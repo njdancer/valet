@@ -15,6 +15,7 @@ import {
   BETWEEN_RUNS_WINDOW_MS,
   BlockedAudit,
   LoginSecrets,
+  MAX_SESSION_VALUES,
 } from '../../src/main/core/blocked'
 import { SHOP } from './fixtures'
 
@@ -98,6 +99,28 @@ describe('LoginSecrets', () => {
     expect(secrets.occursIn('shop', 'later-3-secret')).toBe(true)
     secrets.dispose()
     expect(secrets.occursIn('shop', 'later-3-secret')).toBe(false)
+  })
+
+  it('never drops the latest successful login’s set for pending ones', () => {
+    const secrets = new LoginSecrets()
+    const ok = secrets.begin('shop')
+    ok.register(SecretValue.fromString('session-login-secret'))
+    ok.finish('ok')
+    for (let i = 0; i < 6; i++) {
+      const pending = secrets.begin('shop')
+      pending.register(SecretValue.fromString(`handed-${i}-secret`))
+      pending.finish('needs-user')
+    }
+    expect(secrets.occursIn('shop', 'session-login-secret')).toBe(true)
+    expect(secrets.occursIn('shop', 'handed-5-secret')).toBe(true)
+    // The oldest pending ones went instead.
+    expect(secrets.occursIn('shop', 'handed-0-secret')).toBe(false)
+    // A later success replaces it as the one kept.
+    const next = secrets.begin('shop')
+    next.register(SecretValue.fromString('next-login-secret'))
+    next.finish('ok')
+    expect(secrets.occursIn('shop', 'session-login-secret')).toBe(false)
+    expect(secrets.occursIn('shop', 'next-login-secret')).toBe(true)
   })
 })
 
@@ -192,11 +215,61 @@ describe('BlockedAudit', () => {
     expect(s.events).toHaveLength(BETWEEN_RUNS_CAP + 1)
   })
 
-  it('writes nothing for an adapter it doesn’t know, and survives a failed append', async () => {
+  it('reads the session values when the refusal is reported, and keeps every value it read', async () => {
+    let cookie = 'FirstCookieValue1'
+    let reads = 0
+    const s = setup({
+      values: async () => {
+        reads++
+        return [cookie]
+      },
+    })
+    const between = s.audit.betweenRuns('shop')
+    between(report('https://firstcookievalue1.evil.test'))
+    expect(reads).toBe(1)
+    // Rotated before the write's turn, and again before the next report.
+    cookie = 'SecondCookieValue2'
+    between(report('https://evil.test/FirstCookieValue1'))
+    between(report('https://evil.test/SecondCookieValue2'))
+    await s.audit.settled()
+    expect(s.events.map((e) => (e.type === 'request-blocked' ? e.target : null))).toEqual([
+      '[redacted]',
+      '[redacted]',
+      '[redacted]',
+    ])
+  })
+
+  it('keeps a bounded number of session values, dropping the oldest', async () => {
+    let batch = 0
+    const s = setup({
+      values: async () => {
+        batch++
+        return batch > 2
+          ? []
+          : Array.from({ length: 200 }, (_, i) => `Value${batch}x${String(i).padStart(4, '0')}`)
+      },
+    })
+    const between = s.audit.betweenRuns('shop')
+    for (const target of ['a', 'Value1x0001', 'Value1x0199', 'Value2x0001']) {
+      between(report(`https://evil.test/${target}`))
+      await s.audit.settled()
+    }
+    expect(MAX_SESSION_VALUES).toBe(256)
+    expect(s.events.map((e) => (e.type === 'request-blocked' ? e.target : null))).toEqual([
+      'https://evil.test/a',
+      // The second batch pushed the first one's oldest 144 out.
+      'https://evil.test/Value1x0001',
+      '[redacted]',
+      '[redacted]',
+    ])
+  })
+
+  it('writes nothing for an adapter it doesn’t know, saying so, and survives a failed append', async () => {
     const s = setup()
     s.audit.authPartition('gone')(report('https://evil.test'))
     await s.audit.settled()
     expect(s.events).toEqual([])
+    expect(s.diagnostics).toEqual([{ type: 'request-blocked-unattributed', adapterId: 'gone' }])
     const failing = setup({ failAppend: true })
     failing.audit.authPartition('shop')(report('https://evil.test'))
     failing.audit.authPartition('shop')(report('https://evil.test/2'))

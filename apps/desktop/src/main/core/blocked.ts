@@ -7,7 +7,10 @@
 // adapter code or the site. So each target goes through the runtime's own redaction for targets
 // (sensitiveMatcher, case-insensitive for session values) against the tool partition's session
 // values and the secrets logins registered, and is replaced whole with "[redacted]" on a match. If
-// the session values can't be read, the target is withheld rather than written unchecked.
+// the session values can't be read, the target is withheld rather than written unchecked. The values
+// are read when the refusal is reported, not when its write's turn comes, and every value read for
+// an adapter is kept (bounded), as the runtime keeps every value seen during a call: a cookie that
+// rotated in between still matches.
 
 import type {
   AdapterManifest,
@@ -25,17 +28,23 @@ const MAX_SETS_PER_ADAPTER = 4
  * Clones of the secrets each login registered for redaction, kept per adapter like the runtime
  * keeps its own: a successful login's set replaces the earlier ones; a login that fails before it
  * filled anything is forgotten. A login handed to the person keeps its set beside the earlier one,
- * since what was typed may still come back.
+ * since what was typed may still come back. Past the bound the oldest set goes first, but never the
+ * latest successful login's: the tool partition's session still comes from it.
  */
 export class LoginSecrets {
   private readonly sets = new Map<string, SecretRedactionSet[]>()
+  private readonly latestOk = new Map<string, SecretRedactionSet>()
 
   /** A set for one login. Its secrets count at once; finish() decides whether they stay. */
   begin(adapterId: string): LoginSecretsRun {
     const set = new SecretRedactionSet()
     const sets = this.list(adapterId)
     sets.push(set)
-    while (sets.length > MAX_SETS_PER_ADAPTER) sets.shift()?.dispose()
+    while (sets.length > MAX_SETS_PER_ADAPTER) {
+      const kept = this.latestOk.get(adapterId)
+      const oldest = sets.findIndex((other) => other !== kept)
+      sets.splice(oldest, 1)[0]?.dispose()
+    }
     return {
       register: (secret) => set.register(secret),
       finish: (outcome) => {
@@ -44,6 +53,7 @@ export class LoginSecrets {
         if (outcome === 'ok') {
           for (const other of current.splice(0)) if (other !== set) other.dispose()
           current.push(set)
+          this.latestOk.set(adapterId, set)
         } else if (outcome === 'failed' && set.size === 0) {
           current.splice(current.indexOf(set), 1)
           set.dispose()
@@ -59,6 +69,7 @@ export class LoginSecrets {
 
   dispose(): void {
     for (const sets of this.sets.values()) for (const set of sets.splice(0)) set.dispose()
+    this.latestOk.clear()
   }
 
   private list(adapterId: string): SecretRedactionSet[] {
@@ -81,6 +92,8 @@ export interface LoginSecretsRun {
 /** How many tool-partition refusals between runs are written per adapter in each window. */
 export const BETWEEN_RUNS_CAP = 50
 export const BETWEEN_RUNS_WINDOW_MS = 10 * 60_000
+/** How many session values read for an adapter are kept to match targets against. */
+export const MAX_SESSION_VALUES = 256
 
 export interface BlockedAuditOptions {
   readonly audit: AuditSink
@@ -98,6 +111,8 @@ export class BlockedAudit {
   /** Per adapter: the writes so far, so they land in the order they were reported. */
   private readonly queues = new Map<string, Promise<void>>()
   private readonly windows = new Map<string, { start: number; count: number; capped: boolean }>()
+  /** Per adapter: every session value read so far, oldest first, at most MAX_SESSION_VALUES. */
+  private readonly seen = new Map<string, Set<string>>()
 
   constructor(private readonly options: BlockedAuditOptions) {}
 
@@ -149,16 +164,22 @@ export class BlockedAudit {
     partition: 'auth' | 'tool',
     callId: string | null,
   ): void {
+    const adapter = this.options.adapter(adapterId)
+    if (adapter === null) {
+      // No driver for it (yet), or an adapter the app doesn't know: say so rather than drop it unseen.
+      this.options.diagnostics?.({ type: 'request-blocked-unattributed', adapterId })
+      return
+    }
+    // Now, while the session is as it was when the request was refused.
+    const values = this.readValues(adapterId, adapter.sessionValues)
     const previous = this.queues.get(adapterId) ?? Promise.resolve()
     const next = previous
       .then(async () => {
-        const adapter = this.options.adapter(adapterId)
-        if (adapter === null) return
         await this.options.audit.append({
           type: 'request-blocked',
           adapterId,
           method: printable(blocked.method, 16),
-          target: await this.redactTarget(adapterId, adapter.sessionValues, blocked.target),
+          target: this.redactTarget(adapterId, await values, blocked.target),
           reason: printable(blocked.reason, 64),
           initiator: blocked.initiator === 'tool' ? 'tool' : 'page',
           partition,
@@ -169,18 +190,35 @@ export class BlockedAudit {
     this.queues.set(adapterId, next)
   }
 
-  private async redactTarget(
+  /** This read's values added to the ones kept, and all of them; null when they can't be read. */
+  private async readValues(
     adapterId: string,
     sessionValues: () => Promise<readonly string[]>,
-    target: unknown,
-  ): Promise<string> {
-    if (typeof target !== 'string') return REDACTED
+  ): Promise<readonly string[] | null> {
     let values: readonly string[]
     try {
       values = await sessionValues()
     } catch {
-      return REDACTED
+      return null
     }
+    let seen = this.seen.get(adapterId)
+    if (seen === undefined) {
+      seen = new Set()
+      this.seen.set(adapterId, seen)
+    }
+    for (const value of values) {
+      seen.delete(value)
+      seen.add(value)
+    }
+    for (const oldest of seen) {
+      if (seen.size <= MAX_SESSION_VALUES) break
+      seen.delete(oldest)
+    }
+    return [...seen]
+  }
+
+  private redactTarget(adapterId: string, values: readonly string[] | null, target: unknown): string {
+    if (typeof target !== 'string' || values === null) return REDACTED
     // The runtime's matcher for targets: session values case-insensitively (URL parsing lower-cases
     // hostnames), the login secrets exactly.
     const sessionMatch = sensitiveMatcher(values, NO_SECRETS, { ignoreCase: true })
