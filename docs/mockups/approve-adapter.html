@@ -42,8 +42,17 @@
         font-size: var(--text-xs);
         color: var(--text-secondary);
       }
+      /* Each column scrolls on its own; max-content rows stop cards being squashed to fit. */
+      .review > .stack {
+        min-height: 0;
+        overflow-y: auto;
+        grid-auto-rows: max-content;
+      }
       .files td {
         height: 28px;
+      }
+      .check.disabled {
+        opacity: 0.45;
       }
       .bar {
         display: inline-flex;
@@ -114,6 +123,8 @@
               <span class="badge write">+1 host</span>
               <span class="badge write">+1 login origin</span>
               <span class="badge secret">+1 secret</span>
+              <span class="badge secret">+2 secret fills</span>
+              <span class="badge write">+1 hand-over domain</span>
               <span class="badge write">+1 write tool</span>
               <span class="badge read">+1 read tool</span>
               <span class="badge write">+1 write path</span>
@@ -148,6 +159,42 @@
                   <div class="why">The login flow may now navigate to the Everyday Rewards site.</div>
                 </div>
                 <span class="badge write">new origin</span>
+              </div>
+              <div class="perm-section">Login steps · which field gets which secret</div>
+              <div class="perm">
+                <span class="mark">=</span
+                ><span class="mono xs"
+                  >#loginForm-Email ← login.username · #loginForm-Password ← login.password</span
+                ><span class="xs muted">unchanged</span>
+              </div>
+              <div class="perm added">
+                <span class="mark">+</span>
+                <div>
+                  <div class="mono xs">goto https://www.woolworthsrewards.com.au/es/login</div>
+                  <div class="why">A second login runs after the Woolworths one, on the new origin.</div>
+                </div>
+                <span class="badge write">new step</span>
+              </div>
+              <div class="perm added secret-add">
+                <span class="mark">+</span>
+                <div>
+                  <div class="mono xs">fill #rw-email ← rewards.username · fill #rw-password ← rewards.password</div>
+                  <div class="why">New fills. Each is checked against the origins you grant for “rewards”.</div>
+                </div>
+                <span class="badge secret">new fills</span>
+              </div>
+              <div class="perm-section">Session hand-over · copied from login to tools</div>
+              <div class="perm">
+                <span class="mark">=</span><span class="mono xs">cookies on *.woolworths.com.au · no storage keys</span
+                ><span class="xs muted">unchanged</span>
+              </div>
+              <div class="perm added">
+                <span class="mark">+</span>
+                <div>
+                  <div class="mono xs">cookies on *.woolworthsrewards.com.au</div>
+                  <div class="why">Your Rewards session would be copied into the tool partition, where adapter code runs.</div>
+                </div>
+                <span class="badge write">new domain</span>
               </div>
               <div class="perm-section">Secrets</div>
               <div class="perm">
@@ -198,9 +245,26 @@
           </div>
 
           <div class="stack gap-3" style="align-content: start">
+            <div class="callout secret">
+              <span class="i i-key"></span>
+              <div class="stack" style="gap: 6px">
+                <div>
+                  <strong>Grants are tied to the content hash.</strong> On approval, 0.4.0 has no secrets until you
+                  bind them.
+                </div>
+                <div class="row tertiary">
+                  <span class="check disabled"></span>Re-bind <strong>login</strong> to the same 1Password item and origins
+                </div>
+                <div class="xs muted" style="margin: -4px 0 0 24px">
+                  Not offered: this update changes login steps and navigation. Re-binding is offered, unticked, only
+                  when auth steps, navigation and the secret's origins are identical in both versions.
+                </div>
+                <div class="row"><span class="check"></span>Grant <strong>login</strong> and <strong>rewards</strong> now (opens the grant sheet next)</div>
+              </div>
+            </div>
             <div class="card" style="overflow: hidden">
               <div class="card-head">
-                <span class="h3">manifest.json</span><span class="muted">+19 −3 · limits change not shown</span>
+                <span class="h3">manifest.json</span><span class="muted">+28 −3 · limits change not shown</span>
               </div>
               <div class="diff" style="border: 0; border-radius: 0">
                 <div class="hunk"><span></span><span></span><span></span><span>@@ "navigation", "egress" @@</span></div>
@@ -212,10 +276,20 @@
                 <div class="add"><span></span><span>29</span><span>+</span><span>    "fields": ["username", "password"],</span></div>
                 <div class="add"><span></span><span>30</span><span>+</span><span>    "origins": ["https://www.woolworthsrewards.com.au"]</span></div>
                 <div class="add"><span></span><span>31</span><span>+</span><span>  }</span></div>
+                <div class="hunk"><span></span><span></span><span></span><span>@@ "session"."cookieDomains" @@</span></div>
+                <div class="add"><span></span><span>36</span><span>+</span><span>    "*.woolworthsrewards.com.au"</span></div>
+                <div class="hunk"><span></span><span></span><span></span><span>@@ "auth"."steps" @@</span></div>
+                <div class="add"><span></span><span>52</span><span>+</span><span>  { "op": "goto",</span></div>
+                <div class="add"><span></span><span>53</span><span>+</span><span>    "url": "https://www.woolworthsrewards.com.au/es/login" },</span></div>
+                <div class="add"><span></span><span>54</span><span>+</span><span>  { "op": "fill", "selector": "#rw-email",</span></div>
+                <div class="add"><span></span><span>55</span><span>+</span><span>    "value": { "secret": "rewards", "field": "username" } },</span></div>
+                <div class="add"><span></span><span>56</span><span>+</span><span>  { "op": "fill", "selector": "#rw-password",</span></div>
+                <div class="add"><span></span><span>57</span><span>+</span><span>    "value": { "secret": "rewards", "field": "password" } },</span></div>
+                <div class="add"><span></span><span>58</span><span>+</span><span>  { "op": "click", "selector": "#rw-submit" },</span></div>
                 <div class="hunk"><span></span><span></span><span></span><span>@@ "requests" @@</span></div>
-                <div class="del"><span>58</span><span></span><span>−</span><span>  { "method": "GET", "path": "/apis/ui/Orders/:page", … },</span></div>
-                <div class="add"><span></span><span>64</span><span>+</span><span>  { "method": "POST", "path": "/api/v1/offers/:offerId/boost",</span></div>
-                <div class="add"><span></span><span>65</span><span>+</span><span>    "purpose": "write" },</span></div>
+                <div class="del"><span>66</span><span></span><span>−</span><span>  { "method": "GET", "path": "/apis/ui/Orders/:page", … },</span></div>
+                <div class="add"><span></span><span>72</span><span>+</span><span>  { "method": "POST", "path": "/api/v1/offers/:offerId/boost",</span></div>
+                <div class="add"><span></span><span>73</span><span>+</span><span>    "purpose": "write" },</span></div>
               </div>
             </div>
 
@@ -247,17 +321,6 @@
               </table>
             </div>
 
-            <div class="callout secret">
-              <span class="i i-key"></span>
-              <div class="stack" style="gap: 6px">
-                <div>
-                  <strong>Grants are tied to the content hash.</strong> On approval, 0.4.0 has no secrets until you
-                  bind them.
-                </div>
-                <div class="row"><span class="check on"></span>Re-bind <strong>login</strong> to the same 1Password item and origins</div>
-                <div class="row"><span class="check"></span>Grant <strong>rewards</strong> now (opens the grant sheet next)</div>
-              </div>
-            </div>
           </div>
         </div>
 
