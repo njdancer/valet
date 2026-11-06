@@ -51,6 +51,8 @@ mise exec -- pnpm --filter @siteadapter/desktop dev         # electron-vite dev 
 mise exec -- pnpm --filter @siteadapter/desktop build       # main, preload and renderer to out/, no demo mode
 mise exec -- pnpm --filter @siteadapter/desktop start       # launch what build made
 mise exec -- pnpm --filter @siteadapter/desktop test:smoke  # a demo build, then the Playwright smoke test
+mise exec -- pnpm --filter @siteadapter/desktop test:e2e    # a demo build, then the end-to-end suite (e2e/)
+mise exec -- pnpm --filter @siteadapter/desktop screens:live # a demo build, then screens/live/ from the real app
 mise exec -- pnpm --filter @siteadapter/desktop exec vite   # the renderer alone, on the fake API
 mise exec -- node apps/desktop/src/renderer/dev/screenshot.mjs      # every screen to screens/
 mise exec -- pnpm exec tsc --noEmit -p apps/desktop
@@ -81,7 +83,13 @@ packaged app ignores both switches whatever the build. In demo mode:
 - the test credential provider holding the fake's two-factor account (`twofactor@example.test`) as
   the item “Woolworths (demo account)”, and SMS codes read from the fake's outbox in place of
   Messages. Real 1Password and Messages are off;
-- a DEMO badge: the tray's menu-bar title, the popover and the control panel's sidebar.
+- a DEMO badge: the tray's menu-bar title, the popover and the control panel's sidebar;
+- the fake on the ports the last demo launch used (`demo-site.json` in userData), since the ports
+  are in the adapter's origins and so in its hash: on new ports every launch, a restart was a new
+  bundle waiting for review with no grants. Taken ports get new ones, and the adapter waits again;
+- the adapter's two partitions emptied at every launch: the fake keeps its visitors, Akamai sensor
+  cookies and Auth0 sessions in memory for one launch, so a stale `_abck` from the last one was
+  refused as a bot and the breaker paused the site for ten minutes. Every demo launch logs in again.
 
 To try it: approve Woolworths in the control panel, grant `login` from “Woolworths (demo account)”
 and Messages codes from `Woolworths`, then add the client from the snippet in Settings (it names the
@@ -94,9 +102,43 @@ the first cart tool logs in (email, password, SMS code) in the hidden auth windo
   packaged app ignores it.
 - `SITEADAPTER_E2E=1` only makes window titles deterministic, and sets the same text as the document
   title: `siteadapter (demo) [control]`, `siteadapter menu [tray]`, `siteadapter: confirm
-  [<confirmation id>]`, `siteadapter: sign in [<adapter id>]`. It exposes nothing else.
+  [<confirmation id>]`, `siteadapter: sign in [<adapter id>]`. Outside a demo launch it exposes
+  nothing else; in one, see the e2e-only switches below.
 - The control panel opens at launch on first run (something waits for review), in demo mode and in
   e2e mode.
+- **E2e-only, and only in a demo build** (the demo chunk, which a production build doesn't carry):
+  in an e2e launch, `evil.test` is mapped to 127.0.0.1 alongside the demo hosts (the egress canary
+  runs the fake's exfil sink there, so a request the app let out would arrive rather than fail to
+  resolve), and the main process's global `__siteadapterE2e` holds two calls on the fake site for
+  Playwright's `app.evaluate`: `blockAll(on)` and `trolley()` (the demo account's lines). No renderer
+  can reach the main process's globals.
+
+The suite (`e2e/`, Playwright's `_electron`, one app per spec on a temporary userData) drives the
+built app where the person acts and a real MCP client (the SDK's, over Streamable HTTP with the
+token from `bridge.json`) where an agent does:
+
+- `journey.spec.ts`: first launch (pending, no tools on MCP), approve in the review screen, grant
+  `login` and Messages in the grant sheet (only the manifest's origins offered; a widened origin
+  refused by the main process), search, add (the login: email, password, SMS code on the fake's
+  Auth0), get, set and remove, the trace, the secret scan (the demo password, the SMS code and the
+  endpoint token in no MCP result, audit line, window DOM or log line), the breaker (the fake blocks
+  everything: `blocked` with a wait, the adapter shown blocked with its retry time), and the audit
+  chain (verified, then broken by an edit on disk).
+- `egress.spec.ts`: the canary (proven live first, through Chromium's own stack), then a hostile
+  page script in the tool partition beaconing the page's cookies to `evil.test` every 200 ms by
+  beacon, fetch, image and WebSocket: nothing connects, and every in-run attempt is audited
+  `request-blocked`, initiator `page`, origin only.
+- `update.spec.ts`: a copy of the build with a changed Woolworths bundle (`remove_from_cart` made
+  irreversible, in the compiled manifest and the embedded source alike: `changedAdapterBuild()` in
+  `e2e/harness.ts`). A plain restart keeps approval and grants; the changed one waits for review with
+  a diff, its tools off MCP and no grants; approved and granted again it works, and the confirmation
+  panel's Decline reaches the client as `declined`, its Approve (only from that panel) runs the tool.
+- `screens.spec.ts`: `screens/live/`, light, 1440x900 at scale 2. Skipped unless
+  `SITEADAPTER_E2E_SCREENS=1` (the `screens:live` script), since it rewrites committed files.
+
+The MCP SDK is `packages/mcp-server`'s dependency, not this package's, so the harness loads it from
+there and `tsconfig.json` maps its types (like zod's alias). Every spec closes its app, and a global
+teardown kills any process still running this worktree's Electron binary, never another app's.
 
 In a plain browser there is no preload, so `boot.tsx` loads the fake API. The import sits behind
 `import.meta.env.DEV` at the import site, so a production build drops it: `test/build.test.ts` builds

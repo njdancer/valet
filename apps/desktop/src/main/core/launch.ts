@@ -8,7 +8,10 @@ import type { WindowRole } from './ipc'
 export interface LaunchMode {
   /** A local fake site and a test credential, in a userData of its own. */
   readonly demo: boolean
-  /** Deterministic window titles for the end-to-end suite. Exposes nothing else. */
+  /**
+   * Deterministic window titles for the end-to-end suite. In a demo launch only, also the canary
+   * host mapping and the demo site's hook (electron/demo.ts, exposeToE2e); nothing else.
+   */
   readonly e2e: boolean
   /** SITEADAPTER_USER_DATA: an absolute directory to use as userData instead of the default. */
   readonly userData: string | null
