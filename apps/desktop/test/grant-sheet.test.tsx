@@ -1,5 +1,5 @@
 import { MESSAGES_SECRET as CORE_MESSAGES_SECRET } from '@siteadapter/core'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { ControlPanel } from '../src/renderer/control/App'
@@ -56,9 +56,9 @@ describe('the grant sheet', () => {
 
     // The existing grant's item is pre-selected; the person picks another.
     await waitFor(() =>
-      expect(screen.getByRole('option', { name: 'Woolworths' }).getAttribute('aria-selected')).toBe('true'),
+      expect((screen.getByRole('radio', { name: 'Woolworths' }) as HTMLInputElement).checked).toBe(true),
     )
-    await user.click(screen.getByRole('option', { name: /Woolworths Rewards/ }))
+    await user.click(screen.getByRole('radio', { name: /Woolworths Rewards/ }))
     await user.click(screen.getByRole('button', { name: 'Grant' }))
 
     await waitFor(() =>
@@ -88,6 +88,7 @@ describe('the grant sheet', () => {
           adapterHash: WOOLWORTHS_HASH,
           secret: 'login',
           provider: 'onepassword-service-account',
+          itemId: 'op-item-7c2a',
           itemTitle: 'Woolworths',
           origins: ['https://evil.example', 'https://www.woolworths.com.au'],
           grantedAt: '2026-11-02T09:02:31Z',
@@ -103,9 +104,9 @@ describe('the grant sheet', () => {
     ])
     expect(screen.getByRole('dialog', { name: 'Grant a secret' }).textContent).not.toContain('evil.example')
 
-    // The earlier grant's item is re-selected by title once the vault list loads.
+    // The earlier grant's item is re-selected by id once the vault list loads.
     await waitFor(() =>
-      expect(screen.getByRole('option', { name: 'Woolworths' }).getAttribute('aria-selected')).toBe('true'),
+      expect((screen.getByRole('radio', { name: 'Woolworths' }) as HTMLInputElement).checked).toBe(true),
     )
     await user.click(screen.getByRole('button', { name: 'Grant' }))
     await waitFor(() => expect(api.fake.calls.some((c) => c.method === 'grants.make')).toBe(true))
@@ -117,7 +118,7 @@ describe('the grant sheet', () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })
     renderAt('#/adapters/woolworths/grant/login', api)
-    await user.click(await screen.findByRole('option', { name: /Woolworths Rewards/ }))
+    await user.click(await screen.findByRole('radio', { name: /Woolworths Rewards/ }))
     await user.click(screen.getByRole('checkbox'))
     const grant = screen.getByRole('button', { name: 'Grant' }) as HTMLButtonElement
     expect(grant.disabled).toBe(true)
@@ -161,7 +162,7 @@ describe('the grant sheet', () => {
       },
     }
     renderAt('#/adapters/woolworths/grant/login', api)
-    expect(await screen.findByRole('option', { name: /Woolworths/ })).toBeTruthy()
+    expect(await screen.findByRole('radio', { name: /Woolworths/ })).toBeTruthy()
     expect(document.body.innerHTML).not.toContain('canary')
   })
 
@@ -170,7 +171,7 @@ describe('the grant sheet', () => {
     const api = createFakeApi({ now: NOW })
     renderAt('#/adapters/woolworths/grant/login', api)
     await waitFor(() =>
-      expect(screen.getByRole('option', { name: 'Woolworths' }).getAttribute('aria-selected')).toBe('true'),
+      expect((screen.getByRole('radio', { name: 'Woolworths' }) as HTMLInputElement).checked).toBe(true),
     )
     await user.click(screen.getByRole('radio', { name: /1Password app/ }))
     await waitFor(() =>
@@ -179,7 +180,7 @@ describe('the grant sheet', () => {
       ),
     )
     expect((screen.getByRole('button', { name: 'Grant' }) as HTMLButtonElement).disabled).toBe(true)
-    await user.click(await screen.findByRole('option', { name: 'Woolworths' }))
+    await user.click(await screen.findByRole('radio', { name: 'Woolworths' }))
     await user.click(screen.getByRole('button', { name: 'Grant' }))
     await waitFor(() => expect(makes(api)[0]?.provider).toBe('onepassword-cli'))
   })
@@ -242,7 +243,7 @@ describe('the grant sheet', () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })
     renderAt('#/adapters/woolworths/grant/login', api)
-    await user.click(await screen.findByRole('option', { name: /Woolworths \(old\)/ }))
+    await user.click(await screen.findByRole('radio', { name: /Woolworths \(old\)/ }))
     api.fake.failNext('grants.make')
     await user.click(screen.getByRole('button', { name: 'Grant' }))
     expect((await screen.findByRole('alert')).textContent).toBe('Couldn’t save the grant. Try again.')
@@ -257,12 +258,69 @@ describe('the grant sheet', () => {
     await waitFor(() => expect(window.location.hash).toBe('#/adapters/woolworths'))
   })
 
+  it('re-selects the earlier grant’s item by id, not by a title two items share', async () => {
+    const fake = createFakeApi({ now: NOW })
+    const api: FakeApi = {
+      ...fake,
+      grants: {
+        ...fake.grants,
+        vaultItems: async () => [
+          { id: 'op-item-dupe', title: 'Woolworths' },
+          { id: 'op-item-7c2a', title: 'Woolworths' },
+        ],
+      },
+    }
+    renderAt('#/adapters/woolworths/grant/login', api)
+    await waitFor(() => {
+      const [first, second] = screen.getAllByRole('radio', { name: 'Woolworths' }) as HTMLInputElement[]
+      expect([first?.checked, second?.checked]).toEqual([false, true])
+    })
+  })
+
+  it('moves focus into the sheet, keeps the window behind inert, and gives focus back on close', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    renderAt('#/adapters/coles', api)
+    const opener = (await screen.findAllByRole('link', { name: 'Grant…' }))[0] as HTMLAnchorElement
+    opener.focus()
+    // What a click on the link does: the route changes and the sheet opens over the page.
+    window.location.hash = opener.getAttribute('href') as string
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+
+    const dialog = await screen.findByRole('dialog', { name: 'Grant a secret' })
+    await waitFor(() => expect(document.activeElement).toBe(dialog))
+    const behind = document.querySelector('.window > .body') as HTMLElement
+    expect(behind.hasAttribute('inert')).toBe(true)
+    expect(behind.contains(opener)).toBe(true)
+
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(behind.hasAttribute('inert')).toBe(false)
+    await waitFor(() => expect(document.activeElement).toBe(opener))
+  })
+
+  it('moves the item choice with the arrow keys, as a radio group', async () => {
+    const user = userEvent.setup()
+    renderAt('#/adapters/woolworths/grant/login', createFakeApi({ now: NOW }))
+    const first = (await screen.findByRole('radio', { name: 'Woolworths' })) as HTMLInputElement
+    await waitFor(() => expect(first.checked).toBe(true))
+    first.focus()
+    await user.keyboard('{ArrowDown}')
+    const next = screen.getByRole('radio', { name: 'Woolworths Rewards' }) as HTMLInputElement
+    expect(next.checked).toBe(true)
+    expect(document.activeElement).toBe(next)
+    expect(first.checked).toBe(false)
+  })
+
   it('filters items by the search box', async () => {
     const user = userEvent.setup()
     renderAt('#/adapters/woolworths/grant/login', createFakeApi({ now: NOW }))
-    await screen.findByRole('option', { name: /Coles/ })
+    await screen.findByRole('radio', { name: /Coles/ })
     await user.type(screen.getByRole('textbox', { name: 'Search items' }), 'rewards')
-    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['WWoolworths Rewards'])
+    const items = within(screen.getByRole('radiogroup', { name: '1Password items' }))
+    expect(items.getAllByRole('radio').map((o) => o.closest('label')?.textContent)).toEqual([
+      'WWoolworths Rewards',
+    ])
     await user.type(screen.getByRole('textbox', { name: 'Search items' }), 'zzz')
     expect(screen.getByText('No items match.')).toBeTruthy()
   })

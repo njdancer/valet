@@ -54,6 +54,9 @@ export type Loaded<T> =
 /**
  * Loads `load(api)` and loads it again whenever one of `refreshOn` arrives. Failures show as
  * `error` with no message: the main process's error text never reaches the screen.
+ *
+ * A refresh keeps showing the current data until the new data arrives. A change of `deps` doesn't:
+ * data loaded for other deps (adapter A's detail under adapter B's route) reads as loading.
  */
 export function useLoad<T>(
   load: (api: SiteAdapterApi) => Promise<T>,
@@ -61,7 +64,9 @@ export function useLoad<T>(
   refreshOn: readonly AppEventType[],
 ): Loaded<T> & { readonly reload: () => void } {
   const api = useApi()
-  const [state, setState] = useState<Loaded<T>>({ status: 'loading' })
+  const [state, setState] = useState<{ readonly deps: readonly unknown[]; readonly loaded: Loaded<T> }>(
+    () => ({ deps, loaded: { status: 'loading' } }),
+  )
   const generation = useRef(0)
   // The caller's deps decide when `load` changes; the lint can't see through that.
   // biome-ignore lint/correctness/useExhaustiveDependencies: deps are the caller's
@@ -69,10 +74,10 @@ export function useLoad<T>(
     const mine = ++generation.current
     load(api).then(
       (data) => {
-        if (mine === generation.current) setState({ status: 'ready', data })
+        if (mine === generation.current) setState({ deps, loaded: { status: 'ready', data } })
       },
       () => {
-        if (mine === generation.current) setState({ status: 'error' })
+        if (mine === generation.current) setState({ deps, loaded: { status: 'error' } })
       },
     )
   }, [api, ...deps])
@@ -91,7 +96,12 @@ export function useLoad<T>(
     }
   }, [api, run, refreshKey])
 
-  return { ...state, reload: run }
+  const current = sameDeps(state.deps, deps) ? state.loaded : { status: 'loading' as const }
+  return { ...current, reload: run }
+}
+
+function sameDeps(a: readonly unknown[], b: readonly unknown[]): boolean {
+  return a.length === b.length && a.every((value, i) => Object.is(value, b[i]))
 }
 
 /**

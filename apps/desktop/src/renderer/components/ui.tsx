@@ -5,7 +5,7 @@ import type { Purpose, RunOutcome } from '@siteadapter/core'
 import type { ReactNode } from 'react'
 import type { Loaded } from '../lib/api-context'
 import { shortHash } from '../lib/format'
-import { OUTCOME_TONE, OUTCOME_WORDING } from '../lib/wording'
+import { clientLabel, OUTCOME_TONE, OUTCOME_WORDING } from '../lib/wording'
 
 export type IconName =
   | 'adapter'
@@ -99,6 +99,38 @@ export function Hash({ hash, full = false }: { readonly hash: string; readonly f
   return (
     <span className="hash" title={hash}>
       {full ? hash : shortHash(hash)}
+    </span>
+  )
+}
+
+/** A client's self-reported name, quoted and titled as unverified: it is a claim, not an identity. */
+export function ClientName({ reported }: { readonly reported: string }) {
+  return (
+    <span
+      className="client-name"
+      title="The name this client reported. Any client with the endpoint token can report any name."
+    >
+      “{clientLabel(reported)}”
+    </span>
+  )
+}
+
+/** Adapter-written text is cut to this many characters wherever the app shows it. */
+export const MAX_ADAPTER_TEXT = 280
+
+export function capText(text: string, max = MAX_ADAPTER_TEXT): string {
+  const chars = [...text]
+  return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : text
+}
+
+/**
+ * Text the adapter's manifest wrote (a description), visibly marked as the adapter's and quoted, so
+ * it never reads as the app's own statement.
+ */
+export function AdapterText({ text, className }: { readonly text: string; readonly className?: string }) {
+  return (
+    <span className={`adapter-text${className === undefined ? '' : ` ${className}`}`}>
+      <span className="adapter-text-from">From the manifest</span>“{capText(text)}”
     </span>
   )
 }

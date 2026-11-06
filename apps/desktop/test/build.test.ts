@@ -14,8 +14,9 @@ const out = mkdtempSync(join(tmpdir(), 'siteadapter-renderer-'))
 
 beforeAll(async () => {
   // Vitest sets NODE_ENV=test, which Vite would honour with a dev build (DEV true, fake included).
-  const nodeEnv = process.env['NODE_ENV']
-  process.env['NODE_ENV'] = 'production'
+  const env = process.env as { NODE_ENV?: string }
+  const nodeEnv = env.NODE_ENV
+  env.NODE_ENV = 'production'
   try {
     await build({
       configFile: resolve(import.meta.dirname, '../vite.config.ts'),
@@ -24,7 +25,7 @@ beforeAll(async () => {
       build: { outDir: out, emptyOutDir: true },
     })
   } finally {
-    process.env['NODE_ENV'] = nodeEnv
+    env.NODE_ENV = nodeEnv
   }
 }, 60_000)
 

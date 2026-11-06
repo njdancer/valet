@@ -12,6 +12,7 @@
 import type {
   AuditEvent,
   AuditRecord,
+  AuthStep,
   BlockedRequest,
   ErrorClass,
   NeedsUserReason,
@@ -87,12 +88,17 @@ export interface ToolInfo {
   readonly calls7d: number
 }
 
-/** A grant as the renderer sees it: which item by title, never the item reference or a value. */
+/**
+ * A grant as the renderer sees it: which item by opaque id and title, never an `op://` reference,
+ * a field or a value.
+ */
 export interface GrantInfo {
   readonly adapterId: string
   readonly adapterHash: string
   readonly secret: string
   readonly provider: ProviderKind
+  /** The VaultItem id the grant uses (the same opaque id GrantRequest.itemRef sent), or for a messages grant the approved sender handle. Not a secret. */
+  readonly itemId: string
   /** The 1Password item's title, or for a messages grant the approved sender handle. */
   readonly itemTitle: string
   readonly origins: readonly string[]
@@ -115,11 +121,23 @@ export interface MessagesSourceInfo {
   readonly maxAgeSeconds: number
   /** Origins the code may be typed on: the manifest's navigation origins. */
   readonly requestedOrigins: readonly string[]
+  /**
+   * Non-null only for the sender the grant names (grant.itemId === sender). Core keeps one messages
+   * grant per adapter hash, so when a manifest declares several senders at most one is granted.
+   */
   readonly grant: GrantInfo | null
 }
 
 export type ProbeInfo =
-  | { readonly kind: 'fetch'; readonly path: string; readonly expectStatus: number }
+  | {
+      readonly kind: 'fetch'
+      readonly path: string
+      readonly expectStatus: number
+      readonly loggedOutStatuses: readonly number[]
+      readonly jsonPath: string | null
+      /** What the value at jsonPath must equal; null means present and truthy. */
+      readonly equals: string | number | boolean | null
+    }
   | { readonly kind: 'cookie'; readonly name: string }
 
 export interface AdapterDetail extends AdapterSummary {
@@ -176,6 +194,18 @@ export interface SecretFillEntry {
   readonly field: SecretField
 }
 
+/**
+ * One declarative auth step other than `fill` (secretFills covers those), in manifest order, with
+ * steps inside when/retry flattened after their parent. `detail` is rendered by the runtime from the
+ * manifest's structured fields (selector, URL, condition, reason code), never from page text and
+ * never from a needsUser or fail step's note. A step whose detail changed is one removal plus one
+ * addition.
+ */
+export interface AuthStepEntry {
+  readonly op: AuthStep['op']
+  readonly detail: string
+}
+
 export interface LimitsInfo {
   readonly requestsPerRun: number
   readonly minGapMs: number
@@ -193,9 +223,13 @@ export interface PermissionDiff {
   readonly tools: ListDiff<ToolDiffEntry>
   readonly secrets: ListDiff<SecretDiffEntry>
   readonly secretFills: ListDiff<SecretFillEntry>
+  /** Every other login step: goto, click, waitFor, when/retry, otp, needsUser, fail, and so on. */
+  readonly authSteps: ListDiff<AuthStepEntry>
   readonly messagesSources: ListDiff<{ readonly sender: string }>
   /** Null for a first install. */
   readonly limits: { readonly before: LimitsInfo; readonly after: LimitsInfo } | null
+  /** Null for a first install. The renderer compares the two itself. */
+  readonly probe: { readonly before: ProbeInfo; readonly after: ProbeInfo } | null
 }
 
 export interface ManifestDiffLine {
@@ -478,7 +512,10 @@ export interface ConfirmationItem {
   readonly sideEffect: Purpose
   /** irreversible-tool: the runtime asks before an irreversible tool runs. tool-request: ctx.confirm(). */
   readonly trigger: 'irreversible-tool' | 'tool-request'
+  /** The name the client reported in MCP initialize. A claim: any process with the token can send any name. */
   readonly client: string
+  /** How that client reached the endpoint, which the runtime knows for itself. */
+  readonly clientTransport: ClientInfo['transport']
   readonly callId: string
   readonly requestedAt: IsoTime
   readonly expiresAt: IsoTime
@@ -502,16 +539,31 @@ export interface ReviewItem {
 
 export type AttentionItem = NeedsUserItem | ConfirmationItem | ReviewItem
 
+/**
+ * How long Approve stays disabled after the confirmation window mounts, and again after it regains
+ * focus or becomes visible, so a click already on its way in another app can't land on it.
+ */
+export const CONFIRM_ARM_MS = 800
+
 // ---------- Settings, updates, health ----------
 
 export interface Settings {
   readonly updateChannel: 'stable' | 'beta'
   readonly autoInstallUpdates: boolean
   readonly launchAtLogin: boolean
-  /** Path to the 1Password CLI, or null to search the usual places. */
+  /**
+   * Path to the 1Password CLI, or null to search the usual places. Read-only here: only
+   * settings.chooseOpPath() changes it, so the renderer can never name a binary to run.
+   */
   readonly opPath: string | null
   readonly messagesOtpEnabled: boolean
 }
+
+/** What the renderer may change directly. The 1Password CLI path isn't among them. */
+export type SettingsPatch = Partial<Omit<Settings, 'opPath'>>
+
+/** A control-panel route: a hash that lib/router.ts parses to a page other than not-found. */
+export type HashRoute = `#/${string}`
 
 export interface UpdateStatus {
   readonly current: string
@@ -609,6 +661,10 @@ export interface SiteAdapterApi {
   readonly attention: {
     list(): Promise<readonly AttentionItem[]>
   }
+  /**
+   * The main process refuses an approval that arrives within CONFIRM_ARM_MS of the confirmation
+   * window showing or regaining focus, as the renderer's own delay does.
+   */
   answerConfirmation(confirmationId: string, approved: boolean): Promise<void>
   /** Shows the adapter's auth window to the person. */
   openLoginWindow(adapterId: string): Promise<void>
@@ -618,7 +674,17 @@ export interface SiteAdapterApi {
   closeLoginWindow(adapterId: string): Promise<void>
   readonly settings: {
     get(): Promise<Settings>
-    set(patch: Partial<Settings>): Promise<Settings>
+    /** The main process ignores keys outside SettingsPatch (opPath above all). */
+    set(patch: SettingsPatch): Promise<Settings>
+    /**
+     * Shows a native open dialog in the main process; the person picks the op binary there. Before
+     * saving, the main process checks the path is absolute, the file and its directories aren't
+     * writable by group or others, and it carries 1Password's code signature; otherwise it keeps the
+     * old value and rejects. Resolves with the settings as they now are (unchanged if cancelled).
+     */
+    chooseOpPath(): Promise<Settings>
+    /** Goes back to searching the usual places, where the same checks apply. */
+    clearOpPath(): Promise<Settings>
   }
   readonly updates: {
     status(): Promise<UpdateStatus>
@@ -631,8 +697,12 @@ export interface SiteAdapterApi {
     status(): Promise<AppStatus>
     /** Pauses or resumes every adapter: paused calls return blocked without reaching a site. */
     setPaused(paused: boolean): Promise<void>
-    /** Opens or focuses the control panel at a renderer route (a hash such as "#/activity"). */
-    openControlPanel(route?: string): Promise<void>
+    /**
+     * Opens or focuses the control panel at a renderer route (a hash such as "#/activity"). The main
+     * process accepts only a hash that parseRoute reads as a page (not-found is refused), sets it as
+     * the window's hash on its own index.html, and never passes it to loadURL as a URL.
+     */
+    openControlPanel(route?: HashRoute): Promise<void>
     /** Writes text to the clipboard (a sandboxed renderer can't, outside a user gesture). */
     copyText(text: string): Promise<void>
     quit(): Promise<void>

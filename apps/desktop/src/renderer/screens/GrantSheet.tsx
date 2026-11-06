@@ -3,7 +3,7 @@
 // them, never widen. Items are listed by title: the renderer never sees an item's fields.
 
 import type { ProviderKind } from '@siteadapter/core'
-import { type ReactNode, useEffect, useState } from 'react'
+import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { AdapterDetail, GrantInfo, ProviderStatus, VaultItem } from '../../shared/api'
 import { ActionFailed, Avatar, Icon, SecretBadge } from '../components/ui'
 import { useAction, useApi, useLoad } from '../lib/api-context'
@@ -56,6 +56,20 @@ export function GrantSheet({ adapterId, secret }: { readonly adapterId: string; 
   const detail = useLoad((api) => api.adapters.get(adapterId), [adapterId], ['adapters-changed'])
   const providers = useLoad((api) => api.grants.providers(), [], ['grants-changed', 'settings-changed'])
   const close = () => navigate(href.adapter(adapterId))
+  const sheet = useRef<HTMLDivElement>(null)
+
+  // Focus moves into the sheet when it opens and back to whatever opened it (the Grant… link) when
+  // it closes. The rest of the window is inert meanwhile (control/App.tsx), so Tab stays in here.
+  useLayoutEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    sheet.current?.focus()
+    return () => {
+      // After the commit that removes `inert` from the window behind.
+      queueMicrotask(() => {
+        if (opener?.isConnected === true) opener.focus()
+      })
+    }
+  }, [])
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -97,7 +111,14 @@ export function GrantSheet({ adapterId, secret }: { readonly adapterId: string; 
   return (
     <>
       <div className="sheet-scrim" />
-      <div className="sheet grant-sheet" role="dialog" aria-modal="true" aria-label="Grant a secret">
+      <div
+        ref={sheet}
+        className="sheet grant-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Grant a secret"
+        tabIndex={-1}
+      >
         {body}
       </div>
     </>
@@ -147,7 +168,7 @@ function GrantForm({
   const [provider, setProvider] = useState<ProviderKind>(initialProvider)
   const [query, setQuery] = useState('')
   const [item, setItem] = useState<string | null>(
-    target.kind === 'messages' ? (target.existing?.itemTitle ?? target.senders[0] ?? null) : null,
+    target.kind === 'messages' ? (target.existing?.itemId ?? target.senders[0] ?? null) : null,
   )
   // Pre-tick what an earlier grant allowed, but only where the manifest still asks for it.
   const [origins, setOrigins] = useState<readonly string[]>(() => {
@@ -168,10 +189,10 @@ function GrantForm({
   const vaultItems = items.status === 'ready' ? items.data : []
   const matching = vaultItems.filter((v) => v.title.toLowerCase().includes(query.trim().toLowerCase()))
 
-  // Once items load, re-select the item an earlier grant used, by title.
+  // Once items load, re-select the item an earlier grant used, by id: titles needn't be unique.
   useEffect(() => {
     if (target.kind !== 'onepassword' || item !== null || target.existing?.provider !== provider) return
-    const previous = vaultItems.find((v) => v.title === target.existing?.itemTitle)
+    const previous = vaultItems.find((v) => v.id === target.existing?.itemId)
     if (previous !== undefined) setItem(previous.id)
   }, [vaultItems, item, target, provider])
 
@@ -266,27 +287,28 @@ function GrantForm({
                     placeholder={adapter.name}
                   />
                 </label>
-                <div className="items" role="listbox" aria-label="1Password items">
+                {/* A native radio group: arrow keys move the choice, and a reader announces it. */}
+                <div className="items" role="radiogroup" aria-label="1Password items">
                   {items.status === 'error' ? (
                     <div className="empty">Couldn’t list the vault. Is 1Password set up?</div>
                   ) : matching.length === 0 ? (
                     <div className="empty">{items.status === 'loading' ? 'Loading…' : 'No items match.'}</div>
                   ) : (
                     matching.map((v) => (
-                      <button
-                        key={v.id}
-                        type="button"
-                        role="option"
-                        className="item"
-                        aria-selected={item === v.id}
-                        onClick={() => setItem(v.id)}
-                      >
+                      <label key={v.id} className={`item${item === v.id ? ' on' : ''}`}>
+                        <input
+                          type="radio"
+                          className="sr-only"
+                          name="vault-item"
+                          checked={item === v.id}
+                          onChange={() => setItem(v.id)}
+                        />
                         <span className="op" aria-hidden="true">
                           {v.title.trim().charAt(0).toUpperCase() || '?'}
                         </span>
                         <span>{v.title}</span>
                         {item === v.id ? <Icon name="check" /> : <span />}
-                      </button>
+                      </label>
                     ))
                   )}
                 </div>

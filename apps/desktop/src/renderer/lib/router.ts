@@ -3,6 +3,7 @@
 // are part of the contract too: see README.md.
 
 import { useEffect, useState } from 'react'
+import type { HashRoute } from '../../shared/api'
 
 export type Route =
   | { readonly page: 'adapters' }
@@ -63,18 +64,20 @@ export function parseRoute(hash: string): Route {
 
 const enc = encodeURIComponent
 
+/** Builders for every route. Each returns a HashRoute, the only kind app.openControlPanel takes. */
 export const href = {
-  adapters: () => '#/adapters',
-  adapter: (id: string) => `#/adapters/${enc(id)}`,
-  review: (id: string) => `#/adapters/${enc(id)}/review`,
-  grant: (id: string, secret: string) => `#/adapters/${enc(id)}/grant/${enc(secret)}`,
-  activity: (callId?: string) => (callId === undefined ? '#/activity' : `#/activity/${enc(callId)}`),
-  audit: () => '#/audit',
-  credentials: () => '#/credentials',
-  clients: () => '#/clients',
-  settings: () => '#/settings',
-  confirm: (id: string) => `#/confirm/${enc(id)}`,
-  needsUser: (adapterId: string) => `#/needs-user/${enc(adapterId)}`,
+  adapters: (): HashRoute => '#/adapters',
+  adapter: (id: string): HashRoute => `#/adapters/${enc(id)}`,
+  review: (id: string): HashRoute => `#/adapters/${enc(id)}/review`,
+  grant: (id: string, secret: string): HashRoute => `#/adapters/${enc(id)}/grant/${enc(secret)}`,
+  activity: (callId?: string): HashRoute =>
+    callId === undefined ? '#/activity' : `#/activity/${enc(callId)}`,
+  audit: (): HashRoute => '#/audit',
+  credentials: (): HashRoute => '#/credentials',
+  clients: (): HashRoute => '#/clients',
+  settings: (): HashRoute => '#/settings',
+  confirm: (id: string): HashRoute => `#/confirm/${enc(id)}`,
+  needsUser: (adapterId: string): HashRoute => `#/needs-user/${enc(adapterId)}`,
 }
 
 export function navigate(to: string): void {

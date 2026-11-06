@@ -9,7 +9,7 @@ import {
   WOOLWORTHS_NEXT_HASH,
 } from '../src/renderer/dev/fake-api'
 import { ApiProvider } from '../src/renderer/lib/api-context'
-import type { PendingReview } from '../src/shared/api'
+import type { PendingReview, ProbeInfo } from '../src/shared/api'
 
 const NOW = Date.parse('2026-11-07T21:48:00+11:00')
 
@@ -23,6 +23,15 @@ function renderAt(hash: string, api: FakeApi) {
 }
 
 const LIMITS = { requestsPerRun: 6, minGapMs: 10_000, cooldownSeconds: 1800, maxCooldownSeconds: 21_600 }
+
+const PROBE: ProbeInfo = {
+  kind: 'fetch',
+  path: '/api/ui/v2/bootstrap',
+  expectStatus: 200,
+  loggedOutStatuses: [401],
+  jsonPath: 'IsLoggedIn',
+  equals: true,
+}
 
 /** A review that only removes a host and a tool: nothing for the person to acknowledge. */
 const REMOVALS_ONLY: PendingReview = {
@@ -47,8 +56,18 @@ const REMOVALS_ONLY: PendingReview = {
     },
     secrets: { added: [], removed: [], unchanged: [] },
     secretFills: { added: [], removed: [], unchanged: [] },
+    authSteps: {
+      added: [],
+      removed: [],
+      unchanged: [
+        { op: 'goto', detail: 'goto https://auth.woolworths.com.au/u/login' },
+        { op: 'click', detail: 'click button[type=submit]' },
+        { op: 'assertLoggedIn', detail: 'assertLoggedIn' },
+      ],
+    },
     messagesSources: { added: [], removed: [], unchanged: [] },
     limits: { before: LIMITS, after: { ...LIMITS, requestsPerRun: 4 } },
+    probe: { before: PROBE, after: PROBE },
   },
   manifestDiff: [],
   files: [],
@@ -238,12 +257,18 @@ describe('reviewing an update', () => {
           removed: [{ selector: '#old', secret: 'legacy', field: 'password' }],
           unchanged: [],
         },
+        authSteps: {
+          added: [{ op: 'goto', detail: 'goto https://new.example/login' }],
+          removed: [{ op: 'goto', detail: 'goto https://old.example/login' }],
+          unchanged: [],
+        },
         messagesSources: {
           added: [{ sender: 'Rewards' }],
           removed: [{ sender: 'OldSender' }],
           unchanged: [],
         },
         limits: null,
+        probe: null,
       },
       files: [{ path: 'src/old.ts', status: 'removed', added: 0, removed: 12 }],
     })
@@ -262,12 +287,66 @@ describe('reviewing an update', () => {
       'pay',
       'note',
       'POST /pay',
+      'goto https://new.example/login',
     ]) {
       expect(added.some((row) => row?.includes(text))).toBe(true)
     }
-    expect(screen.getAllByTestId('perm-removed')).toHaveLength(9)
+    expect(screen.getAllByTestId('perm-removed')).toHaveLength(10)
     expect(screen.getByText('+1 irreversible tool')).toBeTruthy()
     expect(screen.getByText('removed')).toBeTruthy()
+  })
+
+  it('shows a login step the update adds, such as a terms click, as an addition that needs the tick', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    api.fake.setPendingReview({
+      ...REMOVALS_ONLY,
+      diff: {
+        ...REMOVALS_ONLY.diff,
+        egress: { added: [], removed: [], unchanged: ['www.woolworths.com.au'] },
+        tools: { added: [], removed: [], unchanged: [] },
+        limits: { before: LIMITS, after: LIMITS },
+        authSteps: {
+          added: [{ op: 'click', detail: 'click button#accept-terms' }],
+          removed: [],
+          unchanged: REMOVALS_ONLY.diff.authSteps.unchanged,
+        },
+      },
+    })
+    renderAt('#/adapters/woolworths/review', api)
+    const approve = await screen.findByRole('button', { name: 'Approve 0.3.1' })
+    const added = screen.getAllByTestId('perm-added')
+    expect(added).toHaveLength(1)
+    expect(added[0]?.textContent).toContain('click button#accept-terms')
+    expect(added[0]?.textContent).toContain('A click can accept terms')
+    expect(screen.getByText('+1 login step')).toBeTruthy()
+    expect((approve as HTMLButtonElement).disabled).toBe(true)
+    await user.click(approve)
+    expect(api.fake.calls.some((c) => c.method === 'approvals.approve')).toBe(false)
+  })
+
+  it('shows a changed login check, before and after, as an addition that needs the tick', async () => {
+    const api = createFakeApi({ now: NOW })
+    api.fake.setPendingReview({
+      ...REMOVALS_ONLY,
+      diff: {
+        ...REMOVALS_ONLY.diff,
+        egress: { added: [], removed: [], unchanged: ['www.woolworths.com.au'] },
+        tools: { added: [], removed: [], unchanged: [] },
+        probe: { before: PROBE, after: { ...PROBE, loggedOutStatuses: [401, 403], equals: null } },
+      },
+    })
+    renderAt('#/adapters/woolworths/review', api)
+    expect(await screen.findByRole('checkbox', { name: /read the highlighted additions/ })).toBeTruthy()
+    const added = screen.getAllByTestId('perm-added')
+    expect(added).toHaveLength(1)
+    expect(added[0]?.textContent).toContain(
+      'GET /api/ui/v2/bootstrap → 200 · IsLoggedIn truthy · logged out on 401, 403',
+    )
+    expect(added[0]?.textContent).toContain(
+      'Was: GET /api/ui/v2/bootstrap → 200 · IsLoggedIn = true · logged out on 401.',
+    )
+    expect(screen.getAllByText('new login check').length).toBeGreaterThan(0)
   })
 
   it('names each changed limit', async () => {

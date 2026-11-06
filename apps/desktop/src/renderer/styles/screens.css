@@ -242,12 +242,16 @@
   border-bottom: 0;
 }
 
-.grant-sheet .item[aria-selected="true"] {
+.grant-sheet .item.on {
   background: var(--accent);
   color: #fff;
 }
 
-.grant-sheet .item[aria-selected="true"] .muted {
+.grant-sheet .item:focus-within {
+  box-shadow: inset var(--focus-ring);
+}
+
+.grant-sheet .item.on .muted {
   color: rgba(255, 255, 255, 0.82);
 }
 
@@ -750,4 +754,19 @@ button.menu-row:hover .kbd,
 button.menu-row:hover .muted,
 button.menu-row:focus-visible .kbd {
   color: rgba(255, 255, 255, 0.8);
+}
+
+/* Adapter-written text: labelled and quoted, so it never reads as the app's own claim. */
+.adapter-text {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+.adapter-text-from {
+  font-style: normal;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-right: 6px;
 }

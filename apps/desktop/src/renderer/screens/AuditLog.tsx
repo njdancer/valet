@@ -1,11 +1,12 @@
 // The audit log (docs/mockups/audit-log.html): hash-chained records with filters, chain
-// verification, and a record inspector. Records are core's AuditRecord as written.
+// verification, and a record inspector. Records are core's AuditRecord as written; the inspector
+// shows only the fields core's audit format defines for each event type.
 
 import type { AuditEvent, AuditRecord } from '@siteadapter/core'
-import { type ReactNode, useEffect, useState } from 'react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
 import type { AuditCategory, AuditPage, ChainStatus } from '../../shared/api'
 import { highlight } from '../components/Preview'
-import { ActionFailed, Hash, Icon, OutcomePill } from '../components/ui'
+import { ActionFailed, ClientName, Hash, Icon, OutcomePill } from '../components/ui'
 import { useAction, useApi, useLoad, useNow } from '../lib/api-context'
 import { formatDuration, formatSeconds, formatTime, hostOf, tinyHash } from '../lib/format'
 import { href } from '../lib/router'
@@ -55,10 +56,25 @@ export function AuditLogPage() {
   const [client, setClient] = useState('')
   const [period, setPeriod] = useState<Period>('week')
   const [search, setSearch] = useState('')
-  const [older, setOlder] = useState<readonly AuditRecord[]>([])
+  const [older, setOlder] = useState<Older>({ head: null, records: [], next: null })
   const [selectedSeq, setSelectedSeq] = useState<number | null>(null)
   const verify = useAction()
+  const more = useAction()
+  const exporting = useAction()
   const [verified, setVerified] = useState<ChainStatus | null>(null)
+  const [appendedSeq, setAppendedSeq] = useState<number | null>(null)
+
+  // A record appended after Verify ran isn't covered by it: drop the result so the callout shows the
+  // main process's last verification, and remember how far the log now goes.
+  useEffect(
+    () =>
+      api.onEvent((event) => {
+        if (event.type !== 'audit-appended') return
+        setVerified(null)
+        setAppendedSeq((seq) => Math.max(seq ?? 0, event.seq))
+      }),
+    [api],
+  )
 
   const adapters = useLoad((a) => a.adapters.list(), [], ['adapters-changed'])
   const clients = useLoad((a) => a.clients.list(), [], ['clients-changed'])
@@ -76,18 +92,39 @@ export function AuditLogPage() {
   const queryKey = JSON.stringify({ ...query, since: days })
   const page = useLoad((a) => a.audit.page(query), [queryKey], ['audit-appended'])
 
-  // A new filter starts from the newest records again.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reset on filter change only
-  useEffect(() => setOlder([]), [queryKey])
-
-  const records = page.status === 'ready' ? [...page.data.records, ...older] : []
+  // Older pages belong to the head page they were loaded under. A new head page (a filter change,
+  // or a record appended, which shifts every page by one) starts from its own cursor again.
+  const head = page.status === 'ready' ? page.data : null
+  const paged: Older =
+    head !== null && older.head === head ? older : { head, records: [], next: head?.nextBeforeSeq ?? null }
+  const records = head === null ? [] : [...head.records, ...paged.records]
   const selected = records.find((r) => r.seq === selectedSeq) ?? records[0] ?? null
   const status = verified ?? (chain.status === 'ready' ? chain.data : null)
-  const loadMore = async (from: AuditPage) => {
-    const next = older.length > 0 ? older[older.length - 1]?.seq : from.nextBeforeSeq
-    if (next === undefined || next === null) return
-    const more = await api.audit.page({ ...query, beforeSeq: next })
-    setOlder((current) => [...current, ...more.records])
+  const newestSeq = Math.max(appendedSeq ?? 0, ...(head?.records.map((r) => r.seq) ?? []))
+
+  const loading = useRef(false)
+  const loadMore = (from: AuditPage, cursor: number) => {
+    if (loading.current) return
+    loading.current = true
+    void more
+      .run(async () => {
+        const next = await api.audit.page({ ...query, beforeSeq: cursor })
+        setOlder((current) => {
+          const base: Older =
+            current.head === from ? current : { head: from, records: [], next: from.nextBeforeSeq }
+          // Another load already moved past this cursor: keep what it found.
+          if (base.next !== cursor) return base
+          const seen = new Set([...from.records, ...base.records].map((r) => r.seq))
+          return {
+            head: from,
+            records: [...base.records, ...next.records.filter((r) => !seen.has(r.seq))],
+            next: next.nextBeforeSeq,
+          }
+        })
+      })
+      .finally(() => {
+        loading.current = false
+      })
   }
 
   return (
@@ -124,7 +161,12 @@ export function AuditLogPage() {
             <Icon name="refresh" size="sm" />
             {verify.busy ? 'Verifying…' : 'Verify chain'}
           </button>
-          <button type="button" className="btn" onClick={() => api.audit.exportJsonl()}>
+          <button
+            type="button"
+            className="btn"
+            disabled={exporting.busy}
+            onClick={() => exporting.run(() => api.audit.exportJsonl())}
+          >
             <Icon name="download" size="sm" />
             Export JSONL
           </button>
@@ -132,8 +174,9 @@ export function AuditLogPage() {
       </div>
 
       <div style={{ margin: 'var(--space-3) var(--space-5) 0' }}>
-        {status !== null ? <ChainCallout status={status} now={now} /> : null}
+        {status !== null ? <ChainCallout status={status} now={now} newestSeq={newestSeq} /> : null}
         <ActionFailed failed={verify.failed} what="verify the chain" />
+        <ActionFailed failed={exporting.failed} what="export the log" />
       </div>
 
       <div className="filterbar" style={{ borderBottom: 0, paddingTop: 'var(--space-3)' }}>
@@ -247,18 +290,24 @@ export function AuditLogPage() {
                       <td className="mono xs">
                         {'callId' in record.event && record.event.callId !== null ? record.event.callId : '—'}
                       </td>
-                      <td className="mono xs tertiary">{tinyHash(record.hash)}</td>
+                      <td className="mono xs tertiary">{hashText(record.hash)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             )
           ) : null}
-          {page.status === 'ready' && (older.length > 0 || page.data.nextBeforeSeq !== null) ? (
+          {head !== null && paged.next !== null ? (
             <div className="empty">
-              <button type="button" className="btn" onClick={() => loadMore(page.data)}>
-                Load older records
+              <button
+                type="button"
+                className="btn"
+                disabled={more.busy}
+                onClick={() => paged.next !== null && loadMore(head, paged.next)}
+              >
+                {more.busy ? 'Loading…' : 'Load older records'}
               </button>
+              <ActionFailed failed={more.failed} what="load older records" />
             </div>
           ) : null}
         </div>
@@ -269,7 +318,22 @@ export function AuditLogPage() {
   )
 }
 
-function ChainCallout({ status, now }: { readonly status: ChainStatus; readonly now: number }) {
+/** Older records loaded under one head page, and the cursor for the next page (null: no more). */
+interface Older {
+  readonly head: AuditPage | null
+  readonly records: readonly AuditRecord[]
+  readonly next: number | null
+}
+
+function ChainCallout({
+  status,
+  now,
+  newestSeq,
+}: {
+  readonly status: ChainStatus
+  readonly now: number
+  readonly newestSeq: number
+}) {
   if (status.state === 'broken') {
     return (
       <div className="callout bad" role="alert" style={{ alignItems: 'center' }}>
@@ -297,10 +361,16 @@ function ChainCallout({ status, now }: { readonly status: ChainStatus; readonly 
     <div className="callout ok" style={{ alignItems: 'center' }}>
       <Icon name="shield" />
       <div className="grow">
-        <strong>Chain intact.</strong> All {status.records.toLocaleString('en-AU')} records verified up to the
-        head at {formatTime(status.verifiedAt, now)}. Each hash covers the record before it, so an edit to an
-        earlier record shows up. Deleting the newest records, or rewriting the whole log, needs an external
-        anchor to detect (planned).
+        <strong>Chain intact up to record {status.headSeq}.</strong> All{' '}
+        {status.records.toLocaleString('en-AU')} records to there verified at{' '}
+        {formatTime(status.verifiedAt, now)}.{' '}
+        {newestSeq > status.headSeq ? (
+          <>
+            <strong>Records after {status.headSeq} were appended since and aren’t checked yet.</strong>{' '}
+          </>
+        ) : null}
+        Each hash covers the record before it, so an edit to an earlier record shows up. Deleting the newest
+        records, or rewriting the whole log, needs an external anchor to detect (planned).
       </div>
       <span className="mono xs muted">head {tinyHash(status.headHash)}</span>
     </div>
@@ -344,7 +414,7 @@ export function details(event: AuditEvent, now: number): ReactNode {
     case 'tool-called':
       return (
         <>
-          <span className="mono xs">{event.tool}</span> · {clientLabel(event.client)}
+          <span className="mono xs">{event.tool}</span> · <ClientName reported={event.client} />
         </>
       )
     case 'tool-finished':
@@ -417,7 +487,9 @@ export function details(event: AuditEvent, now: number): ReactNode {
         <>
           <span className="mono xs">{event.tool}</span> ·{' '}
           <span className={`pill ${event.answer === 'approved' ? 'ok' : ''}`}>{event.answer}</span>{' '}
-          <span className="xs muted">{clientLabel(event.client)}</span>
+          <span className="xs muted">
+            <ClientName reported={event.client} />
+          </span>
         </>
       )
   }
@@ -437,6 +509,70 @@ function isBlockedReason(reason: string): reason is Parameters<typeof blockedWor
   return BLOCKED_REASONS.has(reason)
 }
 
+/**
+ * The fields core's AuditEvent defines, per type. The inspector and Copy record show these and
+ * nothing else, so a field the main process should never have written can't reach the screen.
+ */
+const EVENT_FIELDS = {
+  'adapter-approved': ['type', 'adapterId', 'adapterHash', 'version', 'previousHash'],
+  'adapter-rejected': ['type', 'adapterId', 'adapterHash', 'version'],
+  'grant-made': ['type', 'adapterId', 'adapterHash', 'secret', 'provider', 'origins'],
+  'grant-revoked': ['type', 'adapterId', 'secret'],
+  'tool-called': ['type', 'adapterId', 'adapterHash', 'tool', 'client', 'callId'],
+  'tool-finished': [
+    'type',
+    'adapterId',
+    'callId',
+    'outcome',
+    'needsUser',
+    'stage',
+    'errorClass',
+    'durationMs',
+  ],
+  'login-started': ['type', 'adapterId', 'callId'],
+  'login-finished': ['type', 'adapterId', 'outcome', 'needsUser', 'stage', 'errorClass'],
+  'secret-used': ['type', 'adapterId', 'adapterHash', 'secret', 'field', 'origin', 'callId'],
+  'request-blocked': ['type', 'adapterId', 'method', 'target', 'reason', 'initiator', 'callId'],
+  'breaker-opened': ['type', 'host', 'cause', 'retryAt', 'callId'],
+  'breaker-closed': ['type', 'host'],
+  confirmation: ['type', 'adapterId', 'tool', 'client', 'callId', 'answer'],
+} as const satisfies {
+  readonly [K in AuditEvent['type']]: readonly (keyof Extract<AuditEvent, { readonly type: K }>)[]
+}
+
+type Shown = string | number | boolean | null | readonly string[]
+
+/** A field's value if it is the kind core writes (a scalar or a list of strings), else a placeholder. */
+function shownValue(value: unknown): Shown {
+  if (value === null || ['string', 'number', 'boolean'].includes(typeof value)) return value as Shown
+  if (Array.isArray(value) && value.every((v) => typeof v === 'string')) return value as string[]
+  return '[not shown]'
+}
+
+/** A short hash for display; anything that isn't a hash string shows as "?" rather than crashing. */
+function hashText(value: unknown, chars?: number): string {
+  if (typeof value !== 'string') return '?'
+  return chars === undefined ? tinyHash(value) : `${value.slice(0, chars)}…`
+}
+
+/** The record with only the fields core's audit format defines. */
+export function shownRecord(record: AuditRecord): Record<string, unknown> {
+  const type = record.event.type
+  const fields: readonly string[] = Object.hasOwn(EVENT_FIELDS, type) ? EVENT_FIELDS[type] : ['type']
+  const event = record.event as unknown as Record<string, unknown>
+  const shown: Record<string, Shown> = {}
+  for (const field of fields) {
+    if (Object.hasOwn(event, field) && event[field] !== undefined) shown[field] = shownValue(event[field])
+  }
+  return {
+    seq: shownValue(record.seq),
+    at: shownValue(record.at),
+    event: shown,
+    prev: shownValue(record.prev),
+    hash: shownValue(record.hash),
+  }
+}
+
 function Inspector({
   record,
   records,
@@ -447,6 +583,8 @@ function Inspector({
   readonly status: ChainStatus | null
 }) {
   const api = useApi()
+  const copy = useAction()
+  const text = JSON.stringify(shownRecord(record), null, 2)
   const previous = records.find((r) => r.seq === record.seq - 1)
   const next = records.find((r) => r.seq === record.seq + 1)
   const suspect = status?.state === 'broken' && record.seq >= status.firstBadSeq
@@ -461,15 +599,17 @@ function Inspector({
         <span className="h3">Record {record.seq}</span>
         {suspect ? (
           <span className="pill bad">After the break</span>
-        ) : status?.state === 'intact' ? (
+        ) : status?.state === 'intact' && record.seq <= status.headSeq ? (
           <span className="pill ok">
             <Icon name="check" size="sm" />
             In verified chain
           </span>
+        ) : status?.state === 'intact' ? (
+          <span className="pill">Appended since the last check</span>
         ) : null}
       </div>
       <pre className="code raw" style={{ fontSize: 10.5, lineHeight: 1.5, padding: '10px 12px' }}>
-        {highlight(JSON.stringify(record, null, 2))}
+        {highlight(text)}
       </pre>
       <div className="callout secret" style={{ padding: '8px 10px' }}>
         <Icon name="eye-off" />
@@ -485,22 +625,22 @@ function Inspector({
         <div className="chain">
           <div className="block">
             <strong>{previous?.seq ?? record.seq - 1}</strong>
-            {previous !== undefined ? tinyHash(previous.hash) : '…'}
+            {previous !== undefined ? hashText(previous.hash) : '…'}
           </div>
           <span className="link" />
           <div className="block on">
-            <strong>{record.seq}</strong>prev {record.prev.slice(0, 4)}…
+            <strong>{record.seq}</strong>prev {hashText(record.prev, 4)}
             <br />
-            {tinyHash(record.hash)}
+            {hashText(record.hash)}
           </div>
           <span className="link" />
           <div className="block">
             <strong>{next?.seq ?? record.seq + 1}</strong>
             {next !== undefined ? (
               <>
-                prev {next.prev.slice(0, 4)}…
+                prev {hashText(next.prev, 4)}
                 <br />
-                {tinyHash(next.hash)}
+                {hashText(next.hash)}
               </>
             ) : (
               '…'
@@ -517,12 +657,14 @@ function Inspector({
         <button
           type="button"
           className="btn"
-          onClick={() => api.app.copyText(JSON.stringify(record, null, 2))}
+          disabled={copy.busy}
+          onClick={() => copy.run(() => api.app.copyText(text))}
         >
           <Icon name="copy" size="sm" />
           Copy record
         </button>
       </div>
+      <ActionFailed failed={copy.failed} what="copy the record" />
     </aside>
   )
 }

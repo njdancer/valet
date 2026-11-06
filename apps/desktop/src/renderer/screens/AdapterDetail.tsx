@@ -4,7 +4,9 @@
 import type { AdapterDetail, RunSummary, SecretRequestInfo, SiteHealth } from '../../shared/api'
 import {
   ActionFailed,
+  AdapterText,
   Avatar,
+  ClientName,
   Hash,
   Icon,
   LoadState,
@@ -14,14 +16,9 @@ import {
 } from '../components/ui'
 import { useAction, useApi, useLoad, useNow } from '../lib/api-context'
 import { formatDay, formatDuration, formatIn, formatTime, hostOf, plural } from '../lib/format'
+import { probeText } from '../lib/permissions'
 import { href } from '../lib/router'
-import {
-  clientLabel,
-  FIELD_WORDING,
-  needsUserWording,
-  PROVIDER_WORDING,
-  SESSION_WORDING,
-} from '../lib/wording'
+import { FIELD_WORDING, needsUserWording, PROVIDER_WORDING, SESSION_WORDING } from '../lib/wording'
 
 export function AdapterDetailPage({ adapterId }: { readonly adapterId: string }) {
   const detail = useLoad(
@@ -108,7 +105,11 @@ function Detail({
               </a>
             ) : null}
           </div>
-          <div className="muted small">{adapter.description}</div>
+          {adapter.description === '' ? null : (
+            <div className="small" data-testid="adapter-description">
+              <AdapterText text={adapter.description} />
+            </div>
+          )}
         </div>
         <dl className="kv" style={{ gridTemplateColumns: 'auto auto' }}>
           <dt>Version</dt>
@@ -140,7 +141,7 @@ function Detail({
                 <tr>
                   <th>Tool</th>
                   <th>Side effect</th>
-                  <th>What it does</th>
+                  <th>Manifest’s description</th>
                   <th className="num">Calls · 7d</th>
                 </tr>
               </thead>
@@ -153,7 +154,9 @@ function Detail({
                     <td>
                       <SideEffect purpose={t.sideEffect} />
                     </td>
-                    <td className="xs muted">{t.description}</td>
+                    <td className="xs">
+                      <AdapterText text={t.description} />
+                    </td>
                     <td className="num">{t.calls7d}</td>
                   </tr>
                 ))}
@@ -190,7 +193,9 @@ function Detail({
                       <td className="mono">
                         <a href={href.activity(r.callId)}>{r.tool}</a>
                       </td>
-                      <td>{clientLabel(r.client)}</td>
+                      <td>
+                        <ClientName reported={r.client} />
+                      </td>
                       <td>
                         <OutcomePill outcome={r.outcome} />
                         {r.blockedRequests > 0 ? (
@@ -373,9 +378,7 @@ function SessionCard({
           <dt>Tools</dt>
           <dd className="mono xs">{adapter.partitions.tool}</dd>
           <dt>Probe</dt>
-          <dd className="mono xs">
-            {adapter.probe.kind === 'fetch' ? `GET ${adapter.probe.path}` : `cookie ${adapter.probe.name}`}
-          </dd>
+          <dd className="mono xs">{probeText(adapter.probe)}</dd>
           <dt>Handed over</dt>
           <dd>
             {adapter.handedOver === null
@@ -426,7 +429,9 @@ function SecretBlock({
           </a>
         )}
       </div>
-      <div className="xs muted">{request.description}</div>
+      <div className="xs">
+        <AdapterText text={request.description} />
+      </div>
       {grant !== null ? (
         <>
           <dl className="kv">

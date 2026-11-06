@@ -2,16 +2,59 @@
 // own window at #/confirm/<id>. What siteadapter checked itself comes first and is worded by the app;
 // the adapter's own text comes second, quieter, attributed and marked unverified. Only the person
 // can answer: MCP clients have no way to reach this window.
+//
+// A client can time a call so this window appears under a click the person was already making in
+// another app. So Decline has the focus (Return and Escape decline), and Approve stays disabled for
+// CONFIRM_ARM_MS after the panel mounts and again whenever the window regains focus or visibility,
+// as browser permission prompts do. The main process enforces the same delay on its side.
 
-import { useState } from 'react'
-import type { ConfirmationItem } from '../../shared/api'
+import { useEffect, useRef, useState } from 'react'
+import { CONFIRM_ARM_MS, type ConfirmationItem } from '../../shared/api'
 import { Preview } from '../components/Preview'
-import { ActionFailed, Avatar, Hash, Icon, LoadState, SideEffect } from '../components/ui'
+import { ActionFailed, Avatar, capText, Hash, Icon, LoadState, SideEffect } from '../components/ui'
 import { useAction, useApi, useLoad, useNow } from '../lib/api-context'
 import { formatCountdown, formatDay } from '../lib/format'
-import { clientLabel } from '../lib/wording'
+import { clientClaim, TRANSPORT_WORDING } from '../lib/wording'
 
-export function ConfirmationPanel({ confirmationId }: { readonly confirmationId: string }) {
+/**
+ * False until `delayMs` has passed since mount, and false again from the moment the window loses
+ * focus or is hidden until `delayMs` after it comes back.
+ */
+export function useArmed(delayMs: number): boolean {
+  const [armed, setArmed] = useState(false)
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const disarm = () => {
+      clearTimeout(timer)
+      setArmed(false)
+    }
+    const restart = () => {
+      disarm()
+      timer = setTimeout(() => setArmed(true), delayMs)
+    }
+    const onVisibility = () => (document.visibilityState === 'visible' ? restart() : disarm())
+    restart()
+    window.addEventListener('focus', restart)
+    window.addEventListener('blur', disarm)
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => {
+      clearTimeout(timer)
+      window.removeEventListener('focus', restart)
+      window.removeEventListener('blur', disarm)
+      document.removeEventListener('visibilitychange', onVisibility)
+    }
+  }, [delayMs])
+  return armed
+}
+
+export function ConfirmationPanel({
+  confirmationId,
+  armDelayMs = CONFIRM_ARM_MS,
+}: {
+  readonly confirmationId: string
+  /** Tests shorten it; the window always uses CONFIRM_ARM_MS. */
+  readonly armDelayMs?: number
+}) {
   const attention = useLoad((api) => api.attention.list(), [], ['attention-changed'])
   const [answered, setAnswered] = useState<boolean | null>(null)
   return (
@@ -34,7 +77,7 @@ export function ConfirmationPanel({ confirmationId }: { readonly confirmationId:
                   <div className="small muted">This confirmation was answered or has timed out.</div>
                 </div>
               ) : (
-                <Confirm item={item} onAnswered={setAnswered} />
+                <Confirm item={item} onAnswered={setAnswered} armDelayMs={armDelayMs} />
               )
             }}
           </LoadState>
@@ -47,20 +90,42 @@ export function ConfirmationPanel({ confirmationId }: { readonly confirmationId:
 function Confirm({
   item,
   onAnswered,
+  armDelayMs,
 }: {
   readonly item: ConfirmationItem
   readonly onAnswered: (approved: boolean) => void
+  readonly armDelayMs: number
 }) {
   const api = useApi()
   const now = useNow(1000)
   const action = useAction()
+  const armed = useArmed(armDelayMs)
+  const decline = useRef<HTMLButtonElement>(null)
   const expired = Date.parse(item.expiresAt) <= now
-  const client = clientLabel(item.client)
   const irreversible = item.sideEffect === 'irreversible'
+  const canApprove = armed && !action.busy && !expired
 
   const answer = async (approved: boolean) => {
+    // The button is disabled too; this also stops a click queued before the render that disabled it.
+    if (approved && !canApprove) return
     if (await action.run(() => api.answerConfirmation(item.id, approved))) onAnswered(approved)
   }
+
+  // Decline is the default: it has the focus, so Return declines, and so does Escape.
+  useEffect(() => {
+    decline.current?.focus()
+  }, [])
+  const answerRef = useRef(answer)
+  answerRef.current = answer
+  const declinable = !action.busy && !expired
+  useEffect(() => {
+    if (!declinable) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') void answerRef.current(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [declinable])
 
   return (
     <>
@@ -79,7 +144,8 @@ function Confirm({
                 : `Let ${item.adapterName} continue: ${item.toolTitle}?`}
             </div>
             <div className="small muted">
-              <strong style={{ color: 'var(--text)' }}>{client}</strong> asked to run{' '}
+              <strong style={{ color: 'var(--text)' }}>{clientClaim(item.client)}</strong>, connected over{' '}
+              {TRANSPORT_WORDING[item.clientTransport]}, asked to run{' '}
               <span className="mono">{item.tool}</span>.{' '}
               {irreversible
                 ? 'This can’t be undone.'
@@ -130,7 +196,7 @@ function Confirm({
         </div>
 
         <div>
-          <div className="source">Input from {client}</div>
+          <div className="source">Input from the client</div>
           <Preview parts={item.input} className="mono xs raw" />
         </div>
 
@@ -144,7 +210,7 @@ function Confirm({
               <span className="pill warn">Not verified by siteadapter</span>
             </div>
             <div className="note" data-testid="adapter-note">
-              {item.adapterNote}
+              {capText(item.adapterNote, 600)}
             </div>
             <div className="xs tertiary" style={{ marginTop: 6 }}>
               The adapter wrote this. siteadapter can’t check what it says.
@@ -155,7 +221,7 @@ function Confirm({
         <div className="callout" style={{ padding: '8px 12px' }}>
           <Icon name="clients" size="sm" className="muted" />
           <div className="xs muted">
-            MCP clients can’t answer this prompt. If nobody does, it times out and {client} is told
+            MCP clients can’t answer this prompt. If nobody does, it times out and the client is told
             “timed-out”.
           </div>
         </div>
@@ -169,20 +235,21 @@ function Confirm({
         <span className="spacer" />
         <ActionFailed failed={action.failed} what="send your answer" />
         <button
+          ref={decline}
           type="button"
           className="btn lg default-ring"
-          disabled={action.busy || expired}
+          disabled={!declinable}
           onClick={() => answer(false)}
         >
           Decline
         </button>
+        {/* No Touch ID glyph: nothing gates approval on LocalAuthentication yet (README). */}
         <button
           type="button"
           className={`btn lg ${irreversible ? 'destructive' : 'primary'}`}
-          disabled={action.busy || expired}
+          disabled={!canApprove}
           onClick={() => answer(true)}
         >
-          {irreversible ? <Icon name="touchid" size="sm" /> : null}
           {irreversible ? `Approve ${item.toolTitle}` : 'Allow'}
         </button>
       </div>

@@ -1,8 +1,23 @@
 import { describe, expect, it } from 'vitest'
-import { additionBadges, addsPermissions, limitsChanged } from '../src/renderer/lib/permissions'
-import type { PermissionDiff } from '../src/shared/api'
+import {
+  additionBadges,
+  addsPermissions,
+  limitsChanged,
+  probeText,
+  sameProbe,
+} from '../src/renderer/lib/permissions'
+import type { PermissionDiff, ProbeInfo } from '../src/shared/api'
 
 const LIMITS = { requestsPerRun: 6, minGapMs: 10_000, cooldownSeconds: 1800, maxCooldownSeconds: 21_600 }
+
+const PROBE: ProbeInfo = {
+  kind: 'fetch',
+  path: '/api/ui/v2/bootstrap',
+  expectStatus: 200,
+  loggedOutStatuses: [401],
+  jsonPath: 'IsLoggedIn',
+  equals: true,
+}
 
 /** An update that changes nothing: every list unchanged, limits equal. Each test changes one thing. */
 const NOTHING_NEW: PermissionDiff = {
@@ -19,8 +34,18 @@ const NOTHING_NEW: PermissionDiff = {
   tools: { added: [], removed: [], unchanged: [{ name: 'get_cart', title: 'Get cart', sideEffect: 'read' }] },
   secrets: { added: [], removed: [], unchanged: [] },
   secretFills: { added: [], removed: [], unchanged: [] },
+  authSteps: {
+    added: [],
+    removed: [],
+    unchanged: [
+      { op: 'goto', detail: 'goto https://auth.woolworths.com.au/u/login' },
+      { op: 'click', detail: 'click button[type=submit]' },
+      { op: 'assertLoggedIn', detail: 'assertLoggedIn' },
+    ],
+  },
   messagesSources: { added: [], removed: [], unchanged: [] },
   limits: { before: LIMITS, after: LIMITS },
+  probe: { before: PROBE, after: PROBE },
 }
 
 describe('addsPermissions', () => {
@@ -75,6 +100,14 @@ describe('addsPermissions', () => {
         },
       },
       { messagesSources: { added: [{ sender: 'Woolworths' }], removed: [], unchanged: [] } },
+      {
+        authSteps: {
+          added: [{ op: 'click', detail: 'click button#accept-terms' }],
+          removed: [],
+          unchanged: NOTHING_NEW.authSteps.unchanged,
+        },
+      },
+      { probe: { before: PROBE, after: { ...PROBE, equals: null } } },
     ]
     for (const addition of additions) {
       expect(addsPermissions({ ...NOTHING_NEW, ...addition })).toBe(true)
@@ -115,9 +148,85 @@ describe('addsPermissions', () => {
     expect(limitsChanged(tighter)).toBe(true)
   })
 
-  it('has no limits to compare on a first install', () => {
-    expect(addsPermissions({ ...NOTHING_NEW, limits: null })).toBe(false)
+  it('has no limits or probe to compare on a first install', () => {
+    expect(addsPermissions({ ...NOTHING_NEW, limits: null, probe: null })).toBe(false)
     expect(limitsChanged({ ...NOTHING_NEW, limits: null })).toBe(false)
+  })
+
+  it('needs the tick for a login step that only appears in the login flow, such as a terms click', () => {
+    const diff: PermissionDiff = {
+      ...NOTHING_NEW,
+      authSteps: {
+        added: [{ op: 'click', detail: 'click button#accept-terms' }],
+        removed: [],
+        unchanged: NOTHING_NEW.authSteps.unchanged,
+      },
+    }
+    expect(addsPermissions(diff)).toBe(true)
+    expect(additionBadges(diff)).toEqual([{ label: '+1 login step', tone: 'write' }])
+  })
+
+  it('needs the tick when the update removes a login safeguard, but not another step', () => {
+    const withoutCheck: PermissionDiff = {
+      ...NOTHING_NEW,
+      authSteps: {
+        added: [],
+        removed: [{ op: 'assertLoggedIn', detail: 'assertLoggedIn' }],
+        unchanged: NOTHING_NEW.authSteps.unchanged.slice(0, 2),
+      },
+    }
+    expect(addsPermissions(withoutCheck)).toBe(true)
+    expect(additionBadges(withoutCheck)).toEqual([{ label: '−1 login safeguard', tone: 'write' }])
+    for (const op of ['needsUser', 'fail'] as const) {
+      const diff = {
+        ...withoutCheck,
+        authSteps: { ...withoutCheck.authSteps, removed: [{ op, detail: op }] },
+      }
+      expect(addsPermissions(diff)).toBe(true)
+    }
+    const withoutClick: PermissionDiff = {
+      ...NOTHING_NEW,
+      authSteps: {
+        added: [],
+        removed: [{ op: 'click', detail: 'click button[type=submit]' }],
+        unchanged: [],
+      },
+    }
+    expect(addsPermissions(withoutClick)).toBe(false)
+  })
+
+  it('needs the tick for any change to the login check, in any of its fields', () => {
+    const changed: ProbeInfo[] = [
+      { ...PROBE, path: '/api/ui/v2/other' },
+      { ...PROBE, expectStatus: 204 },
+      { ...PROBE, loggedOutStatuses: [401, 403] },
+      { ...PROBE, loggedOutStatuses: [403] },
+      { ...PROBE, jsonPath: null },
+      { ...PROBE, equals: 'true' },
+      { kind: 'cookie', name: 'session' },
+    ]
+    for (const after of changed) {
+      const diff = { ...NOTHING_NEW, probe: { before: PROBE, after } }
+      expect(addsPermissions(diff)).toBe(true)
+      expect(additionBadges(diff)).toEqual([{ label: 'new login check', tone: 'write' }])
+    }
+    const cookie: ProbeInfo = { kind: 'cookie', name: 'session' }
+    expect(sameProbe(cookie, { kind: 'cookie', name: 'session' })).toBe(true)
+    expect(sameProbe(cookie, { kind: 'cookie', name: 'other' })).toBe(false)
+    expect(sameProbe(cookie, PROBE)).toBe(false)
+  })
+})
+
+describe('probeText', () => {
+  it('words each kind of check from its fields', () => {
+    expect(probeText(PROBE)).toBe('GET /api/ui/v2/bootstrap → 200 · IsLoggedIn = true · logged out on 401')
+    expect(probeText({ ...PROBE, equals: null })).toBe(
+      'GET /api/ui/v2/bootstrap → 200 · IsLoggedIn truthy · logged out on 401',
+    )
+    expect(probeText({ ...PROBE, jsonPath: null, loggedOutStatuses: [401, 403] })).toBe(
+      'GET /api/ui/v2/bootstrap → 200 · logged out on 401, 403',
+    )
+    expect(probeText({ kind: 'cookie', name: 'session' })).toBe('cookie session present')
   })
 })
 

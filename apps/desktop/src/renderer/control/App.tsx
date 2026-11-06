@@ -31,7 +31,8 @@ export function RouteView({ route }: { readonly route: Route }) {
     default:
       return (
         <div className="window">
-          <div className="body">
+          {/* Under the grant sheet the window is inert: no focus, no clicks, nothing for a reader. */}
+          <div className="body" inert={route.page === 'grant'}>
             <Sidebar route={route} />
             <main className="main">{mainFor(route)}</main>
           </div>

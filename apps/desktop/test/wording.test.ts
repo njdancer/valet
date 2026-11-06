@@ -12,6 +12,7 @@ import {
   BLOCKED_WORDING,
   blockedExplanation,
   blockedWording,
+  clientClaim,
   clientLabel,
   ERROR_WORDING,
   errorWording,
@@ -63,5 +64,21 @@ describe('wording', () => {
     expect(clientLabel('claude-ai')).toBe('Claude Desktop')
     expect(clientLabel('cursor')).toBe('cursor')
     expect(clientLabel('hasOwnProperty')).toBe('hasOwnProperty')
+  })
+
+  it('cuts a long reported name and drops characters that hide or reorder text', () => {
+    expect(clientLabel('x'.repeat(41))).toBe(`${'x'.repeat(39)}…`)
+    expect(clientLabel('x'.repeat(40))).toBe('x'.repeat(40))
+    // Right-to-left override: "edoc-edualc" would read as "claude-code".
+    expect(clientLabel('\u202Eedoc-edualc\u202C')).toBe('edoc-edualc')
+    expect(clientLabel('claude\u200B-code')).toBe('claude-code')
+    // Stripped down to look like a known name, it is still shown as reported, not as Claude Code.
+    expect(clientLabel('claude\u200B-code')).not.toBe('Claude Code')
+    expect(clientLabel('\u0000\u200B \n')).toBe('unnamed client')
+  })
+
+  it('words a reported name as a claim', () => {
+    expect(clientClaim('claude-code')).toBe('A client calling itself “Claude Code”')
+    expect(clientClaim('cursor', 'inline')).toBe('a client calling itself “cursor”')
   })
 })

@@ -1,5 +1,5 @@
 import type { AuditEvent, AuditRecord } from '@siteadapter/core'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { ControlPanel } from '../src/renderer/control/App'
@@ -127,12 +127,53 @@ const RECORDS: AuditRecord[] = EVERY_EVENT.map((event, i) => ({
   hash: `${String(i).padStart(2, '0')}`.repeat(32),
 }))
 
+/** A breaker-closed record at `seq`, for logs longer than one page. */
+function closed(seq: number): AuditRecord {
+  return {
+    seq,
+    at: new Date(NOW - (100 - seq) * 1000).toISOString(),
+    event: { type: 'breaker-closed', host: 'www.coles.com.au' },
+    prev: 'aa'.repeat(32),
+    hash: 'bb'.repeat(32),
+  }
+}
+
+/** The fake with an audit log of records 1..60, paged newest first as the main process pages it. */
+function withLongLog(fake: FakeApi): { readonly api: FakeApi; readonly append: () => void } {
+  const log = Array.from({ length: 60 }, (_, i) => closed(i + 1))
+  const api: FakeApi = {
+    ...fake,
+    audit: {
+      ...fake.audit,
+      page: async (query) => {
+        // Through the fake first, so failNext('audit.page') and the call log still work.
+        await fake.audit.page(query)
+        const matching = [...log]
+          .sort((a, b) => b.seq - a.seq)
+          .filter((r) => query.beforeSeq === undefined || r.seq < query.beforeSeq)
+        const records = matching.slice(0, query.limit ?? 50)
+        const last = records.at(-1)
+        return {
+          records,
+          total: log.length,
+          nextBeforeSeq: matching.length > records.length && last !== undefined ? last.seq : null,
+        }
+      },
+    },
+  }
+  const append = () => {
+    log.push(closed(log.length + 1))
+    fake.fake.emit({ type: 'audit-appended', seq: log.length })
+  }
+  return { api, append }
+}
+
 describe('the audit log', () => {
   it('verifies the chain and shows a broken chain plainly', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })
     renderAt('#/audit', api)
-    expect(await screen.findByText('Chain intact.')).toBeTruthy()
+    expect(await screen.findByText('Chain intact up to record 4813.')).toBeTruthy()
     api.fake.breakChainAt(4799)
     await user.click(screen.getByRole('button', { name: 'Verify chain' }))
     const alert = await screen.findByText('Chain broken at record 4799.')
@@ -142,6 +183,9 @@ describe('the audit log', () => {
       within(screen.getByRole('complementary', { name: 'Record' })).getByText('After the break'),
     ).toBeTruthy()
     // The sidebar learns of the break on the next audit event.
+    act(() => {
+      api.fake.appendAudit({ type: 'breaker-closed', host: 'www.coles.com.au' })
+    })
     await waitFor(() => expect(screen.getByText('Audit chain broken')).toBeTruthy())
   })
 
@@ -149,7 +193,7 @@ describe('the audit log', () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })
     renderAt('#/audit', api)
-    await screen.findByText('Chain intact.')
+    await screen.findByText('Chain intact up to record 4813.')
     api.fake.failNext('audit.verify')
     await user.click(screen.getByRole('button', { name: 'Verify chain' }))
     expect((await screen.findByRole('alert')).textContent).toBe('Couldn’t verify the chain. Try again.')
@@ -169,7 +213,7 @@ describe('the audit log', () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })
     renderAt('#/audit', api)
-    await screen.findByText('Chain intact.')
+    await screen.findByText('Chain intact up to record 4813.')
     await user.click(screen.getByRole('button', { name: 'Secret use' }))
     expect(await screen.findAllByText('secret-used')).toHaveLength(2)
     expect(screen.queryByText('tool-called')).toBeNull()
@@ -208,7 +252,7 @@ describe('the audit log', () => {
       'login → 1Password app',
       'login → some-future-provider',
       'revoked',
-      'get_cart · Claude Desktop',
+      'get_cart · “Claude Desktop”',
       '1Password / 1Password is locked',
       'Started from the app',
       'Filling a secret / Wrong origin',
@@ -223,7 +267,7 @@ describe('the audit log', () => {
     }
   })
 
-  it('loads older records on request', async () => {
+  it('loads older records on request, and hides the button once there are none left', async () => {
     const user = userEvent.setup()
     const fake = createFakeApi({ now: NOW })
     const pages: AuditQuery[] = []
@@ -244,6 +288,152 @@ describe('the audit log', () => {
     await user.click(screen.getByRole('button', { name: 'Load older records' }))
     expect(await screen.findByRole('button', { name: 'Show record 893' })).toBeTruthy()
     expect(pages.at(-1)?.beforeSeq).toBe(896)
+    expect(screen.queryByRole('button', { name: 'Load older records' })).toBeNull()
+  })
+
+  it('follows the cursor the main process returns, page after page', async () => {
+    const user = userEvent.setup()
+    const fake = createFakeApi({ now: NOW })
+    const pages: AuditQuery[] = []
+    const api: FakeApi = {
+      ...fake,
+      audit: {
+        ...fake.audit,
+        page: async (query) => {
+          pages.push(query)
+          if (query.beforeSeq === undefined)
+            return { records: RECORDS.slice(0, 3), total: 9, nextBeforeSeq: 898 }
+          if (query.beforeSeq === 898) return { records: RECORDS.slice(3, 6), total: 9, nextBeforeSeq: 895 }
+          return { records: RECORDS.slice(6, 9), total: 9, nextBeforeSeq: null }
+        },
+      },
+    }
+    renderAt('#/audit', api)
+    await screen.findByRole('button', { name: 'Show record 900' })
+    await user.click(screen.getByRole('button', { name: 'Load older records' }))
+    await screen.findByRole('button', { name: 'Show record 895' })
+    await user.click(screen.getByRole('button', { name: 'Load older records' }))
+    await screen.findByRole('button', { name: 'Show record 892' })
+    expect(pages.map((q) => q.beforeSeq)).toEqual([undefined, 898, 895])
+    expect(screen.queryByRole('button', { name: 'Load older records' })).toBeNull()
+  })
+
+  it('loads a page once however fast the button is clicked, with no repeated rows', async () => {
+    const fake = createFakeApi({ now: NOW })
+    let release: () => void = () => {}
+    const older: AuditQuery[] = []
+    const api: FakeApi = {
+      ...fake,
+      audit: {
+        ...fake.audit,
+        page: async (query) => {
+          if (query.beforeSeq === undefined)
+            return { records: RECORDS.slice(0, 5), total: 8, nextBeforeSeq: 896 }
+          older.push(query)
+          await new Promise<void>((resolve) => (release = resolve))
+          // The main process overlaps pages by one here; the renderer still shows each record once.
+          return { records: RECORDS.slice(4, 8), total: 8, nextBeforeSeq: null }
+        },
+      },
+    }
+    renderAt('#/audit', api)
+    const load = await screen.findByRole('button', { name: 'Load older records' })
+    // Two clicks in the same frame, before React has re-rendered the button as busy.
+    act(() => {
+      load.click()
+      load.click()
+    })
+    await act(async () => release())
+    await screen.findByRole('button', { name: 'Show record 893' })
+    expect(older).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: 'Show record 896' })).toHaveLength(1)
+    const seqs = screen.getAllByRole('button', { name: /^Show record / }).map((b) => b.textContent)
+    expect(seqs).toEqual(['900', '899', '898', '897', '896', '895', '894', '893'])
+  })
+
+  it('starts paging again from the new head when a record is appended, so none drops out of view', async () => {
+    const user = userEvent.setup()
+    const { api, append } = withLongLog(createFakeApi({ now: NOW }))
+    renderAt('#/audit', api)
+    await screen.findByRole('button', { name: 'Show record 60' })
+    const shown = () => screen.getAllByRole('button', { name: /^Show record / }).map((b) => b.textContent)
+    expect(shown()).toHaveLength(50)
+    await user.click(screen.getByRole('button', { name: 'Load older records' }))
+    await waitFor(() => expect(shown()).toHaveLength(60))
+
+    // Record 61 arrives: the newest page is now 61..12. Record 11, which was the first older
+    // record, must not vanish between the two lists.
+    act(() => append())
+    await screen.findByRole('button', { name: 'Show record 61' })
+    expect(shown()).toHaveLength(50)
+    expect(new Set(shown()).size).toBe(50)
+    await user.click(screen.getByRole('button', { name: 'Load older records' }))
+    await screen.findByRole('button', { name: 'Show record 11' })
+    expect(shown()).toEqual(Array.from({ length: 61 }, (_, i) => String(61 - i)))
+  })
+
+  it('says so when older records, the export or the copy fail, without the error text', async () => {
+    const user = userEvent.setup()
+    const { api } = withLongLog(createFakeApi({ now: NOW }))
+    renderAt('#/audit', api)
+    await screen.findByRole('button', { name: 'Show record 60' })
+    api.fake.failNext('audit.page')
+    await user.click(screen.getByRole('button', { name: 'Load older records' }))
+    expect(await screen.findByText('Couldn’t load older records. Try again.')).toBeTruthy()
+
+    api.fake.failNext('audit.exportJsonl')
+    await user.click(screen.getByRole('button', { name: 'Export JSONL' }))
+    expect(await screen.findByText('Couldn’t export the log. Try again.')).toBeTruthy()
+
+    api.fake.failNext('app.copyText')
+    await user.click(screen.getByRole('button', { name: 'Copy record' }))
+    expect(await screen.findByText('Couldn’t copy the record. Try again.')).toBeTruthy()
+    expect(document.body.textContent).not.toContain('fake ')
+  })
+
+  it('never marks a record appended after the last verification as verified', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    renderAt('#/audit', api)
+    await user.click(await screen.findByRole('button', { name: 'Show record 4813' }))
+    const inspector = () => screen.getByRole('complementary', { name: 'Record' })
+    expect(within(inspector()).getByText('In verified chain')).toBeTruthy()
+
+    act(() => {
+      api.fake.appendAudit({ type: 'breaker-closed', host: 'www.coles.com.au' })
+    })
+    await user.click(await screen.findByRole('button', { name: 'Show record 4814' }))
+    expect(within(inspector()).queryByText('In verified chain')).toBeNull()
+    expect(within(inspector()).getByText('Appended since the last check')).toBeTruthy()
+    expect(screen.getByText('Records after 4813 were appended since and aren’t checked yet.')).toBeTruthy()
+
+    // The record at the head the check covered is still verified.
+    await user.click(screen.getByRole('button', { name: 'Show record 4813' }))
+    expect(within(inspector()).getByText('In verified chain')).toBeTruthy()
+  })
+
+  it('drops an earlier Verify result once a record is appended, and a new Verify covers it', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    renderAt('#/audit', api)
+    await screen.findByText('Chain intact up to record 4813.')
+    await user.click(screen.getByRole('button', { name: 'Verify chain' }))
+    await waitFor(() => expect(api.fake.calls.some((c) => c.method === 'audit.verify')).toBe(true))
+
+    act(() => {
+      api.fake.appendAudit({ type: 'breaker-closed', host: 'www.coles.com.au' })
+    })
+    expect(
+      await screen.findByText('Records after 4813 were appended since and aren’t checked yet.'),
+    ).toBeTruthy()
+
+    await user.click(screen.getByRole('button', { name: 'Verify chain' }))
+    expect(await screen.findByText('Chain intact up to record 4814.')).toBeTruthy()
+    expect(screen.queryByText(/were appended since/)).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Show record 4814' }))
+    expect(
+      within(screen.getByRole('complementary', { name: 'Record' })).getByText('In verified chain'),
+    ).toBeTruthy()
   })
 
   it('inspects a record, links to its adapter, and copies it through the main process', async () => {

@@ -2,13 +2,49 @@
 // reads it, additions highlighted, and Approve gated on an acknowledgement whenever anything is added.
 
 import { type ReactNode, useState } from 'react'
-import type { LimitsInfo, ListDiff, PendingReview } from '../../shared/api'
-import { ActionFailed, Avatar, Hash, Icon, LoadState, SecretBadge, SideEffect } from '../components/ui'
+import type { AuthStepEntry, LimitsInfo, ListDiff, PendingReview } from '../../shared/api'
+import {
+  ActionFailed,
+  Avatar,
+  capText,
+  Hash,
+  Icon,
+  LoadState,
+  SecretBadge,
+  SideEffect,
+} from '../components/ui'
 import { useAction, useApi, useLoad, useNow } from '../lib/api-context'
 import { formatTime, plural, shortHash } from '../lib/format'
-import { additionBadges, addsPermissions, limitsChanged, limitsLoosened, type Tone } from '../lib/permissions'
+import {
+  additionBadges,
+  addsPermissions,
+  limitsChanged,
+  limitsLoosened,
+  probeChanged,
+  probeText,
+  type Tone,
+} from '../lib/permissions'
 import { href, navigate } from '../lib/router'
 import { FIELD_WORDING } from '../lib/wording'
+
+/** Why an added login step matters, by op. The step's detail is the runtime's rendering of the manifest. */
+const STEP_WHY: Readonly<Record<AuthStepEntry['op'], string>> = {
+  goto: 'The login opens this page.',
+  waitFor: 'The login waits for this before going on.',
+  click: 'The login clicks this. A click can accept terms or confirm something on the site.',
+  fill: 'The login types into this field.',
+  otp: 'The login types a one-time code here.',
+  pause: 'The login pauses here.',
+  when: 'The login branches on this.',
+  retry: 'The login repeats these steps.',
+  assertLoggedIn: 'The login checks that it worked before handing the session over.',
+  needsUser: 'The login stops here and hands over to you.',
+  fail: 'The login gives up here.',
+}
+
+function stepWhy(op: string): string {
+  return Object.hasOwn(STEP_WHY, op) ? STEP_WHY[op as AuthStepEntry['op']] : 'A login step.'
+}
 
 const SOURCE_WORDING: Readonly<Record<PendingReview['source'], string>> = {
   import: 'Imported',
@@ -399,6 +435,40 @@ function PermissionChanges({ review }: { readonly review: PendingReview }) {
         </Section>
       )}
 
+      {isEmpty(diff.authSteps) && !probeChanged(diff) ? null : (
+        <Section title="Login flow · what the login does, and how it checks">
+          {diff.authSteps.unchanged.length > 0 ? (
+            <Unchanged>
+              <span className="xs muted">{plural(diff.authSteps.unchanged.length, 'step')}</span>
+            </Unchanged>
+          ) : null}
+          {diff.authSteps.added.map((step, i) => (
+            <Added
+              // biome-ignore lint/suspicious/noArrayIndexKey: steps can repeat; order is the identity
+              key={`${i}-${step.op}-${step.detail}`}
+              tone="write"
+              tag="new step"
+              why={stepWhy(step.op)}
+            >
+              {mono(step.detail)}
+            </Added>
+          ))}
+          {diff.authSteps.removed.map((step, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: steps can repeat; order is the identity
+            <Removed key={`${i}-${step.op}-${step.detail}`}>{mono(step.detail)}</Removed>
+          ))}
+          {diff.probe !== null && probeChanged(diff) ? (
+            <Added
+              tone="write"
+              tag="new login check"
+              why={`Was: ${probeText(diff.probe.before)}. A different check can treat a logged-out session as logged in, or the reverse.`}
+            >
+              {mono(probeText(diff.probe.after))}
+            </Added>
+          ) : null}
+        </Section>
+      )}
+
       <Section title="Session hand-over · copied from login to tools">
         {diff.cookieDomains.unchanged.length > 0 || diff.storage.unchanged.length > 0 ? (
           <Unchanged>
@@ -452,7 +522,7 @@ function PermissionChanges({ review }: { readonly review: PendingReview }) {
             key={s.name}
             tone="secret"
             tag="new secret"
-            why={`“${s.description}”, for ${s.origins.join(', ')} only.`}
+            why={`The manifest describes it as “${capText(s.description)}”. For ${s.origins.join(', ')} only.`}
           >
             <span className="small">
               <SecretBadge name={s.name} /> {s.fields.map((f) => FIELD_WORDING[f]).join(', ')}

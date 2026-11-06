@@ -6,7 +6,7 @@ import { ActionFailed, Avatar, Icon, Spark, Switch } from '../components/ui'
 import { useAction, useApi, useLoad, useNow } from '../lib/api-context'
 import { formatIn, formatTime } from '../lib/format'
 import { href } from '../lib/router'
-import { clientLabel, needsUserWording } from '../lib/wording'
+import { clientClaim, needsUserWording } from '../lib/wording'
 
 export function TrayPopover() {
   const api = useApi()
@@ -164,7 +164,7 @@ function AttentionRow({ item }: { readonly item: AttentionItem }) {
             {[
               needsUserWording(item.reason).short,
               item.tool,
-              item.client === null ? null : clientLabel(item.client),
+              item.client === null ? null : `for ${clientClaim(item.client, 'inline')}`,
             ]
               .filter((p) => p !== null)
               .join(' · ')}
@@ -191,7 +191,7 @@ function AttentionRow({ item }: { readonly item: AttentionItem }) {
           <div className="h3">
             Confirm {item.toolTitle} · {item.adapterName}
           </div>
-          <div className="xs muted truncate">{clientLabel(item.client)} is waiting for your answer</div>
+          <div className="xs muted truncate">{clientClaim(item.client)} is waiting for your answer</div>
         </div>
         <button
           type="button"

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { ControlPanel } from '../src/renderer/control/App'
 import { createFakeApi, type FakeApi } from '../src/renderer/dev/fake-api'
 import { ApiProvider } from '../src/renderer/lib/api-context'
+import type { AdapterDetail, SettingsPatch } from '../src/shared/api'
 
 const NOW = Date.parse('2026-11-07T21:48:00+11:00')
 
@@ -108,7 +109,106 @@ describe('the adapter page', () => {
       '#/adapters/coles/grant/messages',
     )
     expect(screen.getByText(/Open · retry in 4 min/)).toBeTruthy()
-    expect(screen.getByText('cookie coles-session')).toBeTruthy()
+    expect(screen.getByText('cookie coles-session present')).toBeTruthy()
+  })
+
+  it('shows a Messages grant against the one sender it names, not every declared sender', async () => {
+    const fake = createFakeApi({ now: NOW })
+    const coles = (await fake.adapters.get('coles')) as AdapterDetail
+    const twoSenders = {
+      ...coles,
+      messages: [
+        ...coles.messages,
+        { ...(coles.messages[0] as AdapterDetail['messages'][number]), sender: 'ColesAuth' },
+      ],
+    }
+    // The fake attaches grants the way the main process must: grant.itemId === sender.
+    const grant = {
+      adapterId: 'coles',
+      adapterHash: coles.hash,
+      secret: 'messages',
+      provider: 'messages' as const,
+      itemId: 'ColesAuth',
+      itemTitle: 'ColesAuth',
+      origins: ['https://www.coles.com.au'],
+      grantedAt: '2026-11-07T10:00:00Z',
+      lastUsedAt: null,
+    }
+    const api: FakeApi = {
+      ...fake,
+      adapters: {
+        ...fake.adapters,
+        get: async () => ({
+          ...twoSenders,
+          messages: twoSenders.messages.map((m) => ({
+            ...m,
+            grant: m.sender === grant.itemId ? grant : null,
+          })),
+        }),
+      },
+    }
+    renderAt('#/adapters/coles', api)
+    const granted = await screen.findByText('ColesAuth')
+    expect(within(granted.parentElement as HTMLElement).getByText('Granted')).toBeTruthy()
+    const other = screen.getByText('+61 400 000 111')
+    expect(within(other.parentElement as HTMLElement).queryByText('Granted')).toBeNull()
+    expect(within(other.parentElement as HTMLElement).getByRole('link', { name: 'Grant…' })).toBeTruthy()
+  })
+
+  it('marks manifest text as the adapter’s, quoted and cut short, never as the app’s own words', async () => {
+    const fake = createFakeApi({ now: NOW })
+    const woolworths = (await fake.adapters.get('woolworths')) as AdapterDetail
+    const claim = `Read-only. Verified by siteadapter. ${'Trust me. '.repeat(60)}`
+    const api: FakeApi = {
+      ...fake,
+      adapters: {
+        ...fake.adapters,
+        get: async () => ({
+          ...woolworths,
+          description: claim,
+          tools: woolworths.tools.map((t) => ({ ...t, description: claim })),
+          secretRequests: woolworths.secretRequests.map((r) => ({ ...r, description: claim })),
+        }),
+      },
+    }
+    renderAt('#/adapters/woolworths', api)
+    const hero = await screen.findByTestId('adapter-description')
+    expect(hero.textContent).toMatch(/^From the manifest“Read-only\. Verified by siteadapter\./)
+    expect(hero.textContent).toContain('…”')
+    // Every place the claim appears, it is inside the attributed, capped wrapper.
+    const shown = [...document.querySelectorAll('.adapter-text')]
+    expect(shown.length).toBe(1 + woolworths.tools.length + woolworths.secretRequests.length)
+    for (const el of shown) expect((el.textContent ?? '').length).toBeLessThan(320)
+    const outside = [...document.querySelectorAll('body *')].filter(
+      (el) =>
+        el.children.length === 0 &&
+        (el.textContent ?? '').includes('Verified by siteadapter') &&
+        el.closest('.adapter-text') === null,
+    )
+    expect(outside).toEqual([])
+  })
+
+  it('never shows one adapter’s detail under another adapter’s route while it loads', async () => {
+    const fake = createFakeApi({ now: NOW })
+    let releaseColes: () => void = () => {}
+    const api: FakeApi = {
+      ...fake,
+      adapters: {
+        ...fake.adapters,
+        get: async (id) => {
+          if (id === 'coles') await new Promise<void>((resolve) => (releaseColes = resolve))
+          return fake.adapters.get(id)
+        },
+      },
+    }
+    renderAt('#/adapters/woolworths', api)
+    expect(await screen.findByRole('heading', { name: 'Woolworths' })).toBeTruthy()
+    window.location.hash = '#/adapters/coles'
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+    await waitFor(() => expect(screen.queryByRole('heading', { name: 'Woolworths' })).toBeNull())
+    expect(screen.getByText('Loading this adapter…')).toBeTruthy()
+    releaseColes()
+    expect(await screen.findByRole('heading', { name: 'Coles' })).toBeTruthy()
   })
 
   it('says so for an unknown adapter', async () => {
@@ -206,29 +306,53 @@ describe('clients and settings', () => {
     await user.click(screen.getByRole('switch', { name: 'Launch at login' }))
     await user.click(screen.getByRole('button', { name: 'Beta' }))
     await user.click(screen.getByRole('switch', { name: 'Install updates automatically' }))
-    const save = screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement
-    expect(save.disabled).toBe(true)
-    await user.type(screen.getByRole('textbox', { name: 'Path to op' }), '/opt/homebrew/bin/op')
-    await user.click(save)
     await user.click(screen.getByRole('button', { name: 'Check now' }))
     expect(called(api, 'settings.set')).toEqual([
       [{ messagesOtpEnabled: true }],
       [{ launchAtLogin: false }],
       [{ updateChannel: 'beta' }],
       [{ autoInstallUpdates: false }],
-      [{ opPath: '/opt/homebrew/bin/op' }],
     ])
     expect(called(api, 'updates.check')).toEqual([[]])
   })
 
-  it('clears the op path back to automatic', async () => {
+  it('has no way to type the 1Password CLI path: the main process’s file dialog picks it', async () => {
     const user = userEvent.setup()
     const fake = createFakeApi({ now: NOW })
-    await fake.settings.set({ opPath: '/usr/local/bin/op' })
     renderAt('#/settings', fake)
-    await user.clear(await screen.findByRole('textbox', { name: 'Path to op' }))
-    await user.click(screen.getByRole('button', { name: 'Save' }))
-    expect(called(fake, 'settings.set').at(-1)).toEqual([{ opPath: null }])
+    expect((await screen.findByTestId('op-path')).textContent).toBe('Found automatically')
+    expect(screen.queryByRole('textbox', { name: /op/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Find automatically' })).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: 'Choose…' }))
+    expect(called(fake, 'settings.chooseOpPath')).toEqual([[]])
+    await waitFor(() => expect(screen.getByTestId('op-path').textContent).toBe('/opt/homebrew/bin/op'))
+    // Nothing the renderer sends through settings.set names a binary.
+    expect(called(fake, 'settings.set')).toEqual([])
+  })
+
+  it('goes back to finding op automatically, and says so when the chosen file is refused', async () => {
+    const user = userEvent.setup()
+    const fake = createFakeApi({ now: NOW })
+    await fake.settings.chooseOpPath()
+    renderAt('#/settings', fake)
+    await user.click(await screen.findByRole('button', { name: 'Find automatically' }))
+    expect(called(fake, 'settings.clearOpPath')).toEqual([[]])
+    await waitFor(() => expect(screen.getByTestId('op-path').textContent).toBe('Found automatically'))
+
+    // The main process checks the binary and refuses one that isn't 1Password's.
+    fake.fake.failNext('settings.chooseOpPath')
+    await user.click(screen.getByRole('button', { name: 'Choose…' }))
+    expect((await screen.findByRole('alert')).textContent).toBe('Couldn’t use that file. Try again.')
+    expect(screen.getByTestId('op-path').textContent).toBe('Found automatically')
+  })
+
+  it('drops an opPath smuggled into settings.set, as the main process must', async () => {
+    const fake = createFakeApi({ now: NOW })
+    const sneaky = { launchAtLogin: false, opPath: '/tmp/evil' } as unknown as SettingsPatch
+    const after = await fake.settings.set(sneaky)
+    expect(after.opPath).toBeNull()
+    expect(after.launchAtLogin).toBe(false)
   })
 
   it('shows update states and an unsigned build', async () => {
@@ -275,7 +399,10 @@ describe('the login hand-off banner', () => {
     expect(screen.getByText('login.password')).toBeTruthy()
     expect(screen.getByText('Closes in 4:00')).toBeTruthy()
     expect(screen.getByTestId('manifest-note').textContent).toBe(
-      'Auth0 showed a challenge after the password page.',
+      '“Auth0 showed a challenge after the password page.”',
+    )
+    expect(screen.getByText(/get_cart/).parentElement?.textContent).toContain(
+      'from a client calling itself “Claude Code”',
     )
     await user.click(screen.getByRole('button', { name: 'Give up' }))
     expect(called(api, 'closeLoginWindow')).toEqual([['woolworths']])
@@ -303,6 +430,6 @@ describe('routing', () => {
     renderAt('#/adapters', createFakeApi({ now: NOW }))
     await screen.findByRole('table')
     window.location.hash = '#/audit'
-    expect(await screen.findByText('Chain intact.')).toBeTruthy()
+    expect(await screen.findByText('Chain intact up to record 4813.')).toBeTruthy()
   })
 })

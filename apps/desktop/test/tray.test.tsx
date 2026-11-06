@@ -26,7 +26,10 @@ describe('the tray popover', () => {
     expect(screen.getByText('http://127.0.0.1:47821/mcp')).toBeTruthy()
     expect(await screen.findByText('Tool calls today')).toBeTruthy()
     expect(screen.getByText('Log in to Woolworths')).toBeTruthy()
-    expect(screen.getByText('Verification check · get_cart · Claude Code')).toBeTruthy()
+    expect(
+      screen.getByText('Verification check · get_cart · for a client calling itself “Claude Code”'),
+    ).toBeTruthy()
+    expect(screen.getByText('A client calling itself “Claude Code” is waiting for your answer')).toBeTruthy()
     expect(screen.getByText('Confirm Remove from cart · Woolworths')).toBeTruthy()
     expect(screen.getByText('Review Woolworths 0.4.0')).toBeTruthy()
     expect(screen.getByText('Login window open')).toBeTruthy()

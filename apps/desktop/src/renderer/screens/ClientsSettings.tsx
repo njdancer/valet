@@ -2,8 +2,8 @@
 // connected, setup snippets, and app settings. The endpoint token never reaches this page: rotating
 // it happens in the main process, and the snippets point at the bridge, which reads it itself.
 
-import { useEffect, useState } from 'react'
-import type { ClientInfo, ClientKind, Settings } from '../../shared/api'
+import { useState } from 'react'
+import type { ClientInfo, ClientKind, SettingsPatch } from '../../shared/api'
 import { ActionFailed, Icon, LoadState, Segmented, Switch } from '../components/ui'
 import { useAction, useApi, useLoad, useNow } from '../lib/api-context'
 import { formatAgo, formatDay, formatTime } from '../lib/format'
@@ -250,7 +250,7 @@ function SettingsCard() {
   const api = useApi()
   const settings = useLoad((a) => a.settings.get(), [], ['settings-changed'])
   const action = useAction()
-  const set = (patch: Partial<Settings>) => action.run(() => api.settings.set(patch))
+  const set = (patch: SettingsPatch) => action.run(() => api.settings.set(patch))
   return (
     <div className="card" id="settings">
       <div className="card-head">
@@ -283,7 +283,7 @@ function SettingsCard() {
                   onChange={(on) => set({ messagesOtpEnabled: on })}
                 />
               </div>
-              <OpPathSetting value={s.opPath} onSave={(opPath) => set({ opPath })} />
+              <OpPathSetting value={s.opPath} />
             </>
           )}
         </LoadState>
@@ -293,37 +293,43 @@ function SettingsCard() {
   )
 }
 
-function OpPathSetting({
-  value,
-  onSave,
-}: {
-  readonly value: string | null
-  readonly onSave: (path: string | null) => void
-}) {
-  const [draft, setDraft] = useState(value ?? '')
-  useEffect(() => setDraft(value ?? ''), [value])
-  const trimmed = draft.trim()
-  const changed = trimmed !== (value ?? '')
+/**
+ * The 1Password CLI's path. The renderer can't type one: the main process shows a file dialog,
+ * checks what was picked (absolute, not writable by others, 1Password's signature) and saves it.
+ */
+function OpPathSetting({ value }: { readonly value: string | null }) {
+  const api = useApi()
+  const action = useAction()
   return (
     <div className="setting">
       <span>1Password CLI</span>
-      <label className="field">
-        <span className="sr-only">Path to op</span>
-        <input
-          className="mono"
-          value={draft}
-          placeholder="Found automatically"
-          onChange={(e) => setDraft(e.target.value)}
-        />
-      </label>
-      <button
-        type="button"
-        className="btn"
-        disabled={!changed}
-        onClick={() => onSave(trimmed === '' ? null : trimmed)}
-      >
-        Save
-      </button>
+      <span className="stack" style={{ gap: 2 }}>
+        <span className="mono xs" data-testid="op-path">
+          {value ?? 'Found automatically'}
+        </span>
+        <span className="xs muted">siteadapter checks the file is 1Password’s, signed, before using it.</span>
+        <ActionFailed failed={action.failed} what="use that file" />
+      </span>
+      <span className="row" style={{ gap: 6 }}>
+        <button
+          type="button"
+          className="btn"
+          disabled={action.busy}
+          onClick={() => action.run(() => api.settings.chooseOpPath())}
+        >
+          Choose…
+        </button>
+        {value !== null ? (
+          <button
+            type="button"
+            className="btn ghost"
+            disabled={action.busy}
+            onClick={() => action.run(() => api.settings.clearOpPath())}
+          >
+            Find automatically
+          </button>
+        ) : null}
+      </span>
     </div>
   )
 }

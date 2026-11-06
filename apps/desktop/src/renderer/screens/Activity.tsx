@@ -4,14 +4,14 @@
 import { useState } from 'react'
 import type { RunTrace, TraceStep } from '../../shared/api'
 import { Preview } from '../components/Preview'
-import { Avatar, Hash, Icon, LoadState, Segmented, SideEffect } from '../components/ui'
+import { Avatar, ClientName, Hash, Icon, LoadState, Segmented, SideEffect } from '../components/ui'
 import { useLoad } from '../lib/api-context'
 import { formatBytes, formatDuration, hostOf, plural } from '../lib/format'
 import { href } from '../lib/router'
 import {
   blockedExplanation,
   blockedWording,
-  clientLabel,
+  clientClaim,
   errorWording,
   FILL_CHECK_WORDING,
   needsUserWording,
@@ -106,7 +106,9 @@ function Trace({ trace, view }: { readonly trace: RunTrace; readonly view: 'time
         </div>
         <div className="kpi">
           <span>Client</span>
-          <strong>{clientLabel(summary.client)}</strong>
+          <strong>
+            <ClientName reported={summary.client} />
+          </strong>
         </div>
         <div className="kpi">
           <span>Call</span>
@@ -178,12 +180,12 @@ function Trace({ trace, view }: { readonly trace: RunTrace; readonly view: 'time
             </div>
           ) : null}
           <div>
-            <div className="eyebrow">Input from {clientLabel(summary.client)}</div>
+            <div className="eyebrow">Input from the client</div>
             <Preview parts={trace.input} className="mono xs raw" />
           </div>
           <div>
             <div className="eyebrow row between">
-              <span>Output sent to {clientLabel(summary.client)}</span>
+              <span>Output sent to the client</span>
               {trace.outputBytes !== null ? (
                 <span className="tertiary">{formatBytes(trace.outputBytes)}</span>
               ) : null}
@@ -243,7 +245,7 @@ export function Step({ step }: { readonly step: TraceStep }) {
           <At ms={step.atMs} />
           <Node tone="info" />
           <div className="label">
-            Tool called by {clientLabel(step.client)} <SideEffect purpose={step.sideEffect} />
+            Tool called by {clientClaim(step.client, 'inline')} <SideEffect purpose={step.sideEffect} />
           </div>
           <Dur ms={step.durationMs} />
         </li>

@@ -217,16 +217,38 @@ export const FILL_CHECK_WORDING: Readonly<Record<FillCheck, string>> = {
 }
 
 /**
- * Display names for the self-reported client names we know. Anything else is shown as reported:
- * it is the client's claim, not an identity, and the screens say so.
+ * Display names for the self-reported client names we know. Every client shares one token, so a
+ * name is only what the client says: any process holding the token can call itself "claude-code".
+ * Screens show the label as a claim (clientClaim, or ClientName with its "unverified" title).
  */
 const CLIENT_NAMES: Readonly<Record<string, string>> = {
   'claude-code': 'Claude Code',
   'claude-ai': 'Claude Desktop',
 }
 
+/** Unknown names are cut to this many characters, so a long one can't push the wording off screen. */
+export const MAX_CLIENT_NAME = 40
+
+/**
+ * The display form of a reported name. Anything unknown is shown as reported, minus control and
+ * format characters (bidi overrides, zero-width joiners) that could make it read as something else.
+ */
 export function clientLabel(reportedName: string): string {
-  return Object.hasOwn(CLIENT_NAMES, reportedName) ? (CLIENT_NAMES[reportedName] as string) : reportedName
+  if (Object.hasOwn(CLIENT_NAMES, reportedName)) return CLIENT_NAMES[reportedName] as string
+  const visible = reportedName.replace(/[\p{Cc}\p{Cf}]/gu, '').trim()
+  if (visible === '') return 'unnamed client'
+  const chars = [...visible]
+  return chars.length > MAX_CLIENT_NAME ? `${chars.slice(0, MAX_CLIENT_NAME - 1).join('')}…` : visible
+}
+
+/** A reported name worded as the claim it is: “A client calling itself “Claude Code””. */
+export function clientClaim(reportedName: string, start: 'sentence' | 'inline' = 'sentence'): string {
+  return `${start === 'sentence' ? 'A' : 'a'} client calling itself “${clientLabel(reportedName)}”`
+}
+
+export const TRANSPORT_WORDING: Readonly<Record<'stdio' | 'http', string>> = {
+  stdio: 'the stdio bridge',
+  http: 'HTTP',
 }
 
 export const FIELD_WORDING = { username: 'username', password: 'password', otp: 'one-time code' } as const

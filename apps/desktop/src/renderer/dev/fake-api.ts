@@ -15,6 +15,7 @@ import type {
   AttentionItem,
   AuditCategory,
   AuditQuery,
+  AuthStepEntry,
   ChainStatus,
   ClientInfo,
   ClientSnippet,
@@ -24,6 +25,7 @@ import type {
   GrantRequest,
   PendingReview,
   PreviewPart,
+  ProbeInfo,
   ProviderStatus,
   RunStats,
   RunSummary,
@@ -50,6 +52,10 @@ export interface FakeControls {
   setPendingReview(review: PendingReview): void
   /** Makes every call to `method` (e.g. "grants.make") reject. */
   failNext(method: string): void
+  /** Appends a record to the audit log, as the runtime would, and emits audit-appended. */
+  appendAudit(event: AuditEvent): AuditRecord
+  /** What the next settings.chooseOpPath() dialog picks; null is a cancelled dialog. */
+  chooseOpPathResult(path: string | null): void
   readonly calls: { readonly method: string; readonly args: readonly unknown[] }[]
 }
 
@@ -67,6 +73,26 @@ const WOOLWORTHS_REQUESTS: RequestDeclaration[] = [
   { method: 'GET', path: '/apis/ui/product/detail/:stockcode', purpose: 'read' },
   { method: 'GET', path: '/apis/ui/Trolley', purpose: 'read' },
   { method: 'POST', path: '/api/v3/ui/trolley/update', purpose: 'write' },
+]
+
+const WOOLWORTHS_PROBE: ProbeInfo = {
+  kind: 'fetch',
+  path: '/api/ui/v2/bootstrap',
+  expectStatus: 200,
+  loggedOutStatuses: [401],
+  jsonPath: 'IsLoggedIn',
+  equals: true,
+}
+
+/** The 0.3.0 login, as the runtime renders it from the manifest (fills are in secretFills). */
+const WOOLWORTHS_AUTH_STEPS: AuthStepEntry[] = [
+  { op: 'goto', detail: 'goto https://auth.woolworths.com.au/u/login' },
+  { op: 'when', detail: 'when not visible input[name=username]' },
+  { op: 'needsUser', detail: 'needsUser site-changed' },
+  { op: 'click', detail: 'click button[type=submit]' },
+  { op: 'when', detail: 'when visible input[autocomplete="one-time-code"]' },
+  { op: 'otp', detail: 'otp input[autocomplete="one-time-code"] ← secret login' },
+  { op: 'assertLoggedIn', detail: 'assertLoggedIn' },
 ]
 
 const WOOLWORTHS_LIMITS = {
@@ -108,6 +134,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       adapterHash: WOOLWORTHS_HASH,
       secret: 'login',
       provider: 'onepassword-service-account',
+      itemId: 'op-item-7c2a',
       itemTitle: 'Woolworths',
       origins: [WOW_AUTH],
       grantedAt: ago(5 * 24 * 60 + 106),
@@ -118,6 +145,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       adapterHash: COLES_HASH,
       secret: 'login',
       provider: 'onepassword-cli',
+      itemId: 'op-item-3d18',
       itemTitle: 'Coles',
       origins: ['https://www.coles.com.au'],
       grantedAt: ago(9 * 24 * 60),
@@ -154,7 +182,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     egress: ['www.woolworths.com.au', 'cdn0.woolworths.media', 'acs.woolworths.com.au'],
     cookieDomains: ['woolworths.com.au', 'www.woolworths.com.au'],
     storage: [],
-    probe: { kind: 'fetch', path: '/api/ui/v2/bootstrap', expectStatus: 200 },
+    probe: WOOLWORTHS_PROBE,
     requests: WOOLWORTHS_REQUESTS,
     limits: WOOLWORTHS_LIMITS,
     tools: [
@@ -336,8 +364,10 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
             { selector: 'input#password', secret: 'login', field: 'password' },
           ],
         },
+        authSteps: { added: [], removed: [], unchanged: WOOLWORTHS_AUTH_STEPS },
         messagesSources: { added: [], removed: [], unchanged: [] },
         limits: { before: WOOLWORTHS_LIMITS, after: WOOLWORTHS_LIMITS },
+        probe: { before: WOOLWORTHS_PROBE, after: WOOLWORTHS_PROBE },
       },
       manifestDiff: [
         { kind: 'hunk', oldLine: null, newLine: null, text: '@@ "version" @@' },
@@ -456,6 +486,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       sideEffect: 'write',
       trigger: 'tool-request',
       client: 'claude-code',
+      clientTransport: 'stdio',
       callId: 'c_a40f3c',
       requestedAt: ago(0.15),
       expiresAt: new Date(now + 112_000).toISOString(),
@@ -528,8 +559,11 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
   }
 
   let app: AppStatus = { paused: false, version: '0.1.0' }
+  let chosenOpPath: string | null = '/opt/homebrew/bin/op'
 
   const audit: AuditRecord[] = buildAudit(ago)
+  /** The last verification, as the main process keeps it: launch verified the chain as it was then. */
+  let lastVerified: ChainStatus = chainStatus()
 
   // ---------- Derived views ----------
 
@@ -541,7 +575,12 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       ...s,
       grant: grantFor(base.id, base.hash, s.name),
     }))
-    const messages = base.messages.map((m) => ({ ...m, grant: grantFor(base.id, base.hash, 'messages') }))
+    // One messages grant per adapter hash, as core keeps them: it belongs to the sender it names only.
+    const messagesGrant = grantFor(base.id, base.hash, 'messages')
+    const messages = base.messages.map((m) => ({
+      ...m,
+      grant: messagesGrant !== null && messagesGrant.itemId === m.sender ? messagesGrant : null,
+    }))
     return {
       ...base,
       secretRequests,
@@ -684,6 +723,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
             adapterHash: request.adapterHash,
             secret: request.secret,
             provider: request.provider,
+            itemId: request.itemRef,
             itemTitle: title,
             origins: [...request.origins],
             grantedAt: new Date(now).toISOString(),
@@ -745,13 +785,12 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       },
       async verify() {
         enter('audit.verify')
-        const status = chainStatus()
-        emit({ type: 'audit-appended', seq: 4813 })
-        return status
+        lastVerified = chainStatus()
+        return clone(lastVerified)
       },
       async chainStatus() {
         enter('audit.chainStatus')
-        return chainStatus()
+        return clone(lastVerified)
       },
       async exportJsonl() {
         enter('audit.exportJsonl')
@@ -874,7 +913,27 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       },
       async set(patch) {
         enter('settings.set', patch)
-        settings = { ...settings, ...patch }
+        // As the main process does: keys outside SettingsPatch are dropped, opPath above all.
+        const { updateChannel, autoInstallUpdates, launchAtLogin, messagesOtpEnabled } = patch
+        const known = { updateChannel, autoInstallUpdates, launchAtLogin, messagesOtpEnabled }
+        settings = {
+          ...settings,
+          ...Object.fromEntries(Object.entries(known).filter(([, v]) => v !== undefined)),
+        }
+        emit({ type: 'settings-changed' })
+        return clone(settings)
+      },
+      async chooseOpPath() {
+        enter('settings.chooseOpPath')
+        if (chosenOpPath !== null) {
+          settings = { ...settings, opPath: chosenOpPath }
+          emit({ type: 'settings-changed' })
+        }
+        return clone(settings)
+      },
+      async clearOpPath() {
+        enter('settings.clearOpPath')
+        settings = { ...settings, opPath: null }
         emit({ type: 'settings-changed' })
         return clone(settings)
       },
@@ -932,6 +991,23 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       failNext(method) {
         failing.add(method)
       },
+      appendAudit(event) {
+        const head = audit.reduce((a, b) => (b.seq > a.seq ? b : a))
+        const seq = head.seq + 1
+        const record: AuditRecord = {
+          seq,
+          at: new Date(now).toISOString(),
+          event,
+          prev: head.hash,
+          hash: fakeHash(`${seq}:${head.hash}`),
+        }
+        audit.push(record)
+        emit({ type: 'audit-appended', seq })
+        return clone(record)
+      },
+      chooseOpPathResult(path) {
+        chosenOpPath = path
+      },
       calls,
     },
   }
@@ -940,6 +1016,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     const verifiedAt = new Date(now).toISOString()
     if (brokenAt !== null) return { state: 'broken', records: 4813, firstBadSeq: brokenAt, verifiedAt }
     const head = audit.reduce((a, b) => (b.seq > a.seq ? b : a))
+    // Verification covers what was written when it ran; records appended since stay unchecked.
     return { state: 'intact', records: 4813, headSeq: head.seq, headHash: head.hash, verifiedAt }
   }
 
