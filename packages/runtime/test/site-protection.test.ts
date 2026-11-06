@@ -468,7 +468,8 @@ describe('breaker state file', () => {
   it('never takes a __proto__ host as a host, or as a prototype', () => {
     const parsed = parseBreakerFile('{"version":1,"hosts":{"__proto__":{"retryAt":1,"cooldownMs":0}}}')
     expect(parsed?.size ?? 0).toBe(0)
-    expect(({} as Record<string, unknown>)['retryAt']).toBeUndefined()
+    expect(Object.getPrototypeOf({})).toBe(Object.prototype)
+    expect('retryAt' in {}).toBe(false)
   })
 })
 

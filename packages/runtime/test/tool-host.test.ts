@@ -1,4 +1,4 @@
-import { defineAdapter, SiteAdapterError, tool } from '@siteadapter/core'
+import { defineAdapter, SecretValue, SiteAdapterError, tool } from '@siteadapter/core'
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { ToolHost } from '../src/tool-host'
@@ -771,7 +771,6 @@ describe('ToolHost.call: redaction', () => {
   })
 
   it('redacts a secret the auth flow registered, even after the auth flow disposed its own copy', async () => {
-    const { SecretValue } = await import('@siteadapter/core')
     const canary = SecretValue.fromString('canary-pw-91c2')
     const { host, page, authRunner } = fixture(
       defineAdapter({
@@ -991,12 +990,9 @@ describe('ToolHost.call: what redaction holds, and for how long', () => {
   })
 
   it('disposes its copies of the login’s secrets when the call ends', async () => {
-    const { SecretValue } = await import('@siteadapter/core')
-    const clones: InstanceType<typeof SecretValue>[] = []
+    const clones: SecretValue[] = []
     const realClone = SecretValue.prototype.clone
-    const clone = vi.spyOn(SecretValue.prototype, 'clone').mockImplementation(function (
-      this: InstanceType<typeof SecretValue>,
-    ) {
+    const clone = vi.spyOn(SecretValue.prototype, 'clone').mockImplementation(function (this: SecretValue) {
       const copy = realClone.call(this)
       clones.push(copy)
       return copy
@@ -1027,7 +1023,6 @@ describe('ToolHost.call: what redaction holds, and for how long', () => {
   })
 
   it('withholds the output when the login handed over a secret that could not be kept', async () => {
-    const { SecretValue } = await import('@siteadapter/core')
     const { host, page, authRunner } = fixture(
       defineAdapter({
         manifest,
