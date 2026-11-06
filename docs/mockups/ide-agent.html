@@ -60,9 +60,26 @@
         margin: 0;
         line-height: 1.45;
       }
-      .peek .ww-h {
-        font-size: 12px;
-        margin-bottom: 6px;
+      .peek .peek-h {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        height: 26px;
+        padding: 0 8px;
+        border-bottom: 0.5px solid var(--border);
+        font-size: var(--text-xs);
+        color: var(--text-secondary);
+      }
+      .peek .codeview {
+        padding: 4px 0;
+        font-size: 11px;
+      }
+      .peek .codeview i,
+      .peek .codeview b {
+        display: none;
+      }
+      .peek .codeview > div {
+        padding-left: 10px;
       }
       .chat .seen {
         grid-template-columns: 1fr 1fr;
@@ -119,7 +136,7 @@
             <span class="avatar sm wow">W</span>
             <span class="name">Woolworths</span>
             <span class="pill">0.2.0-dev</span>
-            <span class="hash">draft 41c0e7a2…b7d3</span>
+            <span class="hash" title="The draft as it was before this proposal">draft 5a90d3f8…2c61</span>
           </div>
           <nav class="modes" style="margin-left: var(--space-4)">
             <a href="ide-workspace.html"><span class="i i-code"></span>Workspace</a>
@@ -128,7 +145,7 @@
             <a href="ide-tests.html"><span class="i i-flask"></span>Tests</a>
           </nav>
           <div class="tools">
-            <span class="pill warn">Proposal · 3 files · 3 permissions</span>
+            <span class="pill warn" title="Approving makes the draft 0b64e1c9…d3a2">Proposal · 8 files · 3 permissions</span>
             <button type="button" class="btn primary">Submit for review…</button>
           </div>
         </div>
@@ -272,16 +289,16 @@
                   <div class="col-h ok-text"><span class="i i-check"></span>The agent can see</div>
                   <ul>
                     <li>Manifest, code, tests</li>
-                    <li>Tool session page, requests</li>
-                    <li>Traces, values scrubbed</li>
+                    <li>Fake site, logged-out browser</li>
+                    <li>Your runs, as scrubbed traces</li>
                   </ul>
                 </div>
                 <div>
                   <div class="col-h danger-text"><span class="i i-eye-off"></span>It never sees</div>
                   <ul>
                     <li>Secrets, 1Password, grants</li>
-                    <li>The auth session, ever</li>
-                    <li>Cookie values</li>
+                    <li>Your logged-in session</li>
+                    <li>Values from your runs</li>
                   </ul>
                 </div>
               </div>
@@ -291,39 +308,32 @@
               <div class="msg-user">add a tool to list my past orders</div>
 
               <div class="msg-agent">
-                <div class="who"><span class="mark"><span class="i i-sparkle"></span></span>Agent · exploring in the tool session</div>
+                <div class="who"><span class="mark"><span class="i i-sparkle"></span></span>Agent · working from your run, offline</div>
                 <div class="acts">
                   <div class="act">
-                    <span class="i i-check ok-text"></span><code>session.ensure()</code><span class="tail">ok: login ran without me</span><span class="r">1.9 s</span>
+                    <span class="i i-user"></span><code>asked you</code><span class="tail">to open My orders in the workspace browser</span><span class="r">9:44</span>
                   </div>
                   <div class="act">
-                    <span class="i i-check ok-text"></span><code>page.goto</code><span class="tail mono">/shop/myaccount/myorders</span><span class="r">2.4 s</span>
+                    <span class="i i-net"></span><code>your run</code><span class="tail mono">GET /apis/ui/Orders/1, /Orders/details/:id</span><span class="r">9:47</span>
                   </div>
                   <div class="act">
-                    <span class="i i-net"></span><code>observed</code><span class="tail mono">GET /apis/ui/Orders/1, /Orders/details/:id</span><span class="r"></span>
-                  </div>
-                  <div class="act">
-                    <span class="i i-check ok-text"></span><code>tests</code><span class="tail">9 new, against 2 scrubbed fixtures · pass</span><span class="r">0.8 s</span>
+                    <span class="i i-check ok-text"></span><code>tests</code><span class="tail">9 new, on 2 fixtures built from the shapes · pass</span><span class="r">0.8 s</span>
                   </div>
                 </div>
                 <div class="peek">
-                  <div class="bchrome">
-                    <div class="addr">
-                      <span class="part tool">TOOL</span><span class="url"><span class="host">www.woolworths.com.au</span><span class="path">/shop/myaccount/myorders</span></span>
-                    </div>
+                  <div class="peek-h">
+                    <span class="i i-eye-off"></span><span class="mono">/apis/ui/Orders/1</span>
+                    <span>· what it got: keys and types, no values</span>
                   </div>
-                  <div class="site">
-                    <div class="ww-page">
-                      <div class="ww-card">
-                        <div class="order"><span><strong>Delivered</strong> · Mon 2 Nov · 32 items</span><span class="st">Delivered</span><strong>$142.65</strong></div>
-                      </div>
-                    </div>
+                  <div class="codeview">
+                    <div><i></i><b></b>{ <span class="tp">Orders</span>: [{ <span class="tp">OrderId</span>: <span class="tt">number</span>, <span class="tp">Status</span>: <span class="tt">string</span>, <span class="tp">Total</span>: <span class="tt">number</span>, … } × 10],</div>
+                    <div><i></i><b></b>  <span class="tp">TotalPages</span>: <span class="tt">number</span> }</div>
                   </div>
                 </div>
                 <p>
-                  Added <span class="mono">get_order_history</span>. I left out the page's
-                  <span class="mono">…/reorder</span> call: it writes to your trolley. Items cost a request per order, so
-                  <span class="mono">includeItems</span> stops at 4, under the 6-request ceiling.
+                  Added <span class="mono">get_order_history</span> without seeing your orders. I left out
+                  <span class="mono">…/reorder</span>: it writes to your trolley. <span class="mono">includeItems</span> stops
+                  at 4 orders, so 5 requests at most. I haven't called the real site: try it with Run.
                 </p>
               </div>
 
@@ -342,7 +352,7 @@
                   <span class="m">=</span><span>No new hosts, origins or secrets. No write or irreversible tools.</span><span></span>
                 </div>
                 <div class="pc-foot">
-                  <span class="xs muted grow">The agent can't approve. This changes the draft; 0.1.0 runs until you approve 0.2.0.</span>
+                  <span class="xs muted grow" title="Installed 0.1.0 keeps serving MCP clients until you approve 0.2.0">The agent can't approve. Makes draft 0b64e1c9…d3a2.</span>
                   <button type="button" class="btn">Reject</button>
                   <button type="button" class="btn primary">Approve</button>
                 </div>
@@ -355,7 +365,7 @@
                 <span class="ctx-chip"><span class="i i-list"></span>Request surface</span>
                 <span class="ctx-chip"><span class="i i-code"></span>orders.ts</span>
                 <span class="spacer" style="flex: 1"></span>
-                <span class="xs tertiary">4 requests · 60/h budget</span>
+                <span class="xs tertiary">5 requests at most · 2 s apart</span>
                 <button type="button" class="btn icon primary" style="width: 24px"><span class="i sm i-send"></span></button>
               </div>
             </div>
@@ -363,8 +373,8 @@
         </div>
 
         <div class="ide-status">
-          <span><span class="i i-sparkle"></span>Agent works in <span class="mono">tool:woolworths~dev</span> under the draft manifest's egress</span>
-          <span><span class="i i-lock"></span>Its requests pass the same request-surface guard as tool code</span>
+          <span><span class="i i-sparkle"></span>Agent browses the fake site, or <span class="mono">agent:woolworths</span>: in memory, logged out</span>
+          <span><span class="i i-lock"></span>Your session runs only what you start</span>
           <span class="right">Nothing it proposes runs over MCP until you approve the new hash</span>
         </div>
       </div>
