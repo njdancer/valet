@@ -43,9 +43,9 @@ the same session can also:
 So the boundary is the Electron session partition, not the page:
 
 - **`auth:<site>`** is persistent, so it keeps "remember this device" cookies and avoids
-  repeated 2FA. Only the runtime's declarative interpreter ever drives it. It drives the page
-  through CDP `DOM.*` and `Input.*` and never evaluates an adapter-supplied script. Selectors
-  are data, not code.
+  repeated 2FA. Only the runtime's declarative interpreter ever drives it. The scripts it runs
+  are its own, executed in an isolated world, with selectors passed in as JSON data. It never
+  evaluates an adapter-supplied script. Selectors are data, not code.
 - **`tool:<site>`** is where adapter code runs.
 
 After a successful login, cookies for the manifest's domains are copied from `auth` to `tool`.
@@ -90,8 +90,8 @@ How a secret is filled:
 
 - The value is fetched from 1Password just in time, in the main process. It's held in a
   `Buffer` that is zeroed afterwards.
-- It's typed with CDP `Input.insertText`, or per-key `Input.dispatchKeyEvent` for sites that
-  listen for key events. Both produce trusted events.
+- It's typed as paced `sendInputEvent` char events. These are trusted input. They're paced
+  because sites time keystrokes; the earlier app found its bank does.
 - It's never logged. Traces record `fill(#password, secret:woolworths.password)`.
 
 ### Grants are separate from manifests
@@ -120,6 +120,10 @@ A manifest can't name a 1Password item. If an adapter changes, it doesn't inheri
   includes the site's own CDN and analytics, which the authoring agent picks up from a
   recording. Blocked requests are logged. WebRTC is disabled in the partition. This is what
   stops tool code sending the session cookie somewhere else.
+- **Request surface.** On allowed hosts, calls to the site's API must also match a declared
+  `{ method, path pattern, purpose }`. Runtime-wide deny patterns cover checkout, payment and
+  payee paths. A per-run ceiling caps the number of requests. See
+  [architecture.md](architecture.md#request-surface).
 - **Output redaction.** The runtime knows every secret value and the current session cookie
   values. Exact matches are redacted from tool results and traces before they leave the process.
 - **Side effects.** Every tool is declared `read`, `write` or `irreversible`. An `irreversible`
