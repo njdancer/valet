@@ -117,6 +117,11 @@ export interface SessionDriver {
    * refused one is reported to `onBlocked`.
    */
   beginRun(policy: ToolRunPolicy, onBlocked: (request: BlockedRequest) => void): void
+  /**
+   * Called only after the person approved this run in the app: from now until endRun(), the run's
+   * irreversible declarations are usable. Has no effect unless policy.maxPurpose is irreversible.
+   */
+  unlockIrreversible(): void
   endRun(): void
   /** Closes every window this driver opened. */
   close(): Promise<void>
@@ -128,13 +133,11 @@ export interface ToolRunPolicy {
   readonly egress: readonly string[]
   /** The manifest's request surface, applied to API calls (xhr and fetch) on egress hosts. */
   readonly requests: readonly RequestDeclaration[]
-  /** The strongest purpose this run may use: the tool's declared side effect. */
-  readonly maxPurpose: Purpose
   /**
-   * Whether irreversible declarations are usable. True only after the person confirmed this run in
-   * the app; otherwise deny-segment paths are refused even for an irreversible tool.
+   * The strongest purpose this run may use: the tool's declared side effect. Irreversible
+   * declarations stay refused until unlockIrreversible().
    */
-  readonly irreversibleUnlocked: boolean
+  readonly maxPurpose: Purpose
   /** Navigations and API calls this run may make; static resources don't count. */
   readonly ceiling: number
 }
