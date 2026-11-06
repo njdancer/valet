@@ -8,7 +8,8 @@
 //   4. the site's circuit breaker is closed;
 //   5. an irreversible tool has the person's confirmation, before any of its code runs;
 //   6. the tool runs with a guarded capability object, a timeout and an abort signal;
-//   7. the output matches the tool's schema and is redacted on the way out.
+//   7. the output matches the tool's schema, is converted to plain JSON, and is redacted on the
+//      way out.
 //
 // Every call that reaches an adapter is audited as tool-called and tool-finished. Nothing that
 // leaves here carries page text or exception messages: failures are a stage and an error class.
@@ -38,7 +39,7 @@ import { type Clock, type Sleep, systemClock, systemSleep } from './clock'
 import { GuardedToolPage } from './guarded-page'
 import type { LoginMarkerStore } from './login-marker'
 import { KeyedMutex } from './mutex'
-import { redactDeep, SecretRedactionSet } from './redaction'
+import { redactOutput, SecretRedactionSet } from './redaction'
 import { SessionGate } from './session'
 import {
   DEFAULT_SITE_PROTECTION,
@@ -289,7 +290,11 @@ export class ToolHost {
       // Without the current cookie values we can't redact, so the output doesn't leave.
       return failed('tool-output', 'internal')
     }
-    return { status: 'ok', output: redactDeep(output.data, state.sensitive()) }
+    try {
+      return { status: 'ok', output: redactOutput(output.data, state.sensitive()) }
+    } catch (error) {
+      return fromReportable(toReportable(error, 'tool-output'))
+    }
   }
 
   private async ensure(entry: Entry, state: CallState, page: ToolPage): Promise<EnsureResult> {

@@ -612,6 +612,43 @@ describe('ToolHost.call: redaction', () => {
     expect(await host.call(call)).toEqual({ status: 'failed', stage: 'tool-output', errorClass: 'internal' })
   })
 
+  it('redacts a cookie hidden in a class instance or a toJSON behind a permissive schema', async () => {
+    class Box {
+      constructor(readonly v: string) {}
+    }
+    const { host } = fixture(
+      defineAdapter({
+        manifest,
+        tools: {
+          run_test: tool({
+            input: z.object({}),
+            output: z.unknown(),
+            run: async () => ({ a: new Box(COOKIE), b: { toJSON: () => COOKIE } }),
+          }),
+        },
+      }),
+    )
+    const result = await host.call(call)
+    expect(result).toEqual({ status: 'ok', output: { a: { v: '[redacted]' }, b: '[redacted]' } })
+    expect(JSON.stringify(result)).not.toContain(COOKIE)
+  })
+
+  it('fails output that cannot be turned into JSON as tool-output invalid', async () => {
+    const { host } = fixture(
+      defineAdapter({
+        manifest,
+        tools: {
+          run_test: tool({
+            input: z.object({}),
+            output: z.unknown(),
+            run: async () => ({ bytes: Buffer.from(COOKIE) }),
+          }),
+        },
+      }),
+    )
+    expect(await host.call(call)).toEqual({ status: 'failed', stage: 'tool-output', errorClass: 'invalid' })
+  })
+
   it('works with no session cookies at all', async () => {
     const { host, driver } = fixture(readTrolley)
     driver.cookieValues = []

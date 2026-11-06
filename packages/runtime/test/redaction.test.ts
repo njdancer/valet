@@ -1,6 +1,13 @@
-import { SecretValue } from '@siteadapter/core'
+import { SecretValue, SiteAdapterError } from '@siteadapter/core'
 import { describe, expect, it } from 'vitest'
-import { REDACTED, redactDeep, redactString, SecretRedactionSet, sensitiveMatcher } from '../src/redaction'
+import {
+  REDACTED,
+  redactDeep,
+  redactOutput,
+  redactString,
+  SecretRedactionSet,
+  sensitiveMatcher,
+} from '../src/redaction'
 
 const cookie = 'wow-session-3f9a1c7e2b'
 
@@ -95,39 +102,131 @@ describe('redactDeep', () => {
     expect(Object.prototype).not.toHaveProperty('polluted')
   })
 
-  it('walks Maps and Sets', () => {
-    const output = { map: new Map([[cookie, cookie]]), set: new Set([cookie, 'ok']) }
-    expect(redactDeep(output, sensitive)).toEqual({
-      map: new Map([[REDACTED, REDACTED]]),
-      set: new Set([REDACTED, 'ok']),
-    })
-  })
-
   it('walks objects with a null prototype', () => {
     const output = Object.assign(Object.create(null), { note: cookie })
     expect(redactDeep(output, sensitive)).toEqual({ note: REDACTED })
   })
 
-  it('cuts cycles', () => {
-    const output: { name: string; self?: unknown } = { name: 'loop' }
-    output.self = output
-    expect(redactDeep(output, sensitive)).toEqual({ name: 'loop', self: REDACTED })
+  it('redacts a top-level string', () => {
+    expect(redactDeep(cookie, sensitive)).toBe(REDACTED)
+  })
+})
+
+// Each of these is a way tool code could hand back a cookie that a walk over "plain objects only"
+// would miss. Every one must come out redacted, or not come out at all.
+describe('redactOutput', () => {
+  const sensitive = sensitiveMatcher([cookie], new SecretRedactionSet())
+  const fails = (value: unknown, errorClass: string) => {
+    let thrown: unknown
+    try {
+      redactOutput(value, sensitive)
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(SiteAdapterError)
+    expect(thrown).toMatchObject({ stage: 'tool-output', errorClass })
+  }
+
+  it('redacts a cookie held by a class instance', () => {
+    class Box {
+      constructor(readonly v: string) {}
+    }
+    expect(redactOutput({ a: new Box(cookie) }, sensitive)).toEqual({ a: { v: REDACTED } })
   })
 
-  it('keeps shared references that are not cycles', () => {
-    const shared = { note: cookie }
-    expect(redactDeep({ a: shared, b: shared }, sensitive)).toEqual({
-      a: { note: REDACTED },
-      b: { note: REDACTED },
+  it('redacts what a toJSON function returns, not the function', () => {
+    expect(redactOutput({ b: { toJSON: () => cookie } }, sensitive)).toEqual({ b: REDACTED })
+  })
+
+  it('redacts a getter’s value, reading it only once', () => {
+    let reads = 0
+    const output = {
+      get note() {
+        reads++
+        return reads === 1 ? cookie : 'harmless'
+      },
+    }
+    expect(redactOutput(output, sensitive)).toEqual({ note: REDACTED })
+    expect(reads).toBe(1)
+  })
+
+  it('refuses Buffers and typed arrays, whose bytes no string match can see', () => {
+    fails({ buf: Buffer.from(cookie) }, 'invalid')
+    fails([new Uint8Array(Buffer.from(cookie))], 'invalid')
+    fails(new TextEncoder().encode(cookie).buffer, 'invalid')
+  })
+
+  it('redacts a cookie in an Error’s own enumerable properties and drops the rest', () => {
+    const error = Object.assign(new Error(cookie), { detail: cookie })
+    expect(redactOutput({ error }, sensitive)).toEqual({ error: { detail: REDACTED } })
+  })
+
+  it('redacts a cookie reached through a prototype-created object', () => {
+    const output = Object.create({ inherited: cookie }, { own: { value: cookie, enumerable: true } })
+    expect(redactOutput(output, sensitive)).toEqual({ own: REDACTED })
+  })
+
+  it('turns Maps and Sets into what the transport would send', () => {
+    expect(redactOutput({ map: new Map([[cookie, cookie]]), set: new Set([cookie]) }, sensitive)).toEqual({
+      map: {},
+      set: {},
     })
   })
 
-  it('leaves non-plain objects such as dates alone', () => {
-    const at = new Date(0)
-    expect(redactDeep({ at }, sensitive)).toEqual({ at })
+  it('keeps dates as their ISO strings', () => {
+    expect(redactOutput({ at: new Date(0) }, sensitive)).toEqual({ at: '1970-01-01T00:00:00.000Z' })
   })
 
-  it('redacts a top-level string', () => {
-    expect(redactDeep(cookie, sensitive)).toBe(REDACTED)
+  it('refuses output with a cycle', () => {
+    const output: { self?: unknown } = {}
+    output.self = output
+    fails(output, 'invalid')
+  })
+
+  it('refuses output that cannot be serialised', () => {
+    fails({ n: 1n }, 'invalid')
+    fails(
+      {
+        get boom() {
+          throw new Error(cookie)
+        },
+      },
+      'invalid',
+    )
+    fails(
+      new Proxy(
+        {},
+        {
+          ownKeys: () => {
+            throw new Error('trap')
+          },
+        },
+      ),
+      'invalid',
+    )
+  })
+
+  it('returns undefined for output with nothing to serialise', () => {
+    expect(redactOutput(undefined, sensitive)).toBeUndefined()
+    expect(redactOutput(() => cookie, sensitive)).toBeUndefined()
+  })
+
+  it('fails closed if anything sensitive survives redaction', () => {
+    // A matcher that only recognises the needle in the serialised whole stands in for a value the
+    // per-string pass cannot see.
+    const wholeOnly = (text: string) => text.startsWith('{') && text.includes('a","b')
+    let thrown: unknown
+    try {
+      redactOutput({ x: ['a', 'b'] }, wholeOnly)
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toMatchObject({ stage: 'tool-output', errorClass: 'internal' })
+  })
+
+  it('does not change its input', () => {
+    const output = { note: cookie, nested: { note: cookie } }
+    redactOutput(output, sensitive)
+    expect(output).toEqual({ note: cookie, nested: { note: cookie } })
   })
 })

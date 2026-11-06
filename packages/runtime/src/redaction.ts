@@ -2,7 +2,7 @@
 // session cookie value or a secret this process has handled is replaced whole. Matching is exact
 // substring matching: no normalisation, so an encoded copy of a secret is not caught.
 
-import type { SecretValue } from '@siteadapter/core'
+import { type SecretValue, SiteAdapterError } from '@siteadapter/core'
 
 export const REDACTED = '[redacted]'
 
@@ -47,43 +47,70 @@ export function redactString(text: string, sensitive: Sensitive): string {
 }
 
 /**
- * Returns a copy of `value` with every sensitive string replaced, walking arrays, plain objects,
- * Maps and Sets, including object keys. Other values are returned as they are.
+ * Prepares a tool's output to leave the process: converts it to plain JSON data, replaces every
+ * sensitive string (object keys included), then checks the serialised whole once more.
+ *
+ * Converting first matters. Tool code chooses what it returns, and an output schema such as
+ * z.unknown() lets class instances, getters, toJSON functions and Buffers through. The transport
+ * serialises whatever we hand it, so redacting anything other than the exact data that will be
+ * serialised would redact the wrong thing.
+ *
+ * Throws SiteAdapterError('tool-output', 'invalid') for output that isn't JSON-serialisable (a
+ * cycle, a BigInt, a throwing getter), and ('tool-output', 'internal') if anything sensitive
+ * survives redaction.
  */
-export function redactDeep(value: unknown, sensitive: Sensitive): unknown {
-  const walk = (node: unknown, seen: WeakSet<object>): unknown => {
-    if (typeof node === 'string') return redactString(node, sensitive)
-    if (node === null || typeof node !== 'object') return node
-    if (seen.has(node)) return REDACTED
-    seen.add(node)
-    try {
-      if (Array.isArray(node)) return node.map((item) => walk(item, seen))
-      if (node instanceof Map) {
-        return new Map([...node].map(([key, item]) => [walk(key, seen), walk(item, seen)]))
-      }
-      if (node instanceof Set) return new Set([...node].map((item) => walk(item, seen)))
-      if (!isPlainObject(node)) return node
-      const copy: Record<string, unknown> = {}
-      for (const [key, item] of Object.entries(node)) {
-        Object.defineProperty(copy, uniqueKey(copy, redactString(key, sensitive)), {
-          value: walk(item, seen),
-          enumerable: true,
-          writable: true,
-          configurable: true,
-        })
-      }
-      return copy
-    } finally {
-      // Shared (non-cyclic) references are fine; only an ancestor is a cycle.
-      seen.delete(node)
-    }
+export function redactOutput(value: unknown, sensitive: Sensitive): unknown {
+  const plain = toPlainJson(value)
+  const redacted = redactDeep(plain, sensitive)
+  if (redacted !== undefined && sensitive(JSON.stringify(redacted))) {
+    throw new SiteAdapterError('tool-output', 'internal')
   }
-  return walk(value, new WeakSet())
+  return redacted
 }
 
-function isPlainObject(value: object): boolean {
-  const proto = Object.getPrototypeOf(value)
-  return proto === Object.prototype || proto === null
+/** One serialisation, so getters and toJSON run exactly once and we keep what they returned. */
+function toPlainJson(value: unknown): unknown {
+  let text: string | undefined
+  try {
+    text = JSON.stringify(value, refuseBinary)
+  } catch {
+    throw new SiteAdapterError('tool-output', 'invalid')
+  }
+  // undefined, a function or a symbol at the top level: there is nothing to send.
+  if (text === undefined) return undefined
+  return JSON.parse(text) as unknown
+}
+
+/**
+ * Bytes serialise as arrays of numbers, which no string match can see, and no tool has a reason to
+ * return raw bytes over MCP. Looks at the holder's data property rather than `value`, which toJSON
+ * has already replaced, and never at a getter, so nothing tool-defined runs twice.
+ */
+function refuseBinary(this: unknown, key: string, value: unknown): unknown {
+  const raw = Object.getOwnPropertyDescriptor(this, key)?.value
+  if (raw instanceof ArrayBuffer || ArrayBuffer.isView(raw)) throw new Error('binary output')
+  return value
+}
+
+/**
+ * Returns a copy of JSON data (strings, numbers, booleans, null, arrays and plain objects) with
+ * every sensitive string replaced, including object keys. Use redactOutput for anything else.
+ */
+export function redactDeep(value: unknown, sensitive: Sensitive): unknown {
+  if (typeof value === 'string') return redactString(value, sensitive)
+  if (value === null || typeof value !== 'object') return value
+  if (Array.isArray(value)) return value.map((item) => redactDeep(item, sensitive))
+  const copy: Record<string, unknown> = {}
+  for (const [key, item] of Object.entries(value)) {
+    // defineProperty, so a "__proto__" key from JSON.parse stays data rather than a prototype.
+    Object.defineProperty(copy, uniqueKey(copy, redactString(key, sensitive)), {
+      value: redactDeep(item, sensitive),
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    })
+  }
+  return copy
 }
 
 function uniqueKey(target: Record<string, unknown>, key: string): string {
