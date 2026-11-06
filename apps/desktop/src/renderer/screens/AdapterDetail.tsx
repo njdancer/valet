@@ -453,7 +453,7 @@ function SecretBlock({
             </a>
             <button
               type="button"
-              className="btn ghost danger"
+              className="btn ghost danger-text"
               disabled={action.busy}
               onClick={() => action.run(() => api.grants.revoke(adapter.id, request.name))}
             >
