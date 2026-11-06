@@ -154,6 +154,49 @@ describe('SiteCircuitBreaker', () => {
     ])
   })
 
+  it('ignores a success that arrives while it is open, so it neither closes nor forgets the run', () => {
+    let now = 0
+    const events: unknown[] = []
+    const breaker = new SiteCircuitBreaker({ now: () => now }, options, {
+      opened: (_cause, retryAt) => events.push(['opened', retryAt]),
+      closed: () => events.push(['closed']),
+      changed: () => {},
+    })
+    breaker.trip('blocked-by-site', null)
+    // A response that was already in flight when another request tripped it.
+    breaker.recordSuccess()
+    now = 60_000
+    breaker.trip('blocked-by-site', null)
+
+    expect(events).toEqual([
+      ['opened', 60_000],
+      ['opened', 180_000],
+    ])
+    expect(breaker.retryAfterMs()).toBe(120_000)
+  })
+
+  it('ignores a success for a request admitted before the latest trip, even once the cooldown has passed', () => {
+    let now = 0
+    const closed = vi.fn()
+    const breaker = new SiteCircuitBreaker({ now: () => now }, options, {
+      opened: () => {},
+      closed,
+      changed: () => {},
+    })
+    const before = breaker.admit()
+    breaker.trip('blocked-by-site', null)
+    now = 60_000
+    // A slow response to the request sent before the block.
+    breaker.recordSuccess(before)
+    expect(closed).not.toHaveBeenCalled()
+    breaker.trip('blocked-by-site', null)
+    expect(breaker.retryAfterMs()).toBe(120_000)
+
+    now = 180_000
+    breaker.recordSuccess(breaker.admit())
+    expect(closed).toHaveBeenCalledTimes(1)
+  })
+
   it('starts again from the base cooldown after a success', () => {
     let now = 0
     const breaker = new SiteCircuitBreaker({ now: () => now }, options)
@@ -355,9 +398,60 @@ describe('SiteProtection', () => {
       expect(late.breaker.retryAfterMs()).toBe(120_000)
       expect(diagnostics).toEqual([{ type: 'breaker-state-unreadable' }])
       expect(audit).toEqual([])
-      expect(store.writes).toEqual([])
+      // The bad file is replaced at once, holds included, so the next restart reads a valid one.
+      await site.flushed()
+      expect(parseBreakerFile(store.text ?? '')).toEqual(
+        new Map([
+          ['www.coles.com.au', { retryAt: START + 120_000, cooldownMs: 0 }],
+          ['www.woolworths.com.au', { retryAt: START + 60_000, cooldownMs: 0 }],
+        ]),
+      )
     })
   }
+
+  it('repairs an unreadable file, so a restart after the hold has passed does not fail closed again', async () => {
+    let now = START
+    const store = new MemoryJsonStore()
+    store.text = 'garbage'
+    const first = protection(store, () => now)
+    first.site.forSite('www.woolworths.com.au', LIMITS)
+    await first.site.ready()
+    await first.site.flushed()
+
+    now += 60_000
+    const restarted = protection(store, () => now)
+    const guards = restarted.site.forSite('www.woolworths.com.au', LIMITS)
+    await restarted.site.ready()
+
+    expect(guards.breaker.isOpen()).toBe(false)
+    expect(restarted.diagnostics).toEqual([])
+  })
+
+  it('reports a failed repair of an unreadable file, and still holds every site', async () => {
+    const store = new MemoryJsonStore()
+    store.failRead = true
+    store.failWrite = true
+    const { site, diagnostics } = protection(store)
+    const guards = site.forSite('www.woolworths.com.au', LIMITS)
+    await site.ready()
+    await site.flushed()
+
+    expect(guards.breaker.isOpen()).toBe(true)
+    expect(diagnostics).toEqual([
+      { type: 'breaker-state-unreadable' },
+      { type: 'breaker-state-write-failed' },
+    ])
+  })
+
+  it('writes nothing after a readable load until something changes', async () => {
+    const store = new MemoryJsonStore()
+    const { site } = protection(store)
+    site.forSite('www.woolworths.com.au', LIMITS)
+    await site.ready()
+    site.forSite('www.coles.com.au', LIMITS)
+    await site.flushed()
+    expect(store.writes).toEqual([])
+  })
 
   it('fails closed when the store cannot be read', async () => {
     const store = new MemoryJsonStore()

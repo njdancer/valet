@@ -8,7 +8,13 @@
 // and breaker, which take the most cautious numbers any of them declares. Breaker state is persisted
 // (see breaker-state.ts) so a restart doesn't forget a block.
 
-import { type AdapterManifest, type AuditEvent, type FetchResult, SiteAdapterError } from '@siteadapter/core'
+import {
+  type AdapterManifest,
+  type AuditEvent,
+  type FetchResult,
+  SiteAdapterError,
+  type ToolPage,
+} from '@siteadapter/core'
 import { type BreakerState, type JsonStore, parseBreakerFile, serialiseBreakerFile } from './breaker-state'
 import type { Clock, Sleep } from './clock'
 import type { RuntimeDiagnostic } from './types'
@@ -62,6 +68,8 @@ export class SiteCircuitBreaker {
   private openUntil = 0
   /** The cooldown applied by the current run of blocks; 0 after a normal answer. */
   private cooldown = 0
+  /** How many times it has tripped. A request admitted before the latest trip can't close it. */
+  private trips = 0
   private options: BreakerOptions
 
   constructor(
@@ -95,12 +103,26 @@ export class SiteCircuitBreaker {
     const { cooldownMs, maxCooldownMs } = this.options
     this.cooldown = Math.min(maxCooldownMs, this.cooldown === 0 ? cooldownMs : this.cooldown * 2)
     this.openUntil = this.clock.now() + this.cooldown
+    this.trips++
     this.events.changed()
     this.events.opened(cause, this.openUntil, callId)
   }
 
-  /** A normal response from the site: the next block starts from the base cooldown again. */
-  recordSuccess(): void {
+  /**
+   * Taken when a request is let through, and handed back to recordSuccess() with its answer, so an
+   * answer to a request sent before the latest block can't close the breaker that block opened.
+   */
+  admit(): number {
+    return this.trips
+  }
+
+  /**
+   * A normal response from the site: the next block starts from the base cooldown again. Ignored
+   * while the breaker is open, and for a request admitted (see admit()) before the latest trip: an
+   * answer that was already in flight when another request was blocked says nothing about now.
+   */
+  recordSuccess(admitted: number = this.trips): void {
+    if (this.isOpen() || admitted !== this.trips) return
     if (this.cooldown === 0) return
     this.cooldown = 0
     this.events.changed()
@@ -183,7 +205,11 @@ export class SiteProtection {
         breaker: new SiteCircuitBreaker(this.clock, breakerOptions, this.eventsFor(key)),
       }
       this.sites.set(key, guards)
-      if (this.loaded) this.applyStored(key, guards.breaker)
+      if (this.loaded) {
+        this.applyStored(key, guards.breaker)
+        // A host first seen after an unreadable load is held too; write that down.
+        if (this.failClosedSince !== null) this.persist()
+      }
     } else {
       guards.budget.widen(limits.minGapMs)
       guards.breaker.widen(breakerOptions)
@@ -219,6 +245,9 @@ export class SiteProtection {
     }
     this.loaded = true
     for (const [host, guards] of this.sites) this.applyStored(host, guards.breaker)
+    // Replace the unreadable file at once, fail-closed holds included. Otherwise it would only be
+    // rewritten when some site next trips, and every restart until then would fail closed again.
+    if (stored === null) this.persist()
   }
 
   private applyStored(host: string, breaker: SiteCircuitBreaker): void {
@@ -287,6 +316,28 @@ export function blockCause(result: FetchResult): BlockCause | null {
 
 const AKAMAI_DENIED = /access denied/i
 const AKAMAI_REFERENCE = /reference\s*#/i
+
+/**
+ * Run in the page's isolated world after a navigation. It reads the title and the start of the
+ * text, and makes no request: true when Akamai's "Access Denied ... Reference #" page loaded.
+ */
+const DENIED_PAGE_CHECK = String.raw`(() => {
+  const text = (document.title || '') + ' ' + ((document.body && document.body.innerText) || '').slice(0, 2000)
+  return /access denied/i.test(text) && /reference\s*#/i.test(text)
+})()`
+
+/**
+ * Whether a navigation landed on the site's block page. goto() reports no status or content type
+ * (core's ToolPage), so a 403 or 429 from a navigation can't be seen, only Akamai's page by its
+ * text. A page we can't inspect counts as not blocked.
+ */
+export async function navigationBlocked(page: ToolPage): Promise<BlockCause | null> {
+  try {
+    return (await page.evaluate(DENIED_PAGE_CHECK)) === true ? 'blocked-by-site' : null
+  } catch {
+    return null
+  }
+}
 
 export function isHtml(result: FetchResult): boolean {
   if (result.contentType?.toLowerCase().includes('html')) return true
