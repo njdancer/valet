@@ -7,6 +7,7 @@ import type {
   CookieRecord,
   CookieSetDetails,
   FrameHandle,
+  KeyEvents,
   LoadResult,
   NavigationEvent,
   OutgoingRequest,
@@ -14,7 +15,9 @@ import type {
   PendingNavigation,
   ProxyHandle,
   ProxyPolicy,
+  StorageValue,
   Timers,
+  UserAgentOverride,
 } from '../src/platform'
 import { FakeWindow } from './fake-dom'
 
@@ -22,6 +25,8 @@ let frameIds = 0
 
 export class FakeFrame implements FrameHandle {
   readonly id = `frame-${++frameIds}`
+  /** Stays the same across the frame's navigations; tests that navigate a frame keep it. */
+  nodeId = `node-${frameIds}`
   readonly scripts: string[] = []
   /** What ran in the adapter's world rather than the runtime's. */
   readonly adapterScripts: string[] = []
@@ -122,9 +127,48 @@ export class FakeSurface implements BrowserSurface {
     this.clicks.push({ x, y })
   }
 
-  sendChar(char: string): void {
+  sendChar(char: string, events: KeyEvents): void {
     this.chars.push(char)
+    this.keyEvents.push(events)
     this.afterChar?.(this.chars.length - 1)
+  }
+
+  /** Which key events each sendChar asked for, in order. */
+  readonly keyEvents: KeyEvents[] = []
+  /** Every DevTools user-agent override, in order, and whether a page had loaded before it. */
+  readonly overrides: { override: UserAgentOverride; afterLoad: boolean }[] = []
+  /** How overrideUserAgent answers. Tests replace it to make it fail. */
+  onOverride: () => Promise<void> = async () => {}
+
+  async overrideUserAgent(override: UserAgentOverride): Promise<void> {
+    this.overrides.push({ override, afterLoad: this.loads.length > 0 })
+    await this.onOverride()
+  }
+
+  /** Whether a page had loaded before each watchStorage(). */
+  readonly storageWatches: { afterLoad: boolean }[] = []
+  storageListeners: ((value: StorageValue) => void)[] = []
+  /** How watchStorage answers. Tests replace it to make it fail or hang. */
+  onWatchStorage: () => Promise<void> = async () => {}
+  /** Storage events held back until storageSettled(), as the DevTools protocol may deliver late. */
+  readonly pendingStorage: StorageValue[] = []
+  /** How storageSettled answers. Tests replace it to make it fail. */
+  onStorageSettled: () => Promise<void> = async () => {}
+
+  async watchStorage(listener: (value: StorageValue) => void): Promise<void> {
+    this.storageWatches.push({ afterLoad: this.loads.length > 0 })
+    await this.onWatchStorage()
+    this.storageListeners.push(listener)
+  }
+
+  async storageSettled(): Promise<void> {
+    await this.onStorageSettled()
+    for (const value of this.pendingStorage.splice(0)) this.emitStorage(value)
+  }
+
+  /** Reports a storage write to the watchers, as a DevTools DOMStorage event would. */
+  emitStorage(value: StorageValue): void {
+    for (const listener of this.storageListeners) listener(value)
   }
 
   focus(): void {
@@ -179,13 +223,20 @@ export class FakeSurface implements BrowserSurface {
     return this.guard === null ? true : this.guard({ url, isMainFrame })
   }
 
-  commit(url: string, isMainFrame = true): void {
+  /**
+   * Commits a navigation. A main-frame commit is placed on the first frame's node; a subframe's
+   * goes unplaced unless `frameNodeId` says which frame it was.
+   */
+  commit(url: string, isMainFrame = true, frameNodeId?: string | null): void {
     if (isMainFrame) this.currentUrl = url
-    for (const listener of this.listeners) listener({ kind: 'commit', url, isMainFrame })
+    const node =
+      frameNodeId !== undefined ? frameNodeId : isMainFrame ? (this.frameList[0]?.nodeId ?? null) : null
+    for (const listener of this.listeners) listener({ kind: 'commit', url, isMainFrame, frameNodeId: node })
   }
 
   redirect(url: string, isMainFrame = true): void {
-    for (const listener of this.listeners) listener({ kind: 'redirect', url, isMainFrame })
+    const frameNodeId = isMainFrame ? (this.frameList[0]?.nodeId ?? null) : null
+    for (const listener of this.listeners) listener({ kind: 'redirect', url, isMainFrame, frameNodeId })
   }
 
   finishLoading(): void {
@@ -213,10 +264,13 @@ export class FakeSession implements PartitionSession {
   readonly setCalls: CookieSetDetails[] = []
   getCalls = 0
 
+  acceptLanguages: string | null = null
+
   constructor(readonly partition: string) {}
 
-  setUserAgent(userAgent: string): void {
+  setUserAgent(userAgent: string, acceptLanguages: string): void {
     this.userAgent = userAgent
+    this.acceptLanguages = acceptLanguages
   }
 
   harden(): void {
@@ -243,11 +297,24 @@ export class FakeSession implements PartitionSession {
   async setCookie(details: CookieSetDetails): Promise<void> {
     this.setCalls.push(details)
   }
+
+  cookieListeners: ((cookie: CookieRecord) => void)[] = []
+
+  onCookieChanged(listener: (cookie: CookieRecord) => void): void {
+    this.cookieListeners.push(listener)
+  }
+
+  /** Reports a cookie change, as session.cookies' changed event would. */
+  emitCookie(cookie: CookieRecord): void {
+    for (const listener of this.cookieListeners) listener(cookie)
+  }
 }
 
 export class FakePlatform implements BrowserPlatform {
   readonly chromeVersion = '142.0.7444.59'
   readonly os = 'darwin' as NodeJS.Platform
+  readonly systemVersion = '15.5.0'
+  readonly arch = 'arm64'
   readonly sessions = new Map<string, FakeSession>()
   readonly surfaces: FakeSurface[] = []
   /** Every proxy started, with the policy it was given. */
@@ -270,6 +337,13 @@ export class FakePlatform implements BrowserPlatform {
 
   startProxy(policy: ProxyPolicy): Promise<ProxyHandle> {
     return this.onStartProxy(policy)
+  }
+
+  /** Every process-wide default UA set, in order. */
+  readonly defaultUserAgents: string[] = []
+
+  setDefaultUserAgent(userAgent: string): void {
+    this.defaultUserAgents.push(userAgent)
   }
 
   /** Builds each new surface. Tests replace it to give pages frames. */

@@ -1,20 +1,24 @@
 // The network guards' decisions, kept free of Electron so that each can be attacked in a test.
 //
-// - Auth partition: the main frame may only be on one of the manifest's navigation origins.
-//   Subframes may load any https page by default, because login pages embed bot-protection and
-//   CAPTCHA frames from other origins; a driver can instead pin them to a list. Either way a secret
-//   fill separately requires the frame it types into to be the one whose origin was checked.
-// - Tool partition: every request must go to a host on the manifest's egress list, and on those
-//   hosts the request surface applies: denied paths are refused for every kind of request, and an
-//   API call (anything that isn't a page or one of its assets) must match a declaration whose
-//   purpose the running tool may use.
+// - Auth partition: the main frame may only be on one of the manifest's navigation origins, and a
+//   subframe only on those or the manifest's auth.frameOrigins (a CAPTCHA, say). Everything else is
+//   refused.
+// - Tool partition: one ToolRunPolicy holds every request, whoever made it: tool code through the
+//   capability API, adapter code in evaluate(), a click on the site's own button, or the site's
+//   own scripts. The host must be on the egress list; on those hosts, an API call must pass core's
+//   decideRequest and its declaration's purpose must be within the run's; denied paths are refused
+//   for every kind of request. Page script chooses a request's resource type (new Image(),
+//   <script src>, an iframe, location=), so the type alone never decides that something is not an
+//   API call: a GET under the declarations' API roots is held to the surface whatever its type,
+//   and every request that leaves counts toward a budget.
 
 import {
+  type BlockedRequest,
+  decideRequest,
   hostAllowed,
   type Purpose,
-  pathMatches,
   type RequestDeclaration,
-  sha256Hex,
+  type ToolRunPolicy,
   touchesDeniedSegment,
   urlOriginAllowed,
 } from '@siteadapter/core'
@@ -22,18 +26,18 @@ import type { OutgoingRequest, PendingNavigation } from './platform'
 
 const LOCAL_SUBFRAME_URLS = new Set(['about:blank', 'about:srcdoc'])
 
-/** Which subframes an auth page may load: any https page, or only these origins (plus navigation's). */
-export type FrameRule = 'any-https' | readonly string[]
-
+/**
+ * The auth partition's navigation rule. `frameOrigins` are the manifest's auth.frameOrigins: the
+ * only origins besides `origins` that a subframe may load.
+ */
 export function authNavigationAllowed(
   navigation: PendingNavigation,
   origins: readonly string[],
-  frames: FrameRule = 'any-https',
+  frameOrigins: readonly string[],
 ): boolean {
   if (navigation.isMainFrame) return urlOriginAllowed(navigation.url, origins)
   if (LOCAL_SUBFRAME_URLS.has(navigation.url)) return true
-  if (frames === 'any-https') return parse(navigation.url)?.protocol === 'https:'
-  return urlOriginAllowed(navigation.url, [...origins, ...frames])
+  return urlOriginAllowed(navigation.url, [...origins, ...frameOrigins])
 }
 
 // Schemes that never leave the machine. Chromium rarely shows them to webRequest at all.
@@ -47,24 +51,24 @@ export function egressAllowed(url: string, egress: readonly string[]): boolean {
   return NETWORK_SCHEMES.has(parsed.protocol) && hostAllowed(parsed.hostname, egress)
 }
 
-/** Why the tool partition cancelled a request. The values are core error classes. */
-export type BlockReason = 'host-not-allowed' | 'undeclared-request' | 'denied-path' | 'request-ceiling'
+export type BlockReason = BlockedRequest['reason']
 
-export interface SurfacePolicy {
-  readonly egress: readonly string[]
-  readonly requests: readonly RequestDeclaration[]
-  /** The running tool's side effect: what a declaration's purpose may be at most. */
-  readonly sideEffect: Purpose
-}
+/**
+ * Which of the run's budgets a request it allows counts toward: the ceiling (navigations and API
+ * calls), the larger budget for a page's assets, or none (local schemes, which never leave).
+ */
+export type Budget = 'request' | 'asset' | null
 
 export type RequestDecision =
-  | {
-      readonly allowed: true /** True when it counts toward the per-run ceiling. */
-      readonly counts: boolean
-    }
+  | { readonly allowed: true; readonly counts: Budget }
   | { readonly allowed: false; readonly reason: BlockReason }
 
-const PURPOSE_RANK: Readonly<Record<Purpose, number>> = { read: 0, write: 1, irreversible: 2 }
+// A Map, not an object literal: a lookup of '__proto__' or 'constructor' finds nothing.
+const PURPOSE_RANK: ReadonlyMap<string, number> = new Map<Purpose, number>([
+  ['read', 0],
+  ['write', 1],
+  ['irreversible', 2],
+])
 
 // Requests that only fetch something to show. Everything else, including types Chromium may add
 // later, is treated as an API call.
@@ -72,8 +76,10 @@ const PASSIVE_TYPES = new Set(['stylesheet', 'script', 'image', 'font', 'media']
 const NAVIGATION_TYPES = new Set(['mainFrame', 'subFrame'])
 
 /**
- * True for a request the declarations govern. A GET of a page or one of its assets is not; any
- * other method is, so a form POST after a click is held to the surface like a fetch() is.
+ * True for a request the declarations govern by its kind alone. A GET of a page or one of its
+ * assets is not; any other method is, so a form POST after a click is held to the surface like a
+ * fetch() is. Beacons, sockets and unknown types are API calls too. underApiRoot() decides the
+ * GETs this lets go by.
  */
 export function isApiCall(request: OutgoingRequest): boolean {
   if (request.method.toUpperCase() !== 'GET') return true
@@ -81,92 +87,147 @@ export function isApiCall(request: OutgoingRequest): boolean {
 }
 
 /**
- * The tool partition's decision for one request, before the ceiling. Tool code can reach the
- * network without the capability API (evaluate() can call the page's own fetch, submit a form, or
- * set location), so this, not a wrapper around ToolPage, is where the request surface holds.
+ * The part of each declaration's path that says "this is the site's API": its segments up to and
+ * including the first literal one, lower-cased. "/apis/ui/Trolley" gives ["apis"] and
+ * "/:locale/api/cart" gives [":locale", "api"]. A path with no literal segment is its own root, so
+ * "/*" makes every path an API path; that fails closed.
  */
-export function decideToolRequest(request: OutgoingRequest, policy: SurfacePolicy): RequestDecision {
-  const parsed = parse(request.url)
-  if (parsed === null) return { allowed: false, reason: 'host-not-allowed' }
-  if (LOCAL_SCHEMES.has(parsed.protocol)) return { allowed: true, counts: false }
-  if (!NETWORK_SCHEMES.has(parsed.protocol) || !hostAllowed(parsed.hostname, policy.egress)) {
-    return { allowed: false, reason: 'host-not-allowed' }
-  }
-  const method = request.method.toUpperCase()
-  const path = parsed.pathname
-  const declaration = ambiguousPath(path)
-    ? undefined
-    : policy.requests.find((d) => d.method.toUpperCase() === method && pathMatches(d.path, path))
-  // Checkout, payment and payee paths are refused for every kind of request, navigations and form
-  // posts included, unless an irreversible declaration covers them and an irreversible tool runs.
-  if (deniedPath(path)) {
-    const unlocked = declaration?.purpose === 'irreversible' && policy.sideEffect === 'irreversible'
-    return unlocked
-      ? { allowed: true, counts: isApiCall(request) }
-      : { allowed: false, reason: 'denied-path' }
-  }
-  if (!isApiCall(request)) return { allowed: true, counts: false }
-  if (declaration === undefined) return { allowed: false, reason: 'undeclared-request' }
-  if (PURPOSE_RANK[declaration.purpose] > PURPOSE_RANK[policy.sideEffect]) {
-    return { allowed: false, reason: 'denied-path' }
-  }
-  return { allowed: true, counts: true }
-}
-
-/**
- * Core's deny list matches raw segments. Servers decode percent-escapes and often drop ";matrix"
- * parameters before routing, so "check%6Fut" or "checkout;x=1" must count as checkout, and many
- * treat a decoded backslash as a separator, so "a%5Ccheckout" must too.
- */
-export function deniedPath(pathname: string): boolean {
-  if (touchesDeniedSegment(pathname)) return true
-  const normalised = pathname
-    .split('/')
-    .map((segment) => decodeSegment(segment).replaceAll('\\', '/'))
-    .join('/')
-  return touchesDeniedSegment(normalised)
-}
-
-/**
- * Segments our matcher and the site's router may read differently: an encoded slash, backslash or
- * NUL inside one segment, or one that only decodes to "." or "..". A path holding one matches no
- * declaration.
- */
-export function ambiguousPath(pathname: string): boolean {
-  return pathname.split('/').some((segment) => {
-    if (/%(2f|5c|00)|\\/i.test(segment)) return true
-    const decoded = decodeSegment(segment)
-    return decoded === '.' || decoded === '..'
+export function apiRoots(declarations: readonly RequestDeclaration[]): readonly (readonly string[])[] {
+  return declarations.map((declaration) => {
+    const segments = splitPath(declaration.path).map((segment) => segment.toLowerCase())
+    const literal = segments.findIndex((segment) => !segment.startsWith(':') && segment !== '*')
+    return literal === -1 ? segments : segments.slice(0, literal + 1)
   })
 }
 
-function decodeSegment(segment: string): string {
-  const bare = segment.split(';')[0] ?? ''
-  try {
-    return decodeURIComponent(bare)
-  } catch {
-    return bare
+const MAX_DECODE_ROUNDS = 3
+
+/**
+ * True when `pathname` falls under one of `roots`, read the ways a server might route it: each
+ * segment percent-decoded (up to three times, for a server that decodes twice) with ";" matrix
+ * parameters dropped, and the whole once more with encoded slashes split and dot segments resolved,
+ * so "/static/..%2Fapis/x" is under "apis" too.
+ */
+export function underApiRoot(pathname: string, roots: readonly (readonly string[])[]): boolean {
+  const segments = splitPath(pathname).map((segment) =>
+    decodeFully(segment.split(';')[0] ?? '').toLowerCase(),
+  )
+  const resolved: string[] = []
+  for (const part of segments.join('/').split(/[/\\]/)) {
+    if (part === '' || part === '.') continue
+    if (part === '..') resolved.pop()
+    else resolved.push(part)
   }
+  return roots.some((root) => rootCovers(root, segments) || rootCovers(root, resolved))
+}
+
+function rootCovers(root: readonly string[], segments: readonly string[]): boolean {
+  if (root.length === 0) return segments.length === 0
+  for (const [index, want] of root.entries()) {
+    if (want === '*') return true
+    const got = segments[index]
+    if (got === undefined || got.length === 0) return false
+    if (!want.startsWith(':') && want !== got) return false
+  }
+  return true
+}
+
+function decodeFully(segment: string): string {
+  let current = segment
+  for (let round = 0; round < MAX_DECODE_ROUNDS; round++) {
+    let next: string
+    try {
+      next = decodeURIComponent(current)
+    } catch {
+      return current
+    }
+    if (next === current) return current
+    current = next
+  }
+  return current
+}
+
+function splitPath(path: string): string[] {
+  return path.split('/').filter((segment) => segment.length > 0)
 }
 
 /**
- * Where a blocked request was going, for reports: the origin only. Tool code chooses the whole URL
- * of a request it wants blocked, so a path (or query) can carry a session token straight into the
- * audit log. The hostname can too (`https://<token>.evil.example/`), so even this is untrusted and
- * must go through output redaction before it is written anywhere.
+ * Whether a declaration of `purpose` is usable in a run that allows up to `max`. Anything outside
+ * the vocabulary allows nothing, including names on Object.prototype such as 'toString'.
  */
-export function requestTarget(url: string): string {
+export function purposeAllowed(purpose: Purpose, max: Purpose, irreversibleUnlocked: boolean): boolean {
+  const rank = PURPOSE_RANK.get(purpose)
+  const maxRank = PURPOSE_RANK.get(max)
+  if (rank === undefined || maxRank === undefined || rank > maxRank) return false
+  return purpose !== 'irreversible' || irreversibleUnlocked
+}
+
+/**
+ * The tool partition's decision for one request, before the budgets. `egress` is the driver's own
+ * egress list: a run's policy can narrow it, never widen it. `declared` is the manifest's whole
+ * request surface, whatever this run may use, so that the API roots don't shrink between runs or
+ * in a read run. Tool code can reach the network without the capability API (evaluate() can call
+ * the page's own fetch, submit a form, add an image or set location), and the site's own scripts
+ * make calls nobody declared, so this, not a wrapper around ToolPage, is where the request surface
+ * holds.
+ */
+export function decideToolRequest(
+  request: OutgoingRequest,
+  policy: ToolRunPolicy,
+  egress: readonly string[],
+  irreversibleUnlocked: boolean,
+  declared: readonly RequestDeclaration[] = [],
+): RequestDecision {
+  const parsed = parse(request.url)
+  if (parsed === null) return { allowed: false, reason: 'bad-url' }
+  if (LOCAL_SCHEMES.has(parsed.protocol)) return { allowed: true, counts: null }
+  if (
+    !NETWORK_SCHEMES.has(parsed.protocol) ||
+    !hostAllowed(parsed.hostname, egress) ||
+    !hostAllowed(parsed.hostname, policy.egress)
+  ) {
+    return { allowed: false, reason: 'host-not-allowed' }
+  }
+  // decideRequest wants https; a WebSocket's wss URL is matched as the same path over https.
+  const https = new URL(parsed.href)
+  if (https.protocol === 'wss:') https.protocol = 'https:'
+  const method = request.method.toUpperCase()
+  const surface = decideRequest(method, https.href, policy.egress, policy.requests)
+  const usable =
+    surface.allowed && purposeAllowed(surface.declaration.purpose, policy.maxPurpose, irreversibleUnlocked)
+  const byKind = isApiCall(request)
+  // Checkout, payment and payee pages are refused as navigations and assets too, unless an
+  // irreversible declaration covers them and the person unlocked this run.
+  if (!byKind && touchesDeniedSegment(parsed.pathname)) {
+    const unlocked = usable && surface.declaration.purpose === 'irreversible'
+    if (!unlocked) return { allowed: false, reason: 'denied-path' }
+  }
+  if (byKind || underApiRoot(parsed.pathname, apiRoots([...declared, ...policy.requests]))) {
+    if (!surface.allowed) return { allowed: false, reason: surface.reason }
+    return usable ? { allowed: true, counts: 'request' } : { allowed: false, reason: 'purpose-exceeded' }
+  }
+  return { allowed: true, counts: NAVIGATION_TYPES.has(request.resourceType) ? 'request' : 'asset' }
+}
+
+const MAX_REPORTED_PATH = 300
+
+/**
+ * Where a blocked request was going, for reports: never the query or fragment. On an egress host,
+ * the origin and path, so the person can see which of the site's calls to declare; anywhere else,
+ * the origin only, since a path to a host nobody declared is tool code's choice entirely. Even so
+ * the path (and a hostname, `https://<token>.evil.example/`) can carry data, so the runtime must
+ * redact a report before writing it anywhere.
+ */
+export function requestTarget(url: string, withPath: boolean): string {
   const parsed = parse(url)
   if (parsed === null) return 'invalid-url'
   if (parsed.origin === 'null') return parsed.protocol
-  return parsed.origin
-}
-
-/** A short digest of the path, so that reports can tell paths apart without carrying them. */
-export function pathDigest(url: string): string | null {
-  const parsed = parse(url)
-  if (parsed === null || parsed.origin === 'null') return null
-  return sha256Hex(parsed.pathname).slice(0, 16)
+  if (!withPath) return parsed.origin
+  const path =
+    parsed.pathname.length > MAX_REPORTED_PATH
+      ? `${parsed.pathname.slice(0, MAX_REPORTED_PATH)}…`
+      : parsed.pathname
+  return `${parsed.origin}${path}`
 }
 
 function parse(url: string): URL | null {

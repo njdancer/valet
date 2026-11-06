@@ -5,15 +5,23 @@
 // Environment switches, for the variants the specs compare:
 //   E2E_NO_SITE_ISOLATION=1  cross-origin iframes share the main frame's renderer process
 //   E2E_NO_HARDENING=1       skip hardenProcess(), to check the DNS-prefetch test isn't vacuous
+//   E2E_CLIENT_HINTS=1       the driver overrides client hints to name Google Chrome (D24a)
 
 import { X509Certificate } from 'node:crypto'
 import { mkdtempSync } from 'node:fs'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { type AdapterManifest, parseManifest, SecretValue, SiteAdapterError } from '@siteadapter/core'
+import {
+  type AdapterManifest,
+  type BlockedRequest,
+  type Purpose,
+  parseManifest,
+  SecretValue,
+  SiteAdapterError,
+} from '@siteadapter/core'
 import { app, BrowserWindow, type Cookie, session, type WebFrameMain } from 'electron'
-import { type BlockedRequest, createElectronSessionDriver, hardenProcess } from '../../src/index'
+import { createElectronSessionDriver, hardenProcess, type ManifestOptions } from '../../src/index'
 import { startTestSite, type TestSite } from './server'
 
 if (process.env.E2E_NO_HARDENING === undefined) hardenProcess(app)
@@ -27,6 +35,7 @@ app.on('window-all-closed', () => {})
 const readyWhenHardened = app.isReady()
 
 const CANARY = 'canary-Pw9!x "q'
+const CONTROL_UA = 'Mozilla/5.0 (e2e control window)'
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -39,10 +48,10 @@ async function until<T>(read: () => T | undefined, ms = 5000): Promise<T | undef
   }
 }
 
-function manifest(site: TestSite): AdapterManifest {
+function manifest(site: TestSite, id = 'e2e'): AdapterManifest {
   return parseManifest({
     schemaVersion: 1,
-    id: 'e2e',
+    id,
     name: 'E2E',
     version: '0.0.1',
     description: 'The local test site',
@@ -51,8 +60,12 @@ function manifest(site: TestSite): AdapterManifest {
     egress: ['site.test', 'login.test'],
     secrets: {},
     session: { cookieDomains: ['site.test'], probe: { kind: 'cookie', name: 'sid' } },
-    auth: { steps: [{ op: 'assertLoggedIn' }] },
-    requests: [{ method: 'GET', path: '/echo', purpose: 'read' }],
+    auth: { steps: [{ op: 'assertLoggedIn' }], frameOrigins: [site.url('captcha.test')] },
+    requests: [
+      { method: 'GET', path: '/echo', purpose: 'read' },
+      { method: 'GET', path: '/api/cart', purpose: 'read' },
+      { method: 'POST', path: '/checkout/place', purpose: 'irreversible' },
+    ],
     limits: { requestsPerRun: 5 },
     tools: [{ name: 'noop', title: 'Noop', description: 'Nothing', sideEffect: 'read' }],
   })
@@ -151,28 +164,48 @@ async function setup() {
       return false
     }
   }
-  for (const partition of ['persist:auth:e2e', 'persist:tool:e2e', 'e2e-control']) {
+  for (const partition of [
+    'persist:auth:e2e',
+    'persist:tool:e2e',
+    'persist:auth:e2e-keys',
+    'persist:tool:e2e-keys',
+    'e2e-control',
+  ]) {
     session.fromPartition(partition).setCertificateVerifyProc((request, callback) => {
       callback(trusted(request.certificate.data) ? 0 : -2)
     })
   }
   const blocked: BlockedRequest[] = []
-  const driver = await createElectronSessionDriver(
-    manifest(site),
-    {
-      onBlocked: (b) => blocked.push(b),
-      typingDelayMs: 15,
-      stepTimeoutMs: 10_000,
-      egressPorts: [site.port],
+  const options: ManifestOptions = {
+    onBlocked: (b) => blocked.push(b),
+    typingDelayMs: 15,
+    stepTimeoutMs: 10_000,
+    egressPorts: [site.port],
+    // Small, so that the asset-budget scenario can reach it; the test pages load few assets.
+    assetsPerRun: 80,
+    ...(process.env.E2E_CLIENT_HINTS === undefined ? {} : { clientHints: 'chrome' as const }),
+  }
+  const local = {
+    // The proxy resolves hostnames itself; only the test hosts exist, and they are all local.
+    dial: (host: string, port: number) => {
+      if (!host.endsWith('.test')) throw new Error('the e2e suite never leaves the machine')
+      return connect({ host: '127.0.0.1', port })
     },
-    {
-      // The proxy resolves hostnames itself; only the test hosts exist, and they are all local.
-      dial: (host, port) => {
-        if (!host.endsWith('.test')) throw new Error('the e2e suite never leaves the machine')
-        return connect({ host: '127.0.0.1', port })
-      },
-    },
+  }
+  const siteManifest = manifest(site)
+  const driver = await createElectronSessionDriver(siteManifest, options, local)
+  // The same site, typed with keyDown/char/keyUp instead of char events alone.
+  const keysDriver = await createElectronSessionDriver(
+    manifest(site, 'e2e-keys'),
+    { ...options, keyEvents: 'full' },
+    local,
   )
+  /** Starts a run with the manifest's own egress and surface, reporting into `blocked`. */
+  const begin = (maxPurpose: Purpose = 'read', ceiling = 5) =>
+    driver.beginRun(
+      { egress: siteManifest.egress, requests: siteManifest.requests, maxPurpose, ceiling },
+      (b) => blocked.push(b),
+    )
   const login = site.url('site.test', '/login')
   const evilRequests = () => site.requests.filter((r) => r.host.endsWith('evil.test'))
   // Any request anywhere, other than the two forms a canary is meant for, that carries it.
@@ -183,8 +216,8 @@ async function setup() {
     )
   }
 
-  async function openLogin() {
-    const page = await driver.openAuthPage()
+  async function openLogin(on = driver) {
+    const page = await on.openAuthPage()
     await page.goto(login)
     // Frames load after the main document; wait in Node, as the interpreter does.
     for (let i = 0; i < 100 && (await page.inspect('#password')) === null; i++) await sleep(50)
@@ -223,10 +256,11 @@ async function setup() {
       const page = await openLogin()
       await page.focus('#user')
       await page.type('nick@example.test')
+      const keydowns = await windowAt(login)?.webContents.executeJavaScript('window.__keydowns')
       await page.click('#login-submit')
       const post = await until(() => site.posts.find((p) => p.host === 'site.test' && p.path === '/session'))
       await page.close()
-      return { post }
+      return { post, keydowns }
     },
 
     typeSecretInSameOriginFrame: async () => {
@@ -234,7 +268,7 @@ async function setup() {
       await page.inspect('#code')
       await page.focus('#code')
       const secret = SecretValue.fromString(CANARY)
-      await page.type(secret)
+      await page.type(secret, { allowedOrigins: [site.url('site.test')] })
       secret.dispose()
       await page.click('#code-submit')
       const post = await until(() => site.posts.find((p) => p.path === '/session-code'))
@@ -247,7 +281,7 @@ async function setup() {
       await page.inspect('#password')
       const focus = await settle(page.focus('#password'))
       const secret = SecretValue.fromString(CANARY)
-      const typed = await settle(page.type(secret))
+      const typed = await settle(page.type(secret, { allowedOrigins: [site.url('login.test')] }))
       secret.dispose()
       const frame = subframeWithOrigin(login, site.url('login.test'))
       const valueLength = await frame?.executeJavaScript(`document.querySelector('#password').value.length`)
@@ -255,6 +289,273 @@ async function setup() {
       const post = await until(() => site.posts.find((p) => p.host === 'login.test'), 1500)
       await page.close()
       return { focus, typed, click, post: post ?? null, valueLength, leaks: canaryLeaks() }
+    },
+
+    // A secret typed with no grant origins is refused before anything reaches the page.
+    typeSecretWithoutOrigins: async () => {
+      const page = await openLogin()
+      await page.inspect('#code')
+      await page.focus('#code')
+      const secret = SecretValue.fromString(CANARY)
+      const typed = await settle(page.type(secret))
+      const wrongOrigin = await settle(page.type(secret, { allowedOrigins: [site.url('login.test')] }))
+      secret.dispose()
+      const frame = subframeWithOrigin(login, site.url('site.test'))
+      const valueLength = await frame?.executeJavaScript(`document.querySelector('#code').value.length`)
+      await page.close()
+      return { typed, wrongOrigin, valueLength }
+    },
+
+    // The site navigates the frame a secret is being typed into, partway through.
+    secretFrameNavigates: async () => {
+      const page = await openLogin()
+      await page.inspect('#code')
+      await page.focus('#code')
+      const from = site.posts.length
+      const secret = SecretValue.fromString(`${CANARY}-${'x'.repeat(40)}`)
+      const typing = settle(page.type(secret, { allowedOrigins: [site.url('site.test')] }))
+      await sleep(150)
+      const frame = subframeWithOrigin(login, site.url('site.test'))
+      const typedBefore = await frame?.executeJavaScript(`document.querySelector('#code').value.length`)
+      await frame?.executeJavaScript(`location.href = '/same-frame?moved=1'`)
+      const typed = await typing
+      secret.dispose()
+      await sleep(500)
+      const moved = windowAt(login)?.webContents.mainFrame.framesInSubtree.find((f) =>
+        f.url.includes('moved=1'),
+      )
+      const typedAfter = await moved?.executeJavaScript(`document.querySelector('#code').value.length`)
+      await page.close()
+      return { typed, typedBefore, typedAfter, posts: site.posts.slice(from), leaks: canaryLeaks() }
+    },
+
+    // Another iframe on the page (login.test's) reloads while a secret is typed into #code.
+    secretSiblingReloads: async () => {
+      const page = await openLogin()
+      await page.inspect('#code')
+      await page.focus('#code')
+      const value = `${CANARY}-${'y'.repeat(30)}`
+      const secret = SecretValue.fromString(value)
+      const typing = settle(page.type(secret, { allowedOrigins: [site.url('site.test')] }))
+      await sleep(150)
+      const sibling = subframeWithOrigin(login, site.url('login.test'))
+      const siblingBefore = sibling?.url
+      await sibling?.executeJavaScript(`(location.href = '/frame?reloaded=1', null)`)
+      const typed = await typing
+      secret.dispose()
+      const reloaded =
+        windowAt(login)?.webContents.mainFrame.framesInSubtree.some((f) => f.url.includes('reloaded=1')) ??
+        false
+      const frame = subframeWithOrigin(login, site.url('site.test'))
+      const typedLength = await frame?.executeJavaScript(`document.querySelector('#code').value.length`)
+      await page.close()
+      return {
+        typed,
+        reloaded,
+        siblingBefore: siblingBefore !== undefined,
+        typedLength,
+        expected: value.length,
+      }
+    },
+
+    // keyDown, char and keyUp per character, from a driver set to send them.
+    typeSecretWithFullKeys: async () => {
+      const page = await openLogin(keysDriver)
+      await page.inspect('#code')
+      await page.focus('#code')
+      const from = site.posts.length
+      const secret = SecretValue.fromString(CANARY)
+      await page.type(secret, { allowedOrigins: [site.url('site.test')] })
+      secret.dispose()
+      const frame = subframeWithOrigin(login, site.url('site.test'))
+      const keydowns = await frame?.executeJavaScript('window.__keydowns')
+      await page.click('#code-submit')
+      const post = await until(() => site.posts.slice(from).find((p) => p.path === '/session-code'))
+      await page.close()
+      return { post, keydowns, leaks: canaryLeaks() }
+    },
+
+    // An auth page embedding a declared CAPTCHA frame and an undeclared widget.
+    authSubframes: async () => {
+      const page = await driver.openAuthPage()
+      const from = site.requests.length
+      await page.goto(site.url('site.test', '/framed'))
+      await sleep(1000)
+      const frames = windowAt(site.url('site.test', '/framed'))
+        ?.webContents.mainFrame.framesInSubtree.map((f) => f.origin)
+        .sort()
+      const hosts = site.requests.slice(from).map((r) => r.host)
+      const poisoned = await settle(page.textPresent('anything'))
+      await page.close()
+      return { frames, hosts, poisoned }
+    },
+
+    // What both partitions present as: UA, language and client hints, as the site and page see them.
+    userAgent: async () => {
+      const read = `(async () => ({
+        ua: navigator.userAgent,
+        language: navigator.language,
+        languages: navigator.languages,
+        brands: navigator.userAgentData.brands.map((b) => b.brand),
+        hints: await navigator.userAgentData.getHighEntropyValues(
+          ['architecture', 'bitness', 'formFactors', 'fullVersionList', 'model', 'platformVersion', 'wow64'],
+        ),
+      }))()`
+      const from = site.requests.length
+      const tool = await driver.toolPage()
+      await tool.goto(site.url('site.test', '/'))
+      const toolPageSees = await tool.evaluate(read)
+      const auth = await driver.openAuthPage()
+      await auth.goto(site.url('site.test', '/robots.txt'))
+      const authPageSees = await windowAt(
+        site.url('site.test', '/robots.txt'),
+      )?.webContents.executeJavaScript(read)
+      await auth.close()
+      // The engine's own answer: a window the driver didn't make, with nothing overridden. The
+      // driver set the process-default UA too, so the control names its own, to show it isn't
+      // getting the driver's.
+      const driverRequests = site.requests.slice(from)
+      session.fromPartition('e2e-control').setUserAgent(CONTROL_UA)
+      const control = new BrowserWindow({
+        show: false,
+        webPreferences: { partition: 'e2e-control', sandbox: true },
+      })
+      await control.loadURL(site.url('site.test', '/'))
+      const engineSees = await control.webContents.executeJavaScript(read)
+      control.destroy()
+      const seen = driverRequests
+        .filter((r) => r.path === '/' || r.path === '/robots.txt')
+        .map(({ path, userAgent, acceptLanguage, clientHintBrands }) => ({
+          path,
+          userAgent,
+          acceptLanguage,
+          clientHintBrands,
+        }))
+      return {
+        chrome: process.versions.chrome,
+        controlUa: CONTROL_UA,
+        toolPageSees,
+        authPageSees,
+        engineSees,
+        seen,
+      }
+    },
+
+    // The same, from where Emulation on the page's own target doesn't reach by itself: a dedicated
+    // worker, a service worker, a cross-site (out-of-process) iframe, and a worker inside that.
+    userAgentEverywhere: async () => {
+      const read = `({
+        ua: navigator.userAgent,
+        language: navigator.language,
+        languages: [...navigator.languages],
+        brands: navigator.userAgentData ? navigator.userAgentData.brands.map((b) => b.brand) : null,
+      })`
+      const worker = `new Promise((resolve) => {
+        const worker = new Worker('/ua-worker.js')
+        worker.onmessage = (event) => resolve(event.data)
+        worker.postMessage(null)
+        setTimeout(() => resolve('timeout'), 5000)
+      })`
+      const serviceWorker = `(async () => {
+        const registration = await navigator.serviceWorker.register('/ua-sw.js')
+        await navigator.serviceWorker.ready
+        const active = registration.active
+        return await new Promise((resolve) => {
+          const channel = new MessageChannel()
+          channel.port1.onmessage = (event) => resolve(event.data)
+          active.postMessage(null, [channel.port2])
+          setTimeout(() => resolve('timeout'), 5000)
+        })
+      })().catch((error) => 'failed: ' + error)`
+      const sharedWorker = `new Promise((resolve) => {
+        const worker = new SharedWorker('/ua-worker.js')
+        worker.port.onmessage = (event) => resolve(event.data)
+        worker.port.start()
+        worker.port.postMessage(null)
+        setTimeout(() => resolve('timeout'), 5000)
+      })`
+      const probe = site.url('site.test', '/ua-probe')
+      const sees = async (contents: Electron.WebContents) => {
+        const frame = await until(() =>
+          contents.mainFrame.framesInSubtree.find(
+            (candidate) => candidate.origin === site.url('login.test') && candidate.url.includes('/ua-frame'),
+          ),
+        )
+        return {
+          main: await contents.executeJavaScript(read),
+          worker: await contents.executeJavaScript(worker),
+          serviceWorker: await contents.executeJavaScript(serviceWorker),
+          sharedWorker: await contents.executeJavaScript(sharedWorker),
+          crossSite: (await frame?.executeJavaScript(read)) ?? 'no frame',
+          crossSiteIsOutOfProcess: frame !== undefined && frame.processId !== contents.mainFrame.processId,
+          crossSiteWorker: (await frame?.executeJavaScript(worker)) ?? 'no frame',
+        }
+      }
+      const from = site.requests.length
+      const auth = await driver.openAuthPage()
+      await auth.goto(probe)
+      const authContents = windowAt(probe)?.webContents
+      const authSees = authContents === undefined ? 'no window' : await sees(authContents)
+      await auth.close()
+      begin()
+      const tool = await driver.toolPage()
+      await tool.goto(probe)
+      const toolContents = windowAt(probe)?.webContents
+      const toolSees = toolContents === undefined ? 'no window' : await sees(toolContents)
+      driver.endRun()
+      const headers = site.requests
+        .slice(from)
+        .map((r) => ({ path: r.path, userAgent: r.userAgent, acceptLanguage: r.acceptLanguage }))
+      return { authSees, toolSees, headers }
+    },
+
+    // The site's own script makes an API call nobody declared, while a read tool runs.
+    pageInitiated: async () => {
+      begin()
+      const page = await driver.toolPage()
+      const from = blocked.length
+      await page.goto(site.url('site.test', '/app'))
+      await until(() => blocked.slice(from).find((b) => b.target.endsWith('/api/bootstrap')))
+      const sitesOwn = blocked.slice(from)
+      const toolFrom = blocked.length
+      const tool = await settle(page.fetch('/api/bootstrap'))
+      const toolMade = blocked.slice(toolFrom)
+      driver.endRun()
+      return {
+        origin: site.url('site.test'),
+        sitesOwn,
+        tool,
+        toolMade,
+        reached: site.requests.filter((r) => r.path === '/api/bootstrap').length,
+      }
+    },
+
+    // An irreversible declaration, before and after the person approves the run.
+    irreversible: async () => {
+      const page = await driver.toolPage()
+      await page.goto(site.url('site.test', '/'))
+      const place = () => settle(page.fetch('/checkout/place', { method: 'POST', json: { order: 1 } }))
+      const from = blocked.length
+      const reachedBefore = () => site.requests.filter((r) => r.path === '/checkout/place').length
+      begin('write', 10)
+      driver.unlockIrreversible()
+      const inWriteRun = await place()
+      begin('irreversible', 10)
+      const beforeUnlock = await place()
+      const reachedBeforeUnlock = reachedBefore()
+      driver.unlockIrreversible()
+      const afterUnlock = await place()
+      driver.endRun()
+      const afterRun = await place()
+      return {
+        inWriteRun,
+        beforeUnlock,
+        reachedBeforeUnlock,
+        afterUnlock,
+        afterRun,
+        reached: reachedBefore(),
+        reasons: blocked.slice(from).map((b) => `${b.method} ${b.reason} ${b.initiator}`),
+      }
     },
 
     navigationGuard: async () => {
@@ -286,7 +587,7 @@ async function setup() {
     },
 
     egress: async () => {
-      driver.beginRun('read')
+      begin()
       const page = await driver.toolPage()
       const evil = site.url('evil.test', '/collect')
       const refused = await settle(page.fetch(evil))
@@ -309,7 +610,7 @@ async function setup() {
     },
 
     surface: async () => {
-      driver.beginRun('read')
+      begin()
       const page = await driver.toolPage()
       await page.goto(site.url('site.test', '/'))
       const from = blocked.length
@@ -338,20 +639,120 @@ async function setup() {
       await sleep(500)
       // The ceiling: five API calls a run, and the sixth is cut off. Back to a page on the site.
       await page.goto(site.url('site.test', '/'))
-      driver.beginRun('read')
+      begin()
       const calls: Outcome<{ status: number }>[] = []
       for (let i = 0; i < 6; i++) calls.push(await settle(page.fetch('/echo')))
       driver.endRun()
       const seen = site.requests
         .filter((r) => r.host === 'site.test')
         .map((r) => `${r.method} ${r.path}`)
-        .filter((r) => /checkout|check%6Fut|payment|\/apis\/orders|DELETE|\/collect/.test(r))
+        .filter((r) => /checkout\/pay|check%6Fut|payment|\/apis\/orders|DELETE|\/collect/.test(r))
       return {
         attempts,
         click,
         calls: calls.map((c) => ('ok' in c ? c.ok.status : c.error)),
-        reasons: blocked.slice(from).map((b) => `${b.method} ${b.resourceType} ${b.reason}`),
+        reasons: blocked
+          .slice(from)
+          .map(
+            (b) => `${b.method} ${b.target.replace(site.url('site.test'), '')} ${b.reason} ${b.initiator}`,
+          ),
         seen,
+      }
+    },
+
+    // Adapter code reaches an undeclared GET under the API root by every route page script has
+    // that isn't fetch(): an image, a script, a stylesheet, an iframe, location= and page.goto.
+    apiRoutes: async () => {
+      begin('read', 20)
+      const page = await driver.toolPage()
+      await page.goto(site.url('site.test', '/'))
+      const from = blocked.length
+      const routes = await settle(
+        page.evaluate(
+          `(async () => {
+            const loaded = (element) => new Promise((resolve) => {
+              element.onload = () => resolve('loaded')
+              element.onerror = () => resolve('error')
+              setTimeout(() => resolve('timeout'), 1500)
+              document.body.append(element)
+            })
+            const image = new Image(); image.src = '/api/cart/add?via=img'
+            const encoded = new Image(); encoded.src = '/static/..%2Fapi/cart/add?via=encoded'
+            const script = document.createElement('script'); script.src = '/api/cart/add?via=script'
+            const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = '/api/cart/add?via=css'
+            const frame = document.createElement('iframe'); frame.src = '/api/cart/add?via=iframe'
+            return {
+              image: await loaded(image),
+              encoded: await loaded(encoded),
+              script: await loaded(script),
+              style: await loaded(style),
+              frame: await loaded(frame),
+            }
+          })()`,
+        ),
+      )
+      await settle(page.evaluate(`(location.href = '/api/cart/add?via=location', null)`))
+      await sleep(500)
+      await page.goto(site.url('site.test', '/'))
+      const viaGoto = await settle(page.goto(site.url('site.test', '/api/cart/add?via=goto')))
+      // The declared GET, as an image, still loads: the root holds pages to the surface, it doesn't
+      // forbid them.
+      await page.goto(site.url('site.test', '/'))
+      const declared = await settle(
+        page.evaluate(
+          `new Promise((resolve) => { const i = new Image(); i.onload = i.onerror = () => resolve('done'); i.src = '/api/cart?via=img' })`,
+        ),
+      )
+      driver.endRun()
+      return {
+        routes,
+        viaGoto,
+        declared,
+        reasons: blocked
+          .slice(from)
+          .map((b) => `${b.method} ${b.target.replace(site.url('site.test'), '')} ${b.reason}`),
+        reachedAdd: site.requests.filter((r) => r.path.includes('cart/add')).length,
+        reachedCart: site.requests.filter((r) => r.path === '/api/cart').length,
+      }
+    },
+
+    // Page script loads one image after another: the asset budget (80 here) cuts it off.
+    assetBudget: async () => {
+      begin()
+      const page = await driver.toolPage()
+      await page.goto(site.url('site.test', '/'))
+      const from = blocked.length
+      const pixels = () => site.requests.filter((r) => r.path === '/pixel').length
+      const before = pixels()
+      const load = (count: number, tag: string) =>
+        page.evaluate(
+          `(async () => {
+            let loaded = 0
+            for (let i = 0; i < args.count; i++) {
+              await new Promise((resolve) => {
+                const image = new Image()
+                image.onload = image.onerror = resolve
+                image.src = '/pixel?' + args.tag + '=' + i
+              })
+            }
+            return loaded
+          })()`,
+          { count, tag },
+        )
+      await load(81, 'run')
+      const inRun = pixels() - before
+      begin()
+      await load(1, 'next')
+      const nextRun = pixels() - before - inRun
+      driver.endRun()
+      return {
+        inRun,
+        nextRun,
+        reasons: [
+          ...new Set(
+            blocked.slice(from).map((b) => `${b.target.replace(site.url('site.test'), '')} ${b.reason}`),
+          ),
+        ],
       }
     },
 
@@ -392,7 +793,7 @@ async function setup() {
 
     // Adapter code patches everything the runtime's FETCH script uses, in the world it runs in.
     worlds: async () => {
-      driver.beginRun('read')
+      begin()
       const page = await driver.toolPage()
       await page.goto(site.url('site.test', '/'))
       await page.evaluate(
@@ -418,7 +819,7 @@ async function setup() {
     },
 
     handoff: async () => {
-      driver.beginRun('read')
+      begin()
       const tool = await driver.toolPage()
       await tool.evaluate(
         `(document.cookie = 'planted=from-tool; Path=/; Secure', localStorage.setItem('planted', 'x'))`,
@@ -433,9 +834,36 @@ async function setup() {
       const authPlantedStorage = await windowAt(
         site.url('site.test', '/set-session'),
       )?.webContents.executeJavaScript(`localStorage.getItem('planted')`)
-      const redaction = await driver.sessionCookieValues(['site.test'])
+      const redaction = await driver.sessionSecrets(
+        ['site.test'],
+        [{ origin: site.url('site.test'), keys: ['token'] }],
+      )
       await auth.close()
       return { echoed, token, authCookies, toolCookies, authPlantedStorage, redaction }
+    },
+
+    // After handoff: tool code reads the session, then overwrites or expires what it read, and the
+    // site's values rotate, all before the runtime asks what to redact.
+    redactionAfterOverwrite: async () => {
+      begin()
+      const tool = await driver.toolPage()
+      await tool.goto(site.url('site.test', '/'))
+      const read = await tool.evaluate('document.cookie')
+      await tool.evaluate(
+        `(localStorage.setItem('token', 'rotated-in-page'),
+          localStorage.setItem('token', 'decoy'),
+          document.cookie = 'shared=; Domain=site.test; Path=/; Secure; SameSite=None; Max-Age=0',
+          document.cookie = 'fresh=mid-run-cookie; Path=/; Secure',
+          document.cookie = 'fresh=; Path=/; Secure; Max-Age=0',
+          null)`,
+      )
+      const after = await tool.evaluate('document.cookie')
+      const redaction = await driver.sessionSecrets(
+        ['site.test'],
+        [{ origin: site.url('site.test'), keys: ['token'] }],
+      )
+      driver.endRun()
+      return { read, after, redaction }
     },
 
     handToUser: async () => {
@@ -443,7 +871,7 @@ async function setup() {
       await page.goto(site.url('site.test', '/'))
       const window = windowAt(site.url('site.test', '/'))
       const hiddenBefore = window?.isVisible() === false
-      const handed = page.handToUser('Finish logging in, then close this window')
+      const handed = page.handToUser('login-required')
       await sleep(200)
       const shown = window?.isVisible() === true
       const title = window?.getTitle()

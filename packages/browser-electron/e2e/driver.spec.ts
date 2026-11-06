@@ -33,6 +33,7 @@ test('inspect reports ElementInfo from an isolated world, including in iframes',
     inputMode: null,
     frameOrigin: site,
     formActionOrigin: site,
+    inputReachable: true,
   })
   expect(result.hidden).toMatchObject({ visible: false, inputType: 'text' })
   expect(result.search).toMatchObject({ inputType: 'search', formActionOrigin: 'https://analytics.test' })
@@ -41,12 +42,15 @@ test('inspect reports ElementInfo from an isolated world, including in iframes',
     autocomplete: 'one-time-code',
     frameOrigin: site,
     formActionOrigin: site,
+    inputReachable: true,
   })
+  // With site isolation the cross-origin frame runs in its own process, out of trusted input's reach.
   expect(result.crossOriginFrame).toMatchObject({
     inputType: 'password',
     autocomplete: 'current-password',
     frameOrigin: login,
     formActionOrigin: login,
+    inputReachable: false,
   })
   expect(result.missing).toBeNull()
   expect(result.textPresent).toBe(true)
@@ -61,15 +65,49 @@ test('a selector built to break out of a script stays data', async () => {
 })
 
 test('trusted typing and a trusted click reach a main-frame form', async () => {
-  const { post } = await scenario(app, 'typeInMainFrame')
+  const { post, keydowns } = await scenario(app, 'typeInMainFrame')
   expect(post).toMatchObject({ host: 'site.test', path: '/session' })
   // The page's own listeners saw no untrusted event.
   expect((post as { body: string }).body).toBe('user=nick%40example.test&hidden=&untrusted=0')
+  // Char events alone, by default: the page sees no keydown.
+  expect(keydowns).toBe(0)
 })
 
 test('a secret typed into a same-origin iframe reaches only that form', async () => {
   const { post, leaks } = await scenario(app, 'typeSecretInSameOriginFrame')
   expect((post as { body: string }).body).toBe(`code=${CANARY_ENCODED}&untrusted=0`)
+  expect(leaks).toEqual([])
+})
+
+test('a secret is refused without the grant’s origins, or on a frame outside them', async () => {
+  const result = await scenario(app, 'typeSecretWithoutOrigins')
+  expect(result.typed).toEqual({ error: { stage: 'secret-fill', errorClass: 'origin-mismatch' } })
+  expect(result.wrongOrigin).toEqual({ error: { stage: 'secret-fill', errorClass: 'origin-mismatch' } })
+  expect(result.valueLength).toBe(0)
+})
+
+test('typing a secret stops when the site navigates its frame partway', async () => {
+  const result = await scenario(app, 'secretFrameNavigates')
+  expect(result.typed).toEqual({ error: { stage: 'secret-fill', errorClass: 'origin-mismatch' } })
+  // Some of it went into the old document before the navigation, and none into the new one.
+  expect(result.typedBefore).toBeGreaterThan(0)
+  expect(result.typedAfter).toBe(0)
+  expect(result.posts).toEqual([])
+  expect(result.leaks).toEqual([])
+})
+
+test('another iframe reloading partway doesn’t stop a secret typed into a different frame', async () => {
+  const result = await scenario(app, 'secretSiblingReloads')
+  expect(result.siblingBefore).toBe(true)
+  expect(result.reloaded).toBe(true)
+  expect(result.typed).toEqual({ ok: undefined })
+  expect(result.typedLength).toBe(result.expected)
+})
+
+test('full key events reach the form as keyDown, char and keyUp, and type the same text', async () => {
+  const { post, keydowns, leaks } = await scenario(app, 'typeSecretWithFullKeys')
+  expect((post as { body: string }).body).toBe(`code=${CANARY_ENCODED}&untrusted=0`)
+  expect(keydowns).toBe(15)
   expect(leaks).toEqual([])
 })
 
@@ -123,19 +161,75 @@ test('on an allowed host, tool code cannot get past the request surface by any r
   expect(result.click).toEqual({})
   // Five declared calls a run, and the sixth is cut off.
   expect(result.calls).toEqual([200, 200, 200, 200, 200, { stage: 'tool-run', errorClass: 'unavailable' }])
+  // webRequest can't tell evaluate()'s fetches or a click's form from the site's own requests, so
+  // they are reported as the page's; page.fetch is the tool's.
   expect(result.reasons).toEqual(
     expect.arrayContaining([
-      'POST xhr denied-path',
-      'GET xhr undeclared-request',
-      'DELETE xhr undeclared-request',
-      'POST ping undeclared-request',
-      'POST mainFrame denied-path',
-      'GET mainFrame denied-path',
-      'GET xhr request-ceiling',
+      'POST /checkout/pay undeclared page',
+      'POST /check%6Fut/pay undeclared page',
+      'GET /apis/orders undeclared page',
+      'DELETE /echo undeclared page',
+      'POST /collect undeclared page',
+      'POST /payment undeclared page',
+      'GET /payments/new denied-path page',
+      'GET /echo request-ceiling tool',
     ]),
   )
   // And the site saw none of it.
   expect(result.seen).toEqual([])
+})
+
+test('an image, script, stylesheet, iframe, location= or goto cannot reach an undeclared API path', async () => {
+  const result = await scenario(app, 'apiRoutes')
+  expect(result.routes).toEqual({
+    ok: { image: 'error', encoded: 'error', script: 'error', style: 'error', frame: expect.any(String) },
+  })
+  expect(result.viaGoto).toEqual({ error: { stage: 'egress', errorClass: 'host-not-allowed' } })
+  expect(result.reasons).toEqual(
+    expect.arrayContaining(['GET /api/cart/add undeclared', 'GET /static/..%2Fapi/cart/add ambiguous-path']),
+  )
+  // Seven routes to /api/cart/add, and the site saw none of them; the declared /api/cart it did see.
+  expect(result.reasons as string[]).toHaveLength(7)
+  expect(result.reachedAdd).toBe(0)
+  expect(result.reachedCart).toBe(1)
+})
+
+test('page script cannot load assets without limit: the asset budget cuts off N+1', async () => {
+  const result = await scenario(app, 'assetBudget')
+  expect(result.inRun).toBe(80)
+  expect(result.reasons).toEqual(['/pixel request-ceiling'])
+  // The next run starts a fresh budget.
+  expect(result.nextRun).toBe(1)
+})
+
+test('the site’s own undeclared API call is blocked and reported as the page’s', async () => {
+  const result = await scenario(app, 'pageInitiated')
+  const origin = result.origin as string
+  expect(result.sitesOwn).toEqual([
+    { method: 'GET', target: `${origin}/api/bootstrap`, reason: 'undeclared', initiator: 'page' },
+  ])
+  // The same call through page.fetch is the tool's.
+  expect(result.tool).toEqual({ error: { stage: 'tool-run', errorClass: 'unavailable' } })
+  expect(result.toolMade).toEqual([
+    { method: 'GET', target: `${origin}/api/bootstrap`, reason: 'undeclared', initiator: 'tool' },
+  ])
+  expect(result.reached).toBe(0)
+})
+
+test('an irreversible declaration is refused until the person unlocks the run, and only in it', async () => {
+  const result = await scenario(app, 'irreversible')
+  const refused = { error: { stage: 'tool-run', errorClass: 'unavailable' } }
+  expect(result.inWriteRun).toEqual(refused)
+  expect(result.beforeUnlock).toEqual(refused)
+  expect(result.reachedBeforeUnlock).toBe(0)
+  expect(result.afterUnlock).toMatchObject({ ok: { status: 200 } })
+  expect(result.afterRun).toEqual(refused)
+  expect(result.reached).toBe(1)
+  expect(result.reasons).toEqual([
+    'POST purpose-exceeded tool',
+    'POST purpose-exceeded tool',
+    'POST undeclared tool',
+  ])
 })
 
 test('WebRTC and WebTransport reach no undeclared host from the tool partition', async () => {
@@ -196,14 +290,98 @@ test('handoff copies cookies and storage auth -> tool with their attributes, nev
   // What tool code planted stayed in the tool partition.
   expect((result.authCookies as { name: string }[]).map((c) => c.name)).not.toContain('planted')
   expect(result.authPlantedStorage).toBeNull()
-  expect(result.redaction).toEqual(expect.arrayContaining(['host-only-sid', 'domain-shared']))
+  // sessionSecrets: the cookie values and the handed-off storage value, for output redaction.
+  expect(result.redaction).toEqual(
+    expect.arrayContaining(['host-only-sid', 'domain-shared', 'storage-token-123']),
+  )
+})
+
+test('redaction still has every session value tool code read, after it overwrote or expired them', async () => {
+  const result = await scenario(app, 'redactionAfterOverwrite')
+  expect(result.read).toContain('shared=domain-shared')
+  expect(result.after).not.toContain('domain-shared')
+  expect(result.after).not.toContain('mid-run-cookie')
+  expect(result.redaction).toEqual(
+    expect.arrayContaining([
+      'host-only-sid',
+      'domain-shared',
+      'mid-run-cookie',
+      'storage-token-123',
+      'rotated-in-page',
+      'decoy',
+    ]),
+  )
+})
+
+test('auth subframes load only from navigation and the manifest’s frame origins', async () => {
+  const result = await scenario(app, 'authSubframes')
+  const hosts = result.hosts as string[]
+  expect(hosts).toContain('captcha.test')
+  // The undeclared widget never reached the network.
+  expect(hosts).not.toContain('widget.test')
+  expect((result.frames as string[]).some((origin) => origin.includes('captcha.test'))).toBe(true)
+  expect((result.frames as string[]).some((origin) => origin.includes('widget.test'))).toBe(false)
+  // A blocked subframe doesn't poison the page the way a main-frame escape does.
+  expect(result.poisoned).toEqual({ ok: false })
+})
+
+test('both partitions present the clean Chrome UA and en-AU by default, with the engine’s own hints', async () => {
+  const result = await scenario(app, 'userAgent')
+  const major = (result.chrome as string).split('.')[0]
+  const ua = `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`
+  type Sees = { ua: string; language: string; languages: string[]; brands: string[]; hints: unknown }
+  const engine = result.engineSees as Sees
+  // The control window really has no override from the driver, or the comparison below is vacuous.
+  expect(engine.ua).toBe(result.controlUa)
+  for (const sees of [result.toolPageSees, result.authPageSees] as Sees[]) {
+    expect(sees.ua).toBe(ua)
+    expect(sees.language).toBe('en-AU')
+    expect(sees.languages).toEqual(['en-AU', 'en'])
+    // D24a is open: the client hints are exactly the engine's own, restated.
+    expect(sees.brands).toEqual(engine.brands)
+    expect(sees.brands).not.toContain('Google Chrome')
+    expect(sees.hints).toEqual(engine.hints)
+  }
+  const seen = result.seen as { userAgent: string; acceptLanguage: string; clientHintBrands: string }[]
+  expect(seen.length).toBeGreaterThanOrEqual(2)
+  for (const request of seen) {
+    expect(request.userAgent).toBe(ua)
+    expect(request.userAgent).not.toMatch(/electron|e2e/i)
+    expect(request.acceptLanguage).toBe('en-AU,en;q=0.9')
+    // Electron's Chromium sends no Sec-CH-UA header at all, unlike Chrome; recorded for D24a.
+    expect(request.clientHintBrands).toBe('')
+  }
+})
+
+test('workers, service workers and cross-site frames present the same clean UA and en-AU', async () => {
+  const result = await scenario(app, 'userAgentEverywhere')
+  type Sees = { ua: string; language: string; languages: string[]; brands: string[] }
+  const authSees = result.authSees as Record<string, Sees | boolean>
+  const main = authSees.main as Sees
+  expect(main.ua).toMatch(/Chrome\/\d+\.0\.0\.0 Safari\/537\.36$/)
+  const expected = { ua: main.ua, language: 'en-AU', languages: ['en-AU', 'en'], brands: main.brands }
+  for (const [partition, sees] of Object.entries({
+    auth: authSees,
+    tool: result.toolSees as typeof authSees,
+  })) {
+    // The cross-site frame really is out of process, or this proves nothing about OOPIFs.
+    expect(sees.crossSiteIsOutOfProcess, partition).toBe(true)
+    for (const where of ['main', 'worker', 'serviceWorker', 'sharedWorker', 'crossSite', 'crossSiteWorker']) {
+      expect(sees[where], `${partition} ${where}`).toEqual(expected)
+    }
+  }
+  // And every request they made said the same.
+  for (const request of result.headers as { path: string; userAgent: string; acceptLanguage: string }[]) {
+    expect(request.userAgent, request.path).toBe(main.ua)
+    expect(request.acceptLanguage, request.path).toBe('en-AU,en;q=0.9')
+  }
 })
 
 test('handToUser shows the window, and closing it hides the page instead of destroying it', async () => {
   expect(await scenario(app, 'handToUser')).toEqual({
     hiddenBefore: true,
     shown: true,
-    title: 'Finish logging in, then close this window',
+    title: 'E2E needs you to log in. Close this window when you’re done.',
     hiddenAfter: true,
     aliveAfterClose: true,
     secondCloseDestroyed: true,

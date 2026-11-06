@@ -51,7 +51,8 @@ export type ProxyPolicy = (host: string, port: number) => boolean
 
 /** One persistent browser partition. */
 export interface PartitionSession {
-  setUserAgent(userAgent: string): void
+  /** Sets the UA string and the Accept-Language header for every request the partition makes. */
+  setUserAgent(userAgent: string, acceptLanguages: string): void
   /** Denies permission prompts and downloads. */
   harden(): void
   /** Installs the session's only request filter. Requests it returns false for are cancelled. */
@@ -65,12 +66,30 @@ export interface PartitionSession {
   addResponseHeader(name: string, value: string): void
   getCookies(): Promise<readonly CookieRecord[]>
   setCookie(details: CookieSetDetails): Promise<void>
+  /**
+   * Calls `listener` for every cookie the partition adds, changes or removes, with its value: the
+   * old value when one is removed or overwritten, so that a value never goes unseen.
+   */
+  onCookieChanged(listener: (cookie: CookieRecord) => void): void
+}
+
+/** One web-storage value a page held, as the DevTools protocol reports it. */
+export interface StorageValue {
+  /** The storage's security origin, e.g. https://www.example.com. */
+  readonly origin: string
+  readonly key: string
+  readonly value: string
 }
 
 /** A frame in a page, in tree order. The main frame comes first and has no parent. */
 export interface FrameHandle {
   /** Stable for the frame's lifetime, and comparable with BrowserSurface.focusedFrameId(). */
   readonly id: string
+  /**
+   * The frame's place in the frame tree, which stays the same across its navigations (Chromium's
+   * frame tree node id), unlike `id`. Comparable with NavigationEvent.frameNodeId.
+   */
+  readonly nodeId: string
   /** Security origin as the browser process sees it, not as the page reports it. */
   readonly origin: string
   readonly url: string
@@ -90,12 +109,37 @@ export interface FrameHandle {
   runAdapter(code: string): Promise<unknown>
 }
 
+/** Which trusted key events typing sends per character. */
+export type KeyEvents = 'char' | 'full'
+
+/** What Emulation.setUserAgentOverride takes, in the DevTools protocol's own shape. */
+export interface UserAgentOverride {
+  readonly userAgent: string
+  readonly acceptLanguage: string
+  /** navigator.platform, e.g. MacIntel. */
+  readonly platform: string
+  readonly userAgentMetadata: {
+    readonly brands: readonly { readonly brand: string; readonly version: string }[]
+    readonly fullVersionList: readonly { readonly brand: string; readonly version: string }[]
+    readonly platform: string
+    readonly platformVersion: string
+    readonly architecture: string
+    readonly model: string
+    readonly mobile: boolean
+    readonly bitness: string
+    readonly wow64: boolean
+    readonly formFactors: readonly string[]
+  }
+}
+
 export type LoadResult = { readonly ok: true } | { readonly ok: false; readonly code: string }
 
 export interface NavigationEvent {
   readonly kind: 'commit' | 'redirect'
   readonly url: string
   readonly isMainFrame: boolean
+  /** The navigating frame's FrameHandle.nodeId, or null when the browser couldn't say. */
+  readonly frameNodeId: string | null
 }
 
 /** A navigation about to start, offered to the guard. */
@@ -117,8 +161,24 @@ export interface BrowserSurface {
   focusedFrameId(): string | null
   /** Trusted mouse move, down and up at viewport coordinates. */
   click(x: number, y: number): void
-  /** One trusted char event. */
-  sendChar(char: string): void
+  /**
+   * One trusted keystroke: a char event, or with `full` a keyDown, char and keyUp, as a keyboard
+   * sends them.
+   */
+  sendChar(char: string, events: KeyEvents): void
+  /**
+   * Overrides the UA, Accept-Language and client hints for this page's documents over the DevTools
+   * protocol. Must be called before the first load.
+   */
+  overrideUserAgent(override: UserAgentOverride): Promise<void>
+  /**
+   * Calls `listener` with every web-storage value the page's documents write from now on, the old
+   * value as well as the new when one is overwritten, over the DevTools protocol. Must be called
+   * before the first load.
+   */
+  watchStorage(listener: (value: StorageValue) => void): Promise<void>
+  /** Resolves once every storage write the page has made so far has reached watchStorage's listener. */
+  storageSettled(): Promise<void>
   /** Gives the web contents keyboard focus without showing the window. */
   focus(): void
   show(title: string): void
@@ -145,8 +205,16 @@ export interface BrowserPlatform {
   openSurface(partition: string): BrowserSurface
   /** Starts a local proxy that allows a connection only when `allow` says so. */
   startProxy(allow: ProxyPolicy): Promise<ProxyHandle>
+  /**
+   * Sets the process-wide UA for renderers that neither a session's UA nor a page's DevTools
+   * override reaches before they run: a service worker's (app.userAgentFallback).
+   */
+  setDefaultUserAgent(userAgent: string): void
   readonly chromeVersion: string
   readonly os: NodeJS.Platform
+  /** The OS's own version, e.g. 15.5.0 on macOS. Only client hints use it. */
+  readonly systemVersion: string
+  readonly arch: string
 }
 
 /** Timer functions, injected so that tests control time. */

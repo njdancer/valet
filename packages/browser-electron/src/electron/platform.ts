@@ -1,7 +1,14 @@
 // BrowserPlatform over real Electron. Kept thin: every decision lives in the pure modules, and this
 // file only forwards. It is covered by the e2e suite, not unit tests.
 
-import { BrowserWindow, session as electronSession, type Session, type WebContents } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  session as electronSession,
+  type Session,
+  type WebContents,
+  webFrameMain,
+} from 'electron'
 import { type Dial, startEgressProxy } from '../egress-proxy'
 import type {
   BrowserPlatform,
@@ -9,13 +16,20 @@ import type {
   CookieRecord,
   CookieSetDetails,
   FrameHandle,
+  KeyEvents,
   LoadResult,
   NavigationEvent,
   OutgoingRequest,
   PartitionSession,
   PendingNavigation,
   ProxyHandle,
+  StorageValue,
+  UserAgentOverride,
 } from '../platform'
+
+// keyDown and keyUp need a key code, which Electron derives from the character on a US layout.
+// Anything outside printable ASCII has none, so it goes as a char event alone.
+const US_KEY = /^[\x20-\x7e]$/
 
 // Isolated worlds on the main frame. 0 is the page's own world and 999 is Electron's preload world.
 // The runtime's scripts and adapter code get a world each, so adapter code can't patch the fetch,
@@ -33,6 +47,8 @@ export function electronPlatform(options: ElectronPlatformOptions = {}): Browser
   return {
     chromeVersion: process.versions.chrome,
     os: process.platform,
+    systemVersion: process.getSystemVersion(),
+    arch: process.arch,
     startProxy: (allow) => startEgressProxy({ allow, ...(options.dial ? { dial: options.dial } : {}) }),
     session(partition) {
       let wrapped = sessions.get(partition)
@@ -43,6 +59,9 @@ export function electronPlatform(options: ElectronPlatformOptions = {}): Browser
       return wrapped
     },
     openSurface: (partition) => new ElectronSurface(partition),
+    setDefaultUserAgent: (userAgent) => {
+      app.userAgentFallback = userAgent
+    },
   }
 }
 
@@ -51,8 +70,8 @@ class ElectronPartition implements PartitionSession {
 
   constructor(private readonly ses: Session) {}
 
-  setUserAgent(userAgent: string): void {
-    this.ses.setUserAgent(userAgent)
+  setUserAgent(userAgent: string, acceptLanguages: string): void {
+    this.ses.setUserAgent(userAgent, acceptLanguages)
   }
 
   harden(): void {
@@ -92,6 +111,11 @@ class ElectronPartition implements PartitionSession {
 
   setCookie(details: CookieSetDetails): Promise<void> {
     return this.ses.cookies.set({ ...details })
+  }
+
+  onCookieChanged(listener: (cookie: CookieRecord) => void): void {
+    // A removal (expired, overwritten, evicted, explicit) carries the value that was removed.
+    this.ses.cookies.on('changed', (_event, cookie) => listener(cookie))
   }
 }
 
@@ -139,11 +163,14 @@ class ElectronSurface implements BrowserSurface {
     contents.on('will-redirect', (event) => {
       if (!this.guard({ url: event.url, isMainFrame: event.isMainFrame })) event.preventDefault()
     })
-    contents.on('did-frame-navigate', (_event, url, _code, _status, isMainFrame) => {
-      this.emit({ kind: 'commit', url, isMainFrame })
+    contents.on('did-frame-navigate', (_event, url, _code, _status, isMainFrame, processId, routingId) => {
+      const frame = isMainFrame ? contents.mainFrame : webFrameMain.fromId(processId, routingId)
+      const frameNodeId = frame === undefined || frame === null ? null : String(frame.frameTreeNodeId)
+      this.emit({ kind: 'commit', url, isMainFrame, frameNodeId })
     })
     contents.on('did-redirect-navigation', (event) => {
-      this.emit({ kind: 'redirect', url: event.url, isMainFrame: event.isMainFrame })
+      const frameNodeId = event.frame === null ? null : String(event.frame.frameTreeNodeId)
+      this.emit({ kind: 'redirect', url: event.url, isMainFrame: event.isMainFrame, frameNodeId })
     })
     this.window.on('close', (event) => {
       if (this.closeHandler?.() === true) event.preventDefault()
@@ -198,6 +225,7 @@ class ElectronSurface implements BrowserSurface {
       const parentId = frame.parent?.frameTreeNodeId
       return {
         id: frame.frameToken,
+        nodeId: String(frame.frameTreeNodeId),
         origin: frame.origin,
         url: frame.url,
         parentIndex:
@@ -234,8 +262,60 @@ class ElectronSurface implements BrowserSurface {
     this.contents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 })
   }
 
-  sendChar(char: string): void {
+  sendChar(char: string, events: KeyEvents): void {
+    const full = events === 'full' && US_KEY.test(char)
+    if (full) this.contents.sendInputEvent({ type: 'keyDown', keyCode: char })
     this.contents.sendInputEvent({ type: 'char', keyCode: char })
+    if (full) this.contents.sendInputEvent({ type: 'keyUp', keyCode: char })
+  }
+
+  async overrideUserAgent(override: UserAgentOverride): Promise<void> {
+    // The override lasts while the debugger stays attached, which is the window's lifetime, and
+    // applies to every navigation after it. It reaches only the page's own target, though: a
+    // worker or an out-of-process (cross-site) iframe is a target of its own, and would otherwise
+    // show Electron's UA and the Mac's languages. So every such target is attached as it starts,
+    // paused, given the same override, and only then let run. Shared workers aren't the page's
+    // children, so they are found by discovery instead, in this partition only, and attached
+    // once they are already running.
+    const devtools = await this.devtools()
+    const own = targetContext(await devtools.sendCommand('Target.getTargetInfo'))
+    devtools.on('message', (_event, method: string, params: unknown) => {
+      if (method === 'Target.attachedToTarget') {
+        const child = attachedTarget(params)
+        if (child !== null) void this.overrideChild(devtools, child, override)
+      }
+      if (method === 'Target.targetCreated') {
+        const shared = sharedWorkerIn(params, own)
+        if (shared !== null) {
+          devtools.sendCommand('Target.attachToTarget', { targetId: shared, flatten: true }).catch(() => {})
+        }
+      }
+    })
+    await devtools.sendCommand('Emulation.setUserAgentOverride', override)
+    await devtools.sendCommand('Target.setAutoAttach', AUTO_ATTACH)
+    if (own !== null) {
+      await devtools.sendCommand('Target.setDiscoverTargets', {
+        discover: true,
+        filter: [{ type: 'shared_worker' }],
+      })
+    }
+  }
+
+  async watchStorage(listener: (value: StorageValue) => void): Promise<void> {
+    const devtools = await this.devtools()
+    devtools.on('message', (_event, method: string, params: unknown, sessionId?: string) => {
+      // Only the page's own target: DOMStorage isn't enabled on any other.
+      if (sessionId !== undefined && sessionId !== '') return
+      for (const value of storageValues(method, params)) listener(value)
+    })
+    await devtools.sendCommand('DOMStorage.enable')
+  }
+
+  async storageSettled(): Promise<void> {
+    // The protocol answers in order on one session, so once this command is answered, every
+    // storage event the page sent before it has been delivered.
+    if (this.contents.isDestroyed() || !this.contents.debugger.isAttached()) return
+    await this.contents.debugger.sendCommand('DOMStorage.enable')
   }
 
   focus(): void {
@@ -282,7 +362,116 @@ class ElectronSurface implements BrowserSurface {
     return this.window.isDestroyed()
   }
 
+  /**
+   * Gives a newly attached frame or worker target the page's override, has it attach its own
+   * children the same way, and resumes it. It is resumed whatever happens, or the page would hang.
+   * A frame takes Emulation's override; a worker only Network's, which sets its navigator too.
+   */
+  private async overrideChild(
+    devtools: Electron.Debugger,
+    child: { readonly sessionId: string; readonly type: string },
+    override: UserAgentOverride,
+  ): Promise<void> {
+    // Nothing here may wait forever: a command a target never answers would leave it paused.
+    const send = (method: string, params: object = {}) =>
+      Promise.race([
+        devtools.sendCommand(method, params, child.sessionId).catch(() => {}),
+        new Promise<void>((resolve) => setTimeout(resolve, CHILD_COMMAND_TIMEOUT_MS)),
+      ])
+    if (child.type === 'service_worker') {
+      // A paused service worker answers no command, and is stopped once its start times out, so
+      // it is resumed first and overridden as soon as it runs. Its UA is the process default,
+      // which the session's UA has already set (see setDefaultUserAgent).
+      await send('Runtime.runIfWaitingForDebugger')
+      await send('Network.setUserAgentOverride', override)
+      return
+    }
+    try {
+      const frame = child.type === 'iframe' || child.type === 'page'
+      await send(frame ? 'Emulation.setUserAgentOverride' : 'Network.setUserAgentOverride', override)
+      await send('Target.setAutoAttach', AUTO_ATTACH)
+    } finally {
+      await send('Runtime.runIfWaitingForDebugger')
+    }
+  }
+
+  /** The page's DevTools session, attached once for the window's lifetime. */
+  private async devtools(): Promise<Electron.Debugger> {
+    // A web contents that has never loaded has no renderer for a command to reach, and it waits
+    // forever; about:blank never touches the network.
+    if (this.contents.getURL() === '') await this.contents.loadURL('about:blank')
+    const devtools = this.contents.debugger
+    if (!devtools.isAttached()) devtools.attach('1.3')
+    return devtools
+  }
+
   private emit(event: NavigationEvent): void {
     for (const listener of this.navigationListeners) listener(event)
+  }
+}
+
+const CHILD_COMMAND_TIMEOUT_MS = 2000
+
+/** Attach every child target (worker, out-of-process frame) as it starts, paused until set up. */
+const AUTO_ATTACH = { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }
+
+/** The browser context (partition) a Target.getTargetInfo answer names, or null. */
+function targetContext(answer: unknown): string | null {
+  const context = (answer as { targetInfo?: { browserContextId?: unknown } } | null)?.targetInfo
+    ?.browserContextId
+  return typeof context === 'string' && context !== '' ? context : null
+}
+
+/** The target id of a shared worker created in browser context `own`, or null. */
+function sharedWorkerIn(params: unknown, own: string | null): string | null {
+  const info = (params as { targetInfo?: Record<string, unknown> } | null)?.targetInfo
+  if (own === null || info === undefined) return null
+  const { type, browserContextId, targetId } = info
+  if (type !== 'shared_worker' || browserContextId !== own || typeof targetId !== 'string') return null
+  return targetId
+}
+
+function attachedTarget(params: unknown): { sessionId: string; type: string } | null {
+  if (typeof params !== 'object' || params === null) return null
+  const { sessionId, targetInfo } = params as { sessionId?: unknown; targetInfo?: { type?: unknown } }
+  if (typeof sessionId !== 'string' || typeof targetInfo?.type !== 'string') return null
+  return { sessionId, type: targetInfo.type }
+}
+
+/**
+ * The values a DOMStorage event carries: the new value of an added item, and both the old and the
+ * new of an updated one. A removal carries no value; the old one was reported when it was written.
+ */
+function storageValues(method: string, params: unknown): StorageValue[] {
+  if (typeof params !== 'object' || params === null) return []
+  const { storageId, key, oldValue, newValue } = params as Record<string, unknown>
+  if (typeof key !== 'string' || typeof storageId !== 'object' || storageId === null) return []
+  const origin = storageOrigin(storageId as Record<string, unknown>)
+  if (origin === null) return []
+  const values =
+    method === 'DOMStorage.domStorageItemAdded'
+      ? [newValue]
+      : method === 'DOMStorage.domStorageItemUpdated'
+        ? [oldValue, newValue]
+        : []
+  return values
+    .filter((value): value is string => typeof value === 'string')
+    .map((value) => ({ origin, key, value }))
+}
+
+/** The origin of a DOMStorage storage id: securityOrigin, or the storage key's (minus "^..." partitioning). */
+function storageOrigin(storageId: Record<string, unknown>): string | null {
+  const { securityOrigin, storageKey } = storageId
+  const raw =
+    typeof securityOrigin === 'string' && securityOrigin !== ''
+      ? securityOrigin
+      : typeof storageKey === 'string'
+        ? (storageKey.split('^')[0] ?? '')
+        : ''
+  try {
+    const origin = new URL(raw).origin
+    return origin === 'null' ? null : origin
+  } catch {
+    return null
   }
 }

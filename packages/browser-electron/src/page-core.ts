@@ -2,8 +2,8 @@
 // across frames, trusted clicks and paced trusted typing. Everything that comes back from a page is
 // checked before use: subframes run our scripts in their own world, so their answers are untrusted.
 
-import { SiteAdapterError, type Stage } from '@siteadapter/core'
-import type { BrowserSurface, FrameHandle, Timers } from './platform'
+import { type ErrorClass, originAllowed, SiteAdapterError, type Stage } from '@siteadapter/core'
+import type { BrowserSurface, FrameHandle, KeyEvents, Timers } from './platform'
 import { sleep } from './platform'
 import { focusedScript, focusScript, frameOffsetScript, pointScript } from './scripts'
 import { withTimeout } from './timeout'
@@ -14,6 +14,20 @@ export interface PageTiming {
   readonly stepTimeoutMs: number
   /** Default gap between typed characters. Sites time keystrokes. */
   readonly typingDelayMs: number
+  /** Which key events make up one typed character: char events alone unless set. */
+  readonly keyEvents?: KeyEvents
+}
+
+/** What typing checks before each keystroke. See PageCore.beforeKey. */
+export interface TypingGuard {
+  readonly stage: Stage
+  /** Where focus() left focus, or null to type wherever focus is. */
+  readonly target: FocusTarget | null
+  readonly allowedOrigins?: readonly string[]
+  /** The error class when the target moves partway through. */
+  readonly moved: ErrorClass
+  /** An extra check before each keystroke, such as whether the page has been poisoned. */
+  readonly before?: () => void
 }
 
 /** Where focus() left keyboard focus, so typing can check it is still there. */
@@ -23,11 +37,26 @@ export interface FocusTarget {
   readonly selector: string
 }
 
+/**
+ * Where commits stood when typing started. With `nodes`, the target frame and its ancestors, only
+ * their commits (and commits the browser couldn't place) count as the target moving; without, any
+ * commit does.
+ */
+export interface CommitMark {
+  readonly nodes: readonly string[] | null
+  readonly counts: readonly number[]
+  readonly unplaced: number
+  readonly total: number
+}
+
 /** A frame's answer to a script that looks for one element. */
 export type FrameMatch<T> = { readonly frameIndex: number; readonly frame: FrameHandle; readonly value: T }
 
 export class PageCore {
   private commits = 0
+  /** Commits by frame tree node, and those the browser couldn't place in the tree. */
+  private readonly commitsByNode = new Map<string, number>()
+  private unplacedCommits = 0
   private readonly mainFrameUrls: string[] = []
 
   constructor(
@@ -35,7 +64,11 @@ export class PageCore {
     readonly timing: PageTiming,
   ) {
     surface.onNavigation((event) => {
-      if (event.kind === 'commit') this.commits++
+      if (event.kind === 'commit') {
+        this.commits++
+        if (event.frameNodeId === null) this.unplacedCommits++
+        else this.commitsByNode.set(event.frameNodeId, (this.commitsByNode.get(event.frameNodeId) ?? 0) + 1)
+      }
       if (event.isMainFrame) this.mainFrameUrls.push(event.url)
     })
   }
@@ -152,31 +185,97 @@ export class PageCore {
   }
 
   /**
-   * Sends `count` trusted characters, `delayMs` apart. `send(i)` must send the i-th one; it is given
-   * an index rather than a string so that a secret's characters stay inside its reveal callback.
-   * Stops if the step times out, and fails if any frame commits a navigation while typing, or if
-   * keyboard focus leaves `frameId`: either way the remaining characters would land somewhere else.
+   * Notes where commits stand, for beforeKey(). With a target, only the target's frame and its
+   * ancestors matter: an analytics or CAPTCHA iframe elsewhere on the page that reloads mid-type
+   * doesn't move the keystrokes. A target whose frame is gone, or whose ancestry can't be
+   * followed, falls back to every frame.
+   */
+  commitMark(target: FocusTarget | null): CommitMark {
+    const nodes = target === null ? null : this.lineage(target.frameId)
+    return {
+      nodes,
+      counts: (nodes ?? []).map((node) => this.commitsByNode.get(node) ?? 0),
+      unplaced: this.unplacedCommits,
+      total: this.commits,
+    }
+  }
+
+  /**
+   * Sends `count` trusted characters, `delayMs` apart. `send(i)` must send the i-th one. Before
+   * every character, beforeKey() checks that it would land where typing started.
    */
   async typeChars(
-    stage: Stage,
+    guard: TypingGuard,
     signal: AbortSignal,
     count: number,
     delayMs: number,
-    frameId: string | null,
     send: (index: number) => void,
   ): Promise<void> {
-    const commitsAtStart = this.commits
+    const mark = this.commitMark(guard.target)
     for (let index = 0; index < count; index++) {
       if (index > 0) await sleep(this.timing.timers, delayMs)
-      if (signal.aborted) return
-      if (this.surface.isDestroyed() || this.commits !== commitsAtStart) {
-        throw new SiteAdapterError(stage, 'aborted')
-      }
-      if (frameId !== null && this.surface.focusedFrameId() !== frameId) {
-        throw new SiteAdapterError(stage, 'aborted')
-      }
+      await this.beforeKey(guard, mark, signal)
       send(index)
     }
+  }
+
+  /**
+   * Throws unless the next keystroke would land where typing started: the step is still live, the
+   * window is there, no frame that matters has committed a navigation since `mark` (see
+   * commitMark()), and, with a target, the browser still has keyboard focus in its frame, that frame is still on the target's
+   * origin (and on `allowedOrigins`, when given), and the element itself still has focus. Anything
+   * that moved fails with `guard.moved`, since the remaining characters would land somewhere else.
+   */
+  async beforeKey(guard: TypingGuard, mark: CommitMark, signal: AbortSignal): Promise<void> {
+    const fail = (errorClass: ErrorClass) => new SiteAdapterError(guard.stage, errorClass)
+    const live = () => {
+      guard.before?.()
+      if (signal.aborted || this.surface.isDestroyed()) throw fail('aborted')
+      if (this.movedSince(mark)) throw fail(guard.moved)
+    }
+    live()
+    const target = guard.target
+    if (target === null) return
+    const inFrame = () => {
+      const frame = this.surface.frames().find((candidate) => candidate.id === target.frameId)
+      const stays =
+        frame !== undefined &&
+        frame.origin === target.origin &&
+        frame.receivesInput &&
+        this.surface.focusedFrameId() === target.frameId &&
+        (guard.allowedOrigins === undefined || originAllowed(frame.origin, guard.allowedOrigins))
+      if (!stays) throw fail(guard.moved)
+      return frame
+    }
+    const frame = inFrame()
+    const focused = parseFocus(await runQuietly(frame, focusedScript(target.selector)))?.focused === true
+    live()
+    inFrame()
+    if (!focused) throw fail(guard.moved)
+  }
+
+  private movedSince(mark: CommitMark): boolean {
+    if (mark.nodes === null) return this.commits !== mark.total
+    if (this.unplacedCommits !== mark.unplaced) return true
+    return mark.nodes.some((node, index) => (this.commitsByNode.get(node) ?? 0) !== mark.counts[index])
+  }
+
+  /** The frame's node and its ancestors' up to the main frame, or null if the chain breaks. */
+  private lineage(frameId: string): string[] | null {
+    const frames = this.surface.frames()
+    const nodes: string[] = []
+    let frame = frames.find((candidate) => candidate.id === frameId)
+    for (let depth = 0; frame !== undefined && depth <= frames.length; depth++) {
+      nodes.push(frame.nodeId)
+      if (frame.parentIndex === null) return nodes
+      frame = frames[frame.parentIndex]
+    }
+    return null
+  }
+
+  /** Sends one trusted character, as the page's key-event setting says. */
+  sendChar(char: string): void {
+    this.surface.sendChar(char, this.timing.keyEvents ?? 'char')
   }
 }
 

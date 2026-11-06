@@ -18,6 +18,10 @@ export interface Seen {
   readonly host: string
   readonly method: string
   readonly path: string
+  readonly userAgent: string
+  readonly acceptLanguage: string
+  /** The Sec-CH-UA client hint, or '' when none was sent. */
+  readonly clientHintBrands: string
 }
 
 export interface TestSite {
@@ -57,7 +61,7 @@ function makeCertificate(): { key: Buffer; cert: Buffer } {
       '-subj',
       '/CN=site.test',
       '-addext',
-      'subjectAltName=DNS:site.test,DNS:login.test,DNS:evil.test',
+      'subjectAltName=DNS:site.test,DNS:login.test,DNS:evil.test,DNS:captcha.test,DNS:widget.test',
       '-keyout',
       key,
       '-out',
@@ -73,11 +77,14 @@ function page(title: string, body: string): string {
 }
 
 // Records whether every key event the page saw was trusted, and posts that with the form.
+// It also counts keydown events, which char-only typing doesn't produce.
 const TRUST_PROBE = `<script>
   window.__untrusted = 0
+  window.__keydowns = 0
   for (const type of ['keydown', 'keypress', 'input', 'mousedown', 'click']) {
     document.addEventListener(type, (event) => { if (!event.isTrusted) window.__untrusted++ }, true)
   }
+  document.addEventListener('keydown', () => { window.__keydowns++ }, true)
   document.addEventListener('submit', (event) => {
     const field = document.createElement('input')
     field.type = 'hidden'
@@ -86,6 +93,26 @@ const TRUST_PROBE = `<script>
     event.target.appendChild(field)
   }, true)
 </script>`
+
+/** A dedicated or service worker that answers any message with what its navigator says. */
+const UA_WORKER = `
+const read = () => ({
+  ua: navigator.userAgent,
+  language: navigator.language,
+  languages: [...navigator.languages],
+  brands: navigator.userAgentData ? navigator.userAgentData.brands.map((b) => b.brand) : null,
+})
+self.addEventListener('install', () => self.skipWaiting())
+self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()))
+self.addEventListener('message', (event) => {
+  if (event.ports && event.ports[0]) event.ports[0].postMessage(read())
+  else self.postMessage(read())
+})
+self.addEventListener('connect', (event) => {
+  const port = event.ports[0]
+  port.onmessage = () => port.postMessage(read())
+})
+`
 
 function routes(
   site: { url(host: string, path?: string): string },
@@ -176,6 +203,38 @@ function routes(
       ),
     }
   }
+  if (host === 'site.test' && path === '/app') {
+    // The site's own script calls an API on load, as Woolworths' pages call /api/ui/v2/bootstrap.
+    return {
+      body: page(
+        'App',
+        `<p>app</p><script>
+          window.__bootstrap = fetch('/api/bootstrap').then(() => 'sent', () => 'failed')
+        </script>`,
+      ),
+    }
+  }
+  if (host === 'site.test' && path === '/framed') {
+    // A login page that embeds a declared CAPTCHA frame and an undeclared widget.
+    return {
+      body: page(
+        'Framed',
+        `<iframe id="captcha" src="${site.url('captcha.test')}/frame"></iframe>
+         <iframe id="widget" src="${site.url('widget.test')}/frame"></iframe>`,
+      ),
+    }
+  }
+  if ((host === 'captcha.test' || host === 'widget.test') && path === '/frame') {
+    return { body: page('Frame', `<p id="inner">${host}</p>`) }
+  }
+  // What a page's workers and cross-site frames present as (navigator UA, languages, brands).
+  if ((host === 'site.test' || host === 'login.test') && (path === '/ua-worker.js' || path === '/ua-sw.js')) {
+    return { headers: { 'content-type': 'text/javascript' }, body: UA_WORKER }
+  }
+  if (host === 'site.test' && path === '/ua-probe') {
+    return { body: page('UA', `<iframe id="cross" src="${login}/ua-frame"></iframe>`) }
+  }
+  if (host === 'login.test' && path === '/ua-frame') return { body: page('UA frame', '<p>frame</p>') }
   if (path === '/robots.txt') return { headers: { 'content-type': 'text/plain' }, body: 'User-agent: *\n' }
   return { status: 404, body: page('Not found', '<p>Not found</p>') }
 }
@@ -193,13 +252,25 @@ export async function startTestSite(): Promise<TestSite> {
   const server: Server = createServer({ key, cert }, (request, response) => {
     const host = (request.headers.host ?? '').replace(/:\d+$/, '')
     const url = new URL(request.url ?? '/', `https://${host}`)
-    requests.push({ host, method: request.method ?? 'GET', path: url.pathname })
+    requests.push({
+      host,
+      method: request.method ?? 'GET',
+      path: url.pathname,
+      userAgent: request.headers['user-agent'] ?? '',
+      acceptLanguage: request.headers['accept-language'] ?? '',
+      clientHintBrands: String(request.headers['sec-ch-ua'] ?? ''),
+    })
     const chunks: Buffer[] = []
     request.on('data', (chunk: Buffer) => chunks.push(chunk))
     request.on('end', () => {
       if (request.method === 'POST')
         posts.push({ host, path: url.pathname, body: Buffer.concat(chunks).toString('utf8') })
-      if (url.pathname === '/echo') {
+      // Stands in for the site's own API: a bootstrap call its pages make on load, and an order.
+      if (
+        url.pathname === '/echo' ||
+        url.pathname === '/api/bootstrap' ||
+        url.pathname === '/checkout/place'
+      ) {
         response.writeHead(200, { 'content-type': 'application/json' })
         response.end(JSON.stringify({ host, cookie: request.headers.cookie ?? '' }))
         return
