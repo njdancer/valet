@@ -5,15 +5,7 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ES2024", "DOM", "DOM.Iterable"],
-    "jsx": "react-jsx",
-    // Until zod is a dependency of this package: core's copy (src/main/core/zod.ts).
-    // The e2e suite's MCP client: the SDK is packages/mcp-server's dependency (e2e/harness.ts).
-    "paths": {
-      "zod": ["../../packages/core/node_modules/zod"],
-      "@modelcontextprotocol/sdk/*": [
-        "../../packages/mcp-server/node_modules/@modelcontextprotocol/sdk/dist/esm/*"
-      ]
-    }
+    "jsx": "react-jsx"
   },
   "include": ["src", "test", "e2e", "vite.config.ts", "vitest.config.ts", "electron.vite.config.ts"]
 }

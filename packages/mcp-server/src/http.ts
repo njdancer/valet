@@ -7,10 +7,11 @@ import type { AddressInfo } from 'node:net'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { SiteAdapterError, toReportable } from '@siteadapter/core'
 import { bearerAuthorized, hostAllowed, originAllowed } from './http-guards'
-import { createMcpServer, type ServerInfo, type SiteAdapterMcpServer } from './server'
+import { clientLabel, createMcpServer, type ServerInfo, type SiteAdapterMcpServer } from './server'
 import { isWellFormedToken } from './token'
-import type { ToolCaller } from './tool-caller'
+import type { ClientTransport, ToolCaller } from './tool-caller'
 import { planTools, type SkippedTool, type ToolPlan } from './tool-names'
+import { TRANSPORT_HEADER, transportFrom } from './transport-label'
 
 export const MCP_PATH = '/mcp'
 const MAX_BODY_BYTES = 1024 * 1024
@@ -31,6 +32,26 @@ export interface HttpServerOptions {
   readonly newSessionId?: () => string
   /** Sessions kept at once. Beyond it, the least recently used session is closed. */
   readonly maxSessions?: number
+  /**
+   * Called with the live sessions whenever one opens, finishes initializing, or closes. Must not
+   * throw; if it does, the error is ignored.
+   */
+  readonly onSessionsChanged?: (sessions: LiveSessions) => void
+}
+
+/** One open session, as the app shows it. Never its id, which a request could use with the token. */
+export interface LiveSession {
+  readonly transport: ClientTransport
+  /** The client's self-reported name from initialize, flattened and capped; 'unknown' until known. */
+  readonly client: string
+}
+
+export interface LiveSessions {
+  readonly total: number
+  readonly bridge: number
+  readonly http: number
+  /** Least recently used first. */
+  readonly sessions: readonly LiveSession[]
 }
 
 export interface RunningHttpServer {
@@ -47,12 +68,15 @@ export interface RunningHttpServer {
    * outlives it. Throws SiteAdapterError('config', 'invalid') for a malformed token.
    */
   setToken(token: string): Promise<void>
+  /** The sessions open now, and how each one arrived. */
+  sessions(): LiveSessions
   close(): Promise<void>
 }
 
 interface Session {
   readonly endpoint: SiteAdapterMcpServer
   readonly transport: StreamableHTTPServerTransport
+  readonly via: ClientTransport
 }
 
 export async function startHttpServer(options: HttpServerOptions): Promise<RunningHttpServer> {
@@ -65,30 +89,55 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
   const sessions = new Map<string, Session>()
   let port = 0
 
+  const live = (): LiveSessions => {
+    const list = [...sessions.values()].map(
+      (session): LiveSession => ({
+        transport: session.via,
+        client: clientLabel(session.endpoint.server.server.getClientVersion()?.name),
+      }),
+    )
+    const bridge = list.filter((session) => session.transport === 'stdio-bridge').length
+    return { total: list.length, bridge, http: list.length - bridge, sessions: list }
+  }
+  const changed = (): void => {
+    try {
+      options.onSessionsChanged?.(live())
+    } catch {
+      // The app's listener is not ours to fail.
+    }
+  }
+
   const closeSession = (id: string): Promise<void> => {
     const session = sessions.get(id)
     sessions.delete(id)
-    return session === undefined ? Promise.resolve() : session.endpoint.server.close()
+    if (session === undefined) return Promise.resolve()
+    changed()
+    return session.endpoint.server.close()
   }
 
   const openSession = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    const via = transportFrom(req.headers[TRANSPORT_HEADER])
     const endpoint = createMcpServer(options.caller, info, {
       ...(options.newCallId === undefined ? {} : { newCallId: options.newCallId }),
+      transport: via,
     })
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: newSessionId,
       maxRequestBodySize: MAX_BODY_BYTES,
       onsessioninitialized: (id) => {
-        sessions.set(id, { endpoint, transport })
+        sessions.set(id, { endpoint, transport, via })
         for (const oldest of sessions.keys()) {
           if (sessions.size <= maxSessions) break
           void closeSession(oldest)
         }
+        changed()
       },
     })
     endpoint.server.server.onclose = () => {
-      if (transport.sessionId !== undefined) sessions.delete(transport.sessionId)
+      if (transport.sessionId !== undefined && sessions.delete(transport.sessionId)) changed()
     }
+    // The client's name is known from here on.
+    endpoint.server.server.oninitialized = changed
     await endpoint.server.connect(transport)
     await transport.handleRequest(req, res)
     // Anything but a successful initialize leaves no session behind.
@@ -155,6 +204,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
       token = next
       await Promise.all([...sessions.keys()].map(closeSession))
     },
+    sessions: live,
     async close() {
       await Promise.all([...sessions.keys()].map(closeSession))
       await new Promise<void>((resolve) => {

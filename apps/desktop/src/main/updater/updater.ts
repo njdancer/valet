@@ -459,18 +459,22 @@ export function createUpdater(options: UpdaterOptions): Updater {
 }
 
 /**
- * The renderer's view of the updater (src/shared/api.ts). The contract has no "disabled" or "never
- * checked" state: a disabled updater (unpackaged, unsigned, or electron-updater inactive) reports
- * `signed: false` whatever the caller says, so the UI can say updates are off rather than "up to
- * date"; and `up-to-date` with `checkedAt: null` means no check has finished yet.
+ * The renderer's view of the updater (src/shared/api.ts). `idle` (started, nothing checked yet) is
+ * 'not-checked', never "up to date". The controller itself goes 'disabled' only when
+ * electron-updater reports itself inactive (checkForUpdates returns null), which is the build
+ * being unpackaged as far as it can tell: 'development'.
  */
 export function toUpdateStatus(status: UpdaterStatus, signed: boolean): UpdateStatus {
   const state: UpdateStatus['state'] =
-    status.state === 'checking' || status.state === 'error' || status.state === 'downloading'
+    status.state === 'checking' ||
+    status.state === 'error' ||
+    status.state === 'downloading' ||
+    status.state === 'disabled' ||
+    status.state === 'up-to-date'
       ? status.state
       : status.state === 'ready' || status.state === 'installing'
         ? 'ready'
-        : 'up-to-date'
+        : 'not-checked'
   const checkedAt: IsoTime | null =
     status.checkedAt === null ? null : new Date(status.checkedAt).toISOString()
   return {
@@ -478,6 +482,7 @@ export function toUpdateStatus(status: UpdaterStatus, signed: boolean): UpdateSt
     state,
     available: status.available,
     checkedAt,
-    signed: signed && status.state !== 'disabled',
+    signed,
+    disabledReason: state === 'disabled' ? 'development' : null,
   }
 }

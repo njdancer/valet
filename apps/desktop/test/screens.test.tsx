@@ -68,6 +68,24 @@ describe('the adapters page', () => {
 })
 
 describe('the adapter page', () => {
+  it('shows no hand-off row when the main process can’t tell what was handed over', async () => {
+    const fake = createFakeApi({ now: NOW })
+    renderAt('#/adapters/woolworths', {
+      ...fake,
+      adapters: {
+        ...fake.adapters,
+        get: async (id) => {
+          const detail = await fake.adapters.get(id)
+          return detail === null ? null : { ...detail, handedOver: null }
+        },
+      },
+    })
+    expect(await screen.findByRole('heading', { name: 'Woolworths' })).toBeTruthy()
+    expect(screen.getByText('Probe')).toBeTruthy()
+    expect(screen.queryByText('Handed over')).toBeNull()
+    expect(screen.queryByText('Nothing yet')).toBeNull()
+  })
+
   it('shows tools, permissions, session and the grant, and opens the login window', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })
@@ -241,6 +259,22 @@ describe('activity and run traces', () => {
     expect(screen.getByText(/2 exact matches replaced/)).toBeTruthy()
   })
 
+  it('shows only the blocked count when the main process can’t count what was sent', async () => {
+    const fake = createFakeApi({ now: NOW })
+    renderAt('#/activity/c_8f2e1b', {
+      ...fake,
+      runs: {
+        ...fake.runs,
+        trace: async (callId) => {
+          const trace = await fake.runs.trace(callId)
+          return trace === null ? null : { ...trace, requests: { sent: null, probes: null, blocked: 2 } }
+        },
+      },
+    })
+    expect(await screen.findByText('2 blocked')).toBeTruthy()
+    expect(screen.queryByText(/sent \(/)).toBeNull()
+  })
+
   it('narrows to requests', async () => {
     const user = userEvent.setup()
     renderAt('#/activity/c_8f2e1b', createFakeApi({ now: NOW }))
@@ -367,11 +401,93 @@ describe('clients and settings', () => {
           available: '0.1.1',
           checkedAt: null,
           signed: false,
+          disabledReason: null,
         }),
       },
     })
     expect(await screen.findByText('0.1.1 available')).toBeTruthy()
-    expect(screen.getByText('Unsigned build: updates are off')).toBeTruthy()
+    expect(screen.getByText('Not signed with a Developer ID')).toBeTruthy()
+  })
+
+  it.each([
+    ['not-configured', 'Off: this build has no update feed'],
+    ['development', 'Off in a development or demo build'],
+    ['unsigned', 'Off: Squirrel.Mac only installs updates for a Developer ID build'],
+  ] as const)('says updates are off in a %s build, and offers no check', async (reason, words) => {
+    const fake = createFakeApi({ now: NOW })
+    renderAt('#/settings', {
+      ...fake,
+      updates: {
+        ...fake.updates,
+        status: async () => ({
+          current: '0.1.0',
+          state: 'disabled',
+          available: null,
+          checkedAt: null,
+          signed: false,
+          disabledReason: reason,
+        }),
+      },
+    })
+    expect(await screen.findByText(words)).toBeTruthy()
+    expect(screen.getByText('Off')).toBeTruthy()
+    expect(screen.queryByText('Up to date')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Check now' })).toBeNull()
+  })
+
+  it.each([
+    ['not-checked', 'Not checked yet'],
+    ['checking', 'Checking…'],
+    ['downloading', 'Downloading 0.1.1'],
+    ['available', '0.1.1 available'],
+    ['ready', '0.1.1 downloaded'],
+    ['error', 'Couldn’t check'],
+    ['up-to-date', 'Up to date'],
+  ] as const)('words the %s state', async (state, words) => {
+    const fake = createFakeApi({ now: NOW })
+    renderAt('#/settings', {
+      ...fake,
+      updates: {
+        ...fake.updates,
+        status: async () => ({
+          current: '0.1.0',
+          state,
+          available: state === 'downloading' || state === 'ready' || state === 'available' ? '0.1.1' : null,
+          checkedAt: null,
+          signed: true,
+          disabledReason: null,
+        }),
+      },
+    })
+    expect(await screen.findByText(words)).toBeTruthy()
+    expect(screen.getByText('Developer ID')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Check now' })).toBeTruthy()
+  })
+
+  it.each([
+    [true, 'Downloaded. It installs when siteadapter quits.'],
+    [false, 'Downloaded. Turn on automatic installs to apply it.'],
+  ] as const)('says when a downloaded update installs, with automatic installs %s', async (on, words) => {
+    const fake = createFakeApi({ now: NOW })
+    renderAt('#/settings', {
+      ...fake,
+      settings: {
+        ...fake.settings,
+        get: async () => ({ ...(await fake.settings.get()), autoInstallUpdates: on }),
+      },
+      updates: {
+        ...fake.updates,
+        status: async () => ({
+          current: '0.1.0',
+          state: 'ready',
+          available: '0.1.1',
+          checkedAt: null,
+          signed: true,
+          disabledReason: null,
+        }),
+      },
+    })
+    expect(await screen.findByText(words)).toBeTruthy()
   })
 })
 

@@ -12,7 +12,6 @@ import {
   type FileFacts,
   findOp,
   OP_REQUIREMENT,
-  parseItemList,
   realCredentials,
   SERVICE_ACCOUNT_LISTS_ITEMS,
   serviceAccountReady,
@@ -263,37 +262,12 @@ describe('checkOpBinary', () => {
   })
 })
 
-describe('parseItemList', () => {
-  it('keeps ids and titles only, cleaned', () => {
-    const stdout = JSON.stringify([
-      {
-        id: 'abc123',
-        title: 'Woolworths',
-        category: 'LOGIN',
-        urls: [{ href: 'https://x' }],
-        fields: [{ value: 'pw' }],
-      },
-      { id: '../x', title: 'Bad id' },
-      { id: 'def456', title: 'Wool‮worths\u0000' },
-      'junk',
-      null,
-    ])
-    expect(parseItemList(stdout)).toEqual([
-      { id: 'abc123', title: 'Woolworths' },
-      { id: 'def456', title: 'Woolworths' },
-    ])
-    expect(parseItemList('not json')).toEqual([])
-    expect(parseItemList('{"id":"a"}')).toEqual([])
-  })
-})
-
 describe('realCredentials', () => {
   it('reports what is set up, and offers no fake provider', async () => {
     const { spawn, ran } = spawner({
       ...signed,
       '/usr/bin/security find-generic-password': { code: 0, stdout: 'keychain: x' },
     })
-    // As it will be once the SDK ships with the app and can list items.
     const credentials = realCredentials({
       files: files(homebrew),
       spawner: spawn,
@@ -318,8 +292,11 @@ describe('realCredentials', () => {
     expect(credentials.otpReader()).toBe(disabledOtpReader)
   })
 
-  it('lists vault items through the checked op only, and never for the service account', async () => {
-    const items = JSON.stringify([{ id: 'abc123', title: 'Woolworths' }])
+  it('lists vault items through the checked op, ids and titles only', async () => {
+    const items = JSON.stringify([
+      { id: 'abc123', title: 'Woolworths', fields: [{ value: 'pw' }], urls: [{ href: 'https://x' }] },
+      { id: '../x', title: 'Bad id' },
+    ])
     const { spawn, ran } = spawner({
       ...signed,
       '/opt/homebrew/Caskroom/op/op item': { code: 0, stdout: items },
@@ -337,8 +314,88 @@ describe('realCredentials', () => {
       command: '/opt/homebrew/Caskroom/op/op',
       args: ['item', 'list', '--vault', 'siteadapter', '--format', 'json'],
     })
-    expect(await credentials.vaultItems('onepassword-service-account')).toEqual([])
     expect(await credentials.vaultItems('fake')).toEqual([])
+    expect(await credentials.vaultItems('messages')).toEqual([])
+  })
+
+  it('lists the service account’s vault through its own SDK client, which gets the Keychain token', async () => {
+    const { spawn, ran } = spawner({
+      ...signed,
+      '/usr/bin/security find-generic-password': { code: 0, stdout: 'sa-token' },
+    })
+    const tokens: string[] = []
+    const listed: { vault: string; filters: unknown[] }[] = []
+    const credentials = realCredentials({
+      files: files(homebrew),
+      spawner: spawn,
+      timers,
+      uid: UID,
+      groups: GROUPS,
+      serviceAccountReady: async () => true,
+      serviceAccountClient: async (token) => {
+        token.reveal((plaintext) => tokens.push(plaintext))
+        return {
+          secrets: { resolve: async () => 'never' },
+          vaults: {
+            list: async () => [
+              { id: 'v1', title: 'Personal' },
+              { id: 'v2', title: 'siteadapter' },
+            ],
+          },
+          items: {
+            list: async (vault, ...filters) => {
+              listed.push({ vault, filters })
+              return [{ id: 'item1', title: 'Woolworths\u202e', category: 'Login' } as never]
+            },
+          },
+        }
+      },
+    })
+    await credentials.configure(DEFAULT_SETTINGS)
+    expect(await credentials.vaultItems('onepassword-service-account')).toEqual([
+      { id: 'item1', title: 'Woolworths' },
+    ])
+    // The vault by its exact title, active items only; the token read with -w, for the SDK alone.
+    expect(listed).toEqual([
+      { vault: 'v2', filters: [{ type: 'ByState', content: { active: true, archived: false } }] },
+    ])
+    expect(tokens).toEqual(['sa-token'])
+    expect(ran.find((r) => r.command === '/usr/bin/security')?.args).toContain('-w')
+  })
+
+  it('fails a service-account listing when the vault isn’t there or 1Password refuses', async () => {
+    const { spawn } = spawner({
+      ...signed,
+      '/usr/bin/security find-generic-password': { code: 0, stdout: 'sa-token' },
+    })
+    const credentials = realCredentials({
+      files: files(homebrew),
+      spawner: spawn,
+      timers,
+      uid: UID,
+      groups: GROUPS,
+      serviceAccountClient: async () => ({
+        secrets: { resolve: async () => 'never' },
+        vaults: { list: async () => [{ id: 'v1', title: 'Personal' }] },
+        items: { list: async () => [] },
+      }),
+    })
+    await credentials.configure(DEFAULT_SETTINGS)
+    await expect(credentials.vaultItems('onepassword-service-account')).rejects.toEqual(
+      new CredentialError('not-found'),
+    )
+    const noToken = realCredentials({
+      files: files(homebrew),
+      spawner: spawner({ ...signed, '/usr/bin/security find-generic-password': { code: 44 } }).spawn,
+      timers,
+      uid: UID,
+      groups: GROUPS,
+      serviceAccountClient: async () => {
+        throw new Error('never reached')
+      },
+    })
+    await noToken.configure(DEFAULT_SETTINGS)
+    await expect(noToken.vaultItems('onepassword-service-account')).rejects.toBeInstanceOf(CredentialError)
   })
 
   it('has no CLI provider when op fails the checks, and fails a listing op refuses', async () => {
@@ -381,18 +438,18 @@ describe('realCredentials', () => {
     await expect(failing.vaultItems('onepassword-cli')).rejects.toBeInstanceOf(CredentialError)
   })
 
-  it('reports the service account not installed, without asking the Keychain, until it can work', async () => {
+  it('reports the service account not installed, without asking the Keychain, when its SDK is missing', async () => {
     const { spawn, ran } = spawner({
       ...signed,
       '/usr/bin/security find-generic-password': { code: 0, stdout: 'keychain: x' },
     })
-    // The default: this build can't list the vault through the SDK, so no grant could be made.
     const credentials = realCredentials({
       files: files(homebrew),
       spawner: spawn,
       timers,
       uid: UID,
       groups: GROUPS,
+      serviceAccountReady: async () => false,
     })
     await credentials.configure(DEFAULT_SETTINGS)
     expect((await credentials.status())[0]).toEqual({
@@ -403,19 +460,19 @@ describe('realCredentials', () => {
     expect(ran.some((r) => r.command === '/usr/bin/security')).toBe(false)
   })
 
-  it('serviceAccountReady needs the SDK to resolve and the vault to be listable', async () => {
-    expect(SERVICE_ACCOUNT_LISTS_ITEMS).toBe(false)
+  it('serviceAccountReady needs the SDK to resolve, and it does here', async () => {
+    expect(SERVICE_ACCOUNT_LISTS_ITEMS).toBe(true)
     const asked: string[] = []
     expect(
       await serviceAccountReady((specifier) => {
         asked.push(specifier)
         return true
       }),
-    ).toBe(false)
+    ).toBe(true)
     expect(asked).toEqual(['@1password/sdk'])
     expect(await serviceAccountReady(() => false)).toBe(false)
-    // The default resolver: the SDK isn't a dependency of this package, so it can't resolve here.
-    expect(await serviceAccountReady()).toBe(false)
+    // The default resolver: @1password/sdk is a dependency of this package.
+    expect(await serviceAccountReady()).toBe(true)
   })
 
   it('a disabled Messages reader reads nothing', async () => {

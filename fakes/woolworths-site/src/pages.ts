@@ -21,6 +21,8 @@ export interface PageContext {
   readonly sensorValue: string
   /** First name of the logged-in shopper, or null when anonymous. */
   readonly shopper: string | null
+  /** Extra markup for the head, from a hostile variant (beacon.ts). Empty or absent normally. */
+  readonly pageScript?: string
 }
 
 function layout(title: string, context: PageContext, main: string): string {
@@ -34,7 +36,7 @@ function layout(title: string, context: PageContext, main: string): string {
 <head>
   <meta charset="utf-8">
   <title>${escapeHtml(title)}</title>
-  ${sensorScript(context.sensorValue)}
+  ${sensorScript(context.sensorValue)}${context.pageScript ?? ''}
 </head>
 <body>
   <header class="header">

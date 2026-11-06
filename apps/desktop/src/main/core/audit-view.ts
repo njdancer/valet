@@ -340,7 +340,8 @@ export function runTrace(
     adapterVersion: version.version,
     adapterHash: call.called.event.adapterHash,
     secretsUsed,
-    requests: { sent: 0, probes: 0, blocked },
+    // The runtime audits the requests it refused, never the ones it let through or the probes.
+    requests: { sent: null, probes: null, blocked },
     steps,
     input: remembered?.input ?? [{ kind: 'text', text: '(not kept: the app restarted since this call)' }],
     output: summary.outcome === 'ok' ? (remembered?.output ?? null) : null,

@@ -4,9 +4,9 @@
 // Keychain or Messages.
 //
 // - onepassword-service-account: the token from the Keychain (KeychainTokenSource), vault VAULT.
-//   Reported unavailable ('not-installed') for now: the SDK doesn't ship with the app (it is external
-//   to the bundle and not a dependency of this package) and its items can't be listed from here, so
-//   no grant could be made for it. See serviceAccountReady.
+//   Offered when its SDK resolves from the app (serviceAccountReady) and the token is stored. Its
+//   items are listed through the provider's own SDK client, so the token goes only to
+//   sdkClientFactory.
 // - onepassword-cli: `op`, only at a path that passed checkOpBinary: the one the person chose, or
 //   the first of the usual places that passes. Never a PATH lookup.
 // - messages: MessagesOtpReader, only while the setting is on (it needs Full Disk Access).
@@ -30,6 +30,7 @@ import {
   OnePasswordCliProvider,
   OnePasswordServiceAccountProvider,
   runProcess,
+  type SecretsClientFactory,
   type Spawner,
   type Timers,
 } from '@siteadapter/credentials'
@@ -155,43 +156,23 @@ export async function findOp(settings: Settings, deps: OpCheckDeps): Promise<str
   return null
 }
 
-const OP_ITEM = /^[a-z0-9]{1,64}$/i
-
-/** Parses `op item list --format json`: ids and titles only, whatever else op printed. */
-export function parseItemList(stdout: string): VaultItem[] {
-  let value: unknown
-  try {
-    value = JSON.parse(stdout)
-  } catch {
-    return []
-  }
-  if (!Array.isArray(value)) return []
-  const items: VaultItem[] = []
-  for (const entry of value as unknown[]) {
-    if (entry === null || typeof entry !== 'object') continue
-    const { id, title } = entry as { id?: unknown; title?: unknown }
-    if (typeof id !== 'string' || !OP_ITEM.test(id) || typeof title !== 'string') continue
-    items.push({ id, title: title.replace(/[\p{Cc}\p{Cf}]/gu, '').slice(0, 200) })
-  }
-  return items
-}
-
 export interface RealCredentialsDeps extends OpCheckDeps {
   /** Builds the Messages reader (tests pass a fake). */
   readonly messagesReader?: () => OtpReader
   /** Whether the service account can be offered at all; serviceAccountReady by default. */
   readonly serviceAccountReady?: () => Promise<boolean>
+  /** The service account's SDK client, for tests; the real SDK by default. */
+  readonly serviceAccountClient?: SecretsClientFactory
 }
 
 /**
- * Whether the service-account provider could work in this build: its SDK resolves from the app, and
- * the app can list the vault's items so a grant can be made. The second isn't built yet (the SDK
- * client isn't reachable here without revealing its token outside sdkClientFactory), so this says
- * no without looking, and the provider shows as not installed rather than offering a grant that
- * checkGrantRequest would always refuse.
+ * Whether the service-account provider can list the vault's items, so that a grant can be made for
+ * it. It lists through its own SDK client (credentials' listItems), so this is only a switch for
+ * builds that must not offer it.
  */
-export const SERVICE_ACCOUNT_LISTS_ITEMS = false
+export const SERVICE_ACCOUNT_LISTS_ITEMS = true
 
+/** Whether the service-account provider could work in this build: its SDK resolves from the app. */
 export async function serviceAccountReady(
   resolves: (specifier: string) => boolean = (specifier) => {
     try {
@@ -214,6 +195,8 @@ export function realCredentials(deps: RealCredentialsDeps): Credentials {
       spawner: deps.spawner,
       timers: deps.timers,
     }),
+    timers: deps.timers,
+    ...(deps.serviceAccountClient === undefined ? {} : { clientFactory: deps.serviceAccountClient }),
   })
   let opPath: string | null = null
   let cli: OnePasswordCliProvider | null = null
@@ -261,22 +244,10 @@ export function realCredentials(deps: RealCredentialsDeps): Credentials {
       ]
     },
     async vaultItems(provider) {
-      // The service account's SDK client isn't reachable from here without revealing its token
-      // outside sdkClientFactory, so only the CLI can list items for now.
-      if (provider !== 'onepassword-cli' || opPath === null) return []
-      const listed = await run(
-        opPath,
-        ['item', 'list', '--vault', VAULT, '--format', 'json'],
-        4 * 1024 * 1024,
-        60_000,
-      )
-      if (listed.kind !== 'exited' || listed.code !== 0) {
-        if (listed.kind === 'exited') listed.stdout.fill(0)
-        throw new CredentialError('unavailable')
-      }
-      const items = parseItemList(listed.stdout.toString('utf8'))
-      listed.stdout.fill(0)
-      return items
+      // Both providers list the vault themselves: ids and titles only, never a field.
+      if (provider === 'onepassword-cli') return cli === null ? [] : cli.listItems(VAULT)
+      if (provider === 'onepassword-service-account') return serviceAccount.listItems(VAULT)
+      return []
     },
     async configure(settings) {
       opPath = await findOp(settings, deps)
@@ -286,6 +257,8 @@ export function realCredentials(deps: RealCredentialsDeps): Credentials {
           : new OnePasswordCliProvider({
               opPaths: [opPath],
               searchPath: null,
+              // The path just passed checkOpBinary; a file gone since is reported when op runs.
+              isExecutable: async (path) => path === opPath,
               spawner: deps.spawner,
               timers: deps.timers,
             })

@@ -18,6 +18,8 @@ const endpoint = await startEndpoint({ caller, configPath: bridgeConfigPath })
 const withheld = endpoint.refresh()
 // when the person asks for a new token (one may have leaked):
 await endpoint.resetToken()
+// the sessions open now, and how each arrived (pass onSessionsChanged to hear of changes):
+endpoint.sessions() // { total, bridge, http, sessions: [{ transport, client }] }
 // on quit:
 await endpoint.close()
 ```
@@ -62,6 +64,27 @@ claude mcp add siteadapter -- <repo>/node_modules/.bin/tsx <repo>/packages/mcp-s
 That runs from any working directory, but needs Node 24 on the client's `PATH`. Until the app
 bundles the bridge, this is the only way to launch it.
 
+## Live sessions and their transport
+
+`sessions()` on the running server, and on what `startEndpoint` returns (a
+`SessionReportingEndpoint`, which extends `RunningEndpoint`), returns the open sessions:
+`{ total, bridge, http, sessions }`, where each session is `{ transport, client }`, least
+recently used first. `client` is the name from the client's `initialize`, cleaned as for the
+audit log, or `unknown` until it is known. Session ids are never shown. Pass
+`onSessionsChanged(sessions)` in the options to hear when a session opens, learns its client's
+name, or closes (evicted, token reset, or closed by the client). A listener that throws is
+ignored.
+
+`transport` is `'stdio-bridge'` or `'http'`. The bridge sends `x-siteadapter-transport:
+stdio-bridge` on every request (`TRANSPORT_HEADER`, `BRIDGE_TRANSPORT`). The endpoint reads it only
+on the `initialize` that opens a session, and only that exact value counts; the label then stays
+with the session. Every call passes it to the runtime as `ToolCall.transport`.
+
+**It is a label, not a permission.** Any local client that has the token can send the same header.
+So nothing depends on it: the token, Host and Origin checks, the tools listed, their
+descriptions and every result are the same either way. A header sent without the token opens
+nothing.
+
 ## What the endpoint guarantees
 
 - **Names.** A tool is `<adapter id, - as _>_<tool>`. When two tools map to one name, both are
@@ -99,7 +122,8 @@ bundles the bridge, this is the only way to launch it.
   `Authorization: Bearer <token>` is required on every request (401), compared in constant
   time. Bodies over 1 MiB are refused. At most 32 sessions are kept; the least recently used goes
   first.
-- **Bridge.** It writes nothing but JSON-RPC to stdout. Upstream failures become JSON-RPC errors
+- **Bridge.** It labels itself with `x-siteadapter-transport: stdio-bridge` (see above). It
+  writes nothing but JSON-RPC to stdout. Upstream failures become JSON-RPC errors
   with fixed text. Every client request gets exactly one answer: if the app quits or restarts
   mid-call, or the connection resets, the call is answered at once with a fixed error instead of
   waiting out the client's own timeout, and a late answer is dropped. A request the client

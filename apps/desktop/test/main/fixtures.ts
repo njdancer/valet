@@ -4,6 +4,7 @@
 import {
   type AdapterDefinition,
   type AuthPage,
+  type AuthPageOptions,
   defineAdapter,
   type ElementInfo,
   type FetchResult,
@@ -13,7 +14,8 @@ import {
   type SessionDriver,
   type ToolPage,
 } from '@siteadapter/core'
-import { z } from '../../src/main/core/zod'
+import { z } from 'zod'
+import type { DriverReporters } from '../../src/main/core/service'
 
 export const SHOP: ManifestInput = {
   schemaVersion: 1,
@@ -155,8 +157,13 @@ export class FakeDriver implements SessionDriver {
   readonly log: string[] = []
   closed = false
   nextPage: () => FakeAuthPage = () => new FakeAuthPage()
+  /** What each openAuthPage() was given, in order. */
+  readonly authOptions: (AuthPageOptions | undefined)[] = []
+  /** The reporters the service gave createDriver. */
+  reporters: DriverReporters | null = null
 
-  async openAuthPage(): Promise<AuthPage> {
+  async openAuthPage(options?: AuthPageOptions): Promise<AuthPage> {
+    this.authOptions.push(options)
     const page = this.nextPage()
     this.pages.push(page)
     return page

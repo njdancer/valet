@@ -127,8 +127,9 @@ function Trace({ trace, view }: { readonly trace: RunTrace; readonly view: 'time
         <div className="kpi">
           <span>Requests</span>
           <strong>
-            {trace.requests.sent} sent ({plural(trace.requests.probes, 'probe')}) · {trace.requests.blocked}{' '}
-            blocked
+            {trace.requests.sent === null || trace.requests.probes === null
+              ? `${trace.requests.blocked} blocked`
+              : `${trace.requests.sent} sent (${plural(trace.requests.probes, 'probe')}) · ${trace.requests.blocked} blocked`}
           </strong>
         </div>
         <div className="kpi">

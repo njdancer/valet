@@ -87,6 +87,19 @@ export const STAGE_WORDING: Readonly<Record<Stage, string>> = {
   update: 'App update',
 }
 
+/** Why a build doesn't update itself (UpdateStatus.disabledReason). */
+export const UPDATES_OFF_WORDING: Readonly<Record<'not-configured' | 'development' | 'unsigned', string>> = {
+  'not-configured': 'Off: this build has no update feed',
+  development: 'Off in a development or demo build',
+  unsigned: 'Off: Squirrel.Mac only installs updates for a Developer ID build',
+}
+
+export function updatesOffWording(reason: string): string {
+  return Object.hasOwn(UPDATES_OFF_WORDING, reason)
+    ? UPDATES_OFF_WORDING[reason as keyof typeof UPDATES_OFF_WORDING]
+    : 'Off'
+}
+
 export function stageWording(stage: Stage): string {
   return Object.hasOwn(STAGE_WORDING, stage) ? STAGE_WORDING[stage] : 'Unknown stage'
 }

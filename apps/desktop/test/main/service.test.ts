@@ -2,11 +2,11 @@
 // The whole main-process wiring in plain Node: the real runtime, stores, audit log and auth flow,
 // with a fake driver, the test credential provider, a stand-in endpoint and a recording UI.
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SiteAdapterError } from '@siteadapter/core'
-import type { RunningEndpoint, ToolCaller } from '@siteadapter/mcp-server'
+import type { LiveSessions, SessionReportingEndpoint, ToolCall, ToolCaller } from '@siteadapter/mcp-server'
 import { LoginAttemptMarker } from '@siteadapter/runtime'
 import { afterEach, describe, expect, it } from 'vitest'
 import { dataPaths } from '../../src/main/core/constants'
@@ -14,9 +14,10 @@ import { disabledOtpReader } from '../../src/main/core/credentials'
 import { DEMO_ACCOUNT, demoCredentials } from '../../src/main/core/demo'
 import { builtinAdapter } from '../../src/main/core/registry'
 import { AppService, fillSelector } from '../../src/main/core/service'
+import { disabledUpdates, type UpdatesHooks, type UpdatesPort } from '../../src/main/core/updates'
 import type { AppEvent, ConfirmationItem, HashRoute } from '../../src/shared/api'
 import { CONFIRM_ARM_MS } from '../../src/shared/api'
-import { FakeDriver, SHOP, SHOP_FILES, shopDefinition } from './fixtures'
+import { FakeAuthPage, FakeDriver, SHOP, SHOP_FILES, shopDefinition } from './fixtures'
 
 const TOKEN = 't'.repeat(43)
 const dirs: string[] = []
@@ -26,10 +27,23 @@ afterEach(async () => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
 })
 
-async function setup(options: { checkOp?: (path: string) => Promise<string | null> } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'sa-service-'))
-  dirs.push(dir)
+async function setup(
+  options: {
+    checkOp?: (path: string) => Promise<string | null>
+    updates?: (hooks: UpdatesHooks) => Promise<UpdatesPort>
+    version?: string
+    dir?: string
+    /** breakers.json as the runtime finds it at start. */
+    breakers?: unknown
+  } = {},
+) {
+  const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'sa-service-'))
+  if (options.dir === undefined) dirs.push(dir)
   const paths = dataPaths(join(dir, 'data'))
+  if (options.breakers !== undefined) {
+    mkdirSync(paths.dir, { recursive: true, mode: 0o700 })
+    writeFileSync(paths.breakers, JSON.stringify(options.breakers))
+  }
   let now = Date.parse('2026-11-07T00:00:00.000Z')
   const driver = new FakeDriver()
   const adapter = builtinAdapter(shopDefinition(), SHOP_FILES)
@@ -51,10 +65,12 @@ async function setup(options: { checkOp?: (path: string) => Promise<string | nul
     resets: 0,
     closes: 0,
     starts: 0,
+    live: { total: 0, bridge: 0, http: 0, sessions: [] } as LiveSessions,
+    sessionsChanged: null as ((sessions: LiveSessions) => void) | null,
   }
   const service = new AppService({
     paths,
-    version: '0.1.0',
+    version: options.version ?? '0.1.0',
     demo: true,
     now: () => now,
     timers: {
@@ -63,10 +79,14 @@ async function setup(options: { checkOp?: (path: string) => Promise<string | nul
     },
     sleep: async () => {},
     adapters: [adapter],
-    createDriver: async () => driver,
+    createDriver: async (_manifest, reporters) => {
+      driver.reporters = reporters
+      return driver
+    },
     credentials: demoCredentials(disabledOtpReader),
-    startEndpoint: async (caller): Promise<RunningEndpoint> => {
+    startEndpoint: async (caller, _configPath, onSessionsChanged): Promise<SessionReportingEndpoint> => {
       endpoint.caller = caller
+      endpoint.sessionsChanged = onSessionsChanged
       endpoint.starts++
       writeFileSync(paths.bridgeConfig, JSON.stringify({ url: 'http://127.0.0.1:47000/mcp', token: TOKEN }))
       return {
@@ -83,6 +103,7 @@ async function setup(options: { checkOp?: (path: string) => Promise<string | nul
         close: async () => {
           endpoint.closes++
         },
+        sessions: () => endpoint.live,
       }
     },
     ui: {
@@ -98,9 +119,13 @@ async function setup(options: { checkOp?: (path: string) => Promise<string | nul
       quit: () => ui.quits++,
     },
     emit: (event) => events.push(event),
-    probeFallback: () => null,
     bridge: { command: '/repo/tsx', args: ['/repo/bridge-cli.ts', paths.bridgeConfig] },
     checkOp: options.checkOp ?? (async (path) => (path === '/good/op' ? path : null)),
+    updates: options.updates ?? (async () => disabledUpdates('0.1.0', 'development', false)),
+    // The site's rate budget waits on the test's clock.
+    pacingSleep: async (ms) => {
+      now += ms
+    },
   })
   services.push(service)
   await service.start()
@@ -110,7 +135,8 @@ async function setup(options: { checkOp?: (path: string) => Promise<string | nul
     input: unknown,
     client = 'Claude Code',
     callId = `call_${tool}_${Math.random().toString(36).slice(2)}`,
-  ) => (endpoint.caller as ToolCaller).call({ adapterId: 'shop', tool, input, client, callId })
+    extra: Pick<ToolCall, 'signal' | 'transport'> = { transport: 'http' },
+  ) => (endpoint.caller as ToolCaller).call({ adapterId: 'shop', tool, input, client, callId, ...extra })
   return {
     service,
     api,
@@ -120,6 +146,7 @@ async function setup(options: { checkOp?: (path: string) => Promise<string | nul
     endpoint,
     events,
     paths,
+    dir,
     call,
     advance: (ms: number) => {
       now += ms
@@ -274,6 +301,24 @@ describe('grants', () => {
       origins: ['https://login.shop.test'],
     })
   })
+
+  it('counts a provider’s grants only for an installed hash that is approved', async () => {
+    const s = await approved()
+    await s.api.grants.make({
+      adapterId: 'shop',
+      adapterHash: s.adapter.hash,
+      secret: 'login',
+      provider: 'fake',
+      itemRef: 'demo-woolworths',
+      origins: ['https://login.shop.test'],
+    })
+    const count = async () => (await s.api.grants.providers()).find((p) => p.kind === 'fake')?.grantCount
+    expect(await count()).toBe(1)
+    await s.api.approvals.reject('shop', s.adapter.hash)
+    expect(await count()).toBe(0)
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    expect(await count()).toBe(1)
+  })
 })
 
 describe('a grant and the runtime’s login hold', () => {
@@ -336,8 +381,65 @@ describe('tool calls', () => {
     expect(trace?.output).not.toBeNull()
     expect(await s.api.runs.trace('call_none')).toBeNull()
     expect((await s.api.runs.statsToday()).toolCalls).toBe(1)
-    expect((await s.api.clients.list()).map((c) => [c.reportedName, c.calls7d])).toEqual([['Claude Code', 1]])
-    expect((await s.api.endpoint.status()).connectedClients).toBe(1)
+    expect((await s.api.clients.list()).map((c) => [c.reportedName, c.calls7d, c.transport])).toEqual([
+      ['Claude Code', 1, 'http'],
+    ])
+  })
+
+  it('shows the endpoint’s live sessions, and the transport each client came by', async () => {
+    const s = await approved()
+    expect((await s.api.endpoint.status()).connectedClients).toBe(0)
+    s.endpoint.live = {
+      total: 2,
+      bridge: 1,
+      http: 1,
+      sessions: [
+        { transport: 'stdio-bridge', client: 'Claude Desktop' },
+        { transport: 'http', client: 'Claude Code' },
+      ],
+    }
+    s.events.splice(0)
+    s.endpoint.sessionsChanged?.(s.endpoint.live)
+    expect(s.events).toEqual([{ type: 'endpoint-changed' }])
+    expect((await s.api.endpoint.status()).connectedClients).toBe(2)
+    await s.call('echo', { text: 'x' }, 'Claude Desktop', 'call_bridge', { transport: 'stdio-bridge' })
+    await s.call('echo', { text: 'x' }, 'Claude Code', 'call_http', { transport: 'http' })
+    expect((await s.api.clients.list()).map((c) => [c.reportedName, c.transport])).toEqual([
+      ['Claude Desktop', 'stdio'],
+      ['Claude Code', 'http'],
+    ])
+  })
+
+  it('ends a call the client cancels, and every call still running when the app stops', async () => {
+    const s = await approved()
+    const client = new AbortController()
+    const cancelled = s.call('add', { item: 'milk' }, 'Claude Code', 'call_cancelled', {
+      signal: client.signal,
+    })
+    for (let i = 0; i < 50 && s.ui.shownConfirmations.length === 0; i++)
+      await new Promise((r) => setTimeout(r, 10))
+    client.abort()
+    expect(await cancelled).toEqual({ status: 'failed', stage: 'tool-run', errorClass: 'aborted' })
+    // The panel closed with the call, and the answer is on record as declined.
+    expect(s.ui.closedConfirmations).toEqual(s.ui.shownConfirmations)
+    expect(s.service.confirmationPending(s.ui.shownConfirmations[0] as string)).toBe(false)
+    const events = (await s.api.audit.page({})).records.map((r) => r.event)
+    expect(events).toContainEqual(expect.objectContaining({ type: 'confirmation', answer: 'declined' }))
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'tool-finished',
+        callId: 'call_cancelled',
+        outcome: 'failed',
+        stage: 'tool-run',
+        errorClass: 'aborted',
+      }),
+    )
+
+    const running = s.call('add', { item: 'eggs' }, 'Claude Code', 'call_on_quit')
+    for (let i = 0; i < 50 && s.ui.shownConfirmations.length < 2; i++)
+      await new Promise((r) => setTimeout(r, 10))
+    await s.service.stop()
+    expect(await running).toEqual({ status: 'failed', stage: 'tool-run', errorClass: 'aborted' })
   })
 
   it('refuses every call while paused, and calls under a revoked name, and audits both', async () => {
@@ -420,7 +522,7 @@ describe('tool calls', () => {
 
   it('asks the person in the confirmation panel, and only an armed approval from it counts', async () => {
     const s = await approved()
-    const pending = s.call('add', { item: 'milk' }, 'Claude Code', 'call_add')
+    const pending = s.call('add', { item: 'milk' }, 'Claude Code', 'call_add', { transport: 'stdio-bridge' })
     for (let i = 0; i < 50 && s.ui.shownConfirmations.length === 0; i++)
       await new Promise((r) => setTimeout(r, 10))
     const [id] = s.ui.shownConfirmations
@@ -430,7 +532,7 @@ describe('tool calls', () => {
       tool: 'add',
       client: 'Claude Code',
       adapterNote: 'Add milk?',
-      clientTransport: 'http',
+      clientTransport: 'stdio',
     })
     expect(item?.approvedAt).toBe('2026-11-07T00:00:00.000Z')
     expect(JSON.stringify(item?.input)).toContain('milk')
@@ -472,6 +574,222 @@ describe('tool calls', () => {
   })
 })
 
+describe('updates', () => {
+  function audited(paths: { audit: string }) {
+    return readFileSync(paths.audit, 'utf8')
+      .trim()
+      .split('\n')
+      .filter((line) => line !== '')
+      .map((line) => JSON.parse(line).event)
+  }
+
+  it('says why a build doesn’t update, and checks nothing', async () => {
+    const s = await setup()
+    expect(await s.api.updates.status()).toEqual({
+      current: '0.1.0',
+      state: 'disabled',
+      available: null,
+      checkedAt: null,
+      signed: false,
+      disabledReason: 'development',
+    })
+    await s.api.updates.check()
+    expect(s.events).toContainEqual({ type: 'app-changed' })
+  })
+
+  it('audits update-installed on the first launch of a newer version, and only then', async () => {
+    const first = await setup({ version: '0.1.0' })
+    await first.service.stop()
+    const second = await setup({ version: '0.2.0', dir: first.dir })
+    await second.service.stop()
+    const third = await setup({ version: '0.2.0', dir: first.dir })
+    await third.service.stop()
+    // An older build started by hand afterwards is no update either.
+    const older = await setup({ version: '0.1.5', dir: first.dir })
+    await older.service.stop()
+    expect(audited(first.paths).filter((e) => e.type === 'update-installed')).toEqual([
+      { type: 'update-installed', from: '0.1.0', to: '0.2.0' },
+    ])
+    expect(JSON.parse(readFileSync(first.paths.versions, 'utf8'))).toEqual({
+      lastRun: '0.1.5',
+      highestRun: '0.2.0',
+    })
+  })
+
+  it('gives the updater the settings, versions and idleness it reads, and audits a download', async () => {
+    let hooks: UpdatesHooks | null = null
+    let started = 0
+    let stopped = 0
+    let checks = 0
+    const s = await setup({
+      version: '0.2.0',
+      updates: async (given) => {
+        hooks = given
+        return {
+          status: () => ({
+            current: '0.2.0',
+            state: 'not-checked',
+            available: null,
+            checkedAt: null,
+            signed: true,
+            disabledReason: null,
+          }),
+          check: async () => {
+            checks++
+          },
+          start: () => started++,
+          stop: () => stopped++,
+        }
+      },
+    })
+    const h = hooks as unknown as UpdatesHooks
+    expect(started).toBe(1)
+    expect(h.channel()).toBe('stable')
+    expect(h.autoInstallOnQuit()).toBe(false)
+    await s.api.settings.set({ updateChannel: 'beta', autoInstallUpdates: true })
+    expect(h.channel()).toBe('beta')
+    expect(h.autoInstallOnQuit()).toBe(true)
+    expect(h.highestVersionRun()).toBe('0.2.0')
+    await h.whenIdle()
+    expect((await s.api.updates.status()).state).toBe('not-checked')
+    await s.api.updates.check()
+    expect(checks).toBe(1)
+    s.events.splice(0)
+    h.changed()
+    expect(s.events).toEqual([{ type: 'app-changed' }])
+    h.downloaded('0.2.0', '0.3.0')
+    await s.service.stop()
+    expect(stopped).toBe(1)
+    expect(audited(s.paths).filter((e) => e.type === 'update-downloaded')).toEqual([
+      { type: 'update-downloaded', from: '0.2.0', to: '0.3.0' },
+    ])
+  })
+
+  it('is idle for an install only once no call holds an adapter, and a paused site counts as idle', async () => {
+    let hooks: UpdatesHooks | null = null
+    const s = await setup({
+      updates: async (given) => {
+        hooks = given
+        return disabledUpdates('0.1.0', 'development', false)
+      },
+    })
+    const h = hooks as unknown as UpdatesHooks
+    // Nothing approved: nothing can run.
+    await h.whenIdle()
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    const pending = s.call('add', { item: 'milk' })
+    for (let i = 0; i < 50 && s.ui.shownConfirmations.length === 0; i++)
+      await new Promise((r) => setTimeout(r, 10))
+    let idle = false
+    const waiting = h.whenIdle().then(() => {
+      idle = true
+    })
+    await new Promise((r) => setTimeout(r, 30))
+    expect(idle).toBe(false)
+    await s.api.answerConfirmation(s.ui.shownConfirmations[0] as string, false, { role: 'tray', shows: null })
+    await pending
+    await waiting
+    expect(idle).toBe(true)
+  })
+
+  it('counts a site whose breaker is open as idle for an install', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sa-service-'))
+    dirs.push(dir)
+    let hooks: UpdatesHooks | null = null
+    const s = await setup({
+      dir,
+      breakers: {
+        version: 1,
+        hosts: { 'www.shop.test': { retryAt: Date.parse('2026-11-07T01:00:00.000Z'), cooldownMs: 60_000 } },
+      },
+      updates: async (given) => {
+        hooks = given
+        return disabledUpdates('0.1.0', 'development', false)
+      },
+    })
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    await (hooks as unknown as UpdatesHooks).whenIdle()
+  })
+
+  it('checks nothing when the updater can’t be built', async () => {
+    const s = await setup({
+      updates: async () => {
+        throw new Error('config: invalid')
+      },
+    })
+    expect(await s.api.updates.status()).toMatchObject({
+      state: 'disabled',
+      disabledReason: 'not-configured',
+    })
+  })
+})
+
+describe('refusals outside a run', () => {
+  function auditTypes(paths: { audit: string }) {
+    return readFileSync(paths.audit, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line).event)
+  }
+
+  it('audits the person’s login window as the auth partition’s, with no call', async () => {
+    const s = await approved()
+    await s.api.openLoginWindow('shop')
+    s.driver.authOptions[0]?.onBlocked?.({
+      method: 'GET',
+      target: 'https://widgets.example',
+      reason: 'host-not-allowed',
+      initiator: 'page',
+    })
+    await s.service.stop()
+    expect(auditTypes(s.paths).filter((e) => e.type === 'request-blocked')).toEqual([
+      {
+        type: 'request-blocked',
+        adapterId: 'shop',
+        method: 'GET',
+        target: 'https://widgets.example',
+        reason: 'host-not-allowed',
+        initiator: 'page',
+        partition: 'auth',
+        callId: null,
+      },
+    ])
+  })
+
+  it('audits the tool partition between runs, the target redacted against its session values', async () => {
+    const s = await setup()
+    s.driver.sessionValues = ['SESSIONTOKEN123']
+    const reporters = s.driver.reporters
+    reporters?.onBlocked({
+      method: 'POST',
+      target: 'https://sessiontoken123.evil.test',
+      reason: 'host-not-allowed',
+      initiator: 'page',
+    })
+    reporters?.onBlocked({
+      method: 'GET',
+      target: 'https://www.shop.test/apis/x',
+      reason: 'undeclared',
+      initiator: 'page',
+    })
+    reporters?.onAuthBlocked({
+      method: 'GET',
+      target: 'https://frames.example',
+      reason: 'host-not-allowed',
+      initiator: 'page',
+    })
+    reporters?.onAuthReportsDropped()
+    await s.service.stop()
+    const blocked = auditTypes(s.paths).filter((e) => e.type === 'request-blocked')
+    expect(blocked.map((e) => [e.partition, e.target, e.callId])).toEqual([
+      ['tool', '[redacted]', null],
+      ['tool', 'https://www.shop.test/apis/x', null],
+      ['auth', 'https://frames.example', null],
+    ])
+    expect(JSON.stringify(blocked).toLowerCase()).not.toContain('sessiontoken123')
+  })
+})
+
 describe('the login window', () => {
   it('opens only for an approved adapter, and hands off only once the probe passes', async () => {
     const s = await setup()
@@ -496,38 +814,91 @@ describe('the login window', () => {
     expect(s.driver.pages[1]?.closed).toBe(true)
     expect(s.ui.banners).toContain('close shop')
   })
-  it('is refused while the site’s circuit breaker is open, opening and finishing alike', async () => {
+  it('is refused while the site’s circuit breaker is open, persisted state included', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sa-service-'))
+    dirs.push(dir)
+    const later = Date.parse('2026-11-07T01:00:00.000Z')
+    // A block from an earlier launch: in force before anything is sent.
+    const s = await setup({
+      dir,
+      breakers: { version: 1, hosts: { 'www.shop.test': { retryAt: later, cooldownMs: 60_000 } } },
+    })
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    expect(await s.api.health.sites()).toEqual([
+      {
+        host: 'www.shop.test',
+        adapterIds: ['shop'],
+        breaker: 'open',
+        retryAt: '2026-11-07T01:00:00.000Z',
+        cause: 'blocked-by-site',
+        lastOpenedAt: null,
+        // The persisted minute, doubled.
+        nextCooldownSeconds: 120,
+      },
+    ])
+    await expect(s.api.openLoginWindow('shop')).rejects.toEqual(new SiteAdapterError('login', 'rate-limited'))
+    expect(s.driver.pages).toEqual([])
+    expect(s.service.hasHandoff('shop')).toBe(false)
+    // Once the cool-down is over it opens.
+    s.advance(60 * 60_000)
+    expect((await s.api.health.sites())[0]?.breaker).toBe('closed')
+    await s.api.openLoginWindow('shop')
+    expect(s.service.hasHandoff('shop')).toBe(true)
+  })
+
+  it('opens the breaker when the login page is the block page, and then no hand-off reaches the site', async () => {
     const s = await approved()
+    // The first window: the site answers normally, and the person signs in.
+    await s.api.openLoginWindow('shop')
+    const first = s.driver.pages[0]
+    if (first !== undefined) first.cookies = ['sid']
+    await s.api.closeLoginWindow('shop')
+    // The next one lands on Akamai's page: the breaker opens, and the window is closed, not shown.
+    s.driver.nextPage = () => {
+      const page = new FakeAuthPage()
+      page.text = ['Access Denied … Reference #18.abc']
+      return page
+    }
+    await expect(s.api.openLoginWindow('shop')).rejects.toEqual(
+      new SiteAdapterError('login', 'blocked-by-site'),
+    )
+    expect(s.driver.pages[1]?.closed).toBe(true)
+    expect(s.service.hasHandoff('shop')).toBe(false)
+    expect((await s.api.health.sites())[0]).toMatchObject({ breaker: 'open', cause: 'blocked-by-site' })
+    // The runtime audits the opening as no call's, and the site's health shows when.
+    await expect
+      .poll(async () => (await s.api.audit.page({})).records.map((r) => r.event))
+      .toContainEqual(
+        expect.objectContaining({ type: 'breaker-opened', host: 'www.shop.test', callId: null }),
+      )
+    expect((await s.api.health.sites())[0]?.lastOpenedAt).not.toBeNull()
+    expect((await s.call('echo', { text: 'x' })).status).toBe('blocked')
+    // Open: no window opens, and no page is even made.
+    s.driver.nextPage = () => new FakeAuthPage()
+    await expect(s.api.openLoginWindow('shop')).rejects.toEqual(new SiteAdapterError('login', 'rate-limited'))
+    expect(s.driver.pages).toHaveLength(2)
+    // After the cool-down a window opens, and a hand-off goes through.
+    s.advance(60 * 60_000)
+    await s.api.openLoginWindow('shop')
+    const third = s.driver.pages[2]
+    if (third !== undefined) third.cookies = ['sid']
+    await s.api.finishLogin('shop')
+    expect(s.driver.handoffs).toHaveLength(1)
+    await expect(s.api.finishLogin('shop')).rejects.toEqual(new SiteAdapterError('login', 'not-found'))
+  })
+
+  it('takes a slot of the site’s rate budget for each step', async () => {
+    const s = await approved()
+    const start = (await s.api.health.sites())[0]
+    expect(start).toMatchObject({ breaker: 'closed' })
     await s.api.openLoginWindow('shop')
     const page = s.driver.pages[0]
     if (page !== undefined) page.cookies = ['sid']
-    await s.api.closeLoginWindow('shop')
-    const later = Date.parse('2026-11-07T01:00:00.000Z')
-    writeFileSync(
-      s.paths.breakers,
-      JSON.stringify({ version: 1, hosts: { 'www.shop.test': { retryAt: later, cooldownMs: 60_000 } } }),
-    )
-    expect((await s.api.health.sites())[0]?.breaker).toBe('open')
-    await expect(s.api.openLoginWindow('shop')).rejects.toEqual(new SiteAdapterError('login', 'rate-limited'))
-    expect(s.driver.pages).toHaveLength(1)
-    expect(s.service.hasHandoff('shop')).toBe(false)
-
-    // A window already up when the breaker opened can't hand off either.
-    writeFileSync(s.paths.breakers, JSON.stringify({ version: 1, hosts: {} }))
-    await s.api.openLoginWindow('shop')
-    const second = s.driver.pages[1]
-    if (second !== undefined) second.cookies = ['sid']
-    writeFileSync(
-      s.paths.breakers,
-      JSON.stringify({ version: 1, hosts: { 'www.shop.test': { retryAt: later, cooldownMs: 60_000 } } }),
-    )
-    await expect(s.api.finishLogin('shop')).rejects.toEqual(new SiteAdapterError('login', 'rate-limited'))
-    expect(s.driver.handoffs).toEqual([])
-    expect(s.service.hasHandoff('shop')).toBe(true)
-    // Once the cool-down is over it goes through.
-    s.advance(60 * 60_000)
+    // SHOP's minGapMs is 1 s: the hand-off waited for the next slot, on the test's clock.
+    const before = Date.parse((await s.api.adapters.list())[0]?.session.checkedAt ?? '') || 0
     await s.api.finishLogin('shop')
-    expect(s.driver.handoffs).toHaveLength(1)
+    const after = Date.parse((await s.api.adapters.list())[0]?.session.checkedAt ?? '')
+    expect(after - Math.max(before, Date.parse('2026-11-07T00:00:00.000Z'))).toBe(1000)
   })
 
   it('hands off only once no call or run is going on, and holds new calls until it has', async () => {
@@ -620,7 +991,7 @@ describe('endpoint, settings, audit and the app', () => {
     expect(await s.api.health.sites()).toEqual([
       expect.objectContaining({ host: 'www.shop.test', breaker: 'closed', adapterIds: ['shop'] }),
     ])
-    expect(await s.api.updates.status()).toMatchObject({ current: '0.1.0', state: 'up-to-date' })
+    expect(await s.api.updates.status()).toMatchObject({ current: '0.1.0', state: 'disabled' })
     await s.api.updates.check()
   })
 

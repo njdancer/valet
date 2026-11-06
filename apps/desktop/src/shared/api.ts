@@ -161,7 +161,10 @@ export interface AdapterDetail extends AdapterSummary {
   readonly tools: readonly ToolInfo[]
   readonly secretRequests: readonly SecretRequestInfo[]
   readonly messages: readonly MessagesSourceInfo[]
-  /** What the last hand-off copied: counts only. */
+  /**
+   * What the last hand-off copied: counts only. Null when the main process can't tell (the driver
+   * doesn't report hand-off counts, so today it is always null); the renderer then shows no row.
+   */
   readonly handedOver: { readonly cookies: number; readonly storageKeys: number } | null
 }
 
@@ -377,7 +380,16 @@ export interface RunTrace {
   readonly adapterVersion: string
   readonly adapterHash: string
   readonly secretsUsed: readonly { readonly secret: string; readonly field: SecretField }[]
-  readonly requests: { readonly sent: number; readonly probes: number; readonly blocked: number }
+  /**
+   * Requests the run made and the driver refused. `sent` and `probes` are null when the main process
+   * can't count them (the runtime audits refusals only, so today they are always null); the
+   * renderer then shows the refused count alone.
+   */
+  readonly requests: {
+    readonly sent: number | null
+    readonly probes: number | null
+    readonly blocked: number
+  }
   readonly steps: readonly TraceStep[]
   /** The tool input as the client sent it, after redaction. */
   readonly input: readonly PreviewPart[]
@@ -452,6 +464,7 @@ export interface EndpointStatus {
   readonly listening: boolean
   /** http://127.0.0.1:<port>/mcp, or null while stopped. */
   readonly url: string | null
+  /** MCP sessions open now, over the bridge or plain HTTP. */
   readonly connectedClients: number
   readonly tokenRotatedAt: IsoTime | null
 }
@@ -519,7 +532,10 @@ export interface ConfirmationItem {
   readonly trigger: 'irreversible-tool' | 'tool-request'
   /** The name the client reported in MCP initialize. A claim: any process with the token can send any name. */
   readonly client: string
-  /** How that client reached the endpoint, which the runtime knows for itself. */
+  /**
+   * How that client reached the endpoint, as the endpoint labelled its session. The bridge names
+   * itself in a header, so this is a label like the name, never a permission.
+   */
   readonly clientTransport: ClientInfo['transport']
   readonly callId: string
   readonly requestedAt: IsoTime
@@ -572,10 +588,29 @@ export type HashRoute = `#/${string}`
 
 export interface UpdateStatus {
   readonly current: string
-  readonly state: 'up-to-date' | 'checking' | 'available' | 'downloading' | 'ready' | 'error'
+  /**
+   * 'disabled': this build never contacts a feed (disabledReason says why). 'not-checked': updates
+   * are on, but no check has finished since launch. 'ready': downloaded and verified; it installs
+   * when the app quits, if automatic installs are on.
+   */
+  readonly state:
+    | 'disabled'
+    | 'not-checked'
+    | 'up-to-date'
+    | 'checking'
+    | 'available'
+    | 'downloading'
+    | 'ready'
+    | 'error'
   readonly available: string | null
   readonly checkedAt: IsoTime | null
+  /** Signed with a Developer ID, which Squirrel.Mac checks every update against. */
   readonly signed: boolean
+  /**
+   * Set only when state is 'disabled'. 'not-configured': the build has no feed compiled in.
+   * 'development': unpackaged, or a demo launch. 'unsigned': not signed with a Developer ID.
+   */
+  readonly disabledReason: 'not-configured' | 'development' | 'unsigned' | null
 }
 
 export interface SiteHealth {

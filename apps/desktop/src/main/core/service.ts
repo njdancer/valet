@@ -4,13 +4,13 @@
 // tested in plain Node.
 
 import { randomBytes } from 'node:crypto'
-import { copyFile, mkdir, readFile, rm } from 'node:fs/promises'
-import type { AuthProbe } from '@siteadapter/auth-flow'
+import { copyFile, mkdir, rm } from 'node:fs/promises'
 import {
   type AdapterManifest,
   type AuditEvent,
   type AuditRecord,
   type AuditSink,
+  type BlockedRequest,
   type Grant,
   MESSAGES_SECRET,
   type NeedsUserReason,
@@ -20,15 +20,17 @@ import {
   SiteAdapterError,
 } from '@siteadapter/core'
 import { FileGrantStore } from '@siteadapter/credentials'
-import type { RunningEndpoint, ToolCall, ToolCaller } from '@siteadapter/mcp-server'
+import type { LiveSessions, SessionReportingEndpoint, ToolCall, ToolCaller } from '@siteadapter/mcp-server'
 import {
   ApprovalStore,
   AuditLog,
   JsonFileStore,
   LoginAttemptMarker,
   type RuntimeDiagnostic,
+  type Sleep,
   ToolHost,
 } from '@siteadapter/runtime'
+import { z } from 'zod'
 import type {
   AppEvent,
   AttentionItem,
@@ -39,7 +41,6 @@ import type {
   Settings,
   UpdateStatus,
 } from '../../shared/api'
-import { AdapterGate } from './adapter-gate'
 import {
   type AdapterLookup,
   AuditReader,
@@ -49,8 +50,9 @@ import {
   runTrace,
   statsToday,
 } from './audit-view'
+import { BlockedAudit, LoginSecrets } from './blocked'
 import { type AppRefusal, RuntimeToolCaller } from './caller'
-import { ClientRegistry } from './clients'
+import { ClientRegistry, shownTransport } from './clients'
 import { ConfirmationBroker, type Timers } from './confirmations'
 import {
   AUTH_FLOW_TIMEOUT_MS,
@@ -65,11 +67,12 @@ import type { Credentials } from './credentials'
 import { ensurePrivateDir, JsonDocument } from './files'
 import { checkGrantRequest, grantInfo } from './grants'
 import type { AppWindow, MainApi } from './ipc'
-import { createAuthRunner, Handoffs, SessionTracker } from './login'
+import { createAuthRunner, Handoffs, isBlockedPage, SessionTracker } from './login'
 import { type ApprovedSnapshot, type BuiltinAdapter, SnapshotStore } from './registry'
 import { RunMemory } from './run-memory'
-import { SettingsStore } from './settings'
+import { DEFAULT_SETTINGS, SettingsStore } from './settings'
 import { type BridgeCommand, clientSnippets, snippetFor } from './snippets'
+import { disabledUpdates, type UpdatesHooks, type UpdatesPort, VersionStore } from './updates'
 import {
   type AdapterState,
   adapterDetail,
@@ -78,7 +81,6 @@ import {
   reviewItem,
   siteHealth,
 } from './views'
-import { z } from './zod'
 
 /** What the service asks of the app's windows and the OS. */
 export interface UiPort {
@@ -104,19 +106,41 @@ export interface ServiceDeps {
   readonly timers: Timers
   readonly sleep: (ms: number) => Promise<void>
   readonly adapters: readonly BuiltinAdapter[]
-  readonly createDriver: (manifest: AdapterManifest) => Promise<SessionDriver>
+  /** Builds an adapter's driver, with the reporters its refusals outside a run go to. */
+  readonly createDriver: (manifest: AdapterManifest, reporters: DriverReporters) => Promise<SessionDriver>
   readonly credentials: Credentials
-  readonly startEndpoint: (caller: ToolCaller, configPath: string) => Promise<RunningEndpoint>
+  /** Starts the MCP endpoint; it reports its live sessions to `onSessionsChanged`. */
+  readonly startEndpoint: (
+    caller: ToolCaller,
+    configPath: string,
+    onSessionsChanged: (sessions: LiveSessions) => void,
+  ) => Promise<SessionReportingEndpoint>
   readonly ui: UiPort
   readonly emit: (event: AppEvent) => void
-  /** Probe hooks for drivers whose AuthPage lacks fetch/cookieNames; null to use the page's. */
-  readonly probeFallback: (adapterId: string) => AuthProbe | null
   /** The stdio bridge's command line, for client snippets; null when it can't be launched. */
   readonly bridge: BridgeCommand | null
   /** Checks a chosen op binary (checkOpBinary); the resolved path, or null to refuse it. */
   readonly checkOp: (path: string) => Promise<string | null>
-  readonly diagnostics?: (diagnostic: RuntimeDiagnostic | { readonly type: string }) => void
+  /**
+   * Builds the updates for this launch: an updater (electron/app.ts, createUpdater) when the build
+   * may update itself, otherwise one that says why not (disabledUpdates).
+   */
+  readonly updates: (hooks: UpdatesHooks) => Promise<UpdatesPort>
+  readonly diagnostics?: (
+    diagnostic: RuntimeDiagnostic | { readonly type: string; readonly adapterId?: string },
+  ) => void
   readonly newId?: () => string
+  /** How the runtime waits for a site's rate budget; real time by default. Tests pass their clock's. */
+  readonly pacingSleep?: Sleep
+}
+
+/** Where a driver reports refusals outside the runtime's runs (browser-electron's DriverOptions). */
+export interface DriverReporters {
+  /** The tool partition's refusals between runs. */
+  readonly onBlocked: (blocked: BlockedRequest) => void
+  /** The auth partition's refusals that no open login page took. */
+  readonly onAuthBlocked: (blocked: BlockedRequest) => void
+  readonly onAuthReportsDropped: () => void
 }
 
 /** Wraps the audit log so every record also tells the windows what changed. */
@@ -170,6 +194,12 @@ export class AppService {
   private readonly grants: FileGrantStore
   private readonly markers: LoginAttemptMarker
   private readonly settings: SettingsStore
+  /** The settings as last read or written: the updater reads them synchronously at every check. */
+  private settingsNow: Settings = DEFAULT_SETTINGS
+  private readonly versions: VersionStore
+  private updates: UpdatesPort | null = null
+  /** Audit writes nothing awaits (an update downloaded); stop() waits for them. */
+  private background: Promise<unknown> = Promise.resolve()
   private readonly snapshots: SnapshotStore
   private readonly clients: ClientRegistry
   private readonly titles: JsonDocument<Record<string, string>>
@@ -180,11 +210,14 @@ export class AppService {
   private readonly broker: ConfirmationBroker
   private readonly handoffs: Handoffs
   private readonly drivers = new Map<string, SessionDriver>()
-  private readonly gate: AdapterGate
+  /** The runtime, from start() on. */
+  private host: ToolHost | null = null
+  private readonly loginSecrets = new LoginSecrets()
+  private readonly blocked: BlockedAudit
   /** When each installed hash was approved, for the confirmation panel (which reads synchronously). */
   private readonly approvedAt = new Map<string, string>()
   private caller: RuntimeToolCaller | null = null
-  private endpoint: RunningEndpoint | null = null
+  private endpoint: SessionReportingEndpoint | null = null
   private paused = false
   private chain: ChainStatus = { state: 'unverified' }
   private readonly startedAt: string
@@ -199,6 +232,7 @@ export class AppService {
     this.grants = new FileGrantStore({ path: paths.grants })
     this.markers = new LoginAttemptMarker(paths.loginMarkers, clock)
     this.settings = new SettingsStore(paths.settings)
+    this.versions = new VersionStore(paths.versions)
     this.snapshots = new SnapshotStore(paths.manifests)
     this.clients = new ClientRegistry(paths.clients, date)
     this.titles = new JsonDocument(paths.grantItems, titlesSchema, () => ({}), true)
@@ -209,7 +243,22 @@ export class AppService {
       true,
     )
     this.reader = new AuditReader(paths.audit)
-    this.gate = new AdapterGate(deps.timers)
+    this.blocked = new BlockedAudit({
+      audit: this.audit,
+      secrets: this.loginSecrets,
+      adapter: (adapterId) => {
+        const adapter = this.adapter(adapterId)
+        const driver = this.drivers.get(adapterId)
+        if (adapter === null || driver === undefined) return null
+        const { session } = adapter.definition.manifest
+        return {
+          manifest: adapter.definition.manifest,
+          sessionValues: () => driver.sessionSecrets(session.cookieDomains, session.storage),
+        }
+      },
+      now: deps.now,
+      diagnostics: (d) => deps.diagnostics?.(d),
+    })
     this.sessions = new SessionTracker(date, () => this.emit('adapters-changed'))
     const newId = deps.newId ?? (() => randomBytes(12).toString('hex'))
     this.broker = new ConfirmationBroker({
@@ -225,7 +274,7 @@ export class AppService {
       },
       call: (callId) => {
         const run = this.memory.get(callId)
-        return run === undefined ? null : { transport: run.transport, input: run.input }
+        return run === undefined ? null : { input: run.input }
       },
       show: (id) => deps.ui.showConfirmation(id),
       close: (id) => deps.ui.closeConfirmation(id),
@@ -247,7 +296,6 @@ export class AppService {
         this.emit('attention-changed')
         this.emit('adapters-changed')
       },
-      probeFallback: deps.probeFallback,
     })
     this.api = this.buildApi()
   }
@@ -257,7 +305,11 @@ export class AppService {
     const { paths } = this.deps
     await ensurePrivateDir(paths.dir)
     await mkdir(paths.loginMarkers, { recursive: true, mode: 0o700 })
-    await this.deps.credentials.configure(await this.settings.get())
+    this.settingsNow = await this.settings.get()
+    // Updates first, before any adapter, credential or endpoint: a release that fails further on can
+    // still be replaced by the next one.
+    await this.startUpdates()
+    await this.deps.credentials.configure(this.settingsNow)
     await this.clients.load()
     const host = new ToolHost({
       approvals: this.approvals,
@@ -273,7 +325,8 @@ export class AppService {
         flowTimeoutMs: AUTH_FLOW_TIMEOUT_MS,
         sessions: this.sessions,
         handoffs: this.handoffs,
-        probeFallback: this.deps.probeFallback,
+        blocked: this.blocked,
+        secrets: this.loginSecrets,
         callInfo: (callId) => {
           const run = callId === null ? undefined : this.memory.get(callId)
           return { tool: run?.tool ?? null, client: run?.client ?? null }
@@ -282,13 +335,19 @@ export class AppService {
       }),
       markers: this.markers,
       breakerStore: new JsonFileStore(paths.breakers),
+      clock: { now: this.deps.now },
+      ...(this.deps.pacingSleep === undefined ? {} : { pacingSleep: this.deps.pacingSleep }),
       confirmationTimeoutMs: CONFIRMATION_TIMEOUT_MS,
       diagnostics: (d) => this.deps.diagnostics?.(d),
     })
+    this.host = host
     for (const adapter of this.deps.adapters) {
       const id = adapter.definition.manifest.id
-      // The runtime gets the tracked driver, so the gate sees its runs (adapter-gate.ts).
-      const driver = this.gate.track(id, await this.deps.createDriver(adapter.definition.manifest))
+      const driver = await this.deps.createDriver(adapter.definition.manifest, {
+        onBlocked: this.blocked.betweenRuns(id),
+        onAuthBlocked: this.blocked.authPartition(id),
+        onAuthReportsDropped: () => this.deps.diagnostics?.({ type: 'auth-reports-dropped', adapterId: id }),
+      })
       this.drivers.set(id, driver)
       host.register({ definition: adapter.definition, bundleHash: adapter.hash, driver })
     }
@@ -296,14 +355,13 @@ export class AppService {
       paused: () => this.paused,
       revoked: (client) => this.clients.isRevoked(client),
       started: (call) => {
-        // The bridge reaches the endpoint over HTTP too, so the runtime only ever sees HTTP.
-        this.memory.started(call.callId, call.tool, call.client, call.input, 'http')
-        if (this.clients.seen(call.client, 'http')) this.emit('clients-changed')
+        this.memory.started(call.callId, call.tool, call.client, call.input)
+        // The transport is the endpoint's label for the session: the bridge names itself.
+        if (this.clients.seen(call.client, shownTransport(call.transport))) this.emit('clients-changed')
       },
       finished: (call, result) =>
         this.memory.finished(call.callId, result.status === 'ok' ? result.output : undefined),
       refused: (call, refusal) => this.auditRefusal(call, refusal),
-      enter: (adapterId) => this.gate.enter(adapterId),
     })
     await this.caller.refresh()
     // Reads approval times into the cache the confirmation panel uses.
@@ -312,11 +370,17 @@ export class AppService {
   }
 
   async stop(): Promise<void> {
+    this.updates?.stop()
+    // Calls still running are cancelled: each ends failed tool-run/aborted, its prompt declined.
+    this.caller?.cancelAll()
     this.broker.declineAll()
     this.handoffs.closeAll()
     await this.endpoint?.close().catch(() => undefined)
     this.endpoint = null
     for (const driver of this.drivers.values()) await driver.close().catch(() => undefined)
+    await this.blocked.settled()
+    await this.background
+    this.loginSecrets.dispose()
   }
 
   /** For the Electron glue: the confirmation window was shown or focused. */
@@ -334,6 +398,71 @@ export class AppService {
   }
 
   // ---------- Internals ----------
+
+  /**
+   * Records this launch's version (an update-installed event on the first launch of a newer one)
+   * and builds the updates, which audit each verified download as update-downloaded.
+   */
+  private async startUpdates(): Promise<void> {
+    const { version } = this.deps
+    const launch = await this.versions
+      .recordLaunch(version)
+      .catch(() => ({ highestRun: version, updatedFrom: null }))
+    if (launch.updatedFrom !== null) {
+      await this.audit
+        .append({ type: 'update-installed', from: launch.updatedFrom, to: version })
+        .catch(() => this.deps.diagnostics?.({ type: 'audit-write-failed' }))
+    }
+    try {
+      this.updates = await this.deps.updates({
+        channel: () => this.settingsNow.updateChannel,
+        autoInstallOnQuit: () => this.settingsNow.autoInstallUpdates,
+        highestVersionRun: () => launch.highestRun,
+        whenIdle: () => this.whenIdle(),
+        downloaded: (from, to) => {
+          const write = this.audit
+            .append({ type: 'update-downloaded', from, to })
+            .then(() => undefined)
+            .catch(() => this.deps.diagnostics?.({ type: 'audit-write-failed' }))
+          this.background = this.background.then(() => write)
+        },
+        changed: () => this.emit('app-changed'),
+      })
+    } catch {
+      // An updater that can't be built (a feed or key the controller refuses) checks nothing.
+      this.updates = disabledUpdates(version, 'not-configured', false)
+    }
+    this.updates.start()
+  }
+
+  /**
+   * Resolves once no adapter has a call in flight or a run open: an empty login step takes each
+   * adapter's lock in turn behind them (waiting up to LOGIN_WAIT_MS), as a hand-off would. It takes a
+   * slot of each site's rate budget, which only delays the next request. An unapproved adapter runs
+   * no call, and a site whose breaker is open was refused only once the lock was held, so both count
+   * as idle. Rejects (and the install waits) when an adapter stays busy.
+   */
+  private async whenIdle(): Promise<void> {
+    const host = this.host
+    if (host === null) return
+    await Promise.all(
+      this.deps.adapters.map(async (a) => {
+        try {
+          await host.runLoginStep(a.definition.manifest.id, async () => {}, { waitMs: LOGIN_WAIT_MS })
+        } catch (error) {
+          const idle =
+            error instanceof SiteAdapterError &&
+            (error.errorClass === 'not-granted' || error.errorClass === 'rate-limited')
+          if (!idle) throw error
+        }
+      }),
+    )
+  }
+
+  private runtime(): ToolHost {
+    if (this.host === null) throw new SiteAdapterError('config', 'unavailable')
+    return this.host
+  }
 
   private emit(type: Exclude<AppEvent['type'], 'audit-appended'>): void {
     this.deps.emit({ type })
@@ -457,12 +586,6 @@ export class AppService {
     if (this.sessions.get(adapterId).state === 'needs-user') this.sessions.set(adapterId, 'expired')
   }
 
-  /** Whether the site's circuit breaker is open now: no login may start, nor a hand-off reach it. */
-  private async siteBlocked(adapterId: string): Promise<boolean> {
-    const sites = await this.api.health.sites()
-    return sites.some((s) => s.adapterIds.includes(adapterId) && s.breaker === 'open')
-  }
-
   private async filledFor(
     adapterId: string,
     callId: string | null,
@@ -503,7 +626,9 @@ export class AppService {
 
   private async startListening(): Promise<void> {
     if (this.endpoint !== null || this.caller === null) return
-    this.endpoint = await this.deps.startEndpoint(this.caller, this.deps.paths.bridgeConfig)
+    this.endpoint = await this.deps.startEndpoint(this.caller, this.deps.paths.bridgeConfig, () =>
+      this.emit('endpoint-changed'),
+    )
     this.endpoint.refresh()
     this.emit('endpoint-changed')
   }
@@ -520,6 +645,7 @@ export class AppService {
   }
 
   private async afterSettings(settings: Settings): Promise<Settings> {
+    this.settingsNow = settings
     await this.deps.credentials.configure(settings)
     this.emit('settings-changed')
     this.emit('grants-changed')
@@ -567,9 +693,19 @@ export class AppService {
         },
         providers: async () => {
           const grants = await this.grants.list().catch(() => [] as readonly Grant[])
+          // Only grants for an adapter's installed hash, while that hash is approved: a grant for an
+          // older bundle (or one waiting for review) can't be used, so it isn't counted as live.
+          const live = new Set<string>()
+          for (const adapter of deps.adapters) {
+            const id = adapter.definition.manifest.id
+            if (await this.approvals.isApproved(id, adapter.hash).catch(() => false))
+              live.add(`${id}:${adapter.hash}`)
+          }
           return (await deps.credentials.status()).map((s) => ({
             ...s,
-            grantCount: grants.filter((g) => g.provider === s.kind).length,
+            grantCount: grants.filter(
+              (g) => g.provider === s.kind && live.has(`${g.adapterId}:${g.adapterHash}`),
+            ).length,
           }))
         },
         vaultItems: (provider) => deps.credentials.vaultItems(provider),
@@ -638,7 +774,8 @@ export class AppService {
         status: async (): Promise<EndpointStatus> => ({
           listening: this.endpoint !== null,
           url: this.endpoint?.url ?? null,
-          connectedClients: this.endpoint === null ? 0 : this.clients.connected(),
+          // Sessions open now, bridged or HTTP, as the endpoint counts them.
+          connectedClients: this.endpoint?.sessions().total ?? 0,
           tokenRotatedAt: (await this.endpointMeta.read()).tokenRotatedAt,
         }),
         setListening: async (listening) => {
@@ -700,44 +837,59 @@ export class AppService {
       answerConfirmation: async (confirmationId: string, approved: boolean, from: AppWindow) => {
         this.broker.answer(confirmationId, approved, from)
       },
-      // The person's own login work: never while the site's breaker is open, and never alongside a
-      // tool call or run on the adapter (it waits for them, and new calls wait for it).
+      // The person's own login work runs as the runtime's login steps: under the adapter's lock (it
+      // waits for calls and their runs, and new calls wait for it), never while the site's breaker is
+      // open, approved adapters only, and paced by the site's rate budget.
       openLoginWindow: async (adapterId) => {
         if (this.handoffs.show(adapterId)) return
         const adapter = this.requireAdapter(adapterId)
         const manifest = adapter.definition.manifest
-        // The auth partition is driven only under an approved manifest's navigation rules.
-        if (!(await this.approvals.isApproved(adapterId, adapter.hash)))
-          throw new SiteAdapterError('manifest', 'not-granted')
         const driver = this.drivers.get(adapterId)
         if (driver === undefined) throw new SiteAdapterError('manifest', 'not-found')
-        await this.gate.exclusive(adapterId, LOGIN_WAIT_MS, async () => {
-          // A call's login may have handed a window to the person while this waited.
-          if (this.handoffs.show(adapterId)) return
-          if (await this.siteBlocked(adapterId)) throw new SiteAdapterError('login', 'rate-limited')
-          const page = await driver.openAuthPage()
-          const first = manifest.auth.steps.find((s) => s.op === 'goto')
-          if (first?.op === 'goto') await page.goto(first.url).catch(() => undefined)
-          this.handoffs.start({
-            manifest,
-            driver,
-            page,
-            reason: 'login-required',
-            note: null,
-            startedBy: 'person',
-            callId: null,
-            tool: null,
-            client: null,
-            filled: [],
-            filledOrigin: null,
-          })
+        await this.runtime().runLoginStep(
+          adapterId,
+          async (ctx) => {
+            // A call's login may have handed a window to the person while this waited.
+            if (this.handoffs.show(adapterId)) return
+            // The person's own login window: its refusals are audited too, with no call behind them.
+            const page = await driver.openAuthPage(this.blocked.authPage(adapterId, null))
+            let shown = false
+            try {
+              const first = manifest.auth.steps.find((s) => s.op === 'goto')
+              if (first?.op === 'goto') await page.goto(first.url).catch(() => undefined)
+              if (await isBlockedPage(page)) {
+                ctx.reportBlocked('blocked-by-site')
+                throw new SiteAdapterError('login', 'blocked-by-site')
+              }
+              // Gave up waiting (the step's deadline): the person was already told it failed.
+              if (ctx.signal.aborted) return
+              this.handoffs.start({
+                manifest,
+                driver,
+                page,
+                reason: 'login-required',
+                note: null,
+                startedBy: 'person',
+                callId: null,
+                tool: null,
+                client: null,
+                filled: [],
+                filledOrigin: null,
+              })
+              shown = true
+            } finally {
+              if (!shown) await page.close().catch(() => undefined)
+            }
+          },
+          { waitMs: LOGIN_WAIT_MS },
+        )
+      },
+      finishLogin: async (adapterId) => {
+        if (!this.handoffs.has(adapterId)) throw new SiteAdapterError('login', 'not-found')
+        await this.runtime().runLoginStep(adapterId, (ctx) => this.handoffs.finish(adapterId, ctx), {
+          waitMs: LOGIN_WAIT_MS,
         })
       },
-      finishLogin: (adapterId) =>
-        this.gate.exclusive(adapterId, LOGIN_WAIT_MS, async () => {
-          if (await this.siteBlocked(adapterId)) throw new SiteAdapterError('login', 'rate-limited')
-          await this.handoffs.finish(adapterId)
-        }),
       closeLoginWindow: (adapterId) => this.handoffs.close(adapterId),
       settings: {
         get: () => this.settings.get(),
@@ -756,26 +908,16 @@ export class AppService {
         clearOpPath: async () => this.afterSettings(await this.settings.setOpPath(null)),
       },
       updates: {
-        // The updater is another unit's (src/main/updater); until it lands, nothing is checked.
-        status: async (): Promise<UpdateStatus> => ({
-          current: deps.version,
-          state: 'up-to-date',
-          available: null,
-          checkedAt: null,
-          signed: false,
-        }),
-        check: async () => {},
+        status: async (): Promise<UpdateStatus> =>
+          (this.updates ?? disabledUpdates(deps.version, 'not-configured', false)).status(),
+        check: async () => {
+          await this.updates?.check()
+          this.emit('app-changed')
+        },
       },
       health: {
-        sites: async () => {
-          const breakers = await readFile(deps.paths.breakers, 'utf8').catch(() => null)
-          return siteHealth(
-            deps.adapters.map((a) => a.definition.manifest),
-            breakers,
-            await this.reader.records(),
-            deps.now(),
-          )
-        },
+        sites: async () =>
+          this.host === null ? [] : siteHealth(await this.host.siteHealth(), await this.reader.records()),
       },
       app: {
         status: async () => ({ paused: this.paused, version: deps.version, demo: deps.demo }),

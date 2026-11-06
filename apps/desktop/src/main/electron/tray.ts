@@ -1,9 +1,6 @@
 // The menu-bar icon. A click toggles the popover under the icon; a right-click shows a small menu,
 // rebuilt on each click with popUpContextMenu (setContextMenu shows a stale menu on macOS).
 
-// Electron glue: covered by the smoke test (test/smoke) and the e2e suite, not by unit tests.
-/* v8 ignore start */
-
 import { Menu, nativeImage, Tray } from 'electron'
 import type { MainApi } from '../core/ipc'
 import type { AppWindows } from './windows'
@@ -35,4 +32,3 @@ export function createTray(windows: AppWindows, api: MainApi, demo: boolean): Tr
   })
   return tray
 }
-/* v8 ignore stop */

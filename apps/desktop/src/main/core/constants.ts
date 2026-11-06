@@ -34,9 +34,6 @@ export const TYPING_DELAY_MS = 60
 /** Runs whose input and output previews are kept in memory for the run trace. Nothing is persisted. */
 export const RUN_MEMORY = 200
 
-/** A client counts as connected while it has called within this window. */
-export const CONNECTED_WINDOW_MS = 10 * 60_000
-
 export const MCP_SERVER_NAME = 'siteadapter'
 
 export interface DataPaths {
@@ -52,6 +49,8 @@ export interface DataPaths {
   readonly endpoint: string
   readonly bridgeConfig: string
   readonly loginMarkers: string
+  /** The last and highest versions this install has run (updates.ts). */
+  readonly versions: string
 }
 
 /** Every file the app keeps, under one owner-only directory (D45). */
@@ -69,5 +68,6 @@ export function dataPaths(dir: string): DataPaths {
     endpoint: join(dir, 'endpoint.json'),
     bridgeConfig: join(dir, 'bridge.json'),
     loginMarkers: join(dir, 'login-markers'),
+    versions: join(dir, 'versions.json'),
   }
 }

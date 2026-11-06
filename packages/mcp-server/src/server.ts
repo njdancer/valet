@@ -8,7 +8,7 @@ import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/
 import { NeedsUserError, type ToolDeclaration, toReportable } from '@siteadapter/core'
 import { z } from 'zod'
 import { failedResult, toolResult } from './results'
-import type { CallOutcome, ListedTool, ToolCaller } from './tool-caller'
+import type { CallOutcome, ClientTransport, ListedTool, ToolCaller } from './tool-caller'
 import { type ExposedTool, planTools, type SkippedTool, type ToolPlan } from './tool-names'
 
 export interface ServerInfo {
@@ -19,6 +19,8 @@ export interface ServerInfo {
 export interface ServerOptions {
   /** Makes the id the runtime records a call under in the audit log. */
   readonly newCallId?: () => string
+  /** How this session's client reached the endpoint, passed on with every call. A label only. */
+  readonly transport?: ClientTransport
 }
 
 export interface SiteAdapterMcpServer {
@@ -61,6 +63,7 @@ export function createMcpServer(
         client: clientLabel(server.server.getClientVersion()?.name),
         callId: newCallId(),
         signal,
+        ...(options.transport === undefined ? {} : { transport: options.transport }),
       })
     } catch (error) {
       // A runtime that throws rather than returns needsUser still gets the person asked, not a failure.

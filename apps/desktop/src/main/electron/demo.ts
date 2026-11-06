@@ -6,9 +6,6 @@
 // sets to false, so this chunk, the fake site, its certificate generator and the test account are
 // left out of it.
 
-// Electron glue: covered by the smoke test (test/smoke) and the e2e suite, not by unit tests.
-/* v8 ignore start */
-
 import { X509Certificate } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
 import { connect } from 'node:net'
@@ -80,33 +77,26 @@ export async function startDemoSite(userData: string): Promise<DemoSite> {
 
 /**
  * What the end-to-end suite may do to the fake site from Playwright's `app.evaluate` (the main
- * process's global scope): make it block every request (the site's Access Denied page), and read the
- * demo account's trolley as the site holds it. Set only in an e2e launch of a demo build: this chunk
- * isn't in a production build at all, and no renderer can reach the main process's globals.
+ * process's global scope): make it block every request (the site's Access Denied page), read the
+ * demo account's trolley as the site holds it, and turn on the fake's hostile page beacon (every www
+ * page then carries the site's own script sending its cookies to `target`; null turns it off). Set
+ * only in an e2e launch of a demo build: this chunk isn't in a production build at all, and no
+ * renderer can reach the main process's globals.
  */
 export interface DemoE2eHook {
   blockAll(on: boolean): void
   trolley(): readonly { readonly stockcode: number; readonly quantity: number }[]
+  pageBeacon(target: { readonly host: string; readonly port: number } | null): void
 }
 
 export function exposeToE2e(demo: DemoSite): void {
   const hook: DemoE2eHook = {
     blockAll: (on) => demo.site.blockAll(on === true),
     trolley: () => demo.site.trolleyFor(DEMO_ACCOUNT.username).map((l) => ({ ...l })),
+    pageBeacon: (target) =>
+      demo.site.setPageBeacon(target === null ? null : { host: target.host, port: target.port }),
   }
   Object.defineProperty(globalThis, '__siteadapterE2e', { value: Object.freeze(hook) })
-}
-
-/**
- * Empties the adapter's two partitions. The fake keeps its visitors, Akamai sensor cookies and
- * Auth0 sessions in memory, for one launch, but the partitions persist in the demo's userData: at the
- * next launch the old `_abck` is one the new fake never issued, so its bot layer answered the first
- * API call with Access Denied and the breaker paused the site for ten minutes (the e2e suite found
- * it). A cleared partition starts as a first visit does. Demo mode only; call before any load.
- */
-export async function resetDemoPartitions(adapterId: string): Promise<void> {
-  for (const role of ['auth', 'tool'] as const)
-    await session.fromPartition(partitionName(role, adapterId)).clearStorageData()
 }
 
 /** Trusts the demo certificate for the demo hosts on the adapter's partitions. Call before any load. */
@@ -127,4 +117,3 @@ export function trustDemoCertificate(adapterId: string, fingerprint: string): vo
     })
   }
 }
-/* v8 ignore stop */

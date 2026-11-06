@@ -900,13 +900,15 @@ describe('toUpdateStatus', () => {
     reason: null,
   }
 
-  it('never tells a disabled build it is signed and updating, whatever the caller says', () => {
+  it('never says up to date for a disabled updater, or one that hasn’t checked yet', () => {
     expect(toUpdateStatus({ ...base, state: 'disabled', checkedAt: null }, true)).toMatchObject({
-      state: 'up-to-date',
-      signed: false,
+      state: 'disabled',
+      disabledReason: 'development',
       checkedAt: null,
     })
     expect(toUpdateStatus({ ...base, state: 'idle', checkedAt: null }, true)).toMatchObject({
+      state: 'not-checked',
+      disabledReason: null,
       signed: true,
       checkedAt: null,
     })
@@ -914,8 +916,8 @@ describe('toUpdateStatus', () => {
 
   it('maps the updater’s states onto the renderer contract', () => {
     const mapped = (state: UpdaterStatus['state']) => toUpdateStatus({ ...base, state }, true).state
-    expect(mapped('disabled')).toBe('up-to-date')
-    expect(mapped('idle')).toBe('up-to-date')
+    expect(mapped('disabled')).toBe('disabled')
+    expect(mapped('idle')).toBe('not-checked')
     expect(mapped('up-to-date')).toBe('up-to-date')
     expect(mapped('checking')).toBe('checking')
     expect(mapped('downloading')).toBe('downloading')
@@ -931,6 +933,7 @@ describe('toUpdateStatus', () => {
       available: '1.1.0',
       checkedAt: '2026-11-07T09:00:00.000Z',
       signed: false,
+      disabledReason: null,
     })
     expect(toUpdateStatus({ ...base, checkedAt: null }, true).checkedAt).toBeNull()
   })

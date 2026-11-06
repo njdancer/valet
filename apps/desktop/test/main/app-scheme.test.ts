@@ -11,8 +11,9 @@ import {
   APP_SCHEME_PRIVILEGES,
   appPageUrl,
   createAppSchemeHandler,
+  onAppOrigin,
   resolveAppPath,
-} from '../../src/main/updater/app-scheme'
+} from '../../src/main/core/app-scheme'
 
 const ROOT = '/Applications/siteadapter.app/Contents/Resources/app.asar/out/renderer'
 
@@ -25,6 +26,23 @@ describe('appPageUrl', () => {
   it('registers the scheme with the privileges module scripts need, and no more', () => {
     expect(APP_SCHEME).toBe('app')
     expect(APP_SCHEME_PRIVILEGES).toEqual({ standard: true, secure: true, supportFetchAPI: true })
+  })
+})
+
+describe('onAppOrigin', () => {
+  it('takes app://renderer only', () => {
+    expect(onAppOrigin('app://renderer/index.html#/adapters')).toBe(true)
+    expect(onAppOrigin('app://renderer/assets/index-abc.js')).toBe(true)
+    for (const url of [
+      'app://other/index.html',
+      'app://renderer.evil/index.html',
+      'app://renderer:80/index.html',
+      'app://u:p@renderer/index.html',
+      'file:///index.html',
+      'https://renderer/index.html',
+      'not a url',
+    ])
+      expect(onAppOrigin(url), url).toBe(false)
   })
 })
 

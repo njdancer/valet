@@ -16,7 +16,6 @@ export interface RememberedRun {
   readonly output: readonly PreviewPart[] | null
   readonly outputBytes: number | null
   readonly redactions: number
-  readonly transport: 'http' | 'stdio'
 }
 
 /** JSON text split into text and redaction markers. Unserialisable values preview as a fixed note. */
@@ -42,7 +41,7 @@ export function previewParts(value: unknown): { parts: PreviewPart[]; bytes: num
 export class RunMemory {
   private readonly runs = new Map<string, RememberedRun>()
 
-  started(callId: string, tool: string, client: string, input: unknown, transport: 'http' | 'stdio'): void {
+  started(callId: string, tool: string, client: string, input: unknown): void {
     this.runs.set(callId, {
       tool,
       client,
@@ -50,7 +49,6 @@ export class RunMemory {
       output: null,
       outputBytes: null,
       redactions: 0,
-      transport,
     })
     while (this.runs.size > RUN_MEMORY) {
       const oldest = this.runs.keys().next().value

@@ -9,6 +9,7 @@ export {
   REMEMBER_DEVICE_COOKIE,
   type SentMessage,
 } from './auth-server'
+export { BEACON_ROUNDS_ATTRIBUTE, DEFAULT_BEACON_INTERVAL_MS, type PageBeacon } from './beacon'
 export { catalogue, findProduct } from './catalogue'
 export {
   type CertificateOptions,
@@ -19,6 +20,13 @@ export {
   type TestCertificate,
 } from './certificate'
 export { type ExfilSink, type ExfilSinkOptions, startExfilSink } from './exfil-sink'
+export {
+  FIXTURE_NAMES,
+  FIXTURES_DIRECTORY,
+  type FixtureName,
+  fixtureFile,
+  readFixtureFile,
+} from './fixture-data'
 export type { Product } from './fixtures'
 export type { RecordedRequest, TlsOptions } from './http'
 export type { RateLimit } from './rate-limit'
@@ -31,5 +39,6 @@ export {
   loginHref,
   parentDomainOf,
   startFakeWoolworths,
+  type UnknownSensor,
 } from './server'
 export type { TrolleyLine } from './trolley'

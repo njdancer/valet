@@ -2,7 +2,7 @@
 // which URLs are the app's own pages.
 
 import { isAbsolute, join, resolve, sep } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { appPageUrl } from './app-scheme'
 import type { WindowRole } from './ipc'
 
 export interface LaunchMode {
@@ -45,23 +45,36 @@ export function launchMode(
   }
 }
 
-/** The real install's userData: ~/Library/Application Support/siteadapter. */
-export function realDataDir(appData: string): string {
-  return join(appData, 'siteadapter')
+/** The release app's name, and so its userData folder's. */
+export const RELEASE_DATA_NAME = 'siteadapter'
+/** A development package's name (electron-builder.config.ts), and every unpackaged run's folder. */
+export const DEV_DATA_NAME = 'siteadapter-dev'
+
+/**
+ * An install's userData: ~/Library/Application Support/<name>. `name` is the packaged app's own
+ * (app.getName(): siteadapter for a release, siteadapter-dev for a development package, so the two
+ * never share data); an unpackaged run uses the development name (electron/app.ts).
+ */
+export function realDataDir(appData: string, name: string = RELEASE_DATA_NAME): string {
+  return join(appData, name)
 }
 
 /**
- * The userData directory: the override, or ~/Library/Application Support/siteadapter(-demo). A demo
+ * The userData directory: the override, or ~/Library/Application Support/<name>(-demo). A demo
  * launch never uses the real data folder (or anything inside it), whatever the override says: it
  * would reuse the real grants, approvals and bridge.json.
  */
-export function userDataDir(mode: LaunchMode, appData: string): string {
+export function userDataDir(mode: LaunchMode, appData: string, name: string = RELEASE_DATA_NAME): string {
   const demoDir = join(appData, 'siteadapter-demo')
   if (mode.userData !== null) {
-    if (mode.demo && within(mode.userData, realDataDir(appData))) return demoDir
+    if (
+      mode.demo &&
+      (within(mode.userData, realDataDir(appData)) || within(mode.userData, realDataDir(appData, name)))
+    )
+      return demoDir
     return mode.userData
   }
-  return mode.demo ? demoDir : realDataDir(appData)
+  return mode.demo ? demoDir : realDataDir(appData, name)
 }
 
 /** `path` is `dir` or inside it. macOS volumes are case-insensitive by default, so case is ignored. */
@@ -86,9 +99,13 @@ export function demoResolverRules(mode: Pick<LaunchMode, 'e2e'>): string {
   return mode.e2e ? `${DEMO_RESOLVER_RULES}, MAP ${E2E_CANARY_HOST} 127.0.0.1` : DEMO_RESOLVER_RULES
 }
 
-/** Where the renderer's pages come from: the built files, or electron-vite's dev server. */
+/**
+ * Where the renderer's pages come from: the built files, served at app://renderer from `root`
+ * (app-scheme.ts; never file://, which the grantFileProtocolExtraPrivileges fuse leaves unable to
+ * run the renderer's module scripts), or electron-vite's dev server.
+ */
 export type RendererBase =
-  | { readonly kind: 'file'; readonly dir: string }
+  | { readonly kind: 'app'; readonly root: string }
   | { readonly kind: 'dev'; readonly origin: string }
 
 /**
@@ -102,17 +119,17 @@ export function rendererBase(
   context: { readonly packaged: boolean; readonly devServerBuild: boolean },
   filesDir: string,
 ): RendererBase {
-  if (context.packaged || !context.devServerBuild || devUrl === undefined)
-    return { kind: 'file', dir: filesDir }
+  const files: RendererBase = { kind: 'app', root: filesDir }
+  if (context.packaged || !context.devServerBuild || devUrl === undefined) return files
   let url: URL
   try {
     url = new URL(devUrl)
   } catch {
-    return { kind: 'file', dir: filesDir }
+    return files
   }
   const loopback = url.hostname === 'localhost' || url.hostname === '127.0.0.1'
   if (url.protocol !== 'http:' || !loopback || url.username !== '' || url.password !== '' || url.port === '')
-    return { kind: 'file', dir: filesDir }
+    return files
   return { kind: 'dev', origin: url.origin }
 }
 
@@ -121,7 +138,8 @@ export type Page = (typeof PAGES)[number]
 
 /** The URL of one of the app's pages, with a hash route the caller has already checked. */
 export function pageUrl(base: RendererBase, page: Page, hash = ''): string {
-  const url = base.kind === 'file' ? pathToFileURL(join(base.dir, page)) : new URL(`/${page}`, base.origin)
+  if (base.kind === 'app') return appPageUrl(page, hash)
+  const url = new URL(`/${page}`, base.origin)
   url.hash = hash
   return url.toString()
 }

@@ -11,6 +11,7 @@ import {
 } from '@siteadapter/core'
 import type { AuthRunRequest, LoginMarkerStore } from '@siteadapter/runtime'
 import { describe, expect, it } from 'vitest'
+import { BlockedAudit, LoginSecrets } from '../../src/main/core/blocked'
 import { disabledOtpReader } from '../../src/main/core/credentials'
 import { demoCredentials } from '../../src/main/core/demo'
 import {
@@ -18,8 +19,10 @@ import {
   createAuthRunner,
   Handoffs,
   isBlockedPage,
+  type LoginStepHooks,
   probeLoggedIn,
   SessionTracker,
+  steppedProbe,
 } from '../../src/main/core/login'
 import { FakeAuthPage, FakeDriver, ManualTimers, SHOP } from './fixtures'
 
@@ -74,19 +77,32 @@ function setup() {
     markers: marker.store,
     sessions,
     onChange: () => changes++,
-    probeFallback: () => null,
   })
   return { timers, banners, sessions, handoffs, marker, changes: () => changes }
 }
 
 const cookieProbe = { cookieDomains: ['www.shop.test'], probe: { kind: 'cookie' as const, name: 'sid' } }
 
+/** A login step's hooks, recording each pace and block. */
+function stepHooks() {
+  const seen: string[] = []
+  const hooks: LoginStepHooks = {
+    pace: async () => {
+      seen.push('pace')
+    },
+    reportBlocked: (cause) => {
+      seen.push(`blocked ${cause}`)
+    },
+  }
+  return { hooks, seen }
+}
+
 describe('probe hooks', () => {
   it('ask the auth page, and refuse a URL off home’s origin', async () => {
     const manifest = manifestWith({})
     const page = new FakeAuthPage()
     page.cookies = ['sid']
-    const probe = authProbe(manifest, page, null)
+    const probe = authProbe(manifest, page)
     await probe.fetch('https://www.shop.test/api/me')
     expect(page.fetched).toEqual(['https://www.shop.test/api/me'])
     await expect(probe.fetch('https://login.shop.test/api/me')).rejects.toEqual(
@@ -96,32 +112,12 @@ describe('probe hooks', () => {
     expect(await probe.cookieNames(['www.shop.test'])).toEqual(['sid'])
   })
 
-  it('use the fallback only for a page without them, and fail without either', async () => {
-    const manifest = manifestWith({})
-    const bare = new FakeAuthPage() as Partial<FakeAuthPage>
-    delete (bare as { fetch?: unknown }).fetch
-    Object.defineProperty(bare, 'fetch', { value: undefined })
-    Object.defineProperty(bare, 'cookieNames', { value: undefined })
-    const fallback = {
-      fetch: async () => ({ status: 204, contentType: null, body: null }),
-      cookieNames: async () => ['fallback'],
-    }
-    const withFallback = authProbe(manifest, bare as FakeAuthPage, fallback)
-    expect((await withFallback.fetch('https://www.shop.test/x')).status).toBe(204)
-    expect(await withFallback.cookieNames([])).toEqual(['fallback'])
-    const without = authProbe(manifest, bare as FakeAuthPage, null)
-    await expect(without.fetch('https://www.shop.test/x')).rejects.toEqual(
-      new SiteAdapterError('probe', 'unavailable'),
-    )
-    await expect(without.cookieNames([])).rejects.toEqual(new SiteAdapterError('probe', 'unavailable'))
-  })
-
   it('read the manifest’s probe as auth-flow does', async () => {
     const page = new FakeAuthPage()
     const cookie = manifestWith({ session: cookieProbe })
-    expect(await probeLoggedIn(cookie, authProbe(cookie, page, null))).toBe(false)
+    expect(await probeLoggedIn(cookie, authProbe(cookie, page))).toBe(false)
     page.cookies = ['sid']
-    expect(await probeLoggedIn(cookie, authProbe(cookie, page, null))).toBe(true)
+    expect(await probeLoggedIn(cookie, authProbe(cookie, page))).toBe(true)
 
     const fetch = manifestWith({
       session: {
@@ -130,12 +126,12 @@ describe('probe hooks', () => {
       },
     })
     page.fetchResult = { status: 200, contentType: 'application/json', body: { user: { in: true } } }
-    expect(await probeLoggedIn(fetch, authProbe(fetch, page, null))).toBe(true)
+    expect(await probeLoggedIn(fetch, authProbe(fetch, page))).toBe(true)
     expect(page.fetched.at(-1)).toBe('https://www.shop.test/api/me')
     page.fetchResult = { status: 200, contentType: 'application/json', body: { user: { in: 'yes' } } }
-    expect(await probeLoggedIn(fetch, authProbe(fetch, page, null))).toBe(false)
+    expect(await probeLoggedIn(fetch, authProbe(fetch, page))).toBe(false)
     page.fetchResult = { status: 401, contentType: null, body: null }
-    expect(await probeLoggedIn(fetch, authProbe(fetch, page, null))).toBe(false)
+    expect(await probeLoggedIn(fetch, authProbe(fetch, page))).toBe(false)
     const truthy = manifestWith({
       session: {
         cookieDomains: ['www.shop.test'],
@@ -143,14 +139,39 @@ describe('probe hooks', () => {
       },
     })
     page.fetchResult = { status: 200, contentType: 'application/json', body: { id: 7 } }
-    expect(await probeLoggedIn(truthy, authProbe(truthy, page, null))).toBe(true)
+    expect(await probeLoggedIn(truthy, authProbe(truthy, page))).toBe(true)
     const any = manifestWith({
       session: {
         cookieDomains: ['www.shop.test'],
         probe: { kind: 'fetch', path: '/api/me', expectStatus: 200 },
       },
     })
-    expect(await probeLoggedIn(any, authProbe(any, page, null))).toBe(true)
+    expect(await probeLoggedIn(any, authProbe(any, page))).toBe(true)
+  })
+
+  it('in a login step, open the breaker on a block signature and end the step', async () => {
+    const manifest = manifestWith({})
+    const page = new FakeAuthPage()
+    const step = stepHooks()
+    const probe = steppedProbe(manifest, page, step.hooks)
+    page.fetchResult = { status: 200, contentType: 'application/json', body: { ok: true } }
+    expect((await probe.fetch('https://www.shop.test/api/me')).status).toBe(200)
+    page.fetchResult = { status: 429, contentType: null, body: null }
+    await expect(probe.fetch('https://www.shop.test/api/me')).rejects.toEqual(
+      new SiteAdapterError('login', 'rate-limited'),
+    )
+    page.fetchResult = { status: 403, contentType: 'text/html', body: '<p>Forbidden</p>' }
+    await expect(probe.fetch('https://www.shop.test/api/me')).rejects.toEqual(
+      new SiteAdapterError('login', 'blocked-by-site'),
+    )
+    expect(step.seen).toEqual(['blocked rate-limited', 'blocked blocked-by-site'])
+    // Still home's origin only, and nothing reported for a refusal of our own.
+    await expect(probe.fetch('https://login.shop.test/api/me')).rejects.toEqual(
+      new SiteAdapterError('probe', 'host-not-allowed'),
+    )
+    expect(step.seen).toHaveLength(2)
+    page.cookies = ['sid']
+    expect(await probe.cookieNames(['www.shop.test'])).toEqual(['sid'])
   })
 
   it('see Akamai’s block page only with both of its phrases, and never throw', async () => {
@@ -174,6 +195,13 @@ describe('createAuthRunner', () => {
     driver.nextPage = () => page
     const manifest = manifestWith({ session: cookieProbe, auth: { steps } })
     const registered: SecretValue[] = []
+    const secrets = new LoginSecrets()
+    const blocked = new BlockedAudit({
+      audit: log.sink,
+      secrets,
+      adapter: () => ({ manifest, sessionValues: async () => [] }),
+      now: () => NOW,
+    })
     const run = createAuthRunner({
       grants: { find: async () => null, list: async () => [], put: async () => {}, revoke: async () => {} },
       credentials: demoCredentials(disabledOtpReader),
@@ -184,7 +212,8 @@ describe('createAuthRunner', () => {
       flowTimeoutMs: 5000,
       sessions: s.sessions,
       handoffs: s.handoffs,
-      probeFallback: () => null,
+      blocked,
+      secrets,
       callInfo: () => ({ tool: 'add', client: 'Claude Code' }),
       filledFor: async () => ({
         filled: [{ secret: 'login', field: 'username' }],
@@ -200,8 +229,43 @@ describe('createAuthRunner', () => {
       signal: new AbortController().signal,
       registerForRedaction: (secret) => registered.push(secret),
     }
-    return { ...s, run: () => run(request), log, page, driver, registered }
+    return { ...s, run: () => run(request), log, page, driver, registered, blocked }
   }
+
+  it('opens the login page with reporters that audit its refusals as the auth partition’s, for the call', async () => {
+    const page = new FakeAuthPage()
+    page.cookies = ['sid']
+    const r = runner([{ op: 'assertLoggedIn' }], page)
+    await r.run()
+    const options = r.driver.authOptions[0]
+    expect(options?.onBlocked).toBeTypeOf('function')
+    expect(options?.onReportsDropped).toBeTypeOf('function')
+    options?.onBlocked?.({
+      method: 'GET',
+      target: 'https://evil.test',
+      reason: 'host-not-allowed',
+      initiator: 'page',
+    })
+    await r.blocked.settled()
+    expect(r.log.events.at(-1)).toEqual({
+      type: 'request-blocked',
+      adapterId: 'shop',
+      method: 'GET',
+      target: 'https://evil.test',
+      reason: 'host-not-allowed',
+      initiator: 'page',
+      partition: 'auth',
+      callId: 'call1',
+    })
+  })
+
+  it('throws, and keeps nothing, when the login page can’t be opened', async () => {
+    const r = runner([{ op: 'assertLoggedIn' }])
+    r.driver.openAuthPage = async () => {
+      throw new Error('no window')
+    }
+    await expect(r.run()).rejects.toThrow('no window')
+  })
 
   it('reports ok when the probe passes, closes the page, and adds no login events of its own', async () => {
     const page = new FakeAuthPage()
@@ -253,11 +317,10 @@ describe('createAuthRunner', () => {
 })
 
 describe('Handoffs', () => {
-  function started(startedBy: 'call' | 'person' = 'call') {
+  function started(startedBy: 'call' | 'person' = 'call', manifest = manifestWith({ session: cookieProbe })) {
     const s = setup()
     const page = new FakeAuthPage()
     const driver = new FakeDriver()
-    const manifest = manifestWith({ session: cookieProbe })
     s.handoffs.start({
       manifest,
       driver,
@@ -276,17 +339,47 @@ describe('Handoffs', () => {
 
   it('hands the session over only once the probe says logged in, then clears the hold', async () => {
     const h = started()
-    await expect(h.handoffs.finish('shop')).rejects.toEqual(new SiteAdapterError('probe', 'not-logged-in'))
+    const step = stepHooks()
+    await expect(h.handoffs.finish('shop', step.hooks)).rejects.toEqual(
+      new SiteAdapterError('probe', 'not-logged-in'),
+    )
     expect(h.driver.handoffs).toEqual([])
     expect(h.handoffs.has('shop')).toBe(true)
     h.page.cookies = ['sid']
-    await h.handoffs.finish('shop')
+    await h.handoffs.finish('shop', step.hooks)
+    // Cookies only: the probe took the step's first slot, and the copy needs no page.
+    expect(step.seen).toEqual([])
     expect(h.driver.handoffs).toEqual([{ cookieDomains: ['www.shop.test'], storage: [] }])
     expect(h.marker.cleared).toEqual(['shop'])
     expect(h.page.closed).toBe(true)
     expect(h.handoffs.list()).toEqual([])
     expect(h.sessions.get('shop').state).toBe('logged-in')
-    await expect(h.handoffs.finish('shop')).rejects.toEqual(new SiteAdapterError('login', 'not-found'))
+    await expect(h.handoffs.finish('shop', step.hooks)).rejects.toEqual(
+      new SiteAdapterError('login', 'not-found'),
+    )
+  })
+
+  it('paces the storage copy, and opens the breaker when the probe meets a block, leaving the window up', async () => {
+    const manifest = manifestWith({
+      session: {
+        cookieDomains: ['www.shop.test'],
+        storage: [{ origin: 'https://www.shop.test', keys: ['token'] }],
+        probe: { kind: 'fetch', path: '/api/me', expectStatus: 200, jsonPath: 'in', equals: true },
+      },
+    })
+    const h = started('person', manifest)
+    const step = stepHooks()
+    h.page.fetchResult = { status: 429, contentType: null, body: null }
+    await expect(h.handoffs.finish('shop', step.hooks)).rejects.toEqual(
+      new SiteAdapterError('login', 'rate-limited'),
+    )
+    expect(step.seen).toEqual(['blocked rate-limited'])
+    expect(h.driver.handoffs).toEqual([])
+    expect(h.handoffs.has('shop')).toBe(true)
+    h.page.fetchResult = { status: 200, contentType: 'application/json', body: { in: true } }
+    await h.handoffs.finish('shop', step.hooks)
+    expect(step.seen).toEqual(['blocked rate-limited', 'pace'])
+    expect(h.driver.handoffs).toHaveLength(1)
   })
 
   it('marks the window closed when the person hides it, and shows it again on request', async () => {
@@ -336,7 +429,7 @@ describe('Handoffs', () => {
   it('marks the session logged in once a window the person opened passes the probe', async () => {
     const h = started('person')
     h.page.cookies = ['sid']
-    await h.handoffs.finish('shop')
+    await h.handoffs.finish('shop', stepHooks().hooks)
     expect(h.sessions.get('shop').state).toBe('logged-in')
     expect(h.driver.handoffs).toHaveLength(1)
   })
@@ -425,6 +518,7 @@ describe('a login that fills a secret', () => {
       grantedAt: new Date(NOW).toISOString(),
     }
     const registered: { secret: SecretValue; matched: boolean }[] = []
+    const secrets = new LoginSecrets()
     const run = createAuthRunner({
       grants: {
         find: async () => grant,
@@ -440,7 +534,8 @@ describe('a login that fills a secret', () => {
       flowTimeoutMs: 5000,
       sessions: s.sessions,
       handoffs: s.handoffs,
-      probeFallback: () => null,
+      blocked: new BlockedAudit({ audit: log.sink, secrets, adapter: () => null, now: () => NOW }),
+      secrets,
       callInfo: () => ({ tool: null, client: null }),
       filledFor: async () => ({ filled: [], origin: null }),
     })
@@ -459,6 +554,8 @@ describe('a login that fills a secret', () => {
     expect(registered).toHaveLength(1)
     expect(registered[0]?.matched).toBe(true)
     expect(registered[0]?.secret.disposed).toBe(true)
+    // The app keeps its own clone too, for the audit's targets, past the copy's disposal.
+    expect(secrets.occursIn('shop', 'https://twofactor@example.test.evil.test')).toBe(true)
     expect(page.typed).toEqual([{ text: '[secret]', secret: true }])
     expect(log.events.map((e) => e.type)).toEqual(['login-started', 'secret-used', 'login-finished'])
     expect(JSON.stringify(log.events)).not.toContain('twofactor@example.test')

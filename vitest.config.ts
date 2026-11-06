@@ -11,6 +11,8 @@ export default defineConfig({
         '**/index.ts',
         '**/*.d.ts',
         'packages/browser-electron/src/electron/**',
+        // The desktop app's Electron glue, as above: covered by its smoke test and e2e suite.
+        'apps/desktop/src/main/electron/**',
         // The renderer's dev fake is test scaffolding, not shipped code.
         '**/src/renderer/dev/**',
         '**/*.html',

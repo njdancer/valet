@@ -4,10 +4,10 @@
 // channel's schema exactly (strict objects, bounded strings, no extra arguments). Anything else is
 // refused with a fixed error whose message says nothing about why.
 
+import { z } from 'zod'
 import { parseRoute } from '../../renderer/lib/routes'
 import type { HashRoute, SiteAdapterApi } from '../../shared/api'
 import { CHANNEL_PREFIX, INVOKE_METHODS, type InvokeMethod } from './channels'
-import { z } from './zod'
 
 /** Which of the app's windows sent a request. The main process assigns it when it opens the window. */
 export type WindowRole = 'control' | 'tray' | 'confirmation' | 'needs-user'
@@ -185,8 +185,8 @@ export function methodOf(channel: string): InvokeMethod | null {
 
 /**
  * True when the request came from the main frame of one of the app's windows, showing one of the
- * app's own pages. `isAppPage` decides what the app's pages are (a file URL in a build, the dev
- * server in development).
+ * app's own pages. `isAppPage` decides what the app's pages are (app://renderer in a build, the dev
+ * server's origin under electron-vite dev).
  */
 export function senderTrusted(sender: Sender, isAppPage: (url: string) => boolean): boolean {
   return sender.role !== null && sender.mainFrame && isAppPage(sender.frameUrl)

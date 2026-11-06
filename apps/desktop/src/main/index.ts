@@ -1,7 +1,7 @@
 // The main process entry. Everything privileged lives behind it: see electron/app.ts.
+//
+// The command-line check comes first, before any other module's code runs (ES modules evaluate
+// their imports in order): test/main/argv.test.ts holds this order in place.
 
-// Electron glue: covered by the smoke test (test/smoke) and the e2e suite, not by unit tests.
-/* v8 ignore start */
-
+import './electron/guard'
 import './electron/app'
-/* v8 ignore stop */

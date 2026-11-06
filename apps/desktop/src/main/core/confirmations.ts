@@ -11,6 +11,7 @@
 import type { AdapterManifest } from '@siteadapter/core'
 import type { ConfirmationAnswer, ConfirmationPrompt, ConfirmationRequest } from '@siteadapter/runtime'
 import { CONFIRM_ARM_MS, type ConfirmationItem, type PreviewPart } from '../../shared/api'
+import { shownTransport } from './clients'
 import type { AppWindow } from './ipc'
 import { previewParts } from './run-memory'
 
@@ -27,10 +28,8 @@ export interface Timers {
 
 export interface ConfirmationBrokerOptions {
   readonly adapter: (adapterId: string) => ConfirmationAdapter | null
-  /** How the call reached the endpoint, and the client's input as it sent it. */
-  readonly call: (
-    callId: string,
-  ) => { readonly transport: 'http' | 'stdio'; readonly input: readonly PreviewPart[] } | null
+  /** The client's input as it sent it. */
+  readonly call: (callId: string) => { readonly input: readonly PreviewPart[] } | null
   readonly show: (id: string) => void
   readonly close: (id: string) => void
   readonly onChange: () => void
@@ -81,7 +80,8 @@ export class ConfirmationBroker implements ConfirmationPrompt {
       sideEffect: declaration.sideEffect,
       trigger: request.kind,
       client: request.client,
-      clientTransport: call?.transport ?? 'http',
+      // The transport the runtime was given with the call (mcp-server's label), not the adapter's.
+      clientTransport: shownTransport(request.transport),
       callId: request.callId,
       requestedAt: new Date(now).toISOString(),
       expiresAt: new Date(now + this.options.timeoutMs).toISOString(),

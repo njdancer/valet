@@ -18,6 +18,24 @@ as a `SecretValue`, and every failure as `SiteAdapterError(stage, errorClass)` o
   `isExecutable`, so none looks at the disk.
 - **`FakeCredentialProvider`** for tests and demo mode.
 
+### Listing a vault
+
+Both 1Password providers implement `VaultItemLister`:
+`listItems(vault: string): Promise<readonly VaultItemSummary[]>`, where a summary is
+`{ id, title }`. The grant picker calls the same method whichever provider the person uses.
+
+- The CLI runs `op item list --vault <vault> --format json` with the same `op` it resolves with.
+- The service account asks the SDK for the vaults it can see, picks the one whose id or title is
+  exactly `vault`, and lists that vault's active items. It uses the same cached client as
+  `resolve`, so the token still goes only to `sdkClientFactory`.
+- Only `id` and `title` come back. An id must be 1 to 64 letters and digits, so it can't add a
+  segment or a query to `op://<vault>/<id>`. Titles lose control and bidi characters and are cut
+  at 200 code points. Websites, tags and anything else op or the SDK print are dropped. Listing
+  never resolves a field.
+- Failures are `CredentialError`: `not-found` for a vault name that isn't a valid name, or that
+  matches no vault or more than one; `locked` when 1Password waits for the person (for the CLI, a
+  run that times out); `unavailable` for anything else.
+
 `CredentialResolver` resolves a grant through the provider its `provider` names, and refuses to
 take a provider of kind `messages`: Messages codes only go through the `OtpReader`.
 

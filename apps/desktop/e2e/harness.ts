@@ -11,8 +11,8 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type * as McpClientModule from '@modelcontextprotocol/sdk/client/index.js'
-import type * as McpHttpModule from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { _electron, type ElectronApplication, type Page } from '@playwright/test'
 
 const require = createRequire(import.meta.url)
@@ -21,14 +21,6 @@ export const electronPath = require('electron') as unknown as string
 export const electronDist = electronPath.slice(0, electronPath.indexOf('/Electron.app/'))
 export const appDir = join(import.meta.dirname, '..')
 export const repoRoot = join(appDir, '../..')
-
-// The MCP SDK is a dependency of packages/mcp-server, not of this app (package.json dependencies are
-// not this suite's to change), so it is loaded from there. Its types come through tsconfig paths.
-const mcpRequire = createRequire(join(repoRoot, 'packages/mcp-server/package.json'))
-const { Client } = mcpRequire('@modelcontextprotocol/sdk/client/index.js') as typeof McpClientModule
-const { StreamableHTTPClientTransport } = mcpRequire(
-  '@modelcontextprotocol/sdk/client/streamableHttp.js',
-) as typeof McpHttpModule
 
 /**
  * The fake's two-factor account, which demo mode's test provider holds (src/main/core/demo.ts). The
@@ -116,9 +108,9 @@ export async function windowWithTitle(
   throw new Error(`no window titled with ${marker} opened`)
 }
 
-/** The app's own renderer windows (file:// pages), not the adapter's auth and tool pages. */
+/** The app's own renderer windows (app://renderer pages), not the adapter's auth and tool pages. */
 export function appWindows(app: ElectronApplication): Page[] {
-  return app.windows().filter((page) => !page.isClosed() && page.url().startsWith('file:'))
+  return app.windows().filter((page) => !page.isClosed() && page.url().startsWith('app://renderer/'))
 }
 
 export interface BridgeConfig {

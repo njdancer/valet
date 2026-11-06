@@ -1,10 +1,8 @@
 // The Electron main process: decides the launch mode before ready, takes the single-instance lock,
 // builds the service with Electron's ports, and puts the app in the menu bar.
 
-// Electron glue: covered by the smoke test (test/smoke) and the e2e suite, not by unit tests.
-/* v8 ignore start */
-
 import { existsSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import {
   createElectronSessionDriver,
@@ -12,17 +10,19 @@ import {
   type ManifestOptions,
 } from '@siteadapter/browser-electron'
 import { startEndpoint } from '@siteadapter/mcp-server'
-import { app, clipboard, dialog } from 'electron'
+import { app, clipboard, dialog, protocol } from 'electron'
 import { builtinAdapters } from '../adapters'
+import { APP_SCHEME, APP_SCHEME_PRIVILEGES, createAppSchemeHandler } from '../core/app-scheme'
 import { dataPaths } from '../core/constants'
 import { checkOpBinary, defaultOpCheckDeps, realCredentials } from '../core/credentials'
-import { demoResolverRules, launchMode, rendererBase, userDataDir } from '../core/launch'
+import { DEV_DATA_NAME, demoResolverRules, launchMode, rendererBase, userDataDir } from '../core/launch'
 import { AppService } from '../core/service'
 import type { BridgeCommand } from '../core/snippets'
 import type { DemoSite } from './demo'
+import { launchRefused } from './guard'
 import { broadcast, registerIpc } from './ipc'
-import { partitionProbe } from './probe'
 import { createTray } from './tray'
+import { bundleSignature, electronUpdates } from './updates'
 import { AppWindows } from './windows'
 
 const mode = launchMode(process.argv, process.env, {
@@ -30,21 +30,34 @@ const mode = launchMode(process.argv, process.env, {
   demoBuild: __SITEADAPTER_DEMO_BUILD__,
 })
 
-// Before ready: where everything lives, the process-wide hardening, and demo's host mapping.
-app.setPath('userData', userDataDir(mode, app.getPath('appData')))
-hardenProcess(app)
-if (mode.demo) app.commandLine.appendSwitch('host-resolver-rules', demoResolverRules(mode))
+/**
+ * Before ready: where everything lives, the process-wide hardening, demo's host mapping, and the
+ * app:// scheme the renderer is served from (it must be privileged before ready to be standard and
+ * secure, so module scripts and the page's CSP 'self' work there).
+ *
+ * userData is named after the package (siteadapter-dev for a development package), so a
+ * development build never shares the release app's data. An unpackaged run (`pnpm start`,
+ * `electron .`) is development code too: it uses siteadapter-dev, never the release folder, so it
+ * can't raise the release's version floor or write update-installed events into its audit log.
+ */
+function beforeReady(): void {
+  app.setPath(
+    'userData',
+    userDataDir(mode, app.getPath('appData'), app.isPackaged ? app.getName() : DEV_DATA_NAME),
+  )
+  hardenProcess(app)
+  if (mode.demo) app.commandLine.appendSwitch('host-resolver-rules', demoResolverRules(mode))
+  protocol.registerSchemesAsPrivileged([{ scheme: APP_SCHEME, privileges: APP_SCHEME_PRIVILEGES }])
+}
 
 /** How long quitting may take to close the endpoint, the drivers and the demo site. */
 const QUIT_BOUND_MS = 5_000
 
 const log = (line: string) => process.stderr.write(`siteadapter: ${line}\n`)
 
-/**
- * Where updates will be wired. TODO: call createUpdater from apps/desktop/src/main/updater (another
- * unit writes it) once it merges; until then this does nothing and updates.status says up to date.
- */
-export function startUpdates(): void {}
+/** The update feed, compiled in: empty in a dev, demo or unconfigured build (updates then stay off). */
+const FEED_BASE_URL = __SITEADAPTER_FEED_BASE_URL__
+const FEED_PUBLIC_KEY = __SITEADAPTER_FEED_PUBLIC_KEY__
 
 /** The stdio bridge from the repo, until the app bundles it (packaging's job): tsx and its CLI. */
 function bridgeCommand(configPath: string): BridgeCommand | null {
@@ -66,6 +79,13 @@ async function main(): Promise<void> {
     { packaged: app.isPackaged, devServerBuild: __SITEADAPTER_DEV_SERVER__ },
     join(import.meta.dirname, '../renderer'),
   )
+  // The built renderer (inside app.asar when packaged; Electron's fs reads it there), on the default
+  // session only, which only the app's windows use.
+  if (base.kind === 'app')
+    protocol.handle(
+      APP_SCHEME,
+      createAppSchemeHandler({ root: base.root, readFile: (path) => readFile(path) }),
+    )
   const paths = dataPaths(app.getPath('userData'))
   let service: AppService | null = null
   const windows = new AppWindows({
@@ -81,8 +101,7 @@ async function main(): Promise<void> {
   let demo: DemoSite | null = null
   // The constant first, so a production build drops the import, and with it the demo chunk.
   if (__SITEADAPTER_DEMO_BUILD__ && mode.demo) {
-    const { exposeToE2e, resetDemoPartitions, startDemoSite, trustDemoCertificate } = await import('./demo')
-    await resetDemoPartitions('woolworths')
+    const { exposeToE2e, startDemoSite, trustDemoCertificate } = await import('./demo')
     demo = await startDemoSite(app.getPath('userData'))
     trustDemoCertificate('woolworths', demo.fingerprint)
     if (mode.e2e) exposeToE2e(demo)
@@ -94,6 +113,7 @@ async function main(): Promise<void> {
   )
   const driverOptions: ManifestOptions = demoSite === null ? {} : { egressPorts: [demoSite.site.port] }
   const opDeps = defaultOpCheckDeps()
+  const signature = await bundleSignature()
 
   service = new AppService({
     paths,
@@ -106,13 +126,18 @@ async function main(): Promise<void> {
     },
     sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
     adapters,
-    createDriver: (manifest) =>
-      createElectronSessionDriver(manifest, driverOptions, demoSite === null ? {} : { dial: demoSite.dial }),
+    createDriver: (manifest, reporters) =>
+      createElectronSessionDriver(
+        manifest,
+        { ...driverOptions, ...reporters },
+        demoSite === null ? {} : { dial: demoSite.dial },
+      ),
     credentials: demoSite === null ? realCredentials(opDeps) : demoSite.credentials,
-    startEndpoint: (caller, configPath) =>
+    startEndpoint: (caller, configPath, onSessionsChanged) =>
       startEndpoint({
         caller,
         configPath,
+        onSessionsChanged,
         // D41: the bridge for every client. The port is kept (the bridge reads it from bridge.json)
         // and the token is new at every launch, so one collected by whatever held the saved port
         // while the app was down stops working at the next start. The bridge follows on its own.
@@ -147,11 +172,13 @@ async function main(): Promise<void> {
       quit: () => app.quit(),
     },
     emit: (event) => broadcast(windows, event),
-    probeFallback: (adapterId) => {
-      const adapter = adapters.find((a) => a.definition.manifest.id === adapterId)
-      return adapter === undefined ? null : partitionProbe(adapter.definition.manifest)
-    },
     bridge: bridgeCommand(paths.bridgeConfig),
+    updates: electronUpdates({
+      feed: { url: FEED_BASE_URL, publicKey: FEED_PUBLIC_KEY },
+      demo: mode.demo,
+      signature,
+      log,
+    }),
     checkOp: (path) => checkOpBinary(path, opDeps),
     diagnostics: (d) => log(`diagnostic: ${d.type}`),
   })
@@ -160,7 +187,6 @@ async function main(): Promise<void> {
   registerIpc(running.api, windows, base, log)
   await running.start()
   createTray(windows, running.api, mode.demo)
-  startUpdates()
 
   app.on('second-instance', () => windows.openControlPanel(null))
   let stopping = false
@@ -189,11 +215,20 @@ async function main(): Promise<void> {
   // First run, demo and e2e: open the control panel, where the adapter waits for review.
   const attention = await running.api.attention.list()
   if (mode.demo || mode.e2e || attention.length > 0) windows.openControlPanel(null)
+
+  // A smoke build only: the packaged main process loads what it loads lazily, and says so.
+  if (__SITEADAPTER_SMOKE_BUILD__) {
+    const { smokeSelfCheck } = await import('./smoke')
+    await smokeSelfCheck(app.getPath('userData'))
+  }
 }
 
-if (!app.requestSingleInstanceLock()) {
-  app.quit()
-} else {
+function start(): void {
+  beforeReady()
+  if (!app.requestSingleInstanceLock()) {
+    app.quit()
+    return
+  }
   main().catch((error: unknown) => {
     // Only a development run prints the message: it can name local paths.
     log(
@@ -202,4 +237,6 @@ if (!app.requestSingleInstanceLock()) {
     app.exit(1)
   })
 }
-/* v8 ignore stop */
+
+// A refused launch (electron/guard.ts) is exiting: nothing here runs.
+if (!launchRefused) start()

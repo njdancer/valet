@@ -12,8 +12,8 @@ import {
   canonicalJson,
   parseManifest,
 } from '@siteadapter/core'
+import { z } from 'zod'
 import { JsonDocument } from './files'
-import { z } from './zod'
 
 /** The bundle entry that carries the effective manifest. No source path can look like it. */
 export const MANIFEST_ENTRY = ':manifest.json'

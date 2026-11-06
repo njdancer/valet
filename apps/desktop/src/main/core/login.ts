@@ -5,7 +5,9 @@
 // On needsUser the auth window stays open and is shown to the person with the app's banner above
 // it, and the call returns needsUser at once (D50). The window closes itself after HANDOFF_WINDOW_MS.
 // When the person says they're done, the login probe runs in the auth partition; only if it says
-// logged in is the session handed to the tool partition and the login hold cleared.
+// logged in is the session handed to the tool partition and the login hold cleared. That runs as a
+// login step of the runtime's (ToolHost.runLoginStep): under the adapter's lock, paced by the site's
+// rate budget, and a block it meets opens the site's breaker.
 //
 // The person can also open the login window themselves, from the control panel (startedBy
 // 'person'). That hand-off leaves the session's state alone: giving up on it changes nothing, and
@@ -23,8 +25,16 @@ import {
   type SessionDriver,
   SiteAdapterError,
 } from '@siteadapter/core'
-import type { AuthOutcome, AuthRunner, AuthRunRequest, LoginMarkerStore } from '@siteadapter/runtime'
+import {
+  type AuthOutcome,
+  type AuthRunner,
+  type AuthRunRequest,
+  blockCause,
+  type LoginMarkerStore,
+  type LoginStepContext,
+} from '@siteadapter/runtime'
 import type { NeedsUserItem, SessionStatus } from '../../shared/api'
+import type { BlockedAudit, LoginSecrets } from './blocked'
 import type { Timers } from './confirmations'
 import type { Credentials } from './credentials'
 
@@ -68,25 +78,40 @@ function onHomeOrigin(manifest: AdapterManifest, url: string): boolean {
 }
 
 /**
- * The hooks auth-flow reads its probe through, over the auth page (core v3's AuthPage.fetch and
- * cookieNames). `fallback` stands in while a driver's page lacks them; it must hold to the same
- * contract: GET only, the auth partition's cookies, home's origin only.
+ * The hooks auth-flow reads its probe through: the auth page's own fetch (a GET from the main
+ * process with the auth partition's cookies, held to the navigation origins every hop) and
+ * cookieNames. The probe is narrower still here: home's origin only.
  */
-export function authProbe(manifest: AdapterManifest, page: AuthPage, fallback: AuthProbe | null): AuthProbe {
-  const hasFetch = typeof (page as Partial<AuthPage>).fetch === 'function'
-  const hasNames = typeof (page as Partial<AuthPage>).cookieNames === 'function'
+export function authProbe(manifest: AdapterManifest, page: AuthPage): AuthProbe {
   return {
     async fetch(url) {
       if (!onHomeOrigin(manifest, url)) throw new SiteAdapterError('probe', 'host-not-allowed')
-      if (hasFetch) return page.fetch(url)
-      if (fallback !== null) return fallback.fetch(url)
-      throw new SiteAdapterError('probe', 'unavailable')
+      return page.fetch(url)
     },
-    async cookieNames(domains) {
-      if (hasNames) return page.cookieNames(domains)
-      if (fallback !== null) return fallback.cookieNames(domains)
-      throw new SiteAdapterError('probe', 'unavailable')
+    cookieNames: (domains) => page.cookieNames(domains),
+  }
+}
+
+/** What a login step gets from ToolHost.runLoginStep: the site's rate budget and its breaker. */
+export type LoginStepHooks = Pick<LoginStepContext, 'pace' | 'reportBlocked'>
+
+/**
+ * authProbe for a login step: a block signature in the answer (a 429, a 403 page, Akamai's page) opens
+ * the site's breaker and ends the step, as the runtime's own probe would.
+ */
+export function steppedProbe(manifest: AdapterManifest, page: AuthPage, step: LoginStepHooks): AuthProbe {
+  const probe = authProbe(manifest, page)
+  return {
+    async fetch(url) {
+      const result = await probe.fetch(url)
+      const cause = blockCause(result)
+      if (cause !== null) {
+        step.reportBlocked(cause)
+        throw new SiteAdapterError('login', cause)
+      }
+      return result
     },
+    cookieNames: probe.cookieNames,
   }
 }
 
@@ -132,7 +157,6 @@ export interface HandoffOptions {
   readonly markers: LoginMarkerStore
   readonly sessions: SessionTracker
   readonly onChange: () => void
-  readonly probeFallback: (adapterId: string) => AuthProbe | null
 }
 
 export interface HandoffStart {
@@ -209,14 +233,18 @@ export class Handoffs {
 
   /**
    * The person says they're signed in: probe the auth partition; only then hand off and clear the
-   * hold. Throws, leaving the window up, when the probe says otherwise.
+   * hold. Throws, leaving the window up, when the probe says otherwise. Run it as a login step: the
+   * probe takes the step's first budget slot, and copying storage keys loads a page, which waits
+   * for another.
    */
-  async finish(adapterId: string): Promise<void> {
+  async finish(adapterId: string, step: LoginStepHooks): Promise<void> {
     const handoff = this.open_.get(adapterId)
     if (handoff === undefined) throw new SiteAdapterError('login', 'not-found')
     const { manifest, page, driver } = handoff
-    const probe = authProbe(manifest, page, this.options.probeFallback(adapterId))
+    const probe = steppedProbe(manifest, page, step)
     if (!(await probeLoggedIn(manifest, probe))) throw new SiteAdapterError('probe', 'not-logged-in')
+    // Cookies are copied inside the browser; storage keys are read and written in loaded pages.
+    if (manifest.session.storage.length > 0) await step.pace()
     await driver.handoff(manifest.session.cookieDomains, manifest.session.storage)
     await this.options.markers.clear(adapterId)
     this.dispose(adapterId, handoff)
@@ -275,7 +303,10 @@ export interface AuthRunnerOptions {
   readonly flowTimeoutMs: number
   readonly sessions: SessionTracker
   readonly handoffs: Handoffs
-  readonly probeFallback: (adapterId: string) => AuthProbe | null
+  /** Audits the login page's refused navigations (partition 'auth'). */
+  readonly blocked: BlockedAudit
+  /** Keeps what each login registered for redaction, for those audit targets. */
+  readonly secrets: LoginSecrets
   /** The tool and client of the call that needed the login, for the banner. */
   readonly callInfo: (callId: string | null) => {
     readonly tool: string | null
@@ -295,7 +326,15 @@ export function createAuthRunner(options: AuthRunnerOptions): AuthRunner {
     const adapterId = manifest.id
     const startedAt = options.clock()
     options.sessions.set(adapterId, 'logging-in')
-    const page = await driver.openAuthPage()
+    const secrets = options.secrets.begin(adapterId)
+    let finished: 'ok' | 'needs-user' | 'failed' = 'failed'
+    let page: AuthPage
+    try {
+      page = await driver.openAuthPage(options.blocked.authPage(adapterId, callId))
+    } catch (error) {
+      secrets.finish('failed')
+      throw error
+    }
     let handedToPerson = false
     try {
       const outcome = await runAuthFlow({
@@ -306,11 +345,13 @@ export function createAuthRunner(options: AuthRunnerOptions): AuthRunner {
         grants: options.grants,
         providers: options.credentials.providers(),
         otpReader: options.credentials.otpReader(),
-        probe: authProbe(manifest, page, options.probeFallback(adapterId)),
+        probe: authProbe(manifest, page),
         isBlockedPage: () => isBlockedPage(page),
-        // The runtime clones what it is given and keeps the clone; this copy is ours to dispose.
+        // The runtime clones what it is given and keeps the clone, and so do the app's own login
+        // secrets (for the audit's targets); this copy is ours to dispose.
         rememberSecret: (copy) => {
           try {
+            secrets.register(copy)
             request.registerForRedaction(copy)
           } finally {
             copy.dispose()
@@ -324,12 +365,14 @@ export function createAuthRunner(options: AuthRunnerOptions): AuthRunner {
       })
       switch (outcome.status) {
         case 'ok':
+          finished = 'ok'
           options.sessions.set(adapterId, 'logged-in')
           return { status: 'ok' }
         case 'needsUser': {
           const info = options.callInfo(callId)
           const filled = await options.filledFor(adapterId, callId, startedAt)
           handedToPerson = true
+          finished = 'needs-user'
           options.handoffs.start({
             manifest,
             driver,
@@ -354,6 +397,7 @@ export function createAuthRunner(options: AuthRunnerOptions): AuthRunner {
           return { status: 'blocked', errorClass: outcome.errorClass }
       }
     } finally {
+      secrets.finish(finished)
       if (!handedToPerson) await page.close().catch(() => undefined)
     }
   }

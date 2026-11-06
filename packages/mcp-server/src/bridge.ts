@@ -31,6 +31,7 @@ import {
   type RequestId,
 } from '@modelcontextprotocol/sdk/types.js'
 import { onStreamEnd } from './stream-end'
+import { BRIDGE_TRANSPORT, TRANSPORT_HEADER } from './transport-label'
 
 export interface BridgeTarget {
   /** The endpoint URL, e.g. http://127.0.0.1:52011/mcp. */
@@ -135,7 +136,10 @@ export async function runBridge(options: BridgeOptions): Promise<RunningBridge> 
 
   const openRemote = (target: BridgeTarget): StreamableHTTPClientTransport => {
     const transport = new StreamableHTTPClientTransport(new URL(target.url), {
-      requestInit: { headers: { authorization: `Bearer ${target.token}` } },
+      // The header is a label for the person: it changes nothing the endpoint allows.
+      requestInit: {
+        headers: { authorization: `Bearer ${target.token}`, [TRANSPORT_HEADER]: BRIDGE_TRANSPORT },
+      },
       fetch: watchingFetch,
     })
     transport.onmessage = (message) => {
