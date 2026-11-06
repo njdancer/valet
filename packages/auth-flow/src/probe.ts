@@ -8,8 +8,9 @@ import { type FlowContext, guarded } from './context'
 /**
  * Resolves true when logged in and false when the site says logged out: a cookie that isn't
  * there, one of the probe's loggedOutStatuses, or the expected status with the wrong value.
- * Throws probe: unavailable for any other answer. Only an answer that says "not logged in" may
- * count against a login: an outage or a moved endpoint is not a wrong password.
+ * Throws probe: rate-limited or blocked-by-site for an answer that is the site refusing us, and
+ * probe: unavailable for any other answer. Only an answer that says "not logged in" may count
+ * against a login: an outage or a moved endpoint is not a wrong password.
  */
 export async function probeLoggedIn(ctx: FlowContext): Promise<boolean> {
   const { manifest, probe: hook } = ctx.input
@@ -24,6 +25,11 @@ export async function probeLoggedIn(ctx: FlowContext): Promise<boolean> {
   if (result === null || typeof result !== 'object' || !Number.isInteger(result.status)) {
     throw new SiteAdapterError('probe', 'internal')
   }
+  // Before anything else, whatever the manifest expects: a refusal is never an answer about the
+  // session, and the hook returning one rather than throwing must not turn it into an ordinary
+  // failure that skips the cooldown.
+  const refusal = siteRefusal(result)
+  if (refusal !== null) throw new SiteAdapterError('probe', refusal)
   if (result.status !== probe.expectStatus) {
     if (probe.loggedOutStatuses.includes(result.status)) return false
     throw new SiteAdapterError('probe', 'unavailable')
@@ -53,6 +59,26 @@ function probeUrl(path: string, home: string, navigation: readonly string[]): st
   }
   return url.href
 }
+
+/**
+ * The site's bot protection or rate limit answering instead of the endpoint, classified as the
+ * runtime's looksBlocked does for the tool partition, so the same answer means the same thing in
+ * both partitions: 429 is rate-limited; an HTML 403, or an HTML page that is Akamai's "Access
+ * Denied" with its reference number, is blocked-by-site.
+ */
+function siteRefusal(result: FetchResult): 'rate-limited' | 'blocked-by-site' | null {
+  if (result.status === 429) return 'rate-limited'
+  if (!isHtml(result)) return null
+  if (result.status === 403) return 'blocked-by-site'
+  const body = result.body
+  if (typeof body === 'string' && AKAMAI_DENIED.test(body) && AKAMAI_REFERENCE.test(body)) {
+    return 'blocked-by-site'
+  }
+  return null
+}
+
+const AKAMAI_DENIED = /access denied/i
+const AKAMAI_REFERENCE = /reference\s*#/i
 
 function isHtml(result: FetchResult): boolean {
   if (result.contentType?.toLowerCase().includes('html')) return true

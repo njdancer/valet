@@ -47,10 +47,12 @@ export type AuthOutcome =
  */
 export interface AuthProbe {
   /**
-   * GETs `url` from inside the auth partition with its cookies, as the page would. `url` is always
-   * on the manifest's home origin and on `navigation`. Throw SiteAdapterError('probe',
-   * 'blocked-by-site' | 'rate-limited') for an answer that is the site refusing us (the runtime's
-   * looksBlocked), so the flow ends as blocked; anything else thrown becomes probe: internal.
+   * GETs `url` from inside the auth partition with its cookies, as the page would, and returns
+   * whatever the site answered. `url` is always on the manifest's home origin and on `navigation`.
+   * The flow itself reads a 429, an HTML 403 or Akamai's block page as the site refusing us and
+   * ends as blocked. The hook may also throw SiteAdapterError('probe', 'blocked-by-site' |
+   * 'rate-limited') itself, e.g. when the site's breaker is open; anything else thrown becomes
+   * probe: internal.
    */
   fetch(url: string): Promise<FetchResult>
   /** Names, not values, of the auth partition's cookies on `cookieDomains`. */

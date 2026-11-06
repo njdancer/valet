@@ -97,7 +97,8 @@ describe('a fetch probe', () => {
   })
 
   it('reads any other unexpected status as probe: unavailable, and never retries it', async () => {
-    for (const status of [500, 503, 302, 404, 403, 429]) {
+    // A 403 that isn't an HTML page is an endpoint refusing, not bot protection.
+    for (const status of [500, 503, 302, 404, 403]) {
       const w = world()
       w.probe.respond = () => ({ status, contentType: 'text/plain', body: 'nope' })
       w.input.manifest = {
@@ -216,6 +217,122 @@ describe('a fetch probe', () => {
       stage: 'probe',
       errorClass: 'rate-limited',
     })
+  })
+})
+
+// The hook returns what the site said; the flow decides that it was a refusal, as the runtime's
+// looksBlocked does in the tool partition, so a hook that forgets to throw can't skip the cooldown.
+describe('a fetch probe answered by the site refusing us', () => {
+  it('reads a returned 429 as blocked: rate-limited, and never retries it', async () => {
+    const w = world()
+    w.probe.respond = () => ({ status: 429, contentType: 'application/json', body: {} })
+    w.input.manifest = {
+      ...withProbe(FETCH_PROBE),
+      auth: { steps: [{ op: 'retry', times: 3, steps: [{ op: 'assertLoggedIn' }] }], frameOrigins: [] },
+    }
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'blocked',
+      stage: 'probe',
+      errorClass: 'rate-limited',
+    })
+    expect(w.probe.fetched).toHaveLength(1)
+    expect(w.audit.events.at(-1)).toEqual({
+      type: 'login-finished',
+      adapterId: 'shop',
+      outcome: 'blocked',
+      stage: 'probe',
+      errorClass: 'rate-limited',
+    })
+  })
+
+  it('reads a 429 as rate-limited even when the manifest lists it as logged out', async () => {
+    const w = world()
+    w.probe.respond = () => ({ status: 429, contentType: null, body: null })
+    w.input.manifest = withProbe({ ...FETCH_PROBE, loggedOutStatuses: [401, 429] })
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'blocked',
+      stage: 'probe',
+      errorClass: 'rate-limited',
+    })
+  })
+
+  it('reads a 429 as rate-limited even when the manifest expects it', async () => {
+    const w = world()
+    w.probe.respond = () => ({ status: 429, contentType: null, body: null })
+    w.input.manifest = withProbe({
+      kind: 'fetch',
+      path: '/api/me',
+      expectStatus: 429,
+      loggedOutStatuses: [401],
+    })
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'blocked',
+      stage: 'probe',
+      errorClass: 'rate-limited',
+    })
+  })
+
+  it('reads an HTML 403 as blocked-by-site, even when the manifest lists 403 as logged out', async () => {
+    const w = world()
+    w.probe.respond = () => ({ status: 403, contentType: 'text/html', body: '<html>Forbidden</html>' })
+    w.input.manifest = withProbe({ ...FETCH_PROBE, loggedOutStatuses: [401, 403] })
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'blocked',
+      stage: 'probe',
+      errorClass: 'blocked-by-site',
+    })
+  })
+
+  it("reads Akamai's Access Denied page as blocked-by-site, even on the expected status", async () => {
+    const w = world()
+    const page = '<html><h1>Access Denied</h1><p>Reference #18.2f3a.1700000000</p></html>'
+    w.probe.respond = () => ({ status: 200, contentType: 'text/html', body: page })
+    // No jsonPath: without the block check, the expected status alone would read as logged in.
+    w.input.manifest = withProbe({
+      kind: 'fetch',
+      path: '/api/me',
+      expectStatus: 200,
+      loggedOutStatuses: [401],
+    })
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'blocked',
+      stage: 'probe',
+      errorClass: 'blocked-by-site',
+    })
+  })
+
+  it('does not read an HTML page that only mentions access denied as a block', async () => {
+    const w = world()
+    w.probe.respond = () => ({
+      status: 200,
+      contentType: 'text/html',
+      body: '<p>Access denied? Sign in.</p>',
+    })
+    w.input.manifest = withProbe({
+      kind: 'fetch',
+      path: '/api/me',
+      expectStatus: 200,
+      loggedOutStatuses: [401],
+    })
+    expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
+  })
+
+  it('does not read a JSON body that says access denied as a block', async () => {
+    const w = world()
+    w.probe.respond = () => ({
+      status: 401,
+      contentType: 'application/json',
+      body: 'Access Denied. Reference #1',
+    })
+    w.input.manifest = withProbe(FETCH_PROBE)
+    expect(await runAuthFlow(w.input)).toMatchObject({ status: 'failed', errorClass: 'not-logged-in' })
+  })
+
+  it('does not read an HTML page with no text body as a block', async () => {
+    const w = world()
+    w.probe.respond = () => ({ status: 401, contentType: 'text/html', body: null })
+    w.input.manifest = withProbe(FETCH_PROBE)
+    expect(await runAuthFlow(w.input)).toMatchObject({ status: 'failed', errorClass: 'not-logged-in' })
   })
 })
 
