@@ -6,6 +6,11 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "scripts": {
+    "test:e2e": "playwright test -c e2e/playwright.config.ts",
+    "typecheck:e2e": "tsc -p e2e/tsconfig.json",
+    "check:e2e": "pnpm typecheck:e2e && pnpm test:e2e"
+  },
   "dependencies": {
     "@siteadapter/core": "workspace:*"
   },
