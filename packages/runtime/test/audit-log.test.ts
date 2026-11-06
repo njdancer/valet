@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AuditEvent } from '@siteadapter/core'
@@ -248,5 +248,93 @@ describe('verifyAuditLog', () => {
 
   it('rethrows read errors other than a missing file', async () => {
     await expect(verifyAuditLog(dir)).rejects.toThrow()
+  })
+})
+
+// A write that fails part way must not leave the log chained onto a torn or duplicate line.
+describe('AuditLog when a write fails', () => {
+  /** Opens the real file, but its appendFile writes `written` of the data and then fails. */
+  function tornWrites(written: (data: string) => string, failSync = false) {
+    let failing = true
+    const openFile = async (target: string) => {
+      const handle = await open(target, 'a', 0o600)
+      if (!failing) return handle
+      failing = false
+      return new Proxy(handle, {
+        get(real, key) {
+          if (key === 'appendFile') {
+            return async (data: string) => {
+              await real.appendFile(written(data), 'utf8')
+              if (!failSync) throw Object.assign(new Error('no space left'), { code: 'ENOSPC' })
+            }
+          }
+          if (key === 'sync' && failSync) {
+            return async () => {
+              throw Object.assign(new Error('fsync failed'), { code: 'EIO' })
+            }
+          }
+          const value = Reflect.get(real, key)
+          return typeof value === 'function' ? value.bind(real) : value
+        },
+      })
+    }
+    return openFile
+  }
+
+  it('cuts a torn line back off, rejects that append, and keeps the chain whole', async () => {
+    await new AuditLog(path, clock).append(called)
+    const log = new AuditLog(
+      path,
+      clock,
+      tornWrites((data) => data.slice(0, 20)),
+    )
+
+    await expect(log.append(finished)).rejects.toMatchObject({ code: 'ENOSPC' })
+    expect(await lines()).toHaveLength(1)
+    const next = await log.append(blocked)
+
+    expect(next.seq).toBe(2)
+    expect(await verifyAuditLog(path)).toEqual({ ok: true, records: 2, head: next.hash })
+  })
+
+  it('removes a whole line whose fsync failed, so the next append does not reuse its sequence', async () => {
+    await new AuditLog(path, clock).append(called)
+    const log = new AuditLog(
+      path,
+      clock,
+      tornWrites((data) => data, true),
+    )
+
+    await expect(log.append(finished)).rejects.toMatchObject({ code: 'EIO' })
+    const next = await log.append(blocked)
+
+    expect(next.seq).toBe(2)
+    expect(next.event).toEqual(blocked)
+    expect(await verifyAuditLog(path)).toMatchObject({ ok: true, records: 2 })
+  })
+
+  it('refuses later appends if the torn line could not be cut off', async () => {
+    let calls = 0
+    const openFile = async (target: string) => {
+      const handle = await open(target, 'a', 0o600)
+      calls++
+      if (calls > 1) return handle
+      return new Proxy(handle, {
+        get(real, key) {
+          if (key === 'appendFile') {
+            return async (data: string) => {
+              await real.appendFile(data.slice(0, 10), 'utf8')
+              throw new Error('no space left')
+            }
+          }
+          if (key === 'truncate') return async () => Promise.reject(new Error('EIO'))
+          const value = Reflect.get(real, key)
+          return typeof value === 'function' ? value.bind(real) : value
+        },
+      })
+    }
+    const log = new AuditLog(path, clock, openFile)
+    await expect(log.append(called)).rejects.toThrow()
+    await expect(log.append(finished)).rejects.toMatchObject({ stage: 'tool-run', errorClass: 'internal' })
   })
 })

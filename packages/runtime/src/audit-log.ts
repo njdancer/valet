@@ -2,7 +2,7 @@
 // edit, deletion or reordering anywhere breaks the chain. Truncating the tail is only detectable
 // against a head hash kept elsewhere; see verifyAuditLog's `expectedHead`.
 
-import { open, readFile } from 'node:fs/promises'
+import { type FileHandle, open, readFile } from 'node:fs/promises'
 import {
   type AuditEvent,
   type AuditRecord,
@@ -23,6 +23,11 @@ export function recordHash(seq: number, at: string, event: AuditEvent, prev: str
   return sha256Hex(canonicalJson({ seq, at, event, prev }))
 }
 
+/** Opens the log for appending. Injected so tests can make writes fail part way. */
+export type OpenForAppend = (path: string) => Promise<FileHandle>
+
+const openForAppend: OpenForAppend = (path) => open(path, 'a', 0o600)
+
 export class AuditLog implements AuditSink {
   private head: { readonly seq: number; readonly hash: string } | null = null
   private queue: Promise<unknown> = Promise.resolve()
@@ -30,6 +35,7 @@ export class AuditLog implements AuditSink {
   constructor(
     private readonly path: string,
     private readonly clock: Clock,
+    private readonly openFile: OpenForAppend = openForAppend,
   ) {}
 
   /** Appends one record. Writes are serialised, so records land in the order `append` was called. */
@@ -45,10 +51,24 @@ export class AuditLog implements AuditSink {
     const at = new Date(this.clock.now()).toISOString()
     const prev = head.hash
     const record: AuditRecord = { seq, at, event, prev, hash: recordHash(seq, at, event, prev) }
-    const handle = await open(this.path, 'a', 0o600)
+    // Forget the cached head before touching the file: if this write fails part way, the next
+    // append must re-read and verify the file rather than chain onto what we assumed was there.
+    this.head = null
+    const handle = await this.openFile(this.path)
     try {
-      await handle.appendFile(`${canonicalJson(record)}\n`, 'utf8')
-      await handle.sync()
+      const { size } = await handle.stat()
+      try {
+        await handle.appendFile(`${canonicalJson(record)}\n`, 'utf8')
+        await handle.sync()
+      } catch (error) {
+        // A torn or unsynced line would break the chain for good; cut back to the last good record.
+        // If even that fails, the next append's verification refuses, which fails closed.
+        await handle
+          .truncate(size)
+          .then(() => handle.sync())
+          .catch(() => undefined)
+        throw error
+      }
     } finally {
       await handle.close()
     }
