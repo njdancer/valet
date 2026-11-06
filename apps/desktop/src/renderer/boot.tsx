@@ -1,21 +1,37 @@
 // Mounts a renderer page against the preload's API. In a plain browser (vite dev) there is no
-// preload, so the in-memory fake stands in; a production bundle never loads the fake, and without a
-// preload shows an error instead of an empty app.
+// preload, so the in-memory fake stands in; without a preload a production bundle shows an error
+// instead of an empty app.
 
 import { type ReactNode, StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { SiteAdapterApi } from '../shared/api'
 import { ApiProvider } from './lib/api-context'
 
-export async function resolveApi(win: Window, dev: boolean): Promise<SiteAdapterApi | null> {
+export type FakeLoader = () => Promise<SiteAdapterApi>
+
+/**
+ * The dev fake, or null in a production build. The condition is the compile-time constant at the
+ * import site, so a build drops the import and never emits the fake's chunk (test/build.test.ts).
+ */
+export const devFake: FakeLoader | null = import.meta.env.DEV
+  ? async () => {
+      const { createFakeApi } = await import('./dev/fake-api')
+      return createFakeApi()
+    }
+  : null
+
+export async function resolveApi(win: Window, fake: FakeLoader | null): Promise<SiteAdapterApi | null> {
   if (win.siteadapter !== undefined) return win.siteadapter
-  if (!dev) return null
-  const { createFakeApi } = await import('./dev/fake-api')
-  return createFakeApi()
+  return fake === null ? null : fake()
 }
 
-export async function boot(page: ReactNode, root: HTMLElement, win: Window, dev: boolean): Promise<void> {
-  const api = await resolveApi(win, dev)
+export async function boot(
+  page: ReactNode,
+  root: HTMLElement,
+  win: Window,
+  fake: FakeLoader | null,
+): Promise<void> {
+  const api = await resolveApi(win, fake)
   createRoot(root).render(
     <StrictMode>
       {api === null ? (

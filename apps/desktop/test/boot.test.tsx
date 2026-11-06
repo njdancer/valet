@@ -1,7 +1,7 @@
 import { screen } from '@testing-library/react'
 import { act } from 'react'
 import { describe, expect, it } from 'vitest'
-import { boot, resolveApi } from '../src/renderer/boot'
+import { boot, devFake, resolveApi } from '../src/renderer/boot'
 import { createFakeApi } from '../src/renderer/dev/fake-api'
 import type { SiteAdapterApi } from '../src/shared/api'
 
@@ -12,25 +12,27 @@ function windowWith(api: SiteAdapterApi | undefined): Window {
 describe('boot', () => {
   it('uses the preload’s API when there is one, even in dev', async () => {
     const preload = createFakeApi()
-    expect(await resolveApi(windowWith(preload), true)).toBe(preload)
-    expect(await resolveApi(windowWith(preload), false)).toBe(preload)
+    expect(await resolveApi(windowWith(preload), devFake)).toBe(preload)
+    expect(await resolveApi(windowWith(preload), null)).toBe(preload)
   })
 
-  it('falls back to the fake only in dev, never in a production bundle', async () => {
-    const dev = await resolveApi(windowWith(undefined), true)
-    expect(dev).not.toBeNull()
-    expect(await resolveApi(windowWith(undefined), false)).toBeNull()
+  it('falls back to the fake only when the build has one', async () => {
+    // Vitest runs as a dev build, so the loader is there; test/build.test.ts checks a production
+    // build leaves it out.
+    expect(devFake).not.toBeNull()
+    expect(await resolveApi(windowWith(undefined), devFake)).not.toBeNull()
+    expect(await resolveApi(windowWith(undefined), null)).toBeNull()
   })
 
   it('mounts the page, or an error when there is no main process to talk to', async () => {
     const root = document.createElement('div')
     document.body.append(root)
-    await act(() => boot(<p>mounted</p>, root, windowWith(createFakeApi()), false))
+    await act(() => boot(<p>mounted</p>, root, windowWith(createFakeApi()), null))
     expect(await screen.findByText('mounted')).toBeTruthy()
 
     const bare = document.createElement('div')
     document.body.append(bare)
-    await act(() => boot(<p>never</p>, bare, windowWith(undefined), false))
+    await act(() => boot(<p>never</p>, bare, windowWith(undefined), null))
     expect(await screen.findByText(/couldn’t reach its main process/)).toBeTruthy()
     expect(bare.textContent).not.toContain('never')
   })
