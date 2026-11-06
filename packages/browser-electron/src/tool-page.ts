@@ -1,7 +1,8 @@
 // The tool partition's page, as tool code sees it through the capability API. Adapter code may run
-// here, in an isolated world. The partition's egress guard (see driver.ts) is what keeps anything
-// it learns from leaving for a host the manifest doesn't declare; the checks here only fail early
-// and with a clear error class.
+// here, in an isolated world of its own. The partition's request filter and proxy (see driver.ts)
+// are what keep anything it learns from leaving for a host the manifest doesn't declare, and hold
+// every request to the request surface however it was made; the checks here only fail early and
+// with a clear error class.
 
 import { type FetchInit, type FetchResult, SiteAdapterError, type ToolPage } from '@siteadapter/core'
 import { egressAllowed } from './guards'
@@ -36,7 +37,7 @@ export class SurfaceToolPage implements ToolPage {
   }
 
   click(selector: string): Promise<void> {
-    return this.core.step('tool-run', () => this.core.click('tool-run', selector))
+    return this.core.step('tool-run', (signal) => this.core.click('tool-run', selector, signal))
   }
 
   /** Types literal text as trusted input. Tool pages never receive secrets. */
@@ -47,7 +48,7 @@ export class SurfaceToolPage implements ToolPage {
     await this.core.step(
       'tool-run',
       async (signal) => {
-        const target = await this.core.focus('tool-run', selector)
+        const target = await this.core.focus('tool-run', selector, signal)
         await this.core.typeChars('tool-run', signal, chars.length, delayMs, target.frameId, (index) =>
           this.surface.sendChar(chars[index] ?? ''),
         )
@@ -77,7 +78,7 @@ export class SurfaceToolPage implements ToolPage {
     } catch {
       throw new SiteAdapterError('tool-input', 'invalid')
     }
-    return this.core.step('tool-run', () => this.mainFrame().run(script))
+    return this.core.step('tool-run', () => this.mainFrame().runAdapter(script))
   }
 
   async fetch(pathOrUrl: string, init?: FetchInit): Promise<FetchResult> {

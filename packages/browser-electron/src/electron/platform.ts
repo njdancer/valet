@@ -2,6 +2,7 @@
 // file only forwards. It is covered by the e2e suite, not unit tests.
 
 import { BrowserWindow, session as electronSession, type Session, type WebContents } from 'electron'
+import { type Dial, startEgressProxy } from '../egress-proxy'
 import type {
   BrowserPlatform,
   BrowserSurface,
@@ -13,16 +14,26 @@ import type {
   OutgoingRequest,
   PartitionSession,
   PendingNavigation,
+  ProxyHandle,
 } from '../platform'
 
-// Our scripts' world on the main frame. 0 is the page's own world and 999 is Electron's preload world.
-const ISOLATED_WORLD_ID = 1000
+// Isolated worlds on the main frame. 0 is the page's own world and 999 is Electron's preload world.
+// The runtime's scripts and adapter code get a world each, so adapter code can't patch the fetch,
+// JSON or Storage that the runtime's FETCH, EXTRACT and storage scripts use.
+const RUNTIME_WORLD_ID = 1000
+const ADAPTER_WORLD_ID = 1001
 
-export function electronPlatform(): BrowserPlatform {
+export interface ElectronPlatformOptions {
+  /** Where the egress proxy connects an allowed CONNECT. The e2e suite maps its test hosts here. */
+  readonly dial?: Dial
+}
+
+export function electronPlatform(options: ElectronPlatformOptions = {}): BrowserPlatform {
   const sessions = new Map<string, ElectronPartition>()
   return {
     chromeVersion: process.versions.chrome,
     os: process.platform,
+    startProxy: (allow) => startEgressProxy({ allow, ...(options.dial ? { dial: options.dial } : {}) }),
     session(partition) {
       let wrapped = sessions.get(partition)
       if (wrapped === undefined) {
@@ -52,8 +63,17 @@ class ElectronPartition implements PartitionSession {
 
   filterRequests(allow: (request: OutgoingRequest) => boolean): void {
     this.ses.webRequest.onBeforeRequest((details, callback) => {
-      callback({ cancel: !allow({ url: details.url, method: details.method }) })
+      callback({
+        cancel: !allow({ url: details.url, method: details.method, resourceType: details.resourceType }),
+      })
     })
+  }
+
+  async useProxy(proxy: ProxyHandle): Promise<void> {
+    // "<-loopback>" removes Chromium's implicit direct route to localhost, so loopback goes through
+    // the proxy too, and is refused there like any other undeclared host.
+    await this.ses.setProxy({ mode: 'fixed_servers', proxyRules: proxy.url, proxyBypassRules: '<-loopback>' })
+    await this.ses.closeAllConnections()
   }
 
   addResponseHeader(name: string, value: string): void {
@@ -106,6 +126,8 @@ class ElectronSurface implements BrowserSurface {
     })
     const contents = this.window.webContents
     this.contents = contents
+    // With a proxy set (the tool partition's), WebRTC may then only use TCP through it, where the
+    // egress list applies; UDP, which no proxy here carries, is off.
     contents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp')
     contents.setWindowOpenHandler(() => ({ action: 'deny' }))
     contents.on('will-frame-navigate', (event) => {
@@ -127,7 +149,7 @@ class ElectronSurface implements BrowserSurface {
       if (this.closeHandler?.() === true) event.preventDefault()
     })
     this.window.on('closed', () => {
-      for (const handler of this.destroyedHandlers) handler()
+      for (const handler of [...this.destroyedHandlers]) handler()
     })
   }
 
@@ -147,8 +169,13 @@ class ElectronSurface implements BrowserSurface {
 
   nextStopLoading(): Promise<void> {
     return new Promise((resolve) => {
-      this.contents.once('did-stop-loading', () => resolve())
-      this.destroyedHandlers.push(resolve)
+      const done = () => {
+        this.contents.removeListener('did-stop-loading', done)
+        removeDestroyed()
+        resolve()
+      }
+      const removeDestroyed = this.onDestroyed(done)
+      this.contents.once('did-stop-loading', done)
     })
   }
 
@@ -182,8 +209,15 @@ class ElectronSurface implements BrowserSurface {
             return Promise.reject(new Error('frame is gone'))
           }
           return index === 0
-            ? this.contents.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [{ code }])
+            ? this.contents.executeJavaScriptInIsolatedWorld(RUNTIME_WORLD_ID, [{ code }])
             : frame.executeJavaScript(code)
+        },
+        runAdapter: (code) => {
+          if (index !== 0) return Promise.reject(new Error('adapter code runs in the main frame only'))
+          if (this.contents.isDestroyed() || frame.isDestroyed() || frame.detached) {
+            return Promise.reject(new Error('frame is gone'))
+          }
+          return this.contents.executeJavaScriptInIsolatedWorld(ADAPTER_WORLD_ID, [{ code }])
         },
       }
     })
@@ -217,12 +251,19 @@ class ElectronSurface implements BrowserSurface {
     this.window.hide()
   }
 
-  onCloseRequested(handler: () => boolean): void {
+  onCloseRequested(handler: () => boolean): () => void {
     this.closeHandler = handler
+    return () => {
+      if (this.closeHandler === handler) this.closeHandler = null
+    }
   }
 
-  onDestroyed(handler: () => void): void {
+  onDestroyed(handler: () => void): () => void {
     this.destroyedHandlers.push(handler)
+    return () => {
+      const index = this.destroyedHandlers.indexOf(handler)
+      if (index >= 0) this.destroyedHandlers.splice(index, 1)
+    }
   }
 
   guardNavigation(allow: (navigation: PendingNavigation) => boolean): void {

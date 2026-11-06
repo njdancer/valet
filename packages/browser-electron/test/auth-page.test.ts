@@ -2,7 +2,7 @@ import { inspect } from 'node:util'
 import { SecretValue, SiteAdapterError } from '@siteadapter/core'
 import { describe, expect, it } from 'vitest'
 import { SurfaceAuthPage } from '../src/auth-page'
-import { FakeFrame, FakeSurface, ManualTimers } from './fake-browser'
+import { FakeFrame, FakeSurface, flush, ManualTimers } from './fake-browser'
 import { FakeForm, FakeWindow } from './fake-dom'
 
 const NAVIGATION = ['https://www.example.com', 'https://login.example.com']
@@ -492,12 +492,16 @@ describe('AuthPage.focus', () => {
   })
 })
 
-/** The login page with keyboard focus already on `selector`, as the interpreter leaves it. */
+/**
+ * The login page with keyboard focus already on `selector`, as the interpreter leaves it: it
+ * inspects the element (and checks the grant against its frame origin), then focuses it.
+ */
 async function focusedOn(selector: string) {
   const timers = new ManualTimers()
   const frames = loginFrames()
   const surface = new FakeSurface(PARTITION, [frames.main, frames.child])
   const page = new SurfaceAuthPage(surface, NAVIGATION, timing(timers))
+  await page.inspect(selector)
   await page.focus(selector)
   return { timers, surface, page, ...frames }
 }
@@ -507,8 +511,8 @@ describe('AuthPage.type', () => {
     const { timers, surface, page } = await focusedOn('#user')
     await timers.settle(page.type('nick@example.com'))
     expect(surface.chars.join('')).toBe('nick@example.com')
-    // focus()'s step timeout, type()'s, then one gap between each pair of characters.
-    expect(timers.requested).toEqual([1000, 1000 + 16 * 50, ...Array(15).fill(50)])
+    // inspect()'s and focus()'s step timeouts, type()'s, then one gap between each pair of characters.
+    expect(timers.requested).toEqual([1000, 1000, 1000 + 16 * 50, ...Array(15).fill(50)])
   })
 
   it('types literal text with no focus() first, wherever focus is', async () => {
@@ -535,27 +539,30 @@ describe('AuthPage.type', () => {
     expect(surface.chars).toEqual(['a', '🔑', 'b'])
   })
 
-  it('types a secret, sending every character from inside its reveal callback', async () => {
+  it('decodes a secret once per fill, and types it all inside the work its reveal callback returns', async () => {
     const { timers, surface, page } = await focusedOn('#password')
     const secret = SecretValue.fromString('correct horse')
     const reveal = secret.reveal.bind(secret)
-    let inside = false
+    let reveals = 0
+    let settled = false
     secret.reveal = <T>(use: (plaintext: string) => T): T =>
       reveal((plaintext) => {
-        inside = true
-        try {
-          return use(plaintext)
-        } finally {
-          inside = false
-        }
+        reveals++
+        const work = use(plaintext)
+        Promise.resolve(work).then(
+          () => (settled = true),
+          () => (settled = true),
+        )
+        return work
       })
-    const outside: number[] = []
+    const afterSettled: number[] = []
     surface.afterChar = (index) => {
-      if (!inside) outside.push(index)
+      if (settled) afterSettled.push(index)
     }
     await timers.settle(page.type(secret))
     expect(surface.chars.join('')).toBe('correct horse')
-    expect(outside).toEqual([])
+    expect(reveals).toBe(1)
+    expect(afterSettled).toEqual([])
   })
 
   it('keeps nothing of the secret on the page object', async () => {
@@ -649,18 +656,6 @@ describe('AuthPage.type', () => {
     const error = await rejection(page.type(secret))
     expect(error).toMatchObject({ stage: 'secret-fill', errorClass: 'aborted' })
     expect(surface.chars).toEqual([])
-  })
-
-  it('stops when the secret changes length under it', async () => {
-    const { timers, surface, page } = await focusedOn('#password')
-    const secret = SecretValue.fromString('abcd')
-    const reveal = secret.reveal.bind(secret)
-    let calls = 0
-    secret.reveal = <T>(use: (plaintext: string) => T): T =>
-      reveal((p) => use(calls++ === 0 ? p : p.slice(0, 2)))
-    const error = await timers.settle(rejection(page.type(secret)))
-    expect(error.errorClass).toBe('aborted')
-    expect(surface.chars).toEqual(['a', 'b'])
   })
 
   it('stops the moment any frame commits a navigation, so no character lands in another document', async () => {
@@ -810,5 +805,255 @@ describe('AuthPage.close', () => {
     const error = await rejection(page.goto('https://www.example.com/'))
     expect(error).toMatchObject({ stage: 'navigate', errorClass: 'aborted' })
     expect((await rejection(page.inspect('#user'))).errorClass).toBe('aborted')
+  })
+})
+
+/** Makes `frame` answer each script only once the test releases it. The script itself runs at once. */
+function answerLate(frame: FakeFrame): () => void {
+  let release: () => void = () => {}
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const run = frame.run.bind(frame)
+  frame.run = async (code) => {
+    const result = await run(code)
+    await gate
+    return result
+  }
+  return release
+}
+
+describe('the frame a secret is typed into is the frame inspect() reported', () => {
+  it('refuses focus when the selector’s first match has moved to another frame since inspect', async () => {
+    const frames = loginFrames()
+    // A same-site widget on a sibling subdomain, which inspect never reported.
+    const widgetWindow = new FakeWindow()
+    frames.mainWindow.attachChild(widgetWindow)
+    const widget = new FakeFrame('https://widget.example.com', 'https://widget.example.com/', 0, widgetWindow)
+    const surface = new FakeSurface(PARTITION, [frames.main, widget, frames.child])
+    const page = new SurfaceAuthPage(surface, NAVIGATION, timing(new ManualTimers()))
+    expect(await page.inspect('#password')).toMatchObject({ frameOrigin: 'https://login.example.com' })
+    // The DOM changes between inspect and focus: the widget now has a matching field, first in order.
+    widgetWindow.document.add('#password', widgetWindow.document.element('INPUT', { type: 'password' }))
+    const error = await rejection(page.focus('#password'))
+    expect(error).toMatchObject({ stage: 'auth-step', errorClass: 'element-unsuitable' })
+    const typed = await rejection(page.type(SecretValue.fromString('hunter2')))
+    expect(typed).toMatchObject({ stage: 'secret-fill', errorClass: 'element-unsuitable' })
+    expect(surface.chars).toEqual([])
+  })
+
+  it('refuses focus when the inspected frame now holds another origin', async () => {
+    const frames = loginFrames()
+    const surface = new FakeSurface(PARTITION, [frames.main, frames.child])
+    const page = new SurfaceAuthPage(surface, NAVIGATION, timing(new ManualTimers()))
+    await page.inspect('#password')
+    frames.child.origin = 'https://ads.test'
+    expect((await rejection(page.focus('#password'))).errorClass).toBe('element-unsuitable')
+  })
+
+  it('refuses a secret after a focus() that no inspect() of the same selector preceded', async () => {
+    const frames = loginFrames()
+    const surface = new FakeSurface(PARTITION, [frames.main, frames.child])
+    const page = new SurfaceAuthPage(surface, NAVIGATION, timing(new ManualTimers()))
+    await page.inspect('#user')
+    await page.focus('#password')
+    const error = await rejection(page.type(SecretValue.fromString('hunter2')))
+    expect(error).toMatchObject({ stage: 'secret-fill', errorClass: 'element-unsuitable' })
+    expect(surface.chars).toEqual([])
+  })
+
+  it('still types literal text after a focus() with no inspect()', async () => {
+    const timers = new ManualTimers()
+    const frames = loginFrames()
+    const surface = new FakeSurface(PARTITION, [frames.main, frames.child])
+    const page = new SurfaceAuthPage(surface, NAVIGATION, timing(timers))
+    await page.focus('#user')
+    await timers.settle(page.type('nick'))
+    expect(surface.chars.join('')).toBe('nick')
+  })
+
+  it('forgets what it inspected when the main frame commits a new document', async () => {
+    const frames = loginFrames()
+    const surface = new FakeSurface(PARTITION, [frames.main, frames.child])
+    const page = new SurfaceAuthPage(surface, NAVIGATION, timing(new ManualTimers()))
+    await page.inspect('#password')
+    surface.commit('https://www.example.com/login?step=2')
+    await page.focus('#password')
+    const error = await rejection(page.type(SecretValue.fromString('hunter2')))
+    expect(error.errorClass).toBe('element-unsuitable')
+    expect(surface.chars).toEqual([])
+  })
+
+  it('forgets the focus target when the main frame commits a new document', async () => {
+    const { surface, page } = await focusedOn('#password')
+    surface.commit('https://www.example.com/login?step=2')
+    const error = await rejection(page.type(SecretValue.fromString('hunter2')))
+    expect(error.errorClass).toBe('element-unsuitable')
+  })
+
+  it('refuses a secret for a frame that is not on https', async () => {
+    const frames = loginFrames()
+    frames.child.origin = 'null'
+    const surface = new FakeSurface(PARTITION, [frames.main, frames.child])
+    const page = new SurfaceAuthPage(surface, NAVIGATION, timing(new ManualTimers()))
+    await page.inspect('#password')
+    await page.focus('#password')
+    const error = await rejection(page.type(SecretValue.fromString('hunter2')))
+    expect(error).toMatchObject({ stage: 'secret-fill', errorClass: 'origin-mismatch' })
+    expect(surface.chars).toEqual([])
+  })
+
+  it('checks the focused frame against the grant’s origins, when given them', async () => {
+    const { timers, surface, page } = await focusedOn('#password')
+    const refused = await rejection(
+      page.type(SecretValue.fromString('hunter2'), { allowedOrigins: ['https://www.example.com'] }),
+    )
+    expect(refused).toMatchObject({ stage: 'secret-fill', errorClass: 'origin-mismatch' })
+    expect(surface.chars).toEqual([])
+    await timers.settle(
+      page.type(SecretValue.fromString('hunter2'), { allowedOrigins: ['https://login.example.com'] }),
+    )
+    expect(surface.chars.join('')).toBe('hunter2')
+  })
+})
+
+describe('a primitive whose step has timed out does nothing more', () => {
+  it('sends no click when the element’s position arrives after the timeout', async () => {
+    const timers = new ManualTimers()
+    const { main, mainWindow } = loginFrames()
+    mainWindow.document.add('#go', mainWindow.document.element('BUTTON'))
+    const release = answerLate(main)
+    const surface = new FakeSurface(PARTITION, [main])
+    const page = new SurfaceAuthPage(surface, NAVIGATION, timing(timers))
+    const clicking = rejection(page.click('#go'))
+    await timers.advance(1000)
+    expect(await clicking).toMatchObject({ stage: 'timeout', errorClass: 'timed-out' })
+    release()
+    await flush()
+    await flush()
+    expect(surface.clicks).toEqual([])
+  })
+
+  it('sends no click when an iframe’s offset arrives after the timeout', async () => {
+    const timers = new ManualTimers()
+    const { main, child } = loginFrames()
+    const release = answerLate(main)
+    const surface = new FakeSurface(PARTITION, [main, child])
+    const page = new SurfaceAuthPage(surface, NAVIGATION, timing(timers))
+    // The main frame has no #password, so its (late) answer comes first; then the child's offset.
+    const clicking = rejection(page.click('#password'))
+    await timers.advance(1000)
+    expect((await clicking).errorClass).toBe('timed-out')
+    release()
+    for (let i = 0; i < 5; i++) await flush()
+    expect(surface.clicks).toEqual([])
+    // It stopped before asking the child frame anything.
+    expect(child.scripts).toEqual([])
+  })
+
+  it('leaves no focus target when focus answers after the timeout', async () => {
+    const timers = new ManualTimers()
+    const frames = loginFrames()
+    const surface = new FakeSurface(PARTITION, [frames.main, frames.child])
+    const page = new SurfaceAuthPage(surface, NAVIGATION, timing(timers))
+    await page.inspect('#user')
+    const release = answerLate(frames.main)
+    const focusing = rejection(page.focus('#user'))
+    await timers.advance(1000)
+    expect((await focusing).errorClass).toBe('timed-out')
+    release()
+    for (let i = 0; i < 5; i++) await flush()
+    const error = await rejection(page.type(SecretValue.fromString('hunter2')))
+    expect(error).toMatchObject({ stage: 'secret-fill', errorClass: 'element-unsuitable' })
+    expect(surface.chars).toEqual([])
+  })
+
+  it('leaves no focus target when a goto happened while focus waited', async () => {
+    const timers = new ManualTimers()
+    const frames = loginFrames()
+    const surface = new FakeSurface(PARTITION, [frames.main, frames.child])
+    const page = new SurfaceAuthPage(surface, NAVIGATION, timing(timers))
+    await page.inspect('#user')
+    const release = answerLate(frames.main)
+    const focusing = rejection(page.focus('#user'))
+    await flush()
+    await page.goto('https://www.example.com/login')
+    release()
+    expect(await focusing).toMatchObject({ stage: 'auth-step', errorClass: 'aborted' })
+    const error = await rejection(page.type(SecretValue.fromString('hunter2')))
+    expect(error.errorClass).toBe('element-unsuitable')
+  })
+
+  it('does not bind a selector whose inspection answers after the timeout', async () => {
+    const timers = new ManualTimers()
+    const frames = loginFrames()
+    const surface = new FakeSurface(PARTITION, [frames.main, frames.child])
+    const page = new SurfaceAuthPage(surface, NAVIGATION, timing(timers))
+    const release = answerLate(frames.main)
+    const inspecting = rejection(page.inspect('#user'))
+    await timers.advance(1000)
+    expect((await inspecting).errorClass).toBe('timed-out')
+    release()
+    for (let i = 0; i < 5; i++) await flush()
+    frames.main.run = FakeFrame.prototype.run.bind(frames.main)
+    await page.focus('#user')
+    expect((await rejection(page.type(SecretValue.fromString('hunter2')))).errorClass).toBe(
+      'element-unsuitable',
+    )
+  })
+})
+
+describe('AuthPage.handToUser leaves nothing behind', () => {
+  it('intercepts only the close that ends the hand-off; a later close (or app quit) closes the window', async () => {
+    const surface = new FakeSurface(PARTITION)
+    const page = new SurfaceAuthPage(surface, NAVIGATION, timing(new ManualTimers()))
+    const handed = page.handToUser('Log in')
+    expect(surface.requestClose()).toBe(true)
+    await handed
+    expect(surface.requestClose()).toBe(false)
+    expect(surface.isDestroyed()).toBe(true)
+  })
+
+  it('removes its handlers once the person closes the window', async () => {
+    const surface = new FakeSurface(PARTITION)
+    const page = new SurfaceAuthPage(surface, NAVIGATION, timing(new ManualTimers()))
+    const handed = page.handToUser('Log in')
+    surface.requestClose()
+    await handed
+    expect(surface.closeHandler).toBeNull()
+    expect(surface.destroyedHandlers).toEqual([])
+  })
+
+  it('removes its close handler when it ends because the window was destroyed', async () => {
+    const surface = new FakeSurface(PARTITION)
+    const page = new SurfaceAuthPage(surface, NAVIGATION, timing(new ManualTimers()))
+    const handed = page.handToUser('Log in')
+    surface.destroy()
+    await handed
+    expect(surface.closeHandler).toBeNull()
+  })
+
+  it('can hand the same window over again', async () => {
+    const surface = new FakeSurface(PARTITION)
+    const page = new SurfaceAuthPage(surface, NAVIGATION, timing(new ManualTimers()))
+    const first = page.handToUser('Log in')
+    surface.requestClose()
+    await first
+    const second = page.handToUser('Approve on your phone')
+    expect(surface.requestClose()).toBe(true)
+    await second
+    expect(surface.shown).toEqual(['Log in', 'Approve on your phone'])
+    expect(surface.isDestroyed()).toBe(false)
+  })
+
+  it('does not remove a close handler someone installed after it', async () => {
+    const surface = new FakeSurface(PARTITION)
+    const page = new SurfaceAuthPage(surface, NAVIGATION, timing(new ManualTimers()))
+    const handed = page.handToUser('Log in')
+    const later = () => false
+    surface.onCloseRequested(later)
+    surface.destroy()
+    await handed
+    expect(surface.closeHandler).toBe(later)
   })
 })

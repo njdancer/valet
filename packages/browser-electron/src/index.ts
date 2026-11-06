@@ -1,11 +1,24 @@
 import type { AdapterManifest } from '@siteadapter/core'
 import { ElectronSessionDriver, type ManifestOptions } from './driver'
+import type { Dial } from './egress-proxy'
 
-export { SurfaceAuthPage } from './auth-page'
+export { SurfaceAuthPage, type TypeOptions } from './auth-page'
 export { cookieHost, cookieSetDetails, cookiesForDomains } from './cookies'
 export type { BlockedRequest, DriverOptions, ManifestOptions } from './driver'
 export { ElectronSessionDriver } from './driver'
-export { authNavigationAllowed, egressAllowed, requestTarget } from './guards'
+export { type Dial, parseAuthority, startEgressProxy } from './egress-proxy'
+export {
+  ambiguousPath,
+  authNavigationAllowed,
+  type BlockReason,
+  decideToolRequest,
+  deniedPath,
+  egressAllowed,
+  type FrameRule,
+  isApiCall,
+  pathDigest,
+  requestTarget,
+} from './guards'
 export { partitionName } from './partitions'
 export type * from './platform'
 export { CHROMIUM_SWITCHES, hardenProcess } from './process-hardening'
@@ -19,7 +32,8 @@ export { cleanChromeUserAgent, type UserAgentMode } from './user-agent'
 export async function createElectronSessionDriver(
   manifest: AdapterManifest,
   options: ManifestOptions = {},
+  platform: { readonly dial?: Dial } = {},
 ): Promise<ElectronSessionDriver> {
   const { electronPlatform } = await import('./electron/platform')
-  return ElectronSessionDriver.forManifest(electronPlatform(), manifest, options)
+  return ElectronSessionDriver.forManifest(electronPlatform(platform), manifest, options)
 }

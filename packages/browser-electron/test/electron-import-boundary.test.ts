@@ -13,8 +13,14 @@ const ALLOWED = [
   // The e2e harness is an Electron main process by definition.
   'packages/browser-electron/e2e/',
   'apps/desktop/',
-  // Throwaway experiments that predate the framework. Nothing imports them.
-  'spikes/',
+]
+
+// Throwaway experiments that predate the framework, by name: nothing imports them, and a new file
+// that imports Electron, in spikes/ or anywhere else outside ALLOWED, fails this test.
+const EXISTING_SPIKES = [
+  'spikes/01-woolworths-electron/main.mjs',
+  'spikes/02-woolworths-shapes/probe.mjs',
+  'spikes/02-woolworths-shapes/probe-login.mjs',
 ]
 
 const SOURCE = /\.(?:[cm]?[jt]s|[jt]sx)$/
@@ -45,7 +51,15 @@ describe('electron import boundary', () => {
   })
 
   it('finds no Electron import anywhere else', () => {
-    expect(importers.filter((file) => !ALLOWED.some((prefix) => file.startsWith(prefix)))).toEqual([])
+    expect(
+      importers.filter(
+        (file) => !ALLOWED.some((prefix) => file.startsWith(prefix)) && !EXISTING_SPIKES.includes(file),
+      ),
+    ).toEqual([])
+  })
+
+  it('lists only spikes that exist and import Electron, so the exemption cannot outlive them', () => {
+    for (const spike of EXISTING_SPIKES) expect(importers, spike).toContain(spike)
   })
 
   it('keeps the package entry point free of Electron, so plain Node can import it', () => {

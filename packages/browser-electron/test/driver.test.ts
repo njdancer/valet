@@ -1,6 +1,6 @@
 import { type AdapterManifest, parseManifest, SiteAdapterError } from '@siteadapter/core'
 import { describe, expect, it } from 'vitest'
-import { type BlockedRequest, ElectronSessionDriver } from '../src/driver'
+import { type BlockedRequest, type DriverOptions, ElectronSessionDriver } from '../src/driver'
 import type { CookieRecord } from '../src/platform'
 import { FakeFrame, FakePlatform, FakeSurface, ManualTimers } from './fake-browser'
 import { FakeWindow } from './fake-dom'
@@ -85,6 +85,7 @@ describe('ElectronSessionDriver.forManifest', () => {
       secrets: {},
       session: { cookieDomains: ['www.woolworths.com.au'], probe: { kind: 'cookie', name: 'x' } },
       auth: { steps: [{ op: 'assertLoggedIn' }] },
+      requests: [{ method: 'GET', path: '/apis/ui/Trolley', purpose: 'read' }],
       tools: [{ name: 'trolley', title: 'Trolley', description: 'Reads the trolley', sideEffect: 'read' }],
     })
     const { platform } = browserLike()
@@ -94,8 +95,13 @@ describe('ElectronSessionDriver.forManifest', () => {
       ['persist:tool:woolworths', ['https://www.woolworths.com.au/']],
     ])
     const filter = platform.session('persist:tool:woolworths').filter!
-    expect(filter({ url: 'https://www.woolworths.com.au/apis/ui/Trolley', method: 'GET' })).toBe(true)
-    expect(filter({ url: 'https://www.example.com/', method: 'GET' })).toBe(false)
+    expect(
+      filter({ url: 'https://www.woolworths.com.au/apis/ui/Trolley', method: 'GET', resourceType: 'xhr' }),
+    ).toBe(true)
+    expect(
+      filter({ url: 'https://www.woolworths.com.au/apis/ui/Orders', method: 'GET', resourceType: 'xhr' }),
+    ).toBe(false)
+    expect(filter({ url: 'https://www.example.com/', method: 'GET', resourceType: 'mainFrame' })).toBe(false)
   })
 
   it('refuses an adapter id that is not a safe partition name', () => {
@@ -106,7 +112,7 @@ describe('ElectronSessionDriver.forManifest', () => {
 })
 
 describe('partition set-up', () => {
-  it('hardens the auth partition once and gives it no request filter', async () => {
+  it('hardens the auth partition once and gives it no request filter or proxy', async () => {
     const { platform } = browserLike()
     const driver = new ElectronSessionDriver(platform, OPTIONS)
     await driver.openAuthPage()
@@ -114,6 +120,7 @@ describe('partition set-up', () => {
     const auth = platform.session(AUTH)
     expect(auth.hardened).toBe(1)
     expect(auth.filter).toBeNull()
+    expect(auth.proxy).toBeNull()
     expect(auth.userAgent).toBeNull()
     expect(platform.surfaces.map((s) => s.partition)).toEqual([AUTH, AUTH])
   })
@@ -125,12 +132,12 @@ describe('partition set-up', () => {
     platform.makeSurface = (partition) => {
       const tool = platform.session(TOOL)
       order.push(
-        `open with filter=${tool.filter !== null} headers=${tool.headers.length} hardened=${tool.hardened}`,
+        `open with filter=${tool.filter !== null} headers=${tool.headers.length} hardened=${tool.hardened} proxy=${tool.proxy?.url}`,
       )
       return makeSurface(partition)
     }
     await new ElectronSessionDriver(platform, OPTIONS).toolPage()
-    expect(order).toEqual(['open with filter=true headers=1 hardened=1'])
+    expect(order).toEqual(['open with filter=true headers=1 hardened=1 proxy=http://127.0.0.1:40000'])
     expect(platform.session(TOOL).headers).toEqual([['X-DNS-Prefetch-Control', 'off']])
   })
 
@@ -159,22 +166,37 @@ describe('tool partition egress guard', () => {
     const { platform } = browserLike()
     await new ElectronSessionDriver(platform, OPTIONS).toolPage()
     const filter = platform.session(TOOL).filter!
-    expect(filter({ url: 'https://www.example.com/apis/ui/Trolley', method: 'GET' })).toBe(true)
-    expect(filter({ url: 'https://img.cdn.example.com/p.png', method: 'GET' })).toBe(true)
-    expect(filter({ url: 'https://evil.test/collect', method: 'POST' })).toBe(false)
-    expect(filter({ url: 'http://www.example.com/', method: 'GET' })).toBe(false)
-    expect(filter({ url: 'https://www.example.com.evil.test/', method: 'GET' })).toBe(false)
+    expect(filter({ url: 'https://www.example.com/shop', method: 'GET', resourceType: 'mainFrame' })).toBe(
+      true,
+    )
+    expect(filter({ url: 'https://img.cdn.example.com/p.png', method: 'GET', resourceType: 'image' })).toBe(
+      true,
+    )
+    expect(filter({ url: 'https://evil.test/collect', method: 'POST', resourceType: 'xhr' })).toBe(false)
+    expect(filter({ url: 'http://www.example.com/', method: 'GET', resourceType: 'mainFrame' })).toBe(false)
+    expect(filter({ url: 'https://www.example.com.evil.test/', method: 'GET', resourceType: 'image' })).toBe(
+      false,
+    )
   })
 
-  it('reports a block with origin and path only', async () => {
+  it('reports a block with the origin and a digest of the path, never the path or query', async () => {
     const { platform } = browserLike()
     const blocked: BlockedRequest[] = []
     await new ElectronSessionDriver(platform, { ...OPTIONS, onBlocked: (b) => blocked.push(b) }).toolPage()
     platform.session(TOOL).filter!({
-      url: 'https://evil.test/collect?cookie=session-token-value#x',
+      url: 'https://evil.test/session-token-value/collect?cookie=session-token-value#x',
       method: 'POST',
+      resourceType: 'ping',
     })
-    expect(blocked).toEqual([{ method: 'POST', target: 'https://evil.test/collect' }])
+    expect(blocked).toEqual([
+      {
+        method: 'POST',
+        target: 'https://evil.test',
+        pathDigest: expect.stringMatching(/^[0-9a-f]{16}$/),
+        resourceType: 'ping',
+        reason: 'host-not-allowed',
+      },
+    ])
     expect(JSON.stringify(blocked)).not.toContain('session-token-value')
   })
 
@@ -184,7 +206,334 @@ describe('tool partition egress guard', () => {
       throw new Error('audit log full')
     }
     await new ElectronSessionDriver(platform, { ...OPTIONS, onBlocked }).toolPage()
-    expect(platform.session(TOOL).filter!({ url: 'https://evil.test/', method: 'GET' })).toBe(false)
+    expect(
+      platform.session(TOOL).filter!({ url: 'https://evil.test/', method: 'GET', resourceType: 'image' }),
+    ).toBe(false)
+  })
+})
+
+const SURFACE_OPTIONS = {
+  ...OPTIONS,
+  requests: [
+    { method: 'GET', path: '/apis/ui/Trolley', purpose: 'read' },
+    { method: 'POST', path: '/apis/ui/Trolley/Update', purpose: 'write' },
+    { method: 'POST', path: '/apis/ui/Checkout/Place', purpose: 'irreversible' },
+  ],
+  requestsPerRun: 3,
+} as const
+
+const TROLLEY = { url: 'https://www.example.com/apis/ui/Trolley', method: 'GET', resourceType: 'xhr' }
+
+async function toolFilter(options: Partial<DriverOptions> = {}) {
+  const { platform } = browserLike()
+  const blocked: BlockedRequest[] = []
+  const driver = new ElectronSessionDriver(platform, {
+    ...SURFACE_OPTIONS,
+    ...options,
+    onBlocked: (b) => blocked.push(b),
+  })
+  await driver.toolPage()
+  return { driver, blocked, filter: platform.session(TOOL).filter! }
+}
+
+describe('tool partition request surface', () => {
+  it('cancels an evaluate()d fetch to a denied path on an allowed host, and says why', async () => {
+    const { filter, blocked } = await toolFilter()
+    expect(filter({ url: 'https://www.example.com/checkout/pay', method: 'POST', resourceType: 'xhr' })).toBe(
+      false,
+    )
+    expect(blocked).toEqual([
+      {
+        method: 'POST',
+        target: 'https://www.example.com',
+        pathDigest: expect.any(String),
+        resourceType: 'xhr',
+        reason: 'denied-path',
+      },
+    ])
+  })
+
+  it('cancels a form POST to a payment path that a click submitted', async () => {
+    const { filter, blocked } = await toolFilter()
+    expect(
+      filter({ url: 'https://www.example.com/payment', method: 'POST', resourceType: 'mainFrame' }),
+    ).toBe(false)
+    expect(blocked.map((b) => b.reason)).toEqual(['denied-path'])
+  })
+
+  it('cancels a navigation to a payments page', async () => {
+    const { filter } = await toolFilter()
+    expect(
+      filter({ url: 'https://www.example.com/payments/new', method: 'GET', resourceType: 'mainFrame' }),
+    ).toBe(false)
+  })
+
+  it('cancels an API call to an undeclared path', async () => {
+    const { filter, blocked } = await toolFilter()
+    expect(
+      filter({ url: 'https://www.example.com/apis/ui/Orders', method: 'GET', resourceType: 'xhr' }),
+    ).toBe(false)
+    expect(blocked.map((b) => b.reason)).toEqual(['undeclared-request'])
+  })
+
+  it('makes no API call at all when it was given no declarations', async () => {
+    const { platform } = browserLike()
+    await new ElectronSessionDriver(platform, OPTIONS).toolPage()
+    expect(platform.session(TOOL).filter!(TROLLEY)).toBe(false)
+  })
+
+  it('cuts off API call N+1 in a run, and counts no page or asset toward it', async () => {
+    const { filter, blocked } = await toolFilter()
+    expect(filter(TROLLEY)).toBe(true)
+    expect(filter({ url: 'https://www.example.com/shop', method: 'GET', resourceType: 'mainFrame' })).toBe(
+      true,
+    )
+    expect(filter({ url: 'https://img.cdn.example.com/a.png', method: 'GET', resourceType: 'image' })).toBe(
+      true,
+    )
+    expect(filter(TROLLEY)).toBe(true)
+    expect(filter(TROLLEY)).toBe(true)
+    expect(filter(TROLLEY)).toBe(false)
+    expect(blocked.map((b) => b.reason)).toEqual(['request-ceiling'])
+    // Pages still load once the ceiling is reached.
+    expect(filter({ url: 'https://www.example.com/shop', method: 'GET', resourceType: 'mainFrame' })).toBe(
+      true,
+    )
+  })
+
+  it('does not count a request it blocked for another reason', async () => {
+    const { filter } = await toolFilter()
+    for (let i = 0; i < 5; i++) {
+      filter({ url: 'https://www.example.com/apis/ui/Orders', method: 'GET', resourceType: 'xhr' })
+    }
+    expect(filter(TROLLEY)).toBe(true)
+  })
+
+  it('starts the count again at each run', async () => {
+    const { driver, filter } = await toolFilter()
+    for (let i = 0; i < 3; i++) filter(TROLLEY)
+    expect(filter(TROLLEY)).toBe(false)
+    driver.beginRun('read')
+    expect(filter(TROLLEY)).toBe(true)
+    driver.endRun()
+    for (let i = 0; i < 3; i++) expect(filter(TROLLEY)).toBe(true)
+    expect(filter(TROLLEY)).toBe(false)
+  })
+
+  it('uses the manifest’s default ceiling of 50 when none is given', async () => {
+    const { platform } = browserLike()
+    await new ElectronSessionDriver(platform, { ...OPTIONS, requests: SURFACE_OPTIONS.requests }).toolPage()
+    const filter = platform.session(TOOL).filter!
+    for (let i = 0; i < 50; i++) expect(filter(TROLLEY)).toBe(true)
+    expect(filter(TROLLEY)).toBe(false)
+  })
+
+  it('allows a declaration only up to the running tool’s side effect', async () => {
+    const { driver, filter } = await toolFilter({ requestsPerRun: 50 })
+    const update = {
+      url: 'https://www.example.com/apis/ui/Trolley/Update',
+      method: 'POST',
+      resourceType: 'xhr',
+    }
+    const place = {
+      url: 'https://www.example.com/apis/ui/Checkout/Place',
+      method: 'POST',
+      resourceType: 'xhr',
+    }
+    expect(filter(update)).toBe(false)
+    driver.beginRun('write')
+    expect(filter(update)).toBe(true)
+    expect(filter(place)).toBe(false)
+    driver.beginRun('irreversible')
+    expect(filter(place)).toBe(true)
+    driver.endRun()
+    expect(filter(update)).toBe(false)
+    expect(filter(place)).toBe(false)
+  })
+
+  it('takes the request surface and ceiling from the manifest', async () => {
+    const manifest = parseManifest({
+      schemaVersion: 1,
+      id: 'example',
+      name: 'Example',
+      version: '0.1.0',
+      description: 'Example',
+      home: 'https://www.example.com/',
+      navigation: ['https://www.example.com'],
+      egress: ['www.example.com'],
+      secrets: {},
+      session: { cookieDomains: ['www.example.com'], probe: { kind: 'cookie', name: 'x' } },
+      auth: { steps: [{ op: 'assertLoggedIn' }] },
+      requests: [{ method: 'GET', path: '/apis/ui/Trolley', purpose: 'read' }],
+      limits: { requestsPerRun: 1 },
+      tools: [{ name: 'trolley', title: 'Trolley', description: 'Reads the trolley', sideEffect: 'read' }],
+    })
+    const { platform } = browserLike()
+    await ElectronSessionDriver.forManifest(platform, manifest).toolPage()
+    const filter = platform.session(TOOL).filter!
+    expect(filter(TROLLEY)).toBe(true)
+    expect(filter(TROLLEY)).toBe(false)
+  })
+})
+
+describe('tool partition proxy', () => {
+  it('allows a connection only to an egress host on port 443, and reports what it refuses', async () => {
+    const { platform } = browserLike()
+    const blocked: BlockedRequest[] = []
+    await new ElectronSessionDriver(platform, { ...OPTIONS, onBlocked: (b) => blocked.push(b) }).toolPage()
+    const allow = platform.proxies[0]!.policy
+    expect(allow('www.example.com', 443)).toBe(true)
+    expect(allow('img.cdn.example.com', 443)).toBe(true)
+    expect(allow('www.example.com', 3478)).toBe(false)
+    expect(allow('session-token-value.evil.test', 443)).toBe(false)
+    expect(allow('127.0.0.1', 443)).toBe(false)
+    expect(blocked).toEqual([
+      {
+        method: 'CONNECT',
+        target: 'https://www.example.com:3478',
+        pathDigest: null,
+        resourceType: 'socket',
+        reason: 'host-not-allowed',
+      },
+      {
+        method: 'CONNECT',
+        target: 'https://session-token-value.evil.test',
+        pathDigest: null,
+        resourceType: 'socket',
+        reason: 'host-not-allowed',
+      },
+      {
+        method: 'CONNECT',
+        target: 'https://127.0.0.1',
+        pathDigest: null,
+        resourceType: 'socket',
+        reason: 'host-not-allowed',
+      },
+    ])
+  })
+
+  it('takes other ports only when told to', async () => {
+    const { platform } = browserLike()
+    await new ElectronSessionDriver(platform, { ...OPTIONS, egressPorts: [8443] }).toolPage()
+    const allow = platform.proxies[0]!.policy
+    expect(allow('www.example.com', 8443)).toBe(true)
+    expect(allow('www.example.com', 443)).toBe(false)
+  })
+
+  it('still refuses when the reporter throws', async () => {
+    const { platform } = browserLike()
+    const onBlocked = () => {
+      throw new Error('audit log full')
+    }
+    await new ElectronSessionDriver(platform, { ...OPTIONS, onBlocked }).toolPage()
+    expect(platform.proxies[0]!.policy('evil.test', 443)).toBe(false)
+  })
+
+  it('stops the proxy on close, and the next tool page gets a new one', async () => {
+    const { platform } = browserLike()
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    await driver.toolPage()
+    await driver.close()
+    expect(platform.proxies.map((p) => p.closed)).toEqual([true])
+    await driver.toolPage()
+    expect(platform.proxies.map((p) => p.closed)).toEqual([true, false])
+    expect(platform.session(TOOL).proxy).toBe(platform.proxies[1]!.handle)
+  })
+
+  it('opens no tool window when the proxy fails to start, and tries again next time', async () => {
+    const { platform } = browserLike()
+    const start = platform.onStartProxy
+    platform.onStartProxy = async () => {
+      platform.onStartProxy = start
+      throw new Error('EADDRINUSE')
+    }
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    const error = await rejection(driver.toolPage())
+    expect(error).toMatchObject({ stage: 'egress', errorClass: 'unavailable' })
+    expect(platform.surfaces).toEqual([])
+    await expect(driver.toolPage()).resolves.toBeDefined()
+    expect(platform.surfaces).toHaveLength(1)
+  })
+
+  it('reports a handoff whose tool partition cannot be set up without opening anything', async () => {
+    const { platform } = browserLike()
+    platform.onStartProxy = async () => {
+      throw new Error('EADDRINUSE')
+    }
+    const error = await rejection(
+      new ElectronSessionDriver(platform, OPTIONS).handoff(['www.example.com'], []),
+    )
+    expect(error).toMatchObject({ stage: 'egress', errorClass: 'unavailable' })
+  })
+})
+
+describe('partition set-up failures', () => {
+  it('turns a platform failure into a SiteAdapterError without its message', async () => {
+    const { platform } = browserLike()
+    platform.session = () => {
+      throw new Error('profile directory locked: /Users/nick')
+    }
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    const auth = await rejection(driver.openAuthPage())
+    expect(auth).toMatchObject({ stage: 'navigate', errorClass: 'internal' })
+    expect(auth.message).not.toContain('nick')
+    expect(await rejection(driver.toolPage())).toMatchObject({ stage: 'egress', errorClass: 'internal' })
+    expect(await rejection(driver.sessionCookieValues(['www.example.com']))).toMatchObject({
+      stage: 'session-handoff',
+      errorClass: 'internal',
+    })
+  })
+
+  it('reports a Chrome version it cannot read as a SiteAdapterError, from every entry point', async () => {
+    const { platform } = browserLike()
+    Object.defineProperty(platform, 'chromeVersion', { value: 'unknown' })
+    const driver = new ElectronSessionDriver(platform, { ...OPTIONS, userAgent: 'chrome' })
+    expect(await rejection(driver.openAuthPage())).toMatchObject({ stage: 'manifest', errorClass: 'invalid' })
+    expect(await rejection(driver.toolPage())).toMatchObject({ stage: 'manifest', errorClass: 'invalid' })
+    expect(await rejection(driver.handoff(['www.example.com'], []))).toMatchObject({
+      stage: 'manifest',
+      errorClass: 'invalid',
+    })
+  })
+})
+
+describe('auth partition subframes', () => {
+  it('lets subframes load any https page by default', async () => {
+    const { platform } = browserLike()
+    await new ElectronSessionDriver(platform, OPTIONS).openAuthPage()
+    expect(platform.surfaces[0]!.attemptNavigation('https://widget.example.com/', false)).toBe(true)
+  })
+
+  it('pins subframes to the navigation and frame origins when given them', async () => {
+    const { platform } = browserLike()
+    await new ElectronSessionDriver(platform, {
+      ...OPTIONS,
+      frameOrigins: ['https://captcha.test'],
+    }).openAuthPage()
+    const surface = platform.surfaces[0]!
+    expect(surface.attemptNavigation('https://captcha.test/frame', false)).toBe(true)
+    expect(surface.attemptNavigation('https://login.example.com/frame', false)).toBe(true)
+    expect(surface.attemptNavigation('https://widget.example.com/', false)).toBe(false)
+  })
+
+  it('pins the storage handoff’s helper page the same way', async () => {
+    const { platform, storageFor } = browserLike()
+    storageFor(AUTH, 'https://login.example.com').set('jwt', 'abc')
+    const driver = new ElectronSessionDriver(platform, { ...OPTIONS, frameOrigins: [] })
+    const makeSurface = platform.makeSurface
+    const frameChecks: boolean[] = []
+    platform.makeSurface = (partition) => {
+      const surface = makeSurface(partition)
+      const load = surface.onLoad
+      surface.onLoad = (url) => {
+        if (partition === AUTH)
+          frameChecks.push(surface.attemptNavigation('https://widget.example.com/', false))
+        return load(url)
+      }
+      return surface
+    }
+    await driver.handoff([], [{ origin: 'https://login.example.com', keys: ['jwt'] }])
+    expect(frameChecks).toEqual([false])
   })
 })
 

@@ -8,13 +8,15 @@ import {
   httpsOrigin,
   isBareOrigin,
   originAllowed,
+  type Purpose,
+  type RequestDeclaration,
   type SessionDriver,
   SiteAdapterError,
   type ToolPage,
 } from '@siteadapter/core'
 import { SurfaceAuthPage } from './auth-page'
 import { cookieSetDetails, cookiesForDomains } from './cookies'
-import { egressAllowed, requestTarget } from './guards'
+import { type BlockReason, decideToolRequest, pathDigest, requestTarget } from './guards'
 import { isRecord, type PageTiming } from './page-core'
 import { partitionName } from './partitions'
 import type {
@@ -22,7 +24,9 @@ import type {
   BrowserSurface,
   CookieRecord,
   FrameHandle,
+  OutgoingRequest,
   PartitionSession,
+  ProxyHandle,
   Role,
   Timers,
 } from './platform'
@@ -31,10 +35,20 @@ import { readStorageScript, writeStorageScript } from './scripts'
 import { SurfaceToolPage } from './tool-page'
 import { cleanChromeUserAgent, type UserAgentMode } from './user-agent'
 
-/** A request the tool partition's egress guard cancelled. Origin and path only. */
+/**
+ * A request the tool partition cancelled. Tool code chooses what it asks for, so every field but
+ * `reason` is untrusted: `target` is the origin only and `pathDigest` a hash, but a hostname can
+ * still carry data, so a report must pass output redaction before it is written to the audit log.
+ */
 export interface BlockedRequest {
+  /** The HTTP method, or CONNECT for a socket the proxy refused. */
   readonly method: string
+  /** The origin (scheme, host and port), never the path or query. */
   readonly target: string
+  /** A short digest of the path, or null when there is none, e.g. for a refused CONNECT. */
+  readonly pathDigest: string | null
+  readonly resourceType: string
+  readonly reason: BlockReason
 }
 
 export interface DriverOptions {
@@ -45,6 +59,17 @@ export interface DriverOptions {
   readonly navigation: readonly string[]
   /** Hosts the tool partition may send requests to. */
   readonly egress: readonly string[]
+  /** The manifest's request surface. Without it, the tool partition makes no API call at all. */
+  readonly requests?: readonly RequestDeclaration[]
+  /** API calls allowed per run, counted from beginRun(). The manifest's default is 50. */
+  readonly requestsPerRun?: number
+  /** Ports the tool partition may open connections to on egress hosts. Defaults to 443. */
+  readonly egressPorts?: readonly number[]
+  /**
+   * Origins auth-partition subframes may load, besides the navigation origins. Unset, a subframe
+   * may load any https page; see guards.ts.
+   */
+  readonly frameOrigins?: readonly string[]
   readonly userAgent?: UserAgentMode
   readonly stepTimeoutMs?: number
   readonly typingDelayMs?: number
@@ -57,10 +82,21 @@ export interface DriverOptions {
   readonly timers?: Timers
 }
 
-export type ManifestOptions = Omit<DriverOptions, 'adapterId' | 'home' | 'navigation' | 'egress'>
+export type ManifestOptions = Omit<
+  DriverOptions,
+  'adapterId' | 'home' | 'navigation' | 'egress' | 'requests' | 'requestsPerRun'
+>
 
 const DEFAULT_STEP_TIMEOUT_MS = 30_000
 const DEFAULT_TYPING_DELAY_MS = 60
+const DEFAULT_REQUESTS_PER_RUN = 50
+const DEFAULT_EGRESS_PORTS: readonly number[] = [443]
+
+/** What the tool partition allows right now. Between runs, a read tool's allowance. */
+interface RunState {
+  readonly sideEffect: Purpose
+  requests: number
+}
 
 export class ElectronSessionDriver implements SessionDriver {
   static forManifest(
@@ -74,15 +110,19 @@ export class ElectronSessionDriver implements SessionDriver {
       home: manifest.home,
       navigation: manifest.navigation,
       egress: manifest.egress,
+      requests: manifest.requests,
+      requestsPerRun: manifest.limits.requestsPerRun,
     })
   }
 
   private readonly partitions: Readonly<Record<Role, string>>
-  private readonly configured = new Set<Role>()
+  private readonly configured = new Map<Role, Promise<PartitionSession>>()
+  private proxy: Promise<ProxyHandle> | null = null
+  private run: RunState = { sideEffect: 'read', requests: 0 }
   private readonly timing: PageTiming
   private readonly authPages = new Map<BrowserSurface, SurfaceAuthPage>()
   private readonly helpers = new Set<BrowserSurface>()
-  private tool: { surface: BrowserSurface; page: Promise<SurfaceToolPage> } | null = null
+  private tool: ToolSlot | null = null
 
   constructor(
     private readonly platform: BrowserPlatform,
@@ -99,27 +139,48 @@ export class ElectronSessionDriver implements SessionDriver {
     }
   }
 
+  /**
+   * Starts a tool run: the API-call count starts again from zero, and declarations up to
+   * `sideEffect` become usable. Not yet on core's SessionDriver; the runtime calls it around run().
+   */
+  beginRun(sideEffect: Purpose): void {
+    this.run = { sideEffect, requests: 0 }
+  }
+
+  /** Ends a run: back to a read tool's allowance, with a fresh count. */
+  endRun(): void {
+    this.run = { sideEffect: 'read', requests: 0 }
+  }
+
   async openAuthPage(): Promise<AuthPage> {
-    const surface = this.open('auth')
-    const page = new SurfaceAuthPage(surface, this.options.navigation, this.timing)
+    const surface = await this.open('auth')
+    const page = this.authPage(surface)
     this.authPages.set(surface, page)
     surface.onDestroyed(() => this.authPages.delete(surface))
     return page
   }
 
   toolPage(): Promise<ToolPage> {
-    if (this.tool !== null && !this.tool.surface.isDestroyed()) return this.tool.page
-    const surface = this.open('tool')
-    const page = new SurfaceToolPage(surface, this.options.egress, this.timing)
-    const opened = page.goto(this.options.home).then(
-      () => page,
-      (error: unknown) => {
+    const current = this.tool
+    if (current !== null && (current.surface === null || !current.surface.isDestroyed())) return current.page
+    const slot: ToolSlot = { surface: null, page: Promise.resolve(null as never) }
+    slot.page = this.open('tool').then(async (surface) => {
+      slot.surface = surface
+      const page = new SurfaceToolPage(surface, this.options.egress, this.timing)
+      try {
+        await page.goto(this.options.home)
+      } catch (error) {
         surface.destroy()
         throw error
-      },
-    )
-    this.tool = { surface, page: opened }
-    return opened
+      }
+      return page
+    })
+    this.tool = slot
+    // A partition that failed to open leaves no window, so the next call must start again.
+    slot.page.catch(() => {
+      if (this.tool === slot && slot.surface === null) this.tool = null
+    })
+    return slot.page
   }
 
   /**
@@ -131,8 +192,8 @@ export class ElectronSessionDriver implements SessionDriver {
     cookieDomains: readonly string[],
     storage: readonly { readonly origin: string; readonly keys: readonly string[] }[],
   ): Promise<void> {
-    const auth = this.session('auth')
-    const tool = this.session('tool')
+    const auth = await this.session('auth')
+    const tool = await this.session('tool')
     try {
       const cookies = cookiesForDomains(await auth.getCookies(), cookieDomains)
       for (const cookie of cookies) await tool.setCookie(cookieSetDetails(cookie))
@@ -145,20 +206,32 @@ export class ElectronSessionDriver implements SessionDriver {
   async sessionCookieValues(cookieDomains: readonly string[]): Promise<readonly string[]> {
     let cookies: CookieRecord[]
     try {
-      cookies = cookiesForDomains(await this.session('tool').getCookies(), cookieDomains)
+      const tool = await this.session('tool')
+      cookies = cookiesForDomains(await tool.getCookies(), cookieDomains)
     } catch {
       throw new SiteAdapterError('session-handoff', 'internal')
     }
     return [...new Set(cookies.map((cookie) => cookie.value).filter((value) => value.length > 0))]
   }
 
+  /** Closes every window this driver opened, and the tool partition's proxy. */
   async close(): Promise<void> {
     const surfaces = [...this.authPages.keys(), ...this.helpers]
-    if (this.tool !== null) surfaces.push(this.tool.surface)
+    if (this.tool?.surface) surfaces.push(this.tool.surface)
     for (const surface of surfaces) if (!surface.isDestroyed()) surface.destroy()
     this.authPages.clear()
     this.helpers.clear()
     this.tool = null
+    const proxy = this.proxy
+    this.proxy = null
+    // The tool partition is set up again, with a new proxy, when a page next opens in it.
+    this.configured.delete('tool')
+    if (proxy !== null) await proxy.then((handle) => handle.close()).catch(() => {})
+  }
+
+  private authPage(surface: BrowserSurface): SurfaceAuthPage {
+    const frames = this.options.frameOrigins
+    return new SurfaceAuthPage(surface, this.options.navigation, this.timing, frames ?? 'any-https')
   }
 
   private async copyStorage(origin: string, keys: readonly string[]): Promise<void> {
@@ -192,13 +265,14 @@ export class ElectronSessionDriver implements SessionDriver {
     const wanted = httpsOrigin(origin)
     const open = this.openSurfaces(role).find((surface) => surface.frames()[0]?.origin === wanted)
     if (open !== undefined) return this.runIn(open, use)
-    const surface = this.open(role)
-    this.helpers.add(surface)
+    let surface: BrowserSurface | null = null
     try {
+      surface = await this.open(role)
+      this.helpers.add(surface)
       const url = new URL(this.options.storageDocumentPath ?? '/robots.txt', origin).href
       const page =
         role === 'auth'
-          ? new SurfaceAuthPage(surface, this.options.navigation, this.timing)
+          ? this.authPage(surface)
           : new SurfaceToolPage(surface, this.options.egress, this.timing)
       await page.goto(url)
       if (surface.frames()[0]?.origin !== wanted)
@@ -208,8 +282,10 @@ export class ElectronSessionDriver implements SessionDriver {
       if (error instanceof SiteAdapterError && error.stage === 'session-handoff') throw error
       throw new SiteAdapterError('session-handoff', 'unavailable')
     } finally {
-      this.helpers.delete(surface)
-      if (!surface.isDestroyed()) surface.destroy()
+      if (surface !== null) {
+        this.helpers.delete(surface)
+        if (!surface.isDestroyed()) surface.destroy()
+      }
     }
   }
 
@@ -225,38 +301,109 @@ export class ElectronSessionDriver implements SessionDriver {
 
   private openSurfaces(role: Role): BrowserSurface[] {
     if (role === 'auth') return [...this.authPages.keys()].filter((surface) => !surface.isDestroyed())
-    return this.tool !== null && !this.tool.surface.isDestroyed() ? [this.tool.surface] : []
+    const surface = this.tool?.surface
+    return surface && !surface.isDestroyed() ? [surface] : []
   }
 
-  private open(role: Role): BrowserSurface {
-    this.session(role)
+  private async open(role: Role): Promise<BrowserSurface> {
+    await this.session(role)
     return this.platform.openSurface(this.partitions[role])
   }
 
   /** The partition's session, hardened and guarded before any page opens in it. */
-  private session(role: Role): PartitionSession {
+  private session(role: Role): Promise<PartitionSession> {
+    let configured = this.configured.get(role)
+    if (configured === undefined) {
+      configured = this.configure(role)
+      this.configured.set(role, configured)
+      // A set-up that failed is tried again next time rather than remembered.
+      configured.catch(() => {
+        if (this.configured.get(role) === configured) this.configured.delete(role)
+      })
+    }
+    return configured
+  }
+
+  private async configure(role: Role): Promise<PartitionSession> {
+    try {
+      return await this.configureUnchecked(role)
+    } catch (error) {
+      if (error instanceof SiteAdapterError) throw error
+      throw new SiteAdapterError(role === 'tool' ? 'egress' : 'navigate', 'internal')
+    }
+  }
+
+  private async configureUnchecked(role: Role): Promise<PartitionSession> {
     const session = this.platform.session(this.partitions[role])
-    if (this.configured.has(role)) return session
     session.harden()
     if (this.options.userAgent === 'chrome') {
       session.setUserAgent(cleanChromeUserAgent(this.platform.chromeVersion, this.platform.os))
     }
     if (role === 'tool') {
-      const { egress, onBlocked } = this.options
-      session.filterRequests((request) => {
-        if (egressAllowed(request.url, egress)) return true
-        try {
-          onBlocked?.({ method: request.method, target: requestTarget(request.url) })
-        } catch {
-          // A failing reporter must not turn a block into an allow.
-        }
-        return false
-      })
+      session.filterRequests((request) => this.allowToolRequest(request))
       // Stops the page resolving hostnames it only links to: a hostname can carry data out
       // through DNS without any request that webRequest would see.
       session.addResponseHeader('X-DNS-Prefetch-Control', 'off')
+      await session.useProxy(await this.startProxy())
     }
-    this.configured.add(role)
     return session
   }
+
+  private startProxy(): Promise<ProxyHandle> {
+    const { egress, egressPorts = DEFAULT_EGRESS_PORTS } = this.options
+    const proxy = this.platform.startProxy((host, port) => {
+      if (hostAllowed(host, egress) && egressPorts.includes(port)) return true
+      this.report({
+        method: 'CONNECT',
+        target: requestTarget(`https://${host}:${port}`),
+        pathDigest: null,
+        resourceType: 'socket',
+        reason: 'host-not-allowed',
+      })
+      return false
+    })
+    this.proxy = proxy
+    return proxy.catch(() => {
+      throw new SiteAdapterError('egress', 'unavailable')
+    })
+  }
+
+  /** The tool partition's filter: egress, the request surface, then the per-run ceiling. */
+  private allowToolRequest(request: OutgoingRequest): boolean {
+    const decision = decideToolRequest(request, {
+      egress: this.options.egress,
+      requests: this.options.requests ?? [],
+      sideEffect: this.run.sideEffect,
+    })
+    let reason: BlockReason | null = decision.allowed ? null : decision.reason
+    if (decision.allowed && decision.counts) {
+      this.run.requests++
+      if (this.run.requests > (this.options.requestsPerRun ?? DEFAULT_REQUESTS_PER_RUN)) {
+        reason = 'request-ceiling'
+      }
+    }
+    if (reason === null) return true
+    this.report({
+      method: /^[A-Z]{1,16}$/i.test(request.method) ? request.method.toUpperCase() : 'INVALID',
+      target: requestTarget(request.url),
+      pathDigest: pathDigest(request.url),
+      resourceType: request.resourceType,
+      reason,
+    })
+    return false
+  }
+
+  private report(blocked: BlockedRequest): void {
+    try {
+      this.options.onBlocked?.(blocked)
+    } catch {
+      // A failing reporter must not turn a block into an allow.
+    }
+  }
+}
+
+interface ToolSlot {
+  /** Null until the partition is set up and the window exists. */
+  surface: BrowserSurface | null
+  page: Promise<SurfaceToolPage>
 }

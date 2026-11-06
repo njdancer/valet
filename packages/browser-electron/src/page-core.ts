@@ -72,13 +72,16 @@ export class PageCore {
   /**
    * Runs a lookup script in every frame, main frame first, and returns the first frame that found
    * something. A frame whose script fails (it navigated, or was detached) counts as not found.
+   * Stops before the next frame once `signal` says the step was given up on.
    */
   async locate<T>(
     stage: Stage,
+    signal: AbortSignal,
     script: string,
     parse: (raw: unknown) => T | null,
   ): Promise<FrameMatch<T> | null> {
     for (const [frameIndex, frame] of this.surface.frames().entries()) {
+      assertLive(stage, signal)
       const raw = await runQuietly(frame, script)
       if (isRecord(raw) && raw['error'] === 'invalid-selector') throw new SiteAdapterError(stage, 'invalid')
       const value = parse(raw)
@@ -87,9 +90,13 @@ export class PageCore {
     return null
   }
 
-  /** Scrolls the element into view and sends a trusted click at its centre. */
-  async click(stage: Stage, selector: string): Promise<void> {
-    const match = await this.locate(stage, pointScript(selector), parsePoint)
+  /**
+   * Scrolls the element into view and sends a trusted click at its centre. Every await here can
+   * outlive the step's timeout, so the signal is checked before each script and before the click:
+   * a click that lands after the interpreter has moved on lands on a page it no longer expects.
+   */
+  async click(stage: Stage, selector: string, signal: AbortSignal): Promise<void> {
+    const match = await this.locate(stage, signal, pointScript(selector), parsePoint)
     if (match === null) throw new SiteAdapterError(stage, 'element-missing')
     const point = match.value
     if (point === 'not-visible' || !point.hit) throw new SiteAdapterError(stage, 'element-unsuitable')
@@ -104,6 +111,7 @@ export class PageCore {
       if (parent === undefined || childIndex === null || !parent.receivesInput) {
         throw new SiteAdapterError(stage, 'element-unsuitable')
       }
+      assertLive(stage, signal)
       const offset = parseOffset(await runQuietly(parent, frameOffsetScript(childIndex)))
       if (offset === null) throw new SiteAdapterError(stage, 'element-unsuitable')
       x += offset.x
@@ -111,6 +119,7 @@ export class PageCore {
       childIndex = offset.indexInParent
       frame = parent
     }
+    assertLive(stage, signal)
     this.surface.click(Math.round(x), Math.round(y))
   }
 
@@ -118,9 +127,11 @@ export class PageCore {
    * Focuses the element and checks, from the browser side, that keyboard focus really moved to its
    * frame. Returns the target so that typing can be bound to it.
    */
-  async focus(stage: Stage, selector: string): Promise<FocusTarget> {
+  async focus(stage: Stage, selector: string, signal: AbortSignal): Promise<FocusTarget> {
+    assertLive(stage, signal)
     this.surface.focus()
-    const match = await this.locate(stage, focusScript(selector), parseFocus)
+    const match = await this.locate(stage, signal, focusScript(selector), parseFocus)
+    assertLive(stage, signal)
     if (match === null) throw new SiteAdapterError(stage, 'element-missing')
     if (
       !match.value.focused ||
@@ -167,6 +178,11 @@ export class PageCore {
       send(index)
     }
   }
+}
+
+/** Throws once the step has been given up on, so nothing more is sent to the page. */
+function assertLive(stage: Stage, signal: AbortSignal): void {
+  if (signal.aborted) throw new SiteAdapterError(stage, 'aborted')
 }
 
 async function runQuietly(frame: FrameHandle, script: string): Promise<unknown> {

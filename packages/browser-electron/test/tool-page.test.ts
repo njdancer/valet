@@ -153,7 +153,17 @@ describe('ToolPage.evaluate', () => {
     window.document.body = { innerText: 'Trolley (3)' }
     const { surface, page } = await onHome(window)
     expect(await page.evaluate('document.body.innerText.includes(args.word)', { word: 'Trolley' })).toBe(true)
-    expect(surface.frameList[0]!.scripts.at(-1)).toContain('{"word":"Trolley"}')
+    expect(surface.frameList[0]!.adapterScripts.at(-1)).toContain('{"word":"Trolley"}')
+  })
+
+  it('runs adapter source in the adapter’s world, never the runtime’s', async () => {
+    const { surface, page } = await onHome(new FakeWindow())
+    const runtimeScripts = surface.frameList[0]!.scripts.length
+    await page.evaluate('1 + 1')
+    expect(surface.frameList[0]!.adapterScripts).toHaveLength(1)
+    expect(surface.frameList[0]!.scripts).toHaveLength(runtimeScripts)
+    await page.extract('h1')
+    expect(surface.frameList[0]!.adapterScripts).toHaveLength(1)
   })
 
   it('reports a script that throws as internal, without its message', async () => {

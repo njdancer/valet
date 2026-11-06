@@ -32,7 +32,22 @@ export interface CookieSetDetails {
 export interface OutgoingRequest {
   readonly url: string
   readonly method: string
+  /**
+   * Chromium's resource type, as Electron names it: mainFrame, subFrame, stylesheet, script, image,
+   * font, object, xhr, ping, cspReport, media, webSocket or other. fetch() reports as xhr.
+   */
+  readonly resourceType: string
 }
+
+/** A local proxy a partition's TCP connections go through. */
+export interface ProxyHandle {
+  /** Proxy rules for the session, e.g. http://127.0.0.1:53211. */
+  readonly url: string
+  close(): Promise<void>
+}
+
+/** Decides one proxied connection. `host` is as the page asked for it, never resolved. */
+export type ProxyPolicy = (host: string, port: number) => boolean
 
 /** One persistent browser partition. */
 export interface PartitionSession {
@@ -41,6 +56,11 @@ export interface PartitionSession {
   harden(): void
   /** Installs the session's only request filter. Requests it returns false for are cancelled. */
   filterRequests(allow: (request: OutgoingRequest) => boolean): void
+  /**
+   * Sends every connection the session makes, loopback included, through `proxy`. With WebRTC
+   * limited to proxied traffic, that takes in the sockets webRequest never sees.
+   */
+  useProxy(proxy: ProxyHandle): Promise<void>
   /** Adds a response header to every response, e.g. to switch off DNS prefetch per document. */
   addResponseHeader(name: string, value: string): void
   getCookies(): Promise<readonly CookieRecord[]>
@@ -61,8 +81,13 @@ export interface FrameHandle {
    * with site isolation it never reaches a frame rendered by another process.
    */
   readonly receivesInput: boolean
-  /** Runs runtime-authored script: in an isolated world on the main frame. */
+  /** Runs runtime-authored script: in the runtime's isolated world on the main frame. */
   run(code: string): Promise<unknown>
+  /**
+   * Runs adapter-supplied script in a world of its own on the main frame, so that it can't patch
+   * the globals the runtime's scripts rely on. Rejects in a subframe.
+   */
+  runAdapter(code: string): Promise<unknown>
 }
 
 export type LoadResult = { readonly ok: true } | { readonly ok: false; readonly code: string }
@@ -98,9 +123,13 @@ export interface BrowserSurface {
   focus(): void
   show(title: string): void
   hide(): void
-  /** Called when the person asks to close a shown window. Return true to keep it open. */
-  onCloseRequested(handler: () => boolean): void
-  onDestroyed(handler: () => void): void
+  /**
+   * Called when the person asks to close a window. Return true to keep it open. There is one
+   * handler at a time; the returned function removes it, if it is still the current one.
+   */
+  onCloseRequested(handler: () => boolean): () => void
+  /** Returns a function that removes the handler. */
+  onDestroyed(handler: () => void): () => void
   /** Installs the only navigation guard. Navigations it returns false for are prevented. */
   guardNavigation(allow: (navigation: PendingNavigation) => boolean): void
   onNavigation(listener: (event: NavigationEvent) => void): void
@@ -114,6 +143,8 @@ export interface BrowserPlatform {
   /** The same object for the same partition name. */
   session(partition: string): PartitionSession
   openSurface(partition: string): BrowserSurface
+  /** Starts a local proxy that allows a connection only when `allow` says so. */
+  startProxy(allow: ProxyPolicy): Promise<ProxyHandle>
   readonly chromeVersion: string
   readonly os: NodeJS.Platform
 }

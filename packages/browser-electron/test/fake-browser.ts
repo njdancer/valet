@@ -12,6 +12,8 @@ import type {
   OutgoingRequest,
   PartitionSession,
   PendingNavigation,
+  ProxyHandle,
+  ProxyPolicy,
   Timers,
 } from '../src/platform'
 import { FakeWindow } from './fake-dom'
@@ -21,6 +23,8 @@ let frameIds = 0
 export class FakeFrame implements FrameHandle {
   readonly id = `frame-${++frameIds}`
   readonly scripts: string[] = []
+  /** What ran in the adapter's world rather than the runtime's. */
+  readonly adapterScripts: string[] = []
   fail = false
   /** False plays an out-of-process iframe, which trusted input can't reach. */
   receivesInput = true
@@ -34,6 +38,12 @@ export class FakeFrame implements FrameHandle {
 
   async run(code: string): Promise<unknown> {
     this.scripts.push(code)
+    if (this.fail) throw new Error('Script failed to execute: frame detached')
+    return this.window.run(code)
+  }
+
+  async runAdapter(code: string): Promise<unknown> {
+    this.adapterScripts.push(code)
     if (this.fail) throw new Error('Script failed to execute: frame detached')
     return this.window.run(code)
   }
@@ -57,8 +67,8 @@ export class FakeSurface implements BrowserSurface {
   destroyed = false
   private currentUrl = ''
   private stopWaiters: (() => void)[] = []
-  private closeHandler: (() => boolean) | null = null
-  private readonly destroyedHandlers: (() => void)[] = []
+  closeHandler: (() => boolean) | null = null
+  readonly destroyedHandlers: (() => void)[] = []
   private guard: ((navigation: PendingNavigation) => boolean) | null = null
   private readonly listeners: ((event: NavigationEvent) => void)[] = []
   /** Called after each sendChar, to let a test act mid-typing. */
@@ -129,12 +139,19 @@ export class FakeSurface implements BrowserSurface {
     this.hideCalls++
   }
 
-  onCloseRequested(handler: () => boolean): void {
+  onCloseRequested(handler: () => boolean): () => void {
     this.closeHandler = handler
+    return () => {
+      if (this.closeHandler === handler) this.closeHandler = null
+    }
   }
 
-  onDestroyed(handler: () => void): void {
+  onDestroyed(handler: () => void): () => void {
     this.destroyedHandlers.push(handler)
+    return () => {
+      const index = this.destroyedHandlers.indexOf(handler)
+      if (index >= 0) this.destroyedHandlers.splice(index, 1)
+    }
   }
 
   guardNavigation(allow: (navigation: PendingNavigation) => boolean): void {
@@ -148,7 +165,7 @@ export class FakeSurface implements BrowserSurface {
   destroy(): void {
     if (this.destroyed) return
     this.destroyed = true
-    for (const handler of this.destroyedHandlers) handler()
+    for (const handler of [...this.destroyedHandlers]) handler()
   }
 
   isDestroyed(): boolean {
@@ -190,6 +207,7 @@ export class FakeSession implements PartitionSession {
   userAgent: string | null = null
   hardened = 0
   filter: ((request: OutgoingRequest) => boolean) | null = null
+  proxy: ProxyHandle | null = null
   readonly headers: [string, string][] = []
   cookies: CookieRecord[] = []
   readonly setCalls: CookieSetDetails[] = []
@@ -207,6 +225,10 @@ export class FakeSession implements PartitionSession {
 
   filterRequests(allow: (request: OutgoingRequest) => boolean): void {
     this.filter = allow
+  }
+
+  async useProxy(proxy: ProxyHandle): Promise<void> {
+    this.proxy = proxy
   }
 
   addResponseHeader(name: string, value: string): void {
@@ -228,6 +250,28 @@ export class FakePlatform implements BrowserPlatform {
   readonly os = 'darwin' as NodeJS.Platform
   readonly sessions = new Map<string, FakeSession>()
   readonly surfaces: FakeSurface[] = []
+  /** Every proxy started, with the policy it was given. */
+  readonly proxies: { policy: ProxyPolicy; handle: ProxyHandle; closed: boolean }[] = []
+  /** How startProxy answers. Tests replace it to make it fail. */
+  onStartProxy: (policy: ProxyPolicy) => Promise<ProxyHandle> = async (policy) => {
+    const entry = {
+      policy,
+      closed: false,
+      handle: {
+        url: `http://127.0.0.1:${40_000 + this.proxies.length}`,
+        close: async () => {
+          entry.closed = true
+        },
+      },
+    }
+    this.proxies.push(entry)
+    return entry.handle
+  }
+
+  startProxy(policy: ProxyPolicy): Promise<ProxyHandle> {
+    return this.onStartProxy(policy)
+  }
+
   /** Builds each new surface. Tests replace it to give pages frames. */
   makeSurface: (partition: string) => FakeSurface = (partition) => new FakeSurface(partition)
 
