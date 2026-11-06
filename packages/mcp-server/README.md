@@ -12,8 +12,9 @@ package never imports `@siteadapter/runtime`.
 const token = generateToken()
 const endpoint = await startHttpServer({ caller, token }) // port 0: a free port each launch
 await writeBridgeConfig(bridgeConfigPath, { url: endpoint.url, token }) // mode 0600
-// whenever adapters are approved, revoked or changed:
-endpoint.refresh()
+// whenever adapters are approved, revoked or changed. One listing for every session; if the
+// runtime can't list, it throws SiteAdapterError and no session changes:
+const withheld = endpoint.refresh()
 // on quit:
 await endpoint.close()
 ```
@@ -34,10 +35,13 @@ bundles the bridge, this is the only way to launch it.
 - **Names.** A tool is `<adapter id, - as _>_<tool>`. When two tools map to one name, both are
   withheld, so one adapter can't shadow another's tool. Tools whose input isn't a zod object, or
   whose schemas have no JSON Schema form, are withheld too; `refresh()` returns what was withheld.
-- **Annotations.** `readOnlyHint` for `read`, `destructiveHint` only for `irreversible`,
-  `idempotentHint: false` for `write` and `irreversible`, and `openWorldHint` always.
+- **Annotations.** `readOnlyHint` for `read`; `destructiveHint` for `write` and `irreversible`,
+  since MCP reads `false` as "only adds" and a write can remove cart items; `idempotentHint:
+  false` for `write` and `irreversible`; and `openWorldHint` always.
 - **Results.** Only `ok` output reaches the client, and only after it validates against the
-  tool's output schema. Every other outcome is a tool error with fixed text: `failed` gives stage
+  tool's output schema. What is sent is the parsed value, so keys the schema doesn't declare are
+  dropped at every level (a schema that itself passes anything, such as `z.record()` or
+  `z.unknown()`, still does). Every other outcome is a tool error with fixed text: `failed` gives stage
   and error class (replaced with `tool-run: internal` if either is outside core's vocabulary), and
   an exception from the runtime never has its message sent.
 - **Audit inputs.** Each call carries the client's self-reported name from `initialize`, with

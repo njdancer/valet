@@ -165,6 +165,62 @@ describe('startHttpServer', () => {
     expect(tools.map((t) => t.name).sort()).toEqual(['woolworths_search_products', 'woolworths_view_cart'])
   })
 
+  it('lists the tools once for every session it refreshes', async () => {
+    const caller = new FakeCaller([searchProducts])
+    const running = await start(caller)
+    await connectClient(running.url, 'a')
+    await connectClient(running.url, 'b')
+    let listings = 0
+    caller.listTools = () => {
+      listings++
+      return [searchProducts, viewCart]
+    }
+
+    running.refresh()
+
+    expect(listings).toBe(1)
+  })
+
+  it('returns the tools a refresh withheld', async () => {
+    const caller = new FakeCaller([searchProducts])
+    const running = await start(caller)
+    caller.tools = [searchProducts, { ...viewCart, input: z.string() }]
+    expect(running.refresh()).toEqual([
+      { adapterId: 'woolworths', tool: 'view_cart', reason: 'input-not-object' },
+    ])
+  })
+
+  it('leaves every session on its old tools when the runtime throws during a refresh', async () => {
+    const caller = new FakeCaller([searchProducts])
+    const running = await start(caller)
+    const clients = [await connectClient(running.url, 'a'), await connectClient(running.url, 'b')]
+    caller.listTools = () => {
+      throw new Error('store unavailable: /Users/nick/secret path')
+    }
+
+    let thrown: unknown
+    try {
+      running.refresh()
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toEqual(new SiteAdapterError('tool-run', 'internal'))
+    expect((thrown as Error).message).not.toContain('secret')
+    for (const client of clients) {
+      expect((await client.listTools()).tools.map((t) => t.name)).toEqual(['woolworths_search_products'])
+    }
+  })
+
+  it('reports a SiteAdapterError from the runtime by its own stage and class', async () => {
+    const caller = new FakeCaller([searchProducts])
+    const running = await start(caller)
+    caller.listTools = () => {
+      throw new SiteAdapterError('grant', 'locked')
+    }
+    expect(() => running.refresh()).toThrow(new SiteAdapterError('grant', 'locked'))
+  })
+
   it('closes the least recently used session beyond the limit', async () => {
     const running = await start(new FakeCaller([searchProducts]), { maxSessions: 2 })
     const oldest = await connectClient(running.url, 'oldest')

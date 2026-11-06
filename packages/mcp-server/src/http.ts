@@ -5,11 +5,12 @@ import { randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import { SiteAdapterError } from '@siteadapter/core'
+import { SiteAdapterError, toReportable } from '@siteadapter/core'
 import { bearerAuthorized, hostAllowed, originAllowed } from './http-guards'
 import { createMcpServer, type ServerInfo, type SiteAdapterMcpServer } from './server'
 import { isWellFormedToken } from './token'
 import type { ToolCaller } from './tool-caller'
+import { planTools, type SkippedTool, type ToolPlan } from './tool-names'
 
 export const MCP_PATH = '/mcp'
 const MAX_BODY_BYTES = 1024 * 1024
@@ -31,8 +32,12 @@ export interface HttpServerOptions {
 export interface RunningHttpServer {
   readonly url: string
   readonly port: number
-  /** Re-reads the caller's tools in every session and tells each client the list changed. */
-  refresh(): void
+  /**
+   * Re-reads the caller's tools once, gives every session that same list and tells each client it
+   * changed. Returns the tools that were withheld and why. If the caller can't list its tools,
+   * throws SiteAdapterError and every session keeps the tools it had.
+   */
+  refresh(): readonly SkippedTool[]
   close(): Promise<void>
 }
 
@@ -122,7 +127,16 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
     url: `http://127.0.0.1:${port}${MCP_PATH}`,
     port,
     refresh() {
-      for (const session of sessions.values()) session.endpoint.refresh()
+      let plan: ToolPlan
+      try {
+        plan = planTools(options.caller.listTools())
+      } catch (error) {
+        // All or nothing: a session left on the old list could keep offering a revoked tool.
+        const { stage, errorClass } = toReportable(error, 'tool-run')
+        throw new SiteAdapterError(stage, errorClass)
+      }
+      for (const session of sessions.values()) session.endpoint.apply(plan)
+      return plan.skipped
     },
     async close() {
       await Promise.all([...sessions.keys()].map(closeSession))
