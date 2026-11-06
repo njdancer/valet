@@ -94,6 +94,10 @@ Every case ends `failed tool-run/aborted`, audited as `tool-finished` like any o
   and it hands the lock straight on, so calls behind it keep their order.
 - Aborted during the irreversible confirmation: the prompt's signal aborts and the answer is
   recorded as `declined`. A `yes` that lands after the abort doesn't run the tool either.
+- The same holds for a `ctx.confirm()` and for a call that times out during one. The answer is
+  audited as `declined` the moment the call's signal aborts, whether or not the prompt has
+  settled. So the app should close its prompt when the prompt's signal aborts, not when the
+  `confirmation` audit event arrives.
 - Aborted while the tool runs: the tool's own `ctx.signal` aborts, the call returns at once, and
   the lock and the driver's run stay held until the runtime work the call started has settled, as
   after a timeout. A `ctx.confirm()` in progress answers no.
@@ -135,6 +139,10 @@ the login window, finishing a hand-off) under the protections a tool call gets:
   `login/aborted` once `signal` has aborted;
 - `reportBlocked(cause)`, for a step that lands on the block page or gets a 429. It opens the
   site's breaker with `callId: null`, so `breaker-opened` is audited and later calls fail fast.
+
+`waitMs` and `timeoutMs` must be finite numbers above zero. Anything else (NaN, Infinity, a
+negative number, a string) fails with `config/invalid` before the lock is taken, since an unbounded
+step would hold the adapter's lock for good.
 
 `options.signal` gives up the wait, or stops waiting for the step: `login/aborted`. Whatever the
 step throws is passed on unchanged, since it is the app's own code. The runtime writes no audit

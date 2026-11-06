@@ -387,6 +387,32 @@ describe('ToolHost.runLoginStep', () => {
     expect(await errorOf(step)).toMatchObject({ errorClass: 'timed-out' })
   })
 
+  it('refuses a waitMs or timeoutMs that is not a finite number above zero, before taking the lock', async () => {
+    const events: string[] = []
+    const { definition, release } = gatedTool(events)
+    const { host } = fixture(definition)
+    const step = vi.fn(async () => 'x')
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, -1, 0, '5000']) {
+      for (const options of [{ waitMs: bad }, { timeoutMs: bad }]) {
+        expect([options, await errorOf(host.runLoginStep('example-shop', step, options as never))]).toEqual([
+          options,
+          expect.objectContaining({ stage: 'config', errorClass: 'invalid' }),
+        ])
+      }
+    }
+    // Checked before the adapter is looked up, so a typo is not hidden behind not-granted.
+    expect(await errorOf(host.runLoginStep('nobody', step, { waitMs: Number.NaN }))).toMatchObject({
+      stage: 'config',
+    })
+    expect(step).not.toHaveBeenCalled()
+    // Nothing took the lock: a call runs straight away.
+    const running = host.call({ ...call, input: { id: 'a' } })
+    await flush()
+    expect(events).toEqual(['a:start'])
+    release()
+    expect(await running).toEqual({ status: 'ok', output: 'a' })
+  })
+
   it('stops waiting for the step when its caller aborts, and aborts the step’s signal', async () => {
     const { host } = fixture(trivial, { settleTimeoutMs: 0 })
     const controller = new AbortController()

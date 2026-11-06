@@ -219,7 +219,8 @@ export class ToolHost {
    *   rate budget before `step` runs; `ctx.pace()` takes another before each further request;
    * - `step` runs under a deadline, and the lock stays held until it settles, up to the settle bound.
    *
-   * Rejects with SiteAdapterError: `manifest/not-granted`, `login/rate-limited` (the breaker is open,
+   * Rejects with SiteAdapterError: `config/invalid` (a `waitMs` or `timeoutMs` that isn't a finite
+   * number above zero, before anything else), `manifest/not-granted`, `login/rate-limited` (the breaker is open,
    * before the step or at a `pace()`), `login/timed-out` (the wait or the step ran out of time) or
    * `login/aborted`. Whatever `step` throws is passed on unchanged: it is the app's own code.
    */
@@ -228,6 +229,9 @@ export class ToolHost {
     step: (ctx: LoginStepContext) => Promise<T>,
     options: LoginStepOptions = {},
   ): Promise<T> {
+    // An unbounded wait or step would hold, or queue behind, the adapter's lock for good.
+    const waitMs = boundOf(options.waitMs, DEFAULT_LOGIN_STEP_WAIT_MS)
+    const timeoutMs = boundOf(options.timeoutMs, this.timeoutMs)
     const entry = this.adapters.get(adapterId)
     if (entry === undefined || !(await this.isApproved(entry)))
       throw new SiteAdapterError('manifest', 'not-granted')
@@ -235,7 +239,7 @@ export class ToolHost {
     if (external?.aborted) throw new SiteAdapterError('login', 'aborted')
     // A block persisted by an earlier run of the app must be in force before anything is sent.
     await this.protection.ready()
-    const lock = await this.acquireLock(adapterId, options.waitMs ?? DEFAULT_LOGIN_STEP_WAIT_MS, external)
+    const lock = await this.acquireLock(adapterId, waitMs, external)
     if (lock === 'aborted') throw new SiteAdapterError('login', 'aborted')
     if (lock === 'timed-out') throw new SiteAdapterError('login', 'timed-out')
     const release = lock
@@ -267,7 +271,7 @@ export class ToolHost {
       }
       const work = Promise.resolve().then(() => step(ctx))
       unsettled = work
-      const outcome = await this.race(() => work, options.timeoutMs ?? this.timeoutMs, controller.signal)
+      const outcome = await this.race(() => work, timeoutMs, controller.signal)
       if (outcome.kind === 'returned') {
         unsettled = null
         return outcome.value
@@ -770,6 +774,14 @@ function transportOf(value: unknown): ClientTransport | undefined {
 /** The caller's signal, if it is one. Anything else is ignored rather than trusted to behave. */
 function signalOf(value: unknown): AbortSignal | undefined {
   return value instanceof AbortSignal ? value : undefined
+}
+
+/** A login step's wait or deadline: the default when not given, else finite and above zero. */
+function boundOf(value: unknown, fallback: number): number {
+  if (value === undefined) return fallback
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0)
+    throw new SiteAdapterError('config', 'invalid')
+  return value
 }
 
 /** One string for both the audit log and the prompt: printable, and at most MAX_CLIENT long. */
