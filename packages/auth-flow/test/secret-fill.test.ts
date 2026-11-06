@@ -18,6 +18,7 @@ import {
   LOGIN_PAGE,
   MANIFEST,
   manifestWithSteps,
+  SENDER,
   WWW,
   world,
 } from './fixtures'
@@ -1006,6 +1007,175 @@ describe('the driver holds typing to the allowed origins', () => {
     expect(await runAuthFlow(w.input)).toMatchObject({ stage: 'secret-fill', errorClass: 'origin-mismatch' })
     expect(w.page.typed.map((typed) => typed.text)).toEqual([CANARY.password.slice(0, 5)])
     expect(w.provider.issued[0]?.disposed).toBe(true)
+  })
+})
+
+// The threat the form-action guard exists for: the secret ending up in a same-origin field it
+// would have refused, because the page changed under the typing. The driver types only into the
+// element focus() targeted, so none of these get past it.
+describe('the driver types only into the element it focused', () => {
+  it('stops mid-secret when the page moves focus to a same-origin search box', async () => {
+    const w = world()
+    w.page.beforeKeystroke = (index) => {
+      if (index === 4) w.page.focused = '#search'
+    }
+    w.input.manifest = FILL_PASSWORD
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'secret-fill',
+      errorClass: 'origin-mismatch',
+    })
+    // The four characters went to the password field; the search box got nothing.
+    expect(w.page.typed).toEqual([
+      {
+        selector: '#password',
+        url: LOGIN_PAGE,
+        text: CANARY.password.slice(0, 4),
+        secret: true,
+        delayMs: 40,
+        allowedOrigins: [LOGIN],
+      },
+    ])
+    expect(w.provider.issued[0]?.disposed).toBe(true)
+  })
+
+  it('stops mid-secret when the page navigates to another page on the same origin with a #password', async () => {
+    const w = world()
+    w.page.site[`${LOGIN}/again`] = structuredClone(w.page.site[LOGIN_PAGE]!)
+    w.page.beforeKeystroke = (index) => {
+      if (index === 2) w.page.navigate(`${LOGIN}/again`)
+    }
+    w.input.manifest = FILL_PASSWORD
+    expect(await runAuthFlow(w.input)).toMatchObject({ stage: 'secret-fill', errorClass: 'origin-mismatch' })
+    expect(w.page.typed.map((typed) => [typed.url, typed.text])).toEqual([
+      [LOGIN_PAGE, CANARY.password.slice(0, 2)],
+    ])
+  })
+
+  it("stops mid-secret when the field's frame navigates, even within the same origin", async () => {
+    const w = world()
+    w.page.cookies.add('session')
+    w.page.site[LOGIN_PAGE] = {
+      frames: { sso: LOGIN },
+      forms: { login: LOGIN },
+      elements: { '#password': { inputType: 'password', frame: 'sso', form: 'login' } },
+    }
+    w.page.beforeKeystroke = (index) => {
+      if (index === 6) w.page.navigateFrame('sso', LOGIN)
+    }
+    w.input.manifest = FILL_PASSWORD
+    expect(await runAuthFlow(w.input)).toMatchObject({ stage: 'secret-fill', errorClass: 'origin-mismatch' })
+    expect(w.page.typed.map((typed) => typed.text)).toEqual([CANARY.password.slice(0, 6)])
+  })
+
+  it('stops mid-secret when a re-render replaces the field under the same selector', async () => {
+    const w = world()
+    w.page.beforeKeystroke = (index) => {
+      if (index === 3) {
+        w.page.site[LOGIN_PAGE] = {
+          ...w.page.site[LOGIN_PAGE]!,
+          elements: { '#password': { inputType: 'search', form: 'search' } },
+        }
+      }
+    }
+    w.input.manifest = FILL_PASSWORD
+    expect(await runAuthFlow(w.input)).toMatchObject({ stage: 'secret-fill', errorClass: 'origin-mismatch' })
+    expect(w.page.typed.map((typed) => typed.text)).toEqual([CANARY.password.slice(0, 3)])
+  })
+
+  it('holds a literal to the focused element too', async () => {
+    const w = world()
+    w.page.beforeKeystroke = (index) => {
+      if (index === 1) w.page.focused = '#search'
+    }
+    w.input.manifest = manifestWithSteps([
+      { op: 'goto', url: LOGIN_PAGE },
+      { op: 'fill', selector: '#email', value: { literal: 'shopper' } },
+    ])
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'auth-step',
+      errorClass: 'internal',
+    })
+    expect(w.page.typed.map((typed) => [typed.selector, typed.text])).toEqual([['#email', 's']])
+  })
+})
+
+// Between the last check and focus, an SPA may re-render. The checks run again on what focus
+// landed on, before the secret is remembered, audited or typed.
+describe('checking again after focusing', () => {
+  /** Focuses as the driver does, then lets `change` alter the page, as a re-render on focus would. */
+  function onFocus(w: ReturnType<typeof world>, change: () => void): void {
+    const focus = w.page.focus.bind(w.page)
+    vi.spyOn(w.page, 'focus').mockImplementation(async (selector) => {
+      await focus(selector)
+      change()
+    })
+  }
+
+  it('refuses when the login form was swapped for a same-origin search form as focus landed', async () => {
+    const w = world()
+    onFocus(w, () => {
+      w.page.site[LOGIN_PAGE] = {
+        forms: { search: WWW },
+        elements: { '#password': { inputType: 'password', form: 'search' } },
+      }
+    })
+    w.input.manifest = FILL_PASSWORD
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'secret-fill',
+      errorClass: 'form-action-mismatch',
+    })
+    expect(w.page.typed).toEqual([])
+    expect(w.remembered).toEqual([])
+    expect(w.audit.events.filter((e) => e.type === 'secret-used')).toEqual([])
+    expect(w.provider.issued[0]?.disposed).toBe(true)
+  })
+
+  it('refuses when the field became unsuitable as focus landed', async () => {
+    const w = world()
+    onFocus(w, () => {
+      w.page.site[LOGIN_PAGE] = {
+        forms: { login: LOGIN },
+        elements: { '#password': { inputType: 'text', form: 'login' } },
+      }
+    })
+    w.input.manifest = FILL_PASSWORD
+    expect(await runAuthFlow(w.input)).toMatchObject({ errorClass: 'element-unsuitable' })
+    expect(w.page.typed).toEqual([])
+  })
+
+  it('refuses when focusing sent the page off the allowlist', async () => {
+    const w = world()
+    w.page.site[`${EVIL}/login`] = structuredClone(w.page.site[LOGIN_PAGE]!)
+    onFocus(w, () => w.page.navigate(`${EVIL}/login`))
+    w.input.manifest = FILL_PASSWORD
+    expect(await runAuthFlow(w.input)).toMatchObject({ stage: 'navigate', errorClass: 'navigation-escaped' })
+    expect(w.page.typed).toEqual([])
+    expect(w.remembered).toEqual([])
+  })
+
+  it('refuses a Messages code when the field moved into a foreign frame as focus landed', async () => {
+    const w = world()
+    onFocus(w, () => {
+      w.page.site[LOGIN_PAGE] = {
+        frames: { ad: EVIL },
+        elements: { '#otp': { inputType: 'text', autocomplete: 'one-time-code', frame: 'ad' } },
+      }
+    })
+    w.otpReader.messages.push({ at: w.clock.now, sender: SENDER, body: `Code ${CANARY.sms}` })
+    w.input.manifest = manifestWithSteps([
+      { op: 'goto', url: LOGIN_PAGE },
+      {
+        op: 'otp',
+        selector: '#otp',
+        source: { messages: { sender: SENDER, pattern: '(\\d{6})', maxAgeSeconds: 300 } },
+      },
+    ])
+    expect(await runAuthFlow(w.input)).toMatchObject({ stage: 'secret-fill', errorClass: 'origin-mismatch' })
+    expect(w.page.typed).toEqual([])
+    expect(w.otpReader.issued[0]?.disposed).toBe(true)
   })
 })
 

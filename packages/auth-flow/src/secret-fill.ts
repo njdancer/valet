@@ -48,8 +48,9 @@ export async function fillSecret(ctx: FlowContext, selector: string, ref: Secret
   if (provider === undefined) throw new SiteAdapterError('credential', 'unavailable')
   const secret = await resolveSecret(() => provider.resolve(grant.itemRef, ref.field), 'credential')
   try {
-    const element = await checkTarget(ctx, selector, ref.field, origins)
-    await typeSecret(ctx, selector, secret, ref.secret, ref.field, element, origins)
+    await checkTarget(ctx, selector, ref.field, origins)
+    const element = await focusTarget(ctx, selector, ref.field, origins)
+    await typeSecret(ctx, secret, ref.secret, ref.field, element, origins)
   } finally {
     secret.dispose()
   }
@@ -89,8 +90,9 @@ export async function fillMessagesOtp(
   }
   const code = await readOtp(ctx, query)
   try {
-    const element = await checkTarget(ctx, selector, 'otp', origins)
-    await typeSecret(ctx, selector, code, MESSAGES_SECRET, 'otp', element, origins)
+    await checkTarget(ctx, selector, 'otp', origins)
+    const element = await focusTarget(ctx, selector, 'otp', origins)
+    await typeSecret(ctx, code, MESSAGES_SECRET, 'otp', element, origins)
   } finally {
     code.dispose()
   }
@@ -184,15 +186,31 @@ async function checkTarget(
 }
 
 /**
- * Hands the runtime its copy for redaction, focuses, audits, then types. Auditing first means a
- * secret is never typed without a record of it: if the audit log can't be written, the fill doesn't
- * happen. The driver types only into the element focus() targeted and checks the focused frame's
- * origin against `origins` before every keystroke, so a page that moves focus or navigates
- * mid-secret gets none of the rest.
+ * Focuses the target, then runs every check again on what the selector finds now, so the checks
+ * describe the element focus landed on rather than one an SPA re-render has since replaced (say,
+ * the login form swapped for a same-origin search box). The driver then types only into the
+ * focused element and stops if focus moves, so nothing typed can reach an element these checks
+ * didn't see. The remaining gap, a selector that resolves to a different element for focus() than
+ * for inspect() at the same moment, needs focus() to report what it focused; see the README.
+ */
+async function focusTarget(
+  ctx: FlowContext,
+  selector: string,
+  field: SecretField,
+  origins: readonly string[],
+): Promise<ElementInfo> {
+  await guarded('secret-fill', () => ctx.input.page.focus(selector))
+  return checkTarget(ctx, selector, field, origins)
+}
+
+/**
+ * Hands the runtime its copy for redaction, audits, then types into the focused element. Auditing
+ * first means a secret is never typed without a record of it: if the audit log can't be written,
+ * the fill doesn't happen. The driver checks the focused frame's origin against `origins` before
+ * every keystroke, so a page that moves focus or navigates mid-secret gets none of the rest.
  */
 async function typeSecret(
   ctx: FlowContext,
-  selector: string,
   value: SecretValue,
   secret: string,
   field: SecretField,
@@ -201,7 +219,6 @@ async function typeSecret(
 ): Promise<void> {
   const { page, audit, manifest, adapterHash, callId, typingDelayMs, rememberSecret } = ctx.input
   remember(value, rememberSecret)
-  await guarded('secret-fill', () => page.focus(selector))
   await guarded('secret-fill', () =>
     audit.append({
       type: 'secret-used',
