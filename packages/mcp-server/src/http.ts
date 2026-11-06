@@ -47,7 +47,7 @@ interface Session {
 }
 
 export async function startHttpServer(options: HttpServerOptions): Promise<RunningHttpServer> {
-  if (!isWellFormedToken(options.token)) throw new SiteAdapterError('credential', 'invalid')
+  if (!isWellFormedToken(options.token)) throw new SiteAdapterError('config', 'invalid')
   const info = options.info ?? { name: 'siteadapter', version: '0.0.0' }
   const newSessionId = options.newSessionId ?? randomUUID
   const maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS

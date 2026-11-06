@@ -44,10 +44,17 @@ export async function main(args: readonly string[], io: CliIo): Promise<number> 
 }
 
 function configProblem(error: unknown): string {
-  if (error instanceof SiteAdapterError && error.errorClass === 'not-found') {
-    return 'the config file does not exist or cannot be opened'
+  const errorClass = error instanceof SiteAdapterError ? error.errorClass : null
+  switch (errorClass) {
+    case 'not-found':
+      return 'the config file does not exist; start siteadapter to write it'
+    case 'insecure-file':
+      return 'the config file must be a regular file owned by you with mode 0600; start siteadapter to rewrite it'
+    case 'invalid':
+      return 'the config file must hold only the endpoint url (http://127.0.0.1:<port>/mcp) and token'
+    default:
+      return 'the config file cannot be read'
   }
-  return 'the config file must be private to you (mode 0600) and hold the endpoint url and token'
 }
 
 /* v8 ignore start -- the process entry point; main() is what the tests exercise. */

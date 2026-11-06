@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -81,19 +82,26 @@ describe('writeTokenFile and readTokenFile', () => {
 
   it('refuses to write a malformed token', async () => {
     await expect(writeTokenFile(join(dir, 'token'), 'short')).rejects.toEqual(
-      new SiteAdapterError('credential', 'invalid'),
+      new SiteAdapterError('config', 'invalid'),
     )
   })
 
   it('refuses to read a file holding something other than a token', async () => {
     const path = join(dir, 'token')
     await writePrivateFile(path, 'not a token')
-    await expect(readTokenFile(path)).rejects.toEqual(new SiteAdapterError('credential', 'invalid'))
+    await expect(readTokenFile(path)).rejects.toEqual(new SiteAdapterError('config', 'invalid'))
+  })
+
+  it('refuses a token file other accounts could read', async () => {
+    const path = join(dir, 'token')
+    await writeTokenFile(path, TOKEN)
+    await chmod(path, 0o644)
+    await expect(readTokenFile(path)).rejects.toEqual(new SiteAdapterError('config', 'insecure-file'))
   })
 
   it('reports a missing file as not-found', async () => {
     await expect(readTokenFile(join(dir, 'missing'))).rejects.toEqual(
-      new SiteAdapterError('credential', 'not-found'),
+      new SiteAdapterError('config', 'not-found'),
     )
   })
 })
@@ -144,14 +152,14 @@ describe('readPrivateFile', () => {
     const path = join(dir, 'token')
     await writePrivateFile(path, TOKEN)
     await chmod(path, 0o640)
-    await expect(readPrivateFile(path)).rejects.toEqual(new SiteAdapterError('credential', 'invalid'))
+    await expect(readPrivateFile(path)).rejects.toEqual(new SiteAdapterError('config', 'insecure-file'))
   })
 
   it('refuses a file other accounts could write', async () => {
     const path = join(dir, 'token')
     await writePrivateFile(path, TOKEN)
     await chmod(path, 0o602)
-    await expect(readPrivateFile(path)).rejects.toEqual(new SiteAdapterError('credential', 'invalid'))
+    await expect(readPrivateFile(path)).rejects.toEqual(new SiteAdapterError('config', 'insecure-file'))
   })
 
   it('refuses a file owned by another account', async () => {
@@ -159,13 +167,34 @@ describe('readPrivateFile', () => {
     await writePrivateFile(path, TOKEN)
     const otherUid = (process.getuid?.() ?? 0) + 1
     await expect(readPrivateFile(path, otherUid)).rejects.toEqual(
-      new SiteAdapterError('credential', 'invalid'),
+      new SiteAdapterError('config', 'insecure-file'),
     )
   })
 
   it('refuses a directory', async () => {
     const path = join(dir, 'token')
     await mkdir(path, { mode: 0o700 })
-    await expect(readPrivateFile(path)).rejects.toEqual(new SiteAdapterError('credential', 'invalid'))
+    await expect(readPrivateFile(path)).rejects.toEqual(new SiteAdapterError('config', 'insecure-file'))
+  })
+
+  it('refuses a symlink, even to a private file of this account', async () => {
+    const target = join(dir, 'elsewhere')
+    await writePrivateFile(target, TOKEN)
+    const path = join(dir, 'token')
+    await symlink(target, path)
+    await expect(readPrivateFile(path)).rejects.toEqual(new SiteAdapterError('config', 'insecure-file'))
+  })
+
+  it('refuses a FIFO without blocking on it', async () => {
+    const path = join(dir, 'token')
+    execFileSync('/usr/bin/mkfifo', ['-m', '600', path])
+    await expect(readPrivateFile(path)).rejects.toEqual(new SiteAdapterError('config', 'insecure-file'))
+  })
+
+  it('reports a file it may not open as unavailable, not missing', async () => {
+    const path = join(dir, 'token')
+    await writePrivateFile(path, TOKEN)
+    await chmod(path, 0o000)
+    await expect(readPrivateFile(path)).rejects.toEqual(new SiteAdapterError('config', 'unavailable'))
   })
 })

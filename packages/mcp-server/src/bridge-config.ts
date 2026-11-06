@@ -45,20 +45,23 @@ export function isLoopbackEndpoint(url: string): boolean {
 
 export async function writeBridgeConfig(path: string, config: BridgeConfig): Promise<void> {
   const parsed = configSchema.safeParse(config)
-  if (!parsed.success) throw new SiteAdapterError('credential', 'invalid')
+  if (!parsed.success) throw new SiteAdapterError('config', 'invalid')
   await writePrivateFile(path, `${JSON.stringify(parsed.data, null, 2)}\n`)
 }
 
-/** Throws SiteAdapterError('credential', 'not-found' | 'invalid'). */
+/**
+ * Throws SiteAdapterError('config', …): `not-found`, `insecure-file` (loose permissions, another
+ * owner, a symlink), `invalid` (not the JSON shape above) or `unavailable`.
+ */
 export async function readBridgeConfig(path: string): Promise<BridgeConfig> {
   const text = await readPrivateFile(path)
   let json: unknown
   try {
     json = JSON.parse(text)
   } catch {
-    throw new SiteAdapterError('credential', 'invalid')
+    throw new SiteAdapterError('config', 'invalid')
   }
   const parsed = configSchema.safeParse(json)
-  if (!parsed.success) throw new SiteAdapterError('credential', 'invalid')
+  if (!parsed.success) throw new SiteAdapterError('config', 'invalid')
   return parsed.data
 }

@@ -113,7 +113,7 @@ describe('startHttpServer', () => {
   it('refuses to start with a blank or malformed token', async () => {
     for (const token of ['', 'short', `${TOKEN} `]) {
       await expect(startHttpServer({ caller: new FakeCaller([]), token })).rejects.toEqual(
-        new SiteAdapterError('credential', 'invalid'),
+        new SiteAdapterError('config', 'invalid'),
       )
     }
   })
