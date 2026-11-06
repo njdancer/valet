@@ -1,9 +1,10 @@
 // Spike 2c: a fresh in-memory session visits the homepage and then the login page as a normal
 // visitor would, with no scripted API calls. Records the login form's structure (no values), the
 // navigation chain, the endpoints the page itself calls, and a screenshot. Nothing is typed or submitted.
-import { app, BrowserWindow, session } from 'electron'
+
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { app, BrowserWindow, session } from 'electron'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const DESCRIBE = `(() => {
@@ -34,7 +35,12 @@ async function run() {
       calls.push(`${d.resourceType} ${d.method} ${u.host}${u.pathname} ${d.statusCode}`)
     }
   })
-  const win = new BrowserWindow({ show: false, width: 1440, height: 900, webPreferences: { partition: 'spike02c-fresh' } })
+  const win = new BrowserWindow({
+    show: false,
+    width: 1440,
+    height: 900,
+    webPreferences: { partition: 'spike02c-fresh' },
+  })
   win.webContents.on('did-navigate', (_e, url) => navs.push(url.split('?')[0]))
   win.webContents.on('did-navigate-in-page', (_e, url) => navs.push(`in-page ${url.split('?')[0]}`))
   await win.loadURL('https://www.woolworths.com.au/').catch(() => {})
@@ -45,10 +51,19 @@ async function run() {
   const login = await win.webContents.executeJavaScript(DESCRIBE)
   const shot = await win.webContents.capturePage()
   await writeFile(join(import.meta.dirname, 'results', 'login-fresh.png'), shot.toPNG())
-  await writeFile(join(import.meta.dirname, 'results', 'login-fresh.json'), JSON.stringify({ home, login, navigations: navs, calls: [...new Set(calls)] }, null, 2))
+  await writeFile(
+    join(import.meta.dirname, 'results', 'login-fresh.json'),
+    JSON.stringify({ home, login, navigations: navs, calls: [...new Set(calls)] }, null, 2),
+  )
   console.log('[spike02c] wrote results/login-fresh.json and .png')
   win.destroy()
   app.quit()
 }
 app.on('window-all-closed', () => {})
-app.whenReady().then(run).catch((e) => { console.error(e); app.exit(1) })
+app
+  .whenReady()
+  .then(run)
+  .catch((e) => {
+    console.error(e)
+    app.exit(1)
+  })
