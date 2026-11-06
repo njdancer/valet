@@ -1,12 +1,14 @@
 // Spike 2b: login page structure (inputs anywhere, including shadow roots) and the
 // login-status endpoints the site calls, anonymously. No values typed, nothing submitted.
-import { app, BrowserWindow, session } from 'electron'
+
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { app, BrowserWindow, session } from 'electron'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const PARTITION = 'persist:spike02-anonymous'
-const fetchJson = (path) => `(async () => { const r = await fetch(${JSON.stringify(path)}, { credentials: 'same-origin', headers: { accept: 'application/json' } }); const t = await r.text(); let b; try { b = JSON.parse(t) } catch { b = { nonJson: t.slice(0, 300) } } return { status: r.status, body: b } })()`
+const fetchJson = (path) =>
+  `(async () => { const r = await fetch(${JSON.stringify(path)}, { credentials: 'same-origin', headers: { accept: 'application/json' } }); const t = await r.text(); let b; try { b = JSON.parse(t) } catch { b = { nonJson: t.slice(0, 300) } } return { status: r.status, body: b } })()`
 const DESCRIBE_INPUTS = `(() => {
   const out = []
   const walk = (root, depth) => {
@@ -26,11 +28,31 @@ async function run() {
   const ses = session.fromPartition(PARTITION)
   const calls = []
   const navs = []
-  ses.webRequest.onCompleted({ urls: ['https://*.woolworths.com.au/*', 'https://*.woolworthsrewards.com.au/*', 'https://*.wowlabs.com.au/*'] }, (d) => {
-    const u = new URL(d.url)
-    if (d.resourceType === 'xhr' || d.resourceType === 'fetch' || d.resourceType === 'mainFrame' || d.resourceType === 'subFrame') calls.push(`${d.resourceType} ${d.method} ${u.host}${u.pathname} ${d.statusCode}`)
+  ses.webRequest.onCompleted(
+    {
+      urls: [
+        'https://*.woolworths.com.au/*',
+        'https://*.woolworthsrewards.com.au/*',
+        'https://*.wowlabs.com.au/*',
+      ],
+    },
+    (d) => {
+      const u = new URL(d.url)
+      if (
+        d.resourceType === 'xhr' ||
+        d.resourceType === 'fetch' ||
+        d.resourceType === 'mainFrame' ||
+        d.resourceType === 'subFrame'
+      )
+        calls.push(`${d.resourceType} ${d.method} ${u.host}${u.pathname} ${d.statusCode}`)
+    },
+  )
+  const win = new BrowserWindow({
+    show: false,
+    width: 1440,
+    height: 900,
+    webPreferences: { partition: PARTITION },
   })
-  const win = new BrowserWindow({ show: false, width: 1440, height: 900, webPreferences: { partition: PARTITION } })
   win.webContents.on('did-navigate', (_e, url) => navs.push(url.split('?')[0]))
   win.webContents.on('did-navigate-in-page', (_e, url) => navs.push(`in-page ${url.split('?')[0]}`))
   await win.loadURL('https://www.woolworths.com.au/').catch(() => {})
@@ -51,4 +73,10 @@ async function run() {
   app.quit()
 }
 app.on('window-all-closed', () => {})
-app.whenReady().then(run).catch((e) => { console.error(e); app.exit(1) })
+app
+  .whenReady()
+  .then(run)
+  .catch((e) => {
+    console.error(e)
+    app.exit(1)
+  })

@@ -4,9 +4,9 @@
 //
 // Run: pnpm start   (writes results/*.json)
 
-import { app, BrowserWindow, session } from 'electron'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { app, BrowserWindow, session } from 'electron'
 
 const ORIGIN = 'https://www.woolworths.com.au'
 const PARTITION = 'persist:spike02-anonymous'
@@ -59,8 +59,18 @@ async function run() {
   const apiCalls = []
   ses.webRequest.onCompleted({ urls: ['https://*.woolworths.com.au/*'] }, (details) => {
     const url = new URL(details.url)
-    if (/^\/(apis?|api\/v\d)\//i.test(url.pathname) || details.resourceType === 'xhr' || details.resourceType === 'fetch') {
-      apiCalls.push({ method: details.method, host: url.host, path: url.pathname, status: details.statusCode, type: details.resourceType })
+    if (
+      /^\/(apis?|api\/v\d)\//i.test(url.pathname) ||
+      details.resourceType === 'xhr' ||
+      details.resourceType === 'fetch'
+    ) {
+      apiCalls.push({
+        method: details.method,
+        host: url.host,
+        path: url.pathname,
+        status: details.statusCode,
+        type: details.resourceType,
+      })
     }
   })
   const hosts = new Set()
@@ -71,16 +81,47 @@ async function run() {
     callback({})
   })
 
-  const win = new BrowserWindow({ show: false, width: 1440, height: 900, webPreferences: { partition: PARTITION } })
+  const win = new BrowserWindow({
+    show: false,
+    width: 1440,
+    height: 900,
+    webPreferences: { partition: PARTITION },
+  })
   const out = { at: new Date().toISOString(), electron: process.versions.electron, steps: {} }
 
   await navigate(win, `${ORIGIN}/`)
   await sleep(6000)
   out.steps.home = { title: await inPage(win, 'document.title'), url: win.webContents.getURL() }
-  out.cookieNamesAfterHome = (await ses.cookies.get({})).map((c) => `${c.domain} ${c.name}${c.httpOnly ? ' (httpOnly)' : ''}`).sort()
+  out.cookieNamesAfterHome = (await ses.cookies.get({}))
+    .map((c) => `${c.domain} ${c.name}${c.httpOnly ? ' (httpOnly)' : ''}`)
+    .sort()
 
   const probes = [
-    ['search', '/apis/ui/Search/products', { method: 'POST', body: { SearchTerm: 'milk', PageSize: 3, PageNumber: 1, SortType: 'TraderRelevance', Location: '/shop/search/products?searchTerm=milk', Filters: [], IsSpecial: false, isMobile: false, IsHideEverydayMarketProducts: false, IsRegisteredRewardCardPromotion: null, ExcludeSearchTypes: ['UntraceableVendors'], GpBoost: 0, GroupEdmVariants: true, EnableAdReRanking: false, flags: { EnableProductBoostExperiment: false } }, headers: { 'content-type': 'application/json' } }],
+    [
+      'search',
+      '/apis/ui/Search/products',
+      {
+        method: 'POST',
+        body: {
+          SearchTerm: 'milk',
+          PageSize: 3,
+          PageNumber: 1,
+          SortType: 'TraderRelevance',
+          Location: '/shop/search/products?searchTerm=milk',
+          Filters: [],
+          IsSpecial: false,
+          isMobile: false,
+          IsHideEverydayMarketProducts: false,
+          IsRegisteredRewardCardPromotion: null,
+          ExcludeSearchTypes: ['UntraceableVendors'],
+          GpBoost: 0,
+          GroupEdmVariants: true,
+          EnableAdReRanking: false,
+          flags: { EnableProductBoostExperiment: false },
+        },
+        headers: { 'content-type': 'application/json' },
+      },
+    ],
     ['searchGet', '/apis/ui/Search/products?searchTerm=milk&pageSize=3&pageNumber=1', {}],
     ['trolley', '/apis/ui/Trolley', {}],
   ]
@@ -91,7 +132,9 @@ async function run() {
 
   const firstStockcode = findStockcode(out.steps.search?.body) ?? findStockcode(out.steps.searchGet?.body)
   if (firstStockcode) {
-    out.steps.productDetail = await inPage(win, fetchJson(`/apis/ui/product/detail/${firstStockcode}`)).catch((error) => ({ error: String(error) }))
+    out.steps.productDetail = await inPage(win, fetchJson(`/apis/ui/product/detail/${firstStockcode}`)).catch(
+      (error) => ({ error: String(error) }),
+    )
     await sleep(GAP_MS)
   }
 
@@ -129,7 +172,10 @@ function findStockcode(body) {
 }
 
 app.on('window-all-closed', () => {})
-app.whenReady().then(run).catch((error) => {
-  console.error('[spike02] failed:', error)
-  app.exit(1)
-})
+app
+  .whenReady()
+  .then(run)
+  .catch((error) => {
+    console.error('[spike02] failed:', error)
+    app.exit(1)
+  })

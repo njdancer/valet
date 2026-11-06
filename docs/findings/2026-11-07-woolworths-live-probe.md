@@ -39,7 +39,7 @@ Raw output is in `spikes/02-woolworths-shapes/results/` (gitignored); the scrubb
 
 ## What this means
 
-1. **Validation.** Electron's bundled Chromium is acceptable to Akamai *as a browser*. Scripted
+1. **Validation.** Electron's bundled Chromium is acceptable to Akamai _as a browser_. Scripted
    API traffic with no human-like page activity gets flagged fast. The amasolov server's pacing
    (at most 2 concurrent, ≥250 ms apart, heavy caching, 1-minute backoff) is consistent with this.
 2. **Adapter design implications:**
