@@ -28,7 +28,7 @@ export const CONTENT_SECURITY_POLICY = [
   "form-action 'none'",
 ].join('; ')
 
-function contentSecurityPolicy(): Plugin {
+export function contentSecurityPolicy(): Plugin {
   return {
     name: 'siteadapter-csp',
     apply: 'build',

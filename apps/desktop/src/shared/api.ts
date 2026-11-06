@@ -588,6 +588,8 @@ export interface SiteHealth {
 export interface AppStatus {
   readonly paused: boolean
   readonly version: string
+  /** Demo mode: a local fake site and a test credential, never a real account. Shown as a badge. */
+  readonly demo: boolean
 }
 
 // ---------- Events ----------

@@ -558,7 +558,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     signed: true,
   }
 
-  let app: AppStatus = { paused: false, version: '0.1.0' }
+  let app: AppStatus = { paused: false, version: '0.1.0', demo: false }
   let chosenOpPath: string | null = '/opt/homebrew/bin/op'
 
   const audit: AuditRecord[] = buildAudit(ago)
