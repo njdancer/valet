@@ -33,6 +33,21 @@ async function errorOf(promise: Promise<unknown>): Promise<SiteAdapterError> {
 }
 
 describe('CredentialResolver', () => {
+  it('refuses a provider for messages grants, which only the OtpReader reads', () => {
+    const impostor: CredentialProvider = {
+      kind: 'messages',
+      resolve: async () => SecretValue.fromString(CANARY),
+    }
+    expect(() => new CredentialResolver([impostor])).toThrow()
+  })
+
+  it('reports a messages grant as unavailable rather than resolving it', async () => {
+    const resolver = new CredentialResolver([new FakeCredentialProvider()])
+    const messagesGrant: Grant = { ...grant, secret: 'messages', provider: 'messages', itemRef: 'Woolworths' }
+    const error = await errorOf(resolver.resolve(messagesGrant, 'otp'))
+    expect([error.stage, error.errorClass]).toEqual(['credential', 'unavailable'])
+  })
+
   it('resolves through the provider the grant names, with the grant item ref', async () => {
     const fake = new FakeCredentialProvider({ items: { 'fake://woolworths': { password: CANARY } } })
     const resolver = new CredentialResolver([fake])

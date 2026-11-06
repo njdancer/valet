@@ -20,6 +20,9 @@ export class CredentialResolver {
   constructor(providers: readonly CredentialProvider[]) {
     const byKind = new Map<ProviderKind, CredentialProvider>()
     for (const provider of providers) {
+      // Codes from Messages go through the OtpReader, which holds the sender and pattern guards; a
+      // provider that answered for messages grants would skip them.
+      if (provider.kind === 'messages') throw new Error('messages grants are read by an OtpReader')
       if (byKind.has(provider.kind)) throw new Error(`two credential providers of kind ${provider.kind}`)
       byKind.set(provider.kind, provider)
     }
