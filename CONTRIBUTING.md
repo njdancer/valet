@@ -24,7 +24,10 @@ conventional-style subjects (`feat(runtime): …`, `test(core): …`, `docs: …
 - **Electron.** No module outside `packages/browser-electron` and `apps/desktop` imports
   `electron`. Everything else must run and be tested in plain Node.
 - **Secrets.** Pass them as `SecretValue`, never as `string`. Only the privileged filler in
-  `packages/auth-flow` calls `reveal()`.
+  `packages/auth-flow` calls `reveal()`, with one exception: `sdkClientFactory` in
+  `packages/credentials` reveals the 1Password service-account token once, straight into the SDK's
+  `createClient`, which only accepts a string. A test in `packages/credentials` fails if any other
+  module there calls `reveal()`.
 - **Errors.** Errors that cross a package boundary are `SiteAdapterError(stage, errorClass)` from
   `@siteadapter/core`. Never put page text, URLs with query strings, or exception messages into
   anything that leaves the runtime.

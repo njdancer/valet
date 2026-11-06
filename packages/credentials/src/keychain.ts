@@ -1,6 +1,11 @@
 // Reads a token (the 1Password service-account token) from the macOS Keychain with the `security`
 // tool. The wait is bounded: a hung Keychain approval prompt once froze the earlier app's main process for
 // hours, so an unanswered prompt is reported as locked instead.
+//
+// v0 only. The Keychain checks its ACL against the calling binary, which here is /usr/bin/security,
+// not the signed app, so the item's designated requirement protects nothing yet, and "Always Allow"
+// would let any process read the token. See "The service-account token" in docs/security-model.md;
+// the replacement reads in process through SecItemCopyMatching behind the same TokenSource.
 
 import { CredentialError, SecretValue } from '@siteadapter/core'
 import { nodeSpawner, nodeTimers, runProcess, type Spawner, type Timers } from './process'
