@@ -16,8 +16,7 @@ import { app, clipboard, dialog } from 'electron'
 import { builtinAdapters } from '../adapters'
 import { dataPaths } from '../core/constants'
 import { checkOpBinary, defaultOpCheckDeps, realCredentials } from '../core/credentials'
-import { DEMO_RESOLVER_RULES, demoCredentials } from '../core/demo'
-import { launchMode, type RendererBase, userDataDir } from '../core/launch'
+import { DEMO_RESOLVER_RULES, launchMode, rendererBase, userDataDir } from '../core/launch'
 import { AppService } from '../core/service'
 import type { BridgeCommand } from '../core/snippets'
 import type { DemoSite } from './demo'
@@ -26,7 +25,10 @@ import { partitionProbe } from './probe'
 import { createTray } from './tray'
 import { AppWindows } from './windows'
 
-const mode = launchMode(process.argv, process.env)
+const mode = launchMode(process.argv, process.env, {
+  packaged: app.isPackaged,
+  demoBuild: __SITEADAPTER_DEMO_BUILD__,
+})
 
 // Before ready: where everything lives, the process-wide hardening, and demo's host mapping.
 app.setPath('userData', userDataDir(mode, app.getPath('appData')))
@@ -44,12 +46,6 @@ const log = (line: string) => process.stderr.write(`siteadapter: ${line}\n`)
  */
 export function startUpdates(): void {}
 
-function rendererBase(): RendererBase {
-  const dev = process.env['ELECTRON_RENDERER_URL']
-  if (!app.isPackaged && dev !== undefined) return { kind: 'dev', origin: new URL(dev).origin }
-  return { kind: 'file', dir: join(import.meta.dirname, '../renderer') }
-}
-
 /** The stdio bridge from the repo, until the app bundles it (packaging's job): tsx and its CLI. */
 function bridgeCommand(configPath: string): BridgeCommand | null {
   if (app.isPackaged) return null
@@ -65,7 +61,11 @@ async function main(): Promise<void> {
   await app.whenReady()
   app.dock?.hide()
 
-  const base = rendererBase()
+  const base = rendererBase(
+    process.env['ELECTRON_RENDERER_URL'],
+    { packaged: app.isPackaged, devServerBuild: __SITEADAPTER_DEV_SERVER__ },
+    join(import.meta.dirname, '../renderer'),
+  )
   const paths = dataPaths(app.getPath('userData'))
   let service: AppService | null = null
   const windows = new AppWindows({
@@ -79,7 +79,8 @@ async function main(): Promise<void> {
   windows.lockDefaultSession()
 
   let demo: DemoSite | null = null
-  if (mode.demo) {
+  // The constant first, so a production build drops the import, and with it the demo chunk.
+  if (__SITEADAPTER_DEMO_BUILD__ && mode.demo) {
     const { startDemoSite, trustDemoCertificate } = await import('./demo')
     demo = await startDemoSite()
     trustDemoCertificate('woolworths', demo.fingerprint)
@@ -105,14 +106,17 @@ async function main(): Promise<void> {
     adapters,
     createDriver: (manifest) =>
       createElectronSessionDriver(manifest, driverOptions, demoSite === null ? {} : { dial: demoSite.dial }),
-    credentials: demoSite === null ? realCredentials(opDeps) : demoCredentials(demoSite.otpReader),
+    credentials: demoSite === null ? realCredentials(opDeps) : demoSite.credentials,
     startEndpoint: (caller, configPath) =>
       startEndpoint({
         caller,
         configPath,
-        // D41: a port kept across launches, and a token kept until the person resets it.
+        // D41: the bridge for every client. The port is kept (the bridge reads it from bridge.json)
+        // and the token is new at every launch, so one collected by whatever held the saved port
+        // while the app was down stops working at the next start. The bridge follows on its own.
+        // 'on-reset' waits for an HTTP-client setup that shows the token and states that risk.
         stablePort: true,
-        tokenRotation: 'on-reset',
+        tokenRotation: 'every-launch',
         info: { name: 'siteadapter', version: app.getVersion() },
       }),
     ui: {

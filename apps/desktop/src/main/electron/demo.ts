@@ -1,7 +1,10 @@
 // Demo mode's local Woolworths: the fake site in-process over TLS, on www.woolworths.test and
 // auth.woolworths.test (mapped to 127.0.0.1 by a host resolver rule set before ready). Its
 // certificate is trusted for exactly those two hosts, on exactly the adapter's two partitions;
-// everything else keeps Chromium's own verification. Loaded only in demo mode.
+// everything else keeps Chromium's own verification. Loaded only in demo mode, and bundled only
+// into a demo build: app.ts imports it behind __SITEADAPTER_DEMO_BUILD__, which a production build
+// sets to false, so this chunk, the fake site, its certificate generator and the test account are
+// left out of it.
 
 // Electron glue: covered by the smoke test (test/smoke) and the e2e suite, not by unit tests.
 /* v8 ignore start */
@@ -16,7 +19,8 @@ import {
   startFakeWoolworths,
 } from '@siteadapter/fake-woolworths-site'
 import { session } from 'electron'
-import { DEMO_ACCOUNT, outboxOtpReader } from '../core/demo'
+import type { Credentials } from '../core/credentials'
+import { DEMO_ACCOUNT, demoCredentials, outboxOtpReader } from '../core/demo'
 
 export const DEMO_HOSTS = ['www.woolworths.test', 'auth.woolworths.test'] as const
 
@@ -26,20 +30,24 @@ export interface DemoSite {
   readonly otpReader: ReturnType<typeof outboxOtpReader>
   /** The tool partition's proxy dial: only the demo's hosts, all on this machine. */
   readonly dial: (host: string, port: number) => ReturnType<typeof connect>
+  /** The test provider with the fake's account, and codes from its outbox. */
+  readonly credentials: Credentials
 }
 
 export async function startDemoSite(): Promise<DemoSite> {
   // Needs the openssl CLI; the certificate lives as long as this launch.
   const tls = await generateTestCertificate([...DEMO_HOSTS])
   const site = await startFakeWoolworths({ tls, hostname: DEMO_HOSTS[0], accounts: [DEMO_ACCOUNT] })
+  const otpReader = outboxOtpReader(
+    () => site.outbox,
+    MESSAGES_SENDER,
+    () => Date.now(),
+  )
   return {
     site,
     fingerprint: tls.fingerprint,
-    otpReader: outboxOtpReader(
-      () => site.outbox,
-      MESSAGES_SENDER,
-      () => Date.now(),
-    ),
+    otpReader,
+    credentials: demoCredentials(otpReader),
     dial: (host, port) => {
       if (!(DEMO_HOSTS as readonly string[]).includes(host))
         throw new Error('demo mode stays on this machine')

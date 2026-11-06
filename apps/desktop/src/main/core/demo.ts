@@ -1,6 +1,7 @@
 // Demo mode's credentials: the fake site's own test account behind the fake provider, and one-time
 // codes read from the fake site's outbox in place of Messages. Nothing here can reach a real
 // account: the fake provider holds fixed test values, and real 1Password and Messages are off.
+// Imported only by electron/demo.ts, which only a demo build bundles (see electron.vite.config.ts).
 
 import {
   CredentialError,
@@ -21,9 +22,6 @@ export const DEMO_ACCOUNT = {
   mfa: 'sms',
   firstName: 'Tess',
 } as const
-
-/** The host resolver rule demo mode appends before ready: only the demo's own names. */
-export const DEMO_RESOLVER_RULES = 'MAP *.woolworths.test 127.0.0.1'
 
 export const DEMO_ITEM: VaultItem = { id: 'demo-woolworths', title: 'Woolworths (demo account)' }
 

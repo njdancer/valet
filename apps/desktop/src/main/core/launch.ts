@@ -1,7 +1,7 @@
 // How this launch runs, decided once from argv and the environment before Electron is ready, and
 // which URLs are the app's own pages.
 
-import { isAbsolute, join, resolve } from 'node:path'
+import { isAbsolute, join, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { WindowRole } from './ipc'
 
@@ -14,29 +14,92 @@ export interface LaunchMode {
   readonly userData: string | null
 }
 
+/** What this build is, decided by the build and Electron, never by argv or the environment. */
+export interface LaunchContext {
+  /** app.isPackaged. */
+  readonly packaged: boolean
+  /** Whether the bundle carries demo mode at all (electron-vite dev, or `build --mode demo`). */
+  readonly demoBuild: boolean
+}
+
+/**
+ * Demo mode and the userData override are development switches: a packaged app, or a build made
+ * without demo mode, ignores both, so nothing in argv or the environment can point a real install
+ * at a fake site, a fake certificate or another data folder.
+ */
 export function launchMode(
   argv: readonly string[],
   env: Readonly<Record<string, string | undefined>>,
+  context: LaunchContext,
 ): LaunchMode {
-  const override = env['SITEADAPTER_USER_DATA']
+  const override = context.packaged ? undefined : env['SITEADAPTER_USER_DATA']
+  const demoAllowed = context.demoBuild && !context.packaged
   return {
-    demo: env['SITEADAPTER_DEMO'] === '1' || argv.includes('--demo'),
+    demo: demoAllowed && (env['SITEADAPTER_DEMO'] === '1' || argv.includes('--demo')),
     e2e: env['SITEADAPTER_E2E'] === '1',
     // A relative path would land wherever the app was started from; it is ignored.
     userData: override !== undefined && isAbsolute(override) ? resolve(override) : null,
   }
 }
 
-/** The userData directory: the override, or ~/Library/Application Support/siteadapter(-demo). */
-export function userDataDir(mode: LaunchMode, appData: string): string {
-  if (mode.userData !== null) return mode.userData
-  return join(appData, mode.demo ? 'siteadapter-demo' : 'siteadapter')
+/** The real install's userData: ~/Library/Application Support/siteadapter. */
+export function realDataDir(appData: string): string {
+  return join(appData, 'siteadapter')
 }
+
+/**
+ * The userData directory: the override, or ~/Library/Application Support/siteadapter(-demo). A demo
+ * launch never uses the real data folder (or anything inside it), whatever the override says: it
+ * would reuse the real grants, approvals and bridge.json.
+ */
+export function userDataDir(mode: LaunchMode, appData: string): string {
+  const demoDir = join(appData, 'siteadapter-demo')
+  if (mode.userData !== null) {
+    if (mode.demo && within(mode.userData, realDataDir(appData))) return demoDir
+    return mode.userData
+  }
+  return mode.demo ? demoDir : realDataDir(appData)
+}
+
+/** `path` is `dir` or inside it. macOS volumes are case-insensitive by default, so case is ignored. */
+function within(path: string, dir: string): boolean {
+  const a = resolve(path).toLowerCase()
+  const b = resolve(dir).toLowerCase()
+  return a === b || a.startsWith(b.endsWith(sep) ? b : `${b}${sep}`)
+}
+
+/** The host resolver rule demo mode appends before ready: only the demo's own names. */
+export const DEMO_RESOLVER_RULES = 'MAP *.woolworths.test 127.0.0.1'
 
 /** Where the renderer's pages come from: the built files, or electron-vite's dev server. */
 export type RendererBase =
   | { readonly kind: 'file'; readonly dir: string }
   | { readonly kind: 'dev'; readonly origin: string }
+
+/**
+ * The renderer's base. The dev server's URL (ELECTRON_RENDERER_URL) is taken only from a bundle
+ * electron-vite built for `dev`, never in a packaged app, and only as an http origin on this
+ * machine's loopback names: every page on that origin gets the preload and the app's IPC trust, so a
+ * value left over in a shell must not make some other origin the app's.
+ */
+export function rendererBase(
+  devUrl: string | undefined,
+  context: { readonly packaged: boolean; readonly devServerBuild: boolean },
+  filesDir: string,
+): RendererBase {
+  if (context.packaged || !context.devServerBuild || devUrl === undefined)
+    return { kind: 'file', dir: filesDir }
+  let url: URL
+  try {
+    url = new URL(devUrl)
+  } catch {
+    return { kind: 'file', dir: filesDir }
+  }
+  const loopback = url.hostname === 'localhost' || url.hostname === '127.0.0.1'
+  if (url.protocol !== 'http:' || !loopback || url.username !== '' || url.password !== '' || url.port === '')
+    return { kind: 'file', dir: filesDir }
+  return { kind: 'dev', origin: url.origin }
+}
 
 export const PAGES = ['index.html', 'tray.html'] as const
 export type Page = (typeof PAGES)[number]

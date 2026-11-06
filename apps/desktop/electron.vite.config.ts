@@ -7,9 +7,14 @@
 // - preload: CommonJS, one file, because a sandboxed preload can't load ES modules or other files.
 // - renderer: the same root, pages and CSP as vite.config.ts.
 //
+// Two build-time constants (src/main/build-flags.d.ts) decide what the main bundle carries:
+// __SITEADAPTER_DEMO_BUILD__ (demo mode, the fake site and its fixtures) is true for `dev` and for
+// `build --mode demo` only, and __SITEADAPTER_DEV_SERVER__ (trusting the dev server's URL) for `dev`
+// only. A plain `build`, which packaging uses, has neither.
+//
 //   mise exec -- pnpm --filter @siteadapter/desktop dev     # electron-vite dev
-//   mise exec -- pnpm --filter @siteadapter/desktop build   # to out/
-//   mise exec -- pnpm --filter @siteadapter/desktop demo    # build, then launch against the fake site
+//   mise exec -- pnpm --filter @siteadapter/desktop build   # to out/, without demo mode
+//   mise exec -- pnpm --filter @siteadapter/desktop demo    # a demo build, launched against the fake site
 
 import { cpSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -37,9 +42,13 @@ function fakeSiteFixtures(): Plugin {
   }
 }
 
-export default defineConfig({
+export default defineConfig(({ command, mode }) => ({
   main: {
-    plugins: [fakeSiteFixtures()],
+    plugins: command === 'serve' || mode === 'demo' ? [fakeSiteFixtures()] : [],
+    define: {
+      __SITEADAPTER_DEMO_BUILD__: JSON.stringify(command === 'serve' || mode === 'demo'),
+      __SITEADAPTER_DEV_SERVER__: JSON.stringify(command === 'serve'),
+    },
     // Until zod is a dependency of this package: core's copy (src/main/core/zod.ts).
     resolve: { alias: { zod: resolve(here, '../../packages/core/node_modules/zod') } },
     build: {
@@ -78,4 +87,4 @@ export default defineConfig({
       },
     },
   },
-})
+}))
