@@ -9,7 +9,7 @@
   "scripts": {
     "lint": "biome check .",
     "format": "biome check --write .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p apps/desktop",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
     "check": "pnpm lint && pnpm typecheck && pnpm coverage"
