@@ -1,0 +1,10 @@
+// The renderer and its tests, with DOM and JSX. Kept out of the root tsconfig so the Node packages
+// typecheck without browser globals: run `tsc --noEmit -p apps/desktop` as well as the root check.
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx"
+  },
+  "include": ["src/renderer", "src/shared", "test", "vite.config.ts", "vitest.config.ts"]
+}
