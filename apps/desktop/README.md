@@ -1,12 +1,29 @@
 # @siteadapter/desktop
 
-The menu-bar app. This round has the renderer only: the control panel window, the tray popover,
-the confirmation panel and the login hand-off banner, in React 19 and plain CSS built from
-[docs/mockups](../../docs/mockups). The Electron main process and preload come next; they
-implement the contract in [`src/shared/api.ts`](src/shared/api.ts).
+The menu-bar app: the Electron main process that wires every package together, the preload that
+exposes [`src/shared/api.ts`](src/shared/api.ts) as `window.siteadapter`, and the renderer (the
+control panel, the tray popover, the confirmation panel and the login hand-off banner, in React 19
+and plain CSS built from [docs/mockups](../../docs/mockups)).
 
 ```
 src/shared/api.ts          the window.siteadapter contract (types only)
+src/main/
+  index.ts                 entry: imports electron/app.ts
+  adapters.ts              built-in adapters; their sources are embedded at build time and hashed
+  core/                    everything pure, unit-tested in plain Node (test/main)
+    service.ts             AppService: stores, runtime, auth flow, endpoint, and the API behind IPC
+    ipc.ts, channels.ts    the channel list and the zod schema of every channel's arguments
+    login.ts               the AuthRunner over runAuthFlow, its probe hooks, the hand-off window
+    confirmations.ts       the runtime's ConfirmationPrompt, answered in the floating panel
+    credentials.ts         providers by grant.provider; the op binary checks; vault listing
+    grants.ts              grant requests checked against the approved manifest
+    permission-diff.ts     the review screen's diff; views.ts, audit-view.ts: the other view models
+    caller.ts              the MCP endpoint's ToolCaller over ToolHost
+    registry.ts            bundle hashes, and the last approved manifest of each adapter
+    constants.ts           names and numbers decided once (Keychain, vault, timeouts, file paths)
+    settings, clients, run-memory, files, launch, geometry, snippets, demo, zod
+  electron/                the Electron glue: app, windows, tray, ipcMain, demo site, probe fallback
+src/preload/               index.ts (contextBridge) over api.ts (built from the channel list)
 src/renderer/
   index.html, control.tsx  control panel entry (hash routes)
   tray.html, tray.tsx      tray popover entry
@@ -17,35 +34,146 @@ src/renderer/
   components/              shared pieces; Preview draws redacted JSON
   lib/wording.ts           the only place codes become words
   lib/permissions.ts       reading a permission diff (does it add anything?)
-  lib/router.ts            routes, including the ones the main process opens
+  lib/routes.ts            routes, pure (the main process checks routes with it); router.ts adds the hook
   dev/fake-api.ts          in-memory API with Woolworths data, for vite dev and tests
   dev/screenshot.mjs       renders every screen to screens/ for comparison with the mockups
   styles/                  tokens.css and app.css from the mockups, plus controls.css and screens.css
+test/                      renderer tests (jsdom); test/main: the main process (Node); test/smoke: Playwright
 screens/                   committed screenshots, light and dark
 ```
 
 ## Running it
 
 ```bash
-mise exec -- pnpm --filter @siteadapter/desktop exec vite        # http://127.0.0.1:5194/
+mise exec -- pnpm --filter @siteadapter/desktop demo        # build, then launch against the local fake
+mise exec -- pnpm --filter @siteadapter/desktop dev         # electron-vite dev
+mise exec -- pnpm --filter @siteadapter/desktop build       # main, preload and renderer to out/
+mise exec -- pnpm --filter @siteadapter/desktop start       # launch what build made
+mise exec -- pnpm --filter @siteadapter/desktop test:smoke  # build, then the Playwright smoke test
+mise exec -- pnpm --filter @siteadapter/desktop exec vite   # the renderer alone, on the fake API
 mise exec -- node apps/desktop/src/renderer/dev/screenshot.mjs      # every screen to screens/
-mise exec -- pnpm exec tsc --noEmit -p apps/desktop                 # the renderer's own typecheck
+mise exec -- pnpm exec tsc --noEmit -p apps/desktop
 mise exec -- pnpm vitest run --project desktop --coverage.enabled --coverage.include='src/**'
 ```
 
-`vite` is a dependency of this package only, so it runs through `--filter` (or from `apps/desktop`).
+`vite` and `electron-vite` are dependencies of this package only, so they run through `--filter` (or
+from `apps/desktop`). Electron's binary must be in `node_modules/electron/dist`; after an offline
+install run `node install.js` in the electron package once (it is cached in `~/Library/Caches/electron`).
+
+### Demo mode
+
+`SITEADAPTER_DEMO=1` (or `--demo`) runs the whole app against `fakes/woolworths-site`, with no real
+account anywhere:
+
+- its own userData, `~/Library/Application Support/siteadapter-demo`;
+- the fake site in-process over TLS on `www.woolworths.test` and `auth.woolworths.test` (a fresh
+  certificate from `openssl` each launch), mapped to 127.0.0.1 by a host resolver rule appended
+  before ready. That certificate is trusted for exactly those two hosts, on exactly the adapter's two
+  partitions; everything else keeps Chromium's own verification;
+- the adapter built with `createManifest({ origin, authOrigin })` for the fake's origins, which gives
+  it a hash of its own, so a demo approval never stands for the real site;
+- the test credential provider holding the fake's two-factor account (`twofactor@example.test`) as
+  the item “Woolworths (demo account)”, and SMS codes read from the fake's outbox in place of
+  Messages. Real 1Password and Messages are off;
+- a DEMO badge: the tray's menu-bar title, the popover and the control panel's sidebar.
+
+To try it: approve Woolworths in the control panel, grant `login` from “Woolworths (demo account)”
+and Messages codes from `Woolworths`, then add the client from the snippet in Settings (it names the
+server `siteadapter-demo` and points at the demo's `bridge.json`). `search_products` needs no login;
+the first cart tool logs in (email, password, SMS code) in the hidden auth window.
+
+### For the end-to-end suite
+
+- `SITEADAPTER_USER_DATA=/abs/dir` uses that directory as userData (a relative path is ignored).
+- `SITEADAPTER_E2E=1` only makes window titles deterministic, and sets the same text as the document
+  title: `siteadapter (demo) [control]`, `siteadapter menu [tray]`, `siteadapter: confirm
+  [<confirmation id>]`, `siteadapter: sign in [<adapter id>]`. It exposes nothing else.
+- The control panel opens at launch on first run (something waits for review), in demo mode and in
+  e2e mode.
 
 In a plain browser there is no preload, so `boot.tsx` loads the fake API. The import sits behind
 `import.meta.env.DEV` at the import site, so a production build drops it: `test/build.test.ts` builds
 the renderer and checks no fake chunk or fixture data is emitted. Without a preload a production
 page shows an error.
 
-The renderer typechecks with DOM and JSX through `apps/desktop/tsconfig.json`; the root tsconfig
-stays Node-only, so the root `typecheck` script doesn't cover the renderer yet (it needs
-`tsc --noEmit -p apps/desktop` added).
+The whole app typechecks through `apps/desktop/tsconfig.json` (DOM and JSX for the renderer, Node
+and Electron types for the rest); the root tsconfig stays Node-only. `zod` isn't a dependency of this
+package yet, so `tsconfig.json`, `vitest.config.ts` and `electron.vite.config.ts` alias it to core's
+copy (`src/main/core/zod.ts` says why); the aliases go when it is added.
 
 Vitest 5 resolves `--coverage.include` against the project's root (`apps/desktop`), so the include
-is `src/**`, not `apps/desktop/src/**`. `src/renderer/dev/**` (the fake) is excluded from coverage.
+is `src/**`, not `apps/desktop/src/**`. `src/renderer/dev/**` (the fake) is excluded from coverage,
+and `src/main/electron/**` and the two entry files carry `v8 ignore`: they are Electron glue, covered
+by the smoke test and the e2e suite. The main-process tests start with `@vitest-environment node`.
+
+## The main process
+
+- **Process model.** Main owns everything privileged; renderer windows are views. Each is sandboxed,
+  with context isolation, no Node, the preload only and devtools only unpackaged, and may show only
+  `index.html` or `tray.html` of the app's own renderer (the build's files, or the dev server):
+  navigation, redirects, webviews and `window.open` are refused, and the default session (which only
+  our windows use) cancels every request outside the renderer and grants no permission.
+- **IPC.** One `invoke` channel per API method, `siteadapter:<method>`, and one event channel,
+  `siteadapter:event`. Every request must come from the main frame of one of the app's windows (by
+  the role the main process gave the window when it opened it), on one of the app's pages, and its
+  arguments must parse with the channel's zod schema: strict objects (so `__proto__`, `constructor`
+  or any extra key is refused), bounded strings, exact ids and hashes, no extra arguments. Anything
+  refused or failed rejects with one fixed message. Events cross as `{ type }` (and `seq`) only.
+- **Data**, owner-only under userData: `grants.json` (credentials' FileGrantStore),
+  `grant-items.json` (item titles to show), `approvals.json`, `approved-manifests.json` (what was
+  last approved, for diffs), `audit.jsonl`, `breakers.json`, `settings.json`, `clients.json`,
+  `endpoint.json` (when the token was last rotated), `bridge.json` (port and token, 0600) and
+  `login-markers/`.
+- **Adapters.** Built-in only. A hash is `bundleHash` over the adapter's source files, embedded by
+  the bundler from the same files it compiles, plus the effective manifest. A hash nobody approved
+  waits for review and runs nothing; `approvals.approve` refuses any hash but the installed one. A
+  changed hash is reviewed as a diff against the last approved manifest and source, and has no
+  grants until they are made again.
+- **Credentials**, by `grant.provider`: the service account (`KeychainTokenSource`; service
+  `siteadapter`, account `onepassword-service-account`, vault `siteadapter`, in `core/constants.ts`,
+  pending D6/D43); `op`, only at a path that passed the checks; Messages, only while its setting is
+  on; the test provider in demo mode only. The op checks: absolute; the file (after symlinks) and
+  every directory above it, and above the link, owned by root or the person and not writable by
+  group or others; and `codesign --verify` against 1Password's Team ID. A chosen path that fails is
+  refused and the old one kept; with none chosen, the usual places get the same checks. Never PATH.
+- **Grants** are checked against the installed hash's manifest (`core/grants.ts`): exact hash, an
+  available provider, a requested secret or a declared Messages sender character for character,
+  origins a non-empty subset of the request, and an item the provider lists now (stored by id, as
+  `op://siteadapter/<id>`). `grant-made` and `grant-revoked` are audited before the store changes.
+- **Runtime.** One `ToolHost` with each adapter on its own `createElectronSessionDriver`. The
+  `AuthRunner` runs `runAuthFlow` on the driver's auth page with the grant store, the providers, the
+  OTP reader, probe hooks over `AuthPage.fetch`/`cookieNames`, `rememberSecret` wired to the
+  runtime's `registerForRedaction`, and Akamai's page as `isBlockedPage`; it writes no login events.
+  On `needsUser` the auth window stays open with the banner above it and the call returns at once
+  (D50); the window closes after 15 minutes. `finishLogin` probes the auth partition and hands off
+  only if that passes, then clears the login hold.
+- **Confirmations.** `ctx.confirm()`, and the runtime's own question before an irreversible tool,
+  open a floating, always-on-top panel, shown inactive with `acceptFirstMouse: false`. An approval
+  counts only from that window, at least `CONFIRM_ARM_MS` after it was last shown or focused, and
+  before it expires; a decline is taken from any app window. Unanswered, it declines itself after two
+  minutes (D50), the runtime's deadline too.
+- **MCP.** `startEndpoint` with a stable port and a token kept until reset (D41), over a
+  `ToolCaller` that caches the runtime's async listing and refreshes it when approvals change. Paused
+  calls are `blocked` before they reach the runtime. Snippets launch the stdio bridge from the repo
+  with `tsx` until packaging bundles it.
+- **Updates.** `startUpdates()` in `electron/app.ts` is the one call site, a no-op until
+  `src/main/updater` (another unit) is wired in.
+
+### Where the main process departs from the contract below
+
+- `settings.set` with a key outside `SettingsPatch`, `opPath` included, is refused as a whole rather
+  than the key dropped: every channel refuses unknown keys.
+- `clients.revoke` refuses calls made under that reported name. Every client shares one token, so
+  this stops an honest client only; rotating the token is the real control.
+- `ClientInfo.transport` and `ConfirmationItem.clientTransport` are always `http`: the bridge
+  reaches the endpoint over HTTP too, and the endpoint doesn't say which sessions are bridged.
+- `EndpointStatus.connectedClients` counts clients that called in the last ten minutes; the
+  endpoint doesn't report live sessions.
+- `PendingReview.source` is `import` for a built-in bundle, and `submittedAt` the launch time.
+- `AdapterDetail.handedOver` is always null: the driver doesn't report hand-off counts.
+- `RunTrace` has no probe or allowed-request steps (the runtime doesn't audit them), and input and
+  output previews are kept in memory for the last 200 calls only.
+- `AppStatus.demo` is new: it drives the DEMO badge.
 
 ## The contract for the main process and preload
 
