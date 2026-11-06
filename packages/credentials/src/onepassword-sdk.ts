@@ -11,11 +11,30 @@ import {
 } from '@siteadapter/core'
 import { parseItemRef, secretReference } from './item-ref'
 import { nodeTimers, type Timers } from './process'
+import { isVaultName, summariseItems, type VaultItemLister, type VaultItemSummary } from './vault-items'
+
+/** The SDK's item filter, as `items.list` takes it. */
+export interface ItemStateFilter {
+  readonly type: 'ByState'
+  readonly content: { readonly active: boolean; readonly archived: boolean }
+}
 
 /** The slice of the SDK client this provider uses. */
 export interface SecretsClient {
   readonly secrets: { resolve(secretReference: string): Promise<string> }
+  /** Vault overviews: id, title and counts. Never item contents. */
+  readonly vaults: { list(): Promise<readonly { readonly id: string; readonly title: string }[]> }
+  /** Item overviews (id, title, category, websites, tags, dates). Never field values. */
+  readonly items: {
+    list(
+      vaultId: string,
+      ...filters: ItemStateFilter[]
+    ): Promise<readonly { readonly id: string; readonly title: string }[]>
+  }
 }
+
+// Only items the person can use: archived and deleted ones can't be resolved.
+const ACTIVE_ONLY: ItemStateFilter = { type: 'ByState', content: { active: true, archived: false } }
 
 /** Creates a client from a token. The provider disposes the token once this settles. */
 export type SecretsClientFactory = (token: SecretValue) => Promise<SecretsClient>
@@ -41,7 +60,7 @@ export interface OnePasswordServiceAccountOptions {
 
 const DEFAULT_TIMEOUT_MS = 30_000
 
-export class OnePasswordServiceAccountProvider implements CredentialProvider {
+export class OnePasswordServiceAccountProvider implements CredentialProvider, VaultItemLister {
   readonly kind = 'onepassword-service-account' as const
   readonly #tokenSource: TokenSource
   readonly #clientFactory: SecretsClientFactory
@@ -73,6 +92,33 @@ export class OnePasswordServiceAccountProvider implements CredentialProvider {
     }
     if (value.length === 0) throw new CredentialError('field-missing')
     return SecretValue.fromString(value)
+  }
+
+  /**
+   * Lists the vault's active items through the same client resolve uses, so the token goes nowhere
+   * but sdkClientFactory. `vault` is matched against the vaults the account can see, by exact id or
+   * exact title; none, or more than one, is not-found. Only ids and titles leave this method.
+   */
+  async listItems(vault: string): Promise<readonly VaultItemSummary[]> {
+    if (!isVaultName(vault)) throw new CredentialError('not-found')
+    const pending = this.#currentClient()
+    let listed: unknown
+    try {
+      const client = await pending
+      const vaults = await this.#bounded(client.vaults.list())
+      const matches = Array.isArray(vaults) ? vaults.filter((v) => v?.id === vault || v?.title === vault) : []
+      const only = matches.length === 1 ? matches[0] : undefined
+      if (only === undefined || typeof only.id !== 'string') throw new CredentialError('not-found')
+      listed = await this.#bounded(client.items.list(only.id, ACTIVE_ONLY))
+    } catch (error) {
+      if (error instanceof CredentialError) throw new CredentialError(error.failure)
+      const { failure, dropClient } = classifySdkError(error)
+      if (dropClient) this.#drop(pending)
+      // A listing has no field to miss.
+      throw new CredentialError(failure === 'field-missing' ? 'unavailable' : failure)
+    }
+    if (!Array.isArray(listed)) throw new CredentialError('unavailable')
+    return summariseItems(listed)
   }
 
   #currentClient(): Promise<SecretsClient> {

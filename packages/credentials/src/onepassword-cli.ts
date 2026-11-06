@@ -5,6 +5,7 @@ import { CredentialError, type CredentialProvider, type SecretField, SecretValue
 import { parseItemRef, secretReference } from './item-ref'
 import { isExecutableFile, locateExecutable } from './locate'
 import { nodeSpawner, nodeTimers, runProcess, type Spawner, type Timers } from './process'
+import { isVaultName, parseOpItemList, type VaultItemLister, type VaultItemSummary } from './vault-items'
 
 /**
  * Where op is looked for before PATH: Homebrew on Apple silicon, then Homebrew on Intel, which is
@@ -37,8 +38,10 @@ const NOT_FOUND =
   /\b(isn't|is not) an? (vault|item)\b|\b(no|could not find|cannot find)\s+(\S+\s+)?(vault|item)\b|\b(vault|item)\b[^.]*\b(not found|does not exist|doesn't exist)|\bmore than one (vault|item)\b/
 // A password or code is short; anything bigger is not what we asked for.
 const MAX_SECRET_BYTES = 64 * 1024
+// A vault listing is ids, titles and a little metadata per item.
+const MAX_LIST_BYTES = 4 * 1024 * 1024
 
-export class OnePasswordCliProvider implements CredentialProvider {
+export class OnePasswordCliProvider implements CredentialProvider, VaultItemLister {
   readonly kind = 'onepassword-cli' as const
   readonly #opPaths: readonly string[]
   readonly #searchPath: string | null
@@ -86,6 +89,43 @@ export class OnePasswordCliProvider implements CredentialProvider {
         }
         if (outcome.stdout.length === 0) throw new CredentialError('field-missing')
         return SecretValue.fromBuffer(outcome.stdout)
+    }
+  }
+
+  /**
+   * Runs `op item list --vault <vault> --format json` and keeps each item's id and title. op's list
+   * output never holds field values, and anything else it prints is dropped here.
+   */
+  async listItems(vault: string): Promise<readonly VaultItemSummary[]> {
+    if (!isVaultName(vault)) throw new CredentialError('not-found')
+    const opPath = await this.#locate()
+    if (opPath === null) throw new CredentialError('unavailable')
+    const outcome = await runProcess(
+      this.#spawner,
+      opPath,
+      ['item', 'list', '--vault', vault, '--format', 'json'],
+      { timeoutMs: this.#timeoutMs, maxStdoutBytes: MAX_LIST_BYTES, timers: this.#timers },
+    )
+    switch (outcome.kind) {
+      case 'missing':
+        this.#opPath = null
+        throw new CredentialError('unavailable')
+      case 'timed-out':
+        throw new CredentialError('locked')
+      case 'failed':
+        throw new CredentialError('unavailable')
+      case 'exited': {
+        const text = outcome.stdout.toString('utf8')
+        outcome.stdout.fill(0)
+        if (outcome.code !== 0) {
+          const failure = classifyOpFailure(outcome.stderr, vault)
+          // A listing has no field to miss; op saying so means something else went wrong.
+          throw new CredentialError(failure === 'field-missing' ? 'unavailable' : failure)
+        }
+        const items = parseOpItemList(text)
+        if (items === null) throw new CredentialError('unavailable')
+        return items
+      }
     }
   }
 
