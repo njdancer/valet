@@ -30,7 +30,17 @@ export function TrayPopover() {
             <Icon name="logo" size="lg" />
           </span>
           <div className="grow">
-            <div className="h3">siteadapter</div>
+            <div className="h3">
+              siteadapter{' '}
+              {app.status === 'ready' && app.data.demo ? (
+                <span
+                  className="pill warn"
+                  title="A local fake Woolworths and a test account, never a real one"
+                >
+                  DEMO
+                </span>
+              ) : null}
+            </div>
             <div className="xs muted row">
               <span className={`dot ${paused ? 'warn' : listening ? 'ok' : ''}`} />
               {paused

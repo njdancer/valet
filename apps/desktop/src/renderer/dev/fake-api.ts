@@ -460,6 +460,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       adapterName: 'Woolworths',
       reason: 'captcha',
       note: 'Auth0 showed a challenge after the password page.',
+      startedBy: 'call',
       tool: 'get_cart',
       client: 'claude-code',
       callId: 'c_9a71d0',
@@ -558,7 +559,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     signed: true,
   }
 
-  let app: AppStatus = { paused: false, version: '0.1.0' }
+  let app: AppStatus = { paused: false, version: '0.1.0', demo: false }
   let chosenOpPath: string | null = '/opt/homebrew/bin/op'
 
   const audit: AuditRecord[] = buildAudit(ago)
@@ -786,6 +787,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       async verify() {
         enter('audit.verify')
         lastVerified = chainStatus()
+        emit({ type: 'audit-verified' })
         return clone(lastVerified)
       },
       async chainStatus() {

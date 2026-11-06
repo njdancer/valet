@@ -232,6 +232,56 @@ describe('the grant sheet', () => {
     )
   })
 
+  it('ticks the sign-in origin for Messages codes, not the first navigation origin', async () => {
+    // Woolworths as it is: the shop on www, Auth0 on auth, the login typed on auth only. The e2e
+    // suite found the sheet ticking www alone, a grant that failed every login at the code.
+    const user = userEvent.setup()
+    const api = withWoolworths(createFakeApi({ now: NOW }), (detail) => ({
+      ...detail,
+      navigation: ['https://www.woolworths.com.au', 'https://auth.woolworths.com.au'],
+      messages: [
+        {
+          sender: 'Woolworths',
+          maxAgeSeconds: 300,
+          requestedOrigins: ['https://www.woolworths.com.au', 'https://auth.woolworths.com.au'],
+          grant: null,
+        },
+      ],
+    }))
+    renderAt('#/adapters/woolworths/grant/messages', api)
+    expect(await screen.findByText('Let Woolworths read one-time codes from Messages')).toBeTruthy()
+    const boxes = (await screen.findAllByRole('checkbox')) as HTMLInputElement[]
+    expect(boxes.map((b) => [b.closest('label')?.textContent, b.checked])).toEqual([
+      [
+        expect.stringMatching(/^https:\/\/www\.woolworths\.com\.au.*Leave off unless codes are typed here/),
+        false,
+      ],
+      [expect.stringMatching(/^https:\/\/auth\.woolworths\.com\.au.*Where the sign-in form is/), true],
+    ])
+    await user.click(screen.getByRole('button', { name: 'Grant' }))
+    await waitFor(() =>
+      expect(makes(api).map((r) => r.origins)).toEqual([['https://auth.woolworths.com.au']]),
+    )
+  })
+
+  it('ticks every navigation origin for Messages codes when no login secret says where sign-in is', async () => {
+    const api = withWoolworths(createFakeApi({ now: NOW }), (detail) => ({
+      ...detail,
+      secretRequests: [],
+      messages: [
+        {
+          sender: 'Woolworths',
+          maxAgeSeconds: 300,
+          requestedOrigins: ['https://www.woolworths.com.au', 'https://auth.woolworths.com.au'],
+          grant: null,
+        },
+      ],
+    }))
+    renderAt('#/adapters/woolworths/grant/messages', api)
+    const boxes = (await screen.findAllByRole('checkbox')) as HTMLInputElement[]
+    expect(boxes.map((b) => b.checked)).toEqual([true, true])
+  })
+
   it('has no Messages grant to make for an adapter that declares no SMS source', async () => {
     renderAt('#/adapters/woolworths/grant/messages', createFakeApi({ now: NOW }))
     expect(

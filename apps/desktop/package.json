@@ -4,6 +4,16 @@
   "private": true,
   "type": "module",
   "description": "siteadapter menu-bar app",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview --skipBuild",
+    "demo": "electron-vite build --mode demo && SITEADAPTER_DEMO=1 electron .",
+    "test:smoke": "electron-vite build --mode demo && playwright test -c test/smoke/playwright.config.ts",
+    "test:e2e": "electron-vite build --mode demo && playwright test -c e2e/playwright.config.ts",
+    "screens:live": "electron-vite build --mode demo && SITEADAPTER_E2E_SCREENS=1 playwright test -c e2e/playwright.config.ts screens"
+  },
   "dependencies": {
     "@siteadapter/adapter-woolworths": "workspace:*",
     "@siteadapter/auth-flow": "workspace:*",

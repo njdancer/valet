@@ -410,6 +410,31 @@ describe('the login hand-off banner', () => {
     expect(called(api, 'openLoginWindow')).toEqual([['woolworths']])
   })
 
+  it('says the person opened it, and blames no secret, for a window they opened themselves', async () => {
+    const api = createFakeApi({ now: NOW })
+    const list = api.attention.list
+    api.attention.list = async () =>
+      (await list()).map((item) =>
+        item.kind === 'needs-user'
+          ? {
+              ...item,
+              reason: 'login-required',
+              startedBy: 'person',
+              note: null,
+              tool: null,
+              client: null,
+              callId: null,
+              filled: [],
+              filledOrigin: null,
+            }
+          : item,
+      )
+    renderAt('#/needs-user/woolworths', api)
+    expect(await screen.findByText('Sign in to Woolworths in this window.')).toBeTruthy()
+    expect(screen.queryByText(/couldn't do it with the secrets you granted/)).toBeNull()
+    expect(screen.queryByText('Woolworths needs you to finish logging in.')).toBeNull()
+  })
+
   it('hands over when the person is done', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })

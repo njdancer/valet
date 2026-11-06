@@ -78,7 +78,7 @@ export function AuditLogPage() {
 
   const adapters = useLoad((a) => a.adapters.list(), [], ['adapters-changed'])
   const clients = useLoad((a) => a.clients.list(), [], ['clients-changed'])
-  const chain = useLoad((a) => a.audit.chainStatus(), [], ['audit-appended'])
+  const chain = useLoad((a) => a.audit.chainStatus(), [], ['audit-appended', 'audit-verified'])
   const days = PERIODS[period]
   const query = {
     ...(category === 'all' ? {} : { category }),

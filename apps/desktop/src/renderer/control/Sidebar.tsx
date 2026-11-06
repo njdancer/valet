@@ -61,16 +61,25 @@ export function Sidebar({ route }: { readonly route: Route }) {
   const stats = useLoad((api) => api.runs.statsToday(), [], ['runs-changed'])
   const clients = useLoad((api) => api.clients.list(), [], ['clients-changed'])
   const endpoint = useLoad((api) => api.endpoint.status(), [], ['endpoint-changed'])
-  const chain = useLoad((api) => api.audit.chainStatus(), [], ['audit-appended'])
+  const chain = useLoad((api) => api.audit.chainStatus(), [], ['audit-appended', 'audit-verified'])
   const runs = useLoad((api) => api.runs.list({ limit: 12 }), [], ['runs-changed'])
+  const app = useLoad((api) => api.app.status(), [], ['app-changed'])
   const now = useNow(60_000)
+  const demo = app.status === 'ready' && app.data.demo
 
   const attentionCount = attention.status === 'ready' ? attention.data.length : 0
   const selectedAdapter = route.page === 'adapter' || route.page === 'grant' ? route.adapterId : null
 
   return (
     <aside className="sidebar" aria-label="Sections">
-      <div className="group-label">siteadapter</div>
+      <div className="group-label">
+        siteadapter{' '}
+        {demo ? (
+          <span className="pill warn" title="A local fake Woolworths and a test account, never a real one">
+            DEMO
+          </span>
+        ) : null}
+      </div>
       <NavItem
         to={href.adapters()}
         icon="adapter"

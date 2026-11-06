@@ -1,0 +1,360 @@
+// The runtime's AuthRunner, over auth-flow's runAuthFlow, and the login hand-off that follows a
+// needsUser. The auth flow owns the login-started, login-finished and secret-used audit events; this
+// module adds none.
+//
+// On needsUser the auth window stays open and is shown to the person with the app's banner above
+// it, and the call returns needsUser at once (D50). The window closes itself after HANDOFF_WINDOW_MS.
+// When the person says they're done, the login probe runs in the auth partition; only if it says
+// logged in is the session handed to the tool partition and the login hold cleared.
+//
+// The person can also open the login window themselves, from the control panel (startedBy
+// 'person'). That hand-off leaves the session's state alone: giving up on it changes nothing, and
+// only a probe that passes marks the session logged in.
+
+import type { AuthProbe } from '@siteadapter/auth-flow'
+import { readJsonPath, runAuthFlow } from '@siteadapter/auth-flow'
+import {
+  type AdapterManifest,
+  type AuditSink,
+  type AuthPage,
+  type GrantStore,
+  type NeedsUserReason,
+  type SecretField,
+  type SessionDriver,
+  SiteAdapterError,
+} from '@siteadapter/core'
+import type { AuthOutcome, AuthRunner, AuthRunRequest, LoginMarkerStore } from '@siteadapter/runtime'
+import type { NeedsUserItem, SessionStatus } from '../../shared/api'
+import type { Timers } from './confirmations'
+import type { Credentials } from './credentials'
+
+// ---------- Session status ----------
+
+export class SessionTracker {
+  private readonly states = new Map<string, SessionStatus>()
+
+  constructor(
+    private readonly now: () => Date,
+    private readonly onChange: () => void,
+  ) {}
+
+  get(adapterId: string): SessionStatus {
+    return this.states.get(adapterId) ?? { state: 'unknown', checkedAt: null, needsUser: null, since: null }
+  }
+
+  set(adapterId: string, state: SessionStatus['state'], needsUser: NeedsUserReason | null = null): void {
+    const at = this.now().toISOString()
+    const previous = this.states.get(adapterId)
+    const since = previous?.state === state ? previous.since : at
+    this.states.set(adapterId, {
+      state,
+      checkedAt: at,
+      needsUser: state === 'needs-user' ? needsUser : null,
+      since,
+    })
+    this.onChange()
+  }
+}
+
+// ---------- The probe ----------
+
+/** True when `url`'s origin is exactly `home`'s. */
+function onHomeOrigin(manifest: AdapterManifest, url: string): boolean {
+  try {
+    return new URL(url).origin === new URL(manifest.home).origin
+  } catch {
+    return false
+  }
+}
+
+/**
+ * The hooks auth-flow reads its probe through, over the auth page (core v3's AuthPage.fetch and
+ * cookieNames). `fallback` stands in while a driver's page lacks them; it must hold to the same
+ * contract: GET only, the auth partition's cookies, home's origin only.
+ */
+export function authProbe(manifest: AdapterManifest, page: AuthPage, fallback: AuthProbe | null): AuthProbe {
+  const hasFetch = typeof (page as Partial<AuthPage>).fetch === 'function'
+  const hasNames = typeof (page as Partial<AuthPage>).cookieNames === 'function'
+  return {
+    async fetch(url) {
+      if (!onHomeOrigin(manifest, url)) throw new SiteAdapterError('probe', 'host-not-allowed')
+      if (hasFetch) return page.fetch(url)
+      if (fallback !== null) return fallback.fetch(url)
+      throw new SiteAdapterError('probe', 'unavailable')
+    },
+    async cookieNames(domains) {
+      if (hasNames) return page.cookieNames(domains)
+      if (fallback !== null) return fallback.cookieNames(domains)
+      throw new SiteAdapterError('probe', 'unavailable')
+    },
+  }
+}
+
+/** The manifest's probe, read the way auth-flow reads it, for a login the person finished by hand. */
+export async function probeLoggedIn(manifest: AdapterManifest, probe: AuthProbe): Promise<boolean> {
+  const spec = manifest.session.probe
+  if (spec.kind === 'cookie')
+    return (await probe.cookieNames(manifest.session.cookieDomains)).includes(spec.name)
+  const url = new URL(spec.path, manifest.home).toString()
+  if (!onHomeOrigin(manifest, url)) return false
+  const result = await probe.fetch(url)
+  if (result.status !== spec.expectStatus) return false
+  if (spec.jsonPath === undefined) return true
+  const value = readJsonPath(result.body, spec.jsonPath)
+  return spec.equals === undefined ? Boolean(value) : value === spec.equals
+}
+
+/** Akamai's "Access Denied … Reference #" page, as the runtime recognises it in the tool partition. */
+export async function isBlockedPage(page: AuthPage): Promise<boolean> {
+  try {
+    return (await page.textPresent('Access Denied')) && (await page.textPresent('Reference #'))
+  } catch {
+    return false
+  }
+}
+
+// ---------- Hand-offs ----------
+
+interface Handoff {
+  item: NeedsUserItem
+  readonly page: AuthPage
+  readonly driver: SessionDriver
+  readonly manifest: AdapterManifest
+  readonly timer: unknown
+}
+
+export interface HandoffOptions {
+  readonly now: () => number
+  readonly timers: Timers
+  readonly windowMs: number
+  readonly showBanner: (adapterId: string) => void
+  readonly closeBanner: (adapterId: string) => void
+  readonly markers: LoginMarkerStore
+  readonly sessions: SessionTracker
+  readonly onChange: () => void
+  readonly probeFallback: (adapterId: string) => AuthProbe | null
+}
+
+export interface HandoffStart {
+  readonly manifest: AdapterManifest
+  readonly driver: SessionDriver
+  readonly page: AuthPage
+  readonly reason: NeedsUserReason
+  readonly note: string | null
+  /** 'call': a tool call's login needed the person. 'person': they opened the window themselves. */
+  readonly startedBy: NeedsUserItem['startedBy']
+  readonly callId: string | null
+  readonly tool: string | null
+  readonly client: string | null
+  readonly filled: readonly { readonly secret: string; readonly field: SecretField }[]
+  readonly filledOrigin: string | null
+}
+
+export class Handoffs {
+  private readonly open_ = new Map<string, Handoff>()
+
+  constructor(private readonly options: HandoffOptions) {}
+
+  list(): NeedsUserItem[] {
+    return [...this.open_.values()].map((h) => h.item)
+  }
+
+  has(adapterId: string): boolean {
+    return this.open_.has(adapterId)
+  }
+
+  /** Shows `page` to the person with the banner. An earlier hand-off for the adapter is closed first. */
+  start(start: HandoffStart): void {
+    const adapterId = start.manifest.id
+    const earlier = this.open_.get(adapterId)
+    if (earlier !== undefined) this.dispose(adapterId, earlier)
+    const now = this.options.now()
+    const timer = this.options.timers.setTimeout(() => void this.close(adapterId), this.options.windowMs)
+    const item: NeedsUserItem = {
+      kind: 'needs-user',
+      id: `nu_${adapterId}`,
+      adapterId,
+      adapterName: start.manifest.name,
+      reason: start.reason,
+      note: start.note,
+      startedBy: start.startedBy,
+      tool: start.tool,
+      client: start.client,
+      callId: start.callId,
+      at: new Date(now).toISOString(),
+      filled: [...start.filled],
+      filledOrigin: start.filledOrigin,
+      navigation: [...start.manifest.navigation],
+      windowOpen: true,
+      closesAt: new Date(now + this.options.windowMs).toISOString(),
+    }
+    this.open_.set(adapterId, {
+      item,
+      page: start.page,
+      driver: start.driver,
+      manifest: start.manifest,
+      timer,
+    })
+    if (start.startedBy === 'call') this.options.sessions.set(adapterId, 'needs-user', start.reason)
+    this.reveal(adapterId)
+    this.options.onChange()
+  }
+
+  /** Shows the waiting window again. False when nothing is waiting for this adapter. */
+  show(adapterId: string): boolean {
+    if (!this.open_.has(adapterId)) return false
+    this.reveal(adapterId)
+    return true
+  }
+
+  /**
+   * The person says they're signed in: probe the auth partition; only then hand off and clear the
+   * hold. Throws, leaving the window up, when the probe says otherwise.
+   */
+  async finish(adapterId: string): Promise<void> {
+    const handoff = this.open_.get(adapterId)
+    if (handoff === undefined) throw new SiteAdapterError('login', 'not-found')
+    const { manifest, page, driver } = handoff
+    const probe = authProbe(manifest, page, this.options.probeFallback(adapterId))
+    if (!(await probeLoggedIn(manifest, probe))) throw new SiteAdapterError('probe', 'not-logged-in')
+    await driver.handoff(manifest.session.cookieDomains, manifest.session.storage)
+    await this.options.markers.clear(adapterId)
+    this.dispose(adapterId, handoff)
+    this.options.sessions.set(adapterId, 'logged-in')
+    this.options.onChange()
+  }
+
+  /**
+   * The person gives up, or the window's time ran out: close it without a hand-off. A call's
+   * hand-off leaves the session expired; one the person opened leaves it as it was.
+   */
+  async close(adapterId: string): Promise<void> {
+    const handoff = this.open_.get(adapterId)
+    if (handoff === undefined) return
+    this.dispose(adapterId, handoff)
+    if (handoff.item.startedBy === 'call') this.options.sessions.set(adapterId, 'expired')
+    this.options.onChange()
+  }
+
+  closeAll(): void {
+    for (const [adapterId, handoff] of [...this.open_]) this.dispose(adapterId, handoff)
+  }
+
+  private reveal(adapterId: string): void {
+    const handoff = this.open_.get(adapterId)
+    if (handoff === undefined) return
+    handoff.item = { ...handoff.item, windowOpen: true }
+    this.options.showBanner(adapterId)
+    // Resolves when the person closes (hides) the window; the hand-off stays until done or given up.
+    void handoff.page.handToUser(handoff.item.reason).then(() => {
+      const current = this.open_.get(adapterId)
+      if (current !== handoff) return
+      current.item = { ...current.item, windowOpen: false }
+      this.options.closeBanner(adapterId)
+      this.options.onChange()
+    })
+  }
+
+  private dispose(adapterId: string, handoff: Handoff): void {
+    this.open_.delete(adapterId)
+    this.options.timers.clearTimeout(handoff.timer)
+    this.options.closeBanner(adapterId)
+    void handoff.page.close().catch(() => undefined)
+  }
+}
+
+// ---------- The runner ----------
+
+export interface AuthRunnerOptions {
+  readonly grants: GrantStore
+  readonly credentials: Credentials
+  readonly audit: AuditSink
+  readonly clock: () => Date
+  readonly sleep: (ms: number) => Promise<void>
+  readonly typingDelayMs: number
+  readonly flowTimeoutMs: number
+  readonly sessions: SessionTracker
+  readonly handoffs: Handoffs
+  readonly probeFallback: (adapterId: string) => AuthProbe | null
+  /** The tool and client of the call that needed the login, for the banner. */
+  readonly callInfo: (callId: string | null) => {
+    readonly tool: string | null
+    readonly client: string | null
+  }
+  /** Secret fields this login filled, and where: read back from the audit events it wrote. */
+  readonly filledFor: (
+    adapterId: string,
+    callId: string | null,
+    since: Date,
+  ) => Promise<{ filled: { secret: string; field: SecretField }[]; origin: string | null }>
+}
+
+export function createAuthRunner(options: AuthRunnerOptions): AuthRunner {
+  return async (request: AuthRunRequest): Promise<AuthOutcome> => {
+    const { manifest, adapterHash, driver, callId } = request
+    const adapterId = manifest.id
+    const startedAt = options.clock()
+    options.sessions.set(adapterId, 'logging-in')
+    const page = await driver.openAuthPage()
+    let handedToPerson = false
+    try {
+      const outcome = await runAuthFlow({
+        manifest,
+        adapterHash,
+        callId,
+        page,
+        grants: options.grants,
+        providers: options.credentials.providers(),
+        otpReader: options.credentials.otpReader(),
+        probe: authProbe(manifest, page, options.probeFallback(adapterId)),
+        isBlockedPage: () => isBlockedPage(page),
+        // The runtime clones what it is given and keeps the clone; this copy is ours to dispose.
+        rememberSecret: (copy) => {
+          try {
+            request.registerForRedaction(copy)
+          } finally {
+            copy.dispose()
+          }
+        },
+        audit: options.audit,
+        clock: options.clock,
+        sleep: options.sleep,
+        typingDelayMs: options.typingDelayMs,
+        flowTimeoutMs: options.flowTimeoutMs,
+      })
+      switch (outcome.status) {
+        case 'ok':
+          options.sessions.set(adapterId, 'logged-in')
+          return { status: 'ok' }
+        case 'needsUser': {
+          const info = options.callInfo(callId)
+          const filled = await options.filledFor(adapterId, callId, startedAt)
+          handedToPerson = true
+          options.handoffs.start({
+            manifest,
+            driver,
+            page,
+            reason: outcome.reason,
+            // The manifest's note, for the banner only: never returned to the runtime or a client.
+            note: outcome.appNote ?? null,
+            startedBy: 'call',
+            callId,
+            tool: info.tool,
+            client: info.client,
+            filled: filled.filled,
+            filledOrigin: filled.origin,
+          })
+          return { status: 'needsUser', reason: outcome.reason }
+        }
+        case 'failed':
+          options.sessions.set(adapterId, 'expired')
+          return { status: 'failed', stage: outcome.stage, errorClass: outcome.errorClass }
+        case 'blocked':
+          options.sessions.set(adapterId, 'expired')
+          return { status: 'blocked', errorClass: outcome.errorClass }
+      }
+    } finally {
+      if (!handedToPerson) await page.close().catch(() => undefined)
+    }
+  }
+}

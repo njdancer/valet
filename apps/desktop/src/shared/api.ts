@@ -483,6 +483,11 @@ export interface NeedsUserItem {
   readonly reason: NeedsUserReason
   /** The manifest's note for this needsUser step, shown in the app only. */
   readonly note: string | null
+  /**
+   * 'call': a tool call's login stopped and needs the person. 'person': they opened the login
+   * window themselves from the app, and no automated attempt ran.
+   */
+  readonly startedBy: 'call' | 'person'
   readonly tool: string | null
   readonly client: string | null
   readonly callId: string | null
@@ -588,6 +593,8 @@ export interface SiteHealth {
 export interface AppStatus {
   readonly paused: boolean
   readonly version: string
+  /** Demo mode: a local fake site and a test credential, never a real account. Shown as a badge. */
+  readonly demo: boolean
 }
 
 // ---------- Events ----------
@@ -599,6 +606,8 @@ export type AppEvent =
   | { readonly type: 'grants-changed' }
   | { readonly type: 'runs-changed' }
   | { readonly type: 'audit-appended'; readonly seq: number }
+  /** A verify ran: chainStatus has a new answer, which every window showing it should fetch. */
+  | { readonly type: 'audit-verified' }
   | { readonly type: 'endpoint-changed' }
   | { readonly type: 'clients-changed' }
   | { readonly type: 'attention-changed' }
