@@ -68,6 +68,24 @@ describe('the adapters page', () => {
 })
 
 describe('the adapter page', () => {
+  it('shows no hand-off row when the main process can’t tell what was handed over', async () => {
+    const fake = createFakeApi({ now: NOW })
+    renderAt('#/adapters/woolworths', {
+      ...fake,
+      adapters: {
+        ...fake.adapters,
+        get: async (id) => {
+          const detail = await fake.adapters.get(id)
+          return detail === null ? null : { ...detail, handedOver: null }
+        },
+      },
+    })
+    expect(await screen.findByRole('heading', { name: 'Woolworths' })).toBeTruthy()
+    expect(screen.getByText('Probe')).toBeTruthy()
+    expect(screen.queryByText('Handed over')).toBeNull()
+    expect(screen.queryByText('Nothing yet')).toBeNull()
+  })
+
   it('shows tools, permissions, session and the grant, and opens the login window', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })
@@ -239,6 +257,22 @@ describe('activity and run traces', () => {
     expect(screen.getByText('Blocked requests')).toBeTruthy()
     expect(screen.getByText(/manifest declares no matching request/)).toBeTruthy()
     expect(screen.getByText(/2 exact matches replaced/)).toBeTruthy()
+  })
+
+  it('shows only the blocked count when the main process can’t count what was sent', async () => {
+    const fake = createFakeApi({ now: NOW })
+    renderAt('#/activity/c_8f2e1b', {
+      ...fake,
+      runs: {
+        ...fake.runs,
+        trace: async (callId) => {
+          const trace = await fake.runs.trace(callId)
+          return trace === null ? null : { ...trace, requests: { sent: null, probes: null, blocked: 2 } }
+        },
+      },
+    })
+    expect(await screen.findByText('2 blocked')).toBeTruthy()
+    expect(screen.queryByText(/sent \(/)).toBeNull()
   })
 
   it('narrows to requests', async () => {

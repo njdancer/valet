@@ -286,6 +286,24 @@ describe('grants', () => {
       origins: ['https://login.shop.test'],
     })
   })
+
+  it('counts a provider’s grants only for an installed hash that is approved', async () => {
+    const s = await approved()
+    await s.api.grants.make({
+      adapterId: 'shop',
+      adapterHash: s.adapter.hash,
+      secret: 'login',
+      provider: 'fake',
+      itemRef: 'demo-woolworths',
+      origins: ['https://login.shop.test'],
+    })
+    const count = async () => (await s.api.grants.providers()).find((p) => p.kind === 'fake')?.grantCount
+    expect(await count()).toBe(1)
+    await s.api.approvals.reject('shop', s.adapter.hash)
+    expect(await count()).toBe(0)
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    expect(await count()).toBe(1)
+  })
 })
 
 describe('a grant and the runtime’s login hold', () => {

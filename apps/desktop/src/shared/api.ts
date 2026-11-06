@@ -161,7 +161,10 @@ export interface AdapterDetail extends AdapterSummary {
   readonly tools: readonly ToolInfo[]
   readonly secretRequests: readonly SecretRequestInfo[]
   readonly messages: readonly MessagesSourceInfo[]
-  /** What the last hand-off copied: counts only. */
+  /**
+   * What the last hand-off copied: counts only. Null when the main process can't tell (the driver
+   * doesn't report hand-off counts, so today it is always null); the renderer then shows no row.
+   */
   readonly handedOver: { readonly cookies: number; readonly storageKeys: number } | null
 }
 
@@ -377,7 +380,16 @@ export interface RunTrace {
   readonly adapterVersion: string
   readonly adapterHash: string
   readonly secretsUsed: readonly { readonly secret: string; readonly field: SecretField }[]
-  readonly requests: { readonly sent: number; readonly probes: number; readonly blocked: number }
+  /**
+   * Requests the run made and the driver refused. `sent` and `probes` are null when the main process
+   * can't count them (the runtime audits refusals only, so today they are always null); the
+   * renderer then shows the refused count alone.
+   */
+  readonly requests: {
+    readonly sent: number | null
+    readonly probes: number | null
+    readonly blocked: number
+  }
   readonly steps: readonly TraceStep[]
   /** The tool input as the client sent it, after redaction. */
   readonly input: readonly PreviewPart[]

@@ -671,9 +671,19 @@ export class AppService {
         },
         providers: async () => {
           const grants = await this.grants.list().catch(() => [] as readonly Grant[])
+          // Only grants for an adapter's installed hash, while that hash is approved: a grant for an
+          // older bundle (or one waiting for review) can't be used, so it isn't counted as live.
+          const live = new Set<string>()
+          for (const adapter of deps.adapters) {
+            const id = adapter.definition.manifest.id
+            if (await this.approvals.isApproved(id, adapter.hash).catch(() => false))
+              live.add(`${id}:${adapter.hash}`)
+          }
           return (await deps.credentials.status()).map((s) => ({
             ...s,
-            grantCount: grants.filter((g) => g.provider === s.kind).length,
+            grantCount: grants.filter(
+              (g) => g.provider === s.kind && live.has(`${g.adapterId}:${g.adapterHash}`),
+            ).length,
           }))
         },
         vaultItems: (provider) => deps.credentials.vaultItems(provider),

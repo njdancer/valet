@@ -402,6 +402,8 @@ describe('audit views', () => {
     memory.started('c1', 'add', 'Claude Code', { item: 'milk' }, 'http')
     memory.finished('c1', { added: true, note: REDACTED })
     const trace = runTrace(records, 'c1', lookup, memory, () => ({ version: '1.0.0', hash: 'a'.repeat(64) }))
+    // Only refusals are audited, so what was sent can't be counted: null, never a made-up zero.
+    expect(trace?.requests).toEqual({ sent: null, probes: null, blocked: 1 })
     expect(trace?.steps.map((s) => s.type)).toEqual([
       'called',
       'login-started',

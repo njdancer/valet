@@ -379,12 +379,14 @@ function SessionCard({
           <dd className="mono xs">{adapter.partitions.tool}</dd>
           <dt>Probe</dt>
           <dd className="mono xs">{probeText(adapter.probe)}</dd>
-          <dt>Handed over</dt>
-          <dd>
-            {adapter.handedOver === null
-              ? 'Nothing yet'
-              : `${plural(adapter.handedOver.cookies, 'cookie')} · ${plural(adapter.handedOver.storageKeys, 'storage key')}`}
-          </dd>
+          {adapter.handedOver === null ? null : (
+            <>
+              <dt>Handed over</dt>
+              <dd>
+                {`${plural(adapter.handedOver.cookies, 'cookie')} · ${plural(adapter.handedOver.storageKeys, 'storage key')}`}
+              </dd>
+            </>
+          )}
           <dt>Breaker</dt>
           <dd className="row">
             {breaker !== null && breaker.breaker === 'open' && breaker.retryAt !== null ? (
