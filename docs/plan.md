@@ -29,7 +29,7 @@ new contracts (commits `3289104` and `c7aa6fb`) that the other packages are adop
 
 | Area                                       | State                                                                                                                                                                                                                                                                                                                                                                           |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Docs                                       | Security model, architecture and this plan, updated after round 1. One live finding, four runs. Mockups of the screens the security model leans on. Drafts for remote access (`relay.md`) and the authoring agent are being written in round 2.                                                                                                                                 |
+| Docs                                       | Security model, architecture and this plan, updated after round 1. One live finding, four runs. Mockups of the screens the security model leans on. Drafts for remote access (`relay.md`) and the authoring agent are on the unmerged branch `wip/docs-platform`, so links to `relay.md` are broken until it lands.                                                             |
 | `packages/core`                            | Contracts v2: `needsUser` reason codes and `NeedsUserError`, typed `EnsureResult`, `urlContains`/`urlRegex` with screened patterns, `messages` grants, origin-bound `type()`, `inputReachable`, `auth.frameOrigins`, `beginRun(policy)`/`unlockIrreversible()`/`endRun()`, `sessionSecrets()`, `revealEach()` and `clone()`, rate and breaker limits, new audit events. Tested. |
 | `packages/runtime`                         | Built: `ToolHost` (approval, lock, deadlines, confirmation before `run()`, guarded tool page, output parse, plain-JSON conversion and redaction), the hash-chained audit log, the attempt marker with holds and backoff, the per-site rate budget and circuit breaker.                                                                                                          |
 | `packages/auth-flow`                       | Built: `runAuthFlow`, the interpreter, the secret filler with every pre-fill check, Messages OTP behind a grant, canary tests.                                                                                                                                                                                                                                                  |
@@ -169,8 +169,9 @@ server namespaces them by adapter id (`woolworths_get_cart`). The approval scree
 name; MCP clients and the audit log's client-facing fields show the namespaced one.
 
 `set_cart_quantity` is destructive in MCP's sense (it lowers quantities and removes lines), so
-it is advertised as such ([AC3](#acceptance-criteria)). Splitting out an additive `add_to_cart`
-that clients could auto-approve is [D30](#d30-split-add-to-cart).
+it is advertised as such ([AC3](#acceptance-criteria)). The round-1 adapter also ships
+`add_to_cart` and `remove_from_cart`; whether an additive `add_to_cart` should be advertised as
+non-destructive, so clients could auto-approve it, is [D30](#d30-split-add-to-cart).
 
 Login is not a tool. Every tool calls `session.ensure()`, which runs the auth action when the
 probe says the session is logged out.
@@ -197,13 +198,16 @@ against the real site with Nick present.
    includes `https://www.woolworths.com.au` is a bug. The grant is keyed to the adapter's content
    hash. ([Mockup](mockups/grant-secret.html).)
 3. The app shows how to connect Claude Code (HTTP plus bearer token) and Claude Desktop (stdio
-   bridge), with a copy button for each config. Both list the four tools under their namespaced
-   names (`woolworths_get_cart` and so on), with MCP annotations derived from the manifest:
-   `readOnlyHint: true` for reads; for `set_cart_quantity`, `readOnlyHint: false`,
-   `destructiveHint: true` (it lowers quantities and removes lines) and `idempotentHint: true`
-   (setting the same quantity twice has the same effect); `openWorldHint: true` on all of them.
-   `readOnlyHint` is backed by the runtime's [method policy](#g1-the-request-surface-only-covers-pagefetch),
-   not only by the adapter's label.
+   bridge), with a copy button for each config. Both list the adapter's tools under their
+   namespaced names (`woolworths_get_cart` and so on; six today: search, product, cart, add, set
+   and remove), with MCP annotations derived from the manifest: `readOnlyHint: true` for reads;
+   for `set_cart_quantity`, `readOnlyHint: false`, `destructiveHint: true` (it lowers quantities
+   and removes lines) and `idempotentHint: true` (setting the same quantity twice has the same
+   effect); `openWorldHint: true` on all of them. Until C9, every `write` tool is advertised
+   `destructiveHint: true` and `idempotentHint: false`, `add_to_cart` included. `readOnlyHint` is
+   backed by the run's network policy, not only by the adapter's label: a `read` tool's run
+   allows only `read` declarations for every API call in the tool partition, whoever made it
+   ([security model](security-model.md#the-runs-network-policy)).
 
 **Behaviour, live**
 
@@ -220,7 +224,9 @@ against the real site with Nick present.
 7. A realistic session (about 30 tool calls, the shape of a weekly shop) completes without an
    Akamai block on three separate days, paced by the runtime at the [D28](#d28-rate-budget-defaults)
    defaults. It takes as long as the budget makes it take; the test fails if anything bypasses
-   the budget to finish faster.
+   the budget to finish faster. Today the budget covers only `page.fetch`, `goto` and the probe,
+   so `evaluate()` fetches, clicks, the page's own requests and the login all bypass it; this
+   criterion can't pass until [D55](#d55-driver-level-budget-and-block-detection) is built.
 8. With the Mac locked and Nick away, a tool call from a scheduled agent succeeds through the
    service account.
 
@@ -242,22 +248,28 @@ against the real site with Nick present.
     poisoning, input listeners, exfiltration to an undeclared host, undeclared API paths and
     checkout paths gets blocked on each, and each block is audited. It includes a tool declared
     `read` that writes anyway: it calls `POST /api/v3/ui/trolley/update` through `page.evaluate`
-    and through a click on the page's own "Add" button. Both are cancelled by the method policy
-    and audited, and the fake site's trolley is unchanged. (Automated.)
+    and through a click on the page's own "Add" button. Both are cancelled by the driver because
+    a `read` run allows no `write` declaration, and audited with initiator `tool` or `page`, and
+    the fake site's trolley is unchanged. (Automated.)
 13. No request to a checkout or payment path leaves the tool partition, whether from
     `page.fetch`, `page.evaluate`, a click or a form submission. The test runs against the fake
     site's copy of the **real** checkout and payment paths recorded in M2, not only against
-    paths the implementers chose. While an `irreversible` tool runs, only the specific declared
-    request it was confirmed for is unlocked, and only for that call. (Automated; see
+    paths the implementers chose. While an `irreversible` tool runs, only the `irreversible`
+    declarations that tool lists are unlocked, and only for that call. Core v2 can't meet this
+    yet: its unlock covers every `irreversible` declaration in the manifest, for page-initiated
+    requests too. C15 adds the per-tool list, and must land before any irreversible tool ships
+    ([D18](#d18-irreversible-tools-in-shipped-adapters) means none in v1). (Automated; see
     [gap G1](#g1-the-request-surface-only-covers-pagefetch).)
 14. The audit log verifies end to end with a CLI command, and tampering with any line makes
     verification fail. (Automated.)
 15. A changed adapter (any byte) loses its grants and must be re-approved, with a diff that
     highlights every permission-expanding change: new `navigation` origins; new `egress` hosts;
-    new secrets, new fields on a secret, and new origins for a secret; new `requests`
-    declarations, grouped by purpose; a tool whose `sideEffect` goes up (`read` to `write`, or
-    anything to `irreversible`) or that becomes destructive; new `cookieDomains` or storage keys;
-    and any increase in `limits`. Each kind has its own test. ([Mockup](mockups/approve-adapter.html).)
+    new `auth.frameOrigins`; new secrets, new fields on a secret, and new origins for a secret;
+    new Messages senders; new `requests` declarations, grouped by purpose; a tool whose
+    `sideEffect` goes up (`read` to `write`, or anything to `irreversible`) or that becomes
+    destructive; new `cookieDomains` or storage keys; and any loosening of `limits` (a higher
+    `requestsPerRun`, a lower `minGapMs`, `cooldownSeconds` or `maxCooldownSeconds`). This is the
+    security model's list. Each kind has its own test. ([Mockup](mockups/approve-adapter.html).)
     (Automated.)
 16. `grep` over the app's logs, traces and audit log for Nick's real password finds nothing after
     a week of use. (Manual, scripted.)
@@ -335,10 +347,16 @@ answered on time.
     fixtures in the adapter's tests and routes on the fake site, so AC13 tests the real paths.
   - Measure what partition-wide deny would break ([R17](#risk-register)): log every request the
     trolley and product pages make that touches a deny segment, by resource type.
+  - Measure the site's own traffic for [D58](#d58-page-initiated-traffic): per page view, how many
+    navigations and API calls the page makes by itself, which non-GET calls (Akamai sensor POSTs,
+    `acs.woolworths.com.au`) it sends and to which host, so the Woolworths ceilings and telemetry
+    declarations are set from evidence.
+  - Check which cookies Auth0 sets and on which domain: no Auth0 or session cookie may be set on
+    `.woolworths.com.au`, since `cookieDomains` includes the bare domain.
   - `browser-electron`: the real `SessionDriver`, hidden-but-headed windows, the clean Chrome UA
     on every partition, tolerant navigation, paced `sendInputEvent` typing, the `webRequest`
-    egress guard, partition-wide deny paths and method policy, WebRTC off, cookie and storage
-    handoff.
+    egress guard, partition-wide deny paths and declarations bound to every API call, WebRTC
+    off, cookie and storage handoff.
   - Electron end-to-end tests with Playwright against the fake site served over local HTTPS, on
     two origins (www and auth).
   - A dev build of the app (unsigned is fine) with the MCP endpoint and no UI beyond the tray.
@@ -454,7 +472,8 @@ M0 ─ M1 ─ M2 ─ M3 (MVP) ─ M4 ─┬─ M5 ─ M6 ─┐
 ```
 
 M5 and M7 can run in parallel. M7 must finish before M8. M9 can start any time after M3 if Nick
-wants remote access for himself earlier: the app-side remote mode in [relay.md](relay.md), with
+wants remote access for himself earlier: the app-side remote mode in [relay.md](relay.md)
+(draft, on `wip/docs-platform`), with
 Tailscale Funnel as the transport, is most of M9 without the service. Tunnelling the local
 endpoint directly is not a stopgap (see the security model's "Remote access").
 
@@ -505,7 +524,8 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
      permission-expanding change listed in AC15.
   7. The confirmation broker: the app shows the person a runtime-rendered description of an
      `irreversible` or confirm-gated action ([gap G4](#g4-confirm-takes-adapter-authored-text)),
-     and on approval unlocks exactly that call's declared request in the network policy (C2).
+     and on approval unlocks only the `irreversible` declarations that tool lists (C15). Core
+     v2's `unlockIrreversible()` unlocks all of the manifest's, which is too wide.
   8. Output hardening against prompt injection ([R6](#risk-register)).
 - Depends on: nothing outside `core`.
 - Port from the earlier app: `bank-login-attempt-marker.ts`, `bank-login-outcome.ts`,
@@ -516,23 +536,32 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
 
 - Exists: `packages/browser-electron` with an Electron e2e suite. Of the items below: 1 is built
   except the clean UA as the default and `Accept-Language`; 2 is built, stricter than planned
-  (declarations bind every API call, so no API-prefix method policy is needed), with subframes
-  now pinned by `auth.frameOrigins`; 3, 4 and 5 are built; 6 is not; 7 closed DNS prefetch and
-  WebRTC and WebTransport egress, and measured `preconnect`.
+  (declarations bind every API call, so no API-prefix method policy is needed), except that an
+  ambiguous path only stops a declaration matching, navigations don't count toward the ceiling, and
+  blocks aren't audited; auth subframes are pinned by `auth.frameOrigins` in core v2, but the
+  driver's default is still any https origin; 3, 4 and 5 are built; 6 is not; 7 closed DNS prefetch
+  and WebRTC and WebTransport egress, and measured `preconnect`.
 - Next:
   1. `SessionDriver` for Electron: partitions, hidden-but-headed windows with
      `backgroundThrottling: false`, tolerant navigation, step timeouts, `destroy()` on close.
      Every partition gets the clean Chrome UA (`… Chrome/<real major>.0.0.0 Safari/537.36`,
      the major read from `process.versions.chrome`) and `Accept-Language: en-AU`, set before
      the first request. Client-hint brands are [D24a](#d24a-client-hint-brands).
-  2. Network guard in each tool partition: egress allowlist, partition-wide deny paths, the
-     method policy, the per-run ceiling, WebRTC off, blocked requests audited
-     ([G1](#g1-the-request-surface-only-covers-pagefetch)). In the auth partition: navigation
-     allowlist on every committed navigation, including subframes; for Woolworths that is
-     `https://www.woolworths.com.au` and `https://auth.woolworths.com.au`.
-  3. Handoff never copies the identity provider's cookies. For Woolworths, `cookieDomains`
-     covers www only, so the Auth0 session cookie on `auth.woolworths.com.au` stays in the auth
-     partition, where it makes silent re-login possible. A guard test asserts no
+  2. Network guard in each tool partition, under core v2's `beginRun(policy, onBlocked)`: egress
+     allowlist, ambiguous-path refusal for every request, partition-wide deny paths,
+     declarations and purpose for every API call, the per-run ceiling counting navigations too,
+     WebRTC off, and blocked requests audited with their initiator
+     ([G1](#g1-the-request-surface-only-covers-pagefetch)). Report block signatures to the
+     runtime's breaker and pace main-frame navigations
+     ([D55](#d55-driver-level-budget-and-block-detection)). In the auth partition: navigation
+     allowlist on every committed navigation; subframes limited to `navigation` plus
+     `auth.frameOrigins` (the driver's default today is any https origin); for Woolworths that
+     is `https://www.woolworths.com.au` and `https://auth.woolworths.com.au`.
+  3. Handoff never copies the identity provider's cookies. For Woolworths, `cookieDomains` names
+     www and the bare domain (a cookie set for `.woolworths.com.au` is stored against the bare
+     domain). Matching is exact, so a host-only Auth0 cookie on `auth.woolworths.com.au` stays in
+     the auth partition, where it makes silent re-login possible; a cookie Auth0 set on the
+     parent domain would be copied, which M2 checks for. A guard test asserts no
      `auth.woolworths.com.au` cookie ever appears in the tool partition, and the tool partition's
      egress doesn't include the auth host.
   4. Element inspection for the secret-fill checks (frame origin, input type, form action).
@@ -668,7 +697,8 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
 - Woolworths: `wip/adapter-woolworths` in progress against the fake site. The manifest's shape is
   known from the live probe: `navigation` is `https://www.woolworths.com.au` and
   `https://auth.woolworths.com.au`; the `login` secret's fields are `username` and `password`,
-  both with origin `https://auth.woolworths.com.au`; `cookieDomains` covers www only. The auth
+  both with origin `https://auth.woolworths.com.au`; `cookieDomains` names www and the bare
+  domain, so an Auth0 cookie set on `.woolworths.com.au` would be copied (an M2 check). The auth
   steps go to `www…/auth/login`, take the silent path if Auth0 redirects straight back, and
   otherwise fill the email page, then the password page, then branch on an MFA page. The
   password page's selectors and the probe are confirmed in M2. Read tools should prefer what the
@@ -695,7 +725,7 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
 - Starts in M9 at the earliest. The first step is app-side remote mode (a separate listener, an
   OAuth server in the app, consent on the Mac, per-tool remote policy, a kill switch), with
   Tailscale Funnel or cloudflared documented as the transport in front of it, never in front of the
-  local endpoint. Design: [relay.md](relay.md).
+  local endpoint. Design: [relay.md](relay.md) (draft, on `wip/docs-platform`).
 - If built: a Cloudflare Worker with a Durable Object per user, holding a WebSocket the app opens
   outwards. The Worker is the OAuth 2.1 authorisation server for MCP clients (expect claude.ai's
   remote connectors to need this). Nick has built a Cloudflare OAuth server for another project's MCP endpoint; reuse
@@ -775,25 +805,25 @@ week of use trips anything. Only M3's two weeks of use answers those.
 
 Likelihood and impact are High, Medium or Low.
 
-| #   | Risk                                                                                                                                                                                                                                                                   | L                    | I   | Mitigation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Residual                                                                                                                                                                                                                                                                                                                     |
-| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| R1  | **Bot detection.** Akamai blocked our second anonymous probe within minutes. Automated login, or a burst of tool calls, gets Nick's session or IP blocked, possibly affecting his normal shopping.                                                                     | H                    | H   | Headed hidden windows, Electron's real Chromium, and a clean Chrome UA with the real major version and `en-AU`, because run 4 showed the Electron UA blocked and the clean one not ([D9](#d9-user-agent)); nothing beyond matching the person's own browser ([D24](#d24-bot-detection-posture)). Runtime-owned rate budget set well below the known-bad run 1 pacing, upward-only jitter, a session read cache and a cool-down ([D28](#d28-rate-budget-defaults)). Prefer page-initiated requests for reads. `needsUser` instead of fighting. Live tests rare and paced. | High. We won't evade, so some sites will simply not work unattended. That's a product limit to state openly.                                                                                                                                                                                                                 |
-| R2  | **Site changes.** Woolworths changes its login, endpoints or response shapes.                                                                                                                                                                                          | H                    | M   | Zod output schemas; drift detection in smoke tests; `failed` with a clear class rather than wrong data; the authoring agent (M6) to repair; fixtures recorded from live.                                                                                                                                                                                                                                                                                                                                                                                                 | Medium. Every site adapter is maintenance forever.                                                                                                                                                                                                                                                                           |
-| R3  | **Terms of service and legal.** Woolworths' terms likely prohibit automated access. Publishing an adapter for it, or a marketplace of them, invites a takedown or worse.                                                                                               | M                    | H   | Personal use is the person automating their own account. For the release: the person runs it on their own machine with their own credentials; no hosted automation; adapters distributed separately from the framework if advice says so; no evasion. Get advice before M8 ([D25](#d25-adapter-legal-posture)).                                                                                                                                                                                                                                                          | Medium until advised. This plan isn't legal advice.                                                                                                                                                                                                                                                                          |
-| R4  | **1Password limits.** Service accounts can't read personal vaults; rate limits apply; plan eligibility unconfirmed; the desktop-app path needs an unlocked app.                                                                                                        | M                    | M   | Dedicated vault; cache nothing, but fetch only at login; desktop-app fallback; `needsUser` with a clear reason when neither works.                                                                                                                                                                                                                                                                                                                                                                                                                                       | Low once [D6](#d6-1password-setup) is answered.                                                                                                                                                                                                                                                                              |
-| R5  | **Electron footprint.** ~250 MB app, a Chromium per window, memory while idle.                                                                                                                                                                                         | H                    | L   | Close windows after each run; one hidden window at a time per site; idle with no windows. Measure in M3.                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Low for personal use; a talking point for the OSS audience.                                                                                                                                                                                                                                                                  |
-| R6  | **Prompt injection through tool output.** Product names, descriptions and reviews are site-controlled text that goes straight to the LLM, which may also hold write tools.                                                                                             | M                    | H   | Output is schema-validated structured data with length caps on every string; tools return fields, never page HTML; `irreversible` actions confirmed by the person in the app, never by the client; MCP descriptions note that outputs are untrusted; per-client tool allowlists (M4).                                                                                                                                                                                                                                                                                    | Medium. A `write` tool (cart) can still be misused by an injected client; the harm is bounded to the cart. A tool labelled `read` can only write through a request the adapter declared `read`, or through a non-API path ([G1](#g1-the-request-surface-only-covers-pagefetch)), so the label is a strong hint, not a proof. |
-| R7  | **Sandboxing third-party adapters.** `utilityProcess` isn't a security boundary. A malicious adapter could read files or reach the network.                                                                                                                            | H (if shipped as is) | H   | No third-party adapters before M7. Sandbox choice in [D12](#d12-sandbox-technology). Hostile-adapter suite against the sandbox itself.                                                                                                                                                                                                                                                                                                                                                                                                                                   | Low after M7, if the sandbox is real.                                                                                                                                                                                                                                                                                        |
-| R8  | **The request surface doesn't bind `page.evaluate` or clicks.** See [G1](#g1-the-request-surface-only-covers-pagefetch).                                                                                                                                               | H                    | H   | The tool partition holds every request, whoever made it, to the egress hosts, ambiguous-path refusal, deny segments and the ceiling, and every API call (fetch, XHR, any non-GET, beacons, sockets) to the declarations and the running tool's purpose. Built in the round-1 driver; `beginRun(policy)` in core v2.                                                                                                                                                                                                                                                      | Medium. A `read` label is still the adapter's own claim for top-level navigations to pages that change state, for GET endpoints that write, and for declarations whose purpose is wrong. The approval screen says so. This holds for first-party and agent-authored adapters too.                                            |
-| R9  | **Session exfiltration through tool output.** Exact-match redaction misses an encoded cookie.                                                                                                                                                                          | L                    | M   | Woolworths' auth cookies are `httpOnly`, so tool code can't read them. Output schemas reject unexpected fields. Flag adapters whose manifests copy web-storage tokens.                                                                                                                                                                                                                                                                                                                                                                                                   | Low for Woolworths; higher for storage-token sites.                                                                                                                                                                                                                                                                          |
-| R10 | **Full Disk Access is broad.** Granting it to the whole app hands every adapter's host process access to Mail, Safari history and the rest.                                                                                                                            | M                    | H   | A tiny signed helper with FDA that only answers OTP queries ([D8](#d8-full-disk-access-for-messages)).                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Low with the helper.                                                                                                                                                                                                                                                                                                         |
-| R11 | **Lockouts.** A login bug burns attempts and locks Nick's Woolworths account.                                                                                                                                                                                          | M                    | M   | Attempt marker; `ambiguous` counts as a failure; at most one automated password submit before `needsUser`, enforced by the runtime rather than the manifest, and in place before the first live automated login. The silent Auth0 redirect submits nothing, so it consumes no attempt; if it loops or lands somewhere unexpected, the flow ends in `needsUser`, not a password retry.                                                                                                                                                                                    | Low. Lockouts are the main per-account risk ([D5](#d5-which-woolworths-account)).                                                                                                                                                                                                                                            |
-| R12 | **Signing and Keychain identity churn.** A bundle ID or Team ID change after launch orphans Keychain items and FDA grants.                                                                                                                                             | M                    | M   | Decide the name before the first signed build ([D1](#d1-product-name)).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Low.                                                                                                                                                                                                                                                                                                                         |
-| R13 | **Agent-built code nobody fully read.** Much of this is built overnight by agents in parallel.                                                                                                                                                                         | M                    | H   | Small commits; the security suites as the acceptance bar; Nick reviews `core`, the guards and the filler line by line; an independent review pass before M8.                                                                                                                                                                                                                                                                                                                                                                                                             | Medium.                                                                                                                                                                                                                                                                                                                      |
-| R14 | **Market.** Few people want to run a local Electron app to give agents site access; the relay doesn't sell.                                                                                                                                                            | M                    | L   | Personal use pays off regardless. Waitlist before building the relay.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Accepted.                                                                                                                                                                                                                                                                                                                    |
-| R15 | **Anthropic terms for the authoring agent.** Offering claude.ai login in a third-party product isn't allowed without approval.                                                                                                                                         | M                    | M   | API keys, or the MCP-inverted route ([D13](#d13-authoring-agent-model-access)).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Low.                                                                                                                                                                                                                                                                                                                         |
-| R16 | **MCP and Electron churn.** Spec revisions, SDK major versions, Electron's eight-week cadence.                                                                                                                                                                         | H                    | L   | Pinned versions; a maintenance pass per Electron major; the update feed means users get fixes. The UA's Chromium major is read at runtime, so it tracks Electron upgrades without a code change.                                                                                                                                                                                                                                                                                                                                                                         | Low.                                                                                                                                                                                                                                                                                                                         |
-| R17 | **Partition-wide deny breaks normal pages.** The trolley page may preload a checkout script chunk, or call a checkout-summary API for delivery fees, and a keyword deny list cancels it. The keywords also may not match Woolworths' real order and payment endpoints. | M                    | M   | Apply deny only to `mainFrame`, `subFrame`, `xhr` (Electron reports `fetch` as `xhr`), `ping`, `webSocket` and `other`, never to scripts, stylesheets, images, fonts or media. Record the real checkout and payment paths in M2 and add them as explicit deny entries. Measure in M2 what the trolley and product pages request that touches a deny segment, and add narrow, reviewed exceptions for read-only ones (for example a delivery-fee summary) as `read` declarations.                                                                                         | Medium until M2's measurement. A false block shows up as a broken tool, which is the safe direction.                                                                                                                                                                                                                         |
+| #   | Risk                                                                                                                                                                                                                                                                   | L                    | I   | Mitigation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Residual                                                                                                                                                                                                                                                                                                                     |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R1  | **Bot detection.** Akamai blocked our second anonymous probe within minutes. Automated login, or a burst of tool calls, gets Nick's session or IP blocked, possibly affecting his normal shopping.                                                                     | H                    | H   | Headed hidden windows, Electron's real Chromium, and a clean Chrome UA with the real major version and `en-AU`, because run 4 showed the Electron UA blocked and the clean one not ([D9](#d9-user-agent)); nothing beyond matching the person's own browser ([D24](#d24-bot-detection-posture)). Runtime-owned rate budget set well below the known-bad run 1 pacing, upward-only jitter, a session read cache and a cool-down ([D28](#d28-rate-budget-defaults)). Prefer page-initiated requests for reads. `needsUser` instead of fighting. Live tests rare and paced.                                                                                                                                         | High. We won't evade, so some sites will simply not work unattended. That's a product limit to state openly.                                                                                                                                                                                                                 |
+| R2  | **Site changes.** Woolworths changes its login, endpoints or response shapes.                                                                                                                                                                                          | H                    | M   | Zod output schemas; drift detection in smoke tests; `failed` with a clear class rather than wrong data; the authoring agent (M6) to repair; fixtures recorded from live.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Medium. Every site adapter is maintenance forever.                                                                                                                                                                                                                                                                           |
+| R3  | **Terms of service and legal.** Woolworths' terms likely prohibit automated access. Publishing an adapter for it, or a marketplace of them, invites a takedown or worse.                                                                                               | M                    | H   | Personal use is the person automating their own account. For the release: the person runs it on their own machine with their own credentials; no hosted automation; adapters distributed separately from the framework if advice says so; no evasion. Get advice before M8 ([D25](#d25-adapter-legal-posture)).                                                                                                                                                                                                                                                                                                                                                                                                  | Medium until advised. This plan isn't legal advice.                                                                                                                                                                                                                                                                          |
+| R4  | **1Password limits.** Service accounts can't read personal vaults; rate limits apply; plan eligibility unconfirmed; the desktop-app path needs an unlocked app.                                                                                                        | M                    | M   | Dedicated vault; cache nothing, but fetch only at login; desktop-app fallback; `needsUser` with a clear reason when neither works.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Low once [D6](#d6-1password-setup) is answered.                                                                                                                                                                                                                                                                              |
+| R5  | **Electron footprint.** ~250 MB app, a Chromium per window, memory while idle.                                                                                                                                                                                         | H                    | L   | Close windows after each run; one hidden window at a time per site; idle with no windows. Measure in M3.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Low for personal use; a talking point for the OSS audience.                                                                                                                                                                                                                                                                  |
+| R6  | **Prompt injection through tool output.** Product names, descriptions and reviews are site-controlled text that goes straight to the LLM, which may also hold write tools.                                                                                             | M                    | H   | Output is schema-validated structured data with length caps on every string; tools return fields, never page HTML; `irreversible` actions confirmed by the person in the app, never by the client; MCP descriptions note that outputs are untrusted; per-client tool allowlists (M4).                                                                                                                                                                                                                                                                                                                                                                                                                            | Medium. A `write` tool (cart) can still be misused by an injected client; the harm is bounded to the cart. A tool labelled `read` can only write through a request the adapter declared `read`, or through a non-API path ([G1](#g1-the-request-surface-only-covers-pagefetch)), so the label is a strong hint, not a proof. |
+| R7  | **Sandboxing third-party adapters.** `utilityProcess` isn't a security boundary. A malicious adapter could read files or reach the network.                                                                                                                            | H (if shipped as is) | H   | No third-party adapters before M7. Sandbox choice in [D12](#d12-sandbox-technology). Hostile-adapter suite against the sandbox itself.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Low after M7, if the sandbox is real.                                                                                                                                                                                                                                                                                        |
+| R8  | **The request surface doesn't bind `page.evaluate` or clicks.** See [G1](#g1-the-request-surface-only-covers-pagefetch).                                                                                                                                               | H                    | H   | The tool partition holds every request, whoever made it, to the egress hosts and deny segments, and every API call (fetch, XHR, any non-GET, beacons, sockets) to the declarations and the running tool's purpose: built in the round-1 driver. Ambiguous-path refusal for every request (the driver only stops such a path matching a declaration), navigations counting toward the ceiling (it counts API calls only), the `initiator` field and auditing the driver's blocks are core v2's `beginRun(policy, onBlocked)` contract, not built.                                                                                                                                                                 | Medium. A `read` label is still the adapter's own claim for top-level navigations to pages that change state, for GET endpoints that write, and for declarations whose purpose is wrong. The approval screen says so. This holds for first-party and agent-authored adapters too.                                            |
+| R9  | **Session exfiltration through tool output.** Exact-match redaction misses an encoded cookie.                                                                                                                                                                          | L                    | M   | Woolworths' auth cookies are `httpOnly`, so tool code can't read them. Output schemas reject unexpected fields. Flag adapters whose manifests copy web-storage tokens.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Low for Woolworths; higher for storage-token sites.                                                                                                                                                                                                                                                                          |
+| R10 | **Full Disk Access is broad.** Granting it to the whole app hands every adapter's host process access to Mail, Safari history and the rest.                                                                                                                            | M                    | H   | A tiny signed helper with FDA that only answers OTP queries ([D8](#d8-full-disk-access-for-messages)).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Low with the helper.                                                                                                                                                                                                                                                                                                         |
+| R11 | **Lockouts.** A login bug burns attempts and locks Nick's Woolworths account.                                                                                                                                                                                          | M                    | M   | Attempt marker; `ambiguous` counts as a failure; at most one automated password submit before `needsUser`, enforced by the runtime rather than the manifest, and in place before the first live automated login. The silent Auth0 redirect submits nothing, so it consumes no attempt; if it loops or lands somewhere unexpected, the flow ends in `needsUser`, not a password retry.                                                                                                                                                                                                                                                                                                                            | Low. Lockouts are the main per-account risk ([D5](#d5-which-woolworths-account)).                                                                                                                                                                                                                                            |
+| R12 | **Signing and Keychain identity churn.** A bundle ID or Team ID change after launch orphans Keychain items and FDA grants.                                                                                                                                             | M                    | M   | Decide the name before the first signed build ([D1](#d1-product-name)).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Low.                                                                                                                                                                                                                                                                                                                         |
+| R13 | **Agent-built code nobody fully read.** Much of this is built overnight by agents in parallel.                                                                                                                                                                         | M                    | H   | Small commits; the security suites as the acceptance bar; Nick reviews `core`, the guards and the filler line by line; an independent review pass before M8.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Medium.                                                                                                                                                                                                                                                                                                                      |
+| R14 | **Market.** Few people want to run a local Electron app to give agents site access; the relay doesn't sell.                                                                                                                                                            | M                    | L   | Personal use pays off regardless. Waitlist before building the relay.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Accepted.                                                                                                                                                                                                                                                                                                                    |
+| R15 | **Anthropic terms for the authoring agent.** Offering claude.ai login in a third-party product isn't allowed without approval.                                                                                                                                         | M                    | M   | API keys, or the MCP-inverted route ([D13](#d13-authoring-agent-model-access)).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Low.                                                                                                                                                                                                                                                                                                                         |
+| R16 | **MCP and Electron churn.** Spec revisions, SDK major versions, Electron's eight-week cadence.                                                                                                                                                                         | H                    | L   | Pinned versions; a maintenance pass per Electron major; the update feed means users get fixes. The UA's Chromium major is read at runtime, so it tracks Electron upgrades without a code change.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Low.                                                                                                                                                                                                                                                                                                                         |
+| R17 | **Partition-wide deny breaks normal pages.** The trolley page may preload a checkout script chunk, or call a checkout-summary API for delivery fees, and a keyword deny list cancels it. The keywords also may not match Woolworths' real order and payment endpoints. | M                    | M   | Decided here (recommendation, pending M2's measurement): apply deny only to `mainFrame`, `subFrame`, `xhr` (Electron reports `fetch` as `xhr`), `ping`, `webSocket` and `other`, never to scripts, stylesheets, images, fonts or media. Today the driver applies it to every request, scripts included, and the security model says so; both change once M2 has measured ([D58](#d58-page-initiated-traffic)). Record the real checkout and payment paths in M2 and add them as explicit deny entries. Measure in M2 what the trolley and product pages request that touches a deny segment, and add narrow, reviewed exceptions for read-only ones (for example a delivery-fee summary) as `read` declarations. | Medium until M2's measurement. A false block shows up as a broken tool, which is the safe direction.                                                                                                                                                                                                                         |
 
 ---
 
@@ -804,9 +834,12 @@ Writing this plan turned up these. Each needs a fix in the docs or code; the one
 
 Status after round 1 and core v2: G1 is addressed, more strictly than proposed below: the driver
 holds every API call in the tool partition, whoever made it, to the declarations and the tool's
-purpose, so the API-prefix method policy (C8) isn't needed; what a `read` label still doesn't
-cover is in security-model.md. G2 is partly addressed (C1). G3 is done (C3). G4, G5 and G6 are
-open. G7 and G8 are now in the security model. G9 stands.
+purpose, so the API-prefix method policy in C8 isn't needed; what a `read` label still doesn't cover
+is in security-model.md. Holding the site's own calls to the declarations raises a new problem,
+though: its background traffic (Akamai's sensor POSTs among it) must now be declared, and
+declarations have no host. That is C8 in reduced form, [D58](#d58-page-initiated-traffic). The
+irreversible unlock is wider than G1 asked for (C15). G2 is partly addressed (C1). G3 is done (C3).
+G4, G5 and G6 are open. G7 and G8 are now in the security model. G9 stands.
 
 ### G1. The request surface only covers `page.fetch`
 
@@ -824,6 +857,13 @@ screen and the MCP `readOnlyHint` would then be the adapter's own claim, not som
 runtime enforces. That is true for first-party and agent-authored adapters as well as
 third-party ones, and it matters for R6: an injected client that calls a "read" tool is trusting
 that label.
+
+**Superseded in part.** What follows is the round-1 proposal, kept for the record. What was built
+holds every API call, whoever made it, to the declarations and the tool's purpose, so layer 3
+(the method policy on API prefixes) and the "honest statement" after it are replaced by
+security-model.md's "The run's network policy". Still current: layer 1; layer 2's deny paths and
+resource types (R17, [D58](#d58-page-initiated-traffic)); layer 2's per-declaration unlock, which
+core v2 doesn't meet (C15); and the ceiling paragraph at the end, which is now D58.
 
 Fix, in three layers, all in the tool partition's `webRequest` and applied to **every** request
 whatever its initiator:
@@ -924,47 +964,63 @@ home-page load. Count them in the rate budget.
 
 ### Core change requests
 
-| #   | Change                                                                                                                                                                                                                                                                                                                                                                   | Needed by |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------- |
-| C1  | `limits` gains `minGapMs`, `requestsPerMinute` and `cooldownSeconds` (with defaults), and `AuditEvent` gains `rate-limited` and `cooldown-started`.                                                                                                                                                                                                                      | M1        |
-| C2  | `SessionDriver` takes a network policy for the tool partition (hosts, deny segments and explicit deny paths, the resource types deny applies to, the method policy, the ceiling) and reports blocked requests. Unlocking is a list of specific `irreversible` declarations (method plus path), set for one confirmed call and cleared when it ends, never a single flag. | M1        |
-| C3  | `EnsureResult.needsUser` and step `needsUser`/`fail` carry a reason code from a fixed vocabulary, with optional manifest text shown only in the app.                                                                                                                                                                                                                     | M1        |
-| C4  | `confirm()` takes a structured action description; free text becomes an optional, attributed note.                                                                                                                                                                                                                                                                       | M3        |
-| C5  | A declarative tool-action schema.                                                                                                                                                                                                                                                                                                                                        | M5        |
-| C6  | Tool input and output JSON Schemas declared in the manifest (generated from zod at build time and checked to match).                                                                                                                                                                                                                                                     | M7        |
-| C7  | `ProviderKind` gains `onepassword-desktop` for the SDK's `DesktopAuth`, if [D7](#d7-1password-fallback) picks it.                                                                                                                                                                                                                                                        | M3        |
-| C8  | The manifest gains `apiPrefixes` (per host) and a `telemetry` allowlist of `{ method, host, path }` for the method policy in G1, and `AuditEvent` gains a blocked-by-method-policy reason.                                                                                                                                                                               | M2        |
-| C9  | Tool declarations gain `destructive: boolean` and `idempotent: boolean`, so MCP annotations are derived ([WS4](#ws4-mcp)) rather than hand-written.                                                                                                                                                                                                                      | M2        |
-| C10 | `limits` gains a per-minute cap and a cap on direct API calls per page view, for [D28](#d28-rate-budget-defaults) and [D33](#d33-breaker-defaults-and-persistence).                                                                                                                                                                                                      | M2        |
-| C11 | The login runner learns whether password typing started, so the attempt marker can tell a spent attempt from an interrupted page load ([D35](#d35-the-attempt-marker-after-a-timeout)).                                                                                                                                                                                  | M2        |
-| C12 | `tool-called` carries the client id a per-client token names, alongside the self-reported name ([D42](#d42-per-client-tool-scopes)).                                                                                                                                                                                                                                     | M3        |
-| C13 | `retry.times` is documented as extra attempts, and renamed `retries` at the next `schemaVersion` ([D31](#d31-retry-count-semantics)).                                                                                                                                                                                                                                    | Later     |
-| C14 | `tool-finished` gains a count of redacted strings ([D36](#d36-redaction-whole-string-or-substring)).                                                                                                                                                                                                                                                                     | M4        |
+| #   | Change                                                                                                                                                                                                                                                                                                                                                                   | Needed by                    |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------- |
+| C1  | `limits` gains `minGapMs`, `requestsPerMinute` and `cooldownSeconds` (with defaults), and `AuditEvent` gains `rate-limited` and `cooldown-started`.                                                                                                                                                                                                                      | M1                           |
+| C2  | `SessionDriver` takes a network policy for the tool partition (hosts, deny segments and explicit deny paths, the resource types deny applies to, the method policy, the ceiling) and reports blocked requests. Unlocking is a list of specific `irreversible` declarations (method plus path), set for one confirmed call and cleared when it ends, never a single flag. | M1                           |
+| C3  | `EnsureResult.needsUser` and step `needsUser`/`fail` carry a reason code from a fixed vocabulary, with optional manifest text shown only in the app.                                                                                                                                                                                                                     | M1                           |
+| C4  | `confirm()` takes a structured action description; free text becomes an optional, attributed note.                                                                                                                                                                                                                                                                       | M3                           |
+| C5  | A declarative tool-action schema.                                                                                                                                                                                                                                                                                                                                        | M5                           |
+| C6  | Tool input and output JSON Schemas declared in the manifest (generated from zod at build time and checked to match).                                                                                                                                                                                                                                                     | M7                           |
+| C7  | `ProviderKind` gains `onepassword-desktop` for the SDK's `DesktopAuth`, if [D7](#d7-1password-fallback) picks it.                                                                                                                                                                                                                                                        | M3                           |
+| C8  | The manifest gains `apiPrefixes` (per host) and a `telemetry` allowlist of `{ method, host, path }` for the method policy in G1, and `AuditEvent` gains a blocked-by-method-policy reason.                                                                                                                                                                               | M2                           |
+| C9  | Tool declarations gain `destructive: boolean` and `idempotent: boolean`, so MCP annotations are derived ([WS4](#ws4-mcp)) rather than hand-written.                                                                                                                                                                                                                      | M2                           |
+| C10 | `limits` gains a per-minute cap and a cap on direct API calls per page view, for [D28](#d28-rate-budget-defaults) and [D33](#d33-breaker-defaults-and-persistence).                                                                                                                                                                                                      | M2                           |
+| C11 | The login runner learns whether password typing started, so the attempt marker can tell a spent attempt from an interrupted page load ([D35](#d35-the-attempt-marker-after-a-timeout)).                                                                                                                                                                                  | M2                           |
+| C12 | `tool-called` carries the client id a per-client token names, alongside the self-reported name ([D42](#d42-per-client-tool-scopes)).                                                                                                                                                                                                                                     | M3                           |
+| C13 | `retry.times` is documented as extra attempts, and renamed `retries` at the next `schemaVersion` ([D31](#d31-retry-count-semantics)).                                                                                                                                                                                                                                    | Later                        |
+| C14 | `tool-finished` gains a count of redacted strings ([D36](#d36-redaction-whole-string-or-substring)).                                                                                                                                                                                                                                                                     | M4                           |
+| C15 | Tool declarations gain `unlocks: [{ method, path }]`, each naming one of the manifest's `irreversible` declarations, and `unlockIrreversible()` takes that list, so confirming a tool unlocks only what it names, for that run ([AC13](#acceptance-criteria)).                                                                                                           | Before any irreversible tool |
+| C16 | The driver feeds the runtime's rate budget and breaker: it reports block signatures (403 HTML, Akamai's page, 429) on navigations and API calls in both partitions, and waits on the budget before each main-frame navigation ([D55](#d55-driver-level-budget-and-block-detection)).                                                                                     | M2                           |
+| C17 | `RequestDeclaration` gains an optional `host` (default the manifest's home host) and a `telemetry` purpose for the site's own background calls, which no tool can call through `page.fetch`; `limits` splits the ceiling into tool-initiated and page-initiated counts ([D58](#d58-page-initiated-traffic)).                                                             | M2                           |
+| C18 | `BlockedRequest.target` is the origin plus a path digest, as the round-1 driver reports it, not origin and path ([D57](#d57-blocked-request-target)).                                                                                                                                                                                                                    | M1                           |
+| C19 | `urlRegex` runs under the OTP worker's deadline, or with a per-pattern quantifier cap and a 256-character input bound ([D56](#d56-url-regex-deadline)); and the manifest parser allows at most one Messages sender ([D59](#d59-several-messages-senders)).                                                                                                               | M2                           |
+| C20 | The `minGapMs` comment in `manifest.ts` says what [D33](#d33-breaker-defaults-and-persistence) decides (per host, strictest of the approved adapters), not "across all of this adapter's runs".                                                                                                                                                                          | M2                           |
 
 Status in core v2:
 
 - **C1, partly.** `limits` has `minGapMs`, `cooldownSeconds` and `maxCooldownSeconds`, and the audit
   log has `breaker-opened` and `breaker-closed` with the `rate-limited` error class. No per-minute
   cap; that is C10.
-- **C2, done differently.** `beginRun(policy, onBlocked)`, `unlockIrreversible()` and `endRun()`.
-  The unlock covers the run's `irreversible` declarations, not a list chosen per confirmation,
-  which is equivalent while a confirmation covers a whole tool run.
+- **C2, done differently, and narrower than asked.** `beginRun(policy, onBlocked)`,
+  `unlockIrreversible()` and `endRun()`. The run's policy carries the manifest's whole request
+  surface, and tools don't declare which requests they use, so confirming one irreversible tool
+  unlocks every `irreversible` declaration in the manifest (pay, add a payee, place an order), for
+  page-initiated requests too. That is not equivalent to C2's per-call list; C15 restores it.
+  D18 (no irreversible tools in v1) makes it less urgent, not less wrong. The policy also has no
+  rate field, so the driver can't pace or watch for blocks (C16).
 - **C3, done.** `needsUser` reason codes, `fail` classes, app-only notes, `NeedsUserError`.
 - **C4 to C7, open.** `ProviderKind` gained `messages`, not `onepassword-desktop`.
-- **C8, no longer needed** (see the status above G1).
+- **C8, not needed as written** (see the status above G1). Its host-scoped telemetry list
+  returns in reduced form as C17, if [D58](#d58-page-initiated-traffic) agrees.
 - **C9, open.**
+- **C15 to C20, new** from the review of the round-2 docs; all open.
 
 ### Changes to the other docs
 
 Made in the round-2 docs sync, except the `DesktopAuth` change, which waits on D7. The
 security model now also marks which guarantees code enforces today.
 
-- **security-model.md, "Tool actions":** state that the egress hosts, deny list and method policy
-  are partition-wide, that declarations are a `page.fetch` guarantee plus a non-GET guarantee on
-  API prefixes, and that `read`/`write` labels are enforced only that far
-  ([G1](#g1-the-request-surface-only-covers-pagefetch)). The unlock for an `irreversible` tool is
-  per declaration and per call.
-- **security-model.md, approval:** the list of highlighted additions becomes AC15's list.
+- **security-model.md, "Tool actions":** state that egress hosts and deny segments are
+  partition-wide, that declarations and purpose bind every API call whoever made it, and how far
+  a `read` label is enforced beyond that ([G1](#g1-the-request-surface-only-covers-pagefetch));
+  which of these the round-1 driver enforces and which are core v2's contract; that the
+  irreversible unlock in core v2 covers every `irreversible` declaration in the manifest, wider
+  than C2 asked (C15); that the rate budget and breaker cover only `page.fetch`, `goto` and the
+  probe ([D55](#d55-driver-level-budget-and-block-detection)); and that the current Woolworths
+  manifest would break under the v2 policy until [D58](#d58-page-initiated-traffic) is decided.
+- **security-model.md, approval:** the list of highlighted changes and AC15's list are the same
+  list.
 - **security-model.md:** zeroing is best effort for the SDK's copy (G7); Full Disk Access and the
   in-place, no-copy Messages read (G8); and the bot-detection principle as reworded in
   [D24](#d24-bot-detection-posture).
@@ -983,27 +1039,29 @@ to answer first: they block M2 or M3, or they're expensive to change later.
 
 ### Answer these first
 
-| #   | Decision                                   | Recommendation                                                                         | Blocks     |
-| --- | ------------------------------------------ | -------------------------------------------------------------------------------------- | ---------- |
-| D1  | **Product name**                           | Pick before the first signed build                                                     | M3         |
-| D4  | **Woolworths 2FA (Auth0 MFA)**             | Check his account's factor in M2; SMS via Messages, TOTP via 1Password, else needsUser | M2–M3      |
-| D5  | **Which Woolworths account**               | Nick's real account, with the one-attempt limit in place first                         | M2         |
-| D6  | **1Password setup**                        | Service account on a new "siteadapter" vault; move the item                            | M2–M3      |
-| D8  | **Full Disk Access for Messages**          | Helper before release; whole app acceptable for M3                                     | M3         |
-| D18 | **Irreversible tools in shipped adapters** | None in v1                                                                             | M3, M8     |
-| D24 | **Bot-detection posture**                  | Look like the person's own browser, nothing more; stated publicly                      | Everything |
-| D28 | **Rate budget defaults**                   | ≥10 s between API calls, 2 per page view, session cache                                | M2         |
-| D32 | **Which failures retry**                   | Only "page not ready"; never a second password fill; never retry a write               | M2         |
-| D35 | **The attempt marker after a timeout**     | Hold for the person only if password typing started                                    | M2         |
-| D38 | **Keystroke events**                       | `keyDown`/`char`/`keyUp`, as the person's keyboard sends                               | M2         |
-| D41 | **Stable MCP port and token rotation**     | The bridge for every client; rotate on demand; a token per client                      | M3         |
+| #   | Decision                                    | Recommendation                                                                                | Blocks     |
+| --- | ------------------------------------------- | --------------------------------------------------------------------------------------------- | ---------- |
+| D1  | **Product name**                            | Pick before the first signed build                                                            | M3         |
+| D4  | **Woolworths 2FA (Auth0 MFA)**              | Check his account's factor in M2; SMS via Messages, TOTP via 1Password, else needsUser        | M2–M3      |
+| D5  | **Which Woolworths account**                | Nick's real account, with the one-attempt limit in place first                                | M2         |
+| D6  | **1Password setup**                         | Service account on a new "siteadapter" vault; move the item                                   | M2–M3      |
+| D8  | **Full Disk Access for Messages**           | Helper before release; whole app acceptable for M3                                            | M3         |
+| D18 | **Irreversible tools in shipped adapters**  | None in v1                                                                                    | M3, M8     |
+| D24 | **Bot-detection posture**                   | Look like the person's own browser, nothing more; stated publicly                             | Everything |
+| D28 | **Rate budget defaults**                    | ≥10 s between API calls, 2 per page view, session cache                                       | M2         |
+| D32 | **Which failures retry**                    | Only "page not ready"; never a second password fill; never retry a write                      | M2         |
+| D35 | **The attempt marker after a timeout**      | Hold for the person only if password typing started                                           | M2         |
+| D38 | **Keystroke events**                        | `keyDown`/`char`/`keyUp`, as the person's keyboard sends                                      | M2         |
+| D41 | **Stable MCP port and token rotation**      | The bridge for every client; rotate on demand; a token per client                             | M3         |
+| D55 | **Driver-level budget and block detection** | The driver reports block signatures to the breaker and paces navigations                      | M2         |
+| D58 | **Page-initiated traffic**                  | Separate ceilings; host-scoped declarations for the site's own non-GET calls; numbers from M2 | M2         |
 
 Already decided, recorded for completeness: [D9](#d9-user-agent) (the clean Chrome UA, decided
 by run 4 of the live probe and now the architecture's default) and
 [D39](#d39-auth-subframe-origins) (auth subframes pinned to a list, decided by core v2).
 
 D31 to D54 are the questions round 1 raised. Each has options and a recommendation; none blocks
-round 2.
+round 2. D55 to D59 came out of the review of the round-2 docs; D55 and D58 block M2's live work.
 
 ### D1. Product name
 
@@ -1144,8 +1202,10 @@ round 2.
   compiled file is what the sandbox will load anyway, and it's what the approval hash covers.
   Adapters with dependencies get them bundled in at build time.
 - Recommendation: `.siteadapter` zip with a fixed layout. Authors use TypeScript and a build
-  command; the app only ever loads the built bundle. npm and git are authoring conveniences,
-  never the distribution channel.
+  command; the app only ever loads the built bundle, and the loader hashes exactly the bytes it
+  imports, so nothing outside the hash can run. Approvals and grants keyed by the hash depend on
+  that: today `ToolHost.register()` takes the hash from its caller, and no loader exists. npm and
+  git are authoring conveniences, never the distribution channel.
 - Blocks: M5 (IDE save format), M7.
 
 ### D12. Sandbox technology
@@ -1191,7 +1251,8 @@ round 2.
   also the only obvious thing to charge for. cloudflared and Tailscale work today for technical
   users but don't give claude.ai a proper OAuth flow without more setup.
 - Recommendation: for Nick's own remote use after M3, build the app-side remote mode and
-  document Funnel (then cloudflared) in front of it, as [relay.md](relay.md) recommends; no tunnel
+  document Funnel (then cloudflared) in front of it, as [relay.md](relay.md) (draft, on
+  `wip/docs-platform`) recommends; no tunnel
   in front of the local endpoint. Build the hosted relay only after M8, and only after a waitlist
   shows demand.
 - Blocks: M9.
@@ -1356,6 +1417,10 @@ round 2.
   defaults (2 s; 10 minutes doubling to 2 hours, which are also core v2's `limits` defaults), in
   memory, with no jitter, no per-page-view or per-minute cap, and no read cache. Reconciling the
   two is [D33](#d33-breaker-defaults-and-persistence).
+- **What it covers.** The budget and breaker sit in the runtime's guarded page and probe, so they
+  see `page.fetch`, `goto` and the probe only. Navigations the page makes, clicks that submit,
+  `evaluate()` fetches, the site's own requests and the whole login go unpaced and unwatched for
+  block pages. Closing that is [D55](#d55-driver-level-budget-and-block-detection).
 - Recommendation: start here and loosen only with evidence from M2 and M3, never the other way
   round. A test asserts the run 1 pattern can't get through the defaults unspaced.
 - Blocks: M2.
@@ -1378,8 +1443,13 @@ round 2.
   each add would be tiresome. The runtime can't enforce "additive only" against the trolley
   update endpoint, which takes absolute quantities, so `add_to_cart` would read the trolley and
   write current + n, and its additive claim is the adapter's code, not a runtime guarantee.
-- Recommendation: ship `set_cart_quantity` as destructive in the MVP. Add `add_to_cart` in M4 if
-  the prompts are annoying in practice.
+- Status: overtaken by round 1. The adapter already ships `add_to_cart` (and `remove_from_cart`)
+  alongside `set_cart_quantity`, and the MCP server derives `destructiveHint: true` for every
+  `write` tool, so `add_to_cart` is advertised as destructive and clients still prompt for it.
+  It stays that way until C9 lets a tool declare itself non-destructive.
+- Recommendation: keep the tools as they are, destructive, for the MVP. With C9, mark
+  `add_to_cart` non-destructive in M4 if the prompts are annoying in practice, knowing its
+  additive claim is the adapter's code.
 - Blocks: nothing in the MVP.
 
 ### D31. `retry` count semantics
@@ -1416,12 +1486,20 @@ round 2.
 
 ### D33. Breaker defaults and persistence
 
-- Today: one rate budget and breaker per host, in memory; a 2 s minimum gap; a 10 minute
+- Today: one rate budget and breaker per host, in memory, covering `page.fetch`, `goto` and the
+  probe only ([D55](#d55-driver-level-budget-and-block-detection)); a 2 s minimum gap; a 10 minute
   cool-down doubling to 2 hours; the doubling resets on the next normal response. Core v2's
   `limits` defaults match the code (`minGapMs: 2000`, `cooldownSeconds: 600`,
   `maxCooldownSeconds: 7200`). [D28](#d28-rate-budget-defaults) recommends much stricter numbers
   for Woolworths and a persisted cool-down.
-- Questions: whose numbers; whether and where to persist; what the breaker is keyed on.
+- Questions: whose numbers; whether and where to persist; what the budget and breaker are keyed
+  on, and whose limits win when two adapters declare the same host.
+- The keying disagrees today. Core's `manifest.ts` documents `minGapMs` as "across all of this
+  adapter's runs" (per adapter). The runtime, the security model, the architecture and the
+  `breaker-opened` event key per host, shared by every adapter. This decision's first draft said
+  per manifest (every origin in one manifest's `navigation` and `egress`). With limits declared
+  per manifest, two adapters on one host with different `minGapMs` or `cooldownSeconds` have no
+  defined result.
 - Options for persistence: none (a restart closes the breaker); a small `breakers.json` in the
   data directory; rebuild at start from the last `breaker-opened` per host in the audit log.
 - Recommendation:
@@ -1430,9 +1508,13 @@ round 2.
     (C10), which nothing has today.
   - Persist by rebuilding from the audit log at start. It is already fsynced and hash-chained, so
     there's no second file to keep consistent, and a restart can't be used to skip a cool-down.
-  - Key by the adapter's sites, not just the host that answered: a block seen on the auth origin
-    during a login also stops tool calls to www. Every origin in one manifest's `navigation` and
-    `egress` shares the breaker.
+  - Key both the budget and the breaker per host, shared by every adapter, and apply the
+    strictest limits of all approved adapters that declare that host (the largest `minGapMs`,
+    `cooldownSeconds` and `maxCooldownSeconds`). The site sees one person, one IP and one
+    browser, not adapters, so one adapter tripping a block page stalling another's calls to that
+    host is correct, not a bug. A block on the auth host during a login doesn't open www's
+    breaker, but the login ends `blocked` and the attempt marker's backoff holds further logins.
+  - Fix core's `minGapMs` comment to match (C20).
 - Blocks: M2.
 
 ### D34. Form-action origin: granted or navigation
@@ -1719,6 +1801,114 @@ round 2.
   harm a misused `write` tool can do (R6).
 - Recommendation: 20 per line, raised only if real use hits it.
 - Blocks: nothing. An adapter change.
+
+### D55. Driver-level budget and block detection
+
+- Today: the rate budget and circuit breaker live in the runtime's guarded page and probe. They
+  see `page.fetch`, `goto` and the probe, nothing else. The guarded page leaves requests the page
+  makes, or that `evaluate()` code makes, to the driver, and the driver has no budget or
+  breaker. Core v2's `ToolRunPolicy` has no rate field either. So `evaluate()` fetches, clicks
+  that submit or navigate, the site's own XHRs and Akamai sensor POSTs, page navigations and the
+  whole login in the auth partition are neither paced nor watched for block pages. A block page
+  the site serves to a page-initiated request doesn't open the breaker, and calls keep coming.
+- Why it matters: run 1's block came from a burst of requests. AC7 fails if anything bypasses
+  the budget, and AC9 says no call reaches the site during a cool-down. Neither can pass.
+- Options: leave it (tools must use `page.fetch` and `goto`; reviewers reject adapters that
+  don't); move the budget into the driver entirely; split it: the runtime keeps the budget and
+  breaker, the driver reports to them and asks them.
+- Considerations: the driver sees every request in both partitions with its resource type and
+  status, so it is the only place that can spot a block page served to a page-initiated request
+  or a login. But pacing every subresource would break pages; only main-frame navigations are
+  worth spacing, and the site's own XHRs follow from them. Keeping the state in the runtime keeps
+  one breaker per host whichever partition saw the block.
+- Recommendation: split it (C16). The driver reports block signatures (a 403 HTML page, Akamai's
+  "Access Denied … Reference #" page, a 429) on navigations and API calls in both partitions to
+  the runtime's breaker, and waits on the runtime's budget before each main-frame navigation,
+  tool- or page-initiated, in both partitions. An open breaker cancels every request to that
+  host in the tool partition and ends a login as `blocked`. AC7's test then counts requests at
+  the fake site, not at the capability API.
+- Blocks: M2 (AC7 and AC9, and every live test).
+
+### D56. URL regex deadline
+
+- Today: `urlRegex` conditions run synchronously in the main process. On `main` the auth flow
+  compiles and runs them with a 2,048-character bound on the path and query, no screen and no
+  deadline. Core v2 adds the parse-time screen, which stops exponential shapes but not polynomial
+  ones such as `\d*\d*\d*\d*x`: at 2,048 characters a degree-4 pattern needs on the order of
+  10^13 steps. A hostile adapter controls the pattern, and through `goto(url)` to its own
+  navigation origins, the input too. That freezes the trusted main process: logins, the MCP
+  endpoint and the audit log. OTP patterns already run in a worker under a deadline.
+- Options: run `urlRegex` in the same worker-with-deadline as OTP patterns, a timeout counting
+  as "doesn't match"; cap quantifiers per pattern (say at most two unbounded ones) and lower the
+  input bound to about 256 characters; drop `urlRegex` and keep only `urlContains`.
+- Considerations: `waitFor` polls its condition, so a worker round trip per poll costs latency,
+  but conditions are polled every few hundred milliseconds at most, and a worker can be kept for
+  the length of a login. A quantifier cap is cheap but is another screen that a cleverer shape
+  might pass. Most real login flows only need `urlContains`.
+- Recommendation: the worker with a deadline (C19), shared with the OTP matcher, and the input
+  bound lowered to 256 as well. Until then, reject `urlRegex` in third-party manifests, and
+  prefer `urlContains` in first-party ones.
+- Blocks: M7 (third-party adapters). Nothing for Woolworths, whose flow needs only `urlContains`.
+
+### D57. Blocked-request target
+
+- Today: the round-1 driver reports a blocked request's target as the origin plus a 16-hex digest
+  of the path, on purpose: tool code chooses the whole URL of a request it wants blocked, so a
+  path can carry a session token into the audit log. Core v2's `BlockedRequest.target` is origin
+  and path.
+- Options: origin plus path digest (round 1); origin and path, through output redaction;
+  origin only.
+- Considerations: redaction catches only verbatim cookie and secret values, so an encoded token
+  in a blocked path would be stored in the audit log, which is kept and may be shared to debug.
+  The digest still lets the person see that the same path was blocked again, and match it
+  against a path they already know. A readable path helps when an adapter breaks, but the
+  developer can reproduce that against the fake site.
+- Recommendation: keep origin plus path digest in `request-blocked` (C18).
+- Blocks: M1 (the audit event's shape).
+
+### D58. Page-initiated traffic
+
+- Today: core v2's policy holds the site's own API calls to the declarations, and counts
+  navigations and API calls, the site's own included, against one ceiling
+  (`limits.requestsPerRun`). The Woolworths manifest sets `requestsPerRun: 6` and declares only
+  its tools' four endpoints. The site makes several calls on load, including Akamai's sensor
+  POSTs. Under the v2 policy a home-page load can exhaust the ceiling, and the sensor POSTs are
+  cancelled, which probably makes bot detection worse, against D24's intent. Declarations have
+  no host, so declaring the sensor path on `acs.woolworths.com.au` also allows it on www, and
+  it would have to be labelled `read`. G1's own warning (keep the partition-wide ceiling apart
+  from the `page.fetch` count) was lost when core v2 merged them. Separately, deny segments apply
+  to every resource type today, scripts included (R17).
+- Options: one ceiling and per-host declarations; two ceilings, one for tool-initiated requests
+  (what `requestsPerRun` was meant for) and a larger one for page-initiated navigations and API
+  calls; for the site's own non-GET traffic, a host-scoped `telemetry` list (C8 reduced) or
+  `host` on declarations with a purpose of its own.
+- Considerations: the driver can't tell which world started a request, but the runtime knows
+  which requests it made itself (`page.fetch`, `goto`), so it can count those separately. A
+  telemetry list says plainly on the approval screen what it is; a `read` label on a sensor POST
+  says something false. Cancelling a site's own sensor traffic is the kind of difference from the
+  person's own browser D24 tells us to avoid.
+- Recommendation: two ceilings (C17); `host` on declarations, defaulting to the home host, with
+  the site's own non-GET background calls declared on their real hosts under a `telemetry`
+  purpose that ranks with `read` and that no tool can call through `page.fetch`; and deny
+  segments limited to R17's resource types. The Woolworths numbers, hosts and paths come from
+  M2's measurement, and the manifest is fixed before the driver adopts the v2 policy.
+- Blocks: M2. Until it's decided, the current Woolworths manifest breaks under the v2 policy.
+
+### D59. Several Messages senders
+
+- Today: a grant is one record per adapter, content hash and secret, and Messages codes are
+  granted under the reserved secret `messages` with the sender handle as `itemRef`. So an adapter
+  has one `messages` grant and one sender. `messagesSourcesIn()` can return several senders, and
+  a manifest with two can't be fully granted.
+- Options: one Messages sender per adapter, enforced when the manifest is parsed; a grant per
+  sender (the secret becomes `messages:<sender>`, or the grant's key gains the sender); one grant
+  whose `itemRef` holds a list.
+- Considerations: sites that send codes from two numbers exist (a short code and a long number,
+  or a change of provider), but none we target does. A list in `itemRef` muddies a field every
+  other provider uses for one item. A grant per sender keeps each approval explicit.
+- Recommendation: one sender per adapter for now, as a parse-time rule (C19), and a grant per
+  sender if a real site needs two.
+- Blocks: nothing for Woolworths.
 
 ---
 
