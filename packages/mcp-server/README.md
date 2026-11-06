@@ -55,5 +55,9 @@ bundles the bridge, this is the only way to launch it.
   time. Bodies over 1 MiB are refused. At most 32 sessions are kept; the least recently used goes
   first.
 - **Bridge.** It writes nothing but JSON-RPC to stdout. Upstream failures become JSON-RPC errors
-  with fixed text. The config file must be mode 0600, owned by this user, and name
+  with fixed text. Every client request gets exactly one answer: if the app quits or restarts
+  mid-call, or the connection resets, the call is answered at once with a fixed error instead of
+  waiting out the client's own timeout, and a late answer is dropped. A request the client
+  cancelled gets no answer from the bridge. Its one timer (the reconnect timeout) is injected as
+  `schedule`. The config file must be mode 0600, owned by this user, and name
   `http://127.0.0.1:<port>/mcp`, so an edited file can't send the token elsewhere.

@@ -9,9 +9,9 @@ import {
   LATEST_PROTOCOL_VERSION,
   ToolListChangedNotificationSchema,
 } from '@modelcontextprotocol/sdk/types.js'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { type BridgeTarget, type RunningBridge, runBridge } from '../src/bridge'
+import { type BridgeTarget, type RunningBridge, runBridge, type Schedule } from '../src/bridge'
 import { type RunningHttpServer, startHttpServer } from '../src/http'
 import type { ListedTool } from '../src/tool-caller'
 import { FakeCaller } from './fake-caller'
@@ -96,11 +96,73 @@ function nextLine(stream: PassThrough): Promise<any> {
   })
 }
 
+interface Timer {
+  readonly run: () => void
+  readonly ms: number
+  cancelled: boolean
+}
+
+/** A schedule the test drives: nothing runs until the test calls a timer's run(). */
+function manualSchedule() {
+  const timers: Timer[] = []
+  let notify: (timer: Timer) => void = () => {}
+  const schedule: Schedule = (run, ms) => {
+    const timer: Timer = { run, ms, cancelled: false }
+    timers.push(timer)
+    notify(timer)
+    return () => {
+      timer.cancelled = true
+    }
+  }
+  /** Resolves with the next timer the bridge sets. */
+  const nextTimer = () =>
+    new Promise<Timer>((resolve) => {
+      notify = resolve
+    })
+  return { timers, schedule, nextTimer }
+}
+
+/** One turn of the event loop, after which Node has reported any unhandled rejection. */
+const turn = () => new Promise((resolve) => setImmediate(resolve))
+
 const INITIALIZE = {
   jsonrpc: '2.0',
   id: 1,
   method: 'initialize',
   params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'raw', version: '1' } },
+}
+
+const SESSION_ENDED = 'the siteadapter session ended before this request was answered'
+
+/** A caller whose view_cart never answers, and a promise that resolves once each call reaches it. */
+function stuckCaller(): { caller: FakeCaller; reached: (count: number) => Promise<void> } {
+  const caller = new FakeCaller([viewCart])
+  let waiters: Array<() => void> = []
+  caller.answer = () => {
+    for (const wake of waiters) wake()
+    return new Promise(() => {})
+  }
+  const reached = async (count: number): Promise<void> => {
+    while (caller.calls.length < count) {
+      await new Promise<void>((resolve) => {
+        waiters = [...waiters, resolve]
+      })
+    }
+  }
+  return { caller, reached }
+}
+
+/** Every JSON-RPC line the bridge writes, as it writes them. */
+function collectLines(stream: PassThrough): () => any[] {
+  let buffered = ''
+  stream.on('data', (chunk: Buffer) => {
+    buffered += chunk.toString('utf8')
+  })
+  return () =>
+    buffered
+      .split('\n')
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line))
 }
 
 describe('runBridge', () => {
@@ -299,6 +361,85 @@ describe('runBridge', () => {
     expect(methods).toContain('DELETE')
   })
 
+  it('answers a call in flight at once when the app quits', async () => {
+    const { caller, reached } = stuckCaller()
+    const server = await startHttpServer({ caller, token: TOKEN })
+    const client = await connectThroughBridge(server.url)
+
+    const call = client.callTool({ name: 'woolworths_view_cart', arguments: {} }, undefined, {
+      timeout: 3_000,
+    })
+    await reached(1)
+    await server.close()
+
+    await expect(call).rejects.toThrow(SESSION_ENDED)
+  })
+
+  it('answers a call in flight at once when its connection is reset', async () => {
+    const { caller, reached } = stuckCaller()
+    const server = await startServer(caller)
+    let arm: (reset: () => void) => void = () => {}
+    const armed = new Promise<() => void>((resolve) => {
+      arm = resolve
+    })
+    const resetting: FetchLike = async (url, init) => {
+      const response = await fetch(url, init)
+      if (!String(init?.body).includes('"tools/call"') || response.body === null) return response
+      void response.body.cancel()
+      const broken = new ReadableStream<Uint8Array>({
+        pull: (controller) =>
+          new Promise<void>((resolve) => {
+            arm(() => {
+              controller.error(new TypeError('terminated: ECONNRESET'))
+              resolve()
+            })
+          }),
+      })
+      return new Response(broken, { status: response.status, headers: response.headers })
+    }
+    const { clientTransport } = await wireBridge(server.url, TOKEN, resetting)
+    const client = new Client({ name: 'c', version: '1' })
+    await client.connect(clientTransport)
+    cleanup.push(() => client.close())
+
+    const call = client.callTool({ name: 'woolworths_view_cart', arguments: {} }, undefined, {
+      timeout: 3_000,
+    })
+    await reached(1)
+    const reset = await armed
+    reset()
+
+    await expect(call).rejects.toThrow(SESSION_ENDED)
+  })
+
+  it('answers what is in flight when it closes, except a request the client cancelled', async () => {
+    const { caller, reached } = stuckCaller()
+    const server = await startServer(caller)
+    const { toBridge, fromBridge, bridge } = await wireBridge(server.url)
+    const lines = collectLines(fromBridge)
+    const initialized = nextLine(fromBridge)
+    toBridge.write(`${JSON.stringify(INITIALIZE)}\n`)
+    await initialized
+    const call = (id: number) => ({
+      jsonrpc: '2.0',
+      id,
+      method: 'tools/call',
+      params: { name: 'woolworths_view_cart', arguments: {} },
+    })
+    toBridge.write(`${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`)
+    toBridge.write(`${JSON.stringify(call(2))}\n`)
+    toBridge.write(`${JSON.stringify(call(3))}\n`)
+    await reached(2)
+
+    const cancel = { jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: 2 } }
+    toBridge.write(`${JSON.stringify(cancel)}\n`)
+    await bridge.close()
+
+    expect(lines().slice(1)).toEqual([
+      { jsonrpc: '2.0', id: 3, error: { code: -32000, message: SESSION_ENDED } },
+    ])
+  })
+
   it('can be closed more than once', async () => {
     const server = await startServer(new FakeCaller([searchProducts]))
     const { bridge } = await wireBridge(server.url)
@@ -311,7 +452,12 @@ describe('reconnecting after the app restarts', () => {
   async function bridgeWithReconnect(
     target: { current: BridgeTarget },
     name: string,
-    extra: { fetch?: FetchLike; reconnectTimeoutMs?: number; onReconnect?: () => void } = {},
+    extra: {
+      fetch?: FetchLike
+      reconnectTimeoutMs?: number
+      schedule?: Schedule
+      onReconnect?: () => void
+    } = {},
   ): Promise<Client> {
     const toBridge = new PassThrough()
     const fromBridge = new PassThrough()
@@ -325,6 +471,7 @@ describe('reconnecting after the app restarts', () => {
       },
       ...(extra.fetch === undefined ? {} : { fetch: extra.fetch }),
       ...(extra.reconnectTimeoutMs === undefined ? {} : { reconnectTimeoutMs: extra.reconnectTimeoutMs }),
+      ...(extra.schedule === undefined ? {} : { schedule: extra.schedule }),
     })
     cleanup.push(() => bridge.close())
     const client = new Client({ name, version: '1.0.0' })
@@ -333,8 +480,10 @@ describe('reconnecting after the app restarts', () => {
     return client
   }
 
-  /** An endpoint stand-in that answers initialize with a JSON-RPC error, or never answers. */
-  async function startBrokenEndpoint(mode: 'error' | 'silent'): Promise<{ url: string; server: Server }> {
+  /** An endpoint stand-in that answers initialize with a JSON-RPC error, never answers, or hangs up. */
+  async function startBrokenEndpoint(
+    mode: 'error' | 'silent' | 'hangup',
+  ): Promise<{ url: string; server: Server }> {
     const server = createServer((req, res) => {
       let body = ''
       req.on('data', (chunk) => {
@@ -349,6 +498,11 @@ describe('reconnecting after the app restarts', () => {
         if (mode === 'silent') {
           res.writeHead(200, { 'content-type': 'text/event-stream', 'mcp-session-id': 's' })
           res.write(': waiting\n\n')
+          return
+        }
+        if (mode === 'hangup') {
+          res.writeHead(200, { 'content-type': 'text/event-stream', 'mcp-session-id': 's' })
+          res.end()
           return
         }
         res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 's' })
@@ -443,16 +597,123 @@ describe('reconnecting after the app restarts', () => {
   })
 
   it('gives up when the replayed initialize is never answered', async () => {
+    const clock = manualSchedule()
     const server = await startHttpServer({ caller: new FakeCaller([viewCart]), token: TOKEN })
     const target = { current: { url: server.url, token: TOKEN } }
-    const client = await bridgeWithReconnect(target, 'c', { reconnectTimeoutMs: 50 })
+    const client = await bridgeWithReconnect(target, 'c', {
+      reconnectTimeoutMs: 50,
+      schedule: clock.schedule,
+    })
     await client.listTools()
     await server.close()
     target.current = { url: (await startBrokenEndpoint('silent')).url, token: TOKEN }
 
+    const scheduled = clock.nextTimer()
+    const call = client.callTool({ name: 'woolworths_view_cart', arguments: {} })
+    const timer = await scheduled
+    timer.run()
+
+    expect(timer.ms).toBe(50)
+    await expect(call).rejects.toThrow('siteadapter is not reachable; make sure the app is running')
+  })
+
+  it('gives up at once, without waiting out the timeout, when the new endpoint hangs up', async () => {
+    const clock = manualSchedule()
+    const server = await startHttpServer({ caller: new FakeCaller([viewCart]), token: TOKEN })
+    const target = { current: { url: server.url, token: TOKEN } }
+    const client = await bridgeWithReconnect(target, 'c', { schedule: clock.schedule })
+    await client.listTools()
+    await server.close()
+    target.current = { url: (await startBrokenEndpoint('hangup')).url, token: TOKEN }
+
     await expect(client.callTool({ name: 'woolworths_view_cart', arguments: {} })).rejects.toThrow(
       'siteadapter is not reachable; make sure the app is running',
     )
+    expect(clock.timers).toHaveLength(1)
+    expect(clock.timers[0]?.cancelled).toBe(true)
+  })
+
+  // Regression: the replayed initialize's timeout used to outlive a send that failed, and its
+  // rejection, which nothing awaited, killed the bridge process when it fired.
+  it('survives the reconnect timeout after a reconnect that found the app still down', async () => {
+    const clock = manualSchedule()
+    const server = await startHttpServer({ caller: new FakeCaller([viewCart]), token: TOKEN })
+    const target = { current: { url: server.url, token: TOKEN } }
+    const client = await bridgeWithReconnect(target, 'c', {
+      reconnectTimeoutMs: 50,
+      schedule: clock.schedule,
+    })
+    await client.listTools()
+    await server.close()
+
+    await expect(client.callTool({ name: 'woolworths_view_cart', arguments: {} })).rejects.toThrow(
+      'siteadapter is not reachable; make sure the app is running',
+    )
+    expect(clock.timers).toHaveLength(1)
+    expect(clock.timers[0]?.cancelled).toBe(true)
+    // Even a timer that fired anyway must find nothing left to reject.
+    for (const timer of clock.timers) timer.run()
+    await turn()
+
+    const caller = new FakeCaller([viewCart])
+    caller.answer = async () => ({ status: 'ok', output: { items: 4 } })
+    target.current = { url: (await startServer(caller)).url, token: TOKEN }
+    const result = await client.callTool({ name: 'woolworths_view_cart', arguments: {} })
+    expect(result.structuredContent).toEqual({ items: 4 })
+  })
+
+  it('survives a notification that sets off a reconnect while the app is down', async () => {
+    const clock = manualSchedule()
+    const server = await startHttpServer({ caller: new FakeCaller([viewCart]), token: TOKEN })
+    const target = { current: { url: server.url, token: TOKEN } }
+    const client = await bridgeWithReconnect(target, 'c', {
+      reconnectTimeoutMs: 50,
+      schedule: clock.schedule,
+    })
+    await client.listTools()
+    await server.close()
+
+    // What a client sends after its own request timeout fires.
+    const scheduled = clock.nextTimer()
+    await client.notification({ method: 'notifications/cancelled', params: { requestId: 99 } })
+    const timer = await scheduled
+    await vi.waitFor(() => expect(timer.cancelled).toBe(true))
+    timer.run()
+    await turn()
+
+    const caller = new FakeCaller([viewCart])
+    caller.answer = async () => ({ status: 'ok', output: { items: 5 } })
+    target.current = { url: (await startServer(caller)).url, token: TOKEN }
+    const result = await client.callTool({ name: 'woolworths_view_cart', arguments: {} })
+    expect(result.structuredContent).toEqual({ items: 5 })
+  })
+
+  it('answers the calls left on the old session when it reconnects for a new one', async () => {
+    const { caller, reached } = stuckCaller()
+    const first = await startHttpServer({ caller, token: TOKEN, maxSessions: 1 })
+    cleanup.push(() => first.close())
+    const target = { current: { url: first.url, token: TOKEN } }
+    const client = await bridgeWithReconnect(target, 'c')
+    // Settled into a value at once: the rejection arrives during the listTools() below.
+    const stuck = client
+      .callTool({ name: 'woolworths_view_cart', arguments: {} }, undefined, { timeout: 3_000 })
+      .then(
+        () => 'answered',
+        (error: Error) => error.message,
+      )
+    await reached(1)
+    // Another client takes the only session slot, so the bridge's next request finds its session gone.
+    const other = new Client({ name: 'other', version: '1' })
+    await other.connect(
+      new StreamableHTTPClientTransport(new URL(first.url), {
+        requestInit: { headers: { authorization: `Bearer ${TOKEN}` } },
+      }),
+    )
+    cleanup.push(() => other.close())
+
+    await client.listTools()
+
+    expect(await stuck).toContain(SESSION_ENDED)
   })
 
   it('tries again on the next call after a failed reconnect', async () => {
