@@ -58,6 +58,8 @@ const TOTP: PageState = { ...SMS, path: '/u/mfa-otp-challenge?state=T' }
 const EMAIL: PageState = { ...SMS, path: '/u/mfa-email-challenge?state=T' }
 /** Back on www after the callback. */
 const HOME: PageState = { path: '/', visible: [] }
+/** An Auth0 page off every login path, such as a tenant error page: only its container shows. */
+const AUTH0_ERROR: PageState = { path: '/error?code=tenant', visible: [SELECTORS.auth0Widget] }
 const BLANK: PageState = { path: '/auth/login?redirect_uri=x&path=/', visible: [] }
 
 function withVisible(page: PageState, ...selectors: string[]): PageState {
@@ -196,8 +198,8 @@ describe('settle', () => {
     ])
   })
 
-  it('waits 20 s at most for any one page change', () => {
-    expect(SETTLE_TOTAL_MS).toBe(20_000)
+  it('waits 10 s at most for any one page change', () => {
+    expect(SETTLE_TOTAL_MS).toBe(10_000)
   })
 })
 
@@ -215,7 +217,8 @@ describe('the login, walked against scripted Auth0 pages', () => {
       submit: { identifier: { delayMs: 800, page: PASSWORD }, password: { delayMs: 2500, page: HOME } },
     })
     expect(result.outcome).toBe('logged-in')
-    expect(result.pausedMs).toBe(3000 + 1000 + 3000)
+    expect(result.pausedMs).toBe(3000 + 1500 + 3000)
+    expect(SETTLE_PAUSES_MS.slice(0, 3)).toEqual([500, 1000, 1500])
   })
 
   it('logs in silently, typing nothing, when Auth0’s session sends the browser straight back', () => {
@@ -308,7 +311,7 @@ describe('the login, walked against scripted Auth0 pages', () => {
     })
     expect(result).toMatchObject({ outcome: 'needs-user', reason: 'otp-required', note: NOTES.codeRefused })
     expect(result.actions.filter((action) => action.startsWith('otp'))).toEqual(['otp:messages'])
-    expect(result.pausedMs).toBe(1000)
+    expect(result.pausedMs).toBe(500)
   })
 
   it('hands a CAPTCHA shown before the form to the person, before typing any secret', () => {
@@ -354,7 +357,7 @@ describe('the login, walked against scripted Auth0 pages', () => {
       note: NOTES.passwordRefused,
     })
     expect(result.actions).toEqual(['goto', 'fill:username', 'submit', 'fill:password', 'submit'])
-    expect(result.pausedMs).toBe(1000)
+    expect(result.pausedMs).toBe(1500)
   })
 
   it('reports a blocked account as account-locked', () => {
@@ -383,18 +386,55 @@ describe('the login, walked against scripted Auth0 pages', () => {
     expect(result.actions).not.toContain('fill:password')
   })
 
-  it('hands an Auth0 page nobody scripted (terms, say) to the person', () => {
-    const terms: PageState = { path: '/u/terms?state=T', visible: [] }
-    const result = walk(steps, { ...FULL, submit: { ...FULL.submit, password: { delayMs: 0, page: terms } } })
-    expect(result).toMatchObject({ outcome: 'needs-user', reason: 'other', note: NOTES.unknownPage })
+  it('hands Auth0’s new-terms and consent pages to the person as terms-update', () => {
+    for (const path of ['/u/terms?state=T', '/u/consent?state=T', '/u/terms/accept']) {
+      const page: PageState = { path, visible: [SELECTORS.auth0Widget] }
+      const result = walk(steps, { ...FULL, submit: { ...FULL.submit, password: { delayMs: 0, page } } })
+      expect(result).toMatchObject({ outcome: 'needs-user', reason: 'terms-update', note: NOTES.terms })
+      expect(result.pausedMs).toBe(SETTLE_TOTAL_MS)
+    }
+  })
+
+  it('does not take a lookalike of the terms path for terms', () => {
+    const page: PageState = { path: '/u/termsandmore?state=T', visible: [SELECTORS.auth0Widget] }
+    const result = walk(steps, { ...FULL, submit: { ...FULL.submit, password: { delayMs: 0, page } } })
+    expect(result).toMatchObject({ outcome: 'needs-user', reason: 'site-changed', note: NOTES.unknownPage })
+  })
+
+  it('hands an Auth0 page nobody scripted (phone enrolment, say) to the person as site-changed', () => {
+    const enrol: PageState = { path: '/u/mfa-sms-enrollment?state=T', visible: [SELECTORS.auth0Widget] }
+    const result = walk(steps, { ...FULL, submit: { ...FULL.submit, password: { delayMs: 0, page: enrol } } })
+    expect(result).toMatchObject({ outcome: 'needs-user', reason: 'site-changed', note: NOTES.unknownPage })
     expect(result.pausedMs).toBe(SETTLE_TOTAL_MS)
   })
 
-  it('hands a login page that never appeared to the person', () => {
+  it('hands an Auth0 page off every login path (a tenant error) to the person, not to the probe', () => {
+    const result = walk(steps, {
+      ...FULL,
+      submit: { ...FULL.submit, password: { delayMs: 0, page: AUTH0_ERROR } },
+    })
+    expect(result).toMatchObject({ outcome: 'needs-user', reason: 'site-changed', note: NOTES.unknownPage })
+    expect(result.actions).toEqual(['goto', 'fill:username', 'submit', 'fill:password', 'submit'])
+    // Straight there: off the login paths, so no settle waits on it.
+    expect(result.pausedMs).toBe(0)
+  })
+
+  it('hands an Auth0 error page met straight after the goto to the person, typing nothing', () => {
+    const result = walk(steps, { goto: { delayMs: 0, page: AUTH0_ERROR } })
+    expect(result).toEqual({
+      outcome: 'needs-user',
+      reason: 'site-changed',
+      note: NOTES.unknownPage,
+      actions: ['goto'],
+      pausedMs: 0,
+    })
+  })
+
+  it('hands a login page that never appeared to the person as site-changed', () => {
     const result = walk(steps, { goto: { delayMs: 0, page: BLANK } })
     expect(result).toEqual({
       outcome: 'needs-user',
-      reason: 'other',
+      reason: 'site-changed',
       note: NOTES.noLoginPage,
       actions: ['goto'],
       pausedMs: SETTLE_TOTAL_MS,
@@ -404,7 +444,7 @@ describe('the login, walked against scripted Auth0 pages', () => {
   it('does not take a lookalike path without the field for the page', () => {
     const bare: PageState = { path: '/u/login/identifier?state=T', visible: [] }
     const result = walk(steps, { goto: { delayMs: 0, page: bare } })
-    expect(result).toMatchObject({ outcome: 'needs-user', reason: 'other', note: NOTES.unknownPage })
+    expect(result).toMatchObject({ outcome: 'needs-user', reason: 'site-changed', note: NOTES.unknownPage })
     expect(result.actions).toEqual(['goto'])
   })
 
@@ -419,6 +459,8 @@ describe('the login, walked against scripted Auth0 pages', () => {
       BLANK,
       withVisible(PASSWORD, SELECTORS.fieldError),
       withVisible(IDENTIFIER, SELECTORS.captcha),
+      AUTH0_ERROR,
+      { path: '/u/terms?state=T', visible: [SELECTORS.auth0Widget] },
     ]
     for (const manifestSteps of [steps, totpSteps]) {
       for (const first of pages) {
@@ -440,7 +482,8 @@ describe('the login, walked against scripted Auth0 pages', () => {
               expect(result.actions.filter((action) => action.startsWith('otp')).length).toBeLessThanOrEqual(
                 1,
               )
-              expect(result.pausedMs).toBeLessThanOrEqual(5 * SETTLE_TOTAL_MS)
+              // Four settles at most (after the goto, the email, the password and the code).
+              expect(result.pausedMs).toBeLessThanOrEqual(4 * SETTLE_TOTAL_MS)
             }
           }
         }

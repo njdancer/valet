@@ -152,7 +152,9 @@ and its field together:
    `otp` field of the `login` 1Password item, but only with `createManifest({ totp: true })`;
    otherwise (email, or an authenticator without `totp`) `needsUser`. Then tick "Remember this
    device" if it is unticked (`input[name="rememberBrowser"]:not(:checked)`) and submit.
-4. `assertLoggedIn`.
+4. If the page is off every login path but still shows Auth0's container (`main._widget`), such
+   as a tenant error page, `needsUser` (`site-changed`): conditions can't see the host, so this
+   is what keeps an Auth0 page from reaching the probe as "logged in?". Otherwise `assertLoggedIn`.
 
 **Silent re-login.** When the www session has expired but Auth0's session (in the persistent auth
 partition) hasn't, `/auth/login` comes straight back to www with no page in between. The same
@@ -163,25 +165,40 @@ Conditions only ever see a URL's path and query, never its host, so "off the log
 path test: not under Auth0's `/u/`, `/authorize`, `/login` or `/continue`, nor www's `/auth/` or
 `/shop/securelogin`. They use `urlContains` and core-screened `urlRegex`.
 
-Each wait for the page to change is a `settle`: nested `when`s with pauses between looks (20 s in
+Each wait for the page to change is a `settle`: nested `when`s with pauses between looks (10 s in
 all), which return as soon as the page moves on and never fail. There is no `waitFor`, because
 its timeout ends the flow as `condition-timeout`, and the security model sends challenges and
 unexpected prompts to the person instead. Every way the flow can stop is a `needsUser` with a
 reason code and a fixed in-app note (`NOTES` in `src/manifest.ts`):
 
-| Where                                           | Reason           |
-| ----------------------------------------------- | ---------------- |
-| A CAPTCHA on any page, before typing there      | `captcha`        |
-| Still on the identifier page after Continue     | `login-required` |
-| Still on the password page: account blocked     | `account-locked` |
-| Still on the password page: anything else       | `login-required` |
-| An email code, or an authenticator without TOTP | `otp-required`   |
-| Still on the challenge page after the code      | `otp-required`   |
-| Another Auth0 page (terms, phone enrolment, …)  | `other`          |
-| No login page appeared at all                   | `other`          |
+| Where                                                    | Reason           |
+| -------------------------------------------------------- | ---------------- |
+| A CAPTCHA on any page, before typing there               | `captcha`        |
+| Still on the identifier page after Continue              | `login-required` |
+| Still on the password page: account blocked              | `account-locked` |
+| Still on the password page: anything else                | `login-required` |
+| An email code, or an authenticator without TOTP          | `otp-required`   |
+| Still on the challenge page after the code               | `otp-required`   |
+| Auth0's terms or consent page (`/u/terms`, `/u/consent`) | `terms-update`   |
+| Another Auth0 page (phone enrolment, an error page, …)   | `site-changed`   |
+| No login page appeared at all                            | `site-changed`   |
 
-The worst case is about 80 s of pauses (four settles), so the runtime's flow timeout must be
-longer than that, or a stalled login ends as `timeout` / `timed-out` instead.
+`site-changed` and `terms-update` tell an MCP client to stop retrying; the note says the rest.
+
+### Timing
+
+The worst case is 40 s of pauses (four settles of 10 s: after the goto, the email, the password
+and the code), plus the wait for the SMS, which the auth flow polls for until its own deadline.
+So the stall exits stay typed `needsUser`s only if:
+
+- the auth flow's `flowTimeoutMs` is at least 40 s plus the time an SMS takes to arrive (about
+  60 s is enough: **90 s** is the setting this adapter expects), and
+- the runtime's tool timeout is longer than `flowTimeoutMs` plus the tool's own calls, which are
+  paced at 2.5 s (`limits.minGapMs`) and come to at most eight in the 401-retry path below: the
+  default 120 s (`DEFAULT_TOOL_TIMEOUT_MS`) is just enough for a 90 s flow.
+
+Otherwise a slow but legitimate login ends as `timeout` / `timed-out` instead of the `needsUser`
+the security model wants. Core has no way to declare these per adapter (core change requests).
 
 The request surface lists exactly the calls the tools make, and a test fails if a declaration goes
 unused. The login probe is not on it: the runtime makes the probe itself, outside the tool-code

@@ -98,8 +98,22 @@ describe('the real manifest', () => {
     })
   })
 
-  it('lets no subframe origin onto the auth page beyond the navigation list', () => {
+  it('lets no subframe origin onto the auth page beyond the navigation list until the CAPTCHA is confirmed', () => {
+    // The CAPTCHA provider's frame origin is an open question (README); see the e2e for what [] costs.
     expect(realManifest.auth.frameOrigins).toEqual([])
+  })
+
+  it('declares the CAPTCHA frame origins it is given, and only for the auth page', () => {
+    const manifest = createManifest({ captchaFrameOrigins: ['https://challenges.cloudflare.com'] })
+    expect(manifest.auth.frameOrigins).toEqual(['https://challenges.cloudflare.com'])
+    expect(manifest.navigation).toEqual(realManifest.navigation)
+    expect(manifest.egress).toEqual(realManifest.egress)
+    expect(manifest.secrets.login?.origins).toEqual([REAL_AUTH_ORIGIN])
+  })
+
+  it('refuses a CAPTCHA frame origin core would not accept as an origin', () => {
+    expect(() => createManifest({ captchaFrameOrigins: ['https://*.hcaptcha.com'] })).toThrow()
+    expect(() => createManifest({ captchaFrameOrigins: ['http://challenges.cloudflare.com'] })).toThrow()
   })
 
   it('paces requests at least 2.5 s apart, with the default breaker cool-downs', () => {
@@ -285,7 +299,14 @@ describe('the auth steps', () => {
     expect(all.some((step) => step.op === 'fail')).toBe(false)
     const stops = all.filter((step) => step.op === 'needsUser')
     expect(new Set(stops.map((step) => step.reason))).toEqual(
-      new Set(['captcha', 'login-required', 'account-locked', 'otp-required', 'other']),
+      new Set([
+        'captcha',
+        'login-required',
+        'account-locked',
+        'otp-required',
+        'terms-update',
+        'site-changed',
+      ]),
     )
     for (const stop of stops) expect(Object.values(NOTES)).toContain(stop.note)
     for (const note of Object.values(NOTES)) expect(note.length).toBeLessThanOrEqual(200)
