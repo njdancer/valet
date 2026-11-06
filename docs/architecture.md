@@ -67,7 +67,10 @@ use the round-1 names.
    `irreversible` tool it asks the person in the app before any tool code runs.
 4. Tool code runs with a guarded `ToolContext`. Every `page.fetch` and `goto` is checked against
    the request surface and waits for the site's rate budget; the driver holds every request in the
-   tool partition to the same policy at the network layer.
+   tool partition to the same request policy at the network layer. The rate budget and breaker
+   see only `page.fetch`, `goto` and the probe: requests the page or `evaluate()` code makes, and
+   the login, are not paced or watched for block pages yet
+   ([D55](plan.md#d55-driver-level-budget-and-block-detection)).
 5. `ctx.session.ensure()` runs the probe in the tool partition. If it says logged out, the runtime
    writes the attempt marker and calls the injected `AuthRunner`, which the app implements with
    `runAuthFlow` against `driver.openAuthPage()`, the grant store, the credential resolver and the
@@ -134,9 +137,10 @@ What the driver adds beyond the earlier app:
   and stops on any commit or focus change between characters. Elements in out-of-process
   (cross-site) frames are refused, because `sendInputEvent` can't reach them
   ([D37](plan.md#d37-cross-origin-iframe-logins)).
-- **The tool partition's request filter** applies egress, deny segments, declarations, purpose
-  and the ceiling to every request, whoever made it (security-model.md, "The run's network
-  policy").
+- **The tool partition's request filter** applies egress, deny segments, declarations and
+  purpose to every request, whoever made it. Not yet as core v2 specifies: an ambiguous path only
+  stops a declaration matching, the ceiling counts API calls but not navigations, and blocks
+  aren't audited (security-model.md, "The run's network policy").
 - **The tool partition's CONNECT proxy** (`egress-proxy.ts`) carries every connection, so
   sockets `webRequest` never sees (WebRTC over TCP, WebTransport) can only reach egress hosts on
   443. WebRTC is limited to proxied traffic.
@@ -184,9 +188,11 @@ From the live probe (nothing typed):
 
 So the manifest's `navigation` is `https://www.woolworths.com.au` and
 `https://auth.woolworths.com.au`; the `login` secret's origins are the auth origin only; and
-`cookieDomains` covers www, so the Auth0 session stays in the auth partition. The auth steps go
-to `www…/auth/login` first: if Auth0 still has a session it redirects straight back, the probe
-passes, and no secret is resolved at all. Only when the identifier page appears does the flow
+`cookieDomains` names www and the bare domain. Cookies are matched exactly against their domain,
+so a host-only Auth0 cookie stays in the auth partition; one set on `.woolworths.com.au` would
+not, which M2 checks. The auth steps go to `www…/auth/login` first: if Auth0 still has a session
+it redirects straight back, the probe passes, and no secret is resolved at all. Only when the
+identifier page appears does the flow
 fill.
 
 **On `main`:** the round-1 adapter and fake site still model a same-origin login on www
@@ -280,7 +286,10 @@ From the earlier app, all in `runtime` and `auth-flow`:
   keep driving the session under the next one.
 - **Deadlines everywhere:** input and output parsing (10 s), the tool run (2 min), the
   confirmation (5 min), and the auth flow's own timeout.
-- **Per-site protection:** a rate budget and circuit breaker shared by every adapter for a host.
+- **Per-site protection:** a rate budget and circuit breaker per host, shared by every adapter
+  for that host, applying the strictest limits of the approved adapters that declare it
+  ([D33](plan.md#d33-breaker-defaults-and-persistence), recommended). Today they cover only
+  `page.fetch`, `goto` and the probe ([D55](plan.md#d55-driver-level-budget-and-block-detection)).
 
 ## MCP endpoint
 
@@ -294,7 +303,8 @@ From the earlier app, all in `runtime` and `auth-flow`:
   `readOnlyHint` for `read`; `destructiveHint` and `idempotentHint: false` for `write` and
   `irreversible`; `openWorldHint` always.
 - **Remote access (later):** a separate listener with OAuth and consent on the Mac, behind a
-  tunnel or a relay; see [relay.md](relay.md) and the security model. Until then, nothing remote.
+  tunnel or a relay; see [relay.md](relay.md) (a draft on the unmerged branch `wip/docs-platform`)
+  and the security model. Until then, nothing remote.
 
 ## Packaging and updates
 
