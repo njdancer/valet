@@ -1,12 +1,16 @@
 #!/usr/bin/env node
 // Packages a placeholder app (scripts/smoke/main.cjs) with the real electron-builder config, as a
 // development build, unsigned, in a temporary directory. Then it checks what came out and launches it
-// to see that the fuses hold. Proof that the packaging config works before the main process exists.
-// Nothing it builds is kept unless --keep is given.
+// to see that the fuses hold, and that the renderer's module script runs when served from app://
+// (src/main/updater/app-scheme.ts) with grantFileProtocolExtraPrivileges off. Every check is
+// asserted: any mismatch is listed and the script exits 1. Nothing it builds is kept unless --keep
+// is given, whether it passes or not.
 //
 //   node scripts/package-smoke.mjs [--arch arm64|x64] [--target dir|zip] [--keep]
 //
-// The other architecture than the host's needs electron-builder to download that Electron build.
+// Electron comes from the installed one, copied without Resources/default_app.asar, so the bundle
+// matches what a release build (which downloads Electron and cleans it up) contains. The other
+// architecture than the host's needs electron-builder to download that Electron build.
 // --target zip also builds the zip and compares electron-builder's latest-mac.yml with what
 // scripts/make-feed.mjs writes for the same zip.
 //
@@ -27,6 +31,7 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs'
+import { stripTypeScriptTypes } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -48,6 +53,30 @@ const FUSE_NAMES = [
   'GrantFileProtocolExtraPrivileges',
 ]
 const VERSION = '0.1.0'
+/** electron-builder.config.ts's ELECTRON_FUSES, by wire name (kept equal by hand: this is a .mjs). */
+const EXPECTED_FUSES = {
+  RunAsNode: 'off',
+  EnableCookieEncryption: 'on',
+  EnableNodeOptionsEnvironmentVariable: 'off',
+  EnableNodeCliInspectArguments: 'off',
+  EnableEmbeddedAsarIntegrityValidation: 'on',
+  OnlyLoadAppFromAsar: 'on',
+  LoadBrowserProcessSpecificV8Snapshot: 'off',
+  GrantFileProtocolExtraPrivileges: 'off',
+}
+const EXPECTED_ASAR = [
+  'out/main/app-scheme.mjs',
+  'out/main/index.js',
+  'out/renderer/assets/app.js',
+  'out/renderer/index.html',
+  'package.json',
+]
+
+const failures = []
+/** Records a failed check; the summary lists them and the exit code says whether there were any. */
+function expectEqual(name, actual, expected) {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) failures.push({ check: name, actual, expected })
+}
 
 const { values } = parseArgs({
   options: {
@@ -69,6 +98,9 @@ function writePlaceholder() {
   const pkg = { name: 'siteadapter-desktop-placeholder', version: VERSION, main: 'out/main/index.js' }
   writeFileSync(join(project, 'package.json'), JSON.stringify(pkg, null, 2))
   cpSync(join(APP_DIR, 'scripts', 'smoke', 'main.cjs'), join(project, 'out', 'main', 'index.js'))
+  // The real scheme handler, types stripped (it uses erasable syntax only).
+  const scheme = readFileSync(join(APP_DIR, 'src', 'main', 'updater', 'app-scheme.ts'), 'utf8')
+  writeFileSync(join(project, 'out', 'main', 'app-scheme.mjs'), stripTypeScriptTypes(scheme))
   // Must not be packaged: the config excludes source maps.
   writeFileSync(join(project, 'out', 'main', 'index.js.map'), '{}')
   writeFileSync(
@@ -89,6 +121,14 @@ function cleanEnv(extra = {}) {
   return { ...env, CSC_IDENTITY_AUTO_DISCOVERY: 'false', ...extra }
 }
 
+/** The installed Electron, cloned (APFS copy-on-write) without the default app. */
+function electronDist() {
+  const dist = join(work, 'electron-dist')
+  execFileSync('/bin/cp', ['-cR', join(APP_DIR, 'node_modules', 'electron', 'dist'), dist])
+  rmSync(join(dist, 'Electron.app', 'Contents', 'Resources', 'default_app.asar'), { force: true })
+  return dist
+}
+
 function build() {
   const electron = JSON.parse(readFileSync(join(APP_DIR, 'node_modules', 'electron', 'package.json'), 'utf8'))
   execFileSync(
@@ -104,9 +144,7 @@ function build() {
       `-c.electronVersion=${electron.version}`,
       // The installed Electron is the host's architecture only; for the other one electron-builder
       // downloads Electron itself (network), as a real build does.
-      ...(arch === process.arch
-        ? [`-c.electronDist=${join(APP_DIR, 'node_modules', 'electron', 'dist')}`]
-        : []),
+      ...(arch === process.arch ? [`-c.electronDist=${electronDist()}`] : []),
       '--publish',
       'never',
     ],
@@ -202,103 +240,184 @@ function variant(app, name, change) {
   return copy
 }
 
-writePlaceholder()
-build()
-const app = join(project, 'dist', arch === 'arm64' ? 'mac-arm64' : 'mac', 'siteadapter-dev.app')
-const info = plist(join(app, 'Contents', 'Info.plist'))
-const resources = join(app, 'Contents', 'Resources')
+async function run() {
+  writePlaceholder()
+  build()
+  const app = join(project, 'dist', arch === 'arm64' ? 'mac-arm64' : 'mac', 'siteadapter-dev.app')
+  const info = plist(join(app, 'Contents', 'Info.plist'))
+  const resources = join(app, 'Contents', 'Resources')
 
-const injected = join(work, 'inject.js')
-const injectedMarker = join(work, 'injected-ran')
-writeFileSync(injected, `require('node:fs').writeFileSync(${JSON.stringify(injectedMarker)}, 'x')\n`)
-const runAsNodeMarker = join(work, 'run-as-node-ran')
+  const injected = join(work, 'inject.js')
+  const injectedMarker = join(work, 'injected-ran')
+  writeFileSync(injected, `require('node:fs').writeFileSync(${JSON.stringify(injectedMarker)}, 'x')\n`)
+  const runAsNodeMarker = join(work, 'run-as-node-ran')
 
-// One byte of the main process's code changed inside the asar. Electron checks each file's block
-// hashes as it reads them, so the change must be in a file the app loads at start.
-const tamperedAsar = variant(app, 'tampered-asar', (dir) => {
-  const asar = readFileSync(join(dir, 'app.asar'))
-  const at = asar.indexOf(Buffer.from('use-mock-keychain'))
-  if (at === -1) throw new Error('main process code not found in app.asar')
-  asar.write('U', at)
-  writeFileSync(join(dir, 'app.asar'), asar)
-})
-const folderBesideAsar = variant(app, 'app-folder', (dir) => {
-  renameSync(join(dir, 'app.asar'), join(dir, 'moved.asar'))
-  mkdirSync(join(dir, 'app'))
-  writeFileSync(join(dir, 'app', 'package.json'), JSON.stringify({ name: 'evil', main: 'main.js' }))
-  writeFileSync(
-    join(dir, 'app', 'main.js'),
-    `require('node:fs').writeFileSync(${JSON.stringify(injectedMarker)}, 'x')\n`,
-  )
-})
-
-const launches = {
-  plain: await launch(app, 'plain'),
-  runAsNode: await launch(app, 'run-as-node', {
-    args: ['-e', `require('node:fs').writeFileSync(${JSON.stringify(runAsNodeMarker)}, 'x')`],
-    env: { ELECTRON_RUN_AS_NODE: '1' },
-  }),
-  nodeOptions: await launch(app, 'node-options', { env: { NODE_OPTIONS: `--require ${injected}` } }),
-  inspect: await launch(app, 'inspect', { args: ['--inspect=0'] }),
-  tamperedAsar: await launch(tamperedAsar, 'tampered-asar'),
-  appFolderBesideAsar: await launch(folderBesideAsar, 'app-folder'),
-}
-
-let feed = null
-if (target === 'zip') {
-  const dist = join(project, 'dist')
-  const zipName = `siteadapter-dev-${VERSION}-${arch}.zip`
-  const fromBuilder = readFileSync(join(dist, 'latest-mac.yml'), 'utf8')
-  const zip = await hashZip(join(dist, zipName))
-  const releaseDate = /releaseDate: '([^']+)'/.exec(fromBuilder)?.[1]
-  const fromScript = buildFeedYaml({ version: VERSION, files: [zip], releaseDate })
-  const fields = (yaml) =>
-    Object.fromEntries(
-      [...yaml.matchAll(/^\s*-?\s*(url|sha512|size|path|version|releaseDate): '?([^'\n]+)'?$/gm)].map((m) => [
-        `${m[1]}`,
-        m[2],
-      ]),
+  // One byte of the main process's code changed inside the asar. Electron checks each file's block
+  // hashes as it reads them, so the change must be in a file the app loads at start.
+  const tamperedAsar = variant(app, 'tampered-asar', (dir) => {
+    const asar = readFileSync(join(dir, 'app.asar'))
+    const at = asar.indexOf(Buffer.from('use-mock-keychain'))
+    if (at === -1) throw new Error('main process code not found in app.asar')
+    asar.write('U', at)
+    writeFileSync(join(dir, 'app.asar'), asar)
+  })
+  const folderBesideAsar = variant(app, 'app-folder', (dir) => {
+    renameSync(join(dir, 'app.asar'), join(dir, 'moved.asar'))
+    mkdirSync(join(dir, 'app'))
+    writeFileSync(join(dir, 'app', 'package.json'), JSON.stringify({ name: 'evil', main: 'main.js' }))
+    writeFileSync(
+      join(dir, 'app', 'main.js'),
+      `require('node:fs').writeFileSync(${JSON.stringify(injectedMarker)}, 'x')\n`,
     )
-  feed = {
-    electronBuilderYml: fromBuilder,
-    sameFieldsAsMakeFeed: JSON.stringify(fields(fromBuilder)) === JSON.stringify(fields(fromScript)),
-    channelFiles: ['latest-mac.yml', 'beta-mac.yml', 'alpha-mac.yml'].filter((f) =>
-      existsSync(join(dist, f)),
-    ),
+  })
+
+  const launches = {
+    plain: await launch(app, 'plain'),
+    window: await launch(app, 'window', { env: { SITEADAPTER_SMOKE_WINDOW: '1' } }),
+    runAsNode: await launch(app, 'run-as-node', {
+      args: ['-e', `require('node:fs').writeFileSync(${JSON.stringify(runAsNodeMarker)}, 'x')`],
+      env: { ELECTRON_RUN_AS_NODE: '1' },
+    }),
+    nodeOptions: await launch(app, 'node-options', { env: { NODE_OPTIONS: `--require ${injected}` } }),
+    inspect: await launch(app, 'inspect', { args: ['--inspect=0'] }),
+    tamperedAsar: await launch(tamperedAsar, 'tampered-asar'),
+    appFolderBesideAsar: await launch(folderBesideAsar, 'app-folder'),
+  }
+
+  let feed = null
+  if (target === 'zip') {
+    const dist = join(project, 'dist')
+    const zipName = `siteadapter-dev-${VERSION}-${arch}.zip`
+    const fromBuilder = readFileSync(join(dist, 'latest-mac.yml'), 'utf8')
+    const zip = await hashZip(join(dist, zipName))
+    const releaseDate = /releaseDate: '([^']+)'/.exec(fromBuilder)?.[1]
+    const fromScript = buildFeedYaml({ version: VERSION, files: [zip], releaseDate })
+    const fields = (yaml) =>
+      Object.fromEntries(
+        [...yaml.matchAll(/^\s*-?\s*(url|sha512|size|path|version|releaseDate): '?([^'\n]+)'?$/gm)].map(
+          (m) => [`${m[1]}`, m[2]],
+        ),
+      )
+    feed = {
+      electronBuilderYml: fromBuilder,
+      sameFieldsAsMakeFeed: JSON.stringify(fields(fromBuilder)) === JSON.stringify(fields(fromScript)),
+      channelFiles: ['latest-mac.yml', 'beta-mac.yml', 'alpha-mac.yml'].filter((f) =>
+        existsSync(join(dist, f)),
+      ),
+    }
+  }
+
+  const summary = {
+    electronBuilder: execFileSync(BUILDER, ['--version'], { encoding: 'utf8' }).trim(),
+    app: app.replace(work, '<tmp>'),
+    infoPlist: {
+      CFBundleIdentifier: info.CFBundleIdentifier,
+      CFBundleName: info.CFBundleName,
+      CFBundleExecutable: info.CFBundleExecutable,
+      LSUIElement: info.LSUIElement,
+      ElectronAsarIntegrity: Object.keys(info.ElectronAsarIntegrity ?? {}),
+    },
+    fuses: fuses(app),
+    resources: {
+      appAsar: existsSync(join(resources, 'app.asar')),
+      appFolder: existsSync(join(resources, 'app')),
+      asarFiles: asarFiles(join(resources, 'app.asar')),
+      appUpdateYml: existsSync(join(resources, 'app-update.yml'))
+        ? readFileSync(join(resources, 'app-update.yml'), 'utf8')
+        : null,
+    },
+    // codesign -dv only reads the signature; it writes to stderr.
+    signature: sh('/usr/bin/codesign -dv "$1" 2>&1 || true', app)
+      .split('\n')
+      .filter((l) => /^(Identifier|Format|CodeDirectory|Signature|TeamIdentifier|Runtime)/.test(l)),
+    signedEntitlements:
+      sh('/usr/bin/codesign -d --entitlements - --xml "$1" 2>/dev/null || true', app).trim() || null,
+    launches,
+    runAsNodeScriptRan: existsSync(runAsNodeMarker),
+    injectedScriptRan: existsSync(injectedMarker),
+    feed,
+  }
+
+  // What a development build must look like. Each mismatch is a failure.
+  expectEqual('fuses', { ...summary.fuses, version: undefined, fuse8: undefined }, { ...EXPECTED_FUSES })
+  expectEqual('CFBundleIdentifier', info.CFBundleIdentifier, 'me.dncr.siteadapter.dev')
+  expectEqual('CFBundleName', info.CFBundleName, 'siteadapter-dev')
+  expectEqual('LSUIElement', info.LSUIElement, true)
+  expectEqual('ElectronAsarIntegrity', summary.infoPlist.ElectronAsarIntegrity, ['Resources/app.asar'])
+  expectEqual('asar files', summary.resources.asarFiles, EXPECTED_ASAR)
+  expectEqual('Resources/app folder', summary.resources.appFolder, false)
+  expectEqual('default_app.asar', existsSync(join(resources, 'default_app.asar')), false)
+  expectEqual('ad hoc signature', summary.signature.includes('Signature=adhoc'), true)
+  expectEqual('plain launch', pick(launches.plain), {
+    code: 0,
+    killed: false,
+    name: 'siteadapter-dev',
+    isPackaged: true,
+  })
+  expectEqual('run-as-node launch started the app instead', pick(launches.runAsNode), {
+    code: 0,
+    killed: false,
+    name: 'siteadapter-dev',
+    isPackaged: true,
+  })
+  expectEqual('run-as-node script ran', summary.runAsNodeScriptRan, false)
+  expectEqual('NODE_OPTIONS launch', pick(launches.nodeOptions), {
+    code: 0,
+    killed: false,
+    name: 'siteadapter-dev',
+    isPackaged: true,
+  })
+  expectEqual('NODE_OPTIONS preload ran', launches.nodeOptions.report?.preloadedByNodeOptions, false)
+  expectEqual('--inspect opened a debugger', launches.inspect.debuggerListening, false)
+  expectEqual('--inspect launch', launches.inspect.code, 0)
+  expectEqual(
+    'tampered asar refused at start',
+    launches.tamperedAsar.code !== 0 && launches.tamperedAsar.report === null,
+    true,
+  )
+  expectEqual('app folder beside the asar refused', launches.appFolderBesideAsar.code !== 0, true)
+  expectEqual('injected script ran', summary.injectedScriptRan, false)
+  expectEqual('window launch', launches.window.code, 0)
+  const window = launches.window.report?.window ?? {}
+  expectEqual(
+    'app:// renderer ran its module script',
+    [window.schemeMatches, window.appScheme],
+    [true, 'module-ok'],
+  )
+  // The fuse at work: the same page from loadFile never runs its module script (the page either
+  // doesn't load, titled after its file, or stays at 'loading').
+  expectEqual('loadFile renderer ran its module script', window.loadFile === 'module-ok', false)
+  if (feed !== null) {
+    expectEqual('latest-mac.yml matches make-feed', feed.sameFieldsAsMakeFeed, true)
+    expectEqual('app-update.yml written', summary.resources.appUpdateYml !== null, true)
+  }
+
+  process.stdout.write(`${JSON.stringify({ ...summary, failures }, null, 2)}\n`)
+  if (failures.length > 0) {
+    process.stderr.write(
+      `package-smoke: ${failures.length} check(s) failed: ${failures.map((f) => f.check).join(', ')}\n`,
+    )
+    process.exitCode = 1
+  } else {
+    process.stdout.write('package-smoke: every check passed\n')
   }
 }
 
-const summary = {
-  electronBuilder: execFileSync(BUILDER, ['--version'], { encoding: 'utf8' }).trim(),
-  app: app.replace(work, '<tmp>'),
-  infoPlist: {
-    CFBundleIdentifier: info.CFBundleIdentifier,
-    CFBundleName: info.CFBundleName,
-    CFBundleExecutable: info.CFBundleExecutable,
-    LSUIElement: info.LSUIElement,
-    ElectronAsarIntegrity: Object.keys(info.ElectronAsarIntegrity ?? {}),
-  },
-  fuses: fuses(app),
-  resources: {
-    appAsar: existsSync(join(resources, 'app.asar')),
-    appFolder: existsSync(join(resources, 'app')),
-    asarFiles: asarFiles(join(resources, 'app.asar')),
-    appUpdateYml: existsSync(join(resources, 'app-update.yml'))
-      ? readFileSync(join(resources, 'app-update.yml'), 'utf8')
-      : null,
-  },
-  // codesign -dv only reads the signature; it writes to stderr.
-  signature: sh('/usr/bin/codesign -dv "$1" 2>&1 || true', app)
-    .split('\n')
-    .filter((l) => /^(Identifier|Format|CodeDirectory|Signature|TeamIdentifier|Runtime)/.test(l)),
-  signedEntitlements:
-    sh('/usr/bin/codesign -d --entitlements - --xml "$1" 2>/dev/null || true', app).trim() || null,
-  launches,
-  runAsNodeScriptRan: existsSync(runAsNodeMarker),
-  injectedScriptRan: existsSync(injectedMarker),
-  feed,
+function pick(result) {
+  return {
+    code: result.code,
+    killed: result.killed,
+    name: result.report?.name,
+    isPackaged: result.report?.isPackaged,
+  }
 }
-process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`)
 
-if (values.keep) process.stdout.write(`kept: ${work}\n`)
-else rmSync(work, { recursive: true, force: true })
+try {
+  await run()
+} catch (error) {
+  process.stderr.write(`package-smoke: ${error?.stack ?? error}\n`)
+  process.exitCode = 1
+} finally {
+  if (values.keep) process.stdout.write(`kept: ${work}\n`)
+  else rmSync(work, { recursive: true, force: true })
+}
