@@ -14,6 +14,9 @@ import {
 } from '@siteadapter/core'
 import type { CallOutcome } from './tool-caller'
 
+/** The classes a blocked outcome may carry. */
+const RETRYABLE: readonly ErrorClass[] = ['blocked-by-site', 'rate-limited']
+
 /**
  * `structured`: the tool declares an output schema. MCP requires every non-error result of such a
  * tool to carry structured content matching that schema (the SDK enforces it on both ends), which a
@@ -33,6 +36,9 @@ export function toolResult(outcome: CallOutcome, structured: boolean): CallToolR
     case 'failed':
       return failedResult(outcome.stage, outcome.errorClass)
     case 'blocked': {
+      // Only a site's refusal or a rate limit passes with time; a guard's refusal (denied-path,
+      // request-ceiling, ...) never will, and "try again" would invite a retry loop against it.
+      if (!RETRYABLE.includes(outcome.errorClass)) return failedResult(outcome.stage, outcome.errorClass)
       const { stage, errorClass } = safeCodes(outcome.stage, outcome.errorClass)
       return textResult(
         `The site is refusing or limiting requests (stage ${stage}: ${errorClass}). ` +

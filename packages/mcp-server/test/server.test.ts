@@ -639,12 +639,12 @@ describe('call results', () => {
     )
   })
 
-  it('replaces a blocked stage or class outside the vocabulary rather than passing it through', async () => {
+  it('replaces a blocked stage outside the vocabulary rather than passing it through', async () => {
     const caller = new FakeCaller([searchProducts])
     caller.answer = async () => ({
       status: 'blocked',
       stage: 'Access Denied: reference #18.7f' as Stage,
-      errorClass: 'see https://evil.example' as never,
+      errorClass: 'blocked-by-site',
       retryAfterMs: 1_000,
     })
     const { client } = await connect(caller)
@@ -652,8 +652,50 @@ describe('call results', () => {
     const result = await client.callTool({ name: 'woolworths_search_products', arguments: { query: 'milk' } })
 
     expect(textOf(result)).toBe(
-      'The site is refusing or limiting requests (stage tool-run: internal). Try again in 1 seconds.',
+      'The site is refusing or limiting requests (stage tool-run: blocked-by-site). Try again in 1 seconds.',
     )
+  })
+
+  it('reports a blocked class outside the vocabulary as a failure, without passing it through', async () => {
+    const caller = new FakeCaller([searchProducts])
+    caller.answer = async () => ({
+      status: 'blocked',
+      stage: 'tool-run',
+      errorClass: 'see https://evil.example' as never,
+      retryAfterMs: 1_000,
+    })
+    const { client } = await connect(caller)
+
+    const result = await client.callTool({ name: 'woolworths_search_products', arguments: { query: 'milk' } })
+
+    expect(result.isError).toBe(true)
+    expect(textOf(result)).toBe('The tool failed at stage tool-run: internal.')
+  })
+
+  it("never tells the agent to retry a guard's refusal, even sent as blocked", async () => {
+    const caller = new FakeCaller([searchProducts])
+    const { client } = await connect(caller)
+    const texts: string[] = []
+    for (const errorClass of ['denied-path', 'request-ceiling', 'host-not-allowed', 'not-granted'] as const) {
+      caller.answer = async () => ({
+        status: 'blocked',
+        stage: 'request-surface',
+        errorClass,
+        retryAfterMs: 1_000,
+      })
+      const result = await client.callTool({
+        name: 'woolworths_search_products',
+        arguments: { query: 'milk' },
+      })
+      expect(result.isError).toBe(true)
+      texts.push(textOf(result))
+    }
+    expect(texts).toEqual([
+      'The tool failed at stage request-surface: denied-path.',
+      'The tool failed at stage request-surface: request-ceiling.',
+      'The tool failed at stage request-surface: host-not-allowed.',
+      'The tool failed at stage request-surface: not-granted.',
+    ])
   })
 
   it('never tells the agent to retry immediately', async () => {

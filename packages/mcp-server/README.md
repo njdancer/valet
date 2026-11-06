@@ -81,7 +81,8 @@ bundles the bridge, this is the only way to launch it.
   - `failed`: a tool error with stage and error class. An exception from the runtime never has
     its message sent; a thrown `NeedsUserError` is treated as `needsUser`.
   - `blocked`: a tool error with stage, class (`blocked-by-site` or `rate-limited`) and whole
-    seconds to wait, at least 1.
+    seconds to wait, at least 1. A blocked outcome with any other class is reported as `failed`,
+    with no wait: a guard's refusal never passes with time, so the agent isn't told to retry it.
   - `declined`: a tool error, `confirm: declined`, when the person said no or didn't answer.
   - `needsUser`: the agent is told the person has been asked to act in the siteadapter app, with
     the reason code only (a manifest's note is shown in the app, never sent). It is not an error,
