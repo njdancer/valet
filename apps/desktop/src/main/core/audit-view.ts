@@ -2,7 +2,7 @@
 // Everything here is built from the log's own events (each with fixed vocabularies and no page
 // text), plus the in-memory previews of recent calls' input and output (RunMemory).
 
-import { readFile, stat } from 'node:fs/promises'
+import { type FileHandle, open } from 'node:fs/promises'
 import type { AuditEvent, AuditRecord, Purpose } from '@siteadapter/core'
 import { verifyAuditLog } from '@siteadapter/runtime'
 import type {
@@ -18,44 +18,74 @@ import type {
 } from '../../shared/api'
 import type { RunMemory } from './run-memory'
 
-/** Reads the log, re-parsing only when it changed. Lines that don't parse are skipped here (verify reports them). */
+/**
+ * The log's records, kept in memory and extended as it grows. The log is append-only, so each read
+ * parses only the bytes after the last complete line it already has: an append costs its own size,
+ * not the whole history's. The file is read from the start again on the first read, after verify(),
+ * and when it is replaced or shrinks (a different inode, or a size below what was read). Lines that
+ * don't parse are skipped here (verify reports them). A line still being written, with no newline
+ * yet, waits for the next read.
+ */
 export class AuditReader {
-  private cache: { readonly key: string; readonly records: readonly AuditRecord[] } | null = null
+  private list: AuditRecord[] = []
+  /** Bytes consumed: up to and including the last newline read. */
+  private offset = 0
+  private identity: string | null = null
+  /** Reads run one after another, so two never parse the same bytes. */
+  private queue: Promise<unknown> = Promise.resolve()
 
   constructor(private readonly path: string) {}
 
-  async records(): Promise<readonly AuditRecord[]> {
-    let key: string
+  records(): Promise<readonly AuditRecord[]> {
+    const read = this.queue.then(() => this.read())
+    this.queue = read.catch(() => undefined)
+    return read
+  }
+
+  private reset(identity: string | null): void {
+    this.list = []
+    this.offset = 0
+    this.identity = identity
+  }
+
+  private async read(): Promise<readonly AuditRecord[]> {
+    let handle: FileHandle
     try {
-      const info = await stat(this.path)
-      key = `${info.size}:${info.mtimeMs}`
+      handle = await open(this.path, 'r')
     } catch {
-      return []
+      this.reset(null)
+      return this.list
     }
-    if (this.cache?.key === key) return this.cache.records
-    const text = await readFile(this.path, 'utf8').catch(() => '')
-    const records: AuditRecord[] = []
-    for (const line of text.split('\n')) {
-      if (line.length === 0) continue
-      try {
-        const value = JSON.parse(line) as AuditRecord
-        if (
-          typeof value.seq === 'number' &&
-          typeof value.at === 'string' &&
-          typeof value.event?.type === 'string'
-        ) {
-          records.push(value)
-        }
-      } catch {
-        // A torn or edited line; verify() names it.
+    try {
+      const info = await handle.stat()
+      const identity = `${info.dev}:${info.ino}`
+      if (identity !== this.identity || info.size < this.offset) this.reset(identity)
+      if (info.size === this.offset) return this.list
+      const length = info.size - this.offset
+      const bytes = Buffer.alloc(length)
+      const { bytesRead } = await handle.read(bytes, 0, length, this.offset)
+      // Only whole lines: UTF-8 never has a 0x0a byte inside a character.
+      const end = bytes.subarray(0, bytesRead).lastIndexOf(0x0a)
+      if (end === -1) return this.list
+      for (const line of bytes.subarray(0, end).toString('utf8').split('\n')) {
+        const record = parseRecord(line)
+        if (record !== null) this.list.push(record)
       }
+      this.offset += end + 1
+      return this.list
+    } catch {
+      return this.list
+    } finally {
+      await handle.close().catch(() => undefined)
     }
-    this.cache = { key, records }
-    return records
   }
 
   async verify(at: Date): Promise<ChainStatus> {
     const verifiedAt = at.toISOString()
+    // The next read starts from the top, so an edit verify finds is reflected in the views too.
+    const cleared = this.queue.then(() => this.reset(null))
+    this.queue = cleared
+    await cleared
     const result = await verifyAuditLog(this.path)
     if (result.ok) {
       return {
@@ -68,6 +98,22 @@ export class AuditReader {
     }
     return { state: 'broken', records: Math.max(0, result.line - 1), firstBadSeq: result.line, verifiedAt }
   }
+}
+
+function parseRecord(line: string): AuditRecord | null {
+  if (line.length === 0) return null
+  try {
+    const value = JSON.parse(line) as AuditRecord
+    if (
+      typeof value.seq === 'number' &&
+      typeof value.at === 'string' &&
+      typeof value.event?.type === 'string'
+    )
+      return value
+  } catch {
+    // A torn or edited line; verify() names it.
+  }
+  return null
 }
 
 export const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent['type'][]>> = {

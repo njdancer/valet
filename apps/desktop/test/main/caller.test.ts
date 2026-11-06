@@ -440,6 +440,47 @@ describe('audit views', () => {
     expect(callCounts(records, new Date('2026-11-20T10:30:00.000')).get('shop')).toBeUndefined()
   })
 
+  it('reads only what was appended since the last read, and a torn last line once it is whole', async () => {
+    const { reader, path } = await log(events.slice(0, 2))
+    const first = await reader.records()
+    expect(first.map((r) => r.seq)).toEqual([1, 2])
+    const { appendFileSync, readFileSync } = await import('node:fs')
+    const lines = readFileSync(path, 'utf8').split('\n')
+    const record = JSON.parse(lines[1] as string) as AuditRecord
+    const third = JSON.stringify({ ...record, seq: 3 })
+    // Half a line: not read yet.
+    appendFileSync(path, third.slice(0, 20))
+    expect((await reader.records()).map((r) => r.seq)).toEqual([1, 2])
+    appendFileSync(path, `${third.slice(20)}\n`)
+    expect((await reader.records()).map((r) => r.seq)).toEqual([1, 2, 3])
+    // What was read before isn't parsed again: an earlier line edited in place goes unnoticed until
+    // verify, which reads from the top.
+    const edited = readFileSync(path, 'utf8').replace('"seq":1', '"seq":7')
+    writeFileSync(path, edited)
+    expect((await reader.records()).map((r) => r.seq)).toEqual([1, 2, 3])
+    await reader.verify(new Date(0))
+    expect((await reader.records()).map((r) => r.seq)).toEqual([7, 2, 3])
+  })
+
+  it('starts again when the file is replaced or shrinks, and parallel reads don’t double up', async () => {
+    const { reader, path } = await log(events.slice(0, 3))
+    const [a, b] = await Promise.all([reader.records(), reader.records()])
+    expect(a.map((r) => r.seq)).toEqual([1, 2, 3])
+    expect(b.map((r) => r.seq)).toEqual([1, 2, 3])
+    const { readFileSync, renameSync, rmSync: remove } = await import('node:fs')
+    const firstLine = `${readFileSync(path, 'utf8').split('\n')[0]}\n`
+    // Shrunk in place.
+    writeFileSync(path, firstLine)
+    expect((await reader.records()).map((r) => r.seq)).toEqual([1])
+    // Replaced by another file of the same size.
+    const other = `${path}.new`
+    writeFileSync(other, firstLine.replace('"seq":1', '"seq":5'))
+    renameSync(other, path)
+    expect((await reader.records()).map((r) => r.seq)).toEqual([5])
+    remove(path)
+    expect(await reader.records()).toEqual([])
+  })
+
   it('verifies the chain and reports where it breaks; skips lines that don’t parse', async () => {
     const { reader, path } = await log(events.slice(0, 3))
     expect(await reader.verify(new Date(0))).toMatchObject({ state: 'intact', records: 3, headSeq: 3 })
