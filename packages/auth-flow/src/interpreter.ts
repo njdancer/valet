@@ -27,8 +27,8 @@ export const POLL_MS = 250
 
 /**
  * Failures that a retry may plausibly fix: the page was slow, or the site refused a login it may
- * accept next time. Guard failures are never retried. A guard that fails once has seen something
- * wrong, and trying again only gives it another chance to be wrong in our favour.
+ * accept next time. Guard failures are never retried: a guard that fired has seen something wrong,
+ * and retrying would only give the page another chance to get past it.
  */
 const RETRYABLE: readonly ErrorClass[] = [
   'condition-timeout',
