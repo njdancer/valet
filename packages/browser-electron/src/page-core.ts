@@ -5,7 +5,7 @@
 import { SiteAdapterError, type Stage } from '@siteadapter/core'
 import type { BrowserSurface, FrameHandle, Timers } from './platform'
 import { sleep } from './platform'
-import { focusScript, frameOffsetScript, pointScript } from './scripts'
+import { focusedScript, focusScript, frameOffsetScript, pointScript } from './scripts'
 import { withTimeout } from './timeout'
 
 export interface PageTiming {
@@ -14,6 +14,13 @@ export interface PageTiming {
   readonly stepTimeoutMs: number
   /** Default gap between typed characters. Sites time keystrokes. */
   readonly typingDelayMs: number
+}
+
+/** Where focus() left keyboard focus, so typing can check it is still there. */
+export interface FocusTarget {
+  readonly frameId: string
+  readonly origin: string
+  readonly selector: string
 }
 
 /** A frame's answer to a script that looks for one element. */
@@ -86,6 +93,7 @@ export class PageCore {
     if (match === null) throw new SiteAdapterError(stage, 'element-missing')
     const point = match.value
     if (point === 'not-visible' || !point.hit) throw new SiteAdapterError(stage, 'element-unsuitable')
+    if (!match.frame.receivesInput) throw new SiteAdapterError(stage, 'element-unsuitable')
     const frames = this.surface.frames()
     let { x, y } = point
     let childIndex = point.indexInParent
@@ -93,7 +101,9 @@ export class PageCore {
     // Climb to the main frame, adding each iframe's offset in its parent.
     while (frame !== undefined && frame.parentIndex !== null) {
       const parent: FrameHandle | undefined = frames[frame.parentIndex]
-      if (parent === undefined || childIndex === null) throw new SiteAdapterError(stage, 'element-unsuitable')
+      if (parent === undefined || childIndex === null || !parent.receivesInput) {
+        throw new SiteAdapterError(stage, 'element-unsuitable')
+      }
       const offset = parseOffset(await runQuietly(parent, frameOffsetScript(childIndex)))
       if (offset === null) throw new SiteAdapterError(stage, 'element-unsuitable')
       x += offset.x
@@ -104,32 +114,54 @@ export class PageCore {
     this.surface.click(Math.round(x), Math.round(y))
   }
 
-  async focus(stage: Stage, selector: string): Promise<void> {
+  /**
+   * Focuses the element and checks, from the browser side, that keyboard focus really moved to its
+   * frame. Returns the target so that typing can be bound to it.
+   */
+  async focus(stage: Stage, selector: string): Promise<FocusTarget> {
     this.surface.focus()
     const match = await this.locate(stage, focusScript(selector), parseFocus)
     if (match === null) throw new SiteAdapterError(stage, 'element-missing')
-    if (!match.value.focused) throw new SiteAdapterError(stage, 'element-unsuitable')
+    if (
+      !match.value.focused ||
+      !match.frame.receivesInput ||
+      this.surface.focusedFrameId() !== match.frame.id
+    ) {
+      throw new SiteAdapterError(stage, 'element-unsuitable')
+    }
+    return { frameId: match.frame.id, origin: match.frame.origin, selector }
+  }
+
+  /** True when `target` still has keyboard focus: same frame, same origin, same element. */
+  async stillFocused(target: FocusTarget): Promise<boolean> {
+    const frame = this.surface.frames().find((candidate) => candidate.id === target.frameId)
+    if (frame === undefined || frame.origin !== target.origin || !frame.receivesInput) return false
+    if (this.surface.focusedFrameId() !== target.frameId) return false
+    return parseFocus(await runQuietly(frame, focusedScript(target.selector)))?.focused === true
   }
 
   /**
    * Sends `count` trusted characters, `delayMs` apart. `send(i)` must send the i-th one; it is given
    * an index rather than a string so that a secret's characters stay inside its reveal callback.
-   * Stops if the step times out, and fails if any frame commits a navigation while typing: the
-   * remaining characters would land in a different document.
+   * Stops if the step times out, and fails if any frame commits a navigation while typing, or if
+   * keyboard focus leaves `frameId`: either way the remaining characters would land somewhere else.
    */
   async typeChars(
     stage: Stage,
     signal: AbortSignal,
     count: number,
     delayMs: number,
+    frameId: string | null,
     send: (index: number) => void,
   ): Promise<void> {
     const commitsAtStart = this.commits
-    this.surface.focus()
     for (let index = 0; index < count; index++) {
       if (index > 0) await sleep(this.timing.timers, delayMs)
       if (signal.aborted) return
       if (this.surface.isDestroyed() || this.commits !== commitsAtStart) {
+        throw new SiteAdapterError(stage, 'aborted')
+      }
+      if (frameId !== null && this.surface.focusedFrameId() !== frameId) {
         throw new SiteAdapterError(stage, 'aborted')
       }
       send(index)

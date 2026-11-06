@@ -16,9 +16,14 @@ import type {
 } from '../src/platform'
 import { FakeWindow } from './fake-dom'
 
+let frameIds = 0
+
 export class FakeFrame implements FrameHandle {
+  readonly id = `frame-${++frameIds}`
   readonly scripts: string[] = []
   fail = false
+  /** False plays an out-of-process iframe, which trusted input can't reach. */
+  receivesInput = true
 
   constructor(
     public origin: string,
@@ -89,6 +94,18 @@ export class FakeSurface implements BrowserSurface {
 
   frames(): readonly FrameHandle[] {
     return this.frameList
+  }
+
+  /** Set to pin which frame the browser says has focus; otherwise the frame that focused last. */
+  focusedFrame: string | null | undefined = undefined
+
+  focusedFrameId(): string | null {
+    if (this.focusedFrame !== undefined) return this.focusedFrame
+    let latest: FakeFrame | null = null
+    for (const frame of this.frameList) {
+      if (frame.window.document.focusedAt > (latest?.window.document.focusedAt ?? 0)) latest = frame
+    }
+    return latest?.id ?? this.frameList[0]?.id ?? null
   }
 
   click(x: number, y: number): void {

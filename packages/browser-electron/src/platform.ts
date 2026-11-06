@@ -49,11 +49,18 @@ export interface PartitionSession {
 
 /** A frame in a page, in tree order. The main frame comes first and has no parent. */
 export interface FrameHandle {
+  /** Stable for the frame's lifetime, and comparable with BrowserSurface.focusedFrameId(). */
+  readonly id: string
   /** Security origin as the browser process sees it, not as the page reports it. */
   readonly origin: string
   readonly url: string
   /** Index of the parent in the same frames() list, or null for the main frame. */
   readonly parentIndex: number | null
+  /**
+   * False for an out-of-process frame. Trusted input is sent to the window's main widget, and
+   * with site isolation it never reaches a frame rendered by another process.
+   */
+  readonly receivesInput: boolean
   /** Runs runtime-authored script: in an isolated world on the main frame. */
   run(code: string): Promise<unknown>
 }
@@ -81,6 +88,8 @@ export interface BrowserSurface {
   stop(): void
   url(): string
   frames(): readonly FrameHandle[]
+  /** The id of the frame that has keyboard focus, as the browser process sees it. */
+  focusedFrameId(): string | null
   /** Trusted mouse move, down and up at viewport coordinates. */
   click(x: number, y: number): void
   /** One trusted char event. */

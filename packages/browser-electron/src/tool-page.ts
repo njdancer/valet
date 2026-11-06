@@ -47,8 +47,8 @@ export class SurfaceToolPage implements ToolPage {
     await this.core.step(
       'tool-run',
       async (signal) => {
-        await this.core.focus('tool-run', selector)
-        await this.core.typeChars('tool-run', signal, chars.length, delayMs, (index) =>
+        const target = await this.core.focus('tool-run', selector)
+        await this.core.typeChars('tool-run', signal, chars.length, delayMs, target.frameId, (index) =>
           this.surface.sendChar(chars[index] ?? ''),
         )
       },

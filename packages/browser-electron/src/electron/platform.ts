@@ -170,16 +170,28 @@ class ElectronSurface implements BrowserSurface {
     return subtree.map((frame, index): FrameHandle => {
       const parentId = frame.parent?.frameTreeNodeId
       return {
+        id: frame.frameToken,
         origin: frame.origin,
         url: frame.url,
         parentIndex:
           index === 0 ? null : subtree.findIndex((candidate) => candidate.frameTreeNodeId === parentId),
-        run:
-          index === 0
-            ? (code) => this.contents.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [{ code }])
-            : (code) => frame.executeJavaScript(code),
+        receivesInput: index === 0 || frame.processId === main.processId,
+        run: (code) => {
+          // Touching a destroyed frame can take the main process down with it.
+          if (this.contents.isDestroyed() || frame.isDestroyed() || frame.detached) {
+            return Promise.reject(new Error('frame is gone'))
+          }
+          return index === 0
+            ? this.contents.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [{ code }])
+            : frame.executeJavaScript(code)
+        },
       }
     })
+  }
+
+  focusedFrameId(): string | null {
+    if (this.contents.isDestroyed()) return null
+    return this.contents.focusedFrame?.frameToken ?? null
   }
 
   click(x: number, y: number): void {

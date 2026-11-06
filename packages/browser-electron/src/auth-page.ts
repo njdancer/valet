@@ -14,13 +14,15 @@ import {
   urlOriginAllowed,
 } from '@siteadapter/core'
 import { authNavigationAllowed } from './guards'
-import { characters, isRecord, PageCore, type PageTiming, typingDelay } from './page-core'
+import { characters, type FocusTarget, isRecord, PageCore, type PageTiming, typingDelay } from './page-core'
 import type { BrowserSurface } from './platform'
 import { inspectScript, textPresentScript } from './scripts'
 
 export class SurfaceAuthPage implements AuthPage {
   private readonly core: PageCore
   private escaped = false
+  /** Set by focus(). A secret is only ever typed into the element this names. */
+  private focusTarget: FocusTarget | null = null
 
   constructor(
     private readonly surface: BrowserSurface,
@@ -45,6 +47,7 @@ export class SurfaceAuthPage implements AuthPage {
   async goto(url: string): Promise<void> {
     this.assertInside('navigate')
     if (!urlOriginAllowed(url, this.navigation)) throw new SiteAdapterError('navigate', 'navigation-escaped')
+    this.focusTarget = null
     await this.core.step('navigate', async () => {
       const failure = await this.core.load(url)
       this.assertInside('navigate')
@@ -84,11 +87,16 @@ export class SurfaceAuthPage implements AuthPage {
   focus(selector: string): Promise<void> {
     return this.core.step('auth-step', async () => {
       this.assertInside('auth-step')
-      await this.core.focus('auth-step', selector)
+      this.focusTarget = null
+      this.focusTarget = await this.core.focus('auth-step', selector)
     })
   }
 
   /**
+   * Types into the element the last focus() targeted, checking first that it still has keyboard
+   * focus and then, before every character, that focus hasn't left its frame. A secret needs a
+   * focus() first; literal text without one goes wherever focus is.
+   *
    * A secret's characters are read one at a time inside its own reveal callback and handed straight
    * to the input event; neither the plaintext nor a character outlives that callback.
    */
@@ -100,11 +108,17 @@ export class SurfaceAuthPage implements AuthPage {
       text instanceof SecretValue
         ? (index: number) => revealCharacter(stage, text, index, (char) => this.surface.sendChar(char))
         : (index: number) => this.surface.sendChar(characters(text)[index] ?? '')
+    const target = this.focusTarget
     return this.core.step(
       stage,
       async (signal) => {
         this.assertInside(stage)
-        await this.core.typeChars(stage, signal, count, delayMs, (index) => {
+        if (target === null && text instanceof SecretValue)
+          throw new SiteAdapterError(stage, 'element-unsuitable')
+        if (target !== null && !(await this.core.stillFocused(target))) {
+          throw new SiteAdapterError(stage, 'element-unsuitable')
+        }
+        await this.core.typeChars(stage, signal, count, delayMs, target?.frameId ?? null, (index) => {
           this.assertInside(stage)
           send(index)
         })

@@ -4,6 +4,9 @@
 
 import vm from 'node:vm'
 
+// Orders focus() calls across every fake document, so a surface can tell which frame focused last.
+let focusSequence = 0
+
 export interface Rect {
   left: number
   top: number
@@ -63,7 +66,9 @@ export class FakeElement {
   }
 
   focus(): void {
-    if (this.focusable) this.document.activeElement = this
+    if (!this.focusable) return
+    this.document.activeElement = this
+    this.document.focusedAt = ++focusSequence
   }
 
   select(): void {
@@ -84,6 +89,10 @@ export class FakeDocument {
   readonly invalidSelectors = new Set<string>()
   readonly queried: string[] = []
   activeElement: FakeElement | null = null
+  /** When an element in this document last took focus, in focusSequence order; 0 for never. */
+  focusedAt = 0
+  /** What document.hasFocus() answers. */
+  windowFocused = true
   body: { innerText: string } | null = { innerText: '' }
   /** What elementFromPoint returns. By default, the last registered element containing the point. */
   hitTest: ((x: number, y: number) => FakeElement | null) | null = null
@@ -96,6 +105,10 @@ export class FakeDocument {
 
   element(tagName: string, options?: ConstructorParameters<typeof FakeElement>[2]): FakeElement {
     return new FakeElement(this, tagName, options)
+  }
+
+  hasFocus(): boolean {
+    return this.windowFocused
   }
 
   querySelector(selector: string): FakeElement | null {

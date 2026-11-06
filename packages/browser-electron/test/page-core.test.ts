@@ -12,7 +12,9 @@ describe('PageCore.typeChars', () => {
     const surface = new FakeSurface('persist:auth:example')
     const controller = new AbortController()
     controller.abort()
-    await core(surface).typeChars('auth-step', controller.signal, 3, 0, (i) => surface.sendChar(String(i)))
+    await core(surface).typeChars('auth-step', controller.signal, 3, 0, null, (i) =>
+      surface.sendChar(String(i)),
+    )
     expect(surface.chars).toEqual([])
   })
 
@@ -23,7 +25,7 @@ describe('PageCore.typeChars', () => {
     const timers = new ManualTimers()
     const page = new PageCore(surface, { timers, stepTimeoutMs: 1000, typingDelayMs: 0 })
     await timers.settle(
-      page.typeChars('auth-step', controller.signal, 3, 10, (i) => surface.sendChar(String(i))),
+      page.typeChars('auth-step', controller.signal, 3, 10, null, (i) => surface.sendChar(String(i))),
     )
     expect(surface.chars).toEqual(['0'])
   })

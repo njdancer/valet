@@ -105,7 +105,15 @@ const FOCUS = `(selector) => {
     selection.removeAllRanges()
     selection.addRange(range)
   }
-  return { focused: document.activeElement === el }
+  return { focused: document.activeElement === el && document.hasFocus() }
+}`
+
+// Whether the element still has focus, without touching anything.
+const FOCUSED = `(selector) => {
+  const found = (${FIND})(selector)
+  if (found.invalid) return { error: 'invalid-selector' }
+  const el = found.element
+  return { focused: el !== null && document.activeElement === el && document.hasFocus() }
 }`
 
 const TEXT_PRESENT = `(text) => document.body !== null && document.body.innerText.includes(text)`
@@ -149,6 +157,7 @@ export const inspectScript = (selector: string): string => invoke(INSPECT, selec
 export const pointScript = (selector: string): string => invoke(POINT, selector)
 export const frameOffsetScript = (childIndex: number): string => invoke(FRAME_OFFSET, childIndex)
 export const focusScript = (selector: string): string => invoke(FOCUS, selector)
+export const focusedScript = (selector: string): string => invoke(FOCUSED, selector)
 export const textPresentScript = (text: string): string => invoke(TEXT_PRESENT, text)
 export const readStorageScript = (keys: readonly string[]): string => invoke(READ_STORAGE, keys)
 export const writeStorageScript = (entries: readonly (readonly [string, string])[]): string =>
