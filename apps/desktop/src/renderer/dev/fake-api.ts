@@ -1060,7 +1060,14 @@ const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent['type']
   'secret-use': ['secret-used'],
   blocked: ['request-blocked', 'breaker-opened', 'breaker-closed'],
   confirmations: ['confirmation'],
-  'approvals-grants': ['adapter-approved', 'adapter-rejected', 'grant-made', 'grant-revoked'],
+  'approvals-grants': [
+    'adapter-approved',
+    'adapter-rejected',
+    'grant-made',
+    'grant-revoked',
+    'update-downloaded',
+    'update-installed',
+  ],
 }
 
 function matchesAudit(record: AuditRecord, query: AuditQuery): boolean {
@@ -1148,6 +1155,7 @@ function buildAudit(ago: (minutes: number) => string): AuditRecord[] {
         target: 'https://www.woolworths.com.au/apis/ui/Trolley/Recommendations',
         reason: 'undeclared',
         initiator: 'tool',
+        partition: 'tool',
         callId: 'c_8f2e1b',
       },
     ],
@@ -1161,6 +1169,7 @@ function buildAudit(ago: (minutes: number) => string): AuditRecord[] {
         target: 'https://collect.tealiumiq.com/event',
         reason: 'host-not-allowed',
         initiator: 'page',
+        partition: 'tool',
         callId: 'c_8f2e1b',
       },
     ],

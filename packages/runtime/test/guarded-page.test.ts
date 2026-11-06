@@ -45,6 +45,7 @@ describe('request surface', () => {
       target: `${HOME}/api/account/details`,
       reason: 'undeclared-request',
       initiator: 'tool',
+      partition: 'tool',
       callId: 'call-1',
     })
     expect(JSON.stringify(audit.events)).not.toContain('nick@example.com')

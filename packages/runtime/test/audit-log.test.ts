@@ -42,6 +42,7 @@ const blocked: AuditEvent = {
   target: 'https://evil.test/x',
   reason: 'host-not-allowed',
   initiator: 'tool',
+  partition: 'tool',
   callId: 'call-1',
 }
 

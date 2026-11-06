@@ -90,6 +90,7 @@ const EVERY_EVENT: AuditEvent[] = [
     target: 'https://www.woolworths.com.au/apis/ui/x',
     reason: 'purpose-exceeded',
     initiator: 'tool',
+    partition: 'tool',
     callId: 'c_1',
   },
   {
@@ -99,6 +100,7 @@ const EVERY_EVENT: AuditEvent[] = [
     target: 'https://x.example/',
     reason: 'something-new',
     initiator: 'page',
+    partition: 'tool',
     callId: 'c_1',
   },
   {

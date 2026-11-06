@@ -122,7 +122,14 @@ export const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent[
   'secret-use': ['secret-used'],
   blocked: ['request-blocked', 'breaker-opened', 'breaker-closed'],
   confirmations: ['confirmation'],
-  'approvals-grants': ['adapter-approved', 'adapter-rejected', 'grant-made', 'grant-revoked'],
+  'approvals-grants': [
+    'adapter-approved',
+    'adapter-rejected',
+    'grant-made',
+    'grant-revoked',
+    'update-downloaded',
+    'update-installed',
+  ],
 }
 
 function adapterOf(event: AuditEvent): string | null {

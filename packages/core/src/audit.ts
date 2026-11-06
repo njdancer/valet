@@ -74,6 +74,8 @@ export type AuditEvent =
       readonly reason: string
       /** Who asked: tool code through the capability API, or the site's own page scripts. */
       readonly initiator: 'tool' | 'page'
+      /** Which partition refused it: a login's (auth) or a tool run's (tool). */
+      readonly partition: 'auth' | 'tool'
       readonly callId: string | null
     }
   | {
@@ -85,6 +87,18 @@ export type AuditEvent =
       readonly callId: string | null
     }
   | { readonly type: 'breaker-closed'; readonly host: string }
+  | {
+      /** A verified update finished downloading; it installs when the app next quits. */
+      readonly type: 'update-downloaded'
+      readonly from: string
+      readonly to: string
+    }
+  | {
+      /** The app started on a newer version than it last ran: an update was installed. */
+      readonly type: 'update-installed'
+      readonly from: string
+      readonly to: string
+    }
   | {
       readonly type: 'confirmation'
       readonly adapterId: string

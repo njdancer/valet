@@ -321,6 +321,7 @@ describe('audit views', () => {
       target: 'https://ads.test/',
       reason: 'host-not-allowed',
       initiator: 'page',
+      partition: 'tool',
       callId: 'c1',
     },
     {

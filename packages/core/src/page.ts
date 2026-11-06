@@ -100,8 +100,11 @@ export interface ToolPage {
  * it; tests use fakes. See docs/security-model.md for why auth and tool partitions are separate.
  */
 export interface SessionDriver {
-  /** Opens a page in the auth partition. Only the declarative interpreter may use it. */
-  openAuthPage(): Promise<AuthPage>
+  /**
+   * Opens a page in the auth partition. Only the declarative interpreter may use it. `onBlocked`
+   * hears the auth partition's refused navigations while the page is open, for the audit log.
+   */
+  openAuthPage(options?: AuthPageOptions): Promise<AuthPage>
   /** The tool partition's page, opened at the manifest's home URL on first use. */
   toolPage(): Promise<ToolPage>
   /** Copies cookies for `cookieDomains`, and the named storage keys, from auth to tool. Never the reverse. */
@@ -148,6 +151,12 @@ export interface ToolRunPolicy {
   readonly maxPurpose: Purpose
   /** Navigations and API calls this run may make; static resources don't count. */
   readonly ceiling: number
+}
+
+export interface AuthPageOptions {
+  readonly onBlocked?: (blocked: BlockedRequest) => void
+  /** Called once, the first time a refusal goes unreported because the driver's budget is spent. */
+  readonly onReportsDropped?: () => void
 }
 
 export interface BlockedRequest {

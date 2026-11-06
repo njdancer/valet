@@ -11,7 +11,7 @@ export {
   type Stage,
 } from './errors'
 
-/** Why the driver refused a tool-partition request; mirrors BlockedRequest['reason'] in page.ts. */
+/** Why the driver refused a request, in either partition; BlockedRequest['reason'] in page.ts. */
 export const BLOCK_REASONS = [
   'host-not-allowed',
   'undeclared',

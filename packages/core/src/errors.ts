@@ -22,6 +22,8 @@ export const STAGES = [
   'login',
   /** Local files the app owns: endpoint token, bridge config, grants, approvals. */
   'config',
+  /** The app's own updates: the signed feed, the download and the install. */
+  'update',
 ] as const
 export type Stage = (typeof STAGES)[number]
 
@@ -56,6 +58,10 @@ export const ERROR_CLASSES = [
   'insecure-file',
   'login-in-progress',
   'unsupported',
+  /** A signature did not verify: an update feed's envelope, or a downloaded build. */
+  'signature-invalid',
+  /** Signed metadata past its validity window, e.g. an update feed that stopped being re-signed. */
+  'expired',
   'declined',
   'timed-out',
   'aborted',

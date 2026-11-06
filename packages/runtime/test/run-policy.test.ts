@@ -199,6 +199,7 @@ describe('what the driver refuses', () => {
       target: 'https://evil.test/collect',
       reason: 'host-not-allowed',
       initiator: 'tool',
+      partition: 'tool',
       callId: 'call-1',
     })
   })

@@ -5,6 +5,7 @@
 import {
   type AdapterManifest,
   type AuthPage,
+  type AuthPageOptions,
   type BlockedRequest,
   hostAllowed,
   httpsOrigin,
@@ -124,8 +125,8 @@ export interface DriverOptions {
   readonly timers?: Timers
 }
 
-/** What openAuthPage() may be given besides core's contract. */
-export interface AuthPageRequest {
+/** What openAuthPage() may be given: core's AuthPageOptions, with the driver's reporting rules. */
+export interface AuthPageRequest extends AuthPageOptions {
   /**
    * Told about the auth partition's refused navigations while this page is open, in place of
    * DriverOptions.onAuthBlocked: its own frames' refused navigations, and the partition's

@@ -84,6 +84,7 @@ export const STAGE_WORDING: Readonly<Record<Stage, string>> = {
   timeout: 'Timeout',
   login: 'Login',
   config: 'App files',
+  update: 'App update',
 }
 
 export function stageWording(stage: Stage): string {
@@ -117,6 +118,8 @@ export const ERROR_WORDING: Readonly<Record<ErrorClass, string>> = {
   'insecure-file': 'Insecure file permissions',
   'login-in-progress': 'Login already running',
   unsupported: 'Unsupported',
+  'signature-invalid': 'Signature didn’t verify',
+  expired: 'Expired',
   declined: 'Declined',
   'timed-out': 'Timed out',
   aborted: 'Aborted',

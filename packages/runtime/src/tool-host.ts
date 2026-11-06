@@ -436,6 +436,7 @@ export class ToolHost {
         target: state.redactTarget(target),
         reason: errorClass,
         initiator,
+        partition: 'tool',
         callId: state.callId,
       }),
     )

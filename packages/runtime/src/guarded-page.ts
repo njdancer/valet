@@ -220,6 +220,7 @@ export class GuardedToolPage implements ToolPage {
       target: state.redactTarget(describeTarget(target), raw),
       reason: errorClass,
       initiator: 'tool',
+      partition: 'tool',
       callId: state.callId,
     })
     throw error
