@@ -40,7 +40,8 @@ These come from what the earlier app learned against its bank:
   in the page, because navigation kills in-page timers.
 - **User agent.** The earlier app never overrode Electron's UA, and the bank didn't object. Woolworths
   sits behind Akamai Bot Manager, so spike 1 tests both the default UA and a clean Chrome UA
-  with matching client hints.
+  with matching client hints. Update after run 4 of the live probe: the Electron UA is blocked
+  from Nick's IP and a clean Chrome UA is not, so the clean Chrome UA is now the default.
 
 ## Site API calls
 

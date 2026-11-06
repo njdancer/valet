@@ -104,3 +104,29 @@ Raw output is in `spikes/02-woolworths-shapes/results/` (gitignored); the scrubb
   with no secret fill at all, and the auth flow should try that first.
 - **The fake site** should model a separate auth origin with an identifier-first, two-page flow,
   rather than a single same-origin form.
+
+## Run 4: the block is keyed on the user agent (authorised by Nick)
+
+Nick authorised a diagnostic after the permission system had refused it. A fresh in-memory
+session in the same Electron build loaded the homepage only, twice:
+
+| UA | Result |
+|---|---|
+| Electron default: `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.7977.169 Electron/44.10.2 Safari/537.36` | 403 Access Denied |
+| Clean Chrome: `… Chrome/152.0.0.0 Safari/537.36` | Homepage loads |
+
+Everything else was identical: the window was hidden (the page saw `visibilityState: visible`
+and `hasFocus: false`), and the IP, engine, client hints and TLS stack were the same. So
+Akamai's block applies to the Electron UA from this IP, and probably to the Electron UA in
+general once it's flagged. Run 1 had passed with the Electron UA, so the block was earned by the
+scripted burst and is now attached to that UA.
+
+**Decision (changes the architecture default).** The driver sets a clean Chrome UA on every
+partition by default, with the real Chromium major version and `en-AU` accept-language. This
+matches what Nick's own Chrome sends, which is the goal: the tool should look exactly like Nick
+browsing. Client-hint brands still say `Chromium` rather than `Google Chrome`. Akamai accepted
+that, but matching brands is a follow-up via `Emulation.setUserAgentOverride` with
+`userAgentMetadata`.
+
+**Still true.** The scripted burst is what got the first UA flagged. Rate budgets and the circuit
+breaker remain essential.
