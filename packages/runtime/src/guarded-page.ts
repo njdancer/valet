@@ -78,7 +78,7 @@ export class GuardedToolPage implements ToolPage {
     )
     if (outranked) return this.deny('request-surface', 'denied-path', 'GET', target)
     await this.admit('GET', target)
-    await inner.goto(target.href)
+    await state.track(inner.goto(target.href))
   }
 
   currentUrl(): string {
@@ -87,12 +87,12 @@ export class GuardedToolPage implements ToolPage {
 
   async click(selector: string): Promise<void> {
     this.options.state.assertLive()
-    await this.options.inner.click(selector)
+    await this.options.state.track(this.options.inner.click(selector))
   }
 
   async fill(selector: string, text: string): Promise<void> {
     this.options.state.assertLive()
-    await this.options.inner.fill(selector, text)
+    await this.options.state.track(this.options.inner.fill(selector, text))
   }
 
   async extract(
@@ -100,12 +100,12 @@ export class GuardedToolPage implements ToolPage {
     options?: { readonly attribute?: string; readonly all?: boolean },
   ): Promise<unknown> {
     this.options.state.assertLive()
-    return this.options.inner.extract(selector, options)
+    return this.options.state.track(this.options.inner.extract(selector, options))
   }
 
   async evaluate(source: string, args?: unknown): Promise<unknown> {
     this.options.state.assertLive()
-    return this.options.inner.evaluate(source, args)
+    return this.options.state.track(this.options.inner.evaluate(source, args))
   }
 
   async fetch(pathOrUrl: string, init?: FetchInit): Promise<FetchResult> {
@@ -140,7 +140,7 @@ export class GuardedToolPage implements ToolPage {
       return this.deny('request-surface', 'denied-path', method, target)
     }
     await this.admit(method, target)
-    const result = await inner.fetch(target.href, request)
+    const result = await state.track(inner.fetch(target.href, request))
     if (looksBlocked(result)) {
       state.blocked = true
       site.breaker.trip()

@@ -11,7 +11,7 @@ import {
   SiteAdapterError,
   type ToolPage,
 } from '@siteadapter/core'
-import type { LoginMarkerStore } from '../src/login-marker'
+import type { LoginMarkerState, LoginMarkerStore } from '../src/login-marker'
 import type { ConfirmationAnswer, ConfirmationPrompt, ConfirmationRequest } from '../src/types'
 
 export type FetchHandler = (url: string, init: FetchInit | undefined) => FetchResult | Promise<FetchResult>
@@ -132,33 +132,46 @@ export class MemoryAudit implements AuditSink {
 }
 
 export class FakePrompt implements ConfirmationPrompt {
-  answer: ConfirmationAnswer | 'throw' = 'approved'
+  /** 'hang' never answers, and ignores its signal, like a window nobody looks at. */
+  answer: ConfirmationAnswer | 'throw' | 'hang' = 'approved'
   readonly requests: ConfirmationRequest[] = []
+  readonly signals: AbortSignal[] = []
 
-  async ask(request: ConfirmationRequest, _signal?: AbortSignal): Promise<ConfirmationAnswer> {
+  async ask(request: ConfirmationRequest, signal: AbortSignal): Promise<ConfirmationAnswer> {
     this.requests.push(request)
+    this.signals.push(signal)
     if (this.answer === 'throw') throw new Error('window closed')
+    if (this.answer === 'hang') return new Promise<never>(() => {})
     return this.answer
   }
 }
 
 export class MemoryMarkers implements LoginMarkerStore {
-  readonly marked = new Set<string>()
-  failOn: 'isSet' | 'set' | 'clear' | null = null
+  readonly states = new Map<string, LoginMarkerState>()
+  failOn: 'read' | 'set' | 'hold' | 'clear' | null = null
 
-  async isSet(adapterId: string): Promise<boolean> {
-    if (this.failOn === 'isSet') throw new Error('EIO')
-    return this.marked.has(adapterId)
+  async read(adapterId: string): Promise<LoginMarkerState> {
+    if (this.failOn === 'read') throw new Error('EIO')
+    return this.states.get(adapterId) ?? { kind: 'unset' }
   }
 
   async set(adapterId: string): Promise<void> {
     if (this.failOn === 'set') throw new Error('EIO')
-    this.marked.add(adapterId)
+    this.states.set(adapterId, { kind: 'in-progress' })
+  }
+
+  async hold(adapterId: string, failures: number, retryAt: number | null): Promise<void> {
+    if (this.failOn === 'hold') throw new Error('EIO')
+    this.states.set(adapterId, { kind: 'held', failures, retryAt })
   }
 
   async clear(adapterId: string): Promise<void> {
     if (this.failOn === 'clear') throw new Error('EIO')
-    this.marked.delete(adapterId)
+    this.states.delete(adapterId)
+  }
+
+  kind(adapterId = 'example-shop'): LoginMarkerState['kind'] {
+    return this.states.get(adapterId)?.kind ?? 'unset'
   }
 }
 
@@ -202,5 +215,5 @@ export class FakeClock {
 
 /** Lets queued promise callbacks run. */
 export async function flush(): Promise<void> {
-  for (let i = 0; i < 20; i++) await Promise.resolve()
+  for (let i = 0; i < 100; i++) await Promise.resolve()
 }

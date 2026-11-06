@@ -219,9 +219,9 @@ describe('rate budget', () => {
     const slept: number[] = []
     let now = 0
     const clock = { now: () => now }
-    // Advances time for budget waits, but leaves the long call timeout pending.
+    // Advances time for budget waits, but leaves the call's longer deadlines pending.
     const sleep = (ms: number) =>
-      ms >= 120_000
+      ms > 2_500
         ? new Promise<void>(() => {})
         : Promise.resolve().then(() => {
             slept.push(ms)

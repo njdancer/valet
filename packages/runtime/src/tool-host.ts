@@ -1,15 +1,24 @@
 // The tool host: the one entry point for running an adapter's tool. It owns the order of checks,
 // and the order is the security argument:
 //
-//   1. the adapter's exact bundle hash is approved;
+//   1. the call id is well formed and the adapter's exact bundle hash is approved;
 //   2. the input matches the tool's schema;
 //   3. the adapter's lock is held, so one session never runs two tools at once, and the hash is
 //      still approved once we hold it;
 //   4. the site's circuit breaker is closed;
-//   5. an irreversible tool has the person's confirmation, before any of its code runs;
+//   5. an irreversible tool has the person's confirmation, before its run() starts;
 //   6. the tool runs with a guarded capability object, a timeout and an abort signal;
 //   7. the output matches the tool's schema, is converted to plain JSON, and is redacted on the
 //      way out.
+//
+// Schemas are adapter code too: a zod refine or transform runs whatever the adapter wrote. So input
+// parsing runs before the confirmation (the person is shown the parsed input) with nothing but the
+// raw input to work on, and both parses run under their own deadline, as does the confirmation
+// prompt, so nothing an adapter supplies can hold the lock indefinitely.
+//
+// After a call ends, its lock is held until the runtime work it started (page operations,
+// ensure(), prompts) settles, up to a bound, so a timed-out call can't keep driving the session
+// under the next one.
 //
 // Every call that reaches an adapter is audited as tool-called and tool-finished. Nothing that
 // leaves here carries page text or exception messages: failures are a stage and an error class.
@@ -33,6 +42,7 @@ import {
   type ToolPage,
   toReportable,
 } from '@siteadapter/core'
+import type { z } from 'zod'
 import type { ApprovalLookup } from './approvals'
 import { CallState } from './call-state'
 import { type Clock, type Sleep, systemClock, systemSleep } from './clock'
@@ -40,7 +50,7 @@ import { GuardedToolPage } from './guarded-page'
 import type { LoginMarkerStore } from './login-marker'
 import { KeyedMutex } from './mutex'
 import { redactOutput, SecretRedactionSet } from './redaction'
-import { SessionGate } from './session'
+import { type LoginBackoff, SessionGate } from './session'
 import {
   DEFAULT_SITE_PROTECTION,
   type SiteGuards,
@@ -59,8 +69,16 @@ import type {
 } from './types'
 
 export const DEFAULT_TOOL_TIMEOUT_MS = 120_000
+/** For each schema parse. Parsing is local work; anything this slow is a refinement misbehaving. */
+export const DEFAULT_VALIDATION_TIMEOUT_MS = 10_000
+/** For the person to answer a confirmation. */
+export const DEFAULT_CONFIRMATION_TIMEOUT_MS = 5 * 60_000
+/** How long a finished call's leftover runtime work may hold the adapter's lock. */
+export const DEFAULT_SETTLE_TIMEOUT_MS = 30_000
 const MAX_CONFIRM_MESSAGE = 500
+const MAX_CLIENT = 100
 const TOOL_NAME = /^[a-z][a-z0-9_]{0,63}$/
+const CALL_ID = /^[A-Za-z0-9_-]{1,64}$/
 const HASH = /^[0-9a-f]{64}$/
 
 export interface RegisteredAdapter {
@@ -81,6 +99,10 @@ export interface ToolHostOptions {
   readonly clock?: Clock
   readonly sleep?: Sleep
   readonly timeoutMs?: number
+  readonly validationTimeoutMs?: number
+  readonly confirmationTimeoutMs?: number
+  readonly settleTimeoutMs?: number
+  readonly loginBackoff?: LoginBackoff
   readonly siteProtection?: SiteProtectionOptions
   readonly diagnostics?: (diagnostic: RuntimeDiagnostic) => void
 }
@@ -90,8 +112,8 @@ interface Entry extends RegisteredAdapter {
   readonly site: SiteGuards
 }
 
-type RunOutcome =
-  | { readonly kind: 'returned'; readonly value: unknown }
+type Raced<T> =
+  | { readonly kind: 'returned'; readonly value: T }
   | { readonly kind: 'threw'; readonly error: unknown }
   | { readonly kind: 'timed-out' }
 
@@ -103,6 +125,9 @@ export class ToolHost {
   private readonly clock: Clock
   private readonly sleep: Sleep
   private readonly timeoutMs: number
+  private readonly validationTimeoutMs: number
+  private readonly confirmationTimeoutMs: number
+  private readonly settleTimeoutMs: number
   private readonly diagnostics: (diagnostic: RuntimeDiagnostic) => void
 
   constructor(private readonly options: ToolHostOptions) {
@@ -110,6 +135,9 @@ export class ToolHost {
     this.sleep = options.sleep ?? systemSleep
     this.secrets = options.secrets ?? new SecretRedactionSet()
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS
+    this.validationTimeoutMs = options.validationTimeoutMs ?? DEFAULT_VALIDATION_TIMEOUT_MS
+    this.confirmationTimeoutMs = options.confirmationTimeoutMs ?? DEFAULT_CONFIRMATION_TIMEOUT_MS
+    this.settleTimeoutMs = options.settleTimeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS
     this.diagnostics = options.diagnostics ?? (() => {})
     this.protection = new SiteProtection(
       this.clock,
@@ -137,6 +165,8 @@ export class ToolHost {
       markers: this.options.markers,
       site,
       secrets: this.secrets,
+      clock: this.clock,
+      ...(this.options.loginBackoff === undefined ? {} : { backoff: this.options.loginBackoff }),
       audit: (event) => this.record(event),
       diagnostics: this.diagnostics,
     })
@@ -166,9 +196,13 @@ export class ToolHost {
   }
 
   async call(request: ToolCallRequest): Promise<ToolCallResult> {
+    // The id goes into audit events and the login marker, so it must be short and plain.
+    if (typeof request.callId !== 'string' || !CALL_ID.test(request.callId))
+      return failed('tool-input', 'invalid')
     const entry = this.adapters.get(request.adapterId)
     // An unknown adapter answers like an unapproved one, so callers can't enumerate registrations.
     if (entry === undefined) return failed('manifest', 'not-granted')
+    const client = normaliseClient(request.client)
     const started = this.clock.now()
     try {
       await this.options.audit.append({
@@ -176,7 +210,7 @@ export class ToolHost {
         adapterId: entry.definition.manifest.id,
         adapterHash: entry.bundleHash,
         tool: TOOL_NAME.test(request.tool) ? request.tool : '(invalid)',
-        client: String(request.client).slice(0, 100),
+        client,
         callId: request.callId,
       })
     } catch {
@@ -185,7 +219,7 @@ export class ToolHost {
     }
     let result: ToolCallResult
     try {
-      result = await this.execute(entry, request)
+      result = await this.execute(entry, request, client)
     } catch (error) {
       result = fromError(error, entry.site)
     }
@@ -193,30 +227,45 @@ export class ToolHost {
     return result
   }
 
-  private async execute(entry: Entry, request: ToolCallRequest): Promise<ToolCallResult> {
+  private async execute(entry: Entry, request: ToolCallRequest, client: string): Promise<ToolCallResult> {
     if (!(await this.isApproved(entry))) return failed('manifest', 'not-granted')
     const declaration = entry.definition.manifest.tools.find((t) => t.name === request.tool)
     const implementation = implementationOf(entry, request.tool)
     if (declaration === undefined || implementation === undefined) return failed('manifest', 'not-found')
-    const input = await implementation.input.safeParseAsync(request.input)
-    if (!input.success) return failed('tool-input', 'invalid')
+    const input = await this.validate(implementation.input, request.input, 'tool-input')
+    if (input.status !== 'ok') return input
 
-    return this.locks.run(entry.definition.manifest.id, async () => {
+    const release = await this.locks.acquire(entry.definition.manifest.id)
+    const controller = new AbortController()
+    const state = new CallState(request.callId, controller.signal, this.secrets)
+    try {
       // Again, because a revocation can land while this call waits for the lock.
       if (!(await this.isApproved(entry))) return failed('manifest', 'not-granted')
       if (entry.site.breaker.isOpen()) return blocked(entry.site)
       if (declaration.sideEffect === 'irreversible') {
-        const answer = await this.ask(
-          entry,
-          declaration,
-          request,
-          { kind: 'irreversible-tool', message: declaration.description, input: input.data },
-          new AbortController().signal,
-        )
+        const answer = await this.ask(entry, declaration, request.callId, client, {
+          kind: 'irreversible-tool',
+          message: declaration.description,
+          input: input.output,
+        })
         if (answer !== 'approved') return { status: 'declined' }
       }
-      return this.run(entry, declaration, implementation, request, input.data)
-    })
+      return await this.run(
+        entry,
+        declaration,
+        implementation,
+        request,
+        client,
+        input.output,
+        state,
+        controller,
+      )
+    } finally {
+      // Capabilities die with the call, so promises tool code left running can't act afterwards.
+      controller.abort()
+      if (state.idle) release()
+      else void this.afterSettling(state).finally(release)
+    }
   }
 
   private async run(
@@ -224,11 +273,12 @@ export class ToolHost {
     declaration: ToolDeclaration,
     implementation: ToolImplementation,
     request: ToolCallRequest,
+    client: string,
     input: unknown,
+    state: CallState,
+    controller: AbortController,
   ): Promise<ToolCallResult> {
     const manifest = entry.definition.manifest
-    const controller = new AbortController()
-    const state = new CallState(request.callId, controller.signal, this.secrets)
     let inner: ToolPage
     try {
       inner = await entry.driver.toolPage()
@@ -250,25 +300,22 @@ export class ToolHost {
       session: { ensure: () => this.ensure(entry, state, inner) },
       confirm: async (message) => {
         state.assertLive()
-        const answer = await this.ask(
+        const asking = this.ask(
           entry,
           declaration,
-          request,
+          request.callId,
+          client,
           { kind: 'tool-request', message: String(message).slice(0, MAX_CONFIRM_MESSAGE) },
           controller.signal,
         )
-        return answer === 'approved'
+        return (await state.track(asking)) === 'approved'
       },
       signal: controller.signal,
     }
 
-    let outcome: RunOutcome
-    try {
-      outcome = await this.withTimeout(() => implementation.run(ctx, input), controller)
-    } finally {
-      // Capabilities die with the call, so promises tool code left running can't act afterwards.
-      controller.abort()
-    }
+    const outcome = await this.race(() => implementation.run(ctx, input), this.timeoutMs)
+    // Capabilities die with the call, so promises tool code left running can't act afterwards.
+    controller.abort()
 
     if (outcome.kind === 'timed-out') return failed('timeout', 'timed-out')
     if (state.blocked) return blocked(entry.site)
@@ -282,8 +329,8 @@ export class ToolHost {
       return fromError(outcome.error, entry.site)
     }
 
-    const output = await implementation.output.safeParseAsync(outcome.value)
-    if (!output.success) return failed('tool-output', 'invalid')
+    const output = await this.validate(implementation.output, outcome.value, 'tool-output')
+    if (output.status !== 'ok') return output
     try {
       await this.collectCookies(entry, state)
     } catch {
@@ -291,16 +338,30 @@ export class ToolHost {
       return failed('tool-output', 'internal')
     }
     try {
-      return { status: 'ok', output: redactOutput(output.data, state.sensitive()) }
+      return { status: 'ok', output: redactOutput(output.output, state.sensitive()) }
     } catch (error) {
       return fromReportable(toReportable(error, 'tool-output'))
     }
   }
 
+  /** Parses with an adapter-supplied schema, which may run adapter code, under a deadline. */
+  private async validate(
+    schema: z.ZodType,
+    value: unknown,
+    stage: 'tool-input' | 'tool-output',
+  ): Promise<{ readonly status: 'ok'; readonly output: unknown } | ToolCallResult> {
+    const parsed = await this.race(() => schema.safeParseAsync(value), this.validationTimeoutMs)
+    if (parsed.kind === 'timed-out') return failed(stage, 'timed-out')
+    if (parsed.kind === 'threw' || !parsed.value.success) return failed(stage, 'invalid')
+    return { status: 'ok', output: parsed.value.data }
+  }
+
   private async ensure(entry: Entry, state: CallState, page: ToolPage): Promise<EnsureResult> {
     state.assertLive()
     try {
-      const result = await entry.gate.ensure({ callId: state.callId, signal: state.signal, page })
+      const result = await state.track(
+        entry.gate.ensure({ callId: state.callId, signal: state.signal, page, login: state.login }),
+      )
       state.ensureOutcome = result.status === 'ok' ? null : result
       await this.collectCookies(entry, state)
       return result
@@ -310,31 +371,45 @@ export class ToolHost {
     }
   }
 
+  /** Waits, up to the settle bound, for the runtime work a finished call started. */
+  private async afterSettling(state: CallState): Promise<void> {
+    await this.race(() => state.settled(), this.settleTimeoutMs)
+  }
+
+  /**
+   * Asks the person, under the confirmation deadline. The prompt's signal aborts when the deadline
+   * passes or when `callSignal` (the running tool's) does.
+   */
   private async ask(
     entry: Entry,
     declaration: ToolDeclaration,
-    request: ToolCallRequest,
+    callId: string,
+    client: string,
     question: Pick<ConfirmationRequest, 'kind' | 'message' | 'input'>,
-    signal: AbortSignal,
+    callSignal?: AbortSignal,
   ): Promise<ConfirmationAnswer> {
     const manifest = entry.definition.manifest
-    let answer: ConfirmationAnswer
-    try {
-      answer = await this.options.prompt.ask(
-        {
-          adapterId: manifest.id,
-          adapterName: manifest.name,
-          tool: declaration.name,
-          toolTitle: declaration.title,
-          callId: request.callId,
-          client: request.client,
-          ...question,
-        },
-        signal,
-      )
-    } catch {
-      answer = 'declined'
-    }
+    const deadline = new AbortController()
+    const signal = callSignal === undefined ? deadline.signal : AbortSignal.any([deadline.signal, callSignal])
+    const asked = await this.race(
+      () =>
+        this.options.prompt.ask(
+          {
+            adapterId: manifest.id,
+            adapterName: manifest.name,
+            tool: declaration.name,
+            toolTitle: declaration.title,
+            callId,
+            client,
+            ...question,
+          },
+          signal,
+        ),
+      this.confirmationTimeoutMs,
+    )
+    deadline.abort()
+    let answer: ConfirmationAnswer =
+      asked.kind === 'returned' ? asked.value : asked.kind === 'timed-out' ? 'timed-out' : 'declined'
     // Anything but an explicit yes is a no.
     if (answer !== 'approved' && answer !== 'timed-out') answer = 'declined'
     // An approval we can't record doesn't count: this throws, and the call fails.
@@ -342,27 +417,30 @@ export class ToolHost {
       type: 'confirmation',
       adapterId: manifest.id,
       tool: declaration.name,
-      callId: request.callId,
+      callId,
       answer,
     })
     return answer
   }
 
-  private async withTimeout(task: () => Promise<unknown>, controller: AbortController): Promise<RunOutcome> {
+  /**
+   * Runs `task` against a deadline kept with the injected sleep. The task itself can't be stopped
+   * (callers abort their own signals), only stopped being waited for.
+   */
+  private async race<T>(task: () => Promise<T>, ms: number): Promise<Raced<T>> {
     const timer = new AbortController()
-    const running: Promise<RunOutcome> = Promise.resolve()
+    const running: Promise<Raced<T>> = Promise.resolve()
       .then(task)
       .then(
         (value) => ({ kind: 'returned', value }),
         (error: unknown) => ({ kind: 'threw', error }),
       )
-    const timeout: Promise<RunOutcome> = this.sleep(this.timeoutMs, timer.signal).then(
+    const timeout: Promise<Raced<T>> = this.sleep(ms, timer.signal).then(
       () => ({ kind: 'timed-out' }),
       () => running,
     )
     const outcome = await Promise.race([running, timeout])
     timer.abort()
-    if (outcome.kind === 'timed-out') controller.abort()
     return outcome
   }
 
@@ -389,6 +467,12 @@ export class ToolHost {
 function implementationOf(entry: RegisteredAdapter, name: string): ToolImplementation | undefined {
   // hasOwn, so a tool named "constructor" or "__proto__" can't reach Object.prototype.
   return Object.hasOwn(entry.definition.tools, name) ? entry.definition.tools[name] : undefined
+}
+
+/** One string for both the audit log and the prompt: printable, and at most MAX_CLIENT long. */
+function normaliseClient(client: unknown): string {
+  const printable = typeof client === 'string' ? client.replace(/[\p{Cc}\p{Cf}]/gu, '').trim() : ''
+  return printable.length === 0 ? '(unknown)' : printable.slice(0, MAX_CLIENT)
 }
 
 function failed(stage: Stage, errorClass: ErrorClass): ToolCallResult {

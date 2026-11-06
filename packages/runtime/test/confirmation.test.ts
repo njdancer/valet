@@ -4,7 +4,7 @@
 import { defineAdapter, tool } from '@siteadapter/core'
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
-import { json } from './fakes'
+import { flush, json } from './fakes'
 import { call, fixture, HOME, manifest } from './fixtures'
 
 const placeOrder = vi.fn(
@@ -122,6 +122,38 @@ describe('irreversible tools', () => {
 
     expect(await host.call(order)).toEqual({ status: 'declined' })
     expect(placeOrder).not.toHaveBeenCalled()
+  })
+
+  it('treats a prompt that never answers as timed out, aborts it, and frees the lock', async () => {
+    placeOrder.mockClear()
+    const { host, prompt, audit, clock } = fixture(irreversible, { confirmationTimeoutMs: 60_000 })
+    prompt.answer = 'hang'
+
+    const asking = host.call(order)
+    await flush()
+    await clock.advance(60_000)
+
+    expect(await asking).toEqual({ status: 'declined' })
+    expect(prompt.signals[0]?.aborted).toBe(true)
+    expect(placeOrder).not.toHaveBeenCalled()
+    expect(audit.events).toContainEqual(
+      expect.objectContaining({ type: 'confirmation', answer: 'timed-out' }),
+    )
+
+    prompt.answer = 'declined'
+    expect(await host.call({ ...order, callId: 'call-2' })).toEqual({ status: 'declined' })
+  })
+
+  it('gives the person five minutes by default', async () => {
+    const { host, prompt, clock } = fixture(irreversible)
+    prompt.answer = 'hang'
+
+    const asking = host.call(order)
+    await flush()
+    await clock.advance(5 * 60_000 - 1)
+    expect(prompt.signals[0]?.aborted).toBe(false)
+    await clock.advance(1)
+    expect(await asking).toEqual({ status: 'declined' })
   })
 
   it('does not run when the approval cannot be audited', async () => {

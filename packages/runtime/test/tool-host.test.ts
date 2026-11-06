@@ -345,6 +345,213 @@ describe('ToolHost.call: errors never leak', () => {
     await host.call({ ...call, client: 'c'.repeat(500) })
     expect(audit.events[0]).toMatchObject({ client: 'c'.repeat(100) })
   })
+
+  it('refuses a malformed call id before auditing or running anything', async () => {
+    for (const callId of ['', 'x'.repeat(65), 'call 1', 'call\n{"type":"x"}', '../marker', 42 as never]) {
+      const run = vi.fn(async () => 'ran')
+      const { host, audit, driver } = fixture(
+        defineAdapter({
+          manifest,
+          tools: { run_test: tool({ input: z.object({}), output: z.string(), run }) },
+        }),
+      )
+      expect(await host.call({ ...call, callId })).toEqual({
+        status: 'failed',
+        stage: 'tool-input',
+        errorClass: 'invalid',
+      })
+      expect(audit.events).toEqual([])
+      expect(run).not.toHaveBeenCalled()
+      expect(driver.toolPageCalls).toBe(0)
+    }
+  })
+
+  it('shows the person the same cleaned-up client name the audit log records', async () => {
+    const { host, audit, prompt } = fixture(
+      defineAdapter({
+        manifest,
+        tools: {
+          run_test: tool({
+            input: z.object({}),
+            output: z.boolean(),
+            run: (ctx) => ctx.confirm('ok?'),
+          }),
+        },
+      }),
+    )
+    const client = `claude-code\u202E\n\rApproved by Nick${'!'.repeat(200)}`
+    await host.call({ ...call, client })
+
+    const recorded = (audit.events[0] as { client: string }).client
+    expect(recorded).toBe(`claude-codeApproved by Nick${'!'.repeat(73)}`)
+    expect(prompt.requests[0]?.client).toBe(recorded)
+  })
+
+  it('records a client that is empty or not a string as unknown', async () => {
+    for (const client of ['', '\u0000\u0007', 7 as never]) {
+      const { host, audit } = fixture(readTrolley)
+      await host.call({ ...call, client })
+      expect(audit.events[0]).toMatchObject({ client: '(unknown)' })
+    }
+  })
+})
+
+// Schemas are adapter code: refine, transform and superRefine run whatever the adapter wrote. None of
+// it may hold a call, or the adapter's lock, indefinitely.
+describe('ToolHost.call: schema deadlines', () => {
+  it('times out an input schema that never finishes, and runs nothing', async () => {
+    const run = vi.fn(async () => 'ran')
+    const { host, clock, driver } = fixture(
+      defineAdapter({
+        manifest,
+        tools: {
+          run_test: tool({
+            input: z
+              .object({ hang: z.boolean() })
+              .refine((v) => (v.hang ? new Promise<boolean>(() => {}) : true)),
+            output: z.string(),
+            run,
+          }),
+        },
+      }),
+      { validationTimeoutMs: 1_000 },
+    )
+    const hanging = host.call({ ...call, input: { hang: true } })
+    await flush()
+    await clock.advance(1_000)
+
+    expect(await hanging).toEqual({ status: 'failed', stage: 'tool-input', errorClass: 'timed-out' })
+    expect(run).not.toHaveBeenCalled()
+    expect(driver.toolPageCalls).toBe(0)
+    expect(await host.call({ ...call, callId: 'call-2', input: { hang: false } })).toEqual({
+      status: 'ok',
+      output: 'ran',
+    })
+  })
+
+  it('reports an input schema that throws as invalid input', async () => {
+    const { host } = fixture(
+      defineAdapter({
+        manifest,
+        tools: {
+          run_test: tool({
+            input: z.object({}).refine(() => {
+              throw new Error('refinement exploded with secret text')
+            }),
+            output: z.string(),
+            run: async () => 'ran',
+          }),
+        },
+      }),
+    )
+    expect(await host.call(call)).toEqual({ status: 'failed', stage: 'tool-input', errorClass: 'invalid' })
+  })
+
+  it('times out an output schema that never finishes, and frees the lock', async () => {
+    const { host, clock } = fixture(
+      defineAdapter({
+        manifest,
+        tools: {
+          run_test: tool({
+            input: z.object({ hang: z.boolean() }),
+            output: z.string().refine((v) => (v === 'hang' ? new Promise<boolean>(() => {}) : true)),
+            run: async (_ctx, input) => (input.hang ? 'hang' : 'fine'),
+          }),
+        },
+      }),
+      { validationTimeoutMs: 1_000 },
+    )
+    const hanging = host.call({ ...call, input: { hang: true } })
+    await flush()
+    await clock.advance(1_000)
+
+    expect(await hanging).toEqual({ status: 'failed', stage: 'tool-output', errorClass: 'timed-out' })
+    expect(await host.call({ ...call, callId: 'call-2', input: { hang: false } })).toEqual({
+      status: 'ok',
+      output: 'fine',
+    })
+  })
+
+  it('reports an output schema that throws as invalid output', async () => {
+    const { host } = fixture(
+      defineAdapter({
+        manifest,
+        tools: {
+          run_test: tool({
+            input: z.object({}),
+            output: z.string().transform(() => {
+              throw new Error('boom')
+            }),
+            run: async () => 'x' as never,
+          }),
+        },
+      }),
+    )
+    expect(await host.call(call)).toEqual({ status: 'failed', stage: 'tool-output', errorClass: 'invalid' })
+  })
+
+  it('uses ten seconds per parse by default', async () => {
+    const { host, clock } = fixture(
+      defineAdapter({
+        manifest,
+        tools: {
+          run_test: tool({
+            input: z.object({}).refine(() => new Promise<boolean>(() => {})),
+            output: z.string(),
+            run: async () => 'ran',
+          }),
+        },
+      }),
+    )
+    const hanging = host.call(call)
+    await flush()
+    await clock.advance(9_999)
+    await clock.advance(1)
+    expect(await hanging).toMatchObject({ stage: 'tool-input', errorClass: 'timed-out' })
+  })
+})
+
+describe('ToolHost.call: runtime work that outlives the call', () => {
+  it('holds the lock while a timed-out call’s page operation is still in flight', async () => {
+    let finishGoto: () => void = () => {}
+    const events: string[] = []
+    const { host, clock, page } = fixture(
+      defineAdapter({
+        manifest,
+        tools: {
+          run_test: tool({
+            input: z.object({ id: z.string() }),
+            output: z.string(),
+            run: async (ctx, input) => {
+              events.push(`${input.id}:start`)
+              if (input.id === 'a') await ctx.page.goto('/slow')
+              return input.id
+            },
+          }),
+        },
+      }),
+      { timeoutMs: 1_000, settleTimeoutMs: 60_000 },
+    )
+    page.goto = (url: string) => {
+      page.gotos.push(url)
+      return new Promise<void>((resolve) => {
+        finishGoto = resolve
+      })
+    }
+
+    const first = host.call({ ...call, input: { id: 'a' } })
+    await flush()
+    await clock.advance(1_000)
+    expect(await first).toMatchObject({ stage: 'timeout' })
+
+    const second = host.call({ ...call, callId: 'call-2', input: { id: 'b' } })
+    await flush()
+    expect(events).toEqual(['a:start'])
+
+    finishGoto()
+    expect(await second).toEqual({ status: 'ok', output: 'b' })
+    expect(events).toEqual(['a:start', 'b:start'])
+  })
 })
 
 describe('ToolHost.call: timeout', () => {
@@ -663,7 +870,12 @@ describe('ToolHost defaults', () => {
       audit: { append: async () => ({}) as never },
       prompt: { ask: async () => 'declined' },
       authRunner: async () => ({ status: 'ok' }),
-      markers: { isSet: async () => false, set: async () => {}, clear: async () => {} },
+      markers: {
+        read: async () => ({ kind: 'unset' }),
+        set: async () => {},
+        hold: async () => {},
+        clear: async () => {},
+      },
     })
     expect(host).toBeInstanceOf(ToolHost)
   })

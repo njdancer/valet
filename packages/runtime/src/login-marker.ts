@@ -1,20 +1,38 @@
 // A durable marker that a login is in progress, from the earlier app. It is written and fsynced before
-// the auth action starts and cleared only once the outcome is classified, so a crash or hang
-// mid-login stops further attempts (and lockouts) until the person clears it. The file's existence
-// is the state; anything we can't read counts as set.
+// the auth action starts, so a crash or hang mid-login stops further attempts (and lockouts) until
+// the person clears it. Once the outcome is classified it is cleared, or, if the login failed,
+// replaced by a hold: automatic logins then wait for a backoff to pass, or for the person, because
+// repeated blind attempts are how accounts get locked.
+//
+// The file's existence is the state. A file we can't read or parse counts as in progress.
 
 import { open, stat, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { SiteAdapterError } from '@siteadapter/core'
 import { ADAPTER_ID } from './approvals'
 import type { Clock } from './clock'
-import { isErrno, syncDirectory, writeFileSynced } from './files'
+import { isErrno, syncDirectory, writeFileAtomic, writeFileSynced } from './files'
+
+export type LoginMarkerState =
+  | { readonly kind: 'unset' }
+  /** A login started and never reached a classified outcome. Only the person clears it. */
+  | { readonly kind: 'in-progress' }
+  /**
+   * Logins in a row that failed, and when the next automatic one may start (ms since the epoch).
+   * A null retryAt waits for the person.
+   */
+  | { readonly kind: 'held'; readonly failures: number; readonly retryAt: number | null }
 
 export interface LoginMarkerStore {
-  isSet(adapterId: string): Promise<boolean>
+  read(adapterId: string): Promise<LoginMarkerState>
+  /** Marks a login as in progress. */
   set(adapterId: string, callId: string | null): Promise<void>
+  /** Replaces the marker with a hold after a classified failure. */
+  hold(adapterId: string, failures: number, retryAt: number | null): Promise<void>
   clear(adapterId: string): Promise<void>
 }
+
+const IN_PROGRESS: LoginMarkerState = { kind: 'in-progress' }
 
 export class LoginAttemptMarker implements LoginMarkerStore {
   constructor(
@@ -22,6 +40,22 @@ export class LoginAttemptMarker implements LoginMarkerStore {
     private readonly clock: Clock,
   ) {}
 
+  async read(adapterId: string): Promise<LoginMarkerState> {
+    let text: string
+    try {
+      const handle = await open(this.pathFor(adapterId), 'r')
+      try {
+        text = await handle.readFile('utf8')
+      } finally {
+        await handle.close()
+      }
+    } catch (error) {
+      return isErrno(error, 'ENOENT') ? { kind: 'unset' } : IN_PROGRESS
+    }
+    return parseHold(text) ?? IN_PROGRESS
+  }
+
+  /** True when any marker or hold is present, or the state can't be read. */
   async isSet(adapterId: string): Promise<boolean> {
     try {
       await stat(this.pathFor(adapterId))
@@ -35,6 +69,16 @@ export class LoginAttemptMarker implements LoginMarkerStore {
     const startedAt = new Date(this.clock.now()).toISOString()
     await writeFileSynced(this.pathFor(adapterId), `${JSON.stringify({ startedAt, callId })}\n`)
     await syncDirectory(this.dir)
+  }
+
+  async hold(adapterId: string, failures: number, retryAt: number | null): Promise<void> {
+    if (!Number.isSafeInteger(failures) || failures < 1) throw new SiteAdapterError('auth-step', 'internal')
+    const heldAt = new Date(this.clock.now()).toISOString()
+    // Atomic, so a crash mid-write leaves the in-progress marker rather than a torn hold.
+    await writeFileAtomic(
+      this.pathFor(adapterId),
+      `${JSON.stringify({ state: 'held', heldAt, failures, retryAt })}\n`,
+    )
   }
 
   async clear(adapterId: string): Promise<void> {
@@ -67,4 +111,19 @@ export class LoginAttemptMarker implements LoginMarkerStore {
     if (!ADAPTER_ID.test(adapterId)) throw new SiteAdapterError('manifest', 'invalid')
     return join(this.dir, `${adapterId}.login-attempt`)
   }
+}
+
+function parseHold(text: string): LoginMarkerState | null {
+  let value: unknown
+  try {
+    value = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (value === null || typeof value !== 'object') return null
+  const { state, failures, retryAt } = value as Record<string, unknown>
+  if (state !== 'held') return null
+  if (typeof failures !== 'number' || !Number.isSafeInteger(failures) || failures < 1) return null
+  if (retryAt !== null && (typeof retryAt !== 'number' || !Number.isFinite(retryAt))) return null
+  return { kind: 'held', failures, retryAt }
 }

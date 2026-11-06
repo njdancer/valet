@@ -86,4 +86,64 @@ describe('LoginAttemptMarker', () => {
     // An id we refuse to map to a file can't be shown to be clear.
     expect(await markers.isSet('../escaped')).toBe(true)
   })
+
+  it('reads unset, in progress and held states', async () => {
+    const markers = new LoginAttemptMarker(dir, clock)
+    expect(await markers.read('woolworths')).toEqual({ kind: 'unset' })
+
+    await markers.set('woolworths', 'call-1')
+    expect(await markers.read('woolworths')).toEqual({ kind: 'in-progress' })
+
+    await markers.hold('woolworths', 2, Date.UTC(2026, 10, 7, 9, 10, 0))
+    expect(await markers.read('woolworths')).toEqual({
+      kind: 'held',
+      failures: 2,
+      retryAt: Date.UTC(2026, 10, 7, 9, 10, 0),
+    })
+    expect(await markers.isSet('woolworths')).toBe(true)
+    expect(await readdir(dir)).toEqual(['woolworths.login-attempt'])
+
+    await markers.hold('woolworths', 3, null)
+    expect(await new LoginAttemptMarker(dir, clock).read('woolworths')).toEqual({
+      kind: 'held',
+      failures: 3,
+      retryAt: null,
+    })
+
+    await markers.clear('woolworths')
+    expect(await markers.read('woolworths')).toEqual({ kind: 'unset' })
+  })
+
+  it('reads anything it cannot make sense of as in progress, never as clear', async () => {
+    const markers = new LoginAttemptMarker(dir, clock)
+    const path = join(dir, 'woolworths.login-attempt')
+    for (const contents of [
+      'not json',
+      'null',
+      '"held"',
+      '{"state":"held","failures":0,"retryAt":null}',
+      '{"state":"held","failures":1.5,"retryAt":null}',
+      '{"state":"held","failures":"1","retryAt":null}',
+      '{"state":"held","failures":1,"retryAt":"soon"}',
+      '{"state":"held","failures":1}',
+      '{"state":"cleared"}',
+    ]) {
+      await writeFile(path, contents)
+      expect(await markers.read('woolworths')).toEqual({ kind: 'in-progress' })
+    }
+  })
+
+  it('reads a marker it cannot open as in progress', async () => {
+    const markers = new LoginAttemptMarker(dir, clock)
+    await chmod(dir, 0o000)
+    expect(await markers.read('woolworths')).toEqual({ kind: 'in-progress' })
+    expect(await markers.read('../escaped')).toEqual({ kind: 'in-progress' })
+  })
+
+  it('refuses a hold that does not count a failure', async () => {
+    const markers = new LoginAttemptMarker(dir, clock)
+    await expect(markers.hold('woolworths', 0, null)).rejects.toMatchObject({ errorClass: 'internal' })
+    await expect(markers.hold('woolworths', 1.5, null)).rejects.toMatchObject({ errorClass: 'internal' })
+    expect(await readdir(dir)).toEqual([])
+  })
 })

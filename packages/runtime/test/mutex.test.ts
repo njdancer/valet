@@ -74,4 +74,25 @@ describe('KeyedMutex', () => {
     await running
     expect(mutex.busy('woolworths')).toBe(false)
   })
+
+  it('hands out a release function that is safe to call twice', async () => {
+    const mutex = new KeyedMutex()
+    const release = await mutex.acquire('woolworths')
+    const waiting = mutex.acquire('woolworths')
+    const third = mutex.acquire('woolworths')
+    release()
+    release()
+    const second = await waiting
+    // A second release from the first holder must not let the third in early.
+    let thirdIn = false
+    void third.then(() => {
+      thirdIn = true
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(thirdIn).toBe(false)
+    second()
+    ;(await third)()
+    expect(mutex.busy('woolworths')).toBe(false)
+  })
 })
