@@ -7,7 +7,7 @@
 //     CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --dir --config electron-builder.config.ts
 //   Release build (the release script sets these; signing keys never live in the repo):
 //     SITEADAPTER_RELEASE=1 SITEADAPTER_TEAM_ID=… SITEADAPTER_UPDATE_URL=https://…/mac/ \
-//     CSC_NAME="Developer ID Application: … (TEAMID)" APPLE_KEYCHAIN_PROFILE=siteadapter-notary \
+//     CSC_NAME="<name> (TEAMID)" APPLE_KEYCHAIN_PROFILE=siteadapter-notary \
 //     electron-builder --mac --config electron-builder.config.ts --publish never
 //
 // Development builds get their own bundle ID and product name, so they never share Keychain items,
@@ -199,11 +199,14 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
     if (env.CSC_IDENTITY_AUTO_DISCOVERY === 'false') {
       throw new BuildConfigError('a release build is signed: unset CSC_IDENTITY_AUTO_DISCOVERY=false')
     }
+    // electron-builder takes the name without its "Developer ID Application: " prefix (it refuses
+    // the prefix and searches Developer ID Application certificates only for a release), so the
+    // name must be "<name> (<TEAM_ID>)" for the same team as the requirement, or a SHA-1.
     const name = env.CSC_NAME
     if (name !== undefined && name !== '' && !SHA1_IDENTITY.test(name)) {
-      if (!name.startsWith('Developer ID Application: ') || !name.endsWith(` (${teamId})`)) {
+      if (name.includes(':') || !name.endsWith(` (${teamId})`) || name.length <= ` (${teamId})`.length) {
         throw new BuildConfigError(
-          'CSC_NAME must be a "Developer ID Application: … (SITEADAPTER_TEAM_ID)" identity or its SHA-1',
+          'CSC_NAME must be "<name> (SITEADAPTER_TEAM_ID)", without a prefix, or a SHA-1',
         )
       }
     }
@@ -232,8 +235,9 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
     // electron-vite's output only. No source maps, tests, fixtures or scripts in the package.
     files: ['out/**/*', 'package.json', '!**/*.map'],
     // The packaged package.json names the app, which sets userData, the cookie-encryption Keychain
-    // item and the single-instance lock: dev and release must differ there too.
-    extraMetadata: { productName },
+    // item, the single-instance lock and electron-updater's cache directory: dev and release must
+    // differ there too.
+    extraMetadata: { name: productName, productName },
     asar: true,
     npmRebuild: false,
     forceCodeSigning: release,

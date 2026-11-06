@@ -32,7 +32,7 @@ const RELEASE_ENV: BuildEnv = {
   SITEADAPTER_RELEASE: '1',
   SITEADAPTER_TEAM_ID: 'ABCDE12345',
   SITEADAPTER_UPDATE_URL: 'https://updates.example.com/mac/',
-  CSC_NAME: 'Developer ID Application: Example Person (ABCDE12345)',
+  CSC_NAME: 'Example Person (ABCDE12345)',
   APPLE_KEYCHAIN_PROFILE: 'siteadapter-notary',
 }
 
@@ -58,7 +58,7 @@ describe('a release build', () => {
     expect(c.appId).toBe(RELEASE_APP_ID)
     expect(c.appId).toBe('me.dncr.siteadapter')
     expect(c.productName).toBe('siteadapter')
-    expect(c.extraMetadata).toEqual({ productName: RELEASE_PRODUCT_NAME })
+    expect(c.extraMetadata).toEqual({ name: RELEASE_PRODUCT_NAME, productName: RELEASE_PRODUCT_NAME })
     expect(c.forceCodeSigning).toBe(true)
     expect(c.mac.hardenedRuntime).toBe(true)
     expect(c.mac.notarize).toBe(true)
@@ -191,13 +191,15 @@ describe('a release build refuses to be built weaker', () => {
     refuses({ ...RELEASE_ENV, CSC_IDENTITY_AUTO_DISCOVERY: 'false' }, 'CSC_IDENTITY_AUTO_DISCOVERY')
   })
 
-  it('with an identity from another team, or not a Developer ID', () => {
-    refuses({ ...RELEASE_ENV, CSC_NAME: 'Developer ID Application: Someone (ZZZZZ99999)' }, 'CSC_NAME')
+  it('with an identity from another team, a certificate-type prefix, or no name', () => {
+    refuses({ ...RELEASE_ENV, CSC_NAME: 'Someone (ZZZZZ99999)' }, 'CSC_NAME')
+    // electron-builder refuses a Developer ID prefix itself; an Apple Development one would sign
+    // with the wrong kind of certificate.
+    refuses({ ...RELEASE_ENV, CSC_NAME: 'Developer ID Application: Example Person (ABCDE12345)' }, 'CSC_NAME')
     refuses({ ...RELEASE_ENV, CSC_NAME: 'Apple Development: Example Person (ABCDE12345)' }, 'CSC_NAME')
-    refuses(
-      { ...RELEASE_ENV, CSC_NAME: 'Developer ID Application: Example Person (ABCDE12345) x' },
-      'CSC_NAME',
-    )
+    refuses({ ...RELEASE_ENV, CSC_NAME: 'Example Person (ABCDE12345) x' }, 'CSC_NAME')
+    refuses({ ...RELEASE_ENV, CSC_NAME: ' (ABCDE12345)' }, 'CSC_NAME')
+    refuses({ ...RELEASE_ENV, CSC_NAME: 'a'.repeat(40) }, 'CSC_NAME')
   })
 
   it('without notarisation credentials, or with a partial or Apple ID set', () => {
@@ -223,7 +225,7 @@ describe('a development build', () => {
     expect(c.appId).toBe(DEV_APP_ID)
     expect(c.appId).toBe('me.dncr.siteadapter.dev')
     expect(c.productName).toBe(DEV_PRODUCT_NAME)
-    expect(c.extraMetadata).toEqual({ productName: 'siteadapter-dev' })
+    expect(c.extraMetadata).toEqual({ name: 'siteadapter-dev', productName: 'siteadapter-dev' })
     expect(config({ SITEADAPTER_RELEASE: '0' }).appId).toBe(DEV_APP_ID)
   })
 

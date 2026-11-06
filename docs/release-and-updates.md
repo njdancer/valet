@@ -107,21 +107,21 @@ CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --dir --config electron
 
 # Release build (the release script sets these; no key is in the repo or the environment file).
 SITEADAPTER_RELEASE=1 SITEADAPTER_TEAM_ID=<TEAM_ID> SITEADAPTER_UPDATE_URL=https://updates.<domain>/mac/ \
-CSC_NAME="Developer ID Application: <name> (<TEAM_ID>)" APPLE_KEYCHAIN_PROFILE=siteadapter-notary \
+CSC_NAME="<name> (<TEAM_ID>)" APPLE_KEYCHAIN_PROFILE=siteadapter-notary \
 electron-builder --mac --config electron-builder.config.ts --publish never
 ```
 
 What the environment decides:
 
-| Variable                                                | Release (`SITEADAPTER_RELEASE=1`)                                                 | Development (unset or `0`)                                            |
-| ------------------------------------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| Bundle ID, product name                                 | `me.dncr.siteadapter`, `siteadapter`                                              | `me.dncr.siteadapter.dev`, `siteadapter-dev`                          |
-| `SITEADAPTER_TEAM_ID`                                   | Required, 10 letters or digits; fills the designated requirement                  | Optional; with an identity, fills the dev requirement                 |
-| `SITEADAPTER_UPDATE_URL`                                | Required: https, a directory (`/` at the end), no query, fragment or credentials  | Optional; http to `127.0.0.1` also allowed, for a local feed          |
-| `CSC_NAME` or `CSC_LINK`                                | Required. `CSC_NAME` must be `Developer ID Application: … (<TEAM_ID>)` or a SHA-1 | Optional. Without one the build is unsigned: `mac.identity` is `null` |
-| `CSC_IDENTITY_AUTO_DISCOVERY=false`                     | Refused                                                                           | Allowed (and has the same effect as naming no identity)               |
-| `APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER` | All three, or `APPLE_KEYCHAIN_PROFILE`, required: release builds are notarised    | Ignored: development builds are never notarised                       |
-| `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`               | Refused (electron-builder would prefer the Apple ID over an API key)              | Refused                                                               |
+| Variable                                                | Release (`SITEADAPTER_RELEASE=1`)                                                | Development (unset or `0`)                                            |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Bundle ID, product name                                 | `me.dncr.siteadapter`, `siteadapter`                                             | `me.dncr.siteadapter.dev`, `siteadapter-dev`                          |
+| `SITEADAPTER_TEAM_ID`                                   | Required, 10 letters or digits; fills the designated requirement                 | Optional; with an identity, fills the dev requirement                 |
+| `SITEADAPTER_UPDATE_URL`                                | Required: https, a directory (`/` at the end), no query, fragment or credentials | Optional; http to `127.0.0.1` also allowed, for a local feed          |
+| `CSC_NAME` or `CSC_LINK`                                | Required. `CSC_NAME` must be `<name> (<TEAM_ID>)` (no prefix) or a SHA-1         | Optional. Without one the build is unsigned: `mac.identity` is `null` |
+| `CSC_IDENTITY_AUTO_DISCOVERY=false`                     | Refused                                                                          | Allowed (and has the same effect as naming no identity)               |
+| `APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER` | All three, or `APPLE_KEYCHAIN_PROFILE`, required: release builds are notarised   | Ignored: development builds are never notarised                       |
+| `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`               | Refused (electron-builder would prefer the Apple ID over an API key)             | Refused                                                               |
 
 The parts of the configuration that matter, as `createBuilderConfig` returns them for a release:
 
@@ -129,7 +129,7 @@ The parts of the configuration that matter, as `createBuilderConfig` returns the
 {
   appId: 'me.dncr.siteadapter', // RELEASE_APP_ID; D1 pending
   productName: 'siteadapter',
-  extraMetadata: { productName: 'siteadapter' }, // the packaged package.json: app.getName(), userData
+  extraMetadata: { name: 'siteadapter', productName: 'siteadapter' }, // app.getName(), userData, updater cache
   directories: { output: 'dist', buildResources: 'build' },
   files: ['out/**/*', 'package.json', '!**/*.map'], // electron-vite's output only
   asar: true,
@@ -296,8 +296,9 @@ designated => identifier "__BUNDLE_ID__" and anchor apple generic and certificat
 ```
 
 It says: this bundle ID, chained to Apple, with a Developer ID intermediate and a Developer ID
-Application leaf, issued to this team. The config also refuses a `CSC_NAME` that isn't a
-`Developer ID Application: … (<TEAM_ID>)` identity for the same team (or a SHA-1 hash), so the
+Application leaf, issued to this team. For a release, the config accepts only a `CSC_NAME` of
+the form `<name> (<TEAM_ID>)` with the same Team ID (electron-builder adds the certificate type
+itself and searches Developer ID Application certificates only), or a SHA-1 hash, so the
 requirement and the signature can't name different teams.
 
 **What's honestly new here, and what isn't.**
