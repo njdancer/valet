@@ -71,6 +71,18 @@ function within(path: string, dir: string): boolean {
 /** The host resolver rule demo mode appends before ready: only the demo's own names. */
 export const DEMO_RESOLVER_RULES = 'MAP *.woolworths.test 127.0.0.1'
 
+/**
+ * The end-to-end suite's egress canary: an attacker's host it runs the fake's exfil sink behind.
+ * Mapped to 127.0.0.1 too, in an e2e launch of demo mode only, so that a request the app let out to
+ * it would arrive at the sink rather than fail to resolve, and "nothing arrived" means blocked.
+ */
+export const E2E_CANARY_HOST = 'evil.test'
+
+/** The resolver rules for a demo launch: the demo's names, plus the canary in e2e mode. */
+export function demoResolverRules(mode: Pick<LaunchMode, 'e2e'>): string {
+  return mode.e2e ? `${DEMO_RESOLVER_RULES}, MAP ${E2E_CANARY_HOST} 127.0.0.1` : DEMO_RESOLVER_RULES
+}
+
 /** Where the renderer's pages come from: the built files, or electron-vite's dev server. */
 export type RendererBase =
   | { readonly kind: 'file'; readonly dir: string }

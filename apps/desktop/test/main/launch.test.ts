@@ -11,6 +11,9 @@ import {
   underTrayIcon,
 } from '../../src/main/core/geometry'
 import {
+  DEMO_RESOLVER_RULES,
+  demoResolverRules,
+  E2E_CANARY_HOST,
   isAppPage,
   launchMode,
   pageUrl,
@@ -74,6 +77,19 @@ describe('launchMode', () => {
     const appData = '/Users/n/Library/Application Support'
     const mode = launchMode(['--demo'], { SITEADAPTER_USER_DATA: `${appData}/siteadapter-e2e` }, DEV)
     expect(userDataDir(mode, appData)).toBe(`${appData}/siteadapter-e2e`)
+  })
+})
+
+describe('demo resolver rules', () => {
+  it('map only the demo’s own names, and the canary host in an e2e launch alone', () => {
+    expect(demoResolverRules({ e2e: false })).toBe('MAP *.woolworths.test 127.0.0.1')
+    expect(demoResolverRules({ e2e: false })).toBe(DEMO_RESOLVER_RULES)
+    expect(demoResolverRules({ e2e: true })).toBe('MAP *.woolworths.test 127.0.0.1, MAP evil.test 127.0.0.1')
+    expect(E2E_CANARY_HOST).toBe('evil.test')
+    // Every rule points at this machine: no launch can map a name somewhere else.
+    for (const e2e of [false, true])
+      for (const rule of demoResolverRules({ e2e }).split(','))
+        expect(rule.trim()).toMatch(/^MAP \S+ 127\.0\.0\.1$/)
   })
 })
 

@@ -16,7 +16,7 @@ import { app, clipboard, dialog } from 'electron'
 import { builtinAdapters } from '../adapters'
 import { dataPaths } from '../core/constants'
 import { checkOpBinary, defaultOpCheckDeps, realCredentials } from '../core/credentials'
-import { DEMO_RESOLVER_RULES, launchMode, rendererBase, userDataDir } from '../core/launch'
+import { demoResolverRules, launchMode, rendererBase, userDataDir } from '../core/launch'
 import { AppService } from '../core/service'
 import type { BridgeCommand } from '../core/snippets'
 import type { DemoSite } from './demo'
@@ -33,7 +33,7 @@ const mode = launchMode(process.argv, process.env, {
 // Before ready: where everything lives, the process-wide hardening, and demo's host mapping.
 app.setPath('userData', userDataDir(mode, app.getPath('appData')))
 hardenProcess(app)
-if (mode.demo) app.commandLine.appendSwitch('host-resolver-rules', DEMO_RESOLVER_RULES)
+if (mode.demo) app.commandLine.appendSwitch('host-resolver-rules', demoResolverRules(mode))
 
 /** How long quitting may take to close the endpoint, the drivers and the demo site. */
 const QUIT_BOUND_MS = 5_000
@@ -81,9 +81,10 @@ async function main(): Promise<void> {
   let demo: DemoSite | null = null
   // The constant first, so a production build drops the import, and with it the demo chunk.
   if (__SITEADAPTER_DEMO_BUILD__ && mode.demo) {
-    const { startDemoSite, trustDemoCertificate } = await import('./demo')
+    const { exposeToE2e, startDemoSite, trustDemoCertificate } = await import('./demo')
     demo = await startDemoSite()
     trustDemoCertificate('woolworths', demo.fingerprint)
+    if (mode.e2e) exposeToE2e(demo)
     log(`demo: fake Woolworths at ${demo.site.origin}, signing in at ${demo.site.authOrigin}`)
   }
   const demoSite = demo

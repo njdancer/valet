@@ -56,6 +56,25 @@ export async function startDemoSite(): Promise<DemoSite> {
   }
 }
 
+/**
+ * What the end-to-end suite may do to the fake site from Playwright's `app.evaluate` (the main
+ * process's global scope): make it block every request (the site's Access Denied page), and read the
+ * demo account's trolley as the site holds it. Set only in an e2e launch of a demo build: this chunk
+ * isn't in a production build at all, and no renderer can reach the main process's globals.
+ */
+export interface DemoE2eHook {
+  blockAll(on: boolean): void
+  trolley(): readonly { readonly stockcode: number; readonly quantity: number }[]
+}
+
+export function exposeToE2e(demo: DemoSite): void {
+  const hook: DemoE2eHook = {
+    blockAll: (on) => demo.site.blockAll(on === true),
+    trolley: () => demo.site.trolleyFor(DEMO_ACCOUNT.username).map((l) => ({ ...l })),
+  }
+  Object.defineProperty(globalThis, '__siteadapterE2e', { value: Object.freeze(hook) })
+}
+
 /** Trusts the demo certificate for the demo hosts on the adapter's partitions. Call before any load. */
 export function trustDemoCertificate(adapterId: string, fingerprint: string): void {
   for (const role of ['auth', 'tool'] as const) {
