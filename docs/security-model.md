@@ -364,10 +364,16 @@ its own `beginRun(sideEffect)`):
 - **Contract:** ambiguous-path refusal for every request (in the driver an ambiguous path only
   stops a declaration from matching, so a navigation or passive load with `%2F`, `%2e%2e` or a
   backslash segment goes through, and there is no `ambiguous-path` reason); navigations counting
-  toward the ceiling (the driver counts API calls only); the `initiator` field; and auditing the
-  driver's blocks (its `onBlocked` reports reach no audit log yet, so a page-initiated block is
-  not audited). The runtime doesn't call the driver's `beginRun` at all yet, so the allowance is
-  always a read tool's.
+  toward the ceiling (the driver counts API calls only); and the `initiator` field. The runtime
+  doesn't call the driver's `beginRun` at all yet, so the allowance is always a read tool's.
+
+Every refusal the driver reports is audited as `request-blocked`, with the partition that refused
+it (**Enforced**, in the desktop app). During a run the runtime writes it, with the call's id.
+Between runs the app writes the tool partition's, with no call id, at most 50 per adapter every
+ten minutes. The app also writes the auth partition's: for an automated login with the call that
+needed it, and for the login window the person opens with no call id. Each target first passes
+the runtime's redaction for targets, against the tool partition's session values and the secrets
+the logins registered.
 
 Sockets that `webRequest` never sees are closed too (**Enforced**): the tool partition sends every
 connection, loopback included, through a local CONNECT proxy that allows only egress hosts on

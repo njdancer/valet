@@ -13,6 +13,7 @@
 
 import {
   type AuthPage,
+  type AuthPageOptions,
   type BlockedRequest,
   type SessionDriver,
   SiteAdapterError,
@@ -140,8 +141,8 @@ class TrackedDriver implements SessionDriver {
     private readonly running: (inRun: boolean) => void,
   ) {}
 
-  openAuthPage(): Promise<AuthPage> {
-    return this.inner.openAuthPage()
+  openAuthPage(options?: AuthPageOptions): Promise<AuthPage> {
+    return this.inner.openAuthPage(options)
   }
 
   toolPage(): Promise<ToolPage> {

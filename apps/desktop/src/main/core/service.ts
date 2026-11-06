@@ -10,6 +10,7 @@ import {
   type AuditEvent,
   type AuditRecord,
   type AuditSink,
+  type BlockedRequest,
   type Grant,
   MESSAGES_SECRET,
   type NeedsUserReason,
@@ -49,6 +50,7 @@ import {
   runTrace,
   statsToday,
 } from './audit-view'
+import { BlockedAudit, LoginSecrets } from './blocked'
 import { type AppRefusal, RuntimeToolCaller } from './caller'
 import { ClientRegistry } from './clients'
 import { ConfirmationBroker, type Timers } from './confirmations'
@@ -103,7 +105,8 @@ export interface ServiceDeps {
   readonly timers: Timers
   readonly sleep: (ms: number) => Promise<void>
   readonly adapters: readonly BuiltinAdapter[]
-  readonly createDriver: (manifest: AdapterManifest) => Promise<SessionDriver>
+  /** Builds an adapter's driver, with the reporters its refusals outside a run go to. */
+  readonly createDriver: (manifest: AdapterManifest, reporters: DriverReporters) => Promise<SessionDriver>
   readonly credentials: Credentials
   readonly startEndpoint: (caller: ToolCaller, configPath: string) => Promise<RunningEndpoint>
   readonly ui: UiPort
@@ -112,8 +115,19 @@ export interface ServiceDeps {
   readonly bridge: BridgeCommand | null
   /** Checks a chosen op binary (checkOpBinary); the resolved path, or null to refuse it. */
   readonly checkOp: (path: string) => Promise<string | null>
-  readonly diagnostics?: (diagnostic: RuntimeDiagnostic | { readonly type: string }) => void
+  readonly diagnostics?: (
+    diagnostic: RuntimeDiagnostic | { readonly type: string; readonly adapterId?: string },
+  ) => void
   readonly newId?: () => string
+}
+
+/** Where a driver reports refusals outside the runtime's runs (browser-electron's DriverOptions). */
+export interface DriverReporters {
+  /** The tool partition's refusals between runs. */
+  readonly onBlocked: (blocked: BlockedRequest) => void
+  /** The auth partition's refusals that no open login page took. */
+  readonly onAuthBlocked: (blocked: BlockedRequest) => void
+  readonly onAuthReportsDropped: () => void
 }
 
 /** Wraps the audit log so every record also tells the windows what changed. */
@@ -178,6 +192,8 @@ export class AppService {
   private readonly handoffs: Handoffs
   private readonly drivers = new Map<string, SessionDriver>()
   private readonly gate: AdapterGate
+  private readonly loginSecrets = new LoginSecrets()
+  private readonly blocked: BlockedAudit
   /** When each installed hash was approved, for the confirmation panel (which reads synchronously). */
   private readonly approvedAt = new Map<string, string>()
   private caller: RuntimeToolCaller | null = null
@@ -207,6 +223,22 @@ export class AppService {
     )
     this.reader = new AuditReader(paths.audit)
     this.gate = new AdapterGate(deps.timers)
+    this.blocked = new BlockedAudit({
+      audit: this.audit,
+      secrets: this.loginSecrets,
+      adapter: (adapterId) => {
+        const adapter = this.adapter(adapterId)
+        const driver = this.drivers.get(adapterId)
+        if (adapter === null || driver === undefined) return null
+        const { session } = adapter.definition.manifest
+        return {
+          manifest: adapter.definition.manifest,
+          sessionValues: () => driver.sessionSecrets(session.cookieDomains, session.storage),
+        }
+      },
+      now: deps.now,
+      diagnostics: (d) => deps.diagnostics?.(d),
+    })
     this.sessions = new SessionTracker(date, () => this.emit('adapters-changed'))
     const newId = deps.newId ?? (() => randomBytes(12).toString('hex'))
     this.broker = new ConfirmationBroker({
@@ -269,6 +301,8 @@ export class AppService {
         flowTimeoutMs: AUTH_FLOW_TIMEOUT_MS,
         sessions: this.sessions,
         handoffs: this.handoffs,
+        blocked: this.blocked,
+        secrets: this.loginSecrets,
         callInfo: (callId) => {
           const run = callId === null ? undefined : this.memory.get(callId)
           return { tool: run?.tool ?? null, client: run?.client ?? null }
@@ -283,7 +317,15 @@ export class AppService {
     for (const adapter of this.deps.adapters) {
       const id = adapter.definition.manifest.id
       // The runtime gets the tracked driver, so the gate sees its runs (adapter-gate.ts).
-      const driver = this.gate.track(id, await this.deps.createDriver(adapter.definition.manifest))
+      const driver = this.gate.track(
+        id,
+        await this.deps.createDriver(adapter.definition.manifest, {
+          onBlocked: this.blocked.betweenRuns(id),
+          onAuthBlocked: this.blocked.authPartition(id),
+          onAuthReportsDropped: () =>
+            this.deps.diagnostics?.({ type: 'auth-reports-dropped', adapterId: id }),
+        }),
+      )
       this.drivers.set(id, driver)
       host.register({ definition: adapter.definition, bundleHash: adapter.hash, driver })
     }
@@ -312,6 +354,8 @@ export class AppService {
     await this.endpoint?.close().catch(() => undefined)
     this.endpoint = null
     for (const driver of this.drivers.values()) await driver.close().catch(() => undefined)
+    await this.blocked.settled()
+    this.loginSecrets.dispose()
   }
 
   /** For the Electron glue: the confirmation window was shown or focused. */
@@ -710,7 +754,8 @@ export class AppService {
           // A call's login may have handed a window to the person while this waited.
           if (this.handoffs.show(adapterId)) return
           if (await this.siteBlocked(adapterId)) throw new SiteAdapterError('login', 'rate-limited')
-          const page = await driver.openAuthPage()
+          // The person's own login window: its refusals are audited too, with no call behind them.
+          const page = await driver.openAuthPage(this.blocked.authPage(adapterId, null))
           const first = manifest.auth.steps.find((s) => s.op === 'goto')
           if (first?.op === 'goto') await page.goto(first.url).catch(() => undefined)
           this.handoffs.start({

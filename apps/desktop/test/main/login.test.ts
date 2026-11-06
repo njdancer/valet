@@ -11,6 +11,7 @@ import {
 } from '@siteadapter/core'
 import type { AuthRunRequest, LoginMarkerStore } from '@siteadapter/runtime'
 import { describe, expect, it } from 'vitest'
+import { BlockedAudit, LoginSecrets } from '../../src/main/core/blocked'
 import { disabledOtpReader } from '../../src/main/core/credentials'
 import { demoCredentials } from '../../src/main/core/demo'
 import {
@@ -153,6 +154,13 @@ describe('createAuthRunner', () => {
     driver.nextPage = () => page
     const manifest = manifestWith({ session: cookieProbe, auth: { steps } })
     const registered: SecretValue[] = []
+    const secrets = new LoginSecrets()
+    const blocked = new BlockedAudit({
+      audit: log.sink,
+      secrets,
+      adapter: () => ({ manifest, sessionValues: async () => [] }),
+      now: () => NOW,
+    })
     const run = createAuthRunner({
       grants: { find: async () => null, list: async () => [], put: async () => {}, revoke: async () => {} },
       credentials: demoCredentials(disabledOtpReader),
@@ -163,6 +171,8 @@ describe('createAuthRunner', () => {
       flowTimeoutMs: 5000,
       sessions: s.sessions,
       handoffs: s.handoffs,
+      blocked,
+      secrets,
       callInfo: () => ({ tool: 'add', client: 'Claude Code' }),
       filledFor: async () => ({
         filled: [{ secret: 'login', field: 'username' }],
@@ -178,8 +188,43 @@ describe('createAuthRunner', () => {
       signal: new AbortController().signal,
       registerForRedaction: (secret) => registered.push(secret),
     }
-    return { ...s, run: () => run(request), log, page, driver, registered }
+    return { ...s, run: () => run(request), log, page, driver, registered, blocked }
   }
+
+  it('opens the login page with reporters that audit its refusals as the auth partition’s, for the call', async () => {
+    const page = new FakeAuthPage()
+    page.cookies = ['sid']
+    const r = runner([{ op: 'assertLoggedIn' }], page)
+    await r.run()
+    const options = r.driver.authOptions[0]
+    expect(options?.onBlocked).toBeTypeOf('function')
+    expect(options?.onReportsDropped).toBeTypeOf('function')
+    options?.onBlocked?.({
+      method: 'GET',
+      target: 'https://evil.test',
+      reason: 'host-not-allowed',
+      initiator: 'page',
+    })
+    await r.blocked.settled()
+    expect(r.log.events.at(-1)).toEqual({
+      type: 'request-blocked',
+      adapterId: 'shop',
+      method: 'GET',
+      target: 'https://evil.test',
+      reason: 'host-not-allowed',
+      initiator: 'page',
+      partition: 'auth',
+      callId: 'call1',
+    })
+  })
+
+  it('throws, and keeps nothing, when the login page can’t be opened', async () => {
+    const r = runner([{ op: 'assertLoggedIn' }])
+    r.driver.openAuthPage = async () => {
+      throw new Error('no window')
+    }
+    await expect(r.run()).rejects.toThrow('no window')
+  })
 
   it('reports ok when the probe passes, closes the page, and adds no login events of its own', async () => {
     const page = new FakeAuthPage()
@@ -403,6 +448,7 @@ describe('a login that fills a secret', () => {
       grantedAt: new Date(NOW).toISOString(),
     }
     const registered: { secret: SecretValue; matched: boolean }[] = []
+    const secrets = new LoginSecrets()
     const run = createAuthRunner({
       grants: {
         find: async () => grant,
@@ -418,6 +464,8 @@ describe('a login that fills a secret', () => {
       flowTimeoutMs: 5000,
       sessions: s.sessions,
       handoffs: s.handoffs,
+      blocked: new BlockedAudit({ audit: log.sink, secrets, adapter: () => null, now: () => NOW }),
+      secrets,
       callInfo: () => ({ tool: null, client: null }),
       filledFor: async () => ({ filled: [], origin: null }),
     })
@@ -436,6 +484,8 @@ describe('a login that fills a secret', () => {
     expect(registered).toHaveLength(1)
     expect(registered[0]?.matched).toBe(true)
     expect(registered[0]?.secret.disposed).toBe(true)
+    // The app keeps its own clone too, for the audit's targets, past the copy's disposal.
+    expect(secrets.occursIn('shop', 'https://twofactor@example.test.evil.test')).toBe(true)
     expect(page.typed).toEqual([{ text: '[secret]', secret: true }])
     expect(log.events.map((e) => e.type)).toEqual(['login-started', 'secret-used', 'login-finished'])
     expect(JSON.stringify(log.events)).not.toContain('twofactor@example.test')

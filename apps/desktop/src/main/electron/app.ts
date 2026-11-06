@@ -102,8 +102,12 @@ async function main(): Promise<void> {
     },
     sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
     adapters,
-    createDriver: (manifest) =>
-      createElectronSessionDriver(manifest, driverOptions, demoSite === null ? {} : { dial: demoSite.dial }),
+    createDriver: (manifest, reporters) =>
+      createElectronSessionDriver(
+        manifest,
+        { ...driverOptions, ...reporters },
+        demoSite === null ? {} : { dial: demoSite.dial },
+      ),
     credentials: demoSite === null ? realCredentials(opDeps) : demoSite.credentials,
     startEndpoint: (caller, configPath) =>
       startEndpoint({

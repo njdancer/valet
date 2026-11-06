@@ -25,6 +25,7 @@ import {
 } from '@siteadapter/core'
 import type { AuthOutcome, AuthRunner, AuthRunRequest, LoginMarkerStore } from '@siteadapter/runtime'
 import type { NeedsUserItem, SessionStatus } from '../../shared/api'
+import type { BlockedAudit, LoginSecrets } from './blocked'
 import type { Timers } from './confirmations'
 import type { Credentials } from './credentials'
 
@@ -266,6 +267,10 @@ export interface AuthRunnerOptions {
   readonly flowTimeoutMs: number
   readonly sessions: SessionTracker
   readonly handoffs: Handoffs
+  /** Audits the login page's refused navigations (partition 'auth'). */
+  readonly blocked: BlockedAudit
+  /** Keeps what each login registered for redaction, for those audit targets. */
+  readonly secrets: LoginSecrets
   /** The tool and client of the call that needed the login, for the banner. */
   readonly callInfo: (callId: string | null) => {
     readonly tool: string | null
@@ -285,7 +290,15 @@ export function createAuthRunner(options: AuthRunnerOptions): AuthRunner {
     const adapterId = manifest.id
     const startedAt = options.clock()
     options.sessions.set(adapterId, 'logging-in')
-    const page = await driver.openAuthPage()
+    const secrets = options.secrets.begin(adapterId)
+    let finished: 'ok' | 'needs-user' | 'failed' = 'failed'
+    let page: AuthPage
+    try {
+      page = await driver.openAuthPage(options.blocked.authPage(adapterId, callId))
+    } catch (error) {
+      secrets.finish('failed')
+      throw error
+    }
     let handedToPerson = false
     try {
       const outcome = await runAuthFlow({
@@ -298,9 +311,11 @@ export function createAuthRunner(options: AuthRunnerOptions): AuthRunner {
         otpReader: options.credentials.otpReader(),
         probe: authProbe(manifest, page),
         isBlockedPage: () => isBlockedPage(page),
-        // The runtime clones what it is given and keeps the clone; this copy is ours to dispose.
+        // The runtime clones what it is given and keeps the clone, and so do the app's own login
+        // secrets (for the audit's targets); this copy is ours to dispose.
         rememberSecret: (copy) => {
           try {
+            secrets.register(copy)
             request.registerForRedaction(copy)
           } finally {
             copy.dispose()
@@ -314,12 +329,14 @@ export function createAuthRunner(options: AuthRunnerOptions): AuthRunner {
       })
       switch (outcome.status) {
         case 'ok':
+          finished = 'ok'
           options.sessions.set(adapterId, 'logged-in')
           return { status: 'ok' }
         case 'needsUser': {
           const info = options.callInfo(callId)
           const filled = await options.filledFor(adapterId, callId, startedAt)
           handedToPerson = true
+          finished = 'needs-user'
           options.handoffs.start({
             manifest,
             driver,
@@ -344,6 +361,7 @@ export function createAuthRunner(options: AuthRunnerOptions): AuthRunner {
           return { status: 'blocked', errorClass: outcome.errorClass }
       }
     } finally {
+      secrets.finish(finished)
       if (!handedToPerson) await page.close().catch(() => undefined)
     }
   }

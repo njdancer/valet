@@ -63,7 +63,10 @@ async function setup(options: { checkOp?: (path: string) => Promise<string | nul
     },
     sleep: async () => {},
     adapters: [adapter],
-    createDriver: async () => driver,
+    createDriver: async (_manifest, reporters) => {
+      driver.reporters = reporters
+      return driver
+    },
     credentials: demoCredentials(disabledOtpReader),
     startEndpoint: async (caller): Promise<RunningEndpoint> => {
       endpoint.caller = caller
@@ -468,6 +471,72 @@ describe('tool calls', () => {
       await new Promise((r) => setTimeout(r, 10))
     await s.api.answerConfirmation(s.ui.shownConfirmations[0] as string, false, { role: 'tray', shows: null })
     expect(await pending).toEqual({ status: 'ok', output: { added: false } })
+  })
+})
+
+describe('refusals outside a run', () => {
+  function auditTypes(paths: { audit: string }) {
+    return readFileSync(paths.audit, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line).event)
+  }
+
+  it('audits the person’s login window as the auth partition’s, with no call', async () => {
+    const s = await approved()
+    await s.api.openLoginWindow('shop')
+    s.driver.authOptions[0]?.onBlocked?.({
+      method: 'GET',
+      target: 'https://widgets.example',
+      reason: 'host-not-allowed',
+      initiator: 'page',
+    })
+    await s.service.stop()
+    expect(auditTypes(s.paths).filter((e) => e.type === 'request-blocked')).toEqual([
+      {
+        type: 'request-blocked',
+        adapterId: 'shop',
+        method: 'GET',
+        target: 'https://widgets.example',
+        reason: 'host-not-allowed',
+        initiator: 'page',
+        partition: 'auth',
+        callId: null,
+      },
+    ])
+  })
+
+  it('audits the tool partition between runs, the target redacted against its session values', async () => {
+    const s = await setup()
+    s.driver.sessionValues = ['SESSIONTOKEN123']
+    const reporters = s.driver.reporters
+    reporters?.onBlocked({
+      method: 'POST',
+      target: 'https://sessiontoken123.evil.test',
+      reason: 'host-not-allowed',
+      initiator: 'page',
+    })
+    reporters?.onBlocked({
+      method: 'GET',
+      target: 'https://www.shop.test/apis/x',
+      reason: 'undeclared',
+      initiator: 'page',
+    })
+    reporters?.onAuthBlocked({
+      method: 'GET',
+      target: 'https://frames.example',
+      reason: 'host-not-allowed',
+      initiator: 'page',
+    })
+    reporters?.onAuthReportsDropped()
+    await s.service.stop()
+    const blocked = auditTypes(s.paths).filter((e) => e.type === 'request-blocked')
+    expect(blocked.map((e) => [e.partition, e.target, e.callId])).toEqual([
+      ['tool', '[redacted]', null],
+      ['tool', 'https://www.shop.test/apis/x', null],
+      ['auth', 'https://frames.example', null],
+    ])
+    expect(JSON.stringify(blocked).toLowerCase()).not.toContain('sessiontoken123')
   })
 })
 
