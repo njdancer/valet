@@ -1,12 +1,15 @@
 // A tiny HTTPS site for the e2e suite. One server answers for every *.test host (the harness maps
 // them all to 127.0.0.1) and records each request's host and path, each TLS connection's SNI name,
-// and each form POST's body, so tests can prove what reached which host.
+// and each form POST's body, so tests can prove what reached which host. Beside it, a raw TCP
+// listener and a UDP socket count anything at all that arrives, for the WebRTC and WebTransport
+// tests, which speak neither HTTP nor TLS to us.
 
 import { execFileSync } from 'node:child_process'
 import { X509Certificate } from 'node:crypto'
+import { createSocket } from 'node:dgram'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:https'
-import type { AddressInfo } from 'node:net'
+import { type AddressInfo, createServer as createTcpServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { TLSSocket } from 'node:tls'
@@ -24,6 +27,12 @@ export interface TestSite {
   readonly requests: Seen[]
   readonly connections: string[]
   readonly posts: { host: string; path: string; body: string }[]
+  /** A TCP port that accepts and counts connections, standing in for a TURN server. */
+  readonly tcpPort: number
+  readonly tcpConnections: () => number
+  /** A UDP port that counts datagrams, standing in for STUN, TURN over UDP and QUIC. */
+  readonly udpPort: number
+  readonly udpDatagrams: () => number
   url(host: string, path?: string): string
   close(): Promise<void>
 }
@@ -131,6 +140,17 @@ function routes(
     }
   }
   if (path === '/session' || path === '/session-code') return { body: page('Done', '<p>Signed in</p>') }
+  if (host === 'site.test' && path === '/pay-form') {
+    return {
+      body: page(
+        'Pay',
+        `<form id="pay-form" method="post" action="/payment">
+          <input name="amount" value="100">
+          <button id="pay" type="submit" style="width:120px;height:40px">Pay</button>
+        </form>`,
+      ),
+    }
+  }
   if (host === 'site.test' && path === '/redirect') {
     return { status: 302, headers: { location: query.get('to') ?? '/' }, body: '' }
   }
@@ -198,14 +218,34 @@ export async function startTestSite(): Promise<TestSite> {
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   port = (server.address() as AddressInfo).port
+  let tcpConnections = 0
+  const tcp = createTcpServer((socket) => {
+    tcpConnections++
+    socket.on('error', () => {})
+    socket.destroy()
+  })
+  await new Promise<void>((resolve) => tcp.listen(0, '127.0.0.1', resolve))
+  let udpDatagrams = 0
+  const udp = createSocket('udp4')
+  udp.on('message', () => udpDatagrams++)
+  await new Promise<void>((resolve) => udp.bind(0, '127.0.0.1', resolve))
   return {
     port,
+    tcpPort: (tcp.address() as AddressInfo).port,
+    tcpConnections: () => tcpConnections,
+    udpPort: udp.address().port,
+    udpDatagrams: () => udpDatagrams,
     certificatePem,
     fingerprint: new X509Certificate(cert).fingerprint256,
     requests,
     connections,
     posts,
     url: site.url,
-    close: () => new Promise((resolve) => server.close(() => resolve())),
+    close: () =>
+      new Promise((resolve) => {
+        udp.close()
+        tcp.close()
+        server.close(() => resolve())
+      }),
   }
 }

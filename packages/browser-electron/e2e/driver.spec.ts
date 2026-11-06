@@ -101,16 +101,65 @@ test('the tool partition’s egress guard blocks every request to an undeclared 
   expect(result.refused).toEqual({ error: { stage: 'egress', errorClass: 'host-not-allowed' } })
   expect(result.attempts).toMatchObject({ ok: { fetch: 'failed' } })
   expect(result.allowed).toMatchObject({ ok: { status: 200, body: { host: 'site.test' } } })
-  const targets = (result.blocked as { method: string; target: string }[]).map(
-    (b) => `${b.method} ${b.target}`,
+  const targets = (result.blocked as { method: string; target: string; reason: string }[]).map(
+    (b) => `${b.method} ${b.target} ${b.reason}`,
   )
-  expect(targets.some((t) => /^GET https:\/\/evil\.test:\d+\/collect$/.test(t))).toBe(true)
-  expect(targets.some((t) => /^POST https:\/\/evil\.test:\d+\/collect$/.test(t))).toBe(true)
-  expect(targets.some((t) => /^GET wss:\/\/evil\.test:\d+\/ws$/.test(t))).toBe(true)
-  // Reports carry origin and path only.
-  expect(targets.every((t) => !t.includes('?'))).toBe(true)
+  expect(targets.some((t) => /^GET https:\/\/evil\.test:\d+ host-not-allowed$/.test(t))).toBe(true)
+  expect(targets.some((t) => /^POST https:\/\/evil\.test:\d+ host-not-allowed$/.test(t))).toBe(true)
+  expect(targets.some((t) => /^GET wss:\/\/evil\.test:\d+ host-not-allowed$/.test(t))).toBe(true)
+  // Reports carry the origin only: tool code chose the path and query, and put the cookie there.
+  expect(targets.every((t) => !t.includes('/collect') && !t.includes('?'))).toBe(true)
   // And nothing reached the evil host at all.
   expect(result.evil).toEqual([])
+})
+
+test('on an allowed host, tool code cannot get past the request surface by any route', async () => {
+  const result = await scenario(app, 'surface')
+  // The page's own fetch, called from evaluate(): every one cancelled before it left.
+  expect(result.attempts).toEqual({
+    ok: { checkout: 'failed', encoded: 'failed', undeclared: 'failed', wrongMethod: 'failed', beacon: true },
+  })
+  // A trusted click submitted a POST form to /payment; the navigation was cancelled.
+  expect(result.click).toEqual({})
+  // Five declared calls a run, and the sixth is cut off.
+  expect(result.calls).toEqual([200, 200, 200, 200, 200, { stage: 'tool-run', errorClass: 'unavailable' }])
+  expect(result.reasons).toEqual(
+    expect.arrayContaining([
+      'POST xhr denied-path',
+      'GET xhr undeclared-request',
+      'DELETE xhr undeclared-request',
+      'POST ping undeclared-request',
+      'POST mainFrame denied-path',
+      'GET mainFrame denied-path',
+      'GET xhr request-ceiling',
+    ]),
+  )
+  // And the site saw none of it.
+  expect(result.seen).toEqual([])
+})
+
+test('WebRTC and WebTransport reach no undeclared host from the tool partition', async () => {
+  const result = await scenario(app, 'sockets')
+  expect(result.webrtc).toMatchObject({ outcome: { ok: 'gathered' }, tcp: 0, udp: 0 })
+  expect(result.webtransport).toMatchObject({ outcome: { ok: 'failed' }, tcp: 0, udp: 0 })
+  // TURN over TCP and TLS went to the proxy, which refused before resolving or dialling anything.
+  expect(result.refusedConnects).toEqual(
+    expect.arrayContaining([expect.stringMatching(/^https:\/\/evil\.test:\d+$/)]),
+  )
+})
+
+test('with only the WebRTC IP policy and webRequest, both get out: the test above means something', async () => {
+  const result = await scenario(app, 'socketsWithoutProxy')
+  // TURN over TCP connects even though webRequest would cancel any request to evil.test.
+  expect((result.webrtc as { tcp: number }).tcp).toBeGreaterThan(0)
+  expect((result.webtransport as { udp: number }).udp).toBeGreaterThan(0)
+})
+
+test('adapter code runs in its own world, so it cannot forge what the runtime’s fetch reports', async () => {
+  const result = await scenario(app, 'worlds')
+  // The patches stuck in the adapter's world: even evaluate()'s own result now comes back forged.
+  expect(result.adapterSees).toEqual({ forged: true })
+  expect(result.fetched).toMatchObject({ status: 200, body: { host: 'site.test' } })
 })
 
 test('resource hints to an undeclared host open no connection', async () => {
@@ -157,7 +206,7 @@ test('handToUser shows the window, and closing it hides the page instead of dest
     title: 'Finish logging in, then close this window',
     hiddenAfter: true,
     aliveAfterClose: true,
-    destroyedByPageClose: true,
+    secondCloseDestroyed: true,
   })
 })
 

