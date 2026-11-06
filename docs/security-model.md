@@ -486,8 +486,9 @@ Whatever transport is added later, these must still hold (**Designed**; the full
 - **Every remote call is attributable** in the audit log.
 
 Until that exists, **don't put the local endpoint behind a tunnel** (cloudflared, Tailscale
-Funnel, ngrok). Its `Host` check refuses tunnelled requests anyway, and loosening that check
-would put one long-lived token in front of the internet.
+Funnel, ngrok). Its `Host` check refuses tunnelled requests unless the tunnel rewrites the
+header, and making it pass would put one long-lived token, which can call every tool, in front of
+the internet. A tunnel belongs in front of the separate remote listener, once it exists.
 
 ## Bot detection
 

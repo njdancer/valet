@@ -454,8 +454,9 @@ M0 ─ M1 ─ M2 ─ M3 (MVP) ─ M4 ─┬─ M5 ─ M6 ─┐
 ```
 
 M5 and M7 can run in parallel. M7 must finish before M8. M9 can start any time after M3 if Nick
-wants remote access for himself earlier; documenting cloudflared or Tailscale covers that in the
-meantime.
+wants remote access for himself earlier: the app-side remote mode in [relay.md](relay.md), with
+Tailscale Funnel as the transport, is most of M9 without the service. Tunnelling the local
+endpoint directly is not a stopgap (see the security model's "Remote access").
 
 Rough totals to the open-source v1, summed from M1–M8 above: **44–69 agent-days and 27–41
 Nick-hours** (M1 2–3, M2 4–6, M3 4–6, M4 3–4, M5 4–6, M6 2–3, M7 2–3, M8 6–10). On top of that:
@@ -691,9 +692,10 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
 
 ### WS10. Relay
 
-- Starts in M9 at the earliest. Before then, document cloudflared and Tailscale Funnel as
-  do-it-yourself remote access, with a warning that it exposes the endpoint and should sit behind
-  OAuth or the bearer token.
+- Starts in M9 at the earliest. The first step is app-side remote mode (a separate listener, an
+  OAuth server in the app, consent on the Mac, per-tool remote policy, a kill switch), with
+  Tailscale Funnel or cloudflared documented as the transport in front of it, never in front of the
+  local endpoint. Design: [relay.md](relay.md).
 - If built: a Cloudflare Worker with a Durable Object per user, holding a WebSocket the app opens
   outwards. The Worker is the OAuth 2.1 authorisation server for MCP clients (expect claude.ai's
   remote connectors to need this). Nick has built a Cloudflare OAuth server for another project's MCP endpoint; reuse
@@ -1188,8 +1190,10 @@ round 2.
 - Considerations: the relay is the only piece that's a service with uptime, abuse and cost. It's
   also the only obvious thing to charge for. cloudflared and Tailscale work today for technical
   users but don't give claude.ai a proper OAuth flow without more setup.
-- Recommendation: document both tunnels at M3 for Nick's own remote use. Build the relay only
-  after M8, and only after a waitlist shows demand.
+- Recommendation: for Nick's own remote use after M3, build the app-side remote mode and
+  document Funnel (then cloudflared) in front of it, as [relay.md](relay.md) recommends; no tunnel
+  in front of the local endpoint. Build the hosted relay only after M8, and only after a waitlist
+  shows demand.
 - Blocks: M9.
 
 ### D15. Telemetry
