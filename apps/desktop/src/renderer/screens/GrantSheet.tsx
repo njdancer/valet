@@ -26,12 +26,20 @@ interface Target {
   readonly existing: GrantInfo | null
   readonly kind: 'onepassword' | 'messages'
   readonly senders: readonly string[]
+  /** The origins ticked when there is no earlier grant: where the secret is actually typed. */
+  readonly suggestedOrigins: readonly string[]
 }
 
 export function targetFor(adapter: AdapterDetail, secret: string): Target | null {
   if (secret === MESSAGES_SECRET) {
     if (adapter.messages.length === 0) return null
     const origins = [...new Set(adapter.messages.flatMap((m) => m.requestedOrigins))]
+    // A code may be typed on any navigation origin, but it is typed where the sign-in form is: the
+    // origins the manifest's login secrets are filled on. Ticking only the first navigation origin
+    // (the shop's www, for Woolworths, where Auth0 never asks for a code) made a grant that failed
+    // every login with origin-mismatch.
+    const signIn = new Set(adapter.secretRequests.flatMap((r) => r.origins))
+    const where = origins.filter((o) => signIn.has(o))
     return {
       title: `Let ${adapter.name} read one-time codes from Messages`,
       fields: 'one-time code',
@@ -39,6 +47,7 @@ export function targetFor(adapter: AdapterDetail, secret: string): Target | null
       existing: adapter.messages.find((m) => m.grant !== null)?.grant ?? null,
       kind: 'messages',
       senders: adapter.messages.map((m) => m.sender),
+      suggestedOrigins: where.length > 0 ? where : origins,
     }
   }
   // find() on an array, so names like "__proto__" or "constructor" can't resolve to anything.
@@ -51,6 +60,7 @@ export function targetFor(adapter: AdapterDetail, secret: string): Target | null
     existing: request.grant,
     kind: 'onepassword',
     senders: [],
+    suggestedOrigins: request.origins.slice(0, 1),
   }
 }
 
@@ -175,9 +185,7 @@ function GrantForm({
   // Pre-tick what an earlier grant allowed, but only where the manifest still asks for it.
   const [origins, setOrigins] = useState<readonly string[]>(() => {
     const previous = target.existing?.origins.filter((o) => target.requestedOrigins.includes(o)) ?? []
-    if (previous.length > 0) return previous
-    const first = target.requestedOrigins[0]
-    return first === undefined ? [] : [first]
+    return previous.length > 0 ? previous : target.suggestedOrigins
   })
 
   const items = useLoad(
@@ -368,9 +376,13 @@ function GrantForm({
                   <span className="mono xs">{origin}</span>
                   <span />
                   <span className="xs muted">
-                    {index === 0
-                      ? 'Requested by the manifest'
-                      : 'Also requested. Leave off unless sign-in moves here.'}
+                    {target.kind === 'messages'
+                      ? target.suggestedOrigins.includes(origin)
+                        ? 'Where the sign-in form is'
+                        : 'Visited during sign-in. Leave off unless codes are typed here.'
+                      : index === 0
+                        ? 'Requested by the manifest'
+                        : 'Also requested. Leave off unless sign-in moves here.'}
                   </span>
                 </label>
               ))}
