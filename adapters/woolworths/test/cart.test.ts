@@ -1,4 +1,4 @@
-import { SiteAdapterError } from '@siteadapter/core'
+import { NeedsUserError, SiteAdapterError } from '@siteadapter/core'
 import { describe, expect, it } from 'vitest'
 import { addToCart, getCart, NOTICES, removeFromCart, setCartQuantity } from '../src/cart'
 import { FakeToolContext, json, loadFixture } from './fake-context'
@@ -194,18 +194,47 @@ describe('get_cart', () => {
     expect((await getCart.run(second, {})).notices).toEqual([])
   })
 
-  it('reports a trolley in an unexpected shape as invalid', async () => {
+  it('reports a trolley in an unexpected shape as unexpected-shape, not as bad input', async () => {
     const body = loadFixture('trolley-empty.json')
     delete body.Totals
     const ctx = new FakeToolContext().on('GET', TROLLEY, json(body))
     const error = await getCart.run(ctx, {}).catch((e: unknown) => e)
-    expect(error).toEqual(new SiteAdapterError('tool-run', 'invalid'))
+    expect(error).toEqual(new SiteAdapterError('tool-run', 'unexpected-shape'))
   })
 
-  it('reports a 401 partway through as not-logged-in, so the runtime can log in again', async () => {
+  it('logs in once more after a 401 partway through, and reads the trolley again', async () => {
+    let calls = 0
+    const ctx = new FakeToolContext().on('GET', TROLLEY, () => {
+      calls += 1
+      return calls === 1 ? json({}, 401) : json(loadFixture('trolley-two-items.json'))
+    })
+    const cart = await getCart.run(ctx, {})
+    expect(cart.itemCount).toBe(2)
+    expect(ctx.events).toEqual(['ensure', 'GET /apis/ui/Trolley', 'ensure', 'GET /apis/ui/Trolley'])
+  })
+
+  it('reports a second 401 as not-logged-in, without trying a third time', async () => {
     const ctx = new FakeToolContext().on('GET', TROLLEY, json({}, 401))
     const error = await getCart.run(ctx, {}).catch((e: unknown) => e)
     expect(error).toEqual(new SiteAdapterError('tool-run', 'not-logged-in'))
+    expect(ctx.events).toEqual(['ensure', 'GET /apis/ui/Trolley', 'ensure', 'GET /apis/ui/Trolley'])
+  })
+
+  it('ends as needsUser when logging in again after a 401 needs the person', async () => {
+    const ctx = new FakeToolContext().on('GET', TROLLEY, () => {
+      ctx.ensureResult = { status: 'needsUser', reason: 'otp-required' }
+      return json({}, 401)
+    })
+    const error = await getCart.run(ctx, {}).catch((e: unknown) => e)
+    expect(error).toEqual(new NeedsUserError('otp-required'))
+    expect(ctx.events).toEqual(['ensure', 'GET /apis/ui/Trolley', 'ensure'])
+  })
+
+  it('does not log in again for anything but a 401', async () => {
+    const ctx = new FakeToolContext().on('GET', TROLLEY, json({}, 403))
+    const error = await getCart.run(ctx, {}).catch((e: unknown) => e)
+    expect(error).toEqual(new SiteAdapterError('tool-run', 'blocked-by-site'))
+    expect(ctx.events).toEqual(['ensure', 'GET /apis/ui/Trolley'])
   })
 })
 
@@ -280,7 +309,7 @@ describe('add_to_cart', () => {
       const error = await addToCart
         .run(ctx, addToCart.input.parse({ stockcode: 888137, quantity: 1 }))
         .catch((e: unknown) => e)
-      expect(error).toEqual(new SiteAdapterError('tool-run', 'invalid'))
+      expect(error).toEqual(new SiteAdapterError('tool-run', 'unexpected-shape'))
       expect(ctx.events).toEqual(['ensure', 'GET /apis/ui/Trolley'])
     }
   })
@@ -332,6 +361,32 @@ describe('add_to_cart', () => {
       .on('POST', UPDATE, json({}))
     await addToCart.run(ctx, addToCart.input.parse({ stockcode: 64746 }))
     expect(ctx.events).toEqual(['ensure', 'GET /apis/ui/Trolley', 'POST /api/v3/ui/trolley/update'])
+  })
+
+  it('after a 401 on the write, logs in again and re-reads before writing, so it never adds twice', async () => {
+    let writes = 0
+    const after = loadFixture('trolley-two-items.json')
+    after.AvailableItems[0].QuantityInTrolley = 3
+    const ctx = new FakeToolContext()
+      .on('GET', TROLLEY, json(loadFixture('trolley-two-items.json')))
+      .on('POST', UPDATE, () => {
+        writes += 1
+        return writes === 1 ? json({}, 401) : json(after)
+      })
+    const result = await addToCart.run(ctx, addToCart.input.parse({ stockcode: 88436, quantity: 1 }))
+    expect(ctx.events).toEqual([
+      'ensure',
+      'GET /apis/ui/Trolley',
+      'POST /api/v3/ui/trolley/update',
+      'ensure',
+      'GET /apis/ui/Trolley',
+      'POST /api/v3/ui/trolley/update',
+    ])
+    expect(ctx.fetches.filter((f) => f.method === 'POST').map((f) => f.json)).toEqual([
+      { items: [{ stockcode: 88436, quantity: 3 }] },
+      { items: [{ stockcode: 88436, quantity: 3 }] },
+    ])
+    expect(result).toMatchObject({ previousQuantity: 2, requestedQuantity: 3, quantity: 3, confirmed: true })
   })
 
   it('returns the updated cart when the site sends it back', async () => {
@@ -568,9 +623,10 @@ describe('cart tools without a login', () => {
       const ctx = new FakeToolContext()
         .on('GET', TROLLEY, json(loadFixture('trolley-empty.json')))
         .on('POST', UPDATE, json({}))
-      ctx.ensureResult = { status: 'needsUser', reason: 'CAPTCHA shown' }
+      ctx.ensureResult = { status: 'needsUser', reason: 'captcha' }
       const error = await run(ctx).catch((e: unknown) => e)
-      expect(error).toEqual(new SiteAdapterError('auth-step', 'not-logged-in'))
+      expect(error).toEqual(new NeedsUserError('captcha'))
+      expect(error).toBeInstanceOf(NeedsUserError)
       expect(ctx.fetches).toEqual([])
     })
 

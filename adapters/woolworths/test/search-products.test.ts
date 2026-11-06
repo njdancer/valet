@@ -224,9 +224,10 @@ describe('search_products failures', () => {
     expect(error.message).not.toContain('Reference')
   })
 
-  it('reports rate limiting as blocked-by-site', async () => {
+  it('reports a 429 as rate-limited, apart from an Akamai block', async () => {
     const ctx = new FakeToolContext().on('POST', SEARCH, json({}, 429))
-    expect((await failure(ctx)).errorClass).toBe('blocked-by-site')
+    const error = await failure(ctx)
+    expect([error.stage, error.errorClass]).toEqual(['tool-run', 'rate-limited'])
   })
 
   it('reports a 401 as not-logged-in', async () => {
@@ -277,9 +278,9 @@ describe('search_products failures', () => {
     expect((await failure(ctx)).errorClass).toBe('unavailable')
   })
 
-  it('reports JSON of the wrong shape as invalid', async () => {
+  it('reports JSON of the wrong shape as unexpected-shape', async () => {
     const ctx = new FakeToolContext().on('POST', SEARCH, json({ Products: 'not a list' }))
-    expect((await failure(ctx)).errorClass).toBe('invalid')
+    expect((await failure(ctx)).errorClass).toBe('unexpected-shape')
   })
 
   it('replaces a thrown error with a class, dropping its message', async () => {

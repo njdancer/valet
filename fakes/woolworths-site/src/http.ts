@@ -133,10 +133,13 @@ export interface CookieOptions {
   readonly secure: boolean
   /** Seconds. Omit for a session cookie; 0 deletes the cookie. */
   readonly maxAge?: number
+  /** A Domain attribute, so the cookie is sent to every host under it. Omit for a host-only cookie. */
+  readonly domain?: string
 }
 
 export function serializeCookie(name: string, value: string, options: CookieOptions): string {
   const parts = [`${name}=${value}`, 'Path=/', 'SameSite=Lax']
+  if (options.domain !== undefined) parts.push(`Domain=${options.domain}`)
   if (options.maxAge !== undefined) parts.push(`Max-Age=${options.maxAge}`)
   if (options.httpOnly) parts.push('HttpOnly')
   if (options.secure) parts.push('Secure')

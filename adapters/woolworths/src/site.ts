@@ -48,7 +48,8 @@ async function call<Schema extends z.ZodType>(
   throwForStatus(response.status)
   throwForContentType(response)
   const parsed = schema.safeParse(response.body)
-  if (!parsed.success) throw new SiteAdapterError('tool-run', 'invalid')
+  // JSON the adapter can't read means the site changed, not that the input was bad.
+  if (!parsed.success) throw new SiteAdapterError('tool-run', 'unexpected-shape')
   return parsed.data
 }
 
@@ -57,7 +58,7 @@ async function call<Schema extends z.ZodType>(
  * login page served to an expired session, and the two can't be told apart from here. Both are
  * reported as blocked-by-site, as the runtime's own block detection does: the runtime backs off,
  * and its next ensure() finds an expired session. Reporting not-logged-in instead would send a
- * flagged session straight back to the scripted login. 'invalid' is kept for JSON of the wrong shape.
+ * flagged session straight back to the scripted login. JSON of the wrong shape is unexpected-shape.
  */
 function throwForContentType(response: FetchResult): void {
   const type = response.contentType?.toLowerCase() ?? ''
@@ -71,8 +72,10 @@ function throwForContentType(response: FetchResult): void {
 function throwForStatus(status: number): void {
   if (status >= 200 && status < 300) return
   if (status === 401) throw new SiteAdapterError('tool-run', 'not-logged-in')
-  // Akamai answers a flagged session with a 403 "Access Denied" page (live probe, run 2).
-  if (status === 403 || status === 429) throw new SiteAdapterError('tool-run', 'blocked-by-site')
+  // Akamai answers a flagged session with a 403 "Access Denied" page (live probe, run 2). A 429 is
+  // the site asking for less, which the runtime's breaker treats differently from a block.
+  if (status === 403) throw new SiteAdapterError('tool-run', 'blocked-by-site')
+  if (status === 429) throw new SiteAdapterError('tool-run', 'rate-limited')
   if (status === 404) throw new SiteAdapterError('tool-run', 'not-found')
   throw new SiteAdapterError('tool-run', 'unavailable')
 }

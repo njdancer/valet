@@ -1,36 +1,73 @@
-// The Woolworths manifest. The origin is a parameter so that tests and the e2e harness can point
-// the same adapter at the fake site (https://www.woolworths.test).
+// The Woolworths manifest. The origins are parameters so that tests and the e2e harness can point
+// the same adapter at the fake site (https://www.woolworths.test and https://auth.woolworths.test).
 //
-// Verified live (anonymous probe, 2026-11-07): the API paths below and the egress hosts. Assumed:
-// the login selectors (they are the fake site's; the real ones must be recorded with Nick present),
-// the OTP step, and the bootstrap probe. See README.md.
+// Verified live (anonymous probe, 2026-11-07): the API paths, the egress hosts, and the login's
+// shape: www's /auth/login hands off to Auth0 Universal Login on auth.woolworths.com.au, whose
+// first page asks for the email (input[name=username]). Assumed: Auth0's standard markup for
+// everything after that (the password page, MFA, errors, the CAPTCHA and its frame), the Messages
+// sender, and the bootstrap probe. See README.md.
 //
 // Every way the login can stall ends in needsUser, never in a timeout: docs/security-model.md
 // sends challenges and unexpected prompts to the person, and never solves them automatically.
 
-import { type AdapterManifest, type AuthStep, type Condition, parseManifest } from '@siteadapter/core'
+import {
+  type AdapterManifest,
+  type AuthStep,
+  type Condition,
+  type NeedsUserReason,
+  parseManifest,
+  type SecretField,
+} from '@siteadapter/core'
 
 export const REAL_ORIGIN = 'https://www.woolworths.com.au'
+export const REAL_AUTH_ORIGIN = 'https://auth.woolworths.com.au'
 
 /** Hosts the live probe found the site cannot work without, beyond its own www host. */
 const REAL_EXTRA_EGRESS = ['cdn0.woolworths.media', 'acs.woolworths.com.au']
 
+/** Auth0 Universal Login's elements. Only `username` was seen live; the rest is Auth0's standard markup. */
 export const SELECTORS = {
-  email: '#loginForm-Email',
-  password: '#loginForm-Password',
-  submit: '#loginForm-Submit',
-  otp: 'input[autocomplete="one-time-code"]',
+  username: 'input[name="username"]',
+  password: 'input#password[name="password"]',
+  code: 'input#code[name="code"]',
+  /** The primary button on every Auth0 page, not the passkey, Everyday, resend or other-method ones. */
+  submit: 'button[type="submit"][name="action"][value="default"]',
+  /** Only while unticked: a click on a ticked box would untick it. */
+  rememberDevice: 'input[type="checkbox"][name="rememberBrowser"]:not(:checked)',
+  captcha: '.ulp-captcha-container',
+  /** The container every Universal Login page renders into, error pages included. */
+  auth0Widget: 'main._widget',
+  fieldError: '.ulp-input-error-message',
+  accountBlocked: '[data-error-code="user-blocked"]',
 } as const
 
-export const LOGIN_PATH = '/shop/securelogin'
+/** Paths on the auth origin. Conditions see only a URL's path and query, never its host. */
+export const AUTH_PATHS = {
+  identifier: '/u/login/identifier',
+  password: '/u/login/password',
+  smsChallenge: '/u/mfa-sms-challenge',
+  otpChallenge: '/u/mfa-otp-challenge',
+} as const
 
 /**
- * The pauses between looks while waiting for each page change in the login, 20 s in all. The wait
- * never fails, and that is the point: a
- * waitFor that timed out would end the flow as condition-timeout, and the person would never see
- * the challenge or prompt that stalled it.
+ * Who sends the SMS code, as Messages shows the sender. TO BE CONFIRMED: a placeholder until Nick
+ * receives a Woolworths code. The person approves the real sender when granting Messages access.
  */
-export const SETTLE_PAUSES_MS = [1000, 2000, 3000, 4000, 5000, 5000] as const
+export const MESSAGES_SENDER = 'Woolworths'
+
+/** The live site's login link: www's /auth/login, which redirects to Auth0 and back to `path`. */
+export function loginUrl(origin: string): string {
+  return `${origin}/auth/login?redirect_uri=${origin}/auth/callback&path=/`
+}
+
+/**
+ * The pauses between looks while waiting for each page change in the login, 10 s in all. The wait
+ * never fails, and that is the point: a waitFor that timed out would end the flow as
+ * condition-timeout, and the person would never see the challenge or prompt that stalled it. Kept
+ * short so that four of them, plus the wait for an SMS, end inside the runtime's tool timeout
+ * (README, "Timing").
+ */
+export const SETTLE_PAUSES_MS = [500, 1000, 1500, 2000, 2500, 2500] as const
 
 /**
  * Steps that wait for `condition` and return as soon as it holds, or after every pause has run.
@@ -49,79 +86,124 @@ export function settle(condition: Condition, pauses: readonly number[] = SETTLE_
   ]
 }
 
-const OTP_SHOWN: Condition = { visible: SELECTORS.otp }
-const LEFT_LOGIN: Condition = { not: { urlMatches: LOGIN_PATH } }
+/** On a page the flow knows, by its path and its field, so a lookalike path alone doesn't count. */
+const ON_IDENTIFIER: Condition = {
+  all: [{ urlContains: AUTH_PATHS.identifier }, { visible: SELECTORS.username }],
+}
+const ON_PASSWORD: Condition = {
+  all: [{ urlContains: AUTH_PATHS.password }, { visible: SELECTORS.password }],
+}
+const ON_CHALLENGE: Condition = {
+  all: [{ urlRegex: '^/u/mfa-(sms|email|otp)-challenge' }, { visible: SELECTORS.code }],
+}
+/**
+ * Off every login page, on either origin: Auth0's /u/, /authorize, /login and /continue, and www's
+ * /auth/* hand-off paths and its "not logged in" page. Where it then is, assertLoggedIn decides.
+ */
+const LEFT_LOGIN: Condition = {
+  not: { urlRegex: '^/(u|authorize|login|continue|auth|shop/securelogin)([/?]|$)' },
+}
+/** Auth0's own pages for new terms or consent, which only the person may accept. */
+const TERMS: Condition = { urlRegex: '^/u/(terms|consent)([/?]|$)' }
+const CAPTCHA: Condition = { visible: SELECTORS.captcha }
+const FIELD_ERROR: Condition = { visible: SELECTORS.fieldError }
 
-/** needsUser reasons. Fixed text: the runtime shows it to the person, never to tool code. */
-export const NEEDS_USER_REASONS = {
-  noForm: 'The Woolworths sign-in form did not appear. The site may be showing a check first.',
-  stuck: 'Woolworths did not finish signing in. It may be asking for a check, a code or a correction.',
+/** Why the login stopped, for the person. Shown only in the app, never sent to the MCP client. */
+export const NOTES = {
+  captcha: 'Woolworths is showing a CAPTCHA. Solve it in this window to finish signing in.',
+  noLoginPage:
+    'The Woolworths sign-in page did not appear. The site may be showing a check first, or the page has changed.',
+  emailRefused:
+    'Woolworths did not move past the email address. Check the 1Password item, then sign in here.',
+  passwordRefused:
+    'Woolworths did not accept the password from 1Password. It was typed once and not retried. Check the item, then sign in here.',
+  accountBlocked:
+    'Woolworths says the account is blocked after too many attempts. Unblock it (Woolworths usually emails how), then sign in here.',
+  emailCode: 'Woolworths sent a code by email, which the adapter cannot read. Type it here.',
+  authenticatorCode:
+    'Woolworths asks for an authenticator-app code, and this adapter is not set up with one. Type it here.',
+  codeRefused: 'Woolworths did not accept the one-time code. Type a new one here.',
+  terms: 'Woolworths is asking you to accept new terms before signing in. Read and accept them here.',
+  unknownPage:
+    'Woolworths stopped on a sign-in page the adapter does not know, such as a prompt to add a phone number or an error page.',
 } as const
+
+function needsUser(reason: NeedsUserReason, note: keyof typeof NOTES): AuthStep {
+  return { op: 'needsUser', reason, note: NOTES[note] }
+}
 
 export interface ManifestOptions {
   readonly origin?: string
+  /** Defaults to the real Auth0 origin for the real site, else `origin` with "www." swapped for "auth.". */
+  readonly authOrigin?: string
+  /**
+   * Fill Auth0's authenticator-app challenge from an OTP field on the `login` 1Password item. Off
+   * by default: only if Nick's account uses an authenticator (decision D4). Off, that challenge is
+   * handed to the person, and the manifest doesn't ask for an OTP field it would never use.
+   */
+  readonly totp?: boolean
+  /**
+   * Origins the CAPTCHA's iframe loads from, for auth.frameOrigins. Empty for the real site until
+   * the provider is confirmed live (README, open questions): with none, the driver refuses the
+   * challenge's frame and the person can't solve it in the login window.
+   */
+  readonly captchaFrameOrigins?: readonly string[]
 }
 
-export function createManifest({ origin = REAL_ORIGIN }: ManifestOptions = {}): AdapterManifest {
+export function createManifest({
+  origin = REAL_ORIGIN,
+  authOrigin = defaultAuthOrigin(origin),
+  totp = false,
+  captchaFrameOrigins = [],
+}: ManifestOptions = {}): AdapterManifest {
   const host = new URL(origin).hostname
-  // A cookie set for ".woolworths.com.au" is stored against the bare host, so copy both.
+  // A cookie set for ".woolworths.com.au" is stored against the bare host, so copy both. Auth0's
+  // own cookies are host-only on the auth origin, so neither domain matches them.
   const bareHost = host.startsWith('www.') ? host.slice(4) : host
   const cookieDomains = bareHost === host ? [host] : [bareHost, host]
   const egress = origin === REAL_ORIGIN ? [host, ...REAL_EXTRA_EGRESS] : [host]
+  const fields: SecretField[] = totp ? ['username', 'password', 'otp'] : ['username', 'password']
 
   return parseManifest({
     schemaVersion: 1,
     id: 'woolworths',
     name: 'Woolworths',
-    version: '0.1.0',
+    version: '0.2.0',
     description: 'Search Woolworths (Australia) products and manage the online shopping cart.',
     home: `${origin}/`,
-    navigation: [origin],
+    // The tool partition never needs the auth origin: Auth0's session stays in the auth partition.
+    navigation: [origin, authOrigin],
     egress,
     secrets: {
       login: {
-        description: 'Woolworths account sign-in, plus the one-time code when the site asks for one',
-        fields: ['username', 'password', 'otp'],
-        origins: [origin],
+        description: totp
+          ? 'Woolworths account email and password, plus its authenticator-app code'
+          : 'Woolworths account email and password',
+        fields,
+        // Both fields are typed on Auth0's pages, and both forms post there.
+        origins: [authOrigin],
       },
     },
     session: {
       cookieDomains,
       // Anonymous visitors already get wow-auth-token cookies, so a cookie probe would lie.
+      // The runtime makes this probe in the tool partition, inside the tool's run, and core v2's
+      // driver holds every request there to the request surface. Bootstrap is deliberately not on
+      // it, so the probe depends on a runtime-probe allowance core doesn't have yet (README, core
+      // change requests). Until then every cart tool's ensure() is refused at the probe.
       probe: {
         kind: 'fetch',
         path: '/api/ui/v2/bootstrap',
         expectStatus: 200,
+        loggedOutStatuses: [401],
         jsonPath: 'ShopperDetails.IsLoggedIn',
         equals: true,
       },
     },
-    auth: {
-      steps: [
-        { op: 'goto', url: `${origin}${LOGIN_PATH}` },
-        ...settle({ visible: SELECTORS.email }),
-        // An interstitial challenge, or a page the selectors don't know: show the window rather
-        // than type secrets anywhere.
-        { op: 'when', condition: { not: { visible: SELECTORS.email } }, steps: [needsUser('noForm')] },
-        { op: 'fill', selector: SELECTORS.email, value: { secret: 'login', field: 'username' } },
-        { op: 'fill', selector: SELECTORS.password, value: { secret: 'login', field: 'password' } },
-        { op: 'click', selector: SELECTORS.submit },
-        // The code prompt, if any, renders after the submit round trip.
-        ...settle({ any: [OTP_SHOWN, LEFT_LOGIN] }),
-        {
-          op: 'when',
-          condition: OTP_SHOWN,
-          steps: [{ op: 'otp', selector: SELECTORS.otp, source: { secret: 'login' } }, ...settle(LEFT_LOGIN)],
-        },
-        // Still on the login page: a CAPTCHA, a rejected password, or a prompt nobody scripted.
-        // The person sees it; the password is never submitted a second time.
-        { op: 'when', condition: { urlMatches: LOGIN_PATH }, steps: [needsUser('stuck')] },
-        { op: 'assertLoggedIn' },
-      ],
-    },
+    auth: { steps: authSteps(origin, totp), frameOrigins: [...captchaFrameOrigins] },
     // Exactly the calls the tools make, so a later version can't read anything new (bootstrap's
-    // ShopperDetails, say) without a new permission. The login probe isn't listed: the runtime
-    // makes it itself, outside the tool-code surface guard (runtime probe.ts).
+    // ShopperDetails, say) without a new permission. The login probe isn't listed, so tool code
+    // can't make it; see session.probe for what that costs under core v2.
     requests: [
       { method: 'POST', path: '/apis/ui/Search/products', purpose: 'read' },
       { method: 'GET', path: '/apis/ui/product/detail/:stockcode', purpose: 'read' },
@@ -170,12 +252,140 @@ export function createManifest({ origin = REAL_ORIGIN }: ManifestOptions = {}): 
       },
     ],
     // Every tool needs at most two site calls; the live site flags bursts of scripted requests.
-    limits: { requestsPerRun: 6 },
+    limits: { requestsPerRun: 6, minGapMs: 2500 },
   })
 }
 
-function needsUser(reason: keyof typeof NEEDS_USER_REASONS): AuthStep {
-  return { op: 'needsUser', reason: NEEDS_USER_REASONS[reason] }
+/**
+ * The login. Each page is waited for with `settle`, then handled only if it is the page expected,
+ * so the same steps serve a full login, a remembered device (no MFA), and a silent re-login, where
+ * Auth0's session in the auth partition sends the browser straight back to www with no page and no
+ * secret typed. Each secret is typed at most once per run.
+ */
+function authSteps(origin: string, totp: boolean): AuthStep[] {
+  return [
+    { op: 'goto', url: loginUrl(origin) },
+    ...settle({ any: [ON_IDENTIFIER, ON_PASSWORD, LEFT_LOGIN, CAPTCHA] }),
+    { op: 'when', condition: CAPTCHA, steps: [needsUser('captcha', 'captcha')] },
+
+    // Page 1, the identifier. Auth0 skips it when it remembers who is signing in.
+    {
+      op: 'when',
+      condition: ON_IDENTIFIER,
+      steps: [
+        { op: 'fill', selector: SELECTORS.username, value: { secret: 'login', field: 'username' } },
+        { op: 'click', selector: SELECTORS.submit },
+        ...settle({ any: [ON_PASSWORD, LEFT_LOGIN, FIELD_ERROR, CAPTCHA] }),
+        { op: 'when', condition: CAPTCHA, steps: [needsUser('captcha', 'captcha')] },
+        {
+          op: 'when',
+          condition: { urlContains: AUTH_PATHS.identifier },
+          steps: [needsUser('login-required', 'emailRefused')],
+        },
+      ],
+    },
+
+    // Page 2, the password: typed once, and never again in this run whatever comes back.
+    {
+      op: 'when',
+      condition: ON_PASSWORD,
+      steps: [
+        { op: 'when', condition: CAPTCHA, steps: [needsUser('captcha', 'captcha')] },
+        { op: 'fill', selector: SELECTORS.password, value: { secret: 'login', field: 'password' } },
+        { op: 'click', selector: SELECTORS.submit },
+        ...settle({ any: [ON_CHALLENGE, LEFT_LOGIN, FIELD_ERROR, CAPTCHA] }),
+        {
+          op: 'when',
+          condition: { urlContains: AUTH_PATHS.password },
+          steps: [
+            {
+              op: 'when',
+              condition: { visible: SELECTORS.accountBlocked },
+              steps: [needsUser('account-locked', 'accountBlocked')],
+            },
+            { op: 'when', condition: CAPTCHA, steps: [needsUser('captcha', 'captcha')] },
+            needsUser('login-required', 'passwordRefused'),
+          ],
+        },
+      ],
+    },
+
+    // MFA, when Auth0 asks and the device isn't remembered: the code, "remember this device", submit.
+    {
+      op: 'when',
+      condition: ON_CHALLENGE,
+      steps: [
+        {
+          op: 'when',
+          condition: { urlContains: AUTH_PATHS.otpChallenge },
+          steps: totp
+            ? [{ op: 'otp', selector: SELECTORS.code, source: { secret: 'login' } }]
+            : [needsUser('otp-required', 'authenticatorCode')],
+          otherwise: [
+            {
+              op: 'when',
+              condition: { urlContains: AUTH_PATHS.smsChallenge },
+              steps: [
+                {
+                  op: 'otp',
+                  selector: SELECTORS.code,
+                  source: {
+                    messages: { sender: MESSAGES_SENDER, pattern: '\\b(\\d{6})\\b', maxAgeSeconds: 300 },
+                  },
+                },
+              ],
+              otherwise: [needsUser('otp-required', 'emailCode')],
+            },
+          ],
+        },
+        {
+          op: 'when',
+          condition: { visible: SELECTORS.rememberDevice },
+          steps: [{ op: 'click', selector: SELECTORS.rememberDevice }],
+        },
+        { op: 'click', selector: SELECTORS.submit },
+        ...settle({ any: [LEFT_LOGIN, FIELD_ERROR] }),
+        { op: 'when', condition: { not: LEFT_LOGIN }, steps: [needsUser('otp-required', 'codeRefused')] },
+      ],
+    },
+
+    // Anything else still on a login page: new terms, no page loaded, or one nobody scripted. The
+    // site has changed under the adapter, which the client should not retry.
+    {
+      op: 'when',
+      condition: { not: LEFT_LOGIN },
+      steps: [
+        {
+          op: 'when',
+          condition: TERMS,
+          steps: [needsUser('terms-update', 'terms')],
+          otherwise: [
+            {
+              op: 'when',
+              condition: { urlRegex: '^/u/' },
+              steps: [needsUser('site-changed', 'unknownPage')],
+              otherwise: [needsUser('site-changed', 'noLoginPage')],
+            },
+          ],
+        },
+      ],
+    },
+    // Off the login paths but still on an Auth0 page, such as a tenant error page: conditions can't
+    // see the host, so Auth0's own container is what tells it apart from www.
+    {
+      op: 'when',
+      condition: { visible: SELECTORS.auth0Widget },
+      steps: [needsUser('site-changed', 'unknownPage')],
+    },
+    { op: 'assertLoggedIn' },
+  ]
+}
+
+function defaultAuthOrigin(origin: string): string {
+  if (origin === REAL_ORIGIN) return REAL_AUTH_ORIGIN
+  const url = new URL(origin)
+  url.hostname = `auth.${url.hostname.startsWith('www.') ? url.hostname.slice(4) : url.hostname}`
+  return url.origin
 }
 
 export default createManifest()
