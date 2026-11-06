@@ -18,6 +18,10 @@ manifest's `auth.steps` against an `AuthPage` and returns `ok`, `needsUser(reaso
 
 ## Behaviour worth knowing
 
+- **Before anything else:** `typingDelayMs` must be a finite number ≥ 0 and `flowTimeoutMs` a
+  finite number > 0 (`auth-step: invalid`), so no deadline can be `NaN` and no poll endless. A
+  clock that throws or returns an invalid date ends the flow as `auth-step: internal`; nothing
+  escapes `runAuthFlow`.
 - **After every step, and on every poll:** every committed URL must be on `navigation`
   (`navigate: navigation-escaped`), then `isBlockedPage()` (`blocked`), then the flow deadline
   (`timeout: timed-out`). A fresh page's `about:blank` is allowed in the history.
@@ -34,7 +38,10 @@ manifest's `auth.steps` against an `AuthPage` and returns `ok`, `needsUser(reaso
   `otp`, `grant` or `credential` never is, so a fill guard that fired after Touch ID can't be
   given a second chance (or a second Touch ID prompt). Blocks, `needsUser` and timeouts never are.
 - **`urlMatches`** tests the URL's path and query, never its host. A pattern wrapped in slashes
-  (`/^\/account$/`) is a regular expression; anything else is a substring.
+  (`/^\/account$/`) is a regular expression; anything else is a substring. Every pattern in every
+  branch is compiled before the first step, so a bad one fails `manifest: invalid` up front. A
+  regex is never run on a path and query longer than `MAX_REGEX_INPUT` (2048) characters; such a
+  URL simply doesn't match. Beware that `/account/` is read as the regex `account`.
 - **Messages OTP** needs a grant, as a 1Password secret does: until core has a grant kind for
   it, a `Grant` whose `secret` is `messages` (`MESSAGES_SECRET`), for this adapter and hash; its
   `provider` and `itemRef` are unused. The source must name a `sender` (`secret-fill: invalid`

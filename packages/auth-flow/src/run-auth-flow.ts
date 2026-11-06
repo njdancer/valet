@@ -1,14 +1,35 @@
 // The entry point: runs one auth action and reports it as an outcome, never as a thrown error.
 
 import { type AdapterManifest, type AuditEvent, toReportable } from '@siteadapter/core'
+import { patternsValid } from './conditions'
 import { BlockedHalt, checkAfterStep, type FlowContext, NeedsUserHalt } from './context'
 import { runSteps } from './interpreter'
 import type { AuthFlowInput, AuthOutcome } from './types'
 
 export async function runAuthFlow(input: AuthFlowInput): Promise<AuthOutcome> {
+  try {
+    return await run(input)
+  } catch {
+    // Nothing should get here, but an injected effect outside the steps, such as a clock, could
+    // still throw, with anything in its message. Only the class leaves.
+    return { status: 'failed', stage: 'auth-step', errorClass: 'internal' }
+  }
+}
+
+async function run(input: AuthFlowInput): Promise<AuthOutcome> {
   const { manifest, audit, callId } = input
+  // Bad numbers would make every deadline check false and every poll loop endless.
+  if (!isDuration(input.typingDelayMs) || !isDuration(input.flowTimeoutMs) || input.flowTimeoutMs === 0) {
+    return { status: 'failed', stage: 'auth-step', errorClass: 'invalid' }
+  }
+  // A bad pattern in a branch the flow rarely takes would otherwise only fail mid-flow, perhaps
+  // after secrets were typed.
+  if (!patternsValid(manifest.auth.steps)) {
+    return { status: 'failed', stage: 'manifest', errorClass: 'invalid' }
+  }
   const startedAt = input.clock()
   const ctx: FlowContext = { input, startedAt, deadline: startedAt.getTime() + input.flowTimeoutMs }
+  if (!Number.isFinite(ctx.deadline)) return { status: 'failed', stage: 'auth-step', errorClass: 'internal' }
 
   // A login that can't be audited doesn't happen.
   try {
@@ -26,6 +47,11 @@ export async function runAuthFlow(input: AuthFlowInput): Promise<AuthOutcome> {
     return { status: 'failed', stage: 'auth-step', errorClass: 'internal' }
   }
   return outcome
+}
+
+/** A finite, non-negative number of milliseconds. */
+function isDuration(ms: number): boolean {
+  return Number.isFinite(ms) && ms >= 0
 }
 
 async function execute(ctx: FlowContext): Promise<AuthOutcome> {

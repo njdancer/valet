@@ -1,4 +1,4 @@
-export { evaluateCondition, urlMatches } from './conditions'
+export { evaluateCondition, MAX_REGEX_INPUT, patternsValid, urlMatches } from './conditions'
 export { allowedOrigins, requestedOrigins, suitsField } from './guards'
 export { POLL_MS } from './interpreter'
 export { runAuthFlow } from './run-auth-flow'

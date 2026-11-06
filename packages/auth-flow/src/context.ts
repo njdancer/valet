@@ -40,8 +40,11 @@ export async function guarded<T>(stage: Stage, effect: () => Promise<T> | T): Pr
   }
 }
 
+/** The injected clock's time. A clock that can't tell the time ends the flow rather than every wait. */
 export function now(ctx: FlowContext): number {
-  return ctx.input.clock().getTime()
+  const time = ctx.input.clock().getTime()
+  if (!Number.isFinite(time)) throw new SiteAdapterError('auth-step', 'internal')
+  return time
 }
 
 export function remainingMs(ctx: FlowContext): number {

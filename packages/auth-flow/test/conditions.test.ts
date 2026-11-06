@@ -1,6 +1,6 @@
 import { SiteAdapterError } from '@siteadapter/core'
 import { describe, expect, it } from 'vitest'
-import { evaluateCondition, urlMatches } from '../src/conditions'
+import { evaluateCondition, MAX_REGEX_INPUT, patternsValid, urlMatches } from '../src/conditions'
 import { FakeAuthPage } from './fake-auth-page'
 import { LOGIN_PAGE, SITE } from './fixtures'
 
@@ -47,6 +47,21 @@ describe('urlMatches', () => {
     } catch (error) {
       expect(error).toMatchObject({ stage: 'manifest', errorClass: 'invalid' })
     }
+  })
+
+  it('does not run a regex on a path and query longer than the cap', () => {
+    const long = `https://www.shop.test/account?${'a'.repeat(MAX_REGEX_INPUT)}`
+    expect(urlMatches(long, '/^\\/account/')).toBe(false)
+  })
+
+  it('runs a regex on a path and query exactly at the cap', () => {
+    const path = `/account?${'a'.repeat(MAX_REGEX_INPUT - '/account?'.length)}`
+    expect(urlMatches(`https://www.shop.test${path}`, '/^\\/account/')).toBe(true)
+  })
+
+  it('still matches a substring on a long URL, which costs no backtracking', () => {
+    const long = `https://www.shop.test/account?${'a'.repeat(MAX_REGEX_INPUT)}`
+    expect(urlMatches(long, '/account')).toBe(true)
   })
 
   it('does not match a URL it cannot parse', () => {
@@ -108,5 +123,49 @@ describe('evaluateCondition', () => {
       all: [{ not: { any: [{ visible: '#nope' }, { textPresent: 'Welcome' }] } }, { visible: '#password' }],
     }
     expect(await evaluateCondition(pageAtLogin(), condition)).toBe(true)
+  })
+})
+
+describe('patternsValid', () => {
+  it('holds for steps with no conditions', () => {
+    expect(patternsValid([{ op: 'goto', url: LOGIN_PAGE }])).toBe(true)
+  })
+
+  it('holds for substrings and valid regular expressions', () => {
+    expect(
+      patternsValid([
+        { op: 'waitFor', condition: { urlMatches: '/account' }, timeoutMs: 1000 },
+        { op: 'waitFor', condition: { urlMatches: '/^\\/account$/' }, timeoutMs: 1000 },
+      ]),
+    ).toBe(true)
+  })
+
+  it('fails for an invalid regular expression in a waitFor', () => {
+    expect(patternsValid([{ op: 'waitFor', condition: { urlMatches: '/(/' }, timeoutMs: 1000 }])).toBe(false)
+  })
+
+  it('fails for an invalid regular expression deep inside nested branches', () => {
+    expect(
+      patternsValid([
+        {
+          op: 'retry',
+          times: 1,
+          steps: [
+            {
+              op: 'when',
+              condition: { visible: '#x' },
+              steps: [],
+              otherwise: [
+                {
+                  op: 'when',
+                  condition: { all: [{ textPresent: 'x' }, { any: [{ not: { urlMatches: '/)/' } }] }] },
+                  steps: [],
+                },
+              ],
+            },
+          ],
+        },
+      ]),
+    ).toBe(false)
   })
 })
