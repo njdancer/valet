@@ -21,9 +21,16 @@ import {
   RELEASE_APP_ID,
   RELEASE_PRODUCT_NAME,
   renderRequirement,
+  SIGN_RETRIES,
+  SIGN_RETRY_BACKOFF_MS,
+  SIGN_RETRY_INTERVAL_MS,
   type SignOptionsLike,
   signWithRequirement,
 } from '../../electron-builder.config'
+import { RELEASE_APP_ID as SCRIPT_RELEASE_APP_ID } from '../../scripts/make-feed.mjs'
+
+/** An Apple Development identity's SHA-1, as `security find-identity` prints it. */
+const DEV_IDENTITY = '0123456789ABCDEF0123456789ABCDEF01234567'
 
 const APP_DIR = resolve(import.meta.dirname, '../..')
 const DOC = readFileSync(resolve(APP_DIR, '../../docs/release-and-updates.md'), 'utf8')
@@ -186,6 +193,19 @@ describe('a release build refuses to be built weaker', () => {
     }
   })
 
+  it('with a feed on a host that cannot be public, baked into app-update.yml', () => {
+    for (const url of [
+      'https://localhost/mac/',
+      'https://127.0.0.1/mac/',
+      'https://192.168.1.10/mac/',
+      'https://[::1]/mac/',
+      'https://updates/mac/',
+      'https://updates.local/mac/',
+    ]) {
+      refuses({ ...RELEASE_ENV, SITEADAPTER_UPDATE_URL: url }, 'public host name')
+    }
+  })
+
   it('without a signing identity, or with automatic discovery turned off', () => {
     refuses({ ...RELEASE_ENV, CSC_NAME: undefined }, 'CSC_NAME or CSC_LINK')
     refuses({ ...RELEASE_ENV, CSC_IDENTITY_AUTO_DISCOVERY: 'false' }, 'CSC_IDENTITY_AUTO_DISCOVERY')
@@ -251,14 +271,14 @@ describe('a development build', () => {
   it('is never notarised, even with credentials in the environment', () => {
     const c = config({
       APPLE_KEYCHAIN_PROFILE: 'siteadapter-notary',
-      CSC_NAME: 'Apple Development: X (ABCDE12345)',
+      CSC_NAME: DEV_IDENTITY,
     })
     expect(c.mac.notarize).toBe(false)
     expect(c.mac.type).toBe('development')
   })
 
   it('pins a signed dev build to the team with the Apple Development requirement, for the .dev ID', async () => {
-    const c = config({ CSC_NAME: 'Apple Development: X (ABCDE12345)', SITEADAPTER_TEAM_ID: 'ABCDE12345' })
+    const c = config({ CSC_NAME: DEV_IDENTITY, SITEADAPTER_TEAM_ID: 'ABCDE12345' })
     expect('identity' in c.mac).toBe(false)
     expect(c.electronFuses.resetAdHocDarwinSignature).toBe(false)
     signCalls.length = 0
@@ -271,8 +291,27 @@ describe('a development build', () => {
   })
 
   it('signs without a requirement when no Team ID is given', () => {
-    const c = config({ CSC_NAME: 'Apple Development: X (ABCDE12345)' })
+    const c = config({ CSC_NAME: DEV_IDENTITY })
     expect(c.mac.sign).toBeUndefined()
+  })
+
+  it('takes a signing identity only as a SHA-1, so a name can’t find the Developer ID key', () => {
+    // electron-builder searches "Mac Developer" and "Developer ID Application" certificates for a
+    // development build's CSC_NAME; the release's "<name> (TEAMID)" form would match Developer ID.
+    for (const name of [
+      'Example Person (ABCDE12345)',
+      'Apple Development: Example Person (ABCDE12345)',
+      'Developer ID Application: Example Person (ABCDE12345)',
+      DEV_IDENTITY.toLowerCase(),
+      `${DEV_IDENTITY}0`,
+    ]) {
+      expect(() => config({ CSC_NAME: name }), name).toThrow('SHA-1 of an Apple Development identity')
+      expect(() => config({ CSC_NAME: name, SITEADAPTER_TEAM_ID: 'ABCDE12345' }), name).toThrow(
+        BuildConfigError,
+      )
+    }
+    expect(() => config({ CSC_LINK: '/tmp/developer-id.p12' })).toThrow('unset CSC_LINK')
+    expect(() => config({ CSC_LINK: '/tmp/x.p12', CSC_NAME: DEV_IDENTITY })).toThrow('unset CSC_LINK')
   })
 
   it('may point at a local feed, and has none by default', () => {
@@ -329,6 +368,65 @@ describe('signWithRequirement', () => {
     expect(seen[0]?.optionsForFile?.('/a.app/Contents/MacOS/a')).toEqual({ requirements: undefined })
   })
 
+  it('retries a failed signing as electron-builder’s default signing does, then gives up', async () => {
+    const waits: number[] = []
+    let calls = 0
+    const flaky = signWithRequirement(
+      () => async () => {
+        calls++
+        if (calls < 3) throw new Error('timestamp service unavailable')
+      },
+      '=designated => anchor apple',
+      async (ms) => {
+        waits.push(ms)
+      },
+    )
+    await flaky({ app: '/a.app' })
+    expect(calls).toBe(3)
+    expect(waits).toEqual([SIGN_RETRY_INTERVAL_MS, SIGN_RETRY_INTERVAL_MS + SIGN_RETRY_BACKOFF_MS])
+
+    calls = 0
+    waits.length = 0
+    const broken = signWithRequirement(
+      () => async () => {
+        calls++
+        throw new Error('no identity')
+      },
+      '=designated => anchor apple',
+      async (ms) => {
+        waits.push(ms)
+      },
+    )
+    await expect(broken({ app: '/a.app' })).rejects.toThrow('no identity')
+    expect(calls).toBe(SIGN_RETRIES + 1)
+    expect(SIGN_RETRIES).toBe(3)
+    expect(waits).toHaveLength(SIGN_RETRIES)
+  })
+
+  it('keeps the requirement on the outer app on every attempt', async () => {
+    const seen: SignOptionsLike[] = []
+    const sign = signWithRequirement(
+      () => async (o) => {
+        seen.push(o)
+        if (seen.length === 1) throw new Error('flaky')
+      },
+      '=designated => anchor apple',
+      async () => {},
+    )
+    await sign({ app: '/a.app', optionsForFile: () => ({ hardenedRuntime: true }) })
+    expect(seen).toHaveLength(2)
+    for (const options of seen) {
+      expect(options.optionsForFile?.('/a.app')).toEqual({
+        hardenedRuntime: true,
+        requirements: '=designated => anchor apple',
+      })
+      expect(options.optionsForFile?.('/a.app/Contents/MacOS/a')).toEqual({
+        hardenedRuntime: true,
+        requirements: undefined,
+      })
+    }
+  })
+
   it('reaches electron-builder’s own @electron/osx-sign (loaded, never called here)', () => {
     expect(typeof nodeDeps.loadSignAsync()).toBe('function')
   })
@@ -355,6 +453,12 @@ describe('the entitlements files', () => {
       expect(found).not.toHaveProperty('com.apple.security.app-sandbox')
     })
   }
+})
+
+describe('scripts/make-feed.mjs', () => {
+  it('checks zips against the same release bundle ID as the config', () => {
+    expect(SCRIPT_RELEASE_APP_ID).toBe(RELEASE_APP_ID)
+  })
 })
 
 describe('docs/release-and-updates.md', () => {

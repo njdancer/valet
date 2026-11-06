@@ -13,6 +13,30 @@ export interface FeedUrlOptions {
    * end-to-end build. Never for a release build.
    */
   readonly allowLoopbackHttp?: boolean
+  /**
+   * Refuse a host that can't be a public feed: an IP literal, a single-label name, localhost or a
+   * name under .localhost, .local, .internal, .home.arpa or .test. For a release build, whose URL
+   * is baked into app-update.yml and the asar.
+   */
+  readonly requirePublicHost?: boolean
+}
+
+const NON_PUBLIC_SUFFIXES = [
+  '.localhost',
+  '.local',
+  '.internal',
+  '.home.arpa',
+  '.test',
+  '.invalid',
+  '.example',
+]
+
+/** False for names that only resolve on a private network, or never. Expects a parsed hostname. */
+export function isPublicHostname(hostname: string): boolean {
+  const name = hostname.toLowerCase().replace(/\.$/, '')
+  if (name.startsWith('[') || /^\d+(\.\d+){3}$/.test(name)) return false
+  if (!name.includes('.') || name === 'localhost') return false
+  return !NON_PUBLIC_SUFFIXES.some((suffix) => name.endsWith(suffix))
 }
 
 /**
@@ -36,7 +60,9 @@ export function validateFeedUrl(text: unknown, options: FeedUrlOptions = {}): st
   if (url.username !== '' || url.password !== '') return null
   if (url.search !== '' || url.hash !== '' || text.includes('?') || text.includes('#')) return null
   if (!url.pathname.endsWith('/')) return null
-  if (url.protocol === 'https:') return url.href
+  if (url.protocol === 'https:') {
+    return options.requirePublicHost === true && !isPublicHostname(url.hostname) ? null : url.href
+  }
   if (url.protocol === 'http:' && options.allowLoopbackHttp === true && LOOPBACK_HOSTS.has(url.hostname)) {
     return url.href
   }

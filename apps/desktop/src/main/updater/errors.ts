@@ -7,6 +7,15 @@ export const UPDATE_ERROR_REASONS = [
   'feed-unreachable',
   /** The channel file was missing pieces, unparseable, or named something we won't install. */
   'feed-invalid',
+  /**
+   * The channel file isn't covered by a valid envelope signed with the feed key: a bad or missing
+   * signature, an envelope for another channel, or a channel file whose bytes or version differ.
+   */
+  'feed-unverified',
+  /** The envelope's validity window has passed (or not begun): the feed may be frozen. */
+  'feed-expired',
+  /** A request left the feed base (a redirect to another host, or to http) and was cancelled. */
+  'request-refused',
   /** The feed offered a version that isn't newer than this install, or than any it has run. */
   'downgrade-refused',
   /** The stable channel offered a prerelease. */
@@ -33,6 +42,9 @@ const FEED_INVALID_CODES = new Set([
   'ERR_UPDATER_INVALID_RELEASE_FEED',
   'ERR_UPDATER_ASSET_NOT_FOUND',
 ])
+
+const UNVERIFIED_CODES = new Set(['ERR_SITEADAPTER_FEED_UNVERIFIED'])
+const EXPIRED_CODES = new Set(['ERR_SITEADAPTER_FEED_EXPIRED'])
 
 const NETWORK_CODES = new Set([
   'ECONNREFUSED',
@@ -64,6 +76,8 @@ export function classifyUpdateError(error: unknown, phase: UpdatePhase): UpdateE
   if (phase === 'install') return 'install-failed'
   const code = field(error, 'code')
   if (code === 'ERR_CHECKSUM_MISMATCH') return 'checksum-mismatch'
+  if (typeof code === 'string' && UNVERIFIED_CODES.has(code)) return 'feed-unverified'
+  if (typeof code === 'string' && EXPIRED_CODES.has(code)) return 'feed-expired'
   if (typeof code === 'string' && FEED_INVALID_CODES.has(code)) return 'feed-invalid'
   const network =
     (typeof code === 'string' && (NETWORK_CODES.has(code) || /^HTTP_ERROR_\d{3}$/.test(code))) ||

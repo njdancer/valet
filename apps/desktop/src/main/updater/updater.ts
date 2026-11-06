@@ -2,6 +2,10 @@
 // policy is tested in plain Node without Electron. The policy, which electron-updater alone doesn't
 // give us:
 //
+// - Only from the feed, and only what the feed key signed. electron-updater authenticates nothing
+//   about versions; an enabled updater must be given the feed's Ed25519 public key, and every
+//   channel file is checked against its signed envelope (feed-envelope.ts) before electron-updater
+//   sees it. Requests that leave the feed base are cancelled by the session guard (request-guard.ts).
 // - Only ever forward. electron-updater compares versions loosely, and setting `channel` silently
 //   turns `allowDowngrade` on. Here a version is downloaded only if it parses strictly and is newer
 //   than both the running version and the highest version this install has ever run.
@@ -16,7 +20,10 @@ import type { OutgoingHttpHeaders } from 'node:http'
 import { SiteAdapterError } from '@siteadapter/core'
 import type { IsoTime, Settings, UpdateStatus } from '../../shared/api'
 import { classifyUpdateError, type UpdateErrorReason } from './errors'
+import { loadFeedPublicKey } from './feed-envelope'
+import { type SignedFeedProviderClass, signedFeedProvider } from './feed-provider'
 import { validateFeedUrl } from './feed-url'
+import type { FeedRequestGuard } from './request-guard'
 import { compareVersions, formatVersion, parseVersion, type Version } from './version'
 
 export const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
@@ -43,7 +50,7 @@ export interface AutoUpdaterLike {
   autoInstallOnAppQuit: boolean
   logger: unknown
   requestHeaders: OutgoingHttpHeaders | null
-  setFeedURL(options: { provider: 'generic'; url: string }): void
+  setFeedURL(options: { provider: 'custom'; updateProvider: SignedFeedProviderClass }): void
   checkForUpdates(): Promise<{
     readonly isUpdateAvailable: boolean
     readonly updateInfo: { readonly version: string }
@@ -99,6 +106,14 @@ export interface UpdaterLogEntry {
   readonly refused: string | null
 }
 
+/** The feed, compiled into the asar: its base URL and the public half of the offline feed key. */
+export interface SignedFeedConfig {
+  /** Validated with validateFeedUrl; https to a public host unless allowLoopbackFeed. */
+  readonly url: string
+  /** SPKI PEM of the Ed25519 key that signs the envelopes. */
+  readonly publicKey: string
+}
+
 export interface UpdaterOptions {
   readonly autoUpdater: AutoUpdaterLike
   /**
@@ -124,12 +139,18 @@ export interface UpdaterOptions {
    */
   readonly whenIdle: () => Promise<void>
   /**
-   * The feed's base URL, compiled into the app. When given it replaces the URL in app-update.yml, so
-   * nothing outside the asar names the feed. Validated with validateFeedUrl.
+   * Required when enabled: an updater without the feed key would trust whatever version an
+   * unsigned channel file names. Replaces app-update.yml's provider, so nothing outside the asar
+   * names the feed.
    */
-  readonly feedUrl?: string
+  readonly feed?: SignedFeedConfig
   /** Accept an http://127.0.0.1 feed. For the updater end-to-end build and tests only. */
   readonly allowLoopbackFeed?: boolean
+  /**
+   * confineUpdaterSession's guard on electron-updater's session partition. A check that fails after
+   * the guard cancelled a request reports request-refused.
+   */
+  readonly requestGuard?: FeedRequestGuard
   readonly clock: UpdaterClock
   /** In [0, 1); scales the jitter. */
   readonly random: () => number
@@ -154,8 +175,12 @@ export interface Updater {
   /** Called on every change of status. Returns the unsubscribe. */
   onStatus(listener: (status: UpdaterStatus) => void): () => void
   /**
-   * Waits until no adapter is busy, then quits and installs the downloaded update. Resolves true if
-   * the app is quitting, false if nothing was ready or the install was cancelled.
+   * Waits until no adapter is busy, then hands the downloaded update to quitAndInstall. Resolves true
+   * once it is handed over, false if nothing was ready, the install was cancelled, or it failed at
+   * once. Handed over is not yet quitting: with install-on-quit off, Squirrel.Mac only starts
+   * fetching the update from electron-updater's local proxy at this point, and the app quits once it
+   * has it. If Squirrel.Mac refuses it instead, an error event moves the status to install-failed
+   * and scheduled checks resume.
    */
   installAndRestart(): Promise<boolean>
 }
@@ -175,13 +200,32 @@ export function createUpdater(options: UpdaterOptions): Updater {
   const jitterMs = delayOrDefault(options.jitterMs, CHECK_JITTER_MS)
   const startDelayMs = delayOrDefault(options.startDelayMs, 0)
 
-  // Before anything can make a request: no logging of URLs, and the feed from the asar if given.
+  // Before anything can make a request: no logging of URLs, and the signed feed from the asar.
   autoUpdater.logger = null
   autoUpdater.autoDownload = false
-  if (options.feedUrl !== undefined) {
-    const url = validateFeedUrl(options.feedUrl, { allowLoopbackHttp: options.allowLoopbackFeed === true })
+  if (options.enabled && options.feed === undefined) throw new SiteAdapterError('config', 'invalid')
+  if (options.feed !== undefined) {
+    const loopback = options.allowLoopbackFeed === true
+    const url = validateFeedUrl(options.feed.url, {
+      allowLoopbackHttp: loopback,
+      requirePublicHost: !loopback,
+    })
     if (url === null) throw new SiteAdapterError('config', 'invalid')
-    autoUpdater.setFeedURL({ provider: 'generic', url })
+    let publicKey: ReturnType<typeof loadFeedPublicKey>
+    try {
+      publicKey = loadFeedPublicKey(options.feed.publicKey)
+    } catch {
+      throw new SiteAdapterError('config', 'invalid')
+    }
+    autoUpdater.setFeedURL({
+      provider: 'custom',
+      updateProvider: signedFeedProvider({
+        baseUrl: url,
+        publicKey,
+        now: () => options.clock.now(),
+        stagingId: STAGING_ID_HEADER_VALUE,
+      }),
+    })
   }
 
   let status: UpdaterStatus = {
@@ -195,6 +239,8 @@ export function createUpdater(options: UpdaterOptions): Updater {
   }
   const listeners = new Set<(status: UpdaterStatus) => void>()
   let running = false
+  /** Set by an error event while downloading; see check(). */
+  let errorWhileDownloading = false
   let timer: unknown = null
   let inFlight: Promise<UpdaterStatus> | null = null
 
@@ -261,15 +307,28 @@ export function createUpdater(options: UpdaterOptions): Updater {
     return null
   }
 
+  function refusals(): number {
+    try {
+      const count = options.requestGuard?.refusals() ?? 0
+      return Number.isFinite(count) ? count : 0
+    } catch {
+      return 0
+    }
+  }
+
   async function check(): Promise<UpdaterStatus> {
     const channel = options.channel()
     configure(channel)
+    const refusedBefore = refusals()
+    /** A failure after the guard cancelled a request is the guard's doing, whatever the error says. */
+    const classify = (error: unknown, phase: 'check' | 'download') =>
+      refusals() > refusedBefore ? 'request-refused' : classifyUpdateError(error, phase)
     set({ state: 'checking', channel, reason: null, progress: null })
     let result: Awaited<ReturnType<AutoUpdaterLike['checkForUpdates']>>
     try {
       result = await autoUpdater.checkForUpdates()
     } catch (error) {
-      return fail(classifyUpdateError(error, 'check'))
+      return fail(classify(error, 'check'))
     }
     const checkedAt = options.clock.now()
     if (result === null) return set({ state: 'disabled', available: null, checkedAt })
@@ -279,14 +338,19 @@ export function createUpdater(options: UpdaterOptions): Updater {
     const refusal = judge(offered, channel)
     if (refusal !== null) return fail(refusal, { checkedAt }, offered)
 
+    errorWhileDownloading = false
     set({ state: 'downloading', available: formatVersion(offered), checkedAt, progress: 0 })
     try {
       await autoUpdater.downloadUpdate()
     } catch (error) {
-      return fail(classifyUpdateError(error, 'download'))
+      return fail(classify(error, 'download'))
     }
-    // An error event (Squirrel.Mac refusing the zip) may have arrived while the download settled.
     if (stateNow() !== 'downloading') return status
+    // With install-on-quit on, electron-updater resolves the download once Squirrel.Mac has been
+    // sent the zip, before Squirrel.Mac has checked its signature, and Squirrel.Mac's refusal then
+    // arrives as an error event. A download failure rejects as well as emitting one, so an error
+    // event followed by a resolved download is Squirrel.Mac refusing the update.
+    if (errorWhileDownloading) return fail('install-failed')
     return set({ state: 'ready', progress: null })
   }
 
@@ -326,10 +390,27 @@ export function createUpdater(options: UpdaterOptions): Updater {
     set({ progress: Math.min(Math.max(Math.floor(percent), 0), 100) })
   })
 
+  /**
+   * Whether the schedule was running when installAndRestart() stopped it for the hand-off, or null
+   * if it hasn't. Put back if the install fails, so a refused update doesn't end checking.
+   */
+  let runningBeforeInstall: boolean | null = null
+
+  function installFailed(): void {
+    fail('install-failed')
+    if (runningBeforeInstall !== null) {
+      running = runningBeforeInstall
+      runningBeforeInstall = null
+    }
+    if (running && timer === null && inFlight === null) schedule(nextDelay())
+  }
+
   autoUpdater.on('error', () => {
     // Check and download failures arrive as rejections and are handled there. An error event while
-    // an update is ready or installing is Squirrel.Mac refusing it.
-    if (status.state === 'ready' || status.state === 'installing') fail('install-failed')
+    // an update is ready or installing is Squirrel.Mac refusing it; while downloading, see check().
+    if (status.state === 'downloading') errorWhileDownloading = true
+    else if (status.state === 'installing') installFailed()
+    else if (status.state === 'ready') fail('install-failed')
   })
 
   return {
@@ -362,21 +443,27 @@ export function createUpdater(options: UpdaterOptions): Updater {
       }
       // An error event (Squirrel.Mac refusing the update) may have arrived while we waited.
       if (stateNow() !== 'installing') return false
+      runningBeforeInstall = running
       running = false
       if (timer !== null) options.clock.clearTimeout(timer)
       timer = null
       try {
         autoUpdater.quitAndInstall(false, true)
       } catch {
-        fail('install-failed')
+        installFailed()
         return false
       }
-      return true
+      return stateNow() === 'installing'
     },
   }
 }
 
-/** The renderer's view of the updater (src/shared/api.ts). */
+/**
+ * The renderer's view of the updater (src/shared/api.ts). The contract has no "disabled" or "never
+ * checked" state: a disabled updater (unpackaged, unsigned, or electron-updater inactive) reports
+ * `signed: false` whatever the caller says, so the UI can say updates are off rather than "up to
+ * date"; and `up-to-date` with `checkedAt: null` means no check has finished yet.
+ */
 export function toUpdateStatus(status: UpdaterStatus, signed: boolean): UpdateStatus {
   const state: UpdateStatus['state'] =
     status.state === 'checking' || status.state === 'error' || status.state === 'downloading'
@@ -386,5 +473,11 @@ export function toUpdateStatus(status: UpdaterStatus, signed: boolean): UpdateSt
         : 'up-to-date'
   const checkedAt: IsoTime | null =
     status.checkedAt === null ? null : new Date(status.checkedAt).toISOString()
-  return { current: status.current, state, available: status.available, checkedAt, signed }
+  return {
+    current: status.current,
+    state,
+    available: status.available,
+    checkedAt,
+    signed: signed && status.state !== 'disabled',
+  }
 }

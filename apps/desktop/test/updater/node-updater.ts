@@ -4,22 +4,79 @@
 // architecture (MacUpdater.filterFilesForArch), and the download with its SHA-512 check. What is
 // replaced: Electron's `net` (a Node http executor in its place, as electron-updater's own tests do),
 // the Electron app (an AppAdapter over a temp directory), and Squirrel.Mac (quitAndInstall records).
+// Electron's session partition is emulated as far as the guard needs: every request the executor
+// makes, each redirect hop included, is shown to the partition's onBeforeRequest listener first, and
+// a cancelled one fails as Electron's net does (net::ERR_BLOCKED_BY_CLIENT, no code).
 
+import { EventEmitter } from 'node:events'
 import { request } from 'node:http'
 import { createRequire } from 'node:module'
 import { AppUpdater, MacUpdater } from 'electron-updater'
 import type { AppAdapter } from 'electron-updater/out/AppAdapter'
 import type { DownloadUpdateOptions } from 'electron-updater/out/AppUpdater'
 import { findFile } from 'electron-updater/out/providers/Provider'
+import type { SessionLike } from '../../src/main/updater'
 
 // builder-util-runtime isn't a dependency of this package; take electron-updater's own copy, so the
 // executor below is the same class electron-updater's providers expect.
 const fromUpdater = createRequire(createRequire(import.meta.url).resolve('electron-updater'))
 const runtime: any = fromUpdater('builder-util-runtime')
 
+type BeforeRequest = Parameters<SessionLike['webRequest']['onBeforeRequest']>[0]
+
+/** The "electron-updater" partition, as far as webRequest.onBeforeRequest goes. */
+export class FakePartition implements SessionLike {
+  private listener: BeforeRequest | null = null
+  readonly seen: string[] = []
+  readonly webRequest = {
+    onBeforeRequest: (listener: BeforeRequest) => {
+      this.listener = listener
+    },
+  }
+
+  /** True if the request may go ahead. */
+  allows(url: string, method: string): boolean {
+    this.seen.push(url)
+    if (this.listener === null) return true
+    let cancel = true
+    this.listener({ url, method }, (response) => {
+      cancel = response.cancel
+    })
+    return !cancel
+  }
+}
+
+/** What Electron's net.request does with a request webRequest cancelled. */
+function blockedRequest() {
+  const fake = Object.assign(new EventEmitter(), {
+    end: () => {
+      setImmediate(() => fake.emit('error', new Error('net::ERR_BLOCKED_BY_CLIENT')))
+    },
+    abort: () => {},
+    destroy: () => {},
+  })
+  return fake
+}
+
+/** The request options builder-util-runtime's configureRequestUrl fills in. */
+interface RequestTarget {
+  readonly protocol?: string
+  readonly hostname?: string
+  readonly port?: string | number | null
+  readonly path?: string
+  readonly method?: string
+}
+
 /** HttpExecutor over node:http, with the download method electron-updater's executor has. */
 class NodeHttpExecutor extends runtime.HttpExecutor {
-  createRequest(options: Record<string, unknown>, callback: (response: unknown) => void) {
+  constructor(private readonly partition: FakePartition) {
+    super()
+  }
+
+  createRequest(options: RequestTarget, callback: (response: unknown) => void) {
+    const port = options.port == null || options.port === '' ? '' : `:${options.port}`
+    const url = `${options.protocol ?? 'https:'}//${options.hostname}${port}${options.path ?? '/'}`
+    if (!this.partition.allows(url, options.method ?? 'GET')) return blockedRequest()
     return request(options, callback)
   }
 
@@ -65,6 +122,8 @@ export class NodeAppAdapter implements AppAdapter {
 
 export class NodeUpdater extends AppUpdater {
   readonly installs: Array<[boolean | undefined, boolean | undefined]> = []
+  /** The session partition every request goes through. */
+  readonly partition = new FakePartition()
 
   constructor(
     app: AppAdapter,
@@ -72,7 +131,7 @@ export class NodeUpdater extends AppUpdater {
   ) {
     super(null, app)
     const self = this as any
-    self.httpExecutor = new NodeHttpExecutor()
+    self.httpExecutor = new NodeHttpExecutor(this.partition)
     self._testOnlyOptions = { platform: 'darwin' }
   }
 

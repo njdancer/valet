@@ -46,6 +46,37 @@ describe('validateFeedUrl', () => {
     expect(validateFeedUrl('http://127.0.0.1.nip.io/', { allowLoopbackHttp: true })).toBeNull()
   })
 
+  it('refuses, for a release, a host that cannot be a public feed', () => {
+    const release = { requirePublicHost: true }
+    for (const url of [
+      'https://localhost/mac/',
+      'https://app.localhost/mac/',
+      'https://127.0.0.1/mac/',
+      'https://0x7f000001/mac/',
+      'https://8.8.8.8/mac/',
+      'https://[::1]/mac/',
+      'https://[2001:db8::1]/mac/',
+      'https://updates/mac/',
+      'https://updates.local/mac/',
+      'https://updates.internal/mac/',
+      'https://router.home.arpa/mac/',
+      'https://feed.test/mac/',
+      'https://updates.example/mac/',
+    ]) {
+      expect(validateFeedUrl(url, release), url).toBeNull()
+      // Allowed when a public host isn't required: the parser's canonical form, at least.
+      if (!url.includes('0x7f')) expect(validateFeedUrl(url), url).toBe(url)
+    }
+    expect(validateFeedUrl('https://updates.example.com/mac/', release)).toBe(
+      'https://updates.example.com/mac/',
+    )
+    expect(validateFeedUrl('https://updates.dncr.me/mac/', release)).toBe('https://updates.dncr.me/mac/')
+    // The loopback allowance for the end-to-end build is http only; it doesn't lift the https rule.
+    expect(validateFeedUrl('http://127.0.0.1:4555/', { ...release, allowLoopbackHttp: true })).toBe(
+      'http://127.0.0.1:4555/',
+    )
+  })
+
   it('refuses a path that is not a directory', () => {
     expect(validateFeedUrl('https://updates.example.com/mac')).toBeNull()
     expect(validateFeedUrl('https://updates.example.com/mac/latest-mac.yml')).toBeNull()

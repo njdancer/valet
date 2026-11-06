@@ -1,6 +1,7 @@
 // @vitest-environment node
 // The update controller's policy, against a fake autoUpdater and a manual clock. No Electron.
 
+import { generateKeyPairSync } from 'node:crypto'
 import { SiteAdapterError } from '@siteadapter/core'
 import type { AppUpdater } from 'electron-updater'
 import { describe, expect, it } from 'vitest'
@@ -16,12 +17,13 @@ import {
   type UpdaterOptions,
   type UpdaterStatus,
 } from '../../src/main/updater'
-import { codedError, deferred, FakeAutoUpdater, flush, ManualClock } from './fakes'
+import { codedError, deferred, FakeAutoUpdater, flush, ManualClock, TEST_FEED } from './fakes'
 
 function baseOptions(fake: FakeAutoUpdater, clock: ManualClock, logs: UpdaterLogEntry[]): UpdaterOptions {
   return {
     autoUpdater: fake,
     enabled: true,
+    feed: TEST_FEED,
     currentVersion: '1.0.0',
     channel: () => 'stable',
     autoInstallOnQuit: () => true,
@@ -53,13 +55,38 @@ describe('createUpdater: construction', () => {
     }
   })
 
-  it('points electron-updater at a compiled-in https feed', () => {
+  it('points electron-updater at the signed feed provider, replacing app-update.yml’s', () => {
     const fake = new FakeAutoUpdater()
-    createUpdater({
-      ...baseOptions(fake, new ManualClock(), []),
-      feedUrl: 'https://updates.example.com/mac/',
+    createUpdater(baseOptions(fake, new ManualClock(), []))
+    expect(fake.feeds).toHaveLength(1)
+    expect(fake.feeds[0]?.provider).toBe('custom')
+    expect(typeof fake.feeds[0]?.updateProvider).toBe('function')
+  })
+
+  it('refuses to enable updates without the feed key: an unsigned feed could name any version', () => {
+    const fake = new FakeAutoUpdater()
+    const { feed: _feed, ...options } = baseOptions(fake, new ManualClock(), [])
+    const make = () => createUpdater(options)
+    expect(make).toThrow(SiteAdapterError)
+    expect(make).toThrow('config: invalid')
+    expect(fake.feeds).toEqual([])
+    // A disabled build needs no feed: it never contacts one.
+    expect(createUpdater({ ...options, enabled: false }).status().state).toBe('disabled')
+  })
+
+  it('refuses a feed key that is not an Ed25519 public key', () => {
+    const rsa = generateKeyPairSync('rsa', { modulusLength: 2048 }).publicKey.export({
+      type: 'spki',
+      format: 'pem',
     })
-    expect(fake.feedUrls).toEqual([{ provider: 'generic', url: 'https://updates.example.com/mac/' }])
+    const ed25519Private = generateKeyPairSync('ed25519').privateKey.export({ type: 'pkcs8', format: 'pem' })
+    for (const publicKey of [String(rsa), String(ed25519Private), '', 'not a key']) {
+      const fake = new FakeAutoUpdater()
+      const make = () =>
+        createUpdater({ ...baseOptions(fake, new ManualClock(), []), feed: { ...TEST_FEED, publicKey } })
+      expect(make).toThrow('config: invalid')
+      expect(fake.feeds).toEqual([])
+    }
   })
 
   it('refuses a feed URL carrying a token, and never hands it to electron-updater', () => {
@@ -67,20 +94,37 @@ describe('createUpdater: construction', () => {
     const make = () =>
       createUpdater({
         ...baseOptions(fake, new ManualClock(), []),
-        feedUrl: 'https://updates.example.com/mac/?t=x',
+        feed: { ...TEST_FEED, url: 'https://updates.example.com/mac/?t=x' },
       })
     expect(make).toThrow(SiteAdapterError)
-    expect(fake.feedUrls).toEqual([])
+    expect(fake.feeds).toEqual([])
+  })
+
+  it('refuses a feed on a host that cannot be public, unless the end-to-end build asks for loopback', () => {
+    for (const url of [
+      'https://localhost/mac/',
+      'https://127.0.0.1/mac/',
+      'https://[::1]/mac/',
+      'https://10.0.0.5/mac/',
+      'https://updates/mac/',
+      'https://updates.internal/mac/',
+    ]) {
+      const fake = new FakeAutoUpdater()
+      expect(() =>
+        createUpdater({ ...baseOptions(fake, new ManualClock(), []), feed: { ...TEST_FEED, url } }),
+      ).toThrow(SiteAdapterError)
+      expect(fake.feeds).toEqual([])
+    }
   })
 
   it('refuses a loopback http feed unless the end-to-end build asks for it', () => {
     const fake = new FakeAutoUpdater()
-    const feedUrl = 'http://127.0.0.1:4555/'
-    expect(() => createUpdater({ ...baseOptions(fake, new ManualClock(), []), feedUrl })).toThrow(
+    const feed = { ...TEST_FEED, url: 'http://127.0.0.1:4555/' }
+    expect(() => createUpdater({ ...baseOptions(fake, new ManualClock(), []), feed })).toThrow(
       SiteAdapterError,
     )
-    createUpdater({ ...baseOptions(fake, new ManualClock(), []), feedUrl, allowLoopbackFeed: true })
-    expect(fake.feedUrls).toEqual([{ provider: 'generic', url: feedUrl }])
+    createUpdater({ ...baseOptions(fake, new ManualClock(), []), feed, allowLoopbackFeed: true })
+    expect(fake.feeds).toHaveLength(1)
   })
 
   it('accepts electron-updater’s real AppUpdater as the injected autoUpdater (type-level)', () => {
@@ -426,6 +470,74 @@ describe('createUpdater: failures', () => {
     expect(fake.checks).toEqual([])
   })
 
+  it('reports a check that failed after the session guard cancelled a request as request-refused', async () => {
+    let refused = 0
+    const fake = new FakeAutoUpdater()
+    fake.onCheck = async () => {
+      refused++ // the guard cancelled a redirect hop; Electron's net reports it with no code
+      throw new Error('net::ERR_BLOCKED_BY_CLIENT')
+    }
+    const logs: UpdaterLogEntry[] = []
+    const updater = createUpdater({
+      ...baseOptions(fake, new ManualClock(), logs),
+      requestGuard: { refusals: () => refused },
+    })
+    expect((await updater.checkNow()).reason).toBe('request-refused')
+    // Earlier refusals don't colour a later, unrelated failure.
+    fake.onCheck = async () => {
+      throw codedError('ECONNREFUSED')
+    }
+    expect((await updater.checkNow()).reason).toBe('feed-unreachable')
+    expect(JSON.stringify(logs)).not.toContain('ERR_BLOCKED')
+  })
+
+  it('reports a download cancelled by the guard as request-refused', async () => {
+    let refused = 0
+    const fake = new FakeAutoUpdater()
+    fake.onCheck = available('1.1.0')
+    fake.onDownload = async () => {
+      refused++
+      throw new Error('net::ERR_BLOCKED_BY_CLIENT')
+    }
+    const updater = createUpdater({
+      ...baseOptions(fake, new ManualClock(), []),
+      requestGuard: { refusals: () => refused },
+    })
+    expect((await updater.checkNow()).reason).toBe('request-refused')
+  })
+
+  it('survives a guard whose counter throws or is nonsense', async () => {
+    for (const refusals of [
+      () => {
+        throw new Error('x')
+      },
+      () => Number.NaN,
+    ]) {
+      const fake = new FakeAutoUpdater()
+      fake.onCheck = async () => {
+        throw codedError('ECONNREFUSED')
+      }
+      const updater = createUpdater({
+        ...baseOptions(fake, new ManualClock(), []),
+        requestGuard: { refusals },
+      })
+      expect((await updater.checkNow()).reason).toBe('feed-unreachable')
+    }
+  })
+
+  it('maps the signed feed’s refusals to their own reasons', async () => {
+    const fake = new FakeAutoUpdater()
+    const updater = createUpdater(baseOptions(fake, new ManualClock(), []))
+    fake.onCheck = async () => {
+      throw codedError('ERR_SITEADAPTER_FEED_UNVERIFIED')
+    }
+    expect((await updater.checkNow()).reason).toBe('feed-unverified')
+    fake.onCheck = async () => {
+      throw codedError('ERR_SITEADAPTER_FEED_EXPIRED')
+    }
+    expect((await updater.checkNow()).reason).toBe('feed-expired')
+  })
+
   it('tries again on the next check after a failure', async () => {
     const fake = new FakeAutoUpdater()
     fake.onCheck = async () => {
@@ -696,6 +808,80 @@ describe('createUpdater: installing', () => {
     expect(updater.status().reason).toBe('install-failed')
   })
 
+  it('resumes scheduled checks when Squirrel.Mac refuses the update after the hand-off', async () => {
+    const { fake, clock, updater } = await ready()
+    expect(await updater.installAndRestart()).toBe(true)
+    expect(clock.pending()).toEqual([])
+    // MacUpdater re-emits nativeUpdater's errors: Squirrel.Mac refusing the zip it fetched.
+    fake.emit('error', new Error('Code signature did not pass validation'))
+    expect(updater.status()).toMatchObject({ state: 'error', reason: 'install-failed' })
+    expect(clock.pending()).toEqual([CHECK_INTERVAL_MS])
+    fake.onCheck = available('1.2.0')
+    await clock.advance(60 * 60 * 60 * 1000)
+    expect(fake.checks.length).toBeGreaterThan(1)
+    expect(updater.status()).toMatchObject({ state: 'ready', available: '1.2.0' })
+  })
+
+  it('resumes scheduled checks when quitAndInstall throws', async () => {
+    const { fake, clock, updater } = await ready()
+    fake.onQuitAndInstall = () => {
+      throw new Error('no')
+    }
+    expect(await updater.installAndRestart()).toBe(false)
+    expect(clock.pending()).toEqual([CHECK_INTERVAL_MS])
+    await clock.advance(CHECK_INTERVAL_MS)
+    expect(fake.checks).toHaveLength(2)
+  })
+
+  it('does not start a schedule that was never running when an install fails', async () => {
+    const fake = new FakeAutoUpdater()
+    fake.onCheck = available('1.1.0')
+    const clock = new ManualClock()
+    const updater = createUpdater(baseOptions(fake, clock, []))
+    expect((await updater.checkNow()).state).toBe('ready')
+    expect(await updater.installAndRestart()).toBe(true)
+    fake.emit('error', new Error('refused'))
+    expect(updater.status().reason).toBe('install-failed')
+    expect(clock.pending()).toEqual([])
+  })
+
+  it('reports false, not quitting, when Squirrel.Mac refuses during quitAndInstall itself', async () => {
+    const { fake, clock, updater } = await ready()
+    fake.onQuitAndInstall = () => fake.emit('error', new Error('refused'))
+    expect(await updater.installAndRestart()).toBe(false)
+    expect(updater.status().reason).toBe('install-failed')
+    expect(clock.pending()).toEqual([CHECK_INTERVAL_MS])
+  })
+
+  it('treats a refusal that lands before the download’s promise settles as an install failure', async () => {
+    // With install-on-quit on, electron-updater resolves downloadUpdate() once Squirrel.Mac has been
+    // sent the bytes, before it checks them; its refusal can arrive while the state still says
+    // downloading.
+    const fake = new FakeAutoUpdater()
+    fake.onCheck = available('1.1.0')
+    fake.onDownload = async () => {
+      fake.emit('error', new Error('Code signature did not pass validation'))
+      return []
+    }
+    const updater = createUpdater(baseOptions(fake, new ManualClock(), []))
+    expect(await updater.checkNow()).toMatchObject({ state: 'error', reason: 'install-failed' })
+    // The next download that goes through cleanly is ready again.
+    fake.onDownload = async () => []
+    expect((await updater.checkNow()).state).toBe('ready')
+  })
+
+  it('still classifies a download that fails (error event and rejection) as the download’s', async () => {
+    const fake = new FakeAutoUpdater()
+    fake.onCheck = available('1.1.0')
+    fake.onDownload = async () => {
+      const error = codedError('ERR_CHECKSUM_MISMATCH')
+      fake.emit('error', error)
+      throw error
+    }
+    const updater = createUpdater(baseOptions(fake, new ManualClock(), []))
+    expect((await updater.checkNow()).reason).toBe('checksum-mismatch')
+  })
+
   it('never installs from a check, a download or the schedule', async () => {
     const { fake, clock } = await ready()
     await clock.advance(5 * CHECK_INTERVAL_MS)
@@ -713,6 +899,18 @@ describe('toUpdateStatus', () => {
     progress: null,
     reason: null,
   }
+
+  it('never tells a disabled build it is signed and updating, whatever the caller says', () => {
+    expect(toUpdateStatus({ ...base, state: 'disabled', checkedAt: null }, true)).toMatchObject({
+      state: 'up-to-date',
+      signed: false,
+      checkedAt: null,
+    })
+    expect(toUpdateStatus({ ...base, state: 'idle', checkedAt: null }, true)).toMatchObject({
+      signed: true,
+      checkedAt: null,
+    })
+  })
 
   it('maps the updater’s states onto the renderer contract', () => {
     const mapped = (state: UpdaterStatus['state']) => toUpdateStatus({ ...base, state }, true).state

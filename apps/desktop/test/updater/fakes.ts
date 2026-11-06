@@ -1,8 +1,21 @@
 // Fakes for the updater tests: an autoUpdater that behaves like electron-updater's where the
 // policy depends on it (the channel setter turning allowDowngrade on), and a manual clock.
 
+import { generateKeyPairSync, type KeyObject } from 'node:crypto'
 import type { OutgoingHttpHeaders } from 'node:http'
-import type { AutoUpdaterLike, UpdaterClock } from '../../src/main/updater'
+import type { AutoUpdaterLike, SignedFeedProviderClass, UpdaterClock } from '../../src/main/updater'
+
+/** An Ed25519 feed key made for the test run. Nothing outside the tests trusts it. */
+export function feedKeys(): { privateKey: KeyObject; publicKey: KeyObject; publicPem: string } {
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519')
+  return { privateKey, publicKey, publicPem: publicKey.export({ type: 'spki', format: 'pem' }).toString() }
+}
+
+export const TEST_FEED_KEYS = feedKeys()
+export const TEST_FEED = {
+  url: 'https://updates.example.com/mac/',
+  publicKey: TEST_FEED_KEYS.publicPem,
+} as const
 
 type CheckResult = Awaited<ReturnType<AutoUpdaterLike['checkForUpdates']>>
 
@@ -26,7 +39,7 @@ export class FakeAutoUpdater implements AutoUpdaterLike {
   logger: unknown = console
   requestHeaders: OutgoingHttpHeaders | null = null
 
-  readonly feedUrls: Array<{ provider: 'generic'; url: string }> = []
+  readonly feeds: Array<{ provider: 'custom'; updateProvider: SignedFeedProviderClass }> = []
   readonly checks: CheckSnapshot[] = []
   downloads = 0
   readonly quitAndInstallCalls: Array<[boolean | undefined, boolean | undefined]> = []
@@ -51,8 +64,8 @@ export class FakeAutoUpdater implements AutoUpdaterLike {
     this.allowDowngrade = true
   }
 
-  setFeedURL(options: { provider: 'generic'; url: string }): void {
-    this.feedUrls.push(options)
+  setFeedURL(options: { provider: 'custom'; updateProvider: SignedFeedProviderClass }): void {
+    this.feeds.push(options)
   }
 
   checkForUpdates(): Promise<CheckResult> {
