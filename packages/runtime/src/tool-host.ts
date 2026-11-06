@@ -171,7 +171,6 @@ export class ToolHost {
       site,
       clock: this.clock,
       ...(this.options.loginBackoff === undefined ? {} : { backoff: this.options.loginBackoff }),
-      audit: (event) => this.record(event),
     })
     this.adapters.set(manifest.id, { definition, bundleHash, driver, gate, site })
   }
@@ -246,7 +245,7 @@ export class ToolHost {
     // so two calls on one session can't safely overlap.
     const release = await this.locks.acquire(manifest.id)
     const controller = new AbortController()
-    const state = new CallState(request.callId, controller.signal)
+    const state = new CallState(request.callId, controller.signal, () => entry.gate.secrets)
     let running = false
     try {
       // Again, because a revocation can land while this call waits for the lock.
@@ -260,6 +259,13 @@ export class ToolHost {
           input: input.output,
         })
         if (answer !== 'approved') return { status: 'declined' }
+      }
+      try {
+        // Before the run begins: opening the tool page loads home under the run policy, and what
+        // the driver refuses then is redacted against these.
+        await this.collectSessionSecrets(entry, state)
+      } catch {
+        return failed('tool-run', 'internal')
       }
       try {
         entry.driver.beginRun(runPolicy(manifest, declaration), (b) => this.onBlocked(entry, state, b))
@@ -282,7 +288,6 @@ export class ToolHost {
             // Nothing more to stop; the next beginRun replaces the policy.
           }
         }
-        state.dispose()
         release()
       }
       if (state.idle) finish()
@@ -306,7 +311,6 @@ export class ToolHost {
     } catch (error) {
       return fromReportable(toReportable(error, 'navigate'))
     }
-    await this.collectSessionSecrets(entry, state)
 
     const ctx: ToolContext = {
       page: new GuardedToolPage({
@@ -379,7 +383,6 @@ export class ToolHost {
           signal: state.signal,
           page,
           login: state.login,
-          secrets: state.secrets,
         }),
       )
       state.ensureOutcome = result.status === 'ok' ? null : result
@@ -393,15 +396,20 @@ export class ToolHost {
 
   /**
    * What the driver reports refusing during a run. Each refusal is our own policy at work, never the
-   * site refusing us, so none of them touches the site's breaker. Tool code reaching past the
-   * capability API (initiator 'tool'), or a run over its ceiling, ends the run as a violation; the
-   * site's own scripts being refused (its analytics, say) is normal and only recorded.
+   * site refusing us, so none of them touches the site's breaker.
+   *
+   * The driver can only tell tool code apart for the raw capability calls it is handed (initiator
+   * 'tool'); a fetch from evaluate()d code reaches it like the site's own scripts' (initiator
+   * 'page'). So a page-initiated refusal ends the run too when it is one the site has no reason to
+   * cause: a path that touches a denied segment or is ambiguous, more than the tool's side effect, or
+   * the run over its ceiling. The site's own scripts calling an off-list host or an undeclared
+   * endpoint (its analytics, say) is normal and only recorded.
    */
   private onBlocked(entry: Entry, state: CallState, request: BlockedRequest): void {
     const reason = Object.hasOwn(BLOCKED_REASON, request.reason) ? request.reason : 'bad-url'
     const initiator = request.initiator === 'page' ? 'page' : 'tool'
     const [stage, errorClass] = BLOCKED_REASON[reason]
-    if (initiator === 'tool' || reason === 'request-ceiling') {
+    if (initiator === 'tool' || VIOLATION_WHOEVER_ASKED.has(reason)) {
       state.violation ??= new SiteAdapterError(stage, errorClass)
     }
     const method = plainMethod(request.method)
@@ -539,6 +547,14 @@ const BLOCKED_REASON = {
   'request-ceiling': ['request-surface', 'request-ceiling'],
   'bad-url': ['request-surface', 'invalid'],
 } as const satisfies Record<BlockedRequest['reason'], readonly [Stage, ErrorClass]>
+
+/** Refusals that end the run whoever made the request; see onBlocked. */
+const VIOLATION_WHOEVER_ASKED: ReadonlySet<BlockedRequest['reason']> = new Set<BlockedRequest['reason']>([
+  'denied-path',
+  'ambiguous-path',
+  'purpose-exceeded',
+  'request-ceiling',
+])
 
 /**
  * The network policy for one run. The probe's own request is added to the declarations: it is the

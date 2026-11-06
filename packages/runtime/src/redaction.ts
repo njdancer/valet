@@ -14,8 +14,8 @@ export const REDACTED = '[redacted]'
 export const MIN_SESSION_VALUE_LENGTH = 8
 
 /**
- * The secrets one tool call's login resolved. The auth flow disposes its own copies as soon as it
- * has typed them, so this set keeps independent clones, and disposes them when the call ends.
+ * The secrets a login resolved. The auth flow disposes its own copies as soon as it has typed them,
+ * so this set keeps independent clones, until the next successful login replaces it.
  */
 export class SecretRedactionSet {
   private readonly secrets: SecretValue[] = []
@@ -25,7 +25,7 @@ export class SecretRedactionSet {
 
   /** Keeps a clone of `secret` until dispose(). The caller still owns, and disposes, `secret`. */
   register(secret: SecretValue): void {
-    // After the call, nothing is left to redact, so there is no reason to keep a copy.
+    // A replaced set redacts nothing any more, so there is no reason to keep a copy.
     if (this.ended) return
     if (!(secret instanceof SecretValue) || secret.disposed) {
       // We can't match what we can't hold, so fail closed: the output and audit targets are withheld.
@@ -33,6 +33,11 @@ export class SecretRedactionSet {
       return
     }
     this.secrets.push(secret.clone())
+  }
+
+  /** Something was filled that wasn't registered: every string now counts as sensitive. */
+  markIncomplete(): void {
+    this.incomplete = true
   }
 
   /** True when `text` contains a registered secret. */

@@ -65,6 +65,43 @@ describe('beginRun and endRun', () => {
     expect(driver.runEvents).toEqual([])
   })
 
+  it('collects the session values before the run begins, so refusals while the page opens are redacted', async () => {
+    const { host, driver, audit } = fixture(adapterRunning(async () => 'ok'))
+    const order: string[] = []
+    const sessionSecrets = driver.sessionSecrets.bind(driver)
+    driver.sessionSecrets = (domains, storage) => {
+      order.push(`secrets:${driver.runEvents.join(',')}`)
+      return sessionSecrets(domains, storage)
+    }
+    const toolPage = driver.toolPage.bind(driver)
+    driver.toolPage = async () => {
+      // The page loads home under the run policy; something on it is refused.
+      driver.onBlocked?.({
+        method: 'GET',
+        target: `https://t.example.net/${COOKIE}`,
+        reason: 'host-not-allowed',
+        initiator: 'page',
+      })
+      return toolPage()
+    }
+    await host.call(call)
+
+    expect(order[0]).toBe('secrets:')
+    expect(audit.events).toContainEqual(
+      expect.objectContaining({ type: 'request-blocked', target: '[redacted]' }),
+    )
+    expect(JSON.stringify(audit.events)).not.toContain(COOKIE)
+  })
+
+  it('does not begin a run when the session values cannot be read', async () => {
+    const { host, driver } = fixture(adapterRunning(async () => 'ok'))
+    driver.sessionSecrets = async () => {
+      throw new Error('partition gone')
+    }
+    expect(await host.call(call)).toEqual({ status: 'failed', stage: 'tool-run', errorClass: 'internal' })
+    expect(driver.runEvents).toEqual([])
+  })
+
   it('does not run the tool when the driver cannot start the run, and never ends what never began', async () => {
     let ran = false
     const { host, driver } = fixture(
@@ -136,10 +173,10 @@ describe('beginRun and endRun', () => {
 })
 
 describe('what the driver refuses', () => {
-  it('fails the call when tool code got past the capability API, even if it carries on', async () => {
+  it('fails the call when a raw capability call of tool code was refused, even if it carries on', async () => {
     const { host, driver, audit } = fixture(
       adapterRunning(async () => {
-        // evaluate()d code calling the page's own fetch, as the driver sees it.
+        // Only the requests the driver is handed through ToolPage.fetch/goto are initiator 'tool'.
         driver.onBlocked?.({
           method: 'GET',
           target: 'https://evil.test/collect',
@@ -187,7 +224,75 @@ describe('what the driver refuses', () => {
     expect(page.toolFetches()).toEqual([])
   })
 
-  it('only records the site’s own refused requests, and leaves the call alone', async () => {
+  it('fails the call when evaluate()d code fetches a denied path, which the driver reports as the page’s', async () => {
+    const { host, driver, page } = fixture(
+      adapterRunning(async (ctx) => {
+        await ctx.page.evaluate("fetch('/api/checkout/place', { method: 'POST' })")
+        return 'looks fine'
+      }),
+    )
+    // The driver sees evaluate()d code's fetch exactly as it sees the site's own scripts'.
+    page.evaluate = async (source: string) => {
+      page.evaluated.push(source)
+      driver.onBlocked?.({
+        method: 'POST',
+        target: `${HOME}/api/checkout/place`,
+        reason: 'denied-path',
+        initiator: 'page',
+      })
+      return null
+    }
+
+    expect(await host.call(call)).toEqual({
+      status: 'failed',
+      stage: 'request-surface',
+      errorClass: 'denied-path',
+    })
+  })
+
+  for (const [reason, errorClass] of [
+    ['denied-path', 'denied-path'],
+    ['ambiguous-path', 'ambiguous-path'],
+    ['purpose-exceeded', 'denied-path'],
+  ] as const) {
+    it(`fails the call for a page-initiated ${reason}: the site’s own scripts have no reason to cause one`, async () => {
+      const { host, driver } = fixture(
+        adapterRunning(async () => {
+          driver.onBlocked?.({ method: 'POST', target: `${HOME}/api/x`, reason, initiator: 'page' })
+          return 'ok'
+        }),
+      )
+      expect(await host.call(call)).toEqual({ status: 'failed', stage: 'request-surface', errorClass })
+    })
+  }
+
+  it('makes every capability refuse after a page-initiated denied path, so the code can’t keep probing', async () => {
+    const { host, driver, page } = fixture(
+      adapterRunning(async (ctx) => {
+        driver.onBlocked?.({
+          method: 'GET',
+          target: `${HOME}/%2e%2e/payees/add`,
+          reason: 'ambiguous-path',
+          initiator: 'page',
+        })
+        const tries: string[] = []
+        for (const path of ['/api/trolley', '/api/session']) {
+          tries.push(
+            await ctx.page.fetch(path).then(
+              () => 'sent',
+              (error: { errorClass: string }) => error.errorClass,
+            ),
+          )
+        }
+        return tries
+      }),
+    )
+
+    expect(await host.call(call)).toMatchObject({ status: 'failed', errorClass: 'ambiguous-path' })
+    expect(page.toolFetches()).toEqual([])
+  })
+
+  it('only records the site’s own refused requests to other hosts or undeclared endpoints', async () => {
     const { host, driver, audit } = fixture(
       adapterRunning(async () => {
         driver.onBlocked?.({
@@ -196,6 +301,13 @@ describe('what the driver refuses', () => {
           reason: 'host-not-allowed',
           initiator: 'page',
         })
+        driver.onBlocked?.({
+          method: 'POST',
+          target: `${HOME}/apis/ui/telemetry`,
+          reason: 'undeclared',
+          initiator: 'page',
+        })
+        driver.onBlocked?.({ method: 'GET', target: '(unparseable)', reason: 'bad-url', initiator: 'page' })
         return 'ok'
       }),
     )
@@ -203,6 +315,9 @@ describe('what the driver refuses', () => {
     expect(await host.call(call)).toEqual({ status: 'ok', output: 'ok' })
     expect(audit.events).toContainEqual(
       expect.objectContaining({ type: 'request-blocked', initiator: 'page', reason: 'host-not-allowed' }),
+    )
+    expect(audit.events).toContainEqual(
+      expect.objectContaining({ type: 'request-blocked', initiator: 'page', reason: 'undeclared-request' }),
     )
   })
 
@@ -226,8 +341,10 @@ describe('what the driver refuses', () => {
   })
 
   it('never touches the site’s breaker: these are our refusals, not the site’s', async () => {
+    let calls = 0
     const { host, driver, audit } = fixture(
       adapterRunning(async () => {
+        if (calls++ > 0) return 'ok'
         for (const reason of ['host-not-allowed', 'undeclared', 'denied-path', 'ambiguous-path'] as const) {
           driver.onBlocked?.({ method: 'GET', target: `${HOME}/${reason}`, reason, initiator: 'page' })
         }

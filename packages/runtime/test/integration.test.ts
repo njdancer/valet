@@ -106,7 +106,7 @@ describe('tool host with real stores', () => {
     expect(await markers.isSet('example-shop')).toBe(false)
     expect(driver.page.fetches.map((f) => f.url)).toEqual([SESSION_URL, SESSION_URL])
     const verification = await verifyAuditLog(auditPath)
-    expect(verification).toMatchObject({ ok: true, records: 6 })
+    expect(verification).toMatchObject({ ok: true, records: 4 })
     expect(
       log
         .trim()
@@ -114,9 +114,8 @@ describe('tool host with real stores', () => {
         .map((line) => JSON.parse(line).event.type),
     ).toEqual([
       'adapter-approved',
+      // login-started and login-finished are the auth runner's to write.
       'tool-called',
-      'login-started',
-      'login-finished',
       // Only the first: after a denial every capability refuses without sending or logging again.
       'request-blocked',
       'tool-finished',

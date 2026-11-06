@@ -8,7 +8,7 @@
 
 import { open, stat, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
-import { SiteAdapterError } from '@siteadapter/core'
+import { NEEDS_USER_REASONS, type NeedsUserReason, SiteAdapterError } from '@siteadapter/core'
 import { ADAPTER_ID } from './approvals'
 import type { Clock } from './clock'
 import { isErrno, syncDirectory, writeFileAtomic, writeFileSynced } from './files'
@@ -19,16 +19,22 @@ export type LoginMarkerState =
   | { readonly kind: 'in-progress' }
   /**
    * Logins in a row that failed, and when the next automatic one may start (ms since the epoch).
-   * A null retryAt waits for the person.
+   * A null retryAt waits for the person. `reason` is the needsUser reason the login ended with, if
+   * it ended with one, so callers keep seeing it while held.
    */
-  | { readonly kind: 'held'; readonly failures: number; readonly retryAt: number | null }
+  | {
+      readonly kind: 'held'
+      readonly failures: number
+      readonly retryAt: number | null
+      readonly reason?: NeedsUserReason
+    }
 
 export interface LoginMarkerStore {
   read(adapterId: string): Promise<LoginMarkerState>
   /** Marks a login as in progress. */
   set(adapterId: string, callId: string | null): Promise<void>
   /** Replaces the marker with a hold after a classified failure. */
-  hold(adapterId: string, failures: number, retryAt: number | null): Promise<void>
+  hold(adapterId: string, failures: number, retryAt: number | null, reason?: NeedsUserReason): Promise<void>
   clear(adapterId: string): Promise<void>
 }
 
@@ -71,13 +77,21 @@ export class LoginAttemptMarker implements LoginMarkerStore {
     await syncDirectory(this.dir)
   }
 
-  async hold(adapterId: string, failures: number, retryAt: number | null): Promise<void> {
+  async hold(
+    adapterId: string,
+    failures: number,
+    retryAt: number | null,
+    reason?: NeedsUserReason,
+  ): Promise<void> {
     if (!Number.isSafeInteger(failures) || failures < 1) throw new SiteAdapterError('login', 'invalid')
+    if (reason !== undefined && !NEEDS_USER_REASONS.includes(reason)) {
+      throw new SiteAdapterError('login', 'invalid')
+    }
     const heldAt = new Date(this.clock.now()).toISOString()
     // Atomic, so a crash mid-write leaves the in-progress marker rather than a torn hold.
     await writeFileAtomic(
       this.pathFor(adapterId),
-      `${JSON.stringify({ state: 'held', heldAt, failures, retryAt })}\n`,
+      `${JSON.stringify({ state: 'held', heldAt, failures, retryAt, ...(reason === undefined ? {} : { reason }) })}\n`,
     )
   }
 
@@ -121,9 +135,13 @@ function parseHold(text: string): LoginMarkerState | null {
     return null
   }
   if (value === null || typeof value !== 'object') return null
-  const { state, failures, retryAt } = value as Record<string, unknown>
+  const { state, failures, retryAt, reason } = value as Record<string, unknown>
   if (state !== 'held') return null
   if (typeof failures !== 'number' || !Number.isSafeInteger(failures) || failures < 1) return null
   if (retryAt !== null && (typeof retryAt !== 'number' || !Number.isFinite(retryAt))) return null
-  return { kind: 'held', failures, retryAt }
+  if (reason === undefined) return { kind: 'held', failures, retryAt }
+  const known = NEEDS_USER_REASONS.find((r) => r === reason)
+  // A reason we don't know is a hand edit or a newer app: still held, by the person.
+  if (known === undefined) return { kind: 'held', failures, retryAt: null }
+  return { kind: 'held', failures, retryAt, reason: known }
 }

@@ -8,6 +8,7 @@ import {
   type BlockedRequest,
   type FetchInit,
   type FetchResult,
+  type NeedsUserReason,
   type SessionDriver,
   SiteAdapterError,
   type ToolPage,
@@ -214,9 +215,19 @@ export class MemoryMarkers implements LoginMarkerStore {
     this.states.set(adapterId, { kind: 'in-progress' })
   }
 
-  async hold(adapterId: string, failures: number, retryAt: number | null): Promise<void> {
+  async hold(
+    adapterId: string,
+    failures: number,
+    retryAt: number | null,
+    reason?: NeedsUserReason,
+  ): Promise<void> {
     if (this.failOn === 'hold') throw new Error('EIO')
-    this.states.set(adapterId, { kind: 'held', failures, retryAt })
+    this.states.set(adapterId, {
+      kind: 'held',
+      failures,
+      retryAt,
+      ...(reason === undefined ? {} : { reason }),
+    })
   }
 
   async clear(adapterId: string): Promise<void> {

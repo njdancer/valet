@@ -3,7 +3,18 @@ import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { ToolHost } from '../src/tool-host'
 import { FakeSessionDriver, flush, json } from './fakes'
-import { COOKIE, call, fixture, HASH, HOME, manifest, OTHER_HASH } from './fixtures'
+import {
+  COOKIE,
+  call,
+  fixture,
+  HASH,
+  HOME,
+  loggedIn,
+  loggedOut,
+  manifest,
+  OTHER_HASH,
+  SESSION_URL,
+} from './fixtures'
 
 const trolleyOutput = z.object({ items: z.array(z.object({ name: z.string(), quantity: z.number() })) })
 
@@ -989,7 +1000,7 @@ describe('ToolHost.call: what redaction holds, and for how long', () => {
     expect(await host.call(call)).toEqual({ status: 'ok', output: '[redacted]' })
   })
 
-  it('disposes its copies of the login’s secrets when the call ends', async () => {
+  it('keeps its copies of the login’s secrets past the call, until the next login replaces them', async () => {
     const clones: SecretValue[] = []
     const realClone = SecretValue.prototype.clone
     const clone = vi.spyOn(SecretValue.prototype, 'clone').mockImplementation(function (this: SecretValue) {
@@ -1009,17 +1020,166 @@ describe('ToolHost.call: what redaction holds, and for how long', () => {
         },
       }),
     )
-    page.route('GET', `${HOME}/api/session`, json({ shopper: { loggedIn: false } }))
+    page.route('GET', SESSION_URL, loggedOut)
     authRunner.mockImplementation(async (request) => {
       request.registerForRedaction(SecretValue.fromString('canary-pw-91c2'))
-      page.route('GET', `${HOME}/api/session`, json({ shopper: { loggedIn: true } }))
+      page.route('GET', SESSION_URL, loggedIn)
       return { status: 'ok' }
     })
     await host.call(call)
+    expect(clones).toHaveLength(1)
+    expect(clones[0]?.disposed).toBe(false)
+
+    // The session drops; the next call logs in again, and its secrets replace the first login's.
+    page.route('GET', SESSION_URL, loggedOut)
+    await host.call({ ...call, callId: 'call-2' })
     clone.mockRestore()
 
-    expect(clones).toHaveLength(1)
+    expect(clones).toHaveLength(2)
     expect(clones[0]?.disposed).toBe(true)
+    expect(clones[1]?.disposed).toBe(false)
+  })
+
+  it('redacts a login secret from a later call’s output, such as an account page showing the username', async () => {
+    let calls = 0
+    const { host, page, authRunner } = fixture(
+      defineAdapter({
+        manifest,
+        tools: {
+          run_test: tool({
+            input: z.object({}),
+            output: z.string(),
+            run: async (ctx) => {
+              await ctx.session.ensure()
+              return calls++ === 0 ? 'logged in' : 'Signed in as canary-user-77a1'
+            },
+          }),
+        },
+      }),
+    )
+    page.route('GET', SESSION_URL, loggedOut)
+    authRunner.mockImplementation(async (request) => {
+      request.registerForRedaction(SecretValue.fromString('canary-user-77a1'))
+      page.route('GET', SESSION_URL, loggedIn)
+      return { status: 'ok' }
+    })
+    expect(await host.call(call)).toEqual({ status: 'ok', output: 'logged in' })
+
+    expect(await host.call({ ...call, callId: 'call-2' })).toEqual({ status: 'ok', output: '[redacted]' })
+    expect(authRunner).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the earlier login’s secrets when a later login fails', async () => {
+    let calls = 0
+    const { host, page, authRunner, markers } = fixture(
+      defineAdapter({
+        manifest,
+        tools: {
+          run_test: tool({
+            input: z.object({}),
+            output: z.string(),
+            run: async (ctx) => {
+              await ctx.session.ensure()
+              return calls++ === 0 ? 'logged in' : 'Signed in as canary-user-77a1'
+            },
+          }),
+        },
+      }),
+    )
+    page.route('GET', SESSION_URL, loggedOut)
+    authRunner.mockImplementationOnce(async (request) => {
+      request.registerForRedaction(SecretValue.fromString('canary-user-77a1'))
+      page.route('GET', SESSION_URL, loggedIn)
+      return { status: 'ok' }
+    })
+    await host.call(call)
+    page.route('GET', SESSION_URL, loggedOut)
+    authRunner.mockResolvedValueOnce({ status: 'needsUser', reason: 'otp-required' })
+
+    expect(await host.call({ ...call, callId: 'call-2' })).toEqual({ status: 'ok', output: '[redacted]' })
+    expect(markers.kind()).toBe('held')
+  })
+
+  it('withholds every output when the login says it filled more secrets than it registered', async () => {
+    const { host, page, authRunner } = fixture(
+      defineAdapter({
+        manifest,
+        tools: {
+          run_test: tool({
+            input: z.object({}),
+            output: z.string(),
+            run: async (ctx) => {
+              await ctx.session.ensure()
+              return 'Milk'
+            },
+          }),
+        },
+      }),
+    )
+    page.route('GET', SESSION_URL, loggedOut)
+    authRunner.mockImplementation(async (request) => {
+      request.registerForRedaction(SecretValue.fromString('canary-user-77a1'))
+      page.route('GET', SESSION_URL, loggedIn)
+      // Filled the username and the password, but only handed over the username.
+      return { status: 'ok', filledSecrets: 2 }
+    })
+
+    expect(await host.call(call)).toEqual({ status: 'failed', stage: 'tool-output', errorClass: 'internal' })
+    expect(await host.call({ ...call, callId: 'call-2' })).toEqual({
+      status: 'failed',
+      stage: 'tool-output',
+      errorClass: 'internal',
+    })
+  })
+
+  it('treats a filled count that is not a plain number as more than were registered', async () => {
+    const { host, page, authRunner } = fixture(
+      defineAdapter({
+        manifest,
+        tools: {
+          run_test: tool({
+            input: z.object({}),
+            output: z.string(),
+            run: async (ctx) => {
+              await ctx.session.ensure()
+              return 'Milk'
+            },
+          }),
+        },
+      }),
+    )
+    page.route('GET', SESSION_URL, loggedOut)
+    authRunner.mockImplementation(async () => {
+      page.route('GET', SESSION_URL, loggedIn)
+      return { status: 'ok', filledSecrets: Number.NaN }
+    })
+    expect(await host.call(call)).toEqual({ status: 'failed', stage: 'tool-output', errorClass: 'internal' })
+  })
+
+  it('lets output through when the login registered every secret it filled', async () => {
+    const { host, page, authRunner } = fixture(
+      defineAdapter({
+        manifest,
+        tools: {
+          run_test: tool({
+            input: z.object({}),
+            output: z.string(),
+            run: async (ctx) => {
+              await ctx.session.ensure()
+              return 'Milk'
+            },
+          }),
+        },
+      }),
+    )
+    page.route('GET', SESSION_URL, loggedOut)
+    authRunner.mockImplementation(async (request) => {
+      request.registerForRedaction(SecretValue.fromString('canary-user-77a1'))
+      request.registerForRedaction(SecretValue.fromString('canary-pw-91c2'))
+      page.route('GET', SESSION_URL, loggedIn)
+      return { status: 'ok', filledSecrets: 2 }
+    })
+    expect(await host.call(call)).toEqual({ status: 'ok', output: 'Milk' })
   })
 
   it('withholds the output when the login handed over a secret that could not be kept', async () => {

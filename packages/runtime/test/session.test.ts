@@ -83,9 +83,8 @@ describe('session.ensure', () => {
       { cookieDomains: ['www.example.com'], storage: [{ origin: HOME, keys: ['token'] }] },
     ])
     expect(markers.kind()).toBe('unset')
-    expect(audit.types()).toEqual(['tool-called', 'login-started', 'login-finished', 'tool-finished'])
-    expect(audit.events[1]).toEqual({ type: 'login-started', adapterId: 'example-shop', callId: 'call-1' })
-    expect(audit.events[2]).toEqual({ type: 'login-finished', adapterId: 'example-shop', outcome: 'ok' })
+    // The auth runner owns login-started and login-finished, so a login is one pair in the log.
+    expect(audit.types()).toEqual(['tool-called', 'tool-finished'])
   })
 
   it('refuses to log in while a previous attempt is still marked', async () => {
@@ -125,7 +124,7 @@ describe('session.ensure', () => {
   })
 
   it('reports a failure when the marker cannot be cleared, leaving it set', async () => {
-    const { host, page, markers, audit, driver } = fixture(ensureOnce)
+    const { host, page, markers, driver } = fixture(ensureOnce)
     page.route('GET', SESSION_URL, loggedOut)
     driver.onHandoff = () => page.route('GET', SESSION_URL, loggedIn)
     markers.failOn = 'clear'
@@ -134,23 +133,19 @@ describe('session.ensure', () => {
       output: { status: 'failed', stage: 'login', errorClass: 'login-in-progress' },
     })
     expect(markers.kind()).toBe('in-progress')
-    // The login happened, so it is on record even though the marker could not be cleared.
-    expect(audit.events).toContainEqual({ type: 'login-finished', adapterId: 'example-shop', outcome: 'ok' })
   })
 
-  it('still records a blocked login and opens the breaker when the marker cannot be cleared', async () => {
+  it('still opens the breaker for a blocked login when the marker cannot be cleared', async () => {
     const { host, page, markers, audit, authRunner } = fixture(ensureOnce)
     page.route('GET', SESSION_URL, loggedOut)
-    authRunner.mockResolvedValue({ status: 'blocked' })
+    authRunner.mockResolvedValue({ status: 'blocked', errorClass: 'blocked-by-site' })
     markers.failOn = 'clear'
 
     expect(await host.call(call)).toEqual({ status: 'blocked', retryAfterMs: 60_000 })
     expect(markers.kind()).toBe('in-progress')
-    expect(audit.events).toContainEqual({
-      type: 'login-finished',
-      adapterId: 'example-shop',
-      outcome: 'blocked',
-    })
+    expect(audit.events).toContainEqual(
+      expect.objectContaining({ type: 'breaker-opened', cause: 'blocked-by-site', callId: 'call-1' }),
+    )
     expect(await host.call({ ...call, callId: 'call-2' })).toEqual({
       status: 'blocked',
       retryAfterMs: 60_000,
@@ -160,13 +155,14 @@ describe('session.ensure', () => {
   it('makes a call whose tool throws after needsUser report needsUser, and holds further logins', async () => {
     const { host, page, authRunner, markers, clock } = fixture(ensureOrThrow)
     page.route('GET', SESSION_URL, loggedOut)
-    authRunner.mockResolvedValue({ status: 'needsUser', reason: 'captcha' })
+    authRunner.mockResolvedValue({ status: 'needsUser', reason: 'otp-required' })
 
-    expect(await host.call(call)).toEqual({ status: 'needsUser', reason: 'captcha' })
+    expect(await host.call(call)).toEqual({ status: 'needsUser', reason: 'otp-required' })
     expect(markers.states.get('example-shop')).toEqual({
       kind: 'held',
       failures: 1,
       retryAt: clock.now() + 5 * 60_000,
+      reason: 'otp-required',
     })
   })
 
@@ -181,8 +177,10 @@ describe('session.ensure', () => {
       errorClass: 'origin-mismatch',
     })
     expect(audit.events).toContainEqual({
-      type: 'login-finished',
+      type: 'tool-finished',
       adapterId: 'example-shop',
+      callId: 'call-1',
+      durationMs: 0,
       outcome: 'failed',
       stage: 'secret-fill',
       errorClass: 'origin-mismatch',
@@ -213,18 +211,14 @@ describe('session.ensure', () => {
     })
   })
 
-  it('records the needsUser reason in login-finished', async () => {
+  it('writes no login events of its own: the auth runner owns them', async () => {
     const { host, page, authRunner, audit } = fixture(ensureOnce)
     page.route('GET', SESSION_URL, loggedOut)
     authRunner.mockResolvedValue({ status: 'needsUser', reason: 'terms-update' })
     await host.call(call)
 
-    expect(audit.events).toContainEqual({
-      type: 'login-finished',
-      adapterId: 'example-shop',
-      outcome: 'needsUser',
-      needsUser: 'terms-update',
-    })
+    expect(audit.types()).not.toContain('login-started')
+    expect(audit.types()).not.toContain('login-finished')
   })
 
   it('turns a needsUser reason outside the vocabulary into other, so no free text gets through', async () => {
@@ -245,13 +239,6 @@ describe('session.ensure', () => {
     expect(result).toEqual({ status: 'failed', stage: 'login', errorClass: 'internal' })
     expect(markers.kind()).toBe('in-progress')
     expect(JSON.stringify(audit.events)).not.toContain('hunter2')
-    expect(audit.events).toContainEqual({
-      type: 'login-finished',
-      adapterId: 'example-shop',
-      outcome: 'failed',
-      stage: 'login',
-      errorClass: 'internal',
-    })
   })
 
   it('keeps the stage and class when the auth runner throws a SiteAdapterError', async () => {
@@ -277,7 +264,7 @@ describe('session.ensure', () => {
   })
 
   it('reports not-logged-in when the login succeeded but the probe still disagrees, and waits for the person', async () => {
-    const { host, page, markers, authRunner, audit } = fixture(ensureOnce)
+    const { host, page, markers, authRunner } = fixture(ensureOnce)
     page.route('GET', SESSION_URL, loggedOut)
 
     expect(await host.call(call)).toEqual({
@@ -285,13 +272,6 @@ describe('session.ensure', () => {
       output: { status: 'failed', stage: 'probe', errorClass: 'not-logged-in' },
     })
     expect(markers.states.get('example-shop')).toEqual({ kind: 'held', failures: 1, retryAt: null })
-    expect(audit.events).toContainEqual({
-      type: 'login-finished',
-      adapterId: 'example-shop',
-      outcome: 'failed',
-      stage: 'probe',
-      errorClass: 'not-logged-in',
-    })
     expect(await host.call({ ...call, callId: 'call-2' })).toEqual({
       status: 'ok',
       output: { status: 'needsUser', reason: 'login-required' },
@@ -381,14 +361,13 @@ describe('session.ensure', () => {
     expect(page.fetches).toHaveLength(2)
   })
 
-  it('records a login and clears the marker when the re-probe after it is blocked', async () => {
-    const { host, page, driver, markers, audit } = fixture(ensureOnce)
+  it('clears the marker when the re-probe after a login is blocked', async () => {
+    const { host, page, driver, markers } = fixture(ensureOnce)
     page.route('GET', SESSION_URL, loggedOut)
     driver.onHandoff = () => page.route('GET', SESSION_URL, akamaiDenied)
 
     expect(await host.call(call)).toEqual({ status: 'blocked', retryAfterMs: 60_000 })
     expect(markers.kind()).toBe('unset')
-    expect(audit.events).toContainEqual({ type: 'login-finished', adapterId: 'example-shop', outcome: 'ok' })
   })
 
   it('passes the redaction hook to the auth runner', async () => {
@@ -406,15 +385,10 @@ describe('session.ensure and the site', () => {
   it('turns a blocked login into a blocked call and opens the breaker', async () => {
     const { host, page, authRunner, markers, audit } = fixture(ensureOnce)
     page.route('GET', SESSION_URL, loggedOut)
-    authRunner.mockResolvedValue({ status: 'blocked' })
+    authRunner.mockResolvedValue({ status: 'blocked', errorClass: 'blocked-by-site' })
 
     expect(await host.call(call)).toEqual({ status: 'blocked', retryAfterMs: 60_000 })
     expect(markers.kind()).toBe('unset')
-    expect(audit.events).toContainEqual({
-      type: 'login-finished',
-      adapterId: 'example-shop',
-      outcome: 'blocked',
-    })
     expect(audit.events).toContainEqual(
       expect.objectContaining({ type: 'breaker-opened', cause: 'blocked-by-site', callId: 'call-1' }),
     )
@@ -423,6 +397,45 @@ describe('session.ensure and the site', () => {
       retryAfterMs: 60_000,
     })
     expect(authRunner).toHaveBeenCalledTimes(1)
+  })
+
+  it('audits a login told to slow down as rate-limited, and tells tool code the same', async () => {
+    let thrown: unknown
+    const { host, page, authRunner, audit } = fixture(
+      defineAdapter({
+        manifest,
+        tools: {
+          run_test: tool({
+            input: z.object({}),
+            output: z.unknown(),
+            run: async (ctx) => {
+              thrown = await ctx.session.ensure().catch((error: unknown) => error)
+              return 'swallowed'
+            },
+          }),
+        },
+      }),
+    )
+    page.route('GET', SESSION_URL, loggedOut)
+    authRunner.mockResolvedValue({ status: 'blocked', errorClass: 'rate-limited' })
+
+    expect(await host.call(call)).toEqual({ status: 'blocked', retryAfterMs: 60_000 })
+    expect(thrown).toMatchObject({ stage: 'tool-run', errorClass: 'rate-limited' })
+    expect(audit.events).toContainEqual(
+      expect.objectContaining({ type: 'breaker-opened', cause: 'rate-limited', callId: 'call-1' }),
+    )
+  })
+
+  it('takes a block cause it does not know for the site’s bot protection', async () => {
+    const { host, page, authRunner, audit } = fixture(ensureOnce)
+    page.route('GET', SESSION_URL, loggedOut)
+    authRunner.mockResolvedValue({ status: 'blocked', errorClass: 'Access Denied, ref #1' as never })
+
+    expect(await host.call(call)).toEqual({ status: 'blocked', retryAfterMs: 60_000 })
+    expect(audit.events).toContainEqual(
+      expect.objectContaining({ type: 'breaker-opened', cause: 'blocked-by-site' }),
+    )
+    expect(JSON.stringify(audit.events)).not.toContain('Access Denied')
   })
 
   it('throws blocked-by-site to tool code when the probe gets Akamai’s page', async () => {
@@ -447,6 +460,75 @@ describe('session.ensure and the site', () => {
     expect(await host.call(call)).toEqual({ status: 'blocked', retryAfterMs: 60_000 })
     expect(thrown).toMatchObject({ stage: 'tool-run', errorClass: 'blocked-by-site' })
     expect(authRunner).not.toHaveBeenCalled()
+  })
+
+  it('takes the page home before probing when tool code left it on another egress host', async () => {
+    const { host, page, authRunner } = fixture(
+      defineAdapter({
+        manifest,
+        tools: {
+          run_test: tool({
+            input: z.object({}),
+            output: z.unknown(),
+            run: async (ctx) => {
+              await ctx.page.goto('https://cdn.example.com/assets/app.js')
+              return ctx.session.ensure()
+            },
+          }),
+        },
+      }),
+    )
+    // From another origin the page's fetch sends no cookies, so the site would say 401.
+    page.route('GET', SESSION_URL, () =>
+      new URL(page.url).origin === HOME ? loggedIn : json({ error: 'unauthorised' }, 401),
+    )
+
+    expect(await host.call(call)).toEqual({ status: 'ok', output: { status: 'ok' } })
+    expect(page.gotos).toEqual(['https://cdn.example.com/assets/app.js', `${HOME}/`])
+    expect(authRunner).not.toHaveBeenCalled()
+  })
+
+  it('reports the probe unavailable, without logging in, when going home lands somewhere else', async () => {
+    const { host, page, authRunner, markers } = fixture(ensureOnce)
+    page.url = 'https://cdn.example.com/assets/app.js'
+    page.goto = async (url: string) => {
+      page.gotos.push(url)
+      // Redirected away from home.
+      page.url = 'https://cdn.example.com/maintenance'
+    }
+    page.route('GET', SESSION_URL, json({ error: 'unauthorised' }, 401))
+
+    expect(await host.call(call)).toEqual({
+      status: 'ok',
+      output: { status: 'failed', stage: 'probe', errorClass: 'unavailable' },
+    })
+    expect(page.fetches).toEqual([])
+    expect(authRunner).not.toHaveBeenCalled()
+    expect(markers.kind()).toBe('unset')
+  })
+
+  it('takes a page whose URL cannot be read as off home, and goes home first', async () => {
+    const { host, page } = fixture(ensureOnce)
+    page.url = 'about:blank'
+    expect(await host.call(call)).toEqual({ status: 'ok', output: { status: 'ok' } })
+    expect(page.gotos).toEqual([`${HOME}/`])
+  })
+
+  it('trips the breaker when going home before the probe lands on Akamai’s page', async () => {
+    const { host, page, authRunner } = fixture(ensureOnce)
+    page.url = 'https://cdn.example.com/x'
+    page.evaluate = async () => true
+
+    expect(await host.call(call)).toEqual({ status: 'blocked', retryAfterMs: 60_000 })
+    expect(page.fetches).toEqual([])
+    expect(authRunner).not.toHaveBeenCalled()
+  })
+
+  it('paces the trip home and the probe as two requests', async () => {
+    const { host, page, clock } = fixture(ensureOnce)
+    page.url = 'https://cdn.example.com/x'
+    await host.call(call)
+    expect(clock.paced).toEqual([1_000])
   })
 
   it('reports a probe that throws as a probe failure', async () => {
@@ -827,13 +909,12 @@ describe('login rationing', () => {
   })
 
   it('logs in at most once per call, however often the tool calls ensure()', async () => {
-    const { host, page, authRunner, audit } = fixture(loopingEnsure)
+    const { host, page, authRunner } = fixture(loopingEnsure)
     page.route('GET', SESSION_URL, loggedOut)
     authRunner.mockResolvedValue({ status: 'failed', stage: 'auth-step', errorClass: 'auth-failed' })
 
     const result = await host.call(call)
     expect(authRunner).toHaveBeenCalledTimes(1)
-    expect(audit.types().filter((t) => t === 'login-started')).toHaveLength(1)
     expect(result).toEqual({
       status: 'ok',
       output: Array(20).fill({ status: 'failed', stage: 'auth-step', errorClass: 'auth-failed' }),
@@ -926,6 +1007,65 @@ describe('login rationing', () => {
       kind: 'held',
       failures: 31,
       retryAt: clock.now() + 60_000,
+      reason: 'otp-required',
+    })
+  })
+
+  // Retrying these automatically can only make them worse: a longer lockout, a higher bot score.
+  for (const reason of ['account-locked', 'captcha', 'terms-update', 'site-changed'] as const) {
+    it(`holds for the person, never a timed retry, after needsUser ${reason}`, async () => {
+      const { host, page, authRunner, markers, clock } = fixture(ensureOnce)
+      page.route('GET', SESSION_URL, loggedOut)
+      authRunner.mockResolvedValue({ status: 'needsUser', reason })
+
+      expect(await host.call(call)).toEqual({ status: 'ok', output: { status: 'needsUser', reason } })
+      expect(markers.states.get('example-shop')).toEqual({ kind: 'held', failures: 1, retryAt: null, reason })
+
+      // However long it waits, nothing logs in again by itself, and callers see the real reason.
+      await clock.advance(7 * 24 * 60 * 60_000)
+      expect(await host.call({ ...call, callId: 'call-2' })).toEqual({
+        status: 'ok',
+        output: { status: 'needsUser', reason },
+      })
+      expect(authRunner).toHaveBeenCalledTimes(1)
+    })
+  }
+
+  for (const reason of ['otp-required', 'other', 'login-required'] as const) {
+    it(`backs off and retries by itself after needsUser ${reason}, reporting that reason while held`, async () => {
+      const { host, page, authRunner, markers, clock } = fixture(ensureOnce)
+      page.route('GET', SESSION_URL, loggedOut)
+      authRunner.mockResolvedValue({ status: 'needsUser', reason })
+
+      await host.call(call)
+      expect(markers.states.get('example-shop')).toEqual({
+        kind: 'held',
+        failures: 1,
+        retryAt: clock.now() + 5 * 60_000,
+        reason,
+      })
+      expect(await host.call({ ...call, callId: 'call-2' })).toEqual({
+        status: 'ok',
+        output: { status: 'needsUser', reason },
+      })
+      expect(authRunner).toHaveBeenCalledTimes(1)
+
+      await clock.advance(5 * 60_000)
+      await host.call({ ...call, callId: 'call-3' })
+      expect(authRunner).toHaveBeenCalledTimes(2)
+    })
+  }
+
+  it('reports login-required for a hold that carries no reason, such as a rejected password', async () => {
+    const { host, page, authRunner, markers } = fixture(ensureOnce)
+    page.route('GET', SESSION_URL, loggedOut)
+    authRunner.mockResolvedValue({ status: 'failed', stage: 'auth-step', errorClass: 'auth-failed' })
+    await host.call(call)
+
+    expect(markers.states.get('example-shop')).toEqual({ kind: 'held', failures: 1, retryAt: null })
+    expect(await host.call({ ...call, callId: 'call-2' })).toEqual({
+      status: 'ok',
+      output: { status: 'needsUser', reason: 'login-required' },
     })
   })
 

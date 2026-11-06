@@ -6,11 +6,11 @@
 // a call that times out keeps the adapter's lock until that work has settled, rather than leaving
 // it to drive the session under the next call.
 //
-// Everything that output redaction needs lives here for exactly the length of the call: the session
-// values seen during it, and clones of the secrets its login resolved.
+// Output redaction checks against the session values seen during the call, kept here for exactly
+// its length, and the clones of the latest login's secrets, which the adapter's session gate keeps.
 
 import { type EnsureResult, SiteAdapterError } from '@siteadapter/core'
-import { REDACTED, SecretRedactionSet, type Sensitive, sensitiveMatcher } from './redaction'
+import { REDACTED, type SecretRedactionSet, type Sensitive, sensitiveMatcher } from './redaction'
 import type { CallLogin } from './session'
 import { breakerRefusal } from './site-protection'
 
@@ -25,19 +25,19 @@ export class CallState {
   readonly login: CallLogin = { outcome: null }
   /** Every session value (cookie or handed-off storage) seen during the call, old and new. */
   readonly sessionValues = new Set<string>()
-  /** Clones of the secrets this call's login resolved. */
-  readonly secrets = new SecretRedactionSet()
   /** Request-blocked events already recorded for this call, so a chatty page can't flood the log. */
   readonly reportedBlocks = new Set<string>()
   private readonly work = new Set<Promise<unknown>>()
 
+  /** `secrets` gives the latest login's secrets as they are now: a login during the call replaces them. */
   constructor(
     readonly callId: string,
     readonly signal: AbortSignal,
+    private readonly secrets: () => SecretRedactionSet,
   ) {}
 
   sensitive(): Sensitive {
-    return sensitiveMatcher(this.sessionValues, this.secrets)
+    return sensitiveMatcher(this.sessionValues, this.secrets())
   }
 
   /**
@@ -46,7 +46,7 @@ export class CallState {
    * secret (only ever matched exactly) is still caught in a hostname.
    */
   redactTarget(target: string, raw?: unknown): string {
-    const caseless = sensitiveMatcher(this.sessionValues, this.secrets, { ignoreCase: true })
+    const caseless = sensitiveMatcher(this.sessionValues, this.secrets(), { ignoreCase: true })
     const leaks = caseless(target) || (typeof raw === 'string' && this.sensitive()(raw))
     return leaks ? REDACTED : target
   }
@@ -76,10 +76,5 @@ export class CallState {
   /** Resolves once every tracked piece of work has settled. Never rejects. */
   async settled(): Promise<void> {
     while (this.work.size > 0) await Promise.allSettled([...this.work])
-  }
-
-  /** Ends the call's hold on secrets. */
-  dispose(): void {
-    this.secrets.dispose()
   }
 }

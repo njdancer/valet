@@ -13,12 +13,23 @@ import type {
 } from '@siteadapter/core'
 import type { z } from 'zod'
 
+/**
+ * What the AuthRunner reports. The shape matches auth-flow's own AuthOutcome, so the app can pass
+ * runAuthFlow's result straight through.
+ */
 export type AuthOutcome =
-  | { readonly status: 'ok' }
+  | {
+      readonly status: 'ok'
+      /**
+       * How many secrets the login filled. When it is more than were registered for redaction, the
+       * runtime fails closed: every output is withheld until a login registers them all.
+       */
+      readonly filledSecrets?: number
+    }
   | { readonly status: 'needsUser'; readonly reason: NeedsUserReason }
   | { readonly status: 'failed'; readonly stage: Stage; readonly errorClass: ErrorClass }
-  /** The site's bot protection refused us. Trips the site's circuit breaker. */
-  | { readonly status: 'blocked' }
+  /** The site's bot protection refused us, or told us to slow down. Trips the site's circuit breaker. */
+  | { readonly status: 'blocked'; readonly errorClass: 'blocked-by-site' | 'rate-limited' }
 
 export interface AuthRunRequest {
   readonly adapterId: string
@@ -30,13 +41,16 @@ export interface AuthRunRequest {
   readonly signal: AbortSignal
   /**
    * Call with every secret the auth flow resolves, before disposing it. The runtime keeps its own
-   * clone until the tool call ends, so the tool's output can be redacted; the caller still owns,
+   * clone until the next successful login, so tool output can be redacted; the caller still owns,
    * and disposes, the value it passed.
    */
   registerForRedaction(secret: SecretValue): void
 }
 
-/** Runs an adapter's declarative auth action in the auth partition. */
+/**
+ * Runs an adapter's declarative auth action in the auth partition. It owns the login-started and
+ * login-finished audit events (auth-flow's runAuthFlow writes them); the runtime writes neither.
+ */
 export type AuthRunner = (request: AuthRunRequest) => Promise<AuthOutcome>
 
 export type ConfirmationAnswer = 'approved' | 'declined' | 'timed-out'
