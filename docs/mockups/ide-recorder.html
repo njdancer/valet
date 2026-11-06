@@ -174,7 +174,7 @@
           <div class="tools">
             <span class="xs muted">Recording the <strong>login</strong> auth action</span>
             <button type="button" class="btn"><span class="i sm i-pause"></span>Pause</button>
-            <button type="button" class="btn primary"><span class="i sm i-stop"></span>Stop and keep 7 steps</button>
+            <button type="button" class="btn primary"><span class="i sm i-stop"></span>Stop and review 7 steps</button>
           </div>
         </div>
 
@@ -278,6 +278,15 @@
                 ><span class="op stop">needsUser</span><span class="op stop">fail</span>
               </div>
 
+              <div class="callout warn rules">
+                <span class="i i-eye-off"></span>
+                <div>
+                  <strong>On stop, you review every literal fill.</strong> None yet. Each is listed with its value hidden;
+                  anything that looks sensitive (one-time-code, numeric input, a name like code, otp or pin) defaults to a
+                  secret. No typed value is kept until you confirm it.
+                </div>
+              </div>
+
               <div class="callout secret rules">
                 <span class="i i-lock"></span>
                 <div>
@@ -309,8 +318,8 @@
               </div>
             </div>
             <div class="bmeta">
-              <span class="mono">auth:woolworths~rec</span>
-              <span>In memory, discarded when you stop</span>
+              <span class="mono">rec:woolworths</span>
+              <span>In memory, no <span class="mono">persist:</span> prefix: discarded when you stop</span>
               <span><span class="i i-globe"></span>Chrome 152 UA · en-AU</span>
             </div>
             <div class="viewport">
@@ -336,8 +345,8 @@
                     <div>
                       <div class="t">Bind to <span class="ref"><span class="i i-key"></span>login.password</span></div>
                       <div class="d">
-                        Records <span class="mono">fill(input#password, secret:login.password)</span>. The value comes from
-                        1Password when the login runs.
+                        Records <span class="mono">fill(input#password, secret:login.password)</span>. The 1Password item
+                        is granted later, to an approved version.
                       </div>
                     </div>
                   </div>
@@ -348,16 +357,15 @@
                       <div class="d">Not offered for a password field.</div>
                     </div>
                   </div>
+                  <div class="guard">
+                    <span class="i i-x danger-text"></span
+                    ><span>Frame origin auth.woolworths.com.au isn't granted for <span class="mono">login</span> (www only)</span>
+                  </div>
                   <div class="guard"><span class="i i-check ok-text"></span><span>type=password suits a password</span></div>
                   <div class="guard">
-                    <span class="i i-check ok-text"></span><span>Form posts to <span class="mono">https://auth.woolworths.com.au</span></span>
-                  </div>
-                  <div class="guard">
                     <span class="i i-warn warn-text"></span
-                    ><span
-                      ><span class="mono">login</span> is requested for www.woolworths.com.au only. Binding adds
-                      <strong>auth.woolworths.com.au</strong> to its origins, a new permission you'll review.</span
-                    >
+                    ><span>Form posts there too. Binding adds <strong>auth.woolworths.com.au</strong> to
+                      <span class="mono">login</span>, a new permission you'll review</span>
                   </div>
                 </div>
                 <div class="fc-foot">
@@ -445,7 +453,7 @@
         <div class="ide-status">
           <span class="danger-text"><span class="i i-record"></span>Recording in a throwaway auth session</span>
           <span><span class="i i-eye-off"></span>Keystrokes in secret fields are never captured</span>
-          <span class="right"><span class="i i-lock"></span>Values are never saved: steps keep selectors and secret names only</span>
+          <span class="right"><span class="i i-lock"></span>Typed values are saved only when you choose Record what I type; secret fields never</span>
         </div>
       </div>
     </div>
