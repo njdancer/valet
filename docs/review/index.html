@@ -1,0 +1,1314 @@
+<!doctype html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>siteadapter review</title>
+<link rel="stylesheet" href="../mockups/tokens.css">
+<style>
+  body { background: var(--bg-window); }
+  main { max-width: 1100px; margin: 0 auto; padding: var(--space-5) var(--space-4) 80px; }
+  h1 { font-size: var(--text-2xl); margin: 0 0 4px; }
+  h2 { font-size: var(--text-xl); margin: var(--space-6) 0 var(--space-3); }
+  h3 { font-size: var(--text-lg); margin: 0; }
+  nav.tabs { position: sticky; top: 0; z-index: 2; background: var(--bg-window); display: flex; gap: 4px; padding: var(--space-3) 0; border-bottom: 0.5px solid var(--border); margin-bottom: var(--space-4); flex-wrap: wrap; }
+  nav.tabs a { padding: 4px 12px; border-radius: 999px; color: var(--text); text-decoration: none; }
+  nav.tabs a[aria-current="true"] { background: var(--bg-selected); color: var(--accent); font-weight: 600; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-3); }
+  .stat, .panel, .decision { background: var(--bg-surface); border: 0.5px solid var(--border); border-radius: var(--radius-lg); padding: var(--space-4); }
+  .stat .value { font-size: var(--text-2xl); font-weight: 650; }
+  .stat .label { color: var(--text-secondary); font-size: var(--text-sm); }
+  table { border-collapse: collapse; width: 100%; font-size: var(--text-sm); }
+  th, td { text-align: left; vertical-align: top; padding: 6px 8px; border-bottom: 0.5px solid var(--border); }
+  code { font-family: var(--font-mono); font-size: 0.92em; background: var(--bg-sunken); padding: 0 4px; border-radius: 4px; }
+  pre { background: var(--bg-sunken); padding: var(--space-3); border-radius: var(--radius-md); overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  a { color: var(--accent); }
+  .decision { margin-bottom: var(--space-3); scroll-margin-top: 64px; }
+  .decision.first { border-left: 3px solid var(--write); }
+  .decision.answered { border-left: 3px solid var(--read); }
+  .decision header { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; }
+  .decision .id { font-family: var(--font-mono); color: var(--text-secondary); min-width: 36px; }
+  .decision .blocks { margin-left: auto; color: var(--text-secondary); font-size: var(--text-sm); }
+  .decision .rec { margin: var(--space-2) 0; }
+  .decision details { margin: var(--space-2) 0; }
+  .decision summary { cursor: pointer; color: var(--text-secondary); }
+  .decision .body { font-size: var(--text-sm); }
+  .answer { border: none; padding: 0; margin: var(--space-2) 0 0; display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); }
+  .answer textarea { flex-basis: 100%; font: inherit; padding: 6px 8px; border-radius: var(--radius-sm); border: 0.5px solid var(--border-strong); background: var(--bg-window); color: var(--text); }
+  .toolbar { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; margin-bottom: var(--space-3); }
+  .toolbar .muted { margin-left: auto; }
+  .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: var(--space-3); }
+  .gallery img { width: 100%; border-radius: var(--radius-md); border: 0.5px solid var(--border); }
+  .gallery figure { margin: 0; }
+  .gallery figcaption { font-size: var(--text-sm); color: var(--text-secondary); }
+  .links { margin-bottom: var(--space-4); }
+  .links ul { margin: var(--space-2) 0; padding-left: 18px; }
+  [hidden] { display: none !important; }
+  @media (max-width: 640px) { .decision .blocks { margin-left: 0; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>siteadapter: overnight review</h1>
+  <p class="muted">Draft, 7 November 2026. Built from <code>docs/plan.md</code> and <code>docs/review/status.json</code> by <code>node docs/review/build.mjs</code>.</p>
+  <nav class="tabs">
+    <a href="#overview" data-tab="overview">Overview</a>
+    <a href="#decisions-tab" data-tab="decisions-tab">Decisions (60)</a>
+    <a href="#todo" data-tab="todo">In person</a>
+    <a href="#screens" data-tab="screens">Screens</a>
+    <a href="#material" data-tab="material">Material</a>
+  </nav>
+
+  <section id="overview" data-panel>
+    <p>Placeholder headline.</p>
+    <div class="stats"><div class="stat"><div class="value">2,573</div><div class="label">tests</div></div></div>
+    <h2>Try it</h2>
+    <div class="panel"><p>Run <code>pnpm demo</code>.</p></div>
+    <h2>What exists</h2>
+    <div class="panel"><table><tbody><tr><td><code>packages/core</code></td><td>Contracts v3.</td></tr></tbody></table></div>
+    <h2>Known gaps and risks</h2>
+    <div class="panel"><ul><li>Placeholder gap.</li></ul></div>
+  </section>
+
+  <section id="decisions-tab" data-panel hidden>
+    <div class="toolbar">
+      <button class="btn" data-filter="first">Answer first</button>
+      <button class="btn" data-filter="open">Unanswered</button>
+      <button class="btn" data-filter="all">All</button>
+      <button class="btn primary" id="copy">Copy answers as Markdown</button>
+      <button class="btn" id="download">Download answers.md</button>
+      <span class="muted" id="progress"></span>
+    </div>
+    <p class="muted">Answers stay in this browser. When you're done, copy them and paste them into the chat, or save <code>answers.md</code> into <code>docs/review/</code>.</p>
+    
+<article class="decision first" id="d1" data-id="D1" data-title="Product name">
+  <header>
+    <span class="id">D1</span>
+    <h3>Product name</h3>
+    <span class="badge write">Answer first</span>
+    
+    <span class="blocks">Blocks M3 (signing), M8 (launch)</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Choose the final name before M3's first signed build. If undecided, use a neutral bundle ID that doesn't need to change (<code>me.dncr.&lt;something&gt;</code>) and rebrand only the display name later.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Options: keep &quot;siteadapter&quot;; pick a new name now; pick one at M8.</li><li>Considerations: the bundle ID, Keychain service names, partition names, the npm scope, the domain and the GitHub organisation all derive from it. Changing the bundle ID after the first signed build orphans Keychain grants and Full Disk Access. &quot;siteadapter&quot; is descriptive but generic and hard to search. A name should say &quot;your agents can use your accounts, safely&quot; without promising a bot.</li><li>Recommendation: choose the final name before M3's first signed build. If undecided, use a neutral bundle ID that doesn't need to change (<code>me.dncr.&lt;something&gt;</code>) and rebrand only the display name later.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D1" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D1" value="other"> Something else</label>
+    <label><input type="radio" name="D1" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D1" value="later"> Later</label>
+    <textarea name="D1-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d2" data-id="D2" data-title="Licence">
+  <header>
+    <span class="id">D2</span>
+    <h3>Licence</h3>
+    
+    
+    <span class="blocks">Blocks M8</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Apache-2.0 for the app, packages and adapters. Decide the relay's licence when it exists.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Options: MIT; Apache-2.0; AGPL-3.0; source-available (e.g. FSL, BSL) for the relay only.</li><li>Considerations: Apache-2.0 adds an explicit patent grant and is common for security-relevant infrastructure. AGPL discourages someone hosting the relay as a competing service, but also discourages contributors and companies. The relay, if it's the commercial piece, can be closed or source-available without touching the app's licence.</li><li>Recommendation: Apache-2.0 for the app, packages and adapters. Decide the relay's licence when it exists.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D2" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D2" value="other"> Something else</label>
+    <label><input type="radio" name="D2" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D2" value="later"> Later</label>
+    <textarea name="D2-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d3" data-id="D3" data-title="Repository hosting and going public">
+  <header>
+    <span class="id">D3</span>
+    <h3>Repository hosting and going public</h3>
+    
+    
+    <span class="blocks">Blocks M8; CI before then</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Private GitHub repo now, for backup and later CI, public at M8. Public before the sandbox (M7) invites people to install third-party adapters the design can't contain yet.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Options: stay local until M8; private GitHub repo now, public at M8; public now.</li><li>Recommendation: private GitHub repo now, for backup and later CI, public at M8. Public before the sandbox (M7) invites people to install third-party adapters the design can't contain yet.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D3" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D3" value="other"> Something else</label>
+    <label><input type="radio" name="D3" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D3" value="later"> Later</label>
+    <textarea name="D3-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision first" id="d4" data-id="D4" data-title="Woolworths 2FA">
+  <header>
+    <span class="id">D4</span>
+    <h3>Woolworths 2FA</h3>
+    <span class="badge write">Answer first</span>
+    
+    <span class="blocks">Blocks M2 (auth flow), M3 (OTP reader priority; whether Full Disk Access is needed at all)</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> If the tenant offers an authenticator factor and Nick is willing, enrol one in 1Password and use TOTP; otherwise plan for SMS via Messages. Every other factor is <code>needsUser</code>. Auth0's &quot;remember this device&quot;, if offered, plus the persistent auth partition and the silent redirect should make challenges rare. The fake site models each factor's page.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Known: login is Auth0 Universal Login, so any second factor is an Auth0 MFA challenge page (<code>/u/mfa-*-challenge</code>) after the password page. Unknown: whether Nick's account has MFA enrolled, which factors the Woolworths tenant enables, and whether it challenges only new devices. Nick may know the answer to the first already.</li><li>Options, by Auth0 factor:<ul><li><strong>SMS code:</strong> the Messages reader fills it (AC5).</li><li><strong>Authenticator app (TOTP):</strong> a 1Password one-time-password field, with the <code>secret</code> OTP source. This is the most reliable unattended option if the tenant offers it, and needs no Full Disk Access.</li><li><strong>Email code:</strong> <code>needsUser</code> until there's a reason to build a mail reader.</li><li><strong>Push (Auth0 Guardian), voice, WebAuthn or passkey:</strong> <code>needsUser</code>. These need the person.</li><li><strong>No MFA:</strong> nothing to do.</li></ul></li><li><strong>If SMS:</strong> the Messages grant needs the exact sender handle (an alphanumeric sender ID such as <code>Woolworths</code>, a short code, or a number), which only a real code shows. Record it in M2 from a code Auth0 sends Nick, put it in the manifest's <code>otp</code> step, and the grant picker shows it for approval. Whether Auth0 always sends from the same sender is part of what M2 checks.</li><li>Recommendation: if the tenant offers an authenticator factor and Nick is willing, enrol one in 1Password and use TOTP; otherwise plan for SMS via Messages. Every other factor is <code>needsUser</code>. Auth0's &quot;remember this device&quot;, if offered, plus the persistent auth partition and the silent redirect should make challenges rare. The fake site models each factor's page.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D4" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D4" value="other"> Something else</label>
+    <label><input type="radio" name="D4" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D4" value="later"> Later</label>
+    <textarea name="D4-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision first" id="d5" data-id="D5" data-title="Which Woolworths account">
+  <header>
+    <span class="id">D5</span>
+    <h3>Which Woolworths account</h3>
+    <span class="badge write">Answer first</span>
+    
+    <span class="blocks">Blocks M2</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> His real account, if Nick agrees, with live tests kept rare. Hard requirement before the first live <strong>automated</strong> login in M2: the runtime allows at most one automated password submit before <code>needsUser</code>, and the durable attempt marker is in place and tested (AC10). The first automated login runs with Nick watching.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Options: Nick's real account; a separate test account.</li><li>Considerations:<ul><li>The MVP's point is managing his real trolley, so the real account has to work eventually.</li><li>The main per-account risk is a <strong>lockout</strong> from a login bug (<a href="../plan.md#risk-register">R11</a>). A test account would absorb that.</li><li>Akamai blocks attached to the IP plus the UA fingerprint in run 4, not to an account, so a test account wouldn't protect against those. That's from one observation and not proven.</li><li>A second account may itself breach the terms.</li></ul></li><li>Recommendation: his real account, if Nick agrees, with live tests kept rare. Hard requirement before the first live <strong>automated</strong> login in M2: the runtime allows at most one automated password submit before <code>needsUser</code>, and the durable attempt marker is in place and tested (AC10). The first automated login runs with Nick watching.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D5" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D5" value="other"> Something else</label>
+    <label><input type="radio" name="D5" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D5" value="later"> Later</label>
+    <textarea name="D5-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision first" id="d6" data-id="D6" data-title="1Password setup">
+  <header>
+    <span class="id">D6</span>
+    <h3>1Password setup</h3>
+    <span class="badge write">Answer first</span>
+    
+    <span class="blocks">Blocks M3 (unattended runs); M2 can use the desktop-app path</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> A new vault holding only items granted to siteadapter; <strong>move</strong> the item (a duplicate is a second copy to rotate, which is exactly what the architecture rejects for the Keychain). Autofill in his browser keeps working from any vault he can access. A service account scoped read-only to that vault.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Questions for Nick: which plan (Individual, Families, Teams)? Are service accounts available on it? Is there a vault he's happy to dedicate?</li><li>Options: move the Woolworths item into a new &quot;siteadapter&quot; vault; duplicate it there; skip service accounts and use only the desktop-app path.</li><li>Recommendation: a new vault holding only items granted to siteadapter; <strong>move</strong> the item (a duplicate is a second copy to rotate, which is exactly what the architecture rejects for the Keychain). Autofill in his browser keeps working from any vault he can access. A service account scoped read-only to that vault.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D6" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D6" value="other"> Something else</label>
+    <label><input type="radio" name="D6" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D6" value="later"> Later</label>
+    <textarea name="D6-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d7" data-id="D7" data-title="1Password fallback">
+  <header>
+    <span class="id">D7</span>
+    <h3>1Password fallback</h3>
+    
+    
+    <span class="blocks">Blocks M3. Needs core change C7</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> <code>DesktopAuth</code>. No CLI install or stdout parsing, the same SDK as the service account path, and the person approves in 1Password's own UI. Keep <code>op</code> only if <code>DesktopAuth</code> turns out not to support reading TOTP or to need a newer 1Password app than Nick has.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Options: <code>op read</code> through the CLI; the SDK's <code>DesktopAuth</code> (in the 0.5.0 SDK already installed); none.</li><li>Recommendation: <code>DesktopAuth</code>. No CLI install or stdout parsing, the same SDK as the service account path, and the person approves in 1Password's own UI. Keep <code>op</code> only if <code>DesktopAuth</code> turns out not to support reading TOTP or to need a newer 1Password app than Nick has.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D7" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D7" value="other"> Something else</label>
+    <label><input type="radio" name="D7" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D7" value="later"> Later</label>
+    <textarea name="D7-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision first" id="d8" data-id="D8" data-title="Full Disk Access for Messages">
+  <header>
+    <span class="id">D8</span>
+    <h3>Full Disk Access for Messages</h3>
+    <span class="badge write">Answer first</span>
+    
+    <span class="blocks">Blocks M3 (if D4 needs SMS), M7</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Whole app for M3 (personal, first-party adapter only), the helper before M7 admits third-party adapters.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Options: grant FDA to the whole app; a small signed helper inside the bundle that holds FDA and answers only &quot;latest code matching this sender and pattern since this time&quot;; no Messages support.</li><li>Considerations: FDA to the main app also covers every process that inherits from it, which will include adapter tool code. The helper is extra build and signing work (a Swift command line tool is simplest; a Node single-executable is possible).</li><li>Recommendation: whole app for M3 (personal, first-party adapter only), the helper before M7 admits third-party adapters.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D8" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D8" value="other"> Something else</label>
+    <label><input type="radio" name="D8" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D8" value="later"> Later</label>
+    <textarea name="D8-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision decided" id="d9" data-id="D9" data-title="User agent">
+  <header>
+    <span class="id">D9</span>
+    <h3>User agent</h3>
+    
+    <span class="badge read">Decided</span>
+    
+  </header>
+  
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li><strong>Resolved</strong> by run 4 of the live probe (main commit <code>cb0b1c3</code>). From Nick's IP, a fresh partition with Electron's default UA got a 403 on its first homepage load; the same build with a clean Chrome UA loaded normally. architecture.md now makes the clean Chrome UA the default.</li><li>What the driver sends on every partition: <code>Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/&lt;major&gt;.0.0.0 Safari/537.36</code>, where <code>&lt;major&gt;</code> is the bundled Chromium's real major version, and <code>Accept-Language: en-AU</code>. This is what Nick's own Chrome sends, so it is within <a href="#d24">D24</a>.</li><li>Still open: client-hint brands (<a href="#d24a">D24a</a>).</li><li>In code: <code>cleanChromeUserAgent()</code> exists, but the round-1 driver still defaults to Electron's UA and sends no <code>Accept-Language</code>. Round 2 makes both the default.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D9" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D9" value="other"> Something else</label>
+    <label><input type="radio" name="D9" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D9" value="later"> Later</label>
+    <textarea name="D9-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d10" data-id="D10" data-title="Analytics hosts">
+  <header>
+    <span class="id">D10</span>
+    <h3>Analytics hosts</h3>
+    
+    
+    <span class="blocks">Blocks M2</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Strict by default, measured in M2. Add hosts only with evidence.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Hosts in play, by partition:<ul><li><strong>Auth partition navigation:</strong> <code>https://www.woolworths.com.au</code> and <code>https://auth.woolworths.com.au</code>. The Auth0 pages' subresources aren't restricted by the security model (the site's own scripts are out of scope), but they are logged in M2.</li><li><strong>Tool partition egress, strict set:</strong> www, <code>cdn0.woolworths.media</code>, <code>acs.woolworths.com.au</code>. Not <code>auth.woolworths.com.au</code>: the tool partition never talks to the identity provider.</li><li><strong>Optional:</strong> the ~40 analytics and ad hosts the homepage contacts.</li></ul></li><li>Considerations: fewer hosts means less exfiltration surface and less tracking of Nick. But the site may behave differently, or look more bot-like, with its analytics blocked. Untested.</li><li>Recommendation: strict by default, measured in M2. Add hosts only with evidence.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D10" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D10" value="other"> Something else</label>
+    <label><input type="radio" name="D10" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D10" value="later"> Later</label>
+    <textarea name="D10-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d11" data-id="D11" data-title="Adapter package format">
+  <header>
+    <span class="id">D11</span>
+    <h3>Adapter package format</h3>
+    
+    
+    <span class="blocks">Blocks M5 (IDE save format), M7</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> <code>.siteadapter</code> zip with a fixed layout. Authors use TypeScript and a build command; the app only ever loads the built bundle, and the loader hashes exactly the bytes it imports, so nothing outside the hash can run. Approvals and grants keyed by the hash depend on that: today <code>ToolHost.register()</code> takes the hash from its caller, and no loader exists. npm and git are authoring conveniences, never the distribution channel.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Options: a directory or zip with <code>manifest.json</code>, one compiled ESM <code>tools.mjs</code>, fixtures and a README, hashed with <code>bundleHash</code>; npm packages; git repositories.</li><li>Considerations: npm brings install scripts and dependency trees nobody reviews. A single compiled file is what the sandbox will load anyway, and it's what the approval hash covers. Adapters with dependencies get them bundled in at build time.</li><li>Recommendation: <code>.siteadapter</code> zip with a fixed layout. Authors use TypeScript and a build command; the app only ever loads the built bundle, and the loader hashes exactly the bytes it imports, so nothing outside the hash can run. Approvals and grants keyed by the hash depend on that: today <code>ToolHost.register()</code> takes the hash from its caller, and no loader exists. npm and git are authoring conveniences, never the distribution channel.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D11" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D11" value="other"> Something else</label>
+    <label><input type="radio" name="D11" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D11" value="later"> Later</label>
+    <textarea name="D11-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d12" data-id="D12" data-title="Sandbox technology">
+  <header>
+    <span class="id">D12</span>
+    <h3>Sandbox technology</h3>
+    
+    
+    <span class="blocks">Blocks M7</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Spike the sandboxed renderer and QuickJS-wasm against the hostile-adapter suite in M7, and pick on evidence. Lean towards the sandboxed renderer: tool code is mostly orchestration of capability calls, so its speed doesn't matter, and it adds no dependency.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Options:<ul><li><strong>QuickJS compiled to wasm</strong> (e.g. quickjs-emscripten): a strong boundary with nothing reachable but what's injected; slower, and tool code can't use Node or modern-JS features QuickJS lacks; a new dependency.</li><li><strong>isolated-vm</strong>: a V8 isolate in-process; fast; a native addon (rebuild per Electron), and its README described the project as in maintenance mode at last check; verify before choosing.</li><li><strong>A sandboxed hidden renderer</strong>: tool code runs in a <code>BrowserWindow</code> with <code>sandbox: true</code>, no Node, a partition whose <code>webRequest</code> blocks everything, and the capability API over a <code>MessagePort</code>. Chromium's renderer sandbox is battle-tested, and it costs no dependency. Heavier per run (a renderer process).</li><li><strong>SES / Hardened JS compartments</strong>: good capability discipline, but same process and realm; not a boundary on its own.</li></ul></li><li>Recommendation: spike the sandboxed renderer and QuickJS-wasm against the hostile-adapter suite in M7, and pick on evidence. Lean towards the sandboxed renderer: tool code is mostly orchestration of capability calls, so its speed doesn't matter, and it adds no dependency.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D12" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D12" value="other"> Something else</label>
+    <label><input type="radio" name="D12" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D12" value="later"> Later</label>
+    <textarea name="D12-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d13" data-id="D13" data-title="Authoring agent model access">
+  <header>
+    <span class="id">D13</span>
+    <h3>Authoring agent model access</h3>
+    
+    
+    <span class="blocks">Blocks M6</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> MCP-inverted first. It fits the product (it's already an MCP server), costs nothing, and uses whatever client the person prefers. Add bring-your-own key for a built-in agent in the IDE. Don't ship CLI shelling in a released build without asking Anthropic.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Options:<ul><li><strong>MCP-inverted:</strong> the IDE exposes its authoring tools over MCP; the person's own Claude Code or Claude Desktop drives them. No model access in the product.</li><li><strong>Bring-your-own API key</strong> (Anthropic, or others later): the sanctioned path for a built-in agent using the Agent SDK.</li><li><strong>Shell out to the person's installed <code>claude</code> CLI:</strong> works with their subscription, but it's a grey area under Anthropic's terms for third-party products, and fragile.</li><li><strong>Offer claude.ai login:</strong> not allowed without Anthropic's approval.</li><li><strong>Local models:</strong> possible later; quality unknown for this task.</li></ul></li><li>Recommendation: MCP-inverted first. It fits the product (it's already an MCP server), costs nothing, and uses whatever client the person prefers. Add bring-your-own key for a built-in agent in the IDE. Don't ship CLI shelling in a released build without asking Anthropic.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D13" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D13" value="other"> Something else</label>
+    <label><input type="radio" name="D13" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D13" value="later"> Later</label>
+    <textarea name="D13-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d14" data-id="D14" data-title="Relay">
+  <header>
+    <span class="id">D14</span>
+    <h3>Relay</h3>
+    
+    
+    <span class="blocks">Blocks M9</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> For Nick's own remote use after M3, build the app-side remote mode and document Funnel (then cloudflared) in front of it, as <a href="../relay.md">relay.md</a> (draft, on <code>wip/docs-platform</code>) recommends; no tunnel in front of the local endpoint. Build the hosted relay only after M8, and only after a waitlist shows demand.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Options: build a relay (Worker plus Durable Object, outbound WebSocket from the app, OAuth for MCP clients); document cloudflared or Tailscale Funnel; both.</li><li>Considerations: the relay is the only piece that's a service with uptime, abuse and cost. It's also the only obvious thing to charge for. cloudflared and Tailscale work today for technical users but don't give claude.ai a proper OAuth flow without more setup.</li><li>Recommendation: for Nick's own remote use after M3, build the app-side remote mode and document Funnel (then cloudflared) in front of it, as <a href="../relay.md">relay.md</a> (draft, on <code>wip/docs-platform</code>) recommends; no tunnel in front of the local endpoint. Build the hosted relay only after M8, and only after a waitlist shows demand.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D14" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D14" value="other"> Something else</label>
+    <label><input type="radio" name="D14" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D14" value="later"> Later</label>
+    <textarea name="D14-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d15" data-id="D15" data-title="Telemetry">
+  <header>
+    <span class="id">D15</span>
+    <h3>Telemetry</h3>
+    
+    
+    <span class="blocks">Blocks M8</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> None in v1. A privacy-first security product shouldn't phone home by default. Consider opt-in adapter health with M10, when there's a registry to feed.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Options: none; opt-in crash reports; opt-in anonymous adapter health (&quot;adapter X failed with class Y&quot;), which would tell maintainers a site changed before users report it.</li><li>Recommendation: none in v1. A privacy-first security product shouldn't phone home by default. Consider opt-in adapter health with M10, when there's a registry to feed.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D15" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D15" value="other"> Something else</label>
+    <label><input type="radio" name="D15" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D15" value="later"> Later</label>
+    <textarea name="D15-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d16" data-id="D16" data-title="Pricing">
+  <header>
+    <span class="id">D16</span>
+    <h3>Pricing</h3>
+    
+    
+    <span class="blocks">Blocks M9</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Free, open-source app. If the relay is built, a small monthly fee, tested with a waitlist and a price on the landing page before building it. Don't decide marketplace economics until there are outside adapter authors.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Options: free and open source with a paid relay; paid app; donations or sponsorship; marketplace revenue share.</li><li>Recommendation: free, open-source app. If the relay is built, a small monthly fee, tested with a waitlist and a price on the landing page before building it. Don't decide marketplace economics until there are outside adapter authors.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D16" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D16" value="other"> Something else</label>
+    <label><input type="radio" name="D16" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D16" value="later"> Later</label>
+    <textarea name="D16-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d17" data-id="D17" data-title="UI stack">
+  <header>
+    <span class="id">D17</span>
+    <h3>UI stack</h3>
+    
+    
+    <span class="blocks">Blocks M3</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> React and plain CSS, built with electron-vite (already a devDependency). The IDE in M5 will want a code editor (CodeMirror is lighter than Monaco); that's a dependency request for then.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Options: React with plain CSS against <code>tokens.css</code> (React is already a devDependency); a component library; no framework.</li><li>Recommendation: React and plain CSS, built with electron-vite (already a devDependency). The IDE in M5 will want a code editor (CodeMirror is lighter than Monaco); that's a dependency request for then.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D17" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D17" value="other"> Something else</label>
+    <label><input type="radio" name="D17" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D17" value="later"> Later</label>
+    <textarea name="D17-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision first" id="d18" data-id="D18" data-title="Irreversible tools in shipped adapters">
+  <header>
+    <span class="id">D18</span>
+    <h3>Irreversible tools in shipped adapters</h3>
+    <span class="badge write">Answer first</span>
+    
+    <span class="blocks">Blocks M3 scope, M8 messaging</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> None in v1. The framework supports <code>irreversible</code> and the confirmation path is tested against the fake site, but no shipped adapter moves money until the confirmation UX has had real use. Revisit after M4.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Options: no checkout in v1; a checkout tool behind in-app confirmation.</li><li>Recommendation: none in v1. The framework supports <code>irreversible</code> and the confirmation path is tested against the fake site, but no shipped adapter moves money until the confirmation UX has had real use. Revisit after M4.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D18" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D18" value="other"> Something else</label>
+    <label><input type="radio" name="D18" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D18" value="later"> Later</label>
+    <textarea name="D18-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d19" data-id="D19" data-title="Confirmation when Nick is away">
+  <header>
+    <span class="id">D19</span>
+    <h3>Confirmation when Nick is away</h3>
+    
+    
+    <span class="blocks">Blocks nothing in the MVP (no irreversible tools)</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Decline after a timeout in v1. Phone confirmation comes with the relay.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Options: decline after a timeout; push to his phone (needs the relay or a notification service); queue for later.</li><li>Recommendation: decline after a timeout in v1. Phone confirmation comes with the relay.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D19" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D19" value="other"> Something else</label>
+    <label><input type="radio" name="D19" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D19" value="later"> Later</label>
+    <textarea name="D19-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d20" data-id="D20" data-title="Platforms">
+  <header>
+    <span class="id">D20</span>
+    <h3>Platforms</h3>
+    
+    
+    <span class="blocks">Blocks M8 messaging</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> MacOS only for v1. Keep the runtime free of macOS assumptions (already enforced by the &quot;only two modules import Electron&quot; rule), so Windows is a credential-provider and packaging job later, not a rewrite.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Recommendation: macOS only for v1. Keep the runtime free of macOS assumptions (already enforced by the &quot;only two modules import Electron&quot; rule), so Windows is a credential-provider and packaging job later, not a rewrite.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D20" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D20" value="other"> Something else</label>
+    <label><input type="radio" name="D20" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D20" value="later"> Later</label>
+    <textarea name="D20-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d21" data-id="D21" data-title="MCP client support">
+  <header>
+    <span class="id">D21</span>
+    <h3>MCP client support</h3>
+    
+    
+    <span class="blocks">Blocks M8</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> V1 officially supports Claude Code and Claude Desktop, and tests against the MCP SDK's own client. Others (Cursor, ChatGPT's MCP support, VS Code) are &quot;should work&quot;, with setup docs written as people report them.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Recommendation: v1 officially supports Claude Code and Claude Desktop, and tests against the MCP SDK's own client. Others (Cursor, ChatGPT's MCP support, VS Code) are &quot;should work&quot;, with setup docs written as people report them.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D21" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D21" value="other"> Something else</label>
+    <label><input type="radio" name="D21" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D21" value="later"> Later</label>
+    <textarea name="D21-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d22" data-id="D22" data-title="Second adapter">
+  <header>
+    <span class="id">D22</span>
+    <h3>Second adapter</h3>
+    
+    
+    <span class="blocks">Blocks M4, M8</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> A bank, read-only, kept private (not in the public release) unless Nick decides otherwise. For the public release, pick one or two low-risk sites with fewer legal concerns, ideally ones that have no API.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Options: port the earlier app's bank connector (read-only transactions); another grocer (Coles); a utility or a government site Nick uses.</li><li>Considerations: a bank is the strongest test of the security model and the most valuable to Nick, but also the scariest to publish. Another grocer barely tests the framework.</li><li>Recommendation: a bank, read-only, kept private (not in the public release) unless Nick decides otherwise. For the public release, pick one or two low-risk sites with fewer legal concerns, ideally ones that have no API.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D22" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D22" value="other"> Something else</label>
+    <label><input type="radio" name="D22" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D22" value="later"> Later</label>
+    <textarea name="D22-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d23" data-id="D23" data-title="Update feed host">
+  <header>
+    <span class="id">D23</span>
+    <h3>Update feed host</h3>
+    
+    
+    <span class="blocks">Blocks M4 (auto-update); M3 needs only a DMG</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> R2 with the generic provider until the repo is public, then GitHub Releases. The feed only serves signed builds; the updater verifies the signature.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Options: GitHub Releases (needs a public repo, or a token in the app for a private one, which is unacceptable); Cloudflare R2 or S3 with electron-updater's generic provider; no auto-update before M8.</li><li>Recommendation: R2 with the generic provider until the repo is public, then GitHub Releases. The feed only serves signed builds; the updater verifies the signature.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D23" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D23" value="other"> Something else</label>
+    <label><input type="radio" name="D23" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D23" value="later"> Later</label>
+    <textarea name="D23-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision first" id="d24" data-id="D24" data-title="Bot-detection posture">
+  <header>
+    <span class="id">D24</span>
+    <h3>Bot-detection posture</h3>
+    <span class="badge write">Answer first</span>
+    
+    <span class="blocks">Blocks D25, marketing. (D9 was decided within it.)</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> State it as a principle in the README and docs: siteadapter drives a real browser at human pace on the person's own account and machine, presents itself as the person's own browser would, and stops when a site objects. - <strong>Allowed:</strong> matching what the person's own browser sends: a clean Chrome UA with the engine's real version, the person's language, and their real IP and machine. - <strong>Not allowed:</strong> stealth plugins; patching <code>navigator</code> or other properties to hide automation; CAPTCHA solving; proxies; randomised, rotated or invented fingerprints; claiming to be a different browser, OS or device than the one actually running.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Recommendation: state it as a principle in the README and docs: siteadapter drives a real browser at human pace on the person's own account and machine, presents itself as the person's own browser would, and stops when a site objects.<ul><li><strong>Allowed:</strong> matching what the person's own browser sends: a clean Chrome UA with the engine's real version, the person's language, and their real IP and machine.</li><li><strong>Not allowed:</strong> stealth plugins; patching <code>navigator</code> or other properties to hide automation; CAPTCHA solving; proxies; randomised, rotated or invented fingerprints; claiming to be a different browser, OS or device than the one actually running. In one sentence, worded the same way everywhere: we match the person's own browser, never go further to hide automation, and never solve a CAPTCHA. It's the honest position, it simplifies the legal story, and it's what makes a security-focused audience trust it.</li></ul></li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D24" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D24" value="other"> Something else</label>
+    <label><input type="radio" name="D24" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D24" value="later"> Later</label>
+    <textarea name="D24-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d24a" data-id="D24a" data-title="Client-hint brands">
+  <header>
+    <span class="id">D24a</span>
+    <h3>Client-hint brands</h3>
+    
+    
+    <span class="blocks">Blocks nothing now; M2 if a logged-in block appears</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Leave the brands as <code>Chromium</code> until a block is traced to the mismatch. If that happens, matching brands is acceptable under D24, but Nick decides.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>The UA string now says Chrome, but the <code>Sec-CH-UA</code> client hints still list <code>Chromium</code> rather than <code>Google Chrome</code>. Akamai accepted that in run 4.</li><li>Options:<ul><li><strong>Leave the brands as <code>Chromium</code>.</strong> Truthful about the engine; nothing to maintain.</li><li><strong>Match Nick's Chrome's brands</strong> with <code>Emulation.setUserAgentOverride</code> and <code>userAgentMetadata</code> over CDP on each partition. Arguably within D24 (it matches the person's own browser), but it is a claim about the product, not just the engine, and it adds a CDP override that must track every Electron upgrade.</li><li><strong>Strip client hints.</strong> Real Chrome sends them, so this would look less like Nick's browser, not more.</li></ul></li><li>Recommendation: leave the brands as <code>Chromium</code> until a block is traced to the mismatch. If that happens, matching brands is acceptable under D24, but Nick decides.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D24a" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D24a" value="other"> Something else</label>
+    <label><input type="radio" name="D24a" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D24a" value="later"> Later</label>
+    <textarea name="D24a-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d25" data-id="D25" data-title="Adapter legal posture">
+  <header>
+    <span class="id">D25</span>
+    <h3>Adapter legal posture</h3>
+    
+    
+    <span class="blocks">Blocks M8</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Get a short legal opinion (Australian, plus a US view if the audience is global) before M8. Meanwhile, structure the code so adapters can move to a separate repo without changes (they already only depend on <code>core</code>).</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Questions: can the project publish adapters for sites whose terms prohibit automated access? Should adapters live in a separate repository, maintained by their authors, rather than in the framework's repository?</li><li>Recommendation: get a short legal opinion (Australian, plus a US view if the audience is global) before M8. Meanwhile, structure the code so adapters can move to a separate repo without changes (they already only depend on <code>core</code>).</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D25" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D25" value="other"> Something else</label>
+    <label><input type="radio" name="D25" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D25" value="later"> Later</label>
+    <textarea name="D25-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d26" data-id="D26" data-title="Where the Woolworths adapter lives at release">
+  <header>
+    <span class="id">D26</span>
+    <h3>Where the Woolworths adapter lives at release</h3>
+    
+    
+    <span class="blocks">Blocks M8</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Decide with D25. Default to a separate repo, with a fake-site-only reference adapter in the main repo for the docs.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Options: in the main repo as the reference adapter; in a separate adapters repo; private.</li><li>Recommendation: decide with D25. Default to a separate repo, with a fake-site-only reference adapter in the main repo for the docs.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D26" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D26" value="other"> Something else</label>
+    <label><input type="radio" name="D26" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D26" value="later"> Later</label>
+    <textarea name="D26-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d27" data-id="D27" data-title="Retention">
+  <header>
+    <span class="id">D27</span>
+    <h3>Retention</h3>
+    
+    
+    <span class="blocks">Blocks M4</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Audit log kept (it's small and the chain needs continuity; rotation starts a new chain whose first record commits to the previous file's last hash). Traces and screenshots kept 14 days by default, configurable.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Options: keep the audit log forever; rotate traces after N days; let the person choose.</li><li>Recommendation: audit log kept (it's small and the chain needs continuity; rotation starts a new chain whose first record commits to the previous file's last hash). Traces and screenshots kept 14 days by default, configurable.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D27" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D27" value="other"> Something else</label>
+    <label><input type="radio" name="D27" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D27" value="later"> Later</label>
+    <textarea name="D27-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision first" id="d28" data-id="D28" data-title="Rate budget defaults">
+  <header>
+    <span class="id">D28</span>
+    <h3>Rate budget defaults</h3>
+    <span class="badge write">Answer first</span>
+    
+    <span class="blocks">Blocks M2</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Start here and loosen only with evidence from M2 and M3, never the other way round. A test asserts the run 1 pattern can't get through the defaults unspaced.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li><strong>Known-bad baseline.</strong> Run 1 of the live probe loaded the homepage and then made 4 scripted API calls about 2.5 s apart, with no navigation in between. That was enough for Akamai to flag the UA from Nick's IP within three minutes (<a href="../findings/2026-11-07-woolworths-live-probe.md">finding</a>). Every default must be clearly less aggressive than that, on every axis.</li><li>Starting defaults for Woolworths:<ul><li><strong>Minimum gap of 10 s between direct API calls</strong> (<code>page.fetch</code> and the probe), with upward-only jitter of 0–50% (so 10–15 s, never less than 10). Four times run 1's gap.</li><li><strong>At most 2 direct API calls per page view.</strong> After two, the next one waits for a real navigation (the runtime navigates to a relevant page, such as the trolley or a search URL) as well as the gap. Run 1 made 4 with none.</li><li><strong>At most 4 direct API calls a minute</strong>, and 60 an hour.</li><li><strong>Prefer page-initiated reads.</strong> Navigating to a search URL and reading the response the page fetched itself counts as a navigation, not a direct call.</li><li><strong>Cache reads for the session:</strong> search and product detail until the session ends; the trolley until any write, after which the write's own response is the new cached trolley.</li><li><strong>Cool-down:</strong> 30 minutes after any block, doubling up to 6 hours on repeat blocks, persisted across restarts. No call reaches the site during it.</li></ul></li><li>A realistic weekly shop (about 30 tool calls, many served from cache) then takes roughly 15–30 minutes. That's slow for a bot and fine for an agent doing a shop in the background.</li><li><strong>Where the code is.</strong> Round 1's runtime has the minimum gap and the cool-down only, with looser defaults (2 s; 10 minutes doubling to 2 hours, which are also core v2's <code>limits</code> defaults), in memory, with no jitter, no per-page-view or per-minute cap, and no read cache. Reconciling the two is <a href="#d33">D33</a>.</li><li><strong>What it covers.</strong> The budget and breaker sit in the runtime's guarded page and probe, so they see <code>page.fetch</code>, <code>goto</code> and the probe only. Navigations the page makes, clicks that submit, <code>evaluate()</code> fetches, the site's own requests and the whole login go unpaced and unwatched for block pages. Closing that is <a href="#d55">D55</a>.</li><li>Recommendation: start here and loosen only with evidence from M2 and M3, never the other way round. A test asserts the run 1 pattern can't get through the defaults unspaced.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D28" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D28" value="other"> Something else</label>
+    <label><input type="radio" name="D28" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D28" value="later"> Later</label>
+    <textarea name="D28-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d29" data-id="D29" data-title="Pause, overnight and scheduled use">
+  <header>
+    <span class="id">D29</span>
+    <h3>Pause, overnight and scheduled use</h3>
+    
+    
+    <span class="blocks">Blocks nothing in the MVP; useful in M4</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> An optional &quot;quiet hours&quot; setting that returns <code>needsUser</code> with a clear reason instead of logging in during them; reads on an existing session still work.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Question: should agents be able to call tools at any hour? A login at 3 am with no human activity looks odd to a bot detector, and a <code>needsUser</code> at 3 am helps nobody.</li><li>Recommendation: an optional &quot;quiet hours&quot; setting that returns <code>needsUser</code> with a clear reason instead of logging in during them; reads on an existing session still work.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D29" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D29" value="other"> Something else</label>
+    <label><input type="radio" name="D29" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D29" value="later"> Later</label>
+    <textarea name="D29-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d30" data-id="D30" data-title="Split add-to-cart">
+  <header>
+    <span class="id">D30</span>
+    <h3>Split add-to-cart</h3>
+    
+    
+    <span class="blocks">Blocks nothing in the MVP</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Keep the tools as they are, destructive, for the MVP. With C9, mark <code>add_to_cart</code> non-destructive in M4 if the prompts are annoying in practice, knowing its additive claim is the adapter's code.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Options: keep one <code>set_cart_quantity</code> (destructive, idempotent); add an additive <code>add_to_cart</code> alongside it (<code>destructiveHint: false</code>), so clients can auto-approve adds while still prompting for removals.</li><li>Considerations: whether clients auto-approve on annotations is up to each client, and annotations are hints. But &quot;add these five things&quot; is most of a weekly shop, and prompting for each add would be tiresome. The runtime can't enforce &quot;additive only&quot; against the trolley update endpoint, which takes absolute quantities, so <code>add_to_cart</code> would read the trolley and write current + n, and its additive claim is the adapter's code, not a runtime guarantee.</li><li>Status: overtaken by round 1. The adapter already ships <code>add_to_cart</code> (and <code>remove_from_cart</code>) alongside <code>set_cart_quantity</code>, and the MCP server derives <code>destructiveHint: true</code> for every <code>write</code> tool, so <code>add_to_cart</code> is advertised as destructive and clients still prompt for it. It stays that way until C9 lets a tool declare itself non-destructive.</li><li>Recommendation: keep the tools as they are, destructive, for the MVP. With C9, mark <code>add_to_cart</code> non-destructive in M4 if the prompts are annoying in practice, knowing its additive claim is the adapter's code.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D30" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D30" value="other"> Something else</label>
+    <label><input type="radio" name="D30" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D30" value="later"> Later</label>
+    <textarea name="D30-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d31" data-id="D31" data-title="`retry` count semantics">
+  <header>
+    <span class="id">D31</span>
+    <h3><code>retry</code> count semantics</h3>
+    
+    
+    <span class="blocks">Blocks nothing. The Woolworths flow uses no <code>retry</code></span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Keep the semantics, document <code>times</code> in core as &quot;extra attempts after the first&quot;, and rename the field to <code>retries</code> at the next manifest <code>schemaVersion</code> (C13).</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: <code>retry: { times: n }</code> runs its steps up to <code>n + 1</code> times, and the auth-flow tests pin that. Core documents only the range, 1 to 5.</li><li>Options: keep &quot;<code>n</code> retries after the first run&quot; and document it in core; change it to <code>n</code> runs in all.</li><li>Considerations: most authors will read <code>times: 2</code> as two runs, and get three. The extra run matters only where a <code>retry</code> wraps a submit, and D32 stops a second password submit anyway.</li><li>Recommendation: keep the semantics, document <code>times</code> in core as &quot;extra attempts after the first&quot;, and rename the field to <code>retries</code> at the next manifest <code>schemaVersion</code> (C13).</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D31" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D31" value="other"> Something else</label>
+    <label><input type="radio" name="D31" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D31" value="later"> Later</label>
+    <textarea name="D31-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision first" id="d32" data-id="D32" data-title="Which failures retry">
+  <header>
+    <span class="id">D32</span>
+    <h3>Which failures retry</h3>
+    <span class="badge write">Answer first</span>
+    
+    <span class="blocks">Blocks M2. The second-submit refusal is a hard requirement before the first live automated</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Both of the last two. <code>retry</code> only covers &quot;the page wasn't ready yet&quot; (<code>condition-timeout</code>, <code>element-missing</code>), and the filler refuses a second password fill in one login, ending it as <code>needsUser(login-required)</code>. For tools: after a re-login, the runtime re-runs a tool once only if it is <code>read</code> and failed <code>tool-run/not-logged-in</code>. Never a <code>write</code> or <code>irreversible</code> tool, whose request may already have reached the site (the adapter's <code>add_to_cart</code> would add twice).</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Two places retry: the <code>retry</code> step inside a login, and (designed) the runtime re-running a tool once after a re-login.</li><li>Today <code>retry</code> re-runs after <code>auth-step/condition-timeout</code>, <code>auth-step/element-missing</code>, <code>auth-step/auth-failed</code> and <code>probe/not-logged-in</code>, and never after anything from <code>secret-fill</code>, <code>otp</code>, <code>grant</code> or <code>credential</code>, a block, <code>needsUser</code> or a timeout. The last two retryable ones happen after a password submit, so a <code>retry</code> around the fill can submit the password twice, which AC10 forbids.</li><li>Options: keep the set; drop <code>auth-failed</code> and <code>not-logged-in</code> from it; have the filler count password fills per login and refuse a second whatever the steps say.</li><li>Recommendation: both of the last two. <code>retry</code> only covers &quot;the page wasn't ready yet&quot; (<code>condition-timeout</code>, <code>element-missing</code>), and the filler refuses a second password fill in one login, ending it as <code>needsUser(login-required)</code>. For tools: after a re-login, the runtime re-runs a tool once only if it is <code>read</code> and failed <code>tool-run/not-logged-in</code>. Never a <code>write</code> or <code>irreversible</code> tool, whose request may already have reached the site (the adapter's <code>add_to_cart</code> would add twice). login, with the attempt marker.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D32" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D32" value="other"> Something else</label>
+    <label><input type="radio" name="D32" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D32" value="later"> Later</label>
+    <textarea name="D32-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d33" data-id="D33" data-title="Breaker defaults and persistence">
+  <header>
+    <span class="id">D33</span>
+    <h3>Breaker defaults and persistence</h3>
+    
+    
+    <span class="blocks">Blocks M2</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> - The Woolworths manifest sets D28's gap and cool-downs in its own <code>limits</code>. Core's defaults stay the floor for other adapters, and <code>limits</code> gains D28's per-minute and per-page-view caps (C10), which nothing has today. - Persist by rebuilding from the audit log at start. It is already fsynced and hash-chained, so there's no second file to keep consistent, and a restart can't be used to skip a cool-down. - Key both the budget and the breaker per host, shared by every adapter, and apply the strictest limits of all approved adapters that declare that host (the largest <code>minGapMs</code>, <code>cooldownSeconds</code> and <code>maxCooldownSeconds</code>). The site sees one person, one IP and one browser, not adapters, so one adapter tripping a block page stalling another's calls to that host is correct, not a bug. A block on the auth host during a login doesn't open www's breaker, but the login ends <code>blocked</code> and the attempt marker's backoff holds further logins. - Fix core's <code>minGapMs</code> comment to match (C20).</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: one rate budget and breaker per host, in memory, covering <code>page.fetch</code>, <code>goto</code> and the probe only (<a href="#d55">D55</a>); a 2 s minimum gap; a 10 minute cool-down doubling to 2 hours; the doubling resets on the next normal response. Core v2's <code>limits</code> defaults match the code (<code>minGapMs: 2000</code>, <code>cooldownSeconds: 600</code>, <code>maxCooldownSeconds: 7200</code>). <a href="#d28">D28</a> recommends much stricter numbers for Woolworths and a persisted cool-down.</li><li>Questions: whose numbers; whether and where to persist; what the budget and breaker are keyed on, and whose limits win when two adapters declare the same host.</li><li>The keying disagrees today. Core's <code>manifest.ts</code> documents <code>minGapMs</code> as &quot;across all of this adapter's runs&quot; (per adapter). The runtime, the security model, the architecture and the <code>breaker-opened</code> event key per host, shared by every adapter. This decision's first draft said per manifest (every origin in one manifest's <code>navigation</code> and <code>egress</code>). With limits declared per manifest, two adapters on one host with different <code>minGapMs</code> or <code>cooldownSeconds</code> have no defined result.</li><li>Options for persistence: none (a restart closes the breaker); a small <code>breakers.json</code> in the data directory; rebuild at start from the last <code>breaker-opened</code> per host in the audit log.</li><li>Recommendation:<ul><li>The Woolworths manifest sets D28's gap and cool-downs in its own <code>limits</code>. Core's defaults stay the floor for other adapters, and <code>limits</code> gains D28's per-minute and per-page-view caps (C10), which nothing has today.</li><li>Persist by rebuilding from the audit log at start. It is already fsynced and hash-chained, so there's no second file to keep consistent, and a restart can't be used to skip a cool-down.</li><li>Key both the budget and the breaker per host, shared by every adapter, and apply the strictest limits of all approved adapters that declare that host (the largest <code>minGapMs</code>, <code>cooldownSeconds</code> and <code>maxCooldownSeconds</code>). The site sees one person, one IP and one browser, not adapters, so one adapter tripping a block page stalling another's calls to that host is correct, not a bug. A block on the auth host during a login doesn't open www's breaker, but the login ends <code>blocked</code> and the attempt marker's backoff holds further logins.</li><li>Fix core's <code>minGapMs</code> comment to match (C20).</li></ul></li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D33" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D33" value="other"> Something else</label>
+    <label><input type="radio" name="D33" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D33" value="later"> Later</label>
+    <textarea name="D33-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d34" data-id="D34" data-title="Form-action origin: granted or navigation">
+  <header>
+    <span class="id">D34</span>
+    <h3>Form-action origin: granted or navigation</h3>
+    
+    
+    <span class="blocks">Blocks nothing now</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Keep the granted origins. If a real site posts cross-origin, add a per-secret <code>formActions</code> list to the manifest, shown on the approval screen, rather than loosening the rule.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: a password's owning form must post to an origin in the secret's granted origins. A round-1 reviewer asked whether the navigation list would do, since the navigation guard already checks where the page goes.</li><li>Options: granted origins (today); navigation origins; granted origins plus an explicit per-secret <code>formActions</code> list for sites whose login form posts to another origin.</li><li>Considerations: the navigation guard fires only after the POST has left, and a navigation-only rule would allow a password into a form that posts to a www search endpoint, the case the check exists for. Auth0 posts to its own origin, so Woolworths passes either way.</li><li>Recommendation: keep the granted origins. If a real site posts cross-origin, add a per-secret <code>formActions</code> list to the manifest, shown on the approval screen, rather than loosening the rule.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D34" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D34" value="other"> Something else</label>
+    <label><input type="radio" name="D34" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D34" value="later"> Later</label>
+    <textarea name="D34-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision first" id="d35" data-id="D35" data-title="The attempt marker after a timeout">
+  <header>
+    <span class="id">D35</span>
+    <h3>The attempt marker after a timeout</h3>
+    <span class="badge write">Answer first</span>
+    
+    <span class="blocks">Blocks M2, before the first live automated login. Needs the filler to report &quot;password typing</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> The second. With a fill, the tray says &quot;Woolworths: a login was interrupted after the password was typed. Check you can still log in, then clear.&quot; with a Clear button. Without one, it's a backoff hold that clears itself. A fixed-time clear risks a lockout loop.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: the marker is set before the login runs. A crash, abort or flow timeout leaves it set, and every later login returns <code>needsUser(login-attempt-pending)</code> until the person clears it. There's no UI to clear it yet.</li><li>Problem: a timeout before any password was typed (a slow Auth0 page, a silent redirect that stalled) stops unattended use until Nick notices, though no attempt against the account was spent.</li><li>Options: always need the person; record in the marker whether a password fill started (the filler updates it, fsynced, before typing), and turn a marker with no fill into an ordinary backoff hold; clear every marker after a fixed time.</li><li>Recommendation: the second. With a fill, the tray says &quot;Woolworths: a login was interrupted after the password was typed. Check you can still log in, then clear.&quot; with a Clear button. Without one, it's a backoff hold that clears itself. A fixed-time clear risks a lockout loop. started&quot; to the runtime.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D35" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D35" value="other"> Something else</label>
+    <label><input type="radio" name="D35" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D35" value="later"> Later</label>
+    <textarea name="D35-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d36" data-id="D36" data-title="Redaction: whole string or substring">
+  <header>
+    <span class="id">D36</span>
+    <h3>Redaction: whole string or substring</h3>
+    
+    
+    <span class="blocks">Blocks nothing</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Keep whole-string replacement, and record how many strings were redacted in <code>tool-finished</code> (C14), so a tool that keeps tripping it gets fixed. Encoded copies stay out of scope; output schemas and <code>httpOnly</code> cookies are the main defence.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: a string that contains a sensitive value is replaced whole with <code>[redacted]</code>, object keys included, and the call fails if the serialised result still contains one.</li><li>Options: whole string (today); replace only the matching substring; fail the call whenever anything sensitive appears.</li><li>Considerations: substring replacement keeps more of the output but leaves the text around the match, which can hold another encoding or a fragment of it. Failing the call is safest, but one echoed cookie value would then break a tool outright, where whole-string replacement loses one field.</li><li>Recommendation: keep whole-string replacement, and record how many strings were redacted in <code>tool-finished</code> (C14), so a tool that keeps tripping it gets fixed. Encoded copies stay out of scope; output schemas and <code>httpOnly</code> cookies are the main defence.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D36" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D36" value="other"> Something else</label>
+    <label><input type="radio" name="D36" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D36" value="later"> Later</label>
+    <textarea name="D36-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d37" data-id="D37" data-title="Cross-origin iframe logins">
+  <header>
+    <span class="id">D37</span>
+    <h3>Cross-origin iframe logins</h3>
+    
+    
+    <span class="blocks">Blocks nothing for Woolworths: Auth0 Universal Login is a top-level page</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Refuse until a real site needs it, then CDP input, with the same per-keystroke origin check. Never turn site isolation off.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: the driver refuses to focus or click an element in an out-of-process (cross-site) frame, and the flow ends in <code>needsUser</code>. Core v2's <code>inputReachable</code> makes that a check before the fill.</li><li>Options: refuse (today); turn site isolation off process-wide, which the e2e suite showed lets <code>sendInputEvent</code> reach the frame; type through CDP <code>Input.dispatchKeyEvent</code> on the frame's target; navigate the auth page to the frame's URL directly, when it's on <code>navigation</code>.</li><li>Considerations: turning site isolation off weakens Chromium's process isolation for every page in every partition, including tool pages running adapter code. CDP input is per frame and still trusted input, but attaches a debugger to the auth page. Loading the frame's URL directly often breaks the flow.</li><li>Recommendation: refuse until a real site needs it, then CDP input, with the same per-keystroke origin check. Never turn site isolation off.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D37" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D37" value="other"> Something else</label>
+    <label><input type="radio" name="D37" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D37" value="later"> Later</label>
+    <textarea name="D37-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision first" id="d38" data-id="D38" data-title="Keystroke events">
+  <header>
+    <span class="id">D38</span>
+    <h3>Keystroke events</h3>
+    <span class="badge write">Answer first</span>
+    
+    <span class="blocks">Blocks M2</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> <code>keyDown</code>/<code>char</code>/<code>keyUp</code> per character, with the origin check before each <code>keyDown</code>, tested against the fake site and in the e2e suite. Characters with no key fall back to <code>char</code>.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: one <code>char</code> input event per character.</li><li>Options: <code>char</code> only; <code>keyDown</code>, <code>char</code> and <code>keyUp</code> per character, as a physical keyboard produces; CDP <code>Input.insertText</code>.</li><li>Considerations: some forms listen for key events, and bot-detection scripts look at keystroke pairs and timing. A stream of <code>char</code> events with no <code>keyDown</code> is not what the person's own browser produces, so the full sequence is the D24-consistent choice: it matches the person, and goes no further. <code>insertText</code> looks least like typing.</li><li>Recommendation: <code>keyDown</code>/<code>char</code>/<code>keyUp</code> per character, with the origin check before each <code>keyDown</code>, tested against the fake site and in the e2e suite. Characters with no key fall back to <code>char</code>.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D38" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D38" value="other"> Something else</label>
+    <label><input type="radio" name="D38" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D38" value="later"> Later</label>
+    <textarea name="D38-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision decided" id="d39" data-id="D39" data-title="Auth subframe origins">
+  <header>
+    <span class="id">D39</span>
+    <h3>Auth subframe origins</h3>
+    
+    <span class="badge read">Decided</span>
+    
+  </header>
+  
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li><strong>Resolved</strong> by core v2. Subframes of an auth page may load only <code>navigation</code> origins plus <code>auth.frameOrigins</code> (default empty). The round-1 driver allowed any https subframe and relied on the secret-fill binding; it adopts the list in round 2. For Woolworths, <code>frameOrigins</code> is whatever Auth0's bot detection embeds, measured in M2.</li><li>Still open: when the window is handed to the person, a CAPTCHA frame the manifest didn't list is blocked, so they can't solve it. Recommendation: on hand-off, after the interpreter has stopped and will type nothing more, the subframe rule relaxes to any https origin for that window, and is restored for the next login.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D39" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D39" value="other"> Something else</label>
+    <label><input type="radio" name="D39" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D39" value="later"> Later</label>
+    <textarea name="D39-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d40" data-id="D40" data-title="Storage handoff document">
+  <header>
+    <span class="id">D40</span>
+    <h3>Storage handoff document</h3>
+    
+    
+    <span class="blocks">Blocks the first adapter with storage keys. Woolworths has none</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Reuse only. The auth flow ends on a page of the site, and the tool page is open at <code>home</code>, so no extra request is needed. Keep the <code>/robots.txt</code> fallback off by default.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: storage keys are read and written in a page on their origin. An open page is reused; otherwise a hidden page loads <code>/robots.txt</code> on that origin, in each partition. That's an extra request to the site outside the rate budget, and an unusual one for a browser to make.</li><li>Options: <code>/robots.txt</code> (today); the manifest's <code>home</code>; a path the manifest names; reuse only: hand off while the login's last page and the tool page are open, and fail otherwise.</li><li>Recommendation: reuse only. The auth flow ends on a page of the site, and the tool page is open at <code>home</code>, so no extra request is needed. Keep the <code>/robots.txt</code> fallback off by default.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D40" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D40" value="other"> Something else</label>
+    <label><input type="radio" name="D40" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D40" value="later"> Later</label>
+    <textarea name="D40-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision first" id="d41" data-id="D41" data-title="Stable MCP port and token rotation">
+  <header>
+    <span class="id">D41</span>
+    <h3>Stable MCP port and token rotation</h3>
+    <span class="badge write">Answer first</span>
+    
+    <span class="blocks">Blocks M3 (onboarding, AC3)</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Make the bridge the default setup for every client. Offer a port chosen once and kept only for clients that can't launch a command, with the risk stated next to the option. Rotate tokens on demand (&quot;Reset access&quot; per client in the app), never on a timer, and move to per-client tokens (D42).</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: a free port each launch, and one token written to a 0600 file. The stdio bridge re-reads its config, so bridged clients survive a restart. HTTP-native clients (Claude Code over HTTP) keep the URL and token in their own config, and break on every restart.</li><li>Options for the port: random each launch (today); fixed and configurable; chosen once at first run and kept. For the token: never rotated; rotated on demand from the app; rotated every launch; one per client (D42).</li><li>Considerations: a fixed port has a cost. While the app isn't running, another local account can bind it, and an HTTP-native client would hand it the token. The bridge doesn't have that problem: it reads the current port from a file only the person can read.</li><li>Recommendation: make the bridge the default setup for every client. Offer a port chosen once and kept only for clients that can't launch a command, with the risk stated next to the option. Rotate tokens on demand (&quot;Reset access&quot; per client in the app), never on a timer, and move to per-client tokens (D42).</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D41" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D41" value="other"> Something else</label>
+    <label><input type="radio" name="D41" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D41" value="later"> Later</label>
+    <textarea name="D41-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d42" data-id="D42" data-title="Per-client tool scopes">
+  <header>
+    <span class="id">D42</span>
+    <h3>Per-client tool scopes</h3>
+    
+    
+    <span class="blocks">Blocks M3 (tokens), M4 (allowlists)</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> A token per client in M3. It gives the audit log a real identity (C12) and lets one client's access be revoked alone; the mockups already show it. Per-client allowlists in M4, where a new client gets read tools, write tools are switched on per client, and <code>irreversible</code> tools still need the person's confirmation per call. The remote listener reuses the same allowlists.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: any client with the token sees every approved tool, and the audit log's client name is whatever the client says in <code>initialize</code>.</li><li>Options: one token, all tools (today); a token per client, named by the person, with identity from the token; per-client tool allowlists on top.</li><li>Recommendation: a token per client in M3. It gives the audit log a real identity (C12) and lets one client's access be revoked alone; the mockups already show it. Per-client allowlists in M4, where a new client gets read tools, write tools are switched on per client, and <code>irreversible</code> tools still need the person's confirmation per call. The remote listener reuses the same allowlists.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D42" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D42" value="other"> Something else</label>
+    <label><input type="radio" name="D42" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D42" value="later"> Later</label>
+    <textarea name="D42-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d43" data-id="D43" data-title="Keychain and vault names">
+  <header>
+    <span class="id">D43</span>
+    <h3>Keychain and vault names</h3>
+    
+    
+    <span class="blocks">Blocks M3</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> - Keychain items named from the bundle ID: service <code>&lt;bundle id&gt;.onepassword-service-account</code> for the token (account: the 1Password account's sign-in address), and <code>&lt;bundle id&gt;.mcp-client.&lt;name&gt;</code> per client token if those move from files to the Keychain. - The 1Password vault called &quot;siteadapter&quot; until D1 picks a name. - Grants store item references by vault and item <strong>ID</strong>, not name (<code>op://&lt;vault id&gt;/&lt;item id&gt;</code> is already accepted), so renaming a vault or item in 1Password doesn't silently break or redirect a grant. The grant picker shows names.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Keychain items and grants outlive renames, so these are fixed before the first signed build.</li><li>Options: derive every name from the bundle ID (<a href="#d1">D1</a>); fixed names now.</li><li>Recommendation:<ul><li>Keychain items named from the bundle ID: service <code>&lt;bundle id&gt;.onepassword-service-account</code> for the token (account: the 1Password account's sign-in address), and <code>&lt;bundle id&gt;.mcp-client.&lt;name&gt;</code> per client token if those move from files to the Keychain.</li><li>The 1Password vault called &quot;siteadapter&quot; until D1 picks a name.</li><li>Grants store item references by vault and item <strong>ID</strong>, not name (<code>op://&lt;vault id&gt;/&lt;item id&gt;</code> is already accepted), so renaming a vault or item in 1Password doesn't silently break or redirect a grant. The grant picker shows names.</li></ul></li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D43" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D43" value="other"> Something else</label>
+    <label><input type="radio" name="D43" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D43" value="later"> Later</label>
+    <textarea name="D43-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d44" data-id="D44" data-title="`op` install path">
+  <header>
+    <span class="id">D44</span>
+    <h3><code>op</code> install path</h3>
+    
+    
+    <span class="blocks">Blocks M3</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> D7 first. If the CLI stays: find it at onboarding, pin the absolute path, refuse a binary or directory writable by anyone but root or the person, and check its signature before each use.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: <code>op</code> is found on <code>PATH</code>. An app started from Finder has a minimal <code>PATH</code>, and a <code>PATH</code> lookup runs whichever <code>op</code> comes first. A substitute <code>op</code> can't get secrets out of 1Password (the desktop app checks the caller), but it can hand back a wrong password and spend a login attempt, or log which items are used.</li><li>Options: <code>PATH</code>; probe the known install locations (<code>/opt/homebrew/bin/op</code>, <code>/usr/local/bin/op</code>) at onboarding and pin the absolute path; also verify the binary's code signature against 1Password's Team ID before each use; drop the CLI for <code>DesktopAuth</code> (<a href="#d7">D7</a>).</li><li>Recommendation: D7 first. If the CLI stays: find it at onboarding, pin the absolute path, refuse a binary or directory writable by anyone but root or the person, and check its signature before each use.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D44" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D44" value="other"> Something else</label>
+    <label><input type="radio" name="D44" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D44" value="later"> Later</label>
+    <textarea name="D44-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d45" data-id="D45" data-title="Grant file location">
+  <header>
+    <span class="id">D45</span>
+    <h3>Grant file location</h3>
+    
+    
+    <span class="blocks">Blocks M3 (location), M7 (integrity)</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Application Support, one directory, as the architecture lists. Before third-party adapters (M7), <code>grants.json</code> and <code>approvals.json</code> carry a MAC keyed by a secret in the Keychain under the app's designated requirement, so an edited file fails closed; the audit log's latest hash gets the same, since a chain alone can be recomputed by whoever edits it.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: the runtime, credentials and mcp-server packages take file paths from the caller. Only the bridge config's path is documented.</li><li>Options: everything under <code>~/Library/Application Support/&lt;app&gt;/</code>, a 0700 directory with 0600 files; grants in the Keychain; grants only as events in the audit log.</li><li>Considerations: files are simple and inspectable, but any process running as the person can edit them, and v0 tool code runs in the main process. An edited grant (another item, another origin) would be honoured.</li><li>Recommendation: Application Support, one directory, as the architecture lists. Before third-party adapters (M7), <code>grants.json</code> and <code>approvals.json</code> carry a MAC keyed by a secret in the Keychain under the app's designated requirement, so an edited file fails closed; the audit log's latest hash gets the same, since a chain alone can be recomputed by whoever edits it.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D45" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D45" value="other"> Something else</label>
+    <label><input type="radio" name="D45" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D45" value="later"> Later</label>
+    <textarea name="D45-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d46" data-id="D46" data-title="Touch ID on irreversible confirmations">
+  <header>
+    <span class="id">D46</span>
+    <h3>Touch ID on irreversible confirmations</h3>
+    
+    
+    <span class="blocks">Blocks the first <code>irreversible</code> tool</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Touch ID for <code>irreversible</code> confirmations when it's available, otherwise the click with a note saying so; nothing extra for <code>write</code>. Build it with the first <code>irreversible</code> tool, since v1 ships none (<a href="#d18">D18</a>).</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Options: a click in the app's window; Touch ID (<code>systemPreferences.promptTouchID</code>) as well; the macOS account password.</li><li>Considerations: a click can come from anyone at the unlocked Mac, or from a UI-automation tool the person runs, including an agent with computer use, which is exactly the kind of client this confirmation exists to keep out. Touch ID proves presence. It isn't available on every Mac, or with the lid closed.</li><li>Recommendation: Touch ID for <code>irreversible</code> confirmations when it's available, otherwise the click with a note saying so; nothing extra for <code>write</code>. Build it with the first <code>irreversible</code> tool, since v1 ships none (<a href="#d18">D18</a>).</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D46" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D46" value="other"> Something else</label>
+    <label><input type="radio" name="D46" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D46" value="later"> Later</label>
+    <textarea name="D46-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d47" data-id="D47" data-title="Grant re-bind on update">
+  <header>
+    <span class="id">D47</span>
+    <h3>Grant re-bind on update</h3>
+    
+    
+    <span class="blocks">Blocks M4 (updates)</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Offer it, unticked, next to the approval diff, only when nothing expanded; audit <code>grant-made</code> with the new hash. Never automatic: the point of hash-keyed grants is that the person looks.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: an update has a new hash, inherits no grant, and the person grants again. The mockup offers a re-bind, off by default.</li><li>Options: always grant from scratch; offer a one-click re-bind of the same item when the secret's request didn't expand (the same or fewer fields and origins, the same Messages sender); re-bind automatically in that case.</li><li>Recommendation: offer it, unticked, next to the approval diff, only when nothing expanded; audit <code>grant-made</code> with the new hash. Never automatic: the point of hash-keyed grants is that the person looks.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D47" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D47" value="other"> Something else</label>
+    <label><input type="radio" name="D47" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D47" value="later"> Later</label>
+    <textarea name="D47-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d48" data-id="D48" data-title="Tool titles with the adapter name">
+  <header>
+    <span class="id">D48</span>
+    <h3>Tool titles with the adapter name</h3>
+    
+    
+    <span class="blocks">Blocks nothing</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> The server prefixes the adapter's name. The manifest's title stays bare.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: the MCP title is the manifest's <code>title</code> (&quot;Get cart&quot;), and the name is namespaced (<code>woolworths_get_cart</code>).</li><li>Options: the bare title; &quot;Woolworths: Get cart&quot;, built by the server from the adapter's <code>name</code>; no title.</li><li>Considerations: clients show titles in permission prompts, where &quot;Get cart&quot; doesn't say which site. The adapter's <code>name</code> is manifest text, so a hostile adapter could call itself something else; the approval screen shows the id and name together, and the person approved both.</li><li>Recommendation: the server prefixes the adapter's name. The manifest's title stays bare.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D48" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D48" value="other"> Something else</label>
+    <label><input type="radio" name="D48" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D48" value="later"> Later</label>
+    <textarea name="D48-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d49" data-id="D49" data-title="Cancellation">
+  <header>
+    <span class="id">D49</span>
+    <h3>Cancellation</h3>
+    
+    
+    <span class="blocks">Blocks M1 (wiring)</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Before any secret is typed, abort the login at the next step. After, let it run to a classified outcome, bounded by its own timeout, so the marker is cleared by a result rather than left set (D35); the call itself returns at once as <code>aborted</code>. A write that may have reached the site isn't undone; the audit records the stage where it stopped. Tool code checks <code>ctx.signal</code> before each write, as the Woolworths adapter does.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: the endpoint passes the client's abort signal to the runtime, which aborts the tool's signal, and the tool's capabilities refuse from then on. The bridge never answers a cancelled request.</li><li>Open: what a cancel does to a login in progress, and to a write already sent.</li><li>Options for a login: abort it at the next step; let it finish, detached from the call.</li><li>Recommendation: before any secret is typed, abort the login at the next step. After, let it run to a classified outcome, bounded by its own timeout, so the marker is cleared by a result rather than left set (D35); the call itself returns at once as <code>aborted</code>. A write that may have reached the site isn't undone; the audit records the stage where it stopped. Tool code checks <code>ctx.signal</code> before each write, as the Woolworths adapter does.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D49" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D49" value="other"> Something else</label>
+    <label><input type="radio" name="D49" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D49" value="later"> Later</label>
+    <textarea name="D49-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d50" data-id="D50" data-title="Confirmation and hand-off timeouts">
+  <header>
+    <span class="id">D50</span>
+    <h3>Confirmation and hand-off timeouts</h3>
+    
+    
+    <span class="blocks">Blocks M3</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Return <code>needsUser</code> at once and leave the window up for up to 15 minutes, then close it and hold logins for a backoff. The agent can tell the person and call again. For confirmations, keep the call open with MCP progress notifications for up to 2 minutes (or the client's timeout, if shorter), then decline (<a href="#d19">D19</a>). Measure Claude Code's and Claude Desktop's timeouts in M2 and set these below them.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: the confirmation waits 5 minutes, a tool run 2 minutes, and the auth flow has its own timeout (the Woolworths steps can pause for about 60 s). The hand-off isn't wired. Clients have their own tool-call timeouts, which haven't been measured.</li><li>Options for a hand-off: block the call until the person finishes; return <code>needsUser</code> at once and leave the window up; block for a short bound, then return <code>needsUser</code>.</li><li>Recommendation: return <code>needsUser</code> at once and leave the window up for up to 15 minutes, then close it and hold logins for a backoff. The agent can tell the person and call again. For confirmations, keep the call open with MCP progress notifications for up to 2 minutes (or the client's timeout, if shorter), then decline (<a href="#d19">D19</a>). Measure Claude Code's and Claude Desktop's timeouts in M2 and set these below them.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D50" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D50" value="other"> Something else</label>
+    <label><input type="radio" name="D50" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D50" value="later"> Later</label>
+    <textarea name="D50-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d51" data-id="D51" data-title="Approval acknowledgement friction">
+  <header>
+    <span class="id">D51</span>
+    <h3>Approval acknowledgement friction</h3>
+    
+    
+    <span class="blocks">Blocks M3 (the approval screen)</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Friction in proportion to the change. A first install: one Approve, after the summary. An update that expands nothing: one click. An update that expands anything (a host, a secret or its origins, a Messages sender, a <code>write</code> or <code>irreversible</code> tool or request): a tick per expansion before Approve enables. No typing. Revisit when the authoring agent (M6) makes updates frequent.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Question: how much the approval screen asks of the person.</li><li>Options: one Approve button; a tick per permission-expanding change; typing the adapter's name for anything <code>irreversible</code>.</li><li>Recommendation: friction in proportion to the change. A first install: one Approve, after the summary. An update that expands nothing: one click. An update that expands anything (a host, a secret or its origins, a Messages sender, a <code>write</code> or <code>irreversible</code> tool or request): a tick per expansion before Approve enables. No typing. Revisit when the authoring agent (M6) makes updates frequent.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D51" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D51" value="other"> Something else</label>
+    <label><input type="radio" name="D51" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D51" value="later"> Later</label>
+    <textarea name="D51-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d52" data-id="D52" data-title="Confirmation panel placement">
+  <header>
+    <span class="id">D52</span>
+    <h3>Confirmation panel placement</h3>
+    
+    
+    <span class="blocks">Blocks M3, with C4</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> A standalone window on top, with a notification that only opens it. It has no default button, so a keystroke meant for another app can't approve.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Options: the tray popover; a standalone window from the main process, on top and centred; a system notification with action buttons.</li><li>Considerations: a notification's buttons can be pressed without reading the request, and Focus modes hide them. A popover vanishes when focus moves. The person has to see the runtime-rendered request (C4).</li><li>Recommendation: a standalone window on top, with a notification that only opens it. It has no default button, so a keystroke meant for another app can't approve.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D52" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D52" value="other"> Something else</label>
+    <label><input type="radio" name="D52" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D52" value="later"> Later</label>
+    <textarea name="D52-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d53" data-id="D53" data-title="Fake trolley merge at login">
+  <header>
+    <span class="id">D53</span>
+    <h3>Fake trolley merge at login</h3>
+    
+    
+    <span class="blocks">Blocks M2</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Record it live in M2 with one cheap item, make the fake match, and add an adapter test that no cart tool writes before <code>ensure()</code> returns <code>ok</code>.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Question: when a visitor with items in an anonymous trolley logs in, does Woolworths merge them into the account's trolley, replace it, or drop them? The fake shows the account's trolley after login and drops the anonymous one; that was a guess.</li><li>Why it matters: the tool partition is anonymous until the first handoff, and the search tools run there without logging in. Cart tools call <code>ensure()</code> first, so nothing should be added anonymously, but if something were, a merge would change Nick's real trolley at login.</li><li>Options: model replacement (today); model a merge; record it live first.</li><li>Recommendation: record it live in M2 with one cheap item, make the fake match, and add an adapter test that no cart tool writes before <code>ensure()</code> returns <code>ok</code>.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D53" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D53" value="other"> Something else</label>
+    <label><input type="radio" name="D53" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D53" value="later"> Later</label>
+    <textarea name="D53-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d54" data-id="D54" data-title="Cart line ceiling">
+  <header>
+    <span class="id">D54</span>
+    <h3>Cart line ceiling</h3>
+    
+    
+    <span class="blocks">Blocks nothing. An adapter change</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> 20 per line, raised only if real use hits it.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: the adapter refuses more than 50 of one product: <code>set_cart_quantity</code> takes 0 to 50, and <code>add_to_cart</code> won't go over 50. The site clamps to its own supply limits (often 36) and the tools report that.</li><li>Options: 50; the site's usual limit; a lower cap; no cap.</li><li>Considerations: the cap guards against an injected or confused client (&quot;set 999 milk&quot;), not a site rule. A weekly shop rarely needs more than a dozen of anything, and a lower cap bounds the harm a misused <code>write</code> tool can do (R6).</li><li>Recommendation: 20 per line, raised only if real use hits it.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D54" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D54" value="other"> Something else</label>
+    <label><input type="radio" name="D54" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D54" value="later"> Later</label>
+    <textarea name="D54-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision first" id="d55" data-id="D55" data-title="Driver-level budget and block detection">
+  <header>
+    <span class="id">D55</span>
+    <h3>Driver-level budget and block detection</h3>
+    <span class="badge write">Answer first</span>
+    
+    <span class="blocks">Blocks M2 (AC7 and AC9, and every live test)</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Split it (C16). The driver reports block signatures (a 403 HTML page, Akamai's &quot;Access Denied … Reference #&quot; page, a 429) on navigations and API calls in both partitions to the runtime's breaker, and waits on the runtime's budget before each main-frame navigation, tool- or page-initiated, in both partitions. An open breaker cancels every request to that host in the tool partition and ends a login as <code>blocked</code>. AC7's test then counts requests at the fake site, not at the capability API.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: the rate budget and circuit breaker live in the runtime's guarded page and probe. They see <code>page.fetch</code>, <code>goto</code> and the probe, nothing else. The guarded page leaves requests the page makes, or that <code>evaluate()</code> code makes, to the driver, and the driver has no budget or breaker. Core v2's <code>ToolRunPolicy</code> has no rate field either. So <code>evaluate()</code> fetches, clicks that submit or navigate, the site's own XHRs and Akamai sensor POSTs, page navigations and the whole login in the auth partition are neither paced nor watched for block pages. A block page the site serves to a page-initiated request doesn't open the breaker, and calls keep coming.</li><li>Why it matters: run 1's block came from a burst of requests. AC7 fails if anything bypasses the budget, and AC9 says no call reaches the site during a cool-down. Neither can pass.</li><li>Options: leave it (tools must use <code>page.fetch</code> and <code>goto</code>; reviewers reject adapters that don't); move the budget into the driver entirely; split it: the runtime keeps the budget and breaker, the driver reports to them and asks them.</li><li>Considerations: the driver sees every request in both partitions with its resource type and status, so it is the only place that can spot a block page served to a page-initiated request or a login. But pacing every subresource would break pages; only main-frame navigations are worth spacing, and the site's own XHRs follow from them. Keeping the state in the runtime keeps one breaker per host whichever partition saw the block.</li><li>Recommendation: split it (C16). The driver reports block signatures (a 403 HTML page, Akamai's &quot;Access Denied … Reference #&quot; page, a 429) on navigations and API calls in both partitions to the runtime's breaker, and waits on the runtime's budget before each main-frame navigation, tool- or page-initiated, in both partitions. An open breaker cancels every request to that host in the tool partition and ends a login as <code>blocked</code>. AC7's test then counts requests at the fake site, not at the capability API.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D55" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D55" value="other"> Something else</label>
+    <label><input type="radio" name="D55" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D55" value="later"> Later</label>
+    <textarea name="D55-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d56" data-id="D56" data-title="URL regex deadline">
+  <header>
+    <span class="id">D56</span>
+    <h3>URL regex deadline</h3>
+    
+    
+    <span class="blocks">Blocks M7 (third-party adapters). Nothing for Woolworths, whose flow needs only <code>urlContains</code></span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> The worker with a deadline (C19), shared with the OTP matcher, and the input bound lowered to 256 as well. Until then, reject <code>urlRegex</code> in third-party manifests, and prefer <code>urlContains</code> in first-party ones.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: <code>urlRegex</code> conditions run synchronously in the main process. On <code>main</code> the auth flow compiles and runs them with a 2,048-character bound on the path and query, no screen and no deadline. Core v2 adds the parse-time screen, which stops exponential shapes but not polynomial ones such as <code>\d*\d*\d*\d*x</code>: at 2,048 characters a degree-4 pattern needs on the order of 10^13 steps. A hostile adapter controls the pattern, and through <code>goto(url)</code> to its own navigation origins, the input too. That freezes the trusted main process: logins, the MCP endpoint and the audit log. OTP patterns already run in a worker under a deadline.</li><li>Options: run <code>urlRegex</code> in the same worker-with-deadline as OTP patterns, a timeout counting as &quot;doesn't match&quot;; cap quantifiers per pattern (say at most two unbounded ones) and lower the input bound to about 256 characters; drop <code>urlRegex</code> and keep only <code>urlContains</code>.</li><li>Considerations: <code>waitFor</code> polls its condition, so a worker round trip per poll costs latency, but conditions are polled every few hundred milliseconds at most, and a worker can be kept for the length of a login. A quantifier cap is cheap but is another screen that a cleverer shape might pass. Most real login flows only need <code>urlContains</code>.</li><li>Recommendation: the worker with a deadline (C19), shared with the OTP matcher, and the input bound lowered to 256 as well. Until then, reject <code>urlRegex</code> in third-party manifests, and prefer <code>urlContains</code> in first-party ones.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D56" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D56" value="other"> Something else</label>
+    <label><input type="radio" name="D56" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D56" value="later"> Later</label>
+    <textarea name="D56-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d57" data-id="D57" data-title="Blocked-request target">
+  <header>
+    <span class="id">D57</span>
+    <h3>Blocked-request target</h3>
+    
+    
+    <span class="blocks">Blocks M1 (the audit event's shape)</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Keep origin plus path digest in <code>request-blocked</code> (C18).</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: the round-1 driver reports a blocked request's target as the origin plus a 16-hex digest of the path, on purpose: tool code chooses the whole URL of a request it wants blocked, so a path can carry a session token into the audit log. Core v2's <code>BlockedRequest.target</code> is origin and path.</li><li>Options: origin plus path digest (round 1); origin and path, through output redaction; origin only.</li><li>Considerations: redaction catches only verbatim cookie and secret values, so an encoded token in a blocked path would be stored in the audit log, which is kept and may be shared to debug. The digest still lets the person see that the same path was blocked again, and match it against a path they already know. A readable path helps when an adapter breaks, but the developer can reproduce that against the fake site.</li><li>Recommendation: keep origin plus path digest in <code>request-blocked</code> (C18).</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D57" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D57" value="other"> Something else</label>
+    <label><input type="radio" name="D57" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D57" value="later"> Later</label>
+    <textarea name="D57-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision first" id="d58" data-id="D58" data-title="Page-initiated traffic">
+  <header>
+    <span class="id">D58</span>
+    <h3>Page-initiated traffic</h3>
+    <span class="badge write">Answer first</span>
+    
+    <span class="blocks">Blocks M2. Until it's decided, the current Woolworths manifest breaks under the v2 policy</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Two ceilings (C17); <code>host</code> on declarations, defaulting to the home host, with the site's own non-GET background calls declared on their real hosts under a <code>telemetry</code> purpose that ranks with <code>read</code> and that no tool can call through <code>page.fetch</code>; and deny segments limited to R17's resource types. The Woolworths numbers, hosts and paths come from M2's measurement, and the manifest is fixed before the driver adopts the v2 policy.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: core v2's policy holds the site's own API calls to the declarations, and counts navigations and API calls, the site's own included, against one ceiling (<code>limits.requestsPerRun</code>). The Woolworths manifest sets <code>requestsPerRun: 6</code> and declares only its tools' four endpoints. The site makes several calls on load, including Akamai's sensor POSTs. Under the v2 policy a home-page load can exhaust the ceiling, and the sensor POSTs are cancelled, which probably makes bot detection worse, against D24's intent. Declarations have no host, so declaring the sensor path on <code>acs.woolworths.com.au</code> also allows it on www, and it would have to be labelled <code>read</code>. G1's own warning (keep the partition-wide ceiling apart from the <code>page.fetch</code> count) was lost when core v2 merged them. Separately, deny segments apply to every resource type today, scripts included (R17).</li><li>Options: one ceiling and per-host declarations; two ceilings, one for tool-initiated requests (what <code>requestsPerRun</code> was meant for) and a larger one for page-initiated navigations and API calls; for the site's own non-GET traffic, a host-scoped <code>telemetry</code> list (C8 reduced) or <code>host</code> on declarations with a purpose of its own.</li><li>Considerations: the driver can't tell which world started a request, but the runtime knows which requests it made itself (<code>page.fetch</code>, <code>goto</code>), so it can count those separately. A telemetry list says plainly on the approval screen what it is; a <code>read</code> label on a sensor POST says something false. Cancelling a site's own sensor traffic is the kind of difference from the person's own browser D24 tells us to avoid.</li><li>Recommendation: two ceilings (C17); <code>host</code> on declarations, defaulting to the home host, with the site's own non-GET background calls declared on their real hosts under a <code>telemetry</code> purpose that ranks with <code>read</code> and that no tool can call through <code>page.fetch</code>; and deny segments limited to R17's resource types. The Woolworths numbers, hosts and paths come from M2's measurement, and the manifest is fixed before the driver adopts the v2 policy.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D58" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D58" value="other"> Something else</label>
+    <label><input type="radio" name="D58" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D58" value="later"> Later</label>
+    <textarea name="D58-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d59" data-id="D59" data-title="Several Messages senders">
+  <header>
+    <span class="id">D59</span>
+    <h3>Several Messages senders</h3>
+    
+    
+    <span class="blocks">Blocks nothing for Woolworths</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> One sender per adapter for now, as a parse-time rule (C19), and a grant per sender if a real site needs two.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: a grant is one record per adapter, content hash and secret, and Messages codes are granted under the reserved secret <code>messages</code> with the sender handle as <code>itemRef</code>. So an adapter has one <code>messages</code> grant and one sender. <code>messagesSourcesIn()</code> can return several senders, and a manifest with two can't be fully granted.</li><li>Options: one Messages sender per adapter, enforced when the manifest is parsed; a grant per sender (the secret becomes <code>messages:&lt;sender&gt;</code>, or the grant's key gains the sender); one grant whose <code>itemRef</code> holds a list.</li><li>Considerations: sites that send codes from two numbers exist (a short code and a long number, or a change of provider), but none we target does. A list in <code>itemRef</code> muddies a field every other provider uses for one item. A grant per sender keeps each approval explicit.</li><li>Recommendation: one sender per adapter for now, as a parse-time rule (C19), and a grant per sender if a real site needs two.</li></ul>
+<p>---</p></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D59" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D59" value="other"> Something else</label>
+    <label><input type="radio" name="D59" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D59" value="later"> Later</label>
+    <textarea name="D59-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+  </section>
+
+  <section id="todo" data-panel hidden>
+    <div class="panel"><p>Collected from the above, so tomorrow's review can schedule it.</p>
+<ol><li>Answer the decisions in <a href="../plan.md#answer-these-first">Answer these first</a>: D1, D4 (as far as he knows: is MFA on his Woolworths account, and which kind?), D5, D6, D8, D18, D24 and D28. Look through the <a href="../mockups/index.html">mockups</a> while doing it. Then the round-1 decisions that block M2 and M3: D32, D35, D38 and D41.</li><li>Review <code>core</code> and the overnight branches' guards and secret filler line by line (R13).</li><li>Run spike 1, with the clean Chrome UA: log in by hand in the spike window, close it, read the result (~15 minutes).</li><li>A session to confirm the rest of the Auth0 flow (password page, MFA, the silent redirect), the probe, and the checkout and payment request paths up to but not including &quot;Place order&quot; (~45–60 minutes).</li><li>Set up the 1Password vault and service account (~15 minutes), and give the app the token through its onboarding, not through chat or a file.</li><li>Grant Full Disk Access when the OTP reader lands.</li><li>Make notarisation credentials available in his Keychain for the release script.</li><li>Use it for two weeks.</li></ol></div>
+  </section>
+
+  <section id="screens" data-panel hidden>
+    <div class="gallery"><figure><a href="../mockups/screens/menubar-light.png"><img loading="lazy" src="../mockups/screens/menubar-light.png" alt="Menu bar"></a><figcaption>Menu bar</figcaption></figure></div>
+  </section>
+
+  <section id="material" data-panel hidden>
+    <section class="links"><h3>Docs</h3><ul><li><a href="../plan.md">Plan</a></li></ul></section>
+  </section>
+</main>
+<script>
+  const KEY = 'siteadapter-review-answers'
+  const read = () => { try { return JSON.parse(localStorage.getItem(KEY) || '{}') } catch { return {} } }
+  const write = (value) => { try { localStorage.setItem(KEY, JSON.stringify(value)) } catch {} }
+  const answers = read()
+  const cards = [...document.querySelectorAll('.decision')]
+
+  function refresh() {
+    let done = 0
+    for (const card of cards) {
+      const a = answers[card.dataset.id]
+      const answered = Boolean(a && (a.choice || a.note))
+      card.classList.toggle('answered', answered)
+      if (answered) done++
+    }
+    document.getElementById('progress').textContent = done + ' of ' + cards.length + ' answered'
+  }
+
+  for (const card of cards) {
+    const id = card.dataset.id
+    const saved = answers[id] || {}
+    for (const radio of card.querySelectorAll('input[type=radio]')) {
+      radio.checked = radio.value === saved.choice
+      radio.addEventListener('change', () => { answers[id] = { ...answers[id], choice: radio.value }; write(answers); refresh() })
+    }
+    const note = card.querySelector('textarea')
+    note.value = saved.note || ''
+    note.addEventListener('input', () => { answers[id] = { ...answers[id], note: note.value }; write(answers); refresh() })
+  }
+
+  const LABELS = { accept: 'accept the recommendation', other: 'something else', discuss: 'discuss', later: 'later' }
+  function exportMarkdown() {
+    const lines = ['# Decisions from the overnight review', '']
+    for (const card of cards) {
+      const a = answers[card.dataset.id]
+      if (!a || !(a.choice || a.note)) continue
+      lines.push('- **' + card.dataset.id + ' ' + card.dataset.title + '**: ' + (LABELS[a.choice] || 'note') + (a.note ? '. ' + a.note.trim().replace(/\n+/g, ' ') : ''))
+    }
+    return lines.join('\n') + '\n'
+  }
+  document.getElementById('copy').addEventListener('click', async (event) => {
+    await navigator.clipboard.writeText(exportMarkdown())
+    event.target.textContent = 'Copied'
+    setTimeout(() => { event.target.textContent = 'Copy answers as Markdown' }, 1500)
+  })
+  document.getElementById('download').addEventListener('click', () => {
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(new Blob([exportMarkdown()], { type: 'text/markdown' }))
+    link.download = 'answers.md'
+    link.click()
+  })
+
+  function filter(kind) {
+    for (const card of cards) {
+      const answered = card.classList.contains('answered')
+      card.hidden = (kind === 'first' && !card.classList.contains('first')) || (kind === 'open' && answered)
+    }
+  }
+  for (const button of document.querySelectorAll('[data-filter]')) button.addEventListener('click', () => filter(button.dataset.filter))
+
+  function show(tab) {
+    for (const panel of document.querySelectorAll('[data-panel]')) panel.hidden = panel.id !== tab
+    for (const link of document.querySelectorAll('nav.tabs a')) link.setAttribute('aria-current', String(link.dataset.tab === tab))
+  }
+  function route() {
+    const hash = location.hash.slice(1)
+    if (/^d\d+a?$/.test(hash)) { show('decisions-tab'); filter('all'); document.getElementById(hash)?.scrollIntoView(); return }
+    show(document.getElementById(hash)?.dataset.panel !== undefined ? hash : 'overview')
+  }
+  window.addEventListener('hashchange', route)
+  route()
+  refresh()
+</script>
+</body>
+</html>

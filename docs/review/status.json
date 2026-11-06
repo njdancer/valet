@@ -1,0 +1,10 @@
+{
+  "generated": "Draft, 7 November 2026",
+  "headline": "Placeholder headline.",
+  "numbers": [{ "label": "tests", "value": "2,573" }],
+  "tryIt": "Run `pnpm demo`.",
+  "built": [{ "area": "packages/core", "state": "Contracts v3." }],
+  "gaps": ["Placeholder gap."],
+  "links": [{ "title": "Docs", "items": [{ "label": "Plan", "href": "../plan.md" }] }],
+  "screens": [{ "src": "../mockups/screens/menubar-light.png", "caption": "Menu bar" }]
+}
