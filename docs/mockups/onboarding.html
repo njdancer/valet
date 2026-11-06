@@ -1,0 +1,479 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Onboarding · siteadapter mockups</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="ide.css" />
+    <script src="app.js"></script>
+    <style>
+      .ob-rail .ob-step {
+        cursor: default;
+      }
+      .cols {
+        display: grid;
+        grid-template-columns: 1.45fr 1fr;
+        gap: var(--space-4);
+        align-items: start;
+      }
+      .cols.even {
+        grid-template-columns: 1fr 1fr;
+      }
+      .option .desc {
+        margin-top: 3px;
+        font-size: var(--text-sm);
+        color: var(--text-secondary);
+      }
+      .numlist .btn {
+        height: 22px;
+        font-size: var(--text-sm);
+      }
+      .numlist .hint {
+        display: block;
+        font-size: var(--text-xs);
+        color: var(--text-secondary);
+      }
+      .token-field {
+        min-width: 0;
+        overflow: hidden;
+        white-space: nowrap;
+      }
+      .connected {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 8px;
+        font-size: var(--text-sm);
+        color: var(--ok);
+      }
+      .connected .i {
+        width: 13px;
+        height: 13px;
+      }
+      .side .card {
+        padding: 12px 14px;
+        font-size: var(--text-sm);
+      }
+      .side .card .h3 {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 4px;
+      }
+      .side ul {
+        margin: 4px 0 0;
+        padding-left: 16px;
+        color: var(--text-secondary);
+      }
+      .callout {
+        font-size: var(--text-sm);
+      }
+      .client-card .code {
+        margin: 8px 0;
+        padding: 8px 12px;
+        font-size: 11.5px;
+      }
+      .client-card .card-body {
+        padding: 14px 16px;
+      }
+      .install {
+        display: grid;
+        grid-template-columns: 48px 1fr auto;
+        gap: 14px;
+        align-items: center;
+        padding: 16px;
+      }
+      .perm-grid {
+        display: grid;
+        grid-template-columns: 150px 1fr;
+        gap: 8px 16px;
+        padding: 14px 16px;
+        border-top: 0.5px solid var(--border);
+        font-size: var(--text-sm);
+      }
+      .perm-grid dt {
+        color: var(--text-secondary);
+      }
+      .perm-grid dd {
+        margin: 0;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+      }
+      .bind-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 12px 16px;
+        border-top: 0.5px solid var(--border);
+        background: var(--secret-bg);
+        font-size: var(--text-sm);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="desktop center">
+      <header class="sysbar">
+        <span class="i i-apple"></span>
+        <span class="app-name">siteadapter</span>
+        <span>File</span><span>Edit</span><span>Window</span><span>Help</span>
+        <span class="spacer"></span>
+        <span class="status">
+          <span class="tray"><span class="i i-logo"></span></span>
+          <span class="i i-wifi"></span>
+          <span class="i i-battery" style="width: 22px"></span>
+          <span>Sat 7 Nov&nbsp; 9:14 pm</span>
+        </span>
+      </header>
+
+      <div class="window onboard">
+        <div class="ob">
+          <aside class="ob-rail">
+            <div class="traffic"><span></span><span></span><span></span></div>
+            <div class="ob-brand">
+              <span class="logo"><span class="i i-logo"></span></span>
+              <div>
+                <div class="h3">Set up siteadapter</div>
+                <div class="xs muted">About 5 minutes</div>
+              </div>
+            </div>
+            <div class="ob-step" data-step="1">
+              <span class="n">1</span>
+              <div><div class="title">Welcome</div><div class="sub">What siteadapter does</div></div>
+            </div>
+            <div class="ob-step" data-step="2">
+              <span class="n">2</span>
+              <div><div class="title">Connect a client</div><div class="sub">Claude Code connected</div></div>
+            </div>
+            <div class="ob-step" data-step="3">
+              <span class="n">3</span>
+              <div><div class="title">1Password</div><div class="sub">Where logins come from</div></div>
+            </div>
+            <div class="ob-step" data-step="4">
+              <span class="n">4</span>
+              <div><div class="title">Text-message codes</div><div class="sub">Optional</div></div>
+            </div>
+            <div class="ob-step" data-step="5">
+              <span class="n">5</span>
+              <div><div class="title">First adapter</div><div class="sub">Woolworths</div></div>
+            </div>
+            <div class="foot stack">
+              <span class="row"><span class="dot ok"></span>MCP on · 127.0.0.1:47821</span>
+              <span>Everything here can be changed later in Settings.</span>
+            </div>
+          </aside>
+
+          <main class="ob-main">
+            <div class="ob-content">
+              <!-- 1. What siteadapter is -->
+              <section class="ob-pane" data-step="1" hidden>
+                <div class="kicker">Step 1 of 5</div>
+                <h1>Let your AI tools use websites, not your passwords</h1>
+                <p class="lede">
+                  siteadapter runs small adapters for sites without a public API, like Woolworths, and offers their tools to
+                  Claude over MCP. It runs on this Mac only: no account, no cloud.
+                </p>
+                <div class="ob-flow">
+                  <div class="box">
+                    <div class="h3"><span class="i sm i-clients"></span>Claude Code</div>
+                    <div class="muted">Calls a tool: <span class="mono">get_cart</span></div>
+                  </div>
+                  <div class="arrow"></div>
+                  <div class="box">
+                    <div class="h3"><span class="i sm i-logo"></span>siteadapter</div>
+                    <div class="muted">Runs the adapter in a browser session and checks every request against its manifest</div>
+                  </div>
+                  <div class="arrow"></div>
+                  <div class="box">
+                    <div class="h3"><span class="i sm i-globe"></span>woolworths.com.au</div>
+                    <div class="muted">Sees an ordinary Chrome, logged in as you</div>
+                  </div>
+                </div>
+                <div class="never">
+                  <div class="card">
+                    <div class="h3"><span class="i sm i-key secret-text"></span>Adapters never see a password</div>
+                    <div class="muted">
+                      Logins run in a separate session from 1Password. Adapter code never runs there, and gets a logged-in page
+                      afterwards.
+                    </div>
+                  </div>
+                  <div class="card">
+                    <div class="h3"><span class="i sm i-globe"></span>Only declared hosts</div>
+                    <div class="muted">
+                      Every request an adapter makes is checked against the hosts and API calls it declared and you approved.
+                    </div>
+                  </div>
+                  <div class="card">
+                    <div class="h3"><span class="i sm i-touchid danger-text"></span>Nothing irreversible without you</div>
+                    <div class="muted">
+                      Checkout, payment and the like wait for your confirmation in this app. An agent can't give it.
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 2. MCP clients -->
+              <section class="ob-pane" data-step="2" hidden>
+                <div class="kicker">Step 2 of 5</div>
+                <h1>Connect an MCP client</h1>
+                <p class="lede">
+                  Each client gets its own token, kept in your Keychain. The bundled bridge reads it, so no token sits in a
+                  config file, and you can revoke one client without touching the others.
+                </p>
+                <div class="stack gap-3">
+                  <div class="card client-card">
+                    <div class="card-body">
+                      <div class="row"><span class="h3">Claude Code</span><span class="pill ok" style="margin-left: auto">Connected</span></div>
+                      <pre class="code">claude mcp add siteadapter -- \
+  /Applications/siteadapter.app/Contents/Resources/bin/siteadapter-mcp</pre>
+                      <div class="row">
+                        <button type="button" class="btn"><span class="i sm i-copy"></span>Copy</button>
+                        <span class="xs muted">First call 9:12 pm: <span class="mono">tools/list</span></span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="card client-card">
+                    <div class="card-body">
+                      <div class="row"><span class="h3">Claude Desktop</span><span class="pill" style="margin-left: auto">Not yet</span></div>
+                      <pre class="code">{ <span class="k">"mcpServers"</span>: { <span class="k">"siteadapter"</span>: {
+  <span class="k">"command"</span>: <span class="s">"/Applications/siteadapter.app/Contents/Resources/bin/siteadapter-mcp"</span>
+} } }</pre>
+                      <div class="row">
+                        <button type="button" class="btn primary">Add to Claude Desktop…</button>
+                        <span class="xs muted">Shows you the change, then restart it</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="callout info" style="margin-top: var(--space-4)">
+                  <span class="i i-clients"></span>
+                  <div>
+                    Other clients can use Streamable HTTP at <span class="mono">http://127.0.0.1:47821/mcp</span> with a token
+                    from Settings › Clients. The endpoint listens on this Mac only.
+                  </div>
+                </div>
+              </section>
+
+              <!-- 3. 1Password -->
+              <section class="ob-pane" data-step="3" hidden>
+                <div class="kicker">Step 3 of 5</div>
+                <h1>Where logins come from</h1>
+                <p class="lede">
+                  siteadapter reads one field from 1Password when a login runs, types it into the site and forgets it.
+                  Adapters never see it, and you pick the item each one may use.
+                </p>
+                <div class="cols">
+                  <div class="option on">
+                    <span class="radio on"></span>
+                    <div>
+                      <div class="head">
+                        <span class="h3">A service account for one vault</span><span class="pill ok">Recommended</span>
+                      </div>
+                      <div class="desc">
+                        Works while your Mac is locked or 1Password is closed, so tools keep working when you're away. It can
+                        read only the vault you give it, and you can revoke it in 1Password.
+                      </div>
+                      <ol class="numlist">
+                        <li class="done">
+                          <span>Create a vault called <strong>siteadapter</strong></span><span></span>
+                        </li>
+                        <li class="done">
+                          <span
+                            >Move or copy in the logins to use
+                            <span class="hint">Service accounts can't read your personal vaults. Found: Woolworths.</span></span
+                          ><span></span>
+                        </li>
+                        <li class="done">
+                          <span>Create a service account with read access to that vault only</span>
+                          <button type="button" class="btn"><span class="i sm i-external"></span>1Password.com</button>
+                        </li>
+                        <li class="done">
+                          <span class="token-field"
+                            ><span class="i sm i-lock"></span>ops_eyJhbGciOi••••••••••••<span style="flex: 1"></span
+                            ><span class="xs ok-text">Pasted</span></span
+                          ><span></span>
+                        </li>
+                      </ol>
+                      <div class="connected">
+                        <span class="i i-check"></span>Connected: vault siteadapter, 4 items. Token saved to your Keychain.
+                      </div>
+                    </div>
+                  </div>
+                  <div class="stack gap-3 side">
+                    <div class="option">
+                      <span class="radio"></span>
+                      <div>
+                        <div class="head"><span class="h3">1Password app and op CLI</span></div>
+                        <div class="desc">
+                          No setup. Each login needs 1Password unlocked and Touch ID, so a call made while you're away waits
+                          for you.
+                        </div>
+                        <div class="xs tertiary" style="margin-top: 6px">Found op 2.32 · app integration on</div>
+                      </div>
+                    </div>
+                    <div class="callout warn">
+                      <span class="i i-warn"></span>
+                      <div>
+                        <strong>One honest caveat.</strong> In this version, reading the token shows a macOS prompt naming
+                        <span class="mono">security</span>, not siteadapter. Allow it each time. Never choose
+                        <strong>Always Allow</strong>: any app you run could then read the token.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <!-- 4. Messages, optional -->
+              <section class="ob-pane" data-step="4" hidden>
+                <div class="kicker">Step 4 of 5 · optional</div>
+                <h1>Text-message codes</h1>
+                <p class="lede">
+                  Some sites text you a code when you log in. siteadapter can read it from Messages so the login finishes
+                  without you. It needs more access than that sounds like, so skipping is fine.
+                </p>
+                <div class="cols even">
+                  <div class="card side">
+                    <div class="card" style="border: 0">
+                      <div class="h3"><span class="i sm i-warn warn-text"></span>What it needs: Full Disk Access</div>
+                      <div class="muted">
+                        macOS has no permission for Messages alone. Full Disk Access lets siteadapter read any file you can,
+                        including mail, photos and documents. You'd be trusting the siteadapter app with all of it, not just
+                        your texts.
+                      </div>
+                    </div>
+                  </div>
+                  <div class="card side">
+                    <div class="card" style="border: 0">
+                      <div class="h3"><span class="i sm i-message"></span>What siteadapter does with it</div>
+                      <ul>
+                        <li>Reads Messages only when a login step asks for a code</li>
+                        <li>Only recent texts matching the adapter's sender and pattern</li>
+                        <li>Types the code into the site; adapters and agents never see it, and it isn't logged</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+                <div class="callout ok" style="margin-top: var(--space-4)">
+                  <span class="i i-check"></span>
+                  <div>
+                    <strong>Woolworths doesn't need it today.</strong> No text-message code has been seen on its login. An
+                    adapter that wants codes says so in its manifest, and its review shows it. Turn this on later in System
+                    Settings › Privacy &amp; Security › Full Disk Access.
+                  </div>
+                </div>
+                <div class="row" style="margin-top: var(--space-4)">
+                  <button type="button" class="btn lg">Open Privacy &amp; Security…</button>
+                  <span class="xs muted">You can turn it off there any time.</span>
+                </div>
+              </section>
+
+              <!-- 5. Install Woolworths -->
+              <section class="ob-pane" data-step="5" hidden>
+                <div class="kicker">Step 5 of 5</div>
+                <h1>Install your first adapter</h1>
+                <p class="lede">
+                  Read what it asks for before you approve it. The approval and the login you bind belong to this exact
+                  version: any change, even a repair, comes back to you as a diff.
+                </p>
+                <div class="card">
+                  <div class="install">
+                    <span class="avatar lg wow">W</span>
+                    <div>
+                      <div class="row"><span class="h2">Woolworths</span><span class="pill">0.1.0</span><span class="hash">9f3c1a7e…e0f1</span></div>
+                      <div class="muted small">Search products and manage your trolley. Bundled with siteadapter.</div>
+                    </div>
+                    <span class="badge read">can't check out</span>
+                  </div>
+                  <dl class="perm-grid">
+                    <dt>Login may visit</dt>
+                    <dd><span class="hash">https://www.woolworths.com.au</span><span class="hash">https://auth.woolworths.com.au</span></dd>
+                    <dt>Tools may contact</dt>
+                    <dd><span class="hash">www.woolworths.com.au</span><span class="hash">cdn0.woolworths.media</span><span class="hash">acs.woolworths.com.au</span></dd>
+                    <dt>Tools</dt>
+                    <dd>
+                      <span class="badge read">3 read</span><span class="badge write">3 write: trolley only</span
+                      ><span class="badge neutral">0 irreversible</span>
+                    </dd>
+                    <dt>Asks for a login</dt>
+                    <dd>
+                      <span class="badge secret">login</span> username, password and one-time code, on
+                      <span class="mono">auth.woolworths.com.au</span>
+                    </dd>
+                  </dl>
+                  <div class="bind-row">
+                    <span class="i i-key secret-text"></span>
+                    <span>Use</span>
+                    <span class="select">Woolworths · vault siteadapter</span>
+                    <span>for <span class="badge secret">login</span></span>
+                    <span class="xs muted" style="margin-left: auto">Only this version can use it</span>
+                  </div>
+                </div>
+                <div class="callout info" style="margin-top: var(--space-4)">
+                  <span class="i i-user"></span>
+                  <div>
+                    The first login is from a new browser, so Woolworths may ask for a code or a check. siteadapter shows you
+                    the window when it does. It never solves checks for you.
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <div class="ob-foot">
+              <div class="dots"><i></i><i></i><i></i><i></i><i></i></div>
+              <span class="spacer"></span>
+              <button type="button" class="btn lg" data-back>Back</button>
+              <button type="button" class="btn lg primary" data-next>Continue</button>
+            </div>
+          </main>
+        </div>
+      </div>
+    </div>
+    <nav class="mockbar" aria-label="Mockup">
+      <a href="index.html">All screens</a>
+      <button type="button" data-theme-toggle>Light / dark</button>
+    </nav>
+    <script>
+      // Step switching for the static mockup. ?step=1..5 picks the opening step; 3 (1Password) by default.
+      ;(() => {
+        const LAST = 5
+        const labels = { 4: 'Skip for now', 5: 'Install Woolworths' }
+        const requested = Number(new URLSearchParams(location.search).get('step'))
+        let step = requested >= 1 && requested <= LAST ? requested : 3
+
+        const show = () => {
+          for (const pane of document.querySelectorAll('.ob-pane')) pane.hidden = Number(pane.dataset.step) !== step
+          for (const item of document.querySelectorAll('.ob-step')) {
+            const n = Number(item.dataset.step)
+            item.classList.toggle('on', n === step)
+            item.classList.toggle('done', n < step)
+            item.querySelector('.n').innerHTML = n < step ? '<span class="i i-check"></span>' : String(n)
+          }
+          document.querySelectorAll('.ob-foot .dots i').forEach((dot, i) => {
+            dot.classList.toggle('on', i + 1 === step)
+          })
+          document.querySelector('[data-back]').disabled = step === 1
+          document.querySelector('[data-next]').textContent = labels[step] ?? 'Continue'
+        }
+
+        for (const item of document.querySelectorAll('.ob-step')) {
+          item.addEventListener('click', () => {
+            step = Number(item.dataset.step)
+            show()
+          })
+        }
+        document.querySelector('[data-back]').addEventListener('click', () => {
+          step = Math.max(1, step - 1)
+          show()
+        })
+        document.querySelector('[data-next]').addEventListener('click', () => {
+          step = Math.min(LAST, step + 1)
+          show()
+        })
+        show()
+      })()
+    </script>
+  </body>
+</html>
