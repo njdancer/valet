@@ -1,6 +1,6 @@
 # Development plan
 
-Draft, 2026-11-07. Covers the work from here to a v1 open-source release. Nick reviews it and
+Draft, 2026-11-07, updated after round 1. Covers the work from here to a v1 open-source release. Nick reviews it and
 answers the [decisions](#decisions). It sits on top of [security-model.md](security-model.md) and
 [architecture.md](architecture.md), and doesn't repeat them. Where this plan finds a gap in either,
 it says so.
@@ -24,18 +24,57 @@ it says so.
 
 ## Where we are
 
-As of commit `cb0b1c3` on `main`:
+Round 1 is merged on `main` (`bc0ec97`). Round 2 starts from branch `core-v2`, where `core` has
+new contracts (commits `3289104` and `c7aa6fb`) that the other packages are adopting.
 
-| Area                                       | State                                                                                                                                                                                                                                                                                           |
-| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Docs                                       | Security model and architecture drafts. One live finding, four runs: the Akamai block, the Auth0 login, and the user-agent result.                                                                                                                                                              |
-| `packages/core`                            | Done for v0: manifest schema with declarative auth steps, probes, request surface, origin and host matching, `SecretValue`, page and session-driver contracts, credential, grant and OTP contracts, audit events, the error vocabulary and content hashing. Tested.                             |
-| Other packages                             | Skeletons with their dependencies: `runtime`, `auth-flow`, `credentials`, `mcp-server`, `browser-electron`, `adapters/woolworths`, `fakes/woolworths-site`, `apps/desktop`. Separate overnight branches (`wip/*`) are filling in each one against `core`; they haven't been reviewed or merged. |
-| Spike 1 (`spikes/01-woolworths-electron`)  | Code written. **Not run.** It needs Nick to log in by hand. Its UA comparison is now settled by run 4, so before it runs it should set the clean Chrome UA rather than test both.                                                                                                               |
-| Live probe (`spikes/02-woolworths-shapes`) | Run four times. See [the finding](findings/2026-11-07-woolworths-live-probe.md) and the summary below.                                                                                                                                                                                          |
-| Isolation spike (architecture.md, spike 2) | **Not run.** The architecture's "spike 2" is the secret-fill isolation test against a local fake site. It is replaced by M1's canary egress and hostile-adapter suites, which are the same test made permanent. architecture.md should say so (see [doc changes](#changes-to-the-other-docs)).  |
-| Mockups                                    | Tokens plus clickable static mockups of the screens the security model depends on: [docs/mockups](mockups/index.html), screenshots in `docs/mockups/screens/`. See [Desktop UI](#ws5-desktop-ui).                                                                                               |
-| Packaging, CI, releases                    | Nothing yet. The repo is local-only, with no remote and no CI.                                                                                                                                                                                                                                  |
+| Area                                       | State                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Docs                                       | Security model, architecture and this plan, updated after round 1. One live finding, four runs. Mockups of the screens the security model leans on. Drafts for remote access (`relay.md`) and the authoring agent are being written in round 2.                                                                                                                             |
+| `packages/core`                            | Contracts v2: `needsUser` reason codes and `NeedsUserError`, typed `EnsureResult`, `urlContains`/`urlRegex` with screened patterns, `messages` grants, origin-bound `type()`, `inputReachable`, `auth.frameOrigins`, `beginRun(policy)`/`unlockIrreversible()`/`endRun()`, `sessionSecrets()`, `revealEach()` and `clone()`, rate and breaker limits, new audit events. Tested. |
+| `packages/runtime`                         | Built: `ToolHost` (approval, lock, deadlines, confirmation before `run()`, guarded tool page, output parse, plain-JSON conversion and redaction), the hash-chained audit log, the attempt marker with holds and backoff, the per-site rate budget and circuit breaker.                                                                                                      |
+| `packages/auth-flow`                       | Built: `runAuthFlow`, the interpreter, the secret filler with every pre-fill check, Messages OTP behind a grant, canary tests.                                                                                                                                                                                                                                              |
+| `packages/credentials`                     | Built: 1Password SDK and `op` providers, the resolver, the file grant store, the Keychain token source (with the v0 ACL gap), the Messages OTP reader (exact sender, screened pattern in a worker).                                                                                                                                                                        |
+| `packages/browser-electron`                | Built: the Electron `SessionDriver`, focus-bound typing, the tool partition's request filter on every request, the CONNECT egress proxy, cookie and storage handoff. 21 Electron e2e tests against a local HTTPS site (`check:e2e`, needs a GUI session).                                                                                                                  |
+| `packages/mcp-server`                      | Built: Streamable HTTP on `127.0.0.1` with a bearer token and Host/Origin checks, derived annotations, schema-parsed results with fixed error text, the stdio bridge.                                                                                                                                                                                                       |
+| `adapters/woolworths`                      | Built against the fake: six tools (search, product, cart, add, set, remove). Login is still the round-1 same-origin shape, not Auth0.                                                                                                                                                                                                                                      |
+| `fakes/woolworths-site`                    | Built: one origin, recording every request, an Akamai-like limiter, hostile variants for each guard, an exfil sink, a certificate generator. No separate auth origin yet.                                                                                                                                                                                                   |
+| `apps/desktop`                             | Dependencies only, no source.                                                                                                                                                                                                                                                                                                                                               |
+| Tests                                      | 1,814 unit tests green on `main`, about 99% line coverage (thresholds 90/90/90/85); 21 Electron e2e tests. On `core-v2` the packages other than `core` don't compile until round 2 lands.                                                                                                                                                                                  |
+| Spike 1 (`spikes/01-woolworths-electron`)  | Code written. **Not run.** It needs Nick to log in by hand, with the clean Chrome UA set.                                                                                                                                                                                                                                                                                  |
+| Live probe (`spikes/02-woolworths-shapes`) | Run four times. See [the finding](findings/2026-11-07-woolworths-live-probe.md) and the summary below.                                                                                                                                                                                                                                                                     |
+| Packaging, CI, releases                    | Nothing yet. The repo is local-only, with no remote and no CI.                                                                                                                                                                                                                                                                                                              |
+
+What round 1 did not do, or did differently from the docs. Each is round-2 work unless marked:
+
+- **Nothing is wired end to end.** Each package is tested on its own against `core` and fakes. No
+  test drives an MCP client through the runtime, the auth flow and a driver, and the app doesn't
+  exist. This is still [M1](#m1-vertical-slice-against-fakes)'s exit.
+- **The user agent.** D9 decided the clean Chrome UA, but the driver still defaults to Electron's
+  and sets no `Accept-Language`.
+- **Woolworths login.** The adapter and the fake still model a same-origin login on www with the
+  fake's selectors, not Auth0 on `auth.woolworths.com.au`.
+- **The run's network policy.** The driver enforces it in `webRequest` with its own
+  `beginRun(sideEffect)`, but the runtime never calls it, so the allowance is always a read
+  tool's. Core v2's `beginRun(policy, onBlocked)` replaces both.
+- **Redaction after dispose.** The runtime's redaction set loses each secret when the filler
+  disposes it. Core v2's run-scoped `clone()` fixes that.
+- **Breaker and budget.** In memory only, with the code's defaults (2 s gap, 10 min cool-down
+  doubling to 2 h), looser than [D28](#d28-rate-budget-defaults)'s
+  ([D33](#d33-breaker-defaults-and-persistence)).
+- **One password submit.** AC10's limit holds across logins (the marker holds after
+  `auth-failed`), but not inside one: `retry` re-runs after `auth-step/auth-failed`, so a flow
+  with a `retry` around its fill could submit the password twice
+  ([D32](#d32-which-failures-retry)).
+- **Hand-off.** Nothing calls `AuthPage.handToUser()` yet. `needsUser` reaches the client, but no
+  window is shown.
+- **Free-text reasons.** The adapter's `needsUser` steps and its tool errors still use free text
+  and borrowed error classes; core v2's reason codes and `NeedsUserError` replace them.
+- **Tool code isn't in a separate process.** The architecture's `utilityProcess` was never built;
+  tool code runs in the main process. Planned for M3, with the sandbox in M7.
+
+Round 2, in progress on `wip2/*` branches: each package adopts core v2; the Woolworths adapter
+and fake move to the Auth0 shape; the desktop app's renderer and its `window.siteadapter` API;
+and these docs.
 
 What the live probe established (all on 2026-11-07, from Nick's IP):
 
@@ -46,8 +85,8 @@ What the live probe established (all on 2026-11-07, from Nick's IP):
 - **The block attached to the user agent, not the cookies or the IP alone.** A fresh partition
   with Electron's default UA (which carries the app name and `Electron/44.10.2`) was refused on
   its first homepage load. The same build with a clean Chrome UA loaded normally. So the clean
-  Chrome UA, with the real Chromium major and `en-AU`, is now the default
-  ([D9](#d9-user-agent), resolved).
+  Chrome UA, with the real Chromium major and `en-AU`, is the decided default
+  ([D9](#d9-user-agent), resolved; the driver adopts it in round 2).
 - **Login is Auth0 Universal Login on a separate origin.** `www…/auth/login` redirects to
   `https://auth.woolworths.com.au/u/login/identifier`. The flow is identifier-first: an email
   page (`input[name=username][type=email]`, "Continue"), then a password page (assumed to be
@@ -62,11 +101,6 @@ What the live probe established (all on 2026-11-07, from Nick's IP):
   tries that first.
 - **Anonymous visitors get `wow-auth-token` cookies**, so a cookie probe is useless; the probe
   must be a `fetch` (likely `/api/ui/v2/bootstrap`, unconfirmed).
-
-The overnight branches are the biggest unknown in this plan. They're written against fakes by
-agents in parallel, so expect integration friction when they meet: shared fakes, how the runtime
-drives `auth-flow`, and what `browser-electron` actually implements of `SessionDriver`. Reviewing
-and merging them is the first job of [M1](#m1-vertical-slice-against-fakes).
 
 ---
 
@@ -161,7 +195,7 @@ against the real site with Nick present.
    `login` secret by picking a 1Password item. The grant's origins are exactly
    `https://auth.woolworths.com.au`, where both the email and password pages live; a grant that
    includes `https://www.woolworths.com.au` is a bug. The grant is keyed to the adapter's content
-   hash. ([Mockup](mockups/grant-picker.html).)
+   hash. ([Mockup](mockups/grant-secret.html).)
 3. The app shows how to connect Claude Code (HTTP plus bearer token) and Claude Desktop (stdio
    bridge), with a copy button for each config. Both list the four tools under their namespaced
    names (`woolworths_get_cart` and so on), with MCP annotations derived from the manifest:
@@ -223,7 +257,7 @@ against the real site with Nick present.
     new secrets, new fields on a secret, and new origins for a secret; new `requests`
     declarations, grouped by purpose; a tool whose `sideEffect` goes up (`read` to `write`, or
     anything to `irreversible`) or that becomes destructive; new `cookieDomains` or storage keys;
-    and any increase in `limits`. Each kind has its own test. ([Mockup](mockups/approval.html).)
+    and any increase in `limits`. Each kind has its own test. ([Mockup](mockups/approve-adapter.html).)
     (Automated.)
 16. `grep` over the app's logs, traces and audit log for Nick's real password finds nothing after
     a week of use. (Manual, scripted.)
@@ -245,7 +279,7 @@ Nick-hours are the real bottleneck: nothing live happens without him, and every 
 an Akamai block on his own IP. Estimates are rough and assume the decisions in each milestone are
 answered on time.
 
-### M0. Foundations (done, apart from merging tonight's branches)
+### M0. Foundations (done)
 
 - Scope: docs, core contracts, workspace tooling, spike 1 and the live probe's code, package
   skeletons.
@@ -254,6 +288,10 @@ answered on time.
 
 ### M1. Vertical slice against fakes
 
+- Status after round 1: every package exists and is tested against `core` and fakes, with its
+  guards in place package by package. Not done: the wiring, the whole-path canary and
+  hostile-adapter suites, the replay of the run 1 pattern through the runtime's budget, and the
+  fake site's separate auth origin. Round 2 adopts core v2 first, so the wiring is written once.
 - Scope:
   - Review and merge the overnight branches; resolve their interface disagreements.
   - Wire the whole path in plain Node: an MCP client calls a tool over Streamable HTTP; the
@@ -276,6 +314,9 @@ answered on time.
 
 ### M2. Electron driver and live Woolworths
 
+- Status after round 1: `browser-electron` is built, with an Electron e2e suite against a local
+  HTTPS site. Not done: the clean UA as the default, `keyDown`/`keyUp` typing
+  ([D38](#d38-keystroke-events)), the hand-off window, the app, and anything live.
 - Scope:
   - Every live request in M2 runs under the [D28](#d28-rate-budget-defaults) defaults. The run 1
     pacing (4 scripted calls 2.5 s apart) is the known-bad baseline and is never repeated.
@@ -433,7 +474,12 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
 
 ### WS1. Runtime and security
 
-- Exists: `core` contracts. `wip/runtime` is in progress.
+- Exists: `core` v2 contracts and `packages/runtime`. Of the items below: 1 is built except the
+  retry after a re-login ([D32](#d32-which-failures-retry)); 2 has the gap and the cool-down only,
+  in memory ([D33](#d33-breaker-defaults-and-persistence)); 3 is built except the one-submit limit
+  inside a login; 4 needs the Auth0 adapter, and the runtime still writes the attempt marker on the
+  silent path; 5 is built; 6 has the stores but not the diff; 7 asks before `run()` but has no
+  structured description (C4) and no scoped unlock until core v2; 8 is not started.
 - Next:
   1. Tool-call orchestration: adapter lock, rate budget, `session.ensure()`, auth-on-demand,
      retry-once after re-login, output validation against the tool's zod output schema, output
@@ -467,7 +513,11 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
 
 ### WS2. Browser driver
 
-- Exists: spike code that shows the shape. `wip/browser-electron` in progress.
+- Exists: `packages/browser-electron` with an Electron e2e suite. Of the items below: 1 is built
+  except the clean UA as the default and `Accept-Language`; 2 is built, stricter than planned
+  (declarations bind every API call, so no API-prefix method policy is needed), with subframes
+  now pinned by `auth.frameOrigins`; 3, 4 and 5 are built; 6 is not; 7 closed DNS prefetch and
+  WebRTC and WebTransport egress, and measured `preconnect`.
 - Next:
   1. `SessionDriver` for Electron: partitions, hidden-but-headed windows with
      `backgroundThrottling: false`, tolerant navigation, step timeouts, `destroy()` on close.
@@ -496,7 +546,10 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
 
 ### WS3. Credentials
 
-- Exists: contracts; `@1password/sdk` 0.5.0 installed. `wip/credentials` in progress.
+- Exists: `packages/credentials`. Items 1, 3, 4 and 5 below are built (the Keychain read has the
+  v0 ACL gap in the security model); item 2 is the `op` CLI provider, not `DesktopAuth`
+  ([D7](#d7-1password-fallback)). The Messages reader opens `chat.db` read-only in place per lookup
+  and has only run against test databases, so whether the snapshot fallback is needed is unknown.
 - Next:
   1. Service-account provider over the SDK, with the token from the Keychain (asynchronous,
      bounded prompts).
@@ -527,7 +580,10 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
 
 ### WS4. MCP
 
-- Exists: `@modelcontextprotocol/sdk` 1.32.2 installed. `wip/mcp-server` in progress.
+- Exists: `packages/mcp-server`. Of the items below: 1 is built with a random port and a token
+  file rather than the Keychain ([D41](#d41-stable-mcp-port-and-token-rotation)); 2 is built, with
+  every `write` destructive until C9; 3 runs from the repo with `tsx`, not bundled; 4 is
+  [D42](#d42-per-client-tool-scopes); 5 is [D50](#d50-confirmation-and-hand-off-timeouts).
 - Next:
   1. Streamable HTTP on `127.0.0.1`, random port by default with a fixed-port option, bearer
      token from the Keychain, `Origin` header checked (DNS-rebinding defence).
@@ -555,7 +611,9 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
 
 ### WS5. Desktop UI
 
-- Exists: tokens, and static HTML mockups of the five screens the security model leans on most.
+- Exists: tokens, and static HTML mockups of the app's windows: the menu bar, adapters, adapter
+  detail, update approval, grant, run trace, audit log, confirmation, login hand-off, and clients
+  and settings. The index also lists IDE mockups, which aren't merged yet.
   Open [docs/mockups/index.html](mockups/index.html) in a browser (no build, no network; light
   and dark follow the system, or use the toggle). Screenshots of each, in both themes, are in
   `docs/mockups/screens/`. React and its test tools are in the desktop app's devDependencies.
@@ -564,16 +622,16 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
 
   | #   | Screen                                                                                                                                                                                                                                                                                                            | Mockup                                    | Settles                                                        |
   | --- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- | -------------------------------------------------------------- |
-  | 1   | **Tray menu:** status per adapter (logged in, needs you, blocked until 14:20), recent calls by client, "Open control panel", "Pause all", quit.                                                                                                                                                                   | [tray](mockups/tray.html)                 | AC1, AC9 (cool-down visible), D29                              |
-  | 2   | **Onboarding:** 1Password connection (service-account token or desktop app), vault choice, MCP client setup with copyable configs.                                                                                                                                                                                | not yet                                   | AC2, AC3, D6, D7                                               |
-  | 3   | **Adapter approval:** identity, version, hash, and the permissions as a person reads them: sites it navigates, hosts it contacts, secrets and the origins they're typed on, each API request with its purpose, each tool with its side-effect colour. For an update, the same screen as a diff, expansions first. | [approval](mockups/approval.html)         | AC2, AC15, G1 (the "labels are declared, not proven" note), C6 |
-  | 4   | **Grant picker:** for each requested secret, choose a 1Password item; show the origins it will be typed on, narrowable but never widenable.                                                                                                                                                                       | [grant picker](mockups/grant-picker.html) | AC2, D6                                                        |
+  | 1   | **Tray menu:** status per adapter (logged in, needs you, blocked until 14:20), recent calls by client, "Open control panel", "Pause all", quit.                                                                                                                                                                   | [menu bar](mockups/menubar.html)                 | AC1, AC9 (cool-down visible), D29                              |
+  | 2   | **Onboarding:** 1Password connection (service-account token or desktop app), vault choice, MCP client setup with copyable configs.                                                                                                                                                                                | [clients](mockups/clients-settings.html)  | AC2, AC3, D6, D7                                               |
+  | 3   | **Adapter approval:** identity, version, hash, and the permissions as a person reads them: sites it navigates, hosts it contacts, secrets and the origins they're typed on, each API request with its purpose, each tool with its side-effect colour. For an update, the same screen as a diff, expansions first. | [approval](mockups/approve-adapter.html)         | AC2, AC15, G1 (the "labels are declared, not proven" note), C6 |
+  | 4   | **Grant picker:** for each requested secret, choose a 1Password item; show the origins it will be typed on, narrowable but never widenable.                                                                                                                                                                       | [grant picker](mockups/grant-secret.html) | AC2, D6                                                        |
   | 5   | **`needsUser` window chrome:** a banner over the site window: why it's showing (a reason code, C3), what to do, "Done" and "Give up".                                                                                                                                                                             | [needs user](mockups/needs-user.html)     | AC4, C3, D4                                                    |
-  | 6   | **Confirmation dialog:** runtime-rendered action description, the exact request it unlocks, the calling client, approve or decline, a timeout; the adapter's own text only as an attributed note.                                                                                                                 | [confirm](mockups/confirm.html)           | C4, C2 (scoped unlock), D18, D19                               |
-  | 7   | **Audit log:** filterable list, chain-verified badge, export.                                                                                                                                                                                                                                                     | not yet                                   | AC14                                                           |
+  | 6   | **Confirmation dialog:** runtime-rendered action description, the exact request it unlocks, the calling client, approve or decline, a timeout; the adapter's own text only as an attributed note.                                                                                                                 | [confirm](mockups/confirm-irreversible.html)           | C4, C2 (scoped unlock), D18, D19                               |
+  | 7   | **Audit log:** filterable list, chain-verified badge, export.                                                                                                                                                                                                                                                     | [audit log](mockups/audit-log.html)       | AC14                                                           |
 
-  The two marked "not yet" are ordinary forms and lists; they can be mocked when D6, D7 and D17
-  are answered.
+  The clients mockup covers MCP client setup; the 1Password half of onboarding isn't mocked yet,
+  and can be once D6 and D7 are answered.
   8. (M4+) Run history with traces; settings; update prompt.
   9. (M5) The IDE: editor, embedded browser, network log, element picker, step runner,
   recorder controls, manifest diff.
@@ -724,7 +782,7 @@ Likelihood and impact are High, Medium or Low.
 | R5  | **Electron footprint.** ~250 MB app, a Chromium per window, memory while idle.                                                                                                                                                                                         | H                    | L   | Close windows after each run; one hidden window at a time per site; idle with no windows. Measure in M3.                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Low for personal use; a talking point for the OSS audience.                                                                                                                                                                                                                                                                                                                                                                             |
 | R6  | **Prompt injection through tool output.** Product names, descriptions and reviews are site-controlled text that goes straight to the LLM, which may also hold write tools.                                                                                             | M                    | H   | Output is schema-validated structured data with length caps on every string; tools return fields, never page HTML; `irreversible` actions confirmed by the person in the app, never by the client; MCP descriptions note that outputs are untrusted; per-client tool allowlists (M4).                                                                                                                                                                                                                                                                                    | Medium. A `write` tool (cart) can still be misused by an injected client; the harm is bounded to the cart. A tool labelled `read` can only write through a request the adapter declared `read`, or through a non-API path ([G1](#g1-the-request-surface-only-covers-pagefetch)), so the label is a strong hint, not a proof.                                                                                                            |
 | R7  | **Sandboxing third-party adapters.** `utilityProcess` isn't a security boundary. A malicious adapter could read files or reach the network.                                                                                                                            | H (if shipped as is) | H   | No third-party adapters before M7. Sandbox choice in [D12](#d12-sandbox-technology). Hostile-adapter suite against the sandbox itself.                                                                                                                                                                                                                                                                                                                                                                                                                                   | Low after M7, if the sandbox is real.                                                                                                                                                                                                                                                                                                                                                                                                   |
-| R8  | **The request surface doesn't bind `page.evaluate` or clicks.** See [G1](#g1-the-request-surface-only-covers-pagefetch).                                                                                                                                               | H                    | H   | Enforce the egress hosts, deny paths, the method policy and the ceiling for the whole tool partition in `webRequest`, regardless of initiator. While a `read` tool runs, non-GET requests to the site's API prefixes are cancelled unless they match a declared `read` request or the telemetry allowlist.                                                                                                                                                                                                                                                               | Medium. `webRequest` can't tell tool code from site code, so declared-path checks for GET requests made through `evaluate` or clicks remain impossible, and a `read` label is still the adapter's own claim wherever a site writes through GET, through a path outside the API prefixes, or through a request the adapter mislabels as `read`. The approval screen says so. This holds for first-party and agent-authored adapters too. |
+| R8  | **The request surface doesn't bind `page.evaluate` or clicks.** See [G1](#g1-the-request-surface-only-covers-pagefetch). | H | H | The tool partition holds every request, whoever made it, to the egress hosts, ambiguous-path refusal, deny segments and the ceiling, and every API call (fetch, XHR, any non-GET, beacons, sockets) to the declarations and the running tool's purpose. Built in the round-1 driver; `beginRun(policy)` in core v2. | Medium. A `read` label is still the adapter's own claim for top-level navigations to pages that change state, for GET endpoints that write, and for declarations whose purpose is wrong. The approval screen says so. This holds for first-party and agent-authored adapters too. |
 | R9  | **Session exfiltration through tool output.** Exact-match redaction misses an encoded cookie.                                                                                                                                                                          | L                    | M   | Woolworths' auth cookies are `httpOnly`, so tool code can't read them. Output schemas reject unexpected fields. Flag adapters whose manifests copy web-storage tokens.                                                                                                                                                                                                                                                                                                                                                                                                   | Low for Woolworths; higher for storage-token sites.                                                                                                                                                                                                                                                                                                                                                                                     |
 | R10 | **Full Disk Access is broad.** Granting it to the whole app hands every adapter's host process access to Mail, Safari history and the rest.                                                                                                                            | M                    | H   | A tiny signed helper with FDA that only answers OTP queries ([D8](#d8-full-disk-access-for-messages)).                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | Low with the helper.                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | R11 | **Lockouts.** A login bug burns attempts and locks Nick's Woolworths account.                                                                                                                                                                                          | M                    | M   | Attempt marker; `ambiguous` counts as a failure; at most one automated password submit before `needsUser`, enforced by the runtime rather than the manifest, and in place before the first live automated login. The silent Auth0 redirect submits nothing, so it consumes no attempt; if it loops or lands somewhere unexpected, the flow ends in `needsUser`, not a password retry.                                                                                                                                                                                    | Low. Lockouts are the main per-account risk ([D5](#d5-which-woolworths-account)).                                                                                                                                                                                                                                                                                                                                                       |
@@ -741,6 +799,12 @@ Likelihood and impact are High, Medium or Low.
 
 Writing this plan turned up these. Each needs a fix in the docs or code; the ones that touch
 `core` are listed as change requests for Nick to approve.
+
+Status after round 1 and core v2: G1 is addressed, more strictly than proposed below: the driver
+holds every API call in the tool partition, whoever made it, to the declarations and the tool's
+purpose, so the API-prefix method policy (C8) isn't needed; what a `read` label still doesn't
+cover is in security-model.md. G2 is partly addressed (C1). G3 is done (C3). G4, G5 and G6 are
+open. G7 and G8 are now in the security model. G9 stands.
 
 ### G1. The request surface only covers `page.fetch`
 
@@ -869,11 +933,29 @@ home-page load. Count them in the rate budget.
 | C7  | `ProviderKind` gains `onepassword-desktop` for the SDK's `DesktopAuth`, if [D7](#d7-1password-fallback) picks it.                                                                                                                                                                                                                                                        | M3        |
 | C8  | The manifest gains `apiPrefixes` (per host) and a `telemetry` allowlist of `{ method, host, path }` for the method policy in G1, and `AuditEvent` gains a blocked-by-method-policy reason.                                                                                                                                                                               | M2        |
 | C9  | Tool declarations gain `destructive: boolean` and `idempotent: boolean`, so MCP annotations are derived ([WS4](#ws4-mcp)) rather than hand-written.                                                                                                                                                                                                                      | M2        |
+| C10 | `limits` gains a per-minute cap and a cap on direct API calls per page view, for [D28](#d28-rate-budget-defaults) and [D33](#d33-breaker-defaults-and-persistence).                                                                                                                                                                                                       | M2        |
+| C11 | The login runner learns whether password typing started, so the attempt marker can tell a spent attempt from an interrupted page load ([D35](#d35-the-attempt-marker-after-a-timeout)).                                                                                                                                                                                 | M2        |
+| C12 | `tool-called` carries the client id a per-client token names, alongside the self-reported name ([D42](#d42-per-client-tool-scopes)).                                                                                                                                                                                                                                     | M3        |
+| C13 | `retry.times` is documented as extra attempts, and renamed `retries` at the next `schemaVersion` ([D31](#d31-retry-count-semantics)).                                                                                                                                                                                                                                    | Later     |
+| C14 | `tool-finished` gains a count of redacted strings ([D36](#d36-redaction-whole-string-or-substring)).                                                                                                                                                                                                                                                                     | M4        |
+
+Status in core v2:
+
+- **C1, partly.** `limits` has `minGapMs`, `cooldownSeconds` and `maxCooldownSeconds`, and the audit
+  log has `breaker-opened` and `breaker-closed` with the `rate-limited` error class. No per-minute
+  cap; that is C10.
+- **C2, done differently.** `beginRun(policy, onBlocked)`, `unlockIrreversible()` and `endRun()`.
+  The unlock covers the run's `irreversible` declarations, not a list chosen per confirmation,
+  which is equivalent while a confirmation covers a whole tool run.
+- **C3, done.** `needsUser` reason codes, `fail` classes, app-only notes, `NeedsUserError`.
+- **C4 to C7, open.** `ProviderKind` gained `messages`, not `onepassword-desktop`.
+- **C8, no longer needed** (see the status above G1).
+- **C9, open.**
 
 ### Changes to the other docs
 
-To make when this plan is accepted. Listed here rather than made now because this unit only
-edits the plan.
+Made in the round-2 docs sync, except the `DesktopAuth` change, which waits on D7. The
+security model now also marks which guarantees code enforces today.
 
 - **security-model.md, "Tool actions":** state that the egress hosts, deny list and method policy
   are partition-wide, that declarations are a `page.fetch` guarantee plus a non-GET guarantee on
@@ -909,9 +991,17 @@ to answer first: they block M2 or M3, or they're expensive to change later.
 | D18 | **Irreversible tools in shipped adapters** | None in v1                                                                             | M3, M8     |
 | D24 | **Bot-detection posture**                  | Look like the person's own browser, nothing more; stated publicly                      | Everything |
 | D28 | **Rate budget defaults**                   | ≥10 s between API calls, 2 per page view, session cache                                | M2         |
+| D32 | **Which failures retry**                   | Only "page not ready"; never a second password fill; never retry a write               | M2         |
+| D35 | **The attempt marker after a timeout**     | Hold for the person only if password typing started                                    | M2         |
+| D38 | **Keystroke events**                       | `keyDown`/`char`/`keyUp`, as the person's keyboard sends                               | M2         |
+| D41 | **Stable MCP port and token rotation**     | The bridge for every client; rotate on demand; a token per client                      | M3         |
 
 Already decided, recorded for completeness: [D9](#d9-user-agent) (the clean Chrome UA, decided
-by run 4 of the live probe and now the architecture's default).
+by run 4 of the live probe and now the architecture's default) and
+[D39](#d39-auth-subframe-origins) (auth subframes pinned to a list, decided by core v2).
+
+D31 to D54 are the questions round 1 raised. Each has options and a recommendation; none blocks
+round 2.
 
 ### D1. Product name
 
@@ -958,6 +1048,10 @@ by run 4 of the live probe and now the architecture's default).
   - **Email code:** `needsUser` until there's a reason to build a mail reader.
   - **Push (Auth0 Guardian), voice, WebAuthn or passkey:** `needsUser`. These need the person.
   - **No MFA:** nothing to do.
+- **If SMS:** the Messages grant needs the exact sender handle (an alphanumeric sender ID such as
+  `Woolworths`, a short code, or a number), which only a real code shows. Record it in M2 from a
+  code Auth0 sends Nick, put it in the manifest's `otp` step, and the grant picker shows it for
+  approval. Whether Auth0 always sends from the same sender is part of what M2 checks.
 - Recommendation: if the tenant offers an authenticator factor and Nick is willing, enrol one in
   1Password and use TOTP; otherwise plan for SMS via Messages. Every other factor is
   `needsUser`. Auth0's "remember this device", if offered, plus the persistent auth partition and
@@ -1023,6 +1117,8 @@ by run 4 of the live probe and now the architecture's default).
   the bundled Chromium's real major version, and `Accept-Language: en-AU`. This is what Nick's
   own Chrome sends, so it is within [D24](#d24-bot-detection-posture).
 - Still open: client-hint brands ([D24a](#d24a-client-hint-brands)).
+- In code: `cleanChromeUserAgent()` exists, but the round-1 driver still defaults to Electron's UA
+  and sends no `Accept-Language`. Round 2 makes both the default.
 
 ### D10. Analytics hosts
 
@@ -1182,6 +1278,9 @@ by run 4 of the live probe and now the architecture's default).
     automation; CAPTCHA solving; proxies; randomised, rotated or invented fingerprints; claiming
     to be a different browser, OS or device than the one actually running.
 
+  In one sentence, worded the same way everywhere: we match the person's own browser, never go
+  further to hide automation, and never solve a CAPTCHA.
+
   It's the honest position, it simplifies the legal story, and it's what makes a
   security-focused audience trust it.
 - Blocks: D25, marketing. (D9 was decided within it.)
@@ -1249,9 +1348,21 @@ by run 4 of the live probe and now the architecture's default).
     persisted across restarts. No call reaches the site during it.
 - A realistic weekly shop (about 30 tool calls, many served from cache) then takes roughly
   15–30 minutes. That's slow for a bot and fine for an agent doing a shop in the background.
+- **Where the code is.** Round 1's runtime has the minimum gap and the cool-down only, with looser
+  defaults (2 s; 10 minutes doubling to 2 hours, which are also core v2's `limits` defaults), in
+  memory, with no jitter, no per-page-view or per-minute cap, and no read cache. Reconciling the
+  two is [D33](#d33-breaker-defaults-and-persistence).
 - Recommendation: start here and loosen only with evidence from M2 and M3, never the other way
   round. A test asserts the run 1 pattern can't get through the defaults unspaced.
 - Blocks: M2.
+
+### D29. Pause, overnight and scheduled use
+
+- Question: should agents be able to call tools at any hour? A login at 3 am with no human
+  activity looks odd to a bot detector, and a `needsUser` at 3 am helps nobody.
+- Recommendation: an optional "quiet hours" setting that returns `needsUser` with a clear reason
+  instead of logging in during them; reads on an existing session still work.
+- Blocks: nothing in the MVP; useful in M4.
 
 ### D30. Split add-to-cart
 
@@ -1267,13 +1378,343 @@ by run 4 of the live probe and now the architecture's default).
   the prompts are annoying in practice.
 - Blocks: nothing in the MVP.
 
-### D29. Pause, overnight and scheduled use
+### D31. `retry` count semantics
 
-- Question: should agents be able to call tools at any hour? A login at 3 am with no human
-  activity looks odd to a bot detector, and a `needsUser` at 3 am helps nobody.
-- Recommendation: an optional "quiet hours" setting that returns `needsUser` with a clear reason
-  instead of logging in during them; reads on an existing session still work.
-- Blocks: nothing in the MVP; useful in M4.
+- Today: `retry: { times: n }` runs its steps up to `n + 1` times, and the auth-flow tests pin
+  that. Core documents only the range, 1 to 5.
+- Options: keep "`n` retries after the first run" and document it in core; change it to `n` runs
+  in all.
+- Considerations: most authors will read `times: 2` as two runs, and get three. The extra run
+  matters only where a `retry` wraps a submit, and D32 stops a second password submit anyway.
+- Recommendation: keep the semantics, document `times` in core as "extra attempts after the
+  first", and rename the field to `retries` at the next manifest `schemaVersion` (C13).
+- Blocks: nothing. The Woolworths flow uses no `retry`.
+
+### D32. Which failures retry
+
+- Two places retry: the `retry` step inside a login, and (designed) the runtime re-running a tool
+  once after a re-login.
+- Today `retry` re-runs after `auth-step/condition-timeout`, `auth-step/element-missing`,
+  `auth-step/auth-failed` and `probe/not-logged-in`, and never after anything from `secret-fill`,
+  `otp`, `grant` or `credential`, a block, `needsUser` or a timeout. The last two retryable ones
+  happen after a password submit, so a `retry` around the fill can submit the password twice,
+  which AC10 forbids.
+- Options: keep the set; drop `auth-failed` and `not-logged-in` from it; have the filler count
+  password fills per login and refuse a second whatever the steps say.
+- Recommendation: both of the last two. `retry` only covers "the page wasn't ready yet"
+  (`condition-timeout`, `element-missing`), and the filler refuses a second password fill in one
+  login, ending it as `needsUser(login-required)`. For tools: after a re-login, the runtime
+  re-runs a tool once only if it is `read` and failed `tool-run/not-logged-in`. Never a `write` or
+  `irreversible` tool, whose request may already have reached the site (the adapter's
+  `add_to_cart` would add twice).
+- Blocks: M2. The second-submit refusal is a hard requirement before the first live automated
+  login, with the attempt marker.
+
+### D33. Breaker defaults and persistence
+
+- Today: one rate budget and breaker per host, in memory; a 2 s minimum gap; a 10 minute
+  cool-down doubling to 2 hours; the doubling resets on the next normal response. Core v2's
+  `limits` defaults match the code (`minGapMs: 2000`, `cooldownSeconds: 600`,
+  `maxCooldownSeconds: 7200`). [D28](#d28-rate-budget-defaults) recommends much stricter numbers
+  for Woolworths and a persisted cool-down.
+- Questions: whose numbers; whether and where to persist; what the breaker is keyed on.
+- Options for persistence: none (a restart closes the breaker); a small `breakers.json` in the
+  data directory; rebuild at start from the last `breaker-opened` per host in the audit log.
+- Recommendation:
+  - The Woolworths manifest sets D28's gap and cool-downs in its own `limits`. Core's defaults stay
+    the floor for other adapters, and `limits` gains D28's per-minute and per-page-view caps
+    (C10), which nothing has today.
+  - Persist by rebuilding from the audit log at start. It is already fsynced and hash-chained, so
+    there's no second file to keep consistent, and a restart can't be used to skip a cool-down.
+  - Key by the adapter's sites, not just the host that answered: a block seen on the auth origin
+    during a login also stops tool calls to www. Every origin in one manifest's `navigation` and
+    `egress` shares the breaker.
+- Blocks: M2.
+
+### D34. Form-action origin: granted or navigation
+
+- Today: a password's owning form must post to an origin in the secret's granted origins. A
+  round-1 reviewer asked whether the navigation list would do, since the navigation guard already
+  checks where the page goes.
+- Options: granted origins (today); navigation origins; granted origins plus an explicit
+  per-secret `formActions` list for sites whose login form posts to another origin.
+- Considerations: the navigation guard fires only after the POST has left, and a navigation-only
+  rule would allow a password into a form that posts to a www search endpoint, the case the check
+  exists for. Auth0 posts to its own origin, so Woolworths passes either way.
+- Recommendation: keep the granted origins. If a real site posts cross-origin, add a per-secret
+  `formActions` list to the manifest, shown on the approval screen, rather than loosening the rule.
+- Blocks: nothing now.
+
+### D35. The attempt marker after a timeout
+
+- Today: the marker is set before the login runs. A crash, abort or flow timeout leaves it set,
+  and every later login returns `needsUser(login-attempt-pending)` until the person clears it.
+  There's no UI to clear it yet.
+- Problem: a timeout before any password was typed (a slow Auth0 page, a silent redirect that
+  stalled) stops unattended use until Nick notices, though no attempt against the account was
+  spent.
+- Options: always need the person; record in the marker whether a password fill started (the
+  filler updates it, fsynced, before typing), and turn a marker with no fill into an ordinary
+  backoff hold; clear every marker after a fixed time.
+- Recommendation: the second. With a fill, the tray says "Woolworths: a login was interrupted after
+  the password was typed. Check you can still log in, then clear." with a Clear button. Without
+  one, it's a backoff hold that clears itself. A fixed-time clear risks a lockout loop.
+- Blocks: M2, before the first live automated login. Needs the filler to report "password typing
+  started" to the runtime.
+
+### D36. Redaction: whole string or substring
+
+- Today: a string that contains a sensitive value is replaced whole with `[redacted]`, object keys
+  included, and the call fails if the serialised result still contains one.
+- Options: whole string (today); replace only the matching substring; fail the call whenever
+  anything sensitive appears.
+- Considerations: substring replacement keeps more of the output but leaves the text around the
+  match, which can hold another encoding or a fragment of it. Failing the call is safest, but one
+  echoed cookie value would then break a tool outright, where whole-string replacement loses one
+  field.
+- Recommendation: keep whole-string replacement, and record how many strings were redacted in
+  `tool-finished` (C14), so a tool that keeps tripping it gets fixed. Encoded copies stay out of
+  scope; output schemas and `httpOnly` cookies are the main defence.
+- Blocks: nothing.
+
+### D37. Cross-origin iframe logins
+
+- Today: the driver refuses to focus or click an element in an out-of-process (cross-site)
+  frame, and the flow ends in `needsUser`. Core v2's `inputReachable` makes that a check before
+  the fill.
+- Options: refuse (today); turn site isolation off process-wide, which the e2e suite showed lets
+  `sendInputEvent` reach the frame; type through CDP `Input.dispatchKeyEvent` on the frame's
+  target; navigate the auth page to the frame's URL directly, when it's on `navigation`.
+- Considerations: turning site isolation off weakens Chromium's process isolation for every page
+  in every partition, including tool pages running adapter code. CDP input is per frame and
+  still trusted input, but attaches a debugger to the auth page. Loading the frame's URL directly
+  often breaks the flow.
+- Recommendation: refuse until a real site needs it, then CDP input, with the same per-keystroke
+  origin check. Never turn site isolation off.
+- Blocks: nothing for Woolworths: Auth0 Universal Login is a top-level page.
+
+### D38. Keystroke events
+
+- Today: one `char` input event per character.
+- Options: `char` only; `keyDown`, `char` and `keyUp` per character, as a physical keyboard
+  produces; CDP `Input.insertText`.
+- Considerations: some forms listen for key events, and bot-detection scripts look at keystroke
+  pairs and timing. A stream of `char` events with no `keyDown` is not what the person's own
+  browser produces, so the full sequence is the D24-consistent choice: it matches the person,
+  and goes no further. `insertText` looks least like typing.
+- Recommendation: `keyDown`/`char`/`keyUp` per character, with the origin check before each
+  `keyDown`, tested against the fake site and in the e2e suite. Characters with no key fall back
+  to `char`.
+- Blocks: M2.
+
+### D39. Auth subframe origins
+
+- **Resolved** by core v2. Subframes of an auth page may load only `navigation` origins plus
+  `auth.frameOrigins` (default empty). The round-1 driver allowed any https subframe and relied
+  on the secret-fill binding; it adopts the list in round 2. For Woolworths, `frameOrigins` is
+  whatever Auth0's bot detection embeds, measured in M2.
+- Still open: when the window is handed to the person, a CAPTCHA frame the manifest didn't list
+  is blocked, so they can't solve it. Recommendation: on hand-off, after the interpreter has
+  stopped and will type nothing more, the subframe rule relaxes to any https origin for that
+  window, and is restored for the next login.
+
+### D40. Storage handoff document
+
+- Today: storage keys are read and written in a page on their origin. An open page is reused;
+  otherwise a hidden page loads `/robots.txt` on that origin, in each partition. That's an extra
+  request to the site outside the rate budget, and an unusual one for a browser to make.
+- Options: `/robots.txt` (today); the manifest's `home`; a path the manifest names; reuse only:
+  hand off while the login's last page and the tool page are open, and fail otherwise.
+- Recommendation: reuse only. The auth flow ends on a page of the site, and the tool page is open
+  at `home`, so no extra request is needed. Keep the `/robots.txt` fallback off by default.
+- Blocks: the first adapter with storage keys. Woolworths has none.
+
+### D41. Stable MCP port and token rotation
+
+- Today: a free port each launch, and one token written to a 0600 file. The stdio bridge re-reads
+  its config, so bridged clients survive a restart. HTTP-native clients (Claude Code over HTTP)
+  keep the URL and token in their own config, and break on every restart.
+- Options for the port: random each launch (today); fixed and configurable; chosen once at first
+  run and kept. For the token: never rotated; rotated on demand from the app; rotated every
+  launch; one per client (D42).
+- Considerations: a fixed port has a cost. While the app isn't running, another local account can
+  bind it, and an HTTP-native client would hand it the token. The bridge doesn't have that
+  problem: it reads the current port from a file only the person can read.
+- Recommendation: make the bridge the default setup for every client. Offer a port chosen once and
+  kept only for clients that can't launch a command, with the risk stated next to the option.
+  Rotate tokens on demand ("Reset access" per client in the app), never on a timer, and move to
+  per-client tokens (D42).
+- Blocks: M3 (onboarding, AC3).
+
+### D42. Per-client tool scopes
+
+- Today: any client with the token sees every approved tool, and the audit log's client name is
+  whatever the client says in `initialize`.
+- Options: one token, all tools (today); a token per client, named by the person, with identity
+  from the token; per-client tool allowlists on top.
+- Recommendation: a token per client in M3. It gives the audit log a real identity (C12) and lets
+  one client's access be revoked alone; the mockups already show it. Per-client allowlists in M4,
+  where a new client gets read tools, write tools are switched on per client, and `irreversible`
+  tools still need the person's confirmation per call. The remote listener reuses the same
+  allowlists.
+- Blocks: M3 (tokens), M4 (allowlists).
+
+### D43. Keychain and vault names
+
+- Keychain items and grants outlive renames, so these are fixed before the first signed build.
+- Options: derive every name from the bundle ID ([D1](#d1-product-name)); fixed names now.
+- Recommendation:
+  - Keychain items named from the bundle ID: service `<bundle id>.onepassword-service-account`
+    for the token (account: the 1Password account's sign-in address), and
+    `<bundle id>.mcp-client.<name>` per client token if those move from files to the Keychain.
+  - The 1Password vault called "siteadapter" until D1 picks a name.
+  - Grants store item references by vault and item **ID**, not name (`op://<vault id>/<item id>`
+    is already accepted), so renaming a vault or item in 1Password doesn't silently break or
+    redirect a grant. The grant picker shows names.
+- Blocks: M3.
+
+### D44. `op` install path
+
+- Today: `op` is found on `PATH`. An app started from Finder has a minimal `PATH`, and a `PATH`
+  lookup runs whichever `op` comes first. A substitute `op` can't get secrets out of 1Password
+  (the desktop app checks the caller), but it can hand back a wrong password and spend a login
+  attempt, or log which items are used.
+- Options: `PATH`; probe the known install locations (`/opt/homebrew/bin/op`,
+  `/usr/local/bin/op`) at onboarding and pin the absolute path; also verify the binary's code
+  signature against 1Password's Team ID before each use; drop the CLI for `DesktopAuth`
+  ([D7](#d7-1password-fallback)).
+- Recommendation: D7 first. If the CLI stays: find it at onboarding, pin the absolute path,
+  refuse a binary or directory writable by anyone but root or the person, and check its signature
+  before each use.
+- Blocks: M3.
+
+### D45. Grant file location
+
+- Today: the runtime, credentials and mcp-server packages take file paths from the caller. Only
+  the bridge config's path is documented.
+- Options: everything under `~/Library/Application Support/<app>/`, a 0700 directory with 0600
+  files; grants in the Keychain; grants only as events in the audit log.
+- Considerations: files are simple and inspectable, but any process running as the person can
+  edit them, and v0 tool code runs in the main process. An edited grant (another item, another
+  origin) would be honoured.
+- Recommendation: Application Support, one directory, as the architecture lists. Before
+  third-party adapters (M7), `grants.json` and `approvals.json` carry a MAC keyed by a secret in
+  the Keychain under the app's designated requirement, so an edited file fails closed; the audit
+  log's latest hash gets the same, since a chain alone can be recomputed by whoever edits it.
+- Blocks: M3 (location), M7 (integrity).
+
+### D46. Touch ID on irreversible confirmations
+
+- Options: a click in the app's window; Touch ID (`systemPreferences.promptTouchID`) as well; the
+  macOS account password.
+- Considerations: a click can come from anyone at the unlocked Mac, or from a UI-automation tool
+  the person runs, including an agent with computer use, which is exactly the kind of client this
+  confirmation exists to keep out. Touch ID proves presence. It isn't available on every Mac, or
+  with the lid closed.
+- Recommendation: Touch ID for `irreversible` confirmations when it's available, otherwise the
+  click with a note saying so; nothing extra for `write`. Build it with the first `irreversible`
+  tool, since v1 ships none ([D18](#d18-irreversible-tools-in-shipped-adapters)).
+- Blocks: the first `irreversible` tool.
+
+### D47. Grant re-bind on update
+
+- Today: an update has a new hash, inherits no grant, and the person grants again. The mockup
+  offers a re-bind, off by default.
+- Options: always grant from scratch; offer a one-click re-bind of the same item when the secret's
+  request didn't expand (the same or fewer fields and origins, the same Messages sender); re-bind
+  automatically in that case.
+- Recommendation: offer it, unticked, next to the approval diff, only when nothing expanded; audit
+  `grant-made` with the new hash. Never automatic: the point of hash-keyed grants is that the
+  person looks.
+- Blocks: M4 (updates).
+
+### D48. Tool titles with the adapter name
+
+- Today: the MCP title is the manifest's `title` ("Get cart"), and the name is namespaced
+  (`woolworths_get_cart`).
+- Options: the bare title; "Woolworths: Get cart", built by the server from the adapter's `name`;
+  no title.
+- Considerations: clients show titles in permission prompts, where "Get cart" doesn't say which
+  site. The adapter's `name` is manifest text, so a hostile adapter could call itself something
+  else; the approval screen shows the id and name together, and the person approved both.
+- Recommendation: the server prefixes the adapter's name. The manifest's title stays bare.
+- Blocks: nothing.
+
+### D49. Cancellation
+
+- Today: the endpoint passes the client's abort signal to the runtime, which aborts the tool's
+  signal, and the tool's capabilities refuse from then on. The bridge never answers a cancelled
+  request.
+- Open: what a cancel does to a login in progress, and to a write already sent.
+- Options for a login: abort it at the next step; let it finish, detached from the call.
+- Recommendation: before any secret is typed, abort the login at the next step. After, let it run
+  to a classified outcome, bounded by its own timeout, so the marker is cleared by a result
+  rather than left set (D35); the call itself returns at once as `aborted`. A write that may have
+  reached the site isn't undone; the audit records the stage where it stopped. Tool code checks
+  `ctx.signal` before each write, as the Woolworths adapter does.
+- Blocks: M1 (wiring).
+
+### D50. Confirmation and hand-off timeouts
+
+- Today: the confirmation waits 5 minutes, a tool run 2 minutes, and the auth flow has its own
+  timeout (the Woolworths steps can pause for about 60 s). The hand-off isn't wired. Clients have
+  their own tool-call timeouts, which haven't been measured.
+- Options for a hand-off: block the call until the person finishes; return `needsUser` at once
+  and leave the window up; block for a short bound, then return `needsUser`.
+- Recommendation: return `needsUser` at once and leave the window up for up to 15 minutes, then
+  close it and hold logins for a backoff. The agent can tell the person and call again. For
+  confirmations, keep the call open with MCP progress notifications for up to 2 minutes (or the
+  client's timeout, if shorter), then decline ([D19](#d19-confirmation-when-nick-is-away)).
+  Measure Claude Code's and Claude Desktop's timeouts in M2 and set these below them.
+- Blocks: M3.
+
+### D51. Approval acknowledgement friction
+
+- Question: how much the approval screen asks of the person.
+- Options: one Approve button; a tick per permission-expanding change; typing the adapter's name
+  for anything `irreversible`.
+- Recommendation: friction in proportion to the change. A first install: one Approve, after the
+  summary. An update that expands nothing: one click. An update that expands anything (a host, a
+  secret or its origins, a Messages sender, a `write` or `irreversible` tool or request): a tick
+  per expansion before Approve enables. No typing. Revisit when the authoring agent (M6) makes
+  updates frequent.
+- Blocks: M3 (the approval screen).
+
+### D52. Confirmation panel placement
+
+- Options: the tray popover; a standalone window from the main process, on top and centred; a
+  system notification with action buttons.
+- Considerations: a notification's buttons can be pressed without reading the request, and Focus
+  modes hide them. A popover vanishes when focus moves. The person has to see the
+  runtime-rendered request (C4).
+- Recommendation: a standalone window on top, with a notification that only opens it. It has no
+  default button, so a keystroke meant for another app can't approve.
+- Blocks: M3, with C4.
+
+### D53. Fake trolley merge at login
+
+- Question: when a visitor with items in an anonymous trolley logs in, does Woolworths merge them
+  into the account's trolley, replace it, or drop them? The fake shows the account's trolley after
+  login and drops the anonymous one; that was a guess.
+- Why it matters: the tool partition is anonymous until the first handoff, and the search tools
+  run there without logging in. Cart tools call `ensure()` first, so nothing should be added
+  anonymously, but if something were, a merge would change Nick's real trolley at login.
+- Options: model replacement (today); model a merge; record it live first.
+- Recommendation: record it live in M2 with one cheap item, make the fake match, and add an
+  adapter test that no cart tool writes before `ensure()` returns `ok`.
+- Blocks: M2.
+
+### D54. Cart line ceiling
+
+- Today: the adapter refuses more than 50 of one product: `set_cart_quantity` takes 0 to 50, and
+  `add_to_cart` won't go over 50. The site clamps to its own supply limits (often 36) and the tools
+  report that.
+- Options: 50; the site's usual limit; a lower cap; no cap.
+- Considerations: the cap guards against an injected or confused client ("set 999 milk"), not a
+  site rule. A weekly shop rarely needs more than a dozen of anything, and a lower cap bounds the
+  harm a misused `write` tool can do (R6).
+- Recommendation: 20 per line, raised only if real use hits it.
+- Blocks: nothing. An adapter change.
 
 ---
 
@@ -1283,7 +1724,8 @@ Collected from the above, so tomorrow's review can schedule it.
 
 1. Answer the decisions in [Answer these first](#answer-these-first): D1, D4 (as far as he
    knows: is MFA on his Woolworths account, and which kind?), D5, D6, D8, D18, D24 and D28. Look
-   through the [mockups](mockups/index.html) while doing it.
+   through the [mockups](mockups/index.html) while doing it. Then the round-1 decisions that block
+   M2 and M3: D32, D35, D38 and D41.
 2. Review `core` and the overnight branches' guards and secret filler line by line (R13).
 3. Run spike 1, with the clean Chrome UA: log in by hand in the spike window, close it, read the
    result (~15 minutes).

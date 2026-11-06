@@ -428,7 +428,7 @@ boundary.
   (**Enforced**). The approvals file fails closed: if it can't be read or parsed, nothing is
   approved.
 - Any change, including an AI repair, creates a new hash and needs re-approval with a diff
-  (**Designed**; the screen is mocked in `docs/mockups/approval.html`). Every
+  (**Designed**; the screen is mocked in `docs/mockups/approve-adapter.html`). Every
   permission-expanding change is highlighted, each with its own test: new `navigation` origins;
   new `egress` hosts; new `auth.frameOrigins`; new secrets, new fields on a secret, and new
   origins for a secret; new Messages senders; new `requests` declarations, grouped by purpose; a
