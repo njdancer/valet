@@ -17,7 +17,14 @@ import {
 } from '../core/updates'
 import { confineUpdaterSession, createUpdater, UPDATER_PARTITION } from '../updater'
 
-/** The system default PATH: electron-updater runs `uname` and `sysctl` by name. */
+/**
+ * The system default PATH: electron-updater runs `uname` and `sysctl` by name (MacUpdater, with
+ * execFileSync), inside its own download path, so PATH can't be narrowed for those calls alone. It
+ * is set for the whole main process once the updater is on. That is the PATH launchd gives an app
+ * opened from the Finder anyway. Nothing else in main runs a program by name: codesign, security
+ * and op are run by absolute path, and the stdio bridge is started by the MCP client, not the app.
+ * Code that spawns a child must keep to that.
+ */
 const SYSTEM_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
 
 /** What codesign says the running bundle is signed with. Unpackaged, or unreadable: 'other'. */
@@ -54,6 +61,7 @@ export function electronUpdates(context: UpdatesContext): (hooks: UpdatesHooks) 
       signature: context.signature,
     })
     if (!decision.enabled) return disabledUpdates(app.getVersion(), decision.reason, signed)
+    // Process-wide, on purpose (above).
     process.env['PATH'] = SYSTEM_PATH
     // Every request electron-updater makes, redirect hops included, goes through this partition:
     // confined to the feed base before the first check.

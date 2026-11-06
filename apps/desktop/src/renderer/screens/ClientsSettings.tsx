@@ -343,8 +343,9 @@ function UpdatePill({ status }: { readonly status: UpdateStatus }) {
     case 'up-to-date':
       return <span className="pill ok">Up to date</span>
     case 'available':
-    case 'ready':
       return <span className="pill info">{status.available} available</span>
+    case 'ready':
+      return <span className="pill info">{status.available} downloaded</span>
     case 'downloading':
       return <span className="pill info">Downloading {status.available}</span>
     case 'error':
@@ -391,6 +392,18 @@ function UpdatesCard({ now }: { readonly now: number }) {
           <div className="setting">
             <span>Status</span>
             <span>{updatesOffWording(status.data.disabledReason)}</span>
+            <span />
+          </div>
+        ) : null}
+        {status.status === 'ready' && status.data.state === 'ready' && settings.status === 'ready' ? (
+          // There is no install action: a downloaded update installs on quit, and only if that's on.
+          <div className="setting">
+            <span>Status</span>
+            <span>
+              {settings.data.autoInstallUpdates
+                ? 'Downloaded. It installs when siteadapter quits.'
+                : 'Downloaded. Turn on automatic installs to apply it.'}
+            </span>
             <span />
           </div>
         ) : null}

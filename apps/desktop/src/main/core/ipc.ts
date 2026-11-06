@@ -185,8 +185,8 @@ export function methodOf(channel: string): InvokeMethod | null {
 
 /**
  * True when the request came from the main frame of one of the app's windows, showing one of the
- * app's own pages. `isAppPage` decides what the app's pages are (a file URL in a build, the dev
- * server in development).
+ * app's own pages. `isAppPage` decides what the app's pages are (app://renderer in a build, the dev
+ * server's origin under electron-vite dev).
  */
 export function senderTrusted(sender: Sender, isAppPage: (url: string) => boolean): boolean {
   return sender.role !== null && sender.mainFrame && isAppPage(sender.frameUrl)

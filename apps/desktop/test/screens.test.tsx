@@ -439,7 +439,8 @@ describe('clients and settings', () => {
     ['not-checked', 'Not checked yet'],
     ['checking', 'Checking…'],
     ['downloading', 'Downloading 0.1.1'],
-    ['ready', '0.1.1 available'],
+    ['available', '0.1.1 available'],
+    ['ready', '0.1.1 downloaded'],
     ['error', 'Couldn’t check'],
     ['up-to-date', 'Up to date'],
   ] as const)('words the %s state', async (state, words) => {
@@ -451,7 +452,7 @@ describe('clients and settings', () => {
         status: async () => ({
           current: '0.1.0',
           state,
-          available: state === 'downloading' || state === 'ready' ? '0.1.1' : null,
+          available: state === 'downloading' || state === 'ready' || state === 'available' ? '0.1.1' : null,
           checkedAt: null,
           signed: true,
           disabledReason: null,
@@ -461,6 +462,32 @@ describe('clients and settings', () => {
     expect(await screen.findByText(words)).toBeTruthy()
     expect(screen.getByText('Developer ID')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Check now' })).toBeTruthy()
+  })
+
+  it.each([
+    [true, 'Downloaded. It installs when siteadapter quits.'],
+    [false, 'Downloaded. Turn on automatic installs to apply it.'],
+  ] as const)('says when a downloaded update installs, with automatic installs %s', async (on, words) => {
+    const fake = createFakeApi({ now: NOW })
+    renderAt('#/settings', {
+      ...fake,
+      settings: {
+        ...fake.settings,
+        get: async () => ({ ...(await fake.settings.get()), autoInstallUpdates: on }),
+      },
+      updates: {
+        ...fake.updates,
+        status: async () => ({
+          current: '0.1.0',
+          state: 'ready',
+          available: '0.1.1',
+          checkedAt: null,
+          signed: true,
+          disabledReason: null,
+        }),
+      },
+    })
+    expect(await screen.findByText(words)).toBeTruthy()
   })
 })
 
