@@ -9,7 +9,7 @@ import { toReportable } from '@siteadapter/core'
 import { z } from 'zod'
 import { failedResult, toolResult } from './results'
 import type { CallOutcome, ListedTool, ToolCaller } from './tool-caller'
-import { type ExposedTool, planTools, type SkippedTool } from './tool-names'
+import { type ExposedTool, planTools, type SkippedTool, type ToolPlan } from './tool-names'
 
 export interface ServerInfo {
   readonly name: string
@@ -25,9 +25,11 @@ export interface SiteAdapterMcpServer {
   readonly server: McpServer
   /**
    * Re-reads the caller's tools and, when connected, tells the client the list changed. Returns the
-   * tools that were withheld and why.
+   * tools that were withheld and why. If the caller throws, the tools are left as they were.
    */
   refresh(): readonly SkippedTool[]
+  /** Replaces the tools with an already-made plan, so several sessions can share one listing. */
+  apply(plan: ToolPlan): void
 }
 
 const MAX_CLIENT_NAME_LENGTH = 100
@@ -64,10 +66,10 @@ export function createMcpServer(
       const { stage, errorClass } = toReportable(error, 'tool-run')
       return failedResult(stage, errorClass)
     }
-    if (outcome.status === 'ok' && !(await outputValid(listed.output, outcome.output))) {
-      return failedResult('tool-output', 'invalid')
-    }
-    return toolResult(outcome, structured)
+    if (outcome.status !== 'ok') return toolResult(outcome, structured)
+    const checked = await checkedOutput(listed.output, outcome.output)
+    if (!checked.valid) return failedResult('tool-output', 'invalid')
+    return toolResult({ status: 'ok', output: checked.output }, structured)
   }
 
   const register = ({ name, listed }: ExposedTool): RegisteredTool => {
@@ -88,21 +90,29 @@ export function createMcpServer(
   }
 
   let registered: RegisteredTool[] = []
+  const apply = (plan: ToolPlan): void => {
+    for (const tool of registered) tool.remove()
+    registered = plan.exposed.map(register)
+  }
   const refresh = (): readonly SkippedTool[] => {
     // Listing first: if the runtime throws, the session keeps the tools it had.
     const plan = planTools(caller.listTools())
-    for (const tool of registered) tool.remove()
-    registered = plan.exposed.map(register)
+    apply(plan)
     return plan.skipped
   }
   refresh()
-  return { server, refresh }
+  return { server, refresh, apply }
 }
 
+/**
+ * MCP reads destructiveHint: false as "only additive updates". A write can remove things (taking
+ * an item out of the cart), and the manifest doesn't say which writes only add, so every tool
+ * that isn't a read is marked destructive.
+ */
 export function annotationsFor(sideEffect: 'read' | 'write' | 'irreversible'): ToolAnnotations {
   return {
     readOnlyHint: sideEffect === 'read',
-    destructiveHint: sideEffect === 'irreversible',
+    destructiveHint: sideEffect !== 'read',
     idempotentHint: sideEffect === 'read',
     openWorldHint: true,
   }
@@ -117,13 +127,20 @@ export function clientLabel(name: string | undefined): string {
   return flat.length > 0 ? flat : 'unknown'
 }
 
-/** The runtime should already have checked; a mismatch here means a bug, never a pass-through. */
-async function outputValid(schema: z.ZodType, output: unknown): Promise<boolean> {
+type CheckedOutput = { readonly valid: true; readonly output: unknown } | { readonly valid: false }
+
+/**
+ * The runtime should already have checked; a mismatch here means a bug, never a pass-through. The
+ * parsed value is what gets sent, not the runtime's: zod objects drop keys they don't declare, so a
+ * session cookie riding along in an extra field never reaches the client.
+ */
+async function checkedOutput(schema: z.ZodType, output: unknown): Promise<CheckedOutput> {
   try {
-    if (!(await schema.safeParseAsync(output)).success) return false
-    JSON.stringify(output)
-    return true
+    const parsed = await schema.safeParseAsync(output)
+    if (!parsed.success) return { valid: false }
+    JSON.stringify(parsed.data)
+    return { valid: true, output: parsed.data }
   } catch {
-    return false
+    return { valid: false }
   }
 }

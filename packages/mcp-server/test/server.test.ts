@@ -126,18 +126,18 @@ describe('tool listing', () => {
     })
   })
 
-  it('marks write tools neither read-only, destructive nor idempotent', async () => {
+  it('marks write tools destructive, and neither read-only nor idempotent', async () => {
     const { client } = await connect(new FakeCaller([setQuantity]))
     const { tools } = await client.listTools()
     expect(tools[0]?.annotations).toEqual({
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
       openWorldHint: true,
     })
   })
 
-  it('marks only irreversible tools destructive', async () => {
+  it('marks irreversible tools destructive', async () => {
     const { client } = await connect(new FakeCaller([checkout]))
     const { tools } = await client.listTools()
     expect(tools[0]?.annotations).toEqual({
@@ -156,8 +156,14 @@ describe('tool listing', () => {
 })
 
 describe('annotationsFor', () => {
-  it('never marks a write tool destructive', () => {
-    expect(annotationsFor('write').destructiveHint).toBe(false)
+  // A client may skip approval for a tool that only adds; removing cart items is not that.
+  it('never tells a client a write tool is merely additive', () => {
+    expect(annotationsFor('write').destructiveHint).toBe(true)
+  })
+
+  it('marks only read tools non-destructive', () => {
+    expect(annotationsFor('read').destructiveHint).toBe(false)
+    expect(annotationsFor('irreversible').destructiveHint).toBe(true)
   })
 })
 
@@ -191,6 +197,18 @@ describe('refresh', () => {
 
     expect(result.isError).toBe(true)
     expect(caller.calls).toEqual([])
+  })
+
+  it('applies a plan made elsewhere without listing again', async () => {
+    const caller = new FakeCaller([searchProducts])
+    const { client, endpoint } = await connect(caller)
+    caller.listTools = () => {
+      throw new Error('should not be listed')
+    }
+
+    endpoint.apply({ exposed: [{ name: 'woolworths_checkout', listed: checkout }], skipped: [] })
+
+    expect((await client.listTools()).tools.map((t) => t.name)).toEqual(['woolworths_checkout'])
   })
 
   it('reports the tools it withheld', () => {
@@ -458,6 +476,34 @@ describe('call results', () => {
     expect(result.isError).toBe(true)
     expect(JSON.stringify(result)).not.toContain('abc123')
     expect(textOf(result)).toBe('The tool failed at stage tool-output: invalid.')
+  })
+
+  it('drops keys the output schema does not declare, at every level', async () => {
+    const caller = new FakeCaller([searchProducts])
+    caller.answer = async () => ({
+      status: 'ok',
+      output: {
+        products: [{ stockcode: '1', name: 'Milk', sessionCookie: 'abc123' }],
+        sessionCookie: 'abc123',
+      },
+    })
+    const { client } = await connect(caller)
+
+    const result = await client.callTool({ name: 'woolworths_search_products', arguments: { query: 'milk' } })
+
+    expect(result.isError).toBeFalsy()
+    expect(result.structuredContent).toEqual({ products: [{ stockcode: '1', name: 'Milk' }] })
+    expect(textOf(result)).toBe('{"products":[{"stockcode":"1","name":"Milk"}]}')
+    expect(JSON.stringify(result)).not.toContain('abc123')
+  })
+
+  it('drops undeclared keys from a non-object output too', async () => {
+    const caller = new FakeCaller([{ ...searchProducts, output: z.array(z.object({ name: z.string() })) }])
+    caller.answer = async () => ({ status: 'ok', output: [{ name: 'Milk', sessionCookie: 'abc123' }] })
+    const { client } = await connect(caller)
+    const result = await client.callTool({ name: 'woolworths_search_products', arguments: { query: 'milk' } })
+    expect(textOf(result)).toBe('[{"name":"Milk"}]')
+    expect(result.structuredContent).toBeUndefined()
   })
 
   it('withholds ok output that does not match a non-object output schema', async () => {
