@@ -45,7 +45,13 @@ export const ELECTRON_FUSES = {
    * is on from the first build that holds a real session. See docs/release-and-updates.md.
    */
   enableCookieEncryption: true,
-  /** The renderer is loaded from the asar; it needs no file:// privileges beyond a browser's. */
+  /**
+   * Off: file:// pages get no more than a browser gives them. That stops Vite's module scripts
+   * running from a file:// page (verified on Electron 44: `<script type="module">` never runs), so
+   * the renderer must not be loaded with loadFile. It is served from the privileged app:// scheme
+   * instead (src/main/updater/app-scheme.ts), which scripts/package-smoke.mjs checks in a packaged
+   * window.
+   */
   grantFileProtocolExtraPrivileges: false,
   loadBrowserProcessSpecificV8Snapshot: false,
 } as const
@@ -102,7 +108,21 @@ export interface ConfigDeps {
   readonly readTemplate: (name: string) => string
   /** @electron/osx-sign's signAsync, loaded only when a signed build actually signs. */
   readonly loadSignAsync: () => SignAsync
+  /** Waits between signing attempts. Defaults to a real timer. */
+  readonly sleep?: (ms: number) => Promise<void>
 }
+
+/**
+ * electron-builder's default signing retries (macCodeSign.sign: retry with retries 3, interval and
+ * backoff 5000 ms); a custom `mac.sign` replaces that, so the wrapper retries the same way. One
+ * timestamp-server hiccup during `codesign --timestamp` of any nested binary would otherwise fail
+ * the release.
+ */
+export const SIGN_RETRIES = 3
+export const SIGN_RETRY_INTERVAL_MS = 5000
+export const SIGN_RETRY_BACKOFF_MS = 5000
+
+const realSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
 const TEAM_ID = /^[A-Z0-9]{10}$/
 const SHA1_IDENTITY = /^[0-9A-F]{40}$/
@@ -138,10 +158,14 @@ export function renderRequirement(template: string, values: { appId: string; tea
  * only. electron-builder's own `mac.requirements` gives it to every nested binary too, whose
  * identifiers can't satisfy it.
  */
-export function signWithRequirement(loadSignAsync: () => SignAsync, requirement: string) {
+export function signWithRequirement(
+  loadSignAsync: () => SignAsync,
+  requirement: string,
+  sleep: (ms: number) => Promise<void> = realSleep,
+) {
   return async (options: SignOptionsLike): Promise<void> => {
     const signAsync = loadSignAsync()
-    await signAsync({
+    const signOptions = {
       ...options,
       optionsForFile: (filePath: string) => {
         const base = options.optionsForFile?.(filePath) ?? {}
@@ -149,7 +173,16 @@ export function signWithRequirement(loadSignAsync: () => SignAsync, requirement:
           ? { ...base, requirements: requirement }
           : { ...base, requirements: undefined }
       },
-    })
+    }
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await signAsync(signOptions)
+        return
+      } catch (error) {
+        if (attempt >= SIGN_RETRIES) throw error
+        await sleep(SIGN_RETRY_INTERVAL_MS + attempt * SIGN_RETRY_BACKOFF_MS)
+      }
+    }
   }
 }
 
@@ -183,10 +216,14 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
 
   const rawFeed = env.SITEADAPTER_UPDATE_URL
   const feedUrl =
-    rawFeed === undefined || rawFeed === '' ? null : validateFeedUrl(rawFeed, { allowLoopbackHttp: !release })
+    rawFeed === undefined || rawFeed === ''
+      ? null
+      : validateFeedUrl(rawFeed, { allowLoopbackHttp: !release, requirePublicHost: release })
   if (rawFeed !== undefined && rawFeed !== '' && feedUrl === null) {
     throw new BuildConfigError(
-      'SITEADAPTER_UPDATE_URL must be an https directory URL ending in "/", with no query, fragment or credentials',
+      release
+        ? 'SITEADAPTER_UPDATE_URL must be an https directory URL ending in "/" on a public host name (no IP, localhost or single label), with no query, fragment or credentials'
+        : 'SITEADAPTER_UPDATE_URL must be an https directory URL ending in "/", with no query, fragment or credentials',
     )
   }
 
@@ -219,8 +256,24 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
       appId,
       teamId: teamId as string,
     })
-  } else if (identityGiven && teamId !== undefined && teamId !== '') {
-    requirement = renderRequirement(deps.readTemplate(DEV_REQUIREMENT_TEMPLATE), { appId, teamId })
+  } else if (identityGiven) {
+    // For a non-MAS development build electron-builder searches both "Mac Developer" and "Developer
+    // ID Application" certificates for a CSC_NAME (MacTargetHelper.getCertificateTypes), so a name
+    // would find the Developer ID key, and a .dev bundle would carry the release signature. Only a
+    // SHA-1 picks one certificate; a .p12 from CSC_LINK can't be checked, so it isn't accepted.
+    if (set(env, 'CSC_LINK')) {
+      throw new BuildConfigError(
+        'a development build is signed from the keychain: unset CSC_LINK, set CSC_NAME',
+      )
+    }
+    if (!SHA1_IDENTITY.test(env.CSC_NAME ?? '')) {
+      throw new BuildConfigError(
+        'a development build takes CSC_NAME as the SHA-1 of an Apple Development identity (security find-identity -v -p codesigning)',
+      )
+    }
+    if (teamId !== undefined && teamId !== '') {
+      requirement = renderRequirement(deps.readTemplate(DEV_REQUIREMENT_TEMPLATE), { appId, teamId })
+    }
   }
 
   // A dev build without an explicit identity is never signed, rather than electron-builder finding
@@ -259,7 +312,9 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
       entitlementsInherit: ENTITLEMENTS_INHERIT_PATH,
       // The signed entitlements are exactly the files above.
       preAutoEntitlements: false,
-      ...(requirement === null ? {} : { sign: signWithRequirement(deps.loadSignAsync, requirement) }),
+      ...(requirement === null
+        ? {}
+        : { sign: signWithRequirement(deps.loadSignAsync, requirement, deps.sleep) }),
       notarize: release,
       // The release script assesses with spctl itself, after stapling.
       gatekeeperAssess: false,
