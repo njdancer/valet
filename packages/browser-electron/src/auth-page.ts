@@ -278,7 +278,7 @@ export class SurfaceAuthPage implements AuthPage {
       moved: 'origin-mismatch',
       before: () => this.assertInside(stage),
     }
-    const commitsAtStart = this.core.commitCount
+    const mark = this.core.commitMark(target)
     await this.core.step(stage, async () => {
       this.assertInside(stage)
       if (!(await this.core.stillFocused(target))) throw new SiteAdapterError(stage, 'element-unsuitable')
@@ -288,7 +288,7 @@ export class SurfaceAuthPage implements AuthPage {
       await secret.revealEach(async (char) => {
         if (index++ > 0) await sleep(this.timing.timers, delayMs)
         await this.core.step(stage, async (signal) => {
-          await this.core.beforeKey(guard, commitsAtStart, signal)
+          await this.core.beforeKey(guard, mark, signal)
           this.core.sendChar(char)
         })
       })

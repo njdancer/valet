@@ -797,7 +797,28 @@ describe('AuthPage.type', () => {
     expect(surface.chars).toEqual([])
   })
 
-  it('stops the moment any frame commits a navigation, so no character lands in another document', async () => {
+  it('stops the moment the secret’s frame commits a navigation, so no character lands in another document', async () => {
+    const { timers, surface, page, child } = await focusedOn('#password')
+    surface.afterChar = (index) => {
+      if (index === 1) surface.commit('https://login.example.com/frame', false, child.nodeId)
+    }
+    const error = await timers.settle(rejection(page.type(SecretValue.fromString('hunter2'), GRANT)))
+    expect(error).toMatchObject({ stage: 'secret-fill', errorClass: 'origin-mismatch' })
+    expect(surface.chars).toEqual(['h', 'u'])
+  })
+
+  it('types a secret on when an unrelated iframe elsewhere on the page reloads partway', async () => {
+    const { timers, surface, page, main, child } = await focusedOn('#password')
+    const recaptcha = new FakeFrame('https://www.example.com', 'https://www.example.com/recaptcha', 0)
+    surface.frameList = [main, child, recaptcha]
+    surface.afterChar = (index) => {
+      if (index === 1) surface.commit('https://www.example.com/recaptcha?reload', false, recaptcha.nodeId)
+    }
+    await timers.settle(page.type(SecretValue.fromString('hunter2'), GRANT))
+    expect(surface.chars.join('')).toBe('hunter2')
+  })
+
+  it('stops on a commit the browser could not place, since it may have been the secret’s frame', async () => {
     const { timers, surface, page } = await focusedOn('#password')
     surface.afterChar = (index) => {
       if (index === 1) surface.commit('https://login.example.com/frame', false)

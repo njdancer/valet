@@ -1,7 +1,13 @@
 // BrowserPlatform over real Electron. Kept thin: every decision lives in the pure modules, and this
 // file only forwards. It is covered by the e2e suite, not unit tests.
 
-import { BrowserWindow, session as electronSession, type Session, type WebContents } from 'electron'
+import {
+  BrowserWindow,
+  session as electronSession,
+  type Session,
+  type WebContents,
+  webFrameMain,
+} from 'electron'
 import { type Dial, startEgressProxy } from '../egress-proxy'
 import type {
   BrowserPlatform,
@@ -147,11 +153,14 @@ class ElectronSurface implements BrowserSurface {
     contents.on('will-redirect', (event) => {
       if (!this.guard({ url: event.url, isMainFrame: event.isMainFrame })) event.preventDefault()
     })
-    contents.on('did-frame-navigate', (_event, url, _code, _status, isMainFrame) => {
-      this.emit({ kind: 'commit', url, isMainFrame })
+    contents.on('did-frame-navigate', (_event, url, _code, _status, isMainFrame, processId, routingId) => {
+      const frame = isMainFrame ? contents.mainFrame : webFrameMain.fromId(processId, routingId)
+      const frameNodeId = frame === undefined || frame === null ? null : String(frame.frameTreeNodeId)
+      this.emit({ kind: 'commit', url, isMainFrame, frameNodeId })
     })
     contents.on('did-redirect-navigation', (event) => {
-      this.emit({ kind: 'redirect', url: event.url, isMainFrame: event.isMainFrame })
+      const frameNodeId = event.frame === null ? null : String(event.frame.frameTreeNodeId)
+      this.emit({ kind: 'redirect', url: event.url, isMainFrame: event.isMainFrame, frameNodeId })
     })
     this.window.on('close', (event) => {
       if (this.closeHandler?.() === true) event.preventDefault()
@@ -206,6 +215,7 @@ class ElectronSurface implements BrowserSurface {
       const parentId = frame.parent?.frameTreeNodeId
       return {
         id: frame.frameToken,
+        nodeId: String(frame.frameTreeNodeId),
         origin: frame.origin,
         url: frame.url,
         parentIndex:

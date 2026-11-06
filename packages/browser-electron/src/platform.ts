@@ -72,6 +72,11 @@ export interface PartitionSession {
 export interface FrameHandle {
   /** Stable for the frame's lifetime, and comparable with BrowserSurface.focusedFrameId(). */
   readonly id: string
+  /**
+   * The frame's place in the frame tree, which stays the same across its navigations (Chromium's
+   * frame tree node id), unlike `id`. Comparable with NavigationEvent.frameNodeId.
+   */
+  readonly nodeId: string
   /** Security origin as the browser process sees it, not as the page reports it. */
   readonly origin: string
   readonly url: string
@@ -120,6 +125,8 @@ export interface NavigationEvent {
   readonly kind: 'commit' | 'redirect'
   readonly url: string
   readonly isMainFrame: boolean
+  /** The navigating frame's FrameHandle.nodeId, or null when the browser couldn't say. */
+  readonly frameNodeId: string | null
 }
 
 /** A navigation about to start, offered to the guard. */

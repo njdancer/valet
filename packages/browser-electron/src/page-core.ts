@@ -37,11 +37,26 @@ export interface FocusTarget {
   readonly selector: string
 }
 
+/**
+ * Where commits stood when typing started. With `nodes`, the target frame and its ancestors, only
+ * their commits (and commits the browser couldn't place) count as the target moving; without, any
+ * commit does.
+ */
+export interface CommitMark {
+  readonly nodes: readonly string[] | null
+  readonly counts: readonly number[]
+  readonly unplaced: number
+  readonly total: number
+}
+
 /** A frame's answer to a script that looks for one element. */
 export type FrameMatch<T> = { readonly frameIndex: number; readonly frame: FrameHandle; readonly value: T }
 
 export class PageCore {
   private commits = 0
+  /** Commits by frame tree node, and those the browser couldn't place in the tree. */
+  private readonly commitsByNode = new Map<string, number>()
+  private unplacedCommits = 0
   private readonly mainFrameUrls: string[] = []
 
   constructor(
@@ -49,7 +64,11 @@ export class PageCore {
     readonly timing: PageTiming,
   ) {
     surface.onNavigation((event) => {
-      if (event.kind === 'commit') this.commits++
+      if (event.kind === 'commit') {
+        this.commits++
+        if (event.frameNodeId === null) this.unplacedCommits++
+        else this.commitsByNode.set(event.frameNodeId, (this.commitsByNode.get(event.frameNodeId) ?? 0) + 1)
+      }
       if (event.isMainFrame) this.mainFrameUrls.push(event.url)
     })
   }
@@ -165,9 +184,20 @@ export class PageCore {
     return parseFocus(await runQuietly(frame, focusedScript(target.selector)))?.focused === true
   }
 
-  /** Commits seen so far, in any frame. Typing notes it at the start and stops if it changes. */
-  get commitCount(): number {
-    return this.commits
+  /**
+   * Notes where commits stand, for beforeKey(). With a target, only the target's frame and its
+   * ancestors matter: an analytics or CAPTCHA iframe elsewhere on the page that reloads mid-type
+   * doesn't move the keystrokes. A target whose frame is gone, or whose ancestry can't be
+   * followed, falls back to every frame.
+   */
+  commitMark(target: FocusTarget | null): CommitMark {
+    const nodes = target === null ? null : this.lineage(target.frameId)
+    return {
+      nodes,
+      counts: (nodes ?? []).map((node) => this.commitsByNode.get(node) ?? 0),
+      unplaced: this.unplacedCommits,
+      total: this.commits,
+    }
   }
 
   /**
@@ -181,27 +211,27 @@ export class PageCore {
     delayMs: number,
     send: (index: number) => void,
   ): Promise<void> {
-    const commitsAtStart = this.commits
+    const mark = this.commitMark(guard.target)
     for (let index = 0; index < count; index++) {
       if (index > 0) await sleep(this.timing.timers, delayMs)
-      await this.beforeKey(guard, commitsAtStart, signal)
+      await this.beforeKey(guard, mark, signal)
       send(index)
     }
   }
 
   /**
    * Throws unless the next keystroke would land where typing started: the step is still live, the
-   * window is there, no frame has committed a navigation since `commitsAtStart`, and, with a
-   * target, the browser still has keyboard focus in its frame, that frame is still on the target's
+   * window is there, no frame that matters has committed a navigation since `mark` (see
+   * commitMark()), and, with a target, the browser still has keyboard focus in its frame, that frame is still on the target's
    * origin (and on `allowedOrigins`, when given), and the element itself still has focus. Anything
    * that moved fails with `guard.moved`, since the remaining characters would land somewhere else.
    */
-  async beforeKey(guard: TypingGuard, commitsAtStart: number, signal: AbortSignal): Promise<void> {
+  async beforeKey(guard: TypingGuard, mark: CommitMark, signal: AbortSignal): Promise<void> {
     const fail = (errorClass: ErrorClass) => new SiteAdapterError(guard.stage, errorClass)
     const live = () => {
       guard.before?.()
       if (signal.aborted || this.surface.isDestroyed()) throw fail('aborted')
-      if (this.commits !== commitsAtStart) throw fail(guard.moved)
+      if (this.movedSince(mark)) throw fail(guard.moved)
     }
     live()
     const target = guard.target
@@ -222,6 +252,25 @@ export class PageCore {
     live()
     inFrame()
     if (!focused) throw fail(guard.moved)
+  }
+
+  private movedSince(mark: CommitMark): boolean {
+    if (mark.nodes === null) return this.commits !== mark.total
+    if (this.unplacedCommits !== mark.unplaced) return true
+    return mark.nodes.some((node, index) => (this.commitsByNode.get(node) ?? 0) !== mark.counts[index])
+  }
+
+  /** The frame's node and its ancestors' up to the main frame, or null if the chain breaks. */
+  private lineage(frameId: string): string[] | null {
+    const frames = this.surface.frames()
+    const nodes: string[] = []
+    let frame = frames.find((candidate) => candidate.id === frameId)
+    for (let depth = 0; frame !== undefined && depth <= frames.length; depth++) {
+      nodes.push(frame.nodeId)
+      if (frame.parentIndex === null) return nodes
+      frame = frames[frame.parentIndex]
+    }
+    return null
   }
 
   /** Sends one trusted character, as the page's key-event setting says. */

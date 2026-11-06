@@ -10,6 +10,9 @@ function core(surface: FakeSurface) {
 
 const ANYWHERE = { stage: 'auth-step', target: null, moved: 'aborted' } as const
 
+/** Where commits stand on a page that has seen none. */
+const START = { nodes: null, counts: [], unplaced: 0, total: 0 } as const
+
 describe('PageCore.typeChars', () => {
   it('sends nothing once the step has been given up on', async () => {
     const surface = new FakeSurface('persist:auth:example')
@@ -50,7 +53,7 @@ describe('PageCore.beforeKey', () => {
   it('passes while the target still has focus on an allowed origin', async () => {
     const { surface, target } = focusedInput()
     const guard = { ...ANYWHERE, target, allowedOrigins: ['https://www.example.com'] }
-    await expect(core(surface).beforeKey(guard, 0, new AbortController().signal)).resolves.toBeUndefined()
+    await expect(core(surface).beforeKey(guard, START, new AbortController().signal)).resolves.toBeUndefined()
   })
 
   it('fails with the guard’s class when the frame is not on the allowed origins', async () => {
@@ -62,7 +65,7 @@ describe('PageCore.beforeKey', () => {
       allowedOrigins: ['https://login.test'],
     } as const
     const error = await core(surface)
-      .beforeKey(guard, 0, new AbortController().signal)
+      .beforeKey(guard, START, new AbortController().signal)
       .catch((e: unknown) => e)
     expect(error).toMatchObject({ stage: 'auth-step', errorClass: 'origin-mismatch' })
   })
@@ -71,7 +74,7 @@ describe('PageCore.beforeKey', () => {
     const { surface, target, window } = focusedInput()
     window.document.add('#q', window.document.element('INPUT', { type: 'search' })).focus()
     const error = await core(surface)
-      .beforeKey({ ...ANYWHERE, target, moved: 'origin-mismatch' }, 0, new AbortController().signal)
+      .beforeKey({ ...ANYWHERE, target, moved: 'origin-mismatch' }, START, new AbortController().signal)
       .catch((e: unknown) => e)
     expect(error).toMatchObject({ errorClass: 'origin-mismatch' })
   })
@@ -80,7 +83,7 @@ describe('PageCore.beforeKey', () => {
     const { surface, target, frame } = focusedInput()
     frame.receivesInput = false
     const error = await core(surface)
-      .beforeKey({ ...ANYWHERE, target, moved: 'origin-mismatch' }, 0, new AbortController().signal)
+      .beforeKey({ ...ANYWHERE, target, moved: 'origin-mismatch' }, START, new AbortController().signal)
       .catch((e: unknown) => e)
     expect(error).toMatchObject({ errorClass: 'origin-mismatch' })
   })
@@ -96,7 +99,7 @@ describe('PageCore.beforeKey', () => {
     const error = await page
       .beforeKey(
         { ...ANYWHERE, target, moved: 'origin-mismatch' },
-        page.commitCount,
+        page.commitMark(target),
         new AbortController().signal,
       )
       .catch((e: unknown) => e)
@@ -111,7 +114,7 @@ describe('PageCore.beforeKey', () => {
       return run(code)
     }
     const error = await core(surface)
-      .beforeKey({ ...ANYWHERE, target, moved: 'origin-mismatch' }, 0, new AbortController().signal)
+      .beforeKey({ ...ANYWHERE, target, moved: 'origin-mismatch' }, START, new AbortController().signal)
       .catch((e: unknown) => e)
     expect(error).toMatchObject({ errorClass: 'origin-mismatch' })
   })
@@ -122,7 +125,7 @@ describe('PageCore.beforeKey', () => {
       throw new SiteAdapterError('navigate', 'navigation-escaped')
     }
     const error = await core(surface)
-      .beforeKey({ ...ANYWHERE, target, before }, 0, new AbortController().signal)
+      .beforeKey({ ...ANYWHERE, target, before }, START, new AbortController().signal)
       .catch((e: unknown) => e)
     expect(error).toMatchObject({ stage: 'navigate', errorClass: 'navigation-escaped' })
   })
@@ -195,5 +198,107 @@ describe('typingDelay', () => {
 describe('characters', () => {
   it('splits by code point', () => {
     expect(characters('a😀é')).toEqual(['a', '😀', 'é'])
+  })
+})
+
+/** A main frame with two iframes: the login form, where #code has focus, and an analytics frame. */
+function framedInput() {
+  const main = new FakeFrame('https://www.example.com', 'https://www.example.com/', null)
+  const formWindow = new FakeWindow()
+  formWindow.document.add('#code', formWindow.document.element('INPUT', { type: 'text' })).focus()
+  const form = new FakeFrame('https://www.example.com', 'https://www.example.com/form', 0, formWindow)
+  const analytics = new FakeFrame('https://www.example.com', 'https://www.example.com/pixel', 0)
+  const surface = new FakeSurface('persist:auth:example', [main, form, analytics])
+  surface.focusedFrame = form.id
+  const target = { frameId: form.id, origin: form.origin, selector: '#code' }
+  return { main, form, analytics, surface, target }
+}
+
+describe('PageCore commits while typing', () => {
+  const GUARD = { stage: 'secret-fill', moved: 'origin-mismatch' } as const
+
+  it('types on when an unrelated sibling iframe reloads mid-type', async () => {
+    const { surface, target, analytics } = framedInput()
+    surface.afterChar = (index) => {
+      if (index === 0) surface.commit('https://www.example.com/pixel?2', false, analytics.nodeId)
+    }
+    const timers = new ManualTimers()
+    const page = new PageCore(surface, { timers, stepTimeoutMs: 1000, typingDelayMs: 0 })
+    await timers.settle(
+      page.typeChars({ ...GUARD, target }, new AbortController().signal, 3, 10, (i) =>
+        surface.sendChar(String(i), 'char'),
+      ),
+    )
+    expect(surface.chars).toEqual(['0', '1', '2'])
+  })
+
+  it('stops when the target frame itself commits, even on the same origin', async () => {
+    const { surface, target, form } = framedInput()
+    surface.afterChar = (index) => {
+      if (index === 0) surface.commit('https://www.example.com/form?again', false, form.nodeId)
+    }
+    const timers = new ManualTimers()
+    const page = new PageCore(surface, { timers, stepTimeoutMs: 1000, typingDelayMs: 0 })
+    const error = await timers
+      .settle(
+        page.typeChars({ ...GUARD, target }, new AbortController().signal, 3, 10, (i) =>
+          surface.sendChar(String(i), 'char'),
+        ),
+      )
+      .catch((e: unknown) => e)
+    expect(error).toMatchObject({ stage: 'secret-fill', errorClass: 'origin-mismatch' })
+    expect(surface.chars).toEqual(['0'])
+  })
+
+  it('stops when an ancestor of the target frame commits', async () => {
+    const { surface, target } = framedInput()
+    const page = core(surface)
+    const mark = page.commitMark(target)
+    surface.commit('https://www.example.com/elsewhere')
+    const error = await page
+      .beforeKey({ ...GUARD, target }, mark, new AbortController().signal)
+      .catch((e: unknown) => e)
+    expect(error).toMatchObject({ errorClass: 'origin-mismatch' })
+  })
+
+  it('stops on a commit the browser could not place in the frame tree', async () => {
+    const { surface, target } = framedInput()
+    const page = core(surface)
+    const mark = page.commitMark(target)
+    surface.commit('https://www.example.com/somewhere', false, null)
+    const error = await page
+      .beforeKey({ ...GUARD, target }, mark, new AbortController().signal)
+      .catch((e: unknown) => e)
+    expect(error).toMatchObject({ errorClass: 'origin-mismatch' })
+  })
+
+  it('falls back to every frame when the target’s frame is gone', async () => {
+    const { surface, target, analytics } = framedInput()
+    const page = core(surface)
+    const mark = page.commitMark({ ...target, frameId: 'frame-gone' })
+    expect(mark.nodes).toBeNull()
+    surface.commit('https://www.example.com/pixel?2', false, analytics.nodeId)
+    const error = await page
+      .beforeKey({ ...GUARD, target: null }, mark, new AbortController().signal)
+      .catch((e: unknown) => e)
+    expect(error).toMatchObject({ errorClass: 'origin-mismatch' })
+  })
+
+  it('falls back to every frame when the target’s ancestry is broken', async () => {
+    const { surface, target, form } = framedInput()
+    ;(form as { parentIndex: number | null }).parentIndex = 7
+    expect(core(surface).commitMark(target).nodes).toBeNull()
+  })
+
+  it('falls back to every frame when the frame tree loops', async () => {
+    const { surface, target, form, main } = framedInput()
+    ;(main as { parentIndex: number | null }).parentIndex = 1
+    ;(form as { parentIndex: number | null }).parentIndex = 0
+    expect(core(surface).commitMark(target).nodes).toBeNull()
+  })
+
+  it('lists the target frame and its ancestors in the mark', () => {
+    const { surface, target, form, main } = framedInput()
+    expect(core(surface).commitMark(target).nodes).toEqual([form.nodeId, main.nodeId])
   })
 })

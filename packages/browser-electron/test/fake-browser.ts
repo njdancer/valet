@@ -24,6 +24,8 @@ let frameIds = 0
 
 export class FakeFrame implements FrameHandle {
   readonly id = `frame-${++frameIds}`
+  /** Stays the same across the frame's navigations; tests that navigate a frame keep it. */
+  nodeId = `node-${frameIds}`
   readonly scripts: string[] = []
   /** What ran in the adapter's world rather than the runtime's. */
   readonly adapterScripts: string[] = []
@@ -194,13 +196,20 @@ export class FakeSurface implements BrowserSurface {
     return this.guard === null ? true : this.guard({ url, isMainFrame })
   }
 
-  commit(url: string, isMainFrame = true): void {
+  /**
+   * Commits a navigation. A main-frame commit is placed on the first frame's node; a subframe's
+   * goes unplaced unless `frameNodeId` says which frame it was.
+   */
+  commit(url: string, isMainFrame = true, frameNodeId?: string | null): void {
     if (isMainFrame) this.currentUrl = url
-    for (const listener of this.listeners) listener({ kind: 'commit', url, isMainFrame })
+    const node =
+      frameNodeId !== undefined ? frameNodeId : isMainFrame ? (this.frameList[0]?.nodeId ?? null) : null
+    for (const listener of this.listeners) listener({ kind: 'commit', url, isMainFrame, frameNodeId: node })
   }
 
   redirect(url: string, isMainFrame = true): void {
-    for (const listener of this.listeners) listener({ kind: 'redirect', url, isMainFrame })
+    const frameNodeId = isMainFrame ? (this.frameList[0]?.nodeId ?? null) : null
+    for (const listener of this.listeners) listener({ kind: 'redirect', url, isMainFrame, frameNodeId })
   }
 
   finishLoading(): void {

@@ -107,7 +107,9 @@ to measure a decision or an opt-in rather than to test the default.
   (`secret-fill/origin-mismatch`). `focus(selector)` must land in the same frame, at the same
   origin, as the last `inspect(selector)`, so the frame the interpreter checked against the grant
   is the frame that gets the secret, and that frame must be https and on `allowedOrigins`. Before
-  every keystroke the page checks that no frame has committed a navigation, that the browser
+  every keystroke the page checks that neither that frame nor any of its ancestors has committed
+  a navigation (by frame tree node, so an analytics or CAPTCHA iframe elsewhere on the page that
+  reloads mid-type doesn't stop it; a commit the browser can't place counts), that the browser
   process (`webContents.focusedFrame`) still has focus in that frame, that the frame is still on
   its origin and on `allowedOrigins`, and that the element itself still has focus. If any of that
   changes partway, typing stops with `secret-fill/origin-mismatch` (literal text: `aborted`). A

@@ -328,6 +328,35 @@ async function setup() {
       return { typed, typedBefore, typedAfter, posts: site.posts.slice(from), leaks: canaryLeaks() }
     },
 
+    // Another iframe on the page (login.test's) reloads while a secret is typed into #code.
+    secretSiblingReloads: async () => {
+      const page = await openLogin()
+      await page.inspect('#code')
+      await page.focus('#code')
+      const value = `${CANARY}-${'y'.repeat(30)}`
+      const secret = SecretValue.fromString(value)
+      const typing = settle(page.type(secret, { allowedOrigins: [site.url('site.test')] }))
+      await sleep(150)
+      const sibling = subframeWithOrigin(login, site.url('login.test'))
+      const siblingBefore = sibling?.url
+      await sibling?.executeJavaScript(`(location.href = '/frame?reloaded=1', null)`)
+      const typed = await typing
+      secret.dispose()
+      const reloaded =
+        windowAt(login)?.webContents.mainFrame.framesInSubtree.some((f) => f.url.includes('reloaded=1')) ??
+        false
+      const frame = subframeWithOrigin(login, site.url('site.test'))
+      const typedLength = await frame?.executeJavaScript(`document.querySelector('#code').value.length`)
+      await page.close()
+      return {
+        typed,
+        reloaded,
+        siblingBefore: siblingBefore !== undefined,
+        typedLength,
+        expected: value.length,
+      }
+    },
+
     // keyDown, char and keyUp per character, from a driver set to send them.
     typeSecretWithFullKeys: async () => {
       const page = await openLogin(keysDriver)

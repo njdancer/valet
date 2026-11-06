@@ -96,6 +96,14 @@ test('typing a secret stops when the site navigates its frame partway', async ()
   expect(result.leaks).toEqual([])
 })
 
+test('another iframe reloading partway doesn’t stop a secret typed into a different frame', async () => {
+  const result = await scenario(app, 'secretSiblingReloads')
+  expect(result.siblingBefore).toBe(true)
+  expect(result.reloaded).toBe(true)
+  expect(result.typed).toEqual({ ok: undefined })
+  expect(result.typedLength).toBe(result.expected)
+})
+
 test('full key events reach the form as keyDown, char and keyUp, and type the same text', async () => {
   const { post, keydowns, leaks } = await scenario(app, 'typeSecretWithFullKeys')
   expect((post as { body: string }).body).toBe(`code=${CANARY_ENCODED}&untrusted=0`)
