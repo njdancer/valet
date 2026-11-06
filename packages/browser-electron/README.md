@@ -25,7 +25,7 @@ rules it serves are in [docs/security-model.md](../../docs/security-model.md).
 | `cookies.ts`           | Which cookies hand off, and how to recreate them exactly          |
 | `page-core.ts`         | Tolerant loads, step timeouts, frame lookup, trusted click/typing |
 | `auth-page.ts`         | `AuthPage`: navigation poisoning, origin-bound secret typing      |
-| `session-fetch.ts`     | The auth probe's GET: navigation origins every hop, cap, parsing  |
+| `session-fetch.ts`     | The auth probe: origins every hop, the page's headers, parsing    |
 | `tool-page.ts`         | `ToolPage`: goto, click, fill, extract, evaluate, fetch           |
 | `driver.ts`            | Partitions, runs, the request filter, the handoff, redaction data |
 | `session-values.ts`    | Every value session cookies and storage keys held, for redaction  |
@@ -147,37 +147,66 @@ to measure a decision or an opt-in rather than to test the default.
   navigation (an escape, which also poisons the page, including an off-list commit that slipped
   past the guard), and each refused subframe, goes to a reporter as a core `BlockedRequest` with
   initiator `page`, method `GET` (the guard can't see a form's method), the origin alone as the
-  target, and `host-not-allowed` (or `bad-url` for a URL with no network origin). The reporter is
-  `openAuthPage({ onBlocked })`'s, for that page's own refusals and for the request filter's while
-  it is the newest open auth page (the filter can't tell which page asked), and otherwise
-  `DriverOptions.onAuthBlocked`. Never the tool partition's reporters. Each distinct refusal is
-  reported once per page, up to 200: a main-frame navigation reaches the guard twice
-  (`will-frame-navigate` and `will-navigate`), and pages retry. Like the tool partition's, these
-  reports must pass output redaction before the audit log.
+  target, and `host-not-allowed` (or `bad-url` for a URL with no network origin). A page's own
+  refusals go to `openAuthPage({ onBlocked })`'s reporter, or to `DriverOptions.onAuthBlocked`
+  when it was opened without one. The request filter can't tell which page asked, so its
+  refusals go to the newest open auth page that has a reporter, and otherwise to
+  `onAuthBlocked`. A storage-handoff helper page never takes them: its own refusals are routed
+  the same way. Never the tool partition's reporters. Each distinct refusal is reported once per
+  reporter (a main-frame navigation reaches the guard twice, `will-frame-navigate` and
+  `will-navigate`, and pages retry), up to 200 subframe refusals and, counted apart so that no
+  number of refused widgets can keep an escape out of the audit, 50 escapes. Past a budget the
+  refusal still holds; the first one dropped calls `onReportsDropped` (or
+  `DriverOptions.onAuthReportsDropped` for `onAuthBlocked`'s budget) once, and
+  `driver.droppedAuthReports()` counts them all. Like the tool partition's, these reports must
+  pass output redaction before the audit log. **Gap:** core's `SessionDriver.openAuthPage()`
+  takes no reporter and `BlockedRequest` carries no partition, so a runtime written against the
+  core contract gets none of these unless it passes `onAuthBlocked`, and can't tell them from
+  the tool partition's page-initiated blocks once it does (a core change; the runtime's wiring
+  isn't done).
 - **The session probe is a GET from the main process, not from the page.** `AuthPage.fetch(url)`
   goes through Electron's `net.request` on the auth partition's session, with its cookies
-  (`credentials: 'include'`, so what the answer sets is kept in the auth partition too),
-  `cache: 'no-store'` (a cached answer from before a login or logout would make the probe lie),
-  no referrer, and the clean Chrome UA, `Accept-Language: en-AU,en;q=0.9` and `Accept: */*`
-  restated (with `userAgent: 'electron'`, only `Accept`). No script runs, so the site can't see or
-  shape it. It may go only to the manifest's navigation origins, over https, with no credentials
-  in the URL (`probe/host-not-allowed`, or `probe/invalid` for `user:pass@`), and the fragment is
-  dropped. Redirects are `manual`: each hop is put to the main frame's navigation rule before
-  anything is sent there, so one that leaves the navigation origins (or drops to http) is refused,
-  not followed (`probe/host-not-allowed`), and more than 5 hops is `probe/unavailable`. It runs
-  under the step timeout (`timeout/timed-out`, and the request is aborted), reads at most 1 MiB
-  (`probe/unexpected-shape` past that), and answers per core's `FetchResult`: the body parsed as
-  JSON when the content type is JSON (`application/json`, `+json`, `text/json`) and it parses,
-  otherwise the text, or `null` when empty. Error statuses and block pages come back as answers,
-  for the interpreter to classify. A poisoned page refuses it like every other primitive.
-  `AuthPage.cookieNames(domains)` returns the auth partition's cookie names on those domains (the
-  handoff's matching), never values. The request names the target's origin as its initiator, so
-  it goes out with `Sec-Fetch-Site: same-origin` and `Sec-Fetch-Dest: empty` as the page's own
-  `fetch()` would, but with `Sec-Fetch-Mode: no-cors` where the page's says `cors`: Electron's
-  `net` can't ask for that mode, and a site that checks it can tell the probe isn't the page. The
-  e2e suite records exactly what it sends. Whether the auth partition's `webRequest` filter sees
-  it doesn't matter: the filter only judges subframes, and the probe holds itself to the
-  navigation origins every hop, in the main process.
+  (`credentials: 'include'`, so what the answer sets is kept in the auth partition too, a
+  redirect's included) and `cache: 'no-store'` (a cached answer from before a login or logout
+  would make the probe lie). No script runs, so the site can't see or shape it. It may go only to
+  the manifest's navigation origins, over https, with no credentials in the URL
+  (`probe/host-not-allowed`, or `probe/invalid` for `user:pass@`), and the fragment is dropped.
+  Redirects are taken one hop at a time: each comes back unfollowed, is put to the main frame's
+  navigation rule before anything is sent there, so one that leaves the navigation origins (or
+  drops to http) is refused (`probe/host-not-allowed`), and more than 5 hops is
+  `probe/unavailable`. It runs under the step timeout (`timeout/timed-out`, and the request is
+  aborted), is cancelled when its page closes or the driver does (`probe/aborted`, never an
+  answer for a page that is gone), reads at most 1 MiB (`probe/unexpected-shape` past that), and
+  answers per core's `FetchResult`: the body parsed as JSON when the content type is JSON
+  (`application/json`, `+json`, `text/json`) and it parses, otherwise the text, or `null` when
+  empty. Error statuses and block pages come back as answers, for the interpreter to classify. A
+  poisoned page refuses it like every other primitive. `AuthPage.cookieNames(domains)` returns the
+  auth partition's cookie names on those domains (the handoff's matching), never values.
+- **The probe presents as the page's own `fetch(url, { credentials: 'include' })`.** Electron's
+  `net` has no `mode`, but `setHeader` sends names, case, order and values as given, and the
+  network stack adds the Referer, `Accept-Encoding` and the cookies after them, as Chrome does. So
+  each hop restates, in Chrome's order: `sec-ch-ua-platform`, `User-Agent`, `sec-ch-ua`,
+  `Accept-Language`, `sec-ch-ua-mobile` (the page's override: clean UA, en-AU, the same brands),
+  `Accept: */*`, `Origin` once the request has gone cross-origin (`null` after a tainting
+  redirect, per the fetch spec), `Sec-Fetch-Site`, `Sec-Fetch-Mode: cors`, `Sec-Fetch-Dest:
+  empty`, and the Referer strict-origin-when-cross-origin gives from the auth page's URL: the URL
+  itself to its own origin, its origin elsewhere. The request is made on behalf of the page's
+  origin (`net`'s `origin`), and Chromium overwrites `Sec-Fetch-Site` from that with its own
+  reckoning, public suffix list and all; before any page is on the navigation origins, it goes as
+  if from the target's own origin, with no Referer. The e2e suite diffs it on the wire against the
+  page's own `fetch()` to the same route in the same partition, same-origin and after a redirect:
+  identical but for the cookies. **Gaps:** cross-site (navigation origins on different sites), the
+  page's `fetch()` also sends `Sec-Fetch-Storage-Access: active`, which Chromium strips from a
+  main-process request, so a site can tell the two apart there (the e2e diff records it; it is
+  a cross-site header, so same-site origins such as Woolworths' shouldn't carry it, though only
+  the cross-site case is measured). After a redirect chain that left the
+  page's site and came back, Chrome says `cross-site` for the whole chain, and the probe's
+  per-hop request says what that hop is. High-entropy client hints a site asks for with
+  `Accept-CH` reach the page's requests but not the probe's. With `userAgent: 'electron'` the UA
+  and hints are left to the network stack, and the probe doesn't match the page's order.
+  Whether the auth partition's `webRequest` filter sees the probe doesn't matter: the filter only
+  judges subframes, and the probe holds itself to the navigation origins every hop, in the main
+  process.
 - **The clean Chrome UA and en-AU are the default, on both partitions.** Each partition gets
   `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)
   Chrome/<real major>.0.0.0 Safari/537.36` and the languages `en-AU,en` (sent as
