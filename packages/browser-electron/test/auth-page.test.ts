@@ -588,6 +588,21 @@ describe('AuthPage.type', () => {
     expect(surface.chars).toEqual([])
   })
 
+  it('refuses literal text too when the site moved focus after focus()', async () => {
+    const { surface, page, mainWindow } = await focusedOn('#user')
+    mainWindow.document.add('#q', mainWindow.document.element('INPUT', { type: 'search' })).focus()
+    const error = await rejection(page.type('nick@example.com'))
+    expect(error).toMatchObject({ stage: 'auth-step', errorClass: 'element-unsuitable' })
+    expect(surface.chars).toEqual([])
+  })
+
+  it('refuses a secret on a window that is gone', async () => {
+    const { surface, page } = await focusedOn('#password')
+    surface.destroy()
+    const error = await rejection(page.type(SecretValue.fromString('hunter2')))
+    expect(error).toMatchObject({ stage: 'secret-fill', errorClass: 'aborted' })
+  })
+
   it('refuses when the browser says keyboard focus is in another frame', async () => {
     const { surface, page, child } = await focusedOn('#user')
     surface.focusedFrame = child.id

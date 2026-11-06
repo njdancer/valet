@@ -239,7 +239,6 @@ export class SurfaceAuthPage implements AuthPage {
   private async typeSecret(secret: SecretValue, options: TypeOptions | undefined): Promise<void> {
     const stage: Stage = 'secret-fill'
     const delayMs = typingDelay(options?.delayMs, this.timing.typingDelayMs)
-    if (this.surface.isDestroyed()) throw new SiteAdapterError(stage, 'aborted')
     this.assertInside(stage)
     const target = this.focusTarget
     if (target === null || !target.inspected) throw new SiteAdapterError(stage, 'element-unsuitable')
