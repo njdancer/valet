@@ -24,7 +24,8 @@ draft. Each one marked _verify_ must be confirmed first. Nothing here is legal a
   - updates show a semantic permission diff, and secret grants carry forward only when the person
     clicks to keep them.
 - **Sandbox:** tool code runs in **QuickJS compiled to WebAssembly**, hosted inside a **sandboxed,
-  Node-less hidden renderer** whose session blocks all network. That's two layers:
+  Node-less hidden renderer** whose in-memory session, one per adapter hash and cleared between
+  runs, blocks all network. That's two layers:
   - QuickJS has no ambient authority by construction;
   - Chromium's OS-level sandbox catches a QuickJS or WebAssembly-engine escape.
 
@@ -185,8 +186,10 @@ reproduce can still be installed from a file, but can't be listed.
   dependency request.
 - **Trust on first use, per adapter id.** The first install of `woolworths` from key K pins K.
   An update signed by any other key is presented as a _different adapter_: fresh approval, no
-  grants carried, and a warning that the publisher changed. Key rotation is a signed statement by
-  the old key naming the new one, published in the registry index.
+  grants carried, and a warning that the publisher changed. While ids aren't namespaced, it
+  replaces the old adapter rather than sitting beside it ([Trust model](#trust-model)). Key
+  rotation is a signed statement by the old key naming the new one, published in the registry
+  index.
 - **The registry index is signed with the registry's own key**, embedded in the app. The index is
   how a key is revoked: a listing marks a key as revoked, and the app stops accepting new bundles
   signed by it.
@@ -211,7 +214,15 @@ What each layer means, and what it doesn't:
 Rules that follow:
 
 - **Ids are not names.** Two publishers can both ship an adapter with id `woolworths`.
-  - The app stores adapters by publisher key and id.
+  - Core keys everything on the bare `adapterId`: `Grant.adapterId`, `GrantStore.find` and
+    `revoke(adapterId, secret)`, every `AuditEvent`, and the approval store. Two installed
+    adapters with one id would make a revocation or an audit entry ambiguous.
+  - So until core has a namespaced identity, the app **refuses to install a second adapter whose
+    id is already in use**, whoever published it. An update signed by a different key (the
+    TOFU case below) is installable only after the person removes the existing adapter, which
+    revokes its grants and drops its approval; it's then a fresh install.
+  - The namespaced identity (`<publisher key fingerprint>/<id>`) is in
+    [Core changes](#core-changes), for when two same-id adapters side by side are wanted.
   - The MCP endpoint already withholds colliding tool names rather than letting one adapter
     shadow another (`packages/mcp-server/src/tool-names.ts`).
   - The registry namespaces listings as `<publisher>/<id>`.
@@ -258,7 +269,10 @@ woolworths 1.2.0 → 1.3.0   publisher unchanged (key RWQ…7GFO)   reproducible
 
   tools.mjs changed (+212 −40)                                               [show code diff]
 
-  [ Approve and keep secret grants ]   [ Approve, re-grant secrets ]   [ Stay on 1.2.0 ]
+  Secret grants can't carry forward: egress widened, a write request was added, and an auth
+  step that fills a secret changed.
+
+  [ Approve, re-grant secrets ]   [ Stay on 1.2.0 ]
 ```
 
 - **Additions to secrets, write or irreversible tools and requests, egress or session copying are
@@ -267,13 +281,23 @@ woolworths 1.2.0 → 1.3.0   publisher unchanged (key RWQ…7GFO)   reproducible
   permission widens. They're the steps that decide where a password is typed.
 - **Grants never carry forward silently.** The security model says a changed adapter doesn't
   inherit a grant, and that stays true by default. "Approve and keep secret grants" is offered
-  only when:
+  only when all of these hold:
   - the publisher key is unchanged;
   - no secret's origins or fields widened;
-  - no auth step touching a secret changed.
+  - no auth step touching a secret changed;
+  - no egress host was added and no wildcard widened;
+  - no cookie domain or web-storage key was added to session copying;
+  - no `write` or `irreversible` request declaration or tool was added, and none was widened
+    (a broader path pattern, another method).
 
-  Even then it's a click, never automatic. Otherwise the person re-binds each secret in the grant
-  picker.
+  The last three matter because a secret's real product is the session it logs into, and
+  [guarantee 2](security-model.md#what-we-protect-against) is about where that session can go.
+  An update that keeps the login steps but adds a host to send traffic to, or copies another
+  cookie, changes what the granted password buys.
+
+  Even when every condition holds it's a click, never automatic. Otherwise the person re-binds
+  each secret in the grant picker. The example above fails three of them, so it offers only
+  "Approve, re-grant secrets".
 - **No automatic updates of adapters in v1.** The app may download and verify updates in the
   background, and show a badge. Applying one is always the person's action. Revisit only with
   evidence that the diff screen is being read and the friction is real.
@@ -325,26 +349,39 @@ which is the fourth column.
 ### Why not the renderer alone
 
 D12 leaned towards a sandboxed hidden renderer: no dependency, and Chromium's sandbox is
-battle-tested. Its weakness is the direction of the controls, not their strength.
+battle-tested. The network side of that is already solved in this repo, so it isn't the
+argument:
 
-- A renderer starts with the whole web platform, and every network-capable API has to be found
-  and closed.
-- `webRequest` sees `fetch`, XHR, WebSocket and `sendBeacon`. It doesn't see WebRTC's UDP. ICE
-  candidate gathering resolves hostnames, which is DNS exfiltration with no request to filter
-  (the same class of leak the DNS-prefetch switch in `process-hardening.ts` closes for the tool
-  partition).
-- Deleting `RTCPeerConnection` from the page's globals doesn't hold. An `about:blank` iframe
-  needs no network and hands back fresh globals.
-- Chromium switches can disable some of these. The list is long, changes between versions, and
-  must be re-audited on every Electron upgrade.
+- The tool partition already sends every connection through `egress-proxy.ts`, with WebRTC
+  limited to proxied traffic (`setWebRTCIPHandlingPolicy('disable_non_proxied_udp')`), so
+  WebRTC's TURN-over-TCP and WebTransport's QUIC reach nothing undeclared. The e2e suite proves
+  it (`packages/browser-electron/e2e/driver.spec.ts`, "WebRTC and WebTransport reach no
+  undeclared host from the tool partition").
+- The DNS-prefetch switch in `process-hardening.ts` is process-wide (`blink-settings` applies to
+  every renderer), so it already covers a sandbox renderer too.
+- A sandbox renderer's session could use the same proxy with an empty allow list. Network
+  exfiltration from a sandboxed renderer is closable with mechanisms that exist and are tested.
 
-That's deny-by-enumeration. QuickJS is deny-by-construction: tool code can call only what the
-runtime injected. Put QuickJS _inside_ the sandboxed renderer and each covers the other's gap:
+What the renderer alone doesn't give, and QuickJS does:
+
+- **No ambient authority.** A renderer starts with the whole web platform, network aside:
+  storage (IndexedDB, Cache Storage, `localStorage`), `BroadcastChannel`, service workers,
+  `window.open` and navigation, permission prompts, high-resolution timers and
+  `SharedArrayBuffer` for side channels. Each has to be found and closed.
+- **Closing them can't be done from inside the page.** Deleting a global doesn't hold: an
+  `about:blank` iframe needs no network and hands back fresh globals. So every control has to be
+  at the session or process level.
+- **The list moves.** It's deny-by-enumeration, and the enumeration has to be redone on every
+  Electron upgrade, as new web APIs ship.
+
+QuickJS is deny-by-construction: tool code can call only what the runtime injected. Put QuickJS
+_inside_ the sandboxed renderer and each covers the other's gap:
 
 - tool code can't reach the renderer's web APIs, because QuickJS has no access to the host's
   globals;
 - a bug that escapes QuickJS or the WebAssembly engine lands in a process with no Node, no file
-  access, and a session whose `webRequest` cancels every request.
+  access, a session whose `webRequest` cancels every request, and a deny-all egress proxy behind
+  that.
 
 ### Recommended design
 
@@ -357,16 +394,30 @@ main process (trusted)                        sandbox renderer (one per run, or 
 │  JSON Schema validation  │   only          │   injected: page, session, confirm, signal      │
 │  redaction, audit        │                 │   in-sandbox schema code, if the author wrote it│
 └──────────────────────────┘                 └─────────────────────────────────────────────────┘
-                                              session "persist:sandbox": webRequest cancels all,
-                                              no permissions granted, sandbox: true,
-                                              contextIsolation: true, nodeIntegration: false
+                                              session "sandbox:<adapterHash>" (in memory, no
+                                              persist: prefix): webRequest cancels all, proxy
+                                              to egress-proxy with an empty allow list, WebRTC
+                                              disable_non_proxied_udp, no permissions granted,
+                                              sandbox: true, contextIsolation: true,
+                                              nodeIntegration: false
 ```
+
+- **One in-memory session per adapter hash.** The partition is `sandbox:<adapterHash>`, without
+  the `persist:` prefix, so Chromium keeps its storage and cache in memory, never on disk, and no
+  two adapters ever share one. When a pooled renderer is recycled, and between runs, the runtime
+  clears the session's storage and cache (`clearStorageData`, `clearCache`), so a run can't leave
+  anything for the next run of the same adapter either.
+- **Network, three times over:** `webRequest` cancels everything; the session's proxy is an
+  `egress-proxy.ts` instance that allows nothing, which catches the sockets `webRequest` doesn't
+  see; and WebRTC is held to proxied traffic. The process-wide DNS-prefetch switch already
+  applies. None of this is what keeps tool code in; QuickJS is. It's what an escape runs into.
 
 - **Messages are data.** Every call is `{ id, capability, args }` with JSON-only arguments,
   validated in the main process against the capability's own schema before it does anything.
   Every reply is JSON. No functions, no transferable objects, no `SharedArrayBuffer`.
 - **One QuickJS context per tool call**, so calls can't leave state for each other. The renderer
-  can be pooled per adapter hash, never across adapters.
+  can be pooled per adapter hash, never across adapters, with its session cleared between runs
+  (above).
 - **Limits:**
   - a deadline enforced by QuickJS's interrupt handler and, behind it, by killing the renderer;
   - a QuickJS heap limit;
@@ -406,8 +457,19 @@ and asserts it fails, and that the attempt is visible where it should be:
 - one adapter trying to observe another's state through a pooled renderer.
 
 And for the second layer, a deliberately "escaped" script run directly in the sandbox renderer's
-main world (as if QuickJS had been broken) must fail to make any request, read any file or reach
-Node.
+main world (as if QuickJS had been broken) must fail to:
+
+- make any request, by `fetch`, WebSocket, WebRTC (TURN over TCP and UDP), WebTransport, or a
+  `<link rel=dns-prefetch>`, each checked against the fake site's request and UDP counters as the
+  tool partition's e2e test does;
+- read any file or reach Node;
+- **see another adapter's state:** it writes a marker to `localStorage`, IndexedDB, Cache Storage
+  and a cookie in adapter A's renderer, and the same script in adapter B's renderer must find none
+  of them;
+- **see an earlier run's state:** the same marker, written in run 1 of adapter A, must be gone in
+  run 2 of adapter A in a recycled renderer;
+- **find anything on disk:** after the runs, nothing under `userData/Partitions` belongs to a
+  `sandbox:` partition.
 
 ## Distribution, terms of service and takedowns
 
@@ -523,6 +585,12 @@ None needed for M5. For M7:
 - `confirm()` taking structured content rendered by the runtime rather than free adapter text
   ([G4](plan.md#g4-confirm-takes-adapter-authored-text)). More pressing with third-party adapters.
 - Audit events for install, update (with old and new hashes) and revocation.
+- A namespaced adapter identity, `<publisher key fingerprint>/<id>` (or a structured
+  `{ publisher, id }`), in `Grant`, `GrantStore.find` and `revoke`, every `AuditEvent` that
+  carries `adapterId`, and the approval store. Until then the app refuses a second adapter with
+  an id already in use ([Trust model](#trust-model)); with it, two publishers' `woolworths` can
+  be installed side by side and revoked or audited separately. Unsigned bundles need a stand-in
+  publisher (`local`).
 
 ## Open questions
 
