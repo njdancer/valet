@@ -339,6 +339,13 @@ export class FakePlatform implements BrowserPlatform {
     return this.onStartProxy(policy)
   }
 
+  /** Every process-wide default UA set, in order. */
+  readonly defaultUserAgents: string[] = []
+
+  setDefaultUserAgent(userAgent: string): void {
+    this.defaultUserAgents.push(userAgent)
+  }
+
   /** Builds each new surface. Tests replace it to give pages frames. */
   makeSurface: (partition: string) => FakeSurface = (partition) => new FakeSurface(partition)
 

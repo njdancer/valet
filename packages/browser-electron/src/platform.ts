@@ -205,6 +205,11 @@ export interface BrowserPlatform {
   openSurface(partition: string): BrowserSurface
   /** Starts a local proxy that allows a connection only when `allow` says so. */
   startProxy(allow: ProxyPolicy): Promise<ProxyHandle>
+  /**
+   * Sets the process-wide UA for renderers that neither a session's UA nor a page's DevTools
+   * override reaches before they run: a service worker's (app.userAgentFallback).
+   */
+  setDefaultUserAgent(userAgent: string): void
   readonly chromeVersion: string
   readonly os: NodeJS.Platform
   /** The OS's own version, e.g. 15.5.0 on macOS. Only client hints use it. */

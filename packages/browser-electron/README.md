@@ -145,7 +145,23 @@ to measure a decision or an opt-in rather than to test the default.
   `en-AU,en;q=0.9`). The session setting doesn't reach `navigator.language`, which follows the
   Mac's language list, and `--lang` doesn't change that on macOS. So each page also gets a
   DevTools `Emulation.setUserAgentOverride` before its first load (after `about:blank`, since a
-  never-loaded page has no renderer to answer). That override has to restate the client hints, or
+  never-loaded page has no renderer to answer). **That override reaches only the page's own
+  target.** A dedicated worker kept the Mac's languages, and a cross-site (out-of-process) iframe,
+  a service worker and a shared worker showed Electron's own UA (`… Electron/44.10.2 …`) and
+  languages, which is exactly where bot managers compare. So each page also auto-attaches its
+  children (`Target.setAutoAttach`, flattened, paused on start): an out-of-process frame gets the
+  same `Emulation` override and a worker `Network.setUserAgentOverride` (which sets a worker's
+  navigator too) before it is resumed, and each attaches its own children the same way. A paused
+  service worker answers nothing and is stopped once its start times out, so it is resumed first
+  and overridden as soon as it runs; shared workers aren't a page's children, so they are found by
+  target discovery in the same partition and attached once running. Neither UA reaches those two
+  in time by DevTools, so the driver also sets the clean UA as the process default
+  (`app.userAgentFallback`), which is process-wide. **Residual gap:** a service worker's or
+  shared worker's top-level script, run as it starts, still sees the Mac's languages (and the
+  engine's own brands) until the override lands a moment later; anything it reads afterwards is
+  overridden. The e2e suite checks the main frame, a dedicated worker, a service worker, a shared
+  worker, a cross-site iframe and a worker inside it, in both partitions, and the request headers
+  they send. That override has to restate the client hints, or
   `navigator.userAgentData` comes back empty; by default it restates exactly what the engine
   reports, which the e2e suite checks against a window with no override. `clientHints: 'chrome'`
   also names Google Chrome (D24a, open). **Electron sends no `Sec-CH-UA` header at all**, with or

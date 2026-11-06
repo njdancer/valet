@@ -35,6 +35,7 @@ app.on('window-all-closed', () => {})
 const readyWhenHardened = app.isReady()
 
 const CANARY = 'canary-Pw9!x "q'
+const CONTROL_UA = 'Mozilla/5.0 (e2e control window)'
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -410,8 +411,11 @@ async function setup() {
         site.url('site.test', '/robots.txt'),
       )?.webContents.executeJavaScript(read)
       await auth.close()
-      // The engine's own answer: a window the driver didn't make, with nothing overridden.
+      // The engine's own answer: a window the driver didn't make, with nothing overridden. The
+      // driver set the process-default UA too, so the control names its own, to show it isn't
+      // getting the driver's.
       const driverRequests = site.requests.slice(from)
+      session.fromPartition('e2e-control').setUserAgent(CONTROL_UA)
       const control = new BrowserWindow({
         show: false,
         webPreferences: { partition: 'e2e-control', sandbox: true },
@@ -427,7 +431,82 @@ async function setup() {
           acceptLanguage,
           clientHintBrands,
         }))
-      return { chrome: process.versions.chrome, toolPageSees, authPageSees, engineSees, seen }
+      return {
+        chrome: process.versions.chrome,
+        controlUa: CONTROL_UA,
+        toolPageSees,
+        authPageSees,
+        engineSees,
+        seen,
+      }
+    },
+
+    // The same, from where Emulation on the page's own target doesn't reach by itself: a dedicated
+    // worker, a service worker, a cross-site (out-of-process) iframe, and a worker inside that.
+    userAgentEverywhere: async () => {
+      const read = `({
+        ua: navigator.userAgent,
+        language: navigator.language,
+        languages: [...navigator.languages],
+        brands: navigator.userAgentData ? navigator.userAgentData.brands.map((b) => b.brand) : null,
+      })`
+      const worker = `new Promise((resolve) => {
+        const worker = new Worker('/ua-worker.js')
+        worker.onmessage = (event) => resolve(event.data)
+        worker.postMessage(null)
+        setTimeout(() => resolve('timeout'), 5000)
+      })`
+      const serviceWorker = `(async () => {
+        const registration = await navigator.serviceWorker.register('/ua-sw.js')
+        await navigator.serviceWorker.ready
+        const active = registration.active
+        return await new Promise((resolve) => {
+          const channel = new MessageChannel()
+          channel.port1.onmessage = (event) => resolve(event.data)
+          active.postMessage(null, [channel.port2])
+          setTimeout(() => resolve('timeout'), 5000)
+        })
+      })().catch((error) => 'failed: ' + error)`
+      const sharedWorker = `new Promise((resolve) => {
+        const worker = new SharedWorker('/ua-worker.js')
+        worker.port.onmessage = (event) => resolve(event.data)
+        worker.port.start()
+        worker.port.postMessage(null)
+        setTimeout(() => resolve('timeout'), 5000)
+      })`
+      const probe = site.url('site.test', '/ua-probe')
+      const sees = async (contents: Electron.WebContents) => {
+        const frame = await until(() =>
+          contents.mainFrame.framesInSubtree.find(
+            (candidate) => candidate.origin === site.url('login.test') && candidate.url.includes('/ua-frame'),
+          ),
+        )
+        return {
+          main: await contents.executeJavaScript(read),
+          worker: await contents.executeJavaScript(worker),
+          serviceWorker: await contents.executeJavaScript(serviceWorker),
+          sharedWorker: await contents.executeJavaScript(sharedWorker),
+          crossSite: (await frame?.executeJavaScript(read)) ?? 'no frame',
+          crossSiteIsOutOfProcess: frame !== undefined && frame.processId !== contents.mainFrame.processId,
+          crossSiteWorker: (await frame?.executeJavaScript(worker)) ?? 'no frame',
+        }
+      }
+      const from = site.requests.length
+      const auth = await driver.openAuthPage()
+      await auth.goto(probe)
+      const authContents = windowAt(probe)?.webContents
+      const authSees = authContents === undefined ? 'no window' : await sees(authContents)
+      await auth.close()
+      begin()
+      const tool = await driver.toolPage()
+      await tool.goto(probe)
+      const toolContents = windowAt(probe)?.webContents
+      const toolSees = toolContents === undefined ? 'no window' : await sees(toolContents)
+      driver.endRun()
+      const headers = site.requests
+        .slice(from)
+        .map((r) => ({ path: r.path, userAgent: r.userAgent, acceptLanguage: r.acceptLanguage }))
+      return { authSees, toolSees, headers }
     },
 
     // The site's own script makes an API call nobody declared, while a read tool runs.

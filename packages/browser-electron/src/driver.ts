@@ -74,9 +74,11 @@ export interface DriverOptions {
   /** The manifest's auth.frameOrigins: origins besides navigation's that auth subframes may load. */
   readonly frameOrigins?: readonly string[]
   /**
-   * The clean Chrome UA with en-AU (the default), set on each partition and, so that
-   * navigator.language follows, on each page over the DevTools protocol; or Electron's own, with
-   * nothing overridden.
+   * The clean Chrome UA with en-AU (the default), set on each partition, as the process default
+   * (for service workers), and, so that navigator.language follows, on each page and every worker
+   * and out-of-process frame it starts, over the DevTools protocol; or Electron's own, with nothing
+   * overridden. The process default is process-wide: once any driver has set it, a driver with
+   * Electron's own UA gets the clean one in its service workers too.
    */
   readonly userAgent?: UserAgentMode
   /**
@@ -500,6 +502,9 @@ export class ElectronSessionDriver implements SessionDriver {
     if (this.options.userAgent !== 'electron') {
       const userAgent = cleanChromeUserAgent(this.platform.chromeVersion, this.platform.os)
       session.setUserAgent(userAgent, LANGUAGES)
+      // A service worker starts with the process default, which no session or page override
+      // reaches in time. This is process-wide: a driver with Electron's own UA doesn't undo it.
+      this.platform.setDefaultUserAgent(userAgent)
     }
     if (role === 'auth') {
       // will-frame-navigate is the first line for subframes; this holds the frames it doesn't

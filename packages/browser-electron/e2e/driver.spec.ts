@@ -331,8 +331,8 @@ test('both partitions present the clean Chrome UA and en-AU by default, with the
   const ua = `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`
   type Sees = { ua: string; language: string; languages: string[]; brands: string[]; hints: unknown }
   const engine = result.engineSees as Sees
-  // The control window really is Electron's own presentation, or the comparison below is vacuous.
-  expect(engine.ua).toMatch(/Electron\//)
+  // The control window really has no override from the driver, or the comparison below is vacuous.
+  expect(engine.ua).toBe(result.controlUa)
   for (const sees of [result.toolPageSees, result.authPageSees] as Sees[]) {
     expect(sees.ua).toBe(ua)
     expect(sees.language).toBe('en-AU')
@@ -350,6 +350,30 @@ test('both partitions present the clean Chrome UA and en-AU by default, with the
     expect(request.acceptLanguage).toBe('en-AU,en;q=0.9')
     // Electron's Chromium sends no Sec-CH-UA header at all, unlike Chrome; recorded for D24a.
     expect(request.clientHintBrands).toBe('')
+  }
+})
+
+test('workers, service workers and cross-site frames present the same clean UA and en-AU', async () => {
+  const result = await scenario(app, 'userAgentEverywhere')
+  type Sees = { ua: string; language: string; languages: string[]; brands: string[] }
+  const authSees = result.authSees as Record<string, Sees | boolean>
+  const main = authSees.main as Sees
+  expect(main.ua).toMatch(/Chrome\/\d+\.0\.0\.0 Safari\/537\.36$/)
+  const expected = { ua: main.ua, language: 'en-AU', languages: ['en-AU', 'en'], brands: main.brands }
+  for (const [partition, sees] of Object.entries({
+    auth: authSees,
+    tool: result.toolSees as typeof authSees,
+  })) {
+    // The cross-site frame really is out of process, or this proves nothing about OOPIFs.
+    expect(sees.crossSiteIsOutOfProcess, partition).toBe(true)
+    for (const where of ['main', 'worker', 'serviceWorker', 'sharedWorker', 'crossSite', 'crossSiteWorker']) {
+      expect(sees[where], `${partition} ${where}`).toEqual(expected)
+    }
+  }
+  // And every request they made said the same.
+  for (const request of result.headers as { path: string; userAgent: string; acceptLanguage: string }[]) {
+    expect(request.userAgent, request.path).toBe(main.ua)
+    expect(request.acceptLanguage, request.path).toBe('en-AU,en;q=0.9')
   }
 })
 

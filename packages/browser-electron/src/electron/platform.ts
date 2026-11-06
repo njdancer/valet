@@ -2,6 +2,7 @@
 // file only forwards. It is covered by the e2e suite, not unit tests.
 
 import {
+  app,
   BrowserWindow,
   session as electronSession,
   type Session,
@@ -58,6 +59,9 @@ export function electronPlatform(options: ElectronPlatformOptions = {}): Browser
       return wrapped
     },
     openSurface: (partition) => new ElectronSurface(partition),
+    setDefaultUserAgent: (userAgent) => {
+      app.userAgentFallback = userAgent
+    },
   }
 }
 
@@ -267,9 +271,34 @@ class ElectronSurface implements BrowserSurface {
 
   async overrideUserAgent(override: UserAgentOverride): Promise<void> {
     // The override lasts while the debugger stays attached, which is the window's lifetime, and
-    // applies to every navigation after it.
+    // applies to every navigation after it. It reaches only the page's own target, though: a
+    // worker or an out-of-process (cross-site) iframe is a target of its own, and would otherwise
+    // show Electron's UA and the Mac's languages. So every such target is attached as it starts,
+    // paused, given the same override, and only then let run. Shared workers aren't the page's
+    // children, so they are found by discovery instead, in this partition only, and attached
+    // once they are already running.
     const devtools = await this.devtools()
+    const own = targetContext(await devtools.sendCommand('Target.getTargetInfo'))
+    devtools.on('message', (_event, method: string, params: unknown) => {
+      if (method === 'Target.attachedToTarget') {
+        const child = attachedTarget(params)
+        if (child !== null) void this.overrideChild(devtools, child, override)
+      }
+      if (method === 'Target.targetCreated') {
+        const shared = sharedWorkerIn(params, own)
+        if (shared !== null) {
+          devtools.sendCommand('Target.attachToTarget', { targetId: shared, flatten: true }).catch(() => {})
+        }
+      }
+    })
     await devtools.sendCommand('Emulation.setUserAgentOverride', override)
+    await devtools.sendCommand('Target.setAutoAttach', AUTO_ATTACH)
+    if (own !== null) {
+      await devtools.sendCommand('Target.setDiscoverTargets', {
+        discover: true,
+        filter: [{ type: 'shared_worker' }],
+      })
+    }
   }
 
   async watchStorage(listener: (value: StorageValue) => void): Promise<void> {
@@ -333,6 +362,39 @@ class ElectronSurface implements BrowserSurface {
     return this.window.isDestroyed()
   }
 
+  /**
+   * Gives a newly attached frame or worker target the page's override, has it attach its own
+   * children the same way, and resumes it. It is resumed whatever happens, or the page would hang.
+   * A frame takes Emulation's override; a worker only Network's, which sets its navigator too.
+   */
+  private async overrideChild(
+    devtools: Electron.Debugger,
+    child: { readonly sessionId: string; readonly type: string },
+    override: UserAgentOverride,
+  ): Promise<void> {
+    // Nothing here may wait forever: a command a target never answers would leave it paused.
+    const send = (method: string, params: object = {}) =>
+      Promise.race([
+        devtools.sendCommand(method, params, child.sessionId).catch(() => {}),
+        new Promise<void>((resolve) => setTimeout(resolve, CHILD_COMMAND_TIMEOUT_MS)),
+      ])
+    if (child.type === 'service_worker') {
+      // A paused service worker answers no command, and is stopped once its start times out, so
+      // it is resumed first and overridden as soon as it runs. Its UA is the process default,
+      // which the session's UA has already set (see setDefaultUserAgent).
+      await send('Runtime.runIfWaitingForDebugger')
+      await send('Network.setUserAgentOverride', override)
+      return
+    }
+    try {
+      const frame = child.type === 'iframe' || child.type === 'page'
+      await send(frame ? 'Emulation.setUserAgentOverride' : 'Network.setUserAgentOverride', override)
+      await send('Target.setAutoAttach', AUTO_ATTACH)
+    } finally {
+      await send('Runtime.runIfWaitingForDebugger')
+    }
+  }
+
   /** The page's DevTools session, attached once for the window's lifetime. */
   private async devtools(): Promise<Electron.Debugger> {
     // A web contents that has never loaded has no renderer for a command to reach, and it waits
@@ -346,6 +408,34 @@ class ElectronSurface implements BrowserSurface {
   private emit(event: NavigationEvent): void {
     for (const listener of this.navigationListeners) listener(event)
   }
+}
+
+const CHILD_COMMAND_TIMEOUT_MS = 2000
+
+/** Attach every child target (worker, out-of-process frame) as it starts, paused until set up. */
+const AUTO_ATTACH = { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }
+
+/** The browser context (partition) a Target.getTargetInfo answer names, or null. */
+function targetContext(answer: unknown): string | null {
+  const context = (answer as { targetInfo?: { browserContextId?: unknown } } | null)?.targetInfo
+    ?.browserContextId
+  return typeof context === 'string' && context !== '' ? context : null
+}
+
+/** The target id of a shared worker created in browser context `own`, or null. */
+function sharedWorkerIn(params: unknown, own: string | null): string | null {
+  const info = (params as { targetInfo?: Record<string, unknown> } | null)?.targetInfo
+  if (own === null || info === undefined) return null
+  const { type, browserContextId, targetId } = info
+  if (type !== 'shared_worker' || browserContextId !== own || typeof targetId !== 'string') return null
+  return targetId
+}
+
+function attachedTarget(params: unknown): { sessionId: string; type: string } | null {
+  if (typeof params !== 'object' || params === null) return null
+  const { sessionId, targetInfo } = params as { sessionId?: unknown; targetInfo?: { type?: unknown } }
+  if (typeof sessionId !== 'string' || typeof targetInfo?.type !== 'string') return null
+  return { sessionId, type: targetInfo.type }
 }
 
 /**

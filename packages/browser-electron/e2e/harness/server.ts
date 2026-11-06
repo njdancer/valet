@@ -94,6 +94,26 @@ const TRUST_PROBE = `<script>
   }, true)
 </script>`
 
+/** A dedicated or service worker that answers any message with what its navigator says. */
+const UA_WORKER = `
+const read = () => ({
+  ua: navigator.userAgent,
+  language: navigator.language,
+  languages: [...navigator.languages],
+  brands: navigator.userAgentData ? navigator.userAgentData.brands.map((b) => b.brand) : null,
+})
+self.addEventListener('install', () => self.skipWaiting())
+self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()))
+self.addEventListener('message', (event) => {
+  if (event.ports && event.ports[0]) event.ports[0].postMessage(read())
+  else self.postMessage(read())
+})
+self.addEventListener('connect', (event) => {
+  const port = event.ports[0]
+  port.onmessage = () => port.postMessage(read())
+})
+`
+
 function routes(
   site: { url(host: string, path?: string): string },
   host: string,
@@ -207,6 +227,14 @@ function routes(
   if ((host === 'captcha.test' || host === 'widget.test') && path === '/frame') {
     return { body: page('Frame', `<p id="inner">${host}</p>`) }
   }
+  // What a page's workers and cross-site frames present as (navigator UA, languages, brands).
+  if ((host === 'site.test' || host === 'login.test') && (path === '/ua-worker.js' || path === '/ua-sw.js')) {
+    return { headers: { 'content-type': 'text/javascript' }, body: UA_WORKER }
+  }
+  if (host === 'site.test' && path === '/ua-probe') {
+    return { body: page('UA', `<iframe id="cross" src="${login}/ua-frame"></iframe>`) }
+  }
+  if (host === 'login.test' && path === '/ua-frame') return { body: page('UA frame', '<p>frame</p>') }
   if (path === '/robots.txt') return { headers: { 'content-type': 'text/plain' }, body: 'User-agent: *\n' }
   return { status: 404, body: page('Not found', '<p>Not found</p>') }
 }

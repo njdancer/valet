@@ -183,6 +183,17 @@ describe('partition set-up', () => {
     expect(platform.session(TOOL).userAgent).toBeNull()
     expect(platform.session(AUTH).acceptLanguages).toBeNull()
     expect(platform.surfaces.flatMap((s) => s.overrides)).toEqual([])
+    expect(platform.defaultUserAgents).toEqual([])
+  })
+
+  it('sets the clean UA as the process default too, for service workers', async () => {
+    const { platform } = browserLike()
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    await driver.openAuthPage()
+    await driver.toolPage()
+    const clean = platform.session(TOOL).userAgent
+    expect(clean).toMatch(/^Mozilla\/5\.0 .*Chrome\/142\.0\.0\.0 Safari\/537\.36$/)
+    expect(platform.defaultUserAgents).toEqual([clean, clean])
   })
 
   it('overrides every page before its first load, so navigator.language is en-AU, with the engine’s own brands', async () => {
