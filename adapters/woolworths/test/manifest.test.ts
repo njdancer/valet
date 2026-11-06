@@ -1,7 +1,19 @@
-import { decideRequest, manifestSchema, secretRefsIn, touchesDeniedSegment } from '@siteadapter/core'
+import {
+  decideRequest,
+  manifestSchema,
+  parseManifest,
+  secretRefsIn,
+  touchesDeniedSegment,
+} from '@siteadapter/core'
 import { describe, expect, it } from 'vitest'
 import { createAdapter } from '../src/adapter'
-import realManifest, { createManifest, LOGIN_PATH, REAL_ORIGIN, SELECTORS } from '../src/manifest'
+import realManifest, {
+  createManifest,
+  LOGIN_PATH,
+  NEEDS_USER_REASONS,
+  REAL_ORIGIN,
+  SELECTORS,
+} from '../src/manifest'
 import { FAKE_ORIGIN } from './fake-context'
 
 describe('the real manifest', () => {
@@ -108,17 +120,21 @@ describe('the auth steps', () => {
   })
 
   it('only fill the one-time code when the code input appears', () => {
-    const when = steps.find((step) => step.op === 'when')
-    expect(when).toEqual({
-      op: 'when',
-      condition: { visible: SELECTORS.otp },
-      steps: [{ op: 'otp', selector: 'input[autocomplete="one-time-code"]', source: { secret: 'login' } }],
-    })
+    const when = steps.find((step) => step.op === 'when' && step.steps.some((inner) => inner.op === 'otp'))
+    expect(when).toMatchObject({ op: 'when', condition: { visible: SELECTORS.otp } })
   })
 
-  it('wait to leave the login page, then assert the login', () => {
+  it('contain no waitFor, whose timeout would end the flow as a failure instead of needsUser', () => {
+    expect(JSON.stringify(steps)).not.toContain('"waitFor"')
+  })
+
+  it('end in assertLoggedIn, after a needsUser exit for a login that never left the page', () => {
     expect(steps.slice(-2)).toEqual([
-      { op: 'waitFor', condition: { not: { urlMatches: LOGIN_PATH } }, timeoutMs: 30_000 },
+      {
+        op: 'when',
+        condition: { urlMatches: LOGIN_PATH },
+        steps: [{ op: 'needsUser', reason: NEEDS_USER_REASONS.stuck }],
+      },
       { op: 'assertLoggedIn' },
     ])
   })
@@ -145,16 +161,47 @@ describe('the request surface', () => {
     ])
   })
 
-  it('refuses checkout and payment calls on the site itself', () => {
-    const attempts = [
-      ['POST', `${REAL_ORIGIN}/api/v3/ui/checkout/submit`],
-      ['POST', `${REAL_ORIGIN}/apis/ui/Checkout/PlaceOrder`],
-      ['GET', `${REAL_ORIGIN}/api/v3/ui/payment/instruments`],
-      ['POST', `${REAL_ORIGIN}/api/v3/ui/trolley/update/../checkout`],
-    ] as const
-    for (const [method, url] of attempts) {
-      expect(decideRequest(method, url, egress, requests).allowed).toBe(false)
+  const CHECKOUT_ATTEMPTS = [
+    ['POST', `${REAL_ORIGIN}/api/v3/ui/checkout/submit`],
+    ['POST', `${REAL_ORIGIN}/apis/ui/Checkout/PlaceOrder`],
+    ['GET', `${REAL_ORIGIN}/api/v3/ui/payment/instruments`],
+    ['POST', `${REAL_ORIGIN}/api/v3/ui/trolley/update/../checkout`],
+  ] as const
+
+  it('refuses checkout and payment calls on the site itself, as undeclared', () => {
+    for (const [method, url] of CHECKOUT_ATTEMPTS) {
+      expect(decideRequest(method, url, egress, requests)).toEqual({ allowed: false, reason: 'undeclared' })
     }
+  })
+
+  it('still refuses them, as denied-path, if a later edit declares a wildcard write over them', () => {
+    const broadened = parseManifest({
+      ...realManifest,
+      requests: [
+        ...realManifest.requests,
+        { method: 'POST', path: '/api/v3/ui/*', purpose: 'write' },
+        { method: 'POST', path: '/apis/ui/*', purpose: 'write' },
+        { method: 'GET', path: '/api/v3/ui/*', purpose: 'read' },
+      ],
+    })
+    for (const [method, url] of CHECKOUT_ATTEMPTS) {
+      expect(decideRequest(method, url, broadened.egress, broadened.requests)).toEqual({
+        allowed: false,
+        reason: 'denied-path',
+      })
+    }
+    // The wildcard does match: without the deny list these would be allowed.
+    expect(
+      decideRequest('POST', `${REAL_ORIGIN}/api/v3/ui/trolley/clear`, broadened.egress, broadened.requests),
+    ).toMatchObject({ allowed: true })
+  })
+
+  it("does not let tool code read the login probe, which can carry the shopper's details", () => {
+    expect(realManifest.requests.some((request) => request.path.includes('bootstrap'))).toBe(false)
+    expect(decideRequest('GET', `${REAL_ORIGIN}/api/ui/v2/bootstrap`, egress, requests)).toEqual({
+      allowed: false,
+      reason: 'undeclared',
+    })
   })
 
   it('refuses a declared path with the wrong method', () => {

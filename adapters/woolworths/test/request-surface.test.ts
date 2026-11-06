@@ -2,7 +2,7 @@
 // ships with, or the tool breaks in production. The fake context already refuses undeclared calls;
 // these tests also check the purpose of each call against the tool's declared side effect.
 
-import { decideRequest, SiteAdapterError } from '@siteadapter/core'
+import { decideRequest, parseManifest, SiteAdapterError } from '@siteadapter/core'
 import { describe, expect, it } from 'vitest'
 import { createAdapter } from '../src/adapter'
 import { createManifest, REAL_ORIGIN } from '../src/manifest'
@@ -53,6 +53,28 @@ for (const origin of [REAL_ORIGIN, FAKE_ORIGIN]) {
   })
 }
 
+describe('the declared request surface', () => {
+  for (const origin of [REAL_ORIGIN, FAKE_ORIGIN]) {
+    it(`is exactly what the tools use, against the ${origin} manifest`, async () => {
+      const adapter = createAdapter({ origin })
+      const { manifest } = adapter
+      const used = new Set<unknown>()
+      for (const declaration of manifest.tools) {
+        const implementation = adapter.tools[declaration.name]
+        if (implementation === undefined) throw new Error(`missing ${declaration.name}`)
+        const ctx = serveEverything(new FakeToolContext(manifest))
+        await implementation.run(ctx, implementation.input.parse(INPUTS[declaration.name]))
+        for (const fetch of ctx.fetches) {
+          const decision = decideRequest(fetch.method, fetch.url, manifest.egress, manifest.requests)
+          if (decision.allowed) used.add(decision.declaration)
+        }
+      }
+      // Every declaration is something a person approves; one no tool makes is reach for nothing.
+      expect(manifest.requests.filter((request) => !used.has(request))).toEqual([])
+    })
+  }
+})
+
 describe('the fake guard', () => {
   it('refuses an undeclared call, so the checks above cannot pass vacuously', async () => {
     const ctx = new FakeToolContext(createManifest({ origin: FAKE_ORIGIN }))
@@ -71,6 +93,25 @@ describe('the fake guard', () => {
       'host-not-allowed',
       'undeclared',
     ])
+    expect(ctx.fetches).toEqual([])
+  })
+
+  it('refuses checkout through a wildcard write declaration, as denied-path', async () => {
+    const base = createManifest({ origin: FAKE_ORIGIN })
+    const broadened = parseManifest({
+      ...base,
+      requests: [...base.requests, { method: 'POST', path: '/api/v3/ui/*', purpose: 'write' }],
+    })
+    const ctx = new FakeToolContext(broadened)
+    const attempts = [
+      ctx.page.fetch('/api/v3/ui/checkout/submit', { method: 'POST', json: {} }),
+      ctx.page.fetch('/api/v3/ui/payment/confirm', { method: 'POST', json: {} }),
+      ctx.page.fetch('/api/v3/ui/Pay', { method: 'POST', json: {} }),
+    ]
+    for (const attempt of attempts) {
+      await expect(attempt).rejects.toEqual(new SiteAdapterError('request-surface', 'undeclared-request'))
+    }
+    expect(ctx.blocked.map((b) => b.reason)).toEqual(['denied-path', 'denied-path', 'denied-path'])
     expect(ctx.fetches).toEqual([])
   })
 

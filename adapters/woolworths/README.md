@@ -84,6 +84,29 @@ detection does, so the runtime backs off; its next `ensure()` probe then finds a
 A `SiteAdapterError` thrown by the runtime's own guards (for example the request ceiling) passes
 through unchanged.
 
+## Login
+
+The auth steps open the login page, fill the username and password from the `login` item, submit,
+fill the one-time code if a code prompt appears, and assert the login with the probe. Each wait
+for the page to change is a `settle`: nested `when`s with pauses between looks (20 s in all),
+which return as soon as the page moves on and never fail. There is no `waitFor`, because its
+timeout ends the flow as `condition-timeout`, and the security model sends challenges and
+unexpected prompts to the person instead. So:
+
+- no sign-in form (an Akamai interstitial, a redesigned page): `needsUser` before any secret is
+  typed;
+- still on the login page after submit or after the code (a CAPTCHA, a rejected password, a
+  prompt nobody scripted): `needsUser`. The password and the code are each typed once per run.
+
+The worst case is about 60 s of pauses, so the runtime's flow timeout must be longer than that or a
+stalled login ends as `timeout` / `timed-out` instead. `test/auth-steps.test.ts` walks the steps
+against scripted pages for each of these cases.
+
+The request surface lists exactly the calls the tools make, and a test fails if a declaration goes
+unused. The login probe (`GET /api/ui/v2/bootstrap`) is not on it: the runtime makes the probe
+itself, outside the tool-code surface guard, so tool code can't read the shopper details that
+endpoint probably returns once logged in.
+
 ## Verified live and assumed
 
 From the anonymous probe of 2026-11-07
