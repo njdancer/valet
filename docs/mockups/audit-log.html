@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Audit log · siteadapter mockups</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="app.css" />
+    <script src="app.js"></script>
+    <style>
+      .log {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+      }
+      .log .table th,
+      .log .table td {
+        padding-left: 10px;
+        padding-right: 10px;
+      }
+      .log .table td {
+        height: 31px;
+        font-size: var(--text-sm);
+      }
+      .ev {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font: 600 var(--text-xs) var(--font-mono);
+        white-space: nowrap;
+      }
+      .ev::before {
+        content: "";
+        width: 7px;
+        height: 7px;
+        border-radius: 2px;
+        background: currentColor;
+      }
+      .ev.tool {
+        color: var(--accent);
+      }
+      .ev.login {
+        color: var(--text-secondary);
+      }
+      .ev.secret {
+        color: var(--secret-text);
+      }
+      .ev.blocked {
+        color: var(--danger-text);
+      }
+      .ev.confirm {
+        color: var(--warn-text);
+      }
+      .ev.admin {
+        color: var(--ok);
+      }
+      .raw {
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      /* Fields core's AuditEvent doesn't have yet: drawn so the gap is visible. */
+      .proposed {
+        background: var(--write-bg);
+      }
+      .chain {
+        display: grid;
+        grid-template-columns: 1fr 18px 1fr 18px 1fr;
+        align-items: center;
+        gap: 2px;
+      }
+      .block {
+        padding: 6px 8px;
+        border-radius: 6px;
+        border: 0.5px solid var(--border-strong);
+        background: var(--bg-surface);
+        font: 10.5px / 1.45 var(--font-mono);
+        color: var(--text-secondary);
+      }
+      .block strong {
+        display: block;
+        color: var(--text);
+        font: 600 11px var(--font-ui);
+      }
+      .block.on {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 1px var(--accent);
+      }
+      .link {
+        height: 1.5px;
+        background: var(--border-strong);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="desktop">
+      <header class="sysbar">
+        <span class="i i-apple"></span>
+        <span class="app-name">siteadapter</span>
+        <span>File</span><span>Edit</span><span>View</span><span>Adapter</span><span>Window</span><span>Help</span>
+        <span class="spacer"></span>
+        <span class="status">
+          <span class="tray"><span class="i i-logo"></span><span class="dot"></span></span>
+          <span class="i i-wifi"></span>
+          <span class="i i-battery" style="width: 22px"></span>
+          <span>Sat 7 Nov&nbsp; 9:48 pm</span>
+        </span>
+      </header>
+
+      <div class="window">
+        <div class="body">
+          <aside class="sidebar">
+            <div class="traffic"><span></span><span></span><span></span></div>
+            <div class="group-label">siteadapter</div>
+            <a class="nav-item" href="control-adapters.html"
+              ><span class="i i-adapter"></span>Adapters<span class="count alert">2</span></a
+            >
+            <a class="nav-item" href="run-trace.html"><span class="i i-activity"></span>Activity<span class="count">37</span></a>
+            <a class="nav-item active" href="audit-log.html"><span class="i i-audit"></span>Audit log</a>
+            <a class="nav-item" href="clients-settings.html"><span class="i i-clients"></span>Clients<span class="count">2</span></a>
+            <a class="nav-item" href="grant-secret.html"><span class="i i-key"></span>Credentials</a>
+            <a class="nav-item" href="clients-settings.html"><span class="i i-gear"></span>Settings</a>
+            <div class="group-label">Saved filters</div>
+            <a class="nav-item" href="audit-log.html"><span class="i i-filter"></span>Secret use<span class="count">212</span></a>
+            <a class="nav-item" href="audit-log.html"><span class="i i-filter"></span>Blocked egress<span class="count">1.9k</span></a>
+            <a class="nav-item" href="audit-log.html"><span class="i i-filter"></span>Irreversible<span class="count">9</span></a>
+            <div class="foot">
+              <span class="row"><span class="dot ok"></span>MCP on · 127.0.0.1:47821</span>
+              <span class="row"><span class="i sm i-shield ok-text"></span>Audit chain intact</span>
+            </div>
+          </aside>
+
+          <main class="main">
+            <div class="titlebar">
+              <div>
+                <div class="title">Audit log</div>
+                <div class="subtitle">4,813 records since 28 Oct · append-only</div>
+              </div>
+              <div class="tools">
+                <span class="search"><span class="i sm i-search"></span>Call ID, tool, host…</span>
+                <button type="button" class="btn"><span class="i sm i-refresh"></span>Verify chain</button>
+                <button type="button" class="btn"><span class="i sm i-download"></span>Export JSONL</button>
+              </div>
+            </div>
+
+            <div class="callout ok" style="margin: var(--space-3) var(--space-5) 0; align-items: center">
+              <span class="i i-shield"></span>
+              <div class="grow">
+                <strong>Chain intact.</strong> All 4,813 records verified up to the head at 9:48 pm. Each hash covers the
+                record before it, so an edit to an earlier record shows up. Deleting the newest records, or rewriting the
+                whole log, needs an external anchor to detect (planned).
+              </div>
+              <span class="mono xs muted">head 7b2f40e1…19ad</span>
+            </div>
+
+            <div class="filterbar" style="border-bottom: 0; padding-top: var(--space-3)">
+              <span class="chip on">All</span>
+              <span class="chip">Tool calls</span>
+              <span class="chip">Logins</span>
+              <span class="chip">Secret use</span>
+              <span class="chip">Blocked</span>
+              <span class="chip">Confirmations</span>
+              <span class="chip">Approvals &amp; grants</span>
+              <span class="grow"></span>
+              <span class="select">Woolworths</span>
+              <span class="select">Any client</span>
+              <span class="select">Last 7 days</span>
+            </div>
+
+            <div class="body" style="border-top: 0.5px solid var(--border)">
+              <div class="log">
+                <table class="table">
+                  <thead>
+                    <tr>
+                      <th class="num">Seq</th>
+                      <th>Time</th>
+                      <th>Event</th>
+                      <th>Details</th>
+                      <th>Call</th>
+                      <th>Hash</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td class="num mono xs">4813</td>
+                      <td class="xs">9:47:09 pm</td>
+                      <td><span class="ev tool">tool-finished</span></td>
+                      <td><span class="pill warn">needsUser</span> <span class="xs muted">auth / challenge · 6,104 ms</span></td>
+                      <td class="mono xs">c_9a71d0</td>
+                      <td class="mono xs tertiary">7b2f…19ad</td>
+                    </tr>
+                    <tr>
+                      <td class="num mono xs">4812</td>
+                      <td class="xs">9:47:09 pm</td>
+                      <td><span class="ev login">login-finished</span></td>
+                      <td><span class="pill warn">needsUser</span></td>
+                      <td class="mono xs">c_9a71d0</td>
+                      <td class="mono xs tertiary">e41d…0c58</td>
+                    </tr>
+                    <tr>
+                      <td class="num mono xs">4811</td>
+                      <td class="xs">9:47:06 pm</td>
+                      <td><span class="ev secret">secret-used</span></td>
+                      <td>login.password · <span class="mono xs">www.woolworths.com.au</span></td>
+                      <td class="mono xs">c_9a71d0</td>
+                      <td class="mono xs tertiary">3be0…77a1</td>
+                    </tr>
+                    <tr>
+                      <td class="num mono xs">4810</td>
+                      <td class="xs">9:47:05 pm</td>
+                      <td><span class="ev secret">secret-used</span></td>
+                      <td>login.username · <span class="mono xs">www.woolworths.com.au</span></td>
+                      <td class="mono xs">c_9a71d0</td>
+                      <td class="mono xs tertiary">90fa…12be</td>
+                    </tr>
+                    <tr>
+                      <td class="num mono xs">4809</td>
+                      <td class="xs">9:47:04 pm</td>
+                      <td><span class="ev login">login-started</span></td>
+                      <td class="muted">Started by a tool call</td>
+                      <td class="mono xs">c_9a71d0</td>
+                      <td class="mono xs tertiary">5c27…e8d3</td>
+                    </tr>
+                    <tr>
+                      <td class="num mono xs">4808</td>
+                      <td class="xs">9:47:03 pm</td>
+                      <td><span class="ev tool">tool-called</span></td>
+                      <td><span class="mono xs">get_trolley</span> <span class="badge read">read</span> · token Claude Code</td>
+                      <td class="mono xs">c_9a71d0</td>
+                      <td class="mono xs tertiary">d812…4a09</td>
+                    </tr>
+                    <tr>
+                      <td class="num mono xs">4801</td>
+                      <td class="xs">9:31:17 pm</td>
+                      <td><span class="ev tool">tool-finished</span></td>
+                      <td><span class="pill ok">ok</span> <span class="xs muted">5,194 ms</span></td>
+                      <td class="mono xs">c_8f2e1b</td>
+                      <td class="mono xs tertiary">a1c4…9e02</td>
+                    </tr>
+                    <tr class="alert">
+                      <td class="num mono xs">4800</td>
+                      <td class="xs">9:31:15 pm</td>
+                      <td><span class="ev blocked">request-blocked</span></td>
+                      <td>POST <span class="mono xs">collect.tealiumiq.com/…/i.gif</span> <span class="xs muted">host</span> </td>
+                      <td class="mono xs">c_8f2e1b</td>
+                      <td class="mono xs tertiary">0b9e…f311</td>
+                    </tr>
+                    <tr class="alert">
+                      <td class="num mono xs">4799</td>
+                      <td class="xs">9:31:15 pm</td>
+                      <td><span class="ev blocked">request-blocked</span></td>
+                      <td>POST <span class="mono xs">/apis/ui/Trolley/Recommendations</span> <span class="xs muted">undeclared</span></td>
+                      <td class="mono xs">c_8f2e1b</td>
+                      <td class="mono xs tertiary">6d4a…20cf</td>
+                    </tr>
+                    <tr>
+                      <td class="num mono xs">4612</td>
+                      <td class="xs">Thu 6:20:44 pm</td>
+                      <td><span class="ev confirm">confirmation</span></td>
+                      <td><span class="mono xs">checkout</span> <span class="pill">declined</span></td>
+                      <td class="mono xs">c_3d19e7</td>
+                      <td class="mono xs tertiary">c3f2…8d61</td>
+                    </tr>
+                    <tr class="selected">
+                      <td class="num mono xs">4433</td>
+                      <td class="xs">Mon 8:02:31 pm</td>
+                      <td><span class="ev admin">grant-made</span></td>
+                      <td>
+                        login → service account ·
+                        <span class="proposed">for <span class="hash">9f3c1a7e…e0f1</span> on
+                          <span class="mono xs">www.woolworths.com.au</span></span
+                        >
+                      </td>
+                      <td class="mono xs tertiary">—</td>
+                      <td class="mono xs tertiary">4e88…a7b5</td>
+                    </tr>
+                    <tr>
+                      <td class="num mono xs">4431</td>
+                      <td class="xs">Mon 8:01:58 pm</td>
+                      <td><span class="ev admin">adapter-approved</span></td>
+                      <td>0.3.0 <span class="hash">9f3c1a7e…e0f1</span></td>
+                      <td class="mono xs tertiary">—</td>
+                      <td class="mono xs tertiary">f07a…5b19</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <aside class="inspector stack gap-3" style="align-content: start">
+                <div class="row between">
+                  <span class="h3">Record 4433</span>
+                  <span class="pill ok"><span class="i sm i-check"></span>Hash verified</span>
+                </div>
+                <pre class="code raw" style="font-size: 10.5px; line-height: 1.5; padding: 10px 12px">{
+  <span class="k">"seq"</span>: <span class="n">4433</span>,
+  <span class="k">"at"</span>: <span class="s">"2026-11-02T09:02:31.118Z"</span>,
+  <span class="k">"event"</span>: {
+    <span class="k">"type"</span>: <span class="s">"grant-made"</span>,
+    <span class="k">"adapterId"</span>: <span class="s">"woolworths"</span>,
+    <span class="k">"secret"</span>: <span class="s">"login"</span>,
+    <span class="k">"provider"</span>: <span class="s">"1password-service-account"</span>,
+<span class="proposed">    <span class="k">"adapterHash"</span>: <span class="s">"9f3c1a7e52d4a4c123b1612dd272d1371c17149d439536b3216fdaeec8d9e0f1"</span>,
+    <span class="k">"origins"</span>: [<span class="s">"https://www.woolworths.com.au"</span>],
+    <span class="k">"carriedFrom"</span>: <span class="n">null</span></span>
+  },
+  <span class="k">"prev"</span>: <span class="s">"2a904d8dbc74254770f58904dba41ecccc3fc1626e53a13043b026c48bbfc14e"</span>,
+  <span class="k">"hash"</span>: <span class="s">"4e88b975729fae923d5a4fd12aabfe228f219e9cb0eb53f16947ccf25ec8a7b5"</span>
+}</pre>
+                <div class="xs muted">
+                  <span class="proposed">Highlighted</span> fields are a proposed core change: today's
+                  <span class="mono">grant-made</span> has no hash or origins, so the log can't show what was granted.
+                </div>
+                <div class="callout secret" style="padding: 8px 10px">
+                  <span class="i i-eye-off"></span>
+                  <div class="xs">
+                    Grants record the provider, never the 1Password item reference. Secret values are never written here.
+                  </div>
+                </div>
+                <div>
+                  <div class="eyebrow" style="margin-bottom: 6px">Chain</div>
+                  <div class="chain">
+                    <div class="block"><strong>4432</strong>2a90…c14e</div>
+                    <span class="link"></span>
+                    <div class="block on"><strong>4433</strong>prev 2a90…<br />4e88…a7b5</div>
+                    <span class="link"></span>
+                    <div class="block"><strong>4434</strong>prev 4e88…<br />d5c1…3f07</div>
+                  </div>
+                </div>
+                <div class="row">
+                  <a class="btn" href="adapter-detail.html">Open adapter</a>
+                  <button type="button" class="btn"><span class="i sm i-copy"></span>Copy record</button>
+                </div>
+              </aside>
+            </div>
+          </main>
+        </div>
+      </div>
+    </div>
+    <nav class="mockbar" aria-label="Mockup">
+      <a href="index.html">All screens</a>
+      <button type="button" data-theme-toggle>Light / dark</button>
+    </nav>
+  </body>
+</html>

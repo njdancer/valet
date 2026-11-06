@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>siteadapter mockups</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="app.css" />
+    <script src="app.js"></script>
+    <style>
+      body {
+        background: var(--bg-window);
+      }
+      .page {
+        max-width: 1240px;
+        margin: 0 auto;
+        padding: 40px 40px 64px;
+      }
+      .top {
+        display: flex;
+        align-items: center;
+        gap: var(--space-4);
+        margin-bottom: var(--space-2);
+      }
+      .top .logo {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 44px;
+        height: 44px;
+        border-radius: 11px;
+        color: #fff;
+        background: linear-gradient(160deg, #3a8dff, #0a5fd6);
+      }
+      .lede {
+        max-width: 760px;
+        margin: var(--space-3) 0 var(--space-6);
+        color: var(--text-secondary);
+        font-size: var(--text-lg);
+        line-height: 1.5;
+      }
+      h2.section {
+        margin: var(--space-6) 0 var(--space-3);
+        font-size: var(--text-lg);
+      }
+      .gallery {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: var(--space-5) var(--space-4);
+      }
+      .shot {
+        display: block;
+        color: inherit;
+      }
+      .thumb {
+        position: relative;
+        aspect-ratio: 16 / 10;
+        border-radius: var(--radius-md);
+        overflow: hidden;
+        background: var(--wallpaper);
+        border: 0.5px solid var(--border);
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+      }
+      .thumb img {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+      .thumb .fallback {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--text-tertiary);
+        font: var(--text-sm) var(--font-mono);
+      }
+      .thumb .dark {
+        display: none;
+      }
+      :root[data-theme="dark"] .thumb .dark {
+        display: block;
+      }
+      :root[data-theme="dark"] .thumb .light {
+        display: none;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) .thumb .dark {
+          display: block;
+        }
+        :root:not([data-theme="light"]) .thumb .light {
+          display: none;
+        }
+      }
+      .shot:hover .thumb {
+        box-shadow: 0 0 0 2px var(--accent);
+      }
+      .shot .name {
+        display: flex;
+        align-items: baseline;
+        gap: var(--space-2);
+        margin-top: var(--space-2);
+        font-weight: 600;
+      }
+      .shot .desc {
+        margin-top: 2px;
+        font-size: var(--text-sm);
+        color: var(--text-secondary);
+      }
+      .legend {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: var(--space-3);
+      }
+      .legend .card {
+        padding: var(--space-3) var(--space-4);
+        font-size: var(--text-sm);
+      }
+      .decisions {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: var(--space-3);
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .decisions li {
+        padding: var(--space-3) var(--space-4);
+        font-size: var(--text-sm);
+      }
+      .decisions strong {
+        display: block;
+        margin-bottom: 2px;
+        font-size: var(--text-md);
+      }
+      .questions {
+        margin: 0;
+        padding: var(--space-3) var(--space-4) var(--space-3) calc(var(--space-4) + 18px);
+        font-size: var(--text-sm);
+      }
+      .questions li + li {
+        margin-top: 6px;
+      }
+      @media (max-width: 900px) {
+        .gallery,
+        .legend,
+        .decisions {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .page {
+          padding: 24px 16px 48px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <div class="top">
+        <span class="logo"><span class="i lg i-logo"></span></span>
+        <div class="grow">
+          <div class="h1">siteadapter mockups</div>
+          <div class="muted small">Static HTML. Woolworths is the worked example. 7 Nov 2026.</div>
+        </div>
+        <button type="button" class="btn lg" data-theme-toggle>Light / dark</button>
+      </div>
+      <p class="lede">
+        A menu-bar app that runs per-site adapters and exposes their tools over MCP. Adapter code never sees a secret:
+        logins happen in a separate browser session, filled from 1Password, and every request a tool makes is checked
+        against what its manifest declared. Each screen below shows one part of that model.
+      </p>
+
+      <h2 class="section">Desktop app</h2>
+      <div class="gallery">
+        <a class="shot" href="menubar.html">
+          <div class="thumb">
+            <img class="light" src="screens/menubar.png" alt="" /><img class="dark" src="screens/menubar-dark.png" alt="" />
+          </div>
+          <div class="name">Menu bar popover <span class="xs tertiary mono">menubar.html</span></div>
+          <div class="desc">Status, MCP endpoint switch, today's calls, adapter health, a login hand-off and an update waiting for you.</div>
+        </a>
+        <a class="shot" href="control-adapters.html">
+          <div class="thumb">
+            <img class="light" src="screens/control-adapters.png" alt="" /><img
+              class="dark"
+              src="screens/control-adapters-dark.png"
+              alt=""
+            />
+          </div>
+          <div class="name">Adapters <span class="xs tertiary mono">control-adapters.html</span></div>
+          <div class="desc">Control panel home: every adapter's approval, tools, secrets, session, circuit breaker and budget.</div>
+        </a>
+        <a class="shot" href="adapter-detail.html">
+          <div class="thumb">
+            <img class="light" src="screens/adapter-detail.png" alt="" /><img
+              class="dark"
+              src="screens/adapter-detail-dark.png"
+              alt=""
+            />
+          </div>
+          <div class="name">Woolworths adapter <span class="xs tertiary mono">adapter-detail.html</span></div>
+          <div class="desc">Version and hash, tools by side effect, partitions and probe, the login grant, permissions, runs.</div>
+        </a>
+        <a class="shot" href="approve-adapter.html">
+          <div class="thumb">
+            <img class="light" src="screens/approve-adapter.png" alt="" /><img
+              class="dark"
+              src="screens/approve-adapter-dark.png"
+              alt=""
+            />
+          </div>
+          <div class="name">Review an update <span class="xs tertiary mono">approve-adapter.html</span></div>
+          <div class="desc">0.3.0 → 0.4.0: new host, origin, secret, login steps, hand-over domain and write tool highlighted.</div>
+        </a>
+        <a class="shot" href="grant-secret.html">
+          <div class="thumb">
+            <img class="light" src="screens/grant-secret.png" alt="" /><img class="dark" src="screens/grant-secret-dark.png" alt="" />
+          </div>
+          <div class="name">Grant a secret <span class="xs tertiary mono">grant-secret.html</span></div>
+          <div class="desc">Bind a 1Password item to “login”: provider, item, a subset of origins, and what the adapter can't do.</div>
+        </a>
+        <a class="shot" href="run-trace.html">
+          <div class="thumb">
+            <img class="light" src="screens/run-trace.png" alt="" /><img class="dark" src="screens/run-trace-dark.png" alt="" />
+          </div>
+          <div class="name">Run trace <span class="xs tertiary mono">run-trace.html</span></div>
+          <div class="desc">ensure → probe → login with redacted fills → hand-off → probe in the tool session → requests, two blocked.</div>
+        </a>
+        <a class="shot" href="audit-log.html">
+          <div class="thumb">
+            <img class="light" src="screens/audit-log.png" alt="" /><img class="dark" src="screens/audit-log-dark.png" alt="" />
+          </div>
+          <div class="name">Audit log <span class="xs tertiary mono">audit-log.html</span></div>
+          <div class="desc">Hash-chained records with filters, chain verification, and a grant record with the fields core still lacks.</div>
+        </a>
+        <a class="shot" href="confirm-irreversible.html">
+          <div class="thumb">
+            <img class="light" src="screens/confirm-irreversible.png" alt="" /><img
+              class="dark"
+              src="screens/confirm-irreversible-dark.png"
+              alt=""
+            />
+          </div>
+          <div class="name">Confirm an irreversible tool <span class="xs tertiary mono">confirm-irreversible.html</span></div>
+          <div class="desc">Claude Code asks to place an order; only you can approve, and the adapter's total is marked unverified.</div>
+        </a>
+        <a class="shot" href="needs-user.html">
+          <div class="thumb">
+            <img class="light" src="screens/needs-user.png" alt="" /><img class="dark" src="screens/needs-user-dark.png" alt="" />
+          </div>
+          <div class="name">Login hand-off <span class="xs tertiary mono">needs-user.html</span></div>
+          <div class="desc">The auth window shown for a verification check; the app's banner, not the page, says what was filled.</div>
+        </a>
+        <a class="shot" href="clients-settings.html">
+          <div class="thumb">
+            <img class="light" src="screens/clients-settings.png" alt="" /><img
+              class="dark"
+              src="screens/clients-settings-dark.png"
+              alt=""
+            />
+          </div>
+          <div class="name">Clients and settings <span class="xs tertiary mono">clients-settings.html</span></div>
+          <div class="desc">Endpoint, a token per client, the stdio bridge snippet, remote access as a proposal, and updates.</div>
+        </a>
+      </div>
+
+      <h2 class="section">IDE and onboarding</h2>
+      <div class="gallery">
+        <a class="shot" href="ide-workspace.html">
+          <div class="thumb">
+            <span class="fallback">ide-workspace.html</span>
+            <img class="light" src="screens/ide-workspace.png" alt="" /><img
+              class="dark"
+              src="screens/ide-workspace-dark.png"
+              alt=""
+            />
+          </div>
+          <div class="name">IDE workspace <span class="xs tertiary mono">ide-workspace.html</span></div>
+          <div class="desc">Authoring an adapter: files, manifest, and the site in an embedded browser view.</div>
+        </a>
+        <a class="shot" href="ide-recorder.html">
+          <div class="thumb">
+            <span class="fallback">ide-recorder.html</span>
+            <img class="light" src="screens/ide-recorder.png" alt="" /><img class="dark" src="screens/ide-recorder-dark.png" alt="" />
+          </div>
+          <div class="name">Recorder <span class="xs tertiary mono">ide-recorder.html</span></div>
+          <div class="desc">Recording a session to pick up selectors, requests and hosts for the manifest.</div>
+        </a>
+        <a class="shot" href="ide-agent.html">
+          <div class="thumb">
+            <span class="fallback">ide-agent.html</span>
+            <img class="light" src="screens/ide-agent.png" alt="" /><img class="dark" src="screens/ide-agent-dark.png" alt="" />
+          </div>
+          <div class="name">Authoring agent <span class="xs tertiary mono">ide-agent.html</span></div>
+          <div class="desc">An AI agent writing or repairing an adapter, producing a change you then review.</div>
+        </a>
+        <a class="shot" href="ide-tests.html">
+          <div class="thumb">
+            <span class="fallback">ide-tests.html</span>
+            <img class="light" src="screens/ide-tests.png" alt="" /><img class="dark" src="screens/ide-tests-dark.png" alt="" />
+          </div>
+          <div class="name">Adapter tests <span class="xs tertiary mono">ide-tests.html</span></div>
+          <div class="desc">Running an adapter's tests against recorded fixtures before it goes up for approval.</div>
+        </a>
+        <a class="shot" href="onboarding.html">
+          <div class="thumb">
+            <span class="fallback">onboarding.html</span>
+            <img class="light" src="screens/onboarding.png" alt="" /><img class="dark" src="screens/onboarding-dark.png" alt="" />
+          </div>
+          <div class="name">Onboarding <span class="xs tertiary mono">onboarding.html</span></div>
+          <div class="desc">First run: 1Password, the MCP endpoint and connecting a first client.</div>
+        </a>
+      </div>
+
+      <h2 class="section">How to read the screens</h2>
+      <div class="legend">
+        <div class="card">
+          <span class="badge read">read</span> <span class="badge write">write</span>
+          <span class="badge irreversible">irreversible</span>
+          <div class="muted" style="margin-top: 6px">
+            Every tool declares a side effect. Irreversible tools always ask you in the app.
+          </div>
+        </div>
+        <div class="card">
+          <span class="badge secret">login</span>
+          <div class="muted" style="margin-top: 6px">
+            Purple is secrets: requests, grants, fills and redactions. Values are never shown.
+          </div>
+        </div>
+        <div class="card">
+          <span class="hash">9f3c1a7e…e0f1</span>
+          <div class="muted" style="margin-top: 6px">The adapter's content hash. Approvals and grants belong to one hash.</div>
+        </div>
+        <div class="card">
+          <span class="pill secret">auth:woolworths</span> <span class="pill info">tool:woolworths</span>
+          <div class="muted" style="margin-top: 6px">Two browser sessions per site. Only cookies move, auth to tool.</div>
+        </div>
+      </div>
+
+      <h2 class="section">Choices these mockups make that need your call</h2>
+      <ul class="decisions">
+        <li class="card">
+          <strong>Touch ID on irreversible confirmations</strong>
+          The “Place order” button asks for Touch ID. Without it, anyone at the unlocked Mac can approve. Default here: on.
+        </li>
+        <li class="card">
+          <strong>Carrying a grant across an update</strong>
+          A new hash starts with no grants. The review offers to re-bind the same item and origins only when the login
+          steps, navigation and that secret's origins are identical in both versions, and the box starts unticked. The
+          0.4.0 example changes login, so it isn't offered. Or should every update need a fresh grant?
+        </li>
+        <li class="card">
+          <strong>A token per client</strong>
+          Each client gets its own token from “Connect a client…”, with its own Rotate and Revoke, and calls are attributed
+          to the token. Today there is one shared token, so the client name in the audit log is whatever the client says
+          it is. Per-token “Read only” or “All tools” scopes are drawn as a proposal.
+        </li>
+        <li class="card">
+          <strong>Remote access</strong>
+          Drawn as a proposal, not in v0. Is it in v0 at all? If so, which tools may a remote caller use (proposed: read
+          only), with a separate token per device? The security model needs a section on it before it ships.
+        </li>
+        <li class="card">
+          <strong>needsUser ends the call</strong>
+          Drawn the way core records it: the call returns <span class="mono">needsUser</span>, the login window stays
+          open, and the agent calls again once you're signed in. Pausing the call instead would need a core change.
+        </li>
+        <li class="card">
+          <strong>Confirmation timeout</strong>
+          Unanswered confirmations time out after 2 minutes and the client is told “timed-out”, which core keeps distinct
+          from “declined”. Login windows close after 5.
+        </li>
+        <li class="card">
+          <strong>What the confirmation can vouch for</strong>
+          The order total and card come from the adapter and are tagged “Not verified by siteadapter”. A one-shot unlock of
+          PlaceOrder for that call, and a total siteadapter saw itself, are drawn as proposals.
+        </li>
+        <li class="card">
+          <strong>Requests per tool</strong>
+          Adapter detail shows the calls each tool typically makes, from recent runs. The manifest gives every tool the
+          whole request surface, so a read tool's code may call a declared write path. Binding requests to tools needs
+          core.
+        </li>
+        <li class="card">
+          <strong>“Filled by siteadapter”</strong>
+          The hand-off window lists the filled fields in the app's own banner, outside the web view. There are no badges
+          inside the page: anything drawn there, the site could imitate.
+        </li>
+        <li class="card">
+          <strong>SMS codes</strong>
+          A Messages code source is declared by the manifest alone, with no grant step, so the screens show it as a
+          declared permission, not under a grant. Should reading codes need a grant, with the sender required?
+        </li>
+        <li class="card">
+          <strong>Rate budget and cool-down numbers</strong>
+          60 requests an hour for Woolworths, and a 1-minute cool-down that doubles on repeat blocks. Placeholders until we
+          measure.
+        </li>
+        <li class="card">
+          <strong>Login origins</strong>
+          https://auth.woolworths.com.au is a stand-in second origin to show granting a subset. The real login flow still
+          has to be recorded with you present.
+        </li>
+        <li class="card">
+          <strong>Approval friction</strong>
+          Approve is enabled only after ticking “I've read the highlighted additions”, and only when an update adds
+          something.
+        </li>
+      </ul>
+
+      <h2 class="section">Open questions for you</h2>
+      <ol class="card questions">
+        <li>May an update re-bind an existing grant (unticked, only when login is unchanged), or does every update need a fresh grant?</li>
+        <li>When a login needs you, should the tool call end with <span class="mono">needsUser</span> (as core has it) or wait for you?</li>
+        <li>Is remote access in v0? If yes: which tools, and one token per device?</li>
+        <li>Are per-client scopes worth building in v0, or are per-client tokens with Revoke enough?</li>
+        <li>Should reading an SMS code from Messages need its own grant?</li>
+        <li>Touch ID on irreversible confirmations: on by default?</li>
+      </ol>
+
+      <h2 class="section">Core changes these screens assume</h2>
+      <p class="muted small" style="margin-top: 0">
+        Nothing below exists in <span class="mono">packages/core</span> yet. Each is drawn on a screen as a proposal.
+      </p>
+      <ol class="card questions">
+        <li>
+          <strong>Client registry keyed by token.</strong> Issue one token per client; <span class="mono">tool-called.client</span>
+          is the token's id, and the client's self-reported name is stored separately. Optional per-token tool scopes.
+        </li>
+        <li>
+          <strong>Grant events say what was granted.</strong> <span class="mono">grant-made</span> and
+          <span class="mono">grant-revoked</span> carry <span class="mono">adapterHash</span>, <span class="mono">origins</span>
+          and the provider (never the item reference), plus <span class="mono">carriedFrom</span> if re-binding is
+          accepted. <span class="mono">adapter-approved</span> carries the version.
+        </li>
+        <li>
+          <strong>A grant for a Messages code source</strong>, with the sender required and the origins the code may be
+          filled on.
+        </li>
+        <li>
+          <strong>Confirmation-scoped unlock.</strong> Approving allows one irreversible request, bound to the callId,
+          consumed on use and audited. Optionally record a runtime-observed total from a declared GET as a checked fact.
+        </li>
+        <li>
+          <strong>Per-tool request binding:</strong> <span class="mono">tools[].requests</span>, with
+          <span class="mono">decideRequest</span> also checking the calling tool and its side effect.
+        </li>
+        <li>
+          <strong>Where <span class="mono">assertLoggedIn</span> runs.</strong> The probe is documented as running in the
+          tool partition; the trace shows it after the hand-off. Core should say so for the auth step too.
+        </li>
+        <li>
+          <strong>Anchoring the audit log</strong> so truncating the tail or rewriting the whole chain is detectable, e.g.
+          by periodically recording the head hash somewhere the app can't rewrite.
+        </li>
+        <li>
+          <strong>If needsUser should pause the call</strong>, a non-terminal event for it; today it's a terminal outcome
+          of <span class="mono">tool-finished</span> and <span class="mono">login-finished</span>.
+        </li>
+      </ol>
+    </div>
+    <script>
+      // IDE screenshots come from another branch and may not exist yet; show the file name instead.
+      for (const img of document.querySelectorAll('.thumb img')) {
+        if (img.complete && img.naturalWidth === 0) img.remove()
+        else img.addEventListener('error', () => img.remove())
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Clients and settings · siteadapter mockups</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="app.css" />
+    <script src="app.js"></script>
+    <style>
+      .cols {
+        display: grid;
+        grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+        gap: var(--space-4);
+        align-items: start;
+      }
+      .setting {
+        display: grid;
+        grid-template-columns: 120px minmax(0, 1fr) auto;
+        gap: var(--space-3);
+        align-items: center;
+        padding: 7px 0;
+        border-bottom: 0.5px solid var(--border);
+        font-size: var(--text-sm);
+      }
+      .setting:last-child {
+        border-bottom: 0;
+      }
+      .setting > span:first-child {
+        color: var(--text-secondary);
+      }
+      .code {
+        font-size: 11px;
+        padding: 8px 12px;
+      }
+      .steps {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        counter-reset: step;
+        display: grid;
+        gap: 8px;
+        font-size: var(--text-sm);
+      }
+      .steps li {
+        display: grid;
+        grid-template-columns: 20px minmax(0, 1fr);
+        gap: 8px;
+        counter-increment: step;
+      }
+      .steps li::before {
+        content: counter(step);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--accent);
+        background: var(--bg-selected);
+      }
+      .select {
+        white-space: nowrap;
+      }
+      .client-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        border-radius: 6px;
+        font-size: 11px;
+        font-weight: 700;
+        color: #fff;
+      }
+      .client-icon.cc {
+        background: linear-gradient(160deg, #d97757, #b65a3c);
+      }
+      .client-icon.cd {
+        background: linear-gradient(160deg, #a35c45, #7c3f2c);
+      }
+      .client-icon.cu {
+        background: linear-gradient(160deg, #5a5a5f, #2c2c2e);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="desktop">
+      <header class="sysbar">
+        <span class="i i-apple"></span>
+        <span class="app-name">siteadapter</span>
+        <span>File</span><span>Edit</span><span>View</span><span>Adapter</span><span>Window</span><span>Help</span>
+        <span class="spacer"></span>
+        <span class="status">
+          <span class="tray"><span class="i i-logo"></span><span class="dot"></span></span>
+          <span class="i i-wifi"></span>
+          <span class="i i-battery" style="width: 22px"></span>
+          <span>Sat 7 Nov&nbsp; 9:56 pm</span>
+        </span>
+      </header>
+
+      <div class="window">
+        <div class="body">
+          <aside class="sidebar">
+            <div class="traffic"><span></span><span></span><span></span></div>
+            <div class="group-label">siteadapter</div>
+            <a class="nav-item" href="control-adapters.html"
+              ><span class="i i-adapter"></span>Adapters<span class="count alert">2</span></a
+            >
+            <a class="nav-item" href="run-trace.html"><span class="i i-activity"></span>Activity<span class="count">37</span></a>
+            <a class="nav-item" href="audit-log.html"><span class="i i-audit"></span>Audit log</a>
+            <a class="nav-item active" href="clients-settings.html"
+              ><span class="i i-clients"></span>Clients<span class="count">2</span></a
+            >
+            <a class="nav-item" href="grant-secret.html"><span class="i i-key"></span>Credentials</a>
+            <a class="nav-item" href="clients-settings.html"><span class="i i-gear"></span>Settings</a>
+            <div class="group-label">Settings</div>
+            <a class="nav-item" href="#endpoint"><span class="i i-link"></span>MCP endpoint</a>
+            <a class="nav-item" href="#remote"><span class="i i-globe"></span>Remote access</a>
+            <a class="nav-item" href="#updates"><span class="i i-download"></span>Updates</a>
+            <div class="foot">
+              <span class="row"><span class="dot ok"></span>MCP on · 127.0.0.1:47821</span>
+              <span class="row"><span class="i sm i-shield ok-text"></span>Audit chain intact</span>
+            </div>
+          </aside>
+
+          <main class="main">
+            <div class="titlebar">
+              <div>
+                <div class="title">Clients</div>
+                <div class="subtitle">Who can call your tools, and how they connect</div>
+              </div>
+              <div class="tools">
+                <button type="button" class="btn"><span class="i sm i-plus"></span>Connect a client…</button>
+              </div>
+            </div>
+
+            <div class="content" style="padding-top: var(--space-4)">
+              <div class="cols">
+                <div class="stack gap-4">
+                  <div class="card" id="endpoint">
+                    <div class="card-head">
+                      <span class="h3">MCP endpoint</span><span class="pill ok"><span class="dot ok"></span>Listening</span>
+                      <span class="actions"><span class="switch on"></span></span>
+                    </div>
+                    <div class="card-body" style="padding-top: 2px; padding-bottom: 2px">
+                      <div class="setting">
+                        <span>Address</span><span class="mono">http://127.0.0.1:47821/mcp</span
+                        ><span class="i sm i-copy muted"></span>
+                      </div>
+                      <div class="setting">
+                        <span>Transport</span><span>Streamable HTTP, this Mac only</span><span class="xs muted">stdio via bridge</span>
+                      </div>
+                      <div class="setting">
+                        <span>Tokens</span><span>One per client, issued by “Connect a client…”</span
+                        ><span class="xs muted">3 issued</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="card">
+                    <div class="card-head">
+                      <span class="h3">Client tokens</span><span class="muted">2 active · 1 revoked</span>
+                    </div>
+                    <table class="table tight">
+                      <thead>
+                        <tr>
+                          <th>Token name <span class="tertiary">(yours)</span></th>
+                          <th>May call <span class="pill" style="height: 16px">proposal</span></th>
+                          <th></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td>
+                            <span class="row"><span class="client-icon cc">CC</span><span><span style="display:block">Claude Code</span><span class="xs muted"><span class="mono">sat_…c7d2</span> · says “claude-code” · stdio</span></span></span>
+                          </td>
+                          <td><span class="select">All tools</span></td>
+                          <td><span class="row"><button type="button" class="btn ghost">Rotate</button><button type="button" class="btn ghost">Revoke</button></span></td>
+                        </tr>
+                        <tr>
+                          <td>
+                            <span class="row"><span class="client-icon cd">CD</span><span><span style="display:block">Claude Desktop</span><span class="xs muted"><span class="mono">sat_…41e9</span> · says “claude-ai” · HTTP</span></span></span>
+                          </td>
+                          <td><span class="select">Read only</span></td>
+                          <td><span class="row"><button type="button" class="btn ghost">Rotate</button><button type="button" class="btn ghost">Revoke</button></span></td>
+                        </tr>
+                        <tr>
+                          <td>
+                            <span class="row tertiary"><span class="client-icon cu">Cu</span><span><span style="display:block">Cursor</span><span class="xs muted"><span class="mono">sat_…0b5a</span> · revoked Tue</span></span></span>
+                          </td>
+                          <td><span class="pill">Revoked</span></td>
+                          <td></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                    <div class="card-body xs muted" style="padding-top: 6px">
+                      Calls are attributed to the token that made them. What a client says its name is appears in grey and
+                      proves nothing. Revoking a token stops only that client.
+                    </div>
+                  </div>
+
+                  <div class="card">
+                    <div class="card-head">
+                      <span class="h3">Add to Claude Code</span><span class="muted">stdio bridge, bundled with the app</span>
+                    </div>
+                    <div class="card-body stack">
+                      <pre class="code">claude mcp add siteadapter -- \
+  /Applications/siteadapter.app/Contents/Resources/bin/siteadapter-mcp</pre>
+                      <div class="xs muted">Other clients that only speak stdio:</div>
+                      <pre class="code">{ <span class="k">"mcpServers"</span>: { <span class="k">"siteadapter"</span>: { <span class="k">"command"</span>:
+  <span class="s">"/Applications/siteadapter.app/Contents/Resources/bin/siteadapter-mcp"</span>
+} } }</pre>
+                      <div class="row xs muted">
+                        <span class="i sm i-lock"></span>The bridge reads Claude Code's token from your Keychain, so it never
+                        sits in a config file.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="stack gap-4">
+                  <div class="card" id="remote">
+                    <div class="card-head">
+                      <span class="h3">Remote access</span><span class="pill warn">Proposal · not in v0</span>
+                      <span class="muted">use your tools away from this Mac</span>
+                    </div>
+                    <div class="card-body stack gap-3">
+                      <div class="callout" style="padding: 8px 12px">
+                        <span class="i i-warn"></span>
+                        <div class="xs">
+                          Not covered by the security model yet. Needs your call: whether v0 has it at all, which tools a
+                          remote caller may use (proposed: read only), and a separate token for each remote device.
+                        </div>
+                      </div>
+                      <span class="segmented"
+                        ><span class="on">Tailscale</span><span>cloudflared</span><span>Relay <span class="pill" style="height: 16px">later</span></span></span
+                      >
+                      <ol class="steps">
+                        <li>
+                          <div>Install Tailscale on this Mac and the device you'll call from, signed in to the same tailnet.</div>
+                        </li>
+                        <li>
+                          <div class="stack" style="gap: 4px">
+                            <span>Serve the endpoint on your tailnet only:</span>
+                            <pre class="code">tailscale serve --bg 47821</pre>
+                          </div>
+                        </li>
+                        <li>
+                          <div>
+                            Point the remote client at <span class="mono xs">https://macbook.tail1c2d.ts.net/mcp</span> with a
+                            token issued for that device.
+                          </div>
+                        </li>
+                      </ol>
+                      <div class="callout warn" style="padding: 8px 12px">
+                        <span class="i i-warn"></span>
+                        <div class="xs">
+                          Anyone on the tailnet with that token can call whatever it's scoped to. Irreversible tools still wait
+                          for you on this Mac. Don't use <span class="mono">tailscale funnel</span>; it makes the endpoint public.
+                        </div>
+                      </div>
+                      <div class="row small muted">
+                        <span class="i sm i-bolt"></span>A siteadapter relay, with no tunnel to set up, is coming later.
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="card" id="updates">
+                    <div class="card-head">
+                      <span class="h3">Updates</span><span class="pill ok">Up to date</span>
+                    </div>
+                    <div class="card-body" style="padding-top: 2px; padding-bottom: 2px">
+                      <div class="setting">
+                        <span>Version</span><span>0.1.0 (14) · checked 8:12 pm</span
+                        ><button type="button" class="btn">Check now</button>
+                      </div>
+                      <div class="setting">
+                        <span>Channel</span><span class="segmented" style="justify-self: start"><span class="on">Stable</span><span>Beta</span></span
+                        ><span></span>
+                      </div>
+                      <div class="setting">
+                        <span>Install</span><span>Download in the background, install on quit</span><span class="switch on"></span>
+                      </div>
+                      <div class="setting">
+                        <span>Signature</span
+                        ><span class="row"><span class="i sm i-shield ok-text"></span>Developer ID, notarised</span><span></span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </div>
+    <nav class="mockbar" aria-label="Mockup">
+      <a href="index.html">All screens</a>
+      <button type="button" data-theme-toggle>Light / dark</button>
+    </nav>
+  </body>
+</html>

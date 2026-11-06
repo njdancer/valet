@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Control panel: adapters · siteadapter mockups</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="app.css" />
+    <script src="app.js"></script>
+    <style>
+      .adapter-cell {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+      .tool-counts {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        max-width: 140px;
+      }
+      .breaker {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 2px var(--space-3);
+        padding: 8px 0;
+        border-bottom: 0.5px solid var(--border);
+        font-size: var(--text-sm);
+      }
+      .breaker:last-child {
+        border-bottom: 0;
+      }
+      .meter {
+        height: 5px;
+        border-radius: 3px;
+        background: var(--bg-sunken);
+        overflow: hidden;
+        grid-column: 1 / -1;
+        margin-top: 4px;
+      }
+      .meter i {
+        display: block;
+        height: 100%;
+        border-radius: 3px;
+        background: var(--accent);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="desktop">
+      <header class="sysbar">
+        <span class="i i-apple"></span>
+        <span class="app-name">siteadapter</span>
+        <span>File</span><span>Edit</span><span>View</span><span>Adapter</span><span>Window</span><span>Help</span>
+        <span class="spacer"></span>
+        <span class="status">
+          <span class="tray"><span class="i i-logo"></span><span class="dot"></span></span>
+          <span class="i i-wifi"></span>
+          <span class="i i-battery" style="width: 22px"></span>
+          <span>Sat 7 Nov&nbsp; 9:48 pm</span>
+        </span>
+      </header>
+
+      <div class="window">
+        <div class="body">
+          <aside class="sidebar">
+            <div class="traffic"><span></span><span></span><span></span></div>
+            <div class="group-label">siteadapter</div>
+            <a class="nav-item active" href="control-adapters.html"
+              ><span class="i i-adapter"></span>Adapters<span class="count alert">2</span></a
+            >
+            <a class="nav-item" href="run-trace.html"><span class="i i-activity"></span>Activity<span class="count">37</span></a>
+            <a class="nav-item" href="audit-log.html"><span class="i i-audit"></span>Audit log</a>
+            <a class="nav-item" href="clients-settings.html"><span class="i i-clients"></span>Clients<span class="count">2</span></a>
+            <a class="nav-item" href="grant-secret.html"><span class="i i-key"></span>Credentials</a>
+            <a class="nav-item" href="clients-settings.html"><span class="i i-gear"></span>Settings</a>
+            <div class="group-label">Sites</div>
+            <a class="nav-item" href="adapter-detail.html"><span class="avatar sm wow">W</span>Woolworths</a>
+            <a class="nav-item" href="control-adapters.html"><span class="avatar sm coles">C</span>Coles</a>
+            <a class="nav-item" href="control-adapters.html"><span class="avatar sm bank">B</span>Example Bank</a>
+            <a class="nav-item" href="control-adapters.html"><span class="avatar sm agl">A</span>AGL Energy</a>
+            <div class="foot">
+              <span class="row"><span class="dot ok"></span>MCP on · 127.0.0.1:47821</span>
+              <span class="row"><span class="i sm i-shield ok-text"></span>Audit chain intact</span>
+            </div>
+          </aside>
+
+          <main class="main">
+            <div class="titlebar">
+              <div>
+                <div class="title">Adapters</div>
+                <div class="subtitle">5 installed · 4 approved</div>
+              </div>
+              <div class="tools">
+                <span class="segmented"><span class="on">All</span><span>Needs you</span><span>Drafts</span></span>
+                <span class="search"><span class="i sm i-search"></span>Search adapters</span>
+                <button type="button" class="btn"><span class="i sm i-download"></span>Import…</button>
+                <button type="button" class="btn primary"><span class="i sm i-plus"></span>New adapter</button>
+              </div>
+            </div>
+
+            <div class="content stack gap-4" style="align-content: start">
+              <div class="callout info">
+                <span class="i i-adapter"></span>
+                <div class="grow">
+                  <strong>Woolworths 0.4.0 is ready for review.</strong>
+                  <span class="muted"
+                    >The authoring agent added Everyday Rewards support. It asks for one new host, one new secret
+                    and a new write tool. Calls keep using 0.3.0 until you approve.</span
+                  >
+                </div>
+                <a class="btn" href="approve-adapter.html">Review changes</a>
+              </div>
+
+              <div class="card">
+                <table class="table">
+                  <thead>
+                    <tr>
+                      <th>Adapter</th>
+                      <th>Version</th>
+                      <th>Approval</th>
+                      <th>Tools</th>
+                      <th>Secrets</th>
+                      <th>Session</th>
+                      <th>Health</th>
+                      <th class="num">Calls · 7d</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="selected">
+                      <td>
+                        <div class="adapter-cell">
+                          <span class="avatar wow">W</span>
+                          <div>
+                            <div class="h3">Woolworths</div>
+                            <div class="xs muted">woolworths.com.au</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td>
+                        <div>0.3.0</div>
+                        <span class="hash">9f3c1a7e…e0f1</span>
+                      </td>
+                      <td>
+                        <div class="stack" style="gap: 3px">
+                          <span class="pill ok"><span class="i sm i-check"></span>Approved</span>
+                          <span class="pill info">0.4.0 to review</span>
+                        </div>
+                      </td>
+                      <td>
+                        <div class="tool-counts">
+                          <span class="badge read">5 read</span><span class="badge write">1 write</span
+                          ><span class="badge irreversible">1 irrev.</span>
+                        </div>
+                      </td>
+                      <td><span class="badge secret"><span class="i sm i-key"></span>login</span></td>
+                      <td>
+                        <div class="row"><span class="dot warn pulse"></span>Login window open</div>
+                        <div class="xs muted">needsUser at 9:47 pm</div>
+                      </td>
+                      <td><span class="pill warn">Needs you</span></td>
+                      <td class="num">128</td>
+                    </tr>
+                    <tr>
+                      <td>
+                        <div class="adapter-cell">
+                          <span class="avatar coles">C</span>
+                          <div>
+                            <div class="h3">Coles</div>
+                            <div class="xs muted">coles.com.au</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td>
+                        <div>0.1.2</div>
+                        <span class="hash">d02e77b1…4c90</span>
+                      </td>
+                      <td><span class="pill ok"><span class="i sm i-check"></span>Approved</span></td>
+                      <td>
+                        <div class="tool-counts">
+                          <span class="badge read">3 read</span><span class="badge write">1 write</span>
+                        </div>
+                      </td>
+                      <td><span class="badge secret"><span class="i sm i-key"></span>login</span></td>
+                      <td>
+                        <div class="row"><span class="dot ok"></span>Logged in</div>
+                        <div class="xs muted">Checked 7:40 pm</div>
+                      </td>
+                      <td>
+                        <span class="pill bad">Blocked by site</span>
+                        <div class="xs muted" style="margin-top: 2px">Retry in 4 min</div>
+                      </td>
+                      <td class="num">41</td>
+                    </tr>
+                    <tr>
+                      <td>
+                        <div class="adapter-cell">
+                          <span class="avatar bank">B</span>
+                          <div>
+                            <div class="h3">Example Bank</div>
+                            <div class="xs muted">bank.example.com</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td>
+                        <div>1.2.0</div>
+                        <span class="hash">51ab9c03…77d2</span>
+                      </td>
+                      <td><span class="pill ok"><span class="i sm i-check"></span>Approved</span></td>
+                      <td>
+                        <div class="tool-counts"><span class="badge read">4 read</span></div>
+                      </td>
+                      <td>
+                        <span class="badge secret"><span class="i sm i-key"></span>login</span>
+                        <span class="badge neutral" title="Declared by the manifest. No grant step exists for it yet.">SMS code · declared</span>
+                      </td>
+                      <td>
+                        <div class="row"><span class="dot ok"></span>Logged in</div>
+                        <div class="xs muted">Checked 9:12 pm</div>
+                      </td>
+                      <td><span class="pill ok">Healthy</span></td>
+                      <td class="num">22</td>
+                    </tr>
+                    <tr>
+                      <td>
+                        <div class="adapter-cell">
+                          <span class="avatar agl">A</span>
+                          <div>
+                            <div class="h3">AGL Energy</div>
+                            <div class="xs muted">myaccount.agl.com.au</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td>
+                        <div>0.2.1</div>
+                        <span class="hash">7e19f4d2…0b3a</span>
+                      </td>
+                      <td><span class="pill ok"><span class="i sm i-check"></span>Approved</span></td>
+                      <td>
+                        <div class="tool-counts"><span class="badge read">2 read</span></div>
+                      </td>
+                      <td><span class="badge secret"><span class="i sm i-key"></span>login</span></td>
+                      <td>
+                        <div class="row"><span class="dot"></span>Expired</div>
+                        <div class="xs muted">Logs in on next call</div>
+                      </td>
+                      <td><span class="pill ok">Healthy</span></td>
+                      <td class="num">6</td>
+                    </tr>
+                    <tr>
+                      <td>
+                        <div class="adapter-cell">
+                          <span class="avatar auspost">P</span>
+                          <div>
+                            <div class="h3">Australia Post</div>
+                            <div class="xs muted">auspost.com.au</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td>
+                        <div>0.1.0</div>
+                        <span class="hash">c81f0e5a…92ad</span>
+                      </td>
+                      <td><span class="pill">Draft in IDE</span></td>
+                      <td>
+                        <div class="tool-counts"><span class="badge read">2 read</span></div>
+                      </td>
+                      <td><span class="xs muted">None</span></td>
+                      <td><span class="xs muted">Not on MCP</span></td>
+                      <td><span class="xs tertiary">—</span></td>
+                      <td class="num">0</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="grid-3">
+                <div class="card">
+                  <div class="card-head"><span class="h3">Site circuit breakers</span></div>
+                  <div class="card-body" style="padding-top: 2px; padding-bottom: 2px">
+                    <div class="breaker">
+                      <span class="row"><span class="avatar sm coles">C</span>Coles</span>
+                      <span class="pill bad">Open · 3:58</span>
+                      <span class="xs muted" style="grid-column: 1 / -1"
+                        >Site answered 403 Access Denied at 9:44 pm. No calls until the cool-down ends.</span
+                      >
+                    </div>
+                    <div class="breaker">
+                      <span class="row"><span class="avatar sm wow">W</span>Woolworths</span>
+                      <span class="pill ok">Closed</span>
+                      <span class="xs muted" style="grid-column: 1 / -1">Last block 6 h ago · cool-down 1 min doubled to 4 min</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="card-head"><span class="h3">Rate budgets</span><span class="muted">this hour</span></div>
+                  <div class="card-body" style="padding-top: 6px">
+                    <div class="breaker">
+                      <span>Woolworths</span><span class="mono xs">18 / 60</span>
+                      <div class="meter"><i style="width: 30%"></i></div>
+                    </div>
+                    <div class="breaker">
+                      <span>Coles</span><span class="mono xs">40 / 40</span>
+                      <div class="meter"><i style="width: 100%; background: var(--irreversible)"></i></div>
+                    </div>
+                    <div class="breaker">
+                      <span>Example Bank</span><span class="mono xs">6 / 30</span>
+                      <div class="meter"><i style="width: 20%"></i></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="card">
+                  <div class="card-head"><span class="h3">Credentials</span><span class="muted">1Password</span></div>
+                  <div class="card-body stack" style="gap: 6px">
+                    <div class="row small">
+                      <span class="dot ok"></span><span class="grow">Service account · vault “siteadapter”</span
+                      ><span class="xs muted">3 grants</span>
+                    </div>
+                    <div class="row small">
+                      <span class="dot ok"></span><span class="grow">1Password app (op CLI) · Touch ID</span
+                      ><span class="xs muted">1 grant</span>
+                    </div>
+                    <div class="row small">
+                      <span class="dot warn"></span><span class="grow">Messages · SMS codes (no grant step yet)</span
+                      ><span class="xs muted">Example Bank</span>
+                    </div>
+                    <div class="xs muted" style="margin-top: 4px">
+                      Adapters never see these values. 1Password grants are tied to one adapter hash.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </div>
+    <nav class="mockbar" aria-label="Mockup">
+      <a href="index.html">All screens</a>
+      <button type="button" data-theme-toggle>Light / dark</button>
+    </nav>
+  </body>
+</html>

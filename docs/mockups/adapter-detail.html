@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Woolworths adapter · siteadapter mockups</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="app.css" />
+    <script src="app.js"></script>
+    <style>
+      .detail {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 320px;
+        gap: var(--space-4);
+        align-items: start;
+      }
+      .hero {
+        display: flex;
+        align-items: center;
+        gap: var(--space-4);
+        margin-bottom: var(--space-4);
+      }
+      .surface-list {
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 3px 10px;
+        align-items: center;
+        font-size: var(--text-sm);
+      }
+      .surface-list .method {
+        font: 600 var(--text-xs) var(--font-mono);
+        color: var(--text-secondary);
+      }
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+      }
+      .chips .hash {
+        color: var(--text);
+      }
+      .detail .kv {
+        grid-template-columns: 92px 1fr;
+        gap: 4px var(--space-3);
+      }
+      .detail .card {
+        overflow: hidden;
+      }
+      .perm-group + .perm-group {
+        margin-top: var(--space-3);
+        padding-top: var(--space-3);
+        border-top: 0.5px solid var(--border);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="desktop">
+      <header class="sysbar">
+        <span class="i i-apple"></span>
+        <span class="app-name">siteadapter</span>
+        <span>File</span><span>Edit</span><span>View</span><span>Adapter</span><span>Window</span><span>Help</span>
+        <span class="spacer"></span>
+        <span class="status">
+          <span class="tray"><span class="i i-logo"></span><span class="dot"></span></span>
+          <span class="i i-wifi"></span>
+          <span class="i i-battery" style="width: 22px"></span>
+          <span>Sat 7 Nov&nbsp; 9:48 pm</span>
+        </span>
+      </header>
+
+      <div class="window">
+        <div class="body">
+          <aside class="sidebar">
+            <div class="traffic"><span></span><span></span><span></span></div>
+            <div class="group-label">siteadapter</div>
+            <a class="nav-item" href="control-adapters.html"
+              ><span class="i i-adapter"></span>Adapters<span class="count alert">2</span></a
+            >
+            <a class="nav-item" href="run-trace.html"><span class="i i-activity"></span>Activity<span class="count">37</span></a>
+            <a class="nav-item" href="audit-log.html"><span class="i i-audit"></span>Audit log</a>
+            <a class="nav-item" href="clients-settings.html"><span class="i i-clients"></span>Clients<span class="count">2</span></a>
+            <a class="nav-item" href="grant-secret.html"><span class="i i-key"></span>Credentials</a>
+            <a class="nav-item" href="clients-settings.html"><span class="i i-gear"></span>Settings</a>
+            <div class="group-label">Sites</div>
+            <a class="nav-item active" href="adapter-detail.html"><span class="avatar sm wow">W</span>Woolworths</a>
+            <a class="nav-item" href="control-adapters.html"><span class="avatar sm coles">C</span>Coles</a>
+            <a class="nav-item" href="control-adapters.html"><span class="avatar sm bank">B</span>Example Bank</a>
+            <a class="nav-item" href="control-adapters.html"><span class="avatar sm agl">A</span>AGL Energy</a>
+            <div class="foot">
+              <span class="row"><span class="dot ok"></span>MCP on · 127.0.0.1:47821</span>
+              <span class="row"><span class="i sm i-shield ok-text"></span>Audit chain intact</span>
+            </div>
+          </aside>
+
+          <main class="main">
+            <div class="titlebar">
+              <div class="row">
+                <span class="muted">Adapters</span><span class="i sm i-chevron tertiary"></span
+                ><span class="title">Woolworths</span>
+              </div>
+              <div class="tools">
+                <span class="segmented"
+                  ><span class="on">Overview</span><span>Runs</span><span>Manifest</span><span>Code</span></span
+                >
+                <button type="button" class="btn">Open in IDE</button>
+                <button type="button" class="btn"><span class="i sm i-bolt"></span>Run tool…</button>
+              </div>
+            </div>
+
+            <div class="content" style="padding-top: var(--space-4)">
+              <div class="hero">
+                <span class="avatar lg wow">W</span>
+                <div class="grow">
+                  <div class="row">
+                    <span class="h1">Woolworths</span>
+                    <span class="pill ok"><span class="i sm i-check"></span>Approved</span>
+                    <span class="pill info">0.4.0 waiting for review</span>
+                  </div>
+                  <div class="muted small">
+                    Search products, read and change the trolley, and place orders on woolworths.com.au.
+                  </div>
+                </div>
+                <dl class="kv" style="grid-template-columns: auto auto">
+                  <dt>Version</dt>
+                  <dd>0.3.0 · approved 2 Nov by you</dd>
+                  <dt>Content hash</dt>
+                  <dd class="row"><span class="hash">sha256:9f3c1a7e52d4…c8d9e0f1</span><span class="i sm i-copy muted"></span></dd>
+                </dl>
+              </div>
+
+              <div class="detail">
+                <div class="stack gap-4">
+                  <div class="card">
+                    <div class="card-head">
+                      <span class="h3">Tools</span><span class="muted">7 exposed over MCP · any tool may make any declared request</span>
+                    </div>
+                    <table class="table tight">
+                      <thead>
+                        <tr>
+                          <th>Tool</th>
+                          <th>Side effect</th>
+                          <th>Typically calls <span class="tertiary">(recent runs)</span></th>
+                          <th class="num">Calls · 7d</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td><span class="mono">search_products</span></td>
+                          <td><span class="badge read">read</span></td>
+                          <td class="xs muted mono">POST /apis/ui/Search/products</td>
+                          <td class="num">54</td>
+                        </tr>
+                        <tr>
+                          <td><span class="mono">get_product</span></td>
+                          <td><span class="badge read">read</span></td>
+                          <td class="xs muted mono">GET /apis/ui/product/detail/:stockcode</td>
+                          <td class="num">19</td>
+                        </tr>
+                        <tr>
+                          <td><span class="mono">get_trolley</span></td>
+                          <td><span class="badge read">read</span></td>
+                          <td class="xs muted mono">GET /apis/ui/Trolley</td>
+                          <td class="num">27</td>
+                        </tr>
+                        <tr>
+                          <td><span class="mono">get_delivery_windows</span></td>
+                          <td><span class="badge read">read</span></td>
+                          <td class="xs muted mono">GET /apis/ui/Fulfilment/Windows</td>
+                          <td class="num">6</td>
+                        </tr>
+                        <tr>
+                          <td><span class="mono">get_order_history</span></td>
+                          <td><span class="badge read">read</span></td>
+                          <td class="xs muted mono">GET /apis/ui/Orders/:page</td>
+                          <td class="num">4</td>
+                        </tr>
+                        <tr>
+                          <td><span class="mono">update_trolley</span></td>
+                          <td><span class="badge write">write</span></td>
+                          <td class="xs muted mono">POST /api/v3/ui/trolley/update</td>
+                          <td class="num">16</td>
+                        </tr>
+                        <tr>
+                          <td><span class="mono">checkout</span></td>
+                          <td><span class="badge irreversible">irreversible</span></td>
+                          <td class="xs muted mono">POST /apis/ui/Checkout/PlaceOrder</td>
+                          <td class="num">2</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div class="card">
+                    <div class="card-head">
+                      <span class="h3">Recent runs</span><span class="muted">today</span>
+                      <span class="actions"><a class="btn ghost" href="run-trace.html">All activity</a></span>
+                    </div>
+                    <table class="table tight">
+                      <thead>
+                        <tr>
+                          <th>Time</th>
+                          <th>Tool</th>
+                          <th>Client token</th>
+                          <th>Outcome</th>
+                          <th class="num">Duration</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <tr>
+                          <td class="mono xs">9:47 pm</td>
+                          <td class="mono">get_trolley</td>
+                          <td>Claude Code</td>
+                          <td><span class="pill warn">needsUser</span></td>
+                          <td class="num">6.1 s</td>
+                        </tr>
+                        <tr>
+                          <td class="mono xs">9:31 pm</td>
+                          <td class="mono"><a href="run-trace.html">update_trolley</a></td>
+                          <td>Claude Code</td>
+                          <td><span class="pill ok">ok</span> <span class="xs muted">2 blocked</span></td>
+                          <td class="num">5.2 s</td>
+                        </tr>
+                        <tr>
+                          <td class="mono xs">3:58 pm</td>
+                          <td class="mono">get_trolley</td>
+                          <td>Claude Desktop</td>
+                          <td><span class="pill bad">blocked-by-site</span></td>
+                          <td class="num">0.9 s</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                  <div class="card">
+                    <div class="card-head">
+                      <span class="h3">Permissions</span><span class="muted">declared in the manifest, enforced by the runtime</span>
+                    </div>
+                    <div class="card-body grid-3">
+                      <div>
+                        <div class="eyebrow">Login may visit · auth partition</div>
+                        <div class="chips" style="margin-top: 6px">
+                          <span class="hash">https://www.woolworths.com.au</span>
+                          <span class="hash">https://auth.woolworths.com.au</span>
+                        </div>
+                      </div>
+                      <div>
+                        <div class="eyebrow">Tools may contact · egress</div>
+                        <div class="chips" style="margin-top: 6px">
+                          <span class="hash">www.woolworths.com.au</span>
+                          <span class="hash">cdn0.woolworths.media</span>
+                          <span class="hash">acs.woolworths.com.au</span>
+                        </div>
+                      </div>
+                      <div>
+                        <div class="eyebrow">Request surface</div>
+                        <div class="small" style="margin-top: 6px">8 paths: 6 read · 1 write · 1 irreversible</div>
+                        <div class="small muted">At most 50 requests per run.</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="stack gap-4">
+                  <div class="card">
+                    <div class="card-head">
+                      <span class="h3">Session</span>
+                      <span class="pill warn">Waiting for you</span>
+                      <span class="actions"><a class="btn" href="needs-user.html">Show login</a></span>
+                    </div>
+                    <div class="card-body">
+                      <dl class="kv">
+                        <dt>Auth</dt>
+                        <dd class="mono xs">persist:auth:woolworths</dd>
+                        <dt>Tools</dt>
+                        <dd class="mono xs">persist:tool:woolworths</dd>
+                        <dt>Probe</dt>
+                        <dd class="mono xs">GET /api/ui/v2/bootstrap</dd>
+                        <dt>Handed over</dt>
+                        <dd>14 cookies · 0 storage keys</dd>
+                        <dt>Breaker</dt>
+                        <dd class="row"><span class="dot ok"></span>Closed · 18/60 per hour</dd>
+                      </dl>
+                    </div>
+                  </div>
+
+                  <div class="card">
+                    <div class="card-head">
+                      <span class="h3">Secrets</span><span class="muted">1 of 1 granted</span>
+                      <span class="actions"><a class="btn ghost" href="grant-secret.html">Change…</a></span>
+                    </div>
+                    <div class="card-body stack">
+                      <div class="row">
+                        <span class="badge secret"><span class="i sm i-key"></span>login</span>
+                        <span class="xs muted grow">username, password</span>
+                        <span class="pill ok">Granted</span>
+                      </div>
+                      <dl class="kv">
+                        <dt>Bound to</dt>
+                        <dd>1Password “Woolworths”</dd>
+                        <dt>Allowed on</dt>
+                        <dd class="mono xs truncate">www.woolworths.com.au</dd>
+                        <dt>Not given</dt>
+                        <dd class="mono xs tertiary truncate">auth.woolworths.com.au</dd>
+                        <dt>Valid for</dt>
+                        <dd><span class="hash">9f3c1a7e…e0f1</span> only</dd>
+                      </dl>
+                      <div class="eyebrow" style="margin-top: 4px">One-time codes · declared by the manifest, not granted</div>
+                      <div class="xs muted">
+                        None. A Messages code source would be listed here, not under “Bound to”: today nothing asks you
+                        before an adapter reads one.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </div>
+    <nav class="mockbar" aria-label="Mockup">
+      <a href="index.html">All screens</a>
+      <button type="button" data-theme-toggle>Light / dark</button>
+    </nav>
+  </body>
+</html>
