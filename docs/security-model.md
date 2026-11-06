@@ -79,11 +79,19 @@ After a successful login, cookies for the manifest's `session.cookieDomains` are
 ever goes that way. Nothing flows from `tool` to `auth`, so storage, workers and listeners from
 tool pages can't reach a page where a secret is typed.
 
-The identity provider's own session stays in `auth`. For Woolworths, login is Auth0 on
-`https://auth.woolworths.com.au` and `cookieDomains` covers www only, so the Auth0 cookie never
-reaches the tool partition, and the tool partition's egress doesn't include the auth host. That
-Auth0 session is also what makes a silent re-login possible: when only the www session has
+The identity provider's own session stays in `auth` (**Designed**). For Woolworths, login is
+Auth0 on `https://auth.woolworths.com.au`, and the tool partition's egress doesn't include the
+auth host. `cookieDomains` names `woolworths.com.au` and `www.woolworths.com.au`: the bare domain
+is there because a cookie set for `.woolworths.com.au` is stored against it. Cookie matching is
+exact against the cookie's domain, so a host-only Auth0 cookie on `auth.woolworths.com.au` is
+never copied, but any cookie the auth host sets on the parent domain would be. So "the Auth0
+session never reaches the tool partition" holds only if Auth0's cookies are host-only, which
+hasn't been observed; M2 checks that no Auth0 or session cookie is set on `.woolworths.com.au`.
+That Auth0 session is also what makes a silent re-login possible: when only the www session has
 expired, Auth0 redirects straight back and no secret is filled.
+
+**On `main`:** the Woolworths adapter and fake still log in same-origin on www, so there is no
+separate identity-provider session yet.
 
 ## Auth action
 
@@ -139,10 +147,19 @@ text, URLs with query strings or exception messages (**Enforced**).
 process. Each is screened when the manifest is parsed (`isScreenedPattern`, **Contract**; the
 same screen was **Enforced** for OTP patterns in round 1): it must compile, and it must not have a
 repeated group that itself repeats or alternates, as in `(a+)+` or `(a|ab)*`, or a
-backreference. That stops the exponential shapes. Polynomial ones such as `\d*\d*\d*x` pass the
-screen, so inputs are bounded too: a URL regex never runs on a path and query over 2,048
-characters, and OTP matching runs on at most 2,000 characters of each message, in a worker
-thread under a deadline (**Enforced**).
+backreference. That stops the exponential shapes. Polynomial ones such as `\d*\d*\d*\d*x` pass
+the screen.
+
+- **OTP patterns** run on at most 2,000 characters of each message, in a worker thread under a
+  deadline (**Enforced**), so a slow pattern costs a failed lookup, nothing more.
+- **URL regexes have no deadline.** They run synchronously in the main process, bounded only by
+  a 2,048-character path and query (**Enforced**; on `main` the auth flow compiles and runs them
+  with that bound and no screen at all). At 2,048 characters a degree-4 polynomial pattern
+  needs on the order of 10^13 steps. A hostile adapter controls both the pattern and, through
+  `goto(url)` to its own navigation origins, the path and query it runs on, so it can freeze the
+  trusted main process: logins, the MCP endpoint and the audit log with it. This is an open
+  denial-of-service risk ([D56](plan.md#d56-url-regex-deadline)). Until it is fixed, prefer
+  `urlContains`, and don't accept `urlRegex` in a third-party manifest.
 
 ### Navigation and frames
 
@@ -158,9 +175,12 @@ thread under a deadline (**Enforced**).
 ### Before a secret fill
 
 The interpreter checks all of these, in this order, and aborts the action if any fails
-(**Enforced**, `inputReachable` a **Contract**):
+(**Enforced**, except check 6, a **Contract** that round 2 inserts into the existing order, and
+the Messages sender check in 1, **Designed**):
 
-1. A grant exists for this adapter, this exact content hash and this secret.
+1. A grant exists for this adapter, this exact content hash and this secret. For a Messages
+   code, the step's `sender` must equal the grant's `itemRef` exactly, and the reader is queried
+   with the grant's `itemRef`, so the sender the person approved is the one that gets read.
 2. The manifest's secret request includes the field.
 3. Every URL the page has committed to is on `navigation`, and the page isn't a block page.
 4. The element is visible.
@@ -173,8 +193,8 @@ The interpreter checks all of these, in this order, and aborts the action if any
 8. For a password, the owning form's action resolves to an origin in the same granted set, and
    the element has a form at all. This stops a password being typed into, say, the site's search
    box, where it would land in URLs, history and analytics.
-9. The secret is resolved from the provider, then checks 3, 4 and 5 run again, since resolving
-   can take a Touch ID prompt's worth of time.
+9. The secret is resolved from the provider, then checks 3 to 8 run again, since resolving can
+   take a Touch ID prompt's worth of time.
 10. `secret-used` is audited (secret, field, origin, adapter hash, the call that triggered it).
     If the audit append fails, nothing is typed.
 
@@ -225,6 +245,12 @@ process is the trusted computing base. It isn't a property to advertise.
     for their own secrets), `itemRef` the sender handle the person approved, and `origins` where
     the code may be typed. `messagesSourcesIn()` lists what a manifest asks for, so the grant
     picker can show it.
+  - Before a code is read, the step's `sender` must equal the grant's `itemRef` exactly, and the
+    reader is queried with `itemRef`, never the manifest's string (**Designed**; check 1 below).
+  - A grant is one record per adapter, hash and secret, so there is one `messages` grant with one
+    `itemRef` per adapter. A manifest with two Messages senders can't be fully granted. Until
+    [D59](plan.md#d59-several-messages-senders) is decided, the rule is one Messages sender per
+    adapter, which the manifest parser should enforce (**Designed**).
   - Only codes newer than the start of this login are accepted, and only a capture that looks
     like a code is returned.
   - The reader opens `~/Library/Messages/chat.db` in place, read-only, for each lookup, with a
@@ -243,7 +269,8 @@ A manifest _requests_, for example "secret `login`, fields username and password
 `https://auth.woolworths.com.au`". The person _grants_ it by binding a credential item to the
 request, for one adapter content hash, narrowing the origins if they like but never widening
 them. A manifest can't name a 1Password item. If an adapter changes, it doesn't inherit a grant
-(**Enforced**). Whether an update may offer a one-click re-bind is
+(**Enforced**, given a loader that hashes exactly the code it imports; see "Approval and audit").
+Whether an update may offer a one-click re-bind is
 [D47](plan.md#d47-grant-re-bind-on-update).
 
 `grant-made` is audited with the adapter hash and the granted origins (**Contract**).
@@ -276,8 +303,9 @@ capability refuses for the rest of the call, even if tool code catches the error
 - The runtime runs the manifest's probe in the tool partition. A `fetch` probe's path must start
   with a single `/` (no `//`, no backslash). The runtime logs in only on an explicit logged-out
   answer: the expected status with the wrong value, or one of `loggedOutStatuses` (default
-  `[401]`). Anything else is `probe/unavailable`, never a login (**Enforced**;
-  `loggedOutStatuses` a **Contract**).
+  `[401]`). Anything else is `probe/unavailable`, never a login (**Enforced**; the single-slash
+  rule and `loggedOutStatuses` are a **Contract**: on `main` the manifest only requires the path
+  to start with `/`, so `//host/x` parses).
 - At most one login per tool call. Before the auth action runs, a durable attempt marker is
   written and fsynced; a crash or abort leaves it set, and every later login returns `needsUser`
   (`login-attempt-pending`) until the person clears it. `auth-failed`, or a login after which the
@@ -307,8 +335,11 @@ declared side effect as `maxPurpose`, and a ceiling. For every request:
    could route them one way and the site another.
 3. **Deny segments.** A path with a segment such as `checkout`, `payment`, `payee` or
    `placeorder`, also after percent-decoding and with `;matrix` parameters dropped, is refused
-   for every kind of request, navigations and form posts included, unless it matches an
-   `irreversible` declaration that has been unlocked.
+   unless it matches an `irreversible` declaration that has been unlocked. Today that is every
+   kind of request, scripts and styles included, so a preloaded checkout script chunk is
+   cancelled. The plan narrows it to navigations, frames, API calls and form posts, never
+   scripts, styles, images, fonts or media, once M2 has measured what the real pages load
+   ([R17](plan.md#risk-register), [D58](plan.md#d58-page-initiated-traffic)).
 4. **Declarations.** Every API call (fetch and XHR, any non-GET, beacons, sockets, unknown
    types) must match a declared `{ method, path }`, and the declaration's purpose may not exceed
    `maxPurpose`. So a `read` tool can't call a `write` endpoint, whether through `page.fetch`,
@@ -316,15 +347,27 @@ declared side effect as `maxPurpose`, and a ceiling. For every request:
 5. **Ceiling.** Navigations and API calls count against the run's ceiling
    (`limits.requestsPerRun`); scripts, styles, images and fonts don't.
 
-Each refused request is reported as `{ method, target, reason, initiator }`, where the target is
-origin and path only and the initiator is `tool` or `page`, and audited as `request-blocked`.
-Reports are untrusted: a hostname can carry data, so they pass output redaction before they reach
-the audit log.
+Each refused request is reported as `{ method, target, reason, initiator }`, where the initiator
+is `tool` or `page`, and audited as `request-blocked`. Reports are untrusted: a hostname can carry
+data, so they pass output redaction before they reach the audit log. In core v2 the target is
+origin and path. That widens round 1, where the driver deliberately reported the origin plus a
+16-hex digest of the path: tool code chooses the whole URL of a request it wants blocked, so a
+path can carry a session token, and redaction only catches verbatim cookie and secret values,
+not an encoded copy. Keeping origin plus digest is [D57](plan.md#d57-blocked-request-target).
 
-Where this is today: the round-1 driver enforces 1 to 5 in the tool partition's `webRequest`
-filter (with its own `beginRun(sideEffect)`), and the runtime's guarded page enforces them again
-for `page.fetch` and `goto` (**Enforced**). The runtime doesn't call the driver's `beginRun` yet;
-core v2's `beginRun(policy, onBlocked)` is the contract both are adopting.
+Where this is today, in the round-1 driver's `webRequest` filter for the tool partition (with
+its own `beginRun(sideEffect)`):
+
+- **Enforced:** hosts (1), deny segments (3), and declarations and purpose (4), for every
+  request, tool- or page-initiated. The runtime's guarded page enforces them again for
+  `page.fetch` and `goto`.
+- **Contract:** ambiguous-path refusal for every request (in the driver an ambiguous path only
+  stops a declaration from matching, so a navigation or passive load with `%2F`, `%2e%2e` or a
+  backslash segment goes through, and there is no `ambiguous-path` reason); navigations counting
+  toward the ceiling (the driver counts API calls only); the `initiator` field; and auditing the
+  driver's blocks (its `onBlocked` reports reach no audit log yet, so a page-initiated block is
+  not audited). The runtime doesn't call the driver's `beginRun` at all yet, so the allowance is
+  always a read tool's.
 
 Sockets that `webRequest` never sees are closed too (**Enforced**): the tool partition sends every
 connection, loopback included, through a local CONNECT proxy that allows only egress hosts on
@@ -335,10 +378,19 @@ and the tool partition sends `X-DNS-Prefetch-Control: off` on every response.
 
 What the labels mean, honestly:
 
-- Egress hosts, ambiguous-path refusal, deny segments and the ceiling are partition-wide.
+- Egress hosts and deny segments are partition-wide today; ambiguous-path refusal and the
+  ceiling become partition-wide with the v2 contract.
 - Declarations and purpose bind every API call, whoever made it. **The site's own background
   calls are held to them too**, so a manifest must declare the calls the site makes on load
   (Woolworths makes several, including Akamai's sensor POSTs), or they are cancelled.
+- **The current Woolworths manifest would break under this policy.** It declares only its tools'
+  four endpoints and sets `requestsPerRun` to 6, so a home-page load could exhaust the ceiling,
+  and Akamai's sensor POSTs would be cancelled, which probably makes bot detection worse, against
+  [D24](plan.md#d24-bot-detection-posture). Declarations have no host, so declaring a telemetry
+  path on `acs.woolworths.com.au` would also allow it on www, and the sensor POST would have to
+  be labelled `read`. Separate ceilings for tool- and page-initiated requests, host-scoped
+  declarations for the site's own non-GET traffic, and the numbers M2 measures are
+  [D58](plan.md#d58-page-initiated-traffic) (**Open**).
 - A `read` label is not enforced against a top-level navigation to a page that changes state
   when loaded, against a site that writes through a GET API call the adapter declared as `read`,
   or against any declaration whose purpose the adapter got wrong. The person approves the
@@ -357,6 +409,14 @@ Every tool is declared `read`, `write` or `irreversible`. For an `irreversible` 
 - Only after the person approves does the runtime call `unlockIrreversible()`. From then until
   `endRun()`, and only for that run, the run's `irreversible` declarations are usable. Before it,
   or for a run whose `maxPurpose` isn't `irreversible`, it does nothing (**Contract**).
+- **The unlock is wider than the plan asked for.** The run's policy carries the manifest's whole
+  request surface, and tools don't say which requests they use, so confirming one irreversible
+  tool unlocks **every** `irreversible` declaration in the manifest (pay, add a payee, place an
+  order), and unlocks them for page-initiated requests too, since the policy covers every
+  request in the partition. Change request C2 asked for only the declarations that call was
+  confirmed for; core v2 narrows that to "all of them, for this run". The fix is a per-tool list
+  of the declarations it unlocks (change request C15 in the plan), which should land before any
+  irreversible tool ships.
 - Still open: `confirm(message)` shows adapter-authored text. The dialog should be rendered by the
   runtime from structured data, with the adapter's text as an attributed note (change request C4).
   Whether to require Touch ID is [D46](plan.md#d46-touch-id-on-irreversible-confirmations).
@@ -367,21 +427,43 @@ No shipped adapter has an `irreversible` tool in v1 ([D18](plan.md#d18-irreversi
 
 The live probe showed that a handful of scripted calls gets a session blocked by Akamai within
 minutes ([finding](findings/2026-11-07-woolworths-live-probe.md)). So the runtime, not each
-adapter, protects the site and our standing with it (**Enforced**, the manifest fields a
-**Contract**):
+adapter, protects the site and our standing with it.
 
-- **Per site host**, shared by every adapter and call for that host, a rate budget spaces
-  requests at least `limits.minGapMs` apart (default 2 s).
-- **A circuit breaker** opens on a block signature only: a 429, a 403 HTML page, or Akamai's
-  "Access Denied … Reference #" page. It stays open for `limits.cooldownSeconds` (default
-  10 minutes), doubling on each block in a row up to `limits.maxCooldownSeconds` (default 2
-  hours). While it's open, calls fail fast as `blocked` with a retry time and nothing reaches the
-  site. `breaker-opened { host, cause, retryAt, callId }` and `breaker-closed` are audited.
-- A block surfaces as `blocked` / `blocked-by-site`, never as a generic failure; a 429 or our own
-  refusal is `rate-limited`.
-- Not yet: the breaker lives in memory, so a restart closes it; and the Woolworths defaults in
-  [D28](plan.md#d28-rate-budget-defaults) are stricter than the code's (**Designed**,
-  [D33](plan.md#d33-breaker-defaults-and-persistence)).
+**What it covers today: tool-initiated `page.fetch` and `goto`, and the probe, nothing else**
+(**Enforced** for those, in the runtime's guarded page and probe):
+
+- **Per site host**, shared by every adapter and call for that host, a rate budget spaces those
+  requests at least `limits.minGapMs` apart (default 2 s). Which adapter's limits win when two
+  declare the same host is [D33](plan.md#d33-breaker-defaults-and-persistence); core's comment
+  on `minGapMs` still says per adapter.
+- **A circuit breaker** opens on a block signature in those responses only: a 403 HTML page, or
+  Akamai's "Access Denied … Reference #" page, and a 429 (**Enforced**, as `blocked-by-site`).
+  It stays open for `limits.cooldownSeconds` (default 10 minutes), doubling on each block in a
+  row up to `limits.maxCooldownSeconds` (default 2 hours). While it's open, tool calls fail fast
+  as `blocked` with a retry time, before any tool code runs.
+- A block surfaces as `blocked` / `blocked-by-site`, never as a generic failure (**Enforced**).
+  A 429, or our own refusal, as `rate-limited`, and the `breaker-opened { host, cause, retryAt,
+  callId }` and `breaker-closed` audit events, are a **Contract**: on `main` a 429 is
+  `blocked-by-site` and breaker changes aren't audited.
+
+**What it doesn't cover.** The budget and breaker sit in the runtime's guarded page and probe.
+The driver has neither, and core v2's `ToolRunPolicy` has no rate field, so this is a gap in the
+contract, not only unfinished adoption. None of these is paced or watched for block pages:
+
+- fetches that `evaluate()` code makes with the page's own `fetch`;
+- clicks that submit a form or navigate, and navigations the page makes itself;
+- the site's own XHRs, including Akamai's sensor POSTs;
+- the whole login, in the auth partition.
+
+So "nothing reaches the site while the breaker is open" holds only between tool calls, and
+AC7's "fails if anything bypasses the budget" can't pass yet. The recommended fix is for the
+driver to report block signatures on navigations and API calls in both partitions to the
+runtime's breaker, and to pace main-frame navigations through the same budget
+([D55](plan.md#d55-driver-level-budget-and-block-detection), **Open**).
+
+Also not yet: the breaker lives in memory, so a restart closes it; and the Woolworths defaults in
+[D28](plan.md#d28-rate-budget-defaults) are stricter than the code's (**Designed**,
+[D33](plan.md#d33-breaker-defaults-and-persistence)).
 
 ### Output redaction
 
@@ -409,8 +491,15 @@ sensitive value (**Enforced**, the inputs marked are a **Contract**):
 ### Results reach the client as data
 
 Tool output is parsed with the tool's zod schema, and only the parsed value is sent, so keys the
-schema doesn't declare are dropped. Every non-`ok` outcome reaches the MCP client as fixed text:
-a stage and error class from core's vocabulary, or a `needsUser` reason code (**Enforced**).
+schema doesn't declare are dropped (**Enforced**). Every non-`ok` outcome reaches the MCP client
+as fixed text: a stage and error class from core's vocabulary (**Enforced**), or a `needsUser`
+reason code (**Contract**).
+
+**On `main`:** the runtime carries a `needsUser` reason as a string, and the MCP server passes it
+through with control characters stripped, cut to 200 characters. The Woolworths manifest's
+`needsUser` steps carry English sentences, so adapter-authored free text still reaches the client
+until round 2 adopts the reason codes.
+
 Product names and descriptions are still site-controlled text that reaches the model; that risk
 is R6 in the plan.
 
@@ -425,8 +514,11 @@ boundary.
 ## Approval and audit
 
 - An adapter is a content-hashed bundle. Approvals and grants are keyed by that hash
-  (**Enforced**). The approvals file fails closed: if it can't be read or parsed, nothing is
-  approved.
+  (**Enforced**, given a loader that hashes exactly the code it imports, transitive imports
+  included: [D11](plan.md#d11-adapter-package-format), not built). Today `ToolHost.register()`
+  takes the hash from its caller, so "a changed adapter doesn't inherit a grant" holds only if
+  the future loader hashes what it executes. The approvals file fails closed: if it can't be read
+  or parsed, nothing is approved.
 - Any change, including an AI repair, creates a new hash and needs re-approval with a diff
   (**Designed**; the screen is mocked in `docs/mockups/approve-adapter.html`). Every
   permission-expanding change is highlighted, each with its own test: new `navigation` origins;
@@ -470,7 +562,8 @@ Today there is none: the endpoint listens on `127.0.0.1` and refuses any other `
 that can't reach the Mac (claude.ai on the web or a phone, cloud agents) can't use it.
 
 Whatever transport is added later, these must still hold (**Designed**; the full design is in
-[relay.md](relay.md)):
+[relay.md](relay.md), a draft on the unmerged branch `wip/docs-platform`, so the link is broken
+until that lands):
 
 - **Secrets never leave the Mac.** Passwords, one-time codes, the 1Password token and session
   cookies are not in tool results today, and remote access adds no path for them.
@@ -499,7 +592,8 @@ The browser presents itself as the person's own browser would, and no more
   Chromium's real major version (`… Chrome/<major>.0.0.0 Safari/537.36`), the person's language
   (`en-AU`), their real IP and machine, and a real, headed (if hidden) browser window.
 - **Not allowed:** stealth plugins; patching `navigator` or anything else to hide automation;
-  CAPTCHA solving, by code or by a service; proxies; randomised, rotated or invented
+  CAPTCHA solving, by code or by a service; proxies or VPNs that change the IP or location the
+  site sees (the local egress proxy above doesn't); randomised, rotated or invented
   fingerprints; claiming a browser, OS or device other than the one running.
 - **When a site objects:** a challenge hands the window to the person (`needsUser`); a block
   ends the call as `blocked` and opens the breaker. Nothing retries around it.
@@ -555,4 +649,6 @@ can only reuse sessions the person already has.
   Both partitions have the same engine and UA, so they should, but spike 1 hasn't run.
 - Step-up auth flows that only exist inside a page, with no separate login URL.
 - The decisions round 1 raised, each with options and a recommendation in
-  [plan.md](plan.md#decisions), D31 to D54.
+  [plan.md](plan.md#decisions), D31 to D54, and those the review of this document raised, D55 to
+  D59: driver-level pacing and block detection, a deadline for URL regexes, the blocked-request
+  target, page-initiated traffic, and several Messages senders.
