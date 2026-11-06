@@ -108,18 +108,14 @@
           <div class="traffic inactive"><span></span><span></span><span></span></div>
           <span class="small">~/shopping — claude</span>
         </div>
-        <pre><span class="you">&gt;</span> what's in my woolworths trolley? add 2 bananas and the usual milk
+        <pre><span class="you">&gt;</span> what's in my woolworths trolley? is it ready for sunday?
 
 <span class="tool">⏺ siteadapter · woolworths.get_trolley</span> <span class="dim">(MCP)</span>
-  <span class="dim">⎿</span>  <span class="warn">needsUser</span>: Woolworths showed a verification check during login.
-     siteadapter opened a window on your Mac. Waiting for you…
+  <span class="dim">⎿</span>  <span class="warn">needsUser</span> (auth / challenge): Woolworths showed a verification
+     check during login. siteadapter opened a login window on your Mac.
 
-<span class="dim">  The trolley call is paused until you finish logging in. I'll pick it
-  up as soon as siteadapter reports the session is ready.</span>
-
-<span class="tool">⏺ siteadapter · woolworths.checkout</span> <span class="dim">(MCP)</span>
-  <span class="dim">⎿</span>  <span class="warn">awaiting confirmation</span> in the siteadapter app (irreversible).
-     MCP clients can't approve this; asked you on screen.</pre>
+<span class="dim">  That call has ended. Finish logging in in the siteadapter window and
+  tell me when you're done; I'll fetch the trolley again then.</span></pre>
       </div>
 
       <div class="popover" role="dialog" aria-label="siteadapter">
@@ -185,10 +181,10 @@
             <button type="button" class="btn primary">Open</button>
           </div>
           <div class="attention">
-            <span class="glyph bad"><span class="i i-cart"></span></span>
+            <span class="glyph info"><span class="i i-adapter"></span></span>
             <div class="grow">
-              <div class="h3">Confirm: place Woolworths order</div>
-              <div class="xs muted truncate">$187.42 · Claude Code · declines in 1:52</div>
+              <div class="h3">Review Woolworths 0.4.0</div>
+              <div class="xs muted truncate">Asks for a new host, secret and write tool · calls use 0.3.0</div>
             </div>
             <button type="button" class="btn">Review</button>
           </div>
@@ -198,8 +194,11 @@
           <div class="section-label">Adapters</div>
           <div class="adapter-row">
             <span class="avatar sm wow">W</span>
-            <div class="truncate">Woolworths <span class="xs tertiary">0.3.0</span></div>
-            <span class="state"><span class="dot warn pulse"></span> Waiting for login</span>
+            <div class="truncate">
+              Woolworths <span class="xs tertiary">0.3.0</span>
+              <div class="xs muted row" style="gap: 4px"><span class="dot info"></span>0.4.0 waiting for review</div>
+            </div>
+            <span class="state"><span class="dot warn pulse"></span> Login window open</span>
           </div>
           <div class="adapter-row">
             <span class="avatar sm coles">C</span>
@@ -215,11 +214,6 @@
             <span class="avatar sm agl">A</span>
             <div class="truncate">AGL Energy <span class="xs tertiary">0.2.1</span></div>
             <span class="state"><span class="dot ok"></span> Healthy · yesterday</span>
-          </div>
-          <div class="adapter-row">
-            <span class="avatar sm wow">W</span>
-            <div class="truncate">Woolworths <span class="xs tertiary">0.4.0</span></div>
-            <span class="state"><span class="dot info"></span> Update to review</span>
           </div>
         </section>
 

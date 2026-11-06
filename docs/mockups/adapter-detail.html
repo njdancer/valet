@@ -132,14 +132,14 @@
                 <div class="stack gap-4">
                   <div class="card">
                     <div class="card-head">
-                      <span class="h3">Tools</span><span class="muted">7 exposed over MCP</span>
+                      <span class="h3">Tools</span><span class="muted">7 exposed over MCP · any tool may make any declared request</span>
                     </div>
                     <table class="table tight">
                       <thead>
                         <tr>
                           <th>Tool</th>
                           <th>Side effect</th>
-                          <th>Requests it may make</th>
+                          <th>Typically calls <span class="tertiary">(recent runs)</span></th>
                           <th class="num">Calls · 7d</th>
                         </tr>
                       </thead>
@@ -200,7 +200,7 @@
                         <tr>
                           <th>Time</th>
                           <th>Tool</th>
-                          <th>Client</th>
+                          <th>Client token</th>
                           <th>Outcome</th>
                           <th class="num">Duration</th>
                         </tr>
@@ -211,14 +211,14 @@
                           <td class="mono">get_trolley</td>
                           <td>Claude Code</td>
                           <td><span class="pill warn">needsUser</span></td>
-                          <td class="num muted">running</td>
+                          <td class="num">6.1 s</td>
                         </tr>
                         <tr>
                           <td class="mono xs">9:31 pm</td>
                           <td class="mono"><a href="run-trace.html">update_trolley</a></td>
                           <td>Claude Code</td>
                           <td><span class="pill ok">ok</span> <span class="xs muted">2 blocked</span></td>
-                          <td class="num">4.8 s</td>
+                          <td class="num">5.2 s</td>
                         </tr>
                         <tr>
                           <td class="mono xs">3:58 pm</td>
@@ -302,9 +302,12 @@
                         <dd class="mono xs tertiary truncate">auth.woolworths.com.au</dd>
                         <dt>Valid for</dt>
                         <dd><span class="hash">9f3c1a7e…e0f1</span> only</dd>
-                        <dt>Codes</dt>
-                        <dd>Messages, “Woolworths”, ≤ 5 min</dd>
                       </dl>
+                      <div class="eyebrow" style="margin-top: 4px">One-time codes · declared by the manifest, not granted</div>
+                      <div class="xs muted">
+                        None. A Messages code source would be listed here, not under “Bound to”: today nothing asks you
+                        before an adapter reads one.
+                      </div>
                     </div>
                   </div>
                 </div>

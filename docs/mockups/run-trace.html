@@ -102,9 +102,6 @@
             <a class="nav-item" href="run-trace.html"
               ><span class="dot warn"></span><span class="mono xs">get_trolley</span><span class="count">9:47</span></a
             >
-            <a class="nav-item" href="run-trace.html"
-              ><span class="dot warn"></span><span class="mono xs">checkout</span><span class="count">9:46</span></a
-            >
             <a class="nav-item active" href="run-trace.html"
               ><span class="dot ok"></span><span class="mono xs">update_trolley</span><span class="count">9:31</span></a
             >
@@ -138,11 +135,11 @@
             <div class="run-head">
               <span class="avatar wow">W</span>
               <div class="kpi"><span>Outcome</span><strong class="row"><span class="dot ok"></span>ok</strong></div>
-              <div class="kpi"><span>Client</span><strong>Claude Code</strong></div>
+              <div class="kpi"><span>Client token</span><strong>Claude Code</strong></div>
               <div class="kpi"><span>Call</span><strong class="mono small">c_8f2e1b</strong></div>
               <div class="kpi"><span>Adapter</span><strong>0.3.0 <span class="hash">9f3c1a7e…e0f1</span></strong></div>
-              <div class="kpi"><span>Duration</span><strong>4.8 s</strong></div>
-              <div class="kpi"><span>Requests</span><strong>2 sent · 2 blocked</strong></div>
+              <div class="kpi"><span>Duration</span><strong>5.2 s</strong></div>
+              <div class="kpi"><span>Requests</span><strong>4 sent (2 probes) · 2 blocked</strong></div>
               <div class="kpi"><span>Secrets used</span><strong class="secret-text">login (2 fields)</strong></div>
             </div>
 
@@ -151,7 +148,7 @@
                 <div class="timeline">
                   <div class="step phase">
                     <span class="t">0.000</span><span class="node"><span class="dot info"></span></span>
-                    <div class="label">Tool called by Claude Code <span class="badge write">write</span></div>
+                    <div class="label">Tool called with the Claude Code token <span class="badge write">write</span></div>
                     <span class="dur"></span>
                   </div>
                   <div class="step phase">
@@ -207,9 +204,9 @@
                     <span class="dur">30 ms</span>
                   </div>
                   <div class="step sub">
-                    <span class="t">3.158</span><span class="node"><span class="dot ok"></span></span>
-                    <div class="label"><code>assertLoggedIn</code> <span class="xs ok-text">IsLoggedIn true</span></div>
-                    <span class="dur">402 ms</span>
+                    <span class="t">2.694</span><span class="node"><span class="dot"></span></span>
+                    <div class="label"><code>waitFor(urlMatches "/shop/")</code> <span class="xs muted">left the login page</span></div>
+                    <span class="dur">464 ms</span>
                   </div>
                   <div class="step phase">
                     <span class="t">3.162</span><span class="node"><span class="dot info"></span></span>
@@ -220,40 +217,48 @@
                     <span class="dur">9 ms</span>
                   </div>
                   <div class="step phase">
-                    <span class="t">3.171</span><span class="node"><span class="dot info"></span></span>
+                    <span class="t">3.171</span><span class="node"><span class="dot ok"></span></span>
+                    <div class="label">
+                      <code>assertLoggedIn</code> <span class="partition tool">tool:woolworths</span>
+                      <div class="xs muted">Probe again after hand-off: <code>GET /api/ui/v2/bootstrap</code> → 200, IsLoggedIn true → logged in</div>
+                    </div>
+                    <span class="dur">402 ms</span>
+                  </div>
+                  <div class="step phase">
+                    <span class="t">3.573</span><span class="node"><span class="dot info"></span></span>
                     <div class="label">Tool code <span class="partition tool">tool:woolworths</span> <span class="xs muted">utility process</span></div>
                     <span class="dur">1.62 s</span>
                   </div>
                   <div class="step sub">
-                    <span class="t">3.302</span><span class="node"><span class="dot ok"></span></span>
+                    <span class="t">3.704</span><span class="node"><span class="dot ok"></span></span>
                     <div class="label req">
                       <span class="m">GET</span><code>/apis/ui/Trolley</code><span class="xs ok-text">allowed · read · 200</span>
                     </div>
                     <span class="dur">412 ms</span>
                   </div>
                   <div class="step sub blocked">
-                    <span class="t">3.720</span><span class="node"><span class="dot bad"></span></span>
+                    <span class="t">4.122</span><span class="node"><span class="dot bad"></span></span>
                     <div class="label req">
                       <span class="m">POST</span><code>/apis/ui/Trolley/Recommendations</code><span class="xs danger-text"><strong>blocked</strong> · undeclared request</span>
                     </div>
                     <span class="dur">0 ms</span>
                   </div>
                   <div class="step sub blocked">
-                    <span class="t">3.731</span><span class="node"><span class="dot bad"></span></span>
+                    <span class="t">4.133</span><span class="node"><span class="dot bad"></span></span>
                     <div class="label req">
                       <span class="m">POST</span><code>collect.tealiumiq.com/…</code><span class="xs danger-text"><strong>blocked</strong> · host not allowed</span>
                     </div>
                     <span class="dur">0 ms</span>
                   </div>
                   <div class="step sub">
-                    <span class="t">4.120</span><span class="node"><span class="dot ok"></span></span>
+                    <span class="t">4.522</span><span class="node"><span class="dot ok"></span></span>
                     <div class="label req">
                       <span class="m">POST</span><code>/api/v3/ui/trolley/update</code><span class="xs ok-text">allowed · write · 200</span>
                     </div>
                     <span class="dur">566 ms</span>
                   </div>
                   <div class="step phase">
-                    <span class="t">4.792</span><span class="node"><span class="dot ok"></span></span>
+                    <span class="t">5.194</span><span class="node"><span class="dot ok"></span></span>
                     <div class="label">Output redacted and returned <span class="xs muted">2 exact matches replaced</span></div>
                     <span class="dur"></span>
                   </div>
@@ -287,7 +292,7 @@
     { <span class="k">"name"</span>: <span class="s">"Helga's Wholemeal"</span>, <span class="k">"qty"</span>: <span class="n">1</span> },
     <span class="c">… 20 more</span>
   ],
-  <span class="k">"subtotal"</span>: <span class="n">187.42</span>,
+  <span class="k">"subtotal"</span>: <span class="n">179.42</span>,
   <span class="k">"email"</span>: <span class="redacted">[secret:login.username]</span>,
   <span class="k">"trackingId"</span>: <span class="redacted">[session cookie]</span>
 }</pre>

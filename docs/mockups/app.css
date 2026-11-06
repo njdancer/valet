@@ -70,6 +70,17 @@ a {
   text-decoration: none;
 }
 
+/* The base status dot. Variants live with the pills below; contexts override it later. */
+
+.dot {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+}
+
 /* ---------- Desktop: wallpaper plus the system menu bar ---------- */
 
 .desktop {
@@ -295,12 +306,37 @@ a {
   border-bottom: 0.5px solid var(--border);
 }
 
+.traffic {
+  display: flex;
+  gap: 8px;
+  flex: none;
+}
+
+.traffic span {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.15);
+}
+.traffic span:where(:nth-child(1)) {
+  background: #ff5f57;
+}
+.traffic span:where(:nth-child(2)) {
+  background: #febc2e;
+}
+.traffic span:where(:nth-child(3)) {
+  background: #28c840;
+}
+.traffic:where(.inactive) span {
+  background: var(--border-strong);
+}
+
 .titlebar.slim {
   height: 32px;
   justify-content: center;
 }
 
-.titlebar.slim .traffic {
+.titlebar:where(.slim) .traffic {
   position: absolute;
   left: 12px;
 }
@@ -320,31 +356,6 @@ a {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-}
-
-.traffic {
-  display: flex;
-  gap: 8px;
-  flex: none;
-}
-
-.traffic span {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.15);
-}
-.traffic span:nth-child(1) {
-  background: #ff5f57;
-}
-.traffic span:nth-child(2) {
-  background: #febc2e;
-}
-.traffic span:nth-child(3) {
-  background: #28c840;
-}
-.traffic.inactive span {
-  background: var(--border-strong);
 }
 
 .body {
@@ -595,14 +606,6 @@ a {
 
 /* ---------- Status pills and dots ---------- */
 
-.dot {
-  display: inline-block;
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--text-tertiary);
-}
 .dot.ok {
   background: var(--read);
 }
@@ -907,6 +910,10 @@ a {
   vertical-align: middle;
 }
 
+.table.tight td {
+  height: 30px;
+}
+
 .table tbody tr:nth-child(even) td {
   background: var(--row-alt);
 }
@@ -929,10 +936,6 @@ a {
 .table th.num {
   text-align: right;
   font-variant-numeric: tabular-nums;
-}
-
-.table.tight td {
-  height: 30px;
 }
 
 .card .table th {
@@ -1010,35 +1013,35 @@ a {
   background: var(--write-bg);
   border-color: transparent;
 }
-.callout.warn > .i {
+.callout:where(.warn) > .i {
   color: var(--write);
 }
 .callout.bad {
   background: var(--irreversible-bg);
   border-color: transparent;
 }
-.callout.bad > .i {
+.callout:where(.bad) > .i {
   color: var(--irreversible);
 }
 .callout.ok {
   background: var(--read-bg);
   border-color: transparent;
 }
-.callout.ok > .i {
+.callout:where(.ok) > .i {
   color: var(--read);
 }
 .callout.info {
   background: var(--bg-selected);
   border-color: transparent;
 }
-.callout.info > .i {
+.callout:where(.info) > .i {
   color: var(--accent);
 }
 .callout.secret {
   background: var(--secret-bg);
   border-color: transparent;
 }
-.callout.secret > .i {
+.callout:where(.secret) > .i {
   color: var(--secret);
 }
 
@@ -1183,6 +1186,17 @@ a {
   background: var(--write);
 }
 
+.perm.removed {
+  color: var(--text-secondary);
+  text-decoration: line-through;
+  text-decoration-color: var(--text-tertiary);
+}
+
+.perm.removed .mark {
+  color: #fff;
+  background: var(--text-tertiary);
+}
+
 .perm.added.risk {
   background: var(--irreversible-bg);
 }
@@ -1197,17 +1211,6 @@ a {
 
 .perm.added.secret-add .mark {
   background: var(--secret);
-}
-
-.perm.removed {
-  color: var(--text-secondary);
-  text-decoration: line-through;
-  text-decoration-color: var(--text-tertiary);
-}
-
-.perm.removed .mark {
-  color: #fff;
-  background: var(--text-tertiary);
 }
 
 /* ---------- Popover (menu bar) ---------- */
@@ -1250,6 +1253,10 @@ a {
   border-radius: 6px;
 }
 
+.menu-row .kbd {
+  margin-left: auto;
+}
+
 .menu-row.hover {
   background: var(--accent);
   color: #fff;
@@ -1258,10 +1265,6 @@ a {
 .menu-row.hover .muted,
 .menu-row.hover .kbd {
   color: rgba(255, 255, 255, 0.8);
-}
-
-.menu-row .kbd {
-  margin-left: auto;
 }
 
 .attention {
@@ -1293,6 +1296,11 @@ a {
 .attention .glyph.bad {
   color: var(--irreversible);
   background: var(--irreversible-bg);
+}
+
+.attention .glyph.info {
+  color: var(--accent);
+  background: var(--bg-selected);
 }
 
 .stat-strip {

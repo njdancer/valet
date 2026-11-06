@@ -86,6 +86,33 @@
         font-size: 15px;
         background: #fafafa;
       }
+      .statusbar {
+        flex: none;
+        display: flex;
+        align-items: center;
+        gap: var(--space-4);
+        height: 30px;
+        padding: 0 var(--space-4);
+        border-top: 0.5px solid var(--border);
+        background: var(--titlebar-bg);
+        font-size: var(--text-xs);
+        color: var(--text-secondary);
+      }
+      .statusbar span {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+      }
+      /* App chrome, outside the web view: the only place a trust signal can live. */
+      .filled-list {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 4px;
+        font-size: var(--text-xs);
+        color: var(--text-secondary);
+        white-space: nowrap;
+      }
       .challenge {
         margin-top: 20px;
         padding: 16px;
@@ -130,35 +157,6 @@
         justify-content: center;
         opacity: 0.45;
       }
-      .statusbar {
-        flex: none;
-        display: flex;
-        align-items: center;
-        gap: var(--space-4);
-        height: 30px;
-        padding: 0 var(--space-4);
-        border-top: 0.5px solid var(--border);
-        background: var(--titlebar-bg);
-        font-size: var(--text-xs);
-        color: var(--text-secondary);
-      }
-      .statusbar span {
-        display: inline-flex;
-        align-items: center;
-        gap: 5px;
-      }
-      .filled {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-        margin-left: auto;
-        padding: 0 6px;
-        border-radius: 4px;
-        font-size: 11px;
-        font-family: -apple-system, sans-serif;
-        color: #8e3bb8;
-        background: rgba(175, 82, 222, 0.12);
-      }
     </style>
   </head>
   <body>
@@ -196,11 +194,17 @@
               won't solve for you.
             </div>
             <div class="xs muted">
-              Claude Code called <span class="mono">get_trolley</span> at 9:47 pm and is waiting. When you're signed in,
-              siteadapter carries on by itself.
+              <span class="mono">get_trolley</span> from Claude Code ended at 9:47 pm with <span class="mono">needsUser</span>.
+              Once you're signed in, the session is handed to tools and the next call goes through.
+            </div>
+            <div class="filled-list">
+              <span class="i sm i-key secret-text"></span>Filled by siteadapter:
+              <span class="badge secret">login.username</span><span class="badge secret">login.password</span>
+              on <span class="mono">www.woolworths.com.au</span>
+              <span class="tertiary">· nothing is marked inside the page, where the site could fake it</span>
             </div>
           </div>
-          <button type="button" class="btn">Cancel the call</button>
+          <button type="button" class="btn">Close</button>
           <button type="button" class="btn primary">I'm done</button>
         </div>
 
@@ -215,11 +219,11 @@
             <div class="sub">to your Woolworths account</div>
             <div class="lbl">Email address</div>
             <div class="input">
-              ••••••••@icloud.com<span class="filled"><span class="i sm i-key"></span>filled by siteadapter</span>
+              ••••••••@icloud.com
             </div>
             <div class="lbl">Password</div>
             <div class="input">
-              ••••••••••••<span class="filled"><span class="i sm i-key"></span>filled by siteadapter</span>
+              ••••••••••••
             </div>
             <div class="challenge">
               <div style="font-weight: 700">Let us know you're human</div>
@@ -233,7 +237,7 @@
         <div class="statusbar">
           <span><span class="i sm i-lock"></span>Private login session. No adapter code runs in this window.</span>
           <span><span class="i sm i-globe"></span>Can only visit www.woolworths.com.au, auth.woolworths.com.au</span>
-          <span style="margin-left: auto"><span class="i sm i-clock"></span>Waiting 0:42 · gives up at 5:00</span>
+          <span style="margin-left: auto"><span class="i sm i-clock"></span>Open 0:42 · closes at 5:00</span>
         </div>
       </div>
     </div>
