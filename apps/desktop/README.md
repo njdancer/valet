@@ -21,9 +21,14 @@ src/main/
     caller.ts              the MCP endpoint's ToolCaller over ToolHost
     adapter-gate.ts        keeps the person's login work and tool calls on an adapter apart
     registry.ts            bundle hashes, and the last approved manifest of each adapter
+    blocked.ts             the driver's refusals outside a run, redacted and audited
+    app-scheme.ts          app://renderer: the scheme the built renderer is served from
+    updates.ts             whether this build updates itself, and the versions it has run
+    feed-defines.ts        the update feed a build compiles in, from its environment
     constants.ts           names and numbers decided once (Keychain, vault, timeouts, file paths)
-    settings, clients, run-memory, files, launch, geometry, snippets, demo, zod
-  electron/                the Electron glue: app, windows, tray, ipcMain, demo site, probe fallback
+    settings, clients, run-memory, files, launch, geometry, snippets, demo
+  electron/                the Electron glue: app, windows, tray, ipcMain, demo site, updater
+  updater/                 the update controller, the signed feed and its session guard
 src/preload/               index.ts (contextBridge) over api.ts (built from the channel list)
 src/renderer/
   index.html, control.tsx  control panel entry (hash routes)
@@ -40,6 +45,8 @@ src/renderer/
   dev/screenshot.mjs       renders every screen to screens/ for comparison with the mockups
   styles/                  tokens.css and app.css from the mockups, plus controls.css and screens.css
 test/                      renderer tests (jsdom); test/main: the main process (Node); test/smoke: Playwright
+test/updater/              the updater and the packaging config (Node)
+scripts/                   package, package-smoke (and smoke/), make-feed
 screens/                   committed screenshots, light and dark
 ```
 
@@ -53,9 +60,12 @@ mise exec -- pnpm --filter @siteadapter/desktop start       # launch what build 
 mise exec -- pnpm --filter @siteadapter/desktop test:smoke  # a demo build, then the Playwright smoke test
 mise exec -- pnpm --filter @siteadapter/desktop test:e2e    # a demo build, then the end-to-end suite (e2e/)
 mise exec -- pnpm --filter @siteadapter/desktop screens:live # a demo build, then screens/live/ from the real app
+mise exec -- pnpm --filter @siteadapter/desktop package     # a plain build, then dist/: siteadapter-dev.app and its zip
+mise exec -- pnpm --filter @siteadapter/desktop package:smoke # a plain build, packaged and launched (see Packaging)
 mise exec -- pnpm --filter @siteadapter/desktop exec vite   # the renderer alone, on the fake API
 mise exec -- node apps/desktop/src/renderer/dev/screenshot.mjs      # every screen to screens/
-mise exec -- pnpm exec tsc --noEmit -p apps/desktop
+mise exec -- pnpm exec tsc --noEmit -p apps/desktop                    # renderer (DOM), tests
+mise exec -- pnpm exec tsc --noEmit -p apps/desktop/tsconfig.node.json # main and preload (Node)
 mise exec -- pnpm vitest run --project desktop --coverage.enabled --coverage.include='src/**'
 ```
 
@@ -84,6 +94,8 @@ packaged app ignores both switches whatever the build. In demo mode:
   the item “Woolworths (demo account)”, and SMS codes read from the fake's outbox in place of
   Messages. Real 1Password and Messages are off;
 - a DEMO badge: the tray's menu-bar title, the popover and the control panel's sidebar;
+- no updates: a demo build compiles in no feed, so Settings says updates are off (`disabled`,
+  `not-configured`), and a demo launch of any build is `development`;
 - the fake on the ports the last demo launch used (`demo-site.json` in userData), since the ports
   are in the adapter's origins and so in its hash: on new ports every launch, a restart was a new
   bundle waiting for review with no grants. Taken ports get new ones, and the adapter waits again;
@@ -126,8 +138,9 @@ token from `bridge.json`) where an agent does:
   chain (verified, then broken by an edit on disk).
 - `egress.spec.ts`: the canary (proven live first, through Chromium's own stack), then a hostile
   page script in the tool partition beaconing the page's cookies to `evil.test` every 200 ms by
-  beacon, fetch, image and WebSocket: nothing connects, and every in-run attempt is audited
-  `request-blocked`, initiator `page`, origin only.
+  beacon, fetch, image and WebSocket: nothing connects, and every attempt is audited
+  `request-blocked`, initiator `page`, partition `tool`, origin only: those during a run with its
+  call id (the runtime's), those between runs with none (the app's).
 - `update.spec.ts`: a copy of the build with a changed Woolworths bundle (`remove_from_cart` made
   irreversible, in the compiled manifest and the embedded source alike: `changedAdapterBuild()` in
   `e2e/harness.ts`). A plain restart keeps approval and grants; the changed one waits for review with
@@ -136,9 +149,9 @@ token from `bridge.json`) where an agent does:
 - `screens.spec.ts`: `screens/live/`, light, 1440x900 at scale 2. Skipped unless
   `SITEADAPTER_E2E_SCREENS=1` (the `screens:live` script), since it rewrites committed files.
 
-The MCP SDK is `packages/mcp-server`'s dependency, not this package's, so the harness loads it from
-there and `tsconfig.json` maps its types (like zod's alias). Every spec closes its app, and a global
-teardown kills any process still running this worktree's Electron binary, never another app's.
+The MCP SDK is a devDependency here, for the harness's client. Every spec closes its app, and a
+global teardown kills any process still running this worktree's Electron binary, never another
+app's.
 
 In a plain browser there is no preload, so `boot.tsx` loads the fake API. The import sits behind
 `import.meta.env.DEV` at the import site, so a production build drops it: `test/build.test.ts` builds
@@ -150,23 +163,69 @@ page shows an error.
 `http://127.0.0.1` origin with a port: every page on that origin gets the preload and the app's IPC
 trust, so a value left over in a shell must not make another origin the app's.
 
-The whole app typechecks through `apps/desktop/tsconfig.json` (DOM and JSX for the renderer, Node
-and Electron types for the rest); the root tsconfig stays Node-only. `zod` isn't a dependency of this
-package yet, so `tsconfig.json`, `vitest.config.ts` and `electron.vite.config.ts` alias it to core's
-copy (`src/main/core/zod.ts` says why); the aliases go when it is added.
+Two projects typecheck the app, and the root `typecheck` runs both. `tsconfig.json` has DOM and JSX,
+for the renderer and the tests. `tsconfig.node.json` has no DOM, for the main process, the preload,
+the shared contract and `electron-builder.config.ts`, so main-process code can't lean on a browser
+global. The root tsconfig stays Node-only.
 
 Vitest 5 resolves `--coverage.include` against the project's root (`apps/desktop`), so the include
-is `src/**`, not `apps/desktop/src/**`. `src/renderer/dev/**` (the fake) is excluded from coverage,
-and `src/main/electron/**` and the two entry files carry `v8 ignore`: they are Electron glue, covered
-by the smoke test and the e2e suite. The main-process tests start with `@vitest-environment node`.
+is `src/**`, not `apps/desktop/src/**`. The root config excludes `src/renderer/dev/**` (the fake),
+every `index.ts`, and `src/main/electron/**`: that is Electron glue, covered by the smoke test and
+the e2e suite instead, as `packages/browser-electron/src/electron/**` is. The main-process tests
+start with `@vitest-environment node`.
+
+## Packaging
+
+`package` runs a plain `electron-vite build`, then `scripts/package.mjs`: electron-builder with
+`electron-builder.config.ts` as a development build for this Mac's architecture, `dir` and `zip`,
+into `dist/`. It is never signed with an identity and never notarised. The child gets
+`CSC_IDENTITY_AUTO_DISCOVERY=false` and none of the caller's `CSC_*`, `APPLE_*` or `SITEADAPTER_*`
+variables but `SITEADAPTER_UPDATE_URL`; the fuse flip re-signs the bundle ad hoc. Electron comes
+from the installed copy, cloned without `default_app.asar`. Release builds are the release
+script's job ([docs/release-and-updates.md](../../docs/release-and-updates.md)).
+
+What the package carries (`files` in the config): `out/main`, `out/preload`, `out/renderer`,
+`package.json` (its `main` is `out/main/index.js`), and from `node_modules` only what the main
+bundle keeps external, `@1password/sdk` and `@1password/sdk-core` (`PACKAGED_NODE_MODULES`). Every
+workspace package and npm dependency is bundled into `out/main`. No source maps. The main and
+preload builds empty their output first, so a demo build's chunk and fixtures never reach a plain
+one.
+
+`package:smoke` runs a plain build, then `scripts/package-smoke.mjs`, which packages twice in a
+temporary directory and deletes everything afterwards (`--keep` keeps it):
+
+1. A placeholder app (`scripts/smoke/main.cjs`), for the checks that need code of its own: the fuse
+   wire, the asar and Info.plist, `ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS` and `--inspect` refused, a
+   tampered asar and an `app/` folder refused, the renderer's module script running from `app://`
+   but not from `loadFile`, and a launch under a temporary `HOME` that must move
+   `app.getPath('appData')` and `userData` under it.
+2. The real app from the real `out/` (`scripts/smoke/real-app.mjs`): Info.plist, the fuse wire, and
+   an asar holding only the build and the SDK (no demo chunk, fixtures or maps). Then it is launched
+   under a temporary `HOME` (and `CFFIXED_USER_HOME`), with Chromium's mock keychain, a host
+   resolver that resolves nothing but loopback, and `--remote-debugging-port=0`. Over the DevTools
+   protocol it must show the control panel on `app://renderer/index.html` with Woolworths waiting
+   for review, the preload's API and no Node. Then it quits through its own quit path, its data
+   must be under the temporary `HOME`, and the real `~/Library/Application Support/siteadapter`
+   and `siteadapter-dev` must be as they were. It doesn't launch at all unless step 1 showed the
+   temporary `HOME` moving the data. Playwright can't drive it: its Electron launcher needs
+   `--inspect`, which the fuses turn off.
 
 ## The main process
 
 - **Process model.** Main owns everything privileged; renderer windows are views. Each is sandboxed,
   with context isolation, no Node, the preload only and devtools only unpackaged, and may show only
-  `index.html` or `tray.html` of the app's own renderer (the build's files, or the dev server):
-  navigation, redirects, webviews and `window.open` are refused, and the default session (which only
-  our windows use) cancels every request outside the renderer and grants no permission.
+  `index.html` or `tray.html` of the app's own renderer: navigation, redirects, webviews and
+  `window.open` are refused, and the default session (which only our windows use) cancels every
+  request outside the renderer and grants no permission.
+- **The renderer is served from `app://renderer`, never `file://`.** The packaged app has the
+  `grantFileProtocolExtraPrivileges` fuse off, and with it off a `file://` page can't run Vite's
+  module scripts. So `app` is registered as a privileged (standard, secure) scheme before ready, and
+  `protocol.handle` serves `out/renderer` (inside `app.asar` when packaged) on the default session
+  only (`core/app-scheme.ts`: GET and HEAD, files under the root with a type the build emits, 404
+  for anything else). Every build that loads its own files uses it, demo and e2e included. Windows
+  load `appPageUrl(page, hash)`, and `isAppPage` (the IPC sender check and the navigation lock) and
+  the default session's request filter compare against `app://renderer`. Only `electron-vite dev`
+  loads from its dev server (an `http://localhost` origin), as before.
 - **IPC.** One `invoke` channel per API method, `siteadapter:<method>`, and one event channel,
   `siteadapter:event`. Every request must come from the main frame of one of the app's windows (by
   the role the main process gave the window when it opened it), on one of the app's pages, and its
@@ -176,8 +235,10 @@ by the smoke test and the e2e suite. The main-process tests start with `@vitest-
 - **Data**, owner-only under userData: `grants.json` (credentials' FileGrantStore),
   `grant-items.json` (item titles to show), `approvals.json`, `approved-manifests.json` (what was
   last approved, for diffs), `audit.jsonl`, `breakers.json`, `settings.json`, `clients.json`,
-  `endpoint.json` (when the token was last rotated), `bridge.json` (port and token, 0600) and
-  `login-markers/`.
+  `endpoint.json` (when the token was last rotated), `bridge.json` (port and token, 0600),
+  `versions.json` (the last and highest versions run) and `login-markers/`. userData is
+  `~/Library/Application Support/<app name>`: `siteadapter` for a release and for an unpackaged run,
+  `siteadapter-dev` for a development package, so the two never share data.
 - **Adapters.** Built-in only. A hash is `bundleHash` over the adapter's source files, embedded by
   the bundler from the same files it compiles, plus the effective manifest. A hash nobody approved
   waits for review and runs nothing; `approvals.approve` refuses any hash but the installed one. A
@@ -198,18 +259,31 @@ by the smoke test and the e2e suite. The main-process tests start with `@vitest-
     replace a root-owned binary; on a one-person Mac, admin is the person. Any other group, and
     world-writable, are still refused.
   - **The service account shows as not installed** (`unavailableReason: 'not-installed'`, without
-    asking the Keychain): `@1password/sdk` is external to the bundle and not a dependency of this
-    package, so it can't load from `out/main`, and the app can't list the vault's items through it,
-    so `checkGrantRequest` would refuse every grant. `serviceAccountReady()` turns it on once both
-    hold (`SERVICE_ACCOUNT_LISTS_ITEMS`).
+    asking the Keychain), because the app can't list the vault's items through the SDK yet, so
+    `checkGrantRequest` would refuse every grant (`SERVICE_ACCOUNT_LISTS_ITEMS`, false). The SDK
+    itself now resolves: `@1password/sdk` is a dependency of this package, external to the main
+    bundle, so `out/main` finds it in `node_modules`, and the package ships it (with
+    `@1password/sdk-core` and its wasm) in `app.asar`.
 - **Grants** are checked against the installed hash's manifest (`core/grants.ts`): exact hash, an
   available provider, a requested secret or a declared Messages sender character for character,
   origins a non-empty subset of the request, and an item the provider lists now (stored by id, as
   `op://siteadapter/<id>`). `grant-made` and `grant-revoked` are audited before the store changes.
 - **Runtime.** One `ToolHost` with each adapter on its own `createElectronSessionDriver`. The
   `AuthRunner` runs `runAuthFlow` on the driver's auth page with the grant store, the providers, the
-  OTP reader, probe hooks over `AuthPage.fetch`/`cookieNames`, `rememberSecret` wired to the
-  runtime's `registerForRedaction`, and Akamai's page as `isBlockedPage`; it writes no login events.
+  OTP reader, probe hooks over the page's own `AuthPage.fetch` and `cookieNames` (and only to home's
+  origin), `rememberSecret` wired to the runtime's `registerForRedaction`, and Akamai's page as
+  `isBlockedPage`; it writes no login events.
+- **Refusals outside a run are audited** (`core/blocked.ts`), as `request-blocked`. Every login page
+  the app opens, the automated login's and the person's own window, is opened with
+  `openAuthPage({ onBlocked, onReportsDropped })`: its refusals are written with partition `auth`
+  and the call that needed the login (null for the person's window). `DriverOptions.onAuthBlocked`
+  takes the auth partition's refusals no page took. `DriverOptions.onBlocked` takes the tool
+  partition's between runs: partition `tool`, call id null, at most 50 per adapter every ten
+  minutes (then one `request-blocked-capped` diagnostic). Each target goes through the runtime's
+  redaction for targets first (`sensitiveMatcher`, session values case-insensitively) against the
+  tool partition's session values and the secrets each login registered (the app keeps its own
+  clones, as the runtime does); if the session values can't be read the target is `[redacted]`.
+  During a run the runtime audits the tool partition's refusals itself.
   On `needsUser` the auth window stays open with the banner above it and the call returns at once
   (D50); the window closes after 15 minutes. `finishLogin` probes the auth partition and hands off
   only if that passes, then clears the login hold.
@@ -243,8 +317,21 @@ by the smoke test and the e2e suite. The main-process tests start with `@vitest-
   a revoked client name, `config: not-granted`. The runtime never reports stage `config` for a
   call, so the log tells them apart. Snippets launch the stdio bridge from the repo with `tsx` until
   packaging bundles it.
-- **Updates.** `startUpdates()` in `electron/app.ts` is the one call site, a no-op until
-  `src/main/updater` (another unit) is wired in.
+- **Updates.** The feed is compiled in: a plain `electron-vite build` whose environment names both
+  `SITEADAPTER_UPDATE_URL` (https, a public host, a directory) and `SITEADAPTER_FEED_PUBLIC_KEY_FILE`
+  (the feed key's SPKI PEM) defines `__SITEADAPTER_FEED_BASE_URL__` and
+  `__SITEADAPTER_FEED_PUBLIC_KEY__` (`core/feed-defines.ts`); one without the other, or a feed that
+  isn't public https, fails the build. Dev and demo builds never have one. At launch, before any
+  adapter, credential or endpoint, the service records the version in `versions.json` (writing
+  `update-installed` `{ from, to }` on the first launch of a newer version) and builds the updates
+  (`core/updates.ts`, `electron/updates.ts`). The updater is on only for a packaged, non-demo build
+  with a feed and a Developer ID signature (`codesign -dv` on the running bundle); otherwise
+  `updates.status` is `disabled` with the reason (`not-configured`, `development`, `unsigned`) and
+  nothing contacts a feed. When on: `confineUpdaterSession` on the `electron-updater` partition,
+  `createUpdater` with the signed feed, the channel and install-on-quit read from the settings at
+  every check, the highest version run as the floor, and a check at launch and every six hours.
+  `update-downloaded` `{ from, to }` is audited once per verified download. PATH is set to the
+  system default first (electron-updater runs `uname` and `sysctl` by name).
 
 ### Where the main process departs from the contract below
 
@@ -257,9 +344,17 @@ by the smoke test and the e2e suite. The main-process tests start with `@vitest-
 - `EndpointStatus.connectedClients` counts clients that called in the last ten minutes; the
   endpoint doesn't report live sessions.
 - `PendingReview.source` is `import` for a built-in bundle, and `submittedAt` the launch time.
-- `AdapterDetail.handedOver` is always null: the driver doesn't report hand-off counts.
-- `RunTrace` has no probe or allowed-request steps (the runtime doesn't audit them), and input and
-  output previews are kept in memory for the last 200 calls only.
+- `AdapterDetail.handedOver` is always null: the driver doesn't report hand-off counts. The adapter
+  page shows no "Handed over" row then.
+- `RunTrace` has no probe or allowed-request steps (the runtime doesn't audit them), so
+  `requests.sent` and `requests.probes` are null and the trace shows the blocked count alone. Input
+  and output previews are kept in memory for the last 200 calls only.
+- `ProviderStatus.grantCount` counts only grants for an adapter's installed hash while that hash is
+  approved: a grant for an older bundle can't be used.
+- `UpdateStatus` has two new states, `disabled` (with `disabledReason`) and `not-checked`, so a build
+  that doesn't update, or hasn't checked yet, is never shown as up to date. There is no install
+  action in the contract: with "Install updates automatically" on, a downloaded update installs
+  when the app quits. Settings have no switch for automatic checks.
 - `AppStatus.demo` is new: it drives the DEMO badge.
 - `NeedsUserItem.startedBy` is new: `'person'` for a login window opened from the app.
 
