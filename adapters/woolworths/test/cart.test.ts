@@ -1,6 +1,6 @@
 import { SiteAdapterError } from '@siteadapter/core'
 import { describe, expect, it } from 'vitest'
-import { addToCart, getCart, removeFromCart, setCartQuantity } from '../src/cart'
+import { addToCart, getCart, NOTICES, removeFromCart, setCartQuantity } from '../src/cart'
 import { FakeToolContext, json, loadFixture } from './fake-context'
 
 const TROLLEY = '/apis/ui/Trolley'
@@ -73,8 +73,86 @@ describe('get_cart', () => {
         price: 3.4,
         lineTotal: 3.4,
         available: false,
+        reason: 'unavailable',
       },
     ])
+    expect(cart.notices).toEqual([])
+  })
+
+  it('lists an item from each set-aside bucket with its reason, instead of dropping it', async () => {
+    const buckets = [
+      ['ExceededAtpLimitItems', 'over-stock-limit'],
+      ['ConflictedItems', 'conflicted'],
+      ['RestrictedItems', 'restricted'],
+      ['RestrictedByCrowdDeliveryItems', 'restricted-crowd-delivery'],
+      ['RestrictedByDeliPlattersItems', 'restricted-deli-platters'],
+      ['RestrictedByDeliveryMethodItems', 'restricted-delivery-method'],
+      ['RestrictedByIdVerificationItems', 'needs-id-verification'],
+      ['RestrictedBySellerDeliverabilityItems', 'restricted-seller-delivery'],
+    ]
+    for (const [bucket, reason] of buckets) {
+      const body = loadFixture('trolley-two-items.json')
+      body[bucket as string] = [body.AvailableItems.pop()]
+      const ctx = new FakeToolContext().on('GET', TROLLEY, json(body))
+      const cart = await getCart.run(ctx, {})
+      expect(cart.items.map((i) => i.stockcode)).toEqual([88436])
+      expect(cart.unavailable).toEqual([expect.objectContaining({ stockcode: 888137, quantity: 1, reason })])
+      expect(cart.notices).toEqual([])
+      expect(getCart.output.parse(cart)).toEqual(cart)
+    }
+  })
+
+  it('lists the items of a supply-limit group', async () => {
+    const body = loadFixture('trolley-two-items.json')
+    body.ExceededSupplyLimitGroups = [{ Items: [body.AvailableItems.pop()] }]
+    const ctx = new FakeToolContext().on('GET', TROLLEY, json(body))
+    const cart = await getCart.run(ctx, {})
+    expect(cart.unavailable).toEqual([
+      expect.objectContaining({ stockcode: 888137, reason: 'over-supply-limit' }),
+    ])
+    expect(cart.notices).toEqual([])
+  })
+
+  it('says so when an item is in a shape it cannot read, without echoing the item', async () => {
+    const body = loadFixture('trolley-two-items.json')
+    body.AvailableItems.pop()
+    body.ConflictedItems = [{ Stockcode: 'canary-5e1d', Name: 'canary-5e1d' }]
+    const ctx = new FakeToolContext().on('GET', TROLLEY, json(body))
+    const cart = await getCart.run(ctx, {})
+    expect(cart.items.map((i) => i.stockcode)).toEqual([88436])
+    expect(cart.unavailable).toEqual([])
+    expect(cart.notices).toEqual([NOTICES.incomplete])
+    expect(JSON.stringify(cart)).not.toContain('canary-5e1d')
+  })
+
+  it('says so for a supply-limit group in a shape it cannot read', async () => {
+    const body = loadFixture('trolley-two-items.json')
+    body.ExceededSupplyLimitGroups = [{ Products: [body.AvailableItems.pop()] }]
+    const ctx = new FakeToolContext().on('GET', TROLLEY, json(body))
+    expect((await getCart.run(ctx, {})).notices).toEqual([NOTICES.incomplete])
+  })
+
+  it('says so for a bundle, whose shape is unknown', async () => {
+    const body = loadFixture('trolley-two-items.json')
+    body.BundleItems = [{ BundleId: 1 }]
+    const ctx = new FakeToolContext().on('GET', TROLLEY, json(body))
+    expect((await getCart.run(ctx, {})).notices).toEqual([NOTICES.incomplete])
+  })
+
+  it("says so when the lines it read don't add up to the site's own count", async () => {
+    const body = loadFixture('trolley-two-items.json')
+    body.TrolleyItemCount = 3
+    const ctx = new FakeToolContext().on('GET', TROLLEY, json(body))
+    const cart = await getCart.run(ctx, {})
+    expect(cart.itemCount).toBe(3)
+    expect(cart.notices).toEqual([NOTICES.incomplete])
+  })
+
+  it('says so when one product sits in two buckets', async () => {
+    const body = loadFixture('trolley-two-items.json')
+    body.RestrictedItems = [body.AvailableItems[0]]
+    const ctx = new FakeToolContext().on('GET', TROLLEY, json(body))
+    expect((await getCart.run(ctx, {})).notices).toEqual([NOTICES.incomplete])
   })
 
   it('gives no line total for an item with no price', async () => {
@@ -133,21 +211,39 @@ describe('get_cart', () => {
 
 describe('add_to_cart', () => {
   it('adds to the quantity already in the cart, because the update sets absolute quantities', async () => {
+    const reply = loadFixture('trolley-two-items.json')
+    reply.AvailableItems[0].QuantityInTrolley = 5
     const ctx = new FakeToolContext()
       .on('GET', TROLLEY, json(loadFixture('trolley-two-items.json')))
-      .on('POST', UPDATE, json(loadFixture('trolley-two-items.json')))
+      .on('POST', UPDATE, json(reply))
     const result = await addToCart.run(ctx, addToCart.input.parse({ stockcode: 88436, quantity: 3 }))
     expect(ctx.fetches.at(-1)?.json).toEqual({ items: [{ stockcode: 88436, quantity: 5 }] })
-    expect(result).toMatchObject({ stockcode: 88436, previousQuantity: 2, quantity: 5 })
+    expect(result).toMatchObject({
+      stockcode: 88436,
+      previousQuantity: 2,
+      requestedQuantity: 5,
+      quantity: 5,
+      confirmed: true,
+      notices: [],
+    })
+    expect(addToCart.output.parse(result)).toEqual(result)
   })
 
-  it('starts from zero for a product not in the cart, adding one by default', async () => {
+  it('starts from zero for a product not in the cart, and reports an unconfirmed write as such', async () => {
     const ctx = new FakeToolContext()
       .on('GET', TROLLEY, json(loadFixture('trolley-empty.json')))
       .on('POST', UPDATE, json({}))
     const result = await addToCart.run(ctx, addToCart.input.parse({ stockcode: 64746 }))
     expect(ctx.fetches.at(-1)?.json).toEqual({ items: [{ stockcode: 64746, quantity: 1 }] })
-    expect(result).toEqual({ stockcode: 64746, previousQuantity: 0, quantity: 1, cart: null })
+    expect(result).toEqual({
+      stockcode: 64746,
+      previousQuantity: 0,
+      requestedQuantity: 1,
+      quantity: null,
+      confirmed: false,
+      cart: null,
+      notices: [NOTICES.unconfirmed],
+    })
   })
 
   it('counts a quantity held in the unavailable list', async () => {
@@ -155,7 +251,79 @@ describe('add_to_cart', () => {
     body.UnavailableItems = [body.AvailableItems.pop()]
     const ctx = new FakeToolContext().on('GET', TROLLEY, json(body)).on('POST', UPDATE, json({}))
     const result = await addToCart.run(ctx, addToCart.input.parse({ stockcode: 888137, quantity: 2 }))
-    expect(result).toMatchObject({ previousQuantity: 1, quantity: 3 })
+    expect(result).toMatchObject({ previousQuantity: 1, requestedQuantity: 3 })
+  })
+
+  it('counts a quantity held in a supply-limit group, so the write does not shrink the line', async () => {
+    const body = loadFixture('trolley-two-items.json')
+    const tile = body.AvailableItems.pop()
+    tile.QuantityInTrolley = 4
+    body.ExceededSupplyLimitGroups = [{ Items: [tile] }]
+    const ctx = new FakeToolContext().on('GET', TROLLEY, json(body)).on('POST', UPDATE, json({}))
+    await addToCart.run(ctx, addToCart.input.parse({ stockcode: 888137, quantity: 1 }))
+    expect(ctx.fetches.at(-1)?.json).toEqual({ items: [{ stockcode: 888137, quantity: 5 }] })
+  })
+
+  it('makes no write when the trolley has a line it cannot read, which the write could shrink', async () => {
+    const unreadable = loadFixture('trolley-two-items.json')
+    unreadable.AvailableItems.pop()
+    unreadable.ExceededAtpLimitItems = [{ Stockcode: 888137, QuantityInTrolley: 'four' }]
+    const bundle = loadFixture('trolley-two-items.json')
+    bundle.BundleItems = [{ Stockcode: 888137 }]
+    const miscounted = loadFixture('trolley-two-items.json')
+    miscounted.TrolleyItemCount = 3
+    const duplicated = loadFixture('trolley-two-items.json')
+    duplicated.ConflictedItems = [duplicated.AvailableItems[1]]
+
+    for (const trolley of [unreadable, bundle, miscounted, duplicated]) {
+      const ctx = new FakeToolContext().on('GET', TROLLEY, json(trolley)).on('POST', UPDATE, json({}))
+      const error = await addToCart
+        .run(ctx, addToCart.input.parse({ stockcode: 888137, quantity: 1 }))
+        .catch((e: unknown) => e)
+      expect(error).toEqual(new SiteAdapterError('tool-run', 'invalid'))
+      expect(ctx.events).toEqual(['ensure', 'GET /apis/ui/Trolley'])
+    }
+  })
+
+  it('reports the quantity the site stored when it clamps the line, with a notice', async () => {
+    const before = loadFixture('trolley-two-items.json')
+    before.AvailableItems[0].QuantityInTrolley = 30
+    const reply = loadFixture('trolley-two-items.json')
+    reply.AvailableItems[0].QuantityInTrolley = 36
+    const ctx = new FakeToolContext().on('GET', TROLLEY, json(before)).on('POST', UPDATE, json(reply))
+    const result = await addToCart.run(ctx, addToCart.input.parse({ stockcode: 88436, quantity: 10 }))
+    expect(ctx.fetches.at(-1)?.json).toEqual({ items: [{ stockcode: 88436, quantity: 40 }] })
+    expect(result).toMatchObject({
+      previousQuantity: 30,
+      requestedQuantity: 40,
+      quantity: 36,
+      confirmed: true,
+      notices: [NOTICES.differs(36, 40)],
+    })
+    expect(result.notices[0]).toBe(
+      'The site stored 36, not the 40 asked for. It may limit how many of this product an order can have, or the cart changed at the same time.',
+    )
+  })
+
+  it('flags a reply showing more than it asked for, as a parallel add would leave it', async () => {
+    const reply = loadFixture('trolley-two-items.json')
+    reply.AvailableItems[0].QuantityInTrolley = 4
+    const ctx = new FakeToolContext()
+      .on('GET', TROLLEY, json(loadFixture('trolley-two-items.json')))
+      .on('POST', UPDATE, json(reply))
+    const result = await addToCart.run(ctx, addToCart.input.parse({ stockcode: 88436, quantity: 1 }))
+    expect(result).toMatchObject({ requestedQuantity: 3, quantity: 4, notices: [NOTICES.differs(4, 3)] })
+  })
+
+  it('reports a 200 whose body says the site refused the change as invalid, not success', async () => {
+    const ctx = new FakeToolContext()
+      .on('GET', TROLLEY, json(loadFixture('trolley-empty.json')))
+      .on('POST', UPDATE, json({ Success: false, Errors: [{ Message: 'Item not available canary-0b2e' }] }))
+    const error = await addToCart
+      .run(ctx, addToCart.input.parse({ stockcode: 88436, quantity: 3 }))
+      .catch((e: unknown) => e)
+    expect(error).toEqual(new SiteAdapterError('tool-run', 'invalid'))
+    expect(String(error)).not.toContain('canary-0b2e')
   })
 
   it('makes exactly ensure, one read and one write, in that order', async () => {
@@ -175,6 +343,7 @@ describe('add_to_cart', () => {
       [88436, 2],
       [888137, 1],
     ])
+    expect(result).toMatchObject({ quantity: 2, confirmed: true, notices: [] })
     expect(addToCart.output.parse(result)).toEqual(result)
   })
 
@@ -215,6 +384,21 @@ describe('add_to_cart', () => {
     expect(ctx.fetches.map((f) => f.method)).toEqual(['GET'])
   })
 
+  it('makes no write when the read comes back as an HTML page with a 200', async () => {
+    const ctx = new FakeToolContext()
+      .on('GET', TROLLEY, {
+        status: 200,
+        contentType: 'text/html; charset=utf-8',
+        body: '<html>Sign in</html>',
+      })
+      .on('POST', UPDATE, json({}))
+    const error = await addToCart
+      .run(ctx, addToCart.input.parse({ stockcode: 64746 }))
+      .catch((e: unknown) => e)
+    expect(error).toEqual(new SiteAdapterError('tool-run', 'blocked-by-site'))
+    expect(ctx.fetches.map((f) => f.method)).toEqual(['GET'])
+  })
+
   it('bounds the quantity to 1..50 whole units', () => {
     const parse = (input: unknown) => addToCart.input.safeParse(input)
     expect(parse({ stockcode: 1, quantity: 50 }).success).toBe(true)
@@ -227,32 +411,97 @@ describe('add_to_cart', () => {
 })
 
 describe('set_cart_quantity', () => {
-  it('sets the absolute quantity with one write and no read', async () => {
+  async function set(ctx: FakeToolContext, stockcode: number, quantity: number) {
+    return setCartQuantity.run(ctx, setCartQuantity.input.parse({ stockcode, quantity }))
+  }
+
+  it('sets the absolute quantity with one write and no read, confirmed by the reply', async () => {
     const ctx = new FakeToolContext().on('POST', UPDATE, json(loadFixture('trolley-two-items.json')))
-    const result = await setCartQuantity.run(
-      ctx,
-      setCartQuantity.input.parse({ stockcode: 88436, quantity: 2 }),
-    )
+    const result = await set(ctx, 88436, 2)
     expect(ctx.events).toEqual(['ensure', 'POST /api/v3/ui/trolley/update'])
     expect(ctx.fetches[0]?.json).toEqual({ items: [{ stockcode: 88436, quantity: 2 }] })
+    expect(result).toMatchObject({ requestedQuantity: 2, quantity: 2, confirmed: true, notices: [] })
     expect(result.cart?.subtotal).toBe(11.8)
     expect(setCartQuantity.output.parse(result)).toEqual(result)
   })
 
-  it('reports the cart as null when the update response is not a trolley', async () => {
+  it('reports a reply that is not a trolley as unconfirmed, not as the quantity asked for', async () => {
     const ctx = new FakeToolContext().on('POST', UPDATE, json({ Success: true }))
-    const result = await setCartQuantity.run(
-      ctx,
-      setCartQuantity.input.parse({ stockcode: 88436, quantity: 2 }),
-    )
-    expect(result).toEqual({ stockcode: 88436, quantity: 2, cart: null })
+    expect(await set(ctx, 88436, 2)).toEqual({
+      stockcode: 88436,
+      requestedQuantity: 2,
+      quantity: null,
+      confirmed: false,
+      cart: null,
+      notices: [NOTICES.unconfirmed],
+    })
+  })
+
+  it('reports replies of unknown shape as unconfirmed', async () => {
+    for (const body of [null, [], 'ok', 3, { Trolley: {} }]) {
+      const ctx = new FakeToolContext().on('POST', UPDATE, json(body))
+      expect(await set(ctx, 88436, 2)).toMatchObject({ quantity: null, confirmed: false, cart: null })
+    }
+  })
+
+  it('reports an error-bodied 200 as invalid, never as success', async () => {
+    const trolleyRefused = loadFixture('trolley-two-items.json')
+    trolleyRefused.Success = false
+    const refusals = [
+      { Success: false, Errors: [{ Message: 'Item not available' }] },
+      { Success: false },
+      { Errors: [{ Message: 'Item not available' }] },
+      trolleyRefused,
+    ]
+    for (const body of refusals) {
+      const ctx = new FakeToolContext().on('POST', UPDATE, json(body))
+      const error = await set(ctx, 88436, 3).catch((e: unknown) => e)
+      expect(error).toEqual(new SiteAdapterError('tool-run', 'invalid'))
+    }
+  })
+
+  it('does not treat a reply with an empty Errors list as a refusal', async () => {
+    const ctx = new FakeToolContext().on('POST', UPDATE, json({ Success: true, Errors: [] }))
+    expect(await set(ctx, 88436, 2)).toMatchObject({ confirmed: false })
+  })
+
+  it('reports the clamped quantity the site stored, not the one asked for', async () => {
+    const reply = loadFixture('trolley-two-items.json')
+    reply.AvailableItems[0].QuantityInTrolley = 36
+    const ctx = new FakeToolContext().on('POST', UPDATE, json(reply))
+    expect(await set(ctx, 88436, 50)).toMatchObject({
+      requestedQuantity: 50,
+      quantity: 36,
+      confirmed: true,
+      notices: [NOTICES.differs(36, 50)],
+    })
+  })
+
+  it('reports zero when a complete reply no longer has the line', async () => {
+    const reply = loadFixture('trolley-two-items.json')
+    reply.AvailableItems.shift()
+    reply.TrolleyItemCount = 1
+    const ctx = new FakeToolContext().on('POST', UPDATE, json(reply))
+    expect(await set(ctx, 88436, 3)).toMatchObject({
+      quantity: 0,
+      confirmed: true,
+      notices: [NOTICES.differs(0, 3)],
+    })
+  })
+
+  it('reports unconfirmed when the line may be hidden in a part of the reply it cannot read', async () => {
+    const reply = loadFixture('trolley-two-items.json')
+    reply.AvailableItems.shift()
+    reply.ExceededAtpLimitItems = [{ Stockcode: 'unknown' }]
+    const ctx = new FakeToolContext().on('POST', UPDATE, json(reply))
+    const result = await set(ctx, 88436, 3)
+    expect(result).toMatchObject({ quantity: null, confirmed: false, notices: [NOTICES.lineUnreadable] })
+    expect(result.cart?.notices).toEqual([NOTICES.incomplete])
   })
 
   it('reports a blocked write as blocked-by-site', async () => {
     const ctx = new FakeToolContext().on('POST', UPDATE, json({}, 403))
-    const error = await setCartQuantity
-      .run(ctx, setCartQuantity.input.parse({ stockcode: 88436, quantity: 2 }))
-      .catch((e: unknown) => e)
+    const error = await set(ctx, 88436, 2).catch((e: unknown) => e)
     expect(error).toEqual(new SiteAdapterError('tool-run', 'blocked-by-site'))
   })
 
@@ -268,13 +517,32 @@ describe('set_cart_quantity', () => {
 })
 
 describe('remove_from_cart', () => {
-  it('sets the quantity to zero with one write', async () => {
+  it('sets the quantity to zero with one write, and confirms it from the reply', async () => {
     const ctx = new FakeToolContext().on('POST', UPDATE, json(loadFixture('trolley-empty.json')))
     const result = await removeFromCart.run(ctx, removeFromCart.input.parse({ stockcode: 88436 }))
     expect(ctx.events).toEqual(['ensure', 'POST /api/v3/ui/trolley/update'])
     expect(ctx.fetches[0]?.json).toEqual({ items: [{ stockcode: 88436, quantity: 0 }] })
-    expect(result).toMatchObject({ stockcode: 88436, removed: true, cart: { items: [] } })
+    expect(result).toMatchObject({
+      stockcode: 88436,
+      removed: true,
+      quantity: 0,
+      confirmed: true,
+      cart: { items: [] },
+      notices: [],
+    })
     expect(removeFromCart.output.parse(result)).toEqual(result)
+  })
+
+  it('reports removed: false when the reply still has the line', async () => {
+    const ctx = new FakeToolContext().on('POST', UPDATE, json(loadFixture('trolley-two-items.json')))
+    const result = await removeFromCart.run(ctx, removeFromCart.input.parse({ stockcode: 88436 }))
+    expect(result).toMatchObject({ removed: false, quantity: 2, notices: [NOTICES.differs(2, 0)] })
+  })
+
+  it('reports removed: null when the reply does not say', async () => {
+    const ctx = new FakeToolContext().on('POST', UPDATE, json({ Success: true }))
+    const result = await removeFromCart.run(ctx, removeFromCart.input.parse({ stockcode: 88436 }))
+    expect(result).toMatchObject({ removed: null, confirmed: false, cart: null })
   })
 })
 

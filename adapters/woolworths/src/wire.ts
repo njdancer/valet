@@ -57,13 +57,42 @@ export const productDetailWire = z.object({
 })
 export type ProductDetailWire = z.infer<typeof productDetailWire>
 
+/**
+ * The trolley's other buckets. The captured trolley had every one of them empty, so the item shape
+ * is unconfirmed: elements stay unknown here and are parsed one by one, so an item in an unexpected
+ * shape is counted as unreadable instead of failing the whole trolley.
+ */
+const unconfirmedBucket = z.array(z.unknown()).nullish()
+
+/** Assumed, not seen live: a supply-limit group holds its products under Items. */
+export const supplyLimitGroupWire = z.object({ Items: z.array(productTileWire) })
+
 /** GET /apis/ui/Trolley. Verified shape for an empty, anonymous trolley; item shape assumed. */
 export const trolleyWire = z.object({
   AvailableItems: z.array(productTileWire),
   UnavailableItems: z.array(productTileWire),
+  ExceededSupplyLimitGroups: unconfirmedBucket,
+  ExceededAtpLimitItems: unconfirmedBucket,
+  ConflictedItems: unconfirmedBucket,
+  RestrictedItems: unconfirmedBucket,
+  RestrictedByCrowdDeliveryItems: unconfirmedBucket,
+  RestrictedByDeliPlattersItems: unconfirmedBucket,
+  RestrictedByDeliveryMethodItems: unconfirmedBucket,
+  RestrictedByIdVerificationItems: unconfirmedBucket,
+  RestrictedBySellerDeliverabilityItems: unconfirmedBucket,
+  BundleItems: unconfirmedBucket,
   Totals: z.object({ SubTotal: z.number(), TotalSavings: z.number() }),
   TotalTrolleyItemQuantity: z.number().int(),
   TrolleyItemCount: z.number().int(),
   Errors: z.array(z.object({ Message: z.string().nullish() })).nullish(),
 })
 export type TrolleyWire = z.infer<typeof trolleyWire>
+
+/**
+ * The status fields an update reply may carry when it is not a trolley. Assumed, from the shape
+ * other Woolworths endpoints use for errors; never seen live for this endpoint.
+ */
+export const updateStatusWire = z.object({
+  Success: z.boolean().nullish(),
+  Errors: z.array(z.unknown()).nullish(),
+})

@@ -37,17 +37,46 @@ onSpecial, available, imageUrl }] }`. `wasPrice` is set only for specials whose 
   `healthStarRating`, `countryOfOrigin`, `category { department, aisle }` and `nutrition
 { servingSize, servingsPerPack, per100: [{ nutrient, amount }] }` (null when there's no panel).
 - **`get_cart {}`** returns `{ items, unavailable, subtotal, savings, itemCount, totalQuantity,
-notices }`. Each item is `{ stockcode, name, quantity, price, lineTotal, available }`. `itemCount`
-  is distinct products; `totalQuantity` is units. `notices` are the site's own cart messages, such
-  as a minimum spend.
+notices }`. Each item is `{ stockcode, name, quantity, price, lineTotal, available }`; an
+  unavailable one adds a `reason` for the trolley bucket it came from (`unavailable`,
+  `over-supply-limit`, `over-stock-limit`, `conflicted`, `restricted`, `needs-id-verification`, …).
+  `itemCount` is distinct products and `totalQuantity` units, both as the site counts them.
+  `notices` are the site's own cart messages, such as a minimum spend, then the adapter's.
 - **`add_to_cart { stockcode, quantity = 1 }`** reads the current quantity and sets
   current + quantity, because the update endpoint sets absolute quantities. It refuses to go over
-  50 on one line, and makes no write if the call is cancelled after the read.
+  50 on one line, makes no write if the call is cancelled after the read, and makes no write if
+  the trolley it read isn't complete (below), since the write could shrink a line it can't see.
 - **`set_cart_quantity { stockcode, quantity 0..50 }`** and **`remove_from_cart { stockcode }`**
   make one write each.
 
-The write tools return the cart the update sent back as `cart`, or `cart: null` when the response
-isn't trolley-shaped. They don't spend another request fetching it; call `get_cart` instead.
+### What the write tools report
+
+Every write returns `{ stockcode, quantity, confirmed, cart, notices }`, plus `requestedQuantity`
+(and `previousQuantity` for `add_to_cart`), or `removed` for `remove_from_cart`:
+
+- When the reply is a trolley, `quantity` is the line's quantity **in that trolley**, not the one
+  asked for, and `confirmed` is true. The site clamps to its own supply limits (often 36), so
+  `set_cart_quantity { quantity: 50 }` can return `quantity: 36`; a notice then says the two
+  differ. A line missing from a complete reply counts as 0. `removed` is `quantity === 0`.
+- When the reply isn't a trolley, `quantity`, `cart` and `removed` are null, `confirmed` is false,
+  and a notice says to call `get_cart`. The write may or may not have happened. The tools don't
+  spend another request finding out.
+- When the reply is a trolley the adapter can't fully read and the line isn't in the part it
+  can, `quantity` is null and `confirmed` false.
+- A 2xx reply with `Success: false`, or a non-trolley reply with a non-empty `Errors`, throws
+  `tool-run` / `invalid`: the site refused the change.
+
+A trolley is **complete** when every item in every bucket parses, no product sits in two buckets,
+and the products read add up to the site's `TrolleyItemCount`. The buckets beyond `AvailableItems`
+were all empty in the captured trolley, so their item shape is assumed; `BundleItems` is never
+read. An incomplete trolley gets a fixed notice in `get_cart`, and `add_to_cart` refuses it.
+
+**Parallel writes.** `add_to_cart` is a read-modify-write, and nothing in the adapter serialises
+it. Two parallel `add_to_cart(88436, 1)` calls can both read 2 and both write 3, and both see 3
+in the reply, so the lost addition goes unnoticed. A runtime retry after the POST reached the site
+would instead add twice; that one shows up as a "stored more than asked for" notice. The runtime
+must run a site's write tools one at a time and must not retry a write whose request may have been
+sent (core change requests below).
 
 ### Failures
 
@@ -66,6 +95,8 @@ Tools throw `SiteAdapterError`, never a raw error or a result that describes the
 | JSON not in the expected shape              | `tool-run` / `invalid`                                                                          |
 | Signal aborted before a call                | `tool-run` / `aborted`                                                                          |
 | `add_to_cart` would exceed 50               | `tool-input` / `invalid`                                                                        |
+| `add_to_cart` read an incomplete trolley    | `tool-run` / `invalid`                                                                          |
+| Update reply says the site refused          | `tool-run` / `invalid`                                                                          |
 
 Cart tools throw rather than returning a "please log in" result so the runtime records a failed
 call and can re-run the auth action or show the login window. The `needsUser` reason is free text
@@ -121,7 +152,9 @@ From the anonymous probe of 2026-11-07
 | Search `IsSpecial` flag                                                                                               | **Assumed.** The tool also filters to specials locally, so results are right either way, but `total` is then the site's count                                                              |
 | Trolley item shape: product tiles with `QuantityInTrolley`                                                            | **Assumed.** The anonymous trolley was empty, so `trolley-two-items.json` is synthesised from real search tiles                                                                            |
 | Update body `{ items: [{ stockcode, quantity }] }`, absolute quantities, quantity 0 removes                           | **Assumed** from community code. Real clients may send more fields (`source`, `diagnostics`, …)                                                                                            |
-| Update response is the updated trolley                                                                                | **Assumed.** Handled either way (`cart: null`)                                                                                                                                             |
+| Update response is the updated trolley                                                                                | **Assumed.** Otherwise the write is reported unconfirmed                                                                                                                                   |
+| Other trolley buckets hold product tiles; `ExceededSupplyLimitGroups` holds `{ Items }` groups                        | **Assumed.** Captured empty. An item that doesn't parse makes the trolley incomplete, so `add_to_cart` refuses it                                                                          |
+| A refused update replies 2xx with `Success: false` or a non-empty `Errors`                                            | **Assumed** from other Woolworths endpoints. A refusal in some other shape is reported unconfirmed, not as success                                                                         |
 | Login selectors `#loginForm-Email`, `#loginForm-Password`, `#loginForm-Submit`, `input[autocomplete="one-time-code"]` | **Assumed.** These are the fake site's. The real login page was behind Akamai's block during the probe; the real selectors must be recorded live, in a logged-in session with Nick present |
 | OTP step: a code input appears after submit, filled from the `login` item, and the page moves on by itself            | **Assumed.** Woolworths may send codes by SMS or email instead, which would need a `messages` OTP source, and may need a separate submit click                                             |
 | Login stays on www (no redirect to a separate identity host)                                                          | **Assumed.** A redirect elsewhere would abort the auth action until `navigation` lists it                                                                                                  |
@@ -151,3 +184,7 @@ changing one field.
   throw `SiteAdapterError(stage, errorClass)`, so the adapter borrows `auth-step` /
   `not-logged-in`. A dedicated class (say `needs-user`) would let the runtime show the window
   without guessing from the stage.
+- **Serialise a site's write tools.** `add_to_cart` reads then writes an absolute quantity, so
+  two parallel calls lose an addition. The runtime should queue `write` and `irreversible` tool
+  runs per adapter (reads can stay parallel), and should not retry a write tool after its request
+  may have reached the site.
