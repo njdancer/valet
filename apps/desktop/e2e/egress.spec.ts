@@ -9,8 +9,9 @@
 // fetch over http and https, image, WebSocket). The script is put into the tool partition's pages
 // from the main process (executeJavaScript runs in the page's main world, as the site's own scripts
 // do), because the fake has no page-script variant of its own and this suite may not change it.
-// Every attempt must be blocked, none may reach the sink, and the ones made during a tool's run must
-// be audited as request-blocked with initiator page, the origin only (never the query) as target.
+// Every attempt must be blocked, none may reach the sink, and each must be audited as request-blocked
+// with initiator page and partition tool, the origin only (never the query) as target: the ones made
+// during a tool's run with its call id (the runtime's), the ones between runs with none (the app's).
 
 import { readFileSync, rmSync } from 'node:fs'
 import { connect, createServer, type Server } from 'node:net'
@@ -158,14 +159,15 @@ test('a hostile page script beaconing to evil.test is blocked, and audited as th
     { door: doorPort },
   )
 
-  // Tool runs while the page keeps beaconing: each run's policy refuses them and the runtime audits.
+  // Tool runs while the page keeps beaconing: each run's policy refuses them and the runtime audits
+  // them with the call's id.
   for (const query of ['milk', 'eggs', 'butter']) {
     const result = await callTool(client, 'woolworths_search_products', { query })
     // The site's own script calling an off-list host is normal for a site, and only recorded: the
     // tool still answers.
     expect(result.isError, result.text).toBe(false)
   }
-  // And between runs, with no tool running.
+  // And between runs, with no tool running: the app audits those, with no call id.
   await new Promise((done) => setTimeout(done, 1500))
 
   expect(leaks()).toEqual({ connections: 0, requests: [] })
@@ -176,10 +178,13 @@ test('a hostile page script beaconing to evil.test is blocked, and audited as th
   for (const event of toEvil) {
     expect(event['initiator']).toBe('page')
     expect(event['adapterId']).toBe('woolworths')
-    expect(event['callId']).toEqual(expect.any(String))
+    expect(event['partition']).toBe('tool')
+    expect(event['callId'] === null || typeof event['callId'] === 'string').toBe(true)
     // The origin only: the cookie in the query (and the path) never reach the log.
     expect(String(event['target'])).toMatch(/^(https?|wss?):\/\/evil\.test:\d+$/)
   }
+  expect(toEvil.some((e) => typeof e['callId'] === 'string')).toBe(true)
+  expect(toEvil.some((e) => e['callId'] === null)).toBe(true)
   // Chromium upgrades or refuses the http:// attempts from an https page itself (mixed content);
   // what reaches the network layer is https, and that is what the policy refuses.
   const targets = new Set(toEvil.map((e) => String(e['target'])))
