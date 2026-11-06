@@ -6,7 +6,7 @@
 
 import { SiteAdapterError } from '@siteadapter/core'
 import { readBridgeConfig, writeBridgeConfig } from './bridge-config'
-import { type HttpServerOptions, type RunningHttpServer, startHttpServer } from './http'
+import { type HttpServerOptions, type LiveSessions, type RunningHttpServer, startHttpServer } from './http'
 import { generateToken } from './token'
 import type { SkippedTool } from './tool-names'
 
@@ -40,7 +40,16 @@ export interface RunningEndpoint {
   close(): Promise<void>
 }
 
-export async function startEndpoint(options: EndpointOptions): Promise<RunningEndpoint> {
+/**
+ * What startEndpoint returns: a RunningEndpoint that also reports its sessions. Kept apart so that
+ * code (and fakes) typed against RunningEndpoint keep working.
+ */
+export interface SessionReportingEndpoint extends RunningEndpoint {
+  /** The sessions open now, and how each one arrived. */
+  sessions(): LiveSessions
+}
+
+export async function startEndpoint(options: EndpointOptions): Promise<SessionReportingEndpoint> {
   const {
     configPath,
     stablePort = true,
@@ -95,6 +104,7 @@ export async function startEndpoint(options: EndpointOptions): Promise<RunningEn
       resets = run.catch(() => {})
       return run
     },
+    sessions: () => server.sessions(),
     close: () => server.close(),
   }
 }

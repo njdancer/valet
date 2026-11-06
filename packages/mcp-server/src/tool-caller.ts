@@ -13,6 +13,13 @@ export interface ListedTool {
   readonly output: z.ZodType
 }
 
+/**
+ * How a session reached the endpoint: through the stdio bridge, which says so with a header, or
+ * plain HTTP. Any local client holding the token could send that header, so this is a label for
+ * the person and the log, never a permission.
+ */
+export type ClientTransport = 'stdio-bridge' | 'http'
+
 export interface ToolCall {
   readonly adapterId: string
   readonly tool: string
@@ -23,6 +30,8 @@ export interface ToolCall {
   readonly callId: string
   /** Aborts when the client cancels the request or disconnects. */
   readonly signal?: AbortSignal
+  /** How the session reached the endpoint, when it came over HTTP or the bridge. A label only. */
+  readonly transport?: ClientTransport
 }
 
 /** How a call ended: one variant per core RunOutcome. Nothing in it is free text. */
