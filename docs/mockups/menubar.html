@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Menu bar popover · siteadapter mockups</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="app.css" />
+    <script src="app.js"></script>
+    <style>
+      .term {
+        position: absolute;
+        left: 64px;
+        top: 96px;
+        width: 760px;
+        height: 520px;
+        border-radius: 11px;
+        background: #1c1c1e;
+        color: #e5e5ea;
+        box-shadow: var(--shadow-window);
+        overflow: hidden;
+        font: 12.5px / 1.6 var(--font-mono);
+      }
+      .term .titlebar {
+        background: #2c2c2e;
+        border-color: rgba(255, 255, 255, 0.08);
+        color: #d1d1d6;
+      }
+      .term pre {
+        margin: 0;
+        padding: 14px 18px;
+        white-space: pre-wrap;
+      }
+      .term .you {
+        color: #8e8e93;
+      }
+      .term .tool {
+        color: #64d2ff;
+      }
+      .term .warn {
+        color: #ffd60a;
+      }
+      .term .dim {
+        color: #8e8e93;
+      }
+      .popover .head {
+        display: flex;
+        align-items: center;
+        gap: var(--space-3);
+        padding: var(--space-3) var(--space-4) var(--space-2);
+      }
+      .popover .head .logo {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        color: #fff;
+        background: linear-gradient(160deg, #3a8dff, #0a5fd6);
+      }
+      .endpoint {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        margin: 0 var(--space-2) var(--space-2);
+        padding: 6px 10px;
+        border-radius: 8px;
+        background: var(--bg-sunken);
+        border: 0.5px solid var(--border);
+        font-size: var(--text-sm);
+      }
+      .adapter-row {
+        display: grid;
+        grid-template-columns: 20px 1fr auto;
+        gap: var(--space-2);
+        align-items: center;
+        min-height: 30px;
+        padding: 3px var(--space-2);
+        border-radius: 6px;
+      }
+      .adapter-row .state {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: var(--text-xs);
+        color: var(--text-secondary);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="desktop">
+      <header class="sysbar">
+        <span class="i i-apple"></span>
+        <span class="app-name">Terminal</span>
+        <span>Shell</span><span>Edit</span><span>View</span><span>Window</span><span>Help</span>
+        <span class="spacer"></span>
+        <span class="status">
+          <span class="tray active" title="siteadapter"><span class="i i-logo"></span><span class="dot"></span></span>
+          <span class="i i-wifi"></span>
+          <span class="i i-battery" style="width: 22px"></span>
+          <span>Sat 7 Nov&nbsp; 9:47 pm</span>
+        </span>
+      </header>
+
+      <div class="term">
+        <div class="titlebar slim">
+          <div class="traffic inactive"><span></span><span></span><span></span></div>
+          <span class="small">~/shopping — claude</span>
+        </div>
+        <pre><span class="you">&gt;</span> what's in my woolworths trolley? add 2 bananas and the usual milk
+
+<span class="tool">⏺ siteadapter · woolworths.get_trolley</span> <span class="dim">(MCP)</span>
+  <span class="dim">⎿</span>  <span class="warn">needsUser</span>: Woolworths showed a verification check during login.
+     siteadapter opened a window on your Mac. Waiting for you…
+
+<span class="dim">  The trolley call is paused until you finish logging in. I'll pick it
+  up as soon as siteadapter reports the session is ready.</span>
+
+<span class="tool">⏺ siteadapter · woolworths.checkout</span> <span class="dim">(MCP)</span>
+  <span class="dim">⎿</span>  <span class="warn">awaiting confirmation</span> in the siteadapter app (irreversible).
+     MCP clients can't approve this; asked you on screen.</pre>
+      </div>
+
+      <div class="popover" role="dialog" aria-label="siteadapter">
+        <div class="head">
+          <span class="logo"><span class="i lg i-logo"></span></span>
+          <div class="grow">
+            <div class="h3">siteadapter</div>
+            <div class="xs muted row"><span class="dot ok"></span> Running · 2 clients connected</div>
+          </div>
+          <span class="xs muted">MCP</span>
+          <span class="switch on"></span>
+        </div>
+        <div class="endpoint">
+          <span class="i sm i-link muted"></span>
+          <span class="mono grow">http://127.0.0.1:47821/mcp</span>
+          <span class="xs muted">Streamable HTTP</span>
+          <span class="i sm i-copy muted"></span>
+        </div>
+        <div class="stat-strip">
+          <div class="stat">
+            <div class="value">37</div>
+            <div class="label">Tool calls today</div>
+            <div class="spark">
+              <i style="height: 20%"></i><i style="height: 35%"></i><i style="height: 10%"></i
+              ><i style="height: 55%"></i><i style="height: 40%"></i><i style="height: 70%"></i
+              ><i style="height: 30%"></i><i style="height: 90%"></i><i style="height: 100%"></i>
+            </div>
+          </div>
+          <div class="stat">
+            <div class="value">3</div>
+            <div class="label">Logins · 0 failed</div>
+            <div class="spark">
+              <i style="height: 0%"></i><i style="height: 0%"></i><i style="height: 60%"></i><i style="height: 0%"></i
+              ><i style="height: 0%"></i><i style="height: 60%"></i><i style="height: 0%"></i
+              ><i style="height: 0%"></i><i style="height: 60%"></i>
+            </div>
+          </div>
+          <div class="stat">
+            <div class="value">412</div>
+            <div class="label">Blocked requests</div>
+            <div class="spark">
+              <i style="height: 40%; background: var(--irreversible)"></i
+              ><i style="height: 60%; background: var(--irreversible)"></i
+              ><i style="height: 20%; background: var(--irreversible)"></i
+              ><i style="height: 80%; background: var(--irreversible)"></i
+              ><i style="height: 50%; background: var(--irreversible)"></i
+              ><i style="height: 90%; background: var(--irreversible)"></i
+              ><i style="height: 30%; background: var(--irreversible)"></i
+              ><i style="height: 70%; background: var(--irreversible)"></i
+              ><i style="height: 100%; background: var(--irreversible)"></i>
+            </div>
+          </div>
+        </div>
+
+        <section>
+          <div class="section-label row between"><span>Needs you</span><span class="pill warn">2</span></div>
+          <div class="attention">
+            <span class="glyph warn"><span class="i i-user"></span></span>
+            <div class="grow">
+              <div class="h3">Log in to Woolworths</div>
+              <div class="xs muted truncate">Verification check during login · get_trolley from Claude Code</div>
+            </div>
+            <button type="button" class="btn primary">Open</button>
+          </div>
+          <div class="attention">
+            <span class="glyph bad"><span class="i i-cart"></span></span>
+            <div class="grow">
+              <div class="h3">Confirm: place Woolworths order</div>
+              <div class="xs muted truncate">$187.42 · 23 items · Claude Code · declines in 1:52</div>
+            </div>
+            <button type="button" class="btn">Review</button>
+          </div>
+        </section>
+
+        <section>
+          <div class="section-label">Adapters</div>
+          <div class="adapter-row">
+            <span class="avatar sm wow">W</span>
+            <div class="truncate">Woolworths <span class="xs tertiary">0.3.0</span></div>
+            <span class="state"><span class="dot warn pulse"></span> Waiting for login</span>
+          </div>
+          <div class="adapter-row">
+            <span class="avatar sm coles">C</span>
+            <div class="truncate">Coles <span class="xs tertiary">0.1.2</span></div>
+            <span class="state"><span class="dot bad"></span> Blocked by site · retry in 4 min</span>
+          </div>
+          <div class="adapter-row">
+            <span class="avatar sm bank">B</span>
+            <div class="truncate">Example Bank <span class="xs tertiary">1.2.0</span></div>
+            <span class="state"><span class="dot ok"></span> Healthy · 9:12 pm</span>
+          </div>
+          <div class="adapter-row">
+            <span class="avatar sm agl">A</span>
+            <div class="truncate">AGL Energy <span class="xs tertiary">0.2.1</span></div>
+            <span class="state"><span class="dot ok"></span> Healthy · yesterday</span>
+          </div>
+          <div class="adapter-row">
+            <span class="avatar sm wow">W</span>
+            <div class="truncate">Woolworths <span class="xs tertiary">0.4.0</span></div>
+            <span class="state"><span class="dot info"></span> Update to review</span>
+          </div>
+        </section>
+
+        <section>
+          <div class="menu-row hover">Open Control Panel… <span class="kbd">⌘,</span></div>
+          <div class="menu-row">Activity…<span class="kbd">⌘1</span></div>
+          <div class="menu-row"><span class="i sm i-pause muted"></span> Pause all adapters</div>
+          <div class="menu-row">Quit siteadapter <span class="kbd">⌘Q</span></div>
+        </section>
+      </div>
+    </div>
+    <nav class="mockbar" aria-label="Mockup">
+      <a href="index.html">All screens</a>
+      <button type="button" data-theme-toggle>Light / dark</button>
+    </nav>
+  </body>
+</html>
