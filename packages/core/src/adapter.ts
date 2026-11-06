@@ -1,19 +1,23 @@
 // How an adapter is defined in code: its manifest plus one implementation per declared tool.
 
 import type { z } from 'zod'
+import type { ErrorClass, NeedsUserReason, Stage } from './errors'
 import type { AdapterManifest } from './manifest'
 import type { ToolPage } from './page'
 
 export type EnsureResult =
   | { readonly status: 'ok' }
-  | { readonly status: 'needsUser'; readonly reason: string }
-  | { readonly status: 'failed'; readonly stage: string; readonly errorClass: string }
+  | { readonly status: 'needsUser'; readonly reason: NeedsUserReason }
+  | { readonly status: 'failed'; readonly stage: Stage; readonly errorClass: ErrorClass }
 
 /** The capability object tool code receives. It is the whole of what tool code can do. */
 export interface ToolContext {
   readonly page: ToolPage
   readonly session: {
-    /** Makes sure the session is logged in, running the auth action if needed. */
+    /**
+     * Makes sure the session is logged in, running the auth action if needed. Tool code that gets
+     * needsUser back should throw `new NeedsUserError(result.reason)` so the run ends as needsUser.
+     */
     ensure(): Promise<EnsureResult>
   }
   /** Asks the person (not the MCP client) to confirm. Resolves false if they decline or time out. */

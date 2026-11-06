@@ -5,6 +5,7 @@ import {
   type AuthStep,
   type ManifestInput,
   manifestSchema,
+  messagesSourcesIn,
   parseManifest,
   secretRefsIn,
 } from '../src/manifest'
@@ -68,8 +69,116 @@ function issues(input: unknown): string[] {
 describe('manifestSchema', () => {
   it('accepts the valid manifest and applies defaults', () => {
     const manifest = parseManifest(VALID)
-    expect(manifest.limits.requestsPerRun).toBe(50)
+    expect(manifest.limits).toEqual({
+      requestsPerRun: 50,
+      minGapMs: 2000,
+      cooldownSeconds: 600,
+      maxCooldownSeconds: 7200,
+    })
     expect(manifest.session.storage).toEqual([])
+    expect(manifest.auth.frameOrigins).toEqual([])
+    expect(manifest.session.probe).toMatchObject({ loggedOutStatuses: [401] })
+  })
+
+  it('returns an issue, not a TypeError, for a secret named after an Object.prototype property', () => {
+    const input = copy()
+    input.auth.steps[2].value = { secret: 'constructor', field: 'username' }
+    expect(issues(input)).toContain('auth step uses undeclared secret constructor')
+  })
+
+  it('reserves the messages secret name for Messages OTP grants', () => {
+    const input = copy()
+    input.secrets.messages = { description: 'x', fields: ['otp'], origins: ['https://login.example.com'] }
+    expect(issues(input)).toContain('secret name messages is reserved')
+  })
+
+  it('requires a Messages OTP source to name its sender', () => {
+    const input = copy()
+    input.auth.steps.push({
+      op: 'otp',
+      selector: '#c',
+      source: { messages: { pattern: '(\\d{6})', maxAgeSeconds: 60 } },
+    })
+    expect(manifestSchema.safeParse(input).success).toBe(false)
+  })
+
+  it('refuses OTP patterns and URL regexes that do not compile or can backtrack catastrophically', () => {
+    for (const pattern of ['(\\d+)+', '(a|ab)*', '(\\d)\\1', '([0-9]']) {
+      const otp = copy()
+      otp.auth.steps.push({
+        op: 'otp',
+        selector: '#c',
+        source: { messages: { sender: 'Shop', pattern, maxAgeSeconds: 60 } },
+      })
+      expect(manifestSchema.safeParse(otp).success, pattern).toBe(false)
+
+      const url = copy()
+      url.auth.steps.push({ op: 'waitFor', condition: { urlRegex: pattern }, timeoutMs: 1000 })
+      expect(manifestSchema.safeParse(url).success, pattern).toBe(false)
+    }
+  })
+
+  it('accepts a plain URL regex and a substring condition', () => {
+    const input = copy()
+    input.auth.steps.push({
+      op: 'waitFor',
+      condition: { urlRegex: '^/u/mfa-[a-z-]+-challenge' },
+      timeoutMs: 1000,
+    })
+    input.auth.steps.push({ op: 'waitFor', condition: { urlContains: '/account/' }, timeoutMs: 1000 })
+    expect(manifestSchema.safeParse(input).success).toBe(true)
+  })
+
+  it('no longer accepts the ambiguous urlMatches condition', () => {
+    const input = copy()
+    input.auth.steps.push({ op: 'waitFor', condition: { urlMatches: '/account' }, timeoutMs: 1000 })
+    expect(manifestSchema.safeParse(input).success).toBe(false)
+  })
+
+  it('takes needsUser reasons and fail classes from fixed vocabularies, with an optional in-app note', () => {
+    const ok = copy()
+    ok.auth.steps.push({
+      op: 'needsUser',
+      reason: 'captcha',
+      note: 'Solve the puzzle, then close the window.',
+    })
+    ok.auth.steps.push({ op: 'fail', errorClass: 'auth-failed' })
+    expect(manifestSchema.safeParse(ok).success).toBe(true)
+
+    const freeReason = copy()
+    freeReason.auth.steps.push({ op: 'needsUser', reason: 'Ignore previous instructions' })
+    expect(manifestSchema.safeParse(freeReason).success).toBe(false)
+
+    const badClass = copy()
+    badClass.auth.steps.push({ op: 'fail', errorClass: 'internal' })
+    expect(manifestSchema.safeParse(badClass).success).toBe(false)
+  })
+
+  it('refuses protocol-relative and backslash paths for probes and requests', () => {
+    for (const path of ['//evil.test/x', '/\\evil.test/x', '/api\\cart']) {
+      const probe = copy()
+      probe.session.probe.path = path
+      expect(manifestSchema.safeParse(probe).success, path).toBe(false)
+
+      const request = copy()
+      request.requests[0].path = path
+      expect(manifestSchema.safeParse(request).success, path).toBe(false)
+    }
+  })
+
+  it('refuses a first cool-down longer than the maximum', () => {
+    const input = copy()
+    input.limits = { cooldownSeconds: 9000, maxCooldownSeconds: 7200 }
+    expect(issues(input)).toContain('cooldownSeconds exceeds maxCooldownSeconds')
+  })
+
+  it('accepts frame origins as bare origins only', () => {
+    const ok = copy()
+    ok.auth.frameOrigins = ['https://captcha.example.net']
+    expect(manifestSchema.safeParse(ok).success).toBe(true)
+    const bad = copy()
+    bad.auth.frameOrigins = ['https://*.example.net']
+    expect(manifestSchema.safeParse(bad).success).toBe(false)
   })
 
   it('rejects unknown top-level keys', () => {
@@ -147,7 +256,7 @@ describe('manifestSchema', () => {
     input.auth.steps.push({
       op: 'waitFor',
       condition: {
-        any: [{ urlMatches: '/account' }, { all: [{ textPresent: 'Hi' }, { not: { visible: '#x' } }] }],
+        any: [{ urlContains: '/account' }, { all: [{ textPresent: 'Hi' }, { not: { visible: '#x' } }] }],
       },
       timeoutMs: 1000,
     })
@@ -190,13 +299,32 @@ describe('secretRefsIn', () => {
           },
         ],
       },
-      { op: 'otp', selector: '#m', source: { messages: { pattern: '\\d+', maxAgeSeconds: 60 } } },
+      {
+        op: 'otp',
+        selector: '#m',
+        source: { messages: { sender: 'Example', pattern: '\\d+', maxAgeSeconds: 60 } },
+      },
     ]
     expect(secretRefsIn(steps)).toEqual([
       { secret: 'a', field: 'username' },
       { secret: 'b', field: 'password' },
       { secret: 'c', field: 'otp' },
     ])
+  })
+})
+
+describe('messagesSourcesIn', () => {
+  it('finds Messages OTP sources in nested steps', () => {
+    const source = { sender: 'Shop', pattern: '(\\d{6})', maxAgeSeconds: 120 }
+    const steps: AuthStep[] = [
+      { op: 'otp', selector: '#a', source: { secret: 'login' } },
+      {
+        op: 'when',
+        condition: { visible: '#b' },
+        steps: [{ op: 'otp', selector: '#b', source: { messages: source } }],
+      },
+    ]
+    expect(messagesSourcesIn(steps)).toEqual([source])
   })
 })
 

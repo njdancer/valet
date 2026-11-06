@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SiteAdapterError, toReportable } from '../src/errors'
+import { NeedsUserError, SiteAdapterError, toReportable } from '../src/errors'
 
 describe('toReportable', () => {
   it('passes a SiteAdapterError through as stage and class', () => {
@@ -25,5 +25,14 @@ describe('SiteAdapterError', () => {
     const error = new SiteAdapterError('auth-step', 'condition-timeout')
     expect(error.message).toBe('auth-step: condition-timeout')
     expect(error.name).toBe('SiteAdapterError')
+  })
+})
+
+describe('NeedsUserError', () => {
+  it('carries only a reason code', () => {
+    const error = new NeedsUserError('otp-required')
+    expect(error.reason).toBe('otp-required')
+    expect(error.message).toBe('needs user: otp-required')
+    expect(toReportable(error, 'tool-run')).toEqual({ stage: 'tool-run', errorClass: 'internal' })
   })
 })

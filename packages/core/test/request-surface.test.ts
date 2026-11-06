@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  ambiguousPath,
   decideRequest,
   pathMatches,
   type RequestDeclaration,
@@ -103,5 +104,49 @@ describe('decideRequest', () => {
   it('lets an irreversible declaration through a denied path', () => {
     const decision = decideRequest('POST', 'https://www.example.com/api/checkout/place', hosts, declarations)
     expect(decision.allowed).toBe(true)
+  })
+})
+
+describe('encoded and ambiguous paths', () => {
+  const hosts = ['www.example.com']
+  const declarations: RequestDeclaration[] = [
+    { method: 'POST', path: '/api/:section/items', purpose: 'write' },
+    { method: 'GET', path: '/api/product/:id', purpose: 'read' },
+  ]
+
+  it('catches a deny segment hidden by percent-encoding', () => {
+    expect(touchesDeniedSegment('/api/check%6Fut/items')).toBe(true)
+    expect(
+      decideRequest('POST', 'https://www.example.com/api/check%6Fut/items', hosts, declarations),
+    ).toEqual({
+      allowed: false,
+      reason: 'denied-path',
+    })
+  })
+
+  it('catches a deny segment behind matrix parameters', () => {
+    expect(touchesDeniedSegment('/api/checkout;jsessionid=1/items')).toBe(true)
+  })
+
+  it('refuses encoded slashes, backslashes and NULs inside a segment', () => {
+    for (const path of ['/api/product/..%2F..%2Fcheckout', '/api/product/a%5Cb', '/api/product/a%00']) {
+      expect(ambiguousPath(path), path).toBe(true)
+      expect(decideRequest('GET', `https://www.example.com${path}`, hosts, declarations), path).toEqual({
+        allowed: false,
+        reason: 'ambiguous-path',
+      })
+    }
+  })
+
+  it('refuses segments that decode to dot segments', () => {
+    expect(ambiguousPath('/api/product/%2e%2e')).toBe(true)
+    expect(ambiguousPath('/api/product/%2E')).toBe(true)
+  })
+
+  it('leaves ordinary encoded values alone', () => {
+    expect(ambiguousPath('/api/product/milk%20full%20cream')).toBe(false)
+    expect(
+      decideRequest('GET', 'https://www.example.com/api/product/a%20b', hosts, declarations).allowed,
+    ).toBe(true)
   })
 })

@@ -42,16 +42,24 @@ export function hostAllowed(host: string, patterns: readonly string[]): boolean 
   })
 }
 
-/** True for a string that is an https origin with no path, query or fragment. */
+/**
+ * True for a string that is an https origin with no path, query or fragment, whose host is a plain
+ * DNS name (a port is allowed). The URL parser accepts "*" and IP literals in hosts; neither is a
+ * site anyone can grant.
+ */
 export function isBareOrigin(value: string): boolean {
   const origin = httpsOrigin(value)
-  return origin !== null && (value === origin || value === `${origin}/`)
+  if (origin === null || (value !== origin && value !== `${origin}/`)) return false
+  return isHostname(new URL(origin).hostname)
 }
 
 /** True for a host pattern accepted by `hostAllowed`: a hostname, optionally prefixed with "*.". */
 export function isHostPattern(value: string): boolean {
-  const host = value.startsWith('*.') ? value.slice(2) : value
-  return /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/i.test(
-    host,
-  )
+  return isHostname(value.startsWith('*.') ? value.slice(2) : value)
+}
+
+/** A DNS name with at least two labels and a non-numeric last label, so never an IPv4 literal. */
+function isHostname(host: string): boolean {
+  const shape = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/i
+  return shape.test(host) && !/^\d+$/.test(host.slice(host.lastIndexOf('.') + 1))
 }

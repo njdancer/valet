@@ -4,7 +4,14 @@
 import type { SecretField } from './manifest'
 import type { SecretValue } from './secret'
 
-export type ProviderKind = 'onepassword-service-account' | 'onepassword-cli' | 'fake'
+/**
+ * `messages` grants let an adapter's auth flow read one-time codes from Messages: itemRef is the
+ * sender handle the person approved, and origins are where the code may be typed.
+ */
+export type ProviderKind = 'onepassword-service-account' | 'onepassword-cli' | 'messages' | 'fake'
+
+/** The secret name a manifest's Messages OTP source is granted under. Reserved in manifests. */
+export const MESSAGES_SECRET = 'messages'
 
 export interface Grant {
   readonly adapterId: string
@@ -44,8 +51,13 @@ export interface GrantStore {
   revoke(adapterId: string, secret: string): Promise<void>
 }
 
+/** Where the 1Password service-account token comes from (the Keychain, in the app). */
+export interface TokenSource {
+  token(): Promise<SecretValue>
+}
+
 export interface MessagesOtpQuery {
-  readonly sender?: string
+  readonly sender: string
   /** A regular expression whose first capture group (or whole match) is the code. */
   readonly pattern: string
   readonly maxAgeSeconds: number
