@@ -1,0 +1,122 @@
+// How components reach the API and the clock. Both are injected at the root, so tests render any
+// screen against the fake API at a fixed time.
+
+import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import type { AppEventType, SiteAdapterApi } from '../../shared/api'
+
+export interface Clock {
+  now(): number
+}
+
+export const systemClock: Clock = { now: () => Date.now() }
+
+const ApiContext = createContext<SiteAdapterApi | null>(null)
+const ClockContext = createContext<Clock>(systemClock)
+
+export function ApiProvider({
+  api,
+  clock = systemClock,
+  children,
+}: {
+  readonly api: SiteAdapterApi
+  readonly clock?: Clock
+  readonly children: ReactNode
+}) {
+  return (
+    <ApiContext.Provider value={api}>
+      <ClockContext.Provider value={clock}>{children}</ClockContext.Provider>
+    </ApiContext.Provider>
+  )
+}
+
+export function useApi(): SiteAdapterApi {
+  const api = useContext(ApiContext)
+  if (api === null) throw new Error('useApi outside ApiProvider')
+  return api
+}
+
+/** The current time, re-read every `intervalMs` so countdowns tick. */
+export function useNow(intervalMs = 1000): number {
+  const clock = useContext(ClockContext)
+  const [now, setNow] = useState(() => clock.now())
+  useEffect(() => {
+    const timer = setInterval(() => setNow(clock.now()), intervalMs)
+    return () => clearInterval(timer)
+  }, [clock, intervalMs])
+  return now
+}
+
+export type Loaded<T> =
+  | { readonly status: 'loading' }
+  | { readonly status: 'error' }
+  | { readonly status: 'ready'; readonly data: T }
+
+/**
+ * Loads `load(api)` and loads it again whenever one of `refreshOn` arrives. Failures show as
+ * `error` with no message: the main process's error text never reaches the screen.
+ */
+export function useLoad<T>(
+  load: (api: SiteAdapterApi) => Promise<T>,
+  deps: readonly unknown[],
+  refreshOn: readonly AppEventType[],
+): Loaded<T> & { readonly reload: () => void } {
+  const api = useApi()
+  const [state, setState] = useState<Loaded<T>>({ status: 'loading' })
+  const generation = useRef(0)
+  // The caller's deps decide when `load` changes; the lint can't see through that.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: deps are the caller's
+  const run = useCallback(() => {
+    const mine = ++generation.current
+    load(api).then(
+      (data) => {
+        if (mine === generation.current) setState({ status: 'ready', data })
+      },
+      () => {
+        if (mine === generation.current) setState({ status: 'error' })
+      },
+    )
+  }, [api, ...deps])
+
+  // Call sites pass a fresh array literal each render; compare by content.
+  const refreshKey = refreshOn.join(' ')
+  useEffect(() => {
+    run()
+    const refresh = new Set(refreshKey.split(' '))
+    const unsubscribe = api.onEvent((event) => {
+      if (refresh.has(event.type)) run()
+    })
+    return () => {
+      generation.current++
+      unsubscribe()
+    }
+  }, [api, run, refreshKey])
+
+  return { ...state, reload: run }
+}
+
+/**
+ * Runs an action against the API and reports whether it is busy or failed, without the error's
+ * text. Returns true when the action succeeded.
+ */
+export function useAction(): {
+  readonly busy: boolean
+  readonly failed: boolean
+  readonly run: (action: () => Promise<unknown>) => Promise<boolean>
+} {
+  const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const run = useCallback(async (action: () => Promise<unknown>) => {
+    setBusy(true)
+    setFailed(false)
+    try {
+      await action()
+      return true
+    } catch {
+      setFailed(true)
+      return false
+    } finally {
+      setBusy(false)
+    }
+  }, [])
+  return { busy, failed, run }
+}

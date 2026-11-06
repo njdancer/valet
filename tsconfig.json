@@ -1,5 +1,9 @@
 {
   "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx"
+  },
   "include": [
     "packages/*/src",
     "packages/*/test",
@@ -7,6 +11,9 @@
     "adapters/*/test",
     "fakes/*/src",
     "fakes/*/test",
+    "apps/desktop/src/renderer",
+    "apps/desktop/src/shared",
+    "apps/desktop/test",
     "vitest.config.ts"
   ]
 }
