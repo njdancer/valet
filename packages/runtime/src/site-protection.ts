@@ -107,15 +107,23 @@ export class SiteProtection {
 }
 
 /**
- * True for a response that looks like a bot-protection block: a 403 HTML page, or HTML where an API
- * answer was expected. Akamai serves its "Access Denied" page this way.
+ * True for a response that carries a block signature: a 429, a 403 HTML page, or Akamai's
+ * "Access Denied ... Reference #" page whatever its status. Other HTML, such as an ordinary 404
+ * page, is not a block: one adapter's bad request must not stop every adapter for the site.
  */
-export function looksBlocked(result: FetchResult, expectsJson: boolean): boolean {
-  const html = isHtml(result)
-  return html && (result.status === 403 || expectsJson)
+export function looksBlocked(result: FetchResult): boolean {
+  if (result.status === 429) return true
+  if (!isHtml(result)) return false
+  if (result.status === 403) return true
+  return (
+    typeof result.body === 'string' && AKAMAI_DENIED.test(result.body) && AKAMAI_REFERENCE.test(result.body)
+  )
 }
 
-function isHtml(result: FetchResult): boolean {
+const AKAMAI_DENIED = /access denied/i
+const AKAMAI_REFERENCE = /reference\s*#/i
+
+export function isHtml(result: FetchResult): boolean {
   if (result.contentType?.toLowerCase().includes('html')) return true
   return (
     typeof result.body === 'string' && /^\s*</.test(result.body) && !/json/i.test(result.contentType ?? '')

@@ -3,7 +3,7 @@
 // still obeys the site's rate budget and circuit breaker, since the site can't tell the difference.
 
 import { type AdapterManifest, hostAllowed, SiteAdapterError, type ToolPage } from '@siteadapter/core'
-import { blockedBySite, looksBlocked, type SiteGuards } from './site-protection'
+import { blockedBySite, isHtml, looksBlocked, type SiteGuards } from './site-protection'
 
 export interface ProbeOptions {
   readonly manifest: AdapterManifest
@@ -14,16 +14,19 @@ export interface ProbeOptions {
   readonly onUnsupported: (kind: 'cookie') => void
 }
 
-/** Resolves true when logged in. Throws blocked-by-site, or SiteAdapterError('probe', …). */
+/**
+ * Resolves true when logged in and false when the site says logged out: the expected status with
+ * the wrong value, or a 401. Throws blocked-by-site for a block (a 429 included), and
+ * SiteAdapterError('probe', 'unavailable') for any other answer, which must not start a login.
+ */
 export async function probeLoggedIn(options: ProbeOptions): Promise<boolean> {
   const { manifest, page, site, signal } = options
   const probe = manifest.session.probe
   if (probe.kind === 'cookie') {
     // Cookie probes need the driver to expose cookie names, which SessionDriver does not yet.
-    // Treating the session as logged out errs towards logging in again, never towards acting
-    // without a session.
+    // Answering "logged out" would log in on every ensure(), so the probe fails instead.
     options.onUnsupported('cookie')
-    return false
+    throw new SiteAdapterError('probe', 'unavailable')
   }
   // The schema only requires a leading "/", which "//other.host/" also has.
   const url = new URL(probe.path, manifest.home)
@@ -33,16 +36,26 @@ export async function probeLoggedIn(options: ProbeOptions): Promise<boolean> {
   if (site.breaker.isOpen()) throw blockedBySite()
   await site.budget.acquire(signal)
   const result = await page.fetch(url.href, { method: 'GET', headers: { accept: 'application/json' } })
-  if (looksBlocked(result, probe.jsonPath !== undefined)) {
+  if (looksBlocked(result)) {
     site.breaker.trip()
     throw blockedBySite()
   }
   site.breaker.recordSuccess()
-  if (result.status !== probe.expectStatus) return false
+  if (result.status !== probe.expectStatus) {
+    // Only an answer that says "not logged in" may start a login. An outage, a rate limit or a
+    // moved endpoint turning every tool call into a full login is how accounts get locked.
+    if (LOGGED_OUT_STATUSES.includes(result.status)) return false
+    throw new SiteAdapterError('probe', 'unavailable')
+  }
   if (probe.jsonPath === undefined) return true
+  // HTML where the probe expected JSON is an error or interstitial page, not an answer.
+  if (isHtml(result)) throw new SiteAdapterError('probe', 'unavailable')
   const value = readJsonPath(result.body, probe.jsonPath)
   return probe.equals === undefined ? Boolean(value) : value === probe.equals
 }
+
+/** Statuses that mean logged out whatever the probe expects. See coreChangeRequests for more. */
+const LOGGED_OUT_STATUSES: readonly number[] = [401]
 
 /** Follows a dot path through own properties only, so "constructor" or "__proto__" find nothing. */
 export function readJsonPath(body: unknown, path: string): unknown {

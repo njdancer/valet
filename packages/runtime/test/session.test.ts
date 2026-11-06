@@ -395,7 +395,7 @@ describe('session.ensure and the site', () => {
     expect(authRunner).not.toHaveBeenCalled()
   })
 
-  it('reports a cookie probe as unsupported and treats the session as logged out', async () => {
+  it('reports a cookie probe as unsupported and never logs in on it', async () => {
     const { host, page, authRunner, diagnostics } = fixture(
       defineAdapter({
         manifest: {
@@ -407,14 +407,14 @@ describe('session.ensure and the site', () => {
     )
 
     expect(await host.call(call)).toMatchObject({
-      output: { status: 'failed', stage: 'probe', errorClass: 'not-logged-in' },
+      output: { status: 'failed', stage: 'probe', errorClass: 'unavailable' },
     })
     expect(diagnostics).toHaveBeenCalledWith({
       type: 'unsupported-probe',
       adapterId: 'example-shop',
       kind: 'cookie',
     })
-    expect(authRunner).toHaveBeenCalledTimes(1)
+    expect(authRunner).not.toHaveBeenCalled()
     expect(page.fetches).toEqual([])
   })
 
@@ -487,10 +487,33 @@ describe('probe answers', () => {
     return result.status === 'ok' ? result.output : result
   }
 
-  it('is logged out on an unexpected status', async () => {
+  it('is logged out on a 401, whatever the probe expects', async () => {
     expect(await probeOutcome(json({ shopper: { loggedIn: true } }, 401))).toMatchObject({
       errorClass: 'not-logged-in',
     })
+  })
+
+  for (const status of [500, 503, 404, 302, 403]) {
+    it(`does not log in when the probe answers ${status}`, async () => {
+      const { host, page, authRunner } = fixture(ensureOnce)
+      page.route('GET', SESSION_URL, json({ error: 'x' }, status))
+
+      for (const callId of ['call-1', 'call-2', 'call-3']) {
+        expect(await host.call({ ...call, callId })).toEqual({
+          status: 'ok',
+          output: { status: 'failed', stage: 'probe', errorClass: 'unavailable' },
+        })
+      }
+      expect(authRunner).not.toHaveBeenCalled()
+    })
+  }
+
+  it('treats a 429 from the probe as a block and does not log in', async () => {
+    const { host, page, authRunner } = fixture(ensureOnce)
+    page.route('GET', SESSION_URL, json({}, 429))
+
+    expect(await host.call(call)).toEqual({ status: 'blocked', retryAfterMs: 60_000 })
+    expect(authRunner).not.toHaveBeenCalled()
   })
 
   it('is logged out when the value differs from equals', async () => {
@@ -542,10 +565,15 @@ describe('probe answers', () => {
     })
   })
 
-  it('treats HTML where the probe expected JSON as a block', async () => {
+  it('treats HTML where the probe expected JSON as unavailable, not as logged out', async () => {
     expect(await probeOutcome({ status: 200, contentType: 'text/html', body: '<html>' })).toEqual({
-      status: 'blocked',
-      retryAfterMs: 60_000,
+      status: 'failed',
+      stage: 'probe',
+      errorClass: 'unavailable',
     })
+  })
+
+  it('treats Akamai’s page from the probe as a block', async () => {
+    expect(await probeOutcome(akamaiDenied)).toEqual({ status: 'blocked', retryAfterMs: 60_000 })
   })
 })

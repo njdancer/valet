@@ -135,35 +135,46 @@ describe('SiteProtection', () => {
 
 describe('looksBlocked', () => {
   it('flags a 403 HTML page, as Akamai serves it', () => {
+    expect(looksBlocked({ status: 403, contentType: 'text/html; charset=utf-8', body: '<html>' })).toBe(true)
+  })
+
+  it('flags Akamai’s Access Denied page whatever its status', () => {
     expect(
-      looksBlocked({ status: 403, contentType: 'text/html; charset=utf-8', body: '<html>' }, false),
+      looksBlocked({
+        status: 200,
+        contentType: null,
+        body: '<HTML><TITLE>Access Denied</TITLE>Reference #18.2f1</HTML>',
+      }),
     ).toBe(true)
   })
 
-  it('flags HTML where JSON was expected, whatever the status', () => {
-    expect(looksBlocked({ status: 200, contentType: 'text/html', body: '<html>' }, true)).toBe(true)
+  it('flags a 429, whatever its body', () => {
+    expect(looksBlocked({ status: 429, contentType: 'application/json', body: {} })).toBe(true)
   })
 
-  it('flags an HTML body with no content type where JSON was expected', () => {
-    expect(looksBlocked({ status: 200, contentType: null, body: '  <!DOCTYPE html>' }, true)).toBe(true)
+  it('does not flag an ordinary HTML error page', () => {
+    expect(looksBlocked({ status: 404, contentType: 'text/html', body: '<html>Not found</html>' })).toBe(
+      false,
+    )
+    expect(looksBlocked({ status: 500, contentType: null, body: '  <!DOCTYPE html>' })).toBe(false)
+  })
+
+  it('does not flag an HTML page that mentions only one Akamai marker', () => {
+    expect(
+      looksBlocked({ status: 200, contentType: 'text/html', body: '<p>Access denied to aisle 4</p>' }),
+    ).toBe(false)
   })
 
   it('does not flag a JSON 403, which is the API saying no', () => {
-    expect(looksBlocked({ status: 403, contentType: 'application/json', body: { error: 'x' } }, true)).toBe(
-      false,
-    )
+    expect(looksBlocked({ status: 403, contentType: 'application/json', body: { error: 'x' } })).toBe(false)
   })
 
   it('does not flag a JSON string that happens to start with <', () => {
-    expect(looksBlocked({ status: 200, contentType: 'application/json', body: '<b>' }, true)).toBe(false)
-  })
-
-  it('does not flag HTML when HTML was asked for and the status is fine', () => {
-    expect(looksBlocked({ status: 200, contentType: 'text/html', body: '<html>' }, false)).toBe(false)
+    expect(looksBlocked({ status: 403, contentType: 'application/json', body: '<b>' })).toBe(false)
   })
 
   it('does not flag a normal JSON answer', () => {
-    expect(looksBlocked({ status: 200, contentType: 'application/json', body: {} }, true)).toBe(false)
+    expect(looksBlocked({ status: 200, contentType: 'application/json', body: {} })).toBe(false)
   })
 })
 

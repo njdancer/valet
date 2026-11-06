@@ -26,11 +26,20 @@ describe('circuit breaker', () => {
     expect(await host.call(call)).toEqual({ status: 'blocked', retryAfterMs: 60_000 })
   })
 
-  it('treats HTML where JSON was expected as a block', async () => {
+  it('fails HTML where JSON was expected without tripping the breaker', async () => {
     const { host, page } = fixture(fetchTrolley)
-    page.route('GET', `${HOME}/api/trolley`, { status: 200, contentType: 'text/html', body: '<html>' })
+    page.route('GET', `${HOME}/api/trolley`, { status: 404, contentType: 'text/html', body: '<html>' })
 
-    expect(await host.call(call)).toMatchObject({ status: 'blocked' })
+    expect(await host.call(call)).toEqual({ status: 'failed', stage: 'tool-run', errorClass: 'invalid' })
+    page.route('GET', `${HOME}/api/trolley`, { status: 200, contentType: 'application/json', body: {} })
+    expect(await host.call({ ...call, callId: 'call-2' })).toEqual({ status: 'ok', output: 200 })
+  })
+
+  it('treats a 429 as a block', async () => {
+    const { host, page } = fixture(fetchTrolley)
+    page.route('GET', `${HOME}/api/trolley`, { status: 429, contentType: 'application/json', body: {} })
+
+    expect(await host.call(call)).toEqual({ status: 'blocked', retryAfterMs: 60_000 })
   })
 
   it('does not treat HTML as a block when the tool asked for HTML', async () => {

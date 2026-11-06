@@ -1,8 +1,17 @@
 // The tool page as tool code sees it. Every fetch is checked against the manifest's request surface
 // before it leaves, counted against the per-run ceiling, paced by the site's rate budget, and
-// watched for bot-protection blocks. Navigation is held to the egress hosts. URLs are resolved
-// against the manifest's home, never the page's current URL, so that navigating to another allowed
-// host can't change where a relative fetch goes.
+// watched for bot-protection blocks. URLs are resolved against the manifest's home, never the
+// page's current URL, so that navigating to another allowed host can't change where a relative
+// fetch goes.
+//
+// Navigation is held to https on the egress hosts, denied segments, and the GET declarations: a
+// tool can't goto() a declared endpoint whose purpose outranks its own side effect. Beyond that,
+// navigation, like click(), is not checked against the request surface: a read tool can still
+// navigate to an undeclared page on an egress host that changes state when loaded.
+//
+// Tool code runs in this process and hands us its own objects, so every check runs against one
+// snapshot of what it passed, and only that snapshot reaches the driver: a getter or Proxy can't
+// show the check one thing and the request another.
 //
 // This guards the capability API only. Requests the page makes by itself, or that evaluate()d code
 // makes with the page's own fetch, are the browser driver's job (webRequest egress filtering).
@@ -16,6 +25,7 @@ import {
   type FetchResult,
   hostAllowed,
   type Purpose,
+  pathMatches,
   SiteAdapterError,
   type Stage,
   type ToolPage,
@@ -23,7 +33,7 @@ import {
 } from '@siteadapter/core'
 import type { CallState } from './call-state'
 import { redactString } from './redaction'
-import { blockedBySite, looksBlocked, type SiteGuards } from './site-protection'
+import { blockedBySite, isHtml, looksBlocked, type SiteGuards } from './site-protection'
 
 const PURPOSE_RANK: Readonly<Record<Purpose, number>> = { read: 0, write: 1, irreversible: 2 }
 
@@ -54,9 +64,19 @@ export class GuardedToolPage implements ToolPage {
     if (target === null || target.protocol !== 'https:' || !hostAllowed(target.hostname, manifest.egress)) {
       return this.deny('egress', 'host-not-allowed', 'GET', target)
     }
+    if (ambiguousPath(target.pathname)) {
+      return this.deny('request-surface', 'undeclared-request', 'GET', target)
+    }
     if (deniedPath(target.pathname) && sideEffect !== 'irreversible') {
       return this.deny('request-surface', 'denied-path', 'GET', target)
     }
+    const outranked = manifest.requests.some(
+      (d) =>
+        d.method.toUpperCase() === 'GET' &&
+        pathMatches(d.path, target.pathname) &&
+        PURPOSE_RANK[d.purpose] > PURPOSE_RANK[sideEffect],
+    )
+    if (outranked) return this.deny('request-surface', 'denied-path', 'GET', target)
     await this.admit('GET', target)
     await inner.goto(target.href)
   }
@@ -91,13 +111,15 @@ export class GuardedToolPage implements ToolPage {
   async fetch(pathOrUrl: string, init?: FetchInit): Promise<FetchResult> {
     const { state, manifest, sideEffect, inner, site } = this.options
     state.assertLive()
-    const method = typeof init?.method === 'string' ? init.method.toUpperCase() : 'GET'
     const target = resolve(pathOrUrl, manifest.home)
+    const request = snapshotInit(init)
+    const method = request === null ? 'INVALID' : request.method
     if (target === null) return this.deny('request-surface', 'host-not-allowed', method, null)
-    if (init?.method !== undefined && typeof init.method !== 'string') {
+    if (request === null) return this.deny('request-surface', 'undeclared-request', method, target)
+    if (METHOD_OVERRIDE_HEADERS.some((name) => headerValue(request.headers, name) !== undefined)) {
       return this.deny('request-surface', 'undeclared-request', method, target)
     }
-    if (hasMethodOverride(init?.headers)) {
+    if (ambiguousPath(target.pathname)) {
       return this.deny('request-surface', 'undeclared-request', method, target)
     }
     const decision = decideRequest(method, target.href, manifest.egress, manifest.requests)
@@ -118,13 +140,16 @@ export class GuardedToolPage implements ToolPage {
       return this.deny('request-surface', 'denied-path', method, target)
     }
     await this.admit(method, target)
-    const result = await inner.fetch(target.href, { ...init, method })
-    if (looksBlocked(result, expectsJson(init?.headers))) {
+    const result = await inner.fetch(target.href, request)
+    if (looksBlocked(result)) {
       state.blocked = true
       site.breaker.trip()
       throw blockedBySite()
     }
     site.breaker.recordSuccess()
+    // HTML where an API answer was expected: an error page or a redirect to a login page. Not a
+    // block, so the site's breaker (shared with other adapters) stays closed.
+    if (expectsJson(request.headers) && isHtml(result)) throw new SiteAdapterError('tool-run', 'invalid')
     return result
   }
 
@@ -186,39 +211,87 @@ function describeTarget(target: URL | null): string {
 
 /**
  * The core deny list matches raw segments. Servers decode percent-escapes and often drop
- * ";matrix" parameters before routing, so "check%6Fut" or "checkout;x=1" must count as checkout.
+ * ";matrix" parameters before routing, so "check%6Fut" or "checkout;x=1" must count as checkout,
+ * and many treat a decoded backslash as a separator, so "a%5Ccheckout" must too.
  */
 export function deniedPath(pathname: string): boolean {
   if (touchesDeniedSegment(pathname)) return true
   const normalised = pathname
     .split('/')
-    .map((segment) => {
-      const bare = segment.split(';')[0] ?? ''
-      try {
-        return decodeURIComponent(bare)
-      } catch {
-        return bare
-      }
-    })
+    .map((segment) => decodeSegment(segment).replaceAll('\\', '/'))
     .join('/')
   return touchesDeniedSegment(normalised)
 }
 
-function headerValue(
-  headers: Readonly<Record<string, string>> | undefined,
-  name: string,
-): string | undefined {
-  if (headers === undefined) return undefined
+/**
+ * Segments that servers and proxies disagree about. An encoded slash or backslash inside one segment (for
+ * example "..%2F..%2Fcart%2Fadd" through a ":id" param), a NUL, or a segment that only decodes
+ * to "." or ".." is routed one way by our matcher and possibly another by the site, so none of
+ * them is ever allowed. The URL parser has already resolved literal dot segments and turned
+ * literal backslashes into "/"; the backslash check is for safety if that ever changes.
+ */
+export function ambiguousPath(pathname: string): boolean {
+  return pathname.split('/').some((segment) => {
+    if (/%(2f|5c|00)|\\/i.test(segment)) return true
+    const decoded = decodeSegment(segment)
+    return decoded === '.' || decoded === '..'
+  })
+}
+
+function decodeSegment(segment: string): string {
+  const bare = segment.split(';')[0] ?? ''
+  try {
+    return decodeURIComponent(bare)
+  } catch {
+    return bare
+  }
+}
+
+interface RequestSnapshot {
+  readonly method: string
+  readonly headers: Readonly<Record<string, string>>
+  readonly json?: unknown
+}
+
+/**
+ * Reads each field of `init` exactly once into a fresh frozen object. Header names and values that
+ * aren't strings are dropped. Returns null when init can't be read or its method isn't a string.
+ */
+function snapshotInit(init: FetchInit | undefined): RequestSnapshot | null {
+  if (init === undefined) return Object.freeze({ method: 'GET', headers: Object.freeze({}) })
+  try {
+    if (init === null || typeof init !== 'object') return null
+    const rawMethod: unknown = init.method
+    const rawHeaders: unknown = init.headers
+    const rawJson: unknown = init.json
+    if (rawMethod !== undefined && typeof rawMethod !== 'string') return null
+    const headers: Record<string, string> = {}
+    if (rawHeaders !== undefined) {
+      if (rawHeaders === null || typeof rawHeaders !== 'object') return null
+      for (const [name, value] of Object.entries(rawHeaders)) {
+        if (typeof value !== 'string') continue
+        Object.defineProperty(headers, name, { value, enumerable: true })
+      }
+    }
+    const snapshot: RequestSnapshot = {
+      method: (rawMethod ?? 'GET').toUpperCase(),
+      headers: Object.freeze(headers),
+      // A plain copy, so the driver serialises exactly what was there when we looked.
+      ...(rawJson === undefined ? {} : { json: JSON.parse(JSON.stringify(rawJson)) as unknown }),
+    }
+    return Object.freeze(snapshot)
+  } catch {
+    return null
+  }
+}
+
+function headerValue(headers: Readonly<Record<string, string>>, name: string): string | undefined {
   const key = Object.keys(headers).find((k) => k.toLowerCase() === name)
   return key === undefined ? undefined : headers[key]
 }
 
-function hasMethodOverride(headers: Readonly<Record<string, string>> | undefined): boolean {
-  return METHOD_OVERRIDE_HEADERS.some((name) => headerValue(headers, name) !== undefined)
-}
-
 /** page.fetch is for site APIs, so expect JSON unless the tool explicitly accepts something else. */
-function expectsJson(headers: Readonly<Record<string, string>> | undefined): boolean {
+function expectsJson(headers: Readonly<Record<string, string>>): boolean {
   const accept = headerValue(headers, 'accept')
   return accept === undefined || /json/i.test(accept)
 }

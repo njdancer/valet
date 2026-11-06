@@ -4,7 +4,7 @@
 import { defineAdapter, type ToolContext, tool } from '@siteadapter/core'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { deniedPath } from '../src/guarded-page'
+import { ambiguousPath, deniedPath } from '../src/guarded-page'
 import { json } from './fakes'
 import { COOKIE, call, fixture, HOME, manifest } from './fixtures'
 
@@ -91,6 +91,105 @@ describe('request surface', () => {
     expect(page.toolFetches()).toEqual([])
   })
 
+  it('checks the headers it sends: a getter cannot show the check one thing and the driver another', async () => {
+    let reads = 0
+    const init = {
+      method: 'GET',
+      get headers() {
+        return reads++ < 1 ? {} : { 'X-HTTP-Method-Override': 'DELETE' }
+      },
+    }
+    const { host, page } = fixture(
+      adapterRunning(async (ctx) => (await ctx.page.fetch('/api/trolley', init as never)).status),
+    )
+
+    expect(await host.call(call)).toEqual({ status: 'ok', output: 200 })
+    expect(reads).toBe(1)
+    expect(page.fetches[0]?.init).toEqual({ method: 'GET', headers: {} })
+  })
+
+  it('reads a Proxy init once per field and sends only the snapshot', async () => {
+    const reads: string[] = []
+    const init = new Proxy(
+      { method: 'GET', headers: { accept: 'application/json' } },
+      {
+        get(target, key, receiver) {
+          reads.push(String(key))
+          if (key === 'method' && reads.filter((k) => k === 'method').length > 1) return 'DELETE'
+          return Reflect.get(target, key, receiver)
+        },
+      },
+    )
+    const { host, page } = fixture(
+      adapterRunning(async (ctx) => (await ctx.page.fetch('/api/trolley', init as never)).status),
+    )
+
+    expect(await host.call(call)).toEqual({ status: 'ok', output: 200 })
+    expect(reads.filter((k) => k === 'method')).toHaveLength(1)
+    const sent = page.fetches[0]?.init
+    expect(sent).toEqual({ method: 'GET', headers: { accept: 'application/json' } })
+    expect(Object.isFrozen(sent)).toBe(true)
+    expect(Object.isFrozen(sent?.headers)).toBe(true)
+  })
+
+  it('drops header values that are not strings, so an override cannot hide in one', async () => {
+    const headers = { 'X-HTTP-Method-Override': { toString: () => 'DELETE' }, accept: 'application/json' }
+    const { host, page } = fixture(
+      adapterRunning(async (ctx) => (await ctx.page.fetch('/api/trolley', { headers } as never)).status),
+    )
+
+    expect(await host.call(call)).toEqual({ status: 'ok', output: 200 })
+    expect(page.fetches[0]?.init?.headers).toEqual({ accept: 'application/json' })
+  })
+
+  it('sends a plain copy of the JSON body, taken when it was checked', async () => {
+    let reads = 0
+    const body = {
+      get sku() {
+        reads++
+        return reads === 1 ? 'A1' : 'B2'
+      },
+    }
+    const { host, page } = fixture(
+      adapterRunning(
+        async (ctx) => (await ctx.page.fetch('/api/trolley/update', { method: 'POST', json: body })).status,
+        'write',
+      ),
+    )
+    page.route('POST', `${HOME}/api/trolley/update`, json({}))
+
+    expect(await host.call(call)).toEqual({ status: 'ok', output: 200 })
+    expect(page.fetches[0]?.init?.json).toEqual({ sku: 'A1' })
+    expect(reads).toBe(1)
+  })
+
+  it('blocks an init it cannot read', async () => {
+    const init = new Proxy(
+      {},
+      {
+        get() {
+          throw new Error('trap')
+        },
+      },
+    )
+    const { host, page } = fixture(adapterRunning(async (ctx) => ctx.page.fetch('/api/trolley', init)))
+    expect(await host.call(call)).toMatchObject({
+      stage: 'request-surface',
+      errorClass: 'undeclared-request',
+    })
+    expect(page.toolFetches()).toEqual([])
+  })
+
+  it('blocks headers that are not an object, and a JSON body that cannot be copied', async () => {
+    for (const init of [{ headers: 'accept: */*' }, { headers: null }, { json: { n: 1n } }, 'GET']) {
+      const { host, page } = fixture(
+        adapterRunning(async (ctx) => ctx.page.fetch('/api/trolley', init as never)),
+      )
+      expect(await host.call(call)).toMatchObject({ errorClass: 'undeclared-request' })
+      expect(page.toolFetches()).toEqual([])
+    }
+  })
+
   it('blocks a checkout path that the manifest declares as only a write', async () => {
     const { host, page } = fixture(
       adapterRunning(
@@ -143,6 +242,34 @@ describe('request surface', () => {
     )
     expect(await host.call(call)).toMatchObject({ errorClass: 'denied-path' })
     expect(page.toolFetches()).toEqual([])
+  })
+
+  it('blocks a backslash, encoded or not, that would climb into checkout', async () => {
+    for (const path of ['/api/..%5Ccheckout/items', '/api/..%5ccheckout/items']) {
+      const { host, page } = fixture(adapterRunning(async (ctx) => ctx.page.fetch(path)))
+      expect(await host.call(call)).toMatchObject({ errorClass: 'undeclared-request' })
+      expect(page.toolFetches()).toEqual([])
+    }
+  })
+
+  it('blocks an encoded slash smuggled through a :param to reach a write endpoint', async () => {
+    const { host, page } = fixture(
+      adapterRunning(async (ctx) => ctx.page.fetch('/api/..%2F..%2Ftrolley%2Fupdate/items')),
+    )
+    expect(await host.call(call)).toEqual({
+      status: 'failed',
+      stage: 'request-surface',
+      errorClass: 'undeclared-request',
+    })
+    expect(page.toolFetches()).toEqual([])
+  })
+
+  it('blocks NULs and segments that only decode to dots', async () => {
+    for (const path of ['/api/dairy%00/items', '/api/..;x/items', '/api/.;x/items', '/api/%2e%2e;/items']) {
+      const { host, page } = fixture(adapterRunning(async (ctx) => ctx.page.fetch(path)))
+      expect(await host.call(call)).toMatchObject({ errorClass: 'undeclared-request' })
+      expect(page.toolFetches()).toEqual([])
+    }
   })
 
   it('allows a :param that is not a denied segment', async () => {
@@ -250,6 +377,65 @@ describe('egress', () => {
       stage: 'request-surface',
       errorClass: 'denied-path',
     })
+    expect(page.gotos).toEqual([])
+  })
+
+  it('blocks a read tool navigating to a GET endpoint declared as a write', async () => {
+    const withGetWrite = {
+      ...manifest,
+      requests: [
+        ...manifest.requests,
+        { method: 'GET' as const, path: '/api/cart/add', purpose: 'write' as const },
+      ],
+    }
+    const { host, page } = fixture(
+      defineAdapter({
+        manifest: withGetWrite,
+        tools: {
+          run_test: tool({
+            input: z.object({}),
+            output: z.unknown(),
+            run: (ctx) => ctx.page.goto('/api/cart/add?sku=1'),
+          }),
+        },
+      }),
+    )
+    expect(await host.call(call)).toEqual({
+      status: 'failed',
+      stage: 'request-surface',
+      errorClass: 'denied-path',
+    })
+    expect(page.gotos).toEqual([])
+  })
+
+  it('lets a write tool navigate to a GET endpoint declared as a write', async () => {
+    const withGetWrite = {
+      ...manifest,
+      requests: [
+        ...manifest.requests,
+        { method: 'GET' as const, path: '/api/cart/add', purpose: 'write' as const },
+      ],
+      tools: [{ ...manifest.tools[0]!, sideEffect: 'write' as const }],
+    }
+    const { host, page } = fixture(
+      defineAdapter({
+        manifest: withGetWrite,
+        tools: {
+          run_test: tool({
+            input: z.object({}),
+            output: z.unknown(),
+            run: (ctx) => ctx.page.goto('/api/cart/add?sku=1'),
+          }),
+        },
+      }),
+    )
+    expect(await host.call(call)).toMatchObject({ status: 'ok' })
+    expect(page.gotos).toEqual([`${HOME}/api/cart/add?sku=1`])
+  })
+
+  it('blocks navigation through an encoded separator', async () => {
+    const { host, page } = fixture(adapterRunning(async (ctx) => ctx.page.goto('/shop/..%2Fcheckout')))
+    expect(await host.call(call)).toMatchObject({ errorClass: 'undeclared-request' })
     expect(page.gotos).toEqual([])
   })
 
@@ -428,8 +614,36 @@ describe('deniedPath', () => {
     expect(deniedPath('/api/payees;jsessionid=1')).toBe(true)
   })
 
+  it('treats a decoded backslash as a separator', () => {
+    expect(deniedPath('/api/products/..%5Ccheckout')).toBe(true)
+    expect(deniedPath('/api/a%5cpayment%5cx')).toBe(true)
+  })
+
   it('leaves ordinary paths and malformed escapes alone', () => {
     expect(deniedPath('/api/trolley')).toBe(false)
     expect(deniedPath('/api/%E0%A4%A')).toBe(false)
+  })
+})
+
+describe('ambiguousPath', () => {
+  it('flags encoded separators, NULs and literal backslashes in any case', () => {
+    expect(ambiguousPath('/api/a%2Fb')).toBe(true)
+    expect(ambiguousPath('/api/a%2fb')).toBe(true)
+    expect(ambiguousPath('/api/a%5Cb')).toBe(true)
+    expect(ambiguousPath('/api/a%00')).toBe(true)
+    expect(ambiguousPath('/api/a\\b')).toBe(true)
+  })
+
+  it('flags segments that decode to a dot segment', () => {
+    expect(ambiguousPath('/api/%2E%2E/x')).toBe(true)
+    expect(ambiguousPath('/api/.%2e;v=1/x')).toBe(true)
+    expect(ambiguousPath('/api/%2e/x')).toBe(true)
+  })
+
+  it('leaves ordinary and merely dotted segments alone', () => {
+    expect(ambiguousPath('/api/products/123')).toBe(false)
+    expect(ambiguousPath('/api/v1.2/...')).toBe(false)
+    expect(ambiguousPath('/api/%E0%A4%A')).toBe(false)
+    expect(ambiguousPath('/')).toBe(false)
   })
 })
