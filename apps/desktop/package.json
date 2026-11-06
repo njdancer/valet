@@ -10,7 +10,8 @@
     "build": "electron-vite build",
     "start": "electron-vite preview --skipBuild",
     "demo": "electron-vite build --mode demo && SITEADAPTER_DEMO=1 electron .",
-    "test:smoke": "electron-vite build --mode demo && playwright test -c test/smoke/playwright.config.ts"
+    "test:smoke": "electron-vite build --mode demo && playwright test -c test/smoke/playwright.config.ts",
+    "test:e2e": "electron-vite build --mode demo && playwright test -c e2e/playwright.config.ts"
   },
   "dependencies": {
     "@siteadapter/adapter-woolworths": "workspace:*",
