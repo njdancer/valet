@@ -1,0 +1,12 @@
+{
+  "name": "spike-02-woolworths-shapes",
+  "private": true,
+  "type": "module",
+  "main": "probe.mjs",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^44.10.2"
+  }
+}

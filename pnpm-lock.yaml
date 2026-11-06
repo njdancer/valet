@@ -36,6 +36,12 @@ importers:
   spikes/01-woolworths-electron:
     devDependencies:
       electron:
+        specifier: ^44.3.0
+        version: 44.10.2
+
+  spikes/02-woolworths-shapes:
+    devDependencies:
+      electron:
         specifier: ^44.10.2
         version: 44.10.2
 
