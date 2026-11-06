@@ -56,3 +56,51 @@ Raw output is in `spikes/02-woolworths-shapes/results/` (gitignored); the scrubb
    - A login probe. `/api/ui/v2/bootstrap` is the likely candidate; it's unconfirmed.
    - Whether the block affected Nick's normal browsing from this IP. Akamai blocks are usually
      short-lived and per-session.
+
+## Run 3, about 30 minutes later: a fresh session is also blocked; the built-in browser is not
+
+- Nick asked for a fresh session just to view the login page.
+- **Spike Electron, fresh in-memory partition, no scripted calls:** the very first homepage load
+  got Akamai's 403 "Access Denied". So the block isn't held in cookies.
+- **The Claude desktop app's built-in browser, same IP, same moment:** loaded everything
+  normally. That browser is also Chromium 152 on Electron, and its UA also carries a non-Chrome
+  token (`Claude/4.4212.0`).
+- So the block isn't on the IP alone (Nick is on CGNAT) and isn't on "Electron" alone.
+- **Leading hypothesis:** Akamai keyed the block on IP plus fingerprint, and the UA is part of
+  that fingerprint. Electron's default UA contains the *app name*
+  (`spike-02-woolworths-shapes/0.0.0 … Electron/44.10.2`), and that exact UA is the one that made
+  the scripted burst.
+- **Untested.** A fresh session with a clean Chrome UA was refused by Claude Code's permission
+  system as bot-check circumvention, so Nick has to decide whether and how to test it.
+
+## The real login flow (seen in the built-in browser, nothing typed)
+
+- `www.woolworths.com.au/shop/securelogin` is only an "Oops! You're not logged in" page with a
+  Login button.
+- The login link is
+  `https://www.woolworths.com.au/auth/login?redirect_uri=https://www.woolworths.com.au/auth/callback&path=/`.
+  It redirects to **Auth0 Universal Login** on a separate origin:
+  `https://auth.woolworths.com.au/u/login/identifier?state=…`
+- **The flow is identifier-first.**
+  - Step 1 is a form whose action is on `auth.woolworths.com.au`. It has one input,
+    `name="username"`, `type="email"`, `autocomplete="email webauthn"`, and a
+    `button[type=submit]` labelled "Continue".
+  - Step 2, the password page, wasn't viewed because that would mean entering Nick's email.
+    Auth0's standard page is `/u/login/password` with `input#password[name=password][type=password]`
+    and a "Continue" submit. This is assumed and must be confirmed live.
+  - MFA, if enabled on the account, would be an Auth0 `/u/mfa-*-challenge` page with a code input.
+    Also assumed.
+- **Other options on step 1:** "Log in with a passkey" (`data-testid=social-provider-button-passkey`)
+  and "Log in / Sign up with Everyday" (`social-provider-button-everyday`).
+- After login, Auth0 redirects to `www…/auth/callback`, which sets the www session cookies.
+
+### What changes in the design
+
+- **Navigation.** The Woolworths manifest's `navigation` must include `https://auth.woolworths.com.au`.
+  Secret origins become `https://auth.woolworths.com.au`, since both fields are typed there and
+  both forms post there. The form-action check passes naturally.
+- **The Auth0 session stays in the auth partition.** Only the www cookies need handing off. If the
+  www session expires while Auth0's session is still alive, re-login may be a silent redirect
+  with no secret fill at all, and the auth flow should try that first.
+- **The fake site** should model a separate auth origin with an identifier-first, two-page flow,
+  rather than a single same-origin form.
