@@ -92,7 +92,7 @@ describe('redactDeep', () => {
 
     expect(Object.hasOwn(redacted, '__proto__')).toBe(true)
     expect(Object.getPrototypeOf(redacted)).toBe(Object.prototype)
-    expect(({} as Record<string, unknown>)['polluted']).toBeUndefined()
+    expect(Object.prototype).not.toHaveProperty('polluted')
   })
 
   it('walks Maps and Sets', () => {
@@ -109,8 +109,8 @@ describe('redactDeep', () => {
   })
 
   it('cuts cycles', () => {
-    const output: Record<string, unknown> = { name: 'loop' }
-    output['self'] = output
+    const output: { name: string; self?: unknown } = { name: 'loop' }
+    output.self = output
     expect(redactDeep(output, sensitive)).toEqual({ name: 'loop', self: REDACTED })
   })
 
