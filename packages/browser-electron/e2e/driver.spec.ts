@@ -377,7 +377,14 @@ test('workers, service workers and cross-site frames present the same clean UA a
   }
 })
 
-test('the auth probe GETs from the main process with the auth partition’s cookies, as the page presents', async () => {
+/** A raw header list (rawHeaders: name, value, name, value…) as pairs, Cookie aside. */
+function wire(raw: string[] | undefined): [string, string][] {
+  const pairs: [string, string][] = []
+  for (let i = 0; i + 1 < (raw?.length ?? 0); i += 2) pairs.push([raw?.[i] ?? '', raw?.[i + 1] ?? ''])
+  return pairs.filter(([name]) => name.toLowerCase() !== 'cookie')
+}
+
+test('the auth probe GETs from the main process with the auth partition’s cookies', async () => {
   const result = await scenario(app, 'authProbe')
   const probe = result.probe as {
     ok: { status: number; contentType: string; body: { host: string; headers: Record<string, string> } }
@@ -393,19 +400,6 @@ test('the auth probe GETs from the main process with the auth partition’s cook
   expect(headers['user-agent']).toMatch(
     /^Mozilla\/5\.0 \(Macintosh; Intel Mac OS X 10_15_7\) AppleWebKit\/537\.36 \(KHTML, like Gecko\) Chrome\/\d+\.0\.0\.0 Safari\/537\.36$/,
   )
-  expect(headers['accept-language']).toBe('en-AU,en;q=0.9')
-  expect(headers.accept).toBe('*/*')
-  expect(headers.referer).toBeUndefined()
-  // Fetch metadata as from the page's origin, except the mode: the page's own fetch() says cors, and
-  // Electron's net has no way to ask for that. Recorded, since a site can tell by it.
-  const fetchMetadata = Object.fromEntries(
-    Object.entries(headers).filter(([name]) => /^(sec-|origin$)/.test(name)),
-  )
-  expect(fetchMetadata).toEqual({
-    'sec-fetch-dest': 'empty',
-    'sec-fetch-mode': 'no-cors',
-    'sec-fetch-site': 'same-origin',
-  })
   // The fragment never left, and the probe reached exactly one URL.
   expect(result.probeSeen).toEqual([{ host: 'site.test', path: '/probe' }])
   // Names only, and the cookie the probe's own answer set is kept in the auth partition.
@@ -418,8 +412,42 @@ test('the auth probe GETs from the main process with the auth partition’s cook
     'sid',
   ])
   expect(result.toolCookies).not.toContain('probed')
+  // A redirect's cookie is kept too, though the probe takes each hop as a request of its own.
+  expect(result.redirectCookie).toBe(200)
+  expect(result.hopCookie).toBe(1)
   // The probe isn't a navigation: the page didn't move.
   expect(result.committed).toEqual([expect.stringContaining('/set-session')])
+})
+
+test('the auth probe sends what the page’s own fetch() sends, header for header, in order', async () => {
+  const result = await scenario(app, 'authProbe')
+  const pairs = result.pairs as Record<string, { page: { raw: string[] } | null; probe: { raw?: string[] } }>
+  for (const name of ['same', 'redirectSame']) {
+    const pair = pairs[name]
+    const page = wire(pair?.page?.raw)
+    expect(page.length, name).toBeGreaterThan(5)
+    // Names, case, order and values: the client hints, UA, language, Accept, cors fetch metadata,
+    // the page's URL as Referer, Accept-Encoding. Only the cookies are left out of the diff.
+    expect(wire(pair?.probe.raw), name).toEqual(page)
+    expect(page, name).toContainEqual(['Sec-Fetch-Mode', 'cors'])
+    expect(page, name).toContainEqual(['Referer', expect.stringMatching(/\/set-session$/)])
+  }
+  // Cross-site, the page's fetch() also says Sec-Fetch-Storage-Access, which Chromium strips from a
+  // request the main process makes (see the README). Everything else matches, Origin and the
+  // origin-only Referer included.
+  for (const name of ['cross', 'redirectCross']) {
+    const pair = pairs[name]
+    const page = wire(pair?.page?.raw)
+    expect(page, name).toContainEqual(['Sec-Fetch-Site', 'cross-site'])
+    expect(page, name).toContainEqual(['Origin', expect.stringMatching(/^https:\/\/site\.test:\d+$/)])
+    expect(
+      page.filter(([header]) => header === 'Sec-Fetch-Storage-Access'),
+      name,
+    ).toEqual([['Sec-Fetch-Storage-Access', 'active']])
+    expect(wire(pair?.probe.raw), name).toEqual(
+      page.filter(([header]) => header !== 'Sec-Fetch-Storage-Access'),
+    )
+  }
 })
 
 test('the auth probe is refused off the navigation origins, and refuses a redirect off them', async () => {

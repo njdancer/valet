@@ -903,6 +903,32 @@ async function setup() {
       const from = site.requests.length
       const probe = await settle(page.fetch(site.url('site.test', '/probe?x=1#fragment')))
       const probeSeen = site.requests.slice(from).map((r) => ({ host: r.host, path: r.path }))
+      // Before the page's own fetch() sets the same cookie.
+      const namesAfter = await settle(page.cookieNames(['site.test']))
+      // The same requests from the page's own fetch(), credentials and all, for the spec to diff.
+      const contents = windowAt(site.url('site.test', '/set-session'))?.webContents
+      const pageFetch = async (url: string) =>
+        contents === undefined
+          ? null
+          : ((await contents.executeJavaScript(
+              `fetch(${JSON.stringify(url)}, { credentials: 'include' }).then((r) => r.json())`,
+            )) as { raw: string[] })
+      const viaProbe = async (url: string) => {
+        const outcome = await settle(page.fetch(url))
+        return 'ok' in outcome ? (outcome.ok.body as { raw: string[] }) : outcome
+      }
+      const sameUrl = site.url('site.test', '/probe?pair=same')
+      const crossUrl = site.url('login.test', '/probe?pair=cross')
+      const redirectSame = site.url('site.test', `/redirect?to=${encodeURIComponent(sameUrl)}`)
+      const redirectCross = site.url('site.test', `/redirect?to=${encodeURIComponent(crossUrl)}`)
+      const pairs = {
+        same: { page: await pageFetch(sameUrl), probe: await viaProbe(sameUrl) },
+        redirectSame: { page: await pageFetch(redirectSame), probe: await viaProbe(redirectSame) },
+        cross: { page: await pageFetch(crossUrl), probe: await viaProbe(crossUrl) },
+        redirectCross: { page: await pageFetch(redirectCross), probe: await viaProbe(redirectCross) },
+      }
+      // What a redirect sets is kept, though the probe takes each hop as a request of its own.
+      const redirectCookie = await settle(page.fetch(site.url('site.test', '/redirect-cookie')))
       const offList = await settle(page.fetch(site.url('evil.test', '/probe')))
       const toEvil = encodeURIComponent(site.url('evil.test', '/collect'))
       const redirectOff = await settle(page.fetch(site.url('site.test', `/redirect?to=${toEvil}`)))
@@ -911,7 +937,6 @@ async function setup() {
       const big = await settle(page.fetch(site.url('site.test', '/big')))
       const html = await settle(page.fetch(site.url('site.test', '/')))
       const notFound = await settle(page.fetch(site.url('site.test', '/nothing')))
-      const namesAfter = await settle(page.cookieNames(['site.test']))
       const toolCookies = (await session.fromPartition('persist:tool:e2e').cookies.get({})).map((c) => c.name)
       const committed = page.committedUrls()
       await page.close()
@@ -923,9 +948,13 @@ async function setup() {
               bodyType: typeof outcome.ok.body,
             }
           : outcome
+      const hopCookie = (await session.fromPartition('persist:auth:e2e').cookies.get({ name: 'hop' })).length
       return {
         probe,
         probeSeen,
+        pairs,
+        redirectCookie: 'ok' in redirectCookie ? redirectCookie.ok.status : redirectCookie,
+        hopCookie,
         names,
         offList,
         redirectOff,
