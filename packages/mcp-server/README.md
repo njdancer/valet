@@ -42,8 +42,8 @@ the endpoint keeps them:
   lower-level pieces, for a caller that keeps the port and token itself.
 - **Residual risk.** A stable port and token mean another local account that listens on that port
   while the app isn't running can collect the token from a client that connects. It can only use it
-  against `127.0.0.1` on this machine, and only until the app restarts on a taken port or the person
-  resets. The per-launch random port and token (`stablePort: false, tokenRotation: 'every-launch'`)
+  against `127.0.0.1` on this machine, but it stays valid until the person resets the token, unless
+  the app happens to find the port still taken at its next launch. The per-launch random port and token (`stablePort: false, tokenRotation: 'every-launch'`)
   narrow that window at the cost of reconfiguring HTTP clients each launch.
 
 Registering with Claude Code through the bridge, which re-reads the config file if the app
