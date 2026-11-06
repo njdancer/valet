@@ -26,6 +26,20 @@ for this draft. Each one marked _verify_ must be confirmed before anything is bu
 The app-side remote mode is the part worth building whichever option wins. Every option except
 "do nothing" needs it, and it's where the security properties live.
 
+**This departs from the plan in three places**, each listed for Nick in
+[Open questions](#open-questions):
+
+- **[WS10](plan.md#ws10-relay) and [M9](plan.md#m9-relay-beta-optional) put the OAuth 2.1
+  authorisation server in the Worker.** Here it's in the app. The tunnel options have no Worker,
+  so they need it in the app anyway; consent then happens on the Mac, not on a web page the relay
+  serves; and the relay never holds a token-minting key, so a compromised relay can replay tokens
+  it sees (in D1) but can't issue new ones.
+- **[D14](plan.md#d14-relay) recommends documenting the tunnels at M3.** Here that waits until
+  remote mode exists. A tunnel can't reach today's local endpoint without loosening its `Host`
+  guard ([below](#b-do-it-yourself-tunnels)), and claude.ai can't send its bearer token, so
+  until the app has its own authorisation server there's nothing safe to document.
+- **WS10's "behind OAuth or the bearer token"** becomes OAuth only, for the same reason.
+
 ## What remote access must not change
 
 These hold whatever the transport:
@@ -176,6 +190,8 @@ speaks) asks for the following. The app implements them:
   client ID is an HTTPS URL the server fetches) and Dynamic Client Registration for clients that
   still use it. claude.ai has used DCR (_verify_ which it uses now). Redirect URIs are matched
   exactly; for claude.ai that has been `https://claude.ai/api/mcp/auth_callback` (_verify_).
+  Both registration paths run on an internet-facing listener before anyone has consented, so
+  each has its own rules ([below](#before-consent-fetching-and-limits)).
 - **Tokens:** opaque random access tokens, 1 hour; refresh tokens rotated on every use, with reuse
   of an old refresh token revoking the whole grant (a stolen refresh token used after the real
   client has rotated it shows up as reuse). Tokens are stored hashed. They're per client
@@ -185,21 +201,99 @@ speaks) asks for the following. The app implements them:
   person ticked at consent, and the scope is just `tools`. The remote policy, not the scope, is
   what the app enforces on each call.
 
+### Before consent: fetching and limits
+
+The public URL is not a secret. Funnel's `<machine>.<tailnet>.ts.net` certificates and D2's
+`<id>.<relay-domain>` certificates are in Certificate Transparency logs, and any URL ends up in
+logs and screenshots. So assume anyone can reach the registration and `/authorize` endpoints,
+and that they run on the person's Mac, inside the person's network.
+
+**Client ID Metadata Document fetches** are the server fetching a URL a stranger chose, from the
+Mac. Without rules that's server-side request forgery against the person's LAN, their tailnet
+(`100.64.0.0/10`), and `127.0.0.1`, which includes the local MCP endpoint. The fetcher:
+
+- accepts only `https://` URLs with a DNS name: no IP literals (including decimal and hex forms
+  such as `https://2130706433/`), no userinfo, no port but 443, no fragment, a trailing dot
+  normalised away, and at most 512 characters;
+- resolves the name once, and refuses if **any** answer is loopback (`127.0.0.0/8`, `::1`),
+  private (`10/8`, `172.16/12`, `192.168/16`), link-local (`169.254/16`, `fe80::/10`), CGNAT and
+  tailnet (`100.64.0.0/10`, `fd7a:115c:a1e0::/48`), unique-local (`fc00::/7`), unspecified,
+  multicast or broadcast, or an IPv4-mapped or NAT64 form of any of these;
+- connects to the address that passed, pinned, with the name as SNI and `Host` and normal
+  certificate checks, so a DNS-rebinding resolver's second answer is never used;
+- follows no redirects; sends no cookies and no credentials;
+- reads at most 16 KiB, with a 5-second deadline for the whole fetch, and accepts only a JSON
+  object whose `client_id` equals the URL exactly and whose `redirect_uris` are all HTTPS;
+- caches each result (success or failure) by URL: successes for the response's `max-age`,
+  clamped to between 5 minutes and 24 hours, failures for 1 minute, so a client can't make the
+  Mac fetch in a loop;
+- runs at most two fetches at a time, after the rate limits below have passed;
+- never fetches anything else the document names (`logo_uri`, `jwks_uri`, `tos_uri`). Logos
+  aren't shown, so there's nothing to fetch.
+
+The resolver and the socket are injected, so the tests are deterministic and adversarial: a name
+resolving to each refused range, one resolving to a public and a private address, a rebinding
+resolver, a redirect to `http://127.0.0.1`, an oversized body, a body that trickles, and each
+IP-literal spelling.
+
+**Dynamic Client Registration** stays open, because that's how clients like claude.ai have
+registered, but bounded:
+
+- registrations per source address (5 an hour) and globally (20 a day);
+- at most 50 stored registrations. One with no consent expires after an hour. At the cap, new
+  registrations are refused; consented ones are never evicted to make room;
+- the same metadata rules as a fetched document: HTTPS redirect URIs, size caps, and a
+  `client_name` that is stored but never shown as the headline.
+
+**`/authorize` and consent prompts:**
+
+- `/authorize` is rate-limited per source address (10 an hour) and globally (30 an hour), before
+  any fetch or prompt;
+- at most five pending consent requests at once, each expiring after five minutes; beyond that,
+  `/authorize` answers "try later" without notifying the Mac;
+- the Mac shows **one** consent window at a time, listing every pending request in it, never a
+  notification per request, so a flood can't bury the screen or train the person to click
+  through.
+
+The source address comes from the transport: from tailscaled's forwarding headers for Funnel
+(_verify_ which it sets, and trust them only on the loopback connection from tailscaled), and from
+the relay's frame for D. Where it's unknown, the global limits alone apply. The numbers are a
+starting point for one person; they're settings, not constants.
+
 ### Consent happens on the Mac
 
-The authorise endpoint never decides by itself:
+The authorise endpoint never decides by itself, and the Mac never approves a request it can't
+tie to the browser the person is holding:
 
 1. The client sends the person's browser (on their phone, say) to `/authorize`.
-2. The page there says "Approve this on your Mac" and shows a short code.
-3. The menu-bar app shows a notification and a window: the client's identity (its metadata
-   document's host, or its redirect URI's host), the code, and the remote-enabled tools with
-   checkboxes, `write` tools unticked by default.
-4. The person approves on the Mac; the phone's page continues to the client's redirect.
+2. The page there shows a code (8 characters from an unambiguous 32-symbol alphabet, about 40
+   bits) and says: "Type this code into siteadapter on your Mac. If you didn't just add a
+   connector, close this page."
+3. The menu-bar app shows a notification and one window. It shows, for each pending request,
+   when it arrived and from which address, and the client's _claimed_ identity (its metadata
+   document's host, or its redirect URI's host). It **doesn't show the code**. It has an empty
+   code field, and the remote-enabled tools with checkboxes, `write` tools unticked by default.
+4. The person types the code from their own browser. The typed code selects the request it
+   belongs to; nothing can be approved until it matches. Three wrong codes cancel every pending
+   request.
+5. The person approves on the Mac; the phone's page continues to the client's redirect.
 
-So adding a connector needs the person at their Mac once. After that, refresh tokens keep it
-working from anywhere. That's a feature: nobody who merely knows the URL, or has phished the
-person's relay account, can grant themselves access. If the Mac is asleep or offline, consent
-fails rather than waiting.
+**Why typed, not shown on both sides.** An attacker can add a custom connector in their _own_
+claude.ai account, pointed at the person's public URL. Their consent request then names
+`claude.ai`, exactly like the person's own setup, and approving it links the person's tools to
+the attacker's account. The client identity can't tell the two apart. The code can: it's shown
+only in the browser that started the flow, which is the attacker's. If the Mac merely displayed
+the code next to the browser's, nothing would make the person compare them. Making them type it
+does.
+
+So the rule the app states in the window, and the docs repeat: **a consent prompt you didn't just
+start was started by someone else. Decline it.** Requests that expire or are declined are
+audited with their time and source address.
+
+Adding a connector therefore needs the person at their Mac once. After that, refresh tokens keep
+it working from anywhere. Nobody who merely knows the URL, or has phished the person's relay
+account, can grant themselves access. If the Mac is asleep or offline, consent fails rather than
+waiting.
 
 ### Per-tool remote policy
 
@@ -221,9 +315,20 @@ fails rather than waiting.
   [Core changes](#core-changes).
 - Consent, refresh-token reuse and revocation are audited too, as new event types once core has
   them.
-- **Kill switch:** one tray item, "Remote access: on/off". Off closes the listener or relay
-  socket, revokes every remote grant's refresh tokens, and fails in-flight remote calls with
-  `aborted`. It doesn't need the network to take effect.
+- **Two tray items, because they do different things:**
+  - **"Pause remote access"** closes the listener or relay socket, fails in-flight remote calls
+    with `aborted`, and **revokes every issued access token**. Access tokens are opaque and stored
+    hashed, so revoking them is deleting rows. Client registrations and refresh tokens are kept,
+    so on resume each client refreshes and carries on without the person adding it again. Without
+    the access-token revocation, any token in flight at the pause (including one a D1 relay saw)
+    would work again if remote access resumed within its hour.
+  - **"Revoke all remote clients…"** is the destructive one, and says so: it asks for
+    confirmation, then deletes every registration with its refresh and access tokens and its
+    grant. Every connector then has to be added again, with consent on the Mac.
+  - Each client in the remote-clients list also has its own "Revoke", which does the same for
+    that client alone.
+
+  None of these needs the network to take effect.
 - The tray icon shows when remote mode is on, so it can't stay on unnoticed.
 
 ## Our own relay, in detail
@@ -327,16 +432,19 @@ What D1 can do about it:
 
 ### Threat model
 
-| Attacker                                                 | Wants                                     | What stops or limits them                                                                                                                                                                                                                                                                                             |
-| -------------------------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Anyone on the internet                                   | Call tools                                | Unguessable `<id>`; OAuth with consent only on the Mac; refused calls look like unknown tools; per-IP and per-Mac rate limits at the relay.                                                                                                                                                                           |
-| A client that holds a stolen access or refresh token     | Call tools as the person                  | 1-hour access tokens; refresh rotation with reuse detection; per-client revocation in the app; per-client hourly caps; the kill switch.                                                                                                                                                                               |
-| Prompt injection in the person's own claude.ai chat      | Make Claude call a write tool             | Same as local, but the remote surface is smaller: remote-enabled tools only, `write` off by default, `irreversible` waits for the Mac. Remote doesn't add a confirmation channel.                                                                                                                                     |
-| A phishing "connector" that asks the person to approve   | Get a grant for an attacker's client      | Consent on the Mac shows the client's host; refuse clients whose redirect URI isn't HTTPS; never show the client's self-chosen name as the headline.                                                                                                                                                                  |
-| The relay, compromised (or its operator, or its host)    | Read data; call tools                     | **Reads everything in D1.** Can replay tokens it saw, so can call any remote-enabled tool until the person notices or revokes. Can't get secrets, can't approve an `irreversible` call, can't exceed the app's caps and rate budgets, and every call it makes is in the Mac's audit log. In D2 it sees only metadata. |
-| Another paired "Mac" (any program speaking the protocol) | Use the relay as free hosting or a tunnel | `/mcp` accepts JSON-RPC only; no HTML is ever forwarded; size and rate caps; separate PSL-listed domain; accounts can be closed.                                                                                                                                                                                      |
-| Theft of the Mac's relay key                             | Impersonate the Mac to the relay          | Key in the Keychain under the app's designated requirement; re-pairing rotates it; the relay shows the person their paired devices. An impostor Mac can serve fake tool results to the person's client, but can't reach their accounts.                                                                               |
-| Load against the person's sites through the relay        | Get the person's account or IP blocked    | Rate budgets and the circuit breaker are in the runtime, after remote mode, so a remote flood waits or fails like a local one.                                                                                                                                                                                        |
+| Attacker                                                 | Wants                                         | What stops or limits them                                                                                                                                                                                                                                                                                                                       |
+| -------------------------------------------------------- | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Anyone on the internet                                   | Call tools                                    | Not the URL: Funnel hostnames and D2's `<id>`s are in Certificate Transparency logs, and any URL leaks through logs and screenshots. OAuth with consent only on the Mac, bound by a typed code; refused calls look like unknown tools; rate limits on registration and `/authorize` in the app, and per-IP and per-Mac limits at the relay.     |
+| Anyone on the internet                                   | Make the Mac fetch internal hosts (SSRF)      | Client ID Metadata Document fetches: HTTPS names only, every resolved address checked against loopback, private, link-local, CGNAT/tailnet and ULA ranges, pinned to the checked address, no redirects, size and time caps, a cache, and nothing else in the document fetched.                                                                  |
+| Anyone on the internet                                   | Exhaust storage or flood the Mac with prompts | Per-source and global limits on DCR and `/authorize`; a cap of 50 registrations, unconsented ones expiring; at most five pending consents, shown in one window.                                                                                                                                                                                 |
+| An attacker's own legitimate client against your URL     | Link your tools to their claude.ai account    | Their consent request looks like yours (`claude.ai`), so identity can't separate them. The code appears only in the browser that started the flow (theirs), and the Mac approves only a request whose code the person types. A prompt you didn't start is someone else's: decline it.                                                           |
+| A client that holds a stolen access or refresh token     | Call tools as the person                      | 1-hour access tokens; refresh rotation with reuse detection; per-client revocation in the app; per-client hourly caps; pausing (which revokes access tokens).                                                                                                                                                                                   |
+| Prompt injection in the person's own claude.ai chat      | Make Claude call a write tool                 | Same as local, but the remote surface is smaller: remote-enabled tools only, `write` off by default, `irreversible` waits for the Mac. Remote doesn't add a confirmation channel.                                                                                                                                                               |
+| A phishing "connector" that asks the person to approve   | Get a grant for an attacker's client          | Consent on the Mac shows the client's host, the time and the source address; refuse clients whose redirect URI isn't HTTPS; never show the client's self-chosen name as the headline. Residual: an attacker who persuades the person to type a code from the attacker's page gets the grant. The window's warning is the only control for that. |
+| The relay, compromised (or its operator, or its host)    | Read data; call tools                         | **Reads everything in D1.** Can replay tokens it saw, so can call any remote-enabled tool until the person notices or revokes. Can't get secrets, can't approve an `irreversible` call, can't exceed the app's caps and rate budgets, and every call it makes is in the Mac's audit log. In D2 it sees only metadata.                           |
+| Another paired "Mac" (any program speaking the protocol) | Use the relay as free hosting or a tunnel     | `/mcp` accepts JSON-RPC only; no HTML is ever forwarded; size and rate caps; separate PSL-listed domain; accounts can be closed.                                                                                                                                                                                                                |
+| Theft of the Mac's relay key                             | Impersonate the Mac to the relay              | Key in the Keychain under the app's designated requirement; re-pairing rotates it; the relay shows the person their paired devices. An impostor Mac can serve fake tool results to the person's client, but can't reach their accounts.                                                                                                         |
+| Load against the person's sites through the relay        | Get the person's account or IP blocked        | Rate budgets and the circuit breaker are in the runtime, after remote mode, so a remote flood waits or fails like a local one.                                                                                                                                                                                                                  |
 
 The row that matters is the compromised relay. In D1 the relay is a party that can read results
 and drive remote-enabled tools. The design keeps that bounded (no secrets, no confirmations, the
@@ -420,8 +528,9 @@ Not needed until remote mode is built:
 
 - `AuditEvent['tool-called']` gains `transport: 'local' | 'remote'` and a `clientRegistration`
   id, instead of encoding both in the `client` string.
-- New audit events: `remote-consent` (client host, tool set, approved or declined),
-  `remote-revoked`, `remote-token-reuse`.
+- New audit events: `remote-consent` (client host, source address, time, tool set, and approved,
+  declined, expired or cancelled by wrong codes), `remote-paused`, `remote-revoked`,
+  `remote-token-reuse`.
 - An error class for "not available remotely", or a documented decision to reuse `not-granted`.
 
 ## Open questions
@@ -431,6 +540,12 @@ Not needed until remote mode is built:
 - Whether Funnel still terminates TLS on the node, and its current limits.
 - Whether Anthropic publishes egress IP ranges for connector traffic (useful as a WAF rule for
   B2 and D, never as the only control).
+- **For Nick: the authorisation server in the app, not the Worker** (departs from WS10 and M9),
+  and **the tunnel docs after remote mode, not at M3** (departs from D14). See
+  [Summary](#summary).
+- What source address tailscaled passes to the remote listener for Funnel traffic, and whether
+  claude.ai's connector flow works with a code typed on the Mac (it should: the browser simply
+  waits on the `/authorize` page until the Mac answers).
 - Phone confirmation of `irreversible` calls (D19). It must not go through the relay unsigned,
   or the relay could approve on the person's behalf. It needs a device key pair between the
   person's phone and their Mac, which is a separate, later piece of work.
