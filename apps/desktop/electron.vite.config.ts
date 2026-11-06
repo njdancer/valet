@@ -49,8 +49,6 @@ export default defineConfig(({ command, mode }) => ({
       __SITEADAPTER_DEMO_BUILD__: JSON.stringify(command === 'serve' || mode === 'demo'),
       __SITEADAPTER_DEV_SERVER__: JSON.stringify(command === 'serve'),
     },
-    // Until zod is a dependency of this package: core's copy (src/main/core/zod.ts).
-    resolve: { alias: { zod: resolve(here, '../../packages/core/node_modules/zod') } },
     build: {
       outDir: resolve(here, 'out/main'),
       externalizeDeps: false,

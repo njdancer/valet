@@ -6,11 +6,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SiteAdapterError } from '@siteadapter/core'
 import { afterEach, describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import { ClientRegistry, clientId } from '../../src/main/core/clients'
 import { ensurePrivateDir, JsonDocument, readJsonFile, writeJsonFile } from '../../src/main/core/files'
 import { builtinAdapter, MANIFEST_ENTRY, SnapshotStore } from '../../src/main/core/registry'
 import { DEFAULT_SETTINGS, SettingsStore } from '../../src/main/core/settings'
-import { z } from '../../src/main/core/zod'
 import { SHOP, SHOP_FILES, shopDefinition } from './fixtures'
 
 const dirs: string[] = []

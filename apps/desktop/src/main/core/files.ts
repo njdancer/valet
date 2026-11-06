@@ -5,7 +5,7 @@
 import { randomBytes } from 'node:crypto'
 import { chmod, mkdir, open, readFile, rename, rm } from 'node:fs/promises'
 import { SiteAdapterError } from '@siteadapter/core'
-import type { z } from './zod'
+import type { z } from 'zod'
 
 /** Creates the data directory owner-only, and tightens it if it already existed looser. */
 export async function ensurePrivateDir(dir: string): Promise<void> {

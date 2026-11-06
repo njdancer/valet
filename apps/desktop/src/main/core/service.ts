@@ -29,6 +29,7 @@ import {
   type RuntimeDiagnostic,
   ToolHost,
 } from '@siteadapter/runtime'
+import { z } from 'zod'
 import type {
   AppEvent,
   AttentionItem,
@@ -78,7 +79,6 @@ import {
   reviewItem,
   siteHealth,
 } from './views'
-import { z } from './zod'
 
 /** What the service asks of the app's windows and the OS. */
 export interface UiPort {

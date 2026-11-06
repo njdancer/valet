@@ -4,10 +4,10 @@
 // that cuts off everyone.
 
 import { sha256Hex } from '@siteadapter/core'
+import { z } from 'zod'
 import type { ClientInfo } from '../../shared/api'
 import { CONNECTED_WINDOW_MS } from './constants'
 import { JsonDocument } from './files'
-import { z } from './zod'
 
 const clientSchema = z
   .object({

@@ -10,17 +10,16 @@
 
 import { EventEmitter } from 'node:events'
 import { request } from 'node:http'
-import { createRequire } from 'node:module'
+import * as builderRuntime from 'builder-util-runtime'
 import { AppUpdater, MacUpdater } from 'electron-updater'
 import type { AppAdapter } from 'electron-updater/out/AppAdapter'
 import type { DownloadUpdateOptions } from 'electron-updater/out/AppUpdater'
 import { findFile } from 'electron-updater/out/providers/Provider'
 import type { SessionLike } from '../../src/main/updater'
 
-// builder-util-runtime isn't a dependency of this package; take electron-updater's own copy, so the
-// executor below is the same class electron-updater's providers expect.
-const fromUpdater = createRequire(createRequire(import.meta.url).resolve('electron-updater'))
-const runtime: any = fromUpdater('builder-util-runtime')
+// The same builder-util-runtime electron-updater's providers use (one copy in the lockfile), so the
+// executor below is the class they expect. Its typings are generic over the request type; untyped here.
+const runtime: any = builderRuntime
 
 type BeforeRequest = Parameters<SessionLike['webRequest']['onBeforeRequest']>[0]
 

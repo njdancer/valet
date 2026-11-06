@@ -4,10 +4,10 @@
 // channel's schema exactly (strict objects, bounded strings, no extra arguments). Anything else is
 // refused with a fixed error whose message says nothing about why.
 
+import { z } from 'zod'
 import { parseRoute } from '../../renderer/lib/routes'
 import type { HashRoute, SiteAdapterApi } from '../../shared/api'
 import { CHANNEL_PREFIX, INVOKE_METHODS, type InvokeMethod } from './channels'
-import { z } from './zod'
 
 /** Which of the app's windows sent a request. The main process assigns it when it opens the window. */
 export type WindowRole = 'control' | 'tray' | 'confirmation' | 'needs-user'

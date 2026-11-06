@@ -13,7 +13,7 @@ import {
   type SessionDriver,
   type ToolPage,
 } from '@siteadapter/core'
-import { z } from '../../src/main/core/zod'
+import { z } from 'zod'
 
 export const SHOP: ManifestInput = {
   schemaVersion: 1,

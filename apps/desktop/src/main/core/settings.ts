@@ -3,9 +3,9 @@
 // that doesn't validate reads as the defaults, which are the cautious side of every setting:
 // Messages off, no pinned op path, no launch at login.
 
+import { z } from 'zod'
 import type { Settings, SettingsPatch } from '../../shared/api'
 import { JsonDocument } from './files'
-import { z } from './zod'
 
 export const DEFAULT_SETTINGS: Settings = {
   updateChannel: 'stable',

@@ -14,9 +14,9 @@
 // userData, cookie-encryption keys or Full Disk Access grants with the release app.
 
 import { readFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { signAsync } from '@electron/osx-sign'
 import type { Configuration } from 'electron-builder'
 import { validateFeedUrl } from './src/main/updater/feed-url'
 
@@ -106,7 +106,7 @@ export interface SignOptionsLike {
 export interface ConfigDeps {
   /** Reads a requirement template from build/. */
   readonly readTemplate: (name: string) => string
-  /** @electron/osx-sign's signAsync, loaded only when a signed build actually signs. */
+  /** @electron/osx-sign's signAsync, asked for only when a signed build actually signs. */
   readonly loadSignAsync: () => SignAsync
   /** Waits between signing attempts. Defaults to a real timer. */
   readonly sleep?: (ms: number) => Promise<void>
@@ -334,17 +334,13 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
 
 const here = fileURLToPath(new URL('.', import.meta.url))
 
-/** The real effects: templates from build/, and the osx-sign electron-builder itself uses. */
+/**
+ * The real effects: templates from build/, and @electron/osx-sign (a direct devDependency, the same
+ * version electron-builder's default signing uses: one copy in the lockfile).
+ */
 export const nodeDeps: ConfigDeps = {
   readTemplate: (name) => readFileSync(join(here, 'build', name), 'utf8'),
-  loadSignAsync: () => {
-    // @electron/osx-sign isn't a dependency of this package; take electron-builder's own copy, the
-    // version its default signing would use.
-    const fromHere = createRequire(join(here, 'package.json'))
-    const fromBuilder = createRequire(fromHere.resolve('electron-builder'))
-    const fromLib = createRequire(fromBuilder.resolve('app-builder-lib'))
-    return (fromLib('@electron/osx-sign') as { signAsync: SignAsync }).signAsync
-  },
+  loadSignAsync: () => signAsync as unknown as SignAsync,
 }
 
 export default function config(): Configuration {
