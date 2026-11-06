@@ -8,6 +8,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { type AccountState, type AccountStore, type MfaChannel, newToken } from './accounts'
 import {
+  captchaFramePage,
   ERRORS,
   errorPage,
   type FieldError,
@@ -36,6 +37,10 @@ export const REMEMBER_DEVICE_MAX_AGE = 30 * 24 * 60 * 60
 export const MAX_MFA_FAILURES = 3
 /** How long one Universal Login transaction lives. */
 export const TRANSACTION_TTL_MS = 30 * 60_000
+/** An analytics cookie the login pages set for the whole parent domain, so www gets it too. */
+export const AUTH_ANALYTICS_COOKIE = '_ga'
+/** Where the CAPTCHA's iframe document is served, on the provider's hostname. */
+export const CAPTCHA_FRAME_PATH = '/captcha/frame'
 
 /** A code the fake "sent" by SMS or email, for a test's stand-in for the Messages reader. */
 export interface SentMessage {
@@ -50,6 +55,12 @@ export interface AuthHostile {
   readonly loginFormAction?: string
   /** Accept any redirect_uri at /authorize, not only www's callback. */
   readonly openRedirectAfterLogin?: boolean
+  /**
+   * Once the login is done, send the browser to `to` on the site's own initiative, whatever the
+   * request asked for: from Auth0, in place of www's callback and carrying the code ('auth'), or
+   * from www's callback once it has set the session ('callback').
+   */
+  readonly redirectAfterLogin?: { readonly from: 'auth' | 'callback'; readonly to: string }
   /**
    * Serve the identifier and password forms inside an iframe from this other hostname (this
    * server's port), so the form's frame is cross-origin to the page. The caller maps it to 127.0.0.1.
@@ -71,6 +82,10 @@ export interface FakeAuth0Options {
   readonly hostile: AuthHostile
   /** Whether bot detection starts on. */
   readonly captcha: boolean
+  /** The hostname the CAPTCHA's iframe loads from (on this server's port), a third party's in real life. */
+  readonly captchaFrameHostname: string
+  /** The parent domain to set AUTH_ANALYTICS_COOKIE on, or null for none (no hostname to share). */
+  readonly cookieDomain: string | null
 }
 
 interface Transaction {
@@ -139,7 +154,11 @@ export class FakeAuth0 {
 
   private route(exchange: Exchange): Sent {
     const { method, path } = exchange
-    if (method === 'GET' && path === '/authorize') return this.authorize(exchange)
+    if (method === 'GET' && path === CAPTCHA_FRAME_PATH) return this.html(exchange, 200, captchaFramePage())
+    if (method === 'GET' && path === '/authorize') {
+      this.setAnalyticsCookie(exchange)
+      return this.authorize(exchange)
+    }
     const framed = this.options.hostile.loginInFrame !== undefined
     if (path === '/u/login/identifier' || (framed && path === '/u/login/identifier/frame')) {
       if (method === 'GET') return this.withTransaction(exchange, (t) => this.showIdentifier(exchange, t))
@@ -199,7 +218,12 @@ export class FakeAuth0 {
   ): Sent {
     if (this.shouldFrame(exchange))
       return this.framed(exchange, 'Log in | Woolworths', '/u/login/identifier', transaction)
-    const page = identifierPage({ state: transaction.id, error, captcha: this.captcha })
+    const page = identifierPage({
+      state: transaction.id,
+      error,
+      captcha: this.captcha,
+      captchaFrameSrc: this.captchaFrameSrc(),
+    })
     return this.html(exchange, error === null ? 200 : 400, page)
   }
 
@@ -228,6 +252,7 @@ export class FakeAuth0 {
       state: transaction.id,
       error,
       captcha: this.captcha,
+      captchaFrameSrc: this.captchaFrameSrc(),
       ...(hostile.loginFormAction === undefined ? {} : { action: hostile.loginFormAction }),
       ...(hostile.passwordInputType === undefined ? {} : { passwordType: hostile.passwordInputType }),
     })
@@ -310,7 +335,8 @@ export class FakeAuth0 {
   }
 
   private callback(redirectUri: string, wwwState: string, username: string): string {
-    const url = new URL(redirectUri)
+    const hijack = this.options.hostile.redirectAfterLogin
+    const url = new URL(hijack?.from === 'auth' ? hijack.to : redirectUri)
     url.searchParams.set('code', this.options.broker.issueCode(wwwState, username))
     url.searchParams.set('state', wwwState)
     return url.toString()
@@ -324,6 +350,22 @@ export class FakeAuth0 {
 
   private pagePath(path: string, transaction: Transaction): string {
     return `${path}?state=${encodeURIComponent(transaction.id)}`
+  }
+
+  private captchaFrameSrc(): string {
+    return `${this.options.originOf(this.options.captchaFrameHostname)}${CAPTCHA_FRAME_PATH}`
+  }
+
+  private setAnalyticsCookie(exchange: Exchange): void {
+    const domain = this.options.cookieDomain
+    if (domain === null || exchange.cookies.has(AUTH_ANALYTICS_COOKIE)) return
+    exchange.setCookies.push(
+      serializeCookie(AUTH_ANALYTICS_COOKIE, `GA1.2.${newToken()}`, {
+        httpOnly: false,
+        secure: this.options.secure,
+        domain,
+      }),
+    )
   }
 
   /** The iframe variant wraps the top-level page; the frame's own request ends in /frame. */

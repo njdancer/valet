@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { ERRORS, errorPage, framedPage, identifierPage, mfaPage, passwordPage } from '../src/auth-pages'
+import {
+  captchaFramePage,
+  ERRORS,
+  errorPage,
+  framedPage,
+  identifierPage,
+  mfaPage,
+  passwordPage,
+} from '../src/auth-pages'
 
 describe('identifierPage', () => {
   const html = identifierPage({ state: 'T1', error: null, captcha: false })
@@ -33,6 +41,32 @@ describe('identifierPage', () => {
     expect(shown).toContain(
       '<span id="error-element-username" class="ulp-input-error-message" data-error-code="invalid-captcha">',
     )
+  })
+
+  it('puts the CAPTCHA in a third-party iframe when given its source, escaped', () => {
+    const shown = identifierPage({
+      state: 'T1',
+      error: null,
+      captcha: true,
+      captchaFrameSrc: 'https://challenges.captcha.test:1/captcha/frame?a="b"',
+    })
+    expect(shown).toContain(
+      '<iframe class="ulp-captcha-frame" title="Challenge" src="https://challenges.captcha.test:1/captcha/frame?a=&quot;b&quot;"></iframe>',
+    )
+    const password = passwordPage({
+      state: 'T1',
+      error: null,
+      captcha: true,
+      captchaFrameSrc: 'https://challenges.captcha.test:1/captcha/frame',
+    })
+    expect(password).toContain('<div class="ulp-captcha-container" data-captcha-provider="auth0"><iframe ')
+    expect(passwordPage({ state: 'T1', error: null, captcha: true })).not.toContain('<iframe')
+  })
+
+  it('serves the challenge itself as a page of its own, with nothing to type a secret into', () => {
+    const frame = captchaFramePage()
+    expect(frame).toContain('id="challenge-checkbox"')
+    expect(frame).not.toMatch(/type="(text|email|password)"/)
   })
 
   it('escapes the state everywhere it appears', () => {

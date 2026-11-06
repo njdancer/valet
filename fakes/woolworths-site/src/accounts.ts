@@ -44,6 +44,8 @@ export function newToken(): string {
 export class AccountStore {
   private readonly accounts = new Map<string, AccountState>()
   private readonly visitors = new Map<string, Visitor>()
+  /** Tokens of logged-in sessions that expireSessions() ended. */
+  private readonly expired = new Set<string>()
 
   constructor(accounts: readonly FakeAccount[]) {
     for (const account of accounts) {
@@ -86,6 +88,14 @@ export class AccountStore {
 
   /** Logs every www visitor out, as if the site expired all sessions. Auth0's sessions survive. */
   expireSessions(): void {
+    for (const visitor of this.visitors.values()) {
+      if (visitor.username !== null) this.expired.add(visitor.token)
+    }
     this.visitors.clear()
+  }
+
+  /** Whether `token` was a logged-in session that expireSessions() ended. */
+  wasExpired(token: string | undefined): boolean {
+    return token !== undefined && this.expired.has(token)
   }
 }

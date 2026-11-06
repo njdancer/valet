@@ -65,11 +65,22 @@ export interface FakeWoolworthsOptions {
   /** Auth0's bot detection: a CAPTCHA on the identifier and password pages that refuses every submit. */
   readonly captcha?: boolean
   /**
+   * The hostname the CAPTCHA's iframe loads from, on the auth server's port. Defaults to
+   * challenges.captcha.test; the caller maps it to 127.0.0.1.
+   */
+  readonly captchaFrameHostname?: string
+  /**
    * Hostile variants, for testing the auth interpreter's guards. Each one makes the site behave
    * like a compromised or careless one. All are off by default. `openRedirectAfterLogin` also makes
    * www's callback redirect to the login's `path` unchecked, e.g. https://evil.test/.
    */
-  readonly hostile?: AuthHostile
+  readonly hostile?: Hostile
+}
+
+/** The hostile variants: Auth0's, plus one on www. */
+export interface Hostile extends AuthHostile {
+  /** www answers every request for `path` (any method, after Akamai) with a 302 to `to`. */
+  readonly wwwRedirect?: { readonly path: string; readonly to: string }
 }
 
 export interface FakeWoolworths {
@@ -79,6 +90,8 @@ export interface FakeWoolworths {
   /** The Auth0 origin, e.g. https://auth.woolworths.test:<port>. */
   readonly authOrigin: string
   readonly authPort: number
+  /** Where the CAPTCHA's iframe loads from, e.g. https://challenges.captcha.test:<authPort>. */
+  readonly captchaFrameOrigin: string
   /** Every request www received, in arrival order, including blocked ones. Live: it keeps growing. */
   readonly requests: readonly RecordedRequest[]
   /** Every request the auth origin received. Live. */
@@ -108,6 +121,18 @@ export function loginHref(origin: string, path = '/'): string {
 /** A path on this site, or "/" for anything that would leave it ("//evil", "/\\evil", "https:"). */
 export function sitePath(path: string): string {
   return /^\/(?![/\\])/.test(path) ? path : '/'
+}
+
+/** The default hostname of the CAPTCHA provider's frame. */
+export const CAPTCHA_FRAME_HOSTNAME = 'challenges.captcha.test'
+/** Akamai Bot Manager's cookie, which it sets for the whole parent domain. */
+export const BOT_MANAGER_COOKIE = 'bm_sz'
+/** The cart API paths, which answer 401 to a logged-in session the site has expired. */
+const CART_PATHS = new Set(['/apis/ui/trolley', '/api/v3/ui/trolley/update'])
+
+/** The domain www and auth share, for cookies set on both: woolworths.test for www.woolworths.test. */
+export function parentDomainOf(hostname: string | undefined): string | null {
+  return hostname?.startsWith('www.') === true ? hostname.slice(4) : null
 }
 
 const JSON_TYPE = 'application/json; charset=utf-8'
@@ -208,6 +233,8 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
 
   const hostile = options.hostile ?? {}
   const openRedirect = hostile.openRedirectAfterLogin === true
+  const cookieDomain = parentDomainOf(options.hostname)
+  const captchaFrameHostname = options.captchaFrameHostname ?? CAPTCHA_FRAME_HOSTNAME
   let origin = ''
   let authOrigin = ''
 
@@ -233,6 +260,8 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
     )
     if (done === null) return html(exchange, 403, loginFailedPage(page(exchange)))
     switchVisitor(exchange, done.username)
+    const hijack = hostile.redirectAfterLogin
+    if (hijack?.from === 'callback') return redirect(exchange, hijack.to)
     return redirect(exchange, openRedirect ? done.path : sitePath(done.path))
   }
 
@@ -332,12 +361,35 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
     const isApi = path.startsWith('/api/') || path.startsWith('/apis/')
     if (isApi && (sensor === null || tipped(keys))) return deny(request, response)
 
-    // Every visitor gets a session token, logged in or not, as on the live site.
+    const moved = hostile.wwwRedirect
+    if (moved !== undefined && path === moved.path.toLowerCase()) {
+      response.writeHead(302, { location: moved.to, 'content-type': HTML_TYPE }).end()
+      return 'sent'
+    }
+    // A cart call on a login the site has expired is refused (assumed: README), not served as a
+    // new anonymous trolley, so the client can tell it must log in again.
+    const token = cookies.get(SESSION_COOKIE)
+    if (CART_PATHS.has(path) && store.visitor(token) === null && store.wasExpired(token)) {
+      response.writeHead(401, { 'content-type': JSON_TYPE }).end(JSON.stringify({ Message: 'Unauthorized' }))
+      return 'sent'
+    }
+
+    // Every visitor gets a session token, logged in or not, as on the live site, and Akamai a
+    // cookie on the parent domain when there is one.
     const setCookies: string[] = []
-    let visitor = store.visitor(cookies.get(SESSION_COOKIE))
+    let visitor = store.visitor(token)
     if (visitor === null) {
       visitor = store.startVisitor()
       setCookies.push(serializeCookie(SESSION_COOKIE, visitor.token, { httpOnly: true, secure }))
+      if (cookieDomain !== null && !cookies.has(BOT_MANAGER_COOKIE)) {
+        setCookies.push(
+          serializeCookie(BOT_MANAGER_COOKIE, newSensorValue(), {
+            httpOnly: false,
+            secure,
+            domain: cookieDomain,
+          }),
+        )
+      }
     }
     const exchange: Exchange = {
       request,
@@ -362,6 +414,8 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
     originOf: (hostname) => originFor(options.tls, hostname, authPort),
     hostile,
     captcha: options.captcha === true,
+    captchaFrameHostname,
+    cookieDomain,
   })
 
   const server = createServer(options.tls)
@@ -395,6 +449,7 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
     port,
     authOrigin,
     authPort,
+    captchaFrameOrigin: originFor(options.tls, captchaFrameHostname, authPort),
     requests,
     authRequests: auth0.requests,
     outbox: auth0.outbox,

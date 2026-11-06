@@ -115,17 +115,34 @@ exactly, as Auth0 does.
 - `blockAll(on)`: every www request gets the Access Denied page, as if the IP were blocked. The
   auth origin is not behind Akamai.
 - `expireSessions()`: logs every www visitor out. Auth0 sessions survive, so the next login is a
-  silent re-login.
+  silent re-login. A cart call (`GET /apis/ui/Trolley`, `POST /api/v3/ui/trolley/update`) that
+  still carries an expired logged-in token gets a 401 with no cookies, as the live site is assumed
+  to answer an expired login, rather than a new anonymous trolley; every other path, bootstrap
+  included, starts a new anonymous visitor for it as before.
 - `expireAuthSessions()`: ends every Auth0 session, so the next login asks for the identifier and
   password. Remembered devices survive.
 - `captcha` / `setCaptcha(on)`: Auth0's bot detection shows `.ulp-captcha-container` on the
-  identifier and password pages and refuses every submit with `invalid-captcha`.
+  identifier and password pages and refuses every submit with `invalid-captcha`. The container
+  holds `iframe.ulp-captcha-frame` from `captchaFrameOrigin` (`captchaFrameHostname`, default
+  `challenges.captcha.test`, on the auth port; `/captcha/frame`), because real challenges
+  (Turnstile, reCAPTCHA, hCaptcha, Arkose) render in a third-party frame. The caller maps the
+  hostname to 127.0.0.1.
+- Cookies for the whole domain: when `hostname` starts with `www.`, a new www visitor also gets
+  Akamai's `bm_sz` and `/authorize` sets an analytics `_ga`, both with `Domain=` the rest of the
+  hostname (`woolworths.test`), so a browser sends them to both origins. Every other cookie is
+  host-only.
 - `now`: an injected clock for the rate limit, login expiry and request timestamps.
 - `hostile.loginFormAction`: the password form posts there instead, for the form-action guard.
   The identifier form is untouched.
 - `hostile.openRedirectAfterLogin`: `/authorize` accepts any http(s) `redirect_uri` and sends the
   code there, and www's callback redirects to the login's `path` unchecked (e.g.
   `/auth/login?path=https://evil.test/landed`), for the navigation guard.
+- `hostile.redirectAfterLogin: { from, to }`: once the login is done, the site sends the browser
+  to `to` on its own, whatever the request asked for: from Auth0 in place of www's callback,
+  carrying the code (`from: 'auth'`, the silent re-login included), or from www's callback once it
+  has set the session (`from: 'callback'`), for the navigation guard.
+- `hostile.wwwRedirect: { path, to }`: www answers every request for `path` (any method and case,
+  after Akamai) with a 302 to `to`, for the tool partition's redirect guard.
 - `hostile.loginInFrame`: a hostname. The identifier and password pages hold only
   `iframe#loginFrame`, whose `src` is the same page plus `/frame` on that hostname and the auth
   port, so the form is in a cross-origin frame, for the frame-origin guard. The auth server

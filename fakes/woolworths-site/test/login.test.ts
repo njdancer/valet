@@ -5,7 +5,12 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { FakeAccount } from '../src/accounts'
 import { CODE_TTL_MS, PENDING_LOGIN_TTL_MS } from '../src/logins'
-import { type FakeWoolworths, type FakeWoolworthsOptions, startFakeWoolworths } from '../src/server'
+import {
+  type FakeWoolworths,
+  type FakeWoolworthsOptions,
+  parentDomainOf,
+  startFakeWoolworths,
+} from '../src/server'
 import { Client, type Reply } from './support/client'
 
 const PLAIN: FakeAccount = { username: 'plain@example.test', password: 'plain-password', firstName: 'Pat' }
@@ -854,5 +859,117 @@ describe('the auth origin itself', () => {
     })
     expect(reply.status).toBe(413)
     expect(site.authRequests[0]?.body).toHaveLength(1_000_000)
+  })
+})
+
+describe('the CAPTCHA’s frame', () => {
+  it('loads the challenge from the provider’s own origin, which the auth server answers for', async () => {
+    const site = await start({ captcha: true })
+    expect(site.captchaFrameOrigin).toBe(`http://challenges.captcha.test:${site.authPort}`)
+    const b = await browser(site)
+    const page = await b.auth.get(await beginLogin(site, b))
+    expect(page.text).toContain(`src="${site.captchaFrameOrigin}/captcha/frame"`)
+    const frame = await new Client(site.authOrigin).get('/captcha/frame')
+    expect(frame.status).toBe(200)
+    expect(frame.text).toContain('id="challenge-checkbox"')
+  })
+
+  it('takes another frame hostname', async () => {
+    const site = await start({ captcha: true, captchaFrameHostname: 'frames.example.test' })
+    expect(site.captchaFrameOrigin).toBe(`http://frames.example.test:${site.authPort}`)
+  })
+})
+
+describe('cookies on the parent domain', () => {
+  it('has Akamai set one for the whole domain on a new www visitor, once', async () => {
+    const site = await start({ hostname: 'www.woolworths.test' })
+    const www = new Client(`http://127.0.0.1:${site.port}`)
+    const first = await www.get('/')
+    expect(first.setCookies.find((line) => line.startsWith('bm_sz='))).toMatch(
+      /^bm_sz=[^;]+; Path=\/; SameSite=Lax; Domain=woolworths\.test$/,
+    )
+    www.cookies.delete('wow-auth-token')
+    expect((await www.get('/')).setCookies.some((line) => line.startsWith('bm_sz='))).toBe(false)
+  })
+
+  it('has the login pages set an analytics cookie for the whole domain, once', async () => {
+    const site = await start({ hostname: 'www.woolworths.test' })
+    const auth = new Client(`http://127.0.0.1:${site.authPort}`)
+    const first = await auth.get('/authorize?state=s&redirect_uri=x')
+    expect(first.setCookies).toEqual([
+      expect.stringMatching(/^_ga=GA1\.2\.[\w-]+; Path=\/; SameSite=Lax; Domain=woolworths\.test$/),
+    ])
+    expect((await auth.get('/authorize?state=s&redirect_uri=x')).setCookies).toEqual([])
+  })
+
+  it('sets neither without a www hostname to share', async () => {
+    expect(parentDomainOf(undefined)).toBeNull()
+    expect(parentDomainOf('woolworths.test')).toBeNull()
+    expect(parentDomainOf('www.woolworths.test')).toBe('woolworths.test')
+    const site = await start()
+    expect((await new Client(site.authOrigin).get('/authorize?state=s&redirect_uri=x')).setCookies).toEqual(
+      [],
+    )
+  })
+})
+
+describe('an expired login', () => {
+  it('gets 401 from the cart API, setting nothing, while other calls see a new anonymous visitor', async () => {
+    const site = await start()
+    const b = await browser(site)
+    await b.www.get(location(await signIn(site, b, PLAIN)))
+    site.expireSessions()
+    const read = await b.www.get('/apis/ui/Trolley')
+    expect(read.status).toBe(401)
+    expect(read.setCookies).toEqual([])
+    const write = await b.www.postJson('/api/v3/ui/trolley/update', {
+      items: [{ stockcode: 900601, quantity: 1 }],
+    })
+    expect(write.status).toBe(401)
+    expect(site.trolleyFor(PLAIN.username)).toEqual([])
+    expect((await shopper(b.www)).IsLoggedIn).toBe(false)
+    // The bootstrap call replaced the expired token, so the cart now answers for the new visitor.
+    expect((await b.www.get('/apis/ui/Trolley')).status).toBe(200)
+  })
+
+  it('does not refuse an anonymous visitor the site never knew', async () => {
+    const site = await start()
+    const b = await browser(site)
+    b.www.cookies.set('wow-auth-token', 'never-issued')
+    expect((await b.www.get('/apis/ui/Trolley')).status).toBe(200)
+  })
+})
+
+describe('the site redirecting on its own', () => {
+  it('sends the browser from Auth0 to another host with the code, in place of the callback', async () => {
+    const site = await start({
+      hostile: { redirectAfterLogin: { from: 'auth', to: 'https://evil.test/landed' } },
+    })
+    const b = await browser(site)
+    const reply = await signIn(site, b, PLAIN)
+    expect(location(reply)).toMatch(/^https:\/\/evil\.test\/landed\?code=[\w-]+&state=[\w-]+$/)
+    // The silent re-login goes there too.
+    const again = await b.auth.get(location(await b.www.get(LOGIN(site))))
+    expect(location(again)).toMatch(/^https:\/\/evil\.test\/landed\?code=/)
+  })
+
+  it('sends the browser from www’s callback to another host once the session is set', async () => {
+    const site = await start({
+      hostile: { redirectAfterLogin: { from: 'callback', to: 'https://evil.test/landed' } },
+    })
+    const b = await browser(site)
+    const callback = await b.www.get(location(await signIn(site, b, PLAIN)))
+    expect(location(callback)).toBe('https://evil.test/landed')
+    expect((await shopper(b.www)).IsLoggedIn).toBe(true)
+  })
+
+  it('redirects any request for one www path, API calls included, whatever the case', async () => {
+    const site = await start({
+      hostile: { wwwRedirect: { path: '/apis/ui/Trolley', to: 'https://evil.test/x' } },
+    })
+    const b = await browser(site)
+    expect(location(await b.www.get('/APIS/UI/TROLLEY'))).toBe('https://evil.test/x')
+    expect(location(await b.www.postJson('/apis/ui/trolley', {}))).toBe('https://evil.test/x')
+    expect((await b.www.get('/shop/securelogin')).status).toBe(200)
   })
 })

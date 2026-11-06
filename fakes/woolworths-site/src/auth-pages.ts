@@ -51,9 +51,18 @@ function fieldError(field: string, error: FieldError | null): string {
   return `\n        <span id="error-element-${field}" class="ulp-input-error-message" data-error-code="${escapeHtml(error.code)}">${escapeHtml(error.message)}</span>`
 }
 
-/** Auth0's bot detection: a challenge the person has to solve. The fake never accepts an answer. */
-const CAPTCHA = `
-        <div class="ulp-captcha-container" data-captcha-provider="auth0"><input type="hidden" name="captcha" value=""></div>`
+/**
+ * Auth0's bot detection: a challenge the person has to solve, rendered in a third-party iframe as
+ * Turnstile, reCAPTCHA, hCaptcha and Arkose all are. The fake never accepts an answer.
+ */
+function captchaBlock(frameSrc: string | undefined): string {
+  const frame =
+    frameSrc === undefined
+      ? ''
+      : `<iframe class="ulp-captcha-frame" title="Challenge" src="${escapeHtml(frameSrc)}"></iframe>`
+  return `
+        <div class="ulp-captcha-container" data-captcha-provider="auth0">${frame}<input type="hidden" name="captcha" value=""></div>`
+}
 
 const PRIMARY_BUTTON = `<button type="submit" name="action" value="default" data-action-button-primary="true">Continue</button>`
 
@@ -61,9 +70,11 @@ export interface IdentifierPageOptions {
   readonly state: string
   readonly error: FieldError | null
   readonly captcha: boolean
+  /** Where the CAPTCHA's iframe loads from, when there is one. */
+  readonly captchaFrameSrc?: string
 }
 
-export function identifierPage({ state, error, captcha }: IdentifierPageOptions): string {
+export function identifierPage({ state, error, captcha, captchaFrameSrc }: IdentifierPageOptions): string {
   const action = `/u/login/identifier?state=${encodeURIComponent(state)}`
   return document(
     'Log in | Woolworths',
@@ -71,7 +82,7 @@ export function identifierPage({ state, error, captcha }: IdentifierPageOptions)
     <form method="POST" class="_form-login-id" data-form-primary="true" action="${escapeHtml(action)}">
         ${stateInput(state)}
         <label for="username">Email address*</label>
-        <input class="input" inputmode="email" name="username" id="username" type="email" value="" required autocomplete="email webauthn" autocapitalize="none" spellcheck="false">${captcha ? CAPTCHA : ''}${fieldError('username', error)}
+        <input class="input" inputmode="email" name="username" id="username" type="email" value="" required autocomplete="email webauthn" autocapitalize="none" spellcheck="false">${captcha ? captchaBlock(captchaFrameSrc) : ''}${fieldError('username', error)}
         ${PRIMARY_BUTTON}
     </form>
     <form method="POST" class="_form-login-passkey" action="${escapeHtml(action)}">
@@ -90,6 +101,8 @@ export interface PasswordPageOptions {
   readonly state: string
   readonly error: FieldError | null
   readonly captcha: boolean
+  /** Where the CAPTCHA's iframe loads from, when there is one. */
+  readonly captchaFrameSrc?: string
   /** Where the form posts. Differs from the default only for the hostile variant. */
   readonly action?: string
   /** The password input's `type`. Differs from `password` only for the hostile variant. */
@@ -100,6 +113,7 @@ export function passwordPage({
   state,
   error,
   captcha,
+  captchaFrameSrc,
   action = `/u/login/password?state=${encodeURIComponent(state)}`,
   passwordType = 'password',
 }: PasswordPageOptions): string {
@@ -109,7 +123,7 @@ export function passwordPage({
     <form method="POST" class="_form-login-password" data-form-primary="true" action="${escapeHtml(action)}">
         ${stateInput(state)}
         <label for="password">Password*</label>
-        <input class="input" name="password" id="password" type="${escapeHtml(passwordType)}" required autocomplete="current-password" autocapitalize="none" spellcheck="false">${captcha ? CAPTCHA : ''}${fieldError('password', error)}
+        <input class="input" name="password" id="password" type="${escapeHtml(passwordType)}" required autocomplete="current-password" autocapitalize="none" spellcheck="false">${captcha ? captchaBlock(captchaFrameSrc) : ''}${fieldError('password', error)}
         ${PRIMARY_BUTTON}
     </form>
     <a class="ulp-forgot-password" href="/u/reset-password/request/Username-Password-Authentication?state=${escapeHtml(encodeURIComponent(state))}">Forgot password?</a>`,
@@ -161,6 +175,21 @@ export function mfaPage({ channel, state, error, codeType = 'text' }: MfaPageOpt
 /** The hostile variant's page: nothing but an iframe holding the real form, from another origin. */
 export function framedPage(title: string, frameSrc: string): string {
   return document(title, `    <iframe id="loginFrame" title="Log in" src="${escapeHtml(frameSrc)}"></iframe>`)
+}
+
+/** The challenge inside the CAPTCHA's iframe, served from the provider's origin. */
+export function captchaFramePage(): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Challenge</title>
+</head>
+<body>
+  <div id="challenge-stage"><input type="checkbox" id="challenge-checkbox" name="challenge"><label for="challenge-checkbox">Verify you are human</label></div>
+</body>
+</html>
+`
 }
 
 /** Auth0's generic error page, for a bad state, a callback URL it doesn't know, and the like. */
