@@ -15,6 +15,7 @@ import type {
   SecretValue,
   Stage,
 } from '@siteadapter/core'
+import type { UrlPatternMatcher } from './url-matcher'
 
 export type AuthOutcome =
   /** Logged in, as the probe saw it from the auth partition. Only now may the session be copied. */
@@ -89,4 +90,9 @@ export interface AuthFlowInput {
   readonly typingDelayMs: number
   /** Budget for the whole flow, including waiting for one-time codes. */
   readonly flowTimeoutMs: number
+  /**
+   * Runs urlRegex conditions off the main thread under a deadline. Defaults to a WorkerUrlMatcher
+   * the flow starts on first use and closes when it finishes; one passed in is the caller's to close.
+   */
+  readonly urlMatcher?: UrlPatternMatcher
 }

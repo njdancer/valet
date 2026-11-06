@@ -15,6 +15,7 @@ import {
   SecretValue,
 } from '@siteadapter/core'
 import type { AuthProbe } from '../src/types'
+import type { UrlPatternMatcher } from '../src/url-matcher'
 import type { FakeAuthPage } from './fake-auth-page'
 
 /** Thrown by FakeClock when the code under test has slept too often or too long. Tests only. */
@@ -195,5 +196,23 @@ export class RecordingAudit implements AuditSink {
     if (event.type === this.failOn) throw new Error('audit log unavailable')
     this.events.push(event)
     return { seq: this.events.length, at: '2026-11-07T00:00:00.000Z', event, prev: '', hash: '' }
+  }
+}
+
+/**
+ * Runs urlRegex patterns on this thread, so flow tests stay deterministic and quick. The real
+ * matcher runs them in a worker under a deadline; url-matcher.test.ts tests that one.
+ */
+export class InProcessUrlMatcher implements UrlPatternMatcher {
+  readonly tests: { pattern: string; text: string }[] = []
+  closed = false
+
+  async test(pattern: string, text: string): Promise<boolean> {
+    this.tests.push({ pattern, text })
+    return new RegExp(pattern).test(text)
+  }
+
+  close(): void {
+    this.closed = true
   }
 }

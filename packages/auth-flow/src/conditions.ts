@@ -8,9 +8,13 @@ import {
   isScreenedPattern,
   SiteAdapterError,
 } from '@siteadapter/core'
+import type { UrlPatternMatcher } from './url-matcher'
 
-/** Every urlRegex pattern in a flow, compiled once before its first step. */
-export type UrlRegexes = ReadonlyMap<string, RegExp>
+/** Every urlRegex pattern in a flow, screened before its first step, and what runs them. */
+export interface UrlRegexes {
+  readonly patterns: ReadonlySet<string>
+  readonly matcher: UrlPatternMatcher
+}
 
 export async function evaluateCondition(
   page: AuthPage,
@@ -20,10 +24,9 @@ export async function evaluateCondition(
   if ('visible' in condition) return (await page.inspect(condition.visible))?.visible === true
   if ('urlContains' in condition) return urlContains(page.currentUrl(), condition.urlContains)
   if ('urlRegex' in condition) {
-    const regex = regexes.get(condition.urlRegex)
     // compileUrlRegexes saw every condition in the flow; one it didn't is not from this manifest.
-    if (regex === undefined) throw new SiteAdapterError('manifest', 'invalid')
-    return urlRegexMatches(page.currentUrl(), regex)
+    if (!regexes.patterns.has(condition.urlRegex)) throw new SiteAdapterError('manifest', 'invalid')
+    return urlRegexMatches(page.currentUrl(), condition.urlRegex, regexes.matcher)
   }
   if ('textPresent' in condition) return page.textPresent(condition.textPresent)
   if ('not' in condition) return !(await evaluateCondition(page, condition.not, regexes))
@@ -40,9 +43,9 @@ export async function evaluateCondition(
 }
 
 /**
- * The longest path and query a regular expression is run against. The regex runs synchronously in
- * the main process on a URL the site chose, and the screen at parse time only refuses the
- * exponential shapes, so the input is bounded too; a longer URL simply doesn't match.
+ * The longest path and query a regular expression is run against; a longer URL simply doesn't
+ * match. The worker's deadline is what bounds a slow pattern; this keeps what crosses to the worker
+ * small, and keeps an honest pattern well inside the deadline.
  */
 export const MAX_REGEX_INPUT = 2048
 
@@ -65,28 +68,35 @@ export function urlContains(url: string, text: string): boolean {
   return pathAndQuery(url)?.includes(text) ?? false
 }
 
-/** True when the URL's path and query match `regex`, if they are short enough to try. */
-export function urlRegexMatches(url: string, regex: RegExp): boolean {
+/**
+ * True when the URL's path and query match `pattern`, if they are short enough to try. The pattern
+ * runs in `matcher`'s worker, never on this thread.
+ */
+export async function urlRegexMatches(
+  url: string,
+  pattern: string,
+  matcher: UrlPatternMatcher,
+): Promise<boolean> {
   const target = pathAndQuery(url)
-  return target !== null && target.length <= MAX_REGEX_INPUT && regex.test(target)
+  if (target === null || target.length > MAX_REGEX_INPUT) return false
+  return (await matcher.test(pattern, target)) === true
 }
 
 /**
- * Compiles every urlRegex anywhere in the steps, in every branch, or returns null if any fails to
- * compile or to pass core's backtracking screen. The manifest schema screens them already; this
- * runs again because the flow can't know its manifest was parsed, and because a bad pattern in a
- * branch the flow rarely takes would otherwise only fail mid-flow, perhaps after secrets were typed.
+ * Every urlRegex anywhere in the steps, in every branch, or null if any fails to compile or to pass
+ * core's backtracking screen. The manifest schema screens them already; this runs again because the
+ * flow can't know its manifest was parsed, and because a bad pattern in a branch the flow rarely
+ * takes would otherwise only fail mid-flow, perhaps after secrets were typed. Compiling is cheap
+ * and happens here; matching, which is not, happens in the worker.
  */
-export function compileUrlRegexes(steps: readonly AuthStep[]): Map<string, RegExp> | null {
-  const regexes = new Map<string, RegExp>()
+export function compileUrlRegexes(steps: readonly AuthStep[]): Set<string> | null {
+  const patterns = new Set<string>()
   for (const pattern of urlRegexesIn(conditionsIn(steps))) {
-    if (regexes.has(pattern)) continue
+    if (patterns.has(pattern)) continue
     if (typeof pattern !== 'string' || !isScreenedPattern(pattern)) return null
-    // No flags, as the screen compiled it: in particular no g or y, so a shared RegExp keeps no
-    // lastIndex between tests.
-    regexes.set(pattern, new RegExp(pattern))
+    patterns.add(pattern)
   }
-  return regexes
+  return patterns
 }
 
 function conditionsIn(steps: readonly AuthStep[]): Condition[] {

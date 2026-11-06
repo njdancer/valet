@@ -11,7 +11,15 @@ import {
 } from '@siteadapter/core'
 import type { AuthFlowInput } from '../src/types'
 import { FakeAuthPage, type FakeSite } from './fake-auth-page'
-import { FakeClock, FakeGrantStore, FakeOtpReader, FakeProbe, FakeProvider, RecordingAudit } from './fakes'
+import {
+  FakeClock,
+  FakeGrantStore,
+  FakeOtpReader,
+  FakeProbe,
+  FakeProvider,
+  InProcessUrlMatcher,
+  RecordingAudit,
+} from './fakes'
 
 export const LOGIN = 'https://login.shop.test'
 export const WWW = 'https://www.shop.test'
@@ -143,6 +151,7 @@ export function world() {
   const probe = new FakeProbe(page)
   /** The runtime's copies of every secret typed, for redacting tool output. */
   const remembered: SecretValue[] = []
+  const urlMatcher = new InProcessUrlMatcher()
   const input: { -readonly [K in keyof AuthFlowInput]: AuthFlowInput[K] } = {
     manifest: parseManifest(structuredClone(MANIFEST)),
     adapterHash: HASH,
@@ -159,6 +168,7 @@ export function world() {
     sleep: clock.sleep,
     typingDelayMs: 40,
     flowTimeoutMs: 60_000,
+    urlMatcher,
   }
-  return { clock, page, grants, provider, otpReader, audit, probe, remembered, input }
+  return { clock, page, grants, provider, otpReader, audit, probe, remembered, urlMatcher, input }
 }

@@ -4,10 +4,12 @@ import {
   compileUrlRegexes,
   evaluateCondition,
   MAX_REGEX_INPUT,
+  type UrlRegexes,
   urlContains,
   urlRegexMatches,
 } from '../src/conditions'
 import { FakeAuthPage } from './fake-auth-page'
+import { InProcessUrlMatcher } from './fakes'
 import { LOGIN_PAGE, SITE } from './fixtures'
 
 function pageAtLogin(): FakeAuthPage {
@@ -16,7 +18,7 @@ function pageAtLogin(): FakeAuthPage {
   return page
 }
 
-const NO_REGEXES = new Map<string, RegExp>()
+const NO_REGEXES: UrlRegexes = { patterns: new Set(), matcher: new InProcessUrlMatcher() }
 
 describe('urlContains', () => {
   it('matches a substring of the path', () => {
@@ -62,32 +64,67 @@ describe('urlContains', () => {
 })
 
 describe('urlRegexMatches', () => {
-  it('matches the path and query', () => {
-    expect(urlRegexMatches('https://www.shop.test/account', /^\/account$/)).toBe(true)
-    expect(urlRegexMatches('https://www.shop.test/my/account', /^\/account$/)).toBe(false)
-    expect(urlRegexMatches('https://www.shop.test/login?step=otp', /step=otp$/)).toBe(true)
+  it('matches the path and query', async () => {
+    const matcher = new InProcessUrlMatcher()
+    expect(await urlRegexMatches('https://www.shop.test/account', '^/account$', matcher)).toBe(true)
+    expect(await urlRegexMatches('https://www.shop.test/my/account', '^/account$', matcher)).toBe(false)
+    expect(await urlRegexMatches('https://www.shop.test/login?step=otp', 'step=otp$', matcher)).toBe(true)
   })
 
-  it('never matches against the host, even with an unanchored pattern', () => {
-    expect(urlRegexMatches('https://account.evil.test/', /account/)).toBe(false)
+  it('hands the matcher only the path and query', async () => {
+    const matcher = new InProcessUrlMatcher()
+    await urlRegexMatches('https://user:pw@www.shop.test/login?step=otp#frag', 'x', matcher)
+    expect(matcher.tests).toEqual([{ pattern: 'x', text: '/login?step=otp' }])
   })
 
-  it('never matches against the fragment', () => {
-    expect(urlRegexMatches('https://www.shop.test/login#account', /account/)).toBe(false)
+  it('never matches against the host, even with an unanchored pattern', async () => {
+    expect(await urlRegexMatches('https://account.evil.test/', 'account', new InProcessUrlMatcher())).toBe(
+      false,
+    )
   })
 
-  it('does not run on a path and query longer than the cap', () => {
+  it('never matches against the fragment', async () => {
+    const url = 'https://www.shop.test/login#account'
+    expect(await urlRegexMatches(url, 'account', new InProcessUrlMatcher())).toBe(false)
+  })
+
+  it('does not run on a path and query longer than the cap', async () => {
+    const matcher = new InProcessUrlMatcher()
     const long = `https://www.shop.test/account?${'a'.repeat(MAX_REGEX_INPUT)}`
-    expect(urlRegexMatches(long, /^\/account/)).toBe(false)
+    expect(await urlRegexMatches(long, '^/account', matcher)).toBe(false)
+    expect(matcher.tests).toEqual([])
   })
 
-  it('runs on a path and query exactly at the cap', () => {
+  it('runs on a path and query exactly at the cap', async () => {
     const path = `/account?${'a'.repeat(MAX_REGEX_INPUT - '/account?'.length)}`
-    expect(urlRegexMatches(`https://www.shop.test${path}`, /^\/account/)).toBe(true)
+    expect(
+      await urlRegexMatches(`https://www.shop.test${path}`, '^/account', new InProcessUrlMatcher()),
+    ).toBe(true)
   })
 
-  it('does not match a URL it cannot parse', () => {
-    expect(urlRegexMatches('not a url', /url/)).toBe(false)
+  it('does not match a URL it cannot parse', async () => {
+    const matcher = new InProcessUrlMatcher()
+    expect(await urlRegexMatches('not a url', 'url', matcher)).toBe(false)
+    expect(matcher.tests).toEqual([])
+  })
+
+  it('reads anything but true from the matcher as no match', async () => {
+    const matcher = {
+      test: async () => 'yes' as unknown as boolean,
+      close: () => {},
+    }
+    expect(await urlRegexMatches('https://www.shop.test/', '.', matcher)).toBe(false)
+  })
+
+  it('passes on the matcher refusing a pattern', async () => {
+    const matcher = {
+      test: () => Promise.reject(new SiteAdapterError('auth-step', 'invalid')),
+      close: () => {},
+    }
+    await expect(urlRegexMatches('https://www.shop.test/', '.', matcher)).rejects.toMatchObject({
+      stage: 'auth-step',
+      errorClass: 'invalid',
+    })
   })
 })
 
@@ -97,7 +134,7 @@ describe('compileUrlRegexes', () => {
       { op: 'goto', url: LOGIN_PAGE },
       { op: 'waitFor', condition: { urlContains: '(' }, timeoutMs: 1000 },
     ])
-    expect(regexes).toEqual(new Map())
+    expect(regexes).toEqual(new Set())
   })
 
   it('compiles each distinct pattern once, wherever it appears', () => {
@@ -109,8 +146,7 @@ describe('compileUrlRegexes', () => {
         steps: [{ op: 'waitFor', condition: { urlRegex: 'step=otp' }, timeoutMs: 1000 }],
       },
     ])
-    expect([...(regexes?.keys() ?? [])]).toEqual(['^/account', 'step=otp'])
-    expect(regexes?.get('^/account')?.flags).toBe('')
+    expect([...(regexes ?? [])]).toEqual(['^/account', 'step=otp'])
   })
 
   it('refuses a pattern that does not compile', () => {
@@ -185,8 +221,10 @@ describe('evaluateCondition', () => {
   })
 
   it('urlRegex uses the compiled pattern for the current URL', async () => {
-    const regexes = new Map([['^/$', /^\/$/]])
+    const matcher = new InProcessUrlMatcher()
+    const regexes: UrlRegexes = { patterns: new Set(['^/$']), matcher }
     expect(await evaluateCondition(pageAtLogin(), { urlRegex: '^/$' }, regexes)).toBe(true)
+    expect(matcher.tests).toEqual([{ pattern: '^/$', text: '/' }])
   })
 
   it('urlRegex refuses a pattern that was not compiled up front, rather than compiling it now', async () => {

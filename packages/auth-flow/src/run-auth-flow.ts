@@ -5,6 +5,7 @@ import { compileUrlRegexes } from './conditions'
 import { checkAfterStep, FailStep, type FlowContext, NeedsUserHalt } from './context'
 import { assertLoggedIn, runSteps } from './interpreter'
 import type { AuthFlowInput, AuthOutcome } from './types'
+import { type UrlPatternMatcher, WorkerUrlMatcher } from './url-matcher'
 
 export async function runAuthFlow(input: AuthFlowInput): Promise<AuthOutcome> {
   try {
@@ -17,19 +18,34 @@ export async function runAuthFlow(input: AuthFlowInput): Promise<AuthOutcome> {
 }
 
 async function run(input: AuthFlowInput): Promise<AuthOutcome> {
-  const { manifest, audit, callId } = input
+  const { manifest } = input
   // Bad numbers would make every deadline check false and every poll loop endless.
   if (!isDuration(input.typingDelayMs) || !isDuration(input.flowTimeoutMs) || input.flowTimeoutMs === 0) {
     return { status: 'failed', stage: 'auth-step', errorClass: 'invalid' }
   }
-  const regexes = compileUrlRegexes(manifest.auth.steps)
-  if (regexes === null) return { status: 'failed', stage: 'manifest', errorClass: 'invalid' }
+  const patterns = compileUrlRegexes(manifest.auth.steps)
+  if (patterns === null) return { status: 'failed', stage: 'manifest', errorClass: 'invalid' }
+  // An injected matcher is the caller's to close; the default one is this run's.
+  const matcher = input.urlMatcher ?? new WorkerUrlMatcher()
+  try {
+    return await audited(input, matcher, patterns)
+  } finally {
+    if (matcher !== input.urlMatcher) matcher.close()
+  }
+}
+
+async function audited(
+  input: AuthFlowInput,
+  matcher: UrlPatternMatcher,
+  patterns: ReadonlySet<string>,
+): Promise<AuthOutcome> {
+  const { manifest, audit, callId } = input
   const startedAt = input.clock()
   const ctx: FlowContext = {
     input,
     startedAt,
     deadline: startedAt.getTime() + input.flowTimeoutMs,
-    regexes,
+    regexes: { patterns, matcher },
     probed: false,
   }
   if (!Number.isFinite(ctx.deadline)) return { status: 'failed', stage: 'auth-step', errorClass: 'internal' }
