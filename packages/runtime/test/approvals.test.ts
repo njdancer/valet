@@ -124,7 +124,7 @@ describe('ApprovalStore', () => {
     await expect(store.approvedHashes('woolworths')).rejects.toMatchObject({ errorClass: 'unavailable' })
   })
 
-  it('removes the temporary file when the rename fails', async () => {
+  it('refuses to write when the approvals path is not a readable file', async () => {
     const target = join(dir, 'is-a-directory')
     await mkdir(join(target, 'child'), { recursive: true })
     const store = new ApprovalStore(target)

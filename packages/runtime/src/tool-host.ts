@@ -174,7 +174,7 @@ export class ToolHost {
         adapterId: entry.definition.manifest.id,
         adapterHash: entry.bundleHash,
         tool: TOOL_NAME.test(request.tool) ? request.tool : '(invalid)',
-        client: request.client.slice(0, 100),
+        client: String(request.client).slice(0, 100),
         callId: request.callId,
       })
     } catch {

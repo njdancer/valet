@@ -242,6 +242,21 @@ describe('session.ensure', () => {
     expect(markers.marked.size).toBe(0)
   })
 
+  it('reports a re-probe that throws after login as a probe failure', async () => {
+    const { host, page, driver } = fixture(ensureOnce)
+    page.route('GET', SESSION_URL, loggedOut)
+    driver.onHandoff = () => {
+      page.route('GET', SESSION_URL, () => {
+        throw new Error('net::ERR_ABORTED')
+      })
+    }
+
+    expect(await host.call(call)).toEqual({
+      status: 'ok',
+      output: { status: 'failed', stage: 'probe', errorClass: 'internal' },
+    })
+  })
+
   it('shares one probe and one login between concurrent ensure() calls', async () => {
     const results: EnsureResult[][] = []
     const { host, page, authRunner } = fixture(

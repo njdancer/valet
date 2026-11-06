@@ -160,6 +160,51 @@ describe('circuit breaker', () => {
   })
 })
 
+describe('a breaker opened by another call mid-run', () => {
+  // Two adapters for one site share its breaker. The second adapter's tool is held at a gate
+  // until the first call has tripped the breaker, then tries to act.
+  for (const action of ['fetch', 'ensure'] as const) {
+    it(`refuses a ${action} without sending anything`, async () => {
+      let release: () => void = () => {}
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let seen: unknown
+      const { host, page } = fixture(fetchTrolley, { approvals: { isApproved: async () => true } })
+      const other = new FakeSessionDriver()
+      host.register({
+        definition: defineAdapter({
+          manifest: { ...manifest, id: 'example-shop-2' },
+          tools: {
+            run_test: tool({
+              input: z.object({}),
+              output: z.unknown(),
+              run: async (ctx) => {
+                await gate
+                const attempt = action === 'fetch' ? ctx.page.fetch('/api/trolley') : ctx.session.ensure()
+                seen = await attempt.catch((error: { errorClass: string }) => error.errorClass)
+                return seen
+              },
+            }),
+          },
+        }),
+        bundleHash: HASH,
+        driver: other,
+      })
+      page.route('GET', `${HOME}/api/trolley`, akamaiDenied)
+
+      const second = host.call({ ...call, adapterId: 'example-shop-2', callId: 'call-2' })
+      await flush()
+      expect(await host.call(call)).toMatchObject({ status: 'blocked' })
+      release()
+
+      expect(await second).toMatchObject({ status: 'blocked' })
+      expect(seen).toBe('blocked-by-site')
+      expect(other.page.fetches).toEqual([])
+    })
+  }
+})
+
 describe('rate budget', () => {
   it('spaces a tool’s requests by the minimum gap', async () => {
     const slept: number[] = []

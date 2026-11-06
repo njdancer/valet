@@ -334,6 +334,12 @@ describe('ToolHost.call: errors never leak', () => {
     expect(diagnostics).toHaveBeenCalledWith({ type: 'audit-write-failed', event: 'tool-finished' })
   })
 
+  it('tolerates a failed audit write with no diagnostics hook', async () => {
+    const { host, audit } = fixture(readTrolley, { diagnostics: undefined })
+    audit.failNext = 'tool-finished'
+    expect(await host.call(call)).toMatchObject({ status: 'ok' })
+  })
+
   it('caps the client name it records', async () => {
     const { host, audit } = fixture(readTrolley)
     await host.call({ ...call, client: 'c'.repeat(500) })
