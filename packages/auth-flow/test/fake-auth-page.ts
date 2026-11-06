@@ -5,6 +5,7 @@
 import {
   type AuthPage,
   type ElementInfo,
+  type FetchResult,
   httpsOrigin,
   type NeedsUserReason,
   originAllowed,
@@ -190,6 +191,15 @@ export class FakeAuthPage implements AuthPage {
     if (text instanceof SecretValue) await text.revealEach(keystroke)
     else for (const character of text) await keystroke(character)
     this.typed.push({ ...record, text: typed, secret })
+  }
+
+  // The flow probes through its AuthProbe hook, never through the page; these exist for the contract.
+  async fetch(_url: string): Promise<FetchResult> {
+    throw new SiteAdapterError('probe', 'unsupported')
+  }
+
+  async cookieNames(_cookieDomains: readonly string[]): Promise<readonly string[]> {
+    throw new SiteAdapterError('probe', 'unsupported')
   }
 
   async textPresent(text: string): Promise<boolean> {

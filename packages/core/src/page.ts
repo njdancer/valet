@@ -4,6 +4,7 @@
 import type { NeedsUserReason } from './errors'
 import type { Purpose, RequestDeclaration } from './request-surface'
 import type { SecretValue } from './secret'
+import type { BLOCK_REASONS } from './vocab'
 
 /** What the auth interpreter needs to know about an element before it types into it. */
 export interface ElementInfo {
@@ -52,6 +53,13 @@ export interface AuthPage {
    */
   type(text: string | SecretValue, options?: TypeOptions): Promise<void>
   textPresent(text: string): Promise<boolean>
+  /**
+   * GET `url` with the auth partition's cookies, for the session probe. Issued by the driver from
+   * outside the page (no script runs), and only to the manifest's navigation origins.
+   */
+  fetch(url: string): Promise<FetchResult>
+  /** Names (not values) of the auth partition's cookies on `cookieDomains`, for cookie probes. */
+  cookieNames(cookieDomains: readonly string[]): Promise<readonly string[]>
   /** Shows the window to the person and resolves when they close it. */
   handToUser(reason: NeedsUserReason): Promise<void>
   close(): Promise<void>
@@ -146,13 +154,6 @@ export interface BlockedRequest {
   readonly method: string
   /** Origin and path only. Hostnames can carry data too, so the runtime still redacts it. */
   readonly target: string
-  readonly reason:
-    | 'host-not-allowed'
-    | 'undeclared'
-    | 'denied-path'
-    | 'ambiguous-path'
-    | 'purpose-exceeded'
-    | 'request-ceiling'
-    | 'bad-url'
+  readonly reason: (typeof BLOCK_REASONS)[number]
   readonly initiator: 'tool' | 'page'
 }
