@@ -10,7 +10,7 @@ import { createDispatcher, IpcRefused, type MainApi, methodOf, type Sender } fro
 const PAGE = 'file:///Applications/siteadapter.app/Contents/Resources/app/out/renderer/index.html#/adapters'
 const isAppPage = (url: string) =>
   url.startsWith('file:///Applications/siteadapter.app/Contents/Resources/app/out/renderer/')
-const control: Sender = { role: 'control', frameUrl: PAGE, mainFrame: true }
+const control: Sender = { role: 'control', shows: null, frameUrl: PAGE, mainFrame: true }
 const HASH = 'a'.repeat(64)
 
 /** An API whose every method records its arguments and resolves with a marker. */
@@ -62,7 +62,7 @@ describe('channels', () => {
 
 describe('who may send', () => {
   const cases: [string, Sender][] = [
-    ['a window that is not ours', { role: null, frameUrl: PAGE, mainFrame: true }],
+    ['a window that is not ours', { role: null, shows: null, frameUrl: PAGE, mainFrame: true }],
     ['a subframe of our window', { ...control, mainFrame: false }],
     ['our window showing another page', { ...control, frameUrl: 'https://evil.test/index.html' }],
     ['our window showing a lookalike file', { ...control, frameUrl: 'file:///tmp/out/renderer/index.html' }],
@@ -203,17 +203,18 @@ describe('arguments', () => {
 })
 
 describe('confirmation answers', () => {
-  it('tells the service which window answered', async () => {
+  it('tells the service which window answered, and what that window was opened for', async () => {
     const { d, calls } = dispatcher()
     await d.dispatch(invokeChannel('answerConfirmation'), ['cf_abc', true], {
       role: 'confirmation',
+      shows: 'cf_abc',
       frameUrl: `${PAGE.split('#')[0]}#/confirm/cf_abc`,
       mainFrame: true,
     })
     await d.dispatch(invokeChannel('answerConfirmation'), ['cf_abc', true], control)
     expect(calls.map((c) => c.args)).toEqual([
-      ['cf_abc', true, 'confirmation'],
-      ['cf_abc', true, 'control'],
+      ['cf_abc', true, { role: 'confirmation', shows: 'cf_abc' }],
+      ['cf_abc', true, { role: 'control', shows: null }],
     ])
   })
 })
@@ -296,7 +297,8 @@ describe('every channel', () => {
   it.each(INVOKE_METHODS)('%s reaches its own API method with its arguments', async (method) => {
     const { d, calls } = dispatcher()
     await expect(d.dispatch(invokeChannel(method), valid[method], control)).resolves.toEqual({ method })
-    const expected = method === 'answerConfirmation' ? [...valid[method], 'control'] : valid[method]
+    const expected =
+      method === 'answerConfirmation' ? [...valid[method], { role: 'control', shows: null }] : valid[method]
     expect(calls).toEqual([{ method, args: expected }])
   })
 })

@@ -12,9 +12,21 @@ import { z } from './zod'
 /** Which of the app's windows sent a request. The main process assigns it when it opens the window. */
 export type WindowRole = 'control' | 'tray' | 'confirmation' | 'needs-user'
 
+/** One of the app's windows, as the main process recorded it when it opened the window. */
+export interface AppWindow {
+  readonly role: WindowRole
+  /**
+   * What the window was opened for: the confirmation id of a confirmation panel, the adapter id of
+   * a hand-off banner, null for the control panel and the tray.
+   */
+  readonly shows: string | null
+}
+
 export interface Sender {
   /** The window the request came from, or null for anything that isn't one of the app's windows. */
   readonly role: WindowRole | null
+  /** What that window was opened for (AppWindow.shows); null when it isn't one of ours. */
+  readonly shows: string | null
   /** The URL of the frame that sent it. */
   readonly frameUrl: string
   /** Whether that frame is its window's main frame. Subframes never speak for the app. */
@@ -31,7 +43,7 @@ export class IpcRefused extends Error {
 
 /** The service behind the channels: the API, plus who sent a confirmation answer. */
 export type MainApi = Omit<SiteAdapterApi, 'onEvent' | 'answerConfirmation'> & {
-  answerConfirmation(confirmationId: string, approved: boolean, from: WindowRole): Promise<void>
+  answerConfirmation(confirmationId: string, approved: boolean, from: AppWindow): Promise<void>
 }
 
 const MAX_TEXT = 10_000
@@ -143,7 +155,7 @@ const HANDLERS: Readonly<
   'attention.list': entry(none, (api) => api.attention.list()),
   answerConfirmation: entry(z.tuple([OPAQUE_ID, z.boolean()]), (api, [id, approved], sender) =>
     // The sender's role is non-null here: untrusted senders never reach a handler.
-    api.answerConfirmation(id, approved, sender.role as WindowRole),
+    api.answerConfirmation(id, approved, { role: sender.role as WindowRole, shows: sender.shows }),
   ),
   openLoginWindow: entry(z.tuple([ADAPTER_ID]), (api, [id]) => api.openLoginWindow(id)),
   finishLogin: entry(z.tuple([ADAPTER_ID]), (api, [id]) => api.finishLogin(id)),

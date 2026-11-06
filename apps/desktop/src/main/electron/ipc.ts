@@ -14,8 +14,10 @@ import type { AppWindows } from './windows'
 function senderOf(event: IpcMainInvokeEvent, windows: AppWindows): Sender {
   const frame = event.senderFrame
   const main = event.sender.mainFrame
+  const window = windows.windowOf(event.sender)
   return {
-    role: windows.roleOf(event.sender),
+    role: window?.role ?? null,
+    shows: window?.shows ?? null,
     frameUrl: frame?.url ?? '',
     mainFrame:
       frame !== null &&

@@ -2,7 +2,8 @@
 // client. Everything on the panel but the adapter's note is the runtime's own knowledge.
 //
 // An approval counts only when:
-// - it comes from the confirmation window itself (decline is accepted from any app window);
+// - it comes from the confirmation window opened for this very request, not another confirmation
+//   panel (decline is accepted from any app window);
 // - the window has been shown, and CONFIRM_ARM_MS have passed since it was last shown or focused,
 //   so a click already on its way in another app can't land on Approve;
 // - the request is still pending and hasn't expired. Unanswered, it declines itself at expiry.
@@ -10,7 +11,7 @@
 import type { AdapterManifest } from '@siteadapter/core'
 import type { ConfirmationAnswer, ConfirmationPrompt, ConfirmationRequest } from '@siteadapter/runtime'
 import { CONFIRM_ARM_MS, type ConfirmationItem, type PreviewPart } from '../../shared/api'
-import type { WindowRole } from './ipc'
+import type { AppWindow } from './ipc'
 import { previewParts } from './run-memory'
 
 export interface ConfirmationAdapter {
@@ -125,7 +126,7 @@ export class ConfirmationBroker implements ConfirmationPrompt {
   }
 
   /** Throws ConfirmationRefused for anything but a valid answer to a pending request. */
-  answer(id: string, approved: boolean, from: WindowRole): void {
+  answer(id: string, approved: boolean, from: AppWindow): void {
     const entry = this.pending.get(id)
     if (entry === undefined) throw new ConfirmationRefused()
     const now = this.options.now()
@@ -134,7 +135,8 @@ export class ConfirmationBroker implements ConfirmationPrompt {
       throw new ConfirmationRefused()
     }
     if (approved) {
-      if (from !== 'confirmation') throw new ConfirmationRefused()
+      // With two pending, panel A must not approve B, which the person never saw armed.
+      if (from.role !== 'confirmation' || from.shows !== id) throw new ConfirmationRefused()
       if (entry.armedAt === null || now - entry.armedAt < CONFIRM_ARM_MS) throw new ConfirmationRefused()
     }
     entry.resolve(approved ? 'approved' : 'declined')

@@ -392,13 +392,23 @@ describe('tool calls', () => {
     expect(item?.approvedAt).toBe('2026-11-07T00:00:00.000Z')
     expect(JSON.stringify(item?.input)).toContain('milk')
     // Not yet shown, from the wrong window, and too soon after showing: all refused.
-    await expect(s.api.answerConfirmation(id as string, true, 'confirmation')).rejects.toThrow()
+    await expect(
+      s.api.answerConfirmation(id as string, true, { role: 'confirmation', shows: id as string }),
+    ).rejects.toThrow()
     s.service.confirmationArmed(id as string)
-    await expect(s.api.answerConfirmation(id as string, true, 'control')).rejects.toThrow()
-    await expect(s.api.answerConfirmation(id as string, true, 'confirmation')).rejects.toThrow()
+    await expect(
+      s.api.answerConfirmation(id as string, true, { role: 'control', shows: null }),
+    ).rejects.toThrow()
+    await expect(
+      s.api.answerConfirmation(id as string, true, { role: 'confirmation', shows: id as string }),
+    ).rejects.toThrow()
     s.advance(CONFIRM_ARM_MS)
+    // Armed, but from a confirmation panel opened for some other request.
+    await expect(
+      s.api.answerConfirmation(id as string, true, { role: 'confirmation', shows: 'cf_other' }),
+    ).rejects.toThrow()
     expect(s.service.confirmationPending(id as string)).toBe(true)
-    await s.api.answerConfirmation(id as string, true, 'confirmation')
+    await s.api.answerConfirmation(id as string, true, { role: 'confirmation', shows: id as string })
     expect(await pending).toEqual({ status: 'ok', output: { added: true } })
     expect(s.ui.closedConfirmations).toEqual([id])
     const records = await s.api.audit.page({ category: 'confirmations' })
@@ -414,7 +424,7 @@ describe('tool calls', () => {
     const pending = s.call('add', { item: 'milk' })
     for (let i = 0; i < 50 && s.ui.shownConfirmations.length === 0; i++)
       await new Promise((r) => setTimeout(r, 10))
-    await s.api.answerConfirmation(s.ui.shownConfirmations[0] as string, false, 'tray')
+    await s.api.answerConfirmation(s.ui.shownConfirmations[0] as string, false, { role: 'tray', shows: null })
     expect(await pending).toEqual({ status: 'ok', output: { added: false } })
   })
 })
@@ -495,7 +505,7 @@ describe('the login window', () => {
     expect(s.driver.handoffs).toEqual([])
     // A call that arrives now waits for the hand-off.
     const echo = s.call('echo', { text: 'x' })
-    await s.api.answerConfirmation(s.ui.shownConfirmations[0] as string, false, 'tray')
+    await s.api.answerConfirmation(s.ui.shownConfirmations[0] as string, false, { role: 'tray', shows: null })
     expect(await pending).toEqual({ status: 'ok', output: { added: false } })
     await finishing
     expect((await echo).status).toBe('ok')

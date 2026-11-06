@@ -11,7 +11,7 @@ import { BrowserWindow, type Rectangle, screen, session, type WebContents } from
 import { parseRoute } from '../../renderer/lib/routes'
 import type { HashRoute } from '../../shared/api'
 import { aboveWindow, topRight, underTrayIcon } from '../core/geometry'
-import type { WindowRole } from '../core/ipc'
+import type { AppWindow, WindowRole } from '../core/ipc'
 import { isAppPage, type Page, pageUrl, type RendererBase, windowTitle } from '../core/launch'
 
 export interface WindowsOptions {
@@ -29,7 +29,8 @@ const TRAY_SIZE = { width: 400, height: 640 }
 const BANNER_HEIGHT = 168
 
 export class AppWindows {
-  private readonly roles = new Map<number, WindowRole>()
+  /** By webContents id: each window's role and what it was opened for. */
+  private readonly windows = new Map<number, AppWindow>()
   private control: BrowserWindow | null = null
   private tray: BrowserWindow | null = null
   private readonly confirmations = new Map<string, BrowserWindow>()
@@ -37,9 +38,9 @@ export class AppWindows {
 
   constructor(private readonly options: WindowsOptions) {}
 
-  /** The role of the window a request came from, or null for anything that isn't ours. */
-  roleOf(contents: WebContents): WindowRole | null {
-    return this.roles.get(contents.id) ?? null
+  /** The window a request came from, or null for anything that isn't ours. */
+  windowOf(contents: WebContents): AppWindow | null {
+    return this.windows.get(contents.id) ?? null
   }
 
   /** Every live window of ours, for the event channel. */
@@ -244,8 +245,8 @@ export class AppWindows {
       },
     })
     const contents = window.webContents
-    this.roles.set(contents.id, role)
-    window.on('closed', () => this.roles.delete(contents.id))
+    this.windows.set(contents.id, { role, shows: detail === '' ? null : detail })
+    window.on('closed', () => this.windows.delete(contents.id))
     // The window keeps the title we gave it, not the one in its HTML, and so does the document, so
     // tests that read either see the same deterministic title.
     const title = window.getTitle()

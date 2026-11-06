@@ -63,7 +63,7 @@ import {
 import type { Credentials } from './credentials'
 import { ensurePrivateDir, JsonDocument } from './files'
 import { checkGrantRequest, grantInfo } from './grants'
-import type { MainApi, WindowRole } from './ipc'
+import type { AppWindow, MainApi } from './ipc'
 import { createAuthRunner, Handoffs, SessionTracker } from './login'
 import { type ApprovedSnapshot, type BuiltinAdapter, SnapshotStore } from './registry'
 import { RunMemory } from './run-memory'
@@ -664,7 +664,7 @@ export class AppService {
           return [...this.handoffs.list(), ...this.broker.list(), ...reviews]
         },
       },
-      answerConfirmation: async (confirmationId: string, approved: boolean, from: WindowRole) => {
+      answerConfirmation: async (confirmationId: string, approved: boolean, from: AppWindow) => {
         this.broker.answer(confirmationId, approved, from)
       },
       // The person's own login work: never while the site's breaker is open, and never alongside a

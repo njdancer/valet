@@ -12,8 +12,9 @@ import { ManualTimers, SHOP } from './fixtures'
 const HASH = 'd'.repeat(64)
 const TIMEOUT = 120_000
 
-function setup() {
+function setup(ids: readonly string[] = ['cf_1']) {
   let now = 1_000_000
+  let asked = 0
   const timers = new ManualTimers()
   const shown: string[] = []
   const closed: string[] = []
@@ -37,7 +38,7 @@ function setup() {
     now: () => now,
     timeoutMs: TIMEOUT,
     timers,
-    newId: () => 'cf_1',
+    newId: () => ids[Math.min(asked++, ids.length - 1)] as string,
   })
   return {
     broker,
@@ -117,7 +118,7 @@ describe('ConfirmationBroker', () => {
     const answer = broker.ask(toolRequest, new AbortController().signal)
     broker.armed('cf_1')
     advance(CONFIRM_ARM_MS)
-    broker.answer('cf_1', true, 'confirmation')
+    broker.answer('cf_1', true, { role: 'confirmation', shows: 'cf_1' })
     await expect(answer).resolves.toBe('approved')
     expect(closed).toEqual(['cf_1'])
     expect(broker.list()).toEqual([])
@@ -127,7 +128,9 @@ describe('ConfirmationBroker', () => {
     const { broker, advance } = setup()
     void broker.ask(toolRequest, new AbortController().signal)
     advance(10_000)
-    expect(() => broker.answer('cf_1', true, 'confirmation')).toThrow(ConfirmationRefused)
+    expect(() => broker.answer('cf_1', true, { role: 'confirmation', shows: 'cf_1' })).toThrow(
+      ConfirmationRefused,
+    )
     expect(broker.has('cf_1')).toBe(true)
   })
 
@@ -136,11 +139,15 @@ describe('ConfirmationBroker', () => {
     void broker.ask(toolRequest, new AbortController().signal)
     broker.armed('cf_1')
     advance(CONFIRM_ARM_MS - 1)
-    expect(() => broker.answer('cf_1', true, 'confirmation')).toThrow(ConfirmationRefused)
+    expect(() => broker.answer('cf_1', true, { role: 'confirmation', shows: 'cf_1' })).toThrow(
+      ConfirmationRefused,
+    )
     advance(1)
     broker.armed('cf_1') // the window regained focus
     advance(CONFIRM_ARM_MS - 1)
-    expect(() => broker.answer('cf_1', true, 'confirmation')).toThrow(ConfirmationRefused)
+    expect(() => broker.answer('cf_1', true, { role: 'confirmation', shows: 'cf_1' })).toThrow(
+      ConfirmationRefused,
+    )
   })
 
   it.each(['control', 'tray', 'needs-user'] as const)('refuses an approval from the %s window', (role) => {
@@ -148,22 +155,53 @@ describe('ConfirmationBroker', () => {
     void broker.ask(toolRequest, new AbortController().signal)
     broker.armed('cf_1')
     advance(CONFIRM_ARM_MS)
-    expect(() => broker.answer('cf_1', true, role)).toThrow(ConfirmationRefused)
+    expect(() => broker.answer('cf_1', true, { role, shows: null })).toThrow(ConfirmationRefused)
+  })
+
+  it('refuses an approval from the panel of another pending confirmation', async () => {
+    const { broker, advance, shown } = setup(['cf_a', 'cf_b'])
+    const a = broker.ask(toolRequest, new AbortController().signal)
+    const b = broker.ask(toolRequest, new AbortController().signal)
+    expect(shown).toEqual(['cf_a', 'cf_b'])
+    broker.armed('cf_a')
+    broker.armed('cf_b')
+    advance(CONFIRM_ARM_MS)
+    // Panel A's renderer tries to approve B, which the person never saw armed in A.
+    expect(() => broker.answer('cf_b', true, { role: 'confirmation', shows: 'cf_a' })).toThrow(
+      ConfirmationRefused,
+    )
+    expect(() => broker.answer('cf_b', true, { role: 'confirmation', shows: null })).toThrow(
+      ConfirmationRefused,
+    )
+    expect(broker.has('cf_b')).toBe(true)
+    // Each panel answers its own.
+    broker.answer('cf_a', true, { role: 'confirmation', shows: 'cf_a' })
+    broker.answer('cf_b', true, { role: 'confirmation', shows: 'cf_b' })
+    await expect(a).resolves.toBe('approved')
+    await expect(b).resolves.toBe('approved')
+  })
+
+  it('takes a decline of another confirmation from a panel, as from any window', async () => {
+    const { broker } = setup(['cf_a', 'cf_b'])
+    void broker.ask(toolRequest, new AbortController().signal)
+    const b = broker.ask(toolRequest, new AbortController().signal)
+    broker.answer('cf_b', false, { role: 'confirmation', shows: 'cf_a' })
+    await expect(b).resolves.toBe('declined')
   })
 
   it('accepts a decline from any window, at once', async () => {
     const { broker } = setup()
     const answer = broker.ask(toolRequest, new AbortController().signal)
-    broker.answer('cf_1', false, 'tray')
+    broker.answer('cf_1', false, { role: 'tray', shows: null })
     await expect(answer).resolves.toBe('declined')
   })
 
   it('refuses an id that was answered or never existed', () => {
     const { broker } = setup()
     void broker.ask(toolRequest, new AbortController().signal)
-    broker.answer('cf_1', false, 'control')
-    expect(() => broker.answer('cf_1', false, 'control')).toThrow(ConfirmationRefused)
-    expect(() => broker.answer('cf_2', false, 'control')).toThrow(ConfirmationRefused)
+    broker.answer('cf_1', false, { role: 'control', shows: null })
+    expect(() => broker.answer('cf_1', false, { role: 'control', shows: null })).toThrow(ConfirmationRefused)
+    expect(() => broker.answer('cf_2', false, { role: 'control', shows: null })).toThrow(ConfirmationRefused)
   })
 
   it('declines itself at expiry, and refuses an answer that arrives after it', async () => {
@@ -171,7 +209,9 @@ describe('ConfirmationBroker', () => {
     const answer = broker.ask(toolRequest, new AbortController().signal)
     broker.armed('cf_1')
     advance(TIMEOUT)
-    expect(() => broker.answer('cf_1', true, 'confirmation')).toThrow(ConfirmationRefused)
+    expect(() => broker.answer('cf_1', true, { role: 'confirmation', shows: 'cf_1' })).toThrow(
+      ConfirmationRefused,
+    )
     await expect(answer).resolves.toBe('timed-out')
     const second = broker.ask(toolRequest, new AbortController().signal)
     timers.fire()
