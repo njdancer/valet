@@ -284,6 +284,15 @@ export class HarnessAuthPage implements AuthPage {
     }
   }
 
+  // The flow probes through its AuthProbe hook, never through the page; these exist for the contract.
+  async fetch(_url: string): Promise<FetchResult> {
+    throw new SiteAdapterError('probe', 'unsupported')
+  }
+
+  async cookieNames(_cookieDomains: readonly string[]): Promise<readonly string[]> {
+    throw new SiteAdapterError('probe', 'unsupported')
+  }
+
   async textPresent(text: string): Promise<boolean> {
     return this.tab.doc.text.includes(text)
   }
