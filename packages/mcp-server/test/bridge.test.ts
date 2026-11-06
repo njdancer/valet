@@ -199,7 +199,12 @@ describe('runBridge', () => {
     const result = await client.callTool({ name: 'woolworths_search_products', arguments: { query: 'milk' } })
 
     expect(result.isError).toBe(true)
-    expect(result.content).toEqual([{ type: 'text', text: 'the person declined this action' }])
+    expect(result.content).toEqual([
+      {
+        type: 'text',
+        text: 'The person did not approve this action in the siteadapter app (stage confirm: declined).',
+      },
+    ])
   })
 
   it('relays list_changed notifications from the endpoint', async () => {

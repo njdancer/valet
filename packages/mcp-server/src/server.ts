@@ -5,7 +5,7 @@
 import { randomUUID } from 'node:crypto'
 import { McpServer, type RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js'
-import { toReportable } from '@siteadapter/core'
+import { NeedsUserError, type ToolDeclaration, toReportable } from '@siteadapter/core'
 import { z } from 'zod'
 import { failedResult, toolResult } from './results'
 import type { CallOutcome, ListedTool, ToolCaller } from './tool-caller'
@@ -63,6 +63,9 @@ export function createMcpServer(
         signal,
       })
     } catch (error) {
+      // A runtime that throws rather than returns needsUser still gets the person asked, not a failure.
+      if (error instanceof NeedsUserError)
+        return toolResult({ status: 'needsUser', reason: error.reason }, structured)
       const { stage, errorClass } = toReportable(error, 'tool-run')
       return failedResult(stage, errorClass)
     }
@@ -80,7 +83,7 @@ export function createMcpServer(
       name,
       {
         title: listed.declaration.title,
-        description: listed.declaration.description,
+        description: toolDescription(listed.declaration),
         inputSchema: input,
         ...(output === undefined ? {} : { outputSchema: output }),
         annotations: annotationsFor(listed.declaration.sideEffect),
@@ -102,6 +105,19 @@ export function createMcpServer(
   }
   refresh()
   return { server, refresh, apply }
+}
+
+/**
+ * Appended to an irreversible tool's description. Fixed text, never the adapter's: an adapter could
+ * otherwise tell the agent that confirming is its job, or that no confirmation is needed.
+ */
+export const IRREVERSIBLE_NOTE =
+  'The person must confirm this action in the siteadapter app before it runs. You cannot confirm it for them.'
+
+/** The manifest's description, plus the fixed confirmation note for irreversible tools. */
+export function toolDescription(declaration: ToolDeclaration): string {
+  if (declaration.sideEffect !== 'irreversible') return declaration.description
+  return `${declaration.description}\n\n${IRREVERSIBLE_NOTE}`
 }
 
 /**
