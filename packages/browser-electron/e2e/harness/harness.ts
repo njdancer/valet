@@ -62,6 +62,7 @@ function manifest(site: TestSite, id = 'e2e'): AdapterManifest {
     auth: { steps: [{ op: 'assertLoggedIn' }], frameOrigins: [site.url('captcha.test')] },
     requests: [
       { method: 'GET', path: '/echo', purpose: 'read' },
+      { method: 'GET', path: '/api/cart', purpose: 'read' },
       { method: 'POST', path: '/checkout/place', purpose: 'irreversible' },
     ],
     limits: { requestsPerRun: 5 },
@@ -179,6 +180,8 @@ async function setup() {
     typingDelayMs: 15,
     stepTimeoutMs: 10_000,
     egressPorts: [site.port],
+    // Small, so that the asset-budget scenario can reach it; the test pages load few assets.
+    assetsPerRun: 80,
     ...(process.env.E2E_CLIENT_HINTS === undefined ? {} : { clientHints: 'chrome' as const }),
   }
   const local = {
@@ -546,6 +549,102 @@ async function setup() {
             (b) => `${b.method} ${b.target.replace(site.url('site.test'), '')} ${b.reason} ${b.initiator}`,
           ),
         seen,
+      }
+    },
+
+    // Adapter code reaches an undeclared GET under the API root by every route page script has
+    // that isn't fetch(): an image, a script, a stylesheet, an iframe, location= and page.goto.
+    apiRoutes: async () => {
+      begin('read', 20)
+      const page = await driver.toolPage()
+      await page.goto(site.url('site.test', '/'))
+      const from = blocked.length
+      const routes = await settle(
+        page.evaluate(
+          `(async () => {
+            const loaded = (element) => new Promise((resolve) => {
+              element.onload = () => resolve('loaded')
+              element.onerror = () => resolve('error')
+              setTimeout(() => resolve('timeout'), 1500)
+              document.body.append(element)
+            })
+            const image = new Image(); image.src = '/api/cart/add?via=img'
+            const encoded = new Image(); encoded.src = '/static/..%2Fapi/cart/add?via=encoded'
+            const script = document.createElement('script'); script.src = '/api/cart/add?via=script'
+            const style = document.createElement('link'); style.rel = 'stylesheet'; style.href = '/api/cart/add?via=css'
+            const frame = document.createElement('iframe'); frame.src = '/api/cart/add?via=iframe'
+            return {
+              image: await loaded(image),
+              encoded: await loaded(encoded),
+              script: await loaded(script),
+              style: await loaded(style),
+              frame: await loaded(frame),
+            }
+          })()`,
+        ),
+      )
+      await settle(page.evaluate(`(location.href = '/api/cart/add?via=location', null)`))
+      await sleep(500)
+      await page.goto(site.url('site.test', '/'))
+      const viaGoto = await settle(page.goto(site.url('site.test', '/api/cart/add?via=goto')))
+      // The declared GET, as an image, still loads: the root holds pages to the surface, it doesn't
+      // forbid them.
+      await page.goto(site.url('site.test', '/'))
+      const declared = await settle(
+        page.evaluate(
+          `new Promise((resolve) => { const i = new Image(); i.onload = i.onerror = () => resolve('done'); i.src = '/api/cart?via=img' })`,
+        ),
+      )
+      driver.endRun()
+      return {
+        routes,
+        viaGoto,
+        declared,
+        reasons: blocked
+          .slice(from)
+          .map((b) => `${b.method} ${b.target.replace(site.url('site.test'), '')} ${b.reason}`),
+        reachedAdd: site.requests.filter((r) => r.path.includes('cart/add')).length,
+        reachedCart: site.requests.filter((r) => r.path === '/api/cart').length,
+      }
+    },
+
+    // Page script loads one image after another: the asset budget (80 here) cuts it off.
+    assetBudget: async () => {
+      begin()
+      const page = await driver.toolPage()
+      await page.goto(site.url('site.test', '/'))
+      const from = blocked.length
+      const pixels = () => site.requests.filter((r) => r.path === '/pixel').length
+      const before = pixels()
+      const load = (count: number, tag: string) =>
+        page.evaluate(
+          `(async () => {
+            let loaded = 0
+            for (let i = 0; i < args.count; i++) {
+              await new Promise((resolve) => {
+                const image = new Image()
+                image.onload = image.onerror = resolve
+                image.src = '/pixel?' + args.tag + '=' + i
+              })
+            }
+            return loaded
+          })()`,
+          { count, tag },
+        )
+      await load(81, 'run')
+      const inRun = pixels() - before
+      begin()
+      await load(1, 'next')
+      const nextRun = pixels() - before - inRun
+      driver.endRun()
+      return {
+        inRun,
+        nextRun,
+        reasons: [
+          ...new Set(
+            blocked.slice(from).map((b) => `${b.target.replace(site.url('site.test'), '')} ${b.reason}`),
+          ),
+        ],
       }
     },
 

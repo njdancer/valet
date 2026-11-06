@@ -1,12 +1,14 @@
 import type { RequestDeclaration, ToolRunPolicy } from '@siteadapter/core'
 import { describe, expect, it } from 'vitest'
 import {
+  apiRoots,
   authNavigationAllowed,
   decideToolRequest,
   egressAllowed,
   isApiCall,
   purposeAllowed,
   requestTarget,
+  underApiRoot,
 } from '../src/guards'
 
 const navigation = ['https://www.example.com', 'https://login.example.com']
@@ -285,6 +287,82 @@ describe('purposeAllowed', () => {
     expect(purposeAllowed('admin' as never, 'irreversible', true)).toBe(false)
     expect(purposeAllowed('read', 'everything' as never, true)).toBe(false)
   })
+
+  it('allows nothing for a maximum or a purpose that is a name on Object.prototype', () => {
+    for (const name of ['toString', '__proto__', 'constructor', 'hasOwnProperty', 'valueOf']) {
+      expect(purposeAllowed('write', name as never, false)).toBe(false)
+      expect(purposeAllowed('read', name as never, true)).toBe(false)
+      expect(purposeAllowed(name as never, 'irreversible', true)).toBe(false)
+    }
+  })
+})
+
+describe('apiRoots', () => {
+  it('takes each declaration up to and including its first literal segment, lower-cased', () => {
+    expect(
+      apiRoots([
+        { method: 'GET', path: '/apis/ui/Trolley', purpose: 'read' },
+        { method: 'GET', path: '/:locale/API/cart', purpose: 'read' },
+        { method: 'GET', path: '/*', purpose: 'read' },
+        { method: 'POST', path: '/:id', purpose: 'read' },
+        { method: 'GET', path: '/', purpose: 'read' },
+      ]),
+    ).toEqual([['apis'], [':locale', 'api'], ['*'], [':id'], []])
+  })
+})
+
+describe('underApiRoot', () => {
+  const roots = apiRoots(REQUESTS)
+
+  it('covers every path under a declaration’s first segment, declared or not', () => {
+    for (const path of ['/apis', '/apis/ui/Trolley', '/apis/ui/Trolley/Add', '/apis/anything/else']) {
+      expect(underApiRoot(path, roots), path).toBe(true)
+    }
+  })
+
+  it('leaves the site’s pages and assets alone', () => {
+    for (const path of ['/', '/shop/browse', '/apisx/ui', '/static/apis/logo.png', '/livestream']) {
+      expect(underApiRoot(path, roots), path).toBe(false)
+    }
+  })
+
+  it('sees through case, encodings, double encodings, matrix parameters and empty segments', () => {
+    for (const path of ['/APIS/ui/Trolley', '/%61pis/x', '/%2561pis/x', '/apis;v=1/x', '//apis/x']) {
+      expect(underApiRoot(path, roots), path).toBe(true)
+    }
+  })
+
+  it('sees through an encoded slash or backslash that a server might decode and resolve', () => {
+    for (const path of ['/static/..%2Fapis/ui/Trolley', '/static%2F..%2Fapis/x', '/a/b/..%5C..%5Capis/x']) {
+      expect(underApiRoot(path, roots), path).toBe(true)
+    }
+  })
+
+  it('still covers a path a server that leaves encoded slashes alone would route to the API', () => {
+    expect(underApiRoot('/apis/..%2Fstatic/logo.png', roots)).toBe(true)
+  })
+
+  it('matches a parameter in a root against any one segment', () => {
+    const locale = apiRoots([{ method: 'GET', path: '/:locale/api/cart', purpose: 'read' }])
+    expect(underApiRoot('/en-au/api/cart/add', locale)).toBe(true)
+    expect(underApiRoot('/en-au/shop', locale)).toBe(false)
+    expect(underApiRoot('/en-au', locale)).toBe(false)
+  })
+
+  it('fails closed for a declaration with no literal segment', () => {
+    expect(underApiRoot('/shop/browse', apiRoots([{ method: 'GET', path: '/*', purpose: 'read' }]))).toBe(
+      true,
+    )
+    expect(underApiRoot('/shop', apiRoots([{ method: 'POST', path: '/:id', purpose: 'read' }]))).toBe(true)
+    const bare = apiRoots([{ method: 'POST', path: '/', purpose: 'read' }])
+    expect(underApiRoot('/', bare)).toBe(true)
+    expect(underApiRoot('/shop', bare)).toBe(false)
+  })
+
+  it('keeps a segment that does not decode as it is', () => {
+    expect(underApiRoot('/%E0%A4%A/x', roots)).toBe(false)
+    expect(underApiRoot('/apis/%E0%A4%A', roots)).toBe(true)
+  })
 })
 
 describe('decideToolRequest', () => {
@@ -296,7 +374,7 @@ describe('decideToolRequest', () => {
         EGRESS,
         false,
       ),
-    ).toEqual({ allowed: true, counts: true })
+    ).toEqual({ allowed: true, counts: 'request' })
     expect(
       decideToolRequest(
         { url: 'https://www.example.com/apis/ui/product/detail/123?x=1', method: 'get', resourceType: 'xhr' },
@@ -304,10 +382,10 @@ describe('decideToolRequest', () => {
         EGRESS,
         false,
       ),
-    ).toEqual({ allowed: true, counts: true })
+    ).toEqual({ allowed: true, counts: 'request' })
   })
 
-  it('allows navigations and counts them, and allows assets without counting them', () => {
+  it('allows navigations and counts them toward the ceiling, and assets toward the asset budget', () => {
     expect(
       decideToolRequest(
         { url: 'https://www.example.com/shop/browse', method: 'GET', resourceType: 'mainFrame' },
@@ -315,7 +393,7 @@ describe('decideToolRequest', () => {
         EGRESS,
         false,
       ),
-    ).toEqual({ allowed: true, counts: true })
+    ).toEqual({ allowed: true, counts: 'request' })
     expect(
       decideToolRequest(
         { url: 'https://www.example.com/frame', method: 'GET', resourceType: 'subFrame' },
@@ -323,7 +401,7 @@ describe('decideToolRequest', () => {
         EGRESS,
         false,
       ),
-    ).toEqual({ allowed: true, counts: true })
+    ).toEqual({ allowed: true, counts: 'request' })
     for (const resourceType of ['image', 'script', 'stylesheet', 'font', 'media']) {
       expect(
         decideToolRequest(
@@ -333,8 +411,97 @@ describe('decideToolRequest', () => {
           false,
         ),
         resourceType,
-      ).toEqual({ allowed: true, counts: false })
+      ).toEqual({ allowed: true, counts: 'asset' })
     }
+  })
+
+  it('holds a GET of any type to the surface under an API root: images, scripts and frames too', () => {
+    // Page script chooses the type: new Image(), <script src>, an iframe, location=.
+    for (const resourceType of ['image', 'script', 'stylesheet', 'font', 'media', 'mainFrame', 'subFrame']) {
+      expect(
+        decideToolRequest(
+          { url: 'https://www.example.com/apis/ui/Trolley/Add?id=1', method: 'GET', resourceType },
+          READ,
+          EGRESS,
+          false,
+        ),
+        resourceType,
+      ).toEqual({ allowed: false, reason: 'undeclared' })
+    }
+  })
+
+  it('counts a declared GET under an API root toward the ceiling, whatever its type', () => {
+    for (const resourceType of ['image', 'script', 'mainFrame', 'subFrame']) {
+      expect(
+        decideToolRequest(
+          { url: 'https://www.example.com/apis/ui/Trolley', method: 'GET', resourceType },
+          READ,
+          EGRESS,
+          false,
+        ),
+        resourceType,
+      ).toEqual({ allowed: true, counts: 'request' })
+    }
+  })
+
+  it('holds a GET under an API root on every egress host, a CDN’s included', () => {
+    expect(
+      decideToolRequest(
+        { url: 'https://img.cdn.example.com/apis/ui/Orders', method: 'GET', resourceType: 'image' },
+        READ,
+        EGRESS,
+        false,
+      ),
+    ).toEqual({ allowed: false, reason: 'undeclared' })
+  })
+
+  it('refuses an image through an encoded slash into an API root as ambiguous', () => {
+    expect(
+      decideToolRequest(
+        { url: 'https://www.example.com/static/..%2Fapis/ui/Trolley', method: 'GET', resourceType: 'image' },
+        READ,
+        EGRESS,
+        false,
+      ),
+    ).toEqual({ allowed: false, reason: 'ambiguous-path' })
+  })
+
+  it('takes the API roots from the whole manifest, so a read run cannot reach write-only roots', () => {
+    const declared = [{ method: 'POST', path: '/cart/update', purpose: 'write' } as const]
+    const readRun = { ...READ, requests: REQUESTS.filter((d) => d.purpose === 'read') }
+    expect(
+      decideToolRequest(
+        { url: 'https://www.example.com/cart/update?add=1', method: 'GET', resourceType: 'image' },
+        readRun,
+        EGRESS,
+        false,
+        declared,
+      ),
+    ).toEqual({ allowed: false, reason: 'undeclared' })
+    // Without the manifest's declarations, /cart is just a page.
+    expect(
+      decideToolRequest(
+        { url: 'https://www.example.com/cart/update?add=1', method: 'GET', resourceType: 'image' },
+        readRun,
+        EGRESS,
+        false,
+      ),
+    ).toEqual({ allowed: true, counts: 'asset' })
+  })
+
+  it('refuses a write declaration reached as an image in a read run', () => {
+    const policy = {
+      ...READ,
+      requests: [{ method: 'GET', path: '/apis/cart/add', purpose: 'write' } as const],
+    }
+    expect(
+      decideToolRequest(
+        { url: 'https://www.example.com/apis/cart/add', method: 'GET', resourceType: 'image' },
+        policy,
+        EGRESS,
+        false,
+      ),
+    ).toEqual({ allowed: false, reason: 'purpose-exceeded' })
   })
 
   it('refuses an undeclared host before anything else', () => {
@@ -370,7 +537,7 @@ describe('decideToolRequest', () => {
     })
   })
 
-  it('lets local schemes through without counting them', () => {
+  it('lets local schemes through without counting them toward anything', () => {
     expect(
       decideToolRequest(
         { url: 'data:text/plain,x', method: 'GET', resourceType: 'xhr' },
@@ -378,7 +545,7 @@ describe('decideToolRequest', () => {
         EGRESS,
         false,
       ),
-    ).toEqual({ allowed: true, counts: false })
+    ).toEqual({ allowed: true, counts: null })
   })
 
   it('refuses an API call to an undeclared path on an allowed host, whoever made it', () => {
@@ -423,7 +590,7 @@ describe('decideToolRequest', () => {
         EGRESS,
         false,
       ),
-    ).toEqual({ allowed: true, counts: true })
+    ).toEqual({ allowed: true, counts: 'request' })
   })
 
   it('refuses a form POST (a navigation) that matches no declaration', () => {
@@ -511,7 +678,7 @@ describe('decideToolRequest', () => {
       allowed: false,
       reason: 'purpose-exceeded',
     })
-    expect(decideToolRequest(place, policy, EGRESS, true)).toEqual({ allowed: true, counts: true })
+    expect(decideToolRequest(place, policy, EGRESS, true)).toEqual({ allowed: true, counts: 'request' })
   })
 
   it('opens a denied page only for its irreversible declaration, once unlocked', () => {
@@ -525,7 +692,7 @@ describe('decideToolRequest', () => {
       allowed: false,
       reason: 'denied-path',
     })
-    expect(decideToolRequest(review, policy, EGRESS, true)).toEqual({ allowed: true, counts: true })
+    expect(decideToolRequest(review, policy, EGRESS, true)).toEqual({ allowed: true, counts: 'request' })
     expect(
       decideToolRequest({ ...review, url: 'https://www.example.com/checkout/pay' }, policy, EGRESS, true),
     ).toEqual({ allowed: false, reason: 'denied-path' })
@@ -554,7 +721,7 @@ describe('decideToolRequest', () => {
     })
     expect(decideToolRequest(update, { ...READ, maxPurpose: 'write' }, EGRESS, false)).toEqual({
       allowed: true,
-      counts: true,
+      counts: 'request',
     })
   })
 
@@ -586,6 +753,20 @@ describe('decideToolRequest', () => {
         false,
       ),
     ).toEqual({ allowed: false, reason: 'undeclared' })
+  })
+
+  it('refuses everything for a maximum purpose that is a name on Object.prototype', () => {
+    for (const maxPurpose of ['toString', '__proto__', 'constructor']) {
+      expect(
+        decideToolRequest(
+          { url: 'https://www.example.com/apis/ui/Trolley', method: 'GET', resourceType: 'xhr' },
+          { ...READ, maxPurpose: maxPurpose as never },
+          EGRESS,
+          false,
+        ),
+        maxPurpose,
+      ).toEqual({ allowed: false, reason: 'purpose-exceeded' })
+    }
   })
 
   it('holds an API call to the surface even with no declarations at all', () => {

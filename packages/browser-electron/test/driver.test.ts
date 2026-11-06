@@ -426,7 +426,7 @@ describe('tool partition request surface, in a run', () => {
     ])
   })
 
-  it('lets the site’s static resources on egress hosts through, uncounted', async () => {
+  it('lets the site’s static resources on egress hosts through, not counted toward the ceiling', async () => {
     const { filter, begin } = await toolFilter()
     begin({ ceiling: 0 })
     for (const resourceType of ['script', 'stylesheet', 'image', 'font', 'media']) {
@@ -483,6 +483,79 @@ describe('tool partition request surface, in a run', () => {
     expect(blocked.map((b) => b.reason)).toEqual(['request-ceiling', 'request-ceiling'])
     // Assets still load once the ceiling is reached.
     expect(filter(IMAGE)).toBe(true)
+  })
+
+  it('holds an image, a script or a frame under an API root to the surface, and counts it as a request', async () => {
+    const { filter, blocked, begin } = await toolFilter()
+    begin()
+    const add = 'https://www.example.com/apis/ui/Trolley/Add?id=1'
+    for (const resourceType of ['image', 'script', 'subFrame', 'mainFrame']) {
+      expect(filter({ url: add, method: 'GET', resourceType }), resourceType).toBe(false)
+    }
+    expect(blocked.map((b) => `${b.reason} ${b.target}`)).toEqual(
+      Array(4).fill('undeclared https://www.example.com/apis/ui/Trolley/Add'),
+    )
+    // The declared GET, as an image, counts toward the ceiling of 3.
+    const asImage = { ...TROLLEY, resourceType: 'image' }
+    for (let i = 0; i < 3; i++) expect(filter(asImage)).toBe(true)
+    expect(filter(asImage)).toBe(false)
+    expect(blocked.at(-1)?.reason).toBe('request-ceiling')
+  })
+
+  it('takes the API roots from every declaration in the manifest, even between runs', async () => {
+    const { filter } = await toolFilter({
+      requests: [...DECLARATIONS, { method: 'POST', path: '/cart/update', purpose: 'write' }],
+    })
+    const sneaky = { url: 'https://www.example.com/cart/update?add=1', method: 'GET', resourceType: 'image' }
+    expect(filter(sneaky)).toBe(false)
+  })
+
+  it('cuts off asset N+1 past the asset budget, and reports it as the ceiling', async () => {
+    const { filter, blocked, begin } = await toolFilter({ assetsPerRun: 2 })
+    begin()
+    expect(filter(IMAGE)).toBe(true)
+    expect(filter({ ...IMAGE, resourceType: 'script' })).toBe(true)
+    expect(filter(IMAGE)).toBe(false)
+    expect(blocked).toEqual([
+      {
+        method: 'GET',
+        target: 'https://img.cdn.example.com/a.png',
+        reason: 'request-ceiling',
+        initiator: 'page',
+      },
+    ])
+    // The budgets are separate: navigations and API calls still go.
+    expect(filter(TROLLEY)).toBe(true)
+    expect(filter(SHOP)).toBe(true)
+  })
+
+  it('starts the asset count again at each run and at endRun()', async () => {
+    const { driver, filter, begin } = await toolFilter({ assetsPerRun: 1 })
+    expect(filter(IMAGE)).toBe(true)
+    expect(filter(IMAGE)).toBe(false)
+    begin()
+    expect(filter(IMAGE)).toBe(true)
+    expect(filter(IMAGE)).toBe(false)
+    driver.endRun()
+    expect(filter(IMAGE)).toBe(true)
+    expect(filter(IMAGE)).toBe(false)
+  })
+
+  it('allows 100 assets per request the ceiling allows by default, and never fewer than 1000', async () => {
+    const { filter, begin } = await toolFilter()
+    begin({ ceiling: 3 })
+    for (let i = 0; i < 1000; i++) expect(filter(IMAGE)).toBe(true)
+    expect(filter(IMAGE)).toBe(false)
+    begin({ ceiling: 20 })
+    for (let i = 0; i < 2000; i++) expect(filter(IMAGE)).toBe(true)
+    expect(filter(IMAGE)).toBe(false)
+  })
+
+  it('allows no asset under an asset budget that is not a whole, non-negative number', async () => {
+    for (const assetsPerRun of [-1, 1.5, Number.NaN]) {
+      const { filter } = await toolFilter({ assetsPerRun })
+      expect(filter(IMAGE), String(assetsPerRun)).toBe(false)
+    }
   })
 
   it('does not count a request it blocked for another reason', async () => {

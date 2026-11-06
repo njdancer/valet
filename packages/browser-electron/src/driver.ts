@@ -62,6 +62,12 @@ export interface DriverOptions {
   readonly requests?: readonly RequestDeclaration[]
   /** Navigations and API calls allowed between runs, counted from the last endRun(). Defaults to 50. */
   readonly requestsPerRun?: number
+  /**
+   * Requests for a page's assets (images, scripts, styles, fonts, media) allowed per run, and
+   * between runs. Page script picks a request's type, so these are capped too, if more loosely:
+   * by default 100 for each request the ceiling allows, and never fewer than 1000.
+   */
+  readonly assetsPerRun?: number
   /** Ports the tool partition may open connections to on egress hosts. Defaults to 443. */
   readonly egressPorts?: readonly number[]
   /** The manifest's auth.frameOrigins: origins besides navigation's that auth subframes may load. */
@@ -103,6 +109,8 @@ export type ManifestOptions = Omit<
 const DEFAULT_STEP_TIMEOUT_MS = 30_000
 const DEFAULT_TYPING_DELAY_MS = 60
 const DEFAULT_REQUESTS_PER_RUN = 50
+const ASSETS_PER_REQUEST = 100
+const MIN_ASSETS_PER_RUN = 1000
 const DEFAULT_EGRESS_PORTS: readonly number[] = [443]
 
 type StorageRequest = readonly { readonly origin: string; readonly keys: readonly string[] }[]
@@ -113,7 +121,10 @@ interface RunState {
   readonly onBlocked: ((blocked: BlockedRequest) => void) | undefined
   readonly inRun: boolean
   irreversibleUnlocked: boolean
+  /** Toward the policy's ceiling. */
   counted: number
+  /** Toward the asset budget. */
+  assets: number
 }
 
 export class ElectronSessionDriver implements SessionDriver {
@@ -171,7 +182,7 @@ export class ElectronSessionDriver implements SessionDriver {
    * again from zero, and irreversible declarations stay refused until unlockIrreversible().
    */
   beginRun(policy: ToolRunPolicy, onBlocked: (request: BlockedRequest) => void): void {
-    this.run = { policy, onBlocked, inRun: true, irreversibleUnlocked: false, counted: 0 }
+    this.run = { policy, onBlocked, inRun: true, irreversibleUnlocked: false, counted: 0, assets: 0 }
   }
 
   /** Only after the person approved this run in the app. No effect outside an irreversible run. */
@@ -297,6 +308,7 @@ export class ElectronSessionDriver implements SessionDriver {
       inRun: false,
       irreversibleUnlocked: false,
       counted: 0,
+      assets: 0,
     }
   }
 
@@ -489,14 +501,24 @@ export class ElectronSessionDriver implements SessionDriver {
     })
   }
 
-  /** The tool partition's filter: the run's policy, then its ceiling. */
+  /** The tool partition's filter: the run's policy, then its ceiling or its asset budget. */
   private allowToolRequest(request: OutgoingRequest): boolean {
     const run = this.run
-    const decision = decideToolRequest(request, run.policy, this.options.egress, run.irreversibleUnlocked)
+    const decision = decideToolRequest(
+      request,
+      run.policy,
+      this.options.egress,
+      run.irreversibleUnlocked,
+      this.options.requests ?? [],
+    )
     let reason: BlockReason | null = decision.allowed ? null : decision.reason
-    if (decision.allowed && decision.counts) {
+    if (decision.allowed && decision.counts === 'request') {
       if (run.counted >= ceilingOf(run.policy)) reason = 'request-ceiling'
       else run.counted++
+    }
+    if (decision.allowed && decision.counts === 'asset') {
+      if (run.assets >= this.assetBudget(run.policy)) reason = 'request-ceiling'
+      else run.assets++
     }
     if (reason === null) return true
     this.report(run, {
@@ -506,6 +528,12 @@ export class ElectronSessionDriver implements SessionDriver {
       initiator: this.announced.has(announcementKey(request.method, request.url)) ? 'tool' : 'page',
     })
     return false
+  }
+
+  private assetBudget(policy: ToolRunPolicy): number {
+    const configured = this.options.assetsPerRun
+    if (configured !== undefined) return Number.isInteger(configured) && configured >= 0 ? configured : 0
+    return Math.max(MIN_ASSETS_PER_RUN, ceilingOf(policy) * ASSETS_PER_REQUEST)
   }
 
   /**

@@ -171,6 +171,29 @@ test('on an allowed host, tool code cannot get past the request surface by any r
   expect(result.seen).toEqual([])
 })
 
+test('an image, script, stylesheet, iframe, location= or goto cannot reach an undeclared API path', async () => {
+  const result = await scenario(app, 'apiRoutes')
+  expect(result.routes).toEqual({
+    ok: { image: 'error', encoded: 'error', script: 'error', style: 'error', frame: expect.any(String) },
+  })
+  expect(result.viaGoto).toEqual({ error: { stage: 'egress', errorClass: 'host-not-allowed' } })
+  expect(result.reasons).toEqual(
+    expect.arrayContaining(['GET /api/cart/add undeclared', 'GET /static/..%2Fapi/cart/add ambiguous-path']),
+  )
+  // Seven routes to /api/cart/add, and the site saw none of them; the declared /api/cart it did see.
+  expect(result.reasons as string[]).toHaveLength(7)
+  expect(result.reachedAdd).toBe(0)
+  expect(result.reachedCart).toBe(1)
+})
+
+test('page script cannot load assets without limit: the asset budget cuts off N+1', async () => {
+  const result = await scenario(app, 'assetBudget')
+  expect(result.inRun).toBe(80)
+  expect(result.reasons).toEqual(['/pixel request-ceiling'])
+  // The next run starts a fresh budget.
+  expect(result.nextRun).toBe(1)
+})
+
 test('the site’s own undeclared API call is blocked and reported as the page’s', async () => {
   const result = await scenario(app, 'pageInitiated')
   const origin = result.origin as string

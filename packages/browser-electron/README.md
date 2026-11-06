@@ -58,15 +58,27 @@ to measure a decision or an opt-in rather than to test the default.
   `endRun()`:
   - the host must be on the driver's egress list and the run's (a run can narrow it, never widen
     it);
-  - an API call (any non-GET, and GET fetch/XHR, beacons, sockets and unknown types) must pass
-    core's `decideRequest` (declared method and path, deny segments, ambiguous paths), and its
-    declaration's purpose must be at most `maxPurpose` (`purpose-exceeded` otherwise);
+  - an API call must pass core's `decideRequest` (declared method and path, deny segments,
+    ambiguous paths), and its declaration's purpose must be at most `maxPurpose`
+    (`purpose-exceeded` otherwise). An API call is any non-GET; a GET fetch/XHR, beacon, socket or
+    unknown type; and **a GET of any type under an API root**. Page script picks the resource type
+    (`new Image()`, `<script src>`, an iframe, `location=`), so the type can't be what lets a GET
+    off. A declaration's API root is its path up to and including its first literal segment
+    (`/apis/ui/Trolley` gives `/apis`, `/:locale/api/cart` gives `/:locale/api`), taken from every
+    declaration in the manifest, whatever the run may use. A path is under a root when it is as
+    written, or once each segment is percent-decoded (up to three times) with `;` parameters
+    dropped, or once encoded slashes are split and dot segments resolved
+    (`/static/..%2Fapis/x`). A declaration with no literal segment (`/*`, `/:id`) makes every
+    path an API path: that fails closed, and such a manifest must declare its pages;
   - an `irreversible` declaration stays refused until `unlockIrreversible()`, which only works in
     a run whose `maxPurpose` is `irreversible`, and only until that run ends;
   - deny segments (checkout, payment, payee, …, also when encoded) are refused for navigations and
     assets too, unless an unlocked irreversible declaration covers them;
-  - the ceiling counts navigations (`mainFrame`, `subFrame`) and API calls; scripts, styles,
-    images, fonts and media on egress hosts pass uncounted.
+  - the ceiling counts navigations (`mainFrame`, `subFrame`) and API calls. Every other request
+    that leaves (scripts, styles, images, fonts and media) counts toward a looser asset budget,
+    `assetsPerRun`: by default 100 for each request the ceiling allows, and never fewer than 1000.
+    Past either, requests are refused as `request-ceiling`. Both counts start again at
+    `beginRun()` and `endRun()`.
 
   Between runs the policy is the manifest's egress, its `read` declarations only, and
   `requestsPerRun`, counted from the last `endRun()`; blocks then go to `DriverOptions.onBlocked`.
