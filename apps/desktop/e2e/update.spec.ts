@@ -255,17 +255,15 @@ test('a client that cancels while the panel waits: the panel closes, and the too
       .map((line) => (JSON.parse(line) as { event: Record<string, unknown> }).event)
       .filter((e) => e['type'] === 'tool-finished' || e['type'] === 'confirmation')
       .slice(-2)
-  await expect
-    .poll(finished)
-    .toEqual([
-      expect.objectContaining({ type: 'confirmation', answer: 'declined' }),
-      expect.objectContaining({
-        type: 'tool-finished',
-        outcome: 'failed',
-        stage: 'tool-run',
-        errorClass: 'aborted',
-      }),
-    ])
+  await expect.poll(finished).toEqual([
+    expect.objectContaining({ type: 'confirmation', answer: 'declined' }),
+    expect.objectContaining({
+      type: 'tool-finished',
+      outcome: 'failed',
+      stage: 'tool-run',
+      errorClass: 'aborted',
+    }),
+  ])
   expect(await siteTrolley(launched)).toEqual([{ stockcode, quantity: 3 }])
 })
 
