@@ -19,6 +19,7 @@ src/main/
     grants.ts              grant requests checked against the approved manifest
     permission-diff.ts     the review screen's diff; views.ts, audit-view.ts: the other view models
     caller.ts              the MCP endpoint's ToolCaller over ToolHost
+    adapter-gate.ts        keeps the person's login work and tool calls on an adapter apart
     registry.ts            bundle hashes, and the last approved manifest of each adapter
     constants.ts           names and numbers decided once (Keychain, vault, timeouts, file paths)
     settings, clients, run-memory, files, launch, geometry, snippets, demo, zod
@@ -45,11 +46,11 @@ screens/                   committed screenshots, light and dark
 ## Running it
 
 ```bash
-mise exec -- pnpm --filter @siteadapter/desktop demo        # build, then launch against the local fake
-mise exec -- pnpm --filter @siteadapter/desktop dev         # electron-vite dev
-mise exec -- pnpm --filter @siteadapter/desktop build       # main, preload and renderer to out/
+mise exec -- pnpm --filter @siteadapter/desktop demo        # a demo build, launched against the local fake
+mise exec -- pnpm --filter @siteadapter/desktop dev         # electron-vite dev (demo mode available)
+mise exec -- pnpm --filter @siteadapter/desktop build       # main, preload and renderer to out/, no demo mode
 mise exec -- pnpm --filter @siteadapter/desktop start       # launch what build made
-mise exec -- pnpm --filter @siteadapter/desktop test:smoke  # build, then the Playwright smoke test
+mise exec -- pnpm --filter @siteadapter/desktop test:smoke  # a demo build, then the Playwright smoke test
 mise exec -- pnpm --filter @siteadapter/desktop exec vite   # the renderer alone, on the fake API
 mise exec -- node apps/desktop/src/renderer/dev/screenshot.mjs      # every screen to screens/
 mise exec -- pnpm exec tsc --noEmit -p apps/desktop
@@ -63,9 +64,14 @@ install run `node install.js` in the electron package once (it is cached in `~/L
 ### Demo mode
 
 `SITEADAPTER_DEMO=1` (or `--demo`) runs the whole app against `fakes/woolworths-site`, with no real
-account anywhere:
+account anywhere. Only a development build has it: `electron-vite dev`, or `electron-vite build
+--mode demo` (what the `demo` and `test:smoke` scripts run). A plain `build`, which packaging uses,
+sets `__SITEADAPTER_DEMO_BUILD__` to false (`src/main/build-flags.d.ts`), so the demo chunk, the fake
+site, its certificate generator, its fixtures and the test account aren't in `out/main` at all; and a
+packaged app ignores both switches whatever the build. In demo mode:
 
-- its own userData, `~/Library/Application Support/siteadapter-demo`;
+- its own userData, `~/Library/Application Support/siteadapter-demo`; `SITEADAPTER_USER_DATA` can
+  move it, but never to the real `siteadapter` folder or anything inside it;
 - the fake site in-process over TLS on `www.woolworths.test` and `auth.woolworths.test` (a fresh
   certificate from `openssl` each launch), mapped to 127.0.0.1 by a host resolver rule appended
   before ready. That certificate is trusted for exactly those two hosts, on exactly the adapter's two
@@ -84,7 +90,8 @@ the first cart tool logs in (email, password, SMS code) in the hidden auth windo
 
 ### For the end-to-end suite
 
-- `SITEADAPTER_USER_DATA=/abs/dir` uses that directory as userData (a relative path is ignored).
+- `SITEADAPTER_USER_DATA=/abs/dir` uses that directory as userData (a relative path is ignored). A
+  packaged app ignores it.
 - `SITEADAPTER_E2E=1` only makes window titles deterministic, and sets the same text as the document
   title: `siteadapter (demo) [control]`, `siteadapter menu [tray]`, `siteadapter: confirm
   [<confirmation id>]`, `siteadapter: sign in [<adapter id>]`. It exposes nothing else.
@@ -95,6 +102,11 @@ In a plain browser there is no preload, so `boot.tsx` loads the fake API. The im
 `import.meta.env.DEV` at the import site, so a production build drops it: `test/build.test.ts` builds
 the renderer and checks no fake chunk or fixture data is emitted. Without a preload a production
 page shows an error.
+
+`ELECTRON_RENDERER_URL` (the dev server) is trusted only by a bundle `electron-vite dev` built
+(`__SITEADAPTER_DEV_SERVER__`), never packaged, and only as an `http://localhost` or
+`http://127.0.0.1` origin with a port: every page on that origin gets the preload and the app's IPC
+trust, so a value left over in a shell must not make another origin the app's.
 
 The whole app typechecks through `apps/desktop/tsconfig.json` (DOM and JSX for the renderer, Node
 and Electron types for the rest); the root tsconfig stays Node-only. `zod` isn't a dependency of this
@@ -133,9 +145,21 @@ by the smoke test and the e2e suite. The main-process tests start with `@vitest-
   `siteadapter`, account `onepassword-service-account`, vault `siteadapter`, in `core/constants.ts`,
   pending D6/D43); `op`, only at a path that passed the checks; Messages, only while its setting is
   on; the test provider in demo mode only. The op checks: absolute; the file (after symlinks) and
-  every directory above it, and above the link, owned by root or the person and not writable by
-  group or others; and `codesign --verify` against 1Password's Team ID. A chosen path that fails is
-  refused and the old one kept; with none chosen, the usual places get the same checks. Never PATH.
+  every directory above it, and above the link, owned by root or the person, never writable by
+  others, and writable by the group only when the group is admin (gid 80) and the person is in it;
+  and `codesign --verify` against 1Password's Team ID. A chosen path that fails is refused and the
+  old one kept; with none chosen, the usual places get the same checks. Never PATH.
+  - **D44, decided here: admin-writable counts as the person's.** Homebrew makes `/opt/homebrew/bin`
+    and `Caskroom` `drwxrwxr-x`, group admin, so `brew install 1password-cli` could never pass a
+    no-group-write rule; only the `.pkg` in root-owned `/usr/local/bin` could. Every admin can
+    become root with `sudo`, so a directory admin can write adds no one who couldn't already
+    replace a root-owned binary; on a one-person Mac, admin is the person. Any other group, and
+    world-writable, are still refused.
+  - **The service account shows as not installed** (`unavailableReason: 'not-installed'`, without
+    asking the Keychain): `@1password/sdk` is external to the bundle and not a dependency of this
+    package, so it can't load from `out/main`, and the app can't list the vault's items through it,
+    so `checkGrantRequest` would refuse every grant. `serviceAccountReady()` turns it on once both
+    hold (`SERVICE_ACCOUNT_LISTS_ITEMS`).
 - **Grants** are checked against the installed hash's manifest (`core/grants.ts`): exact hash, an
   available provider, a requested secret or a declared Messages sender character for character,
   origins a non-empty subset of the request, and an item the provider lists now (stored by id, as
@@ -147,15 +171,36 @@ by the smoke test and the e2e suite. The main-process tests start with `@vitest-
   On `needsUser` the auth window stays open with the banner above it and the call returns at once
   (D50); the window closes after 15 minutes. `finishLogin` probes the auth partition and hands off
   only if that passes, then clears the login hold.
+- **The person's own login work** (`openLoginWindow`, `finishLogin`) is refused while the site's
+  circuit breaker is open (`health.sites()`), and runs through `AdapterGate`: it waits, up to 30
+  seconds, until no tool call is in flight and no run is open on the driver (the runtime gets a
+  tracked driver, so a run the runtime keeps open after its call returned counts too), and calls
+  that arrive meanwhile wait for it. So a hand-off never copies the session into the tool partition
+  in the middle of another call's run. A login window the person opens themselves
+  (`NeedsUserItem.startedBy: 'person'`) leaves the session's state alone if they give up, and the
+  banner says they opened it rather than blaming the granted secrets.
+- **The banner never covers the auth window.** It is frameless and on top, so over the window it
+  would hide the title bar and the top of the login page. It goes directly above the window; when
+  there's no room (the usual case for the 900 px auth window), the window is moved down, and
+  shortened if need be, to make room, and the banner follows the window as it is moved or resized
+  (`core/geometry.ts`).
 - **Confirmations.** `ctx.confirm()`, and the runtime's own question before an irreversible tool,
   open a floating, always-on-top panel, shown inactive with `acceptFirstMouse: false`. An approval
-  counts only from that window, at least `CONFIRM_ARM_MS` after it was last shown or focused, and
+  counts only from the window opened for that confirmation (the main process records which id each
+  panel shows; panel A can't approve B), at least `CONFIRM_ARM_MS` after it was last shown or focused, and
   before it expires; a decline is taken from any app window. Unanswered, it declines itself after two
   minutes (D50), the runtime's deadline too.
-- **MCP.** `startEndpoint` with a stable port and a token kept until reset (D41), over a
-  `ToolCaller` that caches the runtime's async listing and refreshes it when approvals change. Paused
-  calls are `blocked` before they reach the runtime. Snippets launch the stdio bridge from the repo
-  with `tsx` until packaging bundles it.
+- **MCP.** `startEndpoint` with the package defaults, D41's recommendation: a port kept across
+  launches and a new token every launch. The bridge reads both from `bridge.json` and follows on its
+  own; a token collected by whatever held the saved port while the app was down dies at the next
+  start. `'on-reset'` waits for an HTTP-client setup that shows the token and states that risk; the
+  app has none (snippets are bridge-only, and no API returns the token). The `ToolCaller` caches the
+  runtime's async listing and refreshes it when approvals change. The app's own refusals never
+  reach the runtime but are audited like a call (`tool-called`, then `tool-finished` with outcome
+  `failed`): while paused, `config: unavailable` (not a rate limit: the site isn't involved); under
+  a revoked client name, `config: not-granted`. The runtime never reports stage `config` for a
+  call, so the log tells them apart. Snippets launch the stdio bridge from the repo with `tsx` until
+  packaging bundles it.
 - **Updates.** `startUpdates()` in `electron/app.ts` is the one call site, a no-op until
   `src/main/updater` (another unit) is wired in.
 
@@ -174,6 +219,7 @@ by the smoke test and the e2e suite. The main-process tests start with `@vitest-
 - `RunTrace` has no probe or allowed-request steps (the runtime doesn't audit them), and input and
   output previews are kept in memory for the last 200 calls only.
 - `AppStatus.demo` is new: it drives the DEMO badge.
+- `NeedsUserItem.startedBy` is new: `'person'` for a login window opened from the app.
 
 ## The contract for the main process and preload
 
