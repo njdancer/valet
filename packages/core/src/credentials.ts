@@ -43,3 +43,15 @@ export interface GrantStore {
   put(grant: Grant): Promise<void>
   revoke(adapterId: string, secret: string): Promise<void>
 }
+
+export interface MessagesOtpQuery {
+  readonly sender?: string
+  /** A regular expression whose first capture group (or whole match) is the code. */
+  readonly pattern: string
+  readonly maxAgeSeconds: number
+}
+
+/** Reads one-time codes that arrived by SMS. Throws CredentialError('not-found') when none match. */
+export interface OtpReader {
+  latest(query: MessagesOtpQuery, notBefore: Date): Promise<SecretValue>
+}

@@ -65,3 +65,23 @@ export interface ToolPage {
   /** fetch() from inside the page, same-origin credentials. The request surface guard applies. */
   fetch(pathOrUrl: string, init?: FetchInit): Promise<FetchResult>
 }
+
+/**
+ * One site's pair of browser sessions, as the runtime sees them. The Electron driver implements
+ * it; tests use fakes. See docs/security-model.md for why auth and tool partitions are separate.
+ */
+export interface SessionDriver {
+  /** Opens a page in the auth partition. Only the declarative interpreter may use it. */
+  openAuthPage(): Promise<AuthPage>
+  /** The tool partition's page, opened at the manifest's home URL on first use. */
+  toolPage(): Promise<ToolPage>
+  /** Copies cookies for `cookieDomains`, and the named storage keys, from auth to tool. Never the reverse. */
+  handoff(
+    cookieDomains: readonly string[],
+    storage: readonly { readonly origin: string; readonly keys: readonly string[] }[],
+  ): Promise<void>
+  /** Current values of the tool partition's cookies on `cookieDomains`, for output redaction. */
+  sessionCookieValues(cookieDomains: readonly string[]): Promise<readonly string[]>
+  /** Closes every window this driver opened. */
+  close(): Promise<void>
+}
