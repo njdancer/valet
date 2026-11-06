@@ -98,7 +98,6 @@ async function setup(options: { checkOp?: (path: string) => Promise<string | nul
       quit: () => ui.quits++,
     },
     emit: (event) => events.push(event),
-    probeFallback: () => null,
     bridge: { command: '/repo/tsx', args: ['/repo/bridge-cli.ts', paths.bridgeConfig] },
     checkOp: options.checkOp ?? (async (path) => (path === '/good/op' ? path : null)),
   })

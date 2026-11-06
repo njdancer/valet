@@ -5,7 +5,6 @@
 
 import { randomBytes } from 'node:crypto'
 import { copyFile, mkdir, readFile, rm } from 'node:fs/promises'
-import type { AuthProbe } from '@siteadapter/auth-flow'
 import {
   type AdapterManifest,
   type AuditEvent,
@@ -109,8 +108,6 @@ export interface ServiceDeps {
   readonly startEndpoint: (caller: ToolCaller, configPath: string) => Promise<RunningEndpoint>
   readonly ui: UiPort
   readonly emit: (event: AppEvent) => void
-  /** Probe hooks for drivers whose AuthPage lacks fetch/cookieNames; null to use the page's. */
-  readonly probeFallback: (adapterId: string) => AuthProbe | null
   /** The stdio bridge's command line, for client snippets; null when it can't be launched. */
   readonly bridge: BridgeCommand | null
   /** Checks a chosen op binary (checkOpBinary); the resolved path, or null to refuse it. */
@@ -247,7 +244,6 @@ export class AppService {
         this.emit('attention-changed')
         this.emit('adapters-changed')
       },
-      probeFallback: deps.probeFallback,
     })
     this.api = this.buildApi()
   }
@@ -273,7 +269,6 @@ export class AppService {
         flowTimeoutMs: AUTH_FLOW_TIMEOUT_MS,
         sessions: this.sessions,
         handoffs: this.handoffs,
-        probeFallback: this.deps.probeFallback,
         callInfo: (callId) => {
           const run = callId === null ? undefined : this.memory.get(callId)
           return { tool: run?.tool ?? null, client: run?.client ?? null }

@@ -74,7 +74,6 @@ function setup() {
     markers: marker.store,
     sessions,
     onChange: () => changes++,
-    probeFallback: () => null,
   })
   return { timers, banners, sessions, handoffs, marker, changes: () => changes }
 }
@@ -86,7 +85,7 @@ describe('probe hooks', () => {
     const manifest = manifestWith({})
     const page = new FakeAuthPage()
     page.cookies = ['sid']
-    const probe = authProbe(manifest, page, null)
+    const probe = authProbe(manifest, page)
     await probe.fetch('https://www.shop.test/api/me')
     expect(page.fetched).toEqual(['https://www.shop.test/api/me'])
     await expect(probe.fetch('https://login.shop.test/api/me')).rejects.toEqual(
@@ -96,32 +95,12 @@ describe('probe hooks', () => {
     expect(await probe.cookieNames(['www.shop.test'])).toEqual(['sid'])
   })
 
-  it('use the fallback only for a page without them, and fail without either', async () => {
-    const manifest = manifestWith({})
-    const bare = new FakeAuthPage() as Partial<FakeAuthPage>
-    delete (bare as { fetch?: unknown }).fetch
-    Object.defineProperty(bare, 'fetch', { value: undefined })
-    Object.defineProperty(bare, 'cookieNames', { value: undefined })
-    const fallback = {
-      fetch: async () => ({ status: 204, contentType: null, body: null }),
-      cookieNames: async () => ['fallback'],
-    }
-    const withFallback = authProbe(manifest, bare as FakeAuthPage, fallback)
-    expect((await withFallback.fetch('https://www.shop.test/x')).status).toBe(204)
-    expect(await withFallback.cookieNames([])).toEqual(['fallback'])
-    const without = authProbe(manifest, bare as FakeAuthPage, null)
-    await expect(without.fetch('https://www.shop.test/x')).rejects.toEqual(
-      new SiteAdapterError('probe', 'unavailable'),
-    )
-    await expect(without.cookieNames([])).rejects.toEqual(new SiteAdapterError('probe', 'unavailable'))
-  })
-
   it('read the manifest’s probe as auth-flow does', async () => {
     const page = new FakeAuthPage()
     const cookie = manifestWith({ session: cookieProbe })
-    expect(await probeLoggedIn(cookie, authProbe(cookie, page, null))).toBe(false)
+    expect(await probeLoggedIn(cookie, authProbe(cookie, page))).toBe(false)
     page.cookies = ['sid']
-    expect(await probeLoggedIn(cookie, authProbe(cookie, page, null))).toBe(true)
+    expect(await probeLoggedIn(cookie, authProbe(cookie, page))).toBe(true)
 
     const fetch = manifestWith({
       session: {
@@ -130,12 +109,12 @@ describe('probe hooks', () => {
       },
     })
     page.fetchResult = { status: 200, contentType: 'application/json', body: { user: { in: true } } }
-    expect(await probeLoggedIn(fetch, authProbe(fetch, page, null))).toBe(true)
+    expect(await probeLoggedIn(fetch, authProbe(fetch, page))).toBe(true)
     expect(page.fetched.at(-1)).toBe('https://www.shop.test/api/me')
     page.fetchResult = { status: 200, contentType: 'application/json', body: { user: { in: 'yes' } } }
-    expect(await probeLoggedIn(fetch, authProbe(fetch, page, null))).toBe(false)
+    expect(await probeLoggedIn(fetch, authProbe(fetch, page))).toBe(false)
     page.fetchResult = { status: 401, contentType: null, body: null }
-    expect(await probeLoggedIn(fetch, authProbe(fetch, page, null))).toBe(false)
+    expect(await probeLoggedIn(fetch, authProbe(fetch, page))).toBe(false)
     const truthy = manifestWith({
       session: {
         cookieDomains: ['www.shop.test'],
@@ -143,14 +122,14 @@ describe('probe hooks', () => {
       },
     })
     page.fetchResult = { status: 200, contentType: 'application/json', body: { id: 7 } }
-    expect(await probeLoggedIn(truthy, authProbe(truthy, page, null))).toBe(true)
+    expect(await probeLoggedIn(truthy, authProbe(truthy, page))).toBe(true)
     const any = manifestWith({
       session: {
         cookieDomains: ['www.shop.test'],
         probe: { kind: 'fetch', path: '/api/me', expectStatus: 200 },
       },
     })
-    expect(await probeLoggedIn(any, authProbe(any, page, null))).toBe(true)
+    expect(await probeLoggedIn(any, authProbe(any, page))).toBe(true)
   })
 
   it('see Akamai’s block page only with both of its phrases, and never throw', async () => {
@@ -184,7 +163,6 @@ describe('createAuthRunner', () => {
       flowTimeoutMs: 5000,
       sessions: s.sessions,
       handoffs: s.handoffs,
-      probeFallback: () => null,
       callInfo: () => ({ tool: 'add', client: 'Claude Code' }),
       filledFor: async () => ({
         filled: [{ secret: 'login', field: 'username' }],
@@ -440,7 +418,6 @@ describe('a login that fills a secret', () => {
       flowTimeoutMs: 5000,
       sessions: s.sessions,
       handoffs: s.handoffs,
-      probeFallback: () => null,
       callInfo: () => ({ tool: null, client: null }),
       filledFor: async () => ({ filled: [], origin: null }),
     })

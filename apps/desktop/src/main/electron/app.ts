@@ -18,7 +18,6 @@ import { AppService } from '../core/service'
 import type { BridgeCommand } from '../core/snippets'
 import type { DemoSite } from './demo'
 import { broadcast, registerIpc } from './ipc'
-import { partitionProbe } from './probe'
 import { createTray } from './tray'
 import { AppWindows } from './windows'
 
@@ -144,10 +143,6 @@ async function main(): Promise<void> {
       quit: () => app.quit(),
     },
     emit: (event) => broadcast(windows, event),
-    probeFallback: (adapterId) => {
-      const adapter = adapters.find((a) => a.definition.manifest.id === adapterId)
-      return adapter === undefined ? null : partitionProbe(adapter.definition.manifest)
-    },
     bridge: bridgeCommand(paths.bridgeConfig),
     checkOp: (path) => checkOpBinary(path, opDeps),
     diagnostics: (d) => log(`diagnostic: ${d.type}`),

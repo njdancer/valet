@@ -68,25 +68,17 @@ function onHomeOrigin(manifest: AdapterManifest, url: string): boolean {
 }
 
 /**
- * The hooks auth-flow reads its probe through, over the auth page (core v3's AuthPage.fetch and
- * cookieNames). `fallback` stands in while a driver's page lacks them; it must hold to the same
- * contract: GET only, the auth partition's cookies, home's origin only.
+ * The hooks auth-flow reads its probe through: the auth page's own fetch (a GET from the main
+ * process with the auth partition's cookies, held to the navigation origins every hop) and
+ * cookieNames. The probe is narrower still here: home's origin only.
  */
-export function authProbe(manifest: AdapterManifest, page: AuthPage, fallback: AuthProbe | null): AuthProbe {
-  const hasFetch = typeof (page as Partial<AuthPage>).fetch === 'function'
-  const hasNames = typeof (page as Partial<AuthPage>).cookieNames === 'function'
+export function authProbe(manifest: AdapterManifest, page: AuthPage): AuthProbe {
   return {
     async fetch(url) {
       if (!onHomeOrigin(manifest, url)) throw new SiteAdapterError('probe', 'host-not-allowed')
-      if (hasFetch) return page.fetch(url)
-      if (fallback !== null) return fallback.fetch(url)
-      throw new SiteAdapterError('probe', 'unavailable')
+      return page.fetch(url)
     },
-    async cookieNames(domains) {
-      if (hasNames) return page.cookieNames(domains)
-      if (fallback !== null) return fallback.cookieNames(domains)
-      throw new SiteAdapterError('probe', 'unavailable')
-    },
+    cookieNames: (domains) => page.cookieNames(domains),
   }
 }
 
@@ -132,7 +124,6 @@ export interface HandoffOptions {
   readonly markers: LoginMarkerStore
   readonly sessions: SessionTracker
   readonly onChange: () => void
-  readonly probeFallback: (adapterId: string) => AuthProbe | null
 }
 
 export interface HandoffStart {
@@ -215,7 +206,7 @@ export class Handoffs {
     const handoff = this.open_.get(adapterId)
     if (handoff === undefined) throw new SiteAdapterError('login', 'not-found')
     const { manifest, page, driver } = handoff
-    const probe = authProbe(manifest, page, this.options.probeFallback(adapterId))
+    const probe = authProbe(manifest, page)
     if (!(await probeLoggedIn(manifest, probe))) throw new SiteAdapterError('probe', 'not-logged-in')
     await driver.handoff(manifest.session.cookieDomains, manifest.session.storage)
     await this.options.markers.clear(adapterId)
@@ -275,7 +266,6 @@ export interface AuthRunnerOptions {
   readonly flowTimeoutMs: number
   readonly sessions: SessionTracker
   readonly handoffs: Handoffs
-  readonly probeFallback: (adapterId: string) => AuthProbe | null
   /** The tool and client of the call that needed the login, for the banner. */
   readonly callInfo: (callId: string | null) => {
     readonly tool: string | null
@@ -306,7 +296,7 @@ export function createAuthRunner(options: AuthRunnerOptions): AuthRunner {
         grants: options.grants,
         providers: options.credentials.providers(),
         otpReader: options.credentials.otpReader(),
-        probe: authProbe(manifest, page, options.probeFallback(adapterId)),
+        probe: authProbe(manifest, page),
         isBlockedPage: () => isBlockedPage(page),
         // The runtime clones what it is given and keeps the clone; this copy is ours to dispose.
         rememberSecret: (copy) => {
