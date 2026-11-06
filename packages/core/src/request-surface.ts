@@ -46,15 +46,39 @@ export function pathMatches(pattern: string, path: string): boolean {
   return patternSegments.length === pathSegments.length
 }
 
+/**
+ * True when any segment of `path` is a deny segment, as written or once percent-decoded with ";"
+ * matrix parameters dropped, so "/api/check%6Fut" and "/api/checkout;x=1" are both caught.
+ */
 export function touchesDeniedSegment(path: string): boolean {
-  return splitPath(path).some((segment) => DENY_SEGMENTS.includes(segment.toLowerCase()))
+  return splitPath(path).some((segment) => {
+    const decoded = decodeSegment(segment).toLowerCase()
+    return (
+      DENY_SEGMENTS.includes(segment.toLowerCase()) ||
+      decoded.split(/[/\\]/).some((part) => DENY_SEGMENTS.includes(part))
+    )
+  })
+}
+
+/**
+ * Segments that servers and proxies disagree about. An encoded slash or backslash inside one
+ * segment (for example "..%2F..%2Fcart%2Fadd" through a ":id" param), a NUL, a literal backslash, or
+ * a segment that decodes to "." or ".." is routed one way by our matcher and possibly another by the
+ * site, so a request with any of them is never allowed.
+ */
+export function ambiguousPath(path: string): boolean {
+  return splitPath(path).some((segment) => {
+    if (/%(2f|5c|00)|\\/i.test(segment)) return true
+    const decoded = decodeSegment(segment)
+    return decoded === '.' || decoded === '..'
+  })
 }
 
 export type SurfaceDecision =
   | { readonly allowed: true; readonly declaration: RequestDeclaration }
   | {
       readonly allowed: false
-      readonly reason: 'host-not-allowed' | 'undeclared' | 'denied-path' | 'bad-url'
+      readonly reason: 'host-not-allowed' | 'undeclared' | 'denied-path' | 'ambiguous-path' | 'bad-url'
     }
 
 /**
@@ -77,6 +101,7 @@ export function decideRequest(
   if (parsed.protocol !== 'https:' || !hostAllowed(parsed.hostname, hosts)) {
     return { allowed: false, reason: 'host-not-allowed' }
   }
+  if (ambiguousPath(parsed.pathname)) return { allowed: false, reason: 'ambiguous-path' }
   const declaration = declarations.find(
     (d) => d.method.toUpperCase() === method.toUpperCase() && pathMatches(d.path, parsed.pathname),
   )
@@ -85,6 +110,15 @@ export function decideRequest(
     return { allowed: false, reason: 'denied-path' }
   }
   return { allowed: true, declaration }
+}
+
+function decodeSegment(segment: string): string {
+  const bare = segment.split(';')[0] ?? ''
+  try {
+    return decodeURIComponent(bare)
+  } catch {
+    return bare
+  }
 }
 
 function splitPath(path: string): string[] {

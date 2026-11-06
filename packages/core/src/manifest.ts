@@ -2,13 +2,25 @@
 // what a person reviews and approves, and what the runtime enforces. See docs/security-model.md.
 
 import { z } from 'zod'
+import { MESSAGES_SECRET } from './credentials'
+import { type ERROR_CLASSES, NEEDS_USER_REASONS, type NeedsUserReason } from './errors'
 import { isBareOrigin, isHostPattern } from './origins'
+import { isScreenedPattern } from './regex-screen'
 
 const name = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, 'lower snake_case, at most 64 characters')
 const origin = z.string().refine(isBareOrigin, 'must be a bare https origin, e.g. https://www.example.com')
 const hostPattern = z.string().refine(isHostPattern, 'must be a hostname, optionally prefixed with "*."')
 const selector = z.string().min(1).max(500)
 const timeoutMs = z.number().int().min(100).max(120_000)
+/** An adapter-supplied regular expression: it must compile and pass the backtracking screen. */
+const screenedRegex = (max: number) =>
+  z
+    .string()
+    .min(1)
+    .max(max)
+    .refine(isScreenedPattern, 'must compile and avoid nested or ambiguous repetition')
+/** Shown to the person inside the app only; never sent to the MCP client. */
+const note = z.string().min(1).max(200)
 
 export const purposeSchema = z.enum(['read', 'write', 'irreversible'])
 
@@ -27,7 +39,10 @@ export type SecretRef = z.infer<typeof secretRefSchema>
 
 export type Condition =
   | { readonly visible: string }
-  | { readonly urlMatches: string }
+  /** The current URL's path and query contain this text. */
+  | { readonly urlContains: string }
+  /** The current URL's path and query match this regular expression. */
+  | { readonly urlRegex: string }
   | { readonly textPresent: string }
   | { readonly not: Condition }
   | { readonly any: readonly Condition[] }
@@ -36,7 +51,8 @@ export type Condition =
 export const conditionSchema: z.ZodType<Condition> = z.lazy(() =>
   z.union([
     z.object({ visible: selector }).strict(),
-    z.object({ urlMatches: z.string().min(1).max(500) }).strict(),
+    z.object({ urlContains: z.string().min(1).max(500) }).strict(),
+    z.object({ urlRegex: screenedRegex(500) }).strict(),
     z.object({ textPresent: z.string().min(1).max(200) }).strict(),
     z.object({ not: conditionSchema }).strict(),
     z.object({ any: z.array(conditionSchema).min(1).max(8) }).strict(),
@@ -50,8 +66,10 @@ export const otpSourceSchema = z.union([
     .object({
       messages: z
         .object({
-          sender: z.string().min(1).max(100).optional(),
-          pattern: z.string().min(1).max(200),
+          /** The sender handle, as Messages shows it; the person approves it when granting. */
+          sender: z.string().min(1).max(100),
+          /** First capture group (or the whole match) is the code. */
+          pattern: screenedRegex(200),
           maxAgeSeconds: z.number().int().min(10).max(900),
         })
         .strict(),
@@ -59,6 +77,15 @@ export const otpSourceSchema = z.union([
     .strict(),
 ])
 export type OtpSource = z.infer<typeof otpSourceSchema>
+
+/** Error classes an auth flow's fail step may end with. */
+export const FAIL_CLASSES = [
+  'auth-failed',
+  'blocked-by-site',
+  'not-logged-in',
+  'unexpected-shape',
+] as const satisfies readonly (typeof ERROR_CLASSES)[number][]
+export type FailClass = (typeof FAIL_CLASSES)[number]
 
 export type AuthStep =
   | { readonly op: 'goto'; readonly url: string }
@@ -83,8 +110,8 @@ export type AuthStep =
     }
   | { readonly op: 'retry'; readonly times: number; readonly steps: readonly AuthStep[] }
   | { readonly op: 'assertLoggedIn' }
-  | { readonly op: 'needsUser'; readonly reason: string }
-  | { readonly op: 'fail'; readonly reason: string }
+  | { readonly op: 'needsUser'; readonly reason: NeedsUserReason; readonly note?: string }
+  | { readonly op: 'fail'; readonly errorClass: FailClass; readonly note?: string }
 
 export const authStepSchema: z.ZodType<AuthStep> = z.lazy(() =>
   z.discriminatedUnion('op', [
@@ -116,18 +143,33 @@ export const authStepSchema: z.ZodType<AuthStep> = z.lazy(() =>
       })
       .strict(),
     z.object({ op: z.literal('assertLoggedIn') }).strict(),
-    z.object({ op: z.literal('needsUser'), reason: z.string().min(1).max(200) }).strict(),
-    z.object({ op: z.literal('fail'), reason: z.string().min(1).max(200) }).strict(),
+    z
+      .object({ op: z.literal('needsUser'), reason: z.enum(NEEDS_USER_REASONS), note: note.optional() })
+      .strict(),
+    z.object({ op: z.literal('fail'), errorClass: z.enum(FAIL_CLASSES), note: note.optional() }).strict(),
   ]),
 )
 
-/** How the runtime decides whether a session is logged in. Runs in the tool partition. */
+/** A same-origin path: starts with one "/", never "//" (protocol-relative) or a backslash. */
+const sitePath = (max: number) =>
+  z
+    .string()
+    .max(max)
+    .regex(/^\/(?![/\\])[^\\]*$/, 'must be a path starting with a single "/"')
+
+/**
+ * How the runtime decides whether a session is logged in. session.ensure() runs it in the tool
+ * partition before deciding to log in; the auth flow's assertLoggedIn step runs it in the auth
+ * partition before the hand-off.
+ */
 export const probeSchema = z.discriminatedUnion('kind', [
   z
     .object({
       kind: z.literal('fetch'),
-      path: z.string().startsWith('/'),
+      path: sitePath(300),
       expectStatus: z.number().int().min(100).max(599),
+      /** Statuses that mean "logged out" rather than "something is wrong". Anything else unexpected is an error. */
+      loggedOutStatuses: z.array(z.number().int().min(100).max(599)).min(1).max(5).default([401]),
       /** Dot path into the JSON body, e.g. "IsLoggedIn" or "shopper.id". */
       jsonPath: z.string().min(1).max(200).optional(),
       /** When set, the value at jsonPath must equal this. Otherwise it must be present and truthy. */
@@ -172,13 +214,22 @@ export const manifestSchema = z
         probe: probeSchema,
       })
       .strict(),
-    auth: z.object({ steps: z.array(authStepSchema).min(1).max(200) }).strict(),
+    auth: z
+      .object({
+        steps: z.array(authStepSchema).min(1).max(200),
+        /**
+         * Origins, beyond navigation, that subframes of the auth page may load (a CAPTCHA, say).
+         * Secrets are never typed into them unless they are also a granted secret origin.
+         */
+        frameOrigins: z.array(origin).max(10).default([]),
+      })
+      .strict(),
     requests: z
       .array(
         z
           .object({
             method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
-            path: z.string().startsWith('/').max(300),
+            path: sitePath(300),
             purpose: purposeSchema,
           })
           .strict(),
@@ -186,9 +237,16 @@ export const manifestSchema = z
       .default([]),
     tools: z.array(toolDeclarationSchema).min(1),
     limits: z
-      .object({ requestsPerRun: z.number().int().min(1).max(500).default(50) })
+      .object({
+        requestsPerRun: z.number().int().min(1).max(500).default(50),
+        /** Minimum gap between requests to the site, across all of this adapter's runs. */
+        minGapMs: z.number().int().min(250).max(60_000).default(2000),
+        /** First circuit-breaker cool-down after the site blocks or rate-limits us; doubles each time. */
+        cooldownSeconds: z.number().int().min(60).max(86_400).default(600),
+        maxCooldownSeconds: z.number().int().min(60).max(86_400).default(7200),
+      })
       .strict()
-      .default({ requestsPerRun: 50 }),
+      .default({ requestsPerRun: 50, minGapMs: 2000, cooldownSeconds: 600, maxCooldownSeconds: 7200 }),
   })
   .strict()
   .superRefine((manifest, ctx) => {
@@ -197,13 +255,19 @@ export const manifestSchema = z
       if (toolNames.has(tool.name)) ctx.addIssue({ code: 'custom', message: `duplicate tool ${tool.name}` })
       toolNames.add(tool.name)
     }
+    if (Object.hasOwn(manifest.secrets, MESSAGES_SECRET)) {
+      ctx.addIssue({ code: 'custom', message: `secret name ${MESSAGES_SECRET} is reserved` })
+    }
     for (const ref of secretRefsIn(manifest.auth.steps)) {
-      const request = manifest.secrets[ref.secret]
+      const request = Object.hasOwn(manifest.secrets, ref.secret) ? manifest.secrets[ref.secret] : undefined
       if (request === undefined) {
         ctx.addIssue({ code: 'custom', message: `auth step uses undeclared secret ${ref.secret}` })
       } else if (!request.fields.includes(ref.field)) {
         ctx.addIssue({ code: 'custom', message: `secret ${ref.secret} does not request field ${ref.field}` })
       }
+    }
+    if (manifest.limits.cooldownSeconds > manifest.limits.maxCooldownSeconds) {
+      ctx.addIssue({ code: 'custom', message: 'cooldownSeconds exceeds maxCooldownSeconds' })
     }
     for (const [secretName, request] of Object.entries(manifest.secrets)) {
       for (const secretOrigin of request.origins) {
@@ -238,6 +302,25 @@ export function secretRefsIn(steps: readonly AuthStep[]): SecretRef[] {
   }
   visit(steps)
   return refs
+}
+
+/** The Messages OTP sources an auth flow uses, including nested steps. Each needs a messages grant. */
+export function messagesSourcesIn(
+  steps: readonly AuthStep[],
+): { readonly sender: string; readonly pattern: string; readonly maxAgeSeconds: number }[] {
+  const sources: { sender: string; pattern: string; maxAgeSeconds: number }[] = []
+  const visit = (list: readonly AuthStep[]): void => {
+    for (const step of list) {
+      if (step.op === 'otp' && 'messages' in step.source) sources.push(step.source.messages)
+      if (step.op === 'when') {
+        visit(step.steps)
+        if (step.otherwise) visit(step.otherwise)
+      }
+      if (step.op === 'retry') visit(step.steps)
+    }
+  }
+  visit(steps)
+  return sources
 }
 
 export function parseManifest(input: unknown): AdapterManifest {

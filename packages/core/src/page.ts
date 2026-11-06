@@ -1,6 +1,8 @@
 // The browser surfaces the runtime drives. Both are implemented by the Electron driver and by test
 // fakes; nothing here imports Electron.
 
+import type { NeedsUserReason } from './errors'
+import type { Purpose, RequestDeclaration } from './request-surface'
 import type { SecretValue } from './secret'
 
 /** What the auth interpreter needs to know about an element before it types into it. */
@@ -15,6 +17,21 @@ export interface ElementInfo {
   readonly frameOrigin: string
   /** Resolved origin of the owning form's action, or null when the element has no form. */
   readonly formActionOrigin: string | null
+  /**
+   * Whether trusted input can reach the element. False inside an out-of-process (cross-site) frame,
+   * where the driver cannot deliver keystrokes without weakening site isolation.
+   */
+  readonly inputReachable: boolean
+}
+
+export interface TypeOptions {
+  readonly delayMs?: number
+  /**
+   * Origins the focused element's frame must be on, checked by the driver immediately before each
+   * keystroke. If the frame navigates or focus moves while typing, the driver stops and throws
+   * SiteAdapterError('secret-fill', 'origin-mismatch'). Required when typing a SecretValue.
+   */
+  readonly allowedOrigins?: readonly string[]
 }
 
 /**
@@ -29,11 +46,14 @@ export interface AuthPage {
   inspect(selector: string): Promise<ElementInfo | null>
   click(selector: string): Promise<void>
   focus(selector: string): Promise<void>
-  /** Types into the focused element as trusted input, one character at a time. */
-  type(text: string | SecretValue, options?: { readonly delayMs?: number }): Promise<void>
+  /**
+   * Types as trusted input, one character at a time, into the element the last focus(selector)
+   * targeted. That element must still have focus. A SecretValue requires options.allowedOrigins.
+   */
+  type(text: string | SecretValue, options?: TypeOptions): Promise<void>
   textPresent(text: string): Promise<boolean>
-  /** Shows the window to the person and resolves when they close it or the condition is met. */
-  handToUser(reason: string): Promise<void>
+  /** Shows the window to the person and resolves when they close it. */
+  handToUser(reason: NeedsUserReason): Promise<void>
   close(): Promise<void>
 }
 
@@ -47,6 +67,7 @@ export interface FetchInit {
 export interface FetchResult {
   readonly status: number
   readonly contentType: string | null
+  /** Parsed JSON when the content type is JSON and it parses; otherwise the text, or null if empty. */
   readonly body: unknown
 }
 
@@ -80,8 +101,58 @@ export interface SessionDriver {
     cookieDomains: readonly string[],
     storage: readonly { readonly origin: string; readonly keys: readonly string[] }[],
   ): Promise<void>
-  /** Current values of the tool partition's cookies on `cookieDomains`, for output redaction. */
-  sessionCookieValues(cookieDomains: readonly string[]): Promise<readonly string[]>
+  /**
+   * Values a tool's output must never contain: the tool partition's cookies on `cookieDomains` and
+   * the handed-off storage values. For output redaction.
+   */
+  sessionSecrets(
+    cookieDomains: readonly string[],
+    storage: readonly { readonly origin: string; readonly keys: readonly string[] }[],
+  ): Promise<readonly string[]>
+  /** Names (not values) of the tool partition's cookies on `cookieDomains`, for cookie probes. */
+  cookieNames(cookieDomains: readonly string[]): Promise<readonly string[]>
+  /**
+   * Starts a tool run: from now until endRun(), every request the tool partition makes, whether
+   * from tool code or the site's own scripts, is held to `policy` at the network layer, and each
+   * refused one is reported to `onBlocked`.
+   */
+  beginRun(policy: ToolRunPolicy, onBlocked: (request: BlockedRequest) => void): void
+  /**
+   * Called only after the person approved this run in the app: from now until endRun(), the run's
+   * irreversible declarations are usable. Has no effect unless policy.maxPurpose is irreversible.
+   */
+  unlockIrreversible(): void
+  endRun(): void
   /** Closes every window this driver opened. */
   close(): Promise<void>
+}
+
+/** The network policy for one tool run. */
+export interface ToolRunPolicy {
+  /** Host patterns any request may go to (the manifest's egress list). */
+  readonly egress: readonly string[]
+  /** The manifest's request surface, applied to API calls (xhr and fetch) on egress hosts. */
+  readonly requests: readonly RequestDeclaration[]
+  /**
+   * The strongest purpose this run may use: the tool's declared side effect. Irreversible
+   * declarations stay refused until unlockIrreversible().
+   */
+  readonly maxPurpose: Purpose
+  /** Navigations and API calls this run may make; static resources don't count. */
+  readonly ceiling: number
+}
+
+export interface BlockedRequest {
+  readonly method: string
+  /** Origin and path only. Hostnames can carry data too, so the runtime still redacts it. */
+  readonly target: string
+  readonly reason:
+    | 'host-not-allowed'
+    | 'undeclared'
+    | 'denied-path'
+    | 'ambiguous-path'
+    | 'purpose-exceeded'
+    | 'request-ceiling'
+    | 'bad-url'
+  readonly initiator: 'tool' | 'page'
 }

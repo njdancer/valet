@@ -1,8 +1,9 @@
-// Screens an adapter's OTP pattern before it is ever run. The pattern is adapter-supplied and runs in
-// the trusted main process's worker, so the classic exponential shapes are refused up front: a
-// repeated group that itself repeats or alternates, as in `(a+)+` or `(a|ab)*`, and backreferences.
-// This is a fast first line only. Polynomial blow-ups such as `\d*\d*\d*x` pass it, which is why
-// matching also runs under a deadline (see pattern-worker.ts).
+// Screens an adapter-supplied regular expression (an OTP pattern or a urlRegex condition) before it
+// is ever run. Both run in the trusted main process, so the classic exponential shapes are refused
+// up front: a repeated group that itself repeats or alternates, as in `(a+)+` or `(a|ab)*`, and
+// backreferences. This is a fast first line only. Polynomial blow-ups such as `\d*\d*\d*x` pass it,
+// which is why callers also bound the input and, for OTP matching, run under a deadline (see
+// packages/credentials/src/pattern-worker.ts).
 
 interface Group {
   /** The group's body has a quantifier or an alternation at any depth. */
@@ -10,7 +11,7 @@ interface Group {
 }
 
 /** True when `pattern` compiles and has none of the shapes above. */
-export function isScreenedOtpPattern(pattern: string): boolean {
+export function isScreenedPattern(pattern: string): boolean {
   try {
     new RegExp(pattern)
   } catch {

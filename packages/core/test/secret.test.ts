@@ -55,4 +55,35 @@ describe('SecretValue', () => {
     expect(disposed.occursIn('hunter2')).toBe(false)
     expect(SecretValue.fromString('').occursIn('anything')).toBe(false)
   })
+
+  it('reveals one character at a time, including multi-byte ones', async () => {
+    const secret = SecretValue.fromString('aé€😀z')
+    const seen: string[] = []
+    await secret.revealEach(async (character) => {
+      seen.push(character)
+    })
+    expect(seen).toEqual(['a', 'é', '€', '😀', 'z'])
+  })
+
+  it('stops revealing characters once disposed mid-way', async () => {
+    const secret = SecretValue.fromString('abc')
+    const seen: string[] = []
+    await expect(
+      secret.revealEach(async (character) => {
+        seen.push(character)
+        secret.dispose()
+      }),
+    ).rejects.toThrow('secret already disposed')
+    expect(seen).toEqual(['a'])
+    await expect(secret.revealEach(async () => {})).rejects.toThrow('secret already disposed')
+  })
+
+  it('clones into an independent copy that survives the original being disposed', () => {
+    const secret = SecretValue.fromString('hunter2')
+    const copy = secret.clone()
+    secret.dispose()
+    expect(copy.occursIn('the password is hunter2')).toBe(true)
+    copy.dispose()
+    expect(() => copy.clone()).toThrow('secret already disposed')
+  })
 })

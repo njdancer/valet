@@ -135,3 +135,20 @@ describe('isHostPattern', () => {
     expect(isHostPattern('*')).toBe(false)
   })
 })
+
+describe('isBareOrigin and isHostPattern refuse hosts nobody can grant', () => {
+  it('rejects wildcard hosts in an origin, which the URL parser would accept', () => {
+    expect(isBareOrigin('https://*.example.com')).toBe(false)
+  })
+
+  it('rejects IP literals', () => {
+    expect(isBareOrigin('https://127.0.0.1')).toBe(false)
+    expect(isBareOrigin('https://[::1]')).toBe(false)
+    expect(isHostPattern('127.0.0.1')).toBe(false)
+    expect(isHostPattern('*.0.0.1')).toBe(false)
+  })
+
+  it('still allows a port on a named host, as local test sites need', () => {
+    expect(isBareOrigin('https://www.woolworths.test:8443')).toBe(true)
+  })
+})

@@ -8,12 +8,12 @@ import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 import {
   CredentialError,
+  isScreenedPattern,
   type MessagesOtpQuery,
   type OtpReader,
   SecretValue,
   SiteAdapterError,
 } from '@siteadapter/core'
-import { isScreenedOtpPattern } from './otp-pattern'
 import { type OtpSender, parseOtpSender } from './otp-sender'
 import { type PatternMatcher, WorkerPatternMatcher } from './pattern-worker'
 import { attributedBodyText } from './typedstream'
@@ -74,7 +74,7 @@ export class MessagesOtpReader implements OtpReader {
     // Without a sender, any message from anyone (another bank's code, a private message) could be
     // typed into the page; the core schema still allows it, so it is refused here.
     const sender = query.sender === undefined ? null : parseOtpSender(query.sender)
-    if (sender === null || !isScreenedOtpPattern(query.pattern)) throw new SiteAdapterError('otp', 'invalid')
+    if (sender === null || !isScreenedPattern(query.pattern)) throw new SiteAdapterError('otp', 'invalid')
     const sinceMs = Math.max(notBefore.getTime(), this.#now().getTime() - query.maxAgeSeconds * 1000)
     const texts: string[] = []
     for (const row of await this.#recent(sinceMs, sender)) {
