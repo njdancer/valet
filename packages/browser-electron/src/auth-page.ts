@@ -52,7 +52,8 @@ export interface AuthPageOptions {
   readonly fetchHeaders?: Readonly<Record<string, string>>
   /**
    * Told about each navigation the guard refuses: the main frame leaving the navigation origins
-   * (which also poisons the page) and a subframe off navigation and frameOrigins. Initiator 'page'.
+   * (which also poisons the page), including an off-list commit that slipped past the guard and
+   * was stopped, and a subframe off navigation and frameOrigins. Initiator 'page'.
    */
   readonly onBlocked?: (blocked: BlockedRequest) => void
 }
@@ -82,6 +83,7 @@ export class SurfaceAuthPage implements AuthPage {
   private readonly inspected = new Map<string, Inspected>()
   private readonly session: Pick<PartitionSession, 'fetch' | 'getCookies'> | null
   private readonly fetchHeaders: Readonly<Record<string, string>>
+  private readonly onBlocked: ((blocked: BlockedRequest) => void) | undefined
 
   constructor(
     private readonly surface: BrowserSurface,
@@ -94,17 +96,11 @@ export class SurfaceAuthPage implements AuthPage {
     this.session = options.session ?? null
     this.fetchHeaders = { ...options.fetchHeaders, accept: PROBE_ACCEPT }
     const frameOrigins = options.frameOrigins ?? []
-    const onBlocked = options.onBlocked
+    this.onBlocked = options.onBlocked
     surface.guardNavigation((pending) => {
       const allowed = authNavigationAllowed(pending, navigation, frameOrigins)
       if (!allowed && pending.isMainFrame) this.escaped = true
-      if (!allowed && onBlocked !== undefined) {
-        try {
-          onBlocked(authBlock(pending.url))
-        } catch {
-          // A failing reporter must not turn a refusal into an allow.
-        }
-      }
+      if (!allowed) this.report(pending.url)
       return allowed
     })
     surface.onNavigation((event) => {
@@ -115,6 +111,7 @@ export class SurfaceAuthPage implements AuthPage {
       if (!urlOriginAllowed(event.url, navigation)) {
         this.escaped = true
         surface.stop()
+        this.report(event.url)
       }
     })
   }
@@ -366,6 +363,15 @@ export class SurfaceAuthPage implements AuthPage {
       if (error instanceof SiteAdapterError) throw error
       // revealEach found the secret disposed partway.
       throw new SiteAdapterError(stage, 'aborted')
+    }
+  }
+
+  /** Tells onBlocked about a refused or stopped navigation. */
+  private report(url: string): void {
+    try {
+      this.onBlocked?.(authBlock(url))
+    } catch {
+      // A failing reporter must not turn a refusal into an allow.
     }
   }
 
