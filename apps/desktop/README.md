@@ -72,14 +72,14 @@ What the main process must hold to, because the renderer relies on it:
 
 Routes the main process opens (`lib/router.ts`):
 
-| Route                       | Where                                                                      |
-| --------------------------- | -------------------------------------------------------------------------- |
-| `#/adapters`, `#/activity`… | The control panel window, `index.html`                                     |
-| `#/adapters/<id>/review`    | Review of a pending bundle, full window (no sidebar)                       |
-| `#/adapters/<id>/grant/<s>` | Grant sheet over the adapter page; `<s>` = `messages` for SMS codes        |
-| `#/confirm/<id>`            | Its own small window, in front, for a pending confirmation                 |
+| Route                       | Where                                                                       |
+| --------------------------- | --------------------------------------------------------------------------- |
+| `#/adapters`, `#/activity`… | The control panel window, `index.html`                                      |
+| `#/adapters/<id>/review`    | Review of a pending bundle, full window (no sidebar)                        |
+| `#/adapters/<id>/grant/<s>` | Grant sheet over the adapter page; `<s>` = `messages` for SMS codes         |
+| `#/confirm/<id>`            | Its own small window, in front, for a pending confirmation                  |
 | `#/needs-user/<adapterId>`  | A view above the auth window's web view: the hand-off banner and status bar |
-| `tray.html`                 | The tray popover window (400 px wide, transparent background)              |
+| `tray.html`                 | The tray popover window (400 px wide, transparent background)               |
 
 ## What differs from the mockups, and why
 
