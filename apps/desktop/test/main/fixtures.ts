@@ -9,6 +9,7 @@ import {
   type FetchResult,
   type ManifestInput,
   parseManifest,
+  SecretValue,
   type SessionDriver,
   type ToolPage,
 } from '@siteadapter/core'
@@ -84,6 +85,9 @@ export class FakeAuthPage implements AuthPage {
   fetched: string[] = []
   fetchResult: FetchResult = { status: 200, contentType: 'application/json', body: { ok: true } }
   text: string[] = []
+  /** What inspect() reports for every selector; null means not found. */
+  element: ElementInfo | null = null
+  typed: { text: string; secret: boolean }[] = []
   private url = 'about:blank'
   private releaseHand: (() => void) | null = null
 
@@ -98,11 +102,13 @@ export class FakeAuthPage implements AuthPage {
     return this.gone
   }
   async inspect(): Promise<ElementInfo | null> {
-    return null
+    return this.element
   }
   async click(): Promise<void> {}
   async focus(): Promise<void> {}
-  async type(): Promise<void> {}
+  async type(text: string | SecretValue): Promise<void> {
+    this.typed.push({ text: String(text), secret: text instanceof SecretValue })
+  }
   async textPresent(text: string): Promise<boolean> {
     return this.text.some((t) => t.includes(text))
   }

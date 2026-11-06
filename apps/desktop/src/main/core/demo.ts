@@ -53,7 +53,8 @@ export function outboxOtpReader(
         if (message.channel !== 'sms' || message.at < oldest) continue
         const match = pattern.exec(message.text.slice(0, 2000))
         const code = match?.[1] ?? match?.[0]
-        if (code !== undefined && /^[A-Za-z0-9]{4,10}$/.test(code)) return SecretValue.fromString(code)
+        if (code !== undefined && /^(?=.*\d)[A-Za-z0-9]{4,10}$/.test(code))
+          return SecretValue.fromString(code)
       }
       throw new CredentialError('not-found')
     },
