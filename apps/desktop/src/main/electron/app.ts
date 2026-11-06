@@ -81,8 +81,9 @@ async function main(): Promise<void> {
   let demo: DemoSite | null = null
   // The constant first, so a production build drops the import, and with it the demo chunk.
   if (__SITEADAPTER_DEMO_BUILD__ && mode.demo) {
-    const { exposeToE2e, startDemoSite, trustDemoCertificate } = await import('./demo')
-    demo = await startDemoSite()
+    const { exposeToE2e, resetDemoPartitions, startDemoSite, trustDemoCertificate } = await import('./demo')
+    await resetDemoPartitions('woolworths')
+    demo = await startDemoSite(app.getPath('userData'))
     trustDemoCertificate('woolworths', demo.fingerprint)
     if (mode.e2e) exposeToE2e(demo)
     log(`demo: fake Woolworths at ${demo.site.origin}, signing in at ${demo.site.authOrigin}`)

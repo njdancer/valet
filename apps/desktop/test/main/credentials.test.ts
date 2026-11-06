@@ -17,7 +17,7 @@ import {
   SERVICE_ACCOUNT_LISTS_ITEMS,
   serviceAccountReady,
 } from '../../src/main/core/credentials'
-import { DEMO_ITEM, demoCredentials, outboxOtpReader } from '../../src/main/core/demo'
+import { DEMO_ITEM, demoCredentials, outboxOtpReader, savedDemoPorts } from '../../src/main/core/demo'
 import { DEFAULT_SETTINGS } from '../../src/main/core/settings'
 
 const UID = 501
@@ -422,6 +422,32 @@ describe('realCredentials', () => {
     await expect(
       disabledOtpReader.latest({ sender: 'x', pattern: '(\\d+)', maxAgeSeconds: 60 }, new Date()),
     ).rejects.toEqual(new CredentialError('unavailable'))
+  })
+})
+
+describe('the demo site’s saved ports', () => {
+  it('reads two distinct unprivileged ports back', () => {
+    expect(savedDemoPorts('{"port":50123,"authPort":50124}')).toEqual({ port: 50123, authPort: 50124 })
+    expect(savedDemoPorts('{"port":1024,"authPort":65535}')).toEqual({ port: 1024, authPort: 65535 })
+  })
+
+  it('takes nothing else: missing, torn, wrong types, privileged, out of range or equal ports', () => {
+    for (const text of [
+      null,
+      '',
+      '{',
+      'null',
+      '[]',
+      '"50123"',
+      '{"port":50123}',
+      '{"port":"50123","authPort":50124}',
+      '{"port":50123.5,"authPort":50124}',
+      '{"port":443,"authPort":50124}',
+      '{"port":50123,"authPort":65536}',
+      '{"port":-1,"authPort":50124}',
+      '{"port":50123,"authPort":50123}',
+    ])
+      expect(savedDemoPorts(text), String(text)).toBeNull()
   })
 })
 

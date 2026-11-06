@@ -10,7 +10,9 @@
 /* v8 ignore start */
 
 import { X509Certificate } from 'node:crypto'
+import { readFile, writeFile } from 'node:fs/promises'
 import { connect } from 'node:net'
+import { join } from 'node:path'
 import { MESSAGES_SENDER } from '@siteadapter/adapter-woolworths'
 import { partitionName } from '@siteadapter/browser-electron'
 import {
@@ -20,7 +22,14 @@ import {
 } from '@siteadapter/fake-woolworths-site'
 import { session } from 'electron'
 import type { Credentials } from '../core/credentials'
-import { DEMO_ACCOUNT, demoCredentials, outboxOtpReader } from '../core/demo'
+import {
+  DEMO_ACCOUNT,
+  DEMO_PORTS_FILE,
+  type DemoPorts,
+  demoCredentials,
+  outboxOtpReader,
+  savedDemoPorts,
+} from '../core/demo'
 
 export const DEMO_HOSTS = ['www.woolworths.test', 'auth.woolworths.test'] as const
 
@@ -34,10 +43,23 @@ export interface DemoSite {
   readonly credentials: Credentials
 }
 
-export async function startDemoSite(): Promise<DemoSite> {
+/**
+ * Starts the fake on the ports the last demo launch used (kept in `userData`), so the adapter's
+ * origins, and with them its hash, its approval and its grants, survive a restart. Ports taken by
+ * something else: new ones, and the adapter waits for review again.
+ */
+export async function startDemoSite(userData: string): Promise<DemoSite> {
   // Needs the openssl CLI; the certificate lives as long as this launch.
   const tls = await generateTestCertificate([...DEMO_HOSTS])
-  const site = await startFakeWoolworths({ tls, hostname: DEMO_HOSTS[0], accounts: [DEMO_ACCOUNT] })
+  const portsFile = join(userData, DEMO_PORTS_FILE)
+  const saved = savedDemoPorts(await readFile(portsFile, 'utf8').catch(() => null))
+  const options = { tls, hostname: DEMO_HOSTS[0], accounts: [DEMO_ACCOUNT] }
+  const site =
+    saved === null
+      ? await startFakeWoolworths(options)
+      : await startFakeWoolworths({ ...options, ...saved }).catch(() => startFakeWoolworths(options))
+  const ports: DemoPorts = { port: site.port, authPort: site.authPort }
+  await writeFile(portsFile, `${JSON.stringify(ports)}\n`, { mode: 0o600 }).catch(() => undefined)
   const otpReader = outboxOtpReader(
     () => site.outbox,
     MESSAGES_SENDER,
@@ -73,6 +95,18 @@ export function exposeToE2e(demo: DemoSite): void {
     trolley: () => demo.site.trolleyFor(DEMO_ACCOUNT.username).map((l) => ({ ...l })),
   }
   Object.defineProperty(globalThis, '__siteadapterE2e', { value: Object.freeze(hook) })
+}
+
+/**
+ * Empties the adapter's two partitions. The fake keeps its visitors, Akamai sensor cookies and
+ * Auth0 sessions in memory, for one launch, but the partitions persist in the demo's userData: at the
+ * next launch the old `_abck` is one the new fake never issued, so its bot layer answered the first
+ * API call with Access Denied and the breaker paused the site for ten minutes (the e2e suite found
+ * it). A cleared partition starts as a first visit does. Demo mode only; call before any load.
+ */
+export async function resetDemoPartitions(adapterId: string): Promise<void> {
+  for (const role of ['auth', 'tool'] as const)
+    await session.fromPartition(partitionName(role, adapterId)).clearStorageData()
 }
 
 /** Trusts the demo certificate for the demo hosts on the adapter's partitions. Call before any load. */

@@ -59,6 +59,35 @@ export function outboxOtpReader(
   }
 }
 
+/** The fake site's two ports, kept in userData from one demo launch to the next. */
+export interface DemoPorts {
+  readonly port: number
+  readonly authPort: number
+}
+
+/** The file in userData that keeps the demo site's ports. */
+export const DEMO_PORTS_FILE = 'demo-site.json'
+
+/**
+ * The saved ports, or null for anything but two distinct unprivileged port numbers. The ports are in
+ * the adapter's origins, and so in its manifest and its hash: a demo site on new ports each launch
+ * was a new bundle each launch, waiting for review again with no grants (the e2e suite found it).
+ */
+export function savedDemoPorts(text: string | null): DemoPorts | null {
+  if (text === null) return null
+  let value: unknown
+  try {
+    value = JSON.parse(text)
+  } catch {
+    return null
+  }
+  if (value === null || typeof value !== 'object') return null
+  const { port, authPort } = value as Record<string, unknown>
+  const ok = (p: unknown): p is number =>
+    Number.isInteger(p) && (p as number) >= 1024 && (p as number) <= 65535
+  return ok(port) && ok(authPort) && port !== authPort ? { port, authPort } : null
+}
+
 export function demoCredentials(otp: OtpReader): Credentials {
   const fake = new FakeCredentialProvider({
     items: { [DEMO_ITEM.id]: { username: DEMO_ACCOUNT.username, password: DEMO_ACCOUNT.password } },
