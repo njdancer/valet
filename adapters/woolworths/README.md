@@ -47,7 +47,8 @@ notices }`. Each item is `{ stockcode, name, quantity, price, lineTotal, availab
 - **`add_to_cart { stockcode, quantity = 1 }`** reads the current quantity and sets
   current + quantity, because the update endpoint sets absolute quantities. It refuses to go over
   50 on one line, makes no write if the call is cancelled after the read, and makes no write if
-  the trolley it read isn't complete (below), since the write could shrink a line it can't see.
+  the trolley it read isn't complete (below), since the write could shrink a line it can't see
+  (`tool-run` / `unexpected-shape`).
 - **`set_cart_quantity { stockcode, quantity 0..50 }`** and **`remove_from_cart { stockcode }`**
   make one write each.
 
@@ -90,15 +91,16 @@ Tools throw, never a raw error or a result that describes the failure:
 | `ensure()` failed                           | `SiteAdapterError` with its own stage and class, if both are in the core vocabularies, else `auth-step` / `auth-failed` |
 | HTTP 401 on a cart call                     | one more `ensure()` and a retry from the start of the tool; a second 401 is `tool-run` / `not-logged-in`                |
 | HTTP 401 on a product call                  | `tool-run` / `not-logged-in`                                                                                            |
-| HTTP 403 or 429 (Akamai)                    | `tool-run` / `blocked-by-site`                                                                                          |
+| HTTP 403 (Akamai)                           | `tool-run` / `blocked-by-site`                                                                                          |
+| HTTP 429                                    | `tool-run` / `rate-limited`                                                                                             |
 | 2xx that is HTML (block page or login page) | `tool-run` / `blocked-by-site`                                                                                          |
 | 2xx that is neither JSON nor HTML           | `tool-run` / `unavailable`                                                                                              |
 | HTTP 404, or detail with no `Product`       | `tool-run` / `not-found`                                                                                                |
 | Other non-2xx, or `fetch` threw             | `tool-run` / `unavailable`                                                                                              |
-| JSON not in the expected shape              | `tool-run` / `invalid`                                                                                                  |
+| JSON not in the expected shape              | `tool-run` / `unexpected-shape`                                                                                         |
 | Signal aborted before a call                | `tool-run` / `aborted`                                                                                                  |
 | `add_to_cart` would exceed 50               | `tool-input` / `invalid`                                                                                                |
-| `add_to_cart` read an incomplete trolley    | `tool-run` / `invalid`                                                                                                  |
+| `add_to_cart` read an incomplete trolley    | `tool-run` / `unexpected-shape`                                                                                         |
 | Update reply says the site refused          | `tool-run` / `invalid`                                                                                                  |
 
 Cart tools throw rather than returning a "please log in" result so the runtime records a failed

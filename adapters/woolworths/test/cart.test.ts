@@ -194,12 +194,12 @@ describe('get_cart', () => {
     expect((await getCart.run(second, {})).notices).toEqual([])
   })
 
-  it('reports a trolley in an unexpected shape as invalid', async () => {
+  it('reports a trolley in an unexpected shape as unexpected-shape, not as bad input', async () => {
     const body = loadFixture('trolley-empty.json')
     delete body.Totals
     const ctx = new FakeToolContext().on('GET', TROLLEY, json(body))
     const error = await getCart.run(ctx, {}).catch((e: unknown) => e)
-    expect(error).toEqual(new SiteAdapterError('tool-run', 'invalid'))
+    expect(error).toEqual(new SiteAdapterError('tool-run', 'unexpected-shape'))
   })
 
   it('logs in once more after a 401 partway through, and reads the trolley again', async () => {
@@ -309,7 +309,7 @@ describe('add_to_cart', () => {
       const error = await addToCart
         .run(ctx, addToCart.input.parse({ stockcode: 888137, quantity: 1 }))
         .catch((e: unknown) => e)
-      expect(error).toEqual(new SiteAdapterError('tool-run', 'invalid'))
+      expect(error).toEqual(new SiteAdapterError('tool-run', 'unexpected-shape'))
       expect(ctx.events).toEqual(['ensure', 'GET /apis/ui/Trolley'])
     }
   })

@@ -239,7 +239,7 @@ export const addToCart = tool({
       const read = readTrolley(await getJson(ctx, PATHS.trolley, trolleyWire))
       // The write replaces the line's quantity, so a line hidden in a bucket the adapter can't read
       // would be overwritten with just the added amount. Refuse rather than shrink it.
-      if (!read.complete) throw new SiteAdapterError('tool-run', 'invalid')
+      if (!read.complete) throw new SiteAdapterError('tool-run', 'unexpected-shape')
       const previousQuantity = read.quantities.get(input.stockcode) ?? 0
       const requestedQuantity = previousQuantity + input.quantity
       if (requestedQuantity > MAX_LINE_QUANTITY) throw new SiteAdapterError('tool-input', 'invalid')
