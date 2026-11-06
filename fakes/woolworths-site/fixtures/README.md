@@ -53,6 +53,11 @@ Assumed, to be confirmed in a logged-in session:
   an unknown stockcode gets 404 with every detail envelope field set to null.
 - **Quantity limits.** A quantity above `SupplyLimit` (36) is reduced to it, as
   `SupplyLimitMessage` describes. Unknown stockcodes reject the whole update.
+- **Path leniency.** The fake routes `/API/…`, `/%63heckout`, `//api/…`, `/a//b`, `/x/../a` and a
+  trailing slash to the same place as the plain path, assuming IIS and ASP.NET routing do too. Only
+  case-insensitivity has any evidence (the site itself calls `/apis/ui/Search/products` and
+  `/apis/ui/Trolley` with capitals). The point is that the fake must not be stricter than the real
+  site, or a deny-rule bypass would look safe here. An encoded slash is not decoded.
 - **Order placement.** `POST /api/v3/ui/checkout/order` returns `{ OrderId }` and empties the
   trolley.
 

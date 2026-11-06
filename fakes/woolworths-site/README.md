@@ -30,7 +30,12 @@ await sink.close()
 ```
 
 `site.requests` and `sink.requests` record every request, blocked ones included, as
-`{ method, host, path, query, headers, body, at }`.
+`{ method, host, target, path, query, headers, rawHeaders, body, at }`. `target` is the request
+target exactly as sent and `rawHeaders` every header line as received. `path`, `query` and
+`headers` are convenience views that lose data (a repeated query key keeps its last value; Node
+keeps only the first of a duplicated `authorization`, `referer`, `user-agent` and others). To
+assert a secret never arrived, search the whole record, e.g.
+`expect(JSON.stringify(sink.requests)).not.toContain(canary)`, not just `path` or `query`.
 
 Run it by hand with `mise exec -- pnpm --filter @siteadapter/fake-woolworths-site start` (plain
 HTTP on port 8417; `-- --port 0` for any free port). It prints the origin and two test accounts.
@@ -56,19 +61,34 @@ HTTP on port 8417; `-- --port 0` for any free port). It prints the origin and tw
 Every visitor gets an httpOnly `wow-auth-token` whether logged in or not, as on the live site, so
 a token cookie is not a login probe. The token is replaced on every login state change.
 
-Paths are case-insensitive. The remember-device cookie (`wow-remembered-device`, 90 days) skips
+Routing is deliberately lenient, as the real ASP.NET/IIS backend probably is: paths are
+case-insensitive, percent-encoded unreserved characters are decoded (`/%63heckout`), repeated
+slashes collapse (`//api/…` is an API path, bot check included), dot segments resolve, and one
+trailing slash is ignored. An encoded slash (`%2F`) is not a separator. So a runtime deny rule
+that one of these spellings slips past shows up here as a placed order. The remember-device cookie (`wow-remembered-device`, 90 days) skips
 2FA for that account only.
 
 ## Controls
 
 - `setRateLimit(limit | null)`: more than `maxRequests` API calls in `windowMs` from one `_abck`
-  blocks that session, pages included, for `cooldownMs`. Changing the limit lifts current blocks.
+  or one `wow-auth-token` blocks that client, pages included, for `cooldownMs`. Both cookies are
+  blocked together, and a cookie presented alongside a blocked one is blocked with it, so deleting
+  the script-readable `_abck` and loading a page for a new one doesn't get out (the httpOnly token
+  is still sent). Dropping both cookies does, as a brand-new client; the fake has no per-IP key
+  apart from `blockAll`. Changing the limit lifts current blocks.
 - `blockAll(on)`: every request gets the Access Denied page, as if the IP were blocked.
 - `expireSessions()`: logs everyone out; remembered devices survive.
 - `now`: an injected clock for the rate limit and request timestamps.
 - `hostile.loginFormAction`: the login form posts there instead, for the form-action guard.
-- `hostile.openRedirectAfterLogin`: a correct password redirects to the `returnUrl` query
-  parameter unchecked, for the navigation guard.
+- `hostile.openRedirectAfterLogin`: a correct password (or, for 2FA accounts, a correct code;
+  `returnUrl` is carried through `/auth/verify`) redirects to the `returnUrl` query parameter
+  unchecked, for the navigation guard.
+- `hostile.loginInFrame`: a hostname. `/shop/securelogin` holds only `iframe#loginFrame`, whose
+  `src` is `/shop/securelogin/frame` on that hostname and the site's port, so the form is in a
+  cross-origin frame, for the frame-origin guard. The same server answers for the frame; the
+  caller maps the hostname to 127.0.0.1.
+- `hostile.passwordInputType` and `hostile.codeInputType`: the `type` of `#loginForm-Password`
+  and `#verify-Code` (normally `password` and `text`), for the element-type guard.
 
 The exfil sink answers every request with 200 and permissive CORS, preflights included, so a leak
 shows up as a success rather than an error. It also records WebSocket upgrade attempts.
