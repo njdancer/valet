@@ -8,4 +8,6 @@ export default defineConfig({
   workers: 1,
   fullyParallel: false,
   reporter: [['list']],
+  // Under out/, which git and Biome both ignore.
+  outputDir: '../out/e2e-results',
 })
