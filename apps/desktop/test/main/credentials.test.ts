@@ -6,6 +6,7 @@ import { CredentialError, SecretValue } from '@siteadapter/core'
 import type { ChildLike, Spawner } from '@siteadapter/credentials'
 import { describe, expect, it } from 'vitest'
 import {
+  ADMIN_GID,
   checkOpBinary,
   disabledOtpReader,
   type FileFacts,
@@ -13,11 +14,15 @@ import {
   OP_REQUIREMENT,
   parseItemList,
   realCredentials,
+  SERVICE_ACCOUNT_LISTS_ITEMS,
+  serviceAccountReady,
 } from '../../src/main/core/credentials'
 import { DEMO_ITEM, demoCredentials, outboxOtpReader } from '../../src/main/core/demo'
 import { DEFAULT_SETTINGS } from '../../src/main/core/settings'
 
 const UID = 501
+/** staff only: the person isn't an admin unless a test says so. */
+const GROUPS: readonly number[] = [20]
 
 /** A spawner that answers each command from `answers`, recording what ran. */
 function spawner(answers: Record<string, { code: number; stdout?: string }>) {
@@ -51,6 +56,8 @@ interface Entry {
   kind: 'file' | 'dir' | 'link'
   mode: number
   uid: number
+  /** Defaults to wheel (0) for root's, staff (20) for the person's. */
+  gid?: number
   target?: string
 }
 
@@ -65,6 +72,7 @@ function files(entries: Record<string, Entry>): FileFacts {
         isSymbolicLink: () => entry.kind === 'link',
         mode: entry.mode,
         uid: entry.uid,
+        gid: entry.gid ?? (entry.uid === 0 ? 0 : 20),
       }
     },
     async realpath(path) {
@@ -75,13 +83,19 @@ function files(entries: Record<string, Entry>): FileFacts {
   }
 }
 
-const dir = (uid = 0, mode = 0o755): Entry => ({ kind: 'dir', mode, uid })
+const dir = (uid = 0, mode = 0o755, gid?: number): Entry =>
+  gid === undefined ? { kind: 'dir', mode, uid } : { kind: 'dir', mode, uid, gid }
 const homebrew: Record<string, Entry> = {
   '/': dir(),
   '/opt': dir(),
   '/opt/homebrew': dir(UID),
   '/opt/homebrew/bin': dir(UID),
-  '/opt/homebrew/bin/op': { kind: 'link', mode: 0o755, uid: UID, target: '/opt/homebrew/Caskroom/op/op' },
+  '/opt/homebrew/bin/op': {
+    kind: 'link',
+    mode: 0o755,
+    uid: UID,
+    target: '/opt/homebrew/Caskroom/op/op',
+  },
   '/opt/homebrew/Caskroom': dir(UID),
   '/opt/homebrew/Caskroom/op': dir(UID),
   '/opt/homebrew/Caskroom/op/op': { kind: 'file', mode: 0o755, uid: UID },
@@ -97,6 +111,7 @@ describe('checkOpBinary', () => {
         spawner: spawn,
         timers,
         uid: UID,
+        groups: GROUPS,
       }),
     ).toBe('/opt/homebrew/Caskroom/op/op')
     expect(ran).toEqual([
@@ -109,7 +124,9 @@ describe('checkOpBinary', () => {
 
   it('refuses a relative path without looking at anything', async () => {
     const { spawn, ran } = spawner(signed)
-    expect(await checkOpBinary('op', { files: files(homebrew), spawner: spawn, timers, uid: UID })).toBeNull()
+    expect(
+      await checkOpBinary('op', { files: files(homebrew), spawner: spawn, timers, uid: UID, groups: GROUPS }),
+    ).toBeNull()
     expect(ran).toEqual([])
   })
 
@@ -130,7 +147,94 @@ describe('checkOpBinary', () => {
     const { spawn } = spawner(signed)
     const tree = { ...homebrew, ...change } as Record<string, Entry>
     expect(
-      await checkOpBinary('/opt/homebrew/bin/op', { files: files(tree), spawner: spawn, timers, uid: UID }),
+      await checkOpBinary('/opt/homebrew/bin/op', {
+        files: files(tree),
+        spawner: spawn,
+        timers,
+        uid: UID,
+        groups: GROUPS,
+      }),
+    ).toBeNull()
+  })
+
+  /** `brew install 1password-cli` as it really lands: bin and Caskroom drwxrwxr-x, group admin. */
+  const realHomebrew: Record<string, Entry> = {
+    '/': dir(),
+    '/opt': dir(),
+    '/opt/homebrew': dir(UID, 0o755, ADMIN_GID),
+    '/opt/homebrew/bin': dir(UID, 0o775, ADMIN_GID),
+    '/opt/homebrew/bin/op': {
+      kind: 'link',
+      mode: 0o755,
+      uid: UID,
+      gid: ADMIN_GID,
+      target: '/opt/homebrew/Caskroom/1password-cli/2.30.0/op',
+    },
+    '/opt/homebrew/Caskroom': dir(UID, 0o775, ADMIN_GID),
+    '/opt/homebrew/Caskroom/1password-cli': dir(UID, 0o755, ADMIN_GID),
+    '/opt/homebrew/Caskroom/1password-cli/2.30.0': dir(UID, 0o755, ADMIN_GID),
+    '/opt/homebrew/Caskroom/1password-cli/2.30.0/op': { kind: 'file', mode: 0o755, uid: UID, gid: ADMIN_GID },
+  }
+
+  it('accepts Homebrew’s admin-writable directories when the person is an admin (D44)', async () => {
+    const { spawn, ran } = spawner(signed)
+    expect(
+      await checkOpBinary('/opt/homebrew/bin/op', {
+        files: files(realHomebrew),
+        spawner: spawn,
+        timers,
+        uid: UID,
+        groups: [20, ADMIN_GID],
+      }),
+    ).toBe('/opt/homebrew/Caskroom/1password-cli/2.30.0/op')
+    expect(ran).toHaveLength(1)
+  })
+
+  it('refuses the same tree for a person who is not an admin, before codesign runs', async () => {
+    const { spawn, ran } = spawner(signed)
+    expect(
+      await checkOpBinary('/opt/homebrew/bin/op', {
+        files: files(realHomebrew),
+        spawner: spawn,
+        timers,
+        uid: UID,
+        groups: [20],
+      }),
+    ).toBeNull()
+    expect(ran).toEqual([])
+  })
+
+  it.each([
+    ['group-writable by staff', { '/opt/homebrew/bin': dir(UID, 0o775, 20) }],
+    ['group-writable by everyone', { '/opt/homebrew/Caskroom': dir(UID, 0o775, 12) }],
+    ['admin-group but also world-writable', { '/opt/homebrew/bin': dir(UID, 0o777, ADMIN_GID) }],
+    ['world-writable but not group-writable', { '/opt/homebrew/Caskroom': dir(UID, 0o757, ADMIN_GID) }],
+    [
+      'admin-group but owned by another account',
+      { '/opt/homebrew/Caskroom/1password-cli': dir(502, 0o775, ADMIN_GID) },
+    ],
+    [
+      'an admin-writable binary of another account',
+      {
+        '/opt/homebrew/Caskroom/1password-cli/2.30.0/op': {
+          kind: 'file',
+          mode: 0o775,
+          uid: 502,
+          gid: ADMIN_GID,
+        },
+      },
+    ],
+  ] as const)('still refuses a directory or binary %s, admin or not', async (_name, change) => {
+    const { spawn } = spawner(signed)
+    const tree = { ...realHomebrew, ...change } as Record<string, Entry>
+    expect(
+      await checkOpBinary('/opt/homebrew/bin/op', {
+        files: files(tree),
+        spawner: spawn,
+        timers,
+        uid: UID,
+        groups: [20, ADMIN_GID],
+      }),
     ).toBeNull()
   })
 
@@ -144,6 +248,7 @@ describe('checkOpBinary', () => {
           spawner: spawn,
           timers,
           uid: UID,
+          groups: GROUPS,
         }),
       ).toBeNull()
     }
@@ -151,7 +256,7 @@ describe('checkOpBinary', () => {
 
   it('finds the chosen path, or the first usual place that passes, never a PATH lookup', async () => {
     const { spawn, ran } = spawner(signed)
-    const deps = { files: files(homebrew), spawner: spawn, timers, uid: UID }
+    const deps = { files: files(homebrew), spawner: spawn, timers, uid: UID, groups: GROUPS }
     expect(await findOp(DEFAULT_SETTINGS, deps)).toBe('/opt/homebrew/Caskroom/op/op')
     expect(await findOp({ ...DEFAULT_SETTINGS, opPath: '/usr/local/bin/op' }, deps)).toBeNull()
     expect(ran.every((r) => r.command === '/usr/bin/codesign')).toBe(true)
@@ -188,7 +293,15 @@ describe('realCredentials', () => {
       ...signed,
       '/usr/bin/security find-generic-password': { code: 0, stdout: 'keychain: x' },
     })
-    const credentials = realCredentials({ files: files(homebrew), spawner: spawn, timers, uid: UID })
+    // As it will be once the SDK ships with the app and can list items.
+    const credentials = realCredentials({
+      files: files(homebrew),
+      spawner: spawn,
+      timers,
+      uid: UID,
+      groups: GROUPS,
+      serviceAccountReady: async () => true,
+    })
     await credentials.configure(DEFAULT_SETTINGS)
     expect(await credentials.status()).toEqual([
       { kind: 'onepassword-service-account', available: true, unavailableReason: null },
@@ -211,7 +324,13 @@ describe('realCredentials', () => {
       ...signed,
       '/opt/homebrew/Caskroom/op/op item': { code: 0, stdout: items },
     })
-    const credentials = realCredentials({ files: files(homebrew), spawner: spawn, timers, uid: UID })
+    const credentials = realCredentials({
+      files: files(homebrew),
+      spawner: spawn,
+      timers,
+      uid: UID,
+      groups: GROUPS,
+    })
     await credentials.configure(DEFAULT_SETTINGS)
     expect(await credentials.vaultItems('onepassword-cli')).toEqual([{ id: 'abc123', title: 'Woolworths' }])
     expect(ran.at(-1)).toEqual({
@@ -227,7 +346,14 @@ describe('realCredentials', () => {
       '/usr/bin/codesign --verify': { code: 1 },
       '/usr/bin/security find-generic-password': { code: 44 },
     })
-    const credentials = realCredentials({ files: files(homebrew), spawner: spawn, timers, uid: UID })
+    const credentials = realCredentials({
+      files: files(homebrew),
+      spawner: spawn,
+      timers,
+      uid: UID,
+      groups: GROUPS,
+      serviceAccountReady: async () => true,
+    })
     await credentials.configure({ ...DEFAULT_SETTINGS, messagesOtpEnabled: true })
     const status = await credentials.status()
     expect(status.find((s) => s.kind === 'onepassword-cli')).toEqual({
@@ -248,10 +374,48 @@ describe('realCredentials', () => {
       spawner: listing.spawn,
       timers,
       uid: UID,
+      groups: GROUPS,
       messagesReader: () => disabledOtpReader,
     })
     await failing.configure(DEFAULT_SETTINGS)
     await expect(failing.vaultItems('onepassword-cli')).rejects.toBeInstanceOf(CredentialError)
+  })
+
+  it('reports the service account not installed, without asking the Keychain, until it can work', async () => {
+    const { spawn, ran } = spawner({
+      ...signed,
+      '/usr/bin/security find-generic-password': { code: 0, stdout: 'keychain: x' },
+    })
+    // The default: this build can't list the vault through the SDK, so no grant could be made.
+    const credentials = realCredentials({
+      files: files(homebrew),
+      spawner: spawn,
+      timers,
+      uid: UID,
+      groups: GROUPS,
+    })
+    await credentials.configure(DEFAULT_SETTINGS)
+    expect((await credentials.status())[0]).toEqual({
+      kind: 'onepassword-service-account',
+      available: false,
+      unavailableReason: 'not-installed',
+    })
+    expect(ran.some((r) => r.command === '/usr/bin/security')).toBe(false)
+  })
+
+  it('serviceAccountReady needs the SDK to resolve and the vault to be listable', async () => {
+    expect(SERVICE_ACCOUNT_LISTS_ITEMS).toBe(false)
+    const asked: string[] = []
+    expect(
+      await serviceAccountReady((specifier) => {
+        asked.push(specifier)
+        return true
+      }),
+    ).toBe(false)
+    expect(asked).toEqual(['@1password/sdk'])
+    expect(await serviceAccountReady(() => false)).toBe(false)
+    // The default resolver: the SDK isn't a dependency of this package, so it can't resolve here.
+    expect(await serviceAccountReady()).toBe(false)
   })
 
   it('a disabled Messages reader reads nothing', async () => {

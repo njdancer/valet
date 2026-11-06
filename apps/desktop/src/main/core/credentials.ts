@@ -4,6 +4,9 @@
 // Keychain or Messages.
 //
 // - onepassword-service-account: the token from the Keychain (KeychainTokenSource), vault VAULT.
+//   Reported unavailable ('not-installed') for now: the SDK doesn't ship with the app (it is external
+//   to the bundle and not a dependency of this package) and its items can't be listed from here, so
+//   no grant could be made for it. See serviceAccountReady.
 // - onepassword-cli: `op`, only at a path that passed checkOpBinary: the one the person chose, or
 //   the first of the usual places that passes. Never a PATH lookup.
 // - messages: MessagesOtpReader, only while the setting is on (it needs Full Disk Access).
@@ -59,6 +62,7 @@ export interface FileFacts {
     isSymbolicLink(): boolean
     mode: number
     uid: number
+    gid: number
   }>
   realpath(path: string): Promise<string>
 }
@@ -70,6 +74,8 @@ export interface OpCheckDeps {
   readonly spawner: Spawner
   readonly timers: Timers
   readonly uid: number
+  /** The person's groups (process.getgroups()), for the admin-group rule below. */
+  readonly groups: readonly number[]
 }
 
 const CODESIGN = '/usr/bin/codesign'
@@ -77,11 +83,14 @@ const SECURITY = '/usr/bin/security'
 /** 1Password's own signature: Apple's chain, and the leaf issued to its Team ID. */
 export const OP_REQUIREMENT = `anchor apple generic and certificate leaf[subject.OU] = "${ONEPASSWORD_TEAM_ID}"`
 
+/** macOS's admin group. */
+export const ADMIN_GID = 80
+
 /**
  * Whether `path` may be run as the 1Password CLI: absolute; the file (after symlinks, as Homebrew
  * installs it) is a regular file; it and every directory above it, and above the link, are owned
- * by root or this user and not writable by group or others; and its code signature satisfies
- * OP_REQUIREMENT. Returns the resolved path to run, or null.
+ * by root or this user and writable by no one else (see safeOwner); and its code signature
+ * satisfies OP_REQUIREMENT. Returns the resolved path to run, or null.
  */
 export async function checkOpBinary(path: string, deps: OpCheckDeps): Promise<string | null> {
   if (!isAbsolute(path) || path.includes('\0')) return null
@@ -89,11 +98,11 @@ export async function checkOpBinary(path: string, deps: OpCheckDeps): Promise<st
   try {
     real = await deps.files.realpath(path)
     const file = await deps.files.lstat(real)
-    if (!file.isFile() || !safeOwner(file, deps.uid)) return null
+    if (!file.isFile() || !safeOwner(file, deps)) return null
     for (const dir of [...ancestors(real), ...ancestors(path)]) {
       const info = await deps.files.lstat(dir)
       // A symlinked directory above the link would be resolved in `real`; refuse it here.
-      if (!info.isDirectory() || !safeOwner(info, deps.uid)) return null
+      if (!info.isDirectory() || !safeOwner(info, deps)) return null
     }
   } catch {
     return null
@@ -111,8 +120,18 @@ export async function checkOpBinary(path: string, deps: OpCheckDeps): Promise<st
   return signed.kind === 'exited' && signed.code === 0 ? real : null
 }
 
-function safeOwner(info: { mode: number; uid: number }, uid: number): boolean {
-  return (info.uid === 0 || info.uid === uid) && (info.mode & 0o022) === 0
+/**
+ * D44: owned by root or the person, never writable by others, and writable by its group only when
+ * that group is admin and the person is in it. Homebrew makes /opt/homebrew/bin and Caskroom
+ * drwxrwxr-x, group admin, so without the exception `brew install 1password-cli` could never pass.
+ * Admin-writable adds no one who couldn't already write a root-owned file: every member of admin can
+ * become root with sudo, and on a one-person Mac admin is the person. Any other group is refused.
+ */
+function safeOwner(info: { mode: number; uid: number; gid: number }, deps: OpCheckDeps): boolean {
+  if (info.uid !== 0 && info.uid !== deps.uid) return false
+  if ((info.mode & 0o002) !== 0) return false
+  if ((info.mode & 0o020) === 0) return true
+  return info.gid === ADMIN_GID && deps.groups.includes(ADMIN_GID)
 }
 
 function ancestors(path: string): string[] {
@@ -160,6 +179,30 @@ export function parseItemList(stdout: string): VaultItem[] {
 export interface RealCredentialsDeps extends OpCheckDeps {
   /** Builds the Messages reader (tests pass a fake). */
   readonly messagesReader?: () => OtpReader
+  /** Whether the service account can be offered at all; serviceAccountReady by default. */
+  readonly serviceAccountReady?: () => Promise<boolean>
+}
+
+/**
+ * Whether the service-account provider could work in this build: its SDK resolves from the app, and
+ * the app can list the vault's items so a grant can be made. The second isn't built yet (the SDK
+ * client isn't reachable here without revealing its token outside sdkClientFactory), so this says
+ * no without looking, and the provider shows as not installed rather than offering a grant that
+ * checkGrantRequest would always refuse.
+ */
+export const SERVICE_ACCOUNT_LISTS_ITEMS = false
+
+export async function serviceAccountReady(
+  resolves: (specifier: string) => boolean = (specifier) => {
+    try {
+      import.meta.resolve(specifier)
+      return true
+    } catch {
+      return false
+    }
+  },
+): Promise<boolean> {
+  return resolves('@1password/sdk') && SERVICE_ACCOUNT_LISTS_ITEMS
 }
 
 /** The providers of a normal launch. The fake provider is never among them. */
@@ -178,6 +221,21 @@ export function realCredentials(deps: RealCredentialsDeps): Credentials {
   let reader: OtpReader = disabledOtpReader
   const run = (command: string, args: readonly string[], maxStdoutBytes: number, timeoutMs: number) =>
     runProcess(deps.spawner, command, args, { timeoutMs, maxStdoutBytes, timers: deps.timers })
+  const ready = deps.serviceAccountReady ?? (() => serviceAccountReady())
+  const serviceAccountStatus = async (): Promise<Omit<ProviderStatus, 'grantCount'>> => {
+    const kind = 'onepassword-service-account'
+    if (!(await ready())) return { kind, available: false, unavailableReason: 'not-installed' }
+    // Asks whether the item exists, never for its value (-w), so no Keychain prompt appears.
+    const keychain = await run(
+      SECURITY,
+      ['find-generic-password', '-s', KEYCHAIN_SERVICE, '-a', KEYCHAIN_ACCOUNT],
+      64 * 1024,
+      5_000,
+    )
+    if (keychain.kind === 'exited') keychain.stdout.fill(0)
+    const tokenStored = keychain.kind === 'exited' && keychain.code === 0
+    return { kind, available: tokenStored, unavailableReason: tokenStored ? null : 'not-configured' }
+  }
 
   return {
     providers() {
@@ -188,21 +246,8 @@ export function realCredentials(deps: RealCredentialsDeps): Credentials {
     },
     otpReader: () => reader,
     async status() {
-      // Asks whether the item exists, never for its value (-w), so no Keychain prompt appears.
-      const keychain = await run(
-        SECURITY,
-        ['find-generic-password', '-s', KEYCHAIN_SERVICE, '-a', KEYCHAIN_ACCOUNT],
-        64 * 1024,
-        5_000,
-      )
-      if (keychain.kind === 'exited') keychain.stdout.fill(0)
-      const tokenStored = keychain.kind === 'exited' && keychain.code === 0
       return [
-        {
-          kind: 'onepassword-service-account',
-          available: tokenStored,
-          unavailableReason: tokenStored ? null : 'not-configured',
-        },
+        await serviceAccountStatus(),
         {
           kind: 'onepassword-cli',
           available: opPath !== null,
@@ -257,4 +302,5 @@ export const defaultOpCheckDeps = (): OpCheckDeps => ({
   spawner: nodeSpawner,
   timers: nodeTimers,
   uid: process.getuid?.() ?? -1,
+  groups: process.getgroups?.() ?? [],
 })
