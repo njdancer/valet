@@ -251,8 +251,9 @@ export function createManifest({
         sideEffect: 'write',
       },
     ],
-    // Every tool needs at most two site calls; the live site flags bursts of scripted requests.
-    limits: { requestsPerRun: 6, minGapMs: 2500 },
+    // Every tool needs at most two site calls. The live site flagged scripted calls 2.5 s apart
+    // within minutes (docs/findings/2026-11-07-woolworths-live-probe.md), so the gap is D28's 10 s.
+    limits: { requestsPerRun: 6, minGapMs: 10_000 },
   })
 }
 

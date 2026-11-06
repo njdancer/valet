@@ -116,10 +116,10 @@ describe('the real manifest', () => {
     expect(() => createManifest({ captchaFrameOrigins: ['http://challenges.cloudflare.com'] })).toThrow()
   })
 
-  it('paces requests at least 2.5 s apart, with the default breaker cool-downs', () => {
+  it('paces requests at least 10 s apart, never the 2.5 s the live site flagged, with the default breaker cool-downs', () => {
     expect(realManifest.limits).toEqual({
       requestsPerRun: 6,
-      minGapMs: 2500,
+      minGapMs: 10_000,
       cooldownSeconds: 600,
       maxCooldownSeconds: 7200,
     })
