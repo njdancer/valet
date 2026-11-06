@@ -3,6 +3,7 @@
 // never inherits one.
 
 import { randomUUID } from 'node:crypto'
+import { constants } from 'node:fs'
 import * as nodeFs from 'node:fs/promises'
 import { dirname } from 'node:path'
 import {
@@ -15,7 +16,7 @@ import {
 } from '@siteadapter/core'
 
 /** The file operations the store uses, injected so tests can fail them. */
-export type GrantFs = Pick<typeof nodeFs, 'lstat' | 'mkdir' | 'open' | 'readFile' | 'rename' | 'unlink'>
+export type GrantFs = Pick<typeof nodeFs, 'lstat' | 'mkdir' | 'open' | 'rename' | 'unlink'>
 
 export interface FileGrantStoreOptions {
   readonly path: string
@@ -31,6 +32,10 @@ const SHA256_HEX = /^[0-9a-f]{64}$/
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/
 // biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting control characters is the point
 const CONTROL = /[\u0000-\u001f\u007f]/
+// What URL parsing leaves of any IPv4 literal, including forms like "0x7f.1".
+const IPV4 = /^[\d.]+$/
+// Never follow a planted symlink, and never block on a planted FIFO.
+const READ_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
 
 export class FileGrantStore implements GrantStore {
   readonly #path: string
@@ -81,16 +86,23 @@ export class FileGrantStore implements GrantStore {
   async #read(): Promise<Grant[]> {
     let raw: string
     try {
-      const info = await this.#fs.lstat(this.#path)
+      if (!(await this.#checkDirectory())) return []
       // A grant decides where a password may be typed, so refuse a file someone else could have
-      // written or redirected.
-      if (!info.isFile() || (info.mode & 0o022) !== 0 || !ownedByUs(info.uid)) {
-        throw new SiteAdapterError('grant', 'invalid')
+      // written or redirected. The checks and the read go through one handle, so the file can't be
+      // swapped between them.
+      const handle = await this.#fs.open(this.#path, READ_FLAGS)
+      try {
+        const info = await handle.stat()
+        if (!info.isFile() || !safeOwnership(info)) throw new SiteAdapterError('grant', 'invalid')
+        raw = await handle.readFile('utf8')
+      } finally {
+        await handle.close()
       }
-      raw = await this.#fs.readFile(this.#path, 'utf8')
     } catch (error) {
       if (error instanceof SiteAdapterError) throw error
       if (errorCode(error) === 'ENOENT') return []
+      // What O_NOFOLLOW reports for a symlink.
+      if (errorCode(error) === 'ELOOP') throw new SiteAdapterError('grant', 'invalid')
       throw new SiteAdapterError('grant', 'unavailable')
     }
     let parsed: unknown
@@ -108,6 +120,12 @@ export class FileGrantStore implements GrantStore {
     const body = `${JSON.stringify({ version: 1, grants }, null, 2)}\n`
     try {
       await this.#fs.mkdir(directory, { recursive: true, mode: 0o700 })
+    } catch {
+      throw new SiteAdapterError('grant', 'unavailable')
+    }
+    // mkdir's mode only applies to a directory it creates; an existing one is checked as on read.
+    await this.#checkDirectory()
+    try {
       const handle = await this.#fs.open(temp, 'wx', 0o600)
       try {
         // The umask can only remove bits; chmod makes the mode exact either way.
@@ -123,6 +141,22 @@ export class FileGrantStore implements GrantStore {
       throw new SiteAdapterError('grant', 'unavailable')
     }
     await this.#syncDirectory(directory)
+  }
+
+  /**
+   * Refuses a directory that another user could write to: whoever can write there can replace the
+   * grant file with their own. Returns false when the directory doesn't exist yet.
+   */
+  async #checkDirectory(): Promise<boolean> {
+    let info: Awaited<ReturnType<GrantFs['lstat']>>
+    try {
+      info = await this.#fs.lstat(dirname(this.#path))
+    } catch (error) {
+      if (errorCode(error) === 'ENOENT') return false
+      throw new SiteAdapterError('grant', 'unavailable')
+    }
+    if (!info.isDirectory() || !safeOwnership(info)) throw new SiteAdapterError('grant', 'invalid')
+    return true
   }
 
   /** Makes the rename durable. Best effort: not every platform can fsync a directory. */
@@ -184,12 +218,14 @@ export function isValidGrant(value: unknown): value is Grant {
 
 /**
  * A bare https origin on a plain hostname. isBareOrigin alone lets "https://*.example.com" through,
- * because URL parsing accepts "*" in a host; a grant is for exact origins only.
+ * because URL parsing accepts "*" in a host; a grant is for exact origins only. IP literals are
+ * refused: a secret is granted to a named site, not to whatever answers at an address. A port other
+ * than 443 is allowed, because it is part of the origin the person sees and grants.
  */
 function isGrantOrigin(origin: unknown): boolean {
   if (typeof origin !== 'string' || !isBareOrigin(origin)) return false
   const host = new URL(origin).hostname
-  return !host.includes('*') && isHostPattern(host)
+  return !host.includes('*') && !IPV4.test(host) && isHostPattern(host)
 }
 
 function copyGrant(grant: Grant): Grant {
@@ -209,8 +245,9 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
   return actual.length === keys.length && keys.every((key) => Object.hasOwn(value, key))
 }
 
-function ownedByUs(uid: number): boolean {
-  return process.getuid === undefined || uid === process.getuid()
+/** Owned by this user, and writable by no one else. */
+function safeOwnership(info: { mode: number; uid: number }): boolean {
+  return (info.mode & 0o022) === 0 && (process.getuid === undefined || info.uid === process.getuid())
 }
 
 function errorCode(error: unknown): unknown {
