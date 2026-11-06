@@ -69,14 +69,17 @@ export class FakeAuthPage implements AuthPage {
   readonly handedToUser: NeedsUserReason[] = []
   /** The auth partition's cookie jar, by name. The probe reads this; nothing copies it anywhere. */
   readonly cookies = new Set<string>()
-  /** Runs before each keystroke of a secret, for tests where the page moves mid-typing. */
+  /** Runs before each keystroke, for tests where the page moves mid-typing. */
   beforeKeystroke: ((index: number) => void) | null = null
   closed = false
+  /** Page and frame navigations so far. Typing stops if this changes under it. */
+  private navigations = 0
 
   constructor(readonly site: FakeSite) {}
 
   /** Moves the page to `url` as if the site navigated it, following server redirects. */
   navigate(url: string): void {
+    this.navigations += 1
     let next: string | undefined = url
     for (let hops = 0; next !== undefined && hops < 10; hops++) {
       this.url = next
@@ -84,6 +87,13 @@ export class FakeAuthPage implements AuthPage {
       for (const cookie of this.state().setsCookies ?? []) this.cookies.add(cookie)
       next = this.state().redirectTo
     }
+  }
+
+  /** Navigates the frame `name` on the current page to `origin`, as the frame's own script might. */
+  navigateFrame(name: string, origin: string): void {
+    this.navigations += 1
+    const state = this.state()
+    this.site[this.url] = { ...state, frames: { ...state.frames, [name]: origin } }
   }
 
   isBlocked(): boolean {
@@ -134,29 +144,46 @@ export class FakeAuthPage implements AuthPage {
   }
 
   /**
-   * Behaves as the driver is specified to: a secret needs allowedOrigins, and before every
-   * keystroke the focused element must still exist in a frame on one of them. Whatever was typed
-   * before it stopped is recorded.
+   * Behaves as the driver is specified to. It types only into the element focus() targeted, on the
+   * page and in the frame it was on when typing began: if focus moves (even to a same-origin field),
+   * the element is replaced, or the page or its frame navigates (even to the same origin), it stops
+   * before the next keystroke. A secret also needs allowedOrigins, and the element's frame must be
+   * on one of them before every keystroke. Whatever reached the target before it stopped is
+   * recorded against that target.
    */
   async type(text: string | SecretValue, options?: TypeOptions): Promise<void> {
     const secret = text instanceof SecretValue
     const allowed = options?.allowedOrigins
     if (secret && allowed === undefined) throw new Error('allowedOrigins is required for a secret')
+    const target = this.focused
+    const element = target === null ? undefined : this.state().elements?.[target]
+    const navigation = this.navigations
     const record = {
-      selector: this.focused,
+      selector: target,
       url: this.url,
       delayMs: options?.delayMs,
       allowedOrigins: allowed,
     }
     let typed = ''
+    const stop = (): never => {
+      this.typed.push({ ...record, text: typed, secret })
+      if (secret) throw new SiteAdapterError('secret-fill', 'origin-mismatch')
+      throw new Error('focus moved')
+    }
     const keystroke = async (character: string): Promise<void> => {
       this.beforeKeystroke?.(typed.length)
+      if (
+        target === null ||
+        element === undefined ||
+        this.focused !== target ||
+        this.navigations !== navigation ||
+        this.state().elements?.[target] !== element
+      ) {
+        stop()
+      }
       if (allowed !== undefined) {
-        const origin = this.focused === null ? null : this.frameOrigin(this.focused)
-        if (origin === null || !originAllowed(origin, allowed)) {
-          this.typed.push({ ...record, text: typed, secret })
-          throw new SiteAdapterError('secret-fill', 'origin-mismatch')
-        }
+        const origin = target === null ? null : this.frameOrigin(target)
+        if (origin === null || !originAllowed(origin, allowed)) stop()
       }
       typed += character
     }
