@@ -8,7 +8,7 @@ import type { ListedTool } from './tool-caller'
 /** The longest tool name the MCP specification allows. */
 export const MAX_TOOL_NAME_LENGTH = 128
 
-export type SkipReason = 'name-collision' | 'name-too-long' | 'input-not-object'
+export type SkipReason = 'name-collision' | 'name-too-long' | 'input-not-object' | 'schema-not-json'
 
 export interface ExposedTool {
   readonly name: string
@@ -41,6 +41,8 @@ export function planTools(listed: readonly ListedTool[]): ToolPlan {
       skipped.push({ adapterId: tool.adapterId, tool: tool.declaration.name, reason: 'input-not-object' })
     } else if (name.length > MAX_TOOL_NAME_LENGTH) {
       skipped.push({ adapterId: tool.adapterId, tool: tool.declaration.name, reason: 'name-too-long' })
+    } else if (!representable(tool)) {
+      skipped.push({ adapterId: tool.adapterId, tool: tool.declaration.name, reason: 'schema-not-json' })
     } else {
       byName.set(name, [...(byName.get(name) ?? []), tool])
     }
@@ -57,4 +59,18 @@ export function planTools(listed: readonly ListedTool[]): ToolPlan {
     }
   }
   return { exposed, skipped }
+}
+
+/**
+ * True when the schemas the server lists convert to JSON Schema. Conversion happens on every
+ * tools/list, and one schema that can't convert (a z.date(), say) would fail the whole list.
+ */
+function representable(tool: ListedTool): boolean {
+  try {
+    z.toJSONSchema(tool.input, { io: 'input', target: 'draft-7' })
+    if (tool.output instanceof z.ZodObject) z.toJSONSchema(tool.output, { io: 'output', target: 'draft-7' })
+    return true
+  } catch {
+    return false
+  }
 }

@@ -89,8 +89,9 @@ export function createMcpServer(
 
   let registered: RegisteredTool[] = []
   const refresh = (): readonly SkippedTool[] => {
-    for (const tool of registered) tool.remove()
+    // Listing first: if the runtime throws, the session keeps the tools it had.
     const plan = planTools(caller.listTools())
+    for (const tool of registered) tool.remove()
     registered = plan.exposed.map(register)
     return plan.skipped
   }

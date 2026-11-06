@@ -83,4 +83,39 @@ describe('planTools', () => {
     ])
     expect(plan.exposed[0]?.name).toHaveLength(MAX_TOOL_NAME_LENGTH)
   })
+
+  it('withholds a tool whose input schema has no JSON Schema form', () => {
+    const plan = planTools([{ ...searchProducts, input: z.object({ since: z.date() }) }])
+    expect(plan.skipped).toEqual([
+      { adapterId: 'woolworths', tool: 'search_products', reason: 'schema-not-json' },
+    ])
+  })
+
+  it('withholds a tool whose object output schema has no JSON Schema form', () => {
+    const plan = planTools([{ ...searchProducts, output: z.object({ at: z.date() }) }])
+    expect(plan.skipped).toEqual([
+      { adapterId: 'woolworths', tool: 'search_products', reason: 'schema-not-json' },
+    ])
+  })
+
+  it('does not convert a non-object output, which is never listed', () => {
+    const plan = planTools([{ ...searchProducts, output: z.array(z.date()) }])
+    expect(plan.exposed).toHaveLength(1)
+  })
+
+  it('lets a tool through when the only tool sharing its name was withheld for another reason', () => {
+    const victim = {
+      ...searchProducts,
+      adapterId: 'a-b',
+      declaration: { ...searchProducts.declaration, name: 'c' },
+    }
+    const broken = {
+      ...searchProducts,
+      adapterId: 'a',
+      declaration: { ...searchProducts.declaration, name: 'b_c' },
+      input: z.string(),
+    }
+    const plan = planTools([victim, broken])
+    expect(plan.exposed.map((t) => t.listed)).toEqual([victim])
+  })
 })

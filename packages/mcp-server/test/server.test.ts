@@ -202,6 +202,28 @@ describe('refresh', () => {
   })
 })
 
+describe('a broken listing', () => {
+  it('keeps serving the other tools when one schema has no JSON Schema form', async () => {
+    const broken: ListedTool = { ...setQuantity, input: z.object({ when: z.date() }) }
+    const { client } = await connect(new FakeCaller([searchProducts, broken]))
+    const { tools } = await client.listTools()
+    expect(tools.map((t) => t.name)).toEqual(['woolworths_search_products'])
+  })
+
+  it('keeps the previous tools when the runtime throws during a refresh', async () => {
+    const caller = new FakeCaller([searchProducts])
+    const { client, endpoint } = await connect(caller)
+    caller.listTools = () => {
+      throw new Error('store unavailable')
+    }
+
+    expect(() => endpoint.refresh()).toThrow()
+    const { tools } = await client.listTools()
+
+    expect(tools.map((t) => t.name)).toEqual(['woolworths_search_products'])
+  })
+})
+
 describe('name collisions', () => {
   // "a-b" + "c_d" and "a" + "b_c_d" both map to "a_b_c_d".
   const victim: ListedTool = {
