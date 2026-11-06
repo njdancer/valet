@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Adapter tests · siteadapter mockups</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="ide.css" />
+    <script src="app.js"></script>
+    <style>
+      .ide-body {
+        grid-template-columns: 284px minmax(0, 1fr) 420px;
+        grid-template-rows: minmax(0, 1fr) 176px;
+      }
+      .tree {
+        grid-row: 1 / 3;
+      }
+      .panel {
+        grid-column: 2 / 4;
+      }
+      .tnode .n {
+        margin-left: auto;
+        font-size: var(--text-xs);
+        color: var(--text-tertiary);
+      }
+      .tnode.fail-row {
+        color: var(--danger-text);
+      }
+      .shape {
+        margin: var(--space-3) var(--space-5) 0;
+      }
+      .shape .codeview {
+        padding: 4px 0;
+        border-radius: var(--radius-md);
+        border: 0.5px solid var(--border);
+        background: var(--editor-bg);
+      }
+      .prov {
+        margin: var(--space-3) var(--space-5);
+        font-size: var(--text-xs);
+      }
+      .prov .i {
+        width: 14px;
+        height: 14px;
+      }
+      .repair {
+        margin: var(--space-3);
+        border-radius: 10px;
+        border: 0.5px solid var(--border-strong);
+        background: var(--bg-surface);
+        overflow: hidden;
+      }
+      .repair .r-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+        border-bottom: 0.5px solid var(--border);
+      }
+      .repair .r-head .glyph {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
+        color: var(--warn-text);
+        background: var(--write-bg);
+      }
+      .repair :where(.r-head .glyph) .i {
+        width: 13px;
+        height: 13px;
+      }
+      .repair .r-text {
+        padding: 8px 12px;
+        font-size: var(--text-sm);
+        color: var(--text-secondary);
+      }
+      .repair .file {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        height: 24px;
+        padding: 0 12px;
+        border-top: 0.5px solid var(--border);
+        background: var(--pane-head-bg);
+        font: 600 11.5px var(--font-mono);
+      }
+      .repair .codeview {
+        padding: 2px 0;
+        font-size: 11px;
+        line-height: 17px;
+      }
+      .repair .codeview > div > i {
+        width: 30px;
+      }
+      .repair .codeview > div > b {
+        width: 16px;
+      }
+      .repair .r-opt {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-top: 0.5px solid var(--border);
+        font-size: var(--text-sm);
+      }
+      .repair .r-foot {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-top: 0.5px solid var(--border);
+        background: var(--bg-window);
+      }
+      .gate-card {
+        margin: 0 var(--space-3) var(--space-3);
+      }
+      .gate-card .head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+      .gate-card .facts {
+        display: grid;
+        grid-template-columns: 14px 1fr;
+        gap: 3px 6px;
+        margin: 6px 0 10px;
+        font-size: var(--text-xs);
+        color: var(--text-secondary);
+      }
+      .gate-card .facts .i {
+        width: 11px;
+        height: 11px;
+        margin-top: 2px;
+      }
+      .btn.warn-outline {
+        border-color: var(--write);
+        color: var(--warn-text);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="desktop ide">
+      <header class="sysbar">
+        <span class="i i-apple"></span>
+        <span class="app-name">siteadapter</span>
+        <span>File</span><span>Edit</span><span>View</span><span>Adapter</span><span>Run</span><span>Window</span
+        ><span>Help</span>
+        <span class="spacer"></span>
+        <span class="status">
+          <span class="tray"><span class="i i-logo"></span></span>
+          <span class="i i-wifi"></span>
+          <span class="i i-battery" style="width: 22px"></span>
+          <span>Sat 7 Nov&nbsp; 10:06 pm</span>
+        </span>
+      </header>
+
+      <div class="window ide">
+        <div class="titlebar">
+          <div class="traffic"><span></span><span></span><span></span></div>
+          <div class="ide-adapter">
+            <span class="avatar sm wow">W</span>
+            <span class="name">Woolworths</span>
+            <span class="pill">0.2.0-dev</span>
+            <span class="hash" title="The draft after you approved the agent's orders proposal">draft 0b64e1c9…d3a2</span>
+          </div>
+          <nav class="modes" style="margin-left: var(--space-4)">
+            <a href="ide-workspace.html"><span class="i i-code"></span>Workspace</a>
+            <a href="ide-recorder.html"><span class="i i-record"></span>Record</a>
+            <a href="ide-agent.html"><span class="i i-sparkle"></span>Agent</a>
+            <a class="on" href="ide-tests.html"><span class="i i-flask"></span>Tests</a>
+          </nav>
+          <div class="tools">
+            <button type="button" class="btn"><span class="i sm i-play" style="color: var(--ok)"></span>Run offline tests</button>
+            <span class="xs tertiary">fixtures and traces, no network</span>
+          </div>
+        </div>
+
+        <div class="ide-body">
+          <aside class="pane tree">
+            <div class="pane-head">
+              Tests<span class="spacer"></span><span class="ok-text" style="font-weight: 500">166 passed</span
+              ><span class="danger-text" style="font-weight: 500">2 failed</span><span style="font-weight: 500">1 gated</span>
+            </div>
+            <div class="pane-scroll tree-list">
+              <div class="tree-group">Fixture tests · against the fake site<span class="count">0.9 s</span></div>
+              <div class="node d1 tnode"><span class="i st pass i-check"></span><span class="label">manifest.test.ts</span><span class="n">26</span></div>
+              <div class="node d1 tnode"><span class="i st pass i-check"></span><span class="label">auth-steps.test.ts</span><span class="n">11</span></div>
+              <div class="node d1 tnode"><span class="i st pass i-check"></span><span class="label">login.test.ts</span><span class="n">7</span></div>
+              <div class="node d1 tnode"><span class="i st pass i-check"></span><span class="label">search-products.test.ts</span><span class="n">34</span></div>
+              <div class="node d1 tnode"><span class="i st pass i-check"></span><span class="label">get-product.test.ts</span><span class="n">14</span></div>
+              <div class="node d1 tnode"><span class="i st pass i-check"></span><span class="label">cart.test.ts</span><span class="n">47</span></div>
+              <div class="node d1 tnode"><span class="i st pass i-check"></span><span class="label">orders.test.ts</span><span class="n">9</span></div>
+              <div class="node d1 tnode"><span class="i st pass i-check"></span><span class="label">request-surface.test.ts</span><span class="n">5</span></div>
+              <div class="node d1 tnode"><span class="i st pass i-check"></span><span class="label">text.test.ts</span><span class="n">8</span></div>
+
+              <div class="tree-group">Security · run on every change</div>
+              <div class="node d1 tnode">
+                <span class="i st pass i-check"></span><span class="label">Canary reaches only the login POST</span>
+              </div>
+              <div class="node d1 tnode">
+                <span class="i st pass i-check"></span><span class="label">Undeclared fetch fails the call</span>
+              </div>
+              <div class="node d1 tnode">
+                <span class="i st pass i-check"></span><span class="label">No route from tool to auth session</span>
+              </div>
+
+              <div class="tree-group">Recorded traces · replayed on the fake</div>
+              <div class="node d1 tnode fail-row">
+                <span class="i st fail i-x"></span><span class="label mono">get_cart</span><span class="n">today 5:12 pm</span>
+              </div>
+              <div class="node d1 tnode">
+                <span class="i st pass i-check"></span><span class="label mono">search_products “milk”</span><span class="n">5 Nov</span>
+              </div>
+              <div class="node d1 tnode">
+                <span class="i st pass i-check"></span><span class="label mono">get_product 88436</span><span class="n">5 Nov</span>
+              </div>
+              <div class="node d1 tnode sel fail-row">
+                <span class="i st fail i-x"></span><span class="label mono">add_to_cart</span><span class="n">today 3:58 pm</span>
+              </div>
+
+              <div class="tree-group">Live · real site, your login</div>
+              <div class="node d1 tnode">
+                <span class="i st gate i-lock"></span><span class="label">Smoke test</span><span class="n">not run · last 3 Nov</span>
+              </div>
+            </div>
+          </aside>
+
+          <!-- The failed replay. Only keys and types are compared: trace values are scrubbed. -->
+          <section class="pane editor">
+            <div class="result-head">
+              <span class="big"><span class="i i-x"></span></span>
+              <div class="grow">
+                <div class="h3">add_to_cart · trace from 3:58 pm, replayed against the fake site</div>
+                <div class="xs muted">
+                  Failed with <span class="mono">tool-run / invalid</span>, the same result the live call gave Claude Desktop.
+                </div>
+              </div>
+              <span class="pill warn">Site changed?</span>
+            </div>
+            <div class="replay">
+              <div class="rstep">
+                <span class="t">+0 ms</span><span class="i i-check ok-text"></span>
+                <span><span class="mono">session.ensure()</span> <span class="muted">→ ok · probe replayed</span></span><span></span>
+              </div>
+              <div class="rstep">
+                <span class="t">+14 ms</span><span class="i i-check ok-text"></span>
+                <span
+                  ><span class="mono">GET /apis/ui/Trolley</span> <span class="muted">→ 200 · recorded response, 14 KB, values scrubbed</span></span
+                ><span class="dec declared">declared · read</span>
+              </div>
+              <div class="rstep bad">
+                <span class="t">+31 ms</span><span class="i i-x danger-text"></span>
+                <span
+                  ><span class="mono">trolleyWire.parse</span>
+                  <span class="danger-text">→ expected a number at TotalTrolleyItemQuantity, found nothing</span></span
+                ><span class="xs danger-text mono">wire.ts:85</span>
+              </div>
+              <div class="rstep" style="color: var(--text-tertiary)">
+                <span class="t">—</span><span class="i i-clock"></span>
+                <span><span class="mono">POST /api/v3/ui/trolley/update</span> · not reached, so nothing was written</span><span></span>
+              </div>
+            </div>
+            <div class="shape">
+              <div class="row" style="margin-bottom: 6px">
+                <span class="h3">Response shape</span>
+                <span class="xs muted">GET /apis/ui/Trolley · fixture from 3 Nov vs this trace</span>
+              </div>
+              <div class="codeview">
+                <div class="fold"><i></i><b></b>{ AvailableItems: [ProductTile × 2], UnavailableItems: [], Totals: {…},</div>
+                <div class="del"><i></i><b>−</b>  <span class="tp">TotalTrolleyItemQuantity</span>: <span class="tt">number</span>,</div>
+                <div class="add"><i></i><b>+</b>  <span class="tp">TrolleyItemQuantity</span>: <span class="tt">number</span>,</div>
+                <div><i></i><b></b>  <span class="tp">TrolleyItemCount</span>: <span class="tt">number</span>,</div>
+                <div class="fold"><i></i><b></b>  … 29 more keys, unchanged }</div>
+              </div>
+            </div>
+            <div class="callout info prov">
+              <span class="i i-activity"></span>
+              <div>
+                The live <span class="mono">add_to_cart</span> call at 3:58 pm saved this trace. Every
+                <span class="mono">get_cart</span> since fails the same way: its 5:12 pm trace is the other failure. The
+                fixtures are from 3 Nov and still have the old key, which is why every fixture test passes. Trace bodies keep
+                keys and types; every value is replaced before it's stored.
+              </div>
+            </div>
+          </section>
+
+          <!-- Repair proposal, then the gated live test. -->
+          <section class="pane">
+            <div class="pane-head"><span class="i sm i-wrench"></span>Repair<span class="spacer"></span>from the authoring agent</div>
+            <div class="pane-scroll">
+              <div class="repair">
+                <div class="r-head">
+                  <span class="glyph"><span class="i i-warn"></span></span>
+                  <div class="grow">
+                    <div class="h3">Woolworths renamed one trolley field</div>
+                    <div class="xs muted">Accept both names while the old one may still be served</div>
+                  </div>
+                </div>
+                <div class="file">src/wire.ts<span class="ok-text" style="margin-left: auto">+3</span><span class="danger-text">−1</span></div>
+                <div class="codeview">
+                  <div class="del"><i>85</i><b>−</b>  <span class="tp">TotalTrolleyItemQuantity</span>: z.<span class="tf">number</span>().<span class="tf">int</span>(),</div>
+                  <div class="add"><i>85</i><b>+</b>  <span class="tc">// Renamed by the site on 7 Nov 2026. Both may be live.</span></div>
+                  <div class="add"><i>86</i><b>+</b>  <span class="tp">TotalTrolleyItemQuantity</span>: z.<span class="tf">number</span>().<span class="tf">int</span>().<span class="tf">optional</span>(),</div>
+                  <div class="add"><i>87</i><b>+</b>  <span class="tp">TrolleyItemQuantity</span>: z.<span class="tf">number</span>().<span class="tf">int</span>().<span class="tf">optional</span>(),</div>
+                </div>
+                <div class="file">src/cart.ts<span class="ok-text" style="margin-left: auto">+3</span><span class="danger-text">−1</span></div>
+                <div class="codeview">
+                  <div class="add"><i>145</i><b>+</b>  <span class="tk">const</span> totalQuantity = trolley.TrolleyItemQuantity ?? trolley.TotalTrolleyItemQuantity</div>
+                  <div class="add"><i>146</i><b>+</b>  <span class="tk">if</span> (totalQuantity === <span class="tk">undefined</span>) <span class="tk">throw new</span> <span class="tf">SiteAdapterError</span>(<span class="ts">'tool-run'</span>, <span class="ts">'invalid'</span>)</div>
+                  <div class="fold"><i></i><b></b>  ⋯</div>
+                  <div class="del"><i>160</i><b>−</b>    totalQuantity: trolley.TotalTrolleyItemQuantity,</div>
+                  <div class="add"><i>160</i><b>+</b>    totalQuantity,</div>
+                </div>
+                <div class="r-opt">
+                  <span class="check on"></span>Add the trace as fixture <span class="mono xs">trolley-2026-11-07.json</span>
+                </div>
+                <div class="r-foot">
+                  <span class="xs muted grow"><span class="ok-text">Code only, no new permissions.</span> A new hash you review.</span>
+                  <button type="button" class="btn">Discard</button>
+                  <button type="button" class="btn primary">Apply and re-run</button>
+                </div>
+              </div>
+
+              <div class="gate-card">
+                <div class="head">
+                  <span class="i i-lock warn-text"></span><span class="h3">Live smoke test</span>
+                  <span class="pill" style="margin-left: auto">Off until you run it</span>
+                </div>
+                <div class="xs muted">
+                  <span class="mono">get_cart</span> and <span class="mono">search_products “milk”</span> once each, about 4
+                  requests 2 s apart, in installed 0.1.0's session.
+                </div>
+                <div class="facts">
+                  <span class="i i-warn warn-text"></span><span>Traffic like this got the first live probe blocked by Akamai</span>
+                  <span class="i i-shield"></span><span>A block opens the breaker: no calls for 10 min, longer each time</span>
+                </div>
+                <button type="button" class="btn warn-outline">Run live smoke test…</button>
+              </div>
+            </div>
+          </section>
+
+          <section class="pane panel">
+            <div class="panel-tabs">
+              <span class="tab on"><span class="i sm i-terminal"></span>Output</span>
+              <span class="tab">Coverage <span class="n">96%</span></span>
+              <span class="spacer"></span>
+              <span class="xs muted">Offline run · 10:05:58 pm · no network</span>
+            </div>
+            <div class="pane-scroll console"><span class="dim"> RUN </span> offline · fake site on 127.0.0.1:52114 · every other host refused
+<span class="ok">✓</span> 9 fixture test files <span class="dim">161 tests · 0.9 s</span>
+<span class="ok">✓</span> security <span class="dim">3 tests · canary typed once, seen only in POST http://127.0.0.1:52114/auth/login, 0 in traces, outputs, audit</span>
+<span class="ok">✓</span> replay search_products · get_product <span class="dim">2 traces</span>
+<span class="bad">✗ replay add_to_cart (7 Nov 3:58 pm) → tool-run / invalid at trolleyWire.parse (wire.ts:85)</span>
+<span class="bad">✗ replay get_cart (7 Nov 5:12 pm) → tool-run / invalid at trolleyWire.parse (wire.ts:85)</span>
+<span class="dim">Tests</span> 164 passed  <span class="dim">Traces</span> 2 passed, <span class="bad">2 failed</span>  <span class="dim">Live</span> not run</div>
+          </section>
+        </div>
+
+        <div class="ide-status">
+          <span class="danger-text"><span class="i i-x"></span>2 traces fail: the site changed</span>
+          <span><span class="i i-lock"></span>Offline tests never reach the network: the fake site runs on this Mac</span>
+          <span class="right">Installed 0.1.0 · c3e94b20…7f15 fails the same way for MCP clients since 3:58 pm</span>
+        </div>
+      </div>
+    </div>
+    <nav class="mockbar" aria-label="Mockup">
+      <a href="index.html">All screens</a>
+      <button type="button" data-theme-toggle>Light / dark</button>
+    </nav>
+  </body>
+</html>

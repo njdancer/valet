@@ -1,8 +1,9 @@
-// Renders every app mockup to docs/mockups/screens/<name>.png (light) and <name>-dark.png at
+// Renders every mockup to docs/mockups/screens/<name>.png (light) and <name>-dark.png at
 // 1440x900, device scale 2. Local files only: the pages load nothing from the network.
 //
-//   mise exec -- node docs/mockups/screenshot.mjs            # every app screen
-//   mise exec -- node docs/mockups/screenshot.mjs menubar    # just one
+//   mise exec -- node docs/mockups/screenshot.mjs                    # every screen
+//   mise exec -- node docs/mockups/screenshot.mjs menubar            # just one
+//   mise exec -- node docs/mockups/screenshot.mjs onboarding-step1   # one onboarding step
 
 import { existsSync, mkdirSync, readdirSync } from 'node:fs'
 import { createRequire } from 'node:module'
@@ -27,7 +28,25 @@ const SCREENS = [
   'confirm-irreversible',
   'needs-user',
   'clients-settings',
+  'ide-workspace',
+  'ide-recorder',
+  'ide-agent',
+  'ide-tests',
+  // onboarding.html opens on step 3; the other steps are the same page with ?step=N.
+  'onboarding',
+  'onboarding-step1',
+  'onboarding-step2',
+  'onboarding-step4',
+  'onboarding-step5',
 ]
+
+// Screens that are one page opened at a given step: name -> [file, extra query].
+const VARIANTS = {
+  'onboarding-step1': ['onboarding', 'step=1'],
+  'onboarding-step2': ['onboarding', 'step=2'],
+  'onboarding-step4': ['onboarding', 'step=4'],
+  'onboarding-step5': ['onboarding', 'step=5'],
+}
 
 const wanted = process.argv.slice(2)
 const names = wanted.length > 0 ? wanted : SCREENS
@@ -48,12 +67,14 @@ try {
     const page = await context.newPage()
     page.on('pageerror', (error) => failures.push(`${theme}: ${error.message}`))
     for (const name of names) {
-      const file = join(here, `${name}.html`)
+      const [base, extra] = VARIANTS[name] ?? [name, '']
+      const file = join(here, `${base}.html`)
       if (!existsSync(file)) {
-        failures.push(`${name}.html does not exist`)
+        failures.push(`${base}.html does not exist`)
         continue
       }
-      const url = `${pathToFileURL(file).href}?theme=${theme}&clean`
+      const query = extra === '' ? '' : `&${extra}`
+      const url = `${pathToFileURL(file).href}?theme=${theme}&clean${query}`
       await page.goto(url, { waitUntil: 'load' })
       const suffix = theme === 'dark' ? '-dark' : ''
       await page.screenshot({ path: join(out, `${name}${suffix}.png`) })

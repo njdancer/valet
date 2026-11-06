@@ -1,0 +1,588 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>IDE workspace · siteadapter mockups</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="ide.css" />
+    <script src="app.js"></script>
+    <style>
+      .ide-body {
+        grid-template-columns: 236px minmax(0, 1fr) 488px;
+        grid-template-rows: minmax(0, 1fr) 236px;
+      }
+      .tree {
+        grid-row: 1 / 3;
+      }
+      .panel {
+        grid-column: 2 / 4;
+      }
+      .netlog th:nth-child(1) {
+        width: 72px;
+      }
+      .netlog th:nth-child(2) {
+        width: 124px;
+      }
+      .netlog th:nth-child(3) {
+        width: 60px;
+      }
+      .netlog th:nth-child(4) {
+        width: 184px;
+      }
+      .netlog th:nth-child(6) {
+        width: 240px;
+      }
+      .netlog th:nth-child(7) {
+        width: 56px;
+      }
+      .netlog th:nth-child(8) {
+        width: 66px;
+      }
+      .used {
+        white-space: nowrap;
+        font-family: var(--font-mono);
+        font-size: 11px;
+        color: var(--text-secondary);
+      }
+      .deny-note {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-top: 8px;
+        font-size: var(--text-xs);
+        color: var(--text-secondary);
+      }
+      .deny-note .i {
+        width: 11px;
+        height: 11px;
+      }
+      .limit {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        margin-right: 6px;
+        white-space: nowrap;
+      }
+      .chip-host {
+        height: 22px;
+        font-size: 11px;
+      }
+      .ww-line {
+        padding: 8px 12px;
+      }
+      .stepper {
+        display: inline-flex;
+        align-items: center;
+        height: 22px;
+        border-radius: 5px;
+        border: 0.5px solid var(--border-strong);
+        background: var(--bg-surface);
+        font: 12px var(--font-mono);
+        overflow: hidden;
+      }
+      .stepper span {
+        padding: 0 10px;
+      }
+      .stepper b {
+        width: 20px;
+        text-align: center;
+        font-weight: 400;
+        color: var(--text-secondary);
+        border-left: 0.5px solid var(--border);
+      }
+      .ww-sum {
+        margin-top: 10px;
+        padding: 12px;
+        display: grid;
+        gap: 6px;
+        font-size: 12.5px;
+      }
+      .ww-sum .r {
+        display: flex;
+        justify-content: space-between;
+      }
+      .ww-sum .save {
+        color: #d0021b;
+        font-weight: 600;
+      }
+      .ww-qty {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 4px;
+        font-size: 11px;
+        color: #444;
+      }
+      .ww-qty b {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        border: 1px solid #178a33;
+        color: #178a33;
+        font-weight: 700;
+      }
+      .viewport-note {
+        position: absolute;
+        right: 10px;
+        bottom: 10px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 9px;
+        border-radius: 7px;
+        background: var(--popover-bg);
+        box-shadow: var(--shadow-popover);
+        font-size: var(--text-xs);
+        color: var(--text);
+      }
+      .viewport-note .i {
+        width: 11px;
+        height: 11px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="desktop ide">
+      <header class="sysbar">
+        <span class="i i-apple"></span>
+        <span class="app-name">siteadapter</span>
+        <span>File</span><span>Edit</span><span>View</span><span>Adapter</span><span>Run</span><span>Window</span
+        ><span>Help</span>
+        <span class="spacer"></span>
+        <span class="status">
+          <span class="tray"><span class="i i-logo"></span></span>
+          <span class="i i-wifi"></span>
+          <span class="i i-battery" style="width: 22px"></span>
+          <span>Sat 7 Nov&nbsp; 9:31 pm</span>
+        </span>
+      </header>
+
+      <div class="window ide">
+        <div class="titlebar">
+          <div class="traffic"><span></span><span></span><span></span></div>
+          <div class="ide-adapter">
+            <span class="avatar sm wow">W</span>
+            <span class="name">Woolworths</span>
+            <span class="pill">0.2.0-dev</span>
+            <span class="hash" title="Draft content hash">draft 41c0e7a2…b7d3</span>
+          </div>
+          <nav class="modes" style="margin-left: var(--space-4)">
+            <a class="on" href="ide-workspace.html"><span class="i i-code"></span>Workspace</a>
+            <a href="ide-recorder.html"><span class="i i-record"></span>Record</a>
+            <a href="ide-agent.html"><span class="i i-sparkle"></span>Agent</a>
+            <a href="ide-tests.html"><span class="i i-flask"></span>Tests</a>
+          </nav>
+          <div class="tools">
+            <span class="select mono" style="font-size: 12px">get_cart {}</span>
+            <button type="button" class="btn"><span class="i sm i-play" style="color: var(--ok)"></span>Run</button>
+            <button type="button" class="btn primary">Submit for review…</button>
+          </div>
+        </div>
+
+        <div class="ide-body">
+          <!-- Structure: the manifest's sections, the auth steps as structured items, the tools. -->
+          <aside class="pane tree">
+            <div class="pane-head">
+              Woolworths adapter<span class="spacer"></span><span class="i sm i-filter"></span>
+            </div>
+            <div class="pane-scroll tree-list">
+              <div class="tree-group">Manifest</div>
+              <div class="node d1"><span class="i i-file"></span><span class="label">Identity</span><span class="meta">woolworths</span></div>
+              <div class="node d1">
+                <span class="i i-globe"></span><span class="label">Navigation</span><span class="meta">2 · 1 new</span>
+              </div>
+              <div class="node d1"><span class="i i-net"></span><span class="label">Egress</span><span class="meta">3 hosts</span></div>
+              <div class="node d1">
+                <span class="i i-key"></span><span class="label">Secrets</span><span class="badge secret" title="Granted to installed 0.1.0 only. This draft has no grant.">login</span>
+              </div>
+              <div class="node d1">
+                <span class="i i-shield"></span><span class="label">Session &amp; probe</span><span class="meta">fetch</span>
+              </div>
+              <div class="node d1">
+                <span class="i sm i-chevron twisty open"></span><span class="label">Auth steps</span
+                ><span class="meta" title="Draft auth steps never fill secrets: no grant until you approve 0.2.0">10 · no grant</span>
+              </div>
+              <div class="node d2"><span class="op nav">goto</span><span class="label sel-text">/auth/login</span></div>
+              <div class="node d2">
+                <span class="op">waitFor</span><span class="label sel-text">input[name=username]</span>
+              </div>
+              <div class="node d2">
+                <span class="op secret">fill</span><span class="label sel-text">username ← login</span>
+              </div>
+              <div class="node d2"><span class="op">click</span><span class="label sel-text">Continue</span></div>
+              <div class="node d2"><span class="op">waitFor</span><span class="label sel-text">/u/login/password</span></div>
+              <div class="node d2">
+                <span class="op secret">fill</span><span class="label sel-text">#password ← login</span>
+              </div>
+              <div class="node d2"><span class="op">click</span><span class="label sel-text">Continue</span></div>
+              <div class="node d2"><span class="op flow">when</span><span class="label sel-text">/u/mfa-… → otp</span></div>
+              <div class="node d2"><span class="op flow">when</span><span class="label sel-text">/u/login → needsUser</span></div>
+              <div class="node d2"><span class="op end">assertLoggedIn</span></div>
+              <div class="node d1 sel">
+                <span class="i i-list" style="color: var(--accent)"></span><span class="label">Request surface</span
+                ><span class="flag" title="3 suggestions"></span>
+              </div>
+              <div class="node d1"><span class="i i-clock"></span><span class="label">Limits</span><span class="meta">6 / run</span></div>
+
+              <div class="tree-group">Tools <span class="count">6</span></div>
+              <div class="node d1"><span class="label mono">search_products</span><span class="badge read">read</span></div>
+              <div class="node d1"><span class="label mono">get_product</span><span class="badge read">read</span></div>
+              <div class="node d1">
+                <span class="label mono">get_cart</span><span class="dot bad" style="margin-left: auto" title="Edited in this draft. Last run failed."></span
+                ><span class="badge read" style="margin-left: 6px">read</span>
+              </div>
+              <div class="node d1"><span class="label mono">add_to_cart</span><span class="badge write">write</span></div>
+              <div class="node d1"><span class="label mono">set_cart_quantity</span><span class="badge write">write</span></div>
+              <div class="node d1"><span class="label mono">remove_from_cart</span><span class="badge write">write</span></div>
+
+              <div class="tree-group">Files</div>
+              <div class="node d1"><span class="i i-folder"></span><span class="label">src</span><span class="meta">9</span></div>
+              <div class="node d1"><span class="i i-folder"></span><span class="label">test</span><span class="meta">11 · 4 fixtures</span></div>
+            </div>
+          </aside>
+
+          <!-- Editor: the manifest as a form. Auth steps and permissions are never edited as code. -->
+          <section class="pane editor">
+            <div class="editor-tabs">
+              <span class="editor-tab on"><span class="i i-list"></span>Manifest</span>
+              <span class="editor-tab"><span class="i i-code"></span>cart.ts</span>
+              <span class="editor-tab"><span class="i i-code"></span>site.ts</span>
+              <span class="editor-tab"><span class="i i-code"></span>login.ts</span>
+              <span class="tail">
+                <span class="segmented"><span class="on">Form</span><span>Source</span></span>
+              </span>
+            </div>
+            <div class="crumbs">
+              manifest <span class="i i-chevron"></span> Request surface
+              <span style="margin-left: auto" class="tertiary">Checked against core's manifest schema as you type · no problems</span>
+            </div>
+            <div class="pane-scroll">
+              <div class="form-sec">
+                <div class="head">
+                  <span class="h3">Request surface</span>
+                  <span class="muted">Every API call in the tool session, from tool code or the site's own scripts. Others are blocked.</span>
+                  <span class="actions"
+                    ><span class="limit xs muted">At most <span class="stepper"><span>6</span><b>−</b><b>+</b></span> per run</span
+                    ><button type="button" class="btn"><span class="i sm i-plus"></span>Request</button></span
+                  >
+                </div>
+                <table class="ftable">
+                  <thead>
+                    <tr>
+                      <th style="width: 82px">Method</th>
+                      <th>Path pattern</th>
+                      <th style="width: 104px">Purpose</th>
+                      <th style="width: 150px">Called by</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><span class="cell sm">POST<span class="i i-down"></span></span></td>
+                      <td><span class="cell">/apis/ui/Search/products</span></td>
+                      <td><span class="badge read">read</span></td>
+                      <td class="used">search_products</td>
+                    </tr>
+                    <tr>
+                      <td><span class="cell sm">GET<span class="i i-down"></span></span></td>
+                      <td><span class="cell">/apis/ui/product/detail/:stockcode</span></td>
+                      <td><span class="badge read">read</span></td>
+                      <td class="used">get_product</td>
+                    </tr>
+                    <tr>
+                      <td><span class="cell sm">GET<span class="i i-down"></span></span></td>
+                      <td><span class="cell">/apis/ui/Trolley</span></td>
+                      <td><span class="badge read">read</span></td>
+                      <td class="used">get_cart, add_to_…</td>
+                    </tr>
+                    <tr>
+                      <td><span class="cell sm">POST<span class="i i-down"></span></span></td>
+                      <td><span class="cell">/api/v3/ui/trolley/update</span></td>
+                      <td><span class="badge write">write</span></td>
+                      <td class="used">3 cart tools</td>
+                    </tr>
+                    <tr class="suggest">
+                      <td><span class="mono" style="padding-left: 8px">GET</span></td>
+                      <td>
+                        <span class="mono">/apis/ui/settings</span>
+                        <span class="xs danger-text">· failed get_cart's run; the page also calls it on load</span>
+                      </td>
+                      <td colspan="2">
+                        <span class="row" style="justify-content: flex-end">
+                          <button type="button" class="btn" style="height: 20px; font-size: 11px">Declare as read</button>
+                          <button type="button" class="btn ghost" style="height: 20px; font-size: 11px">Dismiss</button>
+                        </span>
+                      </td>
+                    </tr>
+                    <tr class="suggest">
+                      <td><span class="mono" style="padding-left: 8px">POST</span></td>
+                      <td>
+                        <span class="mono">acs.… /rest/v1/delivery</span>
+                        <span class="xs warn-text">· the page's own call, blocked</span>
+                      </td>
+                      <td colspan="2">
+                        <span class="row" style="justify-content: flex-end">
+                          <button type="button" class="btn" style="height: 20px; font-size: 11px">Declare as read</button>
+                          <button type="button" class="btn ghost" style="height: 20px; font-size: 11px">Dismiss</button>
+                        </span>
+                      </td>
+                    </tr>
+                    <tr class="suggest">
+                      <td><span class="mono" style="padding-left: 8px">POST</span></td>
+                      <td>
+                        <span class="mono">Akamai sensor</span>
+                        <span class="xs warn-text">· the page's own call, blocked</span>
+                      </td>
+                      <td colspan="2">
+                        <span class="row" style="justify-content: flex-end">
+                          <button type="button" class="btn" style="height: 20px; font-size: 11px">Declare as read</button>
+                          <button type="button" class="btn ghost" style="height: 20px; font-size: 11px">Dismiss</button>
+                        </span>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+                <div class="deny-note">
+                  <span class="i i-lock"></span>Checkout, payment, payee and transfer paths are refused by the runtime unless declared
+                  <span class="badge irreversible">irreversible</span>
+                </div>
+                <div class="deny-note">
+                  <span class="i i-warn"></span>The site's own delivery and sensor POSTs are blocked until declared. Whether the
+                  site keeps working, and whether Akamai tolerates it, is untested.
+                </div>
+              </div>
+
+              <div class="form-sec">
+                <div class="head">
+                  <span class="h3">Egress</span>
+                  <span class="muted">Hosts the tool session may contact at all, enforced in the network layer.</span>
+                </div>
+                <div class="chips">
+                  <span class="chip-host"><span class="i i-globe"></span>www.woolworths.com.au</span>
+                  <span class="chip-host"><span class="i i-globe"></span>cdn0.woolworths.media</span>
+                  <span class="chip-host"><span class="i i-globe"></span>acs.woolworths.com.au</span>
+                  <span class="chip-host add"><span class="i i-plus"></span>Add host</span>
+                </div>
+                <div class="deny-note">
+                  <span class="i i-lock"></span>Your logged-in dev session allows installed 0.1.0's hosts that this draft also
+                  lists. A host the draft adds stays off there until you approve it.
+                </div>
+                <div class="xs muted" style="margin: 10px 0 6px">Blocked in the last run · 41 hosts, all analytics or ads</div>
+                <div class="chips">
+                  <span class="chip-host blocked">tags.tiqcdn.com</span>
+                  <span class="chip-host blocked">assets.adobedtm.com</span>
+                  <span class="chip-host blocked">bat.bing.com</span>
+                  <span class="chip-host blocked">analytics.tiktok.com</span>
+                  <span class="xs tertiary" style="align-self: center">+37 more</span>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- The embedded browser, showing the partition it is in. -->
+          <section class="pane browser">
+            <div class="bchrome">
+              <span class="navbtn back"><span class="i i-chevron"></span></span>
+              <span class="navbtn"><span class="i i-chevron"></span></span>
+              <span class="navbtn"><span class="i i-refresh"></span></span>
+              <div class="addr">
+                <span class="part tool">TOOL</span>
+                <span class="i i-lock ok-text"></span>
+                <span class="url"><span class="host">www.woolworths.com.au</span><span class="path">/shop/cart</span></span>
+              </div>
+            </div>
+            <div class="bmeta">
+              <span class="mono">persist:tool:woolworths-dev</span>
+              <span><span class="i i-globe"></span>Chrome 152 UA · en-AU</span>
+              <span class="ok-text"><span class="dot ok" style="width: 6px; height: 6px"></span>Logged in</span>
+            </div>
+            <div class="bmeta">
+              <span title="Cookies are copied from persist:auth:woolworths, where installed 0.1.0 logs in under its own grant"
+                ><span class="i i-key"></span>Persistent · cookies handed off from installed 0.1.0's login</span
+              >
+            </div>
+            <div class="bmeta">
+              <span><span class="i i-lock"></span>The draft's login steps never run here: no grant until you approve it</span>
+            </div>
+            <div class="viewport">
+              <div class="site">
+                <div class="ww-top">
+                  <span class="word">Woolworths</span>
+                  <span class="search">Search products, recipes &amp; ideas</span>
+                  <span class="acct">My Account</span>
+                </div>
+                                <div class="ww-page">
+                  <div class="ww-h">Trolley <span style="font-weight: 400; color: #666; font-size: 13px">3 items</span></div>
+                  <div class="ww-card">
+                    <div class="ww-line">
+                      <span class="ww-thumb">2L</span>
+                      <div>
+                        <div class="t">Dairy Farmers Full Cream Milk 2L</div>
+                        <div class="s">$2.10 / 1L</div>
+                        <div class="ww-qty"><b>−</b>2<b>+</b></div>
+                      </div>
+                      <div class="p">$8.40<span class="was">Save $1.00</span></div>
+                    </div>
+                    <div class="ww-line">
+                      <span class="ww-thumb">2L</span>
+                      <div>
+                        <div class="t">Woolworths Full Cream Milk 2L</div>
+                        <div class="s">$1.70 / 1L</div>
+                        <div class="ww-qty"><b>−</b>1<b>+</b></div>
+                      </div>
+                      <div class="p">$3.40</div>
+                    </div>
+                    <div class="ww-line">
+                      <span class="ww-thumb">700g</span>
+                      <div>
+                        <div class="t">Helga's Traditional Wholemeal Bread 700g</div>
+                        <div class="s">$0.57 / 100g</div>
+                        <div class="ww-qty"><b>−</b>1<b>+</b></div>
+                      </div>
+                      <div class="p">$4.00</div>
+                    </div>
+                  </div>
+                  <div class="ww-card ww-sum">
+                    <div class="r"><span>Subtotal</span><strong>$15.80</strong></div>
+                    <div class="r save"><span>Savings</span><span>$1.00</span></div>
+                    <div class="ww-btn" style="margin-top: 4px">Checkout</div>
+                  </div>
+                </div>
+              </div>
+              <div class="viewport-note">
+                <span class="i i-lock"></span>Checkout paths are denied to tool code. Clicking here is you, not the adapter.
+              </div>
+            </div>
+          </section>
+
+          <!-- Bottom panel: every request from the tool session, with its request-surface decision. -->
+          <section class="pane panel">
+            <div class="panel-tabs">
+              <span class="tab on"><span class="i sm i-net"></span>Network <span class="n">8</span></span>
+              <span class="tab"><span class="i sm i-activity"></span>Trace</span>
+              <span class="tab"><span class="i sm i-terminal"></span>Console</span>
+              <span class="tab">Problems <span class="n">3</span></span>
+              <span class="spacer"></span>
+              <span class="chip on">All</span>
+              <span class="chip">Capability API</span>
+              <span class="chip">Blocked</span>
+              <span class="xs muted" style="margin-left: 8px">Run <span class="mono">get_cart {}</span> · started by you · 9:31:02 pm</span>
+            </div>
+            <div class="pane-scroll">
+              <table class="netlog">
+                <thead>
+                  <tr>
+                    <th>Time</th>
+                    <th title="Only capability-API calls can be tied to a tool call. Everything else is the tool partition, whoever made it.">Made by</th>
+                    <th>Method</th>
+                    <th>Host</th>
+                    <th>Path <span class="tertiary">(no query; blocked rows matched by digest)</span></th>
+                    <th>Decision</th>
+                    <th class="num">Status</th>
+                    <th class="num">Size</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="mono muted">02.118</td>
+                    <td><span class="who"><span class="i i-globe"></span>tool partition</span></td>
+                    <td class="mono">GET</td>
+                    <td class="mono">www.woolworths.com.au</td>
+                    <td class="mono">/shop/cart</td>
+                    <td><span class="dec page">page load · not an API call</span></td>
+                    <td class="num mono">200</td>
+                    <td class="num mono muted">48 KB</td>
+                  </tr>
+                  <tr>
+                    <td class="mono muted">02.402</td>
+                    <td><span class="who"><span class="i i-globe"></span>tool partition</span></td>
+                    <td class="mono">GET</td>
+                    <td class="mono">tags.tiqcdn.com</td>
+                    <td class="mono">≈ /utag/…/utag.js</td>
+                    <td><span class="dec blocked"><span class="i i-x"></span>blocked · host-not-allowed</span></td>
+                    <td class="num mono muted">—</td>
+                    <td class="num mono muted">—</td>
+                  </tr>
+                  <tr>
+                    <td class="mono muted">02.530</td>
+                    <td><span class="who"><span class="i i-globe"></span>tool partition</span></td>
+                    <td class="mono">GET</td>
+                    <td class="mono">www.woolworths.com.au</td>
+                    <td class="mono">≈ /apis/ui/settings</td>
+                    <td><span class="dec blocked"><span class="i i-x"></span>blocked · undeclared-request</span></td>
+                    <td class="num mono muted">—</td>
+                    <td class="num mono muted">—</td>
+                  </tr>
+                  <tr>
+                    <td class="mono muted">02.977</td>
+                    <td><span class="who"><span class="i i-shield"></span>runtime probe</span></td>
+                    <td class="mono">GET</td>
+                    <td class="mono">www.woolworths.com.au</td>
+                    <td class="mono">/api/ui/v2/bootstrap</td>
+                    <td><span class="dec runtime">session probe · logged in</span></td>
+                    <td class="num mono">200</td>
+                    <td class="num mono muted">6 KB</td>
+                  </tr>
+                  <tr class="sel">
+                    <td class="mono muted">03.214</td>
+                    <td><span class="who"><span class="i i-code"></span>get_cart · fetch</span></td>
+                    <td class="mono">GET</td>
+                    <td class="mono">www.woolworths.com.au</td>
+                    <td class="mono">/apis/ui/settings</td>
+                    <td><span class="dec undeclared"><span class="i i-x"></span>undeclared-request · fails the call</span></td>
+                    <td class="num mono muted">—</td>
+                    <td class="num mono muted">—</td>
+                  </tr>
+                  <tr>
+                    <td class="mono muted">03.702</td>
+                    <td><span class="who"><span class="i i-globe"></span>tool partition</span></td>
+                    <td class="mono">POST</td>
+                    <td class="mono">acs.woolworths.com.au</td>
+                    <td class="mono">≈ /rest/v1/delivery</td>
+                    <td><span class="dec blocked"><span class="i i-x"></span>blocked · undeclared-request</span></td>
+                    <td class="num mono muted">—</td>
+                    <td class="num mono muted">—</td>
+                  </tr>
+                  <tr>
+                    <td class="mono muted">03.950</td>
+                    <td><span class="who"><span class="i i-globe"></span>tool partition</span></td>
+                    <td class="mono">POST</td>
+                    <td class="mono">www.woolworths.com.au</td>
+                    <td class="mono">Akamai sensor path</td>
+                    <td><span class="dec blocked"><span class="i i-x"></span>blocked · undeclared-request</span></td>
+                    <td class="num mono muted">—</td>
+                    <td class="num mono muted">—</td>
+                  </tr>
+                  <tr>
+                    <td class="mono muted">04.015</td>
+                    <td><span class="who"><span class="i i-globe"></span>tool partition</span></td>
+                    <td class="mono">POST</td>
+                    <td class="mono">bat.bing.com</td>
+                    <td class="mono">≈ /action/0</td>
+                    <td><span class="dec blocked"><span class="i i-x"></span>blocked · host-not-allowed</span></td>
+                    <td class="num mono muted">—</td>
+                    <td class="num mono muted">—</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <div class="ide-status">
+          <span class="danger-text"><span class="i i-x"></span>get_cart failed · request-surface / undeclared-request</span>
+          <span><span class="i i-lock"></span>Draft 41c0e7a2…b7d3 runs only here, never over MCP</span>
+          <span class="right"><span class="i i-adapter"></span>Installed 0.1.0 · c3e94b20…7f15 · failing since 3:58 pm, see Tests</span>
+        </div>
+      </div>
+    </div>
+    <nav class="mockbar" aria-label="Mockup">
+      <a href="index.html">All screens</a>
+      <button type="button" data-theme-toggle>Light / dark</button>
+    </nav>
+  </body>
+</html>

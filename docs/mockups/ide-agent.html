@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Authoring agent · siteadapter mockups</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="ide.css" />
+    <script src="app.js"></script>
+    <style>
+      .ide-body {
+        grid-template-columns: 212px minmax(0, 1fr) 452px;
+      }
+      .split {
+        flex: 1;
+        min-height: 0;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+      }
+      .split > div {
+        min-height: 0;
+        overflow: hidden;
+      }
+      .split > div + div {
+        border-top: 0.5px solid var(--border);
+      }
+      .file-head {
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        height: 30px;
+        padding: 0 var(--space-4);
+        border-bottom: 0.5px solid var(--border);
+        background: var(--pane-head-bg);
+        font-size: var(--text-xs);
+        color: var(--text-secondary);
+      }
+      .file-head .name {
+        font: 600 12px var(--font-mono);
+        color: var(--text);
+      }
+      .file-head .spacer {
+        flex: 1;
+      }
+      .node .new {
+        margin-left: auto;
+        font: 700 10px var(--font-mono);
+        color: var(--ok);
+      }
+      .node .mod {
+        margin-left: auto;
+        font: 700 10px var(--font-mono);
+        color: var(--warn-text);
+      }
+      .node.added {
+        background: var(--diff-add-bg);
+      }
+      .msg-agent p {
+        margin: 0;
+        line-height: 1.45;
+      }
+      .peek .peek-h {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        height: 26px;
+        padding: 0 8px;
+        border-bottom: 0.5px solid var(--border);
+        font-size: var(--text-xs);
+        color: var(--text-secondary);
+      }
+      .peek .codeview {
+        padding: 4px 0;
+        font-size: 11px;
+      }
+      .peek .codeview i,
+      .peek .codeview b {
+        display: none;
+      }
+      .peek .codeview > div {
+        padding-left: 10px;
+      }
+      .chat .seen {
+        grid-template-columns: 1fr 1fr;
+      }
+      .model .select,
+      .model .segmented,
+      .model .h3 {
+        flex: none;
+        white-space: nowrap;
+      }
+      .provider {
+        font-size: var(--text-xs);
+        color: var(--text-secondary);
+        line-height: 1.3;
+      }
+      .provider {
+        font-size: var(--text-xs);
+        color: var(--text-secondary);
+      }
+      .provider .i {
+        width: 11px;
+        height: 11px;
+        vertical-align: -1px;
+        margin-right: 4px;
+      }
+      .acts .act {
+        height: 18px;
+      }
+      .thread {
+        gap: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="desktop ide">
+      <header class="sysbar">
+        <span class="i i-apple"></span>
+        <span class="app-name">siteadapter</span>
+        <span>File</span><span>Edit</span><span>View</span><span>Adapter</span><span>Run</span><span>Window</span
+        ><span>Help</span>
+        <span class="spacer"></span>
+        <span class="status">
+          <span class="tray"><span class="i i-logo"></span></span>
+          <span class="i i-wifi"></span>
+          <span class="i i-battery" style="width: 22px"></span>
+          <span>Sat 7 Nov&nbsp; 9:52 pm</span>
+        </span>
+      </header>
+
+      <div class="window ide">
+        <div class="titlebar">
+          <div class="traffic"><span></span><span></span><span></span></div>
+          <div class="ide-adapter">
+            <span class="avatar sm wow">W</span>
+            <span class="name">Woolworths</span>
+            <span class="pill">0.2.0-dev</span>
+            <span class="hash" title="The draft as it was before this proposal">draft 5a90d3f8…2c61</span>
+          </div>
+          <nav class="modes" style="margin-left: var(--space-4)">
+            <a href="ide-workspace.html"><span class="i i-code"></span>Workspace</a>
+            <a href="ide-recorder.html"><span class="i i-record"></span>Record</a>
+            <a class="on" href="ide-agent.html"><span class="i i-sparkle"></span>Agent</a>
+            <a href="ide-tests.html"><span class="i i-flask"></span>Tests</a>
+          </nav>
+          <div class="tools">
+            <span class="pill warn" title="Approving makes the draft 0b64e1c9…d3a2">Proposal · 8 files · 3 permissions</span>
+            <button type="button" class="btn primary">Submit for review…</button>
+          </div>
+        </div>
+
+        <div class="ide-body">
+          <aside class="pane tree">
+            <div class="pane-head">Woolworths adapter</div>
+            <div class="pane-scroll tree-list">
+              <div class="tree-group">Manifest</div>
+              <div class="node d1"><span class="i i-globe"></span><span class="label">Navigation</span><span class="meta">2</span></div>
+              <div class="node d1"><span class="i i-net"></span><span class="label">Egress</span><span class="meta">3</span></div>
+              <div class="node d1">
+                <span class="i i-key"></span><span class="label">Secrets</span><span class="badge secret">login</span>
+              </div>
+              <div class="node d1"><span class="i i-shield"></span><span class="label">Session &amp; probe</span></div>
+              <div class="node d1"><span class="i i-list"></span><span class="label">Auth steps</span><span class="meta">10</span></div>
+              <div class="node d1 sel">
+                <span class="i i-list" style="color: var(--accent)"></span><span class="label">Request surface</span
+                ><span class="new">+2</span>
+              </div>
+              <div class="node d1"><span class="i i-clock"></span><span class="label">Limits</span><span class="meta">6 / run</span></div>
+
+              <div class="tree-group">Tools <span class="count">7</span></div>
+              <div class="node d1"><span class="label mono">search_products</span><span class="badge read">read</span></div>
+              <div class="node d1"><span class="label mono">get_product</span><span class="badge read">read</span></div>
+              <div class="node d1"><span class="label mono">get_cart</span><span class="badge read">read</span></div>
+              <div class="node d1 added">
+                <span class="label mono">get_order_history</span><span class="badge read">read</span>
+              </div>
+              <div class="node d1"><span class="label mono">add_to_cart</span><span class="badge write">write</span></div>
+              <div class="node d1"><span class="label mono">set_cart_quantity</span><span class="badge write">write</span></div>
+              <div class="node d1"><span class="label mono">remove_from_cart</span><span class="badge write">write</span></div>
+
+              <div class="tree-group">Changed files</div>
+              <div class="node d1"><span class="i i-code"></span><span class="label">src/manifest.ts</span><span class="mod">M</span></div>
+              <div class="node d1"><span class="i i-code"></span><span class="label">src/orders.ts</span><span class="new">A</span></div>
+              <div class="node d1"><span class="i i-code"></span><span class="label">src/site.ts</span><span class="mod">M</span></div>
+              <div class="node d1"><span class="i i-code"></span><span class="label">src/wire.ts</span><span class="mod">M</span></div>
+              <div class="node d1"><span class="i i-code"></span><span class="label">src/adapter.ts</span><span class="mod">M</span></div>
+              <div class="node d1">
+                <span class="i i-flask"></span><span class="label">test/orders.test.ts</span><span class="new">A</span>
+              </div>
+              <div class="node d1">
+                <span class="i i-file"></span><span class="label">fixtures/orders-page-1.json</span><span class="new">A</span>
+              </div>
+              <div class="node d1">
+                <span class="i i-file"></span><span class="label">fixtures/order-detail.json</span><span class="new">A</span>
+              </div>
+            </div>
+          </aside>
+
+          <!-- The proposal as diffs. Nothing is applied until the person approves it. -->
+          <section class="pane editor">
+            <div class="editor-tabs">
+              <span class="editor-tab on"><span class="i i-diff"></span>Proposal</span>
+              <span class="editor-tab"><span class="i i-flask"></span>orders.test.ts</span>
+              <span class="editor-tab"><span class="i i-code"></span>wire.ts</span>
+              <span class="tail"><span class="segmented"><span class="on">Unified</span><span>Split</span></span></span>
+            </div>
+            <div class="split">
+              <div>
+                <div class="file-head">
+                  <span class="name">src/manifest.ts</span><span class="ok-text">+9</span><span class="tertiary">−0</span>
+                  <span class="spacer"></span><span>Permissions: 2 requests, 1 tool</span>
+                </div>
+                <div class="codeview">
+                  <div class="hunk"><i></i><b></b>@@ requests @@</div>
+                  <div><i>132</i><b></b>      { method: <span class="ts">'GET'</span>, path: <span class="ts">'/apis/ui/Trolley'</span>, purpose: <span class="ts">'read'</span> },</div>
+                  <div><i>133</i><b></b>      { method: <span class="ts">'POST'</span>, path: <span class="ts">'/api/v3/ui/trolley/update'</span>, purpose: <span class="ts">'write'</span> },</div>
+                  <div class="add"><i>134</i><b>+</b>      { method: <span class="ts">'GET'</span>, path: <span class="ts">'/apis/ui/Orders/:page'</span>, purpose: <span class="ts">'read'</span> },</div>
+                  <div class="add"><i>135</i><b>+</b>      { method: <span class="ts">'GET'</span>, path: <span class="ts">'/apis/ui/Orders/details/:orderId'</span>, purpose: <span class="ts">'read'</span> },</div>
+                  <div><i>136</i><b></b>    ],</div>
+                  <div class="hunk"><i></i><b></b>@@ tools @@</div>
+                  <div class="add"><i>175</i><b>+</b>      {</div>
+                  <div class="add"><i>176</i><b>+</b>        name: <span class="ts">'get_order_history'</span>,</div>
+                  <div class="add"><i>177</i><b>+</b>        title: <span class="ts">'Get order history'</span>,</div>
+                  <div class="add"><i>178</i><b>+</b>        description: <span class="ts">'Past orders, newest first: date, status, total, item count. Items for up to 4.'</span>,</div>
+                  <div class="add"><i>179</i><b>+</b>        sideEffect: <span class="ts">'read'</span>,</div>
+                  <div class="add"><i>180</i><b>+</b>      },</div>
+                  <div><i>181</i><b></b>    ],</div>
+                </div>
+              </div>
+              <div>
+                <div class="file-head">
+                  <span class="name">src/orders.ts</span><span class="pill ok" style="height: 16px">new</span
+                  ><span class="ok-text">+58</span>
+                  <span class="spacer"></span><span>Uses page.fetch and session.ensure only</span>
+                </div>
+                <div class="codeview">
+                  <div class="add"><i>1</i><b>+</b><span class="tc">// Order history. Read-only: the orders page also offers "reorder", which writes to the</span></div>
+                  <div class="add"><i>2</i><b>+</b><span class="tc">// trolley, so that request is deliberately not declared.</span></div>
+                  <div class="add"><i>3</i><b>+</b></div>
+                  <div class="add"><i>4</i><b>+</b><span class="tk">import</span> { <span class="tf">tool</span> } <span class="tk">from</span> <span class="ts">'@siteadapter/core'</span></div>
+                  <div class="add"><i>5</i><b>+</b><span class="tk">import</span> { z } <span class="tk">from</span> <span class="ts">'zod'</span></div>
+                  <div class="add"><i>6</i><b>+</b><span class="tk">import</span> { <span class="tf">requireLogin</span> } <span class="tk">from</span> <span class="ts">'./login'</span></div>
+                  <div class="add"><i>7</i><b>+</b><span class="tk">import</span> { <span class="tf">getJson</span>, PATHS } <span class="tk">from</span> <span class="ts">'./site'</span></div>
+                  <div class="add"><i>8</i><b>+</b><span class="tk">import</span> { orderDetailWire, orderListWire } <span class="tk">from</span> <span class="ts">'./wire'</span></div>
+                  <div class="add"><i>9</i><b>+</b></div>
+                  <div class="add"><i>10</i><b>+</b><span class="tc">/** One request per order's items; the run ceiling is 6, and the list takes one. */</span></div>
+                  <div class="add"><i>11</i><b>+</b><span class="tk">export const</span> <span class="tp">MAX_ORDERS_WITH_ITEMS</span> = <span class="tn">4</span></div>
+                  <div class="fold"><i>12</i><b></b>  ⋯ orderHistorySchema, toOrder, toOrderItem (24 lines)</div>
+                  <div class="add"><i>37</i><b>+</b><span class="tk">export const</span> <span class="tp">getOrderHistory</span> = <span class="tf">tool</span>({</div>
+                  <div class="add"><i>38</i><b>+</b>  input: z.<span class="tf">object</span>({ page: z.<span class="tf">number</span>().<span class="tf">int</span>().<span class="tf">min</span>(<span class="tn">1</span>).<span class="tf">default</span>(<span class="tn">1</span>), includeItems: z.<span class="tf">boolean</span>().<span class="tf">default</span>(<span class="tk">false</span>) }),</div>
+                  <div class="add"><i>39</i><b>+</b>  output: orderHistorySchema,</div>
+                  <div class="add"><i>40</i><b>+</b>  <span class="tk">async</span> <span class="tf">run</span>(ctx, { page, includeItems }) {</div>
+                  <div class="add"><i>41</i><b>+</b>    <span class="tk">await</span> <span class="tf">requireLogin</span>(ctx)</div>
+                  <div class="add"><i>42</i><b>+</b>    <span class="tk">const</span> list = <span class="tk">await</span> <span class="tf">getJson</span>(ctx, PATHS.<span class="tf">orders</span>(page), orderListWire)</div>
+                  <div class="add"><i>43</i><b>+</b>    <span class="tk">const</span> orders = list.Orders.<span class="tf">map</span>(toOrder)</div>
+                  <div class="add"><i>44</i><b>+</b>    <span class="tk">if</span> (includeItems) {</div>
+                  <div class="add"><i>45</i><b>+</b>      <span class="tk">for</span> (<span class="tk">const</span> order <span class="tk">of</span> orders.<span class="tf">slice</span>(<span class="tn">0</span>, <span class="tp">MAX_ORDERS_WITH_ITEMS</span>)) {</div>
+                  <div class="add"><i>46</i><b>+</b>        <span class="tk">const</span> detail = <span class="tk">await</span> <span class="tf">getJson</span>(ctx, PATHS.<span class="tf">orderDetail</span>(order.orderId), orderDetailWire)</div>
+                  <div class="add"><i>47</i><b>+</b>        order.items = detail.Items.<span class="tf">map</span>(toOrderItem)</div>
+                  <div class="add"><i>48</i><b>+</b>      }</div>
+                  <div class="add"><i>49</i><b>+</b>    }</div>
+                  <div class="add"><i>50</i><b>+</b>    <span class="tk">return</span> { orders, hasMore: list.TotalPages &gt; page }</div>
+                  <div class="add"><i>51</i><b>+</b>  },</div>
+                  <div class="add"><i>52</i><b>+</b>})</div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- The agent. It works in the tool session only and can't approve its own changes. -->
+          <section class="pane chat">
+            <div class="chat-head">
+              <div class="model">
+                <span class="i i-sparkle" style="color: #d97757"></span>
+                <span class="h3">Authoring agent</span>
+                <span class="spacer" style="flex: 1"></span>
+                <span class="select">Claude Opus 5.5</span>
+              </div>
+              <div class="model">
+                <span class="segmented"><span class="on">API key</span><span>Local CLI</span></span>
+                <span class="provider"
+                  ><span class="i i-key"></span>Key from your Keychain. Local CLI uses your own <span class="mono">claude</span>
+                  login.</span
+                >
+              </div>
+              <div class="seen">
+                <div>
+                  <div class="col-h ok-text"><span class="i i-check"></span>The agent can see</div>
+                  <ul>
+                    <li>Manifest, code, tests</li>
+                    <li>Fake site, logged-out browser</li>
+                    <li>Your runs, as scrubbed traces</li>
+                  </ul>
+                </div>
+                <div>
+                  <div class="col-h danger-text"><span class="i i-eye-off"></span>It never sees</div>
+                  <ul>
+                    <li>Secrets, 1Password, grants</li>
+                    <li>Your logged-in session</li>
+                    <li>Values from your runs</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+
+            <div class="thread">
+              <div class="msg-user">add a tool to list my past orders</div>
+
+              <div class="msg-agent">
+                <div class="who"><span class="mark"><span class="i i-sparkle"></span></span>Agent · working from your run, offline</div>
+                <div class="acts">
+                  <div class="act">
+                    <span class="i i-user"></span><code>asked you</code><span class="tail">to open My orders in the workspace browser</span><span class="r">9:44</span>
+                  </div>
+                  <div class="act">
+                    <span class="i i-net"></span><code>your run</code><span class="tail mono">GET /apis/ui/Orders/1, /Orders/details/:id</span><span class="r">9:47</span>
+                  </div>
+                  <div class="act">
+                    <span class="i i-check ok-text"></span><code>tests</code><span class="tail">9 new, on 2 fixtures built from the shapes · pass</span><span class="r">0.8 s</span>
+                  </div>
+                </div>
+                <div class="peek">
+                  <div class="peek-h">
+                    <span class="i i-eye-off"></span><span class="mono">/apis/ui/Orders/1</span>
+                    <span>· what it got: keys and types, no values</span>
+                  </div>
+                  <div class="codeview">
+                    <div><i></i><b></b>{ <span class="tp">Orders</span>: [{ <span class="tp">OrderId</span>: <span class="tt">number</span>, <span class="tp">Status</span>: <span class="tt">string</span>, <span class="tp">Total</span>: <span class="tt">number</span>, … } × 10],</div>
+                    <div><i></i><b></b>  <span class="tp">TotalPages</span>: <span class="tt">number</span> }</div>
+                  </div>
+                </div>
+                <p>
+                  Added <span class="mono">get_order_history</span> without seeing your orders. I left out
+                  <span class="mono">…/reorder</span>: it writes to your trolley. <span class="mono">includeItems</span> stops
+                  at 4 orders, so 5 requests at most. I haven't called the real site: try it with Run.
+                </p>
+              </div>
+
+              <div class="perm-card">
+                <div class="pc-head"><span class="i i-shield"></span>Permission changes need your approval</div>
+                <div class="pc-row add">
+                  <span class="m">+</span><span class="mono">GET /apis/ui/Orders/:page</span><span class="badge read">read</span>
+                </div>
+                <div class="pc-row add">
+                  <span class="m">+</span><span class="mono">GET /apis/ui/Orders/details/:orderId</span><span class="badge read">read</span>
+                </div>
+                <div class="pc-row add">
+                  <span class="m">+</span><span>Tool <span class="mono">get_order_history</span></span><span class="badge read">read</span>
+                </div>
+                <div class="pc-row same">
+                  <span class="m">=</span><span>No new hosts, origins or secrets. No write or irreversible tools.</span><span></span>
+                </div>
+                <div class="pc-foot">
+                  <span class="xs muted grow" title="Installed 0.1.0 keeps serving MCP clients until you approve 0.2.0">The agent can't approve. Makes draft 0b64e1c9…d3a2.</span>
+                  <button type="button" class="btn">Reject</button>
+                  <button type="button" class="btn primary">Approve</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="composer">
+              <div class="ph">Ask for a change, or say what to fix…</div>
+              <div class="row">
+                <span class="ctx-chip"><span class="i i-list"></span>Request surface</span>
+                <span class="ctx-chip"><span class="i i-code"></span>orders.ts</span>
+                <span class="spacer" style="flex: 1"></span>
+                <span class="xs tertiary">5 requests at most · 2 s apart</span>
+                <button type="button" class="btn icon primary" style="width: 24px"><span class="i sm i-send"></span></button>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <div class="ide-status">
+          <span><span class="i i-sparkle"></span>Agent browses the fake site, or <span class="mono">agent:woolworths</span>: in memory, logged out</span>
+          <span><span class="i i-lock"></span>Your session runs only what you start</span>
+          <span class="right">Nothing it proposes runs over MCP until you approve the new hash</span>
+        </div>
+      </div>
+    </div>
+    <nav class="mockbar" aria-label="Mockup">
+      <a href="index.html">All screens</a>
+      <button type="button" data-theme-toggle>Light / dark</button>
+    </nav>
+  </body>
+</html>

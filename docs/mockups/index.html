@@ -277,7 +277,7 @@
             />
           </div>
           <div class="name">IDE workspace <span class="xs tertiary mono">ide-workspace.html</span></div>
-          <div class="desc">Authoring an adapter: files, manifest, and the site in an embedded browser view.</div>
+          <div class="desc">Authoring an adapter: the manifest, a run you start in the logged-in dev session, and every request it made.</div>
         </a>
         <a class="shot" href="ide-recorder.html">
           <div class="thumb">
@@ -293,7 +293,7 @@
             <img class="light" src="screens/ide-agent.png" alt="" /><img class="dark" src="screens/ide-agent-dark.png" alt="" />
           </div>
           <div class="name">Authoring agent <span class="xs tertiary mono">ide-agent.html</span></div>
-          <div class="desc">An AI agent writing or repairing an adapter, producing a change you then review.</div>
+          <div class="desc">An AI agent writing an adapter from scrubbed traces, never your session, producing a change you review.</div>
         </a>
         <a class="shot" href="ide-tests.html">
           <div class="thumb">
@@ -309,7 +309,19 @@
             <img class="light" src="screens/onboarding.png" alt="" /><img class="dark" src="screens/onboarding-dark.png" alt="" />
           </div>
           <div class="name">Onboarding <span class="xs tertiary mono">onboarding.html</span></div>
-          <div class="desc">First run: 1Password, the MCP endpoint and connecting a first client.</div>
+          <div class="desc">First run: 1Password, the MCP endpoint and connecting a first client. Opens on step 3.</div>
+        </a>
+        <a class="shot" href="onboarding.html?step=1">
+          <div class="thumb">
+            <span class="fallback">onboarding.html?step=1</span>
+            <img class="light" src="screens/onboarding-step1.png" alt="" /><img
+              class="dark"
+              src="screens/onboarding-step1-dark.png"
+              alt=""
+            />
+          </div>
+          <div class="name">Onboarding, step 1 <span class="xs tertiary mono">?step=1</span></div>
+          <div class="desc">What siteadapter does. Steps 2, 4 and 5 are in screens/onboarding-step*.png.</div>
         </a>
       </div>
 
@@ -333,9 +345,23 @@
           <div class="muted" style="margin-top: 6px">The adapter's content hash. Approvals and grants belong to one hash.</div>
         </div>
         <div class="card">
+          <span class="pill">0.3.0</span> <span class="pill">0.1.0</span>
+          <div class="muted" style="margin-top: 6px">
+            Two Woolworths timelines. App screens: a later 0.3.0 (9f3c1a7e…e0f1), 0.4.0 in review. IDE and onboarding: the
+            bundled adapter as the repo has it, 0.1.0 (c3e94b20…7f15) and drafts of 0.2.0. No hash names two contents.
+          </div>
+        </div>
+        </div>
+        <div class="card">
           <span class="pill secret">auth:woolworths</span> <span class="pill info">tool:woolworths</span>
           <div class="muted" style="margin-top: 6px">Two browser sessions per site. Only cookies move, auth to tool.</div>
         </div>
+        <div class="card">
+          <span class="pill">persist:tool:woolworths-dev</span>
+          <div class="muted" style="margin-top: 6px">
+            IDE sessions. Dev: persistent, cookies from the installed version's login, draft logins never fill secrets.
+            Recorder and agent: in memory.
+          </div>
       </div>
 
       <h2 class="section">Choices these mockups make that need your call</h2>
