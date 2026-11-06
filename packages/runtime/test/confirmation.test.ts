@@ -70,9 +70,44 @@ describe('irreversible tools', () => {
       type: 'confirmation',
       adapterId: 'example-shop',
       tool: 'run_test',
+      client: 'claude-code',
       callId: 'call-1',
       answer: 'approved',
     })
+  })
+
+  it('unlocks the driver’s irreversible declarations only after the approval, within the run', async () => {
+    const { host, page, driver, prompt } = fixture(irreversible)
+    page.route('POST', `${HOME}/api/checkout/place`, json({ ok: true }))
+    let whileAsking: string[] = []
+    prompt.ask = async () => {
+      whileAsking = [...driver.runEvents]
+      return 'approved'
+    }
+    await host.call(order)
+
+    // Nothing is running, let alone unlocked, while the person is still deciding.
+    expect(whileAsking).toEqual([])
+    expect(driver.runEvents).toEqual(['begin', 'unlock', 'end'])
+    expect(driver.policies[0]?.maxPurpose).toBe('irreversible')
+  })
+
+  it('never unlocks for a declined call, or for a tool that is not irreversible', async () => {
+    const declined = fixture(irreversible)
+    declined.prompt.answer = 'declined'
+    await declined.host.call(order)
+    expect(declined.driver.runEvents).toEqual([])
+
+    const write = fixture(
+      defineAdapter({
+        manifest: { ...manifest, tools: [{ ...manifest.tools[0]!, sideEffect: 'write' }] },
+        tools: {
+          run_test: tool({ input: z.object({}), output: z.boolean(), run: (ctx) => ctx.confirm('Really?') }),
+        },
+      }),
+    )
+    expect(await write.host.call(call)).toEqual({ status: 'ok', output: true })
+    expect(write.driver.runEvents).toEqual(['begin', 'end'])
   })
 
   it('does not run when the person declines', async () => {
@@ -85,11 +120,12 @@ describe('irreversible tools', () => {
     expect(driver.toolPageCalls).toBe(0)
     expect(page.fetches).toEqual([])
     expect(audit.events).toContainEqual(expect.objectContaining({ type: 'confirmation', answer: 'declined' }))
-    expect(audit.events.at(-1)).toMatchObject({
+    expect(audit.events.at(-1)).toEqual({
       type: 'tool-finished',
-      outcome: 'failed',
-      stage: 'confirm',
-      errorClass: 'declined',
+      adapterId: 'example-shop',
+      callId: 'call-1',
+      outcome: 'declined',
+      durationMs: 0,
     })
   })
 

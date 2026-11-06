@@ -1,22 +1,35 @@
 // session.ensure(): probe the tool partition, and if it is logged out, run the auth action in the
-// auth partition and copy the session across. Tool code only ever learns ok, needsUser or failed.
+// auth partition and copy the session across. Tool code only ever learns ok, needsUser (a reason
+// code) or failed (a stage and class).
 //
 // Repeated blind attempts are how accounts get locked, so logins are rationed three ways:
 //
 //   - The durable attempt marker: if a previous attempt never reached a classified outcome (a
 //     crash, a hang, an exception), we refuse to try again until the person clears it.
-//   - A durable hold after a classified failure. A rejected password, or a login that "worked" but
-//     left the probe logged out, waits for the person; any other failure backs off, doubling.
+//   - A durable hold after a classified failure. A rejected password, a login that "worked" but
+//     left the probe logged out, or a needsUser that retrying can only make worse (a locked
+//     account, a CAPTCHA, new terms, a changed site) waits for the person; any other failure backs
+//     off, doubling. The hold keeps the needsUser reason, so callers keep seeing the real one.
 //   - At most one login per tool call: later ensure()s in the same call get its outcome.
 //
-// Only an explicit logged-out answer from the probe starts a login (see probe.ts).
+// Only an explicit logged-out answer from the probe starts a login (see probe.ts), and never while
+// the site's breaker is open.
+//
+// The AuthRunner owns the login-started and login-finished audit events (auth-flow's runAuthFlow
+// writes them); the gate writes neither, so one login is one pair in the log. What happens after
+// the runner returns (the handoff, the re-probe) reaches the log through the call's tool-finished.
+//
+// The gate also keeps clones of the secrets the latest successful login registered, for output
+// redaction, until the next successful login replaces them: a page shown long after the login (an
+// account page with the username) is still checked against them.
 
 import {
   type AdapterManifest,
-  type AuditEvent,
   type EnsureResult,
   ERROR_CLASSES,
   type ErrorClass,
+  NEEDS_USER_REASONS,
+  type NeedsUserReason,
   type SessionDriver,
   SiteAdapterError,
   STAGES,
@@ -27,18 +40,15 @@ import {
 import type { Clock } from './clock'
 import type { LoginMarkerState, LoginMarkerStore } from './login-marker'
 import { probeLoggedIn } from './probe'
-import type { SecretRedactionSet } from './redaction'
-import { blockedBySite, type SiteGuards } from './site-protection'
-import type { AuthOutcome, AuthRunner, RuntimeDiagnostic } from './types'
-
-export const MARKER_SET_REASON =
-  'A previous login attempt did not finish. Check the site, then clear the login marker in the app.'
-
-export const LOGIN_HELD_REASON =
-  'The last login attempt failed, so automatic logins are paused for a while. Check the site, or clear the login hold in the app to try now.'
-
-export const LOGIN_NEEDS_PERSON_REASON =
-  'The site did not accept the last login. Check the saved credentials, then clear the login hold in the app.'
+import { SecretRedactionSet } from './redaction'
+import {
+  type BlockCause,
+  breakerRefusal,
+  isSiteRefusal,
+  type SiteGuards,
+  siteRefusal,
+} from './site-protection'
+import type { AuthOutcome, AuthRunner } from './types'
 
 export interface LoginBackoff {
   /** Wait after the first failed login. Each failure in a row doubles it, up to `maxMs`. */
@@ -56,12 +66,8 @@ export interface SessionGateOptions {
   readonly authRunner: AuthRunner
   readonly markers: LoginMarkerStore
   readonly site: SiteGuards
-  readonly secrets: SecretRedactionSet
   readonly clock: Clock
   readonly backoff?: LoginBackoff
-  /** Appends an audit event. Must not throw. */
-  readonly audit: (event: AuditEvent) => Promise<void>
-  readonly diagnostics: (diagnostic: RuntimeDiagnostic) => void
 }
 
 /** What one tool call has done about logging in. One per call; the gate writes it. */
@@ -83,14 +89,31 @@ const OK: EnsureResult = { status: 'ok' }
 /** What a classified login leaves in the marker store. */
 type Disposition = 'clear' | 'backoff' | 'needs-person'
 
+/**
+ * needsUser reasons that an automatic retry can only make worse: retrying a locked account can
+ * extend the lockout, and retrying a CAPTCHA wall raises the bot score. These wait for the person.
+ */
+const NEEDS_PERSON: ReadonlySet<NeedsUserReason> = new Set<NeedsUserReason>([
+  'account-locked',
+  'captcha',
+  'terms-update',
+  'site-changed',
+])
+
 export class SessionGate {
   private inFlight: { readonly owner: CallLogin; readonly running: Promise<EnsureResult> } | null = null
+  private session = new SecretRedactionSet()
 
   constructor(private readonly options: SessionGateOptions) {}
 
+  /** Clones of the secrets the latest successful login registered; replaced by the next one. */
+  get secrets(): SecretRedactionSet {
+    return this.session
+  }
+
   /**
-   * Concurrent ensure()s from one call share one probe and at most one login. Throws only
-   * blocked-by-site or aborted.
+   * Concurrent ensure()s from one call share one probe and at most one login. Throws only a site
+   * refusal (blocked-by-site, rate-limited) or aborted.
    */
   ensure(call: EnsureCall): Promise<EnsureResult> {
     if (this.inFlight !== null) {
@@ -107,13 +130,15 @@ export class SessionGate {
   }
 
   private async run(call: EnsureCall): Promise<EnsureResult> {
-    const { adapterId, markers, audit } = this.options
+    const { adapterId, markers, site } = this.options
     const earlier = call.login.outcome
     if (earlier !== null && earlier.status !== 'ok') return earlier
     const before = await this.probe(call)
     if (before !== false) return before === true ? OK : before
     // This call already logged in and the session is gone again: a second login won't fix that.
     if (earlier !== null) return failed('probe', 'not-logged-in')
+    // A cookie probe never touches the site, so the breaker hasn't been asked yet. A login would.
+    if (site.breaker.isOpen()) throw breakerRefusal()
 
     let marker: LoginMarkerState
     try {
@@ -127,33 +152,35 @@ export class SessionGate {
     try {
       await markers.set(adapterId, call.callId)
     } catch {
-      return failed('auth-step', 'internal')
+      return failed('login', 'login-in-progress')
     }
-    await audit({ type: 'login-started', adapterId, callId: call.callId })
     // Recorded before the login runs, so nothing in this call can start a second one.
-    call.login.outcome = failed('auth-step', 'internal')
+    call.login.outcome = failed('login', 'login-in-progress')
     const outcome = await this.login(call, failures)
     call.login.outcome = outcome
     return outcome
   }
 
+  /**
+   * Whether the marker store lets a login start now. An unfinished attempt is pending until the
+   * person clears it; a hold means a login is needed that we won't attempt ourselves yet.
+   */
   private refusal(marker: LoginMarkerState): EnsureResult | null {
     switch (marker.kind) {
       case 'unset':
         return null
       case 'in-progress':
-        return { status: 'needsUser', reason: MARKER_SET_REASON }
+        return needsUser('login-attempt-pending')
       case 'held':
-        if (marker.retryAt === null) return { status: 'needsUser', reason: LOGIN_NEEDS_PERSON_REASON }
-        if (this.options.clock.now() < marker.retryAt)
-          return { status: 'needsUser', reason: LOGIN_HELD_REASON }
-        return null
+        if (marker.retryAt !== null && this.options.clock.now() >= marker.retryAt) return null
+        return needsUser(marker.reason ?? 'login-required')
     }
   }
 
   /** Runs the auth action, hands off and re-probes, then records the outcome. */
   private async login(call: EnsureCall, failures: number): Promise<EnsureResult> {
-    const { adapterId, adapterHash, manifest, driver, authRunner, secrets, audit } = this.options
+    const { adapterId, adapterHash, manifest, driver, authRunner } = this.options
+    const fresh = new SecretRedactionSet()
     let outcome: AuthOutcome
     try {
       outcome = await authRunner({
@@ -163,21 +190,30 @@ export class SessionGate {
         driver,
         callId: call.callId,
         signal: call.signal,
-        rememberSecret: (secret) => secrets.remember(secret),
+        registerForRedaction: (secret) => fresh.register(secret),
       })
     } catch (error) {
       // Unclassified: the marker stays in progress, so nothing retries this login blindly.
-      const reportable = toReportable(error, 'auth-step')
-      await audit({ type: 'login-finished', adapterId, outcome: 'failed', ...reportable })
+      fresh.dispose()
+      const reportable = toReportable(error, 'login')
       return failed(reportable.stage, reportable.errorClass)
     }
+    if (outcome.status === 'ok') this.adopt(fresh, outcome.filledSecrets)
+    else fresh.dispose()
 
     switch (outcome.status) {
-      case 'blocked':
-        await this.finish(outcome, failures, 'clear')
-        throw blockedBySite()
-      case 'needsUser':
-        return this.finish({ status: 'needsUser', reason: outcome.reason }, failures, 'backoff')
+      case 'blocked': {
+        const cause: BlockCause = outcome.errorClass === 'rate-limited' ? 'rate-limited' : 'blocked-by-site'
+        // The breaker first, so a marker store that fails can't hide the block.
+        this.options.site.breaker.trip(cause, call.callId)
+        await this.finish(OK, failures, 'clear')
+        throw siteRefusal(cause)
+      }
+      case 'needsUser': {
+        const reason = knownReason(outcome.reason)
+        const disposition = NEEDS_PERSON.has(reason) ? 'needs-person' : 'backoff'
+        return this.finish(needsUser(reason), failures, disposition, reason)
+      }
       case 'failed': {
         const { stage, errorClass } = inVocabulary(outcome.stage, outcome.errorClass)
         return this.finish(
@@ -209,42 +245,49 @@ export class SessionGate {
   }
 
   /**
-   * Audits the outcome and trips the breaker for a block before touching the marker, so a marker
-   * store that fails can't hide a login that happened.
+   * Takes up the secrets a successful login registered, in place of the last one's. A runner that
+   * says it filled more secrets than it registered leaves the set incomplete, so every output is
+   * withheld until a login registers them all.
    */
+  private adopt(fresh: SecretRedactionSet, filled: unknown): void {
+    if (typeof filled === 'number' && !(filled <= fresh.size)) fresh.markIncomplete()
+    this.session.dispose()
+    this.session = fresh
+  }
+
+  /** Clears the marker, or replaces it with a hold, and returns `result`. */
   private async finish(
-    result: EnsureResult | { readonly status: 'blocked' },
+    result: EnsureResult,
     failures: number,
     disposition: Disposition,
+    reason?: NeedsUserReason,
   ): Promise<EnsureResult> {
-    const { adapterId, markers, site, audit, clock } = this.options
-    await audit(loginFinished(adapterId, result))
-    if (result.status === 'blocked') site.breaker.trip()
+    const { adapterId, markers, clock } = this.options
     const backoff = this.options.backoff ?? DEFAULT_LOGIN_BACKOFF
     try {
       if (disposition === 'clear') await markers.clear(adapterId)
-      else if (disposition === 'needs-person') await markers.hold(adapterId, failures + 1, null)
+      else if (disposition === 'needs-person') await markers.hold(adapterId, failures + 1, null, reason)
       else {
         const wait = Math.min(backoff.maxMs, backoff.baseMs * 2 ** failures)
-        await markers.hold(adapterId, failures + 1, clock.now() + wait)
+        await markers.hold(adapterId, failures + 1, clock.now() + wait, reason)
       }
     } catch {
       // The marker is still in progress, which only errs towards asking the person.
-      return failed('auth-step', 'internal')
+      return failed('login', 'login-in-progress')
     }
-    return result.status === 'blocked' ? failed('auth-step', 'blocked-by-site') : result
+    return result
   }
 
-  /** true or false from the probe, or a failure to report. Rethrows blocked-by-site and aborted. */
+  /** true or false from the probe, or a failure to report. Rethrows site refusals and aborted. */
   private async probe(call: EnsureCall): Promise<boolean | EnsureResult> {
     try {
       return await probeLoggedIn({
         manifest: this.options.manifest,
         page: call.page,
+        driver: this.options.driver,
         site: this.options.site,
         signal: call.signal,
-        onUnsupported: (kind) =>
-          this.options.diagnostics({ type: 'unsupported-probe', adapterId: this.options.adapterId, kind }),
+        callId: call.callId,
       })
     } catch (error) {
       if (isPassThrough(error)) throw error
@@ -258,41 +301,23 @@ function failed(stage: Stage, errorClass: ErrorClass): EnsureResult {
   return { status: 'failed', stage, errorClass }
 }
 
+function needsUser(reason: NeedsUserReason): EnsureResult {
+  return { status: 'needsUser', reason }
+}
+
 /** Only known vocabulary reaches the audit log or tool code. */
 function inVocabulary(stage: string, errorClass: string): { stage: Stage; errorClass: ErrorClass } {
   return {
-    stage: STAGES.find((s) => s === stage) ?? 'auth-step',
+    stage: STAGES.find((s) => s === stage) ?? 'login',
     errorClass: ERROR_CLASSES.find((c) => c === errorClass) ?? 'internal',
   }
 }
 
-function isPassThrough(error: unknown): boolean {
-  return (
-    error instanceof SiteAdapterError &&
-    (error.errorClass === 'blocked-by-site' || error.errorClass === 'aborted')
-  )
+/** The auth runner is injected; a reason outside the vocabulary becomes 'other'. */
+export function knownReason(reason: unknown): NeedsUserReason {
+  return NEEDS_USER_REASONS.find((r) => r === reason) ?? 'other'
 }
 
-function loginFinished(adapterId: string, result: EnsureResult | { readonly status: 'blocked' }): AuditEvent {
-  switch (result.status) {
-    case 'ok':
-      return { type: 'login-finished', adapterId, outcome: 'ok' }
-    case 'needsUser':
-      return { type: 'login-finished', adapterId, outcome: 'needsUser' }
-    case 'failed':
-      return {
-        type: 'login-finished',
-        adapterId,
-        outcome: 'failed',
-        ...inVocabulary(result.stage, result.errorClass),
-      }
-    case 'blocked':
-      return {
-        type: 'login-finished',
-        adapterId,
-        outcome: 'failed',
-        stage: 'auth-step',
-        errorClass: 'blocked-by-site',
-      }
-  }
+function isPassThrough(error: unknown): boolean {
+  return isSiteRefusal(error) || (error instanceof SiteAdapterError && error.errorClass === 'aborted')
 }

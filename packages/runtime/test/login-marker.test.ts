@@ -114,6 +114,37 @@ describe('LoginAttemptMarker', () => {
     expect(await markers.read('woolworths')).toEqual({ kind: 'unset' })
   })
 
+  it('keeps a hold’s needsUser reason across a restart', async () => {
+    const markers = new LoginAttemptMarker(dir, clock)
+    await markers.hold('woolworths', 1, null, 'account-locked')
+    expect(await new LoginAttemptMarker(dir, clock).read('woolworths')).toEqual({
+      kind: 'held',
+      failures: 1,
+      retryAt: null,
+      reason: 'account-locked',
+    })
+  })
+
+  it('refuses to write a reason outside the vocabulary', async () => {
+    const markers = new LoginAttemptMarker(dir, clock)
+    await expect(
+      markers.hold('woolworths', 1, null, 'Your account is locked' as never),
+    ).rejects.toMatchObject({
+      stage: 'login',
+      errorClass: 'invalid',
+    })
+    expect(await readdir(dir)).toEqual([])
+  })
+
+  it('reads a hold with a reason it does not know as waiting for the person', async () => {
+    const markers = new LoginAttemptMarker(dir, clock)
+    await writeFile(
+      join(dir, 'woolworths.login-attempt'),
+      '{"state":"held","failures":2,"retryAt":1,"reason":"Call 1800 now"}',
+    )
+    expect(await markers.read('woolworths')).toEqual({ kind: 'held', failures: 2, retryAt: null })
+  })
+
   it('reads anything it cannot make sense of as in progress, never as clear', async () => {
     const markers = new LoginAttemptMarker(dir, clock)
     const path = join(dir, 'woolworths.login-attempt')
@@ -142,8 +173,14 @@ describe('LoginAttemptMarker', () => {
 
   it('refuses a hold that does not count a failure', async () => {
     const markers = new LoginAttemptMarker(dir, clock)
-    await expect(markers.hold('woolworths', 0, null)).rejects.toMatchObject({ errorClass: 'internal' })
-    await expect(markers.hold('woolworths', 1.5, null)).rejects.toMatchObject({ errorClass: 'internal' })
+    await expect(markers.hold('woolworths', 0, null)).rejects.toMatchObject({
+      stage: 'login',
+      errorClass: 'invalid',
+    })
+    await expect(markers.hold('woolworths', 1.5, null)).rejects.toMatchObject({
+      stage: 'login',
+      errorClass: 'invalid',
+    })
     expect(await readdir(dir)).toEqual([])
   })
 })

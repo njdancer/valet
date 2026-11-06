@@ -1,45 +1,80 @@
-// Output redaction. Before a tool result leaves the process, any string that contains a current
-// session cookie value or a secret this process has handled is replaced whole. Matching is exact
-// substring matching: no normalisation, so an encoded copy of a secret is not caught.
+// Output redaction. Before a tool result leaves the process, any string that contains a session
+// value (a cookie, or a handed-off storage value) or a secret resolved during the call is replaced
+// whole. Matching is exact substring matching: no normalisation, so an encoded copy of a secret is
+// not caught.
 
-import { type SecretValue, SiteAdapterError } from '@siteadapter/core'
+import { SecretValue, SiteAdapterError } from '@siteadapter/core'
 
 export const REDACTED = '[redacted]'
 
 /**
- * Cookie values shorter than this are flags like "1" or "en-AU", not credentials, and matching them
+ * Session values shorter than this are flags like "1" or "en-AU", not credentials, and matching them
  * would redact nearly every string.
  */
-export const MIN_COOKIE_LENGTH = 8
+export const MIN_SESSION_VALUE_LENGTH = 8
 
-/** Secrets seen in this process. The auth flow adds each one it resolves. */
+/**
+ * The secrets a login resolved. The auth flow disposes its own copies as soon as it has typed them,
+ * so this set keeps independent clones, until the next successful login replaces it.
+ */
 export class SecretRedactionSet {
-  private readonly secrets = new Set<SecretValue>()
+  private readonly secrets: SecretValue[] = []
+  private ended = false
+  /** Set when a secret arrived that could not be kept; every string then counts as sensitive. */
+  private incomplete = false
 
-  remember(secret: SecretValue): void {
-    this.secrets.add(secret)
+  /** Keeps a clone of `secret` until dispose(). The caller still owns, and disposes, `secret`. */
+  register(secret: SecretValue): void {
+    // A replaced set redacts nothing any more, so there is no reason to keep a copy.
+    if (this.ended) return
+    if (!(secret instanceof SecretValue) || secret.disposed) {
+      // We can't match what we can't hold, so fail closed: the output and audit targets are withheld.
+      this.incomplete = true
+      return
+    }
+    this.secrets.push(secret.clone())
   }
 
-  /** True when `text` contains a remembered secret that has not yet been disposed. */
+  /** Something was filled that wasn't registered: every string now counts as sensitive. */
+  markIncomplete(): void {
+    this.incomplete = true
+  }
+
+  /** True when `text` contains a registered secret. */
   occursIn(text: string): boolean {
-    for (const secret of this.secrets) {
-      // A disposed secret's bytes are zeroed, so it can no longer be matched. See knownGaps.
-      if (secret.disposed) this.secrets.delete(secret)
-      else if (secret.occursIn(text)) return true
-    }
-    return false
+    if (this.incomplete) return true
+    return this.secrets.some((secret) => secret.occursIn(text))
+  }
+
+  /** Zeroes every clone. Later registrations are ignored. */
+  dispose(): void {
+    this.ended = true
+    for (const secret of this.secrets.splice(0)) secret.dispose()
   }
 
   get size(): number {
-    return this.secrets.size
+    return this.secrets.length
   }
 }
 
 export type Sensitive = (text: string) => boolean
 
-export function sensitiveMatcher(cookieValues: Iterable<string>, secrets: SecretRedactionSet): Sensitive {
-  const needles = [...new Set(cookieValues)].filter((value) => value.length >= MIN_COOKIE_LENGTH)
-  return (text) => needles.some((needle) => text.includes(needle)) || secrets.occursIn(text)
+/**
+ * Matches `values` (session values) and `secrets`. With `ignoreCase`, session values match
+ * case-insensitively, for text such as hostnames that URL parsing has lower-cased. Secrets always
+ * match exactly: a SecretValue can't be compared any other way without revealing it.
+ */
+export function sensitiveMatcher(
+  values: Iterable<string>,
+  secrets: SecretRedactionSet,
+  options: { readonly ignoreCase?: boolean } = {},
+): Sensitive {
+  const fold = options.ignoreCase === true ? (text: string) => text.toLowerCase() : (text: string) => text
+  const needles = [...new Set(values)].filter((value) => value.length >= MIN_SESSION_VALUE_LENGTH).map(fold)
+  return (text) => {
+    const haystack = fold(text)
+    return needles.some((needle) => haystack.includes(needle)) || secrets.occursIn(text)
+  }
 }
 
 export function redactString(text: string, sensitive: Sensitive): string {

@@ -28,13 +28,20 @@ const called: AuditEvent = {
   client: 'claude-code',
   callId: 'call-1',
 }
-const finished: AuditEvent = { type: 'tool-finished', callId: 'call-1', outcome: 'ok', durationMs: 12 }
+const finished: AuditEvent = {
+  type: 'tool-finished',
+  adapterId: 'woolworths',
+  callId: 'call-1',
+  outcome: 'ok',
+  durationMs: 12,
+}
 const blocked: AuditEvent = {
   type: 'request-blocked',
   adapterId: 'woolworths',
   method: 'GET',
   target: 'https://evil.test/x',
   reason: 'host-not-allowed',
+  initiator: 'tool',
   callId: 'call-1',
 }
 

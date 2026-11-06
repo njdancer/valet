@@ -1,5 +1,6 @@
 export * from './approvals'
 export * from './audit-log'
+export * from './breaker-state'
 export * from './call-state'
 export * from './clock'
 export * from './guarded-page'

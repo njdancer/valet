@@ -5,12 +5,16 @@ import {
   type AuditEvent,
   type AuditRecord,
   type AuditSink,
+  type BlockedRequest,
   type FetchInit,
   type FetchResult,
+  type NeedsUserReason,
   type SessionDriver,
   SiteAdapterError,
   type ToolPage,
+  type ToolRunPolicy,
 } from '@siteadapter/core'
+import type { JsonStore } from '../src/breaker-state'
 import type { LoginMarkerState, LoginMarkerStore } from '../src/login-marker'
 import type { ConfirmationAnswer, ConfirmationPrompt, ConfirmationRequest } from '../src/types'
 
@@ -84,8 +88,17 @@ export class FakeToolPage implements ToolPage {
 
 export class FakeSessionDriver implements SessionDriver {
   readonly page = new FakeToolPage()
+  /** What sessionSecrets() returns: cookie values and handed-off storage values. */
   cookieValues: string[] = []
+  /** What cookieNames() returns. */
+  cookieNameList: string[] = []
   readonly handoffs: { cookieDomains: readonly string[]; storage: readonly unknown[] }[] = []
+  readonly sessionSecretRequests: { cookieDomains: readonly string[]; storage: readonly unknown[] }[] = []
+  /** beginRun, unlockIrreversible and endRun, in the order they were called. */
+  readonly runEvents: string[] = []
+  readonly policies: ToolRunPolicy[] = []
+  /** The current run's onBlocked, so a test can report what the driver refused. */
+  onBlocked: ((request: BlockedRequest) => void) | null = null
   toolPageCalls = 0
   onHandoff: () => void | Promise<void> = () => {}
 
@@ -106,11 +119,53 @@ export class FakeSessionDriver implements SessionDriver {
     await this.onHandoff()
   }
 
-  async sessionCookieValues(): Promise<readonly string[]> {
+  async sessionSecrets(
+    cookieDomains: readonly string[],
+    storage: readonly { readonly origin: string; readonly keys: readonly string[] }[],
+  ): Promise<readonly string[]> {
+    this.sessionSecretRequests.push({ cookieDomains, storage })
     return [...this.cookieValues]
   }
 
+  async cookieNames(_cookieDomains: readonly string[]): Promise<readonly string[]> {
+    return [...this.cookieNameList]
+  }
+
+  beginRun(policy: ToolRunPolicy, onBlocked: (request: BlockedRequest) => void): void {
+    this.runEvents.push('begin')
+    this.policies.push(policy)
+    this.onBlocked = onBlocked
+  }
+
+  unlockIrreversible(): void {
+    this.runEvents.push('unlock')
+  }
+
+  endRun(): void {
+    this.runEvents.push('end')
+    this.onBlocked = null
+  }
+
   async close(): Promise<void> {}
+}
+
+/** A JsonStore in memory. `text` is what is stored; null when nothing is. */
+export class MemoryJsonStore implements JsonStore {
+  text: string | null = null
+  readonly writes: string[] = []
+  failRead = false
+  failWrite = false
+
+  async read(): Promise<string | null> {
+    if (this.failRead) throw new Error('EIO')
+    return this.text
+  }
+
+  async write(text: string): Promise<void> {
+    if (this.failWrite) throw new Error('ENOSPC')
+    this.writes.push(text)
+    this.text = text
+  }
 }
 
 export class MemoryAudit implements AuditSink {
@@ -160,9 +215,19 @@ export class MemoryMarkers implements LoginMarkerStore {
     this.states.set(adapterId, { kind: 'in-progress' })
   }
 
-  async hold(adapterId: string, failures: number, retryAt: number | null): Promise<void> {
+  async hold(
+    adapterId: string,
+    failures: number,
+    retryAt: number | null,
+    reason?: NeedsUserReason,
+  ): Promise<void> {
     if (this.failOn === 'hold') throw new Error('EIO')
-    this.states.set(adapterId, { kind: 'held', failures, retryAt })
+    this.states.set(adapterId, {
+      kind: 'held',
+      failures,
+      retryAt,
+      ...(reason === undefined ? {} : { reason }),
+    })
   }
 
   async clear(adapterId: string): Promise<void> {
@@ -199,6 +264,17 @@ export class FakeClock {
         reject(new SiteAdapterError('tool-run', 'aborted'))
       })
     })
+
+  /**
+   * For the rate budget: moves time on by `ms` and resolves, recording the wait, so pacing doesn't
+   * have to be driven by hand. Deadlines still use sleep().
+   */
+  readonly paced: number[] = []
+  pacingSleep = async (ms: number, signal?: AbortSignal): Promise<void> => {
+    if (signal?.aborted) throw new SiteAdapterError('tool-run', 'aborted')
+    this.paced.push(ms)
+    await this.advance(ms)
+  }
 
   async advance(ms: number): Promise<void> {
     this.current += ms

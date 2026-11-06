@@ -11,10 +11,9 @@ import { z } from 'zod'
 import { ApprovalStore } from '../src/approvals'
 import { AuditLog, verifyAuditLog } from '../src/audit-log'
 import { LoginAttemptMarker } from '../src/login-marker'
-import { SecretRedactionSet } from '../src/redaction'
 import { ToolHost } from '../src/tool-host'
 import type { AuthRunner } from '../src/types'
-import { FakeClock, FakePrompt, FakeSessionDriver, json } from './fakes'
+import { FakeClock, FakePrompt, FakeSessionDriver, json, MemoryJsonStore } from './fakes'
 import { HOME, loggedIn, loggedOut, manifest, SESSION_URL } from './fixtures'
 
 const CANARY_COOKIE = 'canary-cookie-5e0b7c1d9a'
@@ -58,10 +57,9 @@ describe('tool host with real stores', () => {
   it('keeps canaries out of the output and the audit log, and the log verifies', async () => {
     const auditPath = join(dir, 'audit.jsonl')
     const clock = new FakeClock()
-    const approvals = new ApprovalStore(join(dir, 'approvals.json'))
     const audit = new AuditLog(auditPath, clock)
+    const approvals = new ApprovalStore(join(dir, 'approvals.json'), audit)
     const markers = new LoginAttemptMarker(dir, clock)
-    const secrets = new SecretRedactionSet()
     const password = SecretValue.fromString(CANARY_PASSWORD)
     const driver = new FakeSessionDriver()
     driver.page.route('GET', SESSION_URL, loggedOut)
@@ -71,22 +69,24 @@ describe('tool host with real stores', () => {
       driver.page.route('GET', SESSION_URL, loggedIn)
     }
     const authRunner = vi.fn<AuthRunner>(async (request) => {
-      request.rememberSecret(password)
+      request.registerForRedaction(password)
+      // As the real filler does, straight after typing it.
+      password.dispose()
       expect(await markers.isSet('example-shop')).toBe(true)
       return { status: 'ok' }
     })
     const hash = bundleHash({ 'manifest.json': JSON.stringify(manifest), 'index.ts': 'export {}' })
-    await approvals.approve('example-shop', hash)
+    await approvals.approve('example-shop', hash, '1.0.0')
     const host = new ToolHost({
       approvals,
       audit,
       prompt: new FakePrompt(),
       authRunner,
       markers,
-      secrets,
+      breakerStore: new MemoryJsonStore(),
       clock,
       sleep: clock.sleep,
-      siteProtection: { minRequestGapMs: 0, cooldownMs: 60_000, maxCooldownMs: 600_000 },
+      pacingSleep: clock.pacingSleep,
     })
     host.register({ definition: hostile, bundleHash: hash, driver })
 
@@ -106,16 +106,16 @@ describe('tool host with real stores', () => {
     expect(await markers.isSet('example-shop')).toBe(false)
     expect(driver.page.fetches.map((f) => f.url)).toEqual([SESSION_URL, SESSION_URL])
     const verification = await verifyAuditLog(auditPath)
-    expect(verification).toMatchObject({ ok: true, records: 5 })
+    expect(verification).toMatchObject({ ok: true, records: 4 })
     expect(
       log
         .trim()
         .split('\n')
         .map((line) => JSON.parse(line).event.type),
     ).toEqual([
+      'adapter-approved',
+      // login-started and login-finished are the auth runner's to write.
       'tool-called',
-      'login-started',
-      'login-finished',
       // Only the first: after a denial every capability refuses without sending or logging again.
       'request-blocked',
       'tool-finished',
@@ -124,12 +124,12 @@ describe('tool host with real stores', () => {
 
   it('redacts canaries from output that passes every guard', async () => {
     const clock = new FakeClock()
-    const approvals = new ApprovalStore(join(dir, 'approvals.json'))
-    const secrets = new SecretRedactionSet()
-    secrets.remember(SecretValue.fromString(CANARY_PASSWORD))
+    const audit = new AuditLog(join(dir, 'audit.jsonl'), clock)
+    const approvals = new ApprovalStore(join(dir, 'approvals.json'), audit)
     const driver = new FakeSessionDriver()
     driver.cookieValues = [CANARY_COOKIE]
-    driver.page.route('GET', SESSION_URL, loggedIn)
+    driver.page.route('GET', SESSION_URL, loggedOut)
+    driver.onHandoff = () => driver.page.route('GET', SESSION_URL, loggedIn)
     driver.page.route('GET', `${HOME}/api/trolley`, json({ note: `${CANARY_COOKIE} and ${CANARY_PASSWORD}` }))
     const leaky = defineAdapter({
       manifest,
@@ -137,22 +137,30 @@ describe('tool host with real stores', () => {
         run_test: tool({
           input: z.object({}),
           output: z.object({ body: z.unknown(), plain: z.string() }),
-          run: async (ctx) => ({ body: (await ctx.page.fetch('/api/trolley')).body, plain: 'Milk' }),
+          run: async (ctx) => {
+            await ctx.session.ensure()
+            return { body: (await ctx.page.fetch('/api/trolley')).body, plain: 'Milk' }
+          },
         }),
       },
     })
     const hash = bundleHash({ 'index.ts': 'leaky' })
-    await approvals.approve('example-shop', hash)
+    await approvals.approve('example-shop', hash, '1.0.0')
     const host = new ToolHost({
       approvals,
-      audit: new AuditLog(join(dir, 'audit.jsonl'), clock),
+      audit,
       prompt: new FakePrompt(),
-      authRunner: async () => ({ status: 'ok' }),
+      authRunner: async (request) => {
+        const password = SecretValue.fromString(CANARY_PASSWORD)
+        request.registerForRedaction(password)
+        password.dispose()
+        return { status: 'ok' }
+      },
       markers: new LoginAttemptMarker(dir, clock),
-      secrets,
+      breakerStore: new MemoryJsonStore(),
       clock,
       sleep: clock.sleep,
-      siteProtection: { minRequestGapMs: 0, cooldownMs: 60_000, maxCooldownMs: 600_000 },
+      pacingSleep: clock.pacingSleep,
     })
     host.register({ definition: leaky, bundleHash: hash, driver })
 
@@ -169,17 +177,19 @@ describe('tool host with real stores', () => {
 
   it('stops running an adapter as soon as its approval is revoked', async () => {
     const clock = new FakeClock()
-    const approvals = new ApprovalStore(join(dir, 'approvals.json'))
+    const audit = new AuditLog(join(dir, 'audit.jsonl'), clock)
+    const approvals = new ApprovalStore(join(dir, 'approvals.json'), audit)
     const driver = new FakeSessionDriver()
     driver.page.route('GET', SESSION_URL, loggedIn)
     const hash = bundleHash({ 'index.ts': 'v1' })
-    await approvals.approve('example-shop', hash)
+    await approvals.approve('example-shop', hash, '1.0.0')
     const host = new ToolHost({
       approvals,
-      audit: new AuditLog(join(dir, 'audit.jsonl'), clock),
+      audit,
       prompt: new FakePrompt(),
       authRunner: async () => ({ status: 'ok' }),
       markers: new LoginAttemptMarker(dir, clock),
+      breakerStore: new MemoryJsonStore(),
       clock,
       sleep: clock.sleep,
     })
@@ -194,7 +204,7 @@ describe('tool host with real stores', () => {
     const request = { adapterId: 'example-shop', tool: 'run_test', input: {}, client: 'c', callId: 'call-1' }
 
     expect(await host.call(request)).toEqual({ status: 'ok', output: 'ran' })
-    await approvals.revoke('example-shop', hash)
+    await approvals.reject('example-shop', hash, '1.0.0')
     expect(await host.call({ ...request, callId: 'call-2' })).toEqual({
       status: 'failed',
       stage: 'manifest',

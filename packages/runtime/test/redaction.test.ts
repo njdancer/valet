@@ -24,14 +24,30 @@ describe('sensitiveMatcher', () => {
     expect(sensitive(cookie.toUpperCase())).toBe(false)
   })
 
-  it('ignores short cookie values that are flags, not credentials', () => {
+  it('with ignoreCase, matches session values whatever their case', () => {
+    const sensitive = sensitiveMatcher(['Sess-AbCdEf123'], new SecretRedactionSet(), { ignoreCase: true })
+    expect(sensitive('https://sess-abcdef123.evil.test/')).toBe(true)
+    expect(sensitive('https://SESS-ABCDEF123.evil.test/')).toBe(true)
+    expect(sensitive('https://www.example.com/')).toBe(false)
+  })
+
+  it('with ignoreCase, still matches secrets exactly, since a SecretValue cannot be folded unrevealed', () => {
+    const secrets = new SecretRedactionSet()
+    secrets.register(SecretValue.fromString('Canary-Pa55word'))
+    const sensitive = sensitiveMatcher([], secrets, { ignoreCase: true })
+
+    expect(sensitive('x Canary-Pa55word x')).toBe(true)
+    expect(sensitive('x canary-pa55word x')).toBe(false)
+  })
+
+  it('ignores short session values that are flags, not credentials', () => {
     const sensitive = sensitiveMatcher(['1', 'en-AU', ''], new SecretRedactionSet())
     expect(sensitive('Pack of 1, en-AU')).toBe(false)
   })
 
-  it('matches a remembered secret', () => {
+  it('matches a registered secret', () => {
     const secrets = new SecretRedactionSet()
-    secrets.remember(SecretValue.fromString('canary-pa55word'))
+    secrets.register(SecretValue.fromString('canary-pa55word'))
     const sensitive = sensitiveMatcher([], secrets)
 
     expect(sensitive('my password is canary-pa55word ok')).toBe(true)
@@ -40,15 +56,39 @@ describe('sensitiveMatcher', () => {
 })
 
 describe('SecretRedactionSet', () => {
-  it('forgets secrets once they are disposed', () => {
+  it('keeps matching a secret after the auth flow disposes its own copy', () => {
     const secrets = new SecretRedactionSet()
     const secret = SecretValue.fromString('canary-pa55word')
-    secrets.remember(secret)
-    expect(secrets.size).toBe(1)
-
+    secrets.register(secret)
     secret.dispose()
-    expect(secrets.occursIn('canary-pa55word')).toBe(false)
+
+    expect(secrets.occursIn('canary-pa55word')).toBe(true)
+    expect(secrets.size).toBe(1)
+  })
+
+  it('forgets every secret once the call ends, and ignores registrations after that', () => {
+    const secrets = new SecretRedactionSet()
+    secrets.register(SecretValue.fromString('canary-pa55word'))
+    secrets.dispose()
+    secrets.register(SecretValue.fromString('late-canary-91'))
+
+    expect(secrets.occursIn('canary-pa55word late-canary-91')).toBe(false)
     expect(secrets.size).toBe(0)
+  })
+
+  it('treats everything as sensitive once it was handed a secret it could not keep', () => {
+    const secrets = new SecretRedactionSet()
+    const gone = SecretValue.fromString('canary-pa55word')
+    gone.dispose()
+    secrets.register(gone)
+
+    expect(secrets.occursIn('anything at all')).toBe(true)
+  })
+
+  it('treats a value that is not a SecretValue as one it could not keep', () => {
+    const secrets = new SecretRedactionSet()
+    secrets.register('canary-pa55word' as never)
+    expect(secrets.occursIn('Milk')).toBe(true)
   })
 })
 
