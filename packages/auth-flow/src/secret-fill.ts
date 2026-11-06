@@ -7,6 +7,7 @@ import {
   CredentialError,
   type ElementInfo,
   type ErrorClass,
+  type Grant,
   httpsOrigin,
   type MessagesOtpQuery,
   originAllowed,
@@ -19,29 +20,23 @@ import {
   urlOriginAllowed,
 } from '@siteadapter/core'
 import { checkBlocked, checkNavigation, type FlowContext, guarded, now, remainingMs } from './context'
-import { allowedOrigins, suitsField } from './guards'
+import { allowedOrigins, requestedOrigins, suitsField } from './guards'
 
 /** How often to look for a one-time code that hasn't arrived yet. */
 export const OTP_POLL_MS = 1000
 
-/** The audit log's name for codes read from Messages, which have no secret request of their own. */
+/**
+ * The secret name for codes read from Messages, which have no secret request of their own: the
+ * name their grant is stored under and the name the audit log records.
+ */
 export const MESSAGES_SECRET = 'messages'
 
 const RESOLVE_FAILURES: readonly ResolveFailure[] = ['locked', 'not-found', 'field-missing', 'unavailable']
 
 /** Fills a secret from a credential provider: `fill` with a secret ref, or `otp` with a secret source. */
 export async function fillSecret(ctx: FlowContext, selector: string, ref: SecretRef): Promise<void> {
-  const { manifest, adapterHash, grants, providers } = ctx.input
-  const grant = await guarded('grant', () => grants.find(manifest.id, adapterHash, ref.secret))
-  // The store is asked for exactly this adapter and hash; a grant for anything else is not a grant.
-  if (
-    grant === null ||
-    grant.adapterId !== manifest.id ||
-    grant.adapterHash !== adapterHash ||
-    grant.secret !== ref.secret
-  ) {
-    throw new SiteAdapterError('secret-fill', 'not-granted')
-  }
+  const { manifest, providers } = ctx.input
+  const grant = await findGrant(ctx, ref.secret)
   // hasOwn, because a secret named "constructor" would otherwise find Object's.
   const request = Object.hasOwn(manifest.secrets, ref.secret) ? manifest.secrets[ref.secret] : undefined
   if (request === undefined || !request.fields.includes(ref.field)) {
@@ -62,18 +57,27 @@ export async function fillSecret(ctx: FlowContext, selector: string, ref: Secret
 }
 
 /**
- * Fills a one-time code read from Messages. There is no secret request to take origins from, so the
- * code may go to any origin on the navigation allowlist, and the element checks still apply.
+ * Fills a one-time code read from Messages. Reading someone's texts needs their say-so as much as
+ * a 1Password item does, so it takes a grant too: until core has a grant kind of its own for it, a
+ * grant for the secret named MESSAGES_SECRET, for this adapter and hash. Its provider and item are
+ * unused. The code may go only to origins in that grant that some secret request also asked for,
+ * and the manifest must name the sender, so that a grant to one site can't read another's codes.
  */
 export async function fillMessagesOtp(
   ctx: FlowContext,
   selector: string,
   source: { readonly sender?: string | undefined; readonly pattern: string; readonly maxAgeSeconds: number },
 ): Promise<void> {
-  const origins = ctx.input.manifest.navigation
+  const { manifest } = ctx.input
+  // A manifest's own secret called "messages" would have a 1Password grant that reads as this one.
+  if (source.sender === undefined || Object.hasOwn(manifest.secrets, MESSAGES_SECRET)) {
+    throw new SiteAdapterError('secret-fill', 'invalid')
+  }
+  const grant = await findGrant(ctx, MESSAGES_SECRET)
+  const origins = allowedOrigins(grant.origins, requestedOrigins(manifest))
   await checkTarget(ctx, selector, 'otp', origins)
   const query: MessagesOtpQuery = {
-    ...(source.sender === undefined ? {} : { sender: source.sender }),
+    sender: source.sender,
     pattern: source.pattern,
     maxAgeSeconds: source.maxAgeSeconds,
   }
@@ -84,6 +88,22 @@ export async function fillMessagesOtp(
   } finally {
     code.dispose()
   }
+}
+
+/** The person's grant of `secret` to this exact adapter and hash, or `secret-fill: not-granted`. */
+async function findGrant(ctx: FlowContext, secret: string): Promise<Grant> {
+  const { manifest, adapterHash, grants } = ctx.input
+  const grant = await guarded('grant', () => grants.find(manifest.id, adapterHash, secret))
+  // The store is asked for exactly this adapter and hash; a grant for anything else is not a grant.
+  if (
+    grant === null ||
+    grant.adapterId !== manifest.id ||
+    grant.adapterHash !== adapterHash ||
+    grant.secret !== secret
+  ) {
+    throw new SiteAdapterError('secret-fill', 'not-granted')
+  }
+  return grant
 }
 
 /**

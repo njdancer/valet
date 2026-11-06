@@ -1,6 +1,6 @@
 import type { ElementInfo } from '@siteadapter/core'
 import { describe, expect, it } from 'vitest'
-import { allowedOrigins, suitsField } from '../src/guards'
+import { allowedOrigins, requestedOrigins, suitsField } from '../src/guards'
 
 const PASSWORD_INPUT: ElementInfo = {
   visible: true,
@@ -143,5 +143,26 @@ describe('allowedOrigins', () => {
     expect(allowedOrigins(['https://login.shop.test/'], ['https://login.shop.test'])).toEqual([
       'https://login.shop.test/',
     ])
+  })
+})
+
+describe('requestedOrigins', () => {
+  it('collects the origins of every secret request once each', () => {
+    expect(
+      requestedOrigins({
+        secrets: {
+          login: { description: 'Login', fields: ['password'], origins: ['https://login.shop.test'] },
+          card: {
+            description: 'Card',
+            fields: ['otp'],
+            origins: ['https://pay.shop.test', 'https://login.shop.test'],
+          },
+        },
+      }),
+    ).toEqual(['https://login.shop.test', 'https://pay.shop.test'])
+  })
+
+  it('is empty for a manifest that requests no secrets, so a code can be typed nowhere', () => {
+    expect(requestedOrigins({ secrets: {} })).toEqual([])
   })
 })

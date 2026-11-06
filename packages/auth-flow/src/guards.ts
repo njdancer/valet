@@ -1,6 +1,12 @@
 // Pure checks on where a secret may be typed. See "Before a secret fill" in docs/security-model.md.
 
-import { type ElementInfo, isBareOrigin, originAllowed, type SecretField } from '@siteadapter/core'
+import {
+  type AdapterManifest,
+  type ElementInfo,
+  isBareOrigin,
+  originAllowed,
+  type SecretField,
+} from '@siteadapter/core'
 
 /**
  * The origins a secret may be typed on: those the person granted that the manifest also asked for.
@@ -9,6 +15,14 @@ import { type ElementInfo, isBareOrigin, originAllowed, type SecretField } from 
  */
 export function allowedOrigins(granted: readonly string[], requested: readonly string[]): string[] {
   return granted.filter((origin) => isBareOrigin(origin) && originAllowed(origin, requested))
+}
+
+/**
+ * Every origin any of the manifest's secret requests asked for. A Messages code has no request of
+ * its own, so this, not the wider navigation allowlist, bounds where it may be typed.
+ */
+export function requestedOrigins(manifest: Pick<AdapterManifest, 'secrets'>): string[] {
+  return [...new Set(Object.values(manifest.secrets).flatMap((request) => request.origins))]
 }
 
 /** An input whose type attribute is absent is a text field. */

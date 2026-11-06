@@ -83,6 +83,17 @@ export const GRANT: Grant = {
   grantedAt: '2026-11-06T09:00:00.000Z',
 }
 
+/** The person's say-so for this adapter to read one-time codes from Messages, on the login origin. */
+export const MESSAGES_GRANT: Grant = {
+  adapterId: 'shop',
+  adapterHash: HASH,
+  secret: 'messages',
+  provider: 'fake',
+  itemRef: 'unused',
+  origins: [LOGIN],
+  grantedAt: '2026-11-06T09:00:00.000Z',
+}
+
 export const ITEMS: Record<string, { username: string; password: string; otp: string }> = {
   [ITEM]: { username: CANARY.username, password: CANARY.password, otp: CANARY.otp },
 }
@@ -101,7 +112,7 @@ export function manifestWithSteps(steps: AuthStep[]) {
 export function world() {
   const clock = new FakeClock(START)
   const page = new FakeAuthPage(structuredClone(SITE))
-  const grants = new FakeGrantStore([structuredClone(GRANT)])
+  const grants = new FakeGrantStore([structuredClone(GRANT), structuredClone(MESSAGES_GRANT)])
   const provider = new FakeProvider(structuredClone(ITEMS))
   const otpReader = new FakeOtpReader(clock, [])
   const audit = new RecordingAudit()

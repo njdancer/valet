@@ -35,10 +35,13 @@ manifest's `auth.steps` against an `AuthPage` and returns `ok`, `needsUser(reaso
   given a second chance (or a second Touch ID prompt). Blocks, `needsUser` and timeouts never are.
 - **`urlMatches`** tests the URL's path and query, never its host. A pattern wrapped in slashes
   (`/^\/account$/`) is a regular expression; anything else is a substring.
-- **Messages OTP** has no secret request, so the code may be typed on any `navigation` origin;
-  the element checks still apply. It polls every second until the flow deadline, asking only for
-  codes newer than the flow's start, then fails `otp: not-found`. It is audited as secret
-  `messages`.
+- **Messages OTP** needs a grant, as a 1Password secret does: until core has a grant kind for
+  it, a `Grant` whose `secret` is `messages` (`MESSAGES_SECRET`), for this adapter and hash; its
+  `provider` and `itemRef` are unused. The source must name a `sender` (`secret-fill: invalid`
+  otherwise), a manifest may not declare its own secret called `messages`, and the code may be
+  typed only on origins in that grant that some secret request also asked for, not on the whole
+  `navigation` list. It polls every second until the flow deadline, asking only for codes newer
+  than the flow's start, then fails `otp: not-found`. It is audited as secret `messages`.
 - **`blocked`** is audited as `login-finished { outcome: 'failed', errorClass: 'blocked-by-site' }`
   until the audit vocabulary has a `blocked` outcome.
 - **Timeouts are cooperative.** The deadline is checked between steps and on every poll. A driver

@@ -2,7 +2,18 @@ import { CredentialError } from '@siteadapter/core'
 import { describe, expect, it, vi } from 'vitest'
 import { runAuthFlow } from '../src/run-auth-flow'
 import { MESSAGES_SECRET, OTP_POLL_MS } from '../src/secret-fill'
-import { CANARY, EVIL, HASH, LOGIN, LOGIN_PAGE, manifestWithSteps, START, WWW, world } from './fixtures'
+import {
+  CANARY,
+  EVIL,
+  HASH,
+  LOGIN,
+  LOGIN_PAGE,
+  MESSAGES_GRANT,
+  manifestWithSteps,
+  START,
+  WWW,
+  world,
+} from './fixtures'
 
 const TOTP = manifestWithSteps([
   { op: 'goto', url: LOGIN_PAGE },
@@ -128,7 +139,7 @@ describe('otp from Messages', () => {
     })
   })
 
-  it('leaves the sender out of the query when the manifest names none', async () => {
+  it('refuses a Messages source that names no sender, before reading anything', async () => {
     const w = world()
     w.otpReader.messages.push({ at: START, sender: 'anyone', body: `code is ${CANARY.sms}` })
     w.input.manifest = manifestWithSteps([
@@ -139,8 +150,13 @@ describe('otp from Messages', () => {
         source: { messages: { pattern: 'code is (\\d{6})', maxAgeSeconds: 300 } },
       },
     ])
-    expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
-    expect(w.otpReader.calls[0]?.query).toEqual({ pattern: 'code is (\\d{6})', maxAgeSeconds: 300 })
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'secret-fill',
+      errorClass: 'invalid',
+    })
+    expect(w.otpReader.calls).toEqual([])
+    expect(w.page.typed).toEqual([])
   })
 
   it('never reuses a code from before the flow started, and gives up at the flow deadline', async () => {
@@ -214,16 +230,17 @@ describe('otp from Messages', () => {
       {
         op: 'otp',
         selector: '#search',
-        source: { messages: { pattern: '(\\d{6})', maxAgeSeconds: 300 } },
+        source: { messages: { sender: 'ShopSMS', pattern: '(\\d{6})', maxAgeSeconds: 300 } },
       },
     ])
     expect(await runAuthFlow(w.input)).toMatchObject({ errorClass: 'element-unsuitable' })
     expect(w.otpReader.calls).toEqual([])
   })
 
-  it('allows a code on any origin on the navigation allowlist', async () => {
+  it('refuses a code on a navigation origin that no secret request asked for', async () => {
     const w = world()
     w.page.site[`${WWW}/verify`] = { elements: { '#otp': { inputType: 'tel' } } }
+    w.grants.grants[1] = { ...MESSAGES_GRANT, origins: [LOGIN, WWW] }
     w.otpReader.messages.push({ at: START, sender: 'ShopSMS', body: `code is ${CANARY.sms}` })
     w.input.manifest = manifestWithSteps([
       { op: 'goto', url: `${WWW}/verify` },
@@ -233,12 +250,89 @@ describe('otp from Messages', () => {
         source: { messages: { sender: 'ShopSMS', pattern: 'code is (\\d{6})', maxAgeSeconds: 300 } },
       },
     ])
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'secret-fill',
+      errorClass: 'origin-mismatch',
+    })
+    expect(w.otpReader.calls).toEqual([])
+    expect(w.page.typed).toEqual([])
+  })
+
+  it('refuses a code on a requested origin the Messages grant does not cover', async () => {
+    const w = world()
+    w.grants.grants[1] = { ...MESSAGES_GRANT, origins: [WWW] }
+    w.otpReader.messages.push({ at: START, sender: 'ShopSMS', body: `code is ${CANARY.sms}` })
+    w.input.manifest = SMS
+    expect(await runAuthFlow(w.input)).toMatchObject({ errorClass: 'origin-mismatch' })
+    expect(w.otpReader.calls).toEqual([])
+  })
+
+  it('types a code on an origin that is both granted and requested, and audits it as messages', async () => {
+    const w = world()
+    w.otpReader.messages.push({ at: START, sender: 'ShopSMS', body: `code is ${CANARY.sms}` })
+    w.input.manifest = SMS
     expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
-    expect(w.audit.events.find((e) => e.type === 'secret-used')).toMatchObject({
+    expect(w.audit.events.find((e) => e.type === 'secret-used')).toEqual({
+      type: 'secret-used',
+      adapterId: 'shop',
+      adapterHash: HASH,
       secret: MESSAGES_SECRET,
       field: 'otp',
-      origin: WWW,
+      origin: LOGIN,
+      callId: 'call-1',
     })
+  })
+
+  it('needs a Messages grant, and reads nothing without one', async () => {
+    const w = world()
+    w.grants.grants.splice(1, 1)
+    w.otpReader.messages.push({ at: START, sender: 'ShopSMS', body: `code is ${CANARY.sms}` })
+    w.input.manifest = SMS
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'secret-fill',
+      errorClass: 'not-granted',
+    })
+    expect(w.otpReader.calls).toEqual([])
+    expect(w.page.typed).toEqual([])
+  })
+
+  it('does not take a 1Password grant for another secret as a Messages grant', async () => {
+    const w = world()
+    w.grants.grants.splice(1, 1)
+    w.otpReader.messages.push({ at: START, sender: 'ShopSMS', body: `code is ${CANARY.sms}` })
+    w.input.manifest = SMS
+    vi.spyOn(w.grants, 'find').mockResolvedValue(w.grants.grants[0] ?? null)
+    expect(await runAuthFlow(w.input)).toMatchObject({ errorClass: 'not-granted' })
+    expect(w.otpReader.calls).toEqual([])
+  })
+
+  it('does not accept a Messages grant made for another adapter hash', async () => {
+    const w = world()
+    w.otpReader.messages.push({ at: START, sender: 'ShopSMS', body: `code is ${CANARY.sms}` })
+    w.input.manifest = SMS
+    vi.spyOn(w.grants, 'find').mockResolvedValue({ ...MESSAGES_GRANT, adapterHash: 'f'.repeat(64) })
+    expect(await runAuthFlow(w.input)).toMatchObject({ errorClass: 'not-granted' })
+    expect(w.otpReader.calls).toEqual([])
+  })
+
+  it('refuses a manifest that declares its own secret named messages', async () => {
+    const w = world()
+    w.otpReader.messages.push({ at: START, sender: 'ShopSMS', body: `code is ${CANARY.sms}` })
+    w.input.manifest = {
+      ...SMS,
+      secrets: {
+        ...SMS.secrets,
+        messages: { description: 'Not really Messages', fields: ['otp'], origins: [LOGIN] },
+      },
+    }
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'secret-fill',
+      errorClass: 'invalid',
+    })
+    expect(w.otpReader.calls).toEqual([])
   })
 
   it('aborts when the page leaves the allowlist while waiting for the code', async () => {

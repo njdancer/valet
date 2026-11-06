@@ -1,5 +1,5 @@
 export { evaluateCondition, urlMatches } from './conditions'
-export { allowedOrigins, suitsField } from './guards'
+export { allowedOrigins, requestedOrigins, suitsField } from './guards'
 export { POLL_MS } from './interpreter'
 export { runAuthFlow } from './run-auth-flow'
 export { MESSAGES_SECRET, OTP_POLL_MS } from './secret-fill'
