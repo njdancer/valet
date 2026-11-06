@@ -889,6 +889,16 @@ edits the plan.
   UAs. The live probe in `spikes/02-woolworths-shapes` is not that spike 2, despite the
   directory number; renaming the directory would remove the confusion.
 - **architecture.md, credentials:** the `op read` fallback becomes `DesktopAuth` if D7 says so.
+- **This plan, if the design drafts are accepted.** Each departs from the plan as written:
+  - [WS10](#ws10-relay) and [M9](#m9-relay-beta-optional): the OAuth authorisation server moves
+    from the Worker into the app, with consent on the Mac ([relay.md](relay.md#summary)).
+  - [D14](#d14-relay): the tunnel docs wait for the app's remote mode instead of coming at M3,
+    since a tunnel can't reach the local endpoint and claude.ai can't send its bearer token.
+  - [WS9](#ws9-packaging-and-updates): the stdio bridge becomes a `--mcp-bridge` mode of the app
+    binary, not a signed helper, behind a strict command-line allowlist
+    ([release-and-updates.md](release-and-updates.md#the-stdio-bridge)).
+  - [D12](#d12-sandbox-technology): QuickJS inside the sandboxed renderer rather than the renderer
+    alone ([registry-and-sandbox.md](registry-and-sandbox.md#why-not-the-renderer-alone)).
 
 ---
 
