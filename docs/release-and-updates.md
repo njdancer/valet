@@ -14,24 +14,32 @@ memory as of November 2026; anything marked _verify_ must be checked on the firs
 
 - **Identity first.** The bundle ID and Team ID are what Keychain items, Full Disk Access and the
   updater's signature check are tied to. Fix the bundle ID before the first signed build
-  ([D1](plan.md#d1-product-name)). Development builds get a _different_ bundle ID, so they can
-  never read the production 1Password token.
+  ([D1](plan.md#d1-product-name)). Development builds get a _different_ bundle ID and different
+  Keychain service names, so an honest dev build never asks for the production 1Password token.
+  Against a dev build an agent has changed on purpose, the control is access to the signing key,
+  not the bundle ID ([Identity](#identity)).
 - **Signing:**
   - Developer ID, hardened runtime, and one entitlement (`allow-jit`).
-  - Electron fuses that turn off every way of running other code as the app (`runAsNode`,
-    `NODE_OPTIONS`, `--inspect`).
+  - Electron fuses that turn off the Node-level ways of running other code as the app
+    (`runAsNode`, `NODE_OPTIONS`, `--inspect`).
+  - A strict command-line allowlist, first thing in main, for the Chromium and Electron switches
+    no fuse covers (`--remote-debugging-port`, `--host-resolver-rules`, …). Not built yet; see
+    [Command-line switches](#command-line-switches).
   - An explicit designated requirement on the outer bundle only, using the earlier app's `sign`
     wrapper.
 
-  Without the fuses, the designated requirement protects nothing: any local process could run
-  JavaScript _as_ siteadapter and read the Keychain.
+  Without the fuses and the switch allowlist, the designated requirement protects little: any
+  local process could run JavaScript _as_ siteadapter, or drive its renderers over the DevTools
+  protocol, and read what the app can read.
 - **Notarisation:** `notarytool` with an App Store Connect API key. Locally it's a `notarytool`
   Keychain profile on Nick's Mac; in CI, the key comes from the environment. The release script
   also notarises and staples the DMG.
 - **Updates:**
   - electron-updater against a static feed on a domain Nick controls (R2 behind
     `updates.<domain>`), not GitHub Releases, before and after the repo goes public.
-  - Squirrel.Mac already refuses an update not signed with the same designated requirement.
+  - Squirrel.Mac should refuse an update not signed with the same designated requirement. That's
+    its documented behaviour, but it's _verify_ for Electron 44, and the updater E2E test's first
+    two attack rows are what confirm it.
   - On top of that, the feed's metadata is signed with an offline Ed25519 key and carries an
     expiry and a version floor, which stops downgrade and freeze attacks the stock updater
     allows.
@@ -48,11 +56,37 @@ memory as of November 2026; anything marked _verify_ must be checked on the firs
 | `userData` and partitions | `~/Library/Application Support/siteadapter` | `…/siteadapter-dev`                                    |
 | 1Password vault           | `siteadapter`                               | a separate vault with test items, or the fake provider |
 
-Why separate:
+Why separate: an honest local build, including code an agent changed on a `wip/*` branch, then
+never touches production data by accident. What actually keeps a _dishonest_ build away from the
+production token is different, and depends on where the token is read:
 
-- Anything Nick builds locally, including code an agent changed on a `wip/*` branch, would
-  otherwise satisfy the same requirement as the release and could read the production token.
-- With a different bundle ID it can't, whatever certificate signed it.
+- **In v0**, the token is read through `/usr/bin/security`
+  ([security-model.md](security-model.md#the-service-account-token)), so the Keychain sees Apple's
+  tool, not the app, and the bundle ID plays no part. What keeps a dev build away from the
+  production item is only that it asks for `siteadapter-dev.*`, not `siteadapter.*`. An agent's
+  change can rename that back, and the resulting prompt names `security` either way. So in v0
+  there is no technical control: allow the prompt only when you've just started the release app
+  yourself, and deny one you didn't expect.
+- **Once the read moves in process**, the item's ACL is the release designated requirement. A
+  changed build satisfies it only if it has the release bundle ID _and_ a Developer ID signature
+  from Nick's team. An agent can set the bundle ID back to `me.dncr.siteadapter` in one line. So
+  the real control is **access to the Developer ID private key**: if `codesign` can use it without
+  asking, any process running as Nick can sign a build that passes.
+
+So the signing material needs per-use approval, not "Always Allow":
+
+- **Developer ID private key:** not in the login keychain. Keep it in a separate keychain that is
+  locked except during a release (with a short auto-lock), or on a hardware token (a smart card or
+  YubiKey identity via CryptoTokenKit; _verify_ that `codesign` signs with one cleanly). Never
+  click "Always Allow" for `codesign` on it.
+- **The feed key** ([Signed feed metadata](#signed-feed-metadata)): a passphrase-protected file
+  or a hardware key, never stored unlocked.
+- **The notary profile and the R2 upload token:** the same separate release keychain, not the
+  login keychain. Neither can sign an app, but the R2 token can replace the feed and the notary
+  key can get anything notarised under the team's name.
+
+The release script unlocks the release keychain at the start and locks it again on exit, success
+or failure.
 
 Changing either the bundle ID or the Team ID after release orphans every Keychain item and Full
 Disk Access grant ([R12](plan.md#risk-register)).
@@ -173,7 +207,8 @@ A plain-Node test in `apps/desktop/test` should parse the config and both plists
 
 - a forbidden entitlement appears;
 - a fuse in the list above is missing or flipped;
-- `hardenedRuntime`, `forceCodeSigning` or `notarize` is turned off.
+- `hardenedRuntime`, `forceCodeSigning` or `notarize` is turned off;
+- main's first statement isn't the command-line check ([below](#command-line-switches)).
 
 It's cheap and it runs in `pnpm check`, which is where a "temporary" entitlement would otherwise
 slip in.
@@ -220,6 +255,67 @@ Application leaf, issued to this team.
 - The requirement starts protecting the 1Password token only once the read moves in process.
   Until then, never click "Always Allow" on the `security` prompt.
 
+## Command-line switches
+
+The fuses close the Node-level ways in. They don't cover Chromium's or Electron's own
+command-line switches: `@electron/fuses` 1.8.0 has fuses only for `RunAsNode`,
+`CookieEncryption`, `NodeOptions`, `NodeCliInspect`, `AsarIntegrity`, `OnlyLoadAppFromAsar`,
+`V8Snapshot` and `FileProtocol`. Any local process can start the signed app with switches, and
+some of them hand it the app's secrets without touching the signature:
+
+| Switch                                                                     | What it gives a local attacker                                                                                                                                                                                                                            |
+| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--remote-debugging-port`, `--remote-debugging-pipe`                       | The DevTools protocol into every renderer, including the `auth:` page while the password is typed into it, and `Network.getAllCookies` for both partitions (cookie encryption at rest doesn't help: CDP reads them decrypted)                             |
+| `--host-resolver-rules`, `--host-rules` with `--ignore-certificate-errors` | `auth.woolworths.com.au` resolved to a server the attacker runs, with its certificate accepted. The page's origin still reads `https://auth.woolworths.com.au`, so the secret-fill origin check passes and the password is typed into the attacker's page |
+| `--proxy-server`, `--proxy-pac-url`, `--proxy-*`                           | All traffic through the attacker's proxy (combined with the above, readable)                                                                                                                                                                              |
+| `--js-flags`                                                               | V8 flags in every renderer, some of which disable mitigations                                                                                                                                                                                             |
+| `--user-data-dir`                                                          | The app running against a profile the attacker prepared                                                                                                                                                                                                   |
+| `--inspect*`                                                               | Covered by the `NodeCliInspect` fuse, but refused here as well                                                                                                                                                                                            |
+
+So nothing in the trusted path may depend on argv being benign, and the app must refuse to run
+with any switch it didn't expect:
+
+- **An allowlist, not a blocklist.** Main's first statement, before `app` is ready, before the
+  single-instance lock, and before the bridge dispatch below, checks `process.argv` against
+  exactly two shapes:
+  - the executable alone (a normal launch);
+  - the executable, `--mcp-bridge`, and one absolute path (`/…`) as a separate argument.
+
+  Anything else exits at once with a fixed message and a non-zero status: an extra argument, a
+  switch before or after the path, `--mcp-bridge=<path>`, a relative path, a path starting with
+  `-`, a bare `--`, and any other spelling of a switch. Chromium also accepts switches with a
+  single `-` prefix, so a blocklist of names would miss `-remote-debugging-port=9222`; an
+  allowlist doesn't have to know.
+- **A pure function, tested in `pnpm check`.** `classifyArgv(argv)` returns `{ mode: 'app' }`,
+  `{ mode: 'bridge', config }` or `{ mode: 'refuse' }`, and the unit tests try to get past it:
+  each switch in the table, single-dash and `=value` forms, upper-case `--MCP-BRIDGE`, the bridge
+  flag twice, a switch hidden after the config path, an empty string argument, a path containing
+  `\0`, and macOS's historical `-psn_…` process-serial argument (_verify_ whether LaunchServices
+  still passes it on current macOS; if it does, allow exactly that shape and nothing like it).
+- **Relaunches keep the shape.** `app.relaunch()` defaults to the current arguments, which are
+  already allowed. Never pass it extra switches.
+- **Environment variables too.** Electron reads some `ELECTRON_*` variables at start-up. The two
+  that run code are fused off; the check also refuses to start if any `ELECTRON_*` or `NODE_*`
+  variable outside a short reviewed list is set (_verify_ the list against Electron 44's docs).
+
+**What the check can't do.** Chromium parses its switches before any JavaScript runs. Some of them
+act before main's first line: `--js-flags` is applied as V8 starts, and the DevTools listener for
+`--remote-debugging-port` may open during browser start-up (_verify_ the order in Electron 44).
+Exiting in main means no window, no partition and no secret ever exists in such a process, which
+is what matters, but it is detection plus early exit, not prevention. A `--remote-debugging-*`
+listener that is up for a few hundred milliseconds in a process that has loaded nothing is
+acceptable; one that's up while a window exists is not.
+
+**Release check.** After the codesign checks, the release script launches the built app once per
+row of the table above, plus `--mcp-bridge` with a relative path, and asserts that each exits
+non-zero within two seconds without creating a window or a file under `userData`, and that
+nothing answers on the requested debugging port. A build that keeps running with any of them
+doesn't ship.
+
+Until this exists, the Keychain and designated-requirement story above has a hole: any process
+running as the person can drive the signed app, and the app's own code-signature checks don't
+see it.
+
 ## The stdio bridge
 
 MCP clients launch the bridge (`siteadapter-bridge <config file>`) as a command. The usual Electron
@@ -235,9 +331,17 @@ So it stays off. Options:
 
 Recommendation: bridge mode in the app binary.
 
-- The main process checks `process.argv` for `--mcp-bridge` before anything else: before the
-  single-instance lock, the tray, or any window.
-- In bridge mode it runs `runBridge` and nothing else.
+- **This departs from [WS9](plan.md#ws9-packaging-and-updates)**, which says to bundle the stdio
+  bridge as a signed helper. A helper is either a second Node runtime (the second row) or needs
+  `runAsNode` (which the fuses forbid). Bridge mode keeps one identity and one runtime, at the
+  cost of an Electron start per client launch and of making argv part of the trusted path. It's
+  listed for Nick in [Open questions](#open-questions).
+- The main process dispatches on the result of the command-line check
+  ([above](#command-line-switches)), which runs before anything else: before the single-instance
+  lock, the tray, or any window. Bridge mode is reached only when argv is exactly
+  `--mcp-bridge <absolute path>`.
+- In bridge mode it runs `runBridge` and nothing else: no window, no partition, no credential
+  code.
 - Claude Desktop's config then points at `/Applications/siteadapter.app/Contents/MacOS/siteadapter`
   with those arguments.
 
@@ -297,12 +401,23 @@ Then, stopping at the first failure:
    ```bash
    APP=dist/mac-arm64/siteadapter.app
    codesign --verify --deep --strict --verbose=2 "$APP"
-   codesign -d -r- "$APP"                       # must equal build/designated-requirement.txt exactly
-   codesign -d --entitlements - --xml "$APP"    # must equal build/entitlements.mac.plist exactly
+   codesign -d -r- "$APP"                       # same requirement as the requirement file
+   codesign -d --entitlements - --xml "$APP"    # same entitlements as build/entitlements.mac.plist
    pnpm exec electron-fuses read --app "$APP"   # every fuse as configured
    xcrun stapler validate "$APP"
    spctl --assess -vvv --type exec "$APP"       # expect "source=Notarized Developer ID"
    ```
+
+   "Same" means compared after parsing, never byte for byte. The source plist has a comment and
+   indentation and codesign's XML has neither, and `codesign -d -r-` prints a `designated =>`
+   prefix with its own spacing. So the script:
+   - converts both entitlement plists to JSON (`plutil -convert json -o - <file>`, the signed one
+     written to a temporary file first) and compares the parsed objects;
+   - strips the `designated =>` prefix and `/* … */` comments from both requirement texts,
+     collapses runs of whitespace to one space, and compares the results;
+   - fails on any difference and prints both sides.
+
+   Then the command-line refusal checks ([Command-line switches](#command-line-switches)).
 
 3. Sign, notarise and staple the DMG (above), then
    `spctl --assess -vvv --type open --context context:primary-signature "$DMG"`.
@@ -318,8 +433,9 @@ Then, stopping at the first failure:
 6. Tag the commit and keep the build log.
 
 The upload uses R2's S3-compatible API with a token scoped to the one bucket. That token lives in
-Nick's Keychain, like the notary profile. Versioned files get `Cache-Control: public,
-max-age=31536000, immutable`; the yml and envelope get `no-cache`.
+the release keychain with the notary profile ([Identity](#identity)), not the login keychain.
+Versioned files get `Cache-Control: public, max-age=31536000, immutable`; the yml and envelope
+get `no-cache`.
 
 ## Auto-update
 
@@ -331,8 +447,9 @@ max-age=31536000, immutable`; the yml and envelope get `no-cache`.
   host) behind a domain Nick controls, such as `https://updates.<domain>/mac/`.
 - Recommendation: **the static feed, on Nick's own domain, permanently.** Going public doesn't
   need a provider change:
-  - every installed build has its feed URL baked into `app-update.yml` inside its signed bundle,
-    so changing provider means keeping the old feed alive until every install has moved;
+  - every installed build has its feed URL compiled into its signed asar (`FEED_BASE_URL`,
+    [below](#signed-feed-metadata)), so changing provider means keeping the old feed alive until
+    every install has moved;
   - with a domain Nick controls, the host behind it can change without any client knowing;
   - GitHub Releases can still carry the DMG for people downloading by hand.
 
@@ -399,8 +516,16 @@ for a quiet project. That's a scheduled reminder for Nick, not automation holdin
 
 A sketch, in the repo's style. electron-updater exports `Provider` from its entry point, and its
 `parseUpdateInfo` and `resolveFiles` helpers are reachable at `electron-updater/out/providers/Provider`
-(the package has no `exports` map). The app passes the class as `updateProvider` with
-`provider: 'custom'`.
+(the package has no `exports` map).
+
+**One source for the feed URL: a constant compiled into the asar.** At start-up the app calls
+`autoUpdater.setFeedURL({ provider: 'custom', updateProvider: SignedFeedProvider })`. Given
+options, electron-updater 6.8.11 builds the provider from them and never reads the provider
+settings in `app-update.yml` (`AppUpdater.setFeedURL` sets `clientPromise` directly). The
+provider ignores its `options` and uses `FEED_BASE_URL`, so nothing outside the asar can name a
+feed. electron-builder still writes `app-update.yml` from `publish` (electron-updater reads its
+cache directory name from it), and the release check asserts its `url` equals `FEED_BASE_URL`, so
+the two can't drift into telling different stories.
 
 ```ts
 // The update feed, verified. electron-updater authenticates nothing about versions: this provider
@@ -410,7 +535,7 @@ A sketch, in the repo's style. electron-updater exports `Provider` from its entr
 
 export class SignedFeedProvider extends Provider<UpdateInfo> {
   constructor(
-    private readonly options: CustomPublishOptions,
+    _options: CustomPublishOptions, // ignored: the feed is FEED_BASE_URL, compiled in
     private readonly updater: AppUpdater,
     runtime: ProviderRuntimeOptions,
   ) {
@@ -561,9 +686,10 @@ that touches the updater, and before the first release.
   but not notarised (an update fetched by the app carries no quarantine flag, so Gatekeeper isn't
   involved; _verify_). It has its own `userData`, Keychain names and requirement file, so the
   test can't touch the real app's data.
-- **The feed URL** is the fake server's `http://127.0.0.1:<port>/`. It's baked into that build's
-  `app-update.yml` like any other build's. There's no environment variable or flag to point a
-  release build elsewhere, because that would be a way to point it at an attacker's feed.
+- **The feed URL** is the fake server's `http://127.0.0.1:<port>/`, compiled into that build's
+  `FEED_BASE_URL` like any other build's. The script picks a free port before building and starts
+  the fake server on that port, rather than port 0. There's no environment variable or flag to
+  point a release build elsewhere, because that would be a way to point it at an attacker's feed.
 - **The envelope** is signed with a test key, which only the test build embeds.
 - **A build-time constant** (`__UPDATER_E2E__`) makes the test build check immediately, write each
   updater event as a line of JSON to a file the script names, and install without asking. It's
@@ -676,3 +802,11 @@ What else changes when the repo goes public:
   a script; and parse its output rather than eyeballing it.
 - Whether enabling cookie encryption prompts for Keychain access on first run, and what the
   prompt names.
+- **For Nick: bridge mode instead of WS9's signed helper.** [The stdio bridge](#the-stdio-bridge)
+  departs from WS9. Accept it, or say which cost of a helper you'd rather pay.
+- **For Nick: where the Developer ID key lives.** A separate release keychain is the minimum;
+  a hardware token is better if `codesign` works with it. Until one of them is in place, any
+  process running as Nick can sign a build that passes the release requirement.
+- In Electron 44: whether the `--remote-debugging-port` listener opens before main's first
+  statement runs, which `ELECTRON_*` environment variables are read at start-up, and whether
+  LaunchServices still adds a `-psn_…` argument.
