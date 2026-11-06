@@ -1,0 +1,9 @@
+/*
+ * The requirement for a development build signed with an Apple Development certificate, used only
+ * when a dev build has both CSC_NAME (or CSC_LINK) and SITEADAPTER_TEAM_ID. It pins the team and the
+ * Apple Worldwide Developer Relations intermediate rather than the certificate's common name (the
+ * default for Apple Development), so the dev build's own Keychain items survive certificate
+ * renewals. It names the .dev bundle ID: a release build doesn't satisfy it, and a dev build doesn't
+ * satisfy the release requirement.
+ */
+designated => identifier "__BUNDLE_ID__" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.1] /* exists */ and certificate leaf[subject.OU] = "__TEAM_ID__"
