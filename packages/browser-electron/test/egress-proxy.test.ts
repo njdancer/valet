@@ -199,10 +199,14 @@ describe('startEgressProxy', () => {
   })
 
   it('cuts the client off when the upstream drops mid-tunnel', async () => {
-    let upstreamSocket: Socket | null = null
+    // The proxy can answer 200 before the server's connection callback runs, so wait for the socket.
+    let upstreamArrived: (socket: Socket) => void = () => {}
+    const upstreamSocket = new Promise<Socket>((resolve) => {
+      upstreamArrived = resolve
+    })
     const server = createServer((socket) => {
-      upstreamSocket = socket
       socket.on('error', () => {})
+      upstreamArrived(socket)
     })
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
     const address = server.address()
@@ -215,8 +219,8 @@ describe('startEgressProxy', () => {
     const client = connect({ host: '127.0.0.1', port: portOf(handle) })
     const closed = new Promise<void>((resolve) => client.on('close', () => resolve()))
     client.on('error', () => {})
-    client.on('data', () => {
-      ;(upstreamSocket as Socket | null)?.destroy(new Error('reset'))
+    client.once('data', () => {
+      void upstreamSocket.then((socket) => socket.destroy(new Error('reset')))
     })
     client.write('CONNECT site.test:443 HTTP/1.1\r\n\r\n')
     await closed

@@ -11,7 +11,7 @@ const docs = join(here, '..')
 const plan = readFileSync(join(docs, 'plan.md'), 'utf8')
 const status = JSON.parse(readFileSync(join(here, 'status.json'), 'utf8'))
 
-const escape = (text) =>
+const escapeHtml = (text) =>
   text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;')
 
 // Links in plan.md are relative to docs/; the hub lives in docs/review/. Anchors to decisions
@@ -26,14 +26,17 @@ function href(target) {
 function inline(text) {
   const codes = []
   let out = text.replace(/`([^`]+)`/g, (_, code) => {
-    codes.push(`<code>${escape(code)}</code>`)
-    return `\u0000${codes.length - 1}\u0000`
+    codes.push(`<code>${escapeHtml(code)}</code>`)
+    return `\uE000${codes.length - 1}\uE000`
   })
-  out = escape(out)
-  out = out.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, label, target) => `<a href="${escape(href(target))}">${label}</a>`)
+  out = escapeHtml(out)
+  out = out.replace(
+    /\[([^\]]+)\]\(([^)\s]+)\)/g,
+    (_, label, target) => `<a href="${escapeHtml(href(target))}">${label}</a>`,
+  )
   out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
   out = out.replace(/(^|[\s(])_([^_]+)_(?=[\s).,;:]|$)/g, '$1<em>$2</em>')
-  return out.replace(/\u0000(\d+)\u0000/g, (_, i) => codes[Number(i)])
+  return out.replace(/\uE000(\d+)\uE000/g, (_, i) => codes[Number(i)])
 }
 
 // A small Markdown subset: paragraphs, nested "-" and "1." lists, pipe tables, #### headings.
@@ -50,11 +53,22 @@ function markdown(source) {
     if (line.startsWith('|')) {
       const rows = []
       while (i < lines.length && lines[i].startsWith('|')) rows.push(lines[i++])
-      const cells = (row) => row.slice(1, -1).split('|').map((cell) => inline(cell.trim()))
+      const cells = (row) =>
+        row
+          .slice(1, -1)
+          .split('|')
+          .map((cell) => inline(cell.trim()))
       const [head, , ...body] = rows
       html.push(
-        `<table><thead><tr>${cells(head).map((c) => `<th>${c}</th>`).join('')}</tr></thead><tbody>${body
-          .map((row) => `<tr>${cells(row).map((c) => `<td>${c}</td>`).join('')}</tr>`)
+        `<table><thead><tr>${cells(head)
+          .map((c) => `<th>${c}</th>`)
+          .join('')}</tr></thead><tbody>${body
+          .map(
+            (row) =>
+              `<tr>${cells(row)
+                .map((c) => `<td>${c}</td>`)
+                .join('')}</tr>`,
+          )
           .join('')}</tbody></table>`,
       )
       continue
@@ -66,14 +80,20 @@ function markdown(source) {
     }
     if (/^\s*(-|\d+\.) /.test(line)) {
       const block = []
-      while (i < lines.length && (lines[i].trim() === '' ? /^\s+(-|\d+\.) |^\s{2,}\S/.test(lines[i + 1] ?? '') : /^\s*(-|\d+\.) |^\s{2,}\S/.test(lines[i]))) {
+      while (
+        i < lines.length &&
+        (lines[i].trim() === ''
+          ? /^\s+(-|\d+\.) |^\s{2,}\S/.test(lines[i + 1] ?? '')
+          : /^\s*(-|\d+\.) |^\s{2,}\S/.test(lines[i]))
+      ) {
         block.push(lines[i++])
       }
       html.push(list(block))
       continue
     }
     const para = []
-    while (i < lines.length && lines[i].trim() !== '' && !/^\s*(-|\d+\.) |^\||^#/.test(lines[i])) para.push(lines[i++].trim())
+    while (i < lines.length && lines[i].trim() !== '' && !/^\s*(-|\d+\.) |^\||^#/.test(lines[i]))
+      para.push(lines[i++].trim())
     html.push(`<p>${inline(para.join(' '))}</p>`)
   }
   return html.join('\n')
@@ -86,14 +106,17 @@ function list(block) {
   const items = []
   for (const line of block) {
     if (line.trim() === '') continue
-    if (indentOf(line) === base && /^\s*(-|\d+\.) /.test(line)) items.push({ text: [line.replace(/^\s*(-|\d+\.) /, '')], children: [] })
+    if (indentOf(line) === base && /^\s*(-|\d+\.) /.test(line))
+      items.push({ text: [line.replace(/^\s*(-|\d+\.) /, '')], children: [] })
     else if (indentOf(line) > base && /^\s*(-|\d+\.) /.test(line)) items.at(-1).children.push(line)
     else if (items.at(-1).children.length > 0) items.at(-1).children.push(line)
     else items.at(-1).text.push(line.trim())
   }
   const tag = ordered ? 'ol' : 'ul'
   return `<${tag}>${items
-    .map((item) => `<li>${inline(item.text.join(' '))}${item.children.length ? list(item.children) : ''}</li>`)
+    .map(
+      (item) => `<li>${inline(item.text.join(' '))}${item.children.length ? list(item.children) : ''}</li>`,
+    )
     .join('')}</${tag}>`
 }
 
@@ -109,27 +132,33 @@ const capitalise = (text) => text.charAt(0).toUpperCase() + text.slice(1)
 
 const decisionsText = section('Decisions')
 const firstTable = decisionsText.slice(decisionsText.indexOf('### Answer these first'))
-const answerFirst = new Set([...firstTable.slice(0, firstTable.indexOf('\n### D')).matchAll(/^\| (D\d+a?) /gm)].map((m) => m[1]))
+const answerFirst = new Set(
+  [...firstTable.slice(0, firstTable.indexOf('\n### D')).matchAll(/^\| (D\d+a?) /gm)].map((m) => m[1]),
+)
 const decided = new Set(['D9', 'D39'])
 
-const decisions = [...decisionsText.matchAll(/^### (D\d+a?)\. (.+)\n([\s\S]*?)(?=^### |(?![\s\S]))/gm)].map(([, id, title, body]) => {
-  const recommendation = body.match(/^- Recommendation:\s*([\s\S]*?)(?=^- [A-Z][a-z]+[^\n]*:|\n\n|(?![\s\S]))/m)?.[1]
-  const blocks = body.match(/^- Blocks:\s*(.+)$/m)?.[1] ?? ''
-  return {
-    id,
-    title,
-    first: answerFirst.has(id),
-    decided: decided.has(id),
-    recommendation: recommendation ? capitalise(recommendation.replace(/\s+/g, ' ').trim()) : '',
-    blocks: blocks.replace(/\.$/, ''),
-    body: markdown(body.replace(/^- Blocks:.+$/m, '')),
-  }
-})
+const decisions = [...decisionsText.matchAll(/^### (D\d+a?)\. (.+)\n([\s\S]*?)(?=^### |(?![\s\S]))/gm)].map(
+  ([, id, title, body]) => {
+    const recommendation = body.match(
+      /^- Recommendation:\s*([\s\S]*?)(?=^- [A-Z][a-z]+[^\n]*:|\n\n|(?![\s\S]))/m,
+    )?.[1]
+    const blocks = body.match(/^- Blocks:\s*(.+)$/m)?.[1] ?? ''
+    return {
+      id,
+      title,
+      first: answerFirst.has(id),
+      decided: decided.has(id),
+      recommendation: recommendation ? capitalise(recommendation.replace(/\s+/g, ' ').trim()) : '',
+      blocks: blocks.replace(/\.$/, ''),
+      body: markdown(body.replace(/^- Blocks:.+$/m, '')),
+    }
+  },
+)
 
 const inPerson = markdown(section('What Nick has to do in person').replace(/^Collected from[^\n]*\n/, ''))
 
 const card = (d) => `
-<article class="decision${d.first ? ' first' : ''}${d.decided ? ' decided' : ''}" id="${d.id.toLowerCase()}" data-id="${d.id}" data-title="${escape(d.title)}">
+<article class="decision${d.first ? ' first' : ''}${d.decided ? ' decided' : ''}" id="${d.id.toLowerCase()}" data-id="${d.id}" data-title="${escapeHtml(d.title)}">
   <header>
     <span class="id">${d.id}</span>
     <h3>${inline(d.title)}</h3>
@@ -148,14 +177,27 @@ const card = (d) => `
   </fieldset>
 </article>`
 
-const numbers = status.numbers.map((n) => `<div class="stat"><div class="value">${escape(n.value)}</div><div class="label">${escape(n.label)}</div></div>`).join('')
-const built = status.built.map((b) => `<tr><td><code>${escape(b.area)}</code></td><td>${inline(b.state)}</td></tr>`).join('')
+const numbers = status.numbers
+  .map(
+    (n) =>
+      `<div class="stat"><div class="value">${escapeHtml(n.value)}</div><div class="label">${escapeHtml(n.label)}</div></div>`,
+  )
+  .join('')
+const built = status.built
+  .map((b) => `<tr><td><code>${escapeHtml(b.area)}</code></td><td>${inline(b.state)}</td></tr>`)
+  .join('')
 const gaps = status.gaps.map((g) => `<li>${inline(g)}</li>`).join('')
 const links = status.links
-  .map((group) => `<section class="links"><h3>${escape(group.title)}</h3><ul>${group.items.map((l) => `<li><a href="${escape(l.href)}">${escape(l.label)}</a>${l.note ? ` <span class="muted">${inline(l.note)}</span>` : ''}</li>`).join('')}</ul></section>`)
+  .map(
+    (group) =>
+      `<section class="links"><h3>${escapeHtml(group.title)}</h3><ul>${group.items.map((l) => `<li><a href="${escapeHtml(l.href)}">${escapeHtml(l.label)}</a>${l.note ? ` <span class="muted">${inline(l.note)}</span>` : ''}</li>`).join('')}</ul></section>`,
+  )
   .join('')
 const gallery = status.screens
-  .map((s) => `<figure><a href="${escape(s.src)}"><img loading="lazy" src="${escape(s.src)}" alt="${escape(s.caption)}"></a><figcaption>${escape(s.caption)}</figcaption></figure>`)
+  .map(
+    (s) =>
+      `<figure><a href="${escapeHtml(s.src)}"><img loading="lazy" src="${escapeHtml(s.src)}" alt="${escapeHtml(s.caption)}"></a><figcaption>${escapeHtml(s.caption)}</figcaption></figure>`,
+  )
   .join('')
 
 const html = `<!doctype html>
@@ -211,7 +253,7 @@ const html = `<!doctype html>
 <body>
 <main>
   <h1>siteadapter: overnight review</h1>
-  <p class="muted">${escape(status.generated)}. Built from <code>docs/plan.md</code> and <code>docs/review/status.json</code> by <code>node docs/review/build.mjs</code>.</p>
+  <p class="muted">${escapeHtml(status.generated)}. Built from <code>docs/plan.md</code> and <code>docs/review/status.json</code> by <code>node docs/review/build.mjs</code>.</p>
   <nav class="tabs">
     <a href="#overview" data-tab="overview">Overview</a>
     <a href="#decisions-tab" data-tab="decisions-tab">Decisions (${decisions.length})</a>
@@ -233,11 +275,11 @@ const html = `<!doctype html>
 
   <section id="decisions-tab" data-panel hidden>
     <div class="toolbar">
-      <button class="btn" data-filter="first">Answer first</button>
-      <button class="btn" data-filter="open">Unanswered</button>
-      <button class="btn" data-filter="all">All</button>
-      <button class="btn primary" id="copy">Copy answers as Markdown</button>
-      <button class="btn" id="download">Download answers.md</button>
+      <button type="button" class="btn" data-filter="first">Answer first</button>
+      <button type="button" class="btn" data-filter="open">Unanswered</button>
+      <button type="button" class="btn" data-filter="all">All</button>
+      <button type="button" class="btn primary" id="copy">Copy answers as Markdown</button>
+      <button type="button" class="btn" id="download">Download answers.md</button>
       <span class="muted" id="progress"></span>
     </div>
     <p class="muted">Answers stay in this browser. When you're done, copy them and paste them into the chat, or save <code>answers.md</code> into <code>docs/review/</code>.</p>
@@ -334,4 +376,6 @@ const html = `<!doctype html>
 `
 
 writeFileSync(join(here, 'index.html'), html)
-console.log(`wrote docs/review/index.html: ${decisions.length} decisions, ${answerFirst.size} to answer first`)
+console.log(
+  `wrote docs/review/index.html: ${decisions.length} decisions, ${answerFirst.size} to answer first`,
+)
