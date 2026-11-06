@@ -12,6 +12,15 @@ import { evaluateScript, extractScript, fetchScript } from './scripts'
 
 const METHOD = /^[A-Z]{1,16}$/
 
+/**
+ * Tells the driver that tool code is about to make this request through the capability API, so
+ * that a block report can say the tool, not the page, asked for it. Returns the function that
+ * withdraws the announcement once the request has settled.
+ */
+export type Announce = (method: string, url: string) => () => void
+
+const unannounced: Announce = () => () => {}
+
 export class SurfaceToolPage implements ToolPage {
   private readonly core: PageCore
 
@@ -19,6 +28,7 @@ export class SurfaceToolPage implements ToolPage {
     private readonly surface: BrowserSurface,
     private readonly egress: readonly string[],
     private readonly timing: PageTiming,
+    private readonly announce: Announce = unannounced,
   ) {
     this.core = new PageCore(surface, timing)
   }
@@ -26,7 +36,8 @@ export class SurfaceToolPage implements ToolPage {
   goto(url: string): Promise<void> {
     return this.core.step('navigate', async () => {
       const target = this.resolve(url)
-      const failure = await this.core.load(target)
+      const withdraw = this.announce('GET', target)
+      const failure = await this.core.load(target).finally(withdraw)
       if (failure === 'ERR_BLOCKED_BY_CLIENT') throw new SiteAdapterError('egress', 'host-not-allowed')
       if (failure !== null) throw new SiteAdapterError('navigate', 'unavailable')
     })
@@ -49,8 +60,9 @@ export class SurfaceToolPage implements ToolPage {
       'tool-run',
       async (signal) => {
         const target = await this.core.focus('tool-run', selector, signal)
-        await this.core.typeChars('tool-run', signal, chars.length, delayMs, target.frameId, (index) =>
-          this.surface.sendChar(chars[index] ?? ''),
+        const guard = { stage: 'tool-run', target, moved: 'aborted' } as const
+        await this.core.typeChars(guard, signal, chars.length, delayMs, (index) =>
+          this.core.sendChar(chars[index] ?? ''),
         )
       },
       chars.length * delayMs,
@@ -90,9 +102,11 @@ export class SurfaceToolPage implements ToolPage {
     }
     const hasJson = init !== undefined && 'json' in init && init.json !== undefined
     let script: string
+    let url: string
     try {
+      url = this.resolve(pathOrUrl)
       script = fetchScript({
-        url: this.resolve(pathOrUrl),
+        url,
         method,
         headers,
         hasJson,
@@ -103,7 +117,8 @@ export class SurfaceToolPage implements ToolPage {
       throw new SiteAdapterError('tool-input', 'invalid')
     }
     return this.core.step('tool-run', async () => {
-      const raw = await this.mainFrame().run(script)
+      const withdraw = this.announce(method, url)
+      const raw = await this.mainFrame().run(script).finally(withdraw)
       if (isRecord(raw) && raw['error'] === 'network') throw new SiteAdapterError('tool-run', 'unavailable')
       if (!isRecord(raw) || typeof raw['status'] !== 'number')
         throw new SiteAdapterError('tool-run', 'internal')

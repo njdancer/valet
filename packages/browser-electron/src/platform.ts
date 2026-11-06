@@ -51,7 +51,8 @@ export type ProxyPolicy = (host: string, port: number) => boolean
 
 /** One persistent browser partition. */
 export interface PartitionSession {
-  setUserAgent(userAgent: string): void
+  /** Sets the UA string and the Accept-Language header for every request the partition makes. */
+  setUserAgent(userAgent: string, acceptLanguages: string): void
   /** Denies permission prompts and downloads. */
   harden(): void
   /** Installs the session's only request filter. Requests it returns false for are cancelled. */
@@ -90,6 +91,28 @@ export interface FrameHandle {
   runAdapter(code: string): Promise<unknown>
 }
 
+/** Which trusted key events typing sends per character. */
+export type KeyEvents = 'char' | 'full'
+
+/** What Emulation.setUserAgentOverride takes, in the DevTools protocol's own shape. */
+export interface UserAgentOverride {
+  readonly userAgent: string
+  readonly acceptLanguage: string
+  /** navigator.platform, e.g. MacIntel. */
+  readonly platform: string
+  readonly userAgentMetadata: {
+    readonly brands: readonly { readonly brand: string; readonly version: string }[]
+    readonly fullVersionList: readonly { readonly brand: string; readonly version: string }[]
+    readonly platform: string
+    readonly platformVersion: string
+    readonly architecture: string
+    readonly model: string
+    readonly mobile: boolean
+    readonly bitness: string
+    readonly wow64: boolean
+  }
+}
+
 export type LoadResult = { readonly ok: true } | { readonly ok: false; readonly code: string }
 
 export interface NavigationEvent {
@@ -117,8 +140,16 @@ export interface BrowserSurface {
   focusedFrameId(): string | null
   /** Trusted mouse move, down and up at viewport coordinates. */
   click(x: number, y: number): void
-  /** One trusted char event. */
-  sendChar(char: string): void
+  /**
+   * One trusted keystroke: a char event, or with `full` a keyDown, char and keyUp, as a keyboard
+   * sends them.
+   */
+  sendChar(char: string, events: KeyEvents): void
+  /**
+   * Overrides the UA, Accept-Language and client hints for this page's documents over the DevTools
+   * protocol. Must be called before the first load.
+   */
+  overrideUserAgent(override: UserAgentOverride): Promise<void>
   /** Gives the web contents keyboard focus without showing the window. */
   focus(): void
   show(title: string): void
@@ -147,6 +178,9 @@ export interface BrowserPlatform {
   startProxy(allow: ProxyPolicy): Promise<ProxyHandle>
   readonly chromeVersion: string
   readonly os: NodeJS.Platform
+  /** The OS's own version, e.g. 15.5.0 on macOS. Only client hints use it. */
+  readonly systemVersion: string
+  readonly arch: string
 }
 
 /** Timer functions, injected so that tests control time. */

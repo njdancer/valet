@@ -7,6 +7,7 @@ import type {
   CookieRecord,
   CookieSetDetails,
   FrameHandle,
+  KeyEvents,
   LoadResult,
   NavigationEvent,
   OutgoingRequest,
@@ -15,6 +16,7 @@ import type {
   ProxyHandle,
   ProxyPolicy,
   Timers,
+  UserAgentOverride,
 } from '../src/platform'
 import { FakeWindow } from './fake-dom'
 
@@ -122,9 +124,22 @@ export class FakeSurface implements BrowserSurface {
     this.clicks.push({ x, y })
   }
 
-  sendChar(char: string): void {
+  sendChar(char: string, events: KeyEvents): void {
     this.chars.push(char)
+    this.keyEvents.push(events)
     this.afterChar?.(this.chars.length - 1)
+  }
+
+  /** Which key events each sendChar asked for, in order. */
+  readonly keyEvents: KeyEvents[] = []
+  /** Every DevTools user-agent override, in order, and whether a page had loaded before it. */
+  readonly overrides: { override: UserAgentOverride; afterLoad: boolean }[] = []
+  /** How overrideUserAgent answers. Tests replace it to make it fail. */
+  onOverride: () => Promise<void> = async () => {}
+
+  async overrideUserAgent(override: UserAgentOverride): Promise<void> {
+    this.overrides.push({ override, afterLoad: this.loads.length > 0 })
+    await this.onOverride()
   }
 
   focus(): void {
@@ -213,10 +228,13 @@ export class FakeSession implements PartitionSession {
   readonly setCalls: CookieSetDetails[] = []
   getCalls = 0
 
+  acceptLanguages: string | null = null
+
   constructor(readonly partition: string) {}
 
-  setUserAgent(userAgent: string): void {
+  setUserAgent(userAgent: string, acceptLanguages: string): void {
     this.userAgent = userAgent
+    this.acceptLanguages = acceptLanguages
   }
 
   harden(): void {
@@ -248,6 +266,8 @@ export class FakeSession implements PartitionSession {
 export class FakePlatform implements BrowserPlatform {
   readonly chromeVersion = '142.0.7444.59'
   readonly os = 'darwin' as NodeJS.Platform
+  readonly systemVersion = '15.5.0'
+  readonly arch = 'arm64'
   readonly sessions = new Map<string, FakeSession>()
   readonly surfaces: FakeSurface[] = []
   /** Every proxy started, with the policy it was given. */

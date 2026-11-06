@@ -9,24 +9,33 @@ import {
   type AuthPage,
   type ElementInfo,
   httpsOrigin,
+  type NeedsUserReason,
   originAllowed,
   SecretValue,
   SiteAdapterError,
   type Stage,
+  type TypeOptions,
   urlOriginAllowed,
 } from '@siteadapter/core'
-import { authNavigationAllowed, type FrameRule } from './guards'
-import { characters, type FocusTarget, isRecord, PageCore, type PageTiming, typingDelay } from './page-core'
-import type { BrowserSurface } from './platform'
+import { authNavigationAllowed } from './guards'
+import { needsUserTitle } from './needs-user'
+import {
+  characters,
+  type FocusTarget,
+  isRecord,
+  PageCore,
+  type PageTiming,
+  type TypingGuard,
+  typingDelay,
+} from './page-core'
+import { type BrowserSurface, sleep } from './platform'
 import { inspectScript, textPresentScript } from './scripts'
 
-export interface TypeOptions {
-  readonly delayMs?: number
-  /**
-   * The grant's origins. When given, a secret is only typed if the frame that has keyboard focus,
-   * as the browser process sees it, is on one of them. Not yet on core's AuthPage.type.
-   */
-  readonly allowedOrigins?: readonly string[]
+export interface AuthPageOptions {
+  /** The manifest's auth.frameOrigins: origins besides navigation's that subframes may load. */
+  readonly frameOrigins?: readonly string[]
+  /** The manifest's name, for the hand-off window's title. */
+  readonly siteName?: string
 }
 
 /** The frame inspect() last found a selector in. focus() must land in that same frame. */
@@ -42,6 +51,7 @@ interface BoundFocus extends FocusTarget {
 
 export class SurfaceAuthPage implements AuthPage {
   private readonly core: PageCore
+  private readonly siteName: string
   private escaped = false
   /**
    * Bumped by goto() and by every main-frame commit. A primitive that started under an older
@@ -56,11 +66,13 @@ export class SurfaceAuthPage implements AuthPage {
     private readonly surface: BrowserSurface,
     private readonly navigation: readonly string[],
     private readonly timing: PageTiming,
-    frames: FrameRule = 'any-https',
+    options: AuthPageOptions = {},
   ) {
     this.core = new PageCore(surface, timing)
+    this.siteName = options.siteName ?? 'The site'
+    const frameOrigins = options.frameOrigins ?? []
     surface.guardNavigation((pending) => {
-      const allowed = authNavigationAllowed(pending, navigation, frames)
+      const allowed = authNavigationAllowed(pending, navigation, frameOrigins)
       if (!allowed && pending.isMainFrame) this.escaped = true
       return allowed
     })
@@ -97,7 +109,8 @@ export class SurfaceAuthPage implements AuthPage {
 
   /**
    * Describes the first frame's match for `selector`, with the frame origin the browser process
-   * reports. Remembers that frame, so that focus() can refuse to land anywhere else.
+   * reports and whether trusted input can reach that frame. Remembers the frame, so that focus()
+   * can refuse to land anywhere else.
    */
   inspect(selector: string): Promise<ElementInfo | null> {
     return this.core.step('auth-step', async (signal) => {
@@ -114,6 +127,7 @@ export class SurfaceAuthPage implements AuthPage {
         ...rest,
         frameOrigin: match.frame.origin,
         formActionOrigin: formAction === null ? null : originOf(formAction),
+        inputReachable: match.frame.receivesInput,
       }
     })
   }
@@ -153,18 +167,28 @@ export class SurfaceAuthPage implements AuthPage {
 
   /**
    * Types into the element the last focus() targeted, checking first that it still has keyboard
-   * focus and then, before every character, that focus hasn't left its frame. Literal text without
-   * a focus() goes wherever focus is.
+   * focus and then, before every character, that it still would: see PageCore.beforeKey. Literal
+   * text without a focus() goes wherever focus is, unless `allowedOrigins` is given.
    *
-   * A secret needs inspect() and focus() on the same selector first, so that the frame it is typed
-   * into is the frame whose origin was checked, and that frame must be on https (and on
-   * `allowedOrigins`, when given).
+   * A secret needs `allowedOrigins`, and inspect() and focus() on the same selector first, so that
+   * the frame it is typed into is the frame whose origin was checked against the grant.
    */
   async type(text: string | SecretValue, options?: TypeOptions): Promise<void> {
     if (text instanceof SecretValue) return this.typeSecret(text, options)
     const delayMs = typingDelay(options?.delayMs, this.timing.typingDelayMs)
     const chars = characters(text)
     const target = this.focusTarget
+    const allowedOrigins = options?.allowedOrigins
+    if (allowedOrigins !== undefined && target === null) {
+      throw new SiteAdapterError('auth-step', 'origin-mismatch')
+    }
+    const guard: TypingGuard = {
+      stage: 'auth-step',
+      target,
+      moved: 'aborted',
+      before: () => this.assertInside('auth-step'),
+      ...(allowedOrigins === undefined ? {} : { allowedOrigins }),
+    }
     return this.core.step(
       'auth-step',
       async (signal) => {
@@ -172,16 +196,11 @@ export class SurfaceAuthPage implements AuthPage {
         if (target !== null && !(await this.core.stillFocused(target))) {
           throw new SiteAdapterError('auth-step', 'element-unsuitable')
         }
-        await this.core.typeChars(
-          'auth-step',
-          signal,
-          chars.length,
-          delayMs,
-          target?.frameId ?? null,
-          (i) => {
-            this.assertInside('auth-step')
-            this.surface.sendChar(chars[i] ?? '')
-          },
+        if (allowedOrigins !== undefined && !originAllowed(target?.origin ?? '', allowedOrigins)) {
+          throw new SiteAdapterError('auth-step', 'origin-mismatch')
+        }
+        await this.core.typeChars(guard, signal, chars.length, delayMs, (i) =>
+          this.core.sendChar(chars[i] ?? ''),
         )
       },
       chars.length * delayMs,
@@ -199,11 +218,12 @@ export class SurfaceAuthPage implements AuthPage {
   }
 
   /**
-   * Shows the window to the person. Closing it hides it again instead of destroying it, so the
-   * interpreter can carry on from wherever the person left the page. Only that one close is
-   * intercepted: once this resolves, closing the window (or quitting the app) closes it.
+   * Shows the window to the person, titled with the app's wording for `reason`. Closing it hides it
+   * again instead of destroying it, so the interpreter can carry on from wherever the person left
+   * the page. Only that one close is intercepted: once this resolves, closing the window (or
+   * quitting the app) closes it.
    */
-  handToUser(reason: string): Promise<void> {
+  handToUser(reason: NeedsUserReason): Promise<void> {
     return new Promise((resolve) => {
       if (this.surface.isDestroyed()) {
         resolve()
@@ -222,7 +242,7 @@ export class SurfaceAuthPage implements AuthPage {
         }),
         this.surface.onDestroyed(finish),
       )
-      this.surface.show(reason)
+      this.surface.show(needsUserTitle(reason, this.siteName))
     })
   }
 
@@ -231,46 +251,52 @@ export class SurfaceAuthPage implements AuthPage {
   }
 
   /**
-   * The secret is decoded once per fill, inside its reveal callback, and the typing runs inside
-   * that callback too, so neither the plaintext nor its characters are reachable from anywhere once
-   * the fill settles. JavaScript strings can't be zeroed, so that one decoded copy stays on the heap
-   * until it is collected; zeroing it would need a core API that yields one code point at a time.
+   * Types a secret one code point at a time through SecretValue.revealEach, so the whole plaintext
+   * never exists as one JavaScript string: only single characters reach the heap, each inside its
+   * own callback. Each keystroke is a step of its own, since the length is never known up front,
+   * and runs beforeKey's checks against the grant's origins first. If the frame navigates or focus
+   * moves partway, typing stops with secret-fill/origin-mismatch.
    */
   private async typeSecret(secret: SecretValue, options: TypeOptions | undefined): Promise<void> {
     const stage: Stage = 'secret-fill'
     const delayMs = typingDelay(options?.delayMs, this.timing.typingDelayMs)
     this.assertInside(stage)
-    const target = this.focusTarget
-    if (target === null || !target.inspected) throw new SiteAdapterError(stage, 'element-unsuitable')
-    if (httpsOrigin(target.origin) === null) throw new SiteAdapterError(stage, 'origin-mismatch')
-    const allowed = options?.allowedOrigins
-    if (allowed !== undefined && !originAllowed(target.origin, allowed)) {
+    const allowedOrigins = options?.allowedOrigins
+    if (allowedOrigins === undefined || allowedOrigins.length === 0) {
       throw new SiteAdapterError(stage, 'origin-mismatch')
     }
-    let typing: Promise<void>
+    const target = this.focusTarget
+    if (target === null || !target.inspected) throw new SiteAdapterError(stage, 'element-unsuitable')
+    if (httpsOrigin(target.origin) === null || !originAllowed(target.origin, allowedOrigins)) {
+      throw new SiteAdapterError(stage, 'origin-mismatch')
+    }
+    if (secret.disposed) throw new SiteAdapterError(stage, 'aborted')
+    const guard: TypingGuard = {
+      stage,
+      target,
+      allowedOrigins,
+      moved: 'origin-mismatch',
+      before: () => this.assertInside(stage),
+    }
+    const commitsAtStart = this.core.commitCount
+    await this.core.step(stage, async () => {
+      this.assertInside(stage)
+      if (!(await this.core.stillFocused(target))) throw new SiteAdapterError(stage, 'element-unsuitable')
+    })
+    let index = 0
     try {
-      typing = secret.reveal((plaintext) => {
-        const chars = characters(plaintext)
-        return this.core.step(
-          stage,
-          async (signal) => {
-            this.assertInside(stage)
-            if (!(await this.core.stillFocused(target)))
-              throw new SiteAdapterError(stage, 'element-unsuitable')
-            await this.core.typeChars(stage, signal, chars.length, delayMs, target.frameId, (index) => {
-              this.assertInside(stage)
-              if (secret.disposed) throw new SiteAdapterError(stage, 'aborted')
-              this.surface.sendChar(chars[index] ?? '')
-            })
-          },
-          chars.length * delayMs,
-        )
+      await secret.revealEach(async (char) => {
+        if (index++ > 0) await sleep(this.timing.timers, delayMs)
+        await this.core.step(stage, async (signal) => {
+          await this.core.beforeKey(guard, commitsAtStart, signal)
+          this.core.sendChar(char)
+        })
       })
-    } catch {
-      // Disposed before the fill started.
+    } catch (error) {
+      if (error instanceof SiteAdapterError) throw error
+      // revealEach found the secret disposed partway.
       throw new SiteAdapterError(stage, 'aborted')
     }
-    return typing
   }
 
   private forget(): void {
@@ -285,7 +311,9 @@ export class SurfaceAuthPage implements AuthPage {
   }
 }
 
-type Inspection = Omit<ElementInfo, 'frameOrigin' | 'formActionOrigin'> & { formAction: string | null }
+type Inspection = Omit<ElementInfo, 'frameOrigin' | 'formActionOrigin' | 'inputReachable'> & {
+  formAction: string | null
+}
 
 function nullableString(value: unknown): string | null | undefined {
   if (value === null) return null

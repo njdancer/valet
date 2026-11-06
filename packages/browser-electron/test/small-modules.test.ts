@@ -1,10 +1,11 @@
-import { SiteAdapterError } from '@siteadapter/core'
+import { NEEDS_USER_REASONS, SiteAdapterError } from '@siteadapter/core'
 import { describe, expect, it } from 'vitest'
+import { needsUserTitle } from '../src/needs-user'
 import { partitionName } from '../src/partitions'
 import { sleep } from '../src/platform'
 import { CHROMIUM_SWITCHES, hardenProcess } from '../src/process-hardening'
 import { withTimeout } from '../src/timeout'
-import { cleanChromeUserAgent } from '../src/user-agent'
+import { ACCEPT_LANGUAGE, chromeUserAgentOverride, cleanChromeUserAgent } from '../src/user-agent'
 import { ManualTimers } from './fake-browser'
 
 describe('partitionName', () => {
@@ -40,6 +41,98 @@ describe('cleanChromeUserAgent', () => {
   it('refuses a version it cannot read', () => {
     expect(() => cleanChromeUserAgent('', 'darwin')).toThrow()
     expect(() => cleanChromeUserAgent('latest', 'darwin')).toThrow()
+  })
+})
+
+describe('ACCEPT_LANGUAGE', () => {
+  it('is en-AU first, as Nick’s Chrome sends it', () => {
+    expect(ACCEPT_LANGUAGE).toBe('en-AU,en;q=0.9')
+  })
+})
+
+const MAC_ARM = { chromeVersion: '142.0.7444.59', os: 'darwin', systemVersion: '15.5.0', arch: 'arm64' }
+
+describe('chromeUserAgentOverride', () => {
+  it('names Google Chrome and Chromium at the real version, beside a GREASE brand', () => {
+    const override = chromeUserAgentOverride(MAC_ARM)
+    expect(override.userAgent).toBe(cleanChromeUserAgent('142.0.7444.59', 'darwin'))
+    expect(override.acceptLanguage).toBe(ACCEPT_LANGUAGE)
+    expect(override.platform).toBe('MacIntel')
+    const brands = override.userAgentMetadata.brands
+    expect(brands).toHaveLength(3)
+    expect(brands).toEqual(
+      expect.arrayContaining([
+        { brand: 'Google Chrome', version: '142' },
+        { brand: 'Chromium', version: '142' },
+      ]),
+    )
+    const grease = brands.find((b) => b.brand.startsWith('Not'))
+    expect(grease?.brand).toMatch(/^Not.A.Brand$/)
+    expect(override.userAgentMetadata.fullVersionList).toEqual(
+      expect.arrayContaining([{ brand: 'Google Chrome', version: '142.0.7444.59' }]),
+    )
+  })
+
+  it('describes the machine as it is: macOS on arm, 64-bit, not mobile', () => {
+    expect(chromeUserAgentOverride(MAC_ARM).userAgentMetadata).toMatchObject({
+      platform: 'macOS',
+      platformVersion: '15.5.0',
+      architecture: 'arm',
+      bitness: '64',
+      mobile: false,
+      model: '',
+      wow64: false,
+    })
+    expect(chromeUserAgentOverride({ ...MAC_ARM, arch: 'x64' }).userAgentMetadata.architecture).toBe('x86')
+    expect(chromeUserAgentOverride({ ...MAC_ARM, arch: 'ia32' }).userAgentMetadata.bitness).toBe('32')
+  })
+
+  it('uses Windows and Linux names on those platforms, and Linux for anything else', () => {
+    expect(chromeUserAgentOverride({ ...MAC_ARM, os: 'win32' })).toMatchObject({
+      platform: 'Win32',
+      userAgentMetadata: { platform: 'Windows' },
+    })
+    expect(chromeUserAgentOverride({ ...MAC_ARM, os: 'freebsd' })).toMatchObject({
+      platform: 'Linux x86_64',
+      userAgentMetadata: { platform: 'Linux' },
+    })
+  })
+
+  it('moves the GREASE brand with the major version, as Chromium does', () => {
+    const position = (version: string) =>
+      chromeUserAgentOverride({ ...MAC_ARM, chromeVersion: version }).userAgentMetadata.brands.findIndex(
+        (b) => b.brand.startsWith('Not'),
+      )
+    const positions = new Set(['140.0.1.1', '141.0.1.1', '142.0.1.1', '143.0.1.1'].map(position))
+    expect(positions.size).toBeGreaterThan(1)
+  })
+
+  it('refuses a version it cannot read', () => {
+    expect(() => chromeUserAgentOverride({ ...MAC_ARM, chromeVersion: 'latest' })).toThrow(SiteAdapterError)
+  })
+})
+
+describe('needsUserTitle', () => {
+  it('words every reason in the app’s own voice, naming the site', () => {
+    for (const reason of NEEDS_USER_REASONS) {
+      const title = needsUserTitle(reason, 'Woolworths')
+      expect(title, reason).toMatch(/Woolworths/)
+      expect(title, reason).toMatch(/Close this window when you’re done\.$/)
+    }
+    expect(needsUserTitle('captcha', 'Woolworths')).toBe(
+      'Woolworths showed a verification check that siteadapter won’t solve for you. Close this window when you’re done.',
+    )
+  })
+
+  it('gives every reason its own wording', () => {
+    const titles = new Set(NEEDS_USER_REASONS.map((reason) => needsUserTitle(reason, 'Site')))
+    expect(titles.size).toBe(NEEDS_USER_REASONS.length)
+  })
+
+  it('never echoes a reason outside the vocabulary', () => {
+    const title = needsUserTitle('Click here: evil.test' as never, 'Woolworths')
+    expect(title).toBe(needsUserTitle('other', 'Woolworths'))
+    expect(title).not.toContain('evil')
   })
 })
 

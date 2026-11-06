@@ -2,8 +2,8 @@
 // across frames, trusted clicks and paced trusted typing. Everything that comes back from a page is
 // checked before use: subframes run our scripts in their own world, so their answers are untrusted.
 
-import { SiteAdapterError, type Stage } from '@siteadapter/core'
-import type { BrowserSurface, FrameHandle, Timers } from './platform'
+import { type ErrorClass, originAllowed, SiteAdapterError, type Stage } from '@siteadapter/core'
+import type { BrowserSurface, FrameHandle, KeyEvents, Timers } from './platform'
 import { sleep } from './platform'
 import { focusedScript, focusScript, frameOffsetScript, pointScript } from './scripts'
 import { withTimeout } from './timeout'
@@ -14,6 +14,20 @@ export interface PageTiming {
   readonly stepTimeoutMs: number
   /** Default gap between typed characters. Sites time keystrokes. */
   readonly typingDelayMs: number
+  /** Which key events make up one typed character: char events alone unless set. */
+  readonly keyEvents?: KeyEvents
+}
+
+/** What typing checks before each keystroke. See PageCore.beforeKey. */
+export interface TypingGuard {
+  readonly stage: Stage
+  /** Where focus() left focus, or null to type wherever focus is. */
+  readonly target: FocusTarget | null
+  readonly allowedOrigins?: readonly string[]
+  /** The error class when the target moves partway through. */
+  readonly moved: ErrorClass
+  /** An extra check before each keystroke, such as whether the page has been poisoned. */
+  readonly before?: () => void
 }
 
 /** Where focus() left keyboard focus, so typing can check it is still there. */
@@ -151,32 +165,68 @@ export class PageCore {
     return parseFocus(await runQuietly(frame, focusedScript(target.selector)))?.focused === true
   }
 
+  /** Commits seen so far, in any frame. Typing notes it at the start and stops if it changes. */
+  get commitCount(): number {
+    return this.commits
+  }
+
   /**
-   * Sends `count` trusted characters, `delayMs` apart. `send(i)` must send the i-th one; it is given
-   * an index rather than a string so that a secret's characters stay inside its reveal callback.
-   * Stops if the step times out, and fails if any frame commits a navigation while typing, or if
-   * keyboard focus leaves `frameId`: either way the remaining characters would land somewhere else.
+   * Sends `count` trusted characters, `delayMs` apart. `send(i)` must send the i-th one. Before
+   * every character, beforeKey() checks that it would land where typing started.
    */
   async typeChars(
-    stage: Stage,
+    guard: TypingGuard,
     signal: AbortSignal,
     count: number,
     delayMs: number,
-    frameId: string | null,
     send: (index: number) => void,
   ): Promise<void> {
     const commitsAtStart = this.commits
     for (let index = 0; index < count; index++) {
       if (index > 0) await sleep(this.timing.timers, delayMs)
-      if (signal.aborted) return
-      if (this.surface.isDestroyed() || this.commits !== commitsAtStart) {
-        throw new SiteAdapterError(stage, 'aborted')
-      }
-      if (frameId !== null && this.surface.focusedFrameId() !== frameId) {
-        throw new SiteAdapterError(stage, 'aborted')
-      }
+      await this.beforeKey(guard, commitsAtStart, signal)
       send(index)
     }
+  }
+
+  /**
+   * Throws unless the next keystroke would land where typing started: the step is still live, the
+   * window is there, no frame has committed a navigation since `commitsAtStart`, and, with a
+   * target, the browser still has keyboard focus in its frame, that frame is still on the target's
+   * origin (and on `allowedOrigins`, when given), and the element itself still has focus. Anything
+   * that moved fails with `guard.moved`, since the remaining characters would land somewhere else.
+   */
+  async beforeKey(guard: TypingGuard, commitsAtStart: number, signal: AbortSignal): Promise<void> {
+    const fail = (errorClass: ErrorClass) => new SiteAdapterError(guard.stage, errorClass)
+    const live = () => {
+      guard.before?.()
+      if (signal.aborted || this.surface.isDestroyed()) throw fail('aborted')
+      if (this.commits !== commitsAtStart) throw fail(guard.moved)
+    }
+    live()
+    const target = guard.target
+    if (target === null) return
+    const inFrame = () => {
+      const frame = this.surface.frames().find((candidate) => candidate.id === target.frameId)
+      const stays =
+        frame !== undefined &&
+        frame.origin === target.origin &&
+        frame.receivesInput &&
+        this.surface.focusedFrameId() === target.frameId &&
+        (guard.allowedOrigins === undefined || originAllowed(frame.origin, guard.allowedOrigins))
+      if (!stays) throw fail(guard.moved)
+      return frame
+    }
+    const frame = inFrame()
+    const focused = parseFocus(await runQuietly(frame, focusedScript(target.selector)))?.focused === true
+    live()
+    inFrame()
+    if (!focused) throw fail(guard.moved)
+  }
+
+  /** Sends one trusted character, as the page's key-event setting says. */
+  sendChar(char: string): void {
+    this.surface.sendChar(char, this.timing.keyEvents ?? 'char')
   }
 }
 

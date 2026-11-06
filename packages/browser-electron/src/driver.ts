@@ -1,22 +1,24 @@
-// The session driver: one site's auth and tool partitions, the pages in them, and the one-way
-// handoff between them. Written against BrowserPlatform; src/electron supplies the real one.
+// The session driver: one site's auth and tool partitions, the pages in them, the one-way handoff
+// between them, and the tool partition's network policy for each run. Written against
+// BrowserPlatform; src/electron supplies the real one.
 
 import {
   type AdapterManifest,
   type AuthPage,
+  type BlockedRequest,
   hostAllowed,
   httpsOrigin,
   isBareOrigin,
   originAllowed,
-  type Purpose,
   type RequestDeclaration,
   type SessionDriver,
   SiteAdapterError,
   type ToolPage,
+  type ToolRunPolicy,
 } from '@siteadapter/core'
 import { SurfaceAuthPage } from './auth-page'
 import { cookieSetDetails, cookiesForDomains } from './cookies'
-import { type BlockReason, decideToolRequest, pathDigest, requestTarget } from './guards'
+import { authNavigationAllowed, type BlockReason, decideToolRequest, requestTarget } from './guards'
 import { isRecord, type PageTiming } from './page-core'
 import { partitionName } from './partitions'
 import type {
@@ -24,6 +26,7 @@ import type {
   BrowserSurface,
   CookieRecord,
   FrameHandle,
+  KeyEvents,
   OutgoingRequest,
   PartitionSession,
   ProxyHandle,
@@ -33,44 +36,47 @@ import type {
 import { realTimers } from './platform'
 import { readStorageScript, writeStorageScript } from './scripts'
 import { SurfaceToolPage } from './tool-page'
-import { cleanChromeUserAgent, type UserAgentMode } from './user-agent'
-
-/**
- * A request the tool partition cancelled. Tool code chooses what it asks for, so every field but
- * `reason` is untrusted: `target` is the origin only and `pathDigest` a hash, but a hostname can
- * still carry data, so a report must pass output redaction before it is written to the audit log.
- */
-export interface BlockedRequest {
-  /** The HTTP method, or CONNECT for a socket the proxy refused. */
-  readonly method: string
-  /** The origin (scheme, host and port), never the path or query. */
-  readonly target: string
-  /** A short digest of the path, or null when there is none, e.g. for a refused CONNECT. */
-  readonly pathDigest: string | null
-  readonly resourceType: string
-  readonly reason: BlockReason
-}
+import {
+  ACCEPT_LANGUAGE,
+  chromeUserAgentOverride,
+  cleanChromeUserAgent,
+  type UserAgentMode,
+} from './user-agent'
 
 export interface DriverOptions {
   readonly adapterId: string
+  /** The manifest's name, for the hand-off window's title. */
+  readonly siteName?: string
   /** Where the tool page opens on first use. */
   readonly home: string
   /** Origins the auth partition's main frame may be on. */
   readonly navigation: readonly string[]
-  /** Hosts the tool partition may send requests to. */
+  /** Hosts the tool partition may send requests to. A run's policy can narrow this, never widen it. */
   readonly egress: readonly string[]
-  /** The manifest's request surface. Without it, the tool partition makes no API call at all. */
+  /**
+   * The manifest's request surface. Between runs, only its read declarations are usable; without
+   * it, the tool partition makes no API call at all between runs.
+   */
   readonly requests?: readonly RequestDeclaration[]
-  /** API calls allowed per run, counted from beginRun(). The manifest's default is 50. */
+  /** Navigations and API calls allowed between runs, counted from the last endRun(). Defaults to 50. */
   readonly requestsPerRun?: number
   /** Ports the tool partition may open connections to on egress hosts. Defaults to 443. */
   readonly egressPorts?: readonly number[]
-  /**
-   * Origins auth-partition subframes may load, besides the navigation origins. Unset, a subframe
-   * may load any https page; see guards.ts.
-   */
+  /** The manifest's auth.frameOrigins: origins besides navigation's that auth subframes may load. */
   readonly frameOrigins?: readonly string[]
+  /** The clean Chrome UA with en-AU (the default), or Electron's own. */
   readonly userAgent?: UserAgentMode
+  /**
+   * Client-hint brands (D24a, undecided). `engine`, the default, leaves them as Chromium reports
+   * itself. `chrome` overrides them on each page over the DevTools protocol to name Google Chrome,
+   * as Nick's own Chrome does. Only with the chrome user agent.
+   */
+  readonly clientHints?: 'engine' | 'chrome'
+  /**
+   * The key events each typed character sends. `char`, the default, sends one char event; `full`
+   * sends keyDown, char and keyUp, as a keyboard does. Which one sites prefer is Nick's call.
+   */
+  readonly keyEvents?: KeyEvents
   readonly stepTimeoutMs?: number
   readonly typingDelayMs?: number
   /**
@@ -78,13 +84,14 @@ export interface DriverOptions {
    * page on that origin and none is open. Its own content doesn't matter; its origin does.
    */
   readonly storageDocumentPath?: string
+  /** Where requests blocked between runs are reported. During a run, beginRun's reporter is used. */
   readonly onBlocked?: (blocked: BlockedRequest) => void
   readonly timers?: Timers
 }
 
 export type ManifestOptions = Omit<
   DriverOptions,
-  'adapterId' | 'home' | 'navigation' | 'egress' | 'requests' | 'requestsPerRun'
+  'adapterId' | 'siteName' | 'home' | 'navigation' | 'egress' | 'requests' | 'requestsPerRun' | 'frameOrigins'
 >
 
 const DEFAULT_STEP_TIMEOUT_MS = 30_000
@@ -92,10 +99,15 @@ const DEFAULT_TYPING_DELAY_MS = 60
 const DEFAULT_REQUESTS_PER_RUN = 50
 const DEFAULT_EGRESS_PORTS: readonly number[] = [443]
 
-/** What the tool partition allows right now. Between runs, a read tool's allowance. */
+type StorageRequest = readonly { readonly origin: string; readonly keys: readonly string[] }[]
+
+/** The policy the tool partition holds requests to right now, and what it has let through. */
 interface RunState {
-  readonly sideEffect: Purpose
-  requests: number
+  readonly policy: ToolRunPolicy
+  readonly onBlocked: ((blocked: BlockedRequest) => void) | undefined
+  readonly inRun: boolean
+  irreversibleUnlocked: boolean
+  counted: number
 }
 
 export class ElectronSessionDriver implements SessionDriver {
@@ -107,18 +119,24 @@ export class ElectronSessionDriver implements SessionDriver {
     return new ElectronSessionDriver(platform, {
       ...options,
       adapterId: manifest.id,
+      siteName: manifest.name,
       home: manifest.home,
       navigation: manifest.navigation,
       egress: manifest.egress,
       requests: manifest.requests,
       requestsPerRun: manifest.limits.requestsPerRun,
+      frameOrigins: manifest.auth.frameOrigins,
     })
   }
 
   private readonly partitions: Readonly<Record<Role, string>>
   private readonly configured = new Map<Role, Promise<PartitionSession>>()
   private proxy: Promise<ProxyHandle> | null = null
-  private run: RunState = { sideEffect: 'read', requests: 0 }
+  private run: RunState
+  /** Requests tool code announced through the capability API, by method and URL. */
+  private readonly announced = new Map<string, number>()
+  /** Storage values this driver handed off, by origin then key, for sessionSecrets(). */
+  private readonly handedOff = new Map<string, Map<string, string>>()
   private readonly timing: PageTiming
   private readonly authPages = new Map<BrowserSurface, SurfaceAuthPage>()
   private readonly helpers = new Set<BrowserSurface>()
@@ -136,20 +154,28 @@ export class ElectronSessionDriver implements SessionDriver {
       timers: options.timers ?? realTimers,
       stepTimeoutMs: options.stepTimeoutMs ?? DEFAULT_STEP_TIMEOUT_MS,
       typingDelayMs: options.typingDelayMs ?? DEFAULT_TYPING_DELAY_MS,
+      keyEvents: options.keyEvents ?? 'char',
     }
+    this.run = this.betweenRuns()
   }
 
   /**
-   * Starts a tool run: the API-call count starts again from zero, and declarations up to
-   * `sideEffect` become usable. Not yet on core's SessionDriver; the runtime calls it around run().
+   * Starts a tool run: from now until endRun(), every request the tool partition makes is held to
+   * `policy`, and each one refused is reported to `onBlocked`. The count toward the ceiling starts
+   * again from zero, and irreversible declarations stay refused until unlockIrreversible().
    */
-  beginRun(sideEffect: Purpose): void {
-    this.run = { sideEffect, requests: 0 }
+  beginRun(policy: ToolRunPolicy, onBlocked: (request: BlockedRequest) => void): void {
+    this.run = { policy, onBlocked, inRun: true, irreversibleUnlocked: false, counted: 0 }
   }
 
-  /** Ends a run: back to a read tool's allowance, with a fresh count. */
+  /** Only after the person approved this run in the app. No effect outside an irreversible run. */
+  unlockIrreversible(): void {
+    if (this.run.inRun && this.run.policy.maxPurpose === 'irreversible') this.run.irreversibleUnlocked = true
+  }
+
+  /** Ends a run: back to the between-runs policy, with a fresh count. */
   endRun(): void {
-    this.run = { sideEffect: 'read', requests: 0 }
+    this.run = this.betweenRuns()
   }
 
   async openAuthPage(): Promise<AuthPage> {
@@ -166,7 +192,7 @@ export class ElectronSessionDriver implements SessionDriver {
     const slot: ToolSlot = { surface: null, page: Promise.resolve(null as never) }
     slot.page = this.open('tool').then(async (surface) => {
       slot.surface = surface
-      const page = new SurfaceToolPage(surface, this.options.egress, this.timing)
+      const page = this.toolPageOn(surface)
       try {
         await page.goto(this.options.home)
       } catch (error) {
@@ -188,10 +214,7 @@ export class ElectronSessionDriver implements SessionDriver {
    * a runtime script in an auth-partition document and written by one in a tool-partition
    * document on the same origin.
    */
-  async handoff(
-    cookieDomains: readonly string[],
-    storage: readonly { readonly origin: string; readonly keys: readonly string[] }[],
-  ): Promise<void> {
+  async handoff(cookieDomains: readonly string[], storage: StorageRequest): Promise<void> {
     const auth = await this.session('auth')
     const tool = await this.session('tool')
     try {
@@ -203,15 +226,41 @@ export class ElectronSessionDriver implements SessionDriver {
     for (const { origin, keys } of storage) await this.copyStorage(origin, keys)
   }
 
-  async sessionCookieValues(cookieDomains: readonly string[]): Promise<readonly string[]> {
-    let cookies: CookieRecord[]
-    try {
-      const tool = await this.session('tool')
-      cookies = cookiesForDomains(await tool.getCookies(), cookieDomains)
-    } catch {
-      throw new SiteAdapterError('session-handoff', 'internal')
+  /**
+   * Values tool output must never contain: the tool partition's cookie values on `cookieDomains`,
+   * the storage values this driver handed off, and those keys' current values in an open tool page
+   * on the origin (the site may have rotated them). It opens no page to look: tool code can only
+   * read storage through a tool page, and if none is open on the origin there is nothing newer.
+   */
+  async sessionSecrets(
+    cookieDomains: readonly string[],
+    storage: StorageRequest,
+  ): Promise<readonly string[]> {
+    const values = new Set<string>()
+    for (const cookie of await this.toolCookies(cookieDomains)) values.add(cookie.value)
+    for (const { origin, keys } of storage) {
+      const wanted = httpsOrigin(origin)
+      if (wanted === null || !isBareOrigin(origin)) throw new SiteAdapterError('session-handoff', 'invalid')
+      const remembered = this.handedOff.get(wanted)
+      for (const key of keys) {
+        const value = remembered?.get(key)
+        if (value !== undefined) values.add(value)
+      }
+      const open = this.openSurfaces('tool').find((surface) => surface.frames()[0]?.origin === wanted)
+      if (open === undefined) continue
+      const raw = await this.runIn(open, (frame) => frame.run(readStorageScript(keys)))
+      if (!isRecord(raw)) throw new SiteAdapterError('session-handoff', 'internal')
+      for (const key of keys) {
+        const value = raw[key]
+        if (typeof value === 'string') values.add(value)
+      }
     }
-    return [...new Set(cookies.map((cookie) => cookie.value).filter((value) => value.length > 0))]
+    return [...values].filter((value) => value.length > 0)
+  }
+
+  /** Names, never values, of the tool partition's cookies on `cookieDomains`. */
+  async cookieNames(cookieDomains: readonly string[]): Promise<readonly string[]> {
+    return [...new Set((await this.toolCookies(cookieDomains)).map((cookie) => cookie.name))]
   }
 
   /** Closes every window this driver opened, and the tool partition's proxy. */
@@ -229,9 +278,42 @@ export class ElectronSessionDriver implements SessionDriver {
     if (proxy !== null) await proxy.then((handle) => handle.close()).catch(() => {})
   }
 
+  /** Between runs: the egress list, read declarations only, and the per-run ceiling. */
+  private betweenRuns(): RunState {
+    return {
+      policy: {
+        egress: this.options.egress,
+        requests: (this.options.requests ?? []).filter((declaration) => declaration.purpose === 'read'),
+        maxPurpose: 'read',
+        ceiling: this.options.requestsPerRun ?? DEFAULT_REQUESTS_PER_RUN,
+      },
+      onBlocked: this.options.onBlocked,
+      inRun: false,
+      irreversibleUnlocked: false,
+      counted: 0,
+    }
+  }
+
+  private async toolCookies(cookieDomains: readonly string[]): Promise<CookieRecord[]> {
+    try {
+      const tool = await this.session('tool')
+      return cookiesForDomains(await tool.getCookies(), cookieDomains)
+    } catch {
+      throw new SiteAdapterError('session-handoff', 'internal')
+    }
+  }
+
   private authPage(surface: BrowserSurface): SurfaceAuthPage {
-    const frames = this.options.frameOrigins
-    return new SurfaceAuthPage(surface, this.options.navigation, this.timing, frames ?? 'any-https')
+    return new SurfaceAuthPage(surface, this.options.navigation, this.timing, {
+      frameOrigins: this.options.frameOrigins ?? [],
+      siteName: this.options.siteName ?? this.options.adapterId,
+    })
+  }
+
+  private toolPageOn(surface: BrowserSurface): SurfaceToolPage {
+    return new SurfaceToolPage(surface, this.options.egress, this.timing, (method, url) =>
+      this.announce(method, url),
+    )
   }
 
   private async copyStorage(origin: string, keys: readonly string[]): Promise<void> {
@@ -251,6 +333,10 @@ export class ElectronSessionDriver implements SessionDriver {
     }
     if (entries.length === 0) return
     await this.inDocument('tool', origin, (frame) => frame.run(writeStorageScript(entries)))
+    const wanted = httpsOrigin(origin) ?? origin
+    const remembered = this.handedOff.get(wanted) ?? new Map<string, string>()
+    for (const [key, value] of entries) remembered.set(key, value)
+    this.handedOff.set(wanted, remembered)
   }
 
   /**
@@ -270,10 +356,7 @@ export class ElectronSessionDriver implements SessionDriver {
       surface = await this.open(role)
       this.helpers.add(surface)
       const url = new URL(this.options.storageDocumentPath ?? '/robots.txt', origin).href
-      const page =
-        role === 'auth'
-          ? this.authPage(surface)
-          : new SurfaceToolPage(surface, this.options.egress, this.timing)
+      const page = role === 'auth' ? this.authPage(surface) : this.toolPageOn(surface)
       await page.goto(url)
       if (surface.frames()[0]?.origin !== wanted)
         throw new SiteAdapterError('session-handoff', 'origin-mismatch')
@@ -307,7 +390,17 @@ export class ElectronSessionDriver implements SessionDriver {
 
   private async open(role: Role): Promise<BrowserSurface> {
     await this.session(role)
-    return this.platform.openSurface(this.partitions[role])
+    const surface = this.platform.openSurface(this.partitions[role])
+    if (this.options.clientHints !== 'chrome' || this.options.userAgent === 'electron') return surface
+    try {
+      const { chromeVersion, os, systemVersion, arch } = this.platform
+      await surface.overrideUserAgent(chromeUserAgentOverride({ chromeVersion, os, systemVersion, arch }))
+    } catch (error) {
+      surface.destroy()
+      if (error instanceof SiteAdapterError) throw error
+      throw new SiteAdapterError(role === 'tool' ? 'egress' : 'navigate', 'internal')
+    }
+    return surface
   }
 
   /** The partition's session, hardened and guarded before any page opens in it. */
@@ -336,29 +429,47 @@ export class ElectronSessionDriver implements SessionDriver {
   private async configureUnchecked(role: Role): Promise<PartitionSession> {
     const session = this.platform.session(this.partitions[role])
     session.harden()
-    if (this.options.userAgent === 'chrome') {
-      session.setUserAgent(cleanChromeUserAgent(this.platform.chromeVersion, this.platform.os))
+    if (this.options.userAgent !== 'electron') {
+      const userAgent = cleanChromeUserAgent(this.platform.chromeVersion, this.platform.os)
+      session.setUserAgent(userAgent, ACCEPT_LANGUAGE)
     }
-    if (role === 'tool') {
-      session.filterRequests((request) => this.allowToolRequest(request))
-      // Stops the page resolving hostnames it only links to: a hostname can carry data out
-      // through DNS without any request that webRequest would see.
-      session.addResponseHeader('X-DNS-Prefetch-Control', 'off')
-      await session.useProxy(await this.startProxy())
+    if (role === 'auth') {
+      // will-frame-navigate is the first line for subframes; this holds the frames it doesn't
+      // report, such as an iframe's first load, to the same rule at the network layer.
+      const frameOrigins = this.options.frameOrigins ?? []
+      session.filterRequests(
+        (request) =>
+          request.resourceType !== 'subFrame' ||
+          authNavigationAllowed(
+            { url: request.url, isMainFrame: false },
+            this.options.navigation,
+            frameOrigins,
+          ),
+      )
+      return session
     }
+    session.filterRequests((request) => this.allowToolRequest(request))
+    // Stops the page resolving hostnames it only links to: a hostname can carry data out
+    // through DNS without any request that webRequest would see.
+    session.addResponseHeader('X-DNS-Prefetch-Control', 'off')
+    await session.useProxy(await this.startProxy())
     return session
   }
 
   private startProxy(): Promise<ProxyHandle> {
     const { egress, egressPorts = DEFAULT_EGRESS_PORTS } = this.options
     const proxy = this.platform.startProxy((host, port) => {
-      if (hostAllowed(host, egress) && egressPorts.includes(port)) return true
-      this.report({
+      const run = this.run
+      if (hostAllowed(host, egress) && hostAllowed(host, run.policy.egress) && egressPorts.includes(port)) {
+        return true
+      }
+      // Sockets come from page script (WebRTC, WebTransport): tool code can't open one through
+      // the capability API.
+      this.report(run, {
         method: 'CONNECT',
-        target: requestTarget(`https://${host}:${port}`),
-        pathDigest: null,
-        resourceType: 'socket',
+        target: requestTarget(`https://${host}:${port}`, false),
         reason: 'host-not-allowed',
+        initiator: 'page',
       })
       return false
     })
@@ -368,38 +479,60 @@ export class ElectronSessionDriver implements SessionDriver {
     })
   }
 
-  /** The tool partition's filter: egress, the request surface, then the per-run ceiling. */
+  /** The tool partition's filter: the run's policy, then its ceiling. */
   private allowToolRequest(request: OutgoingRequest): boolean {
-    const decision = decideToolRequest(request, {
-      egress: this.options.egress,
-      requests: this.options.requests ?? [],
-      sideEffect: this.run.sideEffect,
-    })
+    const run = this.run
+    const decision = decideToolRequest(request, run.policy, this.options.egress, run.irreversibleUnlocked)
     let reason: BlockReason | null = decision.allowed ? null : decision.reason
     if (decision.allowed && decision.counts) {
-      this.run.requests++
-      if (this.run.requests > (this.options.requestsPerRun ?? DEFAULT_REQUESTS_PER_RUN)) {
-        reason = 'request-ceiling'
-      }
+      if (run.counted >= ceilingOf(run.policy)) reason = 'request-ceiling'
+      else run.counted++
     }
     if (reason === null) return true
-    this.report({
+    this.report(run, {
       method: /^[A-Z]{1,16}$/i.test(request.method) ? request.method.toUpperCase() : 'INVALID',
-      target: requestTarget(request.url),
-      pathDigest: pathDigest(request.url),
-      resourceType: request.resourceType,
+      target: requestTarget(request.url, reason !== 'host-not-allowed' && reason !== 'bad-url'),
       reason,
+      initiator: this.announced.has(announcementKey(request.method, request.url)) ? 'tool' : 'page',
     })
     return false
   }
 
-  private report(blocked: BlockedRequest): void {
+  /**
+   * Records that tool code asked for this request through the capability API. Anything else, the
+   * site's scripts and adapter code in evaluate() alike, is reported as the page's: webRequest
+   * can't tell them apart.
+   */
+  private announce(method: string, url: string): () => void {
+    const key = announcementKey(method, url)
+    this.announced.set(key, (this.announced.get(key) ?? 0) + 1)
+    let withdrawn = false
+    return () => {
+      if (withdrawn) return
+      withdrawn = true
+      const left = (this.announced.get(key) ?? 1) - 1
+      if (left > 0) this.announced.set(key, left)
+      else this.announced.delete(key)
+    }
+  }
+
+  private report(run: RunState, blocked: BlockedRequest): void {
     try {
-      this.options.onBlocked?.(blocked)
+      run.onBlocked?.(blocked)
     } catch {
       // A failing reporter must not turn a block into an allow.
     }
   }
+}
+
+/** A usable ceiling: anything that isn't a whole, non-negative number allows nothing. */
+function ceilingOf(policy: ToolRunPolicy): number {
+  return Number.isInteger(policy.ceiling) && policy.ceiling >= 0 ? policy.ceiling : 0
+}
+
+/** Method and URL without the fragment, which never reaches the network. */
+function announcementKey(method: string, url: string): string {
+  return `${method.toUpperCase()} ${url.split('#')[0]}`
 }
 
 interface ToolSlot {

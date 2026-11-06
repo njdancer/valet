@@ -9,13 +9,19 @@ import type {
   CookieRecord,
   CookieSetDetails,
   FrameHandle,
+  KeyEvents,
   LoadResult,
   NavigationEvent,
   OutgoingRequest,
   PartitionSession,
   PendingNavigation,
   ProxyHandle,
+  UserAgentOverride,
 } from '../platform'
+
+// keyDown and keyUp need a key code, which Electron derives from the character on a US layout.
+// Anything outside printable ASCII has none, so it goes as a char event alone.
+const US_KEY = /^[\x20-\x7e]$/
 
 // Isolated worlds on the main frame. 0 is the page's own world and 999 is Electron's preload world.
 // The runtime's scripts and adapter code get a world each, so adapter code can't patch the fetch,
@@ -33,6 +39,8 @@ export function electronPlatform(options: ElectronPlatformOptions = {}): Browser
   return {
     chromeVersion: process.versions.chrome,
     os: process.platform,
+    systemVersion: process.getSystemVersion(),
+    arch: process.arch,
     startProxy: (allow) => startEgressProxy({ allow, ...(options.dial ? { dial: options.dial } : {}) }),
     session(partition) {
       let wrapped = sessions.get(partition)
@@ -51,8 +59,8 @@ class ElectronPartition implements PartitionSession {
 
   constructor(private readonly ses: Session) {}
 
-  setUserAgent(userAgent: string): void {
-    this.ses.setUserAgent(userAgent)
+  setUserAgent(userAgent: string, acceptLanguages: string): void {
+    this.ses.setUserAgent(userAgent, acceptLanguages)
   }
 
   harden(): void {
@@ -234,8 +242,18 @@ class ElectronSurface implements BrowserSurface {
     this.contents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 })
   }
 
-  sendChar(char: string): void {
+  sendChar(char: string, events: KeyEvents): void {
+    const full = events === 'full' && US_KEY.test(char)
+    if (full) this.contents.sendInputEvent({ type: 'keyDown', keyCode: char })
     this.contents.sendInputEvent({ type: 'char', keyCode: char })
+    if (full) this.contents.sendInputEvent({ type: 'keyUp', keyCode: char })
+  }
+
+  async overrideUserAgent(override: UserAgentOverride): Promise<void> {
+    // The override lasts while the debugger stays attached, which is the window's lifetime.
+    const devtools = this.contents.debugger
+    if (!devtools.isAttached()) devtools.attach('1.3')
+    await devtools.sendCommand('Emulation.setUserAgentOverride', override)
   }
 
   focus(): void {

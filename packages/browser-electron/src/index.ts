@@ -2,28 +2,33 @@ import type { AdapterManifest } from '@siteadapter/core'
 import { ElectronSessionDriver, type ManifestOptions } from './driver'
 import type { Dial } from './egress-proxy'
 
-export { SurfaceAuthPage, type TypeOptions } from './auth-page'
+export { type AuthPageOptions, SurfaceAuthPage } from './auth-page'
 export { cookieHost, cookieSetDetails, cookiesForDomains } from './cookies'
-export type { BlockedRequest, DriverOptions, ManifestOptions } from './driver'
+export type { DriverOptions, ManifestOptions } from './driver'
 export { ElectronSessionDriver } from './driver'
 export { type Dial, parseAuthority, startEgressProxy } from './egress-proxy'
 export {
-  ambiguousPath,
   authNavigationAllowed,
   type BlockReason,
   decideToolRequest,
-  deniedPath,
   egressAllowed,
-  type FrameRule,
   isApiCall,
-  pathDigest,
+  purposeAllowed,
+  type RequestDecision,
   requestTarget,
 } from './guards'
+export { needsUserTitle } from './needs-user'
 export { partitionName } from './partitions'
 export type * from './platform'
 export { CHROMIUM_SWITCHES, hardenProcess } from './process-hardening'
-export { SurfaceToolPage } from './tool-page'
-export { cleanChromeUserAgent, type UserAgentMode } from './user-agent'
+export { type Announce, SurfaceToolPage } from './tool-page'
+export {
+  ACCEPT_LANGUAGE,
+  chromeUserAgentOverride,
+  cleanChromeUserAgent,
+  type EngineInfo,
+  type UserAgentMode,
+} from './user-agent'
 
 // Electron is loaded only when this is called, so that this package can be imported, and
 // its pure parts tested, in plain Node.
