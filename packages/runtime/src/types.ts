@@ -5,6 +5,7 @@
 import type {
   AdapterManifest,
   ErrorClass,
+  NeedsUserReason,
   SecretValue,
   SessionDriver,
   Stage,
@@ -14,7 +15,7 @@ import type { z } from 'zod'
 
 export type AuthOutcome =
   | { readonly status: 'ok' }
-  | { readonly status: 'needsUser'; readonly reason: string }
+  | { readonly status: 'needsUser'; readonly reason: NeedsUserReason }
   | { readonly status: 'failed'; readonly stage: Stage; readonly errorClass: ErrorClass }
   /** The site's bot protection refused us. Trips the site's circuit breaker. */
   | { readonly status: 'blocked' }
@@ -27,8 +28,12 @@ export interface AuthRunRequest {
   /** The tool call that needed the login. */
   readonly callId: string | null
   readonly signal: AbortSignal
-  /** Every secret the auth flow resolves must be passed here, so tool output can be redacted. */
-  rememberSecret(secret: SecretValue): void
+  /**
+   * Call with every secret the auth flow resolves, before disposing it. The runtime keeps its own
+   * clone until the tool call ends, so the tool's output can be redacted; the caller still owns,
+   * and disposes, the value it passed.
+   */
+  registerForRedaction(secret: SecretValue): void
 }
 
 /** Runs an adapter's declarative auth action in the auth partition. */
@@ -61,7 +66,8 @@ export interface ConfirmationPrompt {
 
 export type ToolCallResult =
   | { readonly status: 'ok'; readonly output: unknown }
-  | { readonly status: 'needsUser'; readonly reason: string }
+  /** Only the code: the app renders its own wording, and nothing adapter-authored reaches the client. */
+  | { readonly status: 'needsUser'; readonly reason: NeedsUserReason }
   | { readonly status: 'failed'; readonly stage: Stage; readonly errorClass: ErrorClass }
   | { readonly status: 'blocked'; readonly retryAfterMs: number }
   | { readonly status: 'declined' }
@@ -86,5 +92,9 @@ export interface ListedTool {
 
 /** Things the app may want to show or log that are not audit events. Never carries page text. */
 export type RuntimeDiagnostic =
-  | { readonly type: 'unsupported-probe'; readonly adapterId: string; readonly kind: 'cookie' }
   | { readonly type: 'audit-write-failed'; readonly event: string }
+  /** The persisted breaker state could not be read: every site's breaker opens for its cooldown. */
+  | { readonly type: 'breaker-state-unreadable' }
+  | { readonly type: 'breaker-state-write-failed' }
+  /** A run hit the cap on request-blocked audit events; later blocks in it are not recorded. */
+  | { readonly type: 'request-blocked-capped'; readonly adapterId: string; readonly callId: string }

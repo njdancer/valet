@@ -142,8 +142,14 @@ describe('LoginAttemptMarker', () => {
 
   it('refuses a hold that does not count a failure', async () => {
     const markers = new LoginAttemptMarker(dir, clock)
-    await expect(markers.hold('woolworths', 0, null)).rejects.toMatchObject({ errorClass: 'internal' })
-    await expect(markers.hold('woolworths', 1.5, null)).rejects.toMatchObject({ errorClass: 'internal' })
+    await expect(markers.hold('woolworths', 0, null)).rejects.toMatchObject({
+      stage: 'login',
+      errorClass: 'invalid',
+    })
+    await expect(markers.hold('woolworths', 1.5, null)).rejects.toMatchObject({
+      stage: 'login',
+      errorClass: 'invalid',
+    })
     expect(await readdir(dir)).toEqual([])
   })
 })

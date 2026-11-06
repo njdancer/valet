@@ -5,7 +5,15 @@ import { type AdapterDefinition, type AdapterManifest, parseManifest } from '@si
 import { vi } from 'vitest'
 import { ToolHost, type ToolHostOptions } from '../src/tool-host'
 import type { AuthRunner } from '../src/types'
-import { FakeClock, FakePrompt, FakeSessionDriver, json, MemoryAudit, MemoryMarkers } from './fakes'
+import {
+  FakeClock,
+  FakePrompt,
+  FakeSessionDriver,
+  json,
+  MemoryAudit,
+  MemoryJsonStore,
+  MemoryMarkers,
+} from './fakes'
 
 export const HASH = 'a'.repeat(64)
 export const OTHER_HASH = 'b'.repeat(64)
@@ -51,7 +59,7 @@ export const manifest: AdapterManifest = parseManifest({
     { method: 'GET', path: '/api/:section/items', purpose: 'read' },
   ],
   tools: [{ name: 'run_test', title: 'Run test', description: 'The tool under test', sideEffect: 'read' }],
-  limits: { requestsPerRun: 5 },
+  limits: { requestsPerRun: 5, minGapMs: 1_000, cooldownSeconds: 60, maxCooldownSeconds: 600 },
 })
 
 export const loggedIn = json({ shopper: { loggedIn: true } })
@@ -69,20 +77,37 @@ export function fixture(definition: AdapterDefinition, overrides: Partial<ToolHo
   const diagnostics = vi.fn()
   const authRunner = vi.fn<AuthRunner>(async () => ({ status: 'ok' }))
   const approvals = { isApproved: async (id: string, hash: string) => id === 'example-shop' && hash === HASH }
+  const breakerStore = new MemoryJsonStore()
   const host = new ToolHost({
     approvals,
     audit,
     prompt,
     authRunner,
     markers,
+    breakerStore,
     clock,
     sleep: clock.sleep,
-    siteProtection: { minRequestGapMs: 0, cooldownMs: 60_000, maxCooldownMs: 600_000 },
+    pacingSleep: clock.pacingSleep,
     diagnostics,
     ...overrides,
+    // A test that brings its own sleep paces with it too, unless it says otherwise.
+    ...(overrides.sleep !== undefined && overrides.pacingSleep === undefined
+      ? { pacingSleep: overrides.sleep }
+      : {}),
   })
   host.register({ definition, bundleHash: HASH, driver })
-  return { host, driver, page: driver.page, audit, prompt, markers, clock, authRunner, diagnostics }
+  return {
+    host,
+    driver,
+    page: driver.page,
+    audit,
+    prompt,
+    markers,
+    clock,
+    authRunner,
+    diagnostics,
+    breakerStore,
+  }
 }
 
 export const call = {

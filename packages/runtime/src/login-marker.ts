@@ -72,7 +72,7 @@ export class LoginAttemptMarker implements LoginMarkerStore {
   }
 
   async hold(adapterId: string, failures: number, retryAt: number | null): Promise<void> {
-    if (!Number.isSafeInteger(failures) || failures < 1) throw new SiteAdapterError('auth-step', 'internal')
+    if (!Number.isSafeInteger(failures) || failures < 1) throw new SiteAdapterError('login', 'invalid')
     const heldAt = new Date(this.clock.now()).toISOString()
     // Atomic, so a crash mid-write leaves the in-progress marker rather than a torn hold.
     await writeFileAtomic(

@@ -1,15 +1,22 @@
-// Which adapter bundles the person has approved, keyed by exact content hash. Any change to an
-// adapter makes a new hash, which starts unapproved. Reads fail closed: a file that can't be read
-// or parsed approves nothing.
+// Which adapter bundle the person has approved, keyed by exact content hash. Any change to an
+// adapter makes a new hash, which starts unapproved; approving it replaces the adapter's previous
+// approval. Reads fail closed: a file that can't be read or parsed approves nothing.
+//
+// The store writes the adapter-approved and adapter-rejected audit events itself, so no caller can
+// change an approval without a record. The event is written first: an approval that can't be
+// audited doesn't happen, and if the file write then fails, the log over-reports rather than
+// under-reports.
 
 import { readFile } from 'node:fs/promises'
-import { SiteAdapterError } from '@siteadapter/core'
+import { type AuditSink, SiteAdapterError } from '@siteadapter/core'
 import { z } from 'zod'
 import { isErrno, writeFileAtomic } from './files'
 
 /** The manifest's id rule, repeated here because ids become map keys and file names. */
 export const ADAPTER_ID = /^[a-z][a-z0-9-]{1,63}$/
 const HASH = /^[0-9a-f]{64}$/
+/** The manifest's version rule. */
+const VERSION = /^\d+\.\d+\.\d+$/
 
 const fileSchema = z
   .object({
@@ -25,7 +32,10 @@ export interface ApprovalLookup {
 export class ApprovalStore implements ApprovalLookup {
   private queue: Promise<unknown> = Promise.resolve()
 
-  constructor(private readonly path: string) {}
+  constructor(
+    private readonly path: string,
+    private readonly audit: AuditSink,
+  ) {}
 
   async isApproved(adapterId: string, adapterHash: string): Promise<boolean> {
     try {
@@ -41,28 +51,45 @@ export class ApprovalStore implements ApprovalLookup {
     return (await this.load()).get(adapterId) ?? []
   }
 
-  approve(adapterId: string, adapterHash: string): Promise<void> {
-    return this.update(adapterId, adapterHash, (hashes) =>
-      hashes.includes(adapterHash) ? hashes : [...hashes, adapterHash],
-    )
+  /**
+   * Approves exactly this bundle of the adapter, replacing any earlier approval, and audits
+   * adapter-approved with the hash it replaces. Approving the one hash already approved is a no-op.
+   */
+  approve(adapterId: string, adapterHash: string, version: string): Promise<void> {
+    return this.update(adapterId, adapterHash, version, async (hashes) => {
+      if (hashes.length === 1 && hashes[0] === adapterHash) return null
+      const previousHash = hashes.filter((h) => h !== adapterHash).at(-1) ?? null
+      await this.audit.append({ type: 'adapter-approved', adapterId, adapterHash, version, previousHash })
+      return [adapterHash]
+    })
   }
 
-  revoke(adapterId: string, adapterHash: string): Promise<void> {
-    return this.update(adapterId, adapterHash, (hashes) => hashes.filter((h) => h !== adapterHash))
+  /**
+   * Records that the person rejected this bundle, and withdraws its approval if it had one. Other
+   * hashes' approvals are untouched: rejecting an update leaves the installed version running.
+   */
+  reject(adapterId: string, adapterHash: string, version: string): Promise<void> {
+    return this.update(adapterId, adapterHash, version, async (hashes) => {
+      await this.audit.append({ type: 'adapter-rejected', adapterId, adapterHash, version })
+      return hashes.includes(adapterHash) ? hashes.filter((h) => h !== adapterHash) : null
+    })
   }
 
+  /** `change` returns the adapter's new hashes, or null to leave the file alone. */
   private update(
     adapterId: string,
     adapterHash: string,
-    change: (hashes: readonly string[]) => readonly string[],
+    version: string,
+    change: (hashes: readonly string[]) => Promise<readonly string[] | null>,
   ): Promise<void> {
-    if (!ADAPTER_ID.test(adapterId) || !HASH.test(adapterHash)) {
+    if (!ADAPTER_ID.test(adapterId) || !HASH.test(adapterHash) || !VERSION.test(version)) {
       return Promise.reject(new SiteAdapterError('manifest', 'invalid'))
     }
     const done = this.queue.then(async () => {
       // Throws on a corrupt file rather than overwriting approvals we couldn't read.
       const approved = await this.load()
-      const next = change(approved.get(adapterId) ?? [])
+      const next = await change(approved.get(adapterId) ?? [])
+      if (next === null) return
       if (next.length === 0) approved.delete(adapterId)
       else approved.set(adapterId, next)
       const file = {
@@ -81,13 +108,13 @@ export class ApprovalStore implements ApprovalLookup {
       text = await readFile(this.path, 'utf8')
     } catch (error) {
       if (isErrno(error, 'ENOENT')) return new Map()
-      throw new SiteAdapterError('manifest', 'unavailable')
+      throw new SiteAdapterError('config', 'unavailable')
     }
     let parsed: z.infer<typeof fileSchema>
     try {
       parsed = fileSchema.parse(JSON.parse(text))
     } catch {
-      throw new SiteAdapterError('manifest', 'invalid')
+      throw new SiteAdapterError('config', 'invalid')
     }
     return new Map(Object.entries(parsed.approved))
   }

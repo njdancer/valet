@@ -4,21 +4,23 @@
 // page's current URL, so that navigating to another allowed host can't change where a relative
 // fetch goes.
 //
-// Navigation is held to https on the egress hosts, denied segments, and the GET declarations: a
-// tool can't goto() a declared endpoint whose purpose outranks its own side effect. Beyond that,
-// navigation, like click(), is not checked against the request surface: a read tool can still
-// navigate to an undeclared page on an egress host that changes state when loaded.
+// Navigation is held to https on the egress hosts, unambiguous paths, denied segments, and the GET
+// declarations: a tool can't goto() a declared endpoint whose purpose outranks its own side effect.
+// Beyond that, navigation, like click(), is not checked against the request surface here: a read tool
+// can still navigate to an undeclared page on an egress host that changes state when loaded.
 //
 // Tool code runs in this process and hands us its own objects, so every check runs against one
 // snapshot of what it passed, and only that snapshot reaches the driver: a getter or Proxy can't
 // show the check one thing and the request another.
 //
-// This guards the capability API only. Requests the page makes by itself, or that evaluate()d code
-// makes with the page's own fetch, are the browser driver's job (webRequest egress filtering).
+// This guards the capability API, and fails fast with a precise error. Requests the page makes by
+// itself, or that evaluate()d code makes with the page's own fetch, are held to the same run policy
+// by the browser driver (SessionDriver.beginRun), which reports what it refuses to the tool host.
 
 import {
   type AdapterManifest,
   type AuditEvent,
+  ambiguousPath,
   decideRequest,
   type ErrorClass,
   type FetchInit,
@@ -32,15 +34,14 @@ import {
   touchesDeniedSegment,
 } from '@siteadapter/core'
 import type { CallState } from './call-state'
-import { redactString } from './redaction'
-import { blockedBySite, isHtml, looksBlocked, type SiteGuards } from './site-protection'
+import { blockCause, breakerRefusal, isHtml, type SiteGuards, siteRefusal } from './site-protection'
 
 const PURPOSE_RANK: Readonly<Record<Purpose, number>> = { read: 0, write: 1, irreversible: 2 }
 
 /** Headers some servers honour to turn one method into another, which would bypass method matching. */
 const METHOD_OVERRIDE_HEADERS = ['x-http-method-override', 'x-http-method', 'x-method-override']
 
-const MAX_TARGET_LENGTH = 300
+export const MAX_TARGET_LENGTH = 300
 
 export interface GuardedPageOptions {
   readonly adapterId: string
@@ -62,13 +63,13 @@ export class GuardedToolPage implements ToolPage {
     state.assertLive()
     const target = resolve(url, manifest.home)
     if (target === null || target.protocol !== 'https:' || !hostAllowed(target.hostname, manifest.egress)) {
-      return this.deny('egress', 'host-not-allowed', 'GET', target)
+      return this.deny('egress', 'host-not-allowed', 'GET', target, url)
     }
     if (ambiguousPath(target.pathname)) {
-      return this.deny('request-surface', 'undeclared-request', 'GET', target)
+      return this.deny('request-surface', 'ambiguous-path', 'GET', target, url)
     }
-    if (deniedPath(target.pathname) && sideEffect !== 'irreversible') {
-      return this.deny('request-surface', 'denied-path', 'GET', target)
+    if (touchesDeniedSegment(target.pathname) && sideEffect !== 'irreversible') {
+      return this.deny('request-surface', 'denied-path', 'GET', target, url)
     }
     const outranked = manifest.requests.some(
       (d) =>
@@ -76,8 +77,8 @@ export class GuardedToolPage implements ToolPage {
         pathMatches(d.path, target.pathname) &&
         PURPOSE_RANK[d.purpose] > PURPOSE_RANK[sideEffect],
     )
-    if (outranked) return this.deny('request-surface', 'denied-path', 'GET', target)
-    await this.admit('GET', target)
+    if (outranked) return this.deny('request-surface', 'denied-path', 'GET', target, url)
+    await this.admit('GET', target, url)
     await state.track(inner.goto(target.href))
   }
 
@@ -114,37 +115,25 @@ export class GuardedToolPage implements ToolPage {
     const target = resolve(pathOrUrl, manifest.home)
     const request = snapshotInit(init)
     const method = request === null ? 'INVALID' : request.method
-    if (target === null) return this.deny('request-surface', 'host-not-allowed', method, null)
-    if (request === null) return this.deny('request-surface', 'undeclared-request', method, target)
+    if (target === null) return this.deny('request-surface', 'host-not-allowed', method, null, pathOrUrl)
+    if (request === null) return this.deny('request-surface', 'undeclared-request', method, target, pathOrUrl)
     if (METHOD_OVERRIDE_HEADERS.some((name) => headerValue(request.headers, name) !== undefined)) {
-      return this.deny('request-surface', 'undeclared-request', method, target)
-    }
-    if (ambiguousPath(target.pathname)) {
-      return this.deny('request-surface', 'undeclared-request', method, target)
+      return this.deny('request-surface', 'undeclared-request', method, target, pathOrUrl)
     }
     const decision = decideRequest(method, target.href, manifest.egress, manifest.requests)
     if (!decision.allowed) {
-      const errorClass: ErrorClass =
-        decision.reason === 'undeclared'
-          ? 'undeclared-request'
-          : decision.reason === 'denied-path'
-            ? 'denied-path'
-            : 'host-not-allowed'
-      return this.deny('request-surface', errorClass, method, target)
+      return this.deny('request-surface', SURFACE_CLASS[decision.reason], method, target, pathOrUrl)
     }
-    const purpose = decision.declaration.purpose
-    if (deniedPath(target.pathname) && purpose !== 'irreversible') {
-      return this.deny('request-surface', 'denied-path', method, target)
+    if (PURPOSE_RANK[decision.declaration.purpose] > PURPOSE_RANK[sideEffect]) {
+      return this.deny('request-surface', 'denied-path', method, target, pathOrUrl)
     }
-    if (PURPOSE_RANK[purpose] > PURPOSE_RANK[sideEffect]) {
-      return this.deny('request-surface', 'denied-path', method, target)
-    }
-    await this.admit(method, target)
+    await this.admit(method, target, pathOrUrl)
     const result = await state.track(inner.fetch(target.href, request))
-    if (looksBlocked(result)) {
+    const cause = blockCause(result)
+    if (cause !== null) {
       state.blocked = true
-      site.breaker.trip()
-      throw blockedBySite()
+      site.breaker.trip(cause, state.callId)
+      throw siteRefusal(cause)
     }
     site.breaker.recordSuccess()
     // HTML where an API answer was expected: an error page or a redirect to a login page. Not a
@@ -154,22 +143,22 @@ export class GuardedToolPage implements ToolPage {
   }
 
   /** Counts the request against the ceiling and waits for the site's rate budget. */
-  private async admit(method: string, target: URL): Promise<void> {
+  private async admit(method: string, target: URL, raw: unknown): Promise<void> {
     const { state, manifest, site } = this.options
     state.requests++
     if (state.requests > manifest.limits.requestsPerRun) {
-      return this.deny('request-surface', 'request-ceiling', method, target)
+      return this.deny('request-surface', 'request-ceiling', method, target, raw)
     }
     if (site.breaker.isOpen()) {
       state.blocked = true
-      throw blockedBySite()
+      throw breakerRefusal()
     }
     await site.budget.acquire(state.signal)
     state.assertLive()
     // The breaker can open while we wait our turn.
     if (site.breaker.isOpen()) {
       state.blocked = true
-      throw blockedBySite()
+      throw breakerRefusal()
     }
   }
 
@@ -178,6 +167,7 @@ export class GuardedToolPage implements ToolPage {
     errorClass: ErrorClass,
     method: string,
     target: URL | null,
+    raw: unknown,
   ): Promise<never> {
     const { state, adapterId, audit } = this.options
     const error = new SiteAdapterError(stage, errorClass)
@@ -185,13 +175,27 @@ export class GuardedToolPage implements ToolPage {
     await audit({
       type: 'request-blocked',
       adapterId,
-      method: /^[A-Z]{1,10}$/.test(method) ? method : 'INVALID',
-      target: redactString(describeTarget(target), state.sensitive()),
+      method: plainMethod(method),
+      target: state.redactTarget(describeTarget(target), raw),
       reason: errorClass,
+      initiator: 'tool',
       callId: state.callId,
     })
     throw error
   }
+}
+
+const SURFACE_CLASS = {
+  'host-not-allowed': 'host-not-allowed',
+  'bad-url': 'host-not-allowed',
+  undeclared: 'undeclared-request',
+  'denied-path': 'denied-path',
+  'ambiguous-path': 'ambiguous-path',
+} as const satisfies Record<string, ErrorClass>
+
+/** An HTTP method as it may appear in the audit log; anything else is recorded as INVALID. */
+export function plainMethod(method: unknown): string {
+  return typeof method === 'string' && /^[A-Z]{1,10}$/.test(method) ? method : 'INVALID'
 }
 
 function resolve(pathOrUrl: string, home: string): URL | null {
@@ -207,44 +211,6 @@ function resolve(pathOrUrl: string, home: string): URL | null {
 function describeTarget(target: URL | null): string {
   if (target === null) return '(unparseable)'
   return `${target.origin}${target.pathname}`.slice(0, MAX_TARGET_LENGTH)
-}
-
-/**
- * The core deny list matches raw segments. Servers decode percent-escapes and often drop
- * ";matrix" parameters before routing, so "check%6Fut" or "checkout;x=1" must count as checkout,
- * and many treat a decoded backslash as a separator, so "a%5Ccheckout" must too.
- */
-export function deniedPath(pathname: string): boolean {
-  if (touchesDeniedSegment(pathname)) return true
-  const normalised = pathname
-    .split('/')
-    .map((segment) => decodeSegment(segment).replaceAll('\\', '/'))
-    .join('/')
-  return touchesDeniedSegment(normalised)
-}
-
-/**
- * Segments that servers and proxies disagree about. An encoded slash or backslash inside one segment (for
- * example "..%2F..%2Fcart%2Fadd" through a ":id" param), a NUL, or a segment that only decodes
- * to "." or ".." is routed one way by our matcher and possibly another by the site, so none of
- * them is ever allowed. The URL parser has already resolved literal dot segments and turned
- * literal backslashes into "/"; the backslash check is for safety if that ever changes.
- */
-export function ambiguousPath(pathname: string): boolean {
-  return pathname.split('/').some((segment) => {
-    if (/%(2f|5c|00)|\\/i.test(segment)) return true
-    const decoded = decodeSegment(segment)
-    return decoded === '.' || decoded === '..'
-  })
-}
-
-function decodeSegment(segment: string): string {
-  const bare = segment.split(';')[0] ?? ''
-  try {
-    return decodeURIComponent(bare)
-  } catch {
-    return bare
-  }
 }
 
 interface RequestSnapshot {

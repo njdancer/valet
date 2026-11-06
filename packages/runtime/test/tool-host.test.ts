@@ -130,7 +130,7 @@ describe('ToolHost.call: approval and lookup', () => {
         client: 'claude-code',
         callId: 'call-1',
       },
-      { type: 'tool-finished', callId: 'call-1', outcome: 'ok', durationMs: 250 },
+      { type: 'tool-finished', adapterId: 'example-shop', callId: 'call-1', outcome: 'ok', durationMs: 250 },
     ])
   })
 
@@ -770,7 +770,7 @@ describe('ToolHost.call: redaction', () => {
     expect(await host.call(call)).toEqual({ status: 'ok', output: ['[redacted]'] })
   })
 
-  it('redacts a secret the auth flow remembered', async () => {
+  it('redacts a secret the auth flow registered, even after the auth flow disposed its own copy', async () => {
     const { SecretValue } = await import('@siteadapter/core')
     const canary = SecretValue.fromString('canary-pw-91c2')
     const { host, page, authRunner } = fixture(
@@ -790,7 +790,8 @@ describe('ToolHost.call: redaction', () => {
     )
     page.route('GET', `${HOME}/api/session`, json({ shopper: { loggedIn: false } }))
     authRunner.mockImplementation(async (request) => {
-      request.rememberSecret(canary)
+      request.registerForRedaction(canary)
+      canary.dispose()
       page.route('GET', `${HOME}/api/session`, json({ shopper: { loggedIn: true } }))
       return { status: 'ok' }
     })
@@ -807,7 +808,7 @@ describe('ToolHost.call: redaction', () => {
             input: z.object({}),
             output: z.string(),
             run: async () => {
-              driver.sessionCookieValues = async () => {
+              driver.sessionSecrets = async () => {
                 throw new Error('session destroyed')
               }
               return 'output'
@@ -869,6 +870,7 @@ describe('ToolHost defaults', () => {
       approvals: { isApproved: async () => false },
       audit: { append: async () => ({}) as never },
       prompt: { ask: async () => 'declined' },
+      breakerStore: { read: async () => null, write: async () => {} },
       authRunner: async () => ({ status: 'ok' }),
       markers: {
         read: async () => ({ kind: 'unset' }),
