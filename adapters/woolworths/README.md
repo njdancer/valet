@@ -6,12 +6,14 @@ touches a checkout or payment path, and no tool is `irreversible`.
 ```ts
 import adapter, { createAdapter } from '@siteadapter/adapter-woolworths'
 
-adapter // the real site
-createAdapter({ origin: 'https://www.woolworths.test' }) // the fake site, for tests and e2e
+adapter // the real site: www.woolworths.com.au, signing in on auth.woolworths.com.au
+createAdapter({ origin: site.origin, authOrigin: site.authOrigin }) // the fake site, for tests and e2e
+createAdapter({ totp: true }) // also fill Auth0's authenticator-app challenge from 1Password
 ```
 
-`createManifest({ origin })` does the same for the manifest alone. With a fake origin, egress is
-that host only, so an e2e run can't reach the live site even by mistake.
+`createManifest(options)` does the same for the manifest alone. Without `authOrigin`, a fake
+origin's auth origin is the same host with `www.` swapped for `auth.` (port kept). With a fake
+origin, egress is that www host only, so an e2e run can't reach the live site even by mistake.
 
 ## Tools
 
@@ -80,33 +82,36 @@ sent (core change requests below).
 
 ### Failures
 
-Tools throw `SiteAdapterError`, never a raw error or a result that describes the failure:
+Tools throw, never a raw error or a result that describes the failure:
 
-| Situation                                   | Stage / class                                                                                   |
-| ------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `ensure()` says `needsUser`                 | `auth-step` / `not-logged-in`                                                                   |
-| `ensure()` failed                           | its own stage and class, if both are in the core vocabularies, else `auth-step` / `auth-failed` |
-| HTTP 401                                    | `tool-run` / `not-logged-in`                                                                    |
-| HTTP 403 or 429 (Akamai)                    | `tool-run` / `blocked-by-site`                                                                  |
-| 2xx that is HTML (block page or login page) | `tool-run` / `blocked-by-site`                                                                  |
-| 2xx that is neither JSON nor HTML           | `tool-run` / `unavailable`                                                                      |
-| HTTP 404, or detail with no `Product`       | `tool-run` / `not-found`                                                                        |
-| Other non-2xx, or `fetch` threw             | `tool-run` / `unavailable`                                                                      |
-| JSON not in the expected shape              | `tool-run` / `invalid`                                                                          |
-| Signal aborted before a call                | `tool-run` / `aborted`                                                                          |
-| `add_to_cart` would exceed 50               | `tool-input` / `invalid`                                                                        |
-| `add_to_cart` read an incomplete trolley    | `tool-run` / `invalid`                                                                          |
-| Update reply says the site refused          | `tool-run` / `invalid`                                                                          |
+| Situation                                   | Thrown                                                                                                                  |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `ensure()` says `needsUser`                 | `NeedsUserError(reason)`, the reason if it is in core's vocabulary, else `other`                                        |
+| `ensure()` failed                           | `SiteAdapterError` with its own stage and class, if both are in the core vocabularies, else `auth-step` / `auth-failed` |
+| HTTP 401 on a cart call                     | one more `ensure()` and a retry from the start of the tool; a second 401 is `tool-run` / `not-logged-in`                |
+| HTTP 401 on a product call                  | `tool-run` / `not-logged-in`                                                                                            |
+| HTTP 403 or 429 (Akamai)                    | `tool-run` / `blocked-by-site`                                                                                          |
+| 2xx that is HTML (block page or login page) | `tool-run` / `blocked-by-site`                                                                                          |
+| 2xx that is neither JSON nor HTML           | `tool-run` / `unavailable`                                                                                              |
+| HTTP 404, or detail with no `Product`       | `tool-run` / `not-found`                                                                                                |
+| Other non-2xx, or `fetch` threw             | `tool-run` / `unavailable`                                                                                              |
+| JSON not in the expected shape              | `tool-run` / `invalid`                                                                                                  |
+| Signal aborted before a call                | `tool-run` / `aborted`                                                                                                  |
+| `add_to_cart` would exceed 50               | `tool-input` / `invalid`                                                                                                |
+| `add_to_cart` read an incomplete trolley    | `tool-run` / `invalid`                                                                                                  |
+| Update reply says the site refused          | `tool-run` / `invalid`                                                                                                  |
 
 Cart tools throw rather than returning a "please log in" result so the runtime records a failed
-call and can re-run the auth action or show the login window. The `needsUser` reason is free text
-and is never passed on.
+call. `NeedsUserError` ends the run as `needsUser` with a reason code (`captcha`, `otp-required`,
+`account-locked`, `login-required`, `other`), and the app shows the person the login window. The
+auth steps' notes, which say what happened in words, are shown only in the app; nothing but the
+code reaches the MCP client.
 
-`needsUser` deliberately leaves as a different pair from a 401. The security model has the runtime
-re-run the auth action when a tool hits an expired session (`tool-run` / `not-logged-in`); after a
-`needsUser` that would resubmit the password on a session the site has just challenged, instead of
-showing the person the window. `auth-step` / `not-logged-in` stands in until core has a typed
-`needsUser` signal (see core change requests below).
+Every cart tool calls `ensure()` before its first site call, because the anonymous trolley also
+answers 200: without it, a logged-out `add_to_cart` would fill a trolley nobody sees. If the
+session expires between the probe and the call, the site answers 401; the tool then runs
+`ensure()` once more and starts again from the top. Retrying is safe because the refused request
+changed nothing, and `add_to_cart` re-reads the trolley before writing, so it never adds twice.
 
 An HTML 2xx can be Akamai's challenge or the login page served to an expired session; nothing in
 the response tells them apart. It is reported as `blocked-by-site`, as the runtime's own block
@@ -117,59 +122,121 @@ through unchanged.
 
 ## Login
 
-The auth steps open the login page, fill the username and password from the `login` item, submit,
-fill the one-time code if a code prompt appears, and assert the login with the probe. Each wait
-for the page to change is a `settle`: nested `when`s with pauses between looks (20 s in all),
-which return as soon as the page moves on and never fail. There is no `waitFor`, because its
-timeout ends the flow as `condition-timeout`, and the security model sends challenges and
-unexpected prompts to the person instead. So:
+The live probe found the login on a separate origin
+([findings](../../docs/findings/2026-11-07-woolworths-live-probe.md), runs 3–4): www's
+`/auth/login?redirect_uri=…/auth/callback&path=/` redirects to Auth0 Universal Login on
+`https://auth.woolworths.com.au`, which asks for the email on one page and the password on the
+next, then sends the browser back to www's `/auth/callback`, which sets the www session cookies.
+So:
 
-- no sign-in form (an Akamai interstitial, a redesigned page): `needsUser` before any secret is
-  typed;
-- still on the login page after submit or after the code (a CAPTCHA, a rejected password, a
-  prompt nobody scripted): `needsUser`. The password and the code are each typed once per run.
+- `navigation` is `[www, auth]`. The `login` secret (`username`, `password`) is requested for the
+  auth origin only, where both are typed and both forms post.
+- `egress` and `session.cookieDomains` stay on www. Auth0's own cookies (its session, "remember
+  this device") are host-only on the auth origin, so the hand-off never copies them, and the
+  tool partition never talks to the auth origin.
+- The probe stays `GET /api/ui/v2/bootstrap` → `ShopperDetails.IsLoggedIn === true`, with 401 as
+  the logged-out status. Anonymous visitors get `wow-auth-token` cookies, so a cookie probe would
+  lie; an anonymous bootstrap answers 200 with `IsLoggedIn: false`.
 
-The worst case is about 60 s of pauses, so the runtime's flow timeout must be longer than that or a
-stalled login ends as `timeout` / `timed-out` instead. `test/auth-steps.test.ts` walks the steps
-against scripted pages for each of these cases.
+The steps go to the login link, then handle each page only if it is the page expected, by its path
+and its field together:
+
+1. **Identifier** (`/u/login/identifier`, `input[name="username"]`): fill the email, click the
+   primary button (`button[type="submit"][name="action"][value="default"]`, never the passkey or
+   Everyday ones). Skipped when Auth0 goes straight to the password.
+2. **Password** (`/u/login/password`, `input#password`): fill it and submit. Typed once per run.
+3. **MFA**, if Auth0 asks: on `/u/mfa-sms-challenge`, the code from Messages (sender
+   `Woolworths`, pattern `\b(\d{6})\b`, at most 5 minutes old); on `/u/mfa-otp-challenge`, the
+   `otp` field of the `login` 1Password item, but only with `createManifest({ totp: true })`;
+   otherwise (email, or an authenticator without `totp`) `needsUser`. Then tick "Remember this
+   device" if it is unticked (`input[name="rememberBrowser"]:not(:checked)`) and submit.
+4. `assertLoggedIn`.
+
+**Silent re-login.** When the www session has expired but Auth0's session (in the persistent auth
+partition) hasn't, `/auth/login` comes straight back to www with no page in between. The same
+steps then find themselves off the login pages after the `goto`, skip every page, type nothing,
+and assert the login. A remembered device skips step 3 the same way.
+
+Conditions only ever see a URL's path and query, never its host, so "off the login pages" is a
+path test: not under Auth0's `/u/`, `/authorize`, `/login` or `/continue`, nor www's `/auth/` or
+`/shop/securelogin`. They use `urlContains` and core-screened `urlRegex`.
+
+Each wait for the page to change is a `settle`: nested `when`s with pauses between looks (20 s in
+all), which return as soon as the page moves on and never fail. There is no `waitFor`, because
+its timeout ends the flow as `condition-timeout`, and the security model sends challenges and
+unexpected prompts to the person instead. Every way the flow can stop is a `needsUser` with a
+reason code and a fixed in-app note (`NOTES` in `src/manifest.ts`):
+
+| Where                                           | Reason           |
+| ----------------------------------------------- | ---------------- |
+| A CAPTCHA on any page, before typing there      | `captcha`        |
+| Still on the identifier page after Continue     | `login-required` |
+| Still on the password page: account blocked     | `account-locked` |
+| Still on the password page: anything else       | `login-required` |
+| An email code, or an authenticator without TOTP | `otp-required`   |
+| Still on the challenge page after the code      | `otp-required`   |
+| Another Auth0 page (terms, phone enrolment, …)  | `other`          |
+| No login page appeared at all                   | `other`          |
+
+The worst case is about 80 s of pauses (four settles), so the runtime's flow timeout must be
+longer than that, or a stalled login ends as `timeout` / `timed-out` instead.
 
 The request surface lists exactly the calls the tools make, and a test fails if a declaration goes
-unused. The login probe (`GET /api/ui/v2/bootstrap`) is not on it: the runtime makes the probe
-itself, outside the tool-code surface guard, so tool code can't read the shopper details that
-endpoint probably returns once logged in.
+unused. The login probe is not on it: the runtime makes the probe itself, outside the tool-code
+surface guard, so tool code can't read the shopper details that endpoint probably returns once
+logged in.
 
 ## Verified live and assumed
 
-From the anonymous probe of 2026-11-07
-([findings](../../docs/findings/2026-11-07-woolworths-live-probe.md)):
+From the probe of 2026-11-07 ([findings](../../docs/findings/2026-11-07-woolworths-live-probe.md)):
 
-| Item                                                                                                                  | Status                                                                                                                                                                                     |
-| --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Search POST body keys `SearchTerm`, `PageSize`, `PageNumber`, `SortType`, and the response shape                      | Verified                                                                                                                                                                                   |
-| Product detail path and response shape                                                                                | Verified                                                                                                                                                                                   |
-| Empty trolley response shape (`AvailableItems`, `Totals`, `Errors`, …)                                                | Verified                                                                                                                                                                                   |
-| Egress hosts: www, `cdn0.woolworths.media`, `acs.woolworths.com.au`                                                   | Verified as needed; whether the site works with analytics hosts blocked is untested                                                                                                        |
-| Search `IsSpecial` flag                                                                                               | **Assumed.** The tool also filters to specials locally, so results are right either way, but `total` is then the site's count                                                              |
-| Trolley item shape: product tiles with `QuantityInTrolley`                                                            | **Assumed.** The anonymous trolley was empty, so `trolley-two-items.json` is synthesised from real search tiles                                                                            |
-| Update body `{ items: [{ stockcode, quantity }] }`, absolute quantities, quantity 0 removes                           | **Assumed** from community code. Real clients may send more fields (`source`, `diagnostics`, …)                                                                                            |
-| Update response is the updated trolley                                                                                | **Assumed.** Otherwise the write is reported unconfirmed                                                                                                                                   |
-| Other trolley buckets hold product tiles; `ExceededSupplyLimitGroups` holds `{ Items }` groups                        | **Assumed.** Captured empty. An item that doesn't parse makes the trolley incomplete, so `add_to_cart` refuses it                                                                          |
-| A refused update replies 2xx with `Success: false` or a non-empty `Errors`                                            | **Assumed** from other Woolworths endpoints. A refusal in some other shape is reported unconfirmed, not as success                                                                         |
-| Login selectors `#loginForm-Email`, `#loginForm-Password`, `#loginForm-Submit`, `input[autocomplete="one-time-code"]` | **Assumed.** These are the fake site's. The real login page was behind Akamai's block during the probe; the real selectors must be recorded live, in a logged-in session with Nick present |
-| OTP step: a code input appears after submit, filled from the `login` item, and the page moves on by itself            | **Assumed.** Woolworths may send codes by SMS or email instead, which would need a `messages` OTP source, and may need a separate submit click                                             |
-| Login stays on www (no redirect to a separate identity host)                                                          | **Assumed.** A redirect elsewhere would abort the auth action until `navigation` lists it                                                                                                  |
-| Login probe `GET /api/ui/v2/bootstrap` → `ShopperDetails.IsLoggedIn === true`                                         | **Assumed.** The endpoint exists and returned 200 anonymously; the field path is unconfirmed. A token cookie is not a usable probe: anonymous visitors get `wow-auth-token` too            |
+| Item                                                                                                                     | Status                                                                                                                                                    |
+| ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Search POST body keys `SearchTerm`, `PageSize`, `PageNumber`, `SortType`, and the response shape                         | Verified                                                                                                                                                  |
+| Product detail path and response shape                                                                                   | Verified                                                                                                                                                  |
+| Empty trolley response shape (`AvailableItems`, `Totals`, `Errors`, …)                                                   | Verified                                                                                                                                                  |
+| Egress hosts: www, `cdn0.woolworths.media`, `acs.woolworths.com.au`                                                      | Verified as needed; whether the site works with analytics hosts blocked is untested                                                                       |
+| Login link `/auth/login?redirect_uri=…&path=/` redirecting to Auth0 on `auth.woolworths.com.au`                          | Verified (run 3, nothing typed)                                                                                                                           |
+| Identifier page: `input[name=username]`, `type=email`, a submit labelled Continue, separate passkey and Everyday options | Verified                                                                                                                                                  |
+| The Continue button's `name="action" value="default"`                                                                    | **Assumed** (Auth0's standard markup); the probe recorded only `type=submit`. If wrong, the click fails as `element-missing` before the password is typed |
+| Password page `/u/login/password`, `input#password[name=password]`                                                       | **Assumed** (Auth0 standard; not viewed, as that meant entering Nick's email)                                                                             |
+| Errors as `.ulp-input-error-message`, blocked account as `[data-error-code="user-blocked"]`                              | **Assumed** (Auth0 standard)                                                                                                                              |
+| CAPTCHA as `.ulp-captcha-container`                                                                                      | **Assumed** (Auth0 bot detection)                                                                                                                         |
+| MFA pages `/u/mfa-{sms,email,otp}-challenge`, `input#code`, `input[name=rememberBrowser]`                                | **Assumed** (Auth0 standard). Whether Nick's account has MFA, and which factor, is decision D4                                                            |
+| Messages sender `Woolworths` and a six-digit code                                                                        | **To be confirmed** when Nick next gets a code. The person approves the real sender when granting Messages access                                         |
+| The remember-device checkbox is visible to a click                                                                       | **Assumed.** If Auth0 styles the real input invisible, the tick is skipped and MFA is asked every login                                                   |
+| Silent re-login while Auth0's session lives                                                                              | **Assumed** (standard Auth0)                                                                                                                              |
+| After the callback, www's session cookies are on www or the bare domain, not the auth host                               | **Assumed.** The hand-off copies only `woolworths.com.au` and `www.woolworths.com.au`                                                                     |
+| Login probe `GET /api/ui/v2/bootstrap` → `ShopperDetails.IsLoggedIn === true`, 401 when logged out                       | **Assumed.** The endpoint exists and returned 200 anonymously; the field path is unconfirmed                                                              |
+| Search `IsSpecial` flag                                                                                                  | **Assumed.** The tool also filters to specials locally, so results are right either way, but `total` is then the site's count                             |
+| Trolley item shape: product tiles with `QuantityInTrolley`                                                               | **Assumed.** The anonymous trolley was empty, so `trolley-two-items.json` is synthesised from real search tiles                                           |
+| Update body `{ items: [{ stockcode, quantity }] }`, absolute quantities, quantity 0 removes                              | **Assumed** from community code. Real clients may send more fields (`source`, `diagnostics`, …)                                                           |
+| Update response is the updated trolley                                                                                   | **Assumed.** Otherwise the write is reported unconfirmed                                                                                                  |
+| Other trolley buckets hold product tiles; `ExceededSupplyLimitGroups` holds `{ Items }` groups                           | **Assumed.** Captured empty. An item that doesn't parse makes the trolley incomplete, so `add_to_cart` refuses it                                         |
+| A refused update replies 2xx with `Success: false` or a non-empty `Errors`                                               | **Assumed** from other Woolworths endpoints. A refusal in some other shape is reported unconfirmed, not as success                                        |
 
 The live site flagged four scripted calls in ten seconds (run 2 of the probe). Each tool makes at
-most two calls and the manifest caps a run at six, but pacing, caching and a backoff circuit
-breaker belong in the runtime.
+most two calls, the manifest caps a run at six requests and asks for at least 2.5 s between
+requests (`limits.minGapMs`); the rest of the pacing and the circuit breaker are the runtime's.
 
 ## Tests
 
 `test/fake-context.ts` is a `ToolContext` whose `page.fetch` serves fixtures and, like the runtime,
 refuses any request `decideRequest` would refuse for the manifest. `request-surface.test.ts` runs
 every tool against both the real and the fake manifest and checks each call's purpose against the
-tool's side effect.
+tool's side effect. `auth-steps.test.ts` walks the auth steps against scripted Auth0 pages, every
+combination included, and checks that the flow never runs off the end and types each secret at
+most once.
+
+`e2e.test.ts` runs the adapter against `@siteadapter/fake-woolworths-site` over real HTTPS
+(a test certificate from `openssl`; skipped without it), through `test/e2e/`: a stand-in for the
+runtime and the Electron driver, with a cookie jar per partition, a minimal DOM, the secret-fill
+guards, `ensure()` with the probe and hand-off, and each tool run held to the request surface,
+side effect and ceiling. It interprets only the steps this manifest uses, and resolves only the
+test hostnames, to 127.0.0.1. It proves the login through both origins (SMS and authenticator
+MFA, remember-device, silent re-login), each `needsUser` exit, the hostile form-action and
+field-type variants, every cart tool on the handed-off session, and that checkout is refused
+however it is spelled.
 
 Fixtures in `test/fixtures` were trimmed from the captured responses in
 `spikes/02-woolworths-shapes/results/shapes.json` (gitignored): `Aggregations` cut to one entry and
@@ -180,11 +247,15 @@ changing one field.
 
 ## Core change requests
 
-- **A typed `needsUser` signal for tool failures.** `EnsureResult` has one, but a tool can only
-  throw `SiteAdapterError(stage, errorClass)`, so the adapter borrows `auth-step` /
-  `not-logged-in`. A dedicated class (say `needs-user`) would let the runtime show the window
-  without guessing from the stage.
 - **Serialise a site's write tools.** `add_to_cart` reads then writes an absolute quantity, so
   two parallel calls lose an addition. The runtime should queue `write` and `irreversible` tool
   runs per adapter (reads can stay parallel), and should not retry a write tool after its request
   may have reached the site.
+- **Page-initiated requests and the request surface.** Core v2 has the driver hold every request
+  in the tool partition, the site's own scripts' included, to the request surface and the ceiling.
+  The live homepage makes its own API calls on load (`/api/ui/v2/bootstrap`, `/apis/ui/settings`,
+  `/auth/heartbeat`, `acs.woolworths.com.au/rest/v1/delivery`, Akamai sensor POSTs to random
+  paths). Declaring them would let tool code read bootstrap's shopper details, and the sensor
+  paths can't be declared at all; refusing them may break the page and look odd to Akamai.
+  Page-initiated calls probably need their own allowance (egress only, or a separate list that
+  tool code can't use), and a ceiling that counts them separately from the tool's.
