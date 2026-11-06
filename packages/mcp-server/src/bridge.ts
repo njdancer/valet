@@ -3,9 +3,10 @@
 // the endpoint, and adds only the bearer token. Nothing but protocol messages is written to the
 // output: for a stdio client, any other byte there is a protocol error.
 //
-// The endpoint's port and token change when the app restarts, which ends the session under a
-// client that is still running. With `reconnect`, the bridge then re-reads where the endpoint is,
-// replays the client's initialize into a new session, and tells the client to re-list its tools.
+// The endpoint's token changes when the app restarts (and its port, if the saved one is taken) or
+// when the person resets the token, which ends the session under a client that is still running.
+// With `reconnect`, the bridge then re-reads where the endpoint is, replays the client's
+// initialize into a new session, and tells the client to re-list its tools.
 //
 // Every request the client sends gets exactly one answer. A request whose response stream ends
 // without one (the app quit mid-call) is answered with a fixed error at once, rather than leaving

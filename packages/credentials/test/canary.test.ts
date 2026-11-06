@@ -70,6 +70,8 @@ function expectNoCanary(text: string): void {
 describe('canary secrets', () => {
   it('never appear in errors or output from the op CLI provider', async () => {
     const ok = new OnePasswordCliProvider({
+      searchPath: null,
+      isExecutable: async () => true,
       spawner: scriptedSpawner((child) => child.finish(0, PASSWORD)).spawner,
       timers: new ManualTimers(),
     })
@@ -78,6 +80,8 @@ describe('canary secrets', () => {
     expectNoCanary([String(value), JSON.stringify({ value }), inspect(value)].join('\n'))
 
     const failing = new OnePasswordCliProvider({
+      searchPath: null,
+      isExecutable: async () => true,
       spawner: scriptedSpawner((child) => child.finish(1, PASSWORD, `[ERROR] bad value ${PASSWORD}`)).spawner,
       timers: new ManualTimers(),
     })

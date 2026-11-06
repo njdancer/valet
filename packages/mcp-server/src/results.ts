@@ -1,30 +1,56 @@
-// Turns a runtime outcome into an MCP tool result. Anything that is not `ok` is a tool error, so
-// the agent sees it and can act on it, with text from fixed templates: nothing the runtime returns
-// is passed through except a declared output, a needsUser reason and a retry delay.
+// Turns a runtime outcome into an MCP tool result, with text from fixed templates: nothing the
+// runtime returns is passed through except a declared output, and codes and numbers checked against
+// fixed vocabularies. failed, blocked and declined are tool errors, so the agent sees them and can act
+// on them; needsUser is not an error, because nothing went wrong: the person has to do something.
 
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
-import { ERROR_CLASSES, type ErrorClass, STAGES, type Stage } from '@siteadapter/core'
+import {
+  ERROR_CLASSES,
+  type ErrorClass,
+  NEEDS_USER_REASONS,
+  type NeedsUserReason,
+  STAGES,
+  type Stage,
+} from '@siteadapter/core'
 import type { CallOutcome } from './tool-caller'
 
-const MAX_REASON_LENGTH = 200
+/** The classes a blocked outcome may carry. */
+const RETRYABLE: readonly ErrorClass[] = ['blocked-by-site', 'rate-limited']
 
+/**
+ * `structured`: the tool declares an output schema. MCP requires every non-error result of such a
+ * tool to carry structured content matching that schema (the SDK enforces it on both ends), which a
+ * needsUser result can't, so for those tools needsUser goes out flagged as an error. Its text is
+ * the same either way.
+ */
 export function toolResult(outcome: CallOutcome, structured: boolean): CallToolResult {
   switch (outcome.status) {
     case 'ok':
       return okResult(outcome.output, structured)
     case 'needsUser':
-      return errorResult(
-        `The person needs to open siteadapter to continue (${cleanReason(outcome.reason)}). ` +
-          'Ask them to, then call this tool again.',
+      return textResult(
+        `Not done yet: the person has been asked to act in the siteadapter app (reason: ${needsUserCode(outcome.reason)}). ` +
+          'Call this tool again once they have.',
+        structured,
       )
     case 'failed':
       return failedResult(outcome.stage, outcome.errorClass)
-    case 'blocked':
-      return errorResult(
-        `The site is limiting requests. Try again in ${retryAfterSeconds(outcome.retryAfterMs)} seconds.`,
+    case 'blocked': {
+      // Only a site's refusal or a rate limit passes with time; a guard's refusal (denied-path,
+      // request-ceiling, ...) never will, and "try again" would invite a retry loop against it.
+      if (!RETRYABLE.includes(outcome.errorClass)) return failedResult(outcome.stage, outcome.errorClass)
+      const { stage, errorClass } = safeCodes(outcome.stage, outcome.errorClass)
+      return textResult(
+        `The site is refusing or limiting requests (stage ${stage}: ${errorClass}). ` +
+          `Try again in ${retryAfterSeconds(outcome.retryAfterMs)} seconds.`,
+        true,
       )
+    }
     case 'declined':
-      return errorResult('the person declined this action')
+      return textResult(
+        'The person did not approve this action in the siteadapter app (stage confirm: declined).',
+        true,
+      )
   }
 }
 
@@ -33,9 +59,8 @@ export function toolResult(outcome: CallOutcome, structured: boolean): CallToolR
  * a runtime bug that put free text here still can't reach the client.
  */
 export function failedResult(stage: Stage, errorClass: ErrorClass): CallToolResult {
-  const safeStage = STAGES.includes(stage) ? stage : 'tool-run'
-  const safeClass = ERROR_CLASSES.includes(errorClass) ? errorClass : 'internal'
-  return errorResult(`The tool failed at stage ${safeStage}: ${safeClass}.`)
+  const safe = safeCodes(stage, errorClass)
+  return textResult(`The tool failed at stage ${safe.stage}: ${safe.errorClass}.`, true)
 }
 
 function okResult(output: unknown, structured: boolean): CallToolResult {
@@ -46,14 +71,22 @@ function okResult(output: unknown, structured: boolean): CallToolResult {
   return result
 }
 
-function errorResult(text: string): CallToolResult {
-  return { content: [{ type: 'text', text }], isError: true }
+function textResult(text: string, isError: boolean): CallToolResult {
+  return isError
+    ? { content: [{ type: 'text', text }], isError: true }
+    : { content: [{ type: 'text', text }] }
 }
 
-function cleanReason(reason: string): string {
-  // Control characters could forge extra lines in what the agent reads.
-  const flat = reason.replace(/[\p{Cc}\p{Cf}]+/gu, ' ').trim()
-  return flat.length > MAX_REASON_LENGTH ? `${flat.slice(0, MAX_REASON_LENGTH)}…` : flat
+function safeCodes(stage: Stage, errorClass: ErrorClass): { stage: Stage; errorClass: ErrorClass } {
+  return {
+    stage: STAGES.includes(stage) ? stage : 'tool-run',
+    errorClass: ERROR_CLASSES.includes(errorClass) ? errorClass : 'internal',
+  }
+}
+
+/** Only a code from the fixed vocabulary; anything else, such as manifest text, becomes `other`. */
+function needsUserCode(reason: NeedsUserReason): NeedsUserReason {
+  return NEEDS_USER_REASONS.includes(reason) ? reason : 'other'
 }
 
 function retryAfterSeconds(ms: number): number {

@@ -36,3 +36,14 @@ export function parseOtpSender(sender: string): OtpSender | null {
   if (ALPHANUMERIC.test(lower)) return { kind: 'alphanumeric', handle: lower, services: CARRIER_SERVICES }
   return null
 }
+
+/**
+ * True when `a` and `b` name the same Messages handle, however each is written ("+61 400 000 000"
+ * and "+61400000000", "Woolworths" and "woolworths"). The runtime uses it to check that a messages
+ * grant's itemRef is the sender the manifest's OTP source names. False if either is not a sender.
+ */
+export function sameOtpSender(a: string, b: string): boolean {
+  const left = parseOtpSender(a)
+  const right = parseOtpSender(b)
+  return left !== null && right !== null && left.kind === right.kind && left.handle === right.handle
+}

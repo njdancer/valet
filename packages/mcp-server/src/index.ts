@@ -1,5 +1,6 @@
 export * from './bridge'
 export * from './bridge-config'
+export * from './endpoint'
 export * from './http'
 export * from './server'
 export * from './token'

@@ -22,7 +22,7 @@ export interface Timers {
 
 // A helper gets only what it needs to run. Inheriting OP_SERVICE_ACCOUNT_TOKEN, OP_CONNECT_* or
 // OP_SESSION_* from a developer's shell would let `op` authenticate some other way than the one a
-// grant names. PATH stays because `op` is found through it when no absolute path is configured.
+// grant names. PATH stays for whatever op runs in turn; op itself is always run by absolute path.
 const PASSED_THROUGH = ['HOME', 'USER', 'LOGNAME', 'PATH', 'TMPDIR'] as const
 
 /** The environment helpers run with. LANG=C keeps the stderr phrases the classifiers match stable. */

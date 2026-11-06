@@ -3,11 +3,23 @@
 
 import { CredentialError, type CredentialProvider, type SecretField, SecretValue } from '@siteadapter/core'
 import { parseItemRef, secretReference } from './item-ref'
+import { isExecutableFile, locateExecutable } from './locate'
 import { nodeSpawner, nodeTimers, runProcess, type Spawner, type Timers } from './process'
 
+/**
+ * Where op is looked for before PATH: Homebrew on Apple silicon, then Homebrew on Intel, which is
+ * also where 1Password's own installer puts it. An app started from Finder has a minimal PATH that
+ * holds neither.
+ */
+export const DEFAULT_OP_PATHS: readonly string[] = ['/opt/homebrew/bin/op', '/usr/local/bin/op']
+
 export interface OnePasswordCliOptions {
-  /** The op binary. An app started from Finder has a minimal PATH, so pass an absolute path there. */
-  readonly opPath?: string
+  /** Absolute paths tried in order before PATH. Relative ones are ignored. */
+  readonly opPaths?: readonly string[]
+  /** Searched for op after opPaths, absolute entries only. Defaults to this process's PATH; null skips it. */
+  readonly searchPath?: string | null
+  /** True when an executable regular file is at an absolute path. Injected so tests never look at disk. */
+  readonly isExecutable?: (path: string) => Promise<boolean>
   readonly spawner?: Spawner
   readonly timers?: Timers
   /** Long enough for the person to answer a Touch ID prompt. */
@@ -28,13 +40,19 @@ const MAX_SECRET_BYTES = 64 * 1024
 
 export class OnePasswordCliProvider implements CredentialProvider {
   readonly kind = 'onepassword-cli' as const
-  readonly #opPath: string
+  readonly #opPaths: readonly string[]
+  readonly #searchPath: string | null
+  readonly #isExecutable: (path: string) => Promise<boolean>
   readonly #spawner: Spawner
   readonly #timers: Timers
   readonly #timeoutMs: number
+  // Found once and kept, until a run reports it gone.
+  #opPath: string | null = null
 
   constructor(options: OnePasswordCliOptions = {}) {
-    this.#opPath = options.opPath ?? 'op'
+    this.#opPaths = options.opPaths ?? DEFAULT_OP_PATHS
+    this.#searchPath = options.searchPath === undefined ? (process.env['PATH'] ?? null) : options.searchPath
+    this.#isExecutable = options.isExecutable ?? isExecutableFile
     this.#spawner = options.spawner ?? nodeSpawner
     this.#timers = options.timers ?? nodeTimers
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
@@ -44,13 +62,17 @@ export class OnePasswordCliProvider implements CredentialProvider {
     const ref = parseItemRef(itemRef)
     if (ref === null) throw new CredentialError('not-found')
     const reference = secretReference(ref, field, 'otp')
-    const outcome = await runProcess(this.#spawner, this.#opPath, ['read', '--no-newline', reference], {
+    const opPath = await this.#locate()
+    if (opPath === null) throw new CredentialError('unavailable')
+    const outcome = await runProcess(this.#spawner, opPath, ['read', '--no-newline', reference], {
       timeoutMs: this.#timeoutMs,
       maxStdoutBytes: MAX_SECRET_BYTES,
       timers: this.#timers,
     })
     switch (outcome.kind) {
       case 'missing':
+        // Removed since it was found; look again next time.
+        this.#opPath = null
         throw new CredentialError('unavailable')
       case 'timed-out':
         // Most likely an unanswered Touch ID or unlock prompt.
@@ -65,6 +87,11 @@ export class OnePasswordCliProvider implements CredentialProvider {
         if (outcome.stdout.length === 0) throw new CredentialError('field-missing')
         return SecretValue.fromBuffer(outcome.stdout)
     }
+  }
+
+  async #locate(): Promise<string | null> {
+    this.#opPath ??= await locateExecutable('op', this.#opPaths, this.#searchPath, this.#isExecutable)
+    return this.#opPath
   }
 }
 

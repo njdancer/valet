@@ -2,7 +2,7 @@
 // imports the runtime, so the endpoint can be tested against a fake and the runtime can change
 // behind this seam.
 
-import type { ErrorClass, Stage, ToolDeclaration } from '@siteadapter/core'
+import type { ErrorClass, NeedsUserReason, Stage, ToolDeclaration } from '@siteadapter/core'
 import type { z } from 'zod'
 
 export interface ListedTool {
@@ -25,11 +25,26 @@ export interface ToolCall {
   readonly signal?: AbortSignal
 }
 
+/** How a call ended: one variant per core RunOutcome. Nothing in it is free text. */
 export type CallOutcome =
   | { readonly status: 'ok'; readonly output: unknown }
-  | { readonly status: 'needsUser'; readonly reason: string }
+  /**
+   * The run stopped and the person has been asked to act in the app. Only the reason code crosses
+   * this seam; a manifest's note for the person is shown in the app and never sent to the client.
+   */
+  | { readonly status: 'needsUser'; readonly reason: NeedsUserReason }
   | { readonly status: 'failed'; readonly stage: Stage; readonly errorClass: ErrorClass }
-  | { readonly status: 'blocked'; readonly retryAfterMs: number }
+  /**
+   * The site refused or rate-limited us, or our own rate budget or circuit breaker held the call
+   * back (errorClass blocked-by-site or rate-limited). retryAfterMs is when to try again.
+   */
+  | {
+      readonly status: 'blocked'
+      readonly stage: Stage
+      readonly errorClass: ErrorClass
+      readonly retryAfterMs: number
+    }
+  /** The person declined the confirmation in the app, or didn't answer it in time. */
   | { readonly status: 'declined' }
 
 export interface ToolCaller {

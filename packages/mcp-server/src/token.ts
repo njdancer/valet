@@ -28,12 +28,13 @@ export function tokensEqual(presented: string, expected: string): boolean {
 }
 
 export async function writeTokenFile(path: string, token: string): Promise<void> {
-  if (!isWellFormedToken(token)) throw new SiteAdapterError('credential', 'invalid')
+  if (!isWellFormedToken(token)) throw new SiteAdapterError('config', 'invalid')
   await writePrivateFile(path, `${token}\n`)
 }
 
+/** Throws SiteAdapterError('config', 'not-found' | 'insecure-file' | 'invalid' | 'unavailable'). */
 export async function readTokenFile(path: string): Promise<string> {
   const token = (await readPrivateFile(path)).trim()
-  if (!isWellFormedToken(token)) throw new SiteAdapterError('credential', 'invalid')
+  if (!isWellFormedToken(token)) throw new SiteAdapterError('config', 'invalid')
   return token
 }

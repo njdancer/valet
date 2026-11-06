@@ -7,13 +7,8 @@
 // would let any process read the token. See "The service-account token" in docs/security-model.md;
 // the replacement reads in process through SecItemCopyMatching behind the same TokenSource.
 
-import { CredentialError, SecretValue } from '@siteadapter/core'
+import { CredentialError, SecretValue, type TokenSource } from '@siteadapter/core'
 import { nodeSpawner, nodeTimers, runProcess, type Spawner, type Timers } from './process'
-
-/** Something that hands out a token on demand. The caller disposes each value it gets. */
-export interface TokenSource {
-  token(): Promise<SecretValue>
-}
 
 export interface KeychainTokenOptions {
   readonly service: string
@@ -32,6 +27,7 @@ const EXIT_ITEM_NOT_FOUND = 44
 const LOCKED = /\bcancel|\bdenied\b|\binteraction is not allowed\b|\bauthori[sz]ation\b|\blocked\b/i
 const NOT_FOUND = /\bcould not be found\b/i
 
+/** Hands out the token from the Keychain on each call. The caller disposes each value it gets. */
 export class KeychainTokenSource implements TokenSource {
   readonly #options: Required<KeychainTokenOptions>
 
