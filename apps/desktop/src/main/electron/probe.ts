@@ -3,6 +3,9 @@
 // contract: GET only, the auth partition's own cookies, the manifest's navigation origins only, no
 // script in any page. Remove it once SurfaceAuthPage has both.
 
+// Electron glue: covered by the smoke test (test/smoke) and the e2e suite, not by unit tests.
+/* v8 ignore start */
+
 import type { AuthProbe } from '@siteadapter/auth-flow'
 import { cookiesForDomains, partitionName } from '@siteadapter/browser-electron'
 import { type AdapterManifest, type FetchResult, SiteAdapterError, urlOriginAllowed } from '@siteadapter/core'
@@ -80,3 +83,4 @@ export function partitionProbe(manifest: AdapterManifest): AuthProbe {
     },
   }
 }
+/* v8 ignore stop */

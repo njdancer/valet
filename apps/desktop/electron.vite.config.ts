@@ -40,6 +40,8 @@ function fakeSiteFixtures(): Plugin {
 export default defineConfig({
   main: {
     plugins: [fakeSiteFixtures()],
+    // Until zod is a dependency of this package: core's copy (src/main/core/zod.ts).
+    resolve: { alias: { zod: resolve(here, '../../packages/core/node_modules/zod') } },
     build: {
       outDir: resolve(here, 'out/main'),
       externalizeDeps: false,

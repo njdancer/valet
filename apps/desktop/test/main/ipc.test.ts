@@ -236,3 +236,67 @@ describe('failures', () => {
     expect((error as Error).message).toBe('siteadapter: request refused')
   })
 })
+
+describe('every channel', () => {
+  const HASH64 = 'a'.repeat(64)
+  const valid: Record<(typeof INVOKE_METHODS)[number], unknown[]> = {
+    'adapters.list': [],
+    'adapters.get': ['woolworths'],
+    'approvals.pending': [],
+    'approvals.approve': ['woolworths', HASH64],
+    'approvals.reject': ['woolworths', HASH64],
+    'grants.list': [],
+    'grants.providers': [],
+    'grants.vaultItems': ['onepassword-cli'],
+    'grants.make': [
+      {
+        adapterId: 'woolworths',
+        adapterHash: HASH64,
+        secret: 'login',
+        provider: 'onepassword-cli',
+        itemRef: 'abc',
+        origins: ['https://auth.woolworths.com.au'],
+      },
+    ],
+    'grants.revoke': ['woolworths', 'login'],
+    'runs.list': [{ adapterId: 'woolworths', limit: 5 }],
+    'runs.trace': ['call_1'],
+    'runs.statsToday': [],
+    'audit.page': [{ category: 'logins', since: '2026-11-07T00:00:00.000Z' }],
+    'audit.verify': [],
+    'audit.chainStatus': [],
+    'audit.exportJsonl': [],
+    'endpoint.status': [],
+    'endpoint.setListening': [false],
+    'endpoint.rotateToken': [],
+    'endpoint.snippets': [],
+    'endpoint.copyClientConfig': ['claude-desktop'],
+    'endpoint.copyUrl': [],
+    'clients.list': [],
+    'clients.revoke': ['c_0123456789abcdef'],
+    'attention.list': [],
+    answerConfirmation: ['cf_1', false],
+    openLoginWindow: ['woolworths'],
+    finishLogin: ['woolworths'],
+    closeLoginWindow: ['woolworths'],
+    'settings.get': [],
+    'settings.set': [{ messagesOtpEnabled: true }],
+    'settings.chooseOpPath': [],
+    'settings.clearOpPath': [],
+    'updates.status': [],
+    'updates.check': [],
+    'health.sites': [],
+    'app.status': [],
+    'app.setPaused': [true],
+    'app.openControlPanel': ['#/activity'],
+    'app.copyText': ['hello'],
+    'app.quit': [],
+  }
+
+  it.each(INVOKE_METHODS)('%s reaches its own API method with its arguments', async (method) => {
+    const { d, calls } = dispatcher()
+    await expect(d.dispatch(invokeChannel(method), valid[method], control)).resolves.toEqual({ method })
+    const expected = method === 'answerConfirmation' ? [...valid[method], 'control'] : valid[method]
+    expect(calls).toEqual([{ method, args: expected }])
+  })
+})

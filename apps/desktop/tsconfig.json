@@ -5,7 +5,9 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ES2024", "DOM", "DOM.Iterable"],
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    // Until zod is a dependency of this package: core's copy (src/main/core/zod.ts).
+    "paths": { "zod": ["../../packages/core/node_modules/zod"] }
   },
   "include": ["src", "test", "vite.config.ts", "vitest.config.ts", "electron.vite.config.ts"]
 }

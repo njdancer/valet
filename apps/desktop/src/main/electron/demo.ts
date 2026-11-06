@@ -3,6 +3,9 @@
 // certificate is trusted for exactly those two hosts, on exactly the adapter's two partitions;
 // everything else keeps Chromium's own verification. Loaded only in demo mode.
 
+// Electron glue: covered by the smoke test (test/smoke) and the e2e suite, not by unit tests.
+/* v8 ignore start */
+
 import { X509Certificate } from 'node:crypto'
 import { connect } from 'node:net'
 import { MESSAGES_SENDER } from '@siteadapter/adapter-woolworths'
@@ -63,3 +66,4 @@ export function trustDemoCertificate(adapterId: string, fingerprint: string): vo
     })
   }
 }
+/* v8 ignore stop */

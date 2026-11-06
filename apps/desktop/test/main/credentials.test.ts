@@ -135,7 +135,8 @@ describe('checkOpBinary', () => {
   })
 
   it('refuses a binary 1Password did not sign, or one codesign can’t check', async () => {
-    for (const answers of [{ '/usr/bin/codesign --verify': { code: 3 } }, {}]) {
+    const answerSets: Record<string, { code: number }>[] = [{ '/usr/bin/codesign --verify': { code: 3 } }, {}]
+    for (const answers of answerSets) {
       const { spawn } = spawner(answers)
       expect(
         await checkOpBinary('/opt/homebrew/bin/op', {

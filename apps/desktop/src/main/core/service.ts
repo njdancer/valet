@@ -476,7 +476,9 @@ export class AppService {
           // Only the bundle installed and waiting now; a stale review's hash is refused.
           if (adapter.hash !== hash) throw new SiteAdapterError('manifest', 'invalid')
           await this.approvals.approve(adapterId, hash, adapter.definition.manifest.version)
-          await this.snapshots.put(adapterId, adapter, new Date(deps.now()).toISOString())
+          const at = new Date(deps.now()).toISOString()
+          await this.snapshots.put(adapterId, adapter, at)
+          this.approvedAt.set(`${adapterId}:${hash}`, at)
           await this.refreshTools()
         },
         reject: async (adapterId, hash) => {

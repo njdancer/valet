@@ -3,7 +3,7 @@
 // and audit"), and that nothing in it comes from a step's note.
 
 import { createManifest } from '@siteadapter/adapter-woolworths'
-import { type ManifestInput, parseManifest } from '@siteadapter/core'
+import { type AuthStep, type ManifestInput, parseManifest } from '@siteadapter/core'
 import { describe, expect, it } from 'vitest'
 import {
   addsPermissions,
@@ -144,7 +144,7 @@ describe('permissionDiff', () => {
       (m) => ({
         ...m,
         auth: {
-          steps: m.auth.steps.map((s) =>
+          steps: (m.auth.steps as AuthStep[]).map((s) =>
             s.op === 'fill' && s.selector === '#pass' ? { ...s, selector: '#search' } : s,
           ),
         },
@@ -156,7 +156,7 @@ describe('permissionDiff', () => {
       (m) => ({
         ...m,
         auth: {
-          steps: m.auth.steps.map((s) =>
+          steps: (m.auth.steps as AuthStep[]).map((s) =>
             s.op === 'otp'
               ? { ...s, source: { messages: { sender: 'Other', pattern: '(\\d{6})', maxAgeSeconds: 300 } } }
               : s,

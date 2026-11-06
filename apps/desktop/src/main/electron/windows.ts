@@ -3,6 +3,9 @@
 // and may show only the app's own pages: navigation and new windows are refused, and the default
 // session loads nothing but the renderer's files.
 
+// Electron glue: covered by the smoke test (test/smoke) and the e2e suite, not by unit tests.
+/* v8 ignore start */
+
 import { partitionName } from '@siteadapter/browser-electron'
 import { BrowserWindow, type Rectangle, screen, session, type WebContents } from 'electron'
 import { parseRoute } from '../../renderer/lib/routes'
@@ -280,3 +283,4 @@ function sameOrigin(url: string, origin: string): boolean {
     return false
   }
 }
+/* v8 ignore stop */

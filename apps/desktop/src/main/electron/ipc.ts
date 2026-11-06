@@ -1,6 +1,9 @@
 // ipcMain glue: one handler per channel, each handing the request and who sent it to the
 // dispatcher (core/ipc.ts), which checks everything. The event channel goes to our windows only.
 
+// Electron glue: covered by the smoke test (test/smoke) and the e2e suite, not by unit tests.
+/* v8 ignore start */
+
 import { type IpcMainInvokeEvent, ipcMain } from 'electron'
 import type { AppEvent } from '../../shared/api'
 import { EVENT_CHANNEL, INVOKE_METHODS, invokeChannel } from '../core/channels'
@@ -43,3 +46,4 @@ export function registerIpc(
 export function broadcast(windows: AppWindows, event: AppEvent): void {
   for (const window of windows.all()) window.webContents.send(EVENT_CHANNEL, event)
 }
+/* v8 ignore stop */

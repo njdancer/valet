@@ -1,6 +1,9 @@
 // The Electron main process: decides the launch mode before ready, takes the single-instance lock,
 // builds the service with Electron's ports, and puts the app in the menu bar.
 
+// Electron glue: covered by the smoke test (test/smoke) and the e2e suite, not by unit tests.
+/* v8 ignore start */
+
 import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import {
@@ -193,3 +196,4 @@ if (!app.requestSingleInstanceLock()) {
     app.exit(1)
   })
 }
+/* v8 ignore stop */
