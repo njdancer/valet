@@ -192,8 +192,7 @@ So the manifest's `navigation` is `https://www.woolworths.com.au` and
 so a host-only Auth0 cookie stays in the auth partition; one set on `.woolworths.com.au` would
 not, which M2 checks. The auth steps go to `www…/auth/login` first: if Auth0 still has a session
 it redirects straight back, the probe passes, and no secret is resolved at all. Only when the
-identifier page appears does the flow
-fill.
+identifier page appears does the flow fill.
 
 **On `main`:** the round-1 adapter and fake site still model a same-origin login on www
 (`/shop/securelogin`, `#loginForm-*`), with the fake's selectors. Moving both to the Auth0 shape
