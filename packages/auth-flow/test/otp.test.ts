@@ -167,6 +167,7 @@ describe('otp from Messages', () => {
     expect(await runAuthFlow(w.input)).toEqual({ status: 'failed', stage: 'otp', errorClass: 'not-found' })
     expect(w.page.typed).toEqual([])
     expect(w.clock.now).toBe(START + 5000)
+    expect(w.clock.sleeps).toEqual([OTP_POLL_MS, OTP_POLL_MS, OTP_POLL_MS, OTP_POLL_MS, OTP_POLL_MS])
   })
 
   it('ignores a code from another sender', async () => {

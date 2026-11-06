@@ -226,6 +226,7 @@ describe('waitFor', () => {
       errorClass: 'condition-timeout',
     })
     expect(w.clock.now).toBe(START + 1000)
+    expect(w.clock.sleeps).toEqual([POLL_MS, POLL_MS, POLL_MS, POLL_MS])
   })
 
   it('gives the condition one last look at the deadline', async () => {
@@ -279,6 +280,7 @@ describe('waitFor', () => {
       errorClass: 'timed-out',
     })
     expect(w.clock.now).toBe(START + 2000)
+    expect(w.clock.sleeps).toHaveLength(2000 / POLL_MS)
   })
 
   it('reports a page that throws while being inspected as auth-step: internal', async () => {

@@ -14,20 +14,49 @@ import {
   SecretValue,
 } from '@siteadapter/core'
 
-/** A clock that only moves when the code under test sleeps. */
+/** Thrown by FakeClock when the code under test has slept too often or too long. Tests only. */
+export class RunawayLoop extends Error {
+  constructor(reason: string) {
+    super(`runaway loop: ${reason}`)
+    this.name = 'RunawayLoop'
+  }
+}
+
+/**
+ * A clock that only moves when the code under test sleeps. It gives up after too many sleeps, or
+ * too much fake time, so that a broken deadline check fails its test instead of spinning the suite
+ * in microtasks forever, where vitest's timeout timer would never get to fire.
+ */
 export class FakeClock {
+  static readonly MAX_SLEEPS = 10_000
+  /** Well past any flow budget a test sets. */
+  static readonly MAX_ELAPSED_MS = 24 * 60 * 60 * 1000
+
   readonly sleeps: number[] = []
   /** Runs after each sleep, for tests that change the page while the interpreter waits. */
   onSleep: (() => void) | null = null
+  /** Set once a sleep has been refused, in case the code under test swallows the error. */
+  runaway = false
+  private readonly startedAt: number
 
-  constructor(public now: number) {}
+  constructor(public now: number) {
+    this.startedAt = now
+  }
 
   readonly clock = (): Date => new Date(this.now)
 
   readonly sleep = async (ms: number): Promise<void> => {
+    if (this.sleeps.length >= FakeClock.MAX_SLEEPS) this.refuse(`more than ${FakeClock.MAX_SLEEPS} sleeps`)
+    if (!Number.isFinite(ms) || ms < 0) this.refuse(`sleep(${ms})`)
+    if (this.now + ms - this.startedAt > FakeClock.MAX_ELAPSED_MS) this.refuse('a day of fake time')
     this.sleeps.push(ms)
     this.now += ms
     this.onSleep?.()
+  }
+
+  private refuse(reason: string): never {
+    this.runaway = true
+    throw new RunawayLoop(reason)
   }
 }
 
