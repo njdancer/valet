@@ -61,7 +61,7 @@ mise exec -- pnpm --filter @siteadapter/desktop test:smoke  # a demo build, then
 mise exec -- pnpm --filter @siteadapter/desktop test:e2e    # a demo build, then the end-to-end suite (e2e/)
 mise exec -- pnpm --filter @siteadapter/desktop screens:live # a demo build, then screens/live/ from the real app
 mise exec -- pnpm --filter @siteadapter/desktop package     # a plain build, then dist/: siteadapter-dev.app and its zip
-mise exec -- pnpm --filter @siteadapter/desktop package:smoke # a plain build, packaged and launched (see Packaging)
+mise exec -- pnpm --filter @siteadapter/desktop package:smoke # a smoke build, packaged and launched (see Packaging)
 mise exec -- pnpm --filter @siteadapter/desktop exec vite   # the renderer alone, on the fake API
 mise exec -- node apps/desktop/src/renderer/dev/screenshot.mjs      # every screen to screens/
 mise exec -- pnpm exec tsc --noEmit -p apps/desktop                    # renderer (DOM), tests
@@ -191,8 +191,16 @@ workspace package and npm dependency is bundled into `out/main`. No source maps.
 preload builds empty their output first, so a demo build's chunk and fixtures never reach a plain
 one.
 
-`package:smoke` runs a plain build, then `scripts/package-smoke.mjs`, which packages twice in a
-temporary directory and deletes everything afterwards (`--keep` keeps it):
+A release packages whatever `out/` holds, so `electron-builder.config.ts` checks it first: for
+`SITEADAPTER_RELEASE=1` it refuses an `out/main` that doesn't hold the same `SITEADAPTER_UPDATE_URL`
+and a feed public key, or that is a smoke build (`checkReleaseBundle`). The vite step itself refuses
+a release without a feed, or one that isn't a plain build (`core/feed-defines.ts`).
+
+`package:smoke` runs a smoke build (`electron-vite build --mode smoke`), then
+`scripts/package-smoke.mjs`, which packages twice in a temporary directory and deletes everything
+afterwards (`--keep` keeps it). A smoke build is a plain build plus two things behind
+`__SITEADAPTER_SMOKE_BUILD__` (`core/smoke.ts`): it also accepts the smoke's own argv, and once up it
+writes a self-check to `userData/smoke-report.json`. A plain build has neither.
 
 1. A placeholder app (`scripts/smoke/main.cjs`), for the checks that need code of its own: the fuse
    wire, the asar and Info.plist, `ELECTRON_RUN_AS_NODE`, `NODE_OPTIONS` and `--inspect` refused, a
@@ -201,17 +209,35 @@ temporary directory and deletes everything afterwards (`--keep` keeps it):
    `app.getPath('appData')` and `userData` under it.
 2. The real app from the real `out/` (`scripts/smoke/real-app.mjs`): Info.plist, the fuse wire, and
    an asar holding only the build and the SDK (no demo chunk, fixtures or maps). Then it is launched
-   under a temporary `HOME` (and `CFFIXED_USER_HOME`), with Chromium's mock keychain, a host
-   resolver that resolves nothing but loopback, and `--remote-debugging-port=0`. Over the DevTools
-   protocol it must show the control panel on `app://renderer/index.html` with Woolworths waiting
-   for review, the preload's API and no Node. Then it quits through its own quit path, its data
-   must be under the temporary `HOME`, and the real `~/Library/Application Support/siteadapter`
-   and `siteadapter-dev` must be as they were. It doesn't launch at all unless step 1 showed the
-   temporary `HOME` moving the data. Playwright can't drive it: its Electron launcher needs
-   `--inspect`, which the fuses turn off.
+   under a temporary `HOME` (and `CFFIXED_USER_HOME`), with no `ELECTRON_*` or `NODE_*` variables
+   and exactly the smoke argv: Chromium's mock keychain, `--remote-debugging-port=0`, and a host
+   resolver that resolves nothing but loopback. Over the DevTools protocol it must show the control
+   panel on `app://renderer/index.html` with Woolworths waiting for review, the preload's API and no
+   Node. The self-check must say the 1Password SDK resolved from `app.asar` and imported (its wasm
+   included), and that the bundled electron-updater imported. Then it quits through its own quit
+   path, and its data must be under the temporary `HOME`. Next it is launched with argv and
+   variables it must refuse, each under a fresh `HOME`: a DevTools port alone, a single-dash one,
+   the smoke argv with one more switch or reordered, a host resolver rule, a relative bridge config,
+   `ELECTRON_ENABLE_LOGGING` and `NODE_TLS_REJECT_UNAUTHORIZED`. Each must exit with status 64 and
+   write none of the app's data. Last, every entry under the real
+   `~/Library/Application Support/siteadapter` and `siteadapter-dev` (path, size, mtime) must be as it
+   was. It doesn't launch at all unless step 1 showed the temporary `HOME` moving the data.
+   Playwright can't drive it: its Electron launcher needs `--inspect`, which the fuses turn off.
 
 ## The main process
 
+- **The command line is checked first** (`electron/guard.ts`, `core/argv.ts`). `src/main/index.ts`
+  imports the guard before anything else, so it runs before ready, the single-instance lock, any
+  window or any secret. A packaged app takes only two argv shapes: the executable alone (or with
+  macOS's `-psn_…` argument, not verified to still be passed), and `--mcp-bridge <absolute path>`.
+  Bridge mode isn't built yet, so it is refused too, with its own message. A smoke build also takes
+  exactly the smoke's argv. Any `ELECTRON_*` or `NODE_*` variable but `NODE_USE_SYSTEM_CA` is
+  refused. A refused launch writes one fixed line and exits with status 64; `electron/app.ts` starts
+  nothing then. Chromium parses its switches before main runs, so this is detection and early exit:
+  in the package smoke a refused launch exits in about 200 ms and no DevTools listener came up
+  first. Electron 44 removes `NODE_OPTIONS` and `NODE_EXTRA_CA_CERTS` from the environment itself
+  with the NodeOptions fuse off. Unpackaged runs aren't checked: Playwright launches them with its
+  own switches.
 - **Process model.** Main owns everything privileged; renderer windows are views. Each is sandboxed,
   with context isolation, no Node, the preload only and devtools only unpackaged, and may show only
   `index.html` or `tray.html` of the app's own renderer: navigation, redirects, webviews and
@@ -237,8 +263,10 @@ temporary directory and deletes everything afterwards (`--keep` keeps it):
   last approved, for diffs), `audit.jsonl`, `breakers.json`, `settings.json`, `clients.json`,
   `endpoint.json` (when the token was last rotated), `bridge.json` (port and token, 0600),
   `versions.json` (the last and highest versions run) and `login-markers/`. userData is
-  `~/Library/Application Support/<app name>`: `siteadapter` for a release and for an unpackaged run,
-  `siteadapter-dev` for a development package, so the two never share data.
+  `~/Library/Application Support/<app name>`: `siteadapter` for a release, `siteadapter-dev` for a
+  development package and for every unpackaged run (`pnpm start`, `electron .`). So no development
+  code writes the release folder: it can't raise the release's version floor or audit an
+  `update-installed` that never happened.
 - **Adapters.** Built-in only. A hash is `bundleHash` over the adapter's source files, embedded by
   the bundler from the same files it compiles, plus the effective manifest. A hash nobody approved
   waits for review and runs nothing; `approvals.approve` refuses any hash but the installed one. A
@@ -282,7 +310,11 @@ temporary directory and deletes everything afterwards (`--keep` keeps it):
   minutes (then one `request-blocked-capped` diagnostic). Each target goes through the runtime's
   redaction for targets first (`sensitiveMatcher`, session values case-insensitively) against the
   tool partition's session values and the secrets each login registered (the app keeps its own
-  clones, as the runtime does); if the session values can't be read the target is `[redacted]`.
+  clones, as the runtime does; the latest successful login's set is never evicted for pending
+  ones); if the session values can't be read the target is `[redacted]`. The values are read when
+  the refusal is reported, and every value read is kept (at most 256 per adapter), so a cookie that
+  rotated before the write still matches. A refusal for an adapter with no driver yet is not
+  written; it is reported as a `request-blocked-unattributed` diagnostic.
   During a run the runtime audits the tool partition's refusals itself.
   On `needsUser` the auth window stays open with the banner above it and the call returns at once
   (D50); the window closes after 15 minutes. `finishLogin` probes the auth partition and hands off
@@ -320,8 +352,11 @@ temporary directory and deletes everything afterwards (`--keep` keeps it):
 - **Updates.** The feed is compiled in: a plain `electron-vite build` whose environment names both
   `SITEADAPTER_UPDATE_URL` (https, a public host, a directory) and `SITEADAPTER_FEED_PUBLIC_KEY_FILE`
   (the feed key's SPKI PEM) defines `__SITEADAPTER_FEED_BASE_URL__` and
-  `__SITEADAPTER_FEED_PUBLIC_KEY__` (`core/feed-defines.ts`); one without the other, or a feed that
-  isn't public https, fails the build. Dev and demo builds never have one. At launch, before any
+  `__SITEADAPTER_FEED_PUBLIC_KEY__` (`core/feed-defines.ts`); one without the other fails the
+  build. The URL rule is electron-builder's: with `SITEADAPTER_RELEASE=1` the feed is required and
+  must be https on a public host; otherwise https to any host or http on loopback is taken, for the
+  updater end-to-end build, and the updater then accepts that loopback feed. Dev, demo and smoke
+  builds never have one. At launch, before any
   adapter, credential or endpoint, the service records the version in `versions.json` (writing
   `update-installed` `{ from, to }` on the first launch of a newer version) and builds the updates
   (`core/updates.ts`, `electron/updates.ts`). The updater is on only for a packaged, non-demo build
@@ -331,7 +366,8 @@ temporary directory and deletes everything afterwards (`--keep` keeps it):
   `createUpdater` with the signed feed, the channel and install-on-quit read from the settings at
   every check, the highest version run as the floor, and a check at launch and every six hours.
   `update-downloaded` `{ from, to }` is audited once per verified download. PATH is set to the
-  system default first (electron-updater runs `uname` and `sysctl` by name).
+  system default first, for the whole main process: electron-updater runs `uname` and `sysctl` by
+  name inside its own download path. Everything else main runs is by absolute path.
 
 ### Where the main process departs from the contract below
 
@@ -354,7 +390,9 @@ temporary directory and deletes everything afterwards (`--keep` keeps it):
 - `UpdateStatus` has two new states, `disabled` (with `disabledReason`) and `not-checked`, so a build
   that doesn't update, or hasn't checked yet, is never shown as up to date. There is no install
   action in the contract: with "Install updates automatically" on, a downloaded update installs
-  when the app quits. Settings have no switch for automatic checks.
+  when the app quits. So a `ready` update shows as downloaded, with a line saying it installs on
+  quit, or that automatic installs must be turned on to apply it. Settings have no switch for
+  automatic checks.
 - `AppStatus.demo` is new: it drives the DEMO badge.
 - `NeedsUserItem.startedBy` is new: `'person'` for a login window opened from the app.
 
