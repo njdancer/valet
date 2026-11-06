@@ -4,15 +4,17 @@
 // the renderer an origin of its own (app://renderer), under which module scripts, the page's CSP
 // 'self' and fetch work as on https.
 //
-// It lives beside the updater only because this unit owns the packaging; the main process adopts
-// it. What main wires, in this order:
+// Every build the main process loads from its own files uses it, packaged or not; only the dev
+// server (electron-vite dev) is loaded over http instead. electron/app.ts wires it, in this order:
 //
 //   protocol.registerSchemesAsPrivileged([{ scheme: APP_SCHEME, privileges: APP_SCHEME_PRIVILEGES }])
 //   app.whenReady().then(() => {
-//     protocol.handle(APP_SCHEME, createAppSchemeHandler({ root: join(app.getAppPath(), 'out/renderer'),
-//       readFile: (path) => fs.promises.readFile(path) }))
+//     protocol.handle(APP_SCHEME, createAppSchemeHandler({ root: <out/renderer>, readFile }))
 //     window.loadURL(appPageUrl('index.html'))   // never loadFile
 //   })
+//
+// protocol.handle serves the default session only, which only the app's own windows use: the
+// adapters' auth and tool partitions can't load app:// at all.
 //
 // Requests are answered only for files under `root` (inside app.asar when packaged), with a fixed
 // content type per extension and a deny for anything else: other hosts, query strings, dot or
@@ -42,6 +44,25 @@ export const APP_CONTENT_TYPES: Readonly<Record<string, string>> = {
   '.ico': 'image/x-icon',
   '.woff2': 'font/woff2',
   '.json': 'application/json',
+}
+
+/**
+ * True for a URL on app://renderer and nothing else (no credentials or port). Node's URL parser
+ * doesn't know the scheme is standard, so its `origin` is "null": compare scheme and host instead.
+ */
+export function onAppOrigin(url: string): boolean {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return false
+  }
+  return (
+    parsed.protocol === `${APP_SCHEME}:` &&
+    parsed.host === APP_HOST &&
+    parsed.username === '' &&
+    parsed.password === ''
+  )
 }
 
 /** The app:// URL of a page or asset path relative to the renderer root, e.g. "index.html". */

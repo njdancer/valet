@@ -6,10 +6,15 @@
 import { describe, expect, it, vi } from 'vitest'
 import { INVOKE_METHODS, invokeChannel } from '../../src/main/core/channels'
 import { createDispatcher, IpcRefused, type MainApi, methodOf, type Sender } from '../../src/main/core/ipc'
+import { isAppPage as isAppPageFor } from '../../src/main/core/launch'
 
-const PAGE = 'file:///Applications/siteadapter.app/Contents/Resources/app/out/renderer/index.html#/adapters'
-const isAppPage = (url: string) =>
-  url.startsWith('file:///Applications/siteadapter.app/Contents/Resources/app/out/renderer/')
+const BASE = {
+  kind: 'app',
+  root: '/Applications/siteadapter.app/Contents/Resources/app.asar/out/renderer',
+} as const
+const PAGE = 'app://renderer/index.html#/adapters'
+// The main process's own check (core/launch.ts), as electron/ipc.ts gives it to the dispatcher.
+const isAppPage = (url: string) => isAppPageFor(BASE, url)
 const control: Sender = { role: 'control', shows: null, frameUrl: PAGE, mainFrame: true }
 const HASH = 'a'.repeat(64)
 
@@ -66,6 +71,14 @@ describe('who may send', () => {
     ['a subframe of our window', { ...control, mainFrame: false }],
     ['our window showing another page', { ...control, frameUrl: 'https://evil.test/index.html' }],
     ['our window showing a lookalike file', { ...control, frameUrl: 'file:///tmp/out/renderer/index.html' }],
+    [
+      'our window showing the renderer by file://',
+      {
+        ...control,
+        frameUrl: 'file:///Applications/siteadapter.app/Contents/Resources/app.asar/out/renderer/index.html',
+      },
+    ],
+    ['our window showing another app:// host', { ...control, frameUrl: 'app://evil/index.html' }],
     ['an empty frame URL', { ...control, frameUrl: '' }],
   ]
   for (const [name, sender] of cases) {

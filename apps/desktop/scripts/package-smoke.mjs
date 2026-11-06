@@ -2,7 +2,7 @@
 // Packages a placeholder app (scripts/smoke/main.cjs) with the real electron-builder config, as a
 // development build, unsigned, in a temporary directory. Then it checks what came out and launches it
 // to see that the fuses hold, and that the renderer's module script runs when served from app://
-// (src/main/updater/app-scheme.ts) with grantFileProtocolExtraPrivileges off. Every check is
+// (src/main/core/app-scheme.ts) with grantFileProtocolExtraPrivileges off. Every check is
 // asserted: any mismatch is listed and the script exits 1. Nothing it builds is kept unless --keep
 // is given, whether it passes or not.
 //
@@ -99,7 +99,7 @@ function writePlaceholder() {
   writeFileSync(join(project, 'package.json'), JSON.stringify(pkg, null, 2))
   cpSync(join(APP_DIR, 'scripts', 'smoke', 'main.cjs'), join(project, 'out', 'main', 'index.js'))
   // The real scheme handler, types stripped (it uses erasable syntax only).
-  const scheme = readFileSync(join(APP_DIR, 'src', 'main', 'updater', 'app-scheme.ts'), 'utf8')
+  const scheme = readFileSync(join(APP_DIR, 'src', 'main', 'core', 'app-scheme.ts'), 'utf8')
   writeFileSync(join(project, 'out', 'main', 'app-scheme.mjs'), stripTypeScriptTypes(scheme))
   // Must not be packaged: the config excludes source maps.
   writeFileSync(join(project, 'out', 'main', 'index.js.map'), '{}')

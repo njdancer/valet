@@ -106,7 +106,7 @@ describe('rendererBase', () => {
       kind: 'dev',
       origin: 'http://127.0.0.1:5173',
     })
-    expect(rendererBase(undefined, dev, dir)).toEqual({ kind: 'file', dir })
+    expect(rendererBase(undefined, dev, dir)).toEqual({ kind: 'app', root: dir })
   })
 
   it.each([
@@ -120,21 +120,19 @@ describe('rendererBase', () => {
     ['no port', 'http://localhost', dev],
     ['not a URL', 'nope', dev],
   ] as const)('ignores ELECTRON_RENDERER_URL in %s', (_name, url, context) => {
-    expect(rendererBase(url, context, dir)).toEqual({ kind: 'file', dir })
+    expect(rendererBase(url, context, dir)).toEqual({ kind: 'app', root: dir })
   })
 })
 
 describe('the app’s pages', () => {
   const files = {
-    kind: 'file',
-    dir: '/Applications/siteadapter.app/Contents/Resources/app/out/renderer',
+    kind: 'app',
+    root: '/Applications/siteadapter.app/Contents/Resources/app.asar/out/renderer',
   } as const
   const dev = { kind: 'dev', origin: 'http://localhost:5173' } as const
 
-  it('builds page URLs with the hash and nothing else', () => {
-    expect(pageUrl(files, 'index.html', '#/confirm/cf_1')).toBe(
-      'file:///Applications/siteadapter.app/Contents/Resources/app/out/renderer/index.html#/confirm/cf_1',
-    )
+  it('builds page URLs on app://renderer (never file://) with the hash and nothing else', () => {
+    expect(pageUrl(files, 'index.html', '#/confirm/cf_1')).toBe('app://renderer/index.html#/confirm/cf_1')
     expect(pageUrl(dev, 'tray.html')).toBe('http://localhost:5173/tray.html')
   })
 
@@ -145,16 +143,22 @@ describe('the app’s pages', () => {
   })
 
   it.each([
-    'file:///tmp/out/renderer/index.html',
-    'file:///Applications/siteadapter.app/Contents/Resources/app/out/renderer/other.html',
-    'file:///Applications/siteadapter.app/Contents/Resources/app/out/renderer/index.html?x=1',
+    'file:///Applications/siteadapter.app/Contents/Resources/app.asar/out/renderer/index.html',
+    'app://renderer/other.html',
+    'app://renderer/assets/index.html',
+    'app://renderer/index.html?x=1',
+    'app://other/index.html',
+    'app://renderer.evil/index.html',
+    'app://user@renderer/index.html',
+    'app://renderer:80/index.html',
+    'https://renderer/index.html',
     'https://localhost:5173/index.html',
     'http://localhost:5174/index.html',
     'http://user:pw@localhost:5173/index.html',
     'about:blank',
     'not a url',
   ])('refuses %s', (url) => {
-    expect(isAppPage(url.startsWith('file:') ? files : dev, url)).toBe(false)
+    expect(isAppPage(url.startsWith('http') ? dev : files, url)).toBe(false)
   })
 
   it('titles windows deterministically, marking demo mode', () => {

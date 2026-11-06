@@ -2,6 +2,7 @@
 // builds the service with Electron's ports, and puts the app in the menu bar.
 
 import { existsSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import {
   createElectronSessionDriver,
@@ -9,8 +10,9 @@ import {
   type ManifestOptions,
 } from '@siteadapter/browser-electron'
 import { startEndpoint } from '@siteadapter/mcp-server'
-import { app, clipboard, dialog } from 'electron'
+import { app, clipboard, dialog, protocol } from 'electron'
 import { builtinAdapters } from '../adapters'
+import { APP_SCHEME, APP_SCHEME_PRIVILEGES, createAppSchemeHandler } from '../core/app-scheme'
 import { dataPaths } from '../core/constants'
 import { checkOpBinary, defaultOpCheckDeps, realCredentials } from '../core/credentials'
 import { demoResolverRules, launchMode, rendererBase, userDataDir } from '../core/launch'
@@ -26,10 +28,13 @@ const mode = launchMode(process.argv, process.env, {
   demoBuild: __SITEADAPTER_DEMO_BUILD__,
 })
 
-// Before ready: where everything lives, the process-wide hardening, and demo's host mapping.
+// Before ready: where everything lives, the process-wide hardening, demo's host mapping, and the
+// app:// scheme the renderer is served from (it must be privileged before ready to be standard and
+// secure, so module scripts and the page's CSP 'self' work there).
 app.setPath('userData', userDataDir(mode, app.getPath('appData')))
 hardenProcess(app)
 if (mode.demo) app.commandLine.appendSwitch('host-resolver-rules', demoResolverRules(mode))
+protocol.registerSchemesAsPrivileged([{ scheme: APP_SCHEME, privileges: APP_SCHEME_PRIVILEGES }])
 
 /** How long quitting may take to close the endpoint, the drivers and the demo site. */
 const QUIT_BOUND_MS = 5_000
@@ -62,6 +67,13 @@ async function main(): Promise<void> {
     { packaged: app.isPackaged, devServerBuild: __SITEADAPTER_DEV_SERVER__ },
     join(import.meta.dirname, '../renderer'),
   )
+  // The built renderer (inside app.asar when packaged; Electron's fs reads it there), on the default
+  // session only, which only the app's windows use.
+  if (base.kind === 'app')
+    protocol.handle(
+      APP_SCHEME,
+      createAppSchemeHandler({ root: base.root, readFile: (path) => readFile(path) }),
+    )
   const paths = dataPaths(app.getPath('userData'))
   let service: AppService | null = null
   const windows = new AppWindows({

@@ -49,7 +49,7 @@ export const ELECTRON_FUSES = {
    * Off: file:// pages get no more than a browser gives them. That stops Vite's module scripts
    * running from a file:// page (verified on Electron 44: `<script type="module">` never runs), so
    * the renderer must not be loaded with loadFile. It is served from the privileged app:// scheme
-   * instead (src/main/updater/app-scheme.ts), which scripts/package-smoke.mjs checks in a packaged
+   * instead (src/main/core/app-scheme.ts), which scripts/package-smoke.mjs checks in a packaged
    * window.
    */
   grantFileProtocolExtraPrivileges: false,

@@ -7,6 +7,7 @@ import { partitionName } from '@siteadapter/browser-electron'
 import { BrowserWindow, type Rectangle, screen, session, type WebContents } from 'electron'
 import { parseRoute } from '../../renderer/lib/routes'
 import type { HashRoute } from '../../shared/api'
+import { onAppOrigin } from '../core/app-scheme'
 import { bannerBeside, handoffLayout, topRight, underTrayIcon } from '../core/geometry'
 import type { AppWindow, WindowRole } from '../core/ipc'
 import { isAppPage, type Page, pageUrl, type RendererBase, windowTitle } from '../core/launch'
@@ -52,12 +53,10 @@ export class AppWindows {
   /** The default session, which only our windows use, may load the renderer's files and nothing else. */
   lockDefaultSession(): void {
     const base = this.options.base
-    // The renderer's own directory: its pages and the assets beside them.
-    const rendererDir = pageUrl(base, 'index.html').replace(/index\.html$/, '')
     const allowed = (url: string) =>
       url.startsWith('devtools:') ||
       url.startsWith('data:') ||
-      (base.kind === 'file' ? url.startsWith(rendererDir) : sameOrigin(url, base.origin))
+      (base.kind === 'app' ? onAppOrigin(url) : sameOrigin(url, base.origin))
     session.defaultSession.webRequest.onBeforeRequest((details, callback) =>
       callback({ cancel: !allowed(details.url) }),
     )

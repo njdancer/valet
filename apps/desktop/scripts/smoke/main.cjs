@@ -1,6 +1,6 @@
 // The placeholder main process package-smoke.mjs packages: it reports what the packaged app sees and
 // exits. With SITEADAPTER_SMOKE_WINDOW=1 it also loads the renderer page in two hidden windows, once
-// from app:// through src/main/updater/app-scheme.ts (as the real main process must) and once with
+// from app:// through src/main/core/app-scheme.ts (as the real main process must) and once with
 // loadFile, and reports each window's title: the page's module script sets it, so a title of
 // 'module-ok' means the script ran. With grantFileProtocolExtraPrivileges off, only app:// should.
 

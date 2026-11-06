@@ -2,7 +2,7 @@
 // which URLs are the app's own pages.
 
 import { isAbsolute, join, resolve, sep } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { appPageUrl } from './app-scheme'
 import type { WindowRole } from './ipc'
 
 export interface LaunchMode {
@@ -86,9 +86,13 @@ export function demoResolverRules(mode: Pick<LaunchMode, 'e2e'>): string {
   return mode.e2e ? `${DEMO_RESOLVER_RULES}, MAP ${E2E_CANARY_HOST} 127.0.0.1` : DEMO_RESOLVER_RULES
 }
 
-/** Where the renderer's pages come from: the built files, or electron-vite's dev server. */
+/**
+ * Where the renderer's pages come from: the built files, served at app://renderer from `root`
+ * (app-scheme.ts; never file://, which the grantFileProtocolExtraPrivileges fuse leaves unable to
+ * run the renderer's module scripts), or electron-vite's dev server.
+ */
 export type RendererBase =
-  | { readonly kind: 'file'; readonly dir: string }
+  | { readonly kind: 'app'; readonly root: string }
   | { readonly kind: 'dev'; readonly origin: string }
 
 /**
@@ -102,17 +106,17 @@ export function rendererBase(
   context: { readonly packaged: boolean; readonly devServerBuild: boolean },
   filesDir: string,
 ): RendererBase {
-  if (context.packaged || !context.devServerBuild || devUrl === undefined)
-    return { kind: 'file', dir: filesDir }
+  const files: RendererBase = { kind: 'app', root: filesDir }
+  if (context.packaged || !context.devServerBuild || devUrl === undefined) return files
   let url: URL
   try {
     url = new URL(devUrl)
   } catch {
-    return { kind: 'file', dir: filesDir }
+    return files
   }
   const loopback = url.hostname === 'localhost' || url.hostname === '127.0.0.1'
   if (url.protocol !== 'http:' || !loopback || url.username !== '' || url.password !== '' || url.port === '')
-    return { kind: 'file', dir: filesDir }
+    return files
   return { kind: 'dev', origin: url.origin }
 }
 
@@ -121,7 +125,8 @@ export type Page = (typeof PAGES)[number]
 
 /** The URL of one of the app's pages, with a hash route the caller has already checked. */
 export function pageUrl(base: RendererBase, page: Page, hash = ''): string {
-  const url = base.kind === 'file' ? pathToFileURL(join(base.dir, page)) : new URL(`/${page}`, base.origin)
+  if (base.kind === 'app') return appPageUrl(page, hash)
+  const url = new URL(`/${page}`, base.origin)
   url.hash = hash
   return url.toString()
 }

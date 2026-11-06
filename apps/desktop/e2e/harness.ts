@@ -108,9 +108,9 @@ export async function windowWithTitle(
   throw new Error(`no window titled with ${marker} opened`)
 }
 
-/** The app's own renderer windows (file:// pages), not the adapter's auth and tool pages. */
+/** The app's own renderer windows (app://renderer pages), not the adapter's auth and tool pages. */
 export function appWindows(app: ElectronApplication): Page[] {
-  return app.windows().filter((page) => !page.isClosed() && page.url().startsWith('file:'))
+  return app.windows().filter((page) => !page.isClosed() && page.url().startsWith('app://renderer/'))
 }
 
 export interface BridgeConfig {
