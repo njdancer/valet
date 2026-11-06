@@ -72,8 +72,9 @@ export class MessagesOtpReader implements OtpReader {
 
   async latest(query: MessagesOtpQuery, notBefore: Date): Promise<SecretValue> {
     // Without a sender, any message from anyone (another bank's code, a private message) could be
-    // typed into the page; the core schema still allows it, so it is refused here.
-    const sender = query.sender === undefined ? null : parseOtpSender(query.sender)
+    // typed into the page. The type and the manifest schema both require one; this check stands in
+    // case a query is built some other way (from JSON, say) and the types were never checked.
+    const sender = typeof query.sender === 'string' ? parseOtpSender(query.sender) : null
     if (sender === null || !isScreenedPattern(query.pattern)) throw new SiteAdapterError('otp', 'invalid')
     const sinceMs = Math.max(notBefore.getTime(), this.#now().getTime() - query.maxAgeSeconds * 1000)
     const texts: string[] = []

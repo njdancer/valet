@@ -1,7 +1,6 @@
 import { inspect } from 'node:util'
-import { CredentialError, SecretValue } from '@siteadapter/core'
+import { CredentialError, SecretValue, type TokenSource } from '@siteadapter/core'
 import { describe, expect, it, vi } from 'vitest'
-import type { TokenSource } from '../src/keychain'
 import {
   classifySdkError,
   OnePasswordServiceAccountProvider,

@@ -2,9 +2,14 @@
 // lazily from a token the TokenSource hands out, cached, and dropped when 1Password rejects its auth.
 // The SDK is reached only through an injected factory, so tests never load it.
 
-import { CredentialError, type CredentialProvider, type SecretField, SecretValue } from '@siteadapter/core'
+import {
+  CredentialError,
+  type CredentialProvider,
+  type SecretField,
+  SecretValue,
+  type TokenSource,
+} from '@siteadapter/core'
 import { parseItemRef, secretReference } from './item-ref'
-import type { TokenSource } from './keychain'
 import { nodeTimers, type Timers } from './process'
 
 /** The slice of the SDK client this provider uses. */

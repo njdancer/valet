@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { inspect } from 'node:util'
-import { CredentialError, SiteAdapterError } from '@siteadapter/core'
+import { CredentialError, type MessagesOtpQuery, SiteAdapterError } from '@siteadapter/core'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { defaultMessagesDbPath, MessagesOtpReader } from '../src/messages-otp'
 import { archived } from './typedstream-fixture'
@@ -217,14 +217,20 @@ describe('MessagesOtpReader', () => {
     expect(code.reveal((plaintext) => plaintext)).toBe('111111')
   })
 
-  it('refuses a query with no sender, even with a catch-all pattern', async () => {
+  it('refuses a query with no sender, even with a catch-all pattern, whatever the types say', async () => {
     insert({ text: 'Your bank code is 482913', handle: 2, date: appleNanos(at('00:09:30')) })
     const { sender: _, ...anySender } = WOOLWORTHS
     const reader = new MessagesOtpReader({ path, now })
-    await expect(reader.latest({ ...anySender, pattern: '([\\s\\S]*)' }, NOT_BEFORE)).rejects.toMatchObject({
-      stage: 'otp',
-      errorClass: 'invalid',
-    })
+    for (const query of [
+      { ...anySender, pattern: '([\\s\\S]*)' },
+      { ...anySender, sender: null, pattern: '([\\s\\S]*)' },
+      { ...anySender, sender: ['Woolworths'], pattern: '([\\s\\S]*)' },
+    ]) {
+      await expect(reader.latest(query as unknown as MessagesOtpQuery, NOT_BEFORE)).rejects.toMatchObject({
+        stage: 'otp',
+        errorClass: 'invalid',
+      })
+    }
   })
 
   it('refuses a sender that is not a full number, short code, sender ID or email', async () => {
