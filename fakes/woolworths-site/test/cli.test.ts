@@ -13,33 +13,46 @@ describe('parsePort', () => {
   })
 
   it('refuses a bad port', () => {
-    expect(() => parsePort(['--port'])).toThrow('--port takes 0-65535')
-    expect(() => parsePort(['--port', 'abc'])).toThrow('--port takes 0-65535')
-    expect(() => parsePort(['--port', '70000'])).toThrow('--port takes 0-65535')
+    expect(() => parsePort(['--port'])).toThrow('--port takes 0-65534')
+    expect(() => parsePort(['--port', 'abc'])).toThrow('--port takes 0-65534')
+    expect(() => parsePort(['--port', '70000'])).toThrow('--port takes 0-65534')
+    // The auth origin goes on the next port, so the last one is out.
+    expect(() => parsePort(['--port', '65535'])).toThrow('--port takes 0-65534')
   })
 })
 
 describe('main', () => {
-  it('starts the fake with the dev accounts and prints the origin and how to log in', async () => {
+  it('starts the fake with the dev accounts and prints both origins and how to log in', async () => {
     const lines: string[] = []
     let given: FakeWoolworthsOptions | undefined
     const start = async (options: FakeWoolworthsOptions) => {
       given = options
-      return { origin: 'http://127.0.0.1:1234' } as FakeWoolworths
+      return { origin: 'http://127.0.0.1:1234', authOrigin: 'http://127.0.0.1:1235' } as FakeWoolworths
     }
     await main(['--port', '1234'], { print: (line) => lines.push(line), start })
-    expect(given).toEqual({ accounts: DEV_ACCOUNTS, port: 1234 })
+    expect(given).toEqual({ accounts: DEV_ACCOUNTS, port: 1234, authPort: 1235 })
     expect(lines).toEqual([
-      'fake Woolworths at http://127.0.0.1:1234',
+      'fake Woolworths at http://127.0.0.1:1234, signing in at http://127.0.0.1:1235',
       '  shopper@example.test / fake-password-1',
-      '  twofactor@example.test / fake-password-2, one-time code 246810',
+      '  twofactor@example.test / fake-password-2, sms code 246810',
     ])
+  })
+
+  it('asks for any free auth port when given port 0', async () => {
+    let given: FakeWoolworthsOptions | undefined
+    const start = async (options: FakeWoolworthsOptions) => {
+      given = options
+      return { origin: 'x', authOrigin: 'y' } as FakeWoolworths
+    }
+    await main(['--port', '0'], { print: () => {}, start })
+    expect(given).toMatchObject({ port: 0, authPort: 0 })
   })
 
   it('really starts a server by default', async () => {
     const site = await main(['--port', '0'], { print: () => {} })
     try {
       expect((await fetch(`${site.origin}/`)).status).toBe(200)
+      expect((await fetch(`${site.authOrigin}/u/login/identifier`)).status).toBe(400)
     } finally {
       await site.close()
     }

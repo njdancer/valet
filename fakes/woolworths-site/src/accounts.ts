@@ -1,22 +1,25 @@
-// Accounts and visitor sessions. Every visitor carries an httpOnly `wow-auth-token`, logged in or
-// not, as the live site does; whether it is logged in is server-side state behind the token. The
+// Accounts and www visitor sessions. Every visitor carries an httpOnly `wow-auth-token`, logged in
+// or not, as the live site does; whether it is logged in is server-side state behind the token. The
 // token is replaced on every change of login state so a pre-login token never becomes a logged-in one.
+// Signing in itself happens on the separate auth origin (auth-server.ts), as on the live site.
 
 import { randomBytes } from 'node:crypto'
 import type { Trolley } from './trolley'
 
 export const SESSION_COOKIE = 'wow-auth-token'
-export const DEVICE_COOKIE = 'wow-remembered-device'
-/** How long "remember this device" skips the one-time code, in seconds. */
-export const DEVICE_COOKIE_MAX_AGE = 90 * 24 * 60 * 60
-/** Wrong one-time codes allowed before the half-finished login is thrown away. */
-export const MAX_VERIFY_FAILURES = 3
+
+/** How an account's second factor reaches the person, as Auth0's challenge pages name them. */
+export type MfaChannel = 'sms' | 'email' | 'otp'
 
 export interface FakeAccount {
   readonly username: string
   readonly password: string
-  /** When set, the account has 2FA and this is the code it accepts. */
+  /** When set, the account has MFA and this is the code it accepts. */
   readonly otpCode?: string
+  /** Which challenge page asks for the code. Defaults to `sms`. */
+  readonly mfa?: MfaChannel
+  /** Auth0 has blocked the account: the right password is refused with a "blocked" error. */
+  readonly blocked?: boolean
   /** Shown in the bootstrap response and the page header. Defaults to "Shopper". */
   readonly firstName?: string
 }
@@ -30,9 +33,6 @@ export interface Visitor {
   readonly token: string
   /** Set once logged in. */
   readonly username: string | null
-  /** Set between a correct password and a correct one-time code. */
-  readonly pendingUsername: string | null
-  verifyFailures: number
   /** An anonymous visitor's own trolley. Logged-in visitors use their account's. */
   readonly trolley: Trolley
 }
@@ -44,8 +44,6 @@ export function newToken(): string {
 export class AccountStore {
   private readonly accounts = new Map<string, AccountState>()
   private readonly visitors = new Map<string, Visitor>()
-  /** Device token to the username it was remembered for. */
-  private readonly devices = new Map<string, string>()
 
   constructor(accounts: readonly FakeAccount[]) {
     for (const account of accounts) {
@@ -69,18 +67,9 @@ export class AccountStore {
   }
 
   /** Starts a new visitor session, discarding `replacing` if given. */
-  startVisitor(
-    state: { readonly username?: string; readonly pendingUsername?: string } = {},
-    replacing?: Visitor,
-  ): Visitor {
+  startVisitor(username: string | null = null, replacing?: Visitor): Visitor {
     if (replacing !== undefined) this.visitors.delete(replacing.token)
-    const visitor: Visitor = {
-      token: newToken(),
-      username: state.username ?? null,
-      pendingUsername: state.pendingUsername ?? null,
-      verifyFailures: 0,
-      trolley: new Map(),
-    }
+    const visitor: Visitor = { token: newToken(), username, trolley: new Map() }
     this.visitors.set(visitor.token, visitor)
     return visitor
   }
@@ -95,17 +84,7 @@ export class AccountStore {
     return this.accounts.get(visitor.username)?.account.firstName ?? 'Shopper'
   }
 
-  rememberDevice(username: string): string {
-    const token = newToken()
-    this.devices.set(token, username)
-    return token
-  }
-
-  deviceRemembered(deviceToken: string | undefined, username: string): boolean {
-    return deviceToken !== undefined && this.devices.get(deviceToken) === username
-  }
-
-  /** Logs every visitor out, as if the site expired all sessions. Remembered devices survive. */
+  /** Logs every www visitor out, as if the site expired all sessions. Auth0's sessions survive. */
   expireSessions(): void {
     this.visitors.clear()
   }

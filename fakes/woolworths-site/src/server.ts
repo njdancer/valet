@@ -1,18 +1,12 @@
 // The fake woolworths.com.au: real HTTP(S) on 127.0.0.1, routing every request the adapter,
-// runtime and browser driver touch. See fixtures/README.md for which behaviour is captured and
-// which is assumed.
+// runtime and browser driver touch. Two servers, as two origins: www (the shop, its API and the
+// Akamai simulation) and auth (Auth0 Universal Login, auth-server.ts). See fixtures/README.md for
+// which behaviour is captured and which is assumed.
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
-import {
-  AccountStore,
-  DEVICE_COOKIE,
-  DEVICE_COOKIE_MAX_AGE,
-  type FakeAccount,
-  MAX_VERIFY_FAILURES,
-  SESSION_COOKIE,
-  type Visitor,
-} from './accounts'
+import { AccountStore, type FakeAccount, SESSION_COOKIE, type Visitor } from './accounts'
 import { accessDeniedHtml, newSensorValue, SENSOR_COOKIE } from './akamai'
+import { type AuthHostile, FakeAuth0, type SentMessage } from './auth-server'
 import {
   closeServer,
   createServer,
@@ -26,16 +20,15 @@ import {
   serializeCookie,
   type TlsOptions,
 } from './http'
+import { LoginBroker } from './logins'
 import {
   homePage,
-  loginFramePage,
-  loginInFramePage,
-  loginPage,
+  loginFailedPage,
   myAccountPage,
   notFoundPage,
+  notLoggedInPage,
   type PageContext,
   searchPage,
-  verifyPage,
 } from './pages'
 import { type RateLimit, RateLimiter } from './rate-limit'
 import { routePath } from './route-path'
@@ -54,60 +47,73 @@ export interface FakeWoolworthsOptions {
   readonly accounts?: readonly FakeAccount[]
   /** Off unless given. */
   readonly rateLimit?: RateLimit
-  /** Serve HTTPS with this key and certificate; otherwise plain HTTP. */
+  /** Serve both origins over HTTPS with this key and certificate; otherwise plain HTTP. */
   readonly tls?: TlsOptions
-  /** The hostname reported in `origin`. The server itself always listens on 127.0.0.1. */
+  /** The hostname reported in `origin`. Both servers always listen on 127.0.0.1. */
   readonly hostname?: string
+  /**
+   * The hostname reported in `authOrigin`. Defaults to `hostname` with "www." swapped for "auth."
+   * (or "auth." prefixed), or 127.0.0.1 when there is no hostname.
+   */
+  readonly authHostname?: string
   /** Defaults to 0, a free port. */
   readonly port?: number
-  /** The clock for rate limiting and request timestamps. */
+  /** The auth origin's port. Defaults to 0, a free port. */
+  readonly authPort?: number
+  /** The clock for rate limiting, login expiry and request timestamps. */
   readonly now?: () => number
+  /** Auth0's bot detection: a CAPTCHA on the identifier and password pages that refuses every submit. */
+  readonly captcha?: boolean
   /**
    * Hostile variants, for testing the auth interpreter's guards. Each one makes the site behave
-   * like a compromised or careless one. All are off by default.
+   * like a compromised or careless one. All are off by default. `openRedirectAfterLogin` also makes
+   * www's callback redirect to the login's `path` unchecked, e.g. https://evil.test/.
    */
-  readonly hostile?: {
-    /** Where the login form posts instead of /auth/login, e.g. the exfil sink's origin. */
-    readonly loginFormAction?: string
-    /**
-     * After a correct password, or a correct one-time code for 2FA accounts, redirect to the
-     * `returnUrl` query parameter unchecked.
-     */
-    readonly openRedirectAfterLogin?: boolean
-    /**
-     * Serve the login form inside an iframe from this other hostname (same port, same server), so
-     * the form's frame is cross-origin to the page. The caller maps the hostname to 127.0.0.1.
-     */
-    readonly loginInFrame?: string
-    /** The `type` of the password field instead of `password`, e.g. `text` or `search`. */
-    readonly passwordInputType?: string
-    /** The `type` of the one-time-code field instead of `text`, e.g. `search`. */
-    readonly codeInputType?: string
-  }
+  readonly hostile?: AuthHostile
 }
 
 export interface FakeWoolworths {
+  /** www, e.g. https://www.woolworths.test:<port>. */
   readonly origin: string
   readonly port: number
-  /** Every request received, in arrival order, including blocked ones. Live: it keeps growing. */
+  /** The Auth0 origin, e.g. https://auth.woolworths.test:<port>. */
+  readonly authOrigin: string
+  readonly authPort: number
+  /** Every request www received, in arrival order, including blocked ones. Live: it keeps growing. */
   readonly requests: readonly RecordedRequest[]
+  /** Every request the auth origin received. Live. */
+  readonly authRequests: readonly RecordedRequest[]
+  /** Codes sent by SMS or email for MFA, oldest first. Live. */
+  readonly outbox: readonly SentMessage[]
   close(): Promise<void>
   /** What is in an account's trolley. Throws for an unknown username. */
   trolleyFor(username: string): readonly TrolleyLine[]
   /** Replaces the rate limit (null turns it off) and lifts any current blocks. */
   setRateLimit(limit: RateLimit | null): void
-  /** While on, every request gets the Access Denied page, as if the client's IP were blocked. */
+  /** While on, every www request gets the Access Denied page, as if the client's IP were blocked. */
   blockAll(on: boolean): void
-  /** Logs every visitor out. Remembered devices survive. */
+  /** Logs every www visitor out. Auth0 sessions and remembered devices survive. */
   expireSessions(): void
+  /** Ends every Auth0 session, so the next login asks for the password. Remembered devices survive. */
+  expireAuthSessions(): void
+  /** Turns Auth0's CAPTCHA on or off. */
+  setCaptcha(on: boolean): void
+}
+
+/** The path and query of the live site's login link: www's /auth/login, back to `path` after. */
+export function loginHref(origin: string, path = '/'): string {
+  return `/auth/login?redirect_uri=${origin}/auth/callback&path=${path}`
+}
+
+/** A path on this site, or "/" for anything that would leave it ("//evil", "/\\evil", "https:"). */
+export function sitePath(path: string): string {
+  return /^\/(?![/\\])/.test(path) ? path : '/'
 }
 
 const JSON_TYPE = 'application/json; charset=utf-8'
 const HTML_TYPE = 'text/html; charset=utf-8'
 const INVALID_REQUEST = { Message: 'The request is invalid.' }
 const NO_RESOURCE = { Message: 'No HTTP resource was found that matches the request URI.' }
-const WRONG_CREDENTIALS = 'Your email address or password is incorrect. Please try again.'
-const WRONG_CODE = 'The code you entered is incorrect. Please try again.'
 
 /** Returned by everything that writes a response, so the compiler checks every route answers. */
 type Sent = 'sent'
@@ -130,6 +136,7 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
   const now = options.now ?? Date.now
   const secure = options.tls !== undefined
   const store = new AccountStore(options.accounts ?? [])
+  const broker = new LoginBroker(now)
   const limiter = new RateLimiter(options.rateLimit ?? null, now)
   const issuedSensors = new Set<string>()
   const requests: RecordedRequest[] = []
@@ -192,11 +199,8 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
     return { sensorValue, shopper: store.firstNameOf(exchange.visitor) }
   }
 
-  const switchVisitor = (
-    exchange: Exchange,
-    state: { username?: string; pendingUsername?: string },
-  ): void => {
-    exchange.visitor = store.startVisitor(state, exchange.visitor)
+  const switchVisitor = (exchange: Exchange, username: string | null): void => {
+    exchange.visitor = store.startVisitor(username, exchange.visitor)
     exchange.setCookies.push(
       serializeCookie(SESSION_COOKIE, exchange.visitor.token, { httpOnly: true, secure }),
     )
@@ -204,66 +208,32 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
 
   const hostile = options.hostile ?? {}
   const openRedirect = hostile.openRedirectAfterLogin === true
-  let port = 0
+  let origin = ''
+  let authOrigin = ''
 
-  /** `path`, carrying returnUrl along when the open-redirect variant is on and one was given. */
-  const withReturnUrl = (exchange: Exchange, path: string): string => {
-    const returnUrl = exchange.params.get('returnUrl')
-    if (!openRedirect || returnUrl === null) return path
-    return `${path}?returnUrl=${encodeURIComponent(returnUrl)}`
-  }
-  /** Where to go after logging in: the account page, or anywhere at all for the open-redirect variant. */
-  const afterLogin = (exchange: Exchange): string =>
-    (openRedirect ? exchange.params.get('returnUrl') : null) ?? '/shop/myaccount'
-
-  /** The login form's action: normally /auth/login, carrying returnUrl only for the open-redirect variant. */
-  const loginAction = (exchange: Exchange): string =>
-    hostile.loginFormAction ?? withReturnUrl(exchange, '/auth/login')
-
-  const renderLogin = (exchange: Exchange, error: string | null): string =>
-    loginPage(page(exchange), error, loginAction(exchange), hostile.passwordInputType)
-
-  const login = (exchange: Exchange): Sent => {
-    const form = new URLSearchParams(exchange.body)
-    const username = form.get('email') ?? ''
-    const state = store.authenticate(username, form.get('password') ?? '')
-    if (state === null) return html(exchange, 200, renderLogin(exchange, WRONG_CREDENTIALS))
-    const needsCode =
-      state.account.otpCode !== undefined &&
-      !store.deviceRemembered(exchange.cookies.get(DEVICE_COOKIE), username)
-    if (needsCode) {
-      switchVisitor(exchange, { pendingUsername: username })
-      return redirect(exchange, withReturnUrl(exchange, '/auth/verify'))
-    }
-    switchVisitor(exchange, { username })
-    return redirect(exchange, afterLogin(exchange))
+  /** www's /auth/login: remembers the login for this browser and sends it to Auth0. */
+  const startLogin = (exchange: Exchange): Sent => {
+    const redirectUri = exchange.params.get('redirect_uri') ?? `${origin}/auth/callback`
+    const state = broker.begin(exchange.visitor.token, exchange.params.get('path') ?? '/')
+    const authorize = new URL('/authorize', authOrigin)
+    authorize.searchParams.set('client_id', 'fake-woolworths')
+    authorize.searchParams.set('response_type', 'code')
+    authorize.searchParams.set('scope', 'openid profile email')
+    authorize.searchParams.set('redirect_uri', redirectUri)
+    authorize.searchParams.set('state', state)
+    return redirect(exchange, authorize.toString())
   }
 
-  const renderVerify = (exchange: Exchange, error: string | null): string =>
-    verifyPage(page(exchange), error, withReturnUrl(exchange, '/auth/verify'), hostile.codeInputType)
-
-  const verify = (exchange: Exchange): Sent => {
-    const pending = exchange.visitor.pendingUsername
-    const state = pending === null ? null : store.account(pending)
-    if (pending === null || state === null) return redirect(exchange, '/shop/securelogin')
-    if (exchange.method === 'GET') return html(exchange, 200, renderVerify(exchange, null))
-    const form = new URLSearchParams(exchange.body)
-    if (form.get('code') === state.account.otpCode) {
-      switchVisitor(exchange, { username: pending })
-      if (form.get('rememberDevice') === 'true') {
-        const device = store.rememberDevice(pending)
-        exchange.setCookies.push(
-          serializeCookie(DEVICE_COOKIE, device, { httpOnly: true, secure, maxAge: DEVICE_COOKIE_MAX_AGE }),
-        )
-      }
-      return redirect(exchange, afterLogin(exchange))
-    }
-    exchange.visitor.verifyFailures += 1
-    if (exchange.visitor.verifyFailures >= MAX_VERIFY_FAILURES) {
-      switchVisitor(exchange, {})
-      return redirect(exchange, '/shop/securelogin')
-    }
-    return html(exchange, 200, renderVerify(exchange, WRONG_CODE))
+  /** www's /auth/callback: a code Auth0 issued for a login this browser started, then its path. */
+  const finishLogin = (exchange: Exchange): Sent => {
+    const done = broker.complete(
+      exchange.params.get('state') ?? '',
+      exchange.params.get('code') ?? '',
+      exchange.visitor.token,
+    )
+    if (done === null) return html(exchange, 403, loginFailedPage(page(exchange)))
+    switchVisitor(exchange, done.username)
+    return redirect(exchange, openRedirect ? done.path : sitePath(done.path))
   }
 
   const parseJson = (text: string): unknown => {
@@ -317,23 +287,16 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
     if (method === 'GET' && path === '/') return html(exchange, 200, homePage(page(exchange)))
     if (method === 'GET' && path === '/shop/securelogin') {
       if (loggedIn) return redirect(exchange, '/shop/myaccount')
-      if (hostile.loginInFrame !== undefined) {
-        const frame = `${originFor(options.tls, hostile.loginInFrame, port)}/shop/securelogin/frame`
-        return html(exchange, 200, loginInFramePage(page(exchange), frame))
-      }
-      return html(exchange, 200, renderLogin(exchange, null))
+      return html(exchange, 200, notLoggedInPage(page(exchange), loginHref(origin, '/shop/myaccount')))
     }
-    if (method === 'GET' && path === '/shop/securelogin/frame' && hostile.loginInFrame !== undefined) {
-      return html(exchange, 200, loginFramePage(loginAction(exchange), hostile.passwordInputType))
-    }
-    if (method === 'POST' && path === '/auth/login') return login(exchange)
-    if ((method === 'GET' || method === 'POST') && path === '/auth/verify') return verify(exchange)
+    if (method === 'GET' && path === '/auth/login') return startLogin(exchange)
+    if (method === 'GET' && path === '/auth/callback') return finishLogin(exchange)
     if (method === 'GET' && path === '/shop/myaccount') {
       if (!loggedIn) return redirect(exchange, '/shop/securelogin')
       return html(exchange, 200, myAccountPage(page(exchange)))
     }
     if ((method === 'GET' || method === 'POST') && path === '/auth/logout') {
-      switchVisitor(exchange, {})
+      switchVisitor(exchange, null)
       return redirect(exchange, '/')
     }
     if (method === 'GET' && path === '/shop/search/products') {
@@ -390,22 +353,54 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
     return isApi ? api(exchange) : site(exchange)
   }
 
-  const server = createServer(options.tls)
-  server.on('request', (request: IncomingMessage, response: ServerResponse) => {
-    handle(request, response).catch(
-      /* v8 ignore next 4 */ () => {
-        if (!response.headersSent) response.writeHead(500)
-        response.end()
-      },
-    )
+  const auth0 = new FakeAuth0({
+    store,
+    broker,
+    now,
+    secure,
+    callbackUrl: () => `${origin}/auth/callback`,
+    originOf: (hostname) => originFor(options.tls, hostname, authPort),
+    hostile,
+    captcha: options.captcha === true,
   })
-  port = await listen(server, options.port ?? 0)
+
+  const server = createServer(options.tls)
+  const authServer = createServer(options.tls)
+  for (const [target, handler] of [
+    [server, handle],
+    [authServer, (request: IncomingMessage, response: ServerResponse) => auth0.handle(request, response)],
+  ] as const) {
+    target.on('request', (request: IncomingMessage, response: ServerResponse) => {
+      handler(request, response).catch(
+        /* v8 ignore next 4 */ () => {
+          if (!response.headersSent) response.writeHead(500)
+          response.end()
+        },
+      )
+    })
+  }
+  const port = await listen(server, options.port ?? 0)
+  let authPort = 0
+  try {
+    authPort = await listen(authServer, options.authPort ?? 0)
+  } catch (error) {
+    await closeServer(server)
+    throw error
+  }
+  origin = originFor(options.tls, options.hostname ?? '127.0.0.1', port)
+  authOrigin = originFor(options.tls, options.authHostname ?? authHostnameFor(options.hostname), authPort)
 
   return {
-    origin: originFor(options.tls, options.hostname ?? '127.0.0.1', port),
+    origin,
     port,
+    authOrigin,
+    authPort,
     requests,
-    close: () => closeServer(server),
+    authRequests: auth0.requests,
+    outbox: auth0.outbox,
+    close: async () => {
+      await Promise.all([closeServer(server), closeServer(authServer)])
+    },
     trolleyFor(username) {
       const state = store.account(username)
       if (state === null) throw new Error('no such fake account')
@@ -420,5 +415,17 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
     expireSessions() {
       store.expireSessions()
     },
+    expireAuthSessions() {
+      auth0.expireSessions()
+    },
+    setCaptcha(on) {
+      auth0.captcha = on
+    },
   }
+}
+
+/** auth.woolworths.test for www.woolworths.test; 127.0.0.1 when there is no hostname. */
+export function authHostnameFor(hostname: string | undefined): string {
+  if (hostname === undefined) return '127.0.0.1'
+  return `auth.${hostname.startsWith('www.') ? hostname.slice(4) : hostname}`
 }

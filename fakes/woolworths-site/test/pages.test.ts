@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import { findProduct } from '../src/catalogue'
 import type { Product } from '../src/fixtures'
-import { escapeHtml, homePage, loginPage, myAccountPage, searchPage, verifyPage } from '../src/pages'
+import {
+  escapeHtml,
+  homePage,
+  loginFailedPage,
+  myAccountPage,
+  notLoggedInPage,
+  searchPage,
+} from '../src/pages'
 
 const anonymous = { sensorValue: 'SENSOR~0~-1~-1', shopper: null }
 const loggedIn = { sensorValue: 'SENSOR~0~-1~-1', shopper: 'Sam' }
@@ -16,7 +23,11 @@ describe('escapeHtml', () => {
 
 describe('layout', () => {
   it('carries the sensor script and the decoy header search box on every page', () => {
-    for (const html of [homePage(anonymous), loginPage(anonymous, null), verifyPage(anonymous, null)]) {
+    for (const html of [
+      homePage(anonymous),
+      notLoggedInPage(anonymous, '/auth/login'),
+      loginFailedPage(anonymous),
+    ]) {
       expect(html).toContain('_abck=SENSOR~0~-1~-1')
       expect(html).toContain('<input id="headerSearch-Input" type="search" name="searchTerm"')
       expect(html).toContain('action="/shop/search/products" method="get"')
@@ -34,42 +45,24 @@ describe('layout', () => {
   })
 })
 
-describe('loginPage', () => {
-  it('has the login form the auth flow fills', () => {
-    const html = loginPage(anonymous, null)
-    expect(html).toContain('<form id="loginForm" method="post" action="/auth/login">')
+describe('notLoggedInPage', () => {
+  it('has no form, only a link that starts the login, as on the live site', () => {
+    const html = notLoggedInPage(
+      anonymous,
+      '/auth/login?redirect_uri=https://www.woolworths.test/auth/callback&path=/',
+    )
+    expect(html).toContain("<h1>Oops! You're not logged in</h1>")
     expect(html).toContain(
-      '<input id="loginForm-Email" name="email" type="email" autocomplete="username" required>',
+      '<a id="securelogin-Login" class="button" href="/auth/login?redirect_uri=https://www.woolworths.test/auth/callback&amp;path=/">Login</a>',
     )
-    expect(html).toContain(
-      '<input id="loginForm-Password" name="password" type="password" autocomplete="current-password" required>',
-    )
-    expect(html).toContain('<button id="loginForm-Submit" type="submit">')
-    expect(html).not.toContain('login-error')
-  })
-
-  it('shows an error when given one', () => {
-    expect(loginPage(anonymous, 'Nope & no')).toContain(
-      '<p class="login-error" role="alert">Nope &amp; no</p>',
-    )
+    expect(html).not.toContain('type="password"')
+    expect(html.match(/<form/g)).toHaveLength(1) // the header search box only
   })
 })
 
-describe('verifyPage', () => {
-  it('has a one-time-code input and a remember-device checkbox in a form posting to /auth/verify', () => {
-    const html = verifyPage(anonymous, null)
-    expect(html).toContain('<form id="verifyForm" method="post" action="/auth/verify">')
-    expect(html).toMatch(/<input id="verify-Code"[^>]* inputmode="numeric" autocomplete="one-time-code"/)
-    expect(html).toContain(
-      '<input id="verify-RememberDevice" name="rememberDevice" type="checkbox" value="true">',
-    )
-    expect(html).toContain('<button id="verify-Submit" type="submit">')
-  })
-
-  it('shows an error when given one', () => {
-    expect(verifyPage(anonymous, 'Wrong code')).toContain(
-      '<p class="login-error" role="alert">Wrong code</p>',
-    )
+describe('loginFailedPage', () => {
+  it('says the login failed, without any detail', () => {
+    expect(loginFailedPage(anonymous)).toContain('<h1 id="login-Failed">')
   })
 })
 
