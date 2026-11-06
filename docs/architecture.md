@@ -200,13 +200,13 @@ Tools call the site's own JSON endpoints with an in-page `fetch` (same-origin cr
 the tool partition. Cookies never leave the browser, and Akamai's cookies stay with the client
 that earned them. This is how the earlier app searches the bank's transactions.
 
-| Purpose                           | Request                                    | Status                                       |
-| --------------------------------- | ------------------------------------------ | -------------------------------------------- |
-| Search                            | `POST /apis/ui/Search/products`            | Verified anonymously                         |
-| Product detail                    | `GET /apis/ui/product/detail/<stockcode>`  | Verified anonymously                         |
-| Read cart                         | `GET /apis/ui/Trolley`                     | Verified anonymously (empty trolley)         |
-| Add, set or remove (quantity `0`) | `POST /api/v3/ui/trolley/update`           | Assumed from community code                  |
-| Login probe                       | `GET /api/ui/v2/bootstrap`                 | Endpoint verified; logged-in field assumed   |
+| Purpose                           | Request                                   | Status                                     |
+| --------------------------------- | ----------------------------------------- | ------------------------------------------ |
+| Search                            | `POST /apis/ui/Search/products`           | Verified anonymously                       |
+| Product detail                    | `GET /apis/ui/product/detail/<stockcode>` | Verified anonymously                       |
+| Read cart                         | `GET /apis/ui/Trolley`                    | Verified anonymously (empty trolley)       |
+| Add, set or remove (quantity `0`) | `POST /api/v3/ui/trolley/update`          | Assumed from community code                |
+| Login probe                       | `GET /api/ui/v2/bootstrap`                | Endpoint verified; logged-in field assumed |
 
 Egress for the tool partition is www, `cdn0.woolworths.media` and `acs.woolworths.com.au`; not
 the auth host. Whether the site works with its ~40 analytics hosts blocked is untested
