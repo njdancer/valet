@@ -81,7 +81,15 @@ export class OnePasswordServiceAccountProvider implements CredentialProvider {
   }
 
   async #createClient(): Promise<SecretsClient> {
-    const token = await this.#tokenSource.token()
+    let token: SecretValue
+    try {
+      token = await this.#tokenSource.token()
+    } catch (error) {
+      // The token is the provider's own configuration, not the grant's item. A missing token means the
+      // service account isn't set up, which re-granting the item would not fix, so it is unavailable.
+      const locked = error instanceof CredentialError && error.failure === 'locked'
+      throw new CredentialError(locked ? 'locked' : 'unavailable')
+    }
     try {
       return await this.#bounded(this.#clientFactory(token))
     } finally {
@@ -124,11 +132,25 @@ export function classifySdkError(error: unknown): {
   failure: CredentialError['failure']
   dropClient: boolean
 } {
-  const name = typeof error === 'object' && error !== null ? error.constructor.name : ''
-  const message = (error instanceof Error ? error.message : String(error)).toLowerCase()
+  const { name, message } = describeError(error)
   if (name === 'DesktopSessionExpiredError') return { failure: 'locked', dropClient: true }
   if (name === 'AuthExpiredError' || AUTH.test(message)) return { failure: 'unavailable', dropClient: true }
   if (FIELD_MISSING.test(message)) return { failure: 'field-missing', dropClient: false }
   if (NOT_FOUND.test(message)) return { failure: 'not-found', dropClient: false }
   return { failure: 'unavailable', dropClient: false }
+}
+
+/** The class name and lowercased message of anything thrown, without ever throwing itself. */
+function describeError(error: unknown): { name: unknown; message: string } {
+  try {
+    const name =
+      typeof error === 'object' && error !== null
+        ? (error as { constructor?: { name?: unknown } }).constructor?.name
+        : undefined
+    const message = (error instanceof Error ? error.message : String(error)).toLowerCase()
+    return { name, message }
+  } catch {
+    // A null-prototype object can't be stringified, and a getter can throw; neither is a known error.
+    return { name: undefined, message: '' }
+  }
 }

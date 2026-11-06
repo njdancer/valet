@@ -255,6 +255,49 @@ describe('OnePasswordServiceAccountProvider', () => {
     expect(rendered).not.toContain('resolving')
   })
 
+  it('reports a missing service-account token as unavailable, not as a missing item', async () => {
+    // The Keychain has no token: the account isn't set up. Calling that not-found would tell the
+    // person their 1Password item is gone and send them to re-grant it.
+    const factory = vi.fn()
+    const provider = new OnePasswordServiceAccountProvider({
+      tokenSource: {
+        token: async () => {
+          throw new CredentialError('not-found')
+        },
+      },
+      clientFactory: factory,
+      timers: new ManualTimers(),
+    })
+    expect((await failureOf(provider.resolve(ITEM, 'password'))).failure).toBe('unavailable')
+    expect(factory).not.toHaveBeenCalled()
+  })
+
+  it('reports any other token source failure as unavailable, and a field-missing one too', async () => {
+    for (const thrown of [new CredentialError('field-missing'), new Error('not found'), 'x']) {
+      const provider = new OnePasswordServiceAccountProvider({
+        tokenSource: {
+          token: async () => {
+            throw thrown
+          },
+        },
+        clientFactory: vi.fn(),
+        timers: new ManualTimers(),
+      })
+      expect((await failureOf(provider.resolve(ITEM, 'password'))).failure).toBe('unavailable')
+    }
+  })
+
+  it('rejects with a CredentialError when the SDK throws something with no prototype', async () => {
+    for (const thrown of [Object.create(null), 42, undefined]) {
+      const provider = new OnePasswordServiceAccountProvider({
+        tokenSource: new CountingTokenSource(),
+        clientFactory: async () => recordingClient(() => Promise.reject(thrown)).client,
+        timers: new ManualTimers(),
+      })
+      expect((await failureOf(provider.resolve(ITEM, 'password'))).failure).toBe('unavailable')
+    }
+  })
+
   it('re-creates a token source CredentialError rather than passing the original object on', async () => {
     const original = new CredentialError('locked')
     const provider = new OnePasswordServiceAccountProvider({
@@ -335,6 +378,18 @@ describe('classifySdkError', () => {
         message,
         { failure: 'not-found', dropClient: false },
       ])
+    }
+  })
+
+  it('classifies values that cannot be stringified or inspected without throwing', () => {
+    const throwingGetter = {
+      get constructor(): never {
+        throw new Error('no constructor')
+      },
+    }
+    const badMessage = Object.assign(new Error('x'), { message: 7 })
+    for (const error of [Object.create(null), throwingGetter, badMessage, 42, Symbol('s')]) {
+      expect(classifySdkError(error)).toEqual({ failure: 'unavailable', dropClient: false })
     }
   })
 
