@@ -20,8 +20,23 @@ export interface Timers {
   clearTimeout(handle: unknown): void
 }
 
+// A helper gets only what it needs to run. Inheriting OP_SERVICE_ACCOUNT_TOKEN, OP_CONNECT_* or
+// OP_SESSION_* from a developer's shell would let `op` authenticate some other way than the one a
+// grant names. PATH stays because `op` is found through it when no absolute path is configured.
+const PASSED_THROUGH = ['HOME', 'USER', 'LOGNAME', 'PATH', 'TMPDIR'] as const
+
+/** The environment helpers run with. LANG=C keeps the stderr phrases the classifiers match stable. */
+export function helperEnv(parent: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const env: Record<string, string> = { LANG: 'C', LC_ALL: 'C' }
+  for (const name of PASSED_THROUGH) {
+    const value = parent[name]
+    if (value !== undefined) env[name] = value
+  }
+  return env
+}
+
 export const nodeSpawner: Spawner = (command, args) =>
-  spawn(command, [...args], { stdio: ['ignore', 'pipe', 'pipe'], shell: false })
+  spawn(command, [...args], { stdio: ['ignore', 'pipe', 'pipe'], shell: false, env: helperEnv() })
 
 export const nodeTimers: Timers = {
   setTimeout: (callback, ms) => setTimeout(callback, ms),

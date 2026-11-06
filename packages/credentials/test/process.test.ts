@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { nodeSpawner, nodeTimers, runProcess } from '../src/process'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { helperEnv, nodeSpawner, nodeTimers, runProcess } from '../src/process'
 import { FakeChild, ManualTimers, scriptedSpawner } from './fake-process'
 
 const options = { timeoutMs: 1000, maxStdoutBytes: 64, timers: new ManualTimers() }
@@ -136,7 +136,59 @@ describe('runProcess', () => {
   })
 })
 
+describe('helperEnv', () => {
+  it('passes through only what a helper needs, and fixes the locale', () => {
+    const parent = {
+      HOME: '/Users/p',
+      USER: 'p',
+      LOGNAME: 'p',
+      PATH: '/opt/homebrew/bin:/usr/bin',
+      TMPDIR: '/tmp/x',
+      LANG: 'de_DE.UTF-8',
+      OP_SERVICE_ACCOUNT_TOKEN: 'ops_canary',
+      OP_CONNECT_HOST: 'https://connect.example',
+      OP_CONNECT_TOKEN: 'canary',
+      OP_SESSION_my: 'canary',
+      OP_ACCOUNT: 'my.1password.com',
+      NODE_OPTIONS: '--require /tmp/evil.js',
+      DYLD_INSERT_LIBRARIES: '/tmp/evil.dylib',
+    }
+    expect(helperEnv(parent)).toEqual({
+      HOME: '/Users/p',
+      USER: 'p',
+      LOGNAME: 'p',
+      PATH: '/opt/homebrew/bin:/usr/bin',
+      TMPDIR: '/tmp/x',
+      LANG: 'C',
+      LC_ALL: 'C',
+    })
+  })
+
+  it('leaves out variables the parent does not have', () => {
+    expect(helperEnv({ HOME: '/Users/p' })).toEqual({ HOME: '/Users/p', LANG: 'C', LC_ALL: 'C' })
+  })
+})
+
 describe('nodeSpawner', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('does not hand 1Password credentials from its own environment to the helper', async () => {
+    vi.stubEnv('OP_SERVICE_ACCOUNT_TOKEN', 'ops_canary-env-token')
+    vi.stubEnv('OP_SESSION_my', 'canary-session')
+    const outcome = await runProcess(
+      nodeSpawner,
+      process.execPath,
+      ['-e', 'process.stdout.write(JSON.stringify(Object.keys(process.env).sort()))'],
+      { timeoutMs: 10_000, maxStdoutBytes: 4096, timers: nodeTimers },
+    )
+    expect(outcome.kind).toBe('exited')
+    const names = JSON.parse(outcome.kind === 'exited' ? outcome.stdout.toString() : '[]') as string[]
+    expect(names.filter((name) => name.startsWith('OP_'))).toEqual([])
+    expect(names).toContain('LC_ALL')
+  })
+
   it('runs a real process without a shell and captures its output', async () => {
     const outcome = await runProcess(
       nodeSpawner,
