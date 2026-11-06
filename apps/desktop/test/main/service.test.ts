@@ -557,6 +557,8 @@ describe('endpoint, settings, audit and the app', () => {
     const verified = await s.api.audit.verify()
     expect(verified).toMatchObject({ state: 'intact', records: 1 })
     expect(await s.api.audit.chainStatus()).toEqual(verified)
+    // Every window's chain status refetches: the sidebar shows the answer at once.
+    expect(s.events).toContainEqual({ type: 'audit-verified' })
     await s.api.audit.exportJsonl()
     s.ui.saveTo = join(s.paths.dir, 'export.jsonl')
     await s.api.audit.exportJsonl()

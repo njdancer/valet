@@ -182,10 +182,8 @@ describe('the audit log', () => {
     expect(
       within(screen.getByRole('complementary', { name: 'Record' })).getByText('After the break'),
     ).toBeTruthy()
-    // The sidebar learns of the break on the next audit event.
-    act(() => {
-      api.fake.appendAudit({ type: 'breaker-closed', host: 'www.coles.com.au' })
-    })
+    // The sidebar learns of the break from the verify itself, not only at the next record (the e2e
+    // suite found it still saying "not verified yet" beside a broken chain).
     await waitFor(() => expect(screen.getByText('Audit chain broken')).toBeTruthy())
   })
 

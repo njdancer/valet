@@ -787,6 +787,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       async verify() {
         enter('audit.verify')
         lastVerified = chainStatus()
+        emit({ type: 'audit-verified' })
         return clone(lastVerified)
       },
       async chainStatus() {

@@ -606,6 +606,8 @@ export type AppEvent =
   | { readonly type: 'grants-changed' }
   | { readonly type: 'runs-changed' }
   | { readonly type: 'audit-appended'; readonly seq: number }
+  /** A verify ran: chainStatus has a new answer, which every window showing it should fetch. */
+  | { readonly type: 'audit-verified' }
   | { readonly type: 'endpoint-changed' }
   | { readonly type: 'clients-changed' }
   | { readonly type: 'attention-changed' }

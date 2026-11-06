@@ -66,6 +66,7 @@ export const APP_EVENT_TYPES = [
   'grants-changed',
   'runs-changed',
   'audit-appended',
+  'audit-verified',
   'endpoint-changed',
   'clients-changed',
   'attention-changed',

@@ -592,6 +592,9 @@ export class AppService {
         page: async (query) => auditPage(await this.reader.records(), query),
         verify: async () => {
           this.chain = await this.reader.verify(new Date(deps.now()))
+          // The sidebar's chain status (in every window) would otherwise keep the old answer until
+          // the next record is appended: "not verified yet" beside a broken chain.
+          this.emit('audit-verified')
           return this.chain
         },
         chainStatus: async () => this.chain,
