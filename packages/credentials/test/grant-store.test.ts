@@ -144,6 +144,80 @@ describe('FileGrantStore', () => {
     ])
   })
 
+  it('keeps a grant for each sender of one flow, so granting the second keeps the first', async () => {
+    const store = new FileGrantStore({ path })
+    await store.put({ ...messagesGrant, itemRef: '+61400000000' })
+    await store.put({ ...messagesGrant, itemRef: 'BankCodes' })
+    expect((await store.list()).map((g) => g.itemRef)).toEqual(['+61400000000', 'BankCodes'])
+    expect(await store.findMessages('woolworths', HASH_A, '+61400000000')).toEqual({
+      ...messagesGrant,
+      itemRef: '+61400000000',
+    })
+    expect(await store.findMessages('woolworths', HASH_A, 'BankCodes')).toEqual({
+      ...messagesGrant,
+      itemRef: 'BankCodes',
+    })
+  })
+
+  it('replaces a messages grant for the same sender written another way', async () => {
+    const store = new FileGrantStore({ path })
+    await store.put({ ...messagesGrant, itemRef: '+61 400 000 000' })
+    await store.put({ ...messagesGrant, itemRef: '+61400000000', origins: ['https://www.woolworths.com.au'] })
+    expect(await store.list()).toEqual([
+      { ...messagesGrant, itemRef: '+61400000000', origins: ['https://www.woolworths.com.au'] },
+    ])
+  })
+
+  it('finds a messages grant by sender however either is written', async () => {
+    const store = new FileGrantStore({ path })
+    await store.put({ ...messagesGrant, itemRef: '+61 400 000 000' })
+    expect(await store.findMessages('woolworths', HASH_A, '+61400000000')).toEqual({
+      ...messagesGrant,
+      itemRef: '+61 400 000 000',
+    })
+    expect(await store.findMessages('woolworths', HASH_A, 'woolworths')).toBeNull()
+  })
+
+  it('does not hand a messages grant to another sender, adapter or hash', async () => {
+    const store = new FileGrantStore({ path })
+    await store.put(messagesGrant)
+    // A sender that contains, or is contained by, the granted one is still another sender.
+    expect(await store.findMessages('woolworths', HASH_A, 'fake.woolworths@icloud.com')).toBeNull()
+    expect(await store.findMessages('woolworths', HASH_A, 'Woolworths1')).toBeNull()
+    expect(await store.findMessages('woolworths', HASH_B, 'Woolworths')).toBeNull()
+    expect(await store.findMessages('coles', HASH_A, 'Woolworths')).toBeNull()
+    expect(await store.findMessages('woolworths', HASH_A, 'not a sender!')).toBeNull()
+  })
+
+  it('does not hand out a 1Password grant as a messages grant', async () => {
+    const store = new FileGrantStore({ path })
+    await store.put(grant)
+    expect(await store.findMessages('woolworths', HASH_A, 'op://siteadapter/Woolworths')).toBeNull()
+  })
+
+  it('revokes one sender, whatever the hash, and keeps the others', async () => {
+    const store = new FileGrantStore({ path })
+    await store.put(grant)
+    await store.put(messagesGrant)
+    await store.put({ ...messagesGrant, adapterHash: HASH_B })
+    await store.put({ ...messagesGrant, itemRef: '+61400000000' })
+    await store.revokeMessages('woolworths', 'WOOLWORTHS')
+    expect(await store.list()).toEqual([grant, { ...messagesGrant, itemRef: '+61400000000' }])
+  })
+
+  it('revokes every sender when the messages secret is revoked', async () => {
+    const store = new FileGrantStore({ path })
+    await store.put(messagesGrant)
+    await store.put({ ...messagesGrant, itemRef: '+61400000000' })
+    await store.revoke('woolworths', 'messages')
+    expect(await store.list()).toEqual([])
+  })
+
+  it('does not write when revoking a sender that has no grant', async () => {
+    await new FileGrantStore({ path }).revokeMessages('woolworths', 'Woolworths')
+    await expect(fs.access(path)).rejects.toThrow()
+  })
+
   it('does not create a file when revoking nothing', async () => {
     await new FileGrantStore({ path }).revoke('woolworths', 'login')
     await expect(fs.access(path)).rejects.toThrow()
@@ -260,6 +334,12 @@ describe('FileGrantStore', () => {
     expect(await store.list()).toEqual([onPort])
   })
 
+  it('reads a file with messages grants for two senders of one flow', async () => {
+    const second = { ...messagesGrant, itemRef: '+61400000000' }
+    await writeRaw({ version: 1, grants: [messagesGrant, second] })
+    expect(await new FileGrantStore({ path }).list()).toEqual([messagesGrant, second])
+  })
+
   describe('refuses a grant file that was tampered with', () => {
     const tampered: [string, unknown][] = [
       ['invalid JSON', '{"version":1,'],
@@ -277,6 +357,10 @@ describe('FileGrantStore', () => {
         `{"version":1,"grants":[${JSON.stringify(grant).replace('{', '{"__proto__":{},')}]}`,
       ],
       ['two grants in one slot', { version: 1, grants: [grant, { ...grant, itemRef: 'op://v/other' }] }],
+      [
+        'two messages grants for one sender, written two ways',
+        { version: 1, grants: [messagesGrant, { ...messagesGrant, itemRef: 'WOOLWORTHS' }] },
+      ],
       [
         'a messages grant edited to read codes from anyone',
         { version: 1, grants: [grant, { ...messagesGrant, itemRef: '%' }] },

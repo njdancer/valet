@@ -2,6 +2,12 @@
 // readable only by its owner. A grant binds a secret to one exact adapter hash, so a changed adapter
 // never inherits one.
 //
+// A grant's slot is (adapter, hash, secret), and putting a grant replaces the one in its slot. Every
+// Messages grant has the secret 'messages', but a flow may read codes from more than one sender, so
+// for those the slot also includes the sender: granting a second sender adds a grant beside the
+// first instead of replacing it. Core's find() has no sender to ask with, so it returns one of them;
+// findMessages() asks for the one sender a manifest's OTP source names.
+//
 // The store checks that each grant is well formed on its own. Checking it against the manifest is
 // the runtime's job, at the moment it uses a grant: that grant.origins is a subset of the origins
 // the manifest's secret request names (for a messages grant, of the origins its OTP step may type
@@ -21,7 +27,7 @@ import {
   SiteAdapterError,
 } from '@siteadapter/core'
 import { parseItemRef } from './item-ref'
-import { parseOtpSender } from './otp-sender'
+import { parseOtpSender, sameOtpSender } from './otp-sender'
 
 /** The file operations the store uses, injected so tests can fail them. */
 export type GrantFs = Pick<typeof nodeFs, 'lstat' | 'mkdir' | 'open' | 'rename' | 'unlink'>
@@ -67,6 +73,25 @@ export class FileGrantStore implements GrantStore {
     )
   }
 
+  /**
+   * The messages grant for this adapter and hash whose sender is `sender`, however either is
+   * written ("+61 400 000 000" and "+61400000000"), or null. Unlike find(), it can't hand back the
+   * grant for a different sender of the same flow.
+   */
+  async findMessages(adapterId: string, adapterHash: string, sender: string): Promise<Grant | null> {
+    const grants = await this.#read()
+    return (
+      grants.find(
+        (g) =>
+          g.adapterId === adapterId &&
+          g.adapterHash === adapterHash &&
+          g.secret === MESSAGES_SECRET &&
+          g.provider === 'messages' &&
+          sameOtpSender(g.itemRef, sender),
+      ) ?? null
+    )
+  }
+
   async list(): Promise<readonly Grant[]> {
     return this.#read()
   }
@@ -84,6 +109,18 @@ export class FileGrantStore implements GrantStore {
     return this.#exclusive(async () => {
       const grants = await this.#read()
       const kept = grants.filter((g) => !(g.adapterId === adapterId && g.secret === secret))
+      if (kept.length !== grants.length) await this.#write(kept)
+    })
+  }
+
+  /** Revokes the messages grants for one sender, whatever the hash; revoke() revokes every sender. */
+  revokeMessages(adapterId: string, sender: string): Promise<void> {
+    return this.#exclusive(async () => {
+      const grants = await this.#read()
+      const kept = grants.filter(
+        (g) =>
+          !(g.adapterId === adapterId && g.secret === MESSAGES_SECRET && sameOtpSender(g.itemRef, sender)),
+      )
       if (kept.length !== grants.length) await this.#write(kept)
     })
   }
@@ -247,8 +284,15 @@ function copyGrant(grant: Grant): Grant {
   return Object.freeze({ ...grant, origins: Object.freeze([...grant.origins]) })
 }
 
+/**
+ * Grants that stand for the same approval: the newer replaces the older. Messages grants are one
+ * per sender, so two senders of one flow are two slots.
+ */
 function sameSlot(a: Grant, b: Grant): boolean {
-  return a.adapterId === b.adapterId && a.adapterHash === b.adapterHash && a.secret === b.secret
+  if (a.adapterId !== b.adapterId || a.adapterHash !== b.adapterHash || a.secret !== b.secret) return false
+  // Both are messages grants here (the reserved secret is only valid with that provider), and both
+  // passed isValidGrant, so both itemRefs parse as senders.
+  return a.secret !== MESSAGES_SECRET || sameOtpSender(a.itemRef, b.itemRef)
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
