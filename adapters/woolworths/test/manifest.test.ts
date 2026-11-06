@@ -1,6 +1,9 @@
 import {
   decideRequest,
+  hostAllowed,
+  isScreenedPattern,
   manifestSchema,
+  messagesSourcesIn,
   parseManifest,
   secretRefsIn,
   touchesDeniedSegment,
@@ -9,30 +12,69 @@ import { describe, expect, it } from 'vitest'
 import { createAdapter } from '../src/adapter'
 import realManifest, {
   createManifest,
-  LOGIN_PATH,
-  NEEDS_USER_REASONS,
+  loginUrl,
+  MESSAGES_SENDER,
+  NOTES,
+  REAL_AUTH_ORIGIN,
   REAL_ORIGIN,
   SELECTORS,
 } from '../src/manifest'
 import { FAKE_ORIGIN } from './fake-context'
 
+const FAKE_AUTH_ORIGIN = 'https://auth.woolworths.test'
+
+/** Every condition anywhere in the steps, nested ones included. */
+function conditionsIn(value: unknown): any[] {
+  const found: any[] = []
+  const visit = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item)
+    } else if (node !== null && typeof node === 'object') {
+      const record = node as Record<string, unknown>
+      if ('urlRegex' in record || 'urlContains' in record || 'visible' in record) found.push(record)
+      for (const item of Object.values(record)) visit(item)
+    }
+  }
+  visit(value)
+  return found
+}
+
+/** Every step anywhere in the steps, nested ones included. */
+function stepsIn(steps: readonly unknown[]): any[] {
+  const found: any[] = []
+  for (const step of steps as any[]) {
+    found.push(step)
+    if (Array.isArray(step.steps)) found.push(...stepsIn(step.steps))
+    if (Array.isArray(step.otherwise)) found.push(...stepsIn(step.otherwise))
+  }
+  return found
+}
+
 describe('the real manifest', () => {
   it('is the default export and points at the live site', () => {
     expect(realManifest.home).toBe('https://www.woolworths.com.au/')
-    expect(realManifest.navigation).toEqual([REAL_ORIGIN])
+    expect(realManifest.version).toBe('0.2.0')
     expect(manifestSchema.parse(realManifest)).toEqual(realManifest)
   })
 
-  it('allows the hosts the live probe found the site needs, and no others', () => {
+  it('navigates the auth partition to www and to Auth0, which the live probe found on its own origin', () => {
+    expect(realManifest.navigation).toEqual([REAL_ORIGIN, REAL_AUTH_ORIGIN])
+    expect(REAL_AUTH_ORIGIN).toBe('https://auth.woolworths.com.au')
+  })
+
+  it('allows the hosts the live probe found the site needs, and no others: never the auth origin', () => {
     expect(realManifest.egress).toEqual([
       'www.woolworths.com.au',
       'cdn0.woolworths.media',
       'acs.woolworths.com.au',
     ])
+    expect(hostAllowed('auth.woolworths.com.au', realManifest.egress)).toBe(false)
   })
 
-  it('copies cookies for the bare domain (".woolworths.com.au") and the www host', () => {
+  it('copies cookies for the bare domain (".woolworths.com.au") and the www host, never Auth0’s', () => {
     expect(realManifest.session.cookieDomains).toEqual(['woolworths.com.au', 'www.woolworths.com.au'])
+    // Auth0's session cookie is host-only on the auth origin, so the hand-off never carries it.
+    expect(hostAllowed('auth.woolworths.com.au', realManifest.session.cookieDomains)).toBe(false)
   })
 
   it('probes login through bootstrap, not the auth cookie anonymous visitors also get', () => {
@@ -40,36 +82,90 @@ describe('the real manifest', () => {
       kind: 'fetch',
       path: '/api/ui/v2/bootstrap',
       expectStatus: 200,
+      loggedOutStatuses: [401],
       jsonPath: 'ShopperDetails.IsLoggedIn',
       equals: true,
     })
   })
 
-  it('requests the login secret only for the www origin', () => {
+  it('requests the login secret, email and password only, for the Auth0 origin only', () => {
     expect(realManifest.secrets).toEqual({
       login: {
-        description: expect.any(String),
-        fields: ['username', 'password', 'otp'],
-        origins: [REAL_ORIGIN],
+        description: 'Woolworths account email and password',
+        fields: ['username', 'password'],
+        origins: [REAL_AUTH_ORIGIN],
       },
+    })
+  })
+
+  it('lets no subframe origin onto the auth page beyond the navigation list', () => {
+    expect(realManifest.auth.frameOrigins).toEqual([])
+  })
+
+  it('paces requests at least 2.5 s apart, with the default breaker cool-downs', () => {
+    expect(realManifest.limits).toEqual({
+      requestsPerRun: 6,
+      minGapMs: 2500,
+      cooldownSeconds: 600,
+      maxCooldownSeconds: 7200,
     })
   })
 })
 
-describe('createManifest with the fake origin', () => {
+describe('createManifest with totp', () => {
+  const manifest = createManifest({ totp: true })
+
+  it('also asks for the OTP field of the same 1Password item', () => {
+    expect(manifest.secrets['login']).toEqual({
+      description: 'Woolworths account email and password, plus its authenticator-app code',
+      fields: ['username', 'password', 'otp'],
+      origins: [REAL_AUTH_ORIGIN],
+    })
+  })
+
+  it('fills the authenticator code from it, and still reads SMS codes from Messages', () => {
+    expect(secretRefsIn(manifest.auth.steps)).toEqual([
+      { secret: 'login', field: 'username' },
+      { secret: 'login', field: 'password' },
+      { secret: 'login', field: 'otp' },
+    ])
+    expect(messagesSourcesIn(manifest.auth.steps)).toHaveLength(1)
+  })
+})
+
+describe('createManifest with the fake origins', () => {
   const manifest = createManifest({ origin: FAKE_ORIGIN })
 
   it('parses, with every origin-bearing field on the fake site', () => {
     expect(manifest.home).toBe('https://www.woolworths.test/')
-    expect(manifest.navigation).toEqual([FAKE_ORIGIN])
-    expect(manifest.secrets).toMatchObject({ login: { origins: [FAKE_ORIGIN] } })
+    expect(manifest.navigation).toEqual([FAKE_ORIGIN, FAKE_AUTH_ORIGIN])
+    expect(manifest.secrets).toMatchObject({ login: { origins: [FAKE_AUTH_ORIGIN] } })
     expect(manifest.auth.steps[0]).toEqual({
       op: 'goto',
-      url: 'https://www.woolworths.test/shop/securelogin',
+      url: 'https://www.woolworths.test/auth/login?redirect_uri=https://www.woolworths.test/auth/callback&path=/',
     })
   })
 
-  it('allows egress to the fake host only', () => {
+  it('derives the auth origin with its port, and takes one given', () => {
+    const ported = createManifest({ origin: 'https://www.woolworths.test:8443' })
+    expect(ported.navigation).toEqual([
+      'https://www.woolworths.test:8443',
+      'https://auth.woolworths.test:8443',
+    ])
+    const bare = createManifest({ origin: 'https://woolworths.test' })
+    expect(bare.navigation).toEqual(['https://woolworths.test', 'https://auth.woolworths.test'])
+    const given = createManifest({
+      origin: 'https://www.woolworths.test:8443',
+      authOrigin: 'https://auth.woolworths.test:9443',
+    })
+    expect(given.navigation).toEqual([
+      'https://www.woolworths.test:8443',
+      'https://auth.woolworths.test:9443',
+    ])
+    expect(given.secrets['login']?.origins).toEqual(['https://auth.woolworths.test:9443'])
+  })
+
+  it('allows egress to the fake www host only', () => {
     expect(manifest.egress).toEqual(['www.woolworths.test'])
     expect(manifest.session.cookieDomains).toEqual(['woolworths.test', 'www.woolworths.test'])
   })
@@ -82,6 +178,8 @@ describe('createManifest with the fake origin', () => {
       manifest.requests,
     )
     expect(decision).toEqual({ allowed: false, reason: 'host-not-allowed' })
+    expect(manifest.navigation.some((origin) => origin.includes('woolworths.com.au'))).toBe(false)
+    expect(JSON.stringify(manifest.auth.steps)).not.toContain('woolworths.com.au')
   })
 
   it('copies cookies for just the host when the origin has no www', () => {
@@ -90,58 +188,111 @@ describe('createManifest with the fake origin', () => {
     expect(bare.egress).toEqual(['woolworths.test'])
   })
 
-  it('refuses an http origin', () => {
+  it('refuses an http origin, and an IP-literal one', () => {
     expect(() => createManifest({ origin: 'http://www.woolworths.test' })).toThrow()
+    expect(() =>
+      createManifest({ origin: 'https://127.0.0.1:8443', authOrigin: 'https://127.0.0.1:9443' }),
+    ).toThrow()
   })
 })
 
 describe('the auth steps', () => {
   const steps = realManifest.auth.steps
+  const all = stepsIn(steps)
 
-  it('fill the username, password and code from the login secret, and nothing else', () => {
+  it('start at the live site’s login link', () => {
+    expect(steps[0]).toEqual({ op: 'goto', url: loginUrl(REAL_ORIGIN) })
+    expect(loginUrl(REAL_ORIGIN)).toBe(
+      'https://www.woolworths.com.au/auth/login?redirect_uri=https://www.woolworths.com.au/auth/callback&path=/',
+    )
+  })
+
+  it('never navigate anywhere else themselves', () => {
+    expect(all.filter((step) => step.op === 'goto')).toEqual([steps[0]])
+  })
+
+  it('fill the username and password from the login secret, and read SMS codes from Messages', () => {
     expect(secretRefsIn(steps)).toEqual([
       { secret: 'login', field: 'username' },
       { secret: 'login', field: 'password' },
-      { secret: 'login', field: 'otp' },
     ])
+    expect(messagesSourcesIn(steps)).toEqual([
+      { sender: MESSAGES_SENDER, pattern: String.raw`\b(\d{6})\b`, maxAgeSeconds: 300 },
+    ])
+    expect(MESSAGES_SENDER).toBe('Woolworths')
   })
 
-  it('type the password into the password field, not the email field', () => {
-    expect(steps).toContainEqual({
-      op: 'fill',
-      selector: '#loginForm-Password',
-      value: { secret: 'login', field: 'password' },
-    })
-    expect(steps).toContainEqual({
-      op: 'fill',
-      selector: '#loginForm-Email',
-      value: { secret: 'login', field: 'username' },
+  it('type the password into the password field and the email into the username field', () => {
+    const fills = all.filter((step) => step.op === 'fill')
+    expect(fills).toEqual([
+      { op: 'fill', selector: SELECTORS.username, value: { secret: 'login', field: 'username' } },
+      { op: 'fill', selector: SELECTORS.password, value: { secret: 'login', field: 'password' } },
+    ])
+    expect(SELECTORS.username).toBe('input[name="username"]')
+  })
+
+  it('click only Auth0’s primary button and the remember-device box, never passkey or Everyday', () => {
+    const clicks = new Set(all.filter((step) => step.op === 'click').map((step) => step.selector))
+    expect(clicks).toEqual(new Set([SELECTORS.submit, SELECTORS.rememberDevice]))
+    expect(SELECTORS.submit).toBe('button[type="submit"][name="action"][value="default"]')
+  })
+
+  it('tick remember-device only while it is unticked', () => {
+    expect(SELECTORS.rememberDevice).toContain(':not(:checked)')
+    expect(all).toContainEqual({
+      op: 'when',
+      condition: { visible: SELECTORS.rememberDevice },
+      steps: [{ op: 'click', selector: SELECTORS.rememberDevice }],
     })
   })
 
-  it('only fill the one-time code when the code input appears', () => {
-    const when = steps.find((step) => step.op === 'when' && step.steps.some((inner) => inner.op === 'otp'))
-    expect(when).toMatchObject({ op: 'when', condition: { visible: SELECTORS.otp } })
+  it('use only urlContains and screened urlRegex conditions for URLs', () => {
+    const urlConditions = conditionsIn(steps).filter((c) => 'urlRegex' in c || 'urlContains' in c)
+    expect(urlConditions.length).toBeGreaterThan(0)
+    for (const condition of urlConditions) {
+      if ('urlRegex' in condition) expect(isScreenedPattern(condition.urlRegex as string)).toBe(true)
+    }
+    expect(JSON.stringify(steps)).not.toContain('urlMatches')
+  })
+
+  it('tell the login pages from www by path alone, since conditions never see the host', () => {
+    const leftLogin = conditionsIn(steps).find(
+      (c) => typeof c.urlRegex === 'string' && c.urlRegex.includes('authorize'),
+    )
+    const regex = new RegExp(leftLogin?.urlRegex as string)
+    for (const onLogin of [
+      '/u/login/identifier?state=x',
+      '/u/mfa-sms-challenge?state=x',
+      '/authorize?client_id=x',
+      '/login/callback?x',
+      '/continue?state=x',
+      '/auth/login?redirect_uri=x',
+      '/auth/callback?code=x',
+      '/shop/securelogin',
+    ]) {
+      expect(regex.test(onLogin)).toBe(true)
+    }
+    for (const offLogin of ['/', '/?x=1', '/shop/myaccount', '/shop/browse/dairy', '/authors', '/users']) {
+      expect(regex.test(offLogin)).toBe(false)
+    }
   })
 
   it('contain no waitFor, whose timeout would end the flow as a failure instead of needsUser', () => {
-    expect(JSON.stringify(steps)).not.toContain('"waitFor"')
+    expect(all.some((step) => step.op === 'waitFor')).toBe(false)
   })
 
-  it('end in assertLoggedIn, after a needsUser exit for a login that never left the page', () => {
-    expect(steps.slice(-2)).toEqual([
-      {
-        op: 'when',
-        condition: { urlMatches: LOGIN_PATH },
-        steps: [{ op: 'needsUser', reason: NEEDS_USER_REASONS.stuck }],
-      },
-      { op: 'assertLoggedIn' },
-    ])
+  it('contain no fail step: every stop is needsUser with a reason code and an in-app note', () => {
+    expect(all.some((step) => step.op === 'fail')).toBe(false)
+    const stops = all.filter((step) => step.op === 'needsUser')
+    expect(new Set(stops.map((step) => step.reason))).toEqual(
+      new Set(['captcha', 'login-required', 'account-locked', 'otp-required', 'other']),
+    )
+    for (const stop of stops) expect(Object.values(NOTES)).toContain(stop.note)
+    for (const note of Object.values(NOTES)) expect(note.length).toBeLessThanOrEqual(200)
   })
 
-  it('never navigate anywhere but the login page', () => {
-    const gotos = steps.filter((step) => step.op === 'goto')
-    expect(gotos).toEqual([{ op: 'goto', url: `${REAL_ORIGIN}/shop/securelogin` }])
+  it('end in assertLoggedIn', () => {
+    expect(steps.at(-1)).toEqual({ op: 'assertLoggedIn' })
   })
 })
 

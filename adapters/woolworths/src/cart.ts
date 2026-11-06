@@ -1,5 +1,6 @@
-// Cart tools. Each one calls session.ensure() first, because an anonymous trolley is a different
-// trolley: writing to it would look like success and do nothing for the person.
+// Cart tools. Each one runs under withLogin (login.ts): session.ensure() first, because an anonymous
+// trolley is a different trolley and writing to it would look like success and do nothing for the
+// person; then, if the session expires partway, one more ensure() and a retry from the start.
 //
 // The update endpoint sets absolute quantities (community code; unverified live), so add_to_cart
 // reads the current quantity first. That read is the only extra call any cart tool makes. Nothing
@@ -9,7 +10,7 @@
 
 import { SiteAdapterError, type ToolContext, tool } from '@siteadapter/core'
 import { z } from 'zod'
-import { requireLogin } from './login'
+import { withLogin } from './login'
 import { productName, stockcodeSchema } from './products'
 import { getJson, PATHS, postJson } from './site'
 import { cents, text } from './text'
@@ -218,8 +219,7 @@ export const getCart = tool({
   input: z.object({}),
   output: cartSchema,
   async run(ctx) {
-    await requireLogin(ctx)
-    return readTrolley(await getJson(ctx, PATHS.trolley, trolleyWire)).cart
+    return withLogin(ctx, async () => readTrolley(await getJson(ctx, PATHS.trolley, trolleyWire)).cart)
   },
 })
 
@@ -235,16 +235,17 @@ export const addToCart = tool({
     requestedQuantity: z.number(),
   }),
   async run(ctx, input) {
-    await requireLogin(ctx)
-    const read = readTrolley(await getJson(ctx, PATHS.trolley, trolleyWire))
-    // The write replaces the line's quantity, so a line hidden in a bucket the adapter can't read
-    // would be overwritten with just the added amount. Refuse rather than shrink it.
-    if (!read.complete) throw new SiteAdapterError('tool-run', 'invalid')
-    const previousQuantity = read.quantities.get(input.stockcode) ?? 0
-    const requestedQuantity = previousQuantity + input.quantity
-    if (requestedQuantity > MAX_LINE_QUANTITY) throw new SiteAdapterError('tool-input', 'invalid')
-    const outcome = await setQuantity(ctx, input.stockcode, requestedQuantity)
-    return { stockcode: input.stockcode, previousQuantity, requestedQuantity, ...outcome }
+    return withLogin(ctx, async () => {
+      const read = readTrolley(await getJson(ctx, PATHS.trolley, trolleyWire))
+      // The write replaces the line's quantity, so a line hidden in a bucket the adapter can't read
+      // would be overwritten with just the added amount. Refuse rather than shrink it.
+      if (!read.complete) throw new SiteAdapterError('tool-run', 'invalid')
+      const previousQuantity = read.quantities.get(input.stockcode) ?? 0
+      const requestedQuantity = previousQuantity + input.quantity
+      if (requestedQuantity > MAX_LINE_QUANTITY) throw new SiteAdapterError('tool-input', 'invalid')
+      const outcome = await setQuantity(ctx, input.stockcode, requestedQuantity)
+      return { stockcode: input.stockcode, previousQuantity, requestedQuantity, ...outcome }
+    })
   },
 })
 
@@ -255,8 +256,7 @@ export const setCartQuantity = tool({
   }),
   output: z.object({ ...writeOutput, requestedQuantity: z.number() }),
   async run(ctx, input) {
-    await requireLogin(ctx)
-    const outcome = await setQuantity(ctx, input.stockcode, input.quantity)
+    const outcome = await withLogin(ctx, () => setQuantity(ctx, input.stockcode, input.quantity))
     return { stockcode: input.stockcode, requestedQuantity: input.quantity, ...outcome }
   },
 })
@@ -269,8 +269,7 @@ export const removeFromCart = tool({
     removed: z.boolean().nullable(),
   }),
   async run(ctx, input) {
-    await requireLogin(ctx)
-    const outcome = await setQuantity(ctx, input.stockcode, 0)
+    const outcome = await withLogin(ctx, () => setQuantity(ctx, input.stockcode, 0))
     const removed = outcome.quantity === null ? null : outcome.quantity === 0
     return { stockcode: input.stockcode, removed, ...outcome }
   },
