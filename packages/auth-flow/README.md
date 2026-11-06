@@ -12,6 +12,7 @@ are in [docs/security-model.md](../../docs/security-model.md).
 | `run-auth-flow` | The entry point: audit `login-started` / `login-finished`, the final probe, outcomes |
 | `interpreter`   | One function per step, `retry`, `waitFor` polling                                    |
 | `conditions`    | `visible`, `urlContains`, `urlRegex`, `textPresent`, `not`, `any`, `all`             |
+| `url-matcher`   | `WorkerUrlMatcher`: runs `urlRegex` patterns in a worker thread under a deadline     |
 | `probe`         | Reads the manifest's session probe through the `AuthProbe` hook                      |
 | `secret-fill`   | Grant, manifest and element checks, just-in-time resolve, audit, type, dispose       |
 | `guards`        | Pure checks: field suitability, granted ∩ bound origins                              |
@@ -24,13 +25,27 @@ Messages reader, the caller supplies:
 
 - **`probe: AuthProbe`**, two hooks that fetch evidence from the **auth** partition:
   `fetch(url)` (a GET with the auth session's cookies) and `cookieNames(cookieDomains)`. The flow
-  reads the manifest's probe itself; the hooks never decide. `fetch` should throw
-  `SiteAdapterError('probe', 'blocked-by-site' | 'rate-limited')` for an answer that is the site
-  refusing us (the runtime's `looksBlocked`), and obey the site's rate budget and breaker.
+  reads the manifest's probe itself; the hooks never decide. `fetch` returns what the site said:
+  the flow reads a 429 as `rate-limited` and an HTML 403 or Akamai's "Access Denied" page as
+  `blocked-by-site`, as the runtime's `looksBlocked` does for the tool partition. It may also
+  throw `SiteAdapterError('probe', 'blocked-by-site' | 'rate-limited')` itself (an open breaker),
+  and should obey the site's rate budget.
 - **`rememberSecret(copy)`**, called with an independent `clone()` of every secret just before it
   is typed. The runtime keeps it to redact tool output for the rest of the run, and disposes it.
   If it throws, the secret isn't typed.
 - **`isBlockedPage()`**, the clock, `sleep`, `typingDelayMs` and `flowTimeoutMs`.
+- **`urlMatcher?`**, optional. By default each run starts a `WorkerUrlMatcher` on its first
+  `urlRegex` test and closes it when the run ends. One passed in is the caller's to close.
+
+### The audit log: this package owns the login events
+
+`runAuthFlow` appends `login-started` before the first step and `login-finished` (with the
+outcome, the needsUser reason or the stage and class) after the last, and `secret-used` before
+every secret is typed. The caller must not append its own `login-started` or `login-finished`
+around `runAuthFlow`: two finish records for one login, which disagree (only this one knows the
+reason, and records a block as `blocked`), would end up in a hash-chained log that can't be
+corrected. Today `packages/runtime/src/session.ts` does append both around its `AuthRunner`; that
+needs to go, or become a runtime-only marker event, when the app wires this package in.
 
 ## Outcomes
 
@@ -67,6 +82,9 @@ Messages reader, the caller supplies:
   - A cookie probe asks `cookieNames(session.cookieDomains)` and looks for the exact name.
   - A fetch probe GETs `probe.path` resolved against `home`, and refuses (`probe: host-not-allowed`,
     nothing fetched) unless that stays on `home`'s origin, which must be https and on `navigation`.
+  - First, whatever the manifest says: a 429 is `blocked` with `probe: rate-limited`, and an HTML
+    403, or an HTML page that is Akamai's "Access Denied" with its reference number, is `blocked`
+    with `probe: blocked-by-site`. A refusal is never an answer about the session.
   - The expected status is logged in (subject to `jsonPath`/`equals`); a status in
     `loggedOutStatuses` (default `[401]`) is `probe: not-logged-in`, which `retry` may retry; any
     other status, or HTML where `jsonPath` expected JSON, is `probe: unavailable`, never retried.
@@ -77,12 +95,17 @@ Messages reader, the caller supplies:
   (`element-missing`) → frame origin, then page origin, in granted ∩ requested
   (`origin-mismatch`) → `inputReachable` strictly true (`input-unreachable`) → element suits field
   (`element-unsuitable`) → password form action (`form-action-mismatch`) → resolve
-  (`credential: <failure>`) → **the history, block and element checks again** → hand the runtime
-  its copy → focus → audit `secret-used` → `type(secret, { delayMs, allowedOrigins })` → dispose.
-  Auditing comes before typing, so a fill that can't be audited doesn't happen. `allowedOrigins`
-  is granted ∩ requested in normalised origin form; the driver checks the focused frame against it
-  before every keystroke and stops with `secret-fill: origin-mismatch` if the page navigates or
-  moves focus.
+  (`credential: <failure>`) → **the history, block and element checks again** → focus → **every
+  check once more, on what the selector finds now** → hand the runtime its copy → audit
+  `secret-used` → `type(secret, { delayMs, allowedOrigins })` → dispose. The check after focus is
+  for an SPA that re-renders as focus lands (say, swapping the login form for a search form):
+  the checks then describe the element that has focus. Auditing comes before typing, so a fill
+  that can't be audited doesn't happen. `allowedOrigins` is granted ∩ requested in normalised
+  origin form; the driver types only into the focused element, checks its frame against
+  `allowedOrigins` before every keystroke, and stops with `secret-fill: origin-mismatch` if the
+  page or frame navigates or focus moves. **Known gap:** the checks and `focus()` each resolve
+  the selector, so a selector matching two elements could, in principle, check one and focus the
+  other. Closing it needs core's `focus()` to return the `ElementInfo` of what it focused.
 - **`auth.frameOrigins`** never widens where a secret goes: a CAPTCHA frame's origin gets a
   secret only if it is also granted and requested.
 - **`retry: { times: n }`** runs its steps up to `n + 1` times. Retryability is stage and class
@@ -96,8 +119,12 @@ Messages reader, the caller supplies:
 - **`urlContains`** is a substring of the URL's path and query, never its host or fragment.
   **`urlRegex`** tests the same path and query. Every `urlRegex` in every branch is compiled once,
   before the first step, and must pass core's `isScreenedPattern` (`manifest: invalid`
-  otherwise, before anything is audited or fetched). A regex is never run on a path and query
-  longer than `MAX_REGEX_INPUT` (2048) characters; such a URL simply doesn't match.
+  otherwise, before anything is audited or fetched). The screen only refuses exponential shapes;
+  a polynomial one like `\d*\d*\d*!` passes it and can backtrack for minutes on a long query an
+  adapter chose. So the pattern never runs on the main thread: `WorkerUrlMatcher` runs it in a
+  worker (one per flow, started on first use) and terminates the worker after 500 ms, which
+  ends the flow as `auth-step: invalid`. A regex is never run on a path and query longer than
+  `MAX_REGEX_INPUT` (2048) characters; such a URL simply doesn't match.
 - **Messages OTP** needs a grant with `provider: 'messages'` under `MESSAGES_SECRET` (core's), for
   this adapter and hash, whose `itemRef` is exactly the step's `sender`. The code may be typed only
   on the grant's origins that are also on `navigation`. It polls every second until the flow
@@ -110,9 +137,14 @@ Messages reader, the caller supplies:
 
 `test/fake-auth-page.ts` is a scriptable page: states keyed by URL, with elements, frames, forms,
 text, click targets, server redirects and block pages, a committed-URL history, and a record of
-everything typed, whether it arrived as a `SecretValue` and with which `allowedOrigins`. Its
-`type` behaves as the driver is specified to: it checks the focused element's frame before each
-keystroke, and `beforeKeystroke` lets a test move the page mid-secret. `FakeProbe` answers the
+everything typed, against the element it actually reached, whether it arrived as a
+`SecretValue` and with which `allowedOrigins`. Its `type` behaves as the driver is specified to:
+it types only into the element `focus()` targeted, stops if focus moves, the element is replaced,
+or the page or frame navigates (same origin or not), and checks the element's frame against
+`allowedOrigins` before each keystroke. `beforeKeystroke` and `navigateFrame` let a test move the
+page mid-secret. Flow tests run `urlRegex` through `InProcessUrlMatcher`, on the test's thread;
+`url-matcher.test.ts` runs the real worker, including against `\d*\d*\d*!` on a 2000-digit
+query under a fixed time budget. `FakeProbe` answers the
 probe hooks from the page's cookie jar or a scripted response. `test/fixtures.ts` has the example
 site; tests copy it and change one thing, and `unparsedWithSteps` builds a manifest the schema
 never saw. Every flow finishes with the probe, so tests of a step that doesn't itself log in

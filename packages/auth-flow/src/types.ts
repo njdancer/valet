@@ -85,6 +85,10 @@ export interface AuthFlowInput {
    * throws, the secret is not typed.
    */
   readonly rememberSecret: (secret: SecretValue) => void
+  /**
+   * The flow appends login-started, login-finished and secret-used itself. The caller must not
+   * append its own login-started or login-finished around the flow: one login, two finish records.
+   */
   readonly audit: AuditSink
   readonly clock: () => Date
   readonly sleep: (ms: number) => Promise<void>
