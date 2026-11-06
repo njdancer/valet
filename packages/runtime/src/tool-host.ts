@@ -3,7 +3,8 @@
 //
 //   1. the adapter's exact bundle hash is approved;
 //   2. the input matches the tool's schema;
-//   3. the adapter's lock is held, so one session never runs two tools at once;
+//   3. the adapter's lock is held, so one session never runs two tools at once, and the hash is
+//      still approved once we hold it;
 //   4. the site's circuit breaker is closed;
 //   5. an irreversible tool has the person's confirmation, before any of its code runs;
 //   6. the tool runs with a guarded capability object, a timeout and an abort signal;
@@ -200,6 +201,8 @@ export class ToolHost {
     if (!input.success) return failed('tool-input', 'invalid')
 
     return this.locks.run(entry.definition.manifest.id, async () => {
+      // Again, because a revocation can land while this call waits for the lock.
+      if (!(await this.isApproved(entry))) return failed('manifest', 'not-granted')
       if (entry.site.breaker.isOpen()) return blocked(entry.site)
       if (declaration.sideEffect === 'irreversible') {
         const answer = await this.ask(

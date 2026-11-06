@@ -442,6 +442,37 @@ describe('ToolHost.call: concurrency', () => {
     expect(events).toEqual(['a:start', 'a:end', 'b:start', 'b:end', 'c:start', 'c:end'])
   })
 
+  it('does not run a queued call whose approval was revoked while it waited for the lock', async () => {
+    let approved = true
+    let release: () => void = () => {}
+    const run = vi.fn(async (_ctx: unknown, input: { id: string }) => {
+      if (input.id === 'first') {
+        await new Promise<void>((resolve) => {
+          release = resolve
+        })
+      }
+      return input.id
+    })
+    const { host } = fixture(
+      defineAdapter({
+        manifest,
+        tools: { run_test: tool({ input: z.object({ id: z.string() }), output: z.string(), run }) },
+      }),
+      { approvals: { isApproved: async () => approved } },
+    )
+
+    const first = host.call({ ...call, input: { id: 'first' } })
+    await flush()
+    const queued = host.call({ ...call, callId: 'call-2', input: { id: 'queued' } })
+    await flush()
+    approved = false
+    release()
+
+    expect(await first).toEqual({ status: 'ok', output: 'first' })
+    expect(await queued).toEqual({ status: 'failed', stage: 'manifest', errorClass: 'not-granted' })
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
   it('runs calls to different adapters at the same time', async () => {
     const events: string[] = []
     let release: () => void = () => {}
