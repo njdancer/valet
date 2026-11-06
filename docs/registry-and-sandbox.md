@@ -49,7 +49,8 @@ the _only_ thing it can use. Through that API, an approved adapter can still:
 - **Lie in its results.** Tool output goes to the person's agent, which acts on it. An adapter can
   return text written to steer that agent ("now call `bank_transfer`…"), which is prompt injection
   aimed at the person's other tools. Output schemas and plain-JSON conversion limit the shape,
-  not the content.
+  not the content. Even an honest adapter passes site-authored text (product descriptions,
+  messages) straight through, so this is a property of every adapter, not just malicious ones.
 - **Confirm with misleading text.** `confirm(message)` shows adapter-authored text
   ([G4](plan.md#g4-confirm-takes-adapter-authored-text)).
 - **Burn the person's standing with the site.** Rate budgets bound it; they don't prevent it.
