@@ -275,6 +275,26 @@ export async function startTestSite(): Promise<TestSite> {
         response.end(JSON.stringify({ host, cookie: request.headers.cookie ?? '' }))
         return
       }
+      // Stands in for a login probe: what arrived, headers and all, and a cookie it sets in return.
+      if (url.pathname === '/probe') {
+        response.writeHead(200, {
+          'content-type': 'application/json; charset=utf-8',
+          'set-cookie': 'probed=yes; Path=/; Secure; SameSite=Lax',
+        })
+        response.end(JSON.stringify({ host, headers: request.headers }))
+        return
+      }
+      // More than the probe reads: 2 MiB of text.
+      if (url.pathname === '/big') {
+        response.writeHead(200, { 'content-type': 'text/plain' })
+        response.end('x'.repeat(2 * 1024 * 1024))
+        return
+      }
+      // Doesn't answer for 15 s, for timeouts.
+      if (url.pathname === '/hang') {
+        setTimeout(() => response.destroy(), 15_000).unref()
+        return
+      }
       const route = routes(site, host, url.pathname, url.searchParams)
       response.writeHead(route.status ?? 200, {
         'content-type': 'text/html; charset=utf-8',
