@@ -14,7 +14,8 @@ import { FIELD_WORDING, PROVIDER_WORDING } from '../lib/wording'
 /** Core's MESSAGES_SECRET. Not imported: core's index pulls in Node modules the renderer can't load. */
 export const MESSAGES_SECRET = 'messages'
 
-const ONEPASSWORD: readonly ProviderKind[] = ['onepassword-service-account', 'onepassword-cli']
+/** Vault providers. The test provider is offered only when the main process reports it (demo mode). */
+const ONEPASSWORD: readonly ProviderKind[] = ['onepassword-service-account', 'onepassword-cli', 'fake']
 
 /** What the sheet is granting, resolved from the manifest. Null when the manifest asks for no such secret. */
 interface Target {
@@ -243,7 +244,9 @@ function GrantForm({
             <>
               <fieldset className="stack" style={{ border: 0, margin: 0, padding: 0 }}>
                 <legend className="label">Where siteadapter gets it</legend>
-                {ONEPASSWORD.map((kind) => {
+                {ONEPASSWORD.filter(
+                  (kind) => kind !== 'fake' || providers.some((p) => p.kind === 'fake'),
+                ).map((kind) => {
                   const on = provider === kind
                   const usable = available(kind)
                   return (
