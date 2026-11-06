@@ -1,0 +1,18 @@
+{
+  "name": "@siteadapter/runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@siteadapter/auth-flow": "workspace:*",
+    "@siteadapter/core": "workspace:*",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@siteadapter/adapter-woolworths": "workspace:*",
+    "@siteadapter/fake-woolworths-site": "workspace:*"
+  }
+}

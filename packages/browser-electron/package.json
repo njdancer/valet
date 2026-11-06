@@ -1,0 +1,17 @@
+{
+  "name": "@siteadapter/browser-electron",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@siteadapter/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.0",
+    "@siteadapter/fake-woolworths-site": "workspace:*",
+    "electron": "^44.10.2"
+  }
+}

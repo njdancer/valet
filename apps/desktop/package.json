@@ -1,0 +1,33 @@
+{
+  "name": "@siteadapter/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "siteadapter menu-bar app",
+  "dependencies": {
+    "@siteadapter/adapter-woolworths": "workspace:*",
+    "@siteadapter/auth-flow": "workspace:*",
+    "@siteadapter/browser-electron": "workspace:*",
+    "@siteadapter/core": "workspace:*",
+    "@siteadapter/credentials": "workspace:*",
+    "@siteadapter/mcp-server": "workspace:*",
+    "@siteadapter/runtime": "workspace:*",
+    "electron-updater": "^6.8.11"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.0",
+    "@siteadapter/fake-woolworths-site": "workspace:*",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.8",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.2.1",
+    "electron": "^44.10.2",
+    "electron-builder": "^26.18.0",
+    "electron-vite": "^6.0.0",
+    "jsdom": "^31.0.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "vite": "^8.3.6"
+  }
+}

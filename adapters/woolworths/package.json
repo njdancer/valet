@@ -1,0 +1,16 @@
+{
+  "name": "@siteadapter/adapter-woolworths",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@siteadapter/core": "workspace:*",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@siteadapter/fake-woolworths-site": "workspace:*"
+  }
+}
