@@ -83,13 +83,13 @@ describe('validateFeedUrl', () => {
 
 describe('classifyUpdateError', () => {
   it('never reads the message', () => {
-    expect(classifyUpdateError(new Error('ERR_CHECKSUM_MISMATCH'), 'download')).toBe('internal')
+    expect(classifyUpdateError(new Error('ERR_CHECKSUM_MISMATCH'), 'download')).toBe('download-failed')
     expect(classifyUpdateError(new Error('ECONNREFUSED'), 'check')).toBe('internal')
   })
 
   it('survives values that are not errors, and hostile getters', () => {
     expect(classifyUpdateError(null, 'check')).toBe('internal')
-    expect(classifyUpdateError(42, 'download')).toBe('internal')
+    expect(classifyUpdateError(42, 'check')).toBe('internal')
     const hostile = Object.defineProperty({}, 'code', {
       get() {
         throw new Error('boom')
@@ -101,6 +101,18 @@ describe('classifyUpdateError', () => {
   it('does not accept a code that only looks numeric as an HTTP status', () => {
     expect(classifyUpdateError({ statusCode: '503' }, 'check')).toBe('internal')
     expect(classifyUpdateError({ statusCode: 503 }, 'check')).toBe('feed-unreachable')
+  })
+
+  it('reads builder-util-runtime’s HTTP_ERROR_nnn codes as unreachable while checking', () => {
+    expect(classifyUpdateError({ code: 'HTTP_ERROR_403' }, 'check')).toBe('feed-unreachable')
+    expect(classifyUpdateError({ code: 'HTTP_ERROR_4031' }, 'check')).toBe('internal')
+  })
+
+  it('calls any other failure while downloading a failed download', () => {
+    expect(classifyUpdateError(new Error('Cannot download "http://…", status 404'), 'download')).toBe(
+      'download-failed',
+    )
+    expect(classifyUpdateError(null, 'download')).toBe('download-failed')
   })
 
   it('calls every failure during install an install failure', () => {

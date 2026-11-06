@@ -11,7 +11,7 @@ export const UPDATE_ERROR_REASONS = [
   'downgrade-refused',
   /** The stable channel offered a prerelease. */
   'channel-mismatch',
-  /** The zip couldn't be fetched. */
+  /** The zip couldn't be fetched, or the download failed some other way. */
   'download-failed',
   /** The zip's SHA-512 didn't match the feed's. */
   'checksum-mismatch',
@@ -66,7 +66,12 @@ export function classifyUpdateError(error: unknown, phase: UpdatePhase): UpdateE
   if (code === 'ERR_CHECKSUM_MISMATCH') return 'checksum-mismatch'
   if (typeof code === 'string' && FEED_INVALID_CODES.has(code)) return 'feed-invalid'
   const network =
-    (typeof code === 'string' && NETWORK_CODES.has(code)) || typeof field(error, 'statusCode') === 'number'
-  if (network) return phase === 'check' ? 'feed-unreachable' : 'download-failed'
-  return 'internal'
+    (typeof code === 'string' && (NETWORK_CODES.has(code) || /^HTTP_ERROR_\d{3}$/.test(code))) ||
+    typeof field(error, 'statusCode') === 'number'
+  if (phase === 'download') {
+    // electron-updater's download path reports an HTTP error as a bare Error with the URL in its
+    // message and no code, so anything else that fails while downloading counts as the download's.
+    return 'download-failed'
+  }
+  return network ? 'feed-unreachable' : 'internal'
 }
