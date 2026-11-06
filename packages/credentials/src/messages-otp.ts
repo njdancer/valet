@@ -2,19 +2,27 @@
 // the open fails and the reader reports `unavailable`. The database is opened read-only per lookup.
 // The sender and pattern come from adapter code, so the reader only hands back something shaped like
 // a code, from exactly the named sender, and never runs the pattern on the main thread.
+//
+// The sender the person approved is a messages grant's itemRef; the sender in a query comes from
+// the manifest. Given the grant, latest() refuses a query for any other sender, and
+// messagesQueryFor() builds the query from the grant itself. With requireGrant, a lookup without a
+// grant is refused too. (Core's OtpReader.latest takes no grant yet, so callers through that
+// interface can't pass one; see the README.)
 
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { DatabaseSync } from 'node:sqlite'
 import {
   CredentialError,
+  type Grant,
   isScreenedPattern,
+  MESSAGES_SECRET,
   type MessagesOtpQuery,
   type OtpReader,
   SecretValue,
   SiteAdapterError,
 } from '@siteadapter/core'
-import { type OtpSender, parseOtpSender } from './otp-sender'
+import { type OtpSender, parseOtpSender, sameOtpSender } from './otp-sender'
 import { type PatternMatcher, WorkerPatternMatcher } from './pattern-worker'
 import { attributedBodyText } from './typedstream'
 
@@ -28,6 +36,40 @@ export interface MessagesOtpReaderOptions {
   /** How many recent inbound messages to consider. */
   readonly limit?: number
   readonly matcher?: PatternMatcher
+  /** Refuse every lookup that doesn't come with the messages grant for its sender. Default false. */
+  readonly requireGrant?: boolean
+}
+
+/** A manifest's Messages OTP source: what messagesSourcesIn() lists. */
+export interface MessagesOtpSource {
+  readonly sender: string
+  readonly pattern: string
+  readonly maxAgeSeconds: number
+}
+
+/**
+ * The query for `source`, read from the sender `grant` names. Throws `otp: not-granted` unless
+ * `grant` is a messages grant for that same sender, so a manifest whose sender changed can't read
+ * codes from a sender the person never approved.
+ */
+export function messagesQueryFor(grant: Grant, source: MessagesOtpSource): MessagesOtpQuery {
+  checkGrant(grant, source.sender)
+  return { sender: grant.itemRef, pattern: source.pattern, maxAgeSeconds: source.maxAgeSeconds }
+}
+
+/** A messages grant whose sender is `sender`, or `otp: not-granted`. */
+function checkGrant(grant: Grant | null | undefined, sender: unknown): void {
+  if (
+    grant === undefined ||
+    grant === null ||
+    grant.provider !== 'messages' ||
+    grant.secret !== MESSAGES_SECRET ||
+    typeof grant.itemRef !== 'string' ||
+    typeof sender !== 'string' ||
+    !sameOtpSender(grant.itemRef, sender)
+  ) {
+    throw new SiteAdapterError('otp', 'not-granted')
+  }
 }
 
 // Messages counts time from 2001-01-01 UTC (Core Data's reference date).
@@ -62,15 +104,22 @@ export class MessagesOtpReader implements OtpReader {
   readonly #now: () => Date
   readonly #limit: number
   readonly #matcher: PatternMatcher
+  readonly #requireGrant: boolean
 
   constructor(options: MessagesOtpReaderOptions = {}) {
     this.#path = options.path ?? defaultMessagesDbPath()
     this.#now = options.now ?? (() => new Date())
     this.#limit = options.limit ?? DEFAULT_LIMIT
     this.#matcher = options.matcher ?? new WorkerPatternMatcher()
+    this.#requireGrant = options.requireGrant ?? false
   }
 
-  async latest(query: MessagesOtpQuery, notBefore: Date): Promise<SecretValue> {
+  /**
+   * The newest code from `query.sender` since `notBefore`. With `grant`, it must be the messages
+   * grant for that sender, or this throws `otp: not-granted` before opening the database.
+   */
+  async latest(query: MessagesOtpQuery, notBefore: Date, grant?: Grant): Promise<SecretValue> {
+    if (grant !== undefined || this.#requireGrant) checkGrant(grant, query.sender)
     // Without a sender, any message from anyone (another bank's code, a private message) could be
     // typed into the page. The type and the manifest schema both require one; this check stands in
     // case a query is built some other way (from JSON, say) and the types were never checked.

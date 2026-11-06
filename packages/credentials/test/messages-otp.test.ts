@@ -3,15 +3,25 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { inspect } from 'node:util'
-import { CredentialError, type MessagesOtpQuery, SiteAdapterError } from '@siteadapter/core'
+import { CredentialError, type Grant, type MessagesOtpQuery, SiteAdapterError } from '@siteadapter/core'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { defaultMessagesDbPath, MessagesOtpReader } from '../src/messages-otp'
+import { defaultMessagesDbPath, MessagesOtpReader, messagesQueryFor } from '../src/messages-otp'
 import { archived } from './typedstream-fixture'
 
 const APPLE_EPOCH_MS = Date.UTC(2001, 0, 1)
 const NOW = new Date('2026-11-07T00:10:00.000Z')
 const now = () => NOW
 const WOOLWORTHS = { sender: 'Woolworths', pattern: 'code is (\\d{6})', maxAgeSeconds: 300 }
+// The person approved codes from Woolworths, to be typed on its auth origin.
+const WOOLWORTHS_GRANT: Grant = {
+  adapterId: 'woolworths',
+  adapterHash: 'a'.repeat(64),
+  secret: 'messages',
+  provider: 'messages',
+  itemRef: 'Woolworths',
+  origins: ['https://auth.woolworths.com.au'],
+  grantedAt: '2026-11-07T00:00:00.000Z',
+}
 // The login asked for its code at 00:08.
 const NOT_BEFORE = new Date('2026-11-07T00:08:00.000Z')
 
@@ -411,6 +421,78 @@ describe('MessagesOtpReader', () => {
     insert({ text: 'code is 111111', date: appleNanos(new Date()) })
     const code = await new MessagesOtpReader({ path }).latest(WOOLWORTHS, new Date(Date.now() - 60_000))
     expect(code.reveal((plaintext) => plaintext)).toBe('111111')
+  })
+})
+
+describe('MessagesOtpReader with a grant', () => {
+  it('reads the code when the grant is for the query sender, however it is written', async () => {
+    insert({ text: 'code is 482913', date: appleNanos(at('00:09:00')) })
+    const reader = new MessagesOtpReader({ path, now, requireGrant: true })
+    const code = await reader.latest({ ...WOOLWORTHS, sender: 'WOOLWORTHS' }, NOT_BEFORE, WOOLWORTHS_GRANT)
+    expect(code.reveal((plaintext) => plaintext)).toBe('482913')
+  })
+
+  it('refuses a manifest sender other than the granted one, before reading anything', async () => {
+    // The manifest changed its sender to the person's bank; the grant still names Woolworths.
+    insert({ text: 'Your bank code is 482913', handle: 2, date: appleNanos(at('00:09:00')) })
+    const reader = new MessagesOtpReader({ path: join(dir, 'missing.db'), now })
+    for (const sender of ['+61400000000', 'Woolworths1', 'fake.woolworths@icloud.com']) {
+      await expect(reader.latest({ ...WOOLWORTHS, sender }, NOT_BEFORE, WOOLWORTHS_GRANT)).rejects.toEqual(
+        new SiteAdapterError('otp', 'not-granted'),
+      )
+    }
+  })
+
+  it('refuses a grant that is not a messages grant, even one whose itemRef is the sender', async () => {
+    const reader = new MessagesOtpReader({ path, now })
+    for (const grant of [
+      { ...WOOLWORTHS_GRANT, provider: 'onepassword-cli' as const },
+      { ...WOOLWORTHS_GRANT, provider: 'fake' as const },
+      { ...WOOLWORTHS_GRANT, secret: 'login' },
+      { ...WOOLWORTHS_GRANT, itemRef: '%' },
+    ]) {
+      await expect(reader.latest(WOOLWORTHS, NOT_BEFORE, grant)).rejects.toEqual(
+        new SiteAdapterError('otp', 'not-granted'),
+      )
+    }
+  })
+
+  it('refuses a grant check against a query with no sender, whatever the types say', async () => {
+    const { sender: _, ...anySender } = WOOLWORTHS
+    const reader = new MessagesOtpReader({ path, now })
+    await expect(
+      reader.latest(anySender as unknown as MessagesOtpQuery, NOT_BEFORE, WOOLWORTHS_GRANT),
+    ).rejects.toEqual(new SiteAdapterError('otp', 'not-granted'))
+  })
+
+  it('with requireGrant, refuses a lookup that comes without a grant', async () => {
+    insert({ text: 'code is 482913', date: appleNanos(at('00:09:00')) })
+    const reader = new MessagesOtpReader({ path, now, requireGrant: true })
+    await expect(reader.latest(WOOLWORTHS, NOT_BEFORE)).rejects.toEqual(
+      new SiteAdapterError('otp', 'not-granted'),
+    )
+    await expect(reader.latest(WOOLWORTHS, NOT_BEFORE, null as unknown as Grant)).rejects.toEqual(
+      new SiteAdapterError('otp', 'not-granted'),
+    )
+  })
+})
+
+describe('messagesQueryFor', () => {
+  it('builds the query from the granted sender and the source pattern and age', () => {
+    const query = messagesQueryFor(WOOLWORTHS_GRANT, { ...WOOLWORTHS, sender: 'woolworths' })
+    expect(query).toEqual({ sender: 'Woolworths', pattern: WOOLWORTHS.pattern, maxAgeSeconds: 300 })
+  })
+
+  it('refuses a source whose sender is not the granted one', () => {
+    expect(() => messagesQueryFor(WOOLWORTHS_GRANT, { ...WOOLWORTHS, sender: '+61400000000' })).toThrow(
+      new SiteAdapterError('otp', 'not-granted'),
+    )
+  })
+
+  it('refuses a grant from a credential provider', () => {
+    expect(() => messagesQueryFor({ ...WOOLWORTHS_GRANT, provider: 'onepassword-cli' }, WOOLWORTHS)).toThrow(
+      new SiteAdapterError('otp', 'not-granted'),
+    )
   })
 })
 
