@@ -1,4 +1,5 @@
 export * from './fake'
+export * from './grant-store'
 export * from './item-ref'
 export * from './keychain'
 export * from './onepassword-cli'
