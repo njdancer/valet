@@ -30,7 +30,11 @@ describe('circuit breaker', () => {
     const { host, page } = fixture(fetchTrolley)
     page.route('GET', `${HOME}/api/trolley`, { status: 404, contentType: 'text/html', body: '<html>' })
 
-    expect(await host.call(call)).toEqual({ status: 'failed', stage: 'tool-run', errorClass: 'invalid' })
+    expect(await host.call(call)).toEqual({
+      status: 'failed',
+      stage: 'tool-run',
+      errorClass: 'unexpected-shape',
+    })
     page.route('GET', `${HOME}/api/trolley`, { status: 200, contentType: 'application/json', body: {} })
     expect(await host.call({ ...call, callId: 'call-2' })).toEqual({ status: 'ok', output: 200 })
   })
@@ -166,6 +170,161 @@ describe('circuit breaker', () => {
       }),
     )
     expect(await host.call(call)).toEqual({ status: 'blocked', retryAfterMs: 0 })
+  })
+})
+
+describe('navigations and clicks', () => {
+  const browse = defineAdapter({
+    manifest,
+    tools: {
+      run_test: tool({
+        input: z.object({}),
+        output: z.unknown(),
+        run: async (ctx) => {
+          await ctx.page.goto('/shop/specials')
+          return 'browsed'
+        },
+      }),
+    },
+  })
+
+  it('trips the breaker when a goto lands on Akamai’s Access Denied page', async () => {
+    const { host, page, audit } = fixture(browse)
+    // What the page-check script finds on the block page.
+    page.evaluate = async (source: string) => {
+      page.evaluated.push(source)
+      return true
+    }
+
+    expect(await host.call(call)).toEqual({ status: 'blocked', retryAfterMs: 60_000 })
+    expect(audit.events).toContainEqual(
+      expect.objectContaining({ type: 'breaker-opened', cause: 'blocked-by-site', callId: 'call-1' }),
+    )
+    expect(await host.call({ ...call, callId: 'call-2' })).toEqual({
+      status: 'blocked',
+      retryAfterMs: 60_000,
+    })
+    expect(page.gotos).toHaveLength(1)
+  })
+
+  it('fails the call even when tool code catches a navigation block', async () => {
+    const { host, page } = fixture(
+      defineAdapter({
+        manifest,
+        tools: {
+          run_test: tool({
+            input: z.object({}),
+            output: z.unknown(),
+            run: async (ctx) => {
+              await ctx.page.goto('/shop/specials').catch(() => {})
+              return 'carried on'
+            },
+          }),
+        },
+      }),
+    )
+    page.evaluate = async () => true
+    expect(await host.call(call)).toMatchObject({ status: 'blocked' })
+  })
+
+  it('takes a page it cannot inspect, or an answer that is not exactly true, as not blocked', async () => {
+    for (const answer of [
+      () => Promise.reject(new Error('execution context destroyed')),
+      async () => 'true',
+      async () => 1,
+    ]) {
+      const { host, page } = fixture(browse)
+      page.evaluate = answer as never
+      expect(await host.call(call)).toEqual({ status: 'ok', output: 'browsed' })
+    }
+  })
+
+  it('does not let a goto answered before a block close the breaker that block opened', async () => {
+    const clock = new FakeClock()
+    let finishGoto: () => void = () => {}
+    const { host, page, audit } = fixture(
+      defineAdapter({
+        manifest,
+        tools: {
+          run_test: tool({
+            input: z.object({}),
+            output: z.unknown(),
+            run: async (ctx) => {
+              await Promise.all([ctx.page.goto('/shop/specials'), ctx.page.fetch('/api/trolley')])
+              return 'ok'
+            },
+          }),
+        },
+      }),
+      { clock, sleep: clock.sleep, pacingSleep: clock.pacingSleep },
+    )
+    page.goto = (url: string) => {
+      page.gotos.push(url)
+      return new Promise<void>((resolve) => {
+        finishGoto = resolve
+      })
+    }
+    page.route('GET', `${HOME}/api/trolley`, akamaiDenied)
+
+    const running = host.call(call)
+    // The fetch is blocked while the goto, admitted first, is still loading.
+    await vi.waitFor(() => expect(audit.types()).toContain('breaker-opened'))
+    await clock.advance(60_000)
+    finishGoto()
+    expect(await running).toMatchObject({ status: 'blocked' })
+    await flush()
+
+    expect(audit.types()).not.toContain('breaker-closed')
+  })
+
+  it('paces clicks through the site’s rate budget, without counting them against the ceiling', async () => {
+    const { host, page, clock } = fixture(
+      defineAdapter({
+        manifest,
+        tools: {
+          run_test: tool({
+            input: z.object({}),
+            output: z.unknown(),
+            run: async (ctx) => {
+              for (let i = 0; i < 8; i++) await ctx.page.click(`#page-${i}`)
+              return 'clicked'
+            },
+          }),
+        },
+      }),
+    )
+
+    // Eight clicks against a ceiling of five, each a gap after the last.
+    expect(await host.call(call)).toEqual({ status: 'ok', output: 'clicked' })
+    expect(page.clicks).toHaveLength(8)
+    expect(clock.paced).toEqual(Array(7).fill(1_000))
+  })
+
+  it('refuses a click while the site’s breaker is open', async () => {
+    let clicked: unknown
+    const { host, page } = fixture(
+      defineAdapter({
+        manifest,
+        tools: {
+          run_test: tool({
+            input: z.object({}),
+            output: z.unknown(),
+            run: async (ctx) => {
+              await ctx.page.fetch('/api/trolley').catch(() => {})
+              clicked = await ctx.page
+                .click('#place-order')
+                .catch((error: { errorClass: string }) => error.errorClass)
+              return 'ok'
+            },
+          }),
+        },
+      }),
+    )
+    page.route('GET', `${HOME}/api/trolley`, akamaiDenied)
+
+    expect(await host.call(call)).toMatchObject({ status: 'blocked' })
+    expect(clicked).toBe('rate-limited')
+    expect(page.clicks).toEqual([])
   })
 })
 

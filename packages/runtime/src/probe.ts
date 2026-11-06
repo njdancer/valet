@@ -3,6 +3,11 @@
 // policy still applies; see probeDeclaration). A fetch probe still obeys the site's rate budget and
 // circuit breaker, since the site can't tell the difference. A cookie probe asks the driver for
 // cookie names and never touches the site.
+//
+// The page's fetch sends cookies same-origin only, from wherever the page is. Tool code may have
+// left it on another egress host (an api. or assets. subdomain), where the probe would go out
+// without cookies, come back 401 and start a login nobody needed. So a fetch probe first takes the
+// page home whenever it is on another origin.
 
 import {
   type AdapterManifest,
@@ -12,7 +17,14 @@ import {
   SiteAdapterError,
   type ToolPage,
 } from '@siteadapter/core'
-import { blockCause, breakerRefusal, isHtml, type SiteGuards, siteRefusal } from './site-protection'
+import {
+  blockCause,
+  breakerRefusal,
+  isHtml,
+  navigationBlocked,
+  type SiteGuards,
+  siteRefusal,
+} from './site-protection'
 
 export interface ProbeOptions {
   readonly manifest: AdapterManifest
@@ -43,17 +55,26 @@ export async function probeLoggedIn(options: ProbeOptions): Promise<boolean> {
   if (url.protocol !== 'https:' || !hostAllowed(url.hostname, manifest.egress)) {
     throw new SiteAdapterError('probe', 'host-not-allowed')
   }
-  if (site.breaker.isOpen()) throw breakerRefusal()
-  await site.budget.acquire(signal)
-  // The breaker can open while we wait our turn.
-  if (site.breaker.isOpen()) throw breakerRefusal()
+  if (!sameOrigin(page, url)) {
+    const admitted = await pace(site, signal)
+    await page.goto(new URL(manifest.home).href)
+    const cause = await navigationBlocked(page)
+    if (cause !== null) {
+      site.breaker.trip(cause, callId)
+      throw siteRefusal(cause)
+    }
+    site.breaker.recordSuccess(admitted)
+    // Redirected elsewhere: a probe from here would say nothing about the session.
+    if (!sameOrigin(page, url)) throw new SiteAdapterError('probe', 'unavailable')
+  }
+  const admitted = await pace(site, signal)
   const result = await page.fetch(url.href, { method: 'GET', headers: { accept: 'application/json' } })
   const cause = blockCause(result)
   if (cause !== null) {
     site.breaker.trip(cause, callId)
     throw siteRefusal(cause)
   }
-  site.breaker.recordSuccess()
+  site.breaker.recordSuccess(admitted)
   if (result.status !== probe.expectStatus) {
     // Only an answer that says "not logged in" may start a login. An outage, a rate limit or a
     // moved endpoint turning every tool call into a full login is how accounts get locked.
@@ -65,6 +86,24 @@ export async function probeLoggedIn(options: ProbeOptions): Promise<boolean> {
   if (isHtml(result)) throw new SiteAdapterError('probe', 'unavailable')
   const value = readJsonPath(result.body, probe.jsonPath)
   return probe.equals === undefined ? Boolean(value) : value === probe.equals
+}
+
+/** Waits for the site's rate budget, refusing while its breaker is open; returns the admission token. */
+async function pace(site: SiteGuards, signal: AbortSignal): Promise<number> {
+  if (site.breaker.isOpen()) throw breakerRefusal()
+  await site.budget.acquire(signal)
+  // The breaker can open while we wait our turn.
+  if (site.breaker.isOpen()) throw breakerRefusal()
+  return site.breaker.admit()
+}
+
+/** Whether the page is on `url`'s origin. A page whose URL can't be read or parsed isn't. */
+function sameOrigin(page: ToolPage, url: URL): boolean {
+  try {
+    return new URL(page.currentUrl()).origin === url.origin
+  } catch {
+    return false
+  }
 }
 
 /**

@@ -380,6 +380,96 @@ describe('egress', () => {
     expect(page.gotos).toEqual([])
   })
 
+  it('blocks an irreversible tool navigating to an undeclared denied path, as core’s rule does', async () => {
+    const { host, page, prompt } = fixture(
+      defineAdapter({
+        manifest: { ...manifest, tools: [{ ...manifest.tools[0]!, sideEffect: 'irreversible' as const }] },
+        tools: {
+          run_test: tool({
+            input: z.object({}),
+            output: z.unknown(),
+            run: (ctx) => ctx.page.goto('/payees/add'),
+          }),
+        },
+      }),
+    )
+    expect(await host.call(call)).toEqual({
+      status: 'failed',
+      stage: 'request-surface',
+      errorClass: 'denied-path',
+    })
+    expect(prompt.requests).toHaveLength(1)
+    expect(page.gotos).toEqual([])
+  })
+
+  it('blocks an irreversible tool navigating to a denied segment that a :param declares only as a read', async () => {
+    const { host, page } = fixture(
+      defineAdapter({
+        manifest: { ...manifest, tools: [{ ...manifest.tools[0]!, sideEffect: 'irreversible' as const }] },
+        tools: {
+          run_test: tool({
+            input: z.object({}),
+            output: z.unknown(),
+            // GET /api/:section/items is declared, as a read.
+            run: (ctx) => ctx.page.goto('/api/checkout/items'),
+          }),
+        },
+      }),
+    )
+    expect(await host.call(call)).toMatchObject({ status: 'failed', errorClass: 'denied-path' })
+    expect(page.gotos).toEqual([])
+  })
+
+  it('lets an irreversible tool navigate to a denied path declared as an irreversible GET', async () => {
+    const withConfirmPage = {
+      ...manifest,
+      requests: [
+        ...manifest.requests,
+        { method: 'GET' as const, path: '/checkout/confirm', purpose: 'irreversible' as const },
+      ],
+      tools: [{ ...manifest.tools[0]!, sideEffect: 'irreversible' as const }],
+    }
+    const { host, page } = fixture(
+      defineAdapter({
+        manifest: withConfirmPage,
+        tools: {
+          run_test: tool({
+            input: z.object({}),
+            output: z.unknown(),
+            run: (ctx) => ctx.page.goto('/checkout/confirm'),
+          }),
+        },
+      }),
+    )
+    expect(await host.call(call)).toMatchObject({ status: 'ok' })
+    expect(page.gotos).toEqual([`${HOME}/checkout/confirm`])
+  })
+
+  it('still blocks a write tool from a denied path declared as an irreversible GET', async () => {
+    const withConfirmPage = {
+      ...manifest,
+      requests: [
+        ...manifest.requests,
+        { method: 'GET' as const, path: '/checkout/confirm', purpose: 'irreversible' as const },
+      ],
+      tools: [{ ...manifest.tools[0]!, sideEffect: 'write' as const }],
+    }
+    const { host, page } = fixture(
+      defineAdapter({
+        manifest: withConfirmPage,
+        tools: {
+          run_test: tool({
+            input: z.object({}),
+            output: z.unknown(),
+            run: (ctx) => ctx.page.goto('/checkout/confirm'),
+          }),
+        },
+      }),
+    )
+    expect(await host.call(call)).toMatchObject({ status: 'failed', errorClass: 'denied-path' })
+    expect(page.gotos).toEqual([])
+  })
+
   it('blocks a read tool navigating to a GET endpoint declared as a write', async () => {
     const withGetWrite = {
       ...manifest,
@@ -641,5 +731,13 @@ describe('pass-through capabilities', () => {
     expect(page.clicks).toEqual(['#add'])
     expect(page.fills).toEqual([{ selector: '#q', text: 'milk' }])
     expect(page.evaluated).toEqual(['2 + 2'])
+  })
+
+  it('looks at the page after each goto for the site’s block page, and only reads it', async () => {
+    const { host, page } = fixture(adapterRunning(async (ctx) => ctx.page.goto('/shop')))
+    await host.call(call)
+    expect(page.evaluated).toHaveLength(1)
+    expect(page.evaluated[0]).toContain('document.title')
+    expect(page.evaluated[0]).not.toMatch(/fetch|XMLHttpRequest|location|cookie|storage/i)
   })
 })
