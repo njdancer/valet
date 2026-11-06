@@ -19,6 +19,7 @@ import { demoResolverRules, launchMode, RELEASE_DATA_NAME, rendererBase, userDat
 import { AppService } from '../core/service'
 import type { BridgeCommand } from '../core/snippets'
 import type { DemoSite } from './demo'
+import { launchRefused } from './guard'
 import { broadcast, registerIpc } from './ipc'
 import { createTray } from './tray'
 import { bundleSignature, electronUpdates } from './updates'
@@ -29,18 +30,23 @@ const mode = launchMode(process.argv, process.env, {
   demoBuild: __SITEADAPTER_DEMO_BUILD__,
 })
 
-// Before ready: where everything lives, the process-wide hardening, demo's host mapping, and the
-// app:// scheme the renderer is served from (it must be privileged before ready to be standard and
-// secure, so module scripts and the page's CSP 'self' work there).
-// A package's own name (siteadapter-dev for a development package), so it never shares the release
-// app's data; an unpackaged run keeps the release name.
-app.setPath(
-  'userData',
-  userDataDir(mode, app.getPath('appData'), app.isPackaged ? app.getName() : RELEASE_DATA_NAME),
-)
-hardenProcess(app)
-if (mode.demo) app.commandLine.appendSwitch('host-resolver-rules', demoResolverRules(mode))
-protocol.registerSchemesAsPrivileged([{ scheme: APP_SCHEME, privileges: APP_SCHEME_PRIVILEGES }])
+/**
+ * Before ready: where everything lives, the process-wide hardening, demo's host mapping, and the
+ * app:// scheme the renderer is served from (it must be privileged before ready to be standard and
+ * secure, so module scripts and the page's CSP 'self' work there).
+ *
+ * A package's own name (siteadapter-dev for a development package), so it never shares the release
+ * app's data; an unpackaged run keeps the release name.
+ */
+function beforeReady(): void {
+  app.setPath(
+    'userData',
+    userDataDir(mode, app.getPath('appData'), app.isPackaged ? app.getName() : RELEASE_DATA_NAME),
+  )
+  hardenProcess(app)
+  if (mode.demo) app.commandLine.appendSwitch('host-resolver-rules', demoResolverRules(mode))
+  protocol.registerSchemesAsPrivileged([{ scheme: APP_SCHEME, privileges: APP_SCHEME_PRIVILEGES }])
+}
 
 /** How long quitting may take to close the endpoint, the drivers and the demo site. */
 const QUIT_BOUND_MS = 5_000
@@ -207,11 +213,20 @@ async function main(): Promise<void> {
   // First run, demo and e2e: open the control panel, where the adapter waits for review.
   const attention = await running.api.attention.list()
   if (mode.demo || mode.e2e || attention.length > 0) windows.openControlPanel(null)
+
+  // A smoke build only: the packaged main process loads what it loads lazily, and says so.
+  if (__SITEADAPTER_SMOKE_BUILD__) {
+    const { smokeSelfCheck } = await import('./smoke')
+    await smokeSelfCheck(app.getPath('userData'))
+  }
 }
 
-if (!app.requestSingleInstanceLock()) {
-  app.quit()
-} else {
+function start(): void {
+  beforeReady()
+  if (!app.requestSingleInstanceLock()) {
+    app.quit()
+    return
+  }
   main().catch((error: unknown) => {
     // Only a development run prints the message: it can name local paths.
     log(
@@ -220,3 +235,6 @@ if (!app.requestSingleInstanceLock()) {
     app.exit(1)
   })
 }
+
+// A refused launch (electron/guard.ts) is exiting: nothing here runs.
+if (!launchRefused) start()

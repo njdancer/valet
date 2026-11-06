@@ -10,9 +10,11 @@
 // Build-time constants (src/main/build-flags.d.ts) decide what the main bundle carries:
 // __SITEADAPTER_DEMO_BUILD__ (demo mode, the fake site and its fixtures) is true for `dev` and for
 // `build --mode demo` only, and __SITEADAPTER_DEV_SERVER__ (trusting the dev server's URL) for `dev`
-// only. A plain `build`, which packaging uses, has neither. Only a plain build compiles in an update
-// feed, and only when its environment names both SITEADAPTER_UPDATE_URL and
-// SITEADAPTER_FEED_PUBLIC_KEY_FILE (__SITEADAPTER_FEED_BASE_URL__, __SITEADAPTER_FEED_PUBLIC_KEY__).
+// only. __SITEADAPTER_SMOKE_BUILD__ (the package smoke's own argv and self-check, core/smoke.ts) is
+// true for `build --mode smoke` only. A plain `build`, which packaging uses, has none of them. Only
+// a plain build compiles in an update feed, and only when its environment names both
+// SITEADAPTER_UPDATE_URL and SITEADAPTER_FEED_PUBLIC_KEY_FILE (__SITEADAPTER_FEED_BASE_URL__,
+// __SITEADAPTER_FEED_PUBLIC_KEY__); with SITEADAPTER_RELEASE=1 it must (core/feed-defines.ts).
 //
 //   mise exec -- pnpm --filter @siteadapter/desktop dev     # electron-vite dev
 //   mise exec -- pnpm --filter @siteadapter/desktop build   # to out/, without demo mode
@@ -46,13 +48,15 @@ function fakeSiteFixtures(): Plugin {
 }
 
 export default defineConfig(({ command, mode }) => {
-  const feed = feedDefines(process.env, command === 'build' && mode !== 'demo')
+  const plainBuild = command === 'build' && mode !== 'demo' && mode !== 'smoke'
+  const feed = feedDefines(process.env, plainBuild)
   return {
     main: {
       plugins: command === 'serve' || mode === 'demo' ? [fakeSiteFixtures()] : [],
       define: {
         __SITEADAPTER_DEMO_BUILD__: JSON.stringify(command === 'serve' || mode === 'demo'),
         __SITEADAPTER_DEV_SERVER__: JSON.stringify(command === 'serve'),
+        __SITEADAPTER_SMOKE_BUILD__: JSON.stringify(command === 'build' && mode === 'smoke'),
         __SITEADAPTER_FEED_BASE_URL__: JSON.stringify(feed.url),
         __SITEADAPTER_FEED_PUBLIC_KEY__: JSON.stringify(feed.publicKey),
       },

@@ -13,11 +13,12 @@
 // Development builds get their own bundle ID and product name, so they never share Keychain items,
 // userData, cookie-encryption keys or Full Disk Access grants with the release app.
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { signAsync } from '@electron/osx-sign'
 import type { Configuration } from 'electron-builder'
+import { SMOKE_BUILD_MARKER } from './src/main/core/smoke'
 import { validateFeedUrl } from './src/main/updater/feed-url'
 
 /** The release bundle ID. D1 (the product name) is pending; this is the only place it is written. */
@@ -119,6 +120,35 @@ export interface ConfigDeps {
   readonly loadSignAsync: () => SignAsync
   /** Waits between signing attempts. Defaults to a real timer. */
   readonly sleep?: (ms: number) => Promise<void>
+  /**
+   * The built main process (every .js under out/main, joined), or null when there is none. Read for
+   * a release only, to check it was built for this release.
+   */
+  readonly readMainBundle: () => string | null
+}
+
+/**
+ * A release packages whatever out/ holds, and the feed is compiled in by a separate `electron-vite
+ * build`. So the release refuses an out/main that wasn't built as this release's: it must hold the
+ * same feed URL electron-builder publishes to, and a feed public key, and must not be a smoke build.
+ * Without this, a release built from an out/ made without the feed variables would ship with an
+ * app-update.yml but an updater that says 'not-configured'.
+ */
+export function checkReleaseBundle(bundle: string | null, feedUrl: string): void {
+  if (bundle === null)
+    throw new BuildConfigError(
+      'a release packages out/: run `electron-vite build` with SITEADAPTER_RELEASE=1 first',
+    )
+  if (!bundle.includes(JSON.stringify(feedUrl)))
+    throw new BuildConfigError(
+      'out/main was not built with this SITEADAPTER_UPDATE_URL: rebuild it with SITEADAPTER_RELEASE=1 and the same feed variables',
+    )
+  if (!bundle.includes('-----BEGIN PUBLIC KEY-----'))
+    throw new BuildConfigError(
+      'out/main has no feed public key: rebuild it with SITEADAPTER_FEED_PUBLIC_KEY_FILE',
+    )
+  if (bundle.includes(SMOKE_BUILD_MARKER))
+    throw new BuildConfigError('out/main is a smoke build: rebuild it with a plain `electron-vite build`')
 }
 
 /**
@@ -241,6 +271,7 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
     if (!set(env, 'SITEADAPTER_TEAM_ID'))
       throw new BuildConfigError('a release build needs SITEADAPTER_TEAM_ID')
     if (feedUrl === null) throw new BuildConfigError('a release build needs SITEADAPTER_UPDATE_URL')
+    checkReleaseBundle(deps.readMainBundle(), feedUrl)
     if (!identityGiven) throw new BuildConfigError('a release build needs CSC_NAME or CSC_LINK')
     if (env.CSC_IDENTITY_AUTO_DISCOVERY === 'false') {
       throw new BuildConfigError('a release build is signed: unset CSC_IDENTITY_AUTO_DISCOVERY=false')
@@ -359,6 +390,17 @@ const here = fileURLToPath(new URL('.', import.meta.url))
 export const nodeDeps: ConfigDeps = {
   readTemplate: (name) => readFileSync(join(here, 'build', name), 'utf8'),
   loadSignAsync: () => signAsync as unknown as SignAsync,
+  readMainBundle: () => readBundle(join(here, 'out', 'main')),
+}
+
+/** Every .js file under `dir`, joined, or null when `dir` has no index.js. */
+export function readBundle(dir: string): string | null {
+  if (!existsSync(join(dir, 'index.js'))) return null
+  return readdirSync(dir, { recursive: true, encoding: 'utf8' })
+    .filter((name) => name.endsWith('.js'))
+    .sort()
+    .map((name) => readFileSync(join(dir, name), 'utf8'))
+    .join('\n')
 }
 
 export default function config(): Configuration {

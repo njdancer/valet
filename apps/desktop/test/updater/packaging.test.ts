@@ -2,14 +2,16 @@
 // The packaging configuration, held in place: identity, signing, fuses, entitlements and the feed.
 // Each refusal has a test that tries to get a weaker build out of the config.
 
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   ALLOWED_ENTITLEMENTS,
   BuildConfigError,
   type BuildEnv,
   type ConfigDeps,
+  checkReleaseBundle,
   createBuilderConfig,
   DEV_APP_ID,
   DEV_PRODUCT_NAME,
@@ -20,6 +22,7 @@ import {
   nodeDeps,
   RELEASE_APP_ID,
   RELEASE_PRODUCT_NAME,
+  readBundle,
   renderRequirement,
   SIGN_RETRIES,
   SIGN_RETRY_BACKOFF_MS,
@@ -28,6 +31,7 @@ import {
   signWithRequirement,
 } from '../../electron-builder.config'
 import { RELEASE_APP_ID as SCRIPT_RELEASE_APP_ID } from '../../scripts/make-feed.mjs'
+import { SMOKE_BUILD_MARKER } from '../../src/main/core/smoke'
 
 /** An Apple Development identity's SHA-1, as `security find-identity` prints it. */
 const DEV_IDENTITY = '0123456789ABCDEF0123456789ABCDEF01234567'
@@ -43,12 +47,18 @@ const RELEASE_ENV: BuildEnv = {
   APPLE_KEYCHAIN_PROFILE: 'siteadapter-notary',
 }
 
+/** A release's out/main, built with RELEASE_ENV's feed. */
+const RELEASE_BUNDLE =
+  'const FEED_BASE_URL = "https://updates.example.com/mac/";\n' +
+  'const FEED_PUBLIC_KEY = "-----BEGIN PUBLIC KEY-----\\nMCow…\\n-----END PUBLIC KEY-----\\n";'
+
 const signCalls: SignOptionsLike[] = []
 const DEPS: ConfigDeps = {
   readTemplate: nodeDeps.readTemplate,
   loadSignAsync: () => async (options) => {
     signCalls.push(options)
   },
+  readMainBundle: () => RELEASE_BUNDLE,
 }
 
 // The config's nested option types are electron-builder's unions; tests read them loosely.
@@ -239,6 +249,30 @@ describe('a release build refuses to be built weaker', () => {
     )
     refuses({ ...RELEASE_ENV, APPLE_ID: 'someone@example.com' }, 'APPLE_ID')
     refuses({ ...RELEASE_ENV, APPLE_APP_SPECIFIC_PASSWORD: 'abcd-efgh' }, 'APPLE_ID')
+  })
+
+  it('from an out/main not built as this release: no build, another feed, no key, or a smoke build', () => {
+    const withBundle = (bundle: string | null) => () =>
+      createBuilderConfig(RELEASE_ENV, { ...DEPS, readMainBundle: () => bundle })
+    expect(withBundle(null)).toThrow(/run `electron-vite build`/)
+    expect(withBundle('const FEED_BASE_URL = "";')).toThrow(/not built with this SITEADAPTER_UPDATE_URL/)
+    expect(withBundle(RELEASE_BUNDLE.replace('/mac/', '/mac/beta/'))).toThrow(/SITEADAPTER_UPDATE_URL/)
+    expect(withBundle(RELEASE_BUNDLE.replace('BEGIN PUBLIC KEY', 'nothing'))).toThrow(/public key/)
+    expect(withBundle(`${RELEASE_BUNDLE}\nconst m = "${SMOKE_BUILD_MARKER}";`)).toThrow(/smoke build/)
+    for (const bundle of [null, ''])
+      expect(() => checkReleaseBundle(bundle, 'https://updates.example.com/mac/')).toThrow(BuildConfigError)
+    // A development build never reads out/.
+    expect(() =>
+      createBuilderConfig(
+        {},
+        {
+          ...DEPS,
+          readMainBundle: () => {
+            throw new Error('read')
+          },
+        },
+      ),
+    ).not.toThrow()
   })
 
   it('when the release flag is anything but 1', () => {
@@ -438,6 +472,21 @@ describe('signWithRequirement', () => {
 
   it('reaches electron-builder’s own @electron/osx-sign (loaded, never called here)', () => {
     expect(typeof nodeDeps.loadSignAsync()).toBe('function')
+  })
+
+  it('reads out/main as every .js file under it, joined, or null without an index.js', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sa-bundle-'))
+    try {
+      expect(readBundle(dir)).toBeNull()
+      mkdirSync(join(dir, 'chunks'))
+      writeFileSync(join(dir, 'index.js'), 'index')
+      writeFileSync(join(dir, 'chunks', 'a.js'), 'chunk')
+      writeFileSync(join(dir, 'chunks', 'a.js.map'), 'map')
+      expect(readBundle(dir)).toBe('chunk\nindex')
+      expect(typeof nodeDeps.readMainBundle()).toMatch(/string|object/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 

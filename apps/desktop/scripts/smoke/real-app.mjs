@@ -1,6 +1,13 @@
 // The second half of package-smoke.mjs: the real app, from the real out/ build, packaged the way
 // `package` packages it, then launched with a window to see that the control panel renders.
 //
+// out/ must be a smoke build (`electron-vite build --mode smoke`, which package:smoke runs): a plain
+// one, as a release, refuses every argv but the normal shapes (src/main/core/argv.ts), the smoke's
+// own included. A smoke build accepts exactly SMOKE_ARGV as well (src/main/core/smoke.ts), and
+// writes a self-check report under userData once it is up: the 1Password SDK resolved and imported
+// from app.asar, and the bundled electron-updater imported. electron-builder.config.ts refuses to
+// package a release from a smoke build.
+//
 // The launch must not touch the real userData folder, the real Keychain or the person's own
 // session state. So the child gets a temporary HOME (and CFFIXED_USER_HOME, which CoreFoundation
 // reads for the home directory), Chromium's mock keychain, and none of the caller's CSC_*, APPLE_*,
@@ -11,21 +18,28 @@
 //
 // The control panel is read over the DevTools protocol: --remote-debugging-port=0, the port taken
 // from Chromium's "DevTools listening on" line. Playwright's Electron launcher needs --inspect,
-// which the NodeCliInspect fuse turns off; Chromium's own switch still works, which is the gap
-// docs/release-and-updates.md describes under "Command-line switches".
+// which the NodeCliInspect fuse turns off. Only the smoke build takes the DevTools switch; the smoke
+// also launches it with other argv and environments and checks each is refused (exit 64), with no
+// control panel and none of the app's data written.
 
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { APP_DIR, appPath, asarFiles, cleanEnv, plist, runBuilder } from '../packaging.mjs'
+import { SMOKE_ARGV, SMOKE_BUILD_MARKER, SMOKE_REPORT_FILE } from '../../src/main/core/smoke.ts'
+import { APP_DIR, appPath, asarFiles, cleanEnv, mainBundle, plist, runBuilder } from '../packaging.mjs'
 
 /** How long the real app has to show a rendered control panel. */
 const RENDER_TIMEOUT_MS = 45_000
 
-/** A launch environment with only a temporary home: what both the placeholder and the app get. */
+/**
+ * A launch environment with only a temporary home: what both the placeholder and the app get. No
+ * NODE_* either: the packaged app refuses most of them.
+ */
 export function homeEnv(home, extra = {}) {
-  return cleanEnv({ HOME: home, CFFIXED_USER_HOME: home, ...extra })
+  const env = cleanEnv({ HOME: home, CFFIXED_USER_HOME: home })
+  for (const name of Object.keys(env)) if (name.startsWith('NODE_')) delete env[name]
+  return { ...env, ...extra }
 }
 
 /** True when `path` is `dir` or inside it. */
@@ -33,20 +47,34 @@ export function inside(path, dir) {
   return typeof path === 'string' && (path === dir || path.startsWith(`${dir}/`))
 }
 
-/** What the real folders look like now, to compare after the launch: existence and mtimes. */
+/**
+ * What the real folders look like now, to compare after the launch: every entry under each, by
+ * path, with its size and mtime (stat only; nothing is opened). A write to a file that already
+ * exists changes its own mtime, not the folder's.
+ */
 function realFolders() {
   const support = join(homedir(), 'Library', 'Application Support')
   const state = {}
-  for (const name of ['siteadapter', 'siteadapter-dev']) {
-    const dir = join(support, name)
+  for (const name of ['siteadapter', 'siteadapter-dev']) state[name] = snapshot(join(support, name))
+  return state
+}
+
+function snapshot(dir) {
+  try {
+    statSync(dir)
+  } catch {
+    return null
+  }
+  const entries = {}
+  for (const name of readdirSync(dir, { recursive: true, encoding: 'utf8' }).sort()) {
     try {
-      const s = statSync(dir)
-      state[name] = { exists: true, mtimeMs: s.mtimeMs }
+      const s = statSync(join(dir, name))
+      entries[name] = `${s.size} ${s.mtimeMs}`
     } catch {
-      state[name] = { exists: false }
+      entries[name] = 'gone'
     }
   }
-  return state
+  return entries
 }
 
 /** Every file the packaged app must carry, by pattern, and nothing else. */
@@ -138,21 +166,33 @@ async function readControlPanel(port, deadline) {
   return last
 }
 
+/** Waits for the smoke build's self-check report under `userData`. */
+async function smokeReport(userData, deadline) {
+  const path = join(userData, SMOKE_REPORT_FILE)
+  while (Date.now() < deadline) {
+    if (existsSync(path)) {
+      try {
+        return JSON.parse(readFileSync(path, 'utf8'))
+      } catch {
+        // Still being written.
+      }
+    }
+    await new Promise((r) => setTimeout(r, 250))
+  }
+  return null
+}
+
 /** Runs the packaged app until the panel renders (or the deadline), then quits it. */
-async function launchReal(app, home) {
+async function launchReal(app, home, userData) {
   const executable = join(
     app,
     'Contents',
     'MacOS',
     plist(join(app, 'Contents', 'Info.plist')).CFBundleExecutable,
   )
-  // No host but loopback resolves: the real adapter must never reach its site from a smoke run.
-  const args = [
-    '--use-mock-keychain',
-    '--remote-debugging-port=0',
-    '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1',
-  ]
-  const child = spawn(executable, args, {
+  // The smoke build's own argv: no host but loopback resolves, so the real adapter never reaches its
+  // site from a smoke run.
+  const child = spawn(executable, [...SMOKE_ARGV], {
     env: homeEnv(home),
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -166,21 +206,89 @@ async function launchReal(app, home) {
   const exited = new Promise((done) => child.on('exit', (code, signal) => done({ code, signal })))
   const port = await devtoolsPort(child, 20_000)
   const panel = port === null ? null : await readControlPanel(port, Date.now() + RENDER_TIMEOUT_MS)
+  const report = panel === null ? null : await smokeReport(userData, Date.now() + 15_000)
   // The app's own quit path (SIGTERM → app.quit, bounded at 5 s), then a kill if it hangs.
   child.kill('SIGTERM')
   const timer = setTimeout(() => child.kill('SIGKILL'), 15_000)
   const exit = await exited
   clearTimeout(timer)
-  return { port, panel, exit, output }
+  return { port, panel, report, exit, output }
 }
+
+/** How long a refused launch may take to exit. */
+const REFUSE_TIMEOUT_MS = 10_000
+
+/**
+ * Launches the packaged app with argv or an environment it must refuse: it must exit with status 64
+ * within REFUSE_TIMEOUT_MS, show no page of the app, and write none of the app's data. Whether a
+ * DevTools listener came up first (Chromium parses its switches before main runs) is recorded.
+ */
+async function launchRefused(app, home, args, extraEnv = {}) {
+  const executable = join(
+    app,
+    'Contents',
+    'MacOS',
+    plist(join(app, 'Contents', 'Info.plist')).CFBundleExecutable,
+  )
+  const child = spawn(executable, args, { env: homeEnv(home, extraEnv), stdio: ['ignore', 'pipe', 'pipe'] })
+  let output = ''
+  child.stdout.on('data', (d) => {
+    output += d
+  })
+  child.stderr.on('data', (d) => {
+    output += d
+  })
+  const started = Date.now()
+  const exit = await new Promise((done) => {
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL')
+      done({ code: null, signal: 'SIGKILL', timedOut: true })
+    }, REFUSE_TIMEOUT_MS)
+    child.on('exit', (code, signal) => {
+      clearTimeout(timer)
+      done({ code, signal, timedOut: false })
+    })
+  })
+  const userData = join(home, 'Library', 'Application Support', 'siteadapter-dev')
+  const written = existsSync(userData)
+    ? readdirSync(userData).filter((name) =>
+        ['audit.jsonl', 'bridge.json', 'versions.json', 'settings.json', SMOKE_REPORT_FILE].includes(name),
+      )
+    : []
+  return {
+    exit,
+    ms: Date.now() - started,
+    refusedMessage:
+      output.includes('siteadapter: refused to start') || output.includes('bridge mode is not built yet'),
+    devtoolsListened: /DevTools listening on/.test(output),
+    written,
+  }
+}
+
+/** Argv and environments the packaged app must refuse, even a smoke build. */
+const REFUSALS = [
+  { name: 'a DevTools port alone', args: ['--remote-debugging-port=0'] },
+  { name: 'a single-dash DevTools port', args: ['-remote-debugging-port=0'] },
+  { name: 'the smoke argv and one more', args: [...SMOKE_ARGV, '--proxy-server=127.0.0.1:9'] },
+  { name: 'the smoke argv reordered', args: [...SMOKE_ARGV].reverse() },
+  { name: 'a host resolver rule', args: ['--host-resolver-rules=MAP * 127.0.0.1'] },
+  { name: 'a relative bridge config', args: ['--mcp-bridge', 'bridge.json'] },
+  { name: 'ELECTRON_ENABLE_LOGGING', args: [...SMOKE_ARGV], env: { ELECTRON_ENABLE_LOGGING: '1' } },
+  // NODE_EXTRA_CA_CERTS isn't here: Electron removes it (and NODE_OPTIONS) from the environment
+  // itself when the NodeOptions fuse is off, so main never sees it.
+  { name: 'NODE_TLS_REJECT_UNAUTHORIZED', args: [...SMOKE_ARGV], env: { NODE_TLS_REJECT_UNAUTHORIZED: '0' } },
+]
 
 /**
  * Packages the real out/ build into `work`, checks it, and launches it under `home`. `expectEqual`
  * records failures. Returns the summary.
  */
 export async function smokeRealApp({ work, arch, dist, home, expectEqual, expectedFuses, fuses }) {
-  if (!existsSync(join(APP_DIR, 'out', 'main', 'index.js')))
-    throw new Error('no out/main/index.js: run `electron-vite build` first (package:smoke does)')
+  const bundle = mainBundle()
+  if (bundle === null)
+    throw new Error('no out/main/index.js: run `electron-vite build --mode smoke` first (package:smoke does)')
+  if (!bundle.includes(SMOKE_BUILD_MARKER))
+    throw new Error('out/ is not a smoke build: run `electron-vite build --mode smoke` (package:smoke does)')
   const output = join(work, 'real')
   runBuilder({ projectDir: APP_DIR, output, targets: ['dir'], arch, dist, env: cleanEnv() })
   const app = appPath(output, arch)
@@ -216,9 +324,20 @@ export async function smokeRealApp({ work, arch, dist, home, expectEqual, expect
   )
 
   const before = realFolders()
-  const launch = await launchReal(app, home)
-  const after = realFolders()
   const userData = join(home, 'Library', 'Application Support', 'siteadapter-dev')
+  const launch = await launchReal(app, home, userData)
+  const refusals = {}
+  for (const [i, refusal] of REFUSALS.entries()) {
+    const result = await launchRefused(app, makeHome(work, `refused-${i}`), refusal.args, refusal.env)
+    refusals[refusal.name] = result
+    expectEqual(
+      `real: refuses ${refusal.name}`,
+      { code: result.exit.code, message: result.refusedMessage },
+      { code: 64, message: true },
+    )
+    expectEqual(`real: refusing ${refusal.name} wrote no app data`, result.written, [])
+  }
+  const after = realFolders()
   const panel = launch.panel
   if (panel?.screenshot)
     writeFileSync(join(work, 'control-panel.png'), Buffer.from(panel.screenshot, 'base64'))
@@ -239,6 +358,16 @@ export async function smokeRealApp({ work, arch, dist, home, expectEqual, expect
   expectEqual('real: no Node in the renderer', panel?.node, 'undefined')
   expectEqual('real: quit cleanly', launch.exit.code, 0)
   expectEqual(
+    'real: the 1Password SDK and electron-updater load in the packaged main process',
+    {
+      build: launch.report?.build,
+      sdkResolves: launch.report?.sdkResolves,
+      sdk: launch.report?.sdk,
+      updater: launch.report?.updater,
+    },
+    { build: SMOKE_BUILD_MARKER, sdkResolves: 'ok', sdk: 'ok', updater: 'ok' },
+  )
+  expectEqual(
     'real: data under the temporary HOME',
     existsSync(join(userData, 'versions.json')) && existsSync(join(userData, 'bridge.json')),
     true,
@@ -255,6 +384,13 @@ export async function smokeRealApp({ work, arch, dist, home, expectEqual, expect
         ? null
         : { href: panel.href, title: panel.title, text: String(panel.text).slice(0, 300) },
     exit: launch.exit,
+    selfCheck: launch.report,
+    refusals: Object.fromEntries(
+      Object.entries(refusals).map(([name, r]) => [
+        name,
+        { code: r.exit.code, ms: r.ms, devtoolsListened: r.devtoolsListened },
+      ]),
+    ),
     output: launch.output.split('\n').filter((l) => l.startsWith('siteadapter:')),
   }
 }

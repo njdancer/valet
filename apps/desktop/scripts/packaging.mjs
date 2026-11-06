@@ -3,7 +3,7 @@
 // signing or notarisation variables.
 
 import { execFileSync } from 'node:child_process'
-import { readFileSync, rmSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -65,6 +65,16 @@ export function runBuilder({ projectDir, output, targets, arch, dist, env }) {
     ],
     { stdio: ['ignore', 'inherit', 'inherit'], env },
   )
+}
+
+/** Every .js file under out/main, joined, or null when there is no out/main/index.js. */
+export function mainBundle(dir = join(APP_DIR, 'out', 'main')) {
+  if (!existsSync(join(dir, 'index.js'))) return null
+  return readdirSync(dir, { recursive: true, encoding: 'utf8' })
+    .filter((name) => name.endsWith('.js'))
+    .sort()
+    .map((name) => readFileSync(join(dir, name), 'utf8'))
+    .join('\n')
 }
 
 /** The .app electron-builder made in `output` for `arch`. */

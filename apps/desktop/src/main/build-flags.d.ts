@@ -11,3 +11,8 @@ declare const __SITEADAPTER_DEV_SERVER__: boolean
 declare const __SITEADAPTER_FEED_BASE_URL__: string
 /** The SPKI PEM public key the feed's envelopes are signed for (SITEADAPTER_FEED_PUBLIC_KEY_FILE), or ''. */
 declare const __SITEADAPTER_FEED_PUBLIC_KEY__: string
+/**
+ * `electron-vite build --mode smoke`, for scripts/package-smoke.mjs only: the smoke's own argv
+ * (core/smoke.ts) and a self-check report. electron-builder.config.ts refuses a release from it.
+ */
+declare const __SITEADAPTER_SMOKE_BUILD__: boolean
