@@ -4,7 +4,7 @@
 // remove over MCP. Then the secret scan, the audit chain (verified, then broken by an edit on disk),
 // and the site's block opening the breaker.
 
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, type Page, test } from '@playwright/test'
 import {
@@ -45,6 +45,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await client?.close().catch(() => undefined)
   await launched?.close()
+  if (userData !== undefined) rmSync(userData, { recursive: true, force: true })
 })
 
 // biome-ignore lint/correctness/noEmptyPattern: Playwright needs the fixtures argument destructured

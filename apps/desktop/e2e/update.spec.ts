@@ -5,6 +5,7 @@
 // MCP, and the old grants don't carry. Approved and granted again, the now-irreversible tool asks
 // the person in the confirmation panel: a decline reaches the client as declined, an approval runs it.
 
+import { rmSync } from 'node:fs'
 import { expect, type Page, test } from '@playwright/test'
 import {
   appWindows,
@@ -46,6 +47,7 @@ test.beforeAll(() => {
 test.afterAll(async () => {
   await client?.close().catch(() => undefined)
   await launched?.close()
+  if (userData !== undefined) rmSync(userData, { recursive: true, force: true })
 })
 
 // biome-ignore lint/correctness/noEmptyPattern: Playwright needs the fixtures argument destructured

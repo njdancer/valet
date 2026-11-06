@@ -12,7 +12,7 @@
 // Every attempt must be blocked, none may reach the sink, and the ones made during a tool's run must
 // be audited as request-blocked with initiator page, the origin only (never the query) as target.
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, rmSync } from 'node:fs'
 import { connect, createServer, type Server } from 'node:net'
 import { join } from 'node:path'
 import { expect, type Page, test } from '@playwright/test'
@@ -63,6 +63,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await client?.close().catch(() => undefined)
   await launched?.close()
+  if (userData !== undefined) rmSync(userData, { recursive: true, force: true })
   await sink?.close()
   door?.close()
 })
