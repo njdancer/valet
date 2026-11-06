@@ -148,9 +148,9 @@ describe('canary secrets', () => {
     const path = join(dir, 'chat.db')
     const db = new DatabaseSync(path)
     db.exec(`
-      CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT NOT NULL);
+      CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT NOT NULL, service TEXT NOT NULL);
       CREATE TABLE message (ROWID INTEGER PRIMARY KEY, text TEXT, attributedBody BLOB, handle_id INTEGER, date INTEGER, is_from_me INTEGER);
-      INSERT INTO handle (ROWID, id) VALUES (1, 'Woolworths');
+      INSERT INTO handle (ROWID, id, service) VALUES (1, 'Woolworths', 'SMS');
     `)
     const date = BigInt(Date.parse('2026-11-07T00:09:00Z') - Date.UTC(2001, 0, 1)) * 1_000_000n
     db.prepare(

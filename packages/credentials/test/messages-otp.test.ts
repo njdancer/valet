@@ -164,23 +164,126 @@ describe('MessagesOtpReader', () => {
     expect(code.reveal((plaintext) => plaintext)).toBe('111111')
   })
 
-  it('matches the sender case-insensitively and as a substring of the handle', async () => {
-    insert({ text: 'code is 111111', handle: 2, date: appleNanos(at('00:09:00')) })
+  it('matches an alphanumeric sender case-insensitively, but only as the whole handle', async () => {
+    insert({ text: 'code is 111111', date: appleNanos(at('00:09:00')) })
     const reader = new MessagesOtpReader({ path, now })
-    expect((await reader.latest({ ...WOOLWORTHS, sender: '400000' }, NOT_BEFORE)).reveal((p) => p)).toBe(
+    expect((await reader.latest({ ...WOOLWORTHS, sender: 'wOOLworths' }, NOT_BEFORE)).reveal((p) => p)).toBe(
       '111111',
     )
-    insert({ text: 'code is 222222', date: appleNanos(at('00:09:30')) })
-    expect((await reader.latest({ ...WOOLWORTHS, sender: 'wOOLworths' }, NOT_BEFORE)).reveal((p) => p)).toBe(
-      '222222',
-    )
+    const error = await failureOf(reader.latest({ ...WOOLWORTHS, sender: 'Woolworth' }, NOT_BEFORE))
+    expect(error.failure).toBe('not-found')
   })
 
-  it('accepts any sender when none is given', async () => {
-    insert({ text: 'code is 666666', handle: 2, date: appleNanos(at('00:09:30')) })
+  it('matches a phone number written with spaces against the stored E.164 handle', async () => {
+    insert({ text: 'code is 111111', handle: 2, date: appleNanos(at('00:09:00')) })
+    const reader = new MessagesOtpReader({ path, now })
+    const code = await reader.latest({ ...WOOLWORTHS, sender: '+61 400 000 000' }, NOT_BEFORE)
+    expect(code.reveal((plaintext) => plaintext)).toBe('111111')
+  })
+
+  it('does not match a sender that is only part of the handle', async () => {
+    // "400000" is a valid short code, and a substring of +61400000000; it must not match it.
+    insert({ text: 'code is 111111', handle: 2, date: appleNanos(at('00:09:00')) })
+    const reader = new MessagesOtpReader({ path, now })
+    const error = await failureOf(reader.latest({ ...WOOLWORTHS, sender: '400000' }, NOT_BEFORE))
+    expect(error.failure).toBe('not-found')
+  })
+
+  it('ignores a newer code from a lookalike iMessage handle', async () => {
+    db.exec("INSERT INTO handle (ROWID, id, service) VALUES (3, 'fake.woolworths@icloud.com', 'iMessage')")
+    insert({ text: 'Your Woolworths code is 111111', date: appleNanos(at('00:08:30')) })
+    insert({ text: 'Your Woolworths code is 999999', handle: 3, date: appleNanos(at('00:09:30')) })
+    const code = await new MessagesOtpReader({ path, now }).latest(WOOLWORTHS, NOT_BEFORE)
+    expect(code.reveal((plaintext) => plaintext)).toBe('111111')
+  })
+
+  it('ignores an alphanumeric sender name that arrived over iMessage', async () => {
+    // Sender IDs only exist on the carrier network; the same name over iMessage is someone else.
+    db.exec("INSERT INTO handle (ROWID, id, service) VALUES (3, 'woolworths', 'iMessage')")
+    insert({ text: 'code is 999999', handle: 3, date: appleNanos(at('00:09:30')) })
+    const error = await failureOf(new MessagesOtpReader({ path, now }).latest(WOOLWORTHS, NOT_BEFORE))
+    expect(error.failure).toBe('not-found')
+  })
+
+  it('reads codes from an email sender over iMessage, but not from the same address over SMS', async () => {
+    db.exec(`
+      INSERT INTO handle (ROWID, id, service) VALUES (3, 'codes@example.com', 'iMessage');
+      INSERT INTO handle (ROWID, id, service) VALUES (4, 'codes@example.com', 'SMS');
+    `)
+    insert({ text: 'code is 111111', handle: 3, date: appleNanos(at('00:09:00')) })
+    insert({ text: 'code is 999999', handle: 4, date: appleNanos(at('00:09:30')) })
+    const reader = new MessagesOtpReader({ path, now })
+    const code = await reader.latest({ ...WOOLWORTHS, sender: 'Codes@Example.com' }, NOT_BEFORE)
+    expect(code.reveal((plaintext) => plaintext)).toBe('111111')
+  })
+
+  it('refuses a query with no sender, even with a catch-all pattern', async () => {
+    insert({ text: 'Your bank code is 482913', handle: 2, date: appleNanos(at('00:09:30')) })
     const { sender: _, ...anySender } = WOOLWORTHS
-    const code = await new MessagesOtpReader({ path, now }).latest(anySender, NOT_BEFORE)
-    expect(code.reveal((plaintext) => plaintext)).toBe('666666')
+    const reader = new MessagesOtpReader({ path, now })
+    await expect(reader.latest({ ...anySender, pattern: '([\\s\\S]*)' }, NOT_BEFORE)).rejects.toMatchObject({
+      stage: 'otp',
+      errorClass: 'invalid',
+    })
+  })
+
+  it('refuses a sender that is not a full number, short code, sender ID or email', async () => {
+    const reader = new MessagesOtpReader({ path, now })
+    for (const sender of ['0400 000 000', 'woolworths.com.au', 'Woolworths Group Ltd', '', '12']) {
+      await expect(reader.latest({ ...WOOLWORTHS, sender }, NOT_BEFORE)).rejects.toMatchObject({
+        stage: 'otp',
+        errorClass: 'invalid',
+      })
+    }
+  })
+
+  it('does not hand over a capture that is not shaped like a code', async () => {
+    // A catch-all pattern on the right sender would otherwise return the whole message.
+    insert({ text: 'Your Woolworths code is 482913. Never share it.', date: appleNanos(at('00:09:00')) })
+    const reader = new MessagesOtpReader({ path, now })
+    const error = await failureOf(reader.latest({ ...WOOLWORTHS, pattern: '([\\s\\S]*)' }, NOT_BEFORE))
+    expect(error.failure).toBe('not-found')
+  })
+
+  it('skips a too-short or too-long capture and falls back to an older, code-shaped one', async () => {
+    insert({ text: 'code is 111111', date: appleNanos(at('00:08:30')) })
+    insert({ text: 'code is 12', date: appleNanos(at('00:09:00')) })
+    insert({ text: 'code is 12345678901', date: appleNanos(at('00:09:30')) })
+    const reader = new MessagesOtpReader({ path, now })
+    const code = await reader.latest({ ...WOOLWORTHS, pattern: 'code is (\\w+)' }, NOT_BEFORE)
+    expect(code.reveal((plaintext) => plaintext)).toBe('111111')
+  })
+
+  it('refuses an exponential pattern before running it', async () => {
+    insert({ text: `${'a'.repeat(40)}!`, date: appleNanos(at('00:09:00')) })
+    const started = Date.now()
+    const reader = new MessagesOtpReader({ path, now })
+    await expect(reader.latest({ ...WOOLWORTHS, pattern: '^(a+)+$' }, NOT_BEFORE)).rejects.toMatchObject({
+      stage: 'otp',
+      errorClass: 'invalid',
+    })
+    expect(Date.now() - started).toBeLessThan(1_000)
+  })
+
+  it('cuts off a polynomial pattern that gets past the screen, without blocking the event loop', async () => {
+    // This takes hours on 1,990 digits; run on the main thread it would freeze the app.
+    insert({ text: `code ${'1'.repeat(1_990)}`, date: appleNanos(at('00:09:00')) })
+    let ticks = 0
+    const ticker = setInterval(() => {
+      ticks += 1
+    }, 10)
+    const started = Date.now()
+    try {
+      const reader = new MessagesOtpReader({ path, now })
+      await expect(
+        reader.latest({ ...WOOLWORTHS, pattern: 'code \\d*\\d*\\d*\\d*\\d*x' }, NOT_BEFORE),
+      ).rejects.toMatchObject({ stage: 'otp', errorClass: 'invalid' })
+    } finally {
+      clearInterval(ticker)
+    }
+    expect(Date.now() - started).toBeLessThan(3_000)
+    // The main thread kept running timers while the worker churned.
+    expect(ticks).toBeGreaterThan(5)
   })
 
   it('ignores messages the person sent', async () => {
