@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Recorder · siteadapter mockups</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="app.css" />
+    <link rel="stylesheet" href="ide.css" />
+    <script src="app.js"></script>
+    <style>
+      .ide-body {
+        grid-template-columns: 350px minmax(0, 1fr) 356px;
+      }
+      .recbar {
+        flex: none;
+        display: flex;
+        align-items: center;
+        gap: var(--space-2);
+        height: 34px;
+        padding: 0 var(--space-3);
+        background: var(--irreversible-bg);
+        border-bottom: 0.5px solid var(--border);
+        font-size: var(--text-sm);
+      }
+      .recbar .live {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-weight: 600;
+        color: var(--danger-text);
+      }
+      .recbar .live i {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--rec);
+        box-shadow: 0 0 0 3px rgba(255, 59, 48, 0.22);
+      }
+      .recbar .btn {
+        height: 22px;
+        font-size: var(--text-sm);
+      }
+      .pane-head .live-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        background: var(--rec);
+      }
+      .rules {
+        margin: var(--space-2) var(--space-3) var(--space-3);
+        font-size: var(--text-xs);
+      }
+      .rules .i {
+        width: 14px;
+        height: 14px;
+      }
+      .sub-h {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 10px 14px 2px;
+        font-size: var(--text-xs);
+        font-weight: 600;
+        color: var(--text-tertiary);
+      }
+      .a0 {
+        padding-top: 24px;
+      }
+      .pw-hl {
+        inset: -6px;
+      }
+      .pw-hl .tag {
+        left: auto;
+        right: calc(100% + 8px);
+        bottom: auto;
+        top: 50%;
+        transform: translateY(-50%);
+      }
+      .bind {
+        top: calc(100% + 14px);
+        left: -24px;
+        width: 372px;
+        color: var(--text);
+        font-family: var(--font-ui);
+        font-size: var(--text-sm);
+        line-height: 1.45;
+      }
+      .bind::before {
+        content: "";
+        position: absolute;
+        top: -6px;
+        left: 40px;
+        width: 12px;
+        height: 12px;
+        transform: rotate(45deg);
+        background: var(--secret-bg);
+      }
+      .bind .fc-head {
+        position: relative;
+        background: linear-gradient(0deg, var(--secret-bg), var(--secret-bg)), var(--bg-window);
+      }
+      .choice .t {
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .choice .d {
+        font-size: var(--text-xs);
+        color: var(--text-secondary);
+      }
+      .sel-chip {
+        font-family: var(--font-mono);
+        font-size: 11.5px;
+        padding: 0 5px;
+        border-radius: 4px;
+        background: var(--bg-sunken);
+        border: 0.5px solid var(--border);
+        white-space: nowrap;
+      }
+      .sugg .what .mono {
+        font-size: 11.5px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .sugg .state {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: var(--text-xs);
+        color: var(--ok);
+      }
+      .sugg .state .i {
+        width: 11px;
+        height: 11px;
+      }
+      .sugg.auth-only {
+        background: var(--secret-bg);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="desktop ide">
+      <header class="sysbar">
+        <span class="i i-apple"></span>
+        <span class="app-name">siteadapter</span>
+        <span>File</span><span>Edit</span><span>View</span><span>Adapter</span><span>Run</span><span>Window</span
+        ><span>Help</span>
+        <span class="spacer"></span>
+        <span class="status">
+          <span class="tray"><span class="i i-logo"></span></span>
+          <span class="i i-wifi"></span>
+          <span class="i i-battery" style="width: 22px"></span>
+          <span>Sat 7 Nov&nbsp; 9:24 pm</span>
+        </span>
+      </header>
+
+      <div class="window ide">
+        <div class="titlebar">
+          <div class="traffic"><span></span><span></span><span></span></div>
+          <div class="ide-adapter">
+            <span class="avatar sm wow">W</span>
+            <span class="name">Woolworths</span>
+            <span class="pill">0.2.0-dev</span>
+            <span class="hash">draft 7e21a0c4…19aa</span>
+          </div>
+          <nav class="modes" style="margin-left: var(--space-4)">
+            <a href="ide-workspace.html"><span class="i i-code"></span>Workspace</a>
+            <a class="on" href="ide-recorder.html"><span class="i i-record" style="color: var(--rec)"></span>Record</a>
+            <a href="ide-agent.html"><span class="i i-sparkle"></span>Agent</a>
+            <a href="ide-tests.html"><span class="i i-flask"></span>Tests</a>
+          </nav>
+          <div class="tools">
+            <span class="xs muted">Recording the <strong>login</strong> auth action</span>
+            <button type="button" class="btn"><span class="i sm i-pause"></span>Pause</button>
+            <button type="button" class="btn primary"><span class="i sm i-stop"></span>Stop and keep 7 steps</button>
+          </div>
+        </div>
+
+        <div class="ide-body">
+          <!-- What has been captured, as declarative steps. Nothing here is code. -->
+          <aside class="pane tree">
+            <div class="pane-head">
+              <span class="live-dot"></span>Captured steps <span class="tertiary" style="font-weight: 500">auth action</span>
+              <span class="spacer"></span><span style="font-weight: 500">7 · 1:42</span>
+            </div>
+            <div class="pane-scroll">
+              <div class="steps">
+                <div class="cstep">
+                  <span class="no">1</span>
+                  <div>
+                    <div class="line"><span class="op nav">goto</span><span class="sel-text">https://www.woolworths.com.au/</span></div>
+                  </div>
+                  <span></span>
+                </div>
+                <div class="cstep">
+                  <span class="no">2</span>
+                  <div>
+                    <div class="line">
+                      <span class="op">click</span><span class="sel-chip">a[href^="/auth/login"]</span><span class="muted xs">“Log in”</span>
+                    </div>
+                    <div class="why">Picked the link's href over its text and position. Text is the fallback.</div>
+                  </div>
+                  <span></span>
+                </div>
+                <div class="cstep">
+                  <span class="no">3</span>
+                  <div>
+                    <div class="line">
+                      <span class="op">waitFor</span><span class="muted xs">url</span
+                      ><span class="sel-chip">auth.woolworths.com.au/u/login/identifier</span>
+                    </div>
+                    <div class="why">Redirected to Auth0 on a new origin. See Navigation on the right.</div>
+                  </div>
+                  <span></span>
+                </div>
+                <div class="cstep">
+                  <span class="no">4</span>
+                  <div>
+                    <div class="line">
+                      <span class="op secret">fill</span><span class="sel-chip">input[name=username]</span
+                      ><span class="arrow">←</span><span class="ref"><span class="i i-key"></span>login.username</span>
+                    </div>
+                    <div class="why">type=email · bound by you at 9:23 pm. What you typed was not recorded.</div>
+                  </div>
+                  <span></span>
+                </div>
+                <div class="cstep">
+                  <span class="no">5</span>
+                  <div>
+                    <div class="line">
+                      <span class="op">click</span><span class="sel-chip">button[type=submit]</span><span class="muted xs">“Continue”</span>
+                    </div>
+                  </div>
+                  <span></span>
+                </div>
+                <div class="cstep">
+                  <span class="no">6</span>
+                  <div>
+                    <div class="line">
+                      <span class="op">waitFor</span><span class="muted xs">url</span><span class="sel-chip">/u/login/password</span>
+                      <span class="tertiary xs">10 s</span>
+                    </div>
+                  </div>
+                  <span></span>
+                </div>
+                <div class="cstep sel">
+                  <span class="no">7</span>
+                  <div>
+                    <div class="line">
+                      <span class="op secret">fill</span><span class="sel-chip">input#password</span><span class="arrow">←</span
+                      ><span class="ref pending">secret?</span>
+                    </div>
+                    <div class="why secret-text">Secret field. Waiting for you to bind it; recording is paused for this field.</div>
+                  </div>
+                  <span></span>
+                </div>
+                <div class="cstep next">
+                  <span class="no">8</span>
+                  <div>
+                    <div class="line"><span class="op">click</span><span class="sel-chip">button[type=submit]</span></div>
+                    <div class="why">
+                      On stop, the recorder offers the endings: <span class="op flow">when</span> /u/mfa-*-challenge →
+                      <span class="op secret">otp</span>, <span class="op flow">when</span> still on /u/login →
+                      <span class="op stop">needsUser</span>, then <span class="op end">assertLoggedIn</span>.
+                    </div>
+                  </div>
+                  <span></span>
+                </div>
+              </div>
+
+              <div class="sub-h">Add a step by hand</div>
+              <div class="palette">
+                <span class="op nav">goto</span><span class="op">waitFor</span><span class="op">click</span
+                ><span class="op secret">fill</span><span class="op secret">otp</span><span class="op">pause</span
+                ><span class="op flow">when</span><span class="op flow">retry</span><span class="op end">assertLoggedIn</span
+                ><span class="op stop">needsUser</span><span class="op stop">fail</span>
+              </div>
+
+              <div class="callout secret rules">
+                <span class="i i-lock"></span>
+                <div>
+                  Login steps are data from a fixed vocabulary. The auth session only ever runs them through siteadapter's
+                  interpreter: no step runs script, and adapter code never drives this session.
+                </div>
+              </div>
+            </div>
+          </aside>
+
+          <!-- The auth session, recording. The highlight and prompt are drawn by the app over the view. -->
+          <section class="pane browser">
+            <div class="recbar">
+              <span class="live"><i></i>Recording</span>
+              <span class="muted">Click and type as you normally would. Each action becomes a step on the left.</span>
+              <span class="spacer" style="flex: 1"></span>
+              <button type="button" class="btn">Insert wait</button>
+            </div>
+            <div class="bchrome">
+              <span class="navbtn back"><span class="i i-chevron"></span></span>
+              <span class="navbtn"><span class="i i-chevron"></span></span>
+              <span class="navbtn"><span class="i i-refresh"></span></span>
+              <div class="addr">
+                <span class="part auth"><span class="i i-lock"></span>AUTH</span>
+                <span class="i i-lock ok-text"></span>
+                <span class="url"
+                  ><span class="host">auth.woolworths.com.au</span><span class="path">/u/login/password?state=…</span></span
+                >
+              </div>
+            </div>
+            <div class="bmeta">
+              <span class="mono">auth:woolworths~rec</span>
+              <span>In memory, discarded when you stop</span>
+              <span><span class="i i-globe"></span>Chrome 152 UA · en-AU</span>
+            </div>
+            <div class="viewport">
+              <div class="a0">
+                <div class="a0-card">
+                  <div class="a0-logo"><span><i></i>Woolworths</span></div>
+                  <h1>Enter your password</h1>
+                  <div class="sub">Enter your password for Woolworths to continue</div>
+                  <div class="a0-id"><span>••••••••@icloud.com</span><span class="a0-edit">Edit</span></div>
+                  <div class="a0-field focus">
+                    <span class="float">Password*</span>
+                    <span class="caret"></span>
+                    <div class="hl secret pw-hl"><span class="tag">input#password</span></div>
+
+              <div class="float-card bind">
+                <div class="fc-head">
+                  <span class="i i-key"></span><strong>Secret field detected</strong>
+                  <span class="xs muted" style="margin-left: auto">not recording keystrokes</span>
+                </div>
+                <div class="fc-body">
+                  <div class="choice on">
+                    <span class="radio on"></span>
+                    <div>
+                      <div class="t">Bind to <span class="ref"><span class="i i-key"></span>login.password</span></div>
+                      <div class="d">
+                        Records <span class="mono">fill(input#password, secret:login.password)</span>. The value comes from
+                        1Password when the login runs.
+                      </div>
+                    </div>
+                  </div>
+                  <div class="choice off">
+                    <span class="radio"></span>
+                    <div>
+                      <div class="t">Record what I type</div>
+                      <div class="d">Not offered for a password field.</div>
+                    </div>
+                  </div>
+                  <div class="guard"><span class="i i-check ok-text"></span><span>type=password suits a password</span></div>
+                  <div class="guard">
+                    <span class="i i-check ok-text"></span><span>Form posts to <span class="mono">https://auth.woolworths.com.au</span></span>
+                  </div>
+                  <div class="guard">
+                    <span class="i i-warn warn-text"></span
+                    ><span
+                      ><span class="mono">login</span> is requested for www.woolworths.com.au only. Binding adds
+                      <strong>auth.woolworths.com.au</strong> to its origins, a new permission you'll review.</span
+                    >
+                  </div>
+                </div>
+                <div class="fc-foot">
+                  <span class="xs muted" style="margin-right: auto; align-self: center">Then type it in the page yourself</span>
+                  <button type="button" class="btn">Skip field</button>
+                  <button type="button" class="btn primary">Bind</button>
+                </div>
+              </div>
+                  </div>
+                  <div class="a0-link">Forgot password?</div>
+                  <div class="a0-submit">Continue</div>
+                  <div class="a0-foot">Don't have an account? <span style="color: #178a33; font-weight: 600">Sign up</span></div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Network requests the recording saw, turned into manifest suggestions. -->
+          <aside class="pane tree">
+            <div class="pane-head">
+              <span class="i sm i-net"></span>Captured requests<span class="spacer"></span
+              ><span style="font-weight: 500">212 · 4 to review</span>
+            </div>
+            <div class="pane-scroll">
+              <div class="sugg-group">Navigation and secrets</div>
+              <div class="sugg done">
+                <span class="what"><span class="i sm i-globe"></span><span class="mono">+ https://auth.woolworths.com.au</span></span>
+                <span class="state"><span class="i i-check"></span>Added</span>
+                <span class="why">Step 2 redirected here: Auth0 Universal Login. Steps 3–7 run on this origin.</span>
+              </div>
+              <div class="sugg">
+                <span class="what"
+                  ><span class="i sm i-key secret-text"></span><span class="mono">login origins → auth.woolworths.com.au</span></span
+                >
+                <button type="button" class="btn">Apply</button>
+                <span class="why">Both login forms post here, so a fill on www would fail the form-action check.</span>
+              </div>
+              <div class="sugg">
+                <span class="what"><span class="i sm i-shield"></span><span class="mono">probe GET /api/ui/v2/bootstrap</span></span>
+                <button type="button" class="btn">Use</button>
+                <span class="why">ShopperDetails.IsLoggedIn was false before login. Checked again after the callback.</span>
+              </div>
+
+              <div class="sugg-group">Request surface <span class="host">www.woolworths.com.au</span></div>
+              <div class="sugg done">
+                <span class="what"><span class="method">GET</span><span class="mono">/apis/ui/Trolley</span></span>
+                <span class="state"><span class="i i-check"></span>Declared</span>
+              </div>
+              <div class="sugg done">
+                <span class="what"><span class="method">POST</span><span class="mono">/apis/ui/Search/products</span></span>
+                <span class="state"><span class="i i-check"></span>Declared</span>
+              </div>
+              <div class="sugg">
+                <span class="what"><span class="method">GET</span><span class="mono">/apis/ui/settings</span></span>
+                <button type="button" class="btn">Declare read</button>
+                <span class="why">The page calls it on load. No tool uses it yet, so leave it out unless one will.</span>
+              </div>
+              <div class="sugg">
+                <span class="what"><span class="method">GET</span><span class="mono">/auth/heartbeat</span></span>
+                <button type="button" class="btn ghost">Skip</button>
+                <span class="why">Session keep-alive the page sends itself. Tools don't need it.</span>
+              </div>
+
+              <div class="sugg-group">Egress</div>
+              <div class="sugg done">
+                <span class="what"><span class="i sm i-globe"></span><span class="mono">cdn0.woolworths.media, acs.…</span></span>
+                <span class="state"><span class="i i-check"></span>Allowed</span>
+              </div>
+              <div class="sugg">
+                <span class="what"><span class="i sm i-x danger-text"></span><span>38 analytics and ad hosts</span></span>
+                <button type="button" class="btn ghost">Review</button>
+                <span class="why">Left blocked. Whether the site works without them is untested.</span>
+              </div>
+
+              <div class="sugg-group">Auth session only <span class="host">auth.woolworths.com.au</span></div>
+              <div class="sugg auth-only">
+                <span class="what"><span class="method">POST</span><span class="mono">/u/login/identifier</span></span>
+                <span class="xs secret-text">302</span>
+                <span class="why">Login traffic is never a tool request. Kept in the trace with its body dropped.</span>
+              </div>
+            </div>
+          </aside>
+        </div>
+
+        <div class="ide-status">
+          <span class="danger-text"><span class="i i-record"></span>Recording in a throwaway auth session</span>
+          <span><span class="i i-eye-off"></span>Keystrokes in secret fields are never captured</span>
+          <span class="right"><span class="i i-lock"></span>Values are never saved: steps keep selectors and secret names only</span>
+        </div>
+      </div>
+    </div>
+    <nav class="mockbar" aria-label="Mockup">
+      <a href="index.html">All screens</a>
+      <button type="button" data-theme-toggle>Light / dark</button>
+    </nav>
+  </body>
+</html>
