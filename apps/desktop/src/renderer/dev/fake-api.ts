@@ -557,6 +557,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     available: null,
     checkedAt: ago(96),
     signed: true,
+    disabledReason: null,
   }
 
   let app: AppStatus = { paused: false, version: '0.1.0', demo: false }

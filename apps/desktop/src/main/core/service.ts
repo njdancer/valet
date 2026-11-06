@@ -70,8 +70,9 @@ import type { AppWindow, MainApi } from './ipc'
 import { createAuthRunner, Handoffs, SessionTracker } from './login'
 import { type ApprovedSnapshot, type BuiltinAdapter, SnapshotStore } from './registry'
 import { RunMemory } from './run-memory'
-import { SettingsStore } from './settings'
+import { DEFAULT_SETTINGS, SettingsStore } from './settings'
 import { type BridgeCommand, clientSnippets, snippetFor } from './snippets'
+import { disabledUpdates, type UpdatesHooks, type UpdatesPort, VersionStore } from './updates'
 import {
   type AdapterState,
   adapterDetail,
@@ -115,6 +116,11 @@ export interface ServiceDeps {
   readonly bridge: BridgeCommand | null
   /** Checks a chosen op binary (checkOpBinary); the resolved path, or null to refuse it. */
   readonly checkOp: (path: string) => Promise<string | null>
+  /**
+   * Builds the updates for this launch: an updater (electron/app.ts, createUpdater) when the build
+   * may update itself, otherwise one that says why not (disabledUpdates).
+   */
+  readonly updates: (hooks: UpdatesHooks) => Promise<UpdatesPort>
   readonly diagnostics?: (
     diagnostic: RuntimeDiagnostic | { readonly type: string; readonly adapterId?: string },
   ) => void
@@ -181,6 +187,12 @@ export class AppService {
   private readonly grants: FileGrantStore
   private readonly markers: LoginAttemptMarker
   private readonly settings: SettingsStore
+  /** The settings as last read or written: the updater reads them synchronously at every check. */
+  private settingsNow: Settings = DEFAULT_SETTINGS
+  private readonly versions: VersionStore
+  private updates: UpdatesPort | null = null
+  /** Audit writes nothing awaits (an update downloaded); stop() waits for them. */
+  private background: Promise<unknown> = Promise.resolve()
   private readonly snapshots: SnapshotStore
   private readonly clients: ClientRegistry
   private readonly titles: JsonDocument<Record<string, string>>
@@ -212,6 +224,7 @@ export class AppService {
     this.grants = new FileGrantStore({ path: paths.grants })
     this.markers = new LoginAttemptMarker(paths.loginMarkers, clock)
     this.settings = new SettingsStore(paths.settings)
+    this.versions = new VersionStore(paths.versions)
     this.snapshots = new SnapshotStore(paths.manifests)
     this.clients = new ClientRegistry(paths.clients, date)
     this.titles = new JsonDocument(paths.grantItems, titlesSchema, () => ({}), true)
@@ -285,7 +298,11 @@ export class AppService {
     const { paths } = this.deps
     await ensurePrivateDir(paths.dir)
     await mkdir(paths.loginMarkers, { recursive: true, mode: 0o700 })
-    await this.deps.credentials.configure(await this.settings.get())
+    this.settingsNow = await this.settings.get()
+    // Updates first, before any adapter, credential or endpoint: a release that fails further on can
+    // still be replaced by the next one.
+    await this.startUpdates()
+    await this.deps.credentials.configure(this.settingsNow)
     await this.clients.load()
     const host = new ToolHost({
       approvals: this.approvals,
@@ -349,12 +366,14 @@ export class AppService {
   }
 
   async stop(): Promise<void> {
+    this.updates?.stop()
     this.broker.declineAll()
     this.handoffs.closeAll()
     await this.endpoint?.close().catch(() => undefined)
     this.endpoint = null
     for (const driver of this.drivers.values()) await driver.close().catch(() => undefined)
     await this.blocked.settled()
+    await this.background
     this.loginSecrets.dispose()
   }
 
@@ -373,6 +392,51 @@ export class AppService {
   }
 
   // ---------- Internals ----------
+
+  /**
+   * Records this launch's version (an update-installed event on the first launch of a newer one)
+   * and builds the updates, which audit each verified download as update-downloaded.
+   */
+  private async startUpdates(): Promise<void> {
+    const { version } = this.deps
+    const launch = await this.versions
+      .recordLaunch(version)
+      .catch(() => ({ highestRun: version, updatedFrom: null }))
+    if (launch.updatedFrom !== null) {
+      await this.audit
+        .append({ type: 'update-installed', from: launch.updatedFrom, to: version })
+        .catch(() => this.deps.diagnostics?.({ type: 'audit-write-failed' }))
+    }
+    try {
+      this.updates = await this.deps.updates({
+        channel: () => this.settingsNow.updateChannel,
+        autoInstallOnQuit: () => this.settingsNow.autoInstallUpdates,
+        highestVersionRun: () => launch.highestRun,
+        whenIdle: () => this.whenIdle(),
+        downloaded: (from, to) => {
+          const write = this.audit
+            .append({ type: 'update-downloaded', from, to })
+            .then(() => undefined)
+            .catch(() => this.deps.diagnostics?.({ type: 'audit-write-failed' }))
+          this.background = this.background.then(() => write)
+        },
+        changed: () => this.emit('app-changed'),
+      })
+    } catch {
+      // An updater that can't be built (a feed or key the controller refuses) checks nothing.
+      this.updates = disabledUpdates(version, 'not-configured', false)
+    }
+    this.updates.start()
+  }
+
+  /** Resolves once no adapter has a call in flight or a run open (each waits up to LOGIN_WAIT_MS). */
+  private async whenIdle(): Promise<void> {
+    await Promise.all(
+      this.deps.adapters.map((a) =>
+        this.gate.exclusive(a.definition.manifest.id, LOGIN_WAIT_MS, async () => {}),
+      ),
+    )
+  }
 
   private emit(type: Exclude<AppEvent['type'], 'audit-appended'>): void {
     this.deps.emit({ type })
@@ -559,6 +623,7 @@ export class AppService {
   }
 
   private async afterSettings(settings: Settings): Promise<Settings> {
+    this.settingsNow = settings
     await this.deps.credentials.configure(settings)
     this.emit('settings-changed')
     this.emit('grants-changed')
@@ -796,15 +861,12 @@ export class AppService {
         clearOpPath: async () => this.afterSettings(await this.settings.setOpPath(null)),
       },
       updates: {
-        // The updater is another unit's (src/main/updater); until it lands, nothing is checked.
-        status: async (): Promise<UpdateStatus> => ({
-          current: deps.version,
-          state: 'up-to-date',
-          available: null,
-          checkedAt: null,
-          signed: false,
-        }),
-        check: async () => {},
+        status: async (): Promise<UpdateStatus> =>
+          (this.updates ?? disabledUpdates(deps.version, 'not-configured', false)).status(),
+        check: async () => {
+          await this.updates?.check()
+          this.emit('app-changed')
+        },
       },
       health: {
         sites: async () => {

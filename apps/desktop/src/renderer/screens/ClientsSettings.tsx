@@ -3,11 +3,11 @@
 // it happens in the main process, and the snippets point at the bridge, which reads it itself.
 
 import { useState } from 'react'
-import type { ClientInfo, ClientKind, SettingsPatch } from '../../shared/api'
+import type { ClientInfo, ClientKind, SettingsPatch, UpdateStatus } from '../../shared/api'
 import { ActionFailed, Icon, LoadState, Segmented, Switch } from '../components/ui'
 import { useAction, useApi, useLoad, useNow } from '../lib/api-context'
 import { formatAgo, formatDay, formatTime } from '../lib/format'
-import { clientLabel } from '../lib/wording'
+import { clientLabel, updatesOffWording } from '../lib/wording'
 
 const SNIPPET_TITLES: Readonly<Record<ClientKind, { readonly title: string; readonly detail: string }>> = {
   'claude-code': { title: 'Add to Claude Code', detail: 'stdio bridge, bundled with the app' },
@@ -334,6 +334,26 @@ function OpPathSetting({ value }: { readonly value: string | null }) {
   )
 }
 
+function UpdatePill({ status }: { readonly status: UpdateStatus }) {
+  switch (status.state) {
+    case 'disabled':
+      return <span className="pill">Off</span>
+    case 'not-checked':
+      return <span className="pill">Not checked yet</span>
+    case 'up-to-date':
+      return <span className="pill ok">Up to date</span>
+    case 'available':
+    case 'ready':
+      return <span className="pill info">{status.available} available</span>
+    case 'downloading':
+      return <span className="pill info">Downloading {status.available}</span>
+    case 'error':
+      return <span className="pill bad">Couldn’t check</span>
+    case 'checking':
+      return <span className="pill">Checking…</span>
+  }
+}
+
 function UpdatesCard({ now }: { readonly now: number }) {
   const api = useApi()
   const status = useLoad((a) => a.updates.status(), [], ['settings-changed', 'app-changed'])
@@ -343,17 +363,7 @@ function UpdatesCard({ now }: { readonly now: number }) {
     <div className="card" id="updates">
       <div className="card-head">
         <span className="h3">Updates</span>
-        {status.status === 'ready' ? (
-          status.data.state === 'up-to-date' ? (
-            <span className="pill ok">Up to date</span>
-          ) : status.data.state === 'available' || status.data.state === 'ready' ? (
-            <span className="pill info">{status.data.available} available</span>
-          ) : status.data.state === 'error' ? (
-            <span className="pill bad">Couldn’t check</span>
-          ) : (
-            <span className="pill">Checking…</span>
-          )
-        ) : null}
+        {status.status === 'ready' ? <UpdatePill status={status.data} /> : null}
       </div>
       <div className="card-body" style={{ paddingTop: 2, paddingBottom: 2 }}>
         {status.status === 'ready' ? (
@@ -363,14 +373,25 @@ function UpdatesCard({ now }: { readonly now: number }) {
               {status.data.current}
               {status.data.checkedAt !== null ? ` · checked ${formatTime(status.data.checkedAt, now)}` : ''}
             </span>
-            <button
-              type="button"
-              className="btn"
-              disabled={action.busy}
-              onClick={() => action.run(() => api.updates.check())}
-            >
-              Check now
-            </button>
+            {status.data.state === 'disabled' ? (
+              <span />
+            ) : (
+              <button
+                type="button"
+                className="btn"
+                disabled={action.busy}
+                onClick={() => action.run(() => api.updates.check())}
+              >
+                Check now
+              </button>
+            )}
+          </div>
+        ) : null}
+        {status.status === 'ready' && status.data.disabledReason !== null ? (
+          <div className="setting">
+            <span>Status</span>
+            <span>{updatesOffWording(status.data.disabledReason)}</span>
+            <span />
           </div>
         ) : null}
         {settings.status === 'ready' ? (
@@ -407,12 +428,12 @@ function UpdatesCard({ now }: { readonly now: number }) {
             {status.data.signed ? (
               <span className="row">
                 <Icon name="shield" size="sm" className="ok-text" />
-                Developer ID, notarised
+                Developer ID
               </span>
             ) : (
               <span className="row danger-text">
                 <Icon name="warn" size="sm" />
-                Unsigned build: updates are off
+                Not signed with a Developer ID
               </span>
             )}
             <span />

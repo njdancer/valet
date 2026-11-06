@@ -572,10 +572,29 @@ export type HashRoute = `#/${string}`
 
 export interface UpdateStatus {
   readonly current: string
-  readonly state: 'up-to-date' | 'checking' | 'available' | 'downloading' | 'ready' | 'error'
+  /**
+   * 'disabled': this build never contacts a feed (disabledReason says why). 'not-checked': updates
+   * are on, but no check has finished since launch. 'ready': downloaded and verified; it installs
+   * when the app quits, if automatic installs are on.
+   */
+  readonly state:
+    | 'disabled'
+    | 'not-checked'
+    | 'up-to-date'
+    | 'checking'
+    | 'available'
+    | 'downloading'
+    | 'ready'
+    | 'error'
   readonly available: string | null
   readonly checkedAt: IsoTime | null
+  /** Signed with a Developer ID, which Squirrel.Mac checks every update against. */
   readonly signed: boolean
+  /**
+   * Set only when state is 'disabled'. 'not-configured': the build has no feed compiled in.
+   * 'development': unpackaged, or a demo launch. 'unsigned': not signed with a Developer ID.
+   */
+  readonly disabledReason: 'not-configured' | 'development' | 'unsigned' | null
 }
 
 export interface SiteHealth {

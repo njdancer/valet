@@ -52,6 +52,8 @@ export interface DataPaths {
   readonly endpoint: string
   readonly bridgeConfig: string
   readonly loginMarkers: string
+  /** The last and highest versions this install has run (updates.ts). */
+  readonly versions: string
 }
 
 /** Every file the app keeps, under one owner-only directory (D45). */
@@ -69,5 +71,6 @@ export function dataPaths(dir: string): DataPaths {
     endpoint: join(dir, 'endpoint.json'),
     bridgeConfig: join(dir, 'bridge.json'),
     loginMarkers: join(dir, 'login-markers'),
+    versions: join(dir, 'versions.json'),
   }
 }

@@ -21,6 +21,7 @@ import type { BridgeCommand } from '../core/snippets'
 import type { DemoSite } from './demo'
 import { broadcast, registerIpc } from './ipc'
 import { createTray } from './tray'
+import { bundleSignature, electronUpdates } from './updates'
 import { AppWindows } from './windows'
 
 const mode = launchMode(process.argv, process.env, {
@@ -41,11 +42,9 @@ const QUIT_BOUND_MS = 5_000
 
 const log = (line: string) => process.stderr.write(`siteadapter: ${line}\n`)
 
-/**
- * Where updates will be wired. TODO: call createUpdater from apps/desktop/src/main/updater (another
- * unit writes it) once it merges; until then this does nothing and updates.status says up to date.
- */
-export function startUpdates(): void {}
+/** The update feed, compiled in: empty in a dev, demo or unconfigured build (updates then stay off). */
+const FEED_BASE_URL = __SITEADAPTER_FEED_BASE_URL__
+const FEED_PUBLIC_KEY = __SITEADAPTER_FEED_PUBLIC_KEY__
 
 /** The stdio bridge from the repo, until the app bundles it (packaging's job): tsx and its CLI. */
 function bridgeCommand(configPath: string): BridgeCommand | null {
@@ -102,6 +101,7 @@ async function main(): Promise<void> {
   )
   const driverOptions: ManifestOptions = demoSite === null ? {} : { egressPorts: [demoSite.site.port] }
   const opDeps = defaultOpCheckDeps()
+  const signature = await bundleSignature()
 
   service = new AppService({
     paths,
@@ -160,6 +160,12 @@ async function main(): Promise<void> {
     },
     emit: (event) => broadcast(windows, event),
     bridge: bridgeCommand(paths.bridgeConfig),
+    updates: electronUpdates({
+      feed: { url: FEED_BASE_URL, publicKey: FEED_PUBLIC_KEY },
+      demo: mode.demo,
+      signature,
+      log,
+    }),
     checkOp: (path) => checkOpBinary(path, opDeps),
     diagnostics: (d) => log(`diagnostic: ${d.type}`),
   })
@@ -168,7 +174,6 @@ async function main(): Promise<void> {
   registerIpc(running.api, windows, base, log)
   await running.start()
   createTray(windows, running.api, mode.demo)
-  startUpdates()
 
   app.on('second-instance', () => windows.openControlPanel(null))
   let stopping = false

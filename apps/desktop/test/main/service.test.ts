@@ -14,6 +14,7 @@ import { disabledOtpReader } from '../../src/main/core/credentials'
 import { DEMO_ACCOUNT, demoCredentials } from '../../src/main/core/demo'
 import { builtinAdapter } from '../../src/main/core/registry'
 import { AppService, fillSelector } from '../../src/main/core/service'
+import { disabledUpdates, type UpdatesHooks, type UpdatesPort } from '../../src/main/core/updates'
 import type { AppEvent, ConfirmationItem, HashRoute } from '../../src/shared/api'
 import { CONFIRM_ARM_MS } from '../../src/shared/api'
 import { FakeDriver, SHOP, SHOP_FILES, shopDefinition } from './fixtures'
@@ -26,9 +27,16 @@ afterEach(async () => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
 })
 
-async function setup(options: { checkOp?: (path: string) => Promise<string | null> } = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'sa-service-'))
-  dirs.push(dir)
+async function setup(
+  options: {
+    checkOp?: (path: string) => Promise<string | null>
+    updates?: (hooks: UpdatesHooks) => Promise<UpdatesPort>
+    version?: string
+    dir?: string
+  } = {},
+) {
+  const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'sa-service-'))
+  if (options.dir === undefined) dirs.push(dir)
   const paths = dataPaths(join(dir, 'data'))
   let now = Date.parse('2026-11-07T00:00:00.000Z')
   const driver = new FakeDriver()
@@ -54,7 +62,7 @@ async function setup(options: { checkOp?: (path: string) => Promise<string | nul
   }
   const service = new AppService({
     paths,
-    version: '0.1.0',
+    version: options.version ?? '0.1.0',
     demo: true,
     now: () => now,
     timers: {
@@ -103,6 +111,7 @@ async function setup(options: { checkOp?: (path: string) => Promise<string | nul
     emit: (event) => events.push(event),
     bridge: { command: '/repo/tsx', args: ['/repo/bridge-cli.ts', paths.bridgeConfig] },
     checkOp: options.checkOp ?? (async (path) => (path === '/good/op' ? path : null)),
+    updates: options.updates ?? (async () => disabledUpdates('0.1.0', 'development', false)),
   })
   services.push(service)
   await service.start()
@@ -122,6 +131,7 @@ async function setup(options: { checkOp?: (path: string) => Promise<string | nul
     endpoint,
     events,
     paths,
+    dir,
     call,
     advance: (ms: number) => {
       now += ms
@@ -474,6 +484,110 @@ describe('tool calls', () => {
   })
 })
 
+describe('updates', () => {
+  function audited(paths: { audit: string }) {
+    return readFileSync(paths.audit, 'utf8')
+      .trim()
+      .split('\n')
+      .filter((line) => line !== '')
+      .map((line) => JSON.parse(line).event)
+  }
+
+  it('says why a build doesn’t update, and checks nothing', async () => {
+    const s = await setup()
+    expect(await s.api.updates.status()).toEqual({
+      current: '0.1.0',
+      state: 'disabled',
+      available: null,
+      checkedAt: null,
+      signed: false,
+      disabledReason: 'development',
+    })
+    await s.api.updates.check()
+    expect(s.events).toContainEqual({ type: 'app-changed' })
+  })
+
+  it('audits update-installed on the first launch of a newer version, and only then', async () => {
+    const first = await setup({ version: '0.1.0' })
+    await first.service.stop()
+    const second = await setup({ version: '0.2.0', dir: first.dir })
+    await second.service.stop()
+    const third = await setup({ version: '0.2.0', dir: first.dir })
+    await third.service.stop()
+    // An older build started by hand afterwards is no update either.
+    const older = await setup({ version: '0.1.5', dir: first.dir })
+    await older.service.stop()
+    expect(audited(first.paths).filter((e) => e.type === 'update-installed')).toEqual([
+      { type: 'update-installed', from: '0.1.0', to: '0.2.0' },
+    ])
+    expect(JSON.parse(readFileSync(first.paths.versions, 'utf8'))).toEqual({
+      lastRun: '0.1.5',
+      highestRun: '0.2.0',
+    })
+  })
+
+  it('gives the updater the settings, versions and idleness it reads, and audits a download', async () => {
+    let hooks: UpdatesHooks | null = null
+    let started = 0
+    let stopped = 0
+    let checks = 0
+    const s = await setup({
+      version: '0.2.0',
+      updates: async (given) => {
+        hooks = given
+        return {
+          status: () => ({
+            current: '0.2.0',
+            state: 'not-checked',
+            available: null,
+            checkedAt: null,
+            signed: true,
+            disabledReason: null,
+          }),
+          check: async () => {
+            checks++
+          },
+          start: () => started++,
+          stop: () => stopped++,
+        }
+      },
+    })
+    const h = hooks as unknown as UpdatesHooks
+    expect(started).toBe(1)
+    expect(h.channel()).toBe('stable')
+    expect(h.autoInstallOnQuit()).toBe(false)
+    await s.api.settings.set({ updateChannel: 'beta', autoInstallUpdates: true })
+    expect(h.channel()).toBe('beta')
+    expect(h.autoInstallOnQuit()).toBe(true)
+    expect(h.highestVersionRun()).toBe('0.2.0')
+    await h.whenIdle()
+    expect((await s.api.updates.status()).state).toBe('not-checked')
+    await s.api.updates.check()
+    expect(checks).toBe(1)
+    s.events.splice(0)
+    h.changed()
+    expect(s.events).toEqual([{ type: 'app-changed' }])
+    h.downloaded('0.2.0', '0.3.0')
+    await s.service.stop()
+    expect(stopped).toBe(1)
+    expect(audited(s.paths).filter((e) => e.type === 'update-downloaded')).toEqual([
+      { type: 'update-downloaded', from: '0.2.0', to: '0.3.0' },
+    ])
+  })
+
+  it('checks nothing when the updater can’t be built', async () => {
+    const s = await setup({
+      updates: async () => {
+        throw new Error('config: invalid')
+      },
+    })
+    expect(await s.api.updates.status()).toMatchObject({
+      state: 'disabled',
+      disabledReason: 'not-configured',
+    })
+  })
+})
+
 describe('refusals outside a run', () => {
   function auditTypes(paths: { audit: string }) {
     return readFileSync(paths.audit, 'utf8')
@@ -688,7 +802,7 @@ describe('endpoint, settings, audit and the app', () => {
     expect(await s.api.health.sites()).toEqual([
       expect.objectContaining({ host: 'www.shop.test', breaker: 'closed', adapterIds: ['shop'] }),
     ])
-    expect(await s.api.updates.status()).toMatchObject({ current: '0.1.0', state: 'up-to-date' })
+    expect(await s.api.updates.status()).toMatchObject({ current: '0.1.0', state: 'disabled' })
     await s.api.updates.check()
   })
 

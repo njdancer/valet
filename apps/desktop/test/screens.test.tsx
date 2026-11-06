@@ -367,11 +367,66 @@ describe('clients and settings', () => {
           available: '0.1.1',
           checkedAt: null,
           signed: false,
+          disabledReason: null,
         }),
       },
     })
     expect(await screen.findByText('0.1.1 available')).toBeTruthy()
-    expect(screen.getByText('Unsigned build: updates are off')).toBeTruthy()
+    expect(screen.getByText('Not signed with a Developer ID')).toBeTruthy()
+  })
+
+  it.each([
+    ['not-configured', 'Off: this build has no update feed'],
+    ['development', 'Off in a development or demo build'],
+    ['unsigned', 'Off: Squirrel.Mac only installs updates for a Developer ID build'],
+  ] as const)('says updates are off in a %s build, and offers no check', async (reason, words) => {
+    const fake = createFakeApi({ now: NOW })
+    renderAt('#/settings', {
+      ...fake,
+      updates: {
+        ...fake.updates,
+        status: async () => ({
+          current: '0.1.0',
+          state: 'disabled',
+          available: null,
+          checkedAt: null,
+          signed: false,
+          disabledReason: reason,
+        }),
+      },
+    })
+    expect(await screen.findByText(words)).toBeTruthy()
+    expect(screen.getByText('Off')).toBeTruthy()
+    expect(screen.queryByText('Up to date')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Check now' })).toBeNull()
+  })
+
+  it.each([
+    ['not-checked', 'Not checked yet'],
+    ['checking', 'Checking…'],
+    ['downloading', 'Downloading 0.1.1'],
+    ['ready', '0.1.1 available'],
+    ['error', 'Couldn’t check'],
+    ['up-to-date', 'Up to date'],
+  ] as const)('words the %s state', async (state, words) => {
+    const fake = createFakeApi({ now: NOW })
+    renderAt('#/settings', {
+      ...fake,
+      updates: {
+        ...fake.updates,
+        status: async () => ({
+          current: '0.1.0',
+          state,
+          available: state === 'downloading' || state === 'ready' ? '0.1.1' : null,
+          checkedAt: null,
+          signed: true,
+          disabledReason: null,
+        }),
+      },
+    })
+    expect(await screen.findByText(words)).toBeTruthy()
+    expect(screen.getByText('Developer ID')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Check now' })).toBeTruthy()
   })
 })
 
