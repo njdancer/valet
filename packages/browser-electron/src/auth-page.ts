@@ -31,9 +31,9 @@ import {
   type TypingGuard,
   typingDelay,
 } from './page-core'
-import { type BrowserSurface, type PartitionSession, sleep } from './platform'
+import { type BrowserSurface, type HeaderList, type PartitionSession, sleep } from './platform'
 import { inspectScript, textPresentScript } from './scripts'
-import { MAX_PROBE_BYTES, PROBE_ACCEPT, ProbeRedirects, probeResult, probeTarget } from './session-fetch'
+import { MAX_PROBE_BYTES, probeTarget, sessionProbe } from './session-fetch'
 
 export interface AuthPageOptions {
   /** The manifest's auth.frameOrigins: origins besides navigation's that subframes may load. */
@@ -46,16 +46,18 @@ export interface AuthPageOptions {
    */
   readonly session?: Pick<PartitionSession, 'fetch' | 'getCookies'>
   /**
-   * Headers fetch() restates so that it presents as the page does: the clean Chrome UA and en-AU,
-   * by default. Accept is always sent.
+   * The headers the page's own requests carry ahead of Accept, in Chrome's order and case, which
+   * fetch() restates so that it presents as the page does: the client hints, the clean Chrome UA
+   * and en-AU, by default (pageIdentityHeaders). None by default here.
    */
-  readonly fetchHeaders?: Readonly<Record<string, string>>
+  readonly identity?: HeaderList
   /**
    * Told about each navigation the guard refuses: the main frame leaving the navigation origins
    * (which also poisons the page), including an off-list commit that slipped past the guard and
-   * was stopped, and a subframe off navigation and frameOrigins. Initiator 'page'.
+   * was stopped, and a subframe off navigation and frameOrigins. Initiator 'page'. `mainFrame`
+   * says which, so that a reporter that rations reports never rations an escape with a widget.
    */
-  readonly onBlocked?: (blocked: BlockedRequest) => void
+  readonly onBlocked?: (blocked: BlockedRequest, context: { readonly mainFrame: boolean }) => void
 }
 
 /** The frame inspect() last found a selector in. focus() must land in that same frame. */
@@ -82,8 +84,10 @@ export class SurfaceAuthPage implements AuthPage {
   private focusTarget: BoundFocus | null = null
   private readonly inspected = new Map<string, Inspected>()
   private readonly session: Pick<PartitionSession, 'fetch' | 'getCookies'> | null
-  private readonly fetchHeaders: Readonly<Record<string, string>>
-  private readonly onBlocked: ((blocked: BlockedRequest) => void) | undefined
+  private readonly identity: HeaderList
+  private readonly onBlocked: AuthPageOptions['onBlocked']
+  /** Aborted by close(), and by the window going while a probe is in flight, to cancel it. */
+  private readonly closed = new AbortController()
 
   constructor(
     private readonly surface: BrowserSurface,
@@ -94,13 +98,13 @@ export class SurfaceAuthPage implements AuthPage {
     this.core = new PageCore(surface, timing)
     this.siteName = options.siteName ?? 'The site'
     this.session = options.session ?? null
-    this.fetchHeaders = { ...options.fetchHeaders, accept: PROBE_ACCEPT }
+    this.identity = options.identity ?? []
     const frameOrigins = options.frameOrigins ?? []
     this.onBlocked = options.onBlocked
     surface.guardNavigation((pending) => {
       const allowed = authNavigationAllowed(pending, navigation, frameOrigins)
       if (!allowed && pending.isMainFrame) this.escaped = true
-      if (!allowed) this.report(pending.url)
+      if (!allowed) this.report(pending.url, pending.isMainFrame)
       return allowed
     })
     surface.onNavigation((event) => {
@@ -111,7 +115,7 @@ export class SurfaceAuthPage implements AuthPage {
       if (!urlOriginAllowed(event.url, navigation)) {
         this.escaped = true
         surface.stop()
-        this.report(event.url)
+        this.report(event.url, true)
       }
     })
   }
@@ -246,27 +250,37 @@ export class SurfaceAuthPage implements AuthPage {
   }
 
   /**
-   * GETs `url` with the auth partition's cookies, for the session probe. The driver makes the
+   * GETs `url` with the auth partition's cookies, for the session probe, presenting as this page's
+   * own fetch(url, { credentials: 'include' }) would (see session-fetch.ts). The driver makes the
    * request from the main process, so no script runs and the page can't see or shape it. Only to
    * the navigation origins (probe/host-not-allowed otherwise), and a redirect is followed only while
    * it stays on them: one that leaves is refused, not followed, and the probe fails with
-   * probe/host-not-allowed. At most MAX_PROBE_BYTES of body are read. Runs under the step timeout.
+   * probe/host-not-allowed. At most MAX_PROBE_BYTES of body are read. Runs under the step timeout,
+   * and is cancelled (probe/aborted) if the page closes first.
    */
   fetch(url: string): Promise<FetchResult> {
     return this.core.step('probe', async (signal) => {
       this.assertInside('probe')
-      const target = probeTarget(url, this.navigation)
       const session = this.session
-      if (session === null) throw new SiteAdapterError('probe', 'unsupported')
-      const redirects = new ProbeRedirects(this.navigation)
-      const response = await session.fetch({
-        url: target,
-        headers: this.fetchHeaders,
-        allowRedirect: redirects.allow,
-        maxBytes: MAX_PROBE_BYTES,
-        signal,
-      })
-      return probeResult(response, redirects)
+      if (session === null) {
+        probeTarget(url, this.navigation)
+        throw new SiteAdapterError('probe', 'unsupported')
+      }
+      const dispose = this.surface.onDestroyed(() => this.closed.abort())
+      try {
+        const result = await sessionProbe(session, url, {
+          navigation: this.navigation,
+          identity: this.identity,
+          pageUrl: this.surface.url(),
+          maxBytes: MAX_PROBE_BYTES,
+          signal: AbortSignal.any([signal, this.closed.signal]),
+        })
+        // The page went while the answer was on its way: it answers for a page that no longer exists.
+        this.assertOpen('probe')
+        return result
+      } finally {
+        dispose()
+      }
     })
   }
 
@@ -280,6 +294,7 @@ export class SurfaceAuthPage implements AuthPage {
         throw new SiteAdapterError('probe', 'invalid')
       }
       const cookies = cookiesForDomains(await session.getCookies(), cookieDomains)
+      this.assertOpen('probe')
       return [...new Set(cookies.map((cookie) => cookie.name))]
     })
   }
@@ -314,6 +329,7 @@ export class SurfaceAuthPage implements AuthPage {
   }
 
   async close(): Promise<void> {
+    this.closed.abort()
     if (!this.surface.isDestroyed()) this.surface.destroy()
   }
 
@@ -367,9 +383,9 @@ export class SurfaceAuthPage implements AuthPage {
   }
 
   /** Tells onBlocked about a refused or stopped navigation. */
-  private report(url: string): void {
+  private report(url: string, mainFrame: boolean): void {
     try {
-      this.onBlocked?.(authBlock(url))
+      this.onBlocked?.(authBlock(url), { mainFrame })
     } catch {
       // A failing reporter must not turn a refusal into an allow.
     }
@@ -383,7 +399,12 @@ export class SurfaceAuthPage implements AuthPage {
 
   private assertInside(stage: Stage): void {
     if (this.escaped) throw new SiteAdapterError('navigate', 'navigation-escaped')
-    if (this.surface.isDestroyed()) throw new SiteAdapterError(stage, 'aborted')
+    this.assertOpen(stage)
+  }
+
+  /** Throws `stage`/aborted once the page was closed or its window went. */
+  private assertOpen(stage: Stage): void {
+    if (this.closed.signal.aborted || this.surface.isDestroyed()) throw new SiteAdapterError(stage, 'aborted')
   }
 }
 

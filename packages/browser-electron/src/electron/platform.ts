@@ -119,19 +119,18 @@ class ElectronPartition implements PartitionSession {
   fetch(request: SessionFetchRequest): Promise<SessionFetchResponse> {
     return new Promise((resolve) => {
       let settled = false
-      const finish = (response: SessionFetchResponse) => {
+      let client: Electron.ClientRequest | null = null
+      // Settles first and only then aborts, so that the abort's own event can't overtake the answer.
+      const finish = (response: SessionFetchResponse, abort = false) => {
         if (settled) return
         settled = true
         request.signal.removeEventListener('abort', onAbort)
         resolve(response)
+        if (abort) client?.abort()
       }
-      const onAbort = () => {
-        client?.abort()
-        finish({ ok: false, failure: 'aborted' })
-      }
-      let client: Electron.ClientRequest | null = null
+      const onAbort = () => finish({ kind: 'failed', failure: 'aborted' }, true)
       if (request.signal.aborted) {
-        finish({ ok: false, failure: 'aborted' })
+        finish({ kind: 'failed', failure: 'aborted' })
         return
       }
       request.signal.addEventListener('abort', onAbort, { once: true })
@@ -144,37 +143,30 @@ class ElectronPartition implements PartitionSession {
           credentials: 'include',
           // A cached answer from before a login or logout would make the probe lie.
           cache: 'no-store',
-          referrerPolicy: 'no-referrer',
-          // Each hop is put to allowRedirect before anything is sent there.
+          // The page's default. Chromium refuses an explicit Referer this policy wouldn't send.
+          referrerPolicy: 'strict-origin-when-cross-origin',
+          // Every redirect comes back to the caller, which decides about the next hop itself.
           redirect: 'manual',
-          // Initiated by the page's own origin, as its fetch() would be (Sec-Fetch-Site).
-          origin: new URL(request.url).origin,
+          // The page's origin: Chromium computes Sec-Fetch-Site from it, in place of the header's
+          // placeholder value.
+          origin: request.initiator,
         })
-        for (const [name, value] of Object.entries(request.headers)) client.setHeader(name, value)
+        // setHeader keeps the order and the case. The network stack puts the Referer straight after
+        // these, then Accept-Encoding and the cookies, as Chrome sends a page's fetch().
+        for (const [name, value] of request.headers) client.setHeader(name, value)
+        if (request.referrer !== null) client.setHeader('Referer', request.referrer)
       } catch {
-        client?.abort()
-        finish({ ok: false, failure: 'network' })
+        finish({ kind: 'failed', failure: 'network' }, true)
         return
       }
       const current = client
-      current.on('redirect', (_status, _method, redirectUrl) => {
-        let allowed = false
-        try {
-          allowed = request.allowRedirect(redirectUrl)
-        } catch {
-          allowed = false
-        }
-        if (allowed) {
-          current.followRedirect()
-          return
-        }
-        current.abort()
-        finish({ ok: false, failure: 'redirect-refused' })
-      })
+      current.on('redirect', (_status, _method, location) =>
+        finish({ kind: 'redirect', location: String(location) }, true),
+      )
       // HTTP authentication is never answered: cancel it.
       current.on('login', (_info, callback) => callback())
-      current.on('error', () => finish({ ok: false, failure: 'network' }))
-      current.on('abort', () => finish({ ok: false, failure: 'aborted' }))
+      current.on('error', () => finish({ kind: 'failed', failure: 'network' }))
+      current.on('abort', () => finish({ kind: 'failed', failure: 'aborted' }))
       current.on('response', (response) => {
         const chunks: Buffer[] = []
         let size = 0
@@ -182,8 +174,7 @@ class ElectronPartition implements PartitionSession {
           if (settled) return
           size += chunk.length
           if (size > request.maxBytes) {
-            current.abort()
-            finish({ ok: false, failure: 'too-large' })
+            finish({ kind: 'failed', failure: 'too-large' }, true)
             return
           }
           chunks.push(chunk)
@@ -191,10 +182,10 @@ class ElectronPartition implements PartitionSession {
         response.on('end', () => {
           const header = response.headers['content-type']
           const contentType = Array.isArray(header) ? (header[0] ?? null) : (header ?? null)
-          finish({ ok: true, status: response.statusCode, contentType, body: Buffer.concat(chunks) })
+          finish({ kind: 'response', status: response.statusCode, contentType, body: Buffer.concat(chunks) })
         })
-        response.on('error', () => finish({ ok: false, failure: 'network' }))
-        response.on('aborted', () => finish({ ok: false, failure: 'aborted' }))
+        response.on('error', () => finish({ kind: 'failed', failure: 'network' }))
+        response.on('aborted', () => finish({ kind: 'failed', failure: 'aborted' }))
       })
       current.end()
     })

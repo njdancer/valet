@@ -7,8 +7,9 @@ import {
 } from '@siteadapter/core'
 import { describe, expect, it } from 'vitest'
 import { type DriverOptions, ElectronSessionDriver } from '../src/driver'
-import type { CookieRecord } from '../src/platform'
-import { FakeFrame, FakePlatform, FakeSurface, ManualTimers } from './fake-browser'
+import type { CookieRecord, SessionFetchResponse } from '../src/platform'
+import { chromeUserAgentOverride } from '../src/user-agent'
+import { FakeFrame, FakePlatform, FakeSurface, flush, ManualTimers } from './fake-browser'
 import { FakeWindow } from './fake-dom'
 
 const OPTIONS = {
@@ -1496,30 +1497,83 @@ describe('close', () => {
 })
 
 describe('auth page probe', () => {
-  it('fetches through the auth partition’s session with the clean UA and en-AU', async () => {
+  it('fetches through the auth partition’s session, presenting as the page: hints, clean UA, en-AU', async () => {
     const { platform } = browserLike()
     const page = await new ElectronSessionDriver(platform, OPTIONS).openAuthPage()
+    await page.goto('https://www.example.com/login')
     await page.fetch('https://www.example.com/api/ui/v2/bootstrap')
     const auth = platform.session(AUTH)
     expect(auth.fetches.map((f) => f.url)).toEqual(['https://www.example.com/api/ui/v2/bootstrap'])
-    expect(auth.fetches[0]?.headers).toEqual({
-      'user-agent':
+    expect(auth.fetches[0]?.headers).toEqual([
+      ['sec-ch-ua-platform', '"macOS"'],
+      [
+        'User-Agent',
         'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
-      'accept-language': 'en-AU,en;q=0.9',
-      accept: '*/*',
+      ],
+      ['sec-ch-ua', '"Not_A Brand";v="99", "Chromium";v="142"'],
+      ['Accept-Language', 'en-AU,en;q=0.9'],
+      ['sec-ch-ua-mobile', '?0'],
+      ['Accept', '*/*'],
+      ['Sec-Fetch-Site', 'same-origin'],
+      ['Sec-Fetch-Mode', 'cors'],
+      ['Sec-Fetch-Dest', 'empty'],
+    ])
+    expect(auth.fetches[0]).toMatchObject({
+      initiator: 'https://www.example.com',
+      referrer: 'https://www.example.com/login',
     })
     // The tool partition is never touched by the auth probe.
     expect(platform.sessions.has(TOOL)).toBe(false)
   })
 
-  it('restates no UA with Electron’s own, leaving the session’s', async () => {
+  it('names Google Chrome in the probe’s client hints only when the pages’ do (D24a)', async () => {
+    const { platform } = browserLike()
+    const page = await new ElectronSessionDriver(platform, {
+      ...OPTIONS,
+      clientHints: 'chrome',
+    }).openAuthPage()
+    await page.fetch('https://www.example.com/api')
+    const brands = new Map(platform.session(AUTH).fetches[0]?.headers).get('sec-ch-ua')
+    const override = chromeUserAgentOverride(platform, 'chrome')
+    expect(brands).toBe(
+      override.userAgentMetadata.brands.map((b) => `"${b.brand}";v="${b.version}"`).join(', '),
+    )
+    expect(brands).toContain('"Google Chrome";v="142"')
+  })
+
+  it('restates no UA or hints with Electron’s own, leaving the session’s', async () => {
     const { platform } = browserLike()
     const page = await new ElectronSessionDriver(platform, {
       ...OPTIONS,
       userAgent: 'electron',
     }).openAuthPage()
     await page.fetch('https://www.example.com/api')
-    expect(platform.session(AUTH).fetches[0]?.headers).toEqual({ accept: '*/*' })
+    expect(platform.session(AUTH).fetches[0]?.headers).toEqual([
+      ['Accept', '*/*'],
+      ['Sec-Fetch-Site', 'same-origin'],
+      ['Sec-Fetch-Mode', 'cors'],
+      ['Sec-Fetch-Dest', 'empty'],
+    ])
+  })
+
+  it('cancels a probe in flight on close(), failing it as aborted', async () => {
+    const { platform } = browserLike()
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    const page = await driver.openAuthPage()
+    const signals: AbortSignal[] = []
+    let answer: (response: SessionFetchResponse) => void = () => {}
+    platform.session(AUTH).onFetch = (request) => {
+      signals.push(request.signal)
+      return new Promise((resolve) => {
+        answer = resolve
+      })
+    }
+    const pending = rejection(page.fetch('https://www.example.com/api'))
+    await flush()
+    await driver.close()
+    expect(signals.map((signal) => signal.aborted)).toEqual([true])
+    answer({ kind: 'response', status: 200, contentType: null, body: new Uint8Array() })
+    expect(await pending).toMatchObject({ stage: 'probe', errorClass: 'aborted' })
   })
 
   it('holds the probe to the driver’s navigation origins', async () => {
@@ -1627,15 +1681,71 @@ describe('auth partition block reports', () => {
     expect(blocked.map((b) => b.target)).toEqual(['https://evil.test', 'https://widget.test'])
   })
 
-  it('reports at most 200 distinct refusals per page, and still refuses past that', async () => {
+  it('reports at most 200 distinct subframe refusals per page, still refuses past that, and says so once', async () => {
     const { platform } = browserLike()
     const blocked: BlockedRequest[] = []
-    await new ElectronSessionDriver(platform, OPTIONS).openAuthPage({ onBlocked: (b) => blocked.push(b) })
+    let dropped = 0
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    await driver.openAuthPage({ onBlocked: (b) => blocked.push(b), onReportsDropped: () => dropped++ })
     const surface = platform.surfaces[0]!
     for (let i = 0; i < 250; i++) {
       expect(surface.attemptNavigation(`https://w${i}.evil.test/`, false)).toBe(false)
     }
     expect(blocked).toHaveLength(200)
+    expect(dropped).toBe(1)
+    expect(driver.droppedAuthReports()).toBe(50)
+  })
+
+  it('still reports an escape after the subframe budget is spent, apart from an earlier widget', async () => {
+    const { platform } = browserLike()
+    const blocked: BlockedRequest[] = []
+    await new ElectronSessionDriver(platform, OPTIONS).openAuthPage({ onBlocked: (b) => blocked.push(b) })
+    const surface = platform.surfaces[0]!
+    // The escape's origin was refused as a widget first: the same method, target and reason.
+    surface.attemptNavigation('https://evil.test/widget', false)
+    for (let i = 0; i < 250; i++) platform.session(AUTH).filter!(frameRequest(`https://w${i}.evil.test/`))
+    expect(surface.attemptNavigation('https://evil.test/landing', true)).toBe(false)
+    expect(blocked).toHaveLength(201)
+    expect(blocked[0]?.target).toBe('https://evil.test')
+    expect(blocked[200]).toEqual({
+      method: 'GET',
+      target: 'https://evil.test',
+      reason: 'host-not-allowed',
+      initiator: 'page',
+    })
+  })
+
+  it('budgets a poisoned page’s repeated escapes on their own, and counts what it drops', async () => {
+    const { platform } = browserLike()
+    const blocked: BlockedRequest[] = []
+    let dropped = 0
+    const driver = new ElectronSessionDriver(platform, { ...OPTIONS, onAuthReportsDropped: () => dropped++ })
+    await driver.openAuthPage({ onBlocked: (b) => blocked.push(b) })
+    const surface = platform.surfaces[0]!
+    for (let i = 0; i < 60; i++)
+      expect(surface.attemptNavigation(`https://e${i}.evil.test/`, true)).toBe(false)
+    expect(blocked).toHaveLength(50)
+    expect(driver.droppedAuthReports()).toBe(10)
+    // The page brought its own reporter but no drop callback: onAuthReportsDropped is onAuthBlocked's.
+    expect(dropped).toBe(0)
+  })
+
+  it('tells onAuthReportsDropped when onAuthBlocked’s own budget is spent', async () => {
+    const { platform } = browserLike()
+    let dropped = 0
+    const driver = new ElectronSessionDriver(platform, {
+      ...OPTIONS,
+      onAuthBlocked: () => {},
+      onAuthReportsDropped: () => {
+        dropped++
+        throw new Error('audit log full')
+      },
+    })
+    await driver.openAuthPage()
+    const surface = platform.surfaces[0]!
+    for (let i = 0; i < 210; i++)
+      expect(surface.attemptNavigation(`https://w${i}.evil.test/`, false)).toBe(false)
+    expect(dropped).toBe(1)
   })
 
   it('still refuses when the reporter throws', async () => {
@@ -1668,6 +1778,43 @@ describe('auth partition block reports', () => {
     platform.session(AUTH).filter!(frameRequest('https://widget.test/'))
     expect(mine).toEqual([])
     expect(fallback.map((b) => b.target)).toEqual(['https://widget.test'])
+  })
+
+  it('sends filter refusals to the login page, not to a handoff helper open beside it', async () => {
+    const { platform, storageFor } = browserLike()
+    storageFor(AUTH, 'https://login.example.com').set('jwt', 'abc')
+    const mine: BlockedRequest[] = []
+    // No onAuthBlocked: a refusal routed to the helper would have nowhere to go.
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    const page = await driver.openAuthPage({ onBlocked: (b) => mine.push(b) })
+    await page.goto('https://www.example.com/login')
+    const filter = platform.session(AUTH).filter!
+    const makeSurface = platform.makeSurface
+    platform.makeSurface = (partition) => {
+      const surface = makeSurface(partition)
+      const load = surface.onLoad
+      surface.onLoad = (url) => {
+        const result = load(url)
+        // The login page's widget is refused at the network layer while the helper is the newest page.
+        if (partition === AUTH) filter(frameRequest('https://widget.test/frame'))
+        // And the helper's own refused frame goes where the filter's would: the login page's reporter.
+        if (partition === AUTH) surface.attemptNavigation('https://helper-widget.test/', false)
+        return result
+      }
+      return surface
+    }
+    await driver.handoff([], [{ origin: 'https://login.example.com', keys: ['jwt'] }])
+    expect(mine.map((b) => b.target)).toEqual(['https://widget.test', 'https://helper-widget.test'])
+  })
+
+  it('passes over a newer page with no reporter for one that has one', async () => {
+    const { platform } = browserLike()
+    const mine: BlockedRequest[] = []
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    await driver.openAuthPage({ onBlocked: (b) => mine.push(b) })
+    await driver.openAuthPage()
+    platform.session(AUTH).filter!(frameRequest('https://widget.test/'))
+    expect(mine.map((b) => b.target)).toEqual(['https://widget.test'])
   })
 
   it('reports the storage handoff helper page’s refusals to onAuthBlocked, and forgets it afterwards', async () => {

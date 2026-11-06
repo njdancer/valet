@@ -39,17 +39,29 @@ export interface OutgoingRequest {
   readonly resourceType: string
 }
 
-/** A GET the driver makes itself, from the main process, with a partition's cookies. */
+/** Request headers in the order they go out, names in the case they are sent in. */
+export type HeaderList = readonly (readonly [string, string])[]
+
+/**
+ * One GET the driver makes itself, from the main process, with a partition's cookies. One hop: a
+ * redirect is handed back, never followed, so that the caller can check where it goes and word the
+ * next hop's headers itself.
+ */
 export interface SessionFetchRequest {
   /** An absolute https URL. The caller has already checked it. */
   readonly url: string
-  /** Sent as given, alongside whatever the session adds itself (cookies, mostly). */
-  readonly headers: Readonly<Record<string, string>>
   /**
-   * Asked, synchronously, about every redirect before it is followed. False refuses it: the
-   * request is cancelled and nothing is sent to the new location.
+   * The origin the request is made on behalf of: the page's. Chromium computes Sec-Fetch-Site from
+   * it, and refuses a Referer that its referrer policy wouldn't send to `url`.
    */
-  readonly allowRedirect: (url: string) => boolean
+  readonly initiator: string
+  /**
+   * Sent in this order, ahead of what the network stack adds itself (Referer, Accept-Encoding and
+   * the cookies, in that order).
+   */
+  readonly headers: HeaderList
+  /** The Referer, or null for none. Must be one strict-origin-when-cross-origin would send. */
+  readonly referrer: string | null
   /** The most body bytes to read. A response with more is abandoned. */
   readonly maxBytes: number
   /** Aborting it cancels the request. */
@@ -58,12 +70,14 @@ export interface SessionFetchRequest {
 
 export type SessionFetchResponse =
   | {
-      readonly ok: true
+      readonly kind: 'response'
       readonly status: number
       readonly contentType: string | null
       readonly body: Uint8Array
     }
-  | { readonly ok: false; readonly failure: 'redirect-refused' | 'too-large' | 'network' | 'aborted' }
+  /** A redirect, not followed: the request was cancelled there. What it set is kept. */
+  | { readonly kind: 'redirect'; readonly location: string }
+  | { readonly kind: 'failed'; readonly failure: 'too-large' | 'network' | 'aborted' }
 
 /** A local proxy a partition's TCP connections go through. */
 export interface ProxyHandle {
@@ -94,9 +108,9 @@ export interface PartitionSession {
   setCookie(details: CookieSetDetails): Promise<void>
   /**
    * GETs a URL from the main process with the partition's cookies (sending them, and storing what
-   * the response sets), never from a page: no script runs. Uncached, no referrer, initiated by the
-   * URL's own origin (so Sec-Fetch-Site says same-origin, as the page's fetch would), redirects
-   * only as `allowRedirect` says, and it never rejects: every failure is a value.
+   * the response sets, a redirect's included), never from a page: no script runs. Uncached, with
+   * exactly the headers and referrer given, on behalf of `initiator`. It never follows a redirect
+   * and never rejects: every failure is a value.
    */
   fetch(request: SessionFetchRequest): Promise<SessionFetchResponse>
   /**

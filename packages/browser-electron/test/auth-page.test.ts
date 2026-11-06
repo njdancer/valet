@@ -3,7 +3,7 @@ import { type BlockedRequest, SecretValue, SiteAdapterError } from '@siteadapter
 import { describe, expect, it } from 'vitest'
 import { SurfaceAuthPage } from '../src/auth-page'
 import { needsUserTitle } from '../src/needs-user'
-import type { CookieRecord, SessionFetchRequest } from '../src/platform'
+import type { CookieRecord, HeaderList, SessionFetchRequest, SessionFetchResponse } from '../src/platform'
 import { MAX_PROBE_BYTES, MAX_PROBE_REDIRECTS } from '../src/session-fetch'
 import { FakeFrame, FakeSession, FakeSurface, flush, ManualTimers } from './fake-browser'
 import { FakeForm, FakeWindow } from './fake-dom'
@@ -1246,19 +1246,20 @@ describe('AuthPage.handToUser leaves nothing behind', () => {
 
 describe('AuthPage.fetch', () => {
   const PROBE = 'https://www.example.com/api/ui/v2/bootstrap'
-  const json = (text: string, status = 200) => ({
-    ok: true as const,
+  const json = (text: string, status = 200): SessionFetchResponse => ({
+    kind: 'response',
     status,
     contentType: 'application/json',
     body: new TextEncoder().encode(text),
   })
+  const redirect = (location: string): SessionFetchResponse => ({ kind: 'redirect', location })
 
-  function probePage(timers = new ManualTimers(), headers?: Record<string, string>) {
+  function probePage(timers = new ManualTimers(), identity?: HeaderList) {
     const surface = new FakeSurface(PARTITION)
     const session = new FakeSession(PARTITION)
     const page = new SurfaceAuthPage(surface, NAVIGATION, timing(timers), {
       session,
-      ...(headers === undefined ? {} : { fetchHeaders: headers }),
+      ...(identity === undefined ? {} : { identity }),
     })
     return { surface, session, page, timers }
   }
@@ -1278,18 +1279,39 @@ describe('AuthPage.fetch', () => {
     expect(surface.frameList[0]?.scripts).toEqual([])
   })
 
-  it('restates the page’s UA and language, and always sends its own Accept', async () => {
-    const { session, page } = probePage(new ManualTimers(), {
-      'user-agent': 'Mozilla/5.0 clean',
-      'accept-language': 'en-AU,en;q=0.9',
-      accept: 'text/html',
-    })
+  it('presents as the page’s own fetch(): its identity headers, Accept, cors metadata, its Referer', async () => {
+    const identity: HeaderList = [
+      ['User-Agent', 'Mozilla/5.0 clean'],
+      ['Accept-Language', 'en-AU,en;q=0.9'],
+    ]
+    const { surface, session, page } = probePage(new ManualTimers(), identity)
+    await page.goto('https://www.example.com/login?step=1#x')
+    surface.loads.length = 0
     await page.fetch(PROBE)
-    expect(session.fetches[0]?.headers).toEqual({
-      'user-agent': 'Mozilla/5.0 clean',
-      'accept-language': 'en-AU,en;q=0.9',
-      accept: '*/*',
+    expect(session.fetches[0]).toMatchObject({
+      initiator: 'https://www.example.com',
+      referrer: 'https://www.example.com/login?step=1',
+      headers: [
+        ['User-Agent', 'Mozilla/5.0 clean'],
+        ['Accept-Language', 'en-AU,en;q=0.9'],
+        ['Accept', '*/*'],
+        ['Sec-Fetch-Site', 'same-origin'],
+        ['Sec-Fetch-Mode', 'cors'],
+        ['Sec-Fetch-Dest', 'empty'],
+      ],
     })
+    expect(surface.loads).toEqual([])
+  })
+
+  it('names the page, not the target, as the initiator of a probe to another navigation origin', async () => {
+    const { session, page } = probePage()
+    await page.goto('https://login.example.com/u/login')
+    await page.fetch(PROBE)
+    expect(session.fetches[0]).toMatchObject({
+      initiator: 'https://login.example.com',
+      referrer: 'https://login.example.com/',
+    })
+    expect(new Map(session.fetches[0]?.headers).get('Origin')).toBe('https://login.example.com')
   })
 
   it('refuses a URL off the navigation origins before anything is sent', async () => {
@@ -1312,71 +1334,58 @@ describe('AuthPage.fetch', () => {
     expect(session.fetches).toEqual([])
   })
 
-  it('refuses a redirect off the navigation origins rather than following it', async () => {
+  it('follows a redirect on the list, and refuses one off it rather than following it', async () => {
     const { session, page } = probePage()
-    const offered: boolean[] = []
-    session.onFetch = (request) => {
-      offered.push(request.allowRedirect('https://login.example.com/authorize'))
-      const allowed = request.allowRedirect('https://evil.test/collect?c=1')
-      offered.push(allowed)
-      return allowed ? json('{}') : { ok: false, failure: 'redirect-refused' }
-    }
+    const answers = [
+      redirect('https://login.example.com/authorize'),
+      redirect('https://evil.test/collect?c=1'),
+    ]
+    session.onFetch = () => answers.shift() ?? json('{}')
     expect(await rejection(page.fetch(PROBE))).toMatchObject({
       stage: 'probe',
       errorClass: 'host-not-allowed',
     })
-    expect(offered).toEqual([true, false])
+    expect(session.fetches.map((f) => f.url)).toEqual([PROBE, 'https://login.example.com/authorize'])
   })
 
   it('refuses a redirect that downgrades to http on a navigation host', async () => {
     const { session, page } = probePage()
-    const offered: boolean[] = []
-    session.onFetch = (request) => {
-      offered.push(request.allowRedirect('http://www.example.com/api'))
-      return { ok: false, failure: 'redirect-refused' }
-    }
+    session.onFetch = () => redirect('http://www.example.com/api')
     expect(await rejection(page.fetch(PROBE))).toMatchObject({ errorClass: 'host-not-allowed' })
-    expect(offered).toEqual([false])
+    expect(session.fetches).toHaveLength(1)
   })
 
   it('gives up on a redirect loop on the list as unavailable', async () => {
     const { session, page } = probePage()
-    session.onFetch = (request) => {
-      for (let hop = 0; hop <= MAX_PROBE_REDIRECTS; hop++) {
-        if (!request.allowRedirect(PROBE)) return { ok: false, failure: 'redirect-refused' }
-      }
-      return json('{}')
-    }
+    session.onFetch = () => redirect(PROBE)
     expect(await rejection(page.fetch(PROBE))).toMatchObject({ stage: 'probe', errorClass: 'unavailable' })
+    expect(session.fetches).toHaveLength(MAX_PROBE_REDIRECTS + 1)
   })
 
   it('counts redirects per fetch, not per page', async () => {
     const { session, page } = probePage()
-    session.onFetch = (request) => {
-      for (let hop = 0; hop < MAX_PROBE_REDIRECTS; hop++) {
-        if (!request.allowRedirect(PROBE)) return { ok: false, failure: 'redirect-refused' }
-      }
-      return json('{}')
-    }
+    let hops = 0
+    session.onFetch = () =>
+      hops++ % (MAX_PROBE_REDIRECTS + 1) < MAX_PROBE_REDIRECTS ? redirect(PROBE) : json('{}')
     await page.fetch(PROBE)
     await expect(page.fetch(PROBE)).resolves.toMatchObject({ status: 200 })
   })
 
   it('reports a body over the cap as unexpected-shape, and a network failure as unavailable', async () => {
     const { session, page } = probePage()
-    session.onFetch = () => ({ ok: false, failure: 'too-large' })
+    session.onFetch = () => ({ kind: 'failed', failure: 'too-large' })
     expect(await rejection(page.fetch(PROBE))).toMatchObject({
       stage: 'probe',
       errorClass: 'unexpected-shape',
     })
-    session.onFetch = () => ({ ok: false, failure: 'network' })
+    session.onFetch = () => ({ kind: 'failed', failure: 'network' })
     expect(await rejection(page.fetch(PROBE))).toMatchObject({ stage: 'probe', errorClass: 'unavailable' })
   })
 
   it('hands back error statuses and HTML as they are, for the interpreter to classify', async () => {
     const { session, page } = probePage()
     session.onFetch = () => ({
-      ok: true,
+      kind: 'response',
       status: 403,
       contentType: 'text/html',
       body: new TextEncoder().encode('<html>Access Denied Reference #18</html>'),
@@ -1399,6 +1408,44 @@ describe('AuthPage.fetch', () => {
     expect(error).toMatchObject({ stage: 'timeout', errorClass: 'timed-out' })
     expect(timers.now).toBe(1000)
     expect(signals.map((signal) => signal.aborted)).toEqual([true])
+  })
+
+  it('cancels a probe in flight when the page closes, and fails it as aborted', async () => {
+    const { session, page } = probePage()
+    const signals: AbortSignal[] = []
+    let answer: (response: SessionFetchResponse) => void = () => {}
+    session.onFetch = (request) => {
+      signals.push(request.signal)
+      return new Promise((resolve) => {
+        answer = resolve
+      })
+    }
+    const pending = rejection(page.fetch(PROBE))
+    await flush()
+    expect(signals.map((signal) => signal.aborted)).toEqual([false])
+    await page.close()
+    expect(signals.map((signal) => signal.aborted)).toEqual([true])
+    // Even if the platform answers anyway, the answer is for a page that is gone.
+    answer(json('{"isLoggedIn":true}'))
+    expect(await pending).toMatchObject({ stage: 'probe', errorClass: 'aborted' })
+  })
+
+  it('cancels a probe in flight when the window goes some other way', async () => {
+    const { surface, session, page } = probePage()
+    const signals: AbortSignal[] = []
+    let answer: (response: SessionFetchResponse) => void = () => {}
+    session.onFetch = (request) => {
+      signals.push(request.signal)
+      return new Promise((resolve) => {
+        answer = resolve
+      })
+    }
+    const pending = rejection(page.fetch(PROBE))
+    await flush()
+    surface.destroy()
+    expect(signals.map((signal) => signal.aborted)).toEqual([true])
+    answer(json('{}'))
+    expect(await pending).toMatchObject({ stage: 'probe', errorClass: 'aborted' })
   })
 
   it('turns a throw from the platform into probe/internal without its message', async () => {
@@ -1434,6 +1481,10 @@ describe('AuthPage.fetch', () => {
   it('is unsupported without a session', async () => {
     const page = new SurfaceAuthPage(new FakeSurface(PARTITION), NAVIGATION, timing(new ManualTimers()))
     expect(await rejection(page.fetch(PROBE))).toMatchObject({ stage: 'probe', errorClass: 'unsupported' })
+    expect(await rejection(page.fetch('https://evil.test/'))).toMatchObject({
+      stage: 'probe',
+      errorClass: 'host-not-allowed',
+    })
     expect(await rejection(page.cookieNames(['www.example.com']))).toMatchObject({
       stage: 'probe',
       errorClass: 'unsupported',
@@ -1494,6 +1545,21 @@ describe('AuthPage.cookieNames', () => {
     }
   })
 
+  it('fails as aborted when the page closes while the cookie store answers', async () => {
+    const session = new FakeSession(PARTITION)
+    let answer: (cookies: readonly CookieRecord[]) => void = () => {}
+    session.getCookies = () =>
+      new Promise((resolve) => {
+        answer = resolve
+      })
+    const page = namesPage(session)
+    const pending = rejection(page.cookieNames(['www.example.com']))
+    await flush()
+    await page.close()
+    answer([cookie('sid', 'www.example.com')])
+    expect(await pending).toMatchObject({ stage: 'probe', errorClass: 'aborted' })
+  })
+
   it('turns a cookie-store failure into probe/internal', async () => {
     const session = new FakeSession(PARTITION)
     session.getCookies = async () => {
@@ -1524,6 +1590,18 @@ describe('AuthPage block reports', () => {
       { method: 'GET', target: 'https://widget.test', reason: 'host-not-allowed', initiator: 'page' },
       { method: 'GET', target: 'https://evil.test', reason: 'host-not-allowed', initiator: 'page' },
     ])
+  })
+
+  it('says whether each refusal was the main frame’s', () => {
+    const contexts: { mainFrame: boolean }[] = []
+    const surface = new FakeSurface(PARTITION)
+    new SurfaceAuthPage(surface, NAVIGATION, timing(new ManualTimers()), {
+      onBlocked: (_blocked, context) => contexts.push(context),
+    })
+    surface.attemptNavigation('https://widget.test/', false)
+    surface.attemptNavigation('https://evil.test/', true)
+    surface.commit('https://evil.test/landed')
+    expect(contexts).toEqual([{ mainFrame: false }, { mainFrame: true }, { mainFrame: true }])
   })
 
   it('reports nothing for navigations it allows', () => {

@@ -309,11 +309,11 @@ export class FakeSession implements PartitionSession {
   /** Every fetch(), as it was asked. */
   readonly fetches: SessionFetchRequest[] = []
   /**
-   * How fetch() answers. The default answers 200 with an empty JSON body. Tests replace it, and may
-   * call request.allowRedirect() to play the redirects the network would offer.
+   * How fetch() answers each hop. The default answers 200 with an empty JSON body. Tests replace
+   * it, and answer { kind: 'redirect' } to play the redirects the network would offer.
    */
   onFetch: (request: SessionFetchRequest) => SessionFetchResponse | Promise<SessionFetchResponse> = () => ({
-    ok: true,
+    kind: 'response',
     status: 200,
     contentType: 'application/json',
     body: new Uint8Array(),

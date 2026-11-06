@@ -11,7 +11,7 @@
 // still open, and only happens when the driver is asked to.
 
 import { SiteAdapterError } from '@siteadapter/core'
-import type { UserAgentOverride } from './platform'
+import type { HeaderList, UserAgentOverride } from './platform'
 
 /** `chrome`: the clean Chrome UA and en-AU (the default). `electron`: Electron's own, untouched. */
 export type UserAgentMode = 'chrome' | 'electron'
@@ -132,6 +132,23 @@ export function chromeUserAgentOverride(engine: EngineInfo, brands: ClientHintBr
       formFactors: ['Desktop'],
     },
   }
+}
+
+/**
+ * What a page under `override` sends ahead of Accept on a fetch(), in Chrome's order and case, for a
+ * request the driver makes itself and must present the same way: the low-entropy client hints, the
+ * UA and Accept-Language. Recorded from Electron 44's page fetch(); the e2e suite diffs the two.
+ */
+export function pageIdentityHeaders(override: UserAgentOverride): HeaderList {
+  const metadata = override.userAgentMetadata
+  const brands = metadata.brands.map(({ brand, version }) => `"${brand}";v="${version}"`).join(', ')
+  return [
+    ['sec-ch-ua-platform', `"${metadata.platform}"`],
+    ['User-Agent', override.userAgent],
+    ['sec-ch-ua', brands],
+    ['Accept-Language', ACCEPT_LANGUAGE],
+    ['sec-ch-ua-mobile', metadata.mobile ? '?1' : '?0'],
+  ]
 }
 
 function chromeMajor(chromeVersion: string): number {

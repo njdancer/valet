@@ -26,12 +26,18 @@ export { partitionName } from './partitions'
 export type * from './platform'
 export { CHROMIUM_SWITCHES, hardenProcess } from './process-hardening'
 export {
+  type ChainState,
+  hopHeaders,
   MAX_PROBE_BYTES,
   MAX_PROBE_REDIRECTS,
   PROBE_ACCEPT,
   ProbeRedirects,
+  type ProbeRequest,
+  probeFailure,
   probeResult,
   probeTarget,
+  referrerFor,
+  sessionProbe,
 } from './session-fetch'
 export { SessionValues } from './session-values'
 export { type Announce, SurfaceToolPage } from './tool-page'
@@ -42,6 +48,7 @@ export {
   cleanChromeUserAgent,
   type EngineInfo,
   LANGUAGES,
+  pageIdentityHeaders,
   type UserAgentMode,
 } from './user-agent'
 
