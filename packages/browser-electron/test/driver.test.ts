@@ -155,7 +155,7 @@ describe('partition set-up', () => {
       'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36'
     for (const partition of [AUTH, TOOL]) {
       expect(platform.session(partition).userAgent, partition).toBe(chrome)
-      expect(platform.session(partition).acceptLanguages, partition).toBe('en-AU,en;q=0.9')
+      expect(platform.session(partition).acceptLanguages, partition).toBe('en-AU,en')
     }
   })
 
@@ -182,19 +182,12 @@ describe('partition set-up', () => {
     expect(platform.session(AUTH).userAgent).toBeNull()
     expect(platform.session(TOOL).userAgent).toBeNull()
     expect(platform.session(AUTH).acceptLanguages).toBeNull()
-  })
-
-  it('leaves client hints to the engine by default', async () => {
-    const { platform } = browserLike()
-    const driver = new ElectronSessionDriver(platform, OPTIONS)
-    await driver.openAuthPage()
-    await driver.toolPage()
     expect(platform.surfaces.flatMap((s) => s.overrides)).toEqual([])
   })
 
-  it('overrides client hints on every page before its first load, when asked', async () => {
+  it('overrides every page before its first load, so navigator.language is en-AU, with the engine’s own brands', async () => {
     const { platform } = browserLike()
-    const driver = new ElectronSessionDriver(platform, { ...OPTIONS, clientHints: 'chrome' })
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
     await (await driver.openAuthPage()).goto('https://www.example.com/')
     await driver.toolPage()
     expect(platform.surfaces).toHaveLength(2)
@@ -202,11 +195,35 @@ describe('partition set-up', () => {
       expect(surface.overrides).toHaveLength(1)
       const [{ override, afterLoad }] = surface.overrides as [(typeof surface.overrides)[number]]
       expect(afterLoad).toBe(false)
-      expect(override.userAgent).toContain('Chrome/142.0.0.0')
-      expect(override.acceptLanguage).toBe('en-AU,en;q=0.9')
-      expect(override.userAgentMetadata.brands.map((b) => b.brand)).toContain('Google Chrome')
+      expect(override.userAgent).toBe(platform.session(surface.partition).userAgent)
+      expect(override.acceptLanguage).toBe('en-AU,en')
+      expect(override.userAgentMetadata.brands.map((b) => b.brand)).toEqual(['Not_A Brand', 'Chromium'])
       expect(override.userAgentMetadata).toMatchObject({ platform: 'macOS', platformVersion: '15.5.0' })
     }
+  })
+
+  it('names Google Chrome in the client hints only when asked (D24a)', async () => {
+    const { platform } = browserLike()
+    const driver = new ElectronSessionDriver(platform, { ...OPTIONS, clientHints: 'chrome' })
+    await driver.toolPage()
+    const [{ override }] = platform.surfaces[0]!.overrides as [(typeof platform.surfaces)[0]['overrides'][0]]
+    expect(override.userAgentMetadata.brands.map((b) => b.brand)).toContain('Google Chrome')
+  })
+
+  it('gives up on an override that never answers, and destroys the page', async () => {
+    const { platform } = browserLike()
+    const timers = new ManualTimers()
+    const makeSurface = platform.makeSurface
+    platform.makeSurface = (partition) => {
+      const surface = makeSurface(partition)
+      surface.onOverride = () => new Promise(() => {})
+      return surface
+    }
+    const driver = new ElectronSessionDriver(platform, { ...OPTIONS, clientHints: 'chrome', timers })
+    const error = await timers.settle(rejection(driver.openAuthPage()))
+    expect(error).toMatchObject({ stage: 'timeout', errorClass: 'timed-out' })
+    expect(timers.now).toBe(1000)
+    expect(platform.surfaces[0]!.isDestroyed()).toBe(true)
   })
 
   it('does not override client hints for Electron’s own user agent', async () => {

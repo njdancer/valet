@@ -4,9 +4,11 @@
 // his IP and accepting this one, and D24 allows matching what the person's own browser sends.
 // Electron's own UA is an explicit opt-in.
 //
-// Client-hint brands are D24a, still open: by default they stay the engine's own ("Chromium").
-// `chromeUserAgentOverride` builds the override that would make them say "Google Chrome" too; the
-// driver only applies it when asked.
+// The session's UA and Accept-Language don't reach navigator.language, which follows the Mac's
+// language list instead, so each page also gets a DevTools user-agent override. That override has
+// to restate the client hints, or navigator.userAgentData comes back empty; by default it restates
+// exactly what the engine reports (a GREASE brand and Chromium). Naming Google Chrome too is D24a,
+// still open, and only happens when the driver is asked to.
 
 import { SiteAdapterError } from '@siteadapter/core'
 import type { UserAgentOverride } from './platform'
@@ -14,8 +16,15 @@ import type { UserAgentOverride } from './platform'
 /** `chrome`: the clean Chrome UA and en-AU (the default). `electron`: Electron's own, untouched. */
 export type UserAgentMode = 'chrome' | 'electron'
 
-/** Accept-Language as Nick's Chrome sends it. navigator.language follows its first entry. */
-export const ACCEPT_LANGUAGE = 'en-AU,en;q=0.9'
+/** Client-hint brands: the engine's own (`Chromium`), or also `Google Chrome` (D24a). */
+export type ClientHintBrands = 'engine' | 'chrome'
+
+/**
+ * The language list the partitions are given, as Electron and the DevTools protocol take it:
+ * codes only. Chromium adds the weights itself, so the header goes out as en-AU,en;q=0.9, as
+ * Nick's Chrome sends it, and navigator.language is en-AU.
+ */
+export const LANGUAGES = 'en-AU,en'
 
 const PLATFORM_TOKENS: Readonly<Record<string, string>> = {
   darwin: 'Macintosh; Intel Mac OS X 10_15_7',
@@ -46,13 +55,17 @@ const CLIENT_HINT_PLATFORMS: Readonly<Record<string, { platform: string; navigat
   linux: LINUX,
 }
 
-// Chromium's GREASE brand: a "Not A Brand" entry with varying punctuation and a position, both
-// seeded from the major version, so that servers can't hard-code the list. Mirrors
-// components/embedder_support/user_agent_utils.cc; check it against a real Chrome of the same
-// major before relying on it.
+// Chromium's GREASE brand: a "Not A Brand" entry with varying punctuation, version and position,
+// all seeded from the major version, so that servers can't hard-code the list. Mirrors
+// components/embedder_support/user_agent_utils.cc. The e2e suite checks the engine-brands
+// override against what Electron's Chromium reports with no override at all.
 const GREASE_CHARS = [' ', '(', ':', '-', '.', '/', ')', ';', '=', '?', '_']
 const GREASE_VERSIONS = ['8', '99', '24']
-const ORDERS: readonly (readonly [number, number, number])[] = [
+const TWO_BRAND_ORDERS: readonly (readonly [number, number])[] = [
+  [0, 1],
+  [1, 0],
+]
+const THREE_BRAND_ORDERS: readonly (readonly [number, number, number])[] = [
   [0, 1, 2],
   [0, 2, 1],
   [1, 0, 2],
@@ -61,45 +74,56 @@ const ORDERS: readonly (readonly [number, number, number])[] = [
   [2, 1, 0],
 ]
 
-function brandList(major: number, version: (brand: string) => string) {
+/** The brand names in order: GREASE, Chromium and, for `chrome`, Google Chrome, placed by seed. */
+function brandNames(major: number, brands: ClientHintBrands): string[] {
   const grease = `Not${GREASE_CHARS[major % GREASE_CHARS.length]}A${GREASE_CHARS[(major + 1) % GREASE_CHARS.length]}Brand`
-  const [greasePosition, chromiumPosition, chromePosition] = ORDERS[major % ORDERS.length] as [
+  if (brands === 'engine') {
+    const [greaseAt, chromiumAt] = TWO_BRAND_ORDERS[major % 2] as [number, number]
+    const ordered = ['', '']
+    ordered[greaseAt] = grease
+    ordered[chromiumAt] = 'Chromium'
+    return ordered
+  }
+  const [greaseAt, chromiumAt, chromeAt] = THREE_BRAND_ORDERS[major % THREE_BRAND_ORDERS.length] as [
     number,
     number,
     number,
   ]
   const ordered = ['', '', '']
-  ordered[greasePosition] = grease
-  ordered[chromiumPosition] = 'Chromium'
-  ordered[chromePosition] = 'Google Chrome'
-  return ordered.map((brand) => ({ brand, version: version(brand) }))
+  ordered[greaseAt] = grease
+  ordered[chromiumAt] = 'Chromium'
+  ordered[chromeAt] = 'Google Chrome'
+  return ordered
 }
 
 /**
- * The DevTools override that makes a page's client hints name Google Chrome, as Nick's Chrome does,
- * alongside the clean UA and en-AU. Off unless DriverOptions.clientHints is 'chrome' (D24a).
+ * The DevTools override every page gets with the chrome user agent: the clean UA, en-AU, and client
+ * hints that describe this machine and engine as they are, naming Google Chrome only for `chrome`.
  */
-export function chromeUserAgentOverride(engine: EngineInfo): UserAgentOverride {
+export function chromeUserAgentOverride(engine: EngineInfo, brands: ClientHintBrands): UserAgentOverride {
   const major = chromeMajor(engine.chromeVersion)
   const greaseVersion = GREASE_VERSIONS[major % GREASE_VERSIONS.length] as string
+  const names = brandNames(major, brands)
+  const isGrease = (brand: string) => brand.startsWith('Not')
   const platform = CLIENT_HINT_PLATFORMS[engine.os] ?? LINUX
-  const arm = engine.arch.startsWith('arm')
   return {
     userAgent: cleanChromeUserAgent(engine.chromeVersion, engine.os),
-    acceptLanguage: ACCEPT_LANGUAGE,
+    acceptLanguage: LANGUAGES,
     platform: platform.navigator,
     userAgentMetadata: {
-      brands: brandList(major, (brand) => (brand.startsWith('Not') ? greaseVersion : String(major))),
-      fullVersionList: brandList(major, (brand) =>
-        brand.startsWith('Not') ? `${greaseVersion}.0.0.0` : engine.chromeVersion,
-      ),
+      brands: names.map((brand) => ({ brand, version: isGrease(brand) ? greaseVersion : String(major) })),
+      fullVersionList: names.map((brand) => ({
+        brand,
+        version: isGrease(brand) ? `${greaseVersion}.0.0.0` : engine.chromeVersion,
+      })),
       platform: platform.platform,
       platformVersion: engine.systemVersion,
-      architecture: arm ? 'arm' : 'x86',
+      architecture: engine.arch.startsWith('arm') ? 'arm' : 'x86',
       model: '',
       mobile: false,
       bitness: engine.arch.endsWith('64') ? '64' : '32',
       wow64: false,
+      formFactors: ['Desktop'],
     },
   }
 }

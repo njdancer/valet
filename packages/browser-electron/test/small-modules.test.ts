@@ -5,7 +5,7 @@ import { partitionName } from '../src/partitions'
 import { sleep } from '../src/platform'
 import { CHROMIUM_SWITCHES, hardenProcess } from '../src/process-hardening'
 import { withTimeout } from '../src/timeout'
-import { ACCEPT_LANGUAGE, chromeUserAgentOverride, cleanChromeUserAgent } from '../src/user-agent'
+import { chromeUserAgentOverride, cleanChromeUserAgent, LANGUAGES } from '../src/user-agent'
 import { ManualTimers } from './fake-browser'
 
 describe('partitionName', () => {
@@ -44,71 +44,102 @@ describe('cleanChromeUserAgent', () => {
   })
 })
 
-describe('ACCEPT_LANGUAGE', () => {
-  it('is en-AU first, as Nick’s Chrome sends it', () => {
-    expect(ACCEPT_LANGUAGE).toBe('en-AU,en;q=0.9')
+describe('LANGUAGES', () => {
+  it('is en-AU then en, codes only: Chromium adds the weights itself', () => {
+    expect(LANGUAGES).toBe('en-AU,en')
+    expect(LANGUAGES).not.toContain(';q=')
   })
 })
 
-const MAC_ARM = { chromeVersion: '142.0.7444.59', os: 'darwin', systemVersion: '15.5.0', arch: 'arm64' }
+const MAC_ARM = { chromeVersion: '152.0.7977.169', os: 'darwin', systemVersion: '27.2.0', arch: 'arm64' }
 
 describe('chromeUserAgentOverride', () => {
-  it('names Google Chrome and Chromium at the real version, beside a GREASE brand', () => {
-    const override = chromeUserAgentOverride(MAC_ARM)
-    expect(override.userAgent).toBe(cleanChromeUserAgent('142.0.7444.59', 'darwin'))
-    expect(override.acceptLanguage).toBe(ACCEPT_LANGUAGE)
-    expect(override.platform).toBe('MacIntel')
+  it('restates exactly what Electron 44’s Chromium 152 reports by default, with the clean UA and en-AU', () => {
+    // The engine's own answer, as the e2e suite read it from a page with no override at all.
+    expect(chromeUserAgentOverride(MAC_ARM, 'engine')).toEqual({
+      userAgent:
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
+      acceptLanguage: 'en-AU,en',
+      platform: 'MacIntel',
+      userAgentMetadata: {
+        brands: [
+          { brand: 'Not?A_Brand', version: '24' },
+          { brand: 'Chromium', version: '152' },
+        ],
+        fullVersionList: [
+          { brand: 'Not?A_Brand', version: '24.0.0.0' },
+          { brand: 'Chromium', version: '152.0.7977.169' },
+        ],
+        platform: 'macOS',
+        platformVersion: '27.2.0',
+        architecture: 'arm',
+        model: '',
+        mobile: false,
+        bitness: '64',
+        wow64: false,
+        formFactors: ['Desktop'],
+      },
+    })
+  })
+
+  it('never names Google Chrome unless asked', () => {
+    for (const version of ['140.0.1.1', '141.0.1.1', '152.0.1.1', '153.0.1.1']) {
+      const override = chromeUserAgentOverride({ ...MAC_ARM, chromeVersion: version }, 'engine')
+      expect(JSON.stringify(override.userAgentMetadata), version).not.toContain('Google Chrome')
+    }
+  })
+
+  it('names Google Chrome and Chromium at the real version, beside a GREASE brand, when asked', () => {
+    const override = chromeUserAgentOverride(MAC_ARM, 'chrome')
+    expect(override.userAgent).toBe(cleanChromeUserAgent('152.0.7977.169', 'darwin'))
+    expect(override.acceptLanguage).toBe(LANGUAGES)
     const brands = override.userAgentMetadata.brands
     expect(brands).toHaveLength(3)
     expect(brands).toEqual(
       expect.arrayContaining([
-        { brand: 'Google Chrome', version: '142' },
-        { brand: 'Chromium', version: '142' },
+        { brand: 'Google Chrome', version: '152' },
+        { brand: 'Chromium', version: '152' },
+        { brand: 'Not?A_Brand', version: '24' },
       ]),
     )
-    const grease = brands.find((b) => b.brand.startsWith('Not'))
-    expect(grease?.brand).toMatch(/^Not.A.Brand$/)
     expect(override.userAgentMetadata.fullVersionList).toEqual(
-      expect.arrayContaining([{ brand: 'Google Chrome', version: '142.0.7444.59' }]),
+      expect.arrayContaining([{ brand: 'Google Chrome', version: '152.0.7977.169' }]),
     )
   })
 
-  it('describes the machine as it is: macOS on arm, 64-bit, not mobile', () => {
-    expect(chromeUserAgentOverride(MAC_ARM).userAgentMetadata).toMatchObject({
-      platform: 'macOS',
-      platformVersion: '15.5.0',
-      architecture: 'arm',
-      bitness: '64',
-      mobile: false,
-      model: '',
-      wow64: false,
-    })
-    expect(chromeUserAgentOverride({ ...MAC_ARM, arch: 'x64' }).userAgentMetadata.architecture).toBe('x86')
-    expect(chromeUserAgentOverride({ ...MAC_ARM, arch: 'ia32' }).userAgentMetadata.bitness).toBe('32')
-  })
-
-  it('uses Windows and Linux names on those platforms, and Linux for anything else', () => {
-    expect(chromeUserAgentOverride({ ...MAC_ARM, os: 'win32' })).toMatchObject({
+  it('describes the machine as it is on other architectures and platforms', () => {
+    expect(
+      chromeUserAgentOverride({ ...MAC_ARM, arch: 'x64' }, 'engine').userAgentMetadata.architecture,
+    ).toBe('x86')
+    expect(chromeUserAgentOverride({ ...MAC_ARM, arch: 'ia32' }, 'engine').userAgentMetadata.bitness).toBe(
+      '32',
+    )
+    expect(chromeUserAgentOverride({ ...MAC_ARM, os: 'win32' }, 'engine')).toMatchObject({
       platform: 'Win32',
       userAgentMetadata: { platform: 'Windows' },
     })
-    expect(chromeUserAgentOverride({ ...MAC_ARM, os: 'freebsd' })).toMatchObject({
+    expect(chromeUserAgentOverride({ ...MAC_ARM, os: 'freebsd' }, 'engine')).toMatchObject({
       platform: 'Linux x86_64',
       userAgentMetadata: { platform: 'Linux' },
     })
   })
 
   it('moves the GREASE brand with the major version, as Chromium does', () => {
-    const position = (version: string) =>
-      chromeUserAgentOverride({ ...MAC_ARM, chromeVersion: version }).userAgentMetadata.brands.findIndex(
-        (b) => b.brand.startsWith('Not'),
-      )
-    const positions = new Set(['140.0.1.1', '141.0.1.1', '142.0.1.1', '143.0.1.1'].map(position))
-    expect(positions.size).toBeGreaterThan(1)
+    for (const brands of ['engine', 'chrome'] as const) {
+      const position = (version: string) =>
+        chromeUserAgentOverride(
+          { ...MAC_ARM, chromeVersion: version },
+          brands,
+        ).userAgentMetadata.brands.findIndex((b) => b.brand.startsWith('Not'))
+      const positions = new Set(['140.0.1.1', '141.0.1.1', '142.0.1.1', '143.0.1.1'].map(position))
+      expect(positions.size, brands).toBeGreaterThan(1)
+    }
   })
 
   it('refuses a version it cannot read', () => {
-    expect(() => chromeUserAgentOverride({ ...MAC_ARM, chromeVersion: 'latest' })).toThrow(SiteAdapterError)
+    expect(() => chromeUserAgentOverride({ ...MAC_ARM, chromeVersion: 'latest' }, 'engine')).toThrow(
+      SiteAdapterError,
+    )
   })
 })
 

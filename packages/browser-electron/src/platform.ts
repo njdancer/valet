@@ -110,6 +110,7 @@ export interface UserAgentOverride {
     readonly mobile: boolean
     readonly bitness: string
     readonly wow64: boolean
+    readonly formFactors: readonly string[]
   }
 }
 

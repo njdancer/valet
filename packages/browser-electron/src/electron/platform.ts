@@ -250,7 +250,10 @@ class ElectronSurface implements BrowserSurface {
   }
 
   async overrideUserAgent(override: UserAgentOverride): Promise<void> {
-    // The override lasts while the debugger stays attached, which is the window's lifetime.
+    // A web contents that has never loaded has no renderer for the command to reach, and it waits
+    // forever; about:blank never touches the network. The override lasts while the debugger stays
+    // attached, which is the window's lifetime, and applies to every navigation after it.
+    if (this.contents.getURL() === '') await this.contents.loadURL('about:blank')
     const devtools = this.contents.debugger
     if (!devtools.isAttached()) devtools.attach('1.3')
     await devtools.sendCommand('Emulation.setUserAgentOverride', override)

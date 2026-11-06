@@ -23,10 +23,11 @@ export type * from './platform'
 export { CHROMIUM_SWITCHES, hardenProcess } from './process-hardening'
 export { type Announce, SurfaceToolPage } from './tool-page'
 export {
-  ACCEPT_LANGUAGE,
+  type ClientHintBrands,
   chromeUserAgentOverride,
   cleanChromeUserAgent,
   type EngineInfo,
+  LANGUAGES,
   type UserAgentMode,
 } from './user-agent'
 

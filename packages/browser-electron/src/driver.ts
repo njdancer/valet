@@ -35,11 +35,13 @@ import type {
 } from './platform'
 import { realTimers } from './platform'
 import { readStorageScript, writeStorageScript } from './scripts'
+import { withTimeout } from './timeout'
 import { SurfaceToolPage } from './tool-page'
 import {
-  ACCEPT_LANGUAGE,
+  type ClientHintBrands,
   chromeUserAgentOverride,
   cleanChromeUserAgent,
+  LANGUAGES,
   type UserAgentMode,
 } from './user-agent'
 
@@ -64,14 +66,18 @@ export interface DriverOptions {
   readonly egressPorts?: readonly number[]
   /** The manifest's auth.frameOrigins: origins besides navigation's that auth subframes may load. */
   readonly frameOrigins?: readonly string[]
-  /** The clean Chrome UA with en-AU (the default), or Electron's own. */
+  /**
+   * The clean Chrome UA with en-AU (the default), set on each partition and, so that
+   * navigator.language follows, on each page over the DevTools protocol; or Electron's own, with
+   * nothing overridden.
+   */
   readonly userAgent?: UserAgentMode
   /**
-   * Client-hint brands (D24a, undecided). `engine`, the default, leaves them as Chromium reports
-   * itself. `chrome` overrides them on each page over the DevTools protocol to name Google Chrome,
-   * as Nick's own Chrome does. Only with the chrome user agent.
+   * Client-hint brands (D24a, undecided). `engine`, the default, restates what Chromium reports
+   * itself. `chrome` also names Google Chrome, as Nick's own Chrome does. Only with the chrome user
+   * agent. Electron sends no Sec-CH-UA header either way; this is navigator.userAgentData.
    */
-  readonly clientHints?: 'engine' | 'chrome'
+  readonly clientHints?: ClientHintBrands
   /**
    * The key events each typed character sends. `char`, the default, sends one char event; `full`
    * sends keyDown, char and keyUp, as a keyboard does. Which one sites prefer is Nick's call.
@@ -391,10 +397,14 @@ export class ElectronSessionDriver implements SessionDriver {
   private async open(role: Role): Promise<BrowserSurface> {
     await this.session(role)
     const surface = this.platform.openSurface(this.partitions[role])
-    if (this.options.clientHints !== 'chrome' || this.options.userAgent === 'electron') return surface
+    if (this.options.userAgent === 'electron') return surface
     try {
       const { chromeVersion, os, systemVersion, arch } = this.platform
-      await surface.overrideUserAgent(chromeUserAgentOverride({ chromeVersion, os, systemVersion, arch }))
+      const brands = this.options.clientHints ?? 'engine'
+      const override = chromeUserAgentOverride({ chromeVersion, os, systemVersion, arch }, brands)
+      await withTimeout(this.timing.timers, this.timing.stepTimeoutMs, () =>
+        surface.overrideUserAgent(override),
+      )
     } catch (error) {
       surface.destroy()
       if (error instanceof SiteAdapterError) throw error
@@ -431,7 +441,7 @@ export class ElectronSessionDriver implements SessionDriver {
     session.harden()
     if (this.options.userAgent !== 'electron') {
       const userAgent = cleanChromeUserAgent(this.platform.chromeVersion, this.platform.os)
-      session.setUserAgent(userAgent, ACCEPT_LANGUAGE)
+      session.setUserAgent(userAgent, LANGUAGES)
     }
     if (role === 'auth') {
       // will-frame-navigate is the first line for subframes; this holds the frames it doesn't
