@@ -1,0 +1,67 @@
+{
+  "AvailableItems": [],
+  "BundleItems": [],
+  "ConflictedItems": [],
+  "ExceededAtpLimitItems": [],
+  "ExceededSupplyLimitGroups": [],
+  "RestrictedByCrowdDeliveryItems": [],
+  "RestrictedByDeliPlattersItems": [],
+  "RestrictedByDeliveryMethodItems": [],
+  "RestrictedByIdVerificationItems": [],
+  "RestrictedBySellerDeliverabilityItems": [],
+  "RestrictedItems": [],
+  "UnavailableItems": [],
+  "Errors": [
+    {
+      "Type": "InvalidSubtotal",
+      "Message": "Pick up has a $50 minimum spend. Add $50.00 of Woolworths items to continue.",
+      "ErrorCode": null
+    }
+  ],
+  "IsRewardsEarningsAvailable": false,
+  "MarketDeliveryDetails": {
+    "ThirdPartyVendorDeliveryInfoList": [],
+    "MarketDeliveryAddress": null,
+    "MarketAddressText": null
+  },
+  "MarketShippingFees": null,
+  "MaximumOrderQuantity": 0,
+  "Message": null,
+  "RestrictedByDeliPlattersMessage": null,
+  "RestrictedByDeliveryMethodMessage": null,
+  "RestrictedByDeliveryWindowMessage": null,
+  "WowRewardsSummary": {
+    "WowRewardsToSpend": 0,
+    "IsWowRewardsCardRegistered": false,
+    "IsErrorInGettingWowRewardsBalance": false,
+    "SaveForLaterPreference": "",
+    "IsLessThanMinimumRedemptionBalance": true,
+    "RewardsCredits": {
+      "Balance": 0,
+      "BeingEarned": 0,
+      "BeingRedeemed": 0,
+      "CanRedeem": false
+    },
+    "TotalRewardsPointsEarned": 0
+  },
+  "RestrictedBySellerDeliverabilityMessage": null,
+  "DeliveryFee": {
+    "Total": 0
+  },
+  "PotentialOrderPromotions": [],
+  "Totals": {
+    "MarketDiscountableSubTotal": 0,
+    "MarketEligibleAmountForFlatShippingFee": 0,
+    "MarketSubTotal": 0,
+    "MarketTotal": 0,
+    "SubTotal": 0,
+    "Total": 0,
+    "TotalSavings": 0,
+    "WoolworthsDiscountableSubTotal": 0,
+    "WoolworthsSubTotal": 0,
+    "WoolworthsTotal": 0
+  },
+  "TotalTrolleyItemQuantity": 0,
+  "TotalWowDeliveryTrolleyItemQuantity": 0,
+  "TrolleyItemCount": 0
+}
