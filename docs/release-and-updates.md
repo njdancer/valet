@@ -23,8 +23,8 @@ memory as of November 2026; anything marked _verify_ must be checked on the firs
   - Electron fuses that turn off the Node-level ways of running other code as the app
     (`runAsNode`, `NODE_OPTIONS`, `--inspect`).
   - A strict command-line allowlist, first thing in main, for the Chromium and Electron switches
-    no fuse covers (`--remote-debugging-port`, `--host-resolver-rules`, …). Not built yet; see
-    [Command-line switches](#command-line-switches).
+    no fuse covers (`--remote-debugging-port`, `--host-resolver-rules`, …). Built
+    (`core/argv.ts`, `electron/guard.ts`); see [Command-line switches](#command-line-switches).
   - An explicit designated requirement on the outer bundle only, through a `sign` wrapper like
     the earlier app's.
 
@@ -208,8 +208,7 @@ Notes on choices that aren't obvious:
   page gets only what a browser gives it, and Vite's `<script type="module">` never runs there
   (checked on Electron 44.10.2 with only this fuse flipped; dropping `crossorigin` doesn't help).
   The renderer is served from a privileged custom scheme instead,
-  [`src/main/updater/app-scheme.ts`](../apps/desktop/src/main/updater/app-scheme.ts) (in the
-  packaging unit's directory for now; the main process adopts it):
+  [`src/main/core/app-scheme.ts`](../apps/desktop/src/main/core/app-scheme.ts):
   `protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } }])`
   before `ready`, then `protocol.handle('app', createAppSchemeHandler({ root: <appPath>/out/renderer, readFile }))`
   and `loadURL('app://renderer/index.html')`. The handler answers only `app://renderer/…`, only
@@ -225,18 +224,17 @@ Notes on choices that aren't obvious:
   can still reverse this before any real session exists ([Open questions](#open-questions)).
 - **`preAutoEntitlements: false`.** `@electron/osx-sign` can add entitlements on its own. The
   release check compares the signed entitlements with the files anyway; this makes them agree.
-- **`files` and `main`.** Only `out/**` and `package.json` are packaged. The packaged
-  `package.json` needs a `main` pointing at electron-vite's main bundle; `apps/desktop/package.json`
-  doesn't have one yet (the main process is being written). The workspace packages export
-  TypeScript source, which Electron won't load from `node_modules`, so the main build must bundle
-  them; electron-builder still copies production `dependencies` into the asar unless the main build
-  makes them unnecessary and `files` says so. The main process bundles everything except Electron,
-  Node built-ins and `@1password/sdk` (loaded lazily, with a wasm file beside it), so `files` can't
-  simply exclude `node_modules`; narrowing it to the SDK needs a real build of the main process to
-  check, and none has been packaged yet.
-- **Typechecking.** `tsc --noEmit -p apps/desktop/src/main/updater` checks the updater, the app://
-  scheme and `electron-builder.config.ts` in plain Node, with no DOM; `-p apps/desktop` reaches
-  them too, through the tests.
+- **`files` and `main`.** The packaged `package.json`'s `main` points at electron-vite's main
+  bundle. `files` takes `out/main`, `out/preload`, `out/renderer`, `package.json`, and from
+  `node_modules` only `@1password/sdk` and `@1password/sdk-core` (loaded lazily, with a wasm file
+  beside it). Everything else, the workspace packages included, is bundled into `out/main`. The
+  main and preload builds empty their output folders first, so a stale demo chunk can't be
+  packaged into a plain build. `package:smoke` checks the asar holds exactly this, and that the SDK
+  and `electron-updater` import from inside it.
+- **Typechecking.** `tsc --noEmit -p apps/desktop/tsconfig.node.json` (part of the root
+  `pnpm typecheck`) checks the main process, the preload, the updater and
+  `electron-builder.config.ts` in plain Node, with no DOM; `-p apps/desktop` reaches them too,
+  through the tests.
 
 ### What a development build looks like
 

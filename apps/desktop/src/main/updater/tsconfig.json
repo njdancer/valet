@@ -1,7 +1,0 @@
-// The updater, the app:// scheme and the packaging config, in plain Node: no DOM, as they run in the
-// main process and in electron-builder. `tsc --noEmit -p apps/desktop/src/main/updater`. The
-// renderer config (apps/desktop/tsconfig.json) also reaches these files through the tests.
-{
-  "extends": "../../../../../tsconfig.base.json",
-  "include": [".", "../../../electron-builder.config.ts", "../../../scripts/*.d.mts"]
-}

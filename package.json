@@ -12,7 +12,10 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p apps/desktop && tsc --noEmit -p apps/desktop/tsconfig.node.json",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
-    "check": "pnpm lint && pnpm typecheck && pnpm coverage"
+    "check": "pnpm lint && pnpm typecheck && pnpm coverage",
+    "demo": "pnpm --filter @siteadapter/desktop demo",
+    "test:e2e": "pnpm --filter @siteadapter/desktop test:e2e",
+    "package:smoke": "pnpm --filter @siteadapter/desktop package:smoke"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.6",

@@ -459,7 +459,10 @@ contract, not only unfinished adoption. None of these is paced or watched for bl
 - fetches that `evaluate()` code makes with the page's own `fetch`;
 - clicks that submit a form or navigate, and navigations the page makes itself;
 - the site's own XHRs, including Akamai's sensor POSTs;
-- the whole login, in the auth partition.
+- the automated login inside a call, and the person's own navigation inside the login window, in
+  the auth partition. (The app's own login steps, opening the window and finishing the login,
+  run through the runtime's `runLoginStep`: they take the adapter's lock, check the breaker and
+  take a budget slot before each page load, and a block page there opens the breaker.)
 
 So "nothing reaches the site while the breaker is open" holds only between tool calls, and
 AC7's "fails if anything bypasses the budget" can't pass yet. The recommended fix is for the
