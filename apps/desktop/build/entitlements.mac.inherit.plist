@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The helpers' entitlements (renderer, GPU, plugin, utility). The same single entitlement as the
+  app: their V8 also generates code. If a helper crashes at launch under the hardened runtime, add
+  com.apple.security.cs.allow-unsigned-executable-memory here only, and write down which helper and
+  why in docs/release-and-updates.md. test/updater/packaging.test.ts fails on any other key.
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+</dict>
+</plist>

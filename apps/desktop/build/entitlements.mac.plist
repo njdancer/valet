@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The app bundle's entitlements under the hardened runtime. Only what Electron needs: V8 generates
+  code at run time. Nothing that lets other code run as the app (disable-library-validation,
+  allow-dyld-environment-variables, get-task-allow, debugger), and no App Sandbox: see
+  docs/release-and-updates.md#entitlements. test/updater/packaging.test.ts fails on any other key.
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+</dict>
+</plist>
