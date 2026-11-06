@@ -5,6 +5,7 @@ Core design: login is a fully declarative flow run in an isolated auth partition
 The project knowledge holds the development plan (milestones and 69 numbered decisions, D1–D68 plus D24a), the security model, the architecture, release and updates, and the live Woolworths probe finding. The review hub artifact holds Nick's answers to the decisions and Claude's replies.
 
 Rules:
+
 - Commit and push to the repo freely; releases, packages and anything published elsewhere need Nick.
 - No logged-in or account actions on the live Woolworths site, and no code signing or notarisation, without Nick present.
 - Live anonymous probes stay small and paced; never solve CAPTCHAs or evade bot detection beyond looking like Nick's own browser (D24).
