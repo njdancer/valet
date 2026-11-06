@@ -20,6 +20,17 @@ const grant: Grant = {
   grantedAt: '2026-11-07T00:00:00.000Z',
 }
 
+// A messages grant: the reserved secret, the sender handle as itemRef, and where the code is typed.
+const messagesGrant: Grant = {
+  adapterId: 'woolworths',
+  adapterHash: HASH_A,
+  secret: 'messages',
+  provider: 'messages',
+  itemRef: 'Woolworths',
+  origins: ['https://auth.woolworths.com.au'],
+  grantedAt: '2026-11-07T00:00:00.000Z',
+}
+
 let dir: string
 let path: string
 
@@ -59,6 +70,14 @@ describe('FileGrantStore', () => {
     await store.put(grant)
     expect(await store.find('woolworths', HASH_A, 'login')).toEqual(grant)
     expect(await new FileGrantStore({ path }).list()).toEqual([grant])
+  })
+
+  it('stores a messages grant beside the 1Password grant for the same adapter', async () => {
+    const store = new FileGrantStore({ path })
+    await store.put(grant)
+    await store.put(messagesGrant)
+    expect(await store.find('woolworths', HASH_A, 'messages')).toEqual(messagesGrant)
+    expect(await new FileGrantStore({ path }).list()).toEqual([grant, messagesGrant])
   })
 
   it('does not hand a grant to a changed adapter', async () => {
@@ -159,12 +178,47 @@ describe('FileGrantStore', () => {
       ['an IPv4 literal origin', { ...grant, origins: ['https://192.168.1.1'] }],
       ['a hex IPv4 literal origin', { ...grant, origins: ['https://0x7f.1'] }],
       ['an IPv6 literal origin', { ...grant, origins: ['https://[::1]'] }],
+      ['an IPv4 literal origin with a port', { ...grant, origins: ['https://127.0.0.1:8443'] }],
+      ['a single-label host', { ...grant, origins: ['https://localhost'] }],
+      [
+        'a wildcard origin among good ones',
+        { ...grant, origins: [...grant.origins, 'https://*.evil.example'] },
+      ],
+      ['an upper-case origin', { ...grant, origins: ['https://WWW.woolworths.com.au'] }],
+      ['an origin with a fragment', { ...grant, origins: ['https://www.woolworths.com.au#x'] }],
       ['no origins', { ...grant, origins: [] }],
       ['a non-string origin', { ...grant, origins: [42] }],
       ['a short hash', { ...grant, adapterHash: 'abc' }],
       ['an upper-case hash', { ...grant, adapterHash: HASH_A.toUpperCase() }],
       ['an unknown provider', { ...grant, provider: 'keychain' }],
       ['an empty item ref', { ...grant, itemRef: '' }],
+      [
+        'a 1Password item ref that names a field',
+        { ...grant, itemRef: 'op://siteadapter/Woolworths/password' },
+      ],
+      [
+        'a 1Password item ref with a query',
+        { ...grant, itemRef: 'op://siteadapter/Woolworths?attribute=otp' },
+      ],
+      ['a 1Password item ref that is not op://', { ...grant, itemRef: 'Woolworths' }],
+      [
+        'a service-account item ref that names a field',
+        {
+          ...grant,
+          provider: 'onepassword-service-account',
+          itemRef: 'op://siteadapter/Woolworths/password',
+        },
+      ],
+      ['a 1Password grant for the reserved messages secret', { ...grant, secret: 'messages' }],
+      ['a fake grant for the reserved messages secret', { ...grant, provider: 'fake', secret: 'messages' }],
+      ['a messages grant for another secret', { ...messagesGrant, secret: 'login' }],
+      ['a messages grant whose sender is a domain', { ...messagesGrant, itemRef: 'woolworths.com.au' }],
+      ['a messages grant whose sender is a local number', { ...messagesGrant, itemRef: '0400 000 000' }],
+      ['a messages grant whose sender is a 1Password item', { ...messagesGrant, itemRef: 'op://v/i' }],
+      [
+        'a messages grant with a wildcard origin',
+        { ...messagesGrant, origins: ['https://*.woolworths.com.au'] },
+      ],
       ['a control character in the item ref', { ...grant, itemRef: 'op://v/i\n' }],
       ['an overlong item ref', { ...grant, itemRef: `op://v/${'i'.repeat(510)}` }],
       ['a bad adapter id', { ...grant, adapterId: 'Woolworths' }],
@@ -223,13 +277,21 @@ describe('FileGrantStore', () => {
         `{"version":1,"grants":[${JSON.stringify(grant).replace('{', '{"__proto__":{},')}]}`,
       ],
       ['two grants in one slot', { version: 1, grants: [grant, { ...grant, itemRef: 'op://v/other' }] }],
+      [
+        'a messages grant edited to read codes from anyone',
+        { version: 1, grants: [grant, { ...messagesGrant, itemRef: '%' }] },
+      ],
+      [
+        'a grant edited onto an IP address',
+        { version: 1, grants: [{ ...grant, origins: ['https://203.0.113.7'] }] },
+      ],
     ]
     for (const [name, contents] of tampered) {
       it(name, async () => {
         await writeRaw(contents)
         const store = new FileGrantStore({ path })
         const error = await errorOf(store.find('woolworths', HASH_A, 'login'))
-        expect([error.stage, error.errorClass]).toEqual(['grant', 'invalid'])
+        expect([error.stage, error.errorClass]).toEqual(['config', 'invalid'])
         // A put must not paper over a corrupt file by rewriting it.
         await errorOf(store.put(grant))
         expect(await fs.readFile(path, 'utf8')).toBe(
@@ -242,7 +304,7 @@ describe('FileGrantStore', () => {
   it('refuses a grant file that others can write', async () => {
     await writeRaw({ version: 1, grants: [grant] }, 0o622)
     const error = await errorOf(new FileGrantStore({ path }).list())
-    expect([error.stage, error.errorClass]).toEqual(['grant', 'invalid'])
+    expect([error.stage, error.errorClass]).toEqual(['config', 'insecure-file'])
   })
 
   it('reads a grant file that others can only read', async () => {
@@ -255,13 +317,13 @@ describe('FileGrantStore', () => {
     await fs.writeFile(elsewhere, JSON.stringify({ version: 1, grants: [grant] }), { mode: 0o600 })
     await fs.symlink(elsewhere, path)
     const error = await errorOf(new FileGrantStore({ path }).list())
-    expect([error.stage, error.errorClass]).toEqual(['grant', 'invalid'])
+    expect([error.stage, error.errorClass]).toEqual(['config', 'insecure-file'])
   })
 
   it('refuses a directory in place of the grant file', async () => {
     await fs.mkdir(path)
     const error = await errorOf(new FileGrantStore({ path }).list())
-    expect([error.stage, error.errorClass]).toEqual(['grant', 'invalid'])
+    expect([error.stage, error.errorClass]).toEqual(['config', 'insecure-file'])
   })
 
   it('refuses a grant file owned by another user', async () => {
@@ -277,7 +339,7 @@ describe('FileGrantStore', () => {
       }) as GrantFs['open'],
     }
     const error = await errorOf(new FileGrantStore({ path, fs: otherOwner }).list())
-    expect([error.stage, error.errorClass]).toEqual(['grant', 'invalid'])
+    expect([error.stage, error.errorClass]).toEqual(['config', 'insecure-file'])
   })
 
   it('checks the file through the handle it reads, opened without following links', async () => {
@@ -300,7 +362,7 @@ describe('FileGrantStore', () => {
   it('refuses a FIFO in place of the grant file, without blocking on it', async () => {
     execFileSync('/usr/bin/mkfifo', [path])
     const error = await errorOf(new FileGrantStore({ path }).list())
-    expect([error.stage, error.errorClass]).toEqual(['grant', 'invalid'])
+    expect([error.stage, error.errorClass]).toEqual(['config', 'insecure-file'])
   })
 
   it('refuses a grant file in a directory others can write, on read and on put', async () => {
@@ -310,7 +372,7 @@ describe('FileGrantStore', () => {
       await fs.chmod(dir, mode)
       const store = new FileGrantStore({ path })
       const error = await errorOf(store.list())
-      expect([error.stage, error.errorClass]).toEqual(['grant', 'invalid'])
+      expect([error.stage, error.errorClass]).toEqual(['config', 'insecure-file'])
       await errorOf(store.put({ ...grant, secret: 'other' }))
       expect(await fs.readFile(path, 'utf8')).toBe(before)
     }
@@ -320,7 +382,7 @@ describe('FileGrantStore', () => {
   it('refuses to create the first grant in a directory others can write', async () => {
     await fs.chmod(dir, 0o777)
     const error = await errorOf(new FileGrantStore({ path }).put(grant))
-    expect([error.stage, error.errorClass]).toEqual(['grant', 'invalid'])
+    expect([error.stage, error.errorClass]).toEqual(['config', 'insecure-file'])
     expect(await fs.readdir(dir)).toEqual([])
     await fs.chmod(dir, 0o700)
   })
@@ -341,7 +403,7 @@ describe('FileGrantStore', () => {
       }) as GrantFs['lstat'],
     }
     const error = await errorOf(new FileGrantStore({ path, fs: otherOwner }).list())
-    expect([error.stage, error.errorClass]).toEqual(['grant', 'invalid'])
+    expect([error.stage, error.errorClass]).toEqual(['config', 'insecure-file'])
   })
 
   it('refuses a symlinked directory', async () => {
@@ -352,7 +414,7 @@ describe('FileGrantStore', () => {
     })
     await fs.symlink(real, join(dir, 'link'))
     const error = await errorOf(new FileGrantStore({ path: join(dir, 'link', 'grants.json') }).list())
-    expect([error.stage, error.errorClass]).toEqual(['grant', 'invalid'])
+    expect([error.stage, error.errorClass]).toEqual(['config', 'insecure-file'])
   })
 
   it('starts empty when the directory does not exist yet', async () => {
@@ -367,7 +429,7 @@ describe('FileGrantStore', () => {
       }) as GrantFs['lstat'],
     }
     const error = await errorOf(new FileGrantStore({ path, fs: failing }).list())
-    expect([error.stage, error.errorClass]).toEqual(['grant', 'unavailable'])
+    expect([error.stage, error.errorClass]).toEqual(['config', 'unavailable'])
     expect(error.message).not.toContain(dir)
   })
 
@@ -380,7 +442,7 @@ describe('FileGrantStore', () => {
       }) as GrantFs['open'],
     }
     const error = await errorOf(new FileGrantStore({ path, fs: failing }).list())
-    expect([error.stage, error.errorClass]).toEqual(['grant', 'unavailable'])
+    expect([error.stage, error.errorClass]).toEqual(['config', 'unavailable'])
     expect(error.message).not.toContain(path)
   })
 
@@ -394,7 +456,7 @@ describe('FileGrantStore', () => {
     const error = await errorOf(
       new FileGrantStore({ path: join(dir, 'new', 'grants.json'), fs: failing }).put(grant),
     )
-    expect([error.stage, error.errorClass]).toEqual(['grant', 'unavailable'])
+    expect([error.stage, error.errorClass]).toEqual(['config', 'unavailable'])
   })
 
   it('leaves the old file intact and cleans up when the rename fails', async () => {
@@ -408,7 +470,7 @@ describe('FileGrantStore', () => {
     }
     const store = new FileGrantStore({ path, fs: failing })
     const error = await errorOf(store.put({ ...grant, secret: 'other' }))
-    expect([error.stage, error.errorClass]).toEqual(['grant', 'unavailable'])
+    expect([error.stage, error.errorClass]).toEqual(['config', 'unavailable'])
     expect(await fs.readFile(path, 'utf8')).toBe(before)
     expect(await fs.readdir(dir)).toEqual(['grants.json'])
   })
@@ -422,7 +484,7 @@ describe('FileGrantStore', () => {
       }) as GrantFs['open'],
     }
     const error = await errorOf(new FileGrantStore({ path, fs: failing }).put(grant))
-    expect(error.errorClass).toBe('unavailable')
+    expect([error.stage, error.errorClass]).toEqual(['config', 'unavailable'])
     expect(await fs.readdir(dir)).toEqual([])
   })
 
@@ -464,6 +526,17 @@ describe('isValidGrant', () => {
     for (const provider of ['onepassword-service-account', 'onepassword-cli', 'fake']) {
       expect(isValidGrant({ ...grant, provider })).toBe(true)
     }
+    expect(isValidGrant(messagesGrant)).toBe(true)
+  })
+
+  it('accepts a messages grant from a phone number, short code or email sender', () => {
+    for (const itemRef of ['+61 400 000 000', '+61400000000', '12345', 'codes@example.com']) {
+      expect(isValidGrant({ ...messagesGrant, itemRef })).toBe(true)
+    }
+  })
+
+  it('accepts any well-formed item ref for the fake provider, which is test data', () => {
+    expect(isValidGrant({ ...grant, provider: 'fake', itemRef: 'woolworths' })).toBe(true)
   })
 
   it('rejects null', () => {

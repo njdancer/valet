@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseOtpSender } from '../src/otp-sender'
+import { parseOtpSender, sameOtpSender } from '../src/otp-sender'
 
 describe('parseOtpSender', () => {
   it('reads an E.164 number, with or without spacing, as an SMS phone handle', () => {
@@ -43,5 +43,26 @@ describe('parseOtpSender', () => {
     expect(parseOtpSender('@icloud.com')).toBeNull()
     expect(parseOtpSender('%')).toBeNull()
     expect(parseOtpSender('_woolworths')).toBeNull()
+  })
+})
+
+describe('sameOtpSender', () => {
+  it('matches the same handle however it is written', () => {
+    expect(sameOtpSender('+61 400 000 000', '+61400000000')).toBe(true)
+    expect(sameOtpSender('Woolworths', 'woolworths')).toBe(true)
+    expect(sameOtpSender('Codes@Example.com', 'codes@example.com')).toBe(true)
+    expect(sameOtpSender('12345', ' 12345 ')).toBe(true)
+  })
+
+  it('does not match a handle that only contains or starts like the other', () => {
+    expect(sameOtpSender('Woolworths', 'Woolworth')).toBe(false)
+    expect(sameOtpSender('+61400000000', '+614000000001')).toBe(false)
+    expect(sameOtpSender('codes@example.com', 'fake.codes@example.com')).toBe(false)
+  })
+
+  it('never matches when either side is not a sender, even two identical non-senders', () => {
+    expect(sameOtpSender('', '')).toBe(false)
+    expect(sameOtpSender('Woolworths Group', 'Woolworths Group')).toBe(false)
+    expect(sameOtpSender('woolworths', 'woolworths.com.au')).toBe(false)
   })
 })
