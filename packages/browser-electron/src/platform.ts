@@ -39,6 +39,32 @@ export interface OutgoingRequest {
   readonly resourceType: string
 }
 
+/** A GET the driver makes itself, from the main process, with a partition's cookies. */
+export interface SessionFetchRequest {
+  /** An absolute https URL. The caller has already checked it. */
+  readonly url: string
+  /** Sent as given, alongside whatever the session adds itself (cookies, mostly). */
+  readonly headers: Readonly<Record<string, string>>
+  /**
+   * Asked, synchronously, about every redirect before it is followed. False refuses it: the
+   * request is cancelled and nothing is sent to the new location.
+   */
+  readonly allowRedirect: (url: string) => boolean
+  /** The most body bytes to read. A response with more is abandoned. */
+  readonly maxBytes: number
+  /** Aborting it cancels the request. */
+  readonly signal: AbortSignal
+}
+
+export type SessionFetchResponse =
+  | {
+      readonly ok: true
+      readonly status: number
+      readonly contentType: string | null
+      readonly body: Uint8Array
+    }
+  | { readonly ok: false; readonly failure: 'redirect-refused' | 'too-large' | 'network' | 'aborted' }
+
 /** A local proxy a partition's TCP connections go through. */
 export interface ProxyHandle {
   /** Proxy rules for the session, e.g. http://127.0.0.1:53211. */
@@ -66,6 +92,12 @@ export interface PartitionSession {
   addResponseHeader(name: string, value: string): void
   getCookies(): Promise<readonly CookieRecord[]>
   setCookie(details: CookieSetDetails): Promise<void>
+  /**
+   * GETs a URL from the main process with the partition's cookies (sending them, and storing what
+   * the response sets), never from a page: no script runs. Uncached, no referrer, redirects only
+   * as `allowRedirect` says, and it never resolves with an exception: every failure is a value.
+   */
+  fetch(request: SessionFetchRequest): Promise<SessionFetchResponse>
   /**
    * Calls `listener` for every cookie the partition adds, changes or removes, with its value: the
    * old value when one is removed or overwritten, so that a value never goes unseen.

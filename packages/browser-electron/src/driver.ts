@@ -18,7 +18,13 @@ import {
 } from '@siteadapter/core'
 import { SurfaceAuthPage } from './auth-page'
 import { cookieSetDetails, cookiesForDomains } from './cookies'
-import { authNavigationAllowed, type BlockReason, decideToolRequest, requestTarget } from './guards'
+import {
+  authBlock,
+  authNavigationAllowed,
+  type BlockReason,
+  decideToolRequest,
+  requestTarget,
+} from './guards'
 import { isRecord, type PageTiming } from './page-core'
 import { partitionName } from './partitions'
 import type {
@@ -39,6 +45,7 @@ import { SessionValues } from './session-values'
 import { withTimeout } from './timeout'
 import { SurfaceToolPage } from './tool-page'
 import {
+  ACCEPT_LANGUAGE,
   type ClientHintBrands,
   chromeUserAgentOverride,
   cleanChromeUserAgent,
@@ -101,7 +108,23 @@ export interface DriverOptions {
   readonly storageDocumentPath?: string
   /** Where requests blocked between runs are reported. During a run, beginRun's reporter is used. */
   readonly onBlocked?: (blocked: BlockedRequest) => void
+  /**
+   * Where the auth partition's refused navigations are reported (initiator 'page'), unless the auth
+   * page they belong to was opened with a reporter of its own: the main frame leaving the
+   * navigation origins, and subframes off navigation and frameOrigins.
+   */
+  readonly onAuthBlocked?: (blocked: BlockedRequest) => void
   readonly timers?: Timers
+}
+
+/** What openAuthPage() may be given besides core's contract. */
+export interface AuthPageRequest {
+  /**
+   * Told about the auth partition's refused navigations while this page is open, in place of
+   * DriverOptions.onAuthBlocked: its own frames' refused navigations, and the partition's
+   * request-filter refusals while it is the newest open auth page. Each distinct refusal once.
+   */
+  readonly onBlocked?: (blocked: BlockedRequest) => void
 }
 
 export type ManifestOptions = Omit<
@@ -115,6 +138,8 @@ const DEFAULT_REQUESTS_PER_RUN = 50
 const ASSETS_PER_REQUEST = 100
 const MIN_ASSETS_PER_RUN = 1000
 const DEFAULT_EGRESS_PORTS: readonly number[] = [443]
+/** Distinct refusals reported per auth page; a page whose widgets are all refused is chatty. */
+const MAX_AUTH_REPORTS_PER_PAGE = 200
 
 type StorageRequest = readonly { readonly origin: string; readonly keys: readonly string[] }[]
 
@@ -161,6 +186,8 @@ export class ElectronSessionDriver implements SessionDriver {
   private readonly snapshots = new Set<Promise<void>>()
   private readonly timing: PageTiming
   private readonly authPages = new Map<BrowserSurface, SurfaceAuthPage>()
+  /** Each auth page's reporter and what it has already been told, newest page last. */
+  private readonly authReports = new Map<BrowserSurface, AuthReports>()
   private readonly helpers = new Set<BrowserSurface>()
   private tool: ToolSlot | null = null
 
@@ -202,11 +229,19 @@ export class ElectronSessionDriver implements SessionDriver {
     this.run = this.betweenRuns()
   }
 
-  async openAuthPage(): Promise<AuthPage> {
+  /**
+   * Opens a page in the auth partition. `request.onBlocked` gets this page's refused navigations
+   * instead of DriverOptions.onAuthBlocked (see AuthPageRequest); core's SessionDriver contract
+   * passes nothing.
+   */
+  async openAuthPage(request: AuthPageRequest = {}): Promise<AuthPage> {
     const surface = await this.open('auth')
-    const page = this.authPage(surface)
+    const page = await this.authPage(surface, request.onBlocked)
     this.authPages.set(surface, page)
-    surface.onDestroyed(() => this.authPages.delete(surface))
+    surface.onDestroyed(() => {
+      this.authPages.delete(surface)
+      this.authReports.delete(surface)
+    })
     return page
   }
 
@@ -304,6 +339,7 @@ export class ElectronSessionDriver implements SessionDriver {
     if (this.tool?.surface) surfaces.push(this.tool.surface)
     for (const surface of surfaces) if (!surface.isDestroyed()) surface.destroy()
     this.authPages.clear()
+    this.authReports.clear()
     this.helpers.clear()
     this.tool = null
     const proxy = this.proxy
@@ -339,11 +375,38 @@ export class ElectronSessionDriver implements SessionDriver {
     }
   }
 
-  private authPage(surface: BrowserSurface): SurfaceAuthPage {
+  private async authPage(
+    surface: BrowserSurface,
+    onBlocked?: (blocked: BlockedRequest) => void,
+  ): Promise<SurfaceAuthPage> {
+    const session = await this.session('auth')
+    const reports: AuthReports = { reporter: onBlocked ?? this.options.onAuthBlocked, seen: new Set() }
+    this.authReports.set(surface, reports)
     return new SurfaceAuthPage(surface, this.options.navigation, this.timing, {
       frameOrigins: this.options.frameOrigins ?? [],
       siteName: this.options.siteName ?? this.options.adapterId,
+      session,
+      fetchHeaders: this.probeHeaders(),
+      onBlocked: (blocked) => reportAuth(reports, blocked),
     })
+  }
+
+  /** What the auth page's fetch() restates so that it presents as the page does. */
+  private probeHeaders(): Record<string, string> {
+    if (this.options.userAgent === 'electron') return {}
+    const userAgent = cleanChromeUserAgent(this.platform.chromeVersion, this.platform.os)
+    return { 'user-agent': userAgent, 'accept-language': ACCEPT_LANGUAGE }
+  }
+
+  /**
+   * A refusal from the auth partition's request filter, which can't tell which page asked: it goes
+   * to the newest open auth page's reporter, or to DriverOptions.onAuthBlocked when none is open.
+   */
+  private reportAuthFilter(blocked: BlockedRequest): void {
+    const open = [...this.authReports.entries()].filter(([surface]) => !surface.isDestroyed())
+    const newest = open[open.length - 1]?.[1]
+    if (newest !== undefined) reportAuth(newest, blocked)
+    else reportAuth({ reporter: this.options.onAuthBlocked, seen: new Set() }, blocked)
   }
 
   private toolPageOn(surface: BrowserSurface): SurfaceToolPage {
@@ -416,7 +479,7 @@ export class ElectronSessionDriver implements SessionDriver {
       surface = await this.open(role)
       this.helpers.add(surface)
       const url = new URL(this.options.storageDocumentPath ?? '/robots.txt', origin).href
-      const page = role === 'auth' ? this.authPage(surface) : this.toolPageOn(surface)
+      const page = role === 'auth' ? await this.authPage(surface) : this.toolPageOn(surface)
       await page.goto(url)
       if (surface.frames()[0]?.origin !== wanted)
         throw new SiteAdapterError('session-handoff', 'origin-mismatch')
@@ -427,6 +490,7 @@ export class ElectronSessionDriver implements SessionDriver {
     } finally {
       if (surface !== null) {
         this.helpers.delete(surface)
+        this.authReports.delete(surface)
         if (!surface.isDestroyed()) surface.destroy()
       }
     }
@@ -510,15 +574,13 @@ export class ElectronSessionDriver implements SessionDriver {
       // will-frame-navigate is the first line for subframes; this holds the frames it doesn't
       // report, such as an iframe's first load, to the same rule at the network layer.
       const frameOrigins = this.options.frameOrigins ?? []
-      session.filterRequests(
-        (request) =>
-          request.resourceType !== 'subFrame' ||
-          authNavigationAllowed(
-            { url: request.url, isMainFrame: false },
-            this.options.navigation,
-            frameOrigins,
-          ),
-      )
+      session.filterRequests((request) => {
+        if (request.resourceType !== 'subFrame') return true
+        const pending = { url: request.url, isMainFrame: false }
+        if (authNavigationAllowed(pending, this.options.navigation, frameOrigins)) return true
+        this.reportAuthFilter(authBlock(request.url))
+        return false
+      })
       return session
     }
     session.filterRequests((request) => this.allowToolRequest(request))
@@ -623,6 +685,29 @@ function ceilingOf(policy: ToolRunPolicy): number {
 /** Method and URL without the fragment, which never reaches the network. */
 function announcementKey(method: string, url: string): string {
   return `${method.toUpperCase()} ${url.split('#')[0]}`
+}
+
+/** One auth page's reporter, and the refusals it has been told about. */
+interface AuthReports {
+  readonly reporter: ((blocked: BlockedRequest) => void) | undefined
+  readonly seen: Set<string>
+}
+
+/**
+ * Tells `reports.reporter` about a refusal it hasn't heard of yet. A main-frame navigation reaches
+ * the guard more than once (will-frame-navigate and will-navigate), and a page can retry, so each
+ * distinct refusal is reported once per page, up to MAX_AUTH_REPORTS_PER_PAGE.
+ */
+function reportAuth(reports: AuthReports, blocked: BlockedRequest): void {
+  if (reports.reporter === undefined) return
+  const key = `${blocked.method} ${blocked.target} ${blocked.reason}`
+  if (reports.seen.has(key) || reports.seen.size >= MAX_AUTH_REPORTS_PER_PAGE) return
+  reports.seen.add(key)
+  try {
+    reports.reporter(blocked)
+  } catch {
+    // A failing reporter must not turn a block into an allow.
+  }
 }
 
 interface ToolSlot {

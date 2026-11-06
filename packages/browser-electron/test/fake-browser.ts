@@ -15,6 +15,8 @@ import type {
   PendingNavigation,
   ProxyHandle,
   ProxyPolicy,
+  SessionFetchRequest,
+  SessionFetchResponse,
   StorageValue,
   Timers,
   UserAgentOverride,
@@ -302,6 +304,24 @@ export class FakeSession implements PartitionSession {
 
   onCookieChanged(listener: (cookie: CookieRecord) => void): void {
     this.cookieListeners.push(listener)
+  }
+
+  /** Every fetch(), as it was asked. */
+  readonly fetches: SessionFetchRequest[] = []
+  /**
+   * How fetch() answers. The default answers 200 with an empty JSON body. Tests replace it, and may
+   * call request.allowRedirect() to play the redirects the network would offer.
+   */
+  onFetch: (request: SessionFetchRequest) => SessionFetchResponse | Promise<SessionFetchResponse> = () => ({
+    ok: true,
+    status: 200,
+    contentType: 'application/json',
+    body: new Uint8Array(),
+  })
+
+  async fetch(request: SessionFetchRequest): Promise<SessionFetchResponse> {
+    this.fetches.push(request)
+    return this.onFetch(request)
   }
 
   /** Reports a cookie change, as session.cookies' changed event would. */

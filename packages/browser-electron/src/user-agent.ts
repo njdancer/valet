@@ -26,6 +26,12 @@ export type ClientHintBrands = 'engine' | 'chrome'
  */
 export const LANGUAGES = 'en-AU,en'
 
+/**
+ * LANGUAGES as the Accept-Language header Chromium makes of it, for a request the driver sends
+ * itself and must word the same way.
+ */
+export const ACCEPT_LANGUAGE = 'en-AU,en;q=0.9'
+
 const PLATFORM_TOKENS: Readonly<Record<string, string>> = {
   darwin: 'Macintosh; Intel Mac OS X 10_15_7',
   win32: 'Windows NT 10.0; Win64; x64',

@@ -7,7 +7,9 @@
 
 import {
   type AuthPage,
+  type BlockedRequest,
   type ElementInfo,
+  type FetchResult,
   httpsOrigin,
   type NeedsUserReason,
   originAllowed,
@@ -17,7 +19,8 @@ import {
   type TypeOptions,
   urlOriginAllowed,
 } from '@siteadapter/core'
-import { authNavigationAllowed } from './guards'
+import { cookiesForDomains } from './cookies'
+import { authBlock, authNavigationAllowed } from './guards'
 import { needsUserTitle } from './needs-user'
 import {
   characters,
@@ -28,14 +31,30 @@ import {
   type TypingGuard,
   typingDelay,
 } from './page-core'
-import { type BrowserSurface, sleep } from './platform'
+import { type BrowserSurface, type PartitionSession, sleep } from './platform'
 import { inspectScript, textPresentScript } from './scripts'
+import { MAX_PROBE_BYTES, PROBE_ACCEPT, ProbeRedirects, probeResult, probeTarget } from './session-fetch'
 
 export interface AuthPageOptions {
   /** The manifest's auth.frameOrigins: origins besides navigation's that subframes may load. */
   readonly frameOrigins?: readonly string[]
   /** The manifest's name, for the hand-off window's title. */
   readonly siteName?: string
+  /**
+   * The auth partition's session, for fetch() and cookieNames(). Without it both fail with
+   * probe/unsupported.
+   */
+  readonly session?: Pick<PartitionSession, 'fetch' | 'getCookies'>
+  /**
+   * Headers fetch() restates so that it presents as the page does: the clean Chrome UA and en-AU,
+   * by default. Accept is always sent.
+   */
+  readonly fetchHeaders?: Readonly<Record<string, string>>
+  /**
+   * Told about each navigation the guard refuses: the main frame leaving the navigation origins
+   * (which also poisons the page) and a subframe off navigation and frameOrigins. Initiator 'page'.
+   */
+  readonly onBlocked?: (blocked: BlockedRequest) => void
 }
 
 /** The frame inspect() last found a selector in. focus() must land in that same frame. */
@@ -61,6 +80,8 @@ export class SurfaceAuthPage implements AuthPage {
   /** Set by focus(). A secret is only ever typed into the element this names. */
   private focusTarget: BoundFocus | null = null
   private readonly inspected = new Map<string, Inspected>()
+  private readonly session: Pick<PartitionSession, 'fetch' | 'getCookies'> | null
+  private readonly fetchHeaders: Readonly<Record<string, string>>
 
   constructor(
     private readonly surface: BrowserSurface,
@@ -70,10 +91,20 @@ export class SurfaceAuthPage implements AuthPage {
   ) {
     this.core = new PageCore(surface, timing)
     this.siteName = options.siteName ?? 'The site'
+    this.session = options.session ?? null
+    this.fetchHeaders = { ...options.fetchHeaders, accept: PROBE_ACCEPT }
     const frameOrigins = options.frameOrigins ?? []
+    const onBlocked = options.onBlocked
     surface.guardNavigation((pending) => {
       const allowed = authNavigationAllowed(pending, navigation, frameOrigins)
       if (!allowed && pending.isMainFrame) this.escaped = true
+      if (!allowed && onBlocked !== undefined) {
+        try {
+          onBlocked(authBlock(pending.url))
+        } catch {
+          // A failing reporter must not turn a refusal into an allow.
+        }
+      }
       return allowed
     })
     surface.onNavigation((event) => {
@@ -214,6 +245,45 @@ export class SurfaceAuthPage implements AuthPage {
         raw === true ? true : null,
       )
       return match !== null
+    })
+  }
+
+  /**
+   * GETs `url` with the auth partition's cookies, for the session probe. The driver makes the
+   * request from the main process, so no script runs and the page can't see or shape it. Only to
+   * the navigation origins (probe/host-not-allowed otherwise), and a redirect is followed only while
+   * it stays on them: one that leaves is refused, not followed, and the probe fails with
+   * probe/host-not-allowed. At most MAX_PROBE_BYTES of body are read. Runs under the step timeout.
+   */
+  fetch(url: string): Promise<FetchResult> {
+    return this.core.step('probe', async (signal) => {
+      this.assertInside('probe')
+      const target = probeTarget(url, this.navigation)
+      const session = this.session
+      if (session === null) throw new SiteAdapterError('probe', 'unsupported')
+      const redirects = new ProbeRedirects(this.navigation)
+      const response = await session.fetch({
+        url: target,
+        headers: this.fetchHeaders,
+        allowRedirect: redirects.allow,
+        maxBytes: MAX_PROBE_BYTES,
+        signal,
+      })
+      return probeResult(response, redirects)
+    })
+  }
+
+  /** Names, never values, of the auth partition's cookies on `cookieDomains`. */
+  cookieNames(cookieDomains: readonly string[]): Promise<readonly string[]> {
+    return this.core.step('probe', async () => {
+      this.assertInside('probe')
+      const session = this.session
+      if (session === null) throw new SiteAdapterError('probe', 'unsupported')
+      if (!Array.isArray(cookieDomains) || cookieDomains.some((domain) => typeof domain !== 'string')) {
+        throw new SiteAdapterError('probe', 'invalid')
+      }
+      const cookies = cookiesForDomains(await session.getCookies(), cookieDomains)
+      return [...new Set(cookies.map((cookie) => cookie.name))]
     })
   }
 

@@ -5,6 +5,7 @@ import {
   app,
   BrowserWindow,
   session as electronSession,
+  net,
   type Session,
   type WebContents,
   webFrameMain,
@@ -23,6 +24,8 @@ import type {
   PartitionSession,
   PendingNavigation,
   ProxyHandle,
+  SessionFetchRequest,
+  SessionFetchResponse,
   StorageValue,
   UserAgentOverride,
 } from '../platform'
@@ -111,6 +114,88 @@ class ElectronPartition implements PartitionSession {
 
   setCookie(details: CookieSetDetails): Promise<void> {
     return this.ses.cookies.set({ ...details })
+  }
+
+  fetch(request: SessionFetchRequest): Promise<SessionFetchResponse> {
+    return new Promise((resolve) => {
+      let settled = false
+      const finish = (response: SessionFetchResponse) => {
+        if (settled) return
+        settled = true
+        request.signal.removeEventListener('abort', onAbort)
+        resolve(response)
+      }
+      const onAbort = () => {
+        client?.abort()
+        finish({ ok: false, failure: 'aborted' })
+      }
+      let client: Electron.ClientRequest | null = null
+      if (request.signal.aborted) {
+        finish({ ok: false, failure: 'aborted' })
+        return
+      }
+      request.signal.addEventListener('abort', onAbort, { once: true })
+      try {
+        client = net.request({
+          method: 'GET',
+          url: request.url,
+          session: this.ses,
+          // The session's cookies go out, and what the response sets is kept, as for the page.
+          credentials: 'include',
+          // A cached answer from before a login or logout would make the probe lie.
+          cache: 'no-store',
+          referrerPolicy: 'no-referrer',
+          // Each hop is put to allowRedirect before anything is sent there.
+          redirect: 'manual',
+        })
+        for (const [name, value] of Object.entries(request.headers)) client.setHeader(name, value)
+      } catch {
+        client?.abort()
+        finish({ ok: false, failure: 'network' })
+        return
+      }
+      const current = client
+      current.on('redirect', (_status, _method, redirectUrl) => {
+        let allowed = false
+        try {
+          allowed = request.allowRedirect(redirectUrl)
+        } catch {
+          allowed = false
+        }
+        if (allowed) {
+          current.followRedirect()
+          return
+        }
+        current.abort()
+        finish({ ok: false, failure: 'redirect-refused' })
+      })
+      // HTTP authentication is never answered: cancel it.
+      current.on('login', (_info, callback) => callback())
+      current.on('error', () => finish({ ok: false, failure: 'network' }))
+      current.on('abort', () => finish({ ok: false, failure: 'aborted' }))
+      current.on('response', (response) => {
+        const chunks: Buffer[] = []
+        let size = 0
+        response.on('data', (chunk: Buffer) => {
+          if (settled) return
+          size += chunk.length
+          if (size > request.maxBytes) {
+            current.abort()
+            finish({ ok: false, failure: 'too-large' })
+            return
+          }
+          chunks.push(chunk)
+        })
+        response.on('end', () => {
+          const header = response.headers['content-type']
+          const contentType = Array.isArray(header) ? (header[0] ?? null) : (header ?? null)
+          finish({ ok: true, status: response.statusCode, contentType, body: Buffer.concat(chunks) })
+        })
+        response.on('error', () => finish({ ok: false, failure: 'network' }))
+        response.on('aborted', () => finish({ ok: false, failure: 'aborted' }))
+      })
+      current.end()
+    })
   }
 
   onCookieChanged(listener: (cookie: CookieRecord) => void): void {

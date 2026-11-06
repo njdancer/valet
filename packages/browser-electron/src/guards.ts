@@ -40,6 +40,23 @@ export function authNavigationAllowed(
   return urlOriginAllowed(navigation.url, [...origins, ...frameOrigins])
 }
 
+/**
+ * The report for a frame navigation the auth partition refused, whether its guard or its request
+ * filter refused it. The guard can't see the method, and a refused frame load is a GET unless a
+ * form posted it, so it says GET. The target is the origin alone: the path is off the list
+ * entirely. Always initiator 'page': the interpreter's own goto() off the list fails before any
+ * request exists.
+ */
+export function authBlock(url: string): BlockedRequest {
+  const parsed = parse(url)
+  return {
+    method: 'GET',
+    target: requestTarget(url, false),
+    reason: parsed === null || parsed.origin === 'null' ? 'bad-url' : 'host-not-allowed',
+    initiator: 'page',
+  }
+}
+
 // Schemes that never leave the machine. Chromium rarely shows them to webRequest at all.
 const LOCAL_SCHEMES = new Set(['data:', 'blob:', 'about:'])
 const NETWORK_SCHEMES = new Set(['https:', 'wss:'])
