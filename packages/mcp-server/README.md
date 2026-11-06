@@ -9,8 +9,8 @@ package never imports `@siteadapter/runtime`.
 ## Wiring it into the app
 
 ```ts
-// Reads the port and token the last launch saved in the bridge config file (mode 0600), listens,
-// and writes the file back:
+// Reads the port the last launch saved in the bridge config file (mode 0600), listens there with a
+// new token, and writes the file back:
 const endpoint = await startEndpoint({ caller, configPath: bridgeConfigPath })
 // show endpoint.url and endpoint.token to the person for HTTP clients.
 // whenever adapters are approved, revoked or changed. One listing for every session; if the
@@ -24,27 +24,32 @@ await endpoint.close()
 
 ### Port and token across launches
 
-Clients registered with the HTTP URL and a token, such as Claude Code, store both. So by default
-the endpoint keeps them:
+The bridge config file keeps the port from one launch to the next; by default the token is new at
+each launch. The stdio bridge re-reads the file and follows a new token on its own, so clients
+registered through it (the recommended way, below) never notice. Clients registered with the HTTP
+URL and a token store both, and must be given the new token after each launch unless they opt in
+to keeping it:
 
 - **`stablePort`** (default `true`): listen on the port the config file names. `false` picks a free
   port each launch, which only stdio-bridge clients survive.
-- **`tokenRotation`** (default `'on-reset'`): keep the config file's token until `resetToken()`.
-  `'every-launch'` makes a new one at each start.
-- **The saved port is taken.** The endpoint moves to a free port _and makes a new token_: a client
-  still pointed at the old port sends its token to whatever holds that port, so the old token can't
-  be trusted to mean the person's client. HTTP clients need the new URL and token; the bridge
-  follows on its own.
+- **`tokenRotation`** (default `'every-launch'`): make a new token at each start. `'on-reset'`
+  keeps the config file's token until `resetToken()`, for HTTP-native clients that store it.
+- **Why a new token each launch.** Listening ports are visible to other local accounts. While the
+  app is down, another account can listen on the saved port and collect the token from any client
+  that connects (the bridge, reconnecting, included), then let the port go so the app gets it back.
+  With `'every-launch'` a token collected that way stops working at the next launch. With
+  `'on-reset'` it stays valid, for every tool, until the person resets the token: that is the price
+  of the opt-in.
+- **The saved port is taken.** The endpoint moves to a free port _and makes a new token_, whatever
+  `tokenRotation` says: a client still pointed at the old port sends its token to whatever holds
+  that port, so the old token can't be trusted to mean the person's client. HTTP clients need the
+  new URL and token; the bridge follows on its own.
 - **The config file can't be trusted** (missing, edited, not 0600, not owned by the person, a
-  symlink): its token is not reused, and the file is rewritten.
+  symlink): its token and port are not reused, and the file is rewritten.
 - **`resetToken()`** writes the new token to the file first, then switches the endpoint and closes
-  every session; if the write fails nothing changes. `startHttpServer` and `setToken` are the
+  every session; if the write fails nothing changes. Overlapping resets run one after another, so
+  the file always holds the token the endpoint accepts. `startHttpServer` and `setToken` are the
   lower-level pieces, for a caller that keeps the port and token itself.
-- **Residual risk.** A stable port and token mean another local account that listens on that port
-  while the app isn't running can collect the token from a client that connects. It can only use it
-  against `127.0.0.1` on this machine, but it stays valid until the person resets the token, unless
-  the app happens to find the port still taken at its next launch. The per-launch random port and token (`stablePort: false, tokenRotation: 'every-launch'`)
-  narrow that window at the cost of reconfiguring HTTP clients each launch.
 
 Registering with Claude Code through the bridge, which re-reads the config file if the app
 restarts under a running client:

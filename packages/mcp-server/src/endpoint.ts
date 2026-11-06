@@ -1,6 +1,8 @@
-// The endpoint as the app runs it. The bridge config file carries its port and token from one launch
-// to the next, so a client registered with the HTTP URL and token (Claude Code, say) keeps working
-// across restarts, and the token changes only when the person resets it.
+// The endpoint as the app runs it. The bridge config file carries its port from one launch to the
+// next, and a new token is made at each launch: a token someone collected while the app was down
+// (by listening on the saved port and waiting for a client to connect) stops working at the next
+// launch. The stdio bridge re-reads the file and follows the new token on its own. Keeping the
+// token until the person resets it is an opt-in, for HTTP clients that store the token themselves.
 
 import { SiteAdapterError } from '@siteadapter/core'
 import { readBridgeConfig, writeBridgeConfig } from './bridge-config'
@@ -14,8 +16,9 @@ export interface EndpointOptions extends Omit<HttpServerOptions, 'token' | 'port
   /** Listen on the port the config file names, when it is free. Default true; false picks any free port. */
   readonly stablePort?: boolean
   /**
-   * 'on-reset' (the default) keeps the config file's token until resetToken(). 'every-launch'
-   * makes a new one at each start, so HTTP clients must be given it again each time.
+   * 'every-launch' (the default) makes a new token at each start. 'on-reset' keeps the config
+   * file's token until resetToken(), so HTTP clients that store it keep working across launches,
+   * at the cost of a collected token staying valid until the person resets it.
    */
   readonly tokenRotation?: 'on-reset' | 'every-launch'
   readonly generateToken?: () => string
@@ -41,7 +44,7 @@ export async function startEndpoint(options: EndpointOptions): Promise<RunningEn
   const {
     configPath,
     stablePort = true,
-    tokenRotation = 'on-reset',
+    tokenRotation = 'every-launch',
     generateToken: newToken = generateToken,
     start = startHttpServer,
     ...http
@@ -70,6 +73,16 @@ export async function startEndpoint(options: EndpointOptions): Promise<RunningEn
     throw new SiteAdapterError('config', 'unavailable')
   }
 
+  // Resets run one at a time, so the token in the file is always the one the endpoint accepts.
+  let resets: Promise<unknown> = Promise.resolve()
+  const reset = async (): Promise<void> => {
+    const next = newToken()
+    // The file first: if it can't be written, the bridge would be left holding a dead token.
+    await writeBridgeConfig(configPath, { url: server.url, token: next })
+    token = next
+    await server.setToken(next)
+  }
+
   return {
     url: server.url,
     port: server.port,
@@ -77,12 +90,10 @@ export async function startEndpoint(options: EndpointOptions): Promise<RunningEn
       return token
     },
     refresh: () => server.refresh(),
-    async resetToken() {
-      const next = newToken()
-      // The file first: if it can't be written, the bridge would be left holding a dead token.
-      await writeBridgeConfig(configPath, { url: server.url, token: next })
-      token = next
-      await server.setToken(next)
+    resetToken() {
+      const run = resets.then(reset, reset)
+      resets = run.catch(() => {})
+      return run
     },
     close: () => server.close(),
   }

@@ -108,12 +108,44 @@ describe('startEndpoint', () => {
     expect(await statusWith(endpoint.url, TOKEN_A)).toBe(200)
   })
 
-  it('by default keeps the port and token from the last launch', async () => {
+  it('by default keeps the port from the last launch and makes a new token', async () => {
     const first = await launch({ generateToken: tokens(TOKEN_A) })
     const { port, url } = first
     await first.close()
+    const { start, ports } = recordingStart()
+
+    const second = await launch({ generateToken: tokens(TOKEN_B), start })
+
+    expect(ports).toEqual([port])
+    expect(second.port).toBe(port)
+    expect(second.url).toBe(url)
+    expect(second.token).toBe(TOKEN_B)
+    expect(await statusWith(url, TOKEN_B)).toBe(200)
+    expect(await readBridgeConfig(configPath)).toEqual({ url, token: TOKEN_B })
+  })
+
+  it('by default, a token a squatter collected while the app was down is dead after the next launch', async () => {
+    const first = await launch({ generateToken: tokens(TOKEN_A) })
+    const { port } = first
+    await first.close()
+    // Another local account listens on the saved port while the app is down, and a client (the
+    // bridge, reconnecting) hands it TOKEN_A. Then it lets the port go, so the app gets it back.
+    const squatter = await occupy(port)
+    await new Promise<void>((resolve) => squatter.close(() => resolve()))
 
     const second = await launch({ generateToken: tokens(TOKEN_B) })
+
+    expect(second.port).toBe(port)
+    expect(await statusWith(second.url, TOKEN_A)).toBe(401)
+    expect(await statusWith(second.url, TOKEN_B)).toBe(200)
+  })
+
+  it("keeps the last launch's token when asked to, on the same port", async () => {
+    const first = await launch({ tokenRotation: 'on-reset', generateToken: tokens(TOKEN_A) })
+    const { port, url } = first
+    await first.close()
+
+    const second = await launch({ tokenRotation: 'on-reset', generateToken: tokens(TOKEN_B) })
 
     expect(second.port).toBe(port)
     expect(second.url).toBe(url)
@@ -121,34 +153,30 @@ describe('startEndpoint', () => {
     expect(await statusWith(url, TOKEN_A)).toBe(200)
   })
 
-  it('makes a new token each launch when asked to, on the same port', async () => {
-    await writeBridgeConfig(configPath, { url: 'http://127.0.0.1:52011/mcp', token: TOKEN_A })
-    const { start, ports } = recordingStart()
-
-    const endpoint = await launch({ tokenRotation: 'every-launch', generateToken: tokens(TOKEN_B), start })
-
-    expect(ports[0]).toBe(52011)
-    expect(endpoint.token).toBe(TOKEN_B)
-    expect(await readBridgeConfig(configPath)).toEqual({ url: endpoint.url, token: TOKEN_B })
-  })
-
   it('asks for any free port when the port is not to be kept', async () => {
-    await writeBridgeConfig(configPath, { url: 'http://127.0.0.1:52011/mcp', token: TOKEN_A })
+    const first = await launch({ generateToken: tokens(TOKEN_A) })
+    await first.close()
     const { start, ports } = recordingStart()
 
-    const endpoint = await launch({ stablePort: false, generateToken: tokens(TOKEN_B), start })
+    const endpoint = await launch({
+      stablePort: false,
+      tokenRotation: 'on-reset',
+      generateToken: tokens(TOKEN_B),
+      start,
+    })
 
     expect(ports).toEqual([0])
     expect(endpoint.token).toBe(TOKEN_A)
   })
 
   it('moves to a free port with a new token when something else holds the saved one', async () => {
-    const first = await launch({ generateToken: tokens(TOKEN_A) })
+    // Even when tokens are kept until reset: the kept one may already be in the squatter's hands.
+    const first = await launch({ tokenRotation: 'on-reset', generateToken: tokens(TOKEN_A) })
     const { port } = first
     await first.close()
     await occupy(port)
 
-    const second = await launch({ generateToken: tokens(TOKEN_B) })
+    const second = await launch({ tokenRotation: 'on-reset', generateToken: tokens(TOKEN_B) })
 
     expect(second.port).not.toBe(port)
     // Clients still pointed at the old port hand the squatter TOKEN_A; it must not open the endpoint.
@@ -161,7 +189,7 @@ describe('startEndpoint', () => {
     await writeBridgeConfig(configPath, { url: 'http://127.0.0.1:52011/mcp', token: TOKEN_A })
     await chmod(configPath, 0o644)
 
-    const endpoint = await launch({ generateToken: tokens(TOKEN_B) })
+    const endpoint = await launch({ tokenRotation: 'on-reset', generateToken: tokens(TOKEN_B) })
 
     expect(endpoint.token).toBe(TOKEN_B)
     expect(await statusWith(endpoint.url, TOKEN_A)).toBe(401)
@@ -176,7 +204,7 @@ describe('startEndpoint', () => {
     )
     const { start, ports } = recordingStart()
 
-    const endpoint = await launch({ generateToken: tokens(TOKEN_B), start })
+    const endpoint = await launch({ tokenRotation: 'on-reset', generateToken: tokens(TOKEN_B), start })
 
     expect(ports).toEqual([0])
     expect(endpoint.token).toBe(TOKEN_B)
@@ -231,14 +259,37 @@ describe('resetToken', () => {
     expect(await readBridgeConfig(configPath)).toEqual({ url: endpoint.url, token: TOKEN_B })
   })
 
-  it('keeps the new token across the next launch', async () => {
-    const first = await launch({ generateToken: tokens(TOKEN_A, TOKEN_B) })
+  it('keeps the new token across the next launch when tokens are kept until reset', async () => {
+    const first = await launch({ tokenRotation: 'on-reset', generateToken: tokens(TOKEN_A, TOKEN_B) })
     await first.resetToken()
     await first.close()
 
-    const second = await launch({ generateToken: tokens(TOKEN_C) })
+    const second = await launch({ tokenRotation: 'on-reset', generateToken: tokens(TOKEN_C) })
 
     expect(second.token).toBe(TOKEN_B)
+  })
+
+  it('leaves the file and the endpoint on the same token when resets overlap', async () => {
+    const endpoint = await launch({ generateToken: tokens(TOKEN_A, TOKEN_B, TOKEN_C) })
+
+    await Promise.all([endpoint.resetToken(), endpoint.resetToken()])
+
+    expect(endpoint.token).toBe(TOKEN_C)
+    expect(await readBridgeConfig(configPath)).toEqual({ url: endpoint.url, token: TOKEN_C })
+    expect(await statusWith(endpoint.url, TOKEN_B)).toBe(401)
+    expect(await statusWith(endpoint.url, TOKEN_C)).toBe(200)
+  })
+
+  it('resets again after a reset that failed', async () => {
+    const endpoint = await launch({ generateToken: tokens(TOKEN_A, TOKEN_B, TOKEN_C) })
+    await chmod(dir, 0o500)
+    await expect(endpoint.resetToken()).rejects.toEqual(new SiteAdapterError('config', 'unavailable'))
+    await chmod(dir, 0o700)
+
+    await endpoint.resetToken()
+
+    expect(endpoint.token).toBe(TOKEN_C)
+    expect(await readBridgeConfig(configPath)).toEqual({ url: endpoint.url, token: TOKEN_C })
   })
 
   it('changes nothing when the config file cannot be written', async () => {
