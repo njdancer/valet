@@ -468,6 +468,112 @@ describe('retry', () => {
     expect(w.audit.events.filter((e) => e.type === 'login-finished')).toHaveLength(1)
   })
 
+  it('retries an element that is missing from a click', async () => {
+    const w = world()
+    let sleeps = 0
+    w.clock.onSleep = () => {
+      if (++sleeps === 2) {
+        w.page.site[LOGIN_PAGE] = { elements: { '#later': { tagName: 'button' } } }
+      }
+    }
+    w.input.manifest = manifestWithSteps([
+      { op: 'goto', url: LOGIN_PAGE },
+      {
+        op: 'retry',
+        times: 2,
+        steps: [
+          { op: 'pause', ms: 100 },
+          { op: 'click', selector: '#later' },
+        ],
+      },
+    ])
+    expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
+    expect(w.page.clicked).toEqual(['#later'])
+    expect(w.clock.sleeps).toEqual([100, 100])
+  })
+
+  it('never retries a fill whose element went missing while the person approved Touch ID', async () => {
+    const w = world()
+    w.provider.beforeResolve = () => w.page.navigate(ACCOUNT_PAGE)
+    w.input.manifest = manifestWithSteps([
+      {
+        op: 'retry',
+        times: 2,
+        steps: [
+          { op: 'goto', url: LOGIN_PAGE },
+          { op: 'fill', selector: '#password', value: { secret: 'login', field: 'password' } },
+        ],
+      },
+    ])
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'secret-fill',
+      errorClass: 'element-missing',
+    })
+    expect(w.provider.calls.length).toBe(1)
+    expect(w.page.visited).toEqual([LOGIN_PAGE])
+    expect(w.page.typed).toEqual([])
+  })
+
+  it('never retries a fill after the page bounced through another host while resolving', async () => {
+    const w = world()
+    w.provider.beforeResolve = () => {
+      w.page.navigate(`${EVIL}/x`)
+      w.page.navigate(LOGIN_PAGE)
+    }
+    w.input.manifest = manifestWithSteps([
+      {
+        op: 'retry',
+        times: 2,
+        steps: [
+          { op: 'goto', url: LOGIN_PAGE },
+          { op: 'fill', selector: '#password', value: { secret: 'login', field: 'password' } },
+        ],
+      },
+    ])
+    expect(await runAuthFlow(w.input)).toMatchObject({ errorClass: 'navigation-escaped' })
+    expect(w.provider.calls.length).toBe(1)
+    expect(w.page.typed).toEqual([])
+  })
+
+  it('never retries a secret-fill element-missing even before anything was resolved', async () => {
+    const w = world()
+    w.input.manifest = manifestWithSteps([
+      { op: 'goto', url: LOGIN_PAGE },
+      {
+        op: 'retry',
+        times: 2,
+        steps: [{ op: 'fill', selector: '#gone', value: { secret: 'login', field: 'password' } }],
+      },
+    ])
+    const inspect = vi.spyOn(w.page, 'inspect')
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'secret-fill',
+      errorClass: 'element-missing',
+    })
+    expect(inspect).toHaveBeenCalledTimes(1)
+  })
+
+  it('never retries a credential failure, so the person is not asked twice', async () => {
+    const w = world()
+    w.provider.items['op://siteadapter/Shop'] = {}
+    w.input.manifest = manifestWithSteps([
+      { op: 'goto', url: LOGIN_PAGE },
+      {
+        op: 'retry',
+        times: 2,
+        steps: [{ op: 'fill', selector: '#password', value: { secret: 'login', field: 'password' } }],
+      },
+    ])
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'credential',
+      errorClass: 'field-missing',
+    })
+    expect(w.provider.calls.length).toBe(1)
+  })
+
   it('never retries needsUser', async () => {
     const w = world()
     let runs = 0

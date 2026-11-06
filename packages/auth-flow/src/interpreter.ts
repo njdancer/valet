@@ -6,6 +6,7 @@ import {
   type Condition,
   type ErrorClass,
   SiteAdapterError,
+  type Stage,
   urlOriginAllowed,
 } from '@siteadapter/core'
 import { evaluateCondition } from './conditions'
@@ -26,16 +27,25 @@ import { fillMessagesOtp, fillSecret } from './secret-fill'
 export const POLL_MS = 250
 
 /**
- * Failures that a retry may plausibly fix: the page was slow, or the site refused a login it may
- * accept next time. Guard failures are never retried: a guard that fired has seen something wrong,
- * and retrying would only give the page another chance to get past it.
+ * Failures that a retry may plausibly fix, as stage and class together: the page was slow, or the
+ * site refused a login it may accept next time. The stage matters as much as the class. An element
+ * that went missing during a secret fill is a guard that fired, perhaps because the page changed
+ * while the person approved Touch ID, and guard failures are never retried: retrying would only
+ * give the page another chance to get past the guard, and ask the person for Touch ID again.
  */
-const RETRYABLE: readonly ErrorClass[] = [
-  'condition-timeout',
-  'element-missing',
-  'auth-failed',
-  'not-logged-in',
+const RETRYABLE: readonly (readonly [Stage, ErrorClass])[] = [
+  ['auth-step', 'condition-timeout'],
+  ['auth-step', 'element-missing'],
+  ['auth-step', 'auth-failed'],
+  ['probe', 'not-logged-in'],
 ]
+
+function isRetryable(error: unknown): boolean {
+  return (
+    error instanceof SiteAdapterError &&
+    RETRYABLE.some(([stage, errorClass]) => error.stage === stage && error.errorClass === errorClass)
+  )
+}
 
 export async function runSteps(ctx: FlowContext, steps: readonly AuthStep[]): Promise<void> {
   for (const step of steps) {
@@ -108,8 +118,7 @@ async function retry(ctx: FlowContext, times: number, steps: readonly AuthStep[]
       await runSteps(ctx, steps)
       return
     } catch (error) {
-      const retryable = error instanceof SiteAdapterError && RETRYABLE.includes(error.errorClass)
-      if (!retryable || attempt >= times) throw error
+      if (!isRetryable(error) || attempt >= times) throw error
     }
   }
 }

@@ -28,9 +28,11 @@ manifest's `auth.steps` against an `AuthPage` and returns `ok`, `needsUser(reaso
   (`form-action-mismatch`) → resolve (`credential: <failure>`) → **the history, block and element checks again** →
   focus → audit `secret-used` → type → dispose. Auditing comes before typing, so a fill that
   can't be audited doesn't happen.
-- **`retry: { times: n }`** runs its steps up to `n + 1` times. Only `condition-timeout`,
-  `element-missing`, `auth-failed` and `not-logged-in` are retried; guard failures, blocks,
-  `needsUser` and timeouts never are.
+- **`retry: { times: n }`** runs its steps up to `n + 1` times. Retryability is stage and class
+  together: only `auth-step: condition-timeout`, `auth-step: element-missing`,
+  `auth-step: auth-failed` and `probe: not-logged-in` are retried. Anything from `secret-fill`,
+  `otp`, `grant` or `credential` never is, so a fill guard that fired after Touch ID can't be
+  given a second chance (or a second Touch ID prompt). Blocks, `needsUser` and timeouts never are.
 - **`urlMatches`** tests the URL's path and query, never its host. A pattern wrapped in slashes
   (`/^\/account$/`) is a regular expression; anything else is a substring.
 - **Messages OTP** has no secret request, so the code may be typed on any `navigation` origin;
