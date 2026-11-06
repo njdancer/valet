@@ -1,6 +1,7 @@
 import {
   CredentialError,
   type Grant,
+  MESSAGES_SECRET,
   parseManifest,
   type ResolveFailure,
   type SecretValue,
@@ -38,13 +39,23 @@ function expectNothingReleased(w: ReturnType<typeof world>): void {
   expect(w.audit.events.filter((e) => e.type === 'secret-used')).toEqual([])
 }
 
+// These flows fill and stop. Every flow finishes with the probe, so tests that expect ok start with
+// the auth partition's session cookie already set.
 describe('a secret fill that passes every guard', () => {
-  it('types the password as a SecretValue with the typing delay', async () => {
+  it('types the password as a SecretValue with the typing delay, only on the allowed origins', async () => {
     const w = world()
+    w.page.cookies.add('session')
     w.input.manifest = FILL_PASSWORD
     expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
     expect(w.page.typed).toEqual([
-      { selector: '#password', url: LOGIN_PAGE, text: CANARY.password, secret: true, delayMs: 40 },
+      {
+        selector: '#password',
+        url: LOGIN_PAGE,
+        text: CANARY.password,
+        secret: true,
+        delayMs: 40,
+        allowedOrigins: [LOGIN],
+      },
     ])
   })
 
@@ -65,6 +76,7 @@ describe('a secret fill that passes every guard', () => {
 
   it('does not require a username field to belong to a form', async () => {
     const w = world()
+    w.page.cookies.add('session')
     w.page.site[LOGIN_PAGE] = { elements: { '#email': { inputType: 'email' } } }
     w.input.manifest = FILL_USERNAME
     expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
@@ -72,6 +84,7 @@ describe('a secret fill that passes every guard', () => {
 
   it('accepts a login form inside a frame on a granted origin, on a page of that origin', async () => {
     const w = world()
+    w.page.cookies.add('session')
     w.page.site[LOGIN_PAGE] = {
       frames: { sso: LOGIN },
       forms: { login: LOGIN },
@@ -169,6 +182,7 @@ describe('guard: the manifest request', () => {
           { op: 'goto', url: LOGIN_PAGE },
           { op: 'fill', selector: '#password', value: { secret: 'constructor', field: 'password' } },
         ],
+        frameOrigins: [],
       },
     }
     expect(await runAuthFlow(w.input)).toEqual({
@@ -661,7 +675,11 @@ describe('checking again after resolving', () => {
     w.page.site[`${LOGIN}/denied`] = { ...structuredClone(w.page.site[LOGIN_PAGE]!), blocked: true }
     w.provider.beforeResolve = () => w.page.navigate(`${LOGIN}/denied`)
     w.input.manifest = FILL_PASSWORD
-    expect(await runAuthFlow(w.input)).toEqual({ status: 'blocked' })
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'blocked',
+      stage: 'auth-step',
+      errorClass: 'blocked-by-site',
+    })
     expect(w.page.typed).toEqual([])
     expect(w.audit.events.filter((e) => e.type === 'secret-used')).toEqual([])
     expect(w.provider.issued[0]?.disposed).toBe(true)
@@ -813,5 +831,193 @@ describe('grants for other secrets', () => {
     w.grants.grants[0] = bankGrant
     w.input.manifest = FILL_PASSWORD
     expect(await runAuthFlow(w.input)).toMatchObject({ errorClass: 'not-granted' })
+  })
+
+  it('refuses a grant whose provider is messages, which names a sender rather than an item', async () => {
+    const w = world()
+    w.grants.grants[0] = { ...GRANT, provider: 'messages' }
+    w.input.providers = { ...w.input.providers, messages: w.provider }
+    w.input.manifest = FILL_PASSWORD
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'secret-fill',
+      errorClass: 'not-granted',
+    })
+    expectNothingReleased(w)
+  })
+
+  it('refuses to fill the reserved messages secret from a provider, even if a manifest declares it', async () => {
+    const w = world()
+    w.grants.grants[0] = { ...GRANT, secret: MESSAGES_SECRET }
+    const manifest = parseManifest(structuredClone(MANIFEST))
+    w.input.manifest = {
+      ...manifest,
+      secrets: { [MESSAGES_SECRET]: { description: 'Codes', fields: ['password'], origins: [LOGIN] } },
+      auth: {
+        steps: [
+          { op: 'goto', url: LOGIN_PAGE },
+          { op: 'fill', selector: '#password', value: { secret: MESSAGES_SECRET, field: 'password' } },
+        ],
+        frameOrigins: [],
+      },
+    }
+    const find = vi.spyOn(w.grants, 'find')
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'secret-fill',
+      errorClass: 'invalid',
+    })
+    expect(find).not.toHaveBeenCalled()
+    expectNothingReleased(w)
+  })
+})
+
+describe('guard: trusted input can reach the element', () => {
+  it('refuses an element in an out-of-process frame on a granted origin, before resolving', async () => {
+    const w = world()
+    w.page.site[LOGIN_PAGE] = {
+      frames: { sso: LOGIN },
+      forms: { login: LOGIN },
+      elements: {
+        '#password': { inputType: 'password', frame: 'sso', form: 'login', inputReachable: false },
+      },
+    }
+    w.input.manifest = FILL_PASSWORD
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'secret-fill',
+      errorClass: 'input-unreachable',
+    })
+    expectNothingReleased(w)
+  })
+
+  it('treats a driver that does not say whether input is reachable as unreachable', async () => {
+    const w = world()
+    const inspect = w.page.inspect.bind(w.page)
+    vi.spyOn(w.page, 'inspect').mockImplementation(async (selector) => {
+      const element = await inspect(selector)
+      if (element === null) return null
+      const { inputReachable: _, ...rest } = element
+      return rest as unknown as typeof element
+    })
+    w.input.manifest = FILL_PASSWORD
+    expect(await runAuthFlow(w.input)).toMatchObject({ errorClass: 'input-unreachable' })
+    expectNothingReleased(w)
+  })
+
+  it('reports a foreign frame as an origin mismatch, not as unreachable', async () => {
+    const w = world()
+    w.page.site[LOGIN_PAGE] = {
+      frames: { ad: EVIL },
+      forms: { login: LOGIN },
+      elements: {
+        '#password': { inputType: 'password', frame: 'ad', form: 'login', inputReachable: false },
+      },
+    }
+    w.input.manifest = FILL_PASSWORD
+    expect(await runAuthFlow(w.input)).toMatchObject({ errorClass: 'origin-mismatch' })
+    expectNothingReleased(w)
+  })
+
+  it('refuses when the field moved into an out-of-process frame while resolving', async () => {
+    const w = world()
+    w.provider.beforeResolve = () => {
+      w.page.site[LOGIN_PAGE] = {
+        forms: { login: LOGIN },
+        elements: { '#password': { inputType: 'password', form: 'login', inputReachable: false } },
+      }
+    }
+    w.input.manifest = FILL_PASSWORD
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'secret-fill',
+      errorClass: 'input-unreachable',
+    })
+    expect(w.page.typed).toEqual([])
+    expect(w.remembered).toEqual([])
+    expect(w.provider.issued[0]?.disposed).toBe(true)
+  })
+})
+
+describe('the driver holds typing to the allowed origins', () => {
+  it('passes only origins both granted and requested, not every granted one', async () => {
+    const w = world()
+    w.page.cookies.add('session')
+    w.grants.grants[0] = { ...GRANT, origins: [LOGIN, WWW, EVIL] }
+    w.input.manifest = FILL_PASSWORD
+    expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
+    expect(w.page.typed.map((typed) => typed.allowedOrigins)).toEqual([[LOGIN]])
+  })
+
+  it('stops mid-secret when the page navigates to another allowed origin while typing', async () => {
+    const w = world()
+    w.page.site[`${WWW}/login`] = structuredClone(w.page.site[LOGIN_PAGE]!)
+    w.page.beforeKeystroke = (index) => {
+      if (index === 3) w.page.navigate(`${WWW}/login`)
+    }
+    w.input.manifest = FILL_PASSWORD
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'secret-fill',
+      errorClass: 'origin-mismatch',
+    })
+    expect(w.page.typed.map((typed) => typed.text)).toEqual([CANARY.password.slice(0, 3)])
+    expect(w.provider.issued[0]?.disposed).toBe(true)
+  })
+
+  it('stops mid-secret when the page moves focus into a foreign frame while typing', async () => {
+    const w = world()
+    w.page.site[LOGIN_PAGE] = {
+      ...structuredClone(w.page.site[LOGIN_PAGE]!),
+      frames: { ad: EVIL },
+      elements: {
+        ...structuredClone(w.page.site[LOGIN_PAGE]!.elements),
+        '#ad-input': { inputType: 'text', frame: 'ad' },
+      },
+    }
+    w.page.beforeKeystroke = (index) => {
+      if (index === 5) w.page.focused = '#ad-input'
+    }
+    w.input.manifest = FILL_PASSWORD
+    expect(await runAuthFlow(w.input)).toMatchObject({ stage: 'secret-fill', errorClass: 'origin-mismatch' })
+    expect(w.page.typed.map((typed) => typed.text)).toEqual([CANARY.password.slice(0, 5)])
+    expect(w.provider.issued[0]?.disposed).toBe(true)
+  })
+})
+
+describe('the runtime keeps a copy for redaction', () => {
+  it('hands over an independent copy of every secret typed, which outlives the original', async () => {
+    const w = world()
+    await runAuthFlow(w.input)
+    expect(w.remembered).toHaveLength(2)
+    expect(w.provider.issued.every((secret) => secret.disposed)).toBe(true)
+    expect(w.remembered.every((secret) => !secret.disposed)).toBe(true)
+    expect(w.remembered[0]?.occursIn(`echo ${CANARY.username}`)).toBe(true)
+    expect(w.remembered[1]?.occursIn(`echo ${CANARY.password}`)).toBe(true)
+    expect(w.remembered.some((secret) => w.provider.issued.includes(secret))).toBe(false)
+  })
+
+  it('hands over nothing for a fill refused before resolving', async () => {
+    const w = world()
+    w.input.manifest = manifestWithSteps([
+      { op: 'goto', url: LOGIN_PAGE },
+      { op: 'fill', selector: '#search', value: { secret: 'login', field: 'password' } },
+    ])
+    await runAuthFlow(w.input)
+    expect(w.remembered).toEqual([])
+  })
+
+  it('types nothing, and audits no use, when the runtime cannot take its copy', async () => {
+    const w = world()
+    w.input.rememberSecret = () => {
+      throw new Error(`redaction set full ${CANARY.password}`)
+    }
+    w.input.manifest = FILL_PASSWORD
+    const outcome = await runAuthFlow(w.input)
+    expect(outcome).toEqual({ status: 'failed', stage: 'secret-fill', errorClass: 'internal' })
+    expect(JSON.stringify(outcome)).not.toContain(CANARY.password)
+    expect(w.page.typed).toEqual([])
+    expect(w.audit.events.filter((e) => e.type === 'secret-used')).toEqual([])
+    expect(w.provider.issued[0]?.disposed).toBe(true)
   })
 })

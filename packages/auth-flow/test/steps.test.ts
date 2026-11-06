@@ -4,9 +4,13 @@ import { POLL_MS } from '../src/interpreter'
 import { runAuthFlow } from '../src/run-auth-flow'
 import { ACCOUNT_PAGE, EVIL, LOGIN_PAGE, manifestWithSteps, START, world } from './fixtures'
 
+// Every flow finishes with the probe. Tests about a step that doesn't itself log in start with the
+// session cookie already in the auth partition, so that the step is all they measure.
+
 describe('goto', () => {
   it('navigates to an allowed URL', async () => {
     const w = world()
+    w.page.cookies.add('session')
     w.input.manifest = manifestWithSteps([{ op: 'goto', url: LOGIN_PAGE }])
     expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
     expect(w.page.visited).toEqual([LOGIN_PAGE])
@@ -141,27 +145,33 @@ describe('click', () => {
       { op: 'click', selector: '#submit' },
       { op: 'assertLoggedIn' },
     ])
-    const probe = vi.fn(w.input.probe)
-    w.input.probe = probe
     expect(await runAuthFlow(w.input)).toEqual({
       status: 'failed',
       stage: 'navigate',
       errorClass: 'navigation-escaped',
     })
-    expect(probe).not.toHaveBeenCalled()
+    expect(w.probe.calls).toBe(0)
   })
 })
 
 describe('fill with a literal', () => {
-  it('types the literal into the element as a plain string', async () => {
+  it('types the literal into the element as a plain string, with no origin restriction', async () => {
     const w = world()
+    w.page.cookies.add('session')
     w.input.manifest = manifestWithSteps([
       { op: 'goto', url: LOGIN_PAGE },
       { op: 'fill', selector: '#search', value: { literal: 'milk' } },
     ])
     expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
     expect(w.page.typed).toEqual([
-      { selector: '#search', url: LOGIN_PAGE, text: 'milk', secret: false, delayMs: 40 },
+      {
+        selector: '#search',
+        url: LOGIN_PAGE,
+        text: 'milk',
+        secret: false,
+        delayMs: 40,
+        allowedOrigins: undefined,
+      },
     ])
   })
 
@@ -193,6 +203,7 @@ describe('fill with a literal', () => {
 describe('waitFor', () => {
   it('returns at once when the condition already holds', async () => {
     const w = world()
+    w.page.cookies.add('session')
     w.input.manifest = manifestWithSteps([
       { op: 'goto', url: LOGIN_PAGE },
       { op: 'waitFor', condition: { visible: '#email' }, timeoutMs: 1000 },
@@ -203,6 +214,7 @@ describe('waitFor', () => {
 
   it('polls every 250 ms until the condition holds', async () => {
     const w = world()
+    w.page.cookies.add('session')
     w.input.manifest = manifestWithSteps([
       { op: 'goto', url: LOGIN_PAGE },
       { op: 'waitFor', condition: { textPresent: 'Ready' }, timeoutMs: 5000 },
@@ -231,6 +243,7 @@ describe('waitFor', () => {
 
   it('gives the condition one last look at the deadline', async () => {
     const w = world()
+    w.page.cookies.add('session')
     w.input.manifest = manifestWithSteps([
       { op: 'goto', url: LOGIN_PAGE },
       { op: 'waitFor', condition: { textPresent: 'Ready' }, timeoutMs: 1000 },
@@ -264,7 +277,11 @@ describe('waitFor', () => {
     w.clock.onSleep = () => {
       if (w.clock.now === START + 500) w.page.navigate('https://www.shop.test/denied')
     }
-    expect(await runAuthFlow(w.input)).toEqual({ status: 'blocked' })
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'blocked',
+      stage: 'auth-step',
+      errorClass: 'blocked-by-site',
+    })
   })
 
   it('stops at the flow deadline when that comes before the step timeout', async () => {
@@ -296,20 +313,12 @@ describe('waitFor', () => {
       errorClass: 'internal',
     })
   })
-
-  it('reports an invalid urlMatches regex as an invalid manifest', async () => {
-    const w = world()
-    w.input.manifest = manifestWithSteps([
-      { op: 'goto', url: LOGIN_PAGE },
-      { op: 'waitFor', condition: { urlMatches: '/[/' }, timeoutMs: 1000 },
-    ])
-    expect(await runAuthFlow(w.input)).toEqual({ status: 'failed', stage: 'manifest', errorClass: 'invalid' })
-  })
 })
 
 describe('pause', () => {
   it('sleeps for the given time', async () => {
     const w = world()
+    w.page.cookies.add('session')
     w.input.manifest = manifestWithSteps([{ op: 'pause', ms: 750 }])
     expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
     expect(w.clock.sleeps).toEqual([750])
@@ -361,12 +370,13 @@ describe('when', () => {
 
   it('does nothing when the condition does not hold and there is no otherwise', async () => {
     const w = world()
+    w.page.cookies.add('session')
     w.input.manifest = manifestWithSteps([
       { op: 'goto', url: LOGIN_PAGE },
       {
         op: 'when',
         condition: { textPresent: 'Remember this device?' },
-        steps: [{ op: 'fail', reason: 'should not run' }],
+        steps: [{ op: 'fail', errorClass: 'auth-failed' }],
       },
     ])
     expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
@@ -383,13 +393,17 @@ describe('when', () => {
           {
             op: 'when',
             condition: { not: { visible: '#otp' } },
-            steps: [{ op: 'fail', reason: 'no otp field' }],
-            otherwise: [{ op: 'needsUser', reason: 'otp field present' }],
+            steps: [{ op: 'fail', errorClass: 'unexpected-shape' }],
+            otherwise: [{ op: 'needsUser', reason: 'otp-required', note: 'Enter the code from your app' }],
           },
         ],
       },
     ])
-    expect(await runAuthFlow(w.input)).toEqual({ status: 'needsUser', reason: 'otp field present' })
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'needsUser',
+      reason: 'otp-required',
+      appNote: 'Enter the code from your app',
+    })
   })
 })
 
@@ -397,7 +411,7 @@ describe('retry', () => {
   it('re-runs its steps after a retryable failure until they succeed', async () => {
     const w = world()
     let probes = 0
-    w.input.probe = async () => ++probes >= 3
+    w.probe.cookies = () => (++probes >= 3 ? ['session'] : [])
     w.input.manifest = manifestWithSteps([{ op: 'retry', times: 3, steps: [{ op: 'assertLoggedIn' }] }])
     expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
     expect(probes).toBe(3)
@@ -405,18 +419,13 @@ describe('retry', () => {
 
   it('runs its steps at most times + 1 times, then reports the last failure', async () => {
     const w = world()
-    let probes = 0
-    w.input.probe = async () => {
-      probes++
-      return false
-    }
     w.input.manifest = manifestWithSteps([{ op: 'retry', times: 2, steps: [{ op: 'assertLoggedIn' }] }])
     expect(await runAuthFlow(w.input)).toEqual({
       status: 'failed',
       stage: 'probe',
       errorClass: 'not-logged-in',
     })
-    expect(probes).toBe(3)
+    expect(w.probe.calls).toBe(3)
   })
 
   it('retries a condition timeout', async () => {
@@ -437,7 +446,7 @@ describe('retry', () => {
         times: 2,
         steps: [
           { op: 'pause', ms: 100 },
-          { op: 'fail', reason: 'nope' },
+          { op: 'fail', errorClass: 'auth-failed' },
         ],
       },
     ])
@@ -472,6 +481,7 @@ describe('retry', () => {
 
   it('retries an element that is missing from a click', async () => {
     const w = world()
+    w.page.cookies.add('session')
     let sleeps = 0
     w.clock.onSleep = () => {
       if (++sleeps === 2) {
@@ -578,11 +588,7 @@ describe('retry', () => {
 
   it('never retries needsUser', async () => {
     const w = world()
-    let runs = 0
-    w.input.probe = async () => {
-      runs++
-      return true
-    }
+    w.page.cookies.add('session')
     w.input.manifest = manifestWithSteps([
       {
         op: 'retry',
@@ -591,7 +597,7 @@ describe('retry', () => {
       },
     ])
     expect(await runAuthFlow(w.input)).toEqual({ status: 'needsUser', reason: 'captcha' })
-    expect(runs).toBe(1)
+    expect(w.probe.calls).toBe(1)
   })
 
   it('never retries a block', async () => {
@@ -600,7 +606,11 @@ describe('retry', () => {
     w.input.manifest = manifestWithSteps([
       { op: 'retry', times: 5, steps: [{ op: 'goto', url: 'https://www.shop.test/denied' }] },
     ])
-    expect(await runAuthFlow(w.input)).toEqual({ status: 'blocked' })
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'blocked',
+      stage: 'auth-step',
+      errorClass: 'blocked-by-site',
+    })
     expect(w.page.visited).toHaveLength(1)
   })
 
@@ -613,7 +623,7 @@ describe('retry', () => {
         times: 5,
         steps: [
           { op: 'pause', ms: 200 },
-          { op: 'fail', reason: 'nope' },
+          { op: 'fail', errorClass: 'auth-failed' },
         ],
       },
     ])
@@ -629,10 +639,10 @@ describe('retry', () => {
     const w = world()
     w.input.flowTimeoutMs = 1000
     let probes = 0
-    w.input.probe = async () => {
+    w.probe.cookies = () => {
       probes++
       w.clock.now += 2000
-      return false
+      return []
     }
     w.input.manifest = manifestWithSteps([{ op: 'retry', times: 3, steps: [{ op: 'assertLoggedIn' }] }])
     expect(await runAuthFlow(w.input)).toEqual({
@@ -646,7 +656,7 @@ describe('retry', () => {
   it('nests inside when, and when inside retry', async () => {
     const w = world()
     let probes = 0
-    w.input.probe = async () => ++probes >= 2
+    w.probe.cookies = () => (++probes >= 2 ? ['session'] : [])
     w.input.manifest = manifestWithSteps([
       { op: 'goto', url: LOGIN_PAGE },
       {
@@ -674,16 +684,16 @@ describe('retry', () => {
 })
 
 describe('assertLoggedIn', () => {
-  it('passes when the probe says logged in', async () => {
+  it('passes when the probe says logged in, and is not repeated at the end of the flow', async () => {
     const w = world()
-    w.input.probe = async () => true
+    w.page.cookies.add('session')
     w.input.manifest = manifestWithSteps([{ op: 'assertLoggedIn' }])
     expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
+    expect(w.probe.cookieQueries).toEqual([['www.shop.test']])
   })
 
   it('fails with probe: not-logged-in when the probe says otherwise', async () => {
     const w = world()
-    w.input.probe = async () => false
     w.input.manifest = manifestWithSteps([{ op: 'assertLoggedIn' }])
     expect(await runAuthFlow(w.input)).toEqual({
       status: 'failed',
@@ -694,8 +704,8 @@ describe('assertLoggedIn', () => {
 
   it('reports a probe that throws as probe: internal', async () => {
     const w = world()
-    w.input.probe = async () => {
-      throw new Error('fetch failed: {"email":"someone@example.com"}')
+    w.probe.cookies = () => {
+      throw new Error('cookies failed: {"email":"someone@example.com"}')
     }
     w.input.manifest = manifestWithSteps([{ op: 'assertLoggedIn' }])
     expect(await runAuthFlow(w.input)).toEqual({ status: 'failed', stage: 'probe', errorClass: 'internal' })
@@ -713,15 +723,17 @@ describe('needsUser and fail', () => {
     expect(w.page.visited).toEqual([])
   })
 
-  it('fail ends the flow with auth-step: auth-failed and drops the manifest reason', async () => {
+  it('fail ends the flow with auth-step and the step class, and later steps do not run', async () => {
     const w = world()
     w.input.manifest = manifestWithSteps([
-      { op: 'fail', reason: 'wrong password' },
+      { op: 'fail', errorClass: 'unexpected-shape' },
       { op: 'goto', url: LOGIN_PAGE },
     ])
-    const outcome = await runAuthFlow(w.input)
-    expect(outcome).toEqual({ status: 'failed', stage: 'auth-step', errorClass: 'auth-failed' })
-    expect(JSON.stringify(outcome)).not.toContain('wrong password')
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'auth-step',
+      errorClass: 'unexpected-shape',
+    })
     expect(w.page.visited).toEqual([])
   })
 })
@@ -730,7 +742,11 @@ describe('blocked', () => {
   it('reports blocked when a goto lands on the block page', async () => {
     const w = world()
     w.page.site[LOGIN_PAGE] = { blocked: true }
-    expect(await runAuthFlow(w.input)).toEqual({ status: 'blocked' })
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'blocked',
+      stage: 'auth-step',
+      errorClass: 'blocked-by-site',
+    })
     expect(w.provider.calls).toEqual([])
   })
 
@@ -738,7 +754,11 @@ describe('blocked', () => {
     const w = world()
     w.page.site['https://www.shop.test/'] = { blocked: true }
     w.page.navigate('https://www.shop.test/')
-    expect(await runAuthFlow(w.input)).toEqual({ status: 'blocked' })
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'blocked',
+      stage: 'auth-step',
+      errorClass: 'blocked-by-site',
+    })
     expect(w.page.visited).toEqual([])
   })
 
@@ -746,7 +766,7 @@ describe('blocked', () => {
     const w = world()
     w.page.site[ACCOUNT_PAGE] = { blocked: true }
     const outcome = await runAuthFlow(w.input)
-    expect(outcome).toEqual({ status: 'blocked' })
+    expect(outcome).toEqual({ status: 'blocked', stage: 'auth-step', errorClass: 'blocked-by-site' })
     expect(w.page.clicked).toEqual(['#submit'])
   })
 
@@ -808,6 +828,7 @@ describe('the whole-flow timeout', () => {
 describe('the navigation check', () => {
   it('allows a fresh page on about:blank', async () => {
     const w = world()
+    w.page.cookies.add('session')
     w.page.history.push('about:blank')
     w.input.manifest = manifestWithSteps([{ op: 'goto', url: LOGIN_PAGE }])
     expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })

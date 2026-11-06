@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { MAX_REGEX_INPUT } from '../src/conditions'
 import { runAuthFlow } from '../src/run-auth-flow'
-import { CANARY, LOGIN_PAGE, manifestWithSteps, START, world } from './fixtures'
+import { CANARY, LOGIN_PAGE, manifestWithSteps, START, unparsedWithSteps, WWW, world } from './fixtures'
 
 describe('a clock that misbehaves', () => {
   it('reports a clock that throws at the start as internal, without its message', async () => {
@@ -111,7 +112,7 @@ describe('the flow budget and typing delay', () => {
   it('accepts a one-millisecond flow timeout', async () => {
     const w = world()
     w.input.flowTimeoutMs = 1
-    w.input.manifest = manifestWithSteps([{ op: 'goto', url: LOGIN_PAGE }])
+    w.input.manifest = manifestWithSteps([{ op: 'goto', url: `${WWW}/account` }])
     expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
   })
 
@@ -145,44 +146,49 @@ describe('the flow budget and typing delay', () => {
   })
 })
 
-describe('urlMatches patterns are checked up front', () => {
-  it('refuses a bad pattern in a branch the flow never takes, before any secret is fetched', async () => {
+// The schema screens patterns at parse time. These manifests skip the schema, as a caller that
+// built one by hand would, to check the interpreter doesn't rely on that.
+describe('urlRegex patterns are checked up front, whether or not the manifest was parsed', () => {
+  it('refuses a pattern that does not compile in a branch the flow never takes, before fetching any secret', async () => {
     const w = world()
-    w.input.manifest = manifestWithSteps([
+    w.input.manifest = unparsedWithSteps([
       { op: 'goto', url: LOGIN_PAGE },
       { op: 'fill', selector: '#password', value: { secret: 'login', field: 'password' } },
       {
         op: 'when',
         condition: { visible: '#never' },
-        steps: [{ op: 'waitFor', condition: { urlMatches: '/(/' }, timeoutMs: 1000 }],
+        steps: [{ op: 'waitFor', condition: { urlRegex: '(' }, timeoutMs: 1000 }],
       },
     ])
     expect(await runAuthFlow(w.input)).toEqual({ status: 'failed', stage: 'manifest', errorClass: 'invalid' })
     expect(w.provider.calls).toEqual([])
     expect(w.page.typed).toEqual([])
     expect(w.page.visited).toEqual([])
+    expect(w.audit.events).toEqual([])
   })
 
-  it('refuses a bad pattern inside an otherwise branch', async () => {
+  it('refuses a catastrophic pattern inside an otherwise branch, before running anything', async () => {
     const w = world()
-    w.input.manifest = manifestWithSteps([
+    w.input.manifest = unparsedWithSteps([
+      { op: 'goto', url: LOGIN_PAGE },
       {
         op: 'when',
         condition: { visible: '#email' },
         steps: [],
-        otherwise: [{ op: 'waitFor', condition: { urlMatches: '/[/' }, timeoutMs: 1000 }],
+        otherwise: [{ op: 'waitFor', condition: { urlRegex: '^(a+)+$' }, timeoutMs: 1000 }],
       },
     ])
-    expect(await runAuthFlow(w.input)).toMatchObject({ stage: 'manifest', errorClass: 'invalid' })
+    expect(await runAuthFlow(w.input)).toEqual({ status: 'failed', stage: 'manifest', errorClass: 'invalid' })
+    expect(w.page.visited).toEqual([])
   })
 
   it('refuses a bad pattern inside a retry', async () => {
     const w = world()
-    w.input.manifest = manifestWithSteps([
+    w.input.manifest = unparsedWithSteps([
       {
         op: 'retry',
         times: 1,
-        steps: [{ op: 'waitFor', condition: { urlMatches: '/a{2,1}/' }, timeoutMs: 1000 }],
+        steps: [{ op: 'waitFor', condition: { urlRegex: 'a{2,1}' }, timeoutMs: 1000 }],
       },
     ])
     expect(await runAuthFlow(w.input)).toMatchObject({ stage: 'manifest', errorClass: 'invalid' })
@@ -190,27 +196,57 @@ describe('urlMatches patterns are checked up front', () => {
 
   it('refuses a bad pattern nested in a when condition', async () => {
     const w = world()
-    w.input.manifest = manifestWithSteps([
+    w.input.manifest = unparsedWithSteps([
       {
         op: 'when',
-        condition: { any: [{ visible: '#email' }, { not: { all: [{ urlMatches: '/+/' }] } }] },
+        condition: { any: [{ visible: '#email' }, { not: { all: [{ urlRegex: '(x|xy)*z' }] } }] },
         steps: [],
       },
     ])
     expect(await runAuthFlow(w.input)).toMatchObject({ stage: 'manifest', errorClass: 'invalid' })
   })
 
-  it('accepts valid patterns everywhere', async () => {
+  it('does not treat a urlMatches condition from an old manifest as anything', async () => {
+    const w = world()
+    w.input.manifest = unparsedWithSteps([
+      { op: 'goto', url: LOGIN_PAGE },
+      { op: 'waitFor', condition: { urlMatches: '/' }, timeoutMs: 1000 },
+    ])
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'auth-step',
+      errorClass: 'internal',
+    })
+  })
+
+  it('accepts and uses valid patterns everywhere', async () => {
     const w = world()
     w.input.manifest = manifestWithSteps([
       { op: 'goto', url: LOGIN_PAGE },
       {
         op: 'when',
-        condition: { not: { urlMatches: '/^\\/account/' } },
-        steps: [{ op: 'waitFor', condition: { textPresent: 'Sign in' }, timeoutMs: 1000 }],
-        otherwise: [{ op: 'waitFor', condition: { urlMatches: 'account' }, timeoutMs: 1000 }],
+        condition: { not: { urlRegex: '^/account' } },
+        steps: [{ op: 'click', selector: '#submit' }],
+        otherwise: [{ op: 'fail', errorClass: 'unexpected-shape' }],
       },
+      { op: 'waitFor', condition: { urlRegex: '^/account$' }, timeoutMs: 1000 },
     ])
     expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
+    expect(w.page.clicked).toEqual(['#submit'])
+  })
+
+  it('treats an attacker-chosen URL longer than the cap as no match rather than running the regex', async () => {
+    const w = world()
+    const long = `${LOGIN_PAGE}?${'a'.repeat(MAX_REGEX_INPUT)}`
+    w.page.site[long] = {}
+    w.input.manifest = manifestWithSteps([
+      { op: 'goto', url: long },
+      { op: 'waitFor', condition: { urlRegex: 'a$' }, timeoutMs: 500 },
+    ])
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'auth-step',
+      errorClass: 'condition-timeout',
+    })
   })
 })

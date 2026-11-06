@@ -1,10 +1,17 @@
 // The example site every test starts from: a login page on login.shop.test that posts back to
 // itself and lands on www.shop.test/account. Tests copy what they need and change one thing.
 
-import { type AuthStep, type Grant, type ManifestInput, parseManifest } from '@siteadapter/core'
+import {
+  type AuthStep,
+  type Grant,
+  type ManifestInput,
+  MESSAGES_SECRET,
+  parseManifest,
+  type SecretValue,
+} from '@siteadapter/core'
 import type { AuthFlowInput } from '../src/types'
 import { FakeAuthPage, type FakeSite } from './fake-auth-page'
-import { FakeClock, FakeGrantStore, FakeOtpReader, FakeProvider, RecordingAudit } from './fakes'
+import { FakeClock, FakeGrantStore, FakeOtpReader, FakeProbe, FakeProvider, RecordingAudit } from './fakes'
 
 export const LOGIN = 'https://login.shop.test'
 export const WWW = 'https://www.shop.test'
@@ -50,7 +57,7 @@ export const MANIFEST: ManifestInput = {
       { op: 'fill', selector: '#email', value: { secret: 'login', field: 'username' } },
       { op: 'fill', selector: '#password', value: { secret: 'login', field: 'password' } },
       { op: 'click', selector: '#submit' },
-      { op: 'waitFor', condition: { urlMatches: '/account' }, timeoutMs: 10_000 },
+      { op: 'waitFor', condition: { urlContains: '/account' }, timeoutMs: 10_000 },
       { op: 'assertLoggedIn' },
     ],
   },
@@ -83,13 +90,19 @@ export const GRANT: Grant = {
   grantedAt: '2026-11-06T09:00:00.000Z',
 }
 
-/** The person's say-so for this adapter to read one-time codes from Messages, on the login origin. */
+/** The sender the shop's codes come from, as Messages shows it. */
+export const SENDER = 'ShopSMS'
+
+/**
+ * The person's say-so for this adapter to read one-time codes from SENDER in Messages, and type
+ * them on the login origin.
+ */
 export const MESSAGES_GRANT: Grant = {
   adapterId: 'shop',
   adapterHash: HASH,
-  secret: 'messages',
-  provider: 'fake',
-  itemRef: 'unused',
+  secret: MESSAGES_SECRET,
+  provider: 'messages',
+  itemRef: SENDER,
   origins: [LOGIN],
   grantedAt: '2026-11-06T09:00:00.000Z',
 }
@@ -106,6 +119,15 @@ export function manifestWithSteps(steps: AuthStep[]) {
 }
 
 /**
+ * MANIFEST, parsed, with its auth steps replaced after parsing: for the interpreter's own checks
+ * on a manifest that never went through the schema.
+ */
+export function unparsedWithSteps(steps: unknown[]) {
+  const manifest = parseManifest(structuredClone(MANIFEST))
+  return { ...manifest, auth: { ...manifest.auth, steps: steps as AuthStep[] } }
+}
+
+/**
  * A fresh, fully wired run against the example site, where everything is in order. Tests change
  * one part of it, then call runAuthFlow(w.input).
  */
@@ -116,6 +138,11 @@ export function world() {
   const provider = new FakeProvider(structuredClone(ITEMS))
   const otpReader = new FakeOtpReader(clock, [])
   const audit = new RecordingAudit()
+  // A cookie probe against the auth partition, which is where the flow runs and the only place
+  // the session exists until the caller copies it.
+  const probe = new FakeProbe(page)
+  /** The runtime's copies of every secret typed, for redacting tool output. */
+  const remembered: SecretValue[] = []
   const input: { -readonly [K in keyof AuthFlowInput]: AuthFlowInput[K] } = {
     manifest: parseManifest(structuredClone(MANIFEST)),
     adapterHash: HASH,
@@ -124,15 +151,14 @@ export function world() {
     grants,
     providers: { fake: provider },
     otpReader,
-    // A cookie probe against the auth partition, which is where the flow runs and the only place
-    // the session exists until the caller copies it.
-    probe: async () => page.cookies.has('session'),
+    probe,
     isBlockedPage: async () => page.isBlocked(),
+    rememberSecret: (secret) => remembered.push(secret),
     audit,
     clock: clock.clock,
     sleep: clock.sleep,
     typingDelayMs: 40,
     flowTimeoutMs: 60_000,
   }
-  return { clock, page, grants, provider, otpReader, audit, input }
+  return { clock, page, grants, provider, otpReader, audit, probe, remembered, input }
 }

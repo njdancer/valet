@@ -1,9 +1,9 @@
 // The entry point: runs one auth action and reports it as an outcome, never as a thrown error.
 
 import { type AdapterManifest, type AuditEvent, toReportable } from '@siteadapter/core'
-import { patternsValid } from './conditions'
-import { BlockedHalt, checkAfterStep, type FlowContext, NeedsUserHalt } from './context'
-import { runSteps } from './interpreter'
+import { compileUrlRegexes } from './conditions'
+import { checkAfterStep, FailStep, type FlowContext, NeedsUserHalt } from './context'
+import { assertLoggedIn, runSteps } from './interpreter'
 import type { AuthFlowInput, AuthOutcome } from './types'
 
 export async function runAuthFlow(input: AuthFlowInput): Promise<AuthOutcome> {
@@ -22,13 +22,16 @@ async function run(input: AuthFlowInput): Promise<AuthOutcome> {
   if (!isDuration(input.typingDelayMs) || !isDuration(input.flowTimeoutMs) || input.flowTimeoutMs === 0) {
     return { status: 'failed', stage: 'auth-step', errorClass: 'invalid' }
   }
-  // A bad pattern in a branch the flow rarely takes would otherwise only fail mid-flow, perhaps
-  // after secrets were typed.
-  if (!patternsValid(manifest.auth.steps)) {
-    return { status: 'failed', stage: 'manifest', errorClass: 'invalid' }
-  }
+  const regexes = compileUrlRegexes(manifest.auth.steps)
+  if (regexes === null) return { status: 'failed', stage: 'manifest', errorClass: 'invalid' }
   const startedAt = input.clock()
-  const ctx: FlowContext = { input, startedAt, deadline: startedAt.getTime() + input.flowTimeoutMs }
+  const ctx: FlowContext = {
+    input,
+    startedAt,
+    deadline: startedAt.getTime() + input.flowTimeoutMs,
+    regexes,
+    probed: false,
+  }
   if (!Number.isFinite(ctx.deadline)) return { status: 'failed', stage: 'auth-step', errorClass: 'internal' }
 
   // A login that can't be audited doesn't happen.
@@ -59,6 +62,12 @@ async function execute(ctx: FlowContext): Promise<AuthOutcome> {
     // The page may already be somewhere it shouldn't be, or on a block page, before the first step.
     await checkAfterStep(ctx)
     await runSteps(ctx, ctx.input.manifest.auth.steps)
+    // The interpreter always finishes with the probe. A flow whose last word was a passing
+    // assertLoggedIn has just run it; any other flow, however it ended, runs it now.
+    if (!ctx.probed) {
+      await assertLoggedIn(ctx)
+      await checkAfterStep(ctx)
+    }
     return { status: 'ok' }
   } catch (error) {
     return toOutcome(error)
@@ -66,37 +75,36 @@ async function execute(ctx: FlowContext): Promise<AuthOutcome> {
 }
 
 function toOutcome(error: unknown): AuthOutcome {
-  if (error instanceof NeedsUserHalt) return { status: 'needsUser', reason: error.reason }
-  if (error instanceof BlockedHalt) return { status: 'blocked' }
+  if (error instanceof NeedsUserHalt) {
+    return error.note === undefined
+      ? { status: 'needsUser', reason: error.reason }
+      : { status: 'needsUser', reason: error.reason, appNote: error.note }
+  }
+  const note = error instanceof FailStep && error.note !== undefined ? { appNote: error.note } : {}
   // Only the stage and class survive; the error itself, and anything in its message, stays here.
   const { stage, errorClass } = toReportable(error, 'auth-step')
-  return { status: 'failed', stage, errorClass }
+  // A block, from the block page, the probe or a fail step, is the site's answer, not a fault:
+  // the caller cools down instead of retrying.
+  if (errorClass === 'blocked-by-site' || errorClass === 'rate-limited') {
+    return { status: 'blocked', stage, errorClass, ...note }
+  }
+  return { status: 'failed', stage, errorClass, ...note }
 }
 
-/**
- * The audit vocabulary has no `blocked` outcome yet, so a block is recorded as a failure with the
- * `blocked-by-site` class. See coreChangeRequests in the auth-flow handover.
- */
+/** What the audit log records. Notes are free text and never go in it; reasons and classes do. */
 function finishedEvent(manifest: AdapterManifest, outcome: AuthOutcome): AuditEvent {
   const adapterId = manifest.id
   switch (outcome.status) {
     case 'ok':
       return { type: 'login-finished', adapterId, outcome: 'ok' }
     case 'needsUser':
-      return { type: 'login-finished', adapterId, outcome: 'needsUser' }
+      return { type: 'login-finished', adapterId, outcome: 'needsUser', needsUser: outcome.reason }
     case 'blocked':
-      return {
-        type: 'login-finished',
-        adapterId,
-        outcome: 'failed',
-        stage: 'auth-step',
-        errorClass: 'blocked-by-site',
-      }
     case 'failed':
       return {
         type: 'login-finished',
         adapterId,
-        outcome: 'failed',
+        outcome: outcome.status,
         stage: outcome.stage,
         errorClass: outcome.errorClass,
       }

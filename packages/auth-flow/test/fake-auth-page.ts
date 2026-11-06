@@ -2,7 +2,16 @@
 // the frames and forms they belong to, its text, and where clicks and server redirects lead. Tests
 // copy a site fixture and change one thing.
 
-import { type AuthPage, type ElementInfo, httpsOrigin, SecretValue } from '@siteadapter/core'
+import {
+  type AuthPage,
+  type ElementInfo,
+  httpsOrigin,
+  type NeedsUserReason,
+  originAllowed,
+  SecretValue,
+  SiteAdapterError,
+  type TypeOptions,
+} from '@siteadapter/core'
 
 export interface FakeElement {
   /** Defaults to "input". */
@@ -12,6 +21,8 @@ export interface FakeElement {
   readonly inputMode?: string | null
   /** Defaults to true. */
   readonly visible?: boolean
+  /** Defaults to true. False models an element inside an out-of-process frame. */
+  readonly inputReachable?: boolean
   /** A key in the state's `frames`. Defaults to the top-level page's own origin. */
   readonly frame?: string
   /** A key in the state's `forms`. Defaults to no form. */
@@ -45,6 +56,7 @@ export interface Typed {
   /** Whether it arrived as a SecretValue rather than a string. */
   readonly secret: boolean
   readonly delayMs: number | undefined
+  readonly allowedOrigins: readonly string[] | undefined
 }
 
 export class FakeAuthPage implements AuthPage {
@@ -54,9 +66,11 @@ export class FakeAuthPage implements AuthPage {
   readonly visited: string[] = []
   readonly clicked: string[] = []
   readonly typed: Typed[] = []
-  readonly handedToUser: string[] = []
+  readonly handedToUser: NeedsUserReason[] = []
   /** The auth partition's cookie jar, by name. The probe reads this; nothing copies it anywhere. */
   readonly cookies = new Set<string>()
+  /** Runs before each keystroke of a secret, for tests where the page moves mid-typing. */
+  beforeKeystroke: ((index: number) => void) | null = null
   closed = false
 
   constructor(readonly site: FakeSite) {}
@@ -93,10 +107,6 @@ export class FakeAuthPage implements AuthPage {
     const state = this.state()
     const element = state.elements?.[selector]
     if (element === undefined) return null
-    const frameOrigin =
-      element.frame === undefined
-        ? (httpsOrigin(this.url) ?? 'null')
-        : (state.frames?.[element.frame] ?? 'null')
     const formActionOrigin = element.form === undefined ? null : (state.forms?.[element.form] ?? null)
     return {
       visible: element.visible ?? true,
@@ -104,8 +114,9 @@ export class FakeAuthPage implements AuthPage {
       inputType: element.inputType ?? null,
       autocomplete: element.autocomplete ?? null,
       inputMode: element.inputMode ?? null,
-      frameOrigin,
+      frameOrigin: this.frameOrigin(selector) ?? 'null',
       formActionOrigin,
+      inputReachable: element.inputReachable ?? true,
     }
   }
 
@@ -122,28 +133,57 @@ export class FakeAuthPage implements AuthPage {
     this.focused = selector
   }
 
-  async type(text: string | SecretValue, options?: { readonly delayMs?: number }): Promise<void> {
+  /**
+   * Behaves as the driver is specified to: a secret needs allowedOrigins, and before every
+   * keystroke the focused element must still exist in a frame on one of them. Whatever was typed
+   * before it stopped is recorded.
+   */
+  async type(text: string | SecretValue, options?: TypeOptions): Promise<void> {
     const secret = text instanceof SecretValue
-    const plaintext = text instanceof SecretValue ? text.reveal((value) => value) : text
-    this.typed.push({
+    const allowed = options?.allowedOrigins
+    if (secret && allowed === undefined) throw new Error('allowedOrigins is required for a secret')
+    const record = {
       selector: this.focused,
       url: this.url,
-      text: plaintext,
-      secret,
       delayMs: options?.delayMs,
-    })
+      allowedOrigins: allowed,
+    }
+    let typed = ''
+    const keystroke = async (character: string): Promise<void> => {
+      this.beforeKeystroke?.(typed.length)
+      if (allowed !== undefined) {
+        const origin = this.focused === null ? null : this.frameOrigin(this.focused)
+        if (origin === null || !originAllowed(origin, allowed)) {
+          this.typed.push({ ...record, text: typed, secret })
+          throw new SiteAdapterError('secret-fill', 'origin-mismatch')
+        }
+      }
+      typed += character
+    }
+    if (text instanceof SecretValue) await text.revealEach(keystroke)
+    else for (const character of text) await keystroke(character)
+    this.typed.push({ ...record, text: typed, secret })
   }
 
   async textPresent(text: string): Promise<boolean> {
     return this.state().text?.some((line) => line.includes(text)) ?? false
   }
 
-  async handToUser(reason: string): Promise<void> {
+  async handToUser(reason: NeedsUserReason): Promise<void> {
     this.handedToUser.push(reason)
   }
 
   async close(): Promise<void> {
     this.closed = true
+  }
+
+  /** The security origin of the frame holding `selector` on the current page, or null if it's gone. */
+  private frameOrigin(selector: string): string | null {
+    const state = this.state()
+    const element = state.elements?.[selector]
+    if (element === undefined) return null
+    if (element.frame === undefined) return httpsOrigin(this.url)
+    return state.frames?.[element.frame] ?? null
   }
 
   private state(): FakeState {

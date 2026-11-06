@@ -9,6 +9,7 @@ import {
   type ErrorClass,
   type Grant,
   httpsOrigin,
+  MESSAGES_SECRET,
   type MessagesOtpQuery,
   originAllowed,
   type ResolveFailure,
@@ -20,23 +21,21 @@ import {
   urlOriginAllowed,
 } from '@siteadapter/core'
 import { checkBlocked, checkNavigation, type FlowContext, guarded, now, remainingMs } from './context'
-import { allowedOrigins, requestedOrigins, suitsField } from './guards'
+import { allowedOrigins, suitsField } from './guards'
 
 /** How often to look for a one-time code that hasn't arrived yet. */
 export const OTP_POLL_MS = 1000
-
-/**
- * The secret name for codes read from Messages, which have no secret request of their own: the
- * name their grant is stored under and the name the audit log records.
- */
-export const MESSAGES_SECRET = 'messages'
 
 const RESOLVE_FAILURES: readonly ResolveFailure[] = ['locked', 'not-found', 'field-missing', 'unavailable']
 
 /** Fills a secret from a credential provider: `fill` with a secret ref, or `otp` with a secret source. */
 export async function fillSecret(ctx: FlowContext, selector: string, ref: SecretRef): Promise<void> {
   const { manifest, providers } = ctx.input
+  // The schema reserves the name; a manifest that uses it anyway would read a Messages grant as its own.
+  if (ref.secret === MESSAGES_SECRET) throw new SiteAdapterError('secret-fill', 'invalid')
   const grant = await findGrant(ctx, ref.secret)
+  // A Messages grant names a sender, not a credential item, and is never resolved through a provider.
+  if (grant.provider === 'messages') throw new SiteAdapterError('secret-fill', 'not-granted')
   // hasOwn, because a secret named "constructor" would otherwise find Object's.
   const request = Object.hasOwn(manifest.secrets, ref.secret) ? manifest.secrets[ref.secret] : undefined
   if (request === undefined || !request.fields.includes(ref.field)) {
@@ -50,7 +49,7 @@ export async function fillSecret(ctx: FlowContext, selector: string, ref: Secret
   const secret = await resolveSecret(() => provider.resolve(grant.itemRef, ref.field), 'credential')
   try {
     const element = await checkTarget(ctx, selector, ref.field, origins)
-    await typeSecret(ctx, selector, secret, ref.secret, ref.field, element)
+    await typeSecret(ctx, selector, secret, ref.secret, ref.field, element, origins)
   } finally {
     secret.dispose()
   }
@@ -58,23 +57,30 @@ export async function fillSecret(ctx: FlowContext, selector: string, ref: Secret
 
 /**
  * Fills a one-time code read from Messages. Reading someone's texts needs their say-so as much as
- * a 1Password item does, so it takes a grant too: until core has a grant kind of its own for it, a
- * grant for the secret named MESSAGES_SECRET, for this adapter and hash. Its provider and item are
- * unused. The code may go only to origins in that grant that some secret request also asked for,
- * and the manifest must name the sender, so that a grant to one site can't read another's codes.
+ * a 1Password item does: a grant with provider `messages` under the reserved secret name, for this
+ * exact adapter and hash, whose itemRef is the sender the manifest names. So a grant for one sender
+ * can't read another's codes, and a changed manifest asks again. The code may go only to origins
+ * in that grant that are also on the navigation allowlist.
  */
 export async function fillMessagesOtp(
   ctx: FlowContext,
   selector: string,
-  source: { readonly sender?: string | undefined; readonly pattern: string; readonly maxAgeSeconds: number },
+  source: { readonly sender: string; readonly pattern: string; readonly maxAgeSeconds: number },
 ): Promise<void> {
   const { manifest } = ctx.input
   // A manifest's own secret called "messages" would have a 1Password grant that reads as this one.
-  if (source.sender === undefined || Object.hasOwn(manifest.secrets, MESSAGES_SECRET)) {
+  if (
+    typeof source.sender !== 'string' ||
+    source.sender.length === 0 ||
+    Object.hasOwn(manifest.secrets, MESSAGES_SECRET)
+  ) {
     throw new SiteAdapterError('secret-fill', 'invalid')
   }
   const grant = await findGrant(ctx, MESSAGES_SECRET)
-  const origins = allowedOrigins(grant.origins, requestedOrigins(manifest))
+  if (grant.provider !== 'messages' || grant.itemRef !== source.sender) {
+    throw new SiteAdapterError('secret-fill', 'not-granted')
+  }
+  const origins = allowedOrigins(grant.origins, manifest.navigation)
   await checkTarget(ctx, selector, 'otp', origins)
   const query: MessagesOtpQuery = {
     sender: source.sender,
@@ -84,7 +90,7 @@ export async function fillMessagesOtp(
   const code = await readOtp(ctx, query)
   try {
     const element = await checkTarget(ctx, selector, 'otp', origins)
-    await typeSecret(ctx, selector, code, MESSAGES_SECRET, 'otp', element)
+    await typeSecret(ctx, selector, code, MESSAGES_SECRET, 'otp', element, origins)
   } finally {
     code.dispose()
   }
@@ -162,6 +168,9 @@ async function checkTarget(
   }
   const currentUrl = await guarded('secret-fill', () => page.currentUrl())
   if (!urlOriginAllowed(currentUrl, origins)) throw new SiteAdapterError('secret-fill', 'origin-mismatch')
+  // Strictly true: the driver can't deliver trusted keystrokes into an out-of-process frame, and
+  // finding that out only after the person approved Touch ID would ask them again for nothing.
+  if (element.inputReachable !== true) throw new SiteAdapterError('secret-fill', 'input-unreachable')
   if (!suitsField(element, field)) throw new SiteAdapterError('secret-fill', 'element-unsuitable')
   // A password typed into a form that posts elsewhere, or into no form at all (a search box), ends
   // up in URLs, history and analytics.
@@ -175,8 +184,11 @@ async function checkTarget(
 }
 
 /**
- * Audits, then types. Auditing first means a secret is never typed without a record of it: if the
- * audit log can't be written, the fill doesn't happen.
+ * Hands the runtime its copy for redaction, focuses, audits, then types. Auditing first means a
+ * secret is never typed without a record of it: if the audit log can't be written, the fill doesn't
+ * happen. The driver types only into the element focus() targeted and checks the focused frame's
+ * origin against `origins` before every keystroke, so a page that moves focus or navigates
+ * mid-secret gets none of the rest.
  */
 async function typeSecret(
   ctx: FlowContext,
@@ -185,8 +197,10 @@ async function typeSecret(
   secret: string,
   field: SecretField,
   element: ElementInfo,
+  origins: readonly string[],
 ): Promise<void> {
-  const { page, audit, manifest, adapterHash, callId, typingDelayMs } = ctx.input
+  const { page, audit, manifest, adapterHash, callId, typingDelayMs, rememberSecret } = ctx.input
+  remember(value, rememberSecret)
   await guarded('secret-fill', () => page.focus(selector))
   await guarded('secret-fill', () =>
     audit.append({
@@ -200,5 +214,22 @@ async function typeSecret(
       callId,
     }),
   )
-  await guarded('secret-fill', () => page.type(value, { delayMs: typingDelayMs }))
+  await guarded('secret-fill', () =>
+    page.type(value, { delayMs: typingDelayMs, allowedOrigins: [...origins] }),
+  )
+}
+
+/**
+ * Gives the runtime an independent copy, so tool output can still be redacted after this one is
+ * disposed. If the runtime can't take it, the secret isn't typed: a value that might later appear
+ * unredacted is worse than a login that didn't happen.
+ */
+function remember(value: SecretValue, rememberSecret: (secret: SecretValue) => void): void {
+  const copy = value.clone()
+  try {
+    rememberSecret(copy)
+  } catch {
+    copy.dispose()
+    throw new SiteAdapterError('secret-fill', 'internal')
+  }
 }

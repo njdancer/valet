@@ -1,7 +1,7 @@
-import { CredentialError } from '@siteadapter/core'
+import { CredentialError, MESSAGES_SECRET } from '@siteadapter/core'
 import { describe, expect, it, vi } from 'vitest'
 import { runAuthFlow } from '../src/run-auth-flow'
-import { MESSAGES_SECRET, OTP_POLL_MS } from '../src/secret-fill'
+import { OTP_POLL_MS } from '../src/secret-fill'
 import {
   CANARY,
   EVIL,
@@ -10,10 +10,15 @@ import {
   LOGIN_PAGE,
   MESSAGES_GRANT,
   manifestWithSteps,
+  SENDER,
   START,
+  unparsedWithSteps,
   WWW,
   world,
 } from './fixtures'
+
+// These flows type a code and stop. Every flow finishes with the probe, so tests that expect ok
+// start with the auth partition's session cookie already set.
 
 const TOTP = manifestWithSteps([
   { op: 'goto', url: LOGIN_PAGE },
@@ -25,18 +30,26 @@ const SMS = manifestWithSteps([
   {
     op: 'otp',
     selector: '#otp',
-    source: { messages: { sender: 'ShopSMS', pattern: 'code is (\\d{6})', maxAgeSeconds: 300 } },
+    source: { messages: { sender: SENDER, pattern: 'code is (\\d{6})', maxAgeSeconds: 300 } },
   },
 ])
 
 describe('otp from a 1Password TOTP field', () => {
   it('fills the code like any other secret', async () => {
     const w = world()
+    w.page.cookies.add('session')
     w.input.manifest = TOTP
     expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
     expect(w.provider.calls).toEqual([{ itemRef: 'op://siteadapter/Shop', field: 'otp' }])
     expect(w.page.typed).toEqual([
-      { selector: '#otp', url: LOGIN_PAGE, text: CANARY.otp, secret: true, delayMs: 40 },
+      {
+        selector: '#otp',
+        url: LOGIN_PAGE,
+        text: CANARY.otp,
+        secret: true,
+        delayMs: 40,
+        allowedOrigins: [LOGIN],
+      },
     ])
     expect(w.provider.issued[0]?.disposed).toBe(true)
   })
@@ -93,6 +106,7 @@ describe('otp from a 1Password TOTP field', () => {
 
   it('does not apply the password form-action rule to codes', async () => {
     const w = world()
+    w.page.cookies.add('session')
     w.page.site[LOGIN_PAGE] = {
       elements: { '#otp': { inputType: 'text', autocomplete: 'one-time-code' } },
     }
@@ -102,8 +116,9 @@ describe('otp from a 1Password TOTP field', () => {
 })
 
 describe('otp from Messages', () => {
-  it('waits for the code to arrive, then types it', async () => {
+  it('waits for the code to arrive, then types it on the granted origins only', async () => {
     const w = world()
+    w.page.cookies.add('session')
     w.otpReader.messages.push({
       at: START + 3000,
       sender: 'ShopSMS',
@@ -112,7 +127,14 @@ describe('otp from Messages', () => {
     w.input.manifest = SMS
     expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
     expect(w.page.typed).toEqual([
-      { selector: '#otp', url: LOGIN_PAGE, text: CANARY.sms, secret: true, delayMs: 40 },
+      {
+        selector: '#otp',
+        url: LOGIN_PAGE,
+        text: CANARY.sms,
+        secret: true,
+        delayMs: 40,
+        allowedOrigins: [LOGIN],
+      },
     ])
     expect(w.clock.sleeps).toEqual([OTP_POLL_MS, OTP_POLL_MS, OTP_POLL_MS])
   })
@@ -142,7 +164,7 @@ describe('otp from Messages', () => {
   it('refuses a Messages source that names no sender, before reading anything', async () => {
     const w = world()
     w.otpReader.messages.push({ at: START, sender: 'anyone', body: `code is ${CANARY.sms}` })
-    w.input.manifest = manifestWithSteps([
+    w.input.manifest = unparsedWithSteps([
       { op: 'goto', url: LOGIN_PAGE },
       {
         op: 'otp',
@@ -231,15 +253,16 @@ describe('otp from Messages', () => {
       {
         op: 'otp',
         selector: '#search',
-        source: { messages: { sender: 'ShopSMS', pattern: '(\\d{6})', maxAgeSeconds: 300 } },
+        source: { messages: { sender: SENDER, pattern: '(\\d{6})', maxAgeSeconds: 300 } },
       },
     ])
     expect(await runAuthFlow(w.input)).toMatchObject({ errorClass: 'element-unsuitable' })
     expect(w.otpReader.calls).toEqual([])
   })
 
-  it('refuses a code on a navigation origin that no secret request asked for', async () => {
+  it('types a code on any navigation origin the Messages grant covers', async () => {
     const w = world()
+    w.page.cookies.add('session')
     w.page.site[`${WWW}/verify`] = { elements: { '#otp': { inputType: 'tel' } } }
     w.grants.grants[1] = { ...MESSAGES_GRANT, origins: [LOGIN, WWW] }
     w.otpReader.messages.push({ at: START, sender: 'ShopSMS', body: `code is ${CANARY.sms}` })
@@ -248,7 +271,31 @@ describe('otp from Messages', () => {
       {
         op: 'otp',
         selector: '#otp',
-        source: { messages: { sender: 'ShopSMS', pattern: 'code is (\\d{6})', maxAgeSeconds: 300 } },
+        source: { messages: { sender: SENDER, pattern: 'code is (\\d{6})', maxAgeSeconds: 300 } },
+      },
+    ])
+    expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
+    expect(w.page.typed.map((typed) => typed.allowedOrigins)).toEqual([[LOGIN, WWW]])
+  })
+
+  it('refuses a code on a granted origin that is not on the navigation allowlist', async () => {
+    const w = world()
+    const pay = 'https://pay.shop.test'
+    w.grants.grants[1] = { ...MESSAGES_GRANT, origins: [pay] }
+    w.otpReader.messages.push({ at: START, sender: 'ShopSMS', body: `code is ${CANARY.sms}` })
+    // The page is somehow on the granted origin; the navigation check would catch it too, so this
+    // checks the origin set itself by letting only the history through.
+    const committed = w.page.committedUrls.bind(w.page)
+    vi.spyOn(w.page, 'committedUrls').mockImplementation(() =>
+      committed().filter((url) => !url.startsWith(pay)),
+    )
+    w.page.site[`${pay}/verify`] = { elements: { '#otp': { inputType: 'tel' } } }
+    w.page.navigate(`${pay}/verify`)
+    w.input.manifest = manifestWithSteps([
+      {
+        op: 'otp',
+        selector: '#otp',
+        source: { messages: { sender: SENDER, pattern: 'code is (\\d{6})', maxAgeSeconds: 300 } },
       },
     ])
     expect(await runAuthFlow(w.input)).toEqual({
@@ -257,7 +304,6 @@ describe('otp from Messages', () => {
       errorClass: 'origin-mismatch',
     })
     expect(w.otpReader.calls).toEqual([])
-    expect(w.page.typed).toEqual([])
   })
 
   it('refuses a code on a requested origin the Messages grant does not cover', async () => {
@@ -269,8 +315,9 @@ describe('otp from Messages', () => {
     expect(w.otpReader.calls).toEqual([])
   })
 
-  it('types a code on an origin that is both granted and requested, and audits it as messages', async () => {
+  it('audits a code from Messages as the messages secret, on the origin it was typed', async () => {
     const w = world()
+    w.page.cookies.add('session')
     w.otpReader.messages.push({ at: START, sender: 'ShopSMS', body: `code is ${CANARY.sms}` })
     w.input.manifest = SMS
     expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
@@ -299,6 +346,56 @@ describe('otp from Messages', () => {
     expect(w.page.typed).toEqual([])
   })
 
+  it('refuses a Messages grant for another sender, and reads nothing', async () => {
+    const w = world()
+    w.grants.grants[1] = { ...MESSAGES_GRANT, itemRef: 'BankSMS' }
+    w.otpReader.messages.push({ at: START, sender: 'ShopSMS', body: `code is ${CANARY.sms}` })
+    w.input.manifest = SMS
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'secret-fill',
+      errorClass: 'not-granted',
+    })
+    expect(w.otpReader.calls).toEqual([])
+  })
+
+  it('compares the sender exactly, not by case or prefix', async () => {
+    for (const itemRef of ['shopsms', 'ShopSMS ', 'Shop']) {
+      const w = world()
+      w.grants.grants[1] = { ...MESSAGES_GRANT, itemRef }
+      w.input.manifest = SMS
+      expect(await runAuthFlow(w.input)).toMatchObject({ errorClass: 'not-granted' })
+      expect(w.otpReader.calls).toEqual([])
+    }
+  })
+
+  it('refuses a grant under the messages name whose provider is not messages', async () => {
+    const w = world()
+    w.grants.grants[1] = { ...MESSAGES_GRANT, provider: 'onepassword-service-account' }
+    w.input.manifest = SMS
+    expect(await runAuthFlow(w.input)).toMatchObject({ errorClass: 'not-granted' })
+    expect(w.otpReader.calls).toEqual([])
+  })
+
+  it('refuses an empty sender even when the grant names an empty sender', async () => {
+    const w = world()
+    w.grants.grants[1] = { ...MESSAGES_GRANT, itemRef: '' }
+    w.input.manifest = unparsedWithSteps([
+      { op: 'goto', url: LOGIN_PAGE },
+      {
+        op: 'otp',
+        selector: '#otp',
+        source: { messages: { sender: '', pattern: '(\\d{6})', maxAgeSeconds: 300 } },
+      },
+    ])
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'secret-fill',
+      errorClass: 'invalid',
+    })
+    expect(w.otpReader.calls).toEqual([])
+  })
+
   it('does not take a 1Password grant for another secret as a Messages grant', async () => {
     const w = world()
     w.grants.grants.splice(1, 1)
@@ -318,7 +415,7 @@ describe('otp from Messages', () => {
     expect(w.otpReader.calls).toEqual([])
   })
 
-  it('refuses a manifest that declares its own secret named messages', async () => {
+  it('refuses a manifest that declares its own secret named messages, which the schema would refuse', async () => {
     const w = world()
     w.otpReader.messages.push({ at: START, sender: 'ShopSMS', body: `code is ${CANARY.sms}` })
     w.input.manifest = {
@@ -351,7 +448,11 @@ describe('otp from Messages', () => {
     w.page.site['https://www.shop.test/denied'] = { blocked: true }
     w.clock.onSleep = () => w.page.navigate('https://www.shop.test/denied')
     w.input.manifest = SMS
-    expect(await runAuthFlow(w.input)).toEqual({ status: 'blocked' })
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'blocked',
+      stage: 'auth-step',
+      errorClass: 'blocked-by-site',
+    })
   })
 
   it('checks the target again once the code arrives, and disposes it when refused', async () => {
