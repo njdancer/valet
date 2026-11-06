@@ -165,7 +165,7 @@
             <span class="avatar sm wow">W</span>
             <span class="name">Woolworths</span>
             <span class="pill">0.2.0-dev</span>
-            <span class="hash">draft 41c0e7a2…b7d3</span>
+            <span class="hash" title="The draft after you approved the agent's orders proposal">draft 0b64e1c9…d3a2</span>
           </div>
           <nav class="modes" style="margin-left: var(--space-4)">
             <a href="ide-workspace.html"><span class="i i-code"></span>Workspace</a>
@@ -182,8 +182,8 @@
         <div class="ide-body">
           <aside class="pane tree">
             <div class="pane-head">
-              Tests<span class="spacer"></span><span class="ok-text" style="font-weight: 500">175 passed</span
-              ><span class="danger-text" style="font-weight: 500">1 failed</span><span style="font-weight: 500">1 gated</span>
+              Tests<span class="spacer"></span><span class="ok-text" style="font-weight: 500">166 passed</span
+              ><span class="danger-text" style="font-weight: 500">2 failed</span><span style="font-weight: 500">1 gated</span>
             </div>
             <div class="pane-scroll tree-list">
               <div class="tree-group">Fixture tests · against the fake site<span class="count">0.9 s</span></div>
@@ -194,7 +194,7 @@
               <div class="node d1 tnode"><span class="i st pass i-check"></span><span class="label">get-product.test.ts</span><span class="n">14</span></div>
               <div class="node d1 tnode"><span class="i st pass i-check"></span><span class="label">cart.test.ts</span><span class="n">47</span></div>
               <div class="node d1 tnode"><span class="i st pass i-check"></span><span class="label">orders.test.ts</span><span class="n">9</span></div>
-              <div class="node d1 tnode"><span class="i st pass i-check"></span><span class="label">request-surface.test.ts</span><span class="n">13</span></div>
+              <div class="node d1 tnode"><span class="i st pass i-check"></span><span class="label">request-surface.test.ts</span><span class="n">5</span></div>
               <div class="node d1 tnode"><span class="i st pass i-check"></span><span class="label">text.test.ts</span><span class="n">8</span></div>
 
               <div class="tree-group">Security · run on every change</div>
@@ -202,15 +202,15 @@
                 <span class="i st pass i-check"></span><span class="label">Canary reaches only the login POST</span>
               </div>
               <div class="node d1 tnode">
-                <span class="i st pass i-check"></span><span class="label">Undeclared fetch is cancelled</span>
+                <span class="i st pass i-check"></span><span class="label">Undeclared fetch fails the call</span>
               </div>
               <div class="node d1 tnode">
                 <span class="i st pass i-check"></span><span class="label">No route from tool to auth session</span>
               </div>
 
               <div class="tree-group">Recorded traces · replayed on the fake</div>
-              <div class="node d1 tnode">
-                <span class="i st pass i-check"></span><span class="label mono">get_cart</span><span class="n">today 9:31 pm</span>
+              <div class="node d1 tnode fail-row">
+                <span class="i st fail i-x"></span><span class="label mono">get_cart</span><span class="n">today 5:12 pm</span>
               </div>
               <div class="node d1 tnode">
                 <span class="i st pass i-check"></span><span class="label mono">search_products “milk”</span><span class="n">5 Nov</span>
@@ -280,9 +280,10 @@
             <div class="callout info prov">
               <span class="i i-activity"></span>
               <div>
-                The live <span class="mono">add_to_cart</span> call at 3:58 pm saved this trace. The fixtures are from 3 Nov
-                and still have the old key, which is why every fixture test passes. Trace bodies keep keys and types; every
-                value is replaced before it's stored.
+                The live <span class="mono">add_to_cart</span> call at 3:58 pm saved this trace. Every
+                <span class="mono">get_cart</span> since fails the same way: its 5:12 pm trace is the other failure. The
+                fixtures are from 3 Nov and still have the old key, which is why every fixture test passes. Trace bodies keep
+                keys and types; every value is replaced before it's stored.
               </div>
             </div>
           </section>
@@ -308,16 +309,17 @@
                 </div>
                 <div class="file">src/cart.ts<span class="ok-text" style="margin-left: auto">+3</span><span class="danger-text">−1</span></div>
                 <div class="codeview">
-                  <div class="del"><i>158</i><b>−</b>    totalQuantity: trolley.TotalTrolleyItemQuantity,</div>
-                  <div class="add"><i>158</i><b>+</b>    totalQuantity: trolley.TrolleyItemQuantity ??</div>
-                  <div class="add"><i>159</i><b>+</b>      trolley.TotalTrolleyItemQuantity ??</div>
-                  <div class="add"><i>160</i><b>+</b>      <span class="tf">sumQuantities</span>(quantities),</div>
+                  <div class="add"><i>145</i><b>+</b>  <span class="tk">const</span> totalQuantity = trolley.TrolleyItemQuantity ?? trolley.TotalTrolleyItemQuantity</div>
+                  <div class="add"><i>146</i><b>+</b>  <span class="tk">if</span> (totalQuantity === <span class="tk">undefined</span>) <span class="tk">throw new</span> <span class="tf">SiteAdapterError</span>(<span class="ts">'tool-run'</span>, <span class="ts">'invalid'</span>)</div>
+                  <div class="fold"><i></i><b></b>  ⋯</div>
+                  <div class="del"><i>160</i><b>−</b>    totalQuantity: trolley.TotalTrolleyItemQuantity,</div>
+                  <div class="add"><i>160</i><b>+</b>    totalQuantity,</div>
                 </div>
                 <div class="r-opt">
                   <span class="check on"></span>Add the trace as fixture <span class="mono xs">trolley-2026-11-07.json</span>
                 </div>
                 <div class="r-foot">
-                  <span class="xs muted grow"><span class="ok-text">Code only, no new permissions.</span> Still a new hash you review.</span>
+                  <span class="xs muted grow"><span class="ok-text">Code only, no new permissions.</span> A new hash you review.</span>
                   <button type="button" class="btn">Discard</button>
                   <button type="button" class="btn primary">Apply and re-run</button>
                 </div>
@@ -329,13 +331,12 @@
                   <span class="pill" style="margin-left: auto">Off until you run it</span>
                 </div>
                 <div class="xs muted">
-                  Calls <span class="mono">get_cart</span> and <span class="mono">search_products “milk”</span> once each on
-                  the real site, logged in as you.
+                  <span class="mono">get_cart</span> and <span class="mono">search_products “milk”</span> once each, about 4
+                  requests 2 s apart, in installed 0.1.0's session.
                 </div>
                 <div class="facts">
-                  <span class="i i-globe"></span><span>3 requests to www.woolworths.com.au, at least 2.5 s apart</span>
-                  <span class="i i-clock"></span><span>Counts against the hourly budget: 18 of 60 used</span>
-                  <span class="i i-shield"></span><span>Read tools only, and blocked while the circuit breaker is open</span>
+                  <span class="i i-warn warn-text"></span><span>Traffic like this got the first live probe blocked by Akamai</span>
+                  <span class="i i-shield"></span><span>A block opens the breaker: no calls for 10 min, longer each time</span>
                 </div>
                 <button type="button" class="btn warn-outline">Run live smoke test…</button>
               </div>
@@ -350,19 +351,19 @@
               <span class="xs muted">Offline run · 10:05:58 pm · no network</span>
             </div>
             <div class="pane-scroll console"><span class="dim"> RUN </span> offline · fake site on 127.0.0.1:52114 · every other host refused
-<span class="ok">✓</span> 9 fixture test files <span class="dim">169 tests · 0.9 s</span>
-<span class="ok">✓</span> security/canary-egress <span class="dim">canary typed once · seen only in POST https://auth.woolworths.test/u/login/password · 0 in traces, outputs, audit</span>
-<span class="ok">✓</span> security/request-surface, security/partition-isolation <span class="dim">2 tests</span>
-<span class="ok">✓</span> replay get_cart · search_products · get_product <span class="dim">3 traces</span>
+<span class="ok">✓</span> 9 fixture test files <span class="dim">161 tests · 0.9 s</span>
+<span class="ok">✓</span> security <span class="dim">3 tests · canary typed once, seen only in POST http://127.0.0.1:52114/auth/login, 0 in traces, outputs, audit</span>
+<span class="ok">✓</span> replay search_products · get_product <span class="dim">2 traces</span>
 <span class="bad">✗ replay add_to_cart (7 Nov 3:58 pm) → tool-run / invalid at trolleyWire.parse (wire.ts:85)</span>
-<span class="dim">Tests</span> 172 passed  <span class="dim">Traces</span> 3 passed, <span class="bad">1 failed</span>  <span class="dim">Live</span> not run</div>
+<span class="bad">✗ replay get_cart (7 Nov 5:12 pm) → tool-run / invalid at trolleyWire.parse (wire.ts:85)</span>
+<span class="dim">Tests</span> 164 passed  <span class="dim">Traces</span> 2 passed, <span class="bad">2 failed</span>  <span class="dim">Live</span> not run</div>
           </section>
         </div>
 
         <div class="ide-status">
-          <span class="danger-text"><span class="i i-x"></span>1 trace fails: the site changed</span>
+          <span class="danger-text"><span class="i i-x"></span>2 traces fail: the site changed</span>
           <span><span class="i i-lock"></span>Offline tests never reach the network: the fake site runs on this Mac</span>
-          <span class="right">Installed 0.1.0 is failing the same way for MCP clients · last call 3:58 pm</span>
+          <span class="right">Installed 0.1.0 · c3e94b20…7f15 fails the same way for MCP clients since 3:58 pm</span>
         </div>
       </div>
     </div>
