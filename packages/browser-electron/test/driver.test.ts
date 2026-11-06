@@ -254,6 +254,47 @@ describe('partition set-up', () => {
     expect(await rejection(driver.toolPage())).toMatchObject({ stage: 'egress', errorClass: 'internal' })
     expect(platform.surfaces.map((s) => s.isDestroyed())).toEqual([true, true])
   })
+
+  it('watches storage in every tool page before its first load, and in no auth page', async () => {
+    const { platform } = browserLike()
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    await driver.openAuthPage()
+    await driver.toolPage()
+    expect(platform.surfaces.map((s) => s.storageWatches)).toEqual([[], [{ afterLoad: false }]])
+  })
+
+  it('watches storage in tool pages with Electron’s own user agent too', async () => {
+    const { platform } = browserLike()
+    await new ElectronSessionDriver(platform, { ...OPTIONS, userAgent: 'electron' }).toolPage()
+    expect(platform.surfaces[0]!.storageWatches).toEqual([{ afterLoad: false }])
+  })
+
+  it('destroys a tool page whose storage watch fails or never answers', async () => {
+    const { platform } = browserLike()
+    const timers = new ManualTimers()
+    const makeSurface = platform.makeSurface
+    let hang = false
+    platform.makeSurface = (partition) => {
+      const surface = makeSurface(partition)
+      surface.onWatchStorage = hang
+        ? () => new Promise(() => {})
+        : async () => {
+            throw new Error('Target closed: /Users/nick')
+          }
+      return surface
+    }
+    const driver = new ElectronSessionDriver(platform, { ...OPTIONS, timers })
+    const failed = await rejection(driver.toolPage())
+    expect(failed).toMatchObject({ stage: 'egress', errorClass: 'internal' })
+    expect(failed.message).not.toContain('nick')
+    hang = true
+    expect(await timers.settle(rejection(driver.toolPage()))).toMatchObject({
+      stage: 'timeout',
+      errorClass: 'timed-out',
+    })
+    expect(platform.surfaces.map((s) => s.isDestroyed())).toEqual([true, true])
+    expect(platform.surfaces.flatMap((s) => s.loads)).toEqual([])
+  })
 })
 
 describe('tool partition egress guard', () => {
@@ -1214,6 +1255,142 @@ describe('sessionSecrets', () => {
     storageFor(TOOL, 'https://www.example.com').set('token', 'rotated')
     const secrets = await driver.sessionSecrets([], [{ origin: 'https://www.example.com', keys: ['token'] }])
     expect([...secrets].sort()).toEqual(['first', 'rotated'])
+  })
+
+  it('still lists a handed-off cookie value after the tool page overwrote it', async () => {
+    const { platform } = browserLike()
+    platform.session(AUTH).cookies = [tokenCookie]
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    await driver.handoff(['www.example.com'], [])
+    // document.cookie = 'wow-auth-token=x': the store now holds only the new value.
+    platform.session(TOOL).cookies = [{ ...tokenCookie, value: 'overwritten-by-tool' }]
+    const secrets = await driver.sessionSecrets(['www.example.com'], [])
+    expect([...secrets].sort()).toEqual(['overwritten-by-tool', 'session-token-value'])
+  })
+
+  it('still lists a cookie the site rotated mid-run after tool code expired it', async () => {
+    const { platform } = browserLike()
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    await driver.toolPage()
+    const tool = platform.session(TOOL)
+    // Set-Cookie rotates the session, then document.cookie = 'sid=; max-age=0' removes it: each
+    // change event carries the value, the removal the one removed.
+    tool.emitCookie({ ...tokenCookie, value: 'rotated-mid-run' })
+    tool.emitCookie({ ...tokenCookie, value: 'rotated-mid-run' })
+    tool.cookies = []
+    expect(await driver.sessionSecrets(['www.example.com'], [])).toEqual(['rotated-mid-run'])
+  })
+
+  it('lists only the remembered cookie values on the domains asked for', async () => {
+    const { platform } = browserLike()
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    await driver.toolPage()
+    platform.session(TOOL).emitCookie({ ...tokenCookie, name: 'ads', value: 'tracker', domain: '.ads.test' })
+    expect(await driver.sessionSecrets(['www.example.com'], [])).toEqual([])
+  })
+
+  it('still lists a storage value the site rotated after tool code overwrote it', async () => {
+    const { platform, storageFor } = browserLike()
+    storageFor(AUTH, 'https://www.example.com').set('token', 'handed-off')
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    await driver.toolPage()
+    await driver.handoff([], [{ origin: 'https://www.example.com', keys: ['token'] }])
+    const surface = platform.surfaces.find((s) => s.partition === TOOL && !s.isDestroyed())!
+    const tool = storageFor(TOOL, 'https://www.example.com')
+    // The site rotates the token; tool code reads it and overwrites it before anyone asks.
+    tool.set('token', 'rotated')
+    surface.emitStorage({ origin: 'https://www.example.com', key: 'token', value: 'rotated' })
+    tool.set('token', 'decoy')
+    surface.emitStorage({ origin: 'https://www.example.com', key: 'token', value: 'rotated' })
+    surface.emitStorage({ origin: 'https://www.example.com', key: 'token', value: 'decoy' })
+    const secrets = await driver.sessionSecrets([], [{ origin: 'https://www.example.com', keys: ['token'] }])
+    expect([...secrets].sort()).toEqual(['decoy', 'handed-off', 'rotated'])
+  })
+
+  it('waits for storage events still on their way before it answers', async () => {
+    const { platform } = browserLike()
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    await driver.toolPage()
+    const storage = [{ origin: 'https://www.example.com', keys: ['token'] }]
+    await driver.sessionSecrets([], storage)
+    platform.surfaces[0]!.pendingStorage.push({
+      origin: 'https://www.example.com',
+      key: 'token',
+      value: 'late',
+    })
+    expect(await driver.sessionSecrets([], storage)).toEqual(['late'])
+  })
+
+  it('records no storage write to a key nobody asked to hand off or redact', async () => {
+    const { platform } = browserLike()
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    await driver.toolPage()
+    platform.surfaces[0]!.emitStorage({ origin: 'https://www.example.com', key: 'token', value: 'early' })
+    platform.surfaces[0]!.emitStorage({ origin: 'https://www.example.com', key: 'theme', value: 'dark' })
+    const storage = [{ origin: 'https://www.example.com', keys: ['token'] }]
+    expect(await driver.sessionSecrets([], storage)).toEqual([])
+    platform.surfaces[0]!.emitStorage({ origin: 'https://www.example.com', key: 'token', value: 'later' })
+    expect(await driver.sessionSecrets([], storage)).toEqual(['later'])
+  })
+
+  it('reads the watched keys when a run begins and ends, before tool code can remove them', async () => {
+    const { platform, storageFor } = browserLike()
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    await driver.toolPage()
+    const storage = [{ origin: 'https://www.example.com', keys: ['token'] }]
+    await driver.sessionSecrets([], storage)
+    const tool = storageFor(TOOL, 'https://www.example.com')
+    // Left from an earlier app session: never written while the driver watched.
+    tool.set('token', 'persisted')
+    driver.beginRun(READ_RUN, () => {})
+    tool.delete('token')
+    expect(await driver.sessionSecrets([], storage)).toEqual(['persisted'])
+    tool.set('token', 'second')
+    driver.endRun()
+    tool.delete('token')
+    expect([...(await driver.sessionSecrets([], storage))].sort()).toEqual(['persisted', 'second'])
+  })
+
+  it('reads nothing when a run begins with no tool page open or no watched key', async () => {
+    const { platform } = browserLike()
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    driver.beginRun(READ_RUN, () => {})
+    await driver.toolPage()
+    const frame = platform.surfaces[0]!.frameList[0]!
+    driver.endRun()
+    expect(frame.scripts).toEqual([])
+  })
+
+  it('ignores a run-start read that fails or answers nonsense', async () => {
+    const { platform } = browserLike()
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    await driver.toolPage()
+    const storage = [{ origin: 'https://www.example.com', keys: ['token'] }]
+    await driver.sessionSecrets([], storage)
+    const frame = platform.surfaces[0]!.frameList[0]!
+    const run = frame.run.bind(frame)
+    frame.run = async () => {
+      throw new Error('frame detached')
+    }
+    driver.beginRun(READ_RUN, () => {})
+    frame.run = async () => 'nonsense'
+    driver.endRun()
+    frame.run = run
+    expect(await driver.sessionSecrets([], storage)).toEqual([])
+  })
+
+  it('reports storage events that cannot be settled as internal', async () => {
+    const { platform } = browserLike()
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    await driver.toolPage()
+    platform.surfaces[0]!.onStorageSettled = async () => {
+      throw new Error('Target closed: /Users/nick')
+    }
+    const error = await rejection(
+      driver.sessionSecrets([], [{ origin: 'https://www.example.com', keys: ['token'] }]),
+    )
+    expect(error).toMatchObject({ stage: 'session-handoff', errorClass: 'internal' })
+    expect(error.message).not.toContain('nick')
   })
 
   it('opens no page to look, and never reads the auth partition', async () => {

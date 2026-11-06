@@ -35,6 +35,7 @@ import type {
 } from './platform'
 import { realTimers } from './platform'
 import { readStorageScript, writeStorageScript } from './scripts'
+import { SessionValues } from './session-values'
 import { withTimeout } from './timeout'
 import { SurfaceToolPage } from './tool-page'
 import {
@@ -152,8 +153,10 @@ export class ElectronSessionDriver implements SessionDriver {
   private run: RunState
   /** Requests tool code announced through the capability API, by method and URL. */
   private readonly announced = new Map<string, number>()
-  /** Storage values this driver handed off, by origin then key, for sessionSecrets(). */
-  private readonly handedOff = new Map<string, Map<string, string>>()
+  /** Every value the session's cookies and storage keys have held in the tool partition. */
+  private readonly values = new SessionValues()
+  /** Storage reads beginRun() and endRun() started, which sessionSecrets() waits for. */
+  private readonly snapshots = new Set<Promise<void>>()
   private readonly timing: PageTiming
   private readonly authPages = new Map<BrowserSurface, SurfaceAuthPage>()
   private readonly helpers = new Set<BrowserSurface>()
@@ -182,6 +185,7 @@ export class ElectronSessionDriver implements SessionDriver {
    * again from zero, and irreversible declarations stay refused until unlockIrreversible().
    */
   beginRun(policy: ToolRunPolicy, onBlocked: (request: BlockedRequest) => void): void {
+    this.snapshotStorage()
     this.run = { policy, onBlocked, inRun: true, irreversibleUnlocked: false, counted: 0, assets: 0 }
   }
 
@@ -192,6 +196,7 @@ export class ElectronSessionDriver implements SessionDriver {
 
   /** Ends a run: back to the between-runs policy, with a fresh count. */
   endRun(): void {
+    this.snapshotStorage()
     this.run = this.betweenRuns()
   }
 
@@ -236,7 +241,10 @@ export class ElectronSessionDriver implements SessionDriver {
     const tool = await this.session('tool')
     try {
       const cookies = cookiesForDomains(await auth.getCookies(), cookieDomains)
-      for (const cookie of cookies) await tool.setCookie(cookieSetDetails(cookie))
+      for (const cookie of cookies) {
+        this.values.cookie(cookie)
+        await tool.setCookie(cookieSetDetails(cookie))
+      }
     } catch {
       throw new SiteAdapterError('session-handoff', 'internal')
     }
@@ -244,10 +252,13 @@ export class ElectronSessionDriver implements SessionDriver {
   }
 
   /**
-   * Values tool output must never contain: the tool partition's cookie values on `cookieDomains`,
-   * the storage values this driver handed off, and those keys' current values in an open tool page
-   * on the origin (the site may have rotated them). It opens no page to look: tool code can only
-   * read storage through a tool page, and if none is open on the origin there is nothing newer.
+   * Values tool output must never contain. Not a snapshot, since tool code can read a value and
+   * then overwrite or expire it before this is called: the tool partition's cookie values on
+   * `cookieDomains` now, every value they held before (handed off, or seen in a cookie change
+   * event, removals included), every value the storage keys held (handed off, written by a tool
+   * page, or read at beginRun() and endRun()), and the keys' current values in an open tool page on
+   * the origin. It opens no page to look: tool code can only reach storage through a tool page.
+   * Each cookie and key keeps its 16 most recent values.
    */
   async sessionSecrets(
     cookieDomains: readonly string[],
@@ -255,22 +266,27 @@ export class ElectronSessionDriver implements SessionDriver {
   ): Promise<readonly string[]> {
     const values = new Set<string>()
     for (const cookie of await this.toolCookies(cookieDomains)) values.add(cookie.value)
+    for (const value of this.values.cookieValues(cookieDomains)) values.add(value)
+    await Promise.all([...this.snapshots])
     for (const { origin, keys } of storage) {
       const wanted = httpsOrigin(origin)
       if (wanted === null || !isBareOrigin(origin)) throw new SiteAdapterError('session-handoff', 'invalid')
-      const remembered = this.handedOff.get(wanted)
-      for (const key of keys) {
-        const value = remembered?.get(key)
-        if (value !== undefined) values.add(value)
-      }
+      this.values.watch(wanted, keys)
       const open = this.openSurfaces('tool').find((surface) => surface.frames()[0]?.origin === wanted)
-      if (open === undefined) continue
-      const raw = await this.runIn(open, (frame) => frame.run(readStorageScript(keys)))
-      if (!isRecord(raw)) throw new SiteAdapterError('session-handoff', 'internal')
-      for (const key of keys) {
-        const value = raw[key]
-        if (typeof value === 'string') values.add(value)
+      if (open !== undefined) {
+        try {
+          await open.storageSettled()
+        } catch {
+          throw new SiteAdapterError('session-handoff', 'internal')
+        }
+        const raw = await this.runIn(open, (frame) => frame.run(readStorageScript(keys)))
+        if (!isRecord(raw)) throw new SiteAdapterError('session-handoff', 'internal')
+        for (const key of keys) {
+          const value = raw[key]
+          if (typeof value === 'string') values.add(value)
+        }
       }
+      for (const value of this.values.storageValues(wanted, keys)) values.add(value)
     }
     return [...values].filter((value) => value.length > 0)
   }
@@ -342,6 +358,9 @@ export class ElectronSessionDriver implements SessionDriver {
     const host = new URL(origin).hostname
     if (!hostAllowed(host, this.options.egress))
       throw new SiteAdapterError('session-handoff', 'host-not-allowed')
+    const wanted = httpsOrigin(origin) ?? origin
+    // From now on a tool page's writes to these keys are recorded, the site's rotations included.
+    this.values.watch(wanted, keys)
     const raw = await this.inDocument('auth', origin, (frame) => frame.run(readStorageScript(keys)))
     if (!isRecord(raw)) throw new SiteAdapterError('session-handoff', 'internal')
     const entries: [string, string][] = []
@@ -350,11 +369,32 @@ export class ElectronSessionDriver implements SessionDriver {
       if (typeof value === 'string') entries.push([key, value])
     }
     if (entries.length === 0) return
+    for (const [key, value] of entries) this.values.rememberStorage(wanted, key, value)
     await this.inDocument('tool', origin, (frame) => frame.run(writeStorageScript(entries)))
-    const wanted = httpsOrigin(origin) ?? origin
-    const remembered = this.handedOff.get(wanted) ?? new Map<string, string>()
-    for (const [key, value] of entries) remembered.set(key, value)
-    this.handedOff.set(wanted, remembered)
+  }
+
+  /**
+   * Reads the watched storage keys in the open tool page, so a value already there when a run
+   * starts (left from an earlier app session, say) is recorded before tool code can remove it.
+   */
+  private snapshotStorage(): void {
+    const surface = this.openSurfaces('tool')[0]
+    const origin = surface?.frames()[0]?.origin
+    if (surface === undefined || origin === undefined) return
+    const keys = this.values.watchedKeys(origin)
+    if (keys.length === 0) return
+    const read = this.runIn(surface, (frame) => frame.run(readStorageScript(keys))).then(
+      (raw) => {
+        if (!isRecord(raw)) return
+        for (const key of keys) {
+          const value = raw[key]
+          if (typeof value === 'string') this.values.rememberStorage(origin, key, value)
+        }
+      },
+      () => {},
+    )
+    this.snapshots.add(read)
+    void read.finally(() => this.snapshots.delete(read))
   }
 
   /**
@@ -409,14 +449,20 @@ export class ElectronSessionDriver implements SessionDriver {
   private async open(role: Role): Promise<BrowserSurface> {
     await this.session(role)
     const surface = this.platform.openSurface(this.partitions[role])
-    if (this.options.userAgent === 'electron') return surface
     try {
-      const { chromeVersion, os, systemVersion, arch } = this.platform
-      const brands = this.options.clientHints ?? 'engine'
-      const override = chromeUserAgentOverride({ chromeVersion, os, systemVersion, arch }, brands)
-      await withTimeout(this.timing.timers, this.timing.stepTimeoutMs, () =>
-        surface.overrideUserAgent(override),
-      )
+      if (this.options.userAgent !== 'electron') {
+        const { chromeVersion, os, systemVersion, arch } = this.platform
+        const brands = this.options.clientHints ?? 'engine'
+        const override = chromeUserAgentOverride({ chromeVersion, os, systemVersion, arch }, brands)
+        await withTimeout(this.timing.timers, this.timing.stepTimeoutMs, () =>
+          surface.overrideUserAgent(override),
+        )
+      }
+      if (role === 'tool') {
+        await withTimeout(this.timing.timers, this.timing.stepTimeoutMs, () =>
+          surface.watchStorage((value) => this.values.storageValue(value)),
+        )
+      }
     } catch (error) {
       surface.destroy()
       if (error instanceof SiteAdapterError) throw error
@@ -471,6 +517,7 @@ export class ElectronSessionDriver implements SessionDriver {
       return session
     }
     session.filterRequests((request) => this.allowToolRequest(request))
+    session.onCookieChanged((cookie) => this.values.cookie(cookie))
     // Stops the page resolving hostnames it only links to: a hostname can carry data out
     // through DNS without any request that webRequest would see.
     session.addResponseHeader('X-DNS-Prefetch-Control', 'off')

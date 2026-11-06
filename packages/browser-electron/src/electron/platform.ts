@@ -22,6 +22,7 @@ import type {
   PartitionSession,
   PendingNavigation,
   ProxyHandle,
+  StorageValue,
   UserAgentOverride,
 } from '../platform'
 
@@ -106,6 +107,11 @@ class ElectronPartition implements PartitionSession {
 
   setCookie(details: CookieSetDetails): Promise<void> {
     return this.ses.cookies.set({ ...details })
+  }
+
+  onCookieChanged(listener: (cookie: CookieRecord) => void): void {
+    // A removal (expired, overwritten, evicted, explicit) carries the value that was removed.
+    this.ses.cookies.on('changed', (_event, cookie) => listener(cookie))
   }
 }
 
@@ -260,13 +266,27 @@ class ElectronSurface implements BrowserSurface {
   }
 
   async overrideUserAgent(override: UserAgentOverride): Promise<void> {
-    // A web contents that has never loaded has no renderer for the command to reach, and it waits
-    // forever; about:blank never touches the network. The override lasts while the debugger stays
-    // attached, which is the window's lifetime, and applies to every navigation after it.
-    if (this.contents.getURL() === '') await this.contents.loadURL('about:blank')
-    const devtools = this.contents.debugger
-    if (!devtools.isAttached()) devtools.attach('1.3')
+    // The override lasts while the debugger stays attached, which is the window's lifetime, and
+    // applies to every navigation after it.
+    const devtools = await this.devtools()
     await devtools.sendCommand('Emulation.setUserAgentOverride', override)
+  }
+
+  async watchStorage(listener: (value: StorageValue) => void): Promise<void> {
+    const devtools = await this.devtools()
+    devtools.on('message', (_event, method: string, params: unknown, sessionId?: string) => {
+      // Only the page's own target: DOMStorage isn't enabled on any other.
+      if (sessionId !== undefined && sessionId !== '') return
+      for (const value of storageValues(method, params)) listener(value)
+    })
+    await devtools.sendCommand('DOMStorage.enable')
+  }
+
+  async storageSettled(): Promise<void> {
+    // The protocol answers in order on one session, so once this command is answered, every
+    // storage event the page sent before it has been delivered.
+    if (this.contents.isDestroyed() || !this.contents.debugger.isAttached()) return
+    await this.contents.debugger.sendCommand('DOMStorage.enable')
   }
 
   focus(): void {
@@ -313,7 +333,55 @@ class ElectronSurface implements BrowserSurface {
     return this.window.isDestroyed()
   }
 
+  /** The page's DevTools session, attached once for the window's lifetime. */
+  private async devtools(): Promise<Electron.Debugger> {
+    // A web contents that has never loaded has no renderer for a command to reach, and it waits
+    // forever; about:blank never touches the network.
+    if (this.contents.getURL() === '') await this.contents.loadURL('about:blank')
+    const devtools = this.contents.debugger
+    if (!devtools.isAttached()) devtools.attach('1.3')
+    return devtools
+  }
+
   private emit(event: NavigationEvent): void {
     for (const listener of this.navigationListeners) listener(event)
+  }
+}
+
+/**
+ * The values a DOMStorage event carries: the new value of an added item, and both the old and the
+ * new of an updated one. A removal carries no value; the old one was reported when it was written.
+ */
+function storageValues(method: string, params: unknown): StorageValue[] {
+  if (typeof params !== 'object' || params === null) return []
+  const { storageId, key, oldValue, newValue } = params as Record<string, unknown>
+  if (typeof key !== 'string' || typeof storageId !== 'object' || storageId === null) return []
+  const origin = storageOrigin(storageId as Record<string, unknown>)
+  if (origin === null) return []
+  const values =
+    method === 'DOMStorage.domStorageItemAdded'
+      ? [newValue]
+      : method === 'DOMStorage.domStorageItemUpdated'
+        ? [oldValue, newValue]
+        : []
+  return values
+    .filter((value): value is string => typeof value === 'string')
+    .map((value) => ({ origin, key, value }))
+}
+
+/** The origin of a DOMStorage storage id: securityOrigin, or the storage key's (minus "^..." partitioning). */
+function storageOrigin(storageId: Record<string, unknown>): string | null {
+  const { securityOrigin, storageKey } = storageId
+  const raw =
+    typeof securityOrigin === 'string' && securityOrigin !== ''
+      ? securityOrigin
+      : typeof storageKey === 'string'
+        ? (storageKey.split('^')[0] ?? '')
+        : ''
+  try {
+    const origin = new URL(raw).origin
+    return origin === 'null' ? null : origin
+  } catch {
+    return null
   }
 }

@@ -763,6 +763,30 @@ async function setup() {
       return { echoed, token, authCookies, toolCookies, authPlantedStorage, redaction }
     },
 
+    // After handoff: tool code reads the session, then overwrites or expires what it read, and the
+    // site's values rotate, all before the runtime asks what to redact.
+    redactionAfterOverwrite: async () => {
+      begin()
+      const tool = await driver.toolPage()
+      await tool.goto(site.url('site.test', '/'))
+      const read = await tool.evaluate('document.cookie')
+      await tool.evaluate(
+        `(localStorage.setItem('token', 'rotated-in-page'),
+          localStorage.setItem('token', 'decoy'),
+          document.cookie = 'shared=; Domain=site.test; Path=/; Secure; SameSite=None; Max-Age=0',
+          document.cookie = 'fresh=mid-run-cookie; Path=/; Secure',
+          document.cookie = 'fresh=; Path=/; Secure; Max-Age=0',
+          null)`,
+      )
+      const after = await tool.evaluate('document.cookie')
+      const redaction = await driver.sessionSecrets(
+        ['site.test'],
+        [{ origin: site.url('site.test'), keys: ['token'] }],
+      )
+      driver.endRun()
+      return { read, after, redaction }
+    },
+
     handToUser: async () => {
       const page = await driver.openAuthPage()
       await page.goto(site.url('site.test', '/'))

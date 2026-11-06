@@ -296,6 +296,23 @@ test('handoff copies cookies and storage auth -> tool with their attributes, nev
   )
 })
 
+test('redaction still has every session value tool code read, after it overwrote or expired them', async () => {
+  const result = await scenario(app, 'redactionAfterOverwrite')
+  expect(result.read).toContain('shared=domain-shared')
+  expect(result.after).not.toContain('domain-shared')
+  expect(result.after).not.toContain('mid-run-cookie')
+  expect(result.redaction).toEqual(
+    expect.arrayContaining([
+      'host-only-sid',
+      'domain-shared',
+      'mid-run-cookie',
+      'storage-token-123',
+      'rotated-in-page',
+      'decoy',
+    ]),
+  )
+})
+
 test('auth subframes load only from navigation and the manifest’s frame origins', async () => {
   const result = await scenario(app, 'authSubframes')
   const hosts = result.hosts as string[]

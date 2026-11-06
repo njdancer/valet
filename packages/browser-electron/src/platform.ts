@@ -66,6 +66,19 @@ export interface PartitionSession {
   addResponseHeader(name: string, value: string): void
   getCookies(): Promise<readonly CookieRecord[]>
   setCookie(details: CookieSetDetails): Promise<void>
+  /**
+   * Calls `listener` for every cookie the partition adds, changes or removes, with its value: the
+   * old value when one is removed or overwritten, so that a value never goes unseen.
+   */
+  onCookieChanged(listener: (cookie: CookieRecord) => void): void
+}
+
+/** One web-storage value a page held, as the DevTools protocol reports it. */
+export interface StorageValue {
+  /** The storage's security origin, e.g. https://www.example.com. */
+  readonly origin: string
+  readonly key: string
+  readonly value: string
 }
 
 /** A frame in a page, in tree order. The main frame comes first and has no parent. */
@@ -158,6 +171,14 @@ export interface BrowserSurface {
    * protocol. Must be called before the first load.
    */
   overrideUserAgent(override: UserAgentOverride): Promise<void>
+  /**
+   * Calls `listener` with every web-storage value the page's documents write from now on, the old
+   * value as well as the new when one is overwritten, over the DevTools protocol. Must be called
+   * before the first load.
+   */
+  watchStorage(listener: (value: StorageValue) => void): Promise<void>
+  /** Resolves once every storage write the page has made so far has reached watchStorage's listener. */
+  storageSettled(): Promise<void>
   /** Gives the web contents keyboard focus without showing the window. */
   focus(): void
   show(title: string): void

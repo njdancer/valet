@@ -15,6 +15,7 @@ import type {
   PendingNavigation,
   ProxyHandle,
   ProxyPolicy,
+  StorageValue,
   Timers,
   UserAgentOverride,
 } from '../src/platform'
@@ -144,6 +145,32 @@ export class FakeSurface implements BrowserSurface {
     await this.onOverride()
   }
 
+  /** Whether a page had loaded before each watchStorage(). */
+  readonly storageWatches: { afterLoad: boolean }[] = []
+  storageListeners: ((value: StorageValue) => void)[] = []
+  /** How watchStorage answers. Tests replace it to make it fail or hang. */
+  onWatchStorage: () => Promise<void> = async () => {}
+  /** Storage events held back until storageSettled(), as the DevTools protocol may deliver late. */
+  readonly pendingStorage: StorageValue[] = []
+  /** How storageSettled answers. Tests replace it to make it fail. */
+  onStorageSettled: () => Promise<void> = async () => {}
+
+  async watchStorage(listener: (value: StorageValue) => void): Promise<void> {
+    this.storageWatches.push({ afterLoad: this.loads.length > 0 })
+    await this.onWatchStorage()
+    this.storageListeners.push(listener)
+  }
+
+  async storageSettled(): Promise<void> {
+    await this.onStorageSettled()
+    for (const value of this.pendingStorage.splice(0)) this.emitStorage(value)
+  }
+
+  /** Reports a storage write to the watchers, as a DevTools DOMStorage event would. */
+  emitStorage(value: StorageValue): void {
+    for (const listener of this.storageListeners) listener(value)
+  }
+
   focus(): void {
     this.focusCalls++
   }
@@ -269,6 +296,17 @@ export class FakeSession implements PartitionSession {
 
   async setCookie(details: CookieSetDetails): Promise<void> {
     this.setCalls.push(details)
+  }
+
+  cookieListeners: ((cookie: CookieRecord) => void)[] = []
+
+  onCookieChanged(listener: (cookie: CookieRecord) => void): void {
+    this.cookieListeners.push(listener)
+  }
+
+  /** Reports a cookie change, as session.cookies' changed event would. */
+  emitCookie(cookie: CookieRecord): void {
+    for (const listener of this.cookieListeners) listener(cookie)
   }
 }
 

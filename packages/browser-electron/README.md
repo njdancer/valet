@@ -27,6 +27,7 @@ rules it serves are in [docs/security-model.md](../../docs/security-model.md).
 | `auth-page.ts`         | `AuthPage`: navigation poisoning, origin-bound secret typing      |
 | `tool-page.ts`         | `ToolPage`: goto, click, fill, extract, evaluate, fetch           |
 | `driver.ts`            | Partitions, runs, the request filter, the handoff, redaction data |
+| `session-values.ts`    | Every value session cookies and storage keys held, for redaction  |
 | `user-agent.ts`        | The clean Chrome UA, en-AU, and the client hints restated         |
 | `needs-user.ts`        | The hand-off window's title for each `NeedsUserReason`            |
 | `process-hardening.ts` | Chromium switches the desktop app appends before `ready`          |
@@ -150,9 +151,17 @@ to measure a decision or an opt-in rather than to test the default.
   also names Google Chrome (D24a, open). **Electron sends no `Sec-CH-UA` header at all**, with or
   without the override, unlike Chrome; the brands only reach scripts. `userAgent: 'electron'`
   leaves Electron's own UA, languages and hints alone.
-- **Redaction data.** `sessionSecrets()` returns the tool partition's cookie values on the
-  domains, the storage values this driver handed off, and those keys' current values in an open
-  tool page on the origin. It opens no page to look. `cookieNames()` returns names only.
+- **Redaction data is a history, not a snapshot.** Tool code can read a session value
+  (`document.cookie`, `localStorage`) and then overwrite or expire it before the runtime asks, and
+  the site can rotate one mid-run. So `sessionSecrets()` returns, besides the tool partition's
+  cookie values on the domains now: every value the handoff copied; every value seen in the tool
+  partition's cookie `changed` events (a removal or overwrite carries the old value); every value
+  written to a handed-off (or previously asked-for) storage key in a tool page, from DevTools
+  `DOMStorage` events, which each tool page enables before its first load; those keys' values read
+  at `beginRun()` and `endRun()`; and their current values in an open tool page on the origin,
+  once pending storage events have arrived. Each cookie and key keeps its 16 most recent values
+  (and at most 2000 cookie names), so the history is bounded. It opens no page to look.
+  `cookieNames()` returns names only.
 - **Storage handoff needs a document on the origin.** Keys are read in an auth-partition page and
   written in a tool-partition page on that origin. An open page is reused; otherwise a short-lived
   hidden page loads `/robots.txt` (configurable) on that origin and is destroyed afterwards.
