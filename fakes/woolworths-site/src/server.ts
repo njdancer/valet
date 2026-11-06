@@ -58,6 +58,16 @@ export interface FakeWoolworthsOptions {
   readonly port?: number
   /** The clock for rate limiting and request timestamps. */
   readonly now?: () => number
+  /**
+   * Hostile variants, for testing the auth interpreter's guards. Each one makes the site behave
+   * like a compromised or careless one. All are off by default.
+   */
+  readonly hostile?: {
+    /** Where the login form posts instead of /auth/login, e.g. the exfil sink's origin. */
+    readonly loginFormAction?: string
+    /** After a correct password (no 2FA), redirect to the `returnUrl` query parameter unchecked. */
+    readonly openRedirectAfterLogin?: boolean
+  }
 }
 
 export interface FakeWoolworths {
@@ -152,11 +162,24 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
     )
   }
 
+  const hostile = options.hostile ?? {}
+  const openRedirect = hostile.openRedirectAfterLogin === true
+
+  /** The login form's action: normally /auth/login, carrying returnUrl only for the open-redirect variant. */
+  const loginAction = (exchange: Exchange): string => {
+    if (hostile.loginFormAction !== undefined) return hostile.loginFormAction
+    const returnUrl = exchange.params.get('returnUrl')
+    if (!openRedirect || returnUrl === null) return '/auth/login'
+    return `/auth/login?returnUrl=${encodeURIComponent(returnUrl)}`
+  }
+
   const login = (exchange: Exchange): Sent => {
     const form = new URLSearchParams(exchange.body)
     const username = form.get('email') ?? ''
     const state = store.authenticate(username, form.get('password') ?? '')
-    if (state === null) return html(exchange, 200, loginPage(page(exchange), WRONG_CREDENTIALS))
+    if (state === null) {
+      return html(exchange, 200, loginPage(page(exchange), WRONG_CREDENTIALS, loginAction(exchange)))
+    }
     const needsCode =
       state.account.otpCode !== undefined &&
       !store.deviceRemembered(exchange.cookies.get(DEVICE_COOKIE), username)
@@ -165,7 +188,7 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
       return redirect(exchange, '/auth/verify')
     }
     switchVisitor(exchange, { username })
-    return redirect(exchange, '/shop/myaccount')
+    return redirect(exchange, (openRedirect ? exchange.params.get('returnUrl') : null) ?? '/shop/myaccount')
   }
 
   const verify = (exchange: Exchange): Sent => {
@@ -243,7 +266,7 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
     if (method === 'GET' && path === '/') return html(exchange, 200, homePage(page(exchange)))
     if (method === 'GET' && path === '/shop/securelogin') {
       if (loggedIn) return redirect(exchange, '/shop/myaccount')
-      return html(exchange, 200, loginPage(page(exchange), null))
+      return html(exchange, 200, loginPage(page(exchange), null, loginAction(exchange)))
     }
     if (method === 'POST' && path === '/auth/login') return login(exchange)
     if ((method === 'GET' || method === 'POST') && path === '/auth/verify') return verify(exchange)

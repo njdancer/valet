@@ -3,6 +3,7 @@
 // a test asserting "nothing arrived" can't pass because the sink refused the request.
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import type { Duplex } from 'node:stream'
 import {
   closeServer,
   createServer,
@@ -60,6 +61,12 @@ export async function startExfilSink(options: ExfilSinkOptions = {}): Promise<Ex
         response.end()
       },
     )
+  })
+  // A WebSocket handshake never reaches the request handler. Record it, then refuse it: what matters
+  // to a test is that it arrived at all.
+  server.on('upgrade', (request: IncomingMessage, socket: Duplex) => {
+    requests.push(recordRequest(request, '', now()))
+    socket.end('HTTP/1.1 501 Not Implemented\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
   })
   const port = await listen(server, options.port ?? 0)
   return {

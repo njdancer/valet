@@ -63,13 +63,13 @@ export function homePage(context: PageContext): string {
   )
 }
 
-export function loginPage(context: PageContext, error: string | null): string {
+export function loginPage(context: PageContext, error: string | null, action = '/auth/login'): string {
   const alert = error === null ? '' : `    <p class="login-error" role="alert">${escapeHtml(error)}</p>\n`
   return layout(
     'Log in | Woolworths',
     context,
     `    <h1>Log in or sign up</h1>
-${alert}    <form id="loginForm" method="post" action="/auth/login">
+${alert}    <form id="loginForm" method="post" action="${escapeHtml(action)}">
       <label for="loginForm-Email">Email address</label>
       <input id="loginForm-Email" name="email" type="email" autocomplete="username" required>
       <label for="loginForm-Password">Password</label>
