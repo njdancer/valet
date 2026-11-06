@@ -30,8 +30,7 @@ function setup(ids: readonly string[] = ['cf_1']) {
   const broker = new ConfirmationBroker({
     adapter: (id) =>
       id === 'shop' ? { manifest, hash: HASH, approvedAt: '2026-11-07T00:00:00.000Z' } : null,
-    call: (callId) =>
-      callId === 'call1' ? { transport: 'http', input: [{ kind: 'text', text: '{"item":"milk"}' }] } : null,
+    call: (callId) => (callId === 'call1' ? { input: [{ kind: 'text', text: '{"item":"milk"}' }] } : null),
     show: (id) => shown.push(id),
     close: (id) => closed.push(id),
     onChange: () => changes++,

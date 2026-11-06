@@ -174,7 +174,6 @@ describe('reviews', () => {
 
 describe('site health', () => {
   const now = Date.parse('2026-11-07T10:00:00.000Z')
-  const manifests = [adapter.definition.manifest]
   const opened: AuditRecord = {
     seq: 1,
     at: '2026-11-07T09:55:00.000Z',
@@ -188,13 +187,27 @@ describe('site health', () => {
     prev: '0'.repeat(64),
     hash: '1'.repeat(64),
   }
+  const closed = {
+    host: 'www.shop.test',
+    adapterIds: ['shop'],
+    breaker: 'closed' as const,
+    retryAt: null,
+    retryAfterMs: 0,
+    cooldownMs: 0,
+    nextCooldownMs: 600_000,
+    budget: { minGapMs: 1000, waitMs: 0 },
+  }
 
-  it('reads the persisted breaker and its cause', () => {
-    const file = JSON.stringify({
-      version: 1,
-      hosts: { 'www.shop.test': { retryAt: now + 300_000, cooldownMs: 600_000 } },
-    })
-    expect(siteHealth(manifests, file, [opened], now)).toEqual([
+  it('shows the runtime’s breaker, with the cause and time of its last opening from the log', () => {
+    const open = {
+      ...closed,
+      breaker: 'open' as const,
+      retryAt: now + 300_000,
+      retryAfterMs: 300_000,
+      cooldownMs: 600_000,
+      nextCooldownMs: 1_200_000,
+    }
+    expect(siteHealth([open], [opened])).toEqual([
       {
         host: 'www.shop.test',
         adapterIds: ['shop'],
@@ -205,18 +218,22 @@ describe('site health', () => {
         nextCooldownSeconds: 1200,
       },
     ])
+    // Open with nothing in the log (a block the audit couldn't record): the site's own block.
+    expect(siteHealth([open], [])[0]?.cause).toBe('blocked-by-site')
   })
 
-  it('is closed with no file, a stale hold, or a file that does not parse', () => {
-    for (const file of [
-      null,
-      JSON.stringify({ version: 1, hosts: { 'www.shop.test': { retryAt: now - 1, cooldownMs: 0 } } }),
-      '{',
-    ]) {
-      const [site] = siteHealth(manifests, file, [], now)
-      expect(site?.breaker).toBe('closed')
-      expect(site?.retryAt).toBeNull()
-      expect(site?.nextCooldownSeconds).toBe(600)
-    }
+  it('is closed with no cause while the runtime says closed, whatever the log says', () => {
+    expect(siteHealth([closed], [opened])).toEqual([
+      {
+        host: 'www.shop.test',
+        adapterIds: ['shop'],
+        breaker: 'closed',
+        retryAt: null,
+        cause: null,
+        lastOpenedAt: '2026-11-07T09:55:00.000Z',
+        nextCooldownSeconds: 600,
+      },
+    ])
+    expect(siteHealth([], [opened])).toEqual([])
   })
 })

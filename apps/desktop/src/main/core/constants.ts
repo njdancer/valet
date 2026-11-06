@@ -34,9 +34,6 @@ export const TYPING_DELAY_MS = 60
 /** Runs whose input and output previews are kept in memory for the run trace. Nothing is persisted. */
 export const RUN_MEMORY = 200
 
-/** A client counts as connected while it has called within this window. */
-export const CONNECTED_WINDOW_MS = 10 * 60_000
-
 export const MCP_SERVER_NAME = 'siteadapter'
 
 export interface DataPaths {

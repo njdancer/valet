@@ -10,7 +10,7 @@ import {
   messagesSourcesIn,
   type Purpose,
 } from '@siteadapter/core'
-import { parseBreakerFile } from '@siteadapter/runtime'
+import type { SiteHealthSnapshot } from '@siteadapter/runtime'
 import type {
   AdapterDetail,
   AdapterSummary,
@@ -203,40 +203,28 @@ export function reviewItem(review: PendingReview): ReviewItem {
 }
 
 /**
- * Per site host: the breaker as the runtime persisted it (breakers.json), and its cause and last
- * opening from the audit log. Hosts and limits follow the runtime: adapters sharing a host get the
- * most cautious numbers any of them declares.
+ * Per site host: the breaker as the runtime holds it (ToolHost.siteHealth, persisted state
+ * included), with the cause and time of its last opening from the audit log, which the runtime
+ * doesn't keep.
  */
 export function siteHealth(
-  manifests: readonly AdapterManifest[],
-  breakerFile: string | null,
+  snapshots: readonly SiteHealthSnapshot[],
   records: readonly AuditRecord[],
-  now: number,
 ): SiteHealth[] {
-  const states = breakerFile === null ? new Map() : (parseBreakerFile(breakerFile) ?? new Map())
-  const hosts = new Map<string, AdapterManifest[]>()
-  for (const manifest of manifests) {
-    const host = new URL(manifest.home).hostname
-    hosts.set(host, [...(hosts.get(host) ?? []), manifest])
-  }
-  return [...hosts].map(([host, list]) => {
-    const base = Math.max(...list.map((m) => m.limits.cooldownSeconds))
-    const max = Math.max(...list.map((m) => m.limits.maxCooldownSeconds))
-    const state = states.get(host) as { retryAt: number; cooldownMs: number } | undefined
-    const open = state !== undefined && state.retryAt > now
+  return snapshots.map((site) => {
+    const retryAt = site.breaker === 'open' ? site.retryAt : null
     const lastOpened = [...records]
       .reverse()
-      .find((r) => r.event.type === 'breaker-opened' && r.event.host === host)
+      .find((r) => r.event.type === 'breaker-opened' && r.event.host === site.host)
     const opened = lastOpened?.event.type === 'breaker-opened' ? lastOpened.event : null
-    const doubled = state !== undefined && state.cooldownMs > 0 ? (state.cooldownMs * 2) / 1000 : base
     return {
-      host,
-      adapterIds: list.map((m) => m.id),
-      breaker: open ? 'open' : 'closed',
-      retryAt: open ? new Date(state.retryAt).toISOString() : null,
-      cause: open ? (opened?.cause ?? 'blocked-by-site') : null,
+      host: site.host,
+      adapterIds: [...site.adapterIds],
+      breaker: retryAt !== null ? 'open' : 'closed',
+      retryAt: retryAt !== null ? new Date(retryAt).toISOString() : null,
+      cause: retryAt !== null ? (opened?.cause ?? 'blocked-by-site') : null,
       lastOpenedAt: lastOpened?.at ?? null,
-      nextCooldownSeconds: Math.min(max, Math.max(base, Math.round(doubled))),
+      nextCooldownSeconds: Math.round(site.nextCooldownMs / 1000),
     }
   })
 }

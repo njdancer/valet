@@ -101,8 +101,7 @@ async function main(): Promise<void> {
   let demo: DemoSite | null = null
   // The constant first, so a production build drops the import, and with it the demo chunk.
   if (__SITEADAPTER_DEMO_BUILD__ && mode.demo) {
-    const { exposeToE2e, resetDemoPartitions, startDemoSite, trustDemoCertificate } = await import('./demo')
-    await resetDemoPartitions('woolworths')
+    const { exposeToE2e, startDemoSite, trustDemoCertificate } = await import('./demo')
     demo = await startDemoSite(app.getPath('userData'))
     trustDemoCertificate('woolworths', demo.fingerprint)
     if (mode.e2e) exposeToE2e(demo)
@@ -134,10 +133,11 @@ async function main(): Promise<void> {
         demoSite === null ? {} : { dial: demoSite.dial },
       ),
     credentials: demoSite === null ? realCredentials(opDeps) : demoSite.credentials,
-    startEndpoint: (caller, configPath) =>
+    startEndpoint: (caller, configPath, onSessionsChanged) =>
       startEndpoint({
         caller,
         configPath,
+        onSessionsChanged,
         // D41: the bridge for every client. The port is kept (the bridge reads it from bridge.json)
         // and the token is new at every launch, so one collected by whatever held the saved port
         // while the app was down stops working at the next start. The bridge follows on its own.

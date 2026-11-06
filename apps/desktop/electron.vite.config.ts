@@ -10,7 +10,8 @@
 // Build-time constants (src/main/build-flags.d.ts) decide what the main bundle carries:
 // __SITEADAPTER_DEMO_BUILD__ (demo mode, the fake site and its fixtures) is true for `dev` and for
 // `build --mode demo` only, and __SITEADAPTER_DEV_SERVER__ (trusting the dev server's URL) for `dev`
-// only. __SITEADAPTER_SMOKE_BUILD__ (the package smoke's own argv and self-check, core/smoke.ts) is
+// only. The fake imports its fixtures as JSON modules, so they are inlined in the demo chunk and no
+// folder is copied beside it. __SITEADAPTER_SMOKE_BUILD__ (the package smoke's own argv and self-check, core/smoke.ts) is
 // true for `build --mode smoke` only. A plain `build`, which packaging uses, has none of them. Only
 // a plain build compiles in an update feed, and only when its environment names both
 // SITEADAPTER_UPDATE_URL and SITEADAPTER_FEED_PUBLIC_KEY_FILE (__SITEADAPTER_FEED_BASE_URL__,
@@ -20,39 +21,19 @@
 //   mise exec -- pnpm --filter @siteadapter/desktop build   # to out/, without demo mode
 //   mise exec -- pnpm --filter @siteadapter/desktop demo    # a demo build, launched against the fake site
 
-import { cpSync } from 'node:fs'
 import { resolve } from 'node:path'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'electron-vite'
-import type { Plugin } from 'vite'
 import { feedDefines } from './src/main/core/feed-defines'
 import { contentSecurityPolicy } from './vite.config'
 
 const here = import.meta.dirname
-
-/**
- * Demo mode runs the fake site in-process, and the fake reads its JSON fixtures from
- * `../fixtures/` beside its own module, which in the bundle is a chunk under out/main/chunks.
- */
-function fakeSiteFixtures(): Plugin {
-  return {
-    name: 'siteadapter-fake-fixtures',
-    apply: 'build',
-    writeBundle() {
-      cpSync(resolve(here, '../../fakes/woolworths-site/fixtures'), resolve(here, 'out/main/fixtures'), {
-        recursive: true,
-        filter: (source) => !source.endsWith('.md'),
-      })
-    },
-  }
-}
 
 export default defineConfig(({ command, mode }) => {
   const plainBuild = command === 'build' && mode !== 'demo' && mode !== 'smoke'
   const feed = feedDefines(process.env, plainBuild)
   return {
     main: {
-      plugins: command === 'serve' || mode === 'demo' ? [fakeSiteFixtures()] : [],
       define: {
         __SITEADAPTER_DEMO_BUILD__: JSON.stringify(command === 'serve' || mode === 'demo'),
         __SITEADAPTER_DEV_SERVER__: JSON.stringify(command === 'serve'),

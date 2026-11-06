@@ -19,8 +19,10 @@ import {
   createAuthRunner,
   Handoffs,
   isBlockedPage,
+  type LoginStepHooks,
   probeLoggedIn,
   SessionTracker,
+  steppedProbe,
 } from '../../src/main/core/login'
 import { FakeAuthPage, FakeDriver, ManualTimers, SHOP } from './fixtures'
 
@@ -81,6 +83,20 @@ function setup() {
 
 const cookieProbe = { cookieDomains: ['www.shop.test'], probe: { kind: 'cookie' as const, name: 'sid' } }
 
+/** A login step's hooks, recording each pace and block. */
+function stepHooks() {
+  const seen: string[] = []
+  const hooks: LoginStepHooks = {
+    pace: async () => {
+      seen.push('pace')
+    },
+    reportBlocked: (cause) => {
+      seen.push(`blocked ${cause}`)
+    },
+  }
+  return { hooks, seen }
+}
+
 describe('probe hooks', () => {
   it('ask the auth page, and refuse a URL off home’s origin', async () => {
     const manifest = manifestWith({})
@@ -131,6 +147,31 @@ describe('probe hooks', () => {
       },
     })
     expect(await probeLoggedIn(any, authProbe(any, page))).toBe(true)
+  })
+
+  it('in a login step, open the breaker on a block signature and end the step', async () => {
+    const manifest = manifestWith({})
+    const page = new FakeAuthPage()
+    const step = stepHooks()
+    const probe = steppedProbe(manifest, page, step.hooks)
+    page.fetchResult = { status: 200, contentType: 'application/json', body: { ok: true } }
+    expect((await probe.fetch('https://www.shop.test/api/me')).status).toBe(200)
+    page.fetchResult = { status: 429, contentType: null, body: null }
+    await expect(probe.fetch('https://www.shop.test/api/me')).rejects.toEqual(
+      new SiteAdapterError('login', 'rate-limited'),
+    )
+    page.fetchResult = { status: 403, contentType: 'text/html', body: '<p>Forbidden</p>' }
+    await expect(probe.fetch('https://www.shop.test/api/me')).rejects.toEqual(
+      new SiteAdapterError('login', 'blocked-by-site'),
+    )
+    expect(step.seen).toEqual(['blocked rate-limited', 'blocked blocked-by-site'])
+    // Still home's origin only, and nothing reported for a refusal of our own.
+    await expect(probe.fetch('https://login.shop.test/api/me')).rejects.toEqual(
+      new SiteAdapterError('probe', 'host-not-allowed'),
+    )
+    expect(step.seen).toHaveLength(2)
+    page.cookies = ['sid']
+    expect(await probe.cookieNames(['www.shop.test'])).toEqual(['sid'])
   })
 
   it('see Akamai’s block page only with both of its phrases, and never throw', async () => {
@@ -276,11 +317,10 @@ describe('createAuthRunner', () => {
 })
 
 describe('Handoffs', () => {
-  function started(startedBy: 'call' | 'person' = 'call') {
+  function started(startedBy: 'call' | 'person' = 'call', manifest = manifestWith({ session: cookieProbe })) {
     const s = setup()
     const page = new FakeAuthPage()
     const driver = new FakeDriver()
-    const manifest = manifestWith({ session: cookieProbe })
     s.handoffs.start({
       manifest,
       driver,
@@ -299,17 +339,47 @@ describe('Handoffs', () => {
 
   it('hands the session over only once the probe says logged in, then clears the hold', async () => {
     const h = started()
-    await expect(h.handoffs.finish('shop')).rejects.toEqual(new SiteAdapterError('probe', 'not-logged-in'))
+    const step = stepHooks()
+    await expect(h.handoffs.finish('shop', step.hooks)).rejects.toEqual(
+      new SiteAdapterError('probe', 'not-logged-in'),
+    )
     expect(h.driver.handoffs).toEqual([])
     expect(h.handoffs.has('shop')).toBe(true)
     h.page.cookies = ['sid']
-    await h.handoffs.finish('shop')
+    await h.handoffs.finish('shop', step.hooks)
+    // Cookies only: the probe took the step's first slot, and the copy needs no page.
+    expect(step.seen).toEqual([])
     expect(h.driver.handoffs).toEqual([{ cookieDomains: ['www.shop.test'], storage: [] }])
     expect(h.marker.cleared).toEqual(['shop'])
     expect(h.page.closed).toBe(true)
     expect(h.handoffs.list()).toEqual([])
     expect(h.sessions.get('shop').state).toBe('logged-in')
-    await expect(h.handoffs.finish('shop')).rejects.toEqual(new SiteAdapterError('login', 'not-found'))
+    await expect(h.handoffs.finish('shop', step.hooks)).rejects.toEqual(
+      new SiteAdapterError('login', 'not-found'),
+    )
+  })
+
+  it('paces the storage copy, and opens the breaker when the probe meets a block, leaving the window up', async () => {
+    const manifest = manifestWith({
+      session: {
+        cookieDomains: ['www.shop.test'],
+        storage: [{ origin: 'https://www.shop.test', keys: ['token'] }],
+        probe: { kind: 'fetch', path: '/api/me', expectStatus: 200, jsonPath: 'in', equals: true },
+      },
+    })
+    const h = started('person', manifest)
+    const step = stepHooks()
+    h.page.fetchResult = { status: 429, contentType: null, body: null }
+    await expect(h.handoffs.finish('shop', step.hooks)).rejects.toEqual(
+      new SiteAdapterError('login', 'rate-limited'),
+    )
+    expect(step.seen).toEqual(['blocked rate-limited'])
+    expect(h.driver.handoffs).toEqual([])
+    expect(h.handoffs.has('shop')).toBe(true)
+    h.page.fetchResult = { status: 200, contentType: 'application/json', body: { in: true } }
+    await h.handoffs.finish('shop', step.hooks)
+    expect(step.seen).toEqual(['blocked rate-limited', 'pace'])
+    expect(h.driver.handoffs).toHaveLength(1)
   })
 
   it('marks the window closed when the person hides it, and shows it again on request', async () => {
@@ -359,7 +429,7 @@ describe('Handoffs', () => {
   it('marks the session logged in once a window the person opened passes the probe', async () => {
     const h = started('person')
     h.page.cookies = ['sid']
-    await h.handoffs.finish('shop')
+    await h.handoffs.finish('shop', stepHooks().hooks)
     expect(h.sessions.get('shop').state).toBe('logged-in')
     expect(h.driver.handoffs).toHaveLength(1)
   })

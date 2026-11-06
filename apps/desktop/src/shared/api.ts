@@ -464,6 +464,7 @@ export interface EndpointStatus {
   readonly listening: boolean
   /** http://127.0.0.1:<port>/mcp, or null while stopped. */
   readonly url: string | null
+  /** MCP sessions open now, over the bridge or plain HTTP. */
   readonly connectedClients: number
   readonly tokenRotatedAt: IsoTime | null
 }
@@ -531,7 +532,10 @@ export interface ConfirmationItem {
   readonly trigger: 'irreversible-tool' | 'tool-request'
   /** The name the client reported in MCP initialize. A claim: any process with the token can send any name. */
   readonly client: string
-  /** How that client reached the endpoint, which the runtime knows for itself. */
+  /**
+   * How that client reached the endpoint, as the endpoint labelled its session. The bridge names
+   * itself in a header, so this is a label like the name, never a permission.
+   */
   readonly clientTransport: ClientInfo['transport']
   readonly callId: string
   readonly requestedAt: IsoTime

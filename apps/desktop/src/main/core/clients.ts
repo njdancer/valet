@@ -4,9 +4,9 @@
 // that cuts off everyone.
 
 import { sha256Hex } from '@siteadapter/core'
+import type { ClientTransport } from '@siteadapter/runtime'
 import { z } from 'zod'
 import type { ClientInfo } from '../../shared/api'
-import { CONNECTED_WINDOW_MS } from './constants'
 import { JsonDocument } from './files'
 
 const clientSchema = z
@@ -23,6 +23,15 @@ const clientSchema = z
 const fileSchema = z.object({ version: z.literal(1), clients: z.array(clientSchema).max(500) }).strict()
 
 type StoredClient = z.infer<typeof clientSchema>
+
+/**
+ * How the screens name a transport: the bridge as stdio, everything else as HTTP. The endpoint
+ * labels each session itself; the bridge says so in a header any local client could also send, so
+ * it is a label, never a permission.
+ */
+export function shownTransport(transport: ClientTransport | undefined): ClientInfo['transport'] {
+  return transport === 'stdio-bridge' ? 'stdio' : 'http'
+}
 
 export function clientId(reportedName: string): string {
   return `c_${sha256Hex(reportedName).slice(0, 16)}`
@@ -78,12 +87,6 @@ export class ClientRegistry {
 
   list(calls7d: (reportedName: string) => number): ClientInfo[] {
     return this.clients.map((c) => ({ ...c, calls7d: calls7d(c.reportedName) }))
-  }
-
-  /** Clients that called recently and aren't revoked. The endpoint doesn't report live sessions. */
-  connected(): number {
-    const since = this.now().getTime() - CONNECTED_WINDOW_MS
-    return this.clients.filter((c) => c.revokedAt === null && Date.parse(c.lastSeen) >= since).length
   }
 
   private save(): Promise<void> {

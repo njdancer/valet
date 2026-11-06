@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { SiteAdapterError } from '@siteadapter/core'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { ClientRegistry, clientId } from '../../src/main/core/clients'
+import { ClientRegistry, clientId, shownTransport } from '../../src/main/core/clients'
 import { ensurePrivateDir, JsonDocument, readJsonFile, writeJsonFile } from '../../src/main/core/files'
 import { builtinAdapter, MANIFEST_ENTRY, SnapshotStore } from '../../src/main/core/registry'
 import { DEFAULT_SETTINGS, SettingsStore } from '../../src/main/core/settings'
@@ -126,17 +126,15 @@ describe('ClientRegistry', () => {
     await registry.load()
     expect(registry.seen('Claude Code', 'http')).toBe(true)
     expect(registry.seen('Claude Code', 'http')).toBe(false)
-    registry.seen('Other', 'http')
-    expect(registry.connected()).toBe(2)
+    expect(registry.seen('Other', 'stdio')).toBe(true)
+    expect(registry.list(() => 0).map((c) => c.transport)).toEqual(['http', 'stdio'])
     const id = clientId('Claude Code')
     expect(await registry.revoke(id)).toBe(true)
     expect(await registry.revoke(id)).toBe(false)
     expect(await registry.revoke('c_0000000000000000')).toBe(false)
     expect(registry.isRevoked('Claude Code')).toBe(true)
     expect(registry.isRevoked('Other')).toBe(false)
-    expect(registry.connected()).toBe(1)
     now += 11 * 60_000
-    expect(registry.connected()).toBe(0)
     expect(registry.list(() => 4).find((c) => c.id === id)).toMatchObject({
       reportedName: 'Claude Code',
       calls7d: 4,
@@ -144,5 +142,11 @@ describe('ClientRegistry', () => {
     const reloaded = new ClientRegistry(path, () => new Date(now))
     await reloaded.load()
     expect(reloaded.isRevoked('Claude Code')).toBe(true)
+  })
+
+  it('shows the bridge’s label as stdio and anything else as HTTP', () => {
+    expect(shownTransport('stdio-bridge')).toBe('stdio')
+    expect(shownTransport('http')).toBe('http')
+    expect(shownTransport(undefined)).toBe('http')
   })
 })

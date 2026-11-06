@@ -5,7 +5,9 @@
 // On needsUser the auth window stays open and is shown to the person with the app's banner above
 // it, and the call returns needsUser at once (D50). The window closes itself after HANDOFF_WINDOW_MS.
 // When the person says they're done, the login probe runs in the auth partition; only if it says
-// logged in is the session handed to the tool partition and the login hold cleared.
+// logged in is the session handed to the tool partition and the login hold cleared. That runs as a
+// login step of the runtime's (ToolHost.runLoginStep): under the adapter's lock, paced by the site's
+// rate budget, and a block it meets opens the site's breaker.
 //
 // The person can also open the login window themselves, from the control panel (startedBy
 // 'person'). That hand-off leaves the session's state alone: giving up on it changes nothing, and
@@ -23,7 +25,14 @@ import {
   type SessionDriver,
   SiteAdapterError,
 } from '@siteadapter/core'
-import type { AuthOutcome, AuthRunner, AuthRunRequest, LoginMarkerStore } from '@siteadapter/runtime'
+import {
+  type AuthOutcome,
+  type AuthRunner,
+  type AuthRunRequest,
+  blockCause,
+  type LoginMarkerStore,
+  type LoginStepContext,
+} from '@siteadapter/runtime'
 import type { NeedsUserItem, SessionStatus } from '../../shared/api'
 import type { BlockedAudit, LoginSecrets } from './blocked'
 import type { Timers } from './confirmations'
@@ -80,6 +89,29 @@ export function authProbe(manifest: AdapterManifest, page: AuthPage): AuthProbe 
       return page.fetch(url)
     },
     cookieNames: (domains) => page.cookieNames(domains),
+  }
+}
+
+/** What a login step gets from ToolHost.runLoginStep: the site's rate budget and its breaker. */
+export type LoginStepHooks = Pick<LoginStepContext, 'pace' | 'reportBlocked'>
+
+/**
+ * authProbe for a login step: a block signature in the answer (a 429, a 403 page, Akamai's page) opens
+ * the site's breaker and ends the step, as the runtime's own probe would.
+ */
+export function steppedProbe(manifest: AdapterManifest, page: AuthPage, step: LoginStepHooks): AuthProbe {
+  const probe = authProbe(manifest, page)
+  return {
+    async fetch(url) {
+      const result = await probe.fetch(url)
+      const cause = blockCause(result)
+      if (cause !== null) {
+        step.reportBlocked(cause)
+        throw new SiteAdapterError('login', cause)
+      }
+      return result
+    },
+    cookieNames: probe.cookieNames,
   }
 }
 
@@ -201,14 +233,18 @@ export class Handoffs {
 
   /**
    * The person says they're signed in: probe the auth partition; only then hand off and clear the
-   * hold. Throws, leaving the window up, when the probe says otherwise.
+   * hold. Throws, leaving the window up, when the probe says otherwise. Run it as a login step: the
+   * probe takes the step's first budget slot, and copying storage keys loads a page, which waits
+   * for another.
    */
-  async finish(adapterId: string): Promise<void> {
+  async finish(adapterId: string, step: LoginStepHooks): Promise<void> {
     const handoff = this.open_.get(adapterId)
     if (handoff === undefined) throw new SiteAdapterError('login', 'not-found')
     const { manifest, page, driver } = handoff
-    const probe = authProbe(manifest, page)
+    const probe = steppedProbe(manifest, page, step)
     if (!(await probeLoggedIn(manifest, probe))) throw new SiteAdapterError('probe', 'not-logged-in')
+    // Cookies are copied inside the browser; storage keys are read and written in loaded pages.
+    if (manifest.session.storage.length > 0) await step.pace()
     await driver.handoff(manifest.session.cookieDomains, manifest.session.storage)
     await this.options.markers.clear(adapterId)
     this.dispose(adapterId, handoff)

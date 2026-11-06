@@ -60,7 +60,6 @@ describe('RuntimeToolCaller', () => {
       started: () => {},
       finished: () => {},
       refused: async () => {},
-      enter: async () => () => {},
     })
     expect(caller.listTools()).toEqual([])
     await caller.refresh()
@@ -79,32 +78,64 @@ describe('RuntimeToolCaller', () => {
       refused: async () => {
         seen.push('refused')
       },
-      enter: async (adapterId) => {
-        seen.push(`enter ${adapterId}`)
-        return () => seen.push(`leave ${adapterId}`)
-      },
     })
-    expect(await caller.call({ ...call, signal: new AbortController().signal })).toEqual({
+    const client = new AbortController()
+    expect(await caller.call({ ...call, signal: client.signal, transport: 'stdio-bridge' })).toEqual({
       status: 'ok',
       output: { text: 'hi' },
     })
-    expect(h.calls).toEqual([call])
-    expect(seen).toEqual(['enter shop', 'started c1', 'finished c1 ok', 'leave shop'])
+    const [given] = h.calls as { signal: AbortSignal; transport?: string }[]
+    expect(given).toEqual({ ...call, signal: expect.any(AbortSignal), transport: 'stdio-bridge' })
+    expect(seen).toEqual(['started c1', 'finished c1 ok'])
+    // The signal the runtime got follows the client's.
+    expect(given?.signal.aborted).toBe(false)
+    client.abort()
+    expect(given?.signal.aborted).toBe(true)
+  })
+
+  it('cancels every call in flight, and every later one, when the app stops', async () => {
+    const signals: AbortSignal[] = []
+    const caller = new RuntimeToolCaller(
+      {
+        listTools: async () => [],
+        call: async (request) => {
+          const signal = request.signal as AbortSignal
+          signals.push(signal)
+          if (signal.aborted) return { status: 'failed', stage: 'tool-run', errorClass: 'aborted' }
+          return new Promise((resolve) =>
+            signal.addEventListener('abort', () =>
+              resolve({ status: 'failed', stage: 'tool-run', errorClass: 'aborted' }),
+            ),
+          )
+        },
+      },
+      {
+        paused: () => false,
+        revoked: () => false,
+        started: () => {},
+        finished: () => {},
+        refused: async () => {},
+      },
+    )
+    // One with a signal of its own and one without: both follow the app's.
+    const running = [caller.call({ ...call, signal: new AbortController().signal }), caller.call(call)]
+    caller.cancelAll()
+    const aborted = { status: 'failed', stage: 'tool-run', errorClass: 'aborted' }
+    expect(await Promise.all(running)).toEqual([aborted, aborted])
+    expect(await caller.call({ ...call, callId: 'c2' })).toEqual(aborted)
+    expect(signals.every((s) => s.aborted)).toBe(true)
+    // A call that names no transport passes none on.
+    expect(signals).toHaveLength(3)
   })
 
   it('refuses while paused and for a revoked client name, before the runtime sees the call', async () => {
     const h = host()
     const refused: [string, AppRefusal][] = []
-    const entered: string[] = []
     const hooks = {
       started: () => {},
       finished: () => {},
       refused: async (c: { callId: string }, r: AppRefusal) => {
         refused.push([c.callId, r])
-      },
-      enter: async (adapterId: string) => {
-        entered.push(adapterId)
-        return () => {}
       },
     }
     const paused = new RuntimeToolCaller(h.host, { ...hooks, paused: () => true, revoked: () => false })
@@ -117,7 +148,6 @@ describe('RuntimeToolCaller', () => {
     })
     expect(await revoked.call(call)).toEqual({ status: 'failed', stage: 'config', errorClass: 'not-granted' })
     expect(h.calls).toEqual([])
-    expect(entered).toEqual([])
     expect(refused).toEqual([
       ['c1', PAUSED_REFUSAL],
       ['c1', REVOKED_REFUSAL],
@@ -134,14 +164,13 @@ describe('RuntimeToolCaller', () => {
       refused: async () => {
         throw new Error('disk full')
       },
-      enter: async () => () => {},
     })
     expect(await caller.call(call)).toEqual(outcomeOf(PAUSED_REFUSAL))
     expect(h.calls).toEqual([])
   })
 
-  it('leaves the gate even when the runtime throws', async () => {
-    const left: string[] = []
+  it('tells the app nothing finished when the runtime throws', async () => {
+    const finished: string[] = []
     const caller = new RuntimeToolCaller(
       {
         listTools: async () => [],
@@ -153,13 +182,12 @@ describe('RuntimeToolCaller', () => {
         paused: () => false,
         revoked: () => false,
         started: () => {},
-        finished: () => {},
+        finished: (c) => finished.push(c.callId),
         refused: async () => {},
-        enter: async (adapterId) => () => left.push(adapterId),
       },
     )
     await expect(caller.call(call)).rejects.toThrow('boom')
-    expect(left).toEqual(['shop'])
+    expect(finished).toEqual([])
   })
 
   it('maps every runtime result onto the endpoint’s outcome', () => {
@@ -260,7 +288,7 @@ describe('run previews', () => {
 
   it('keeps a bounded number of runs, in memory only', () => {
     const memory = new RunMemory()
-    for (let i = 0; i < 205; i++) memory.started(`c${i}`, 'echo', 'Claude Code', { i }, 'http')
+    for (let i = 0; i < 205; i++) memory.started(`c${i}`, 'echo', 'Claude Code', { i })
     expect(memory.get('c0')).toBeUndefined()
     memory.finished('c204', { text: 'done' })
     expect(memory.get('c204')?.outputBytes).toBeGreaterThan(0)
@@ -399,7 +427,7 @@ describe('audit views', () => {
     ])
     expect(runSummaries(records, lookup, { adapterId: 'x' })).toEqual([])
     const memory = new RunMemory()
-    memory.started('c1', 'add', 'Claude Code', { item: 'milk' }, 'http')
+    memory.started('c1', 'add', 'Claude Code', { item: 'milk' })
     memory.finished('c1', { added: true, note: REDACTED })
     const trace = runTrace(records, 'c1', lookup, memory, () => ({ version: '1.0.0', hash: 'a'.repeat(64) }))
     // Only refusals are audited, so what was sent can't be counted: null, never a made-up zero.
