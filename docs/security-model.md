@@ -142,6 +142,31 @@ A manifest can't name a 1Password item. If an adapter changes, it doesn't inheri
   origin, adapter hash, the tool call that triggered it), tool calls along with the MCP client
   that made them, blocked egress, and confirmations.
 
+## The service-account token
+
+The 1Password service-account token unlocks every item in the siteadapter vault, so it is the
+most valuable secret the app holds.
+
+- **Where it is revealed.** Only once per client, in `sdkClientFactory`, which passes it straight
+  to `@1password/sdk`. That is the one `reveal()` outside the privileged filler (see
+  CONTRIBUTING.md).
+- **Where it lives.** The design is a Keychain item whose ACL names the signed app's designated
+  requirement, pinned to the Team ID, so only siteadapter can read it without a prompt.
+
+**v0 gap: the designated-requirement property does not hold yet.** `KeychainTokenSource` reads
+the item by running `/usr/bin/security`. The Keychain checks its ACL against the calling binary,
+which is Apple's `security` tool, not siteadapter. So:
+
+- every read prompts, and the prompt names `security` rather than siteadapter;
+- **never click "Always Allow" on that prompt.** It adds `/usr/bin/security` to the item's ACL.
+  After that, any process running as the person, including v0 adapter tool code (whose sandbox is
+  not a boundary), can read the token silently with `security find-generic-password -w`.
+
+Before the token source is used outside development, and at the latest before third-party
+adapters exist, the read moves in process: a native addon calling `SecItemCopyMatching`, or a
+small helper bundled with the app and signed with its Team ID, whose own requirement is the one on
+the ACL. The `TokenSource` interface and its bounded wait stay the same.
+
 ## Personal Chrome profile mode (later)
 
 This mode attaches to the person's real Chrome through a companion extension. Chrome 136 and
