@@ -56,6 +56,15 @@ export const ELECTRON_FUSES = {
   loadBrowserProcessSpecificV8Snapshot: false,
 } as const
 
+/**
+ * The only node_modules the packaged app carries: what the main bundle keeps external
+ * (electron.vite.config.ts). Every workspace package and npm dependency is bundled into out/main,
+ * so electron-builder's copy of the production dependencies is dropped but for these. The SDK is
+ * loaded lazily, by the service-account provider, and reads its wasm from beside itself (Electron's
+ * fs reads it inside app.asar).
+ */
+export const PACKAGED_NODE_MODULES = ['@1password/sdk', '@1password/sdk-core'] as const
+
 /** The only entitlement either plist may hold. */
 export const ALLOWED_ENTITLEMENTS = ['com.apple.security.cs.allow-jit'] as const
 
@@ -285,8 +294,17 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
     appId,
     productName,
     directories: { output: 'dist', buildResources: 'build' },
-    // electron-vite's output only. No source maps, tests, fixtures or scripts in the package.
-    files: ['out/**/*', 'package.json', '!**/*.map'],
+    // electron-vite's output, and the external modules it loads. No source maps, tests, fixtures,
+    // scripts or bundled dependencies in the package.
+    files: [
+      'out/main/**/*',
+      'out/preload/**/*',
+      'out/renderer/**/*',
+      'package.json',
+      '!**/*.map',
+      '!node_modules/**/*',
+      ...PACKAGED_NODE_MODULES.map((name) => `node_modules/${name}/**/*`),
+    ],
     // The packaged package.json names the app, which sets userData, the cookie-encryption Keychain
     // item, the single-instance lock and electron-updater's cache directory: dev and release must
     // differ there too.

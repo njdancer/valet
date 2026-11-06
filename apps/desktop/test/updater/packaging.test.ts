@@ -140,7 +140,16 @@ describe('a release build', () => {
 
   it('packages only the build output', () => {
     const c = config(RELEASE_ENV)
-    expect(c.files).toEqual(['out/**/*', 'package.json', '!**/*.map'])
+    expect(c.files).toEqual([
+      'out/main/**/*',
+      'out/preload/**/*',
+      'out/renderer/**/*',
+      'package.json',
+      '!**/*.map',
+      '!node_modules/**/*',
+      'node_modules/@1password/sdk/**/*',
+      'node_modules/@1password/sdk-core/**/*',
+    ])
     expect(c.asar).toBe(true)
     expect(c.directories).toEqual({ output: 'dist', buildResources: 'build' })
   })

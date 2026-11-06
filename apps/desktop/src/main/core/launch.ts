@@ -45,23 +45,34 @@ export function launchMode(
   }
 }
 
-/** The real install's userData: ~/Library/Application Support/siteadapter. */
-export function realDataDir(appData: string): string {
-  return join(appData, 'siteadapter')
+/** The release app's name, and so its userData folder's. */
+export const RELEASE_DATA_NAME = 'siteadapter'
+
+/**
+ * An install's userData: ~/Library/Application Support/<name>. `name` is the packaged app's own
+ * (app.getName(): siteadapter for a release, siteadapter-dev for a development package, so the two
+ * never share data); an unpackaged run uses the release name.
+ */
+export function realDataDir(appData: string, name: string = RELEASE_DATA_NAME): string {
+  return join(appData, name)
 }
 
 /**
- * The userData directory: the override, or ~/Library/Application Support/siteadapter(-demo). A demo
+ * The userData directory: the override, or ~/Library/Application Support/<name>(-demo). A demo
  * launch never uses the real data folder (or anything inside it), whatever the override says: it
  * would reuse the real grants, approvals and bridge.json.
  */
-export function userDataDir(mode: LaunchMode, appData: string): string {
+export function userDataDir(mode: LaunchMode, appData: string, name: string = RELEASE_DATA_NAME): string {
   const demoDir = join(appData, 'siteadapter-demo')
   if (mode.userData !== null) {
-    if (mode.demo && within(mode.userData, realDataDir(appData))) return demoDir
+    if (
+      mode.demo &&
+      (within(mode.userData, realDataDir(appData)) || within(mode.userData, realDataDir(appData, name)))
+    )
+      return demoDir
     return mode.userData
   }
-  return mode.demo ? demoDir : realDataDir(appData)
+  return mode.demo ? demoDir : realDataDir(appData, name)
 }
 
 /** `path` is `dir` or inside it. macOS volumes are case-insensitive by default, so case is ignored. */

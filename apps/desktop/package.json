@@ -12,6 +12,8 @@
     "demo": "electron-vite build --mode demo && SITEADAPTER_DEMO=1 electron .",
     "test:smoke": "electron-vite build --mode demo && playwright test -c test/smoke/playwright.config.ts",
     "test:e2e": "electron-vite build --mode demo && playwright test -c e2e/playwright.config.ts",
+    "package": "electron-vite build && node scripts/package.mjs",
+    "package:smoke": "electron-vite build && node scripts/package-smoke.mjs",
     "screens:live": "electron-vite build --mode demo && SITEADAPTER_E2E_SCREENS=1 playwright test -c e2e/playwright.config.ts screens"
   },
   "dependencies": {

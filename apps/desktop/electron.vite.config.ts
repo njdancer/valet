@@ -58,6 +58,8 @@ export default defineConfig(({ command, mode }) => {
       },
       build: {
         outDir: resolve(here, 'out/main'),
+        // A demo build's chunk and fixtures must never outlive it into a plain build's out/main.
+        emptyOutDir: true,
         externalizeDeps: false,
         rollupOptions: {
           input: { index: resolve(here, 'src/main/index.ts') },
@@ -69,6 +71,7 @@ export default defineConfig(({ command, mode }) => {
     preload: {
       build: {
         outDir: resolve(here, 'out/preload'),
+        emptyOutDir: true,
         externalizeDeps: false,
         rollupOptions: {
           input: { index: resolve(here, 'src/preload/index.ts') },

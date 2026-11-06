@@ -1,12 +1,20 @@
 #!/usr/bin/env node
-// Packages a placeholder app (scripts/smoke/main.cjs) with the real electron-builder config, as a
-// development build, unsigned, in a temporary directory. Then it checks what came out and launches it
-// to see that the fuses hold, and that the renderer's module script runs when served from app://
-// (src/main/core/app-scheme.ts) with grantFileProtocolExtraPrivileges off. Every check is
-// asserted: any mismatch is listed and the script exits 1. Nothing it builds is kept unless --keep
-// is given, whether it passes or not.
+// Two packages, both development builds, unsigned, in a temporary directory, with the real
+// electron-builder config:
 //
-//   node scripts/package-smoke.mjs [--arch arm64|x64] [--target dir|zip] [--keep]
+// 1. A placeholder app (scripts/smoke/main.cjs). It is checked and launched to see that the fuses
+//    hold, that the renderer's module script runs when served from app://
+//    (src/main/core/app-scheme.ts) with grantFileProtocolExtraPrivileges off, and that a temporary
+//    HOME moves app.getPath('appData').
+// 2. The real app, from the real out/ build (scripts/smoke/real-app.mjs): Info.plist, the fuse wire
+//    and the asar's contents, then a launch under a temporary HOME that must show the control panel
+//    rendered on app://renderer. It is refused unless step 1 showed the temporary HOME moving
+//    appData, so the real userData folder is never touched. --placeholder-only skips it.
+//
+// Every check is asserted: any mismatch is listed and the script exits 1. Nothing it builds is kept
+// unless --keep is given, whether it passes or not.
+//
+//   node scripts/package-smoke.mjs [--arch arm64|x64] [--target dir|zip] [--placeholder-only] [--keep]
 //
 // Electron comes from the installed one, copied without Resources/default_app.asar, so the bundle
 // matches what a release build (which downloads Electron and cleans it up) contains. The other
@@ -17,8 +25,9 @@
 // It never signs with an identity or notarises: the child gets CSC_IDENTITY_AUTO_DISCOVERY=false and
 // none of the CSC_*, APPLE_* or SITEADAPTER_* variables from the caller. The fuse flip re-signs the
 // bundle ad hoc ("-"), which uses no key, and which Apple silicon needs to run a modified binary at
-// all. Launches use a temporary --user-data-dir and Chromium's mock keychain, so nothing is written to
-// ~/Library or the Keychain. Every launch is killed after 30 seconds if it hasn't exited.
+// all. Placeholder launches use a temporary --user-data-dir (or a temporary HOME) and Chromium's mock
+// keychain, so nothing is written to ~/Library or the Keychain. Every placeholder launch is killed
+// after 30 seconds if it hasn't exited.
 
 import { execFileSync, spawn } from 'node:child_process'
 import {
@@ -33,13 +42,12 @@ import {
 } from 'node:fs'
 import { stripTypeScriptTypes } from 'node:module'
 import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { buildFeedYaml, hashZip } from './make-feed.mjs'
+import { APP_DIR, asarFiles, BUILDER, cleanEnv, electronDist as cloneElectron, plist } from './packaging.mjs'
+import { homeEnv, inside, makeHome, smokeRealApp } from './smoke/real-app.mjs'
 
-const APP_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const BUILDER = join(APP_DIR, 'node_modules', '.bin', 'electron-builder')
 const SENTINEL = 'dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX'
 // @electron/fuses 1.8.0's names, in wire order. Electron 44's wire is longer; extra ones print as fuseN.
 const FUSE_NAMES = [
@@ -83,6 +91,7 @@ const { values } = parseArgs({
     arch: { type: 'string', default: process.arch },
     target: { type: 'string', default: 'dir' },
     keep: { type: 'boolean', default: false },
+    'placeholder-only': { type: 'boolean', default: false },
   },
 })
 const { arch, target } = values
@@ -113,19 +122,10 @@ function writePlaceholder() {
   cpSync(join(APP_DIR, 'build'), join(project, 'build'), { recursive: true })
 }
 
-function cleanEnv(extra = {}) {
-  const env = { ...process.env }
-  for (const name of Object.keys(env)) {
-    if (/^(CSC_|APPLE_|SITEADAPTER_|ELECTRON_|NODE_OPTIONS)/.test(name)) delete env[name]
-  }
-  return { ...env, CSC_IDENTITY_AUTO_DISCOVERY: 'false', ...extra }
-}
-
-/** The installed Electron, cloned (APFS copy-on-write) without the default app. */
+/** The installed Electron without its default app, cloned once and shared by both packages. */
+let dist = null
 function electronDist() {
-  const dist = join(work, 'electron-dist')
-  execFileSync('/bin/cp', ['-cR', join(APP_DIR, 'node_modules', 'electron', 'dist'), dist])
-  rmSync(join(dist, 'Electron.app', 'Contents', 'Resources', 'default_app.asar'), { force: true })
+  dist ??= cloneElectron(work)
   return dist
 }
 
@@ -155,27 +155,6 @@ function build() {
   )
 }
 
-function plist(path) {
-  return JSON.parse(
-    execFileSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', path], { encoding: 'utf8' }),
-  )
-}
-
-/** The file list in app.asar, from its JSON header (two pickled sizes, then the header). */
-function asarFiles(path) {
-  const buffer = readFileSync(path)
-  const header = JSON.parse(buffer.subarray(16, 16 + buffer.readUInt32LE(12)).toString('utf8'))
-  const files = []
-  const walk = (node, prefix) => {
-    for (const [name, child] of Object.entries(node.files ?? {})) {
-      if (child.files) walk(child, `${prefix}${name}/`)
-      else files.push(`${prefix}${name}`)
-    }
-  }
-  walk(header, '')
-  return files.sort()
-}
-
 /** The fuse wire as @electron/fuses reads it: sentinel, version, length, then one byte per fuse. */
 function fuses(app) {
   const binary = readFileSync(
@@ -196,8 +175,11 @@ function sh(script, ...args) {
   return execFileSync('/bin/sh', ['-c', script, 'sh', ...args], { encoding: 'utf8' })
 }
 
-/** Runs the app once: its report (or null), its exit, and whether it had to be killed. */
-function launch(app, name, { args = [], env = {} } = {}) {
+/**
+ * Runs the app once: its report (or null), its exit, and whether it had to be killed. With `home`,
+ * under that HOME and no --user-data-dir, to see where its data would go.
+ */
+function launch(app, name, { args = [], env = {}, home = null } = {}) {
   const executable = join(
     app,
     'Contents',
@@ -206,8 +188,13 @@ function launch(app, name, { args = [], env = {} } = {}) {
   )
   const reportPath = join(work, `report-${name}.json`)
   return new Promise((done) => {
-    const child = spawn(executable, [`--user-data-dir=${join(work, `userData-${name}`)}`, ...args], {
-      env: cleanEnv({ SITEADAPTER_SMOKE_REPORT: reportPath, ...env }),
+    const userDataArgs = home === null ? [`--user-data-dir=${join(work, `userData-${name}`)}`] : []
+    const childEnv =
+      home === null
+        ? cleanEnv({ SITEADAPTER_SMOKE_REPORT: reportPath, ...env })
+        : homeEnv(home, { SITEADAPTER_SMOKE_REPORT: reportPath, ...env })
+    const child = spawn(executable, [...userDataArgs, ...args], {
+      env: childEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let output = ''
@@ -271,8 +258,10 @@ async function run() {
     )
   })
 
+  const placeholderHome = makeHome(work, 'placeholder')
   const launches = {
     plain: await launch(app, 'plain'),
+    home: await launch(app, 'home', { home: placeholderHome }),
     window: await launch(app, 'window', { env: { SITEADAPTER_SMOKE_WINDOW: '1' } }),
     runAsNode: await launch(app, 'run-as-node', {
       args: ['-e', `require('node:fs').writeFileSync(${JSON.stringify(runAsNodeMarker)}, 'x')`],
@@ -390,6 +379,36 @@ async function run() {
   if (feed !== null) {
     expectEqual('latest-mac.yml matches make-feed', feed.sameFieldsAsMakeFeed, true)
     expectEqual('app-update.yml written', summary.resources.appUpdateYml !== null, true)
+  }
+  // A temporary HOME must move where an Electron app of this build keeps its data, or the real app
+  // can't be launched without touching the person's own folder.
+  const paths = launches.home.report?.paths ?? {}
+  const homeMoves =
+    inside(paths.home, placeholderHome) &&
+    inside(paths.appData, placeholderHome) &&
+    inside(paths.userData, placeholderHome)
+  expectEqual('a temporary HOME moves appData and userData', homeMoves, true)
+  summary.homePaths = Object.fromEntries(
+    Object.entries(paths).map(([k, v]) => [k, String(v).replace(work, '<tmp>')]),
+  )
+
+  if (!values['placeholder-only']) {
+    if (!homeMoves) {
+      failures.push({
+        check: 'real app launch refused: a temporary HOME did not move its data',
+        actual: paths,
+      })
+    } else {
+      summary.real = await smokeRealApp({
+        work,
+        arch,
+        dist: arch === process.arch ? electronDist() : null,
+        home: makeHome(work, 'real'),
+        expectEqual,
+        expectedFuses: EXPECTED_FUSES,
+        fuses,
+      })
+    }
   }
 
   process.stdout.write(`${JSON.stringify({ ...summary, failures }, null, 2)}\n`)

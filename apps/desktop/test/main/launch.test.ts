@@ -59,6 +59,18 @@ describe('launchMode', () => {
       '/tmp/x',
     )
     expect(realDataDir(appData)).toBe(`${appData}/siteadapter`)
+    // A development package has its own folder, apart from the release app's.
+    expect(realDataDir(appData, 'siteadapter-dev')).toBe(`${appData}/siteadapter-dev`)
+    expect(userDataDir(launchMode([], {}, DEV), appData, 'siteadapter-dev')).toBe(
+      `${appData}/siteadapter-dev`,
+    )
+    expect(
+      userDataDir(
+        launchMode(['--demo'], { SITEADAPTER_USER_DATA: `${appData}/siteadapter-dev/x` }, DEV),
+        appData,
+        'siteadapter-dev',
+      ),
+    ).toBe(`${appData}/siteadapter-demo`)
   })
 
   it.each([

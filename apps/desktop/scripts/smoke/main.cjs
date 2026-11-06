@@ -23,6 +23,9 @@ const report = {
   isPackaged: app.isPackaged,
   argv: process.argv.slice(1),
   preloadedByNodeOptions: globalThis.__smokeInjected === true,
+  // Where this launch keeps its data: the smoke checks a temporary HOME moves them before it
+  // launches the real app with one.
+  paths: { home: app.getPath('home'), appData: app.getPath('appData'), userData: app.getPath('userData') },
 }
 
 /** Loads a URL in a hidden window and returns the title once the module script set it, or after 15 s. */

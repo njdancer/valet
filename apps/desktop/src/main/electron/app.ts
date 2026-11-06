@@ -15,7 +15,7 @@ import { builtinAdapters } from '../adapters'
 import { APP_SCHEME, APP_SCHEME_PRIVILEGES, createAppSchemeHandler } from '../core/app-scheme'
 import { dataPaths } from '../core/constants'
 import { checkOpBinary, defaultOpCheckDeps, realCredentials } from '../core/credentials'
-import { demoResolverRules, launchMode, rendererBase, userDataDir } from '../core/launch'
+import { demoResolverRules, launchMode, RELEASE_DATA_NAME, rendererBase, userDataDir } from '../core/launch'
 import { AppService } from '../core/service'
 import type { BridgeCommand } from '../core/snippets'
 import type { DemoSite } from './demo'
@@ -32,7 +32,12 @@ const mode = launchMode(process.argv, process.env, {
 // Before ready: where everything lives, the process-wide hardening, demo's host mapping, and the
 // app:// scheme the renderer is served from (it must be privileged before ready to be standard and
 // secure, so module scripts and the page's CSP 'self' work there).
-app.setPath('userData', userDataDir(mode, app.getPath('appData')))
+// A package's own name (siteadapter-dev for a development package), so it never shares the release
+// app's data; an unpackaged run keeps the release name.
+app.setPath(
+  'userData',
+  userDataDir(mode, app.getPath('appData'), app.isPackaged ? app.getName() : RELEASE_DATA_NAME),
+)
 hardenProcess(app)
 if (mode.demo) app.commandLine.appendSwitch('host-resolver-rules', demoResolverRules(mode))
 protocol.registerSchemesAsPrivileged([{ scheme: APP_SCHEME, privileges: APP_SCHEME_PRIVILEGES }])
