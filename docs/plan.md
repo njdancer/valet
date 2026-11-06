@@ -603,10 +603,16 @@ code.
 
 Fix: in the tool partition, `webRequest` enforces, for **every** request whatever its initiator,
 the egress host allowlist, the deny segments (checkout, payment and the rest) unless an
-`irreversible` tool with confirmation is running, and the per-run ceiling. Declared-path checks
-stay on `page.fetch` only. The security model should say plainly that declarations are a
-`page.fetch` guarantee, while the deny list and hosts are partition-wide. `SessionDriver` has
-no way today to install or change that guard; see change request C2.
+`irreversible` tool with confirmation is running, and a ceiling. Declared-path checks stay on
+`page.fetch` only. The security model should say plainly that declarations are a `page.fetch`
+guarantee, while the deny list and hosts are partition-wide. `SessionDriver` has no way today to
+install or change that guard; see change request C2.
+
+The ceiling needs care. Woolworths' home page alone makes far more than the default 50 requests
+(scripts, images, Akamai sensors, analytics). A partition-wide ceiling should count only
+`mainFrame`, `subFrame`, `xhr` and `fetch` requests (`webRequest` reports the resource type),
+and sit separately from the `page.fetch` count that `requestsPerRun` was meant for. The numbers
+come from measuring a real session in M2.
 
 ### G2. Rate budgets aren't in the manifest
 
