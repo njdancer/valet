@@ -36,18 +36,53 @@ export function topRight(size: { width: number; height: number }, workArea: Rect
   }
 }
 
+/** Where the hand-off banner and the adapter's auth window go together. */
+export interface HandoffLayout {
+  readonly banner: Rect
+  /** New bounds for the auth window, or null to leave it where it is. */
+  readonly window: Rect | null
+}
+
+/** The smallest the auth window is made to give the banner room; below that it isn't shrunk. */
+export const MIN_AUTH_WINDOW_HEIGHT = 420
+
 /**
- * The hand-off banner: as wide as the auth window, directly above it; if there's no room above,
- * along the top of the work area (over the auth window's top edge rather than off screen).
+ * The hand-off banner: as wide as the auth window and never over it, since it is frameless and on
+ * top and would hide the window's title bar and the top of the login page. Directly above the
+ * window when there's room. When there isn't (the usual case for a tall auth window), the window is
+ * moved down by the banner's height, and shortened if it would then run off the bottom, but never
+ * below MIN_AUTH_WINDOW_HEIGHT. On a screen too small even for that, the window stays and the banner
+ * goes wherever bannerBeside puts it.
  */
-export function aboveWindow(target: Rect | null, height: number, workArea: Rect): Rect {
+export function handoffLayout(target: Rect | null, height: number, workArea: Rect): HandoffLayout {
   if (target === null) {
     const width = Math.min(760, workArea.width)
-    return { x: workArea.x + Math.round((workArea.width - width) / 2), y: workArea.y, width, height }
+    return {
+      banner: { x: workArea.x + Math.round((workArea.width - width) / 2), y: workArea.y, width, height },
+      window: null,
+    }
   }
+  if (target.y - height >= workArea.y) return { banner: bannerBeside(target, height, workArea), window: null }
+  const top = workArea.y + height
+  const room = workArea.y + workArea.height - top
+  const windowHeight = Math.min(target.height, room)
+  if (windowHeight < Math.min(MIN_AUTH_WINDOW_HEIGHT, target.height)) {
+    return { banner: bannerBeside(target, height, workArea), window: null }
+  }
+  const moved = { x: target.x, y: top, width: target.width, height: windowHeight }
+  return { banner: bannerBeside(moved, height, workArea), window: moved }
+}
+
+/**
+ * The banner for a window where it is now, without moving the window (as it is dragged or
+ * resized): directly above it if there's room, else directly below it, else along the bottom of the
+ * work area, where it covers the least of the page and none of the title bar.
+ */
+export function bannerBeside(target: Rect, height: number, workArea: Rect): Rect {
   const width = Math.min(target.width, workArea.width)
   const x = clamp(target.x, workArea.x, workArea.x + workArea.width - width)
-  // Above it when there's room, else along the top of the work area.
-  const y = Math.max(target.y - height, workArea.y)
-  return { x, y, width, height }
+  const bottom = workArea.y + workArea.height
+  if (target.y - height >= workArea.y) return { x, y: target.y - height, width, height }
+  if (target.y + target.height + height <= bottom) return { x, y: target.y + target.height, width, height }
+  return { x, y: bottom - height, width, height }
 }

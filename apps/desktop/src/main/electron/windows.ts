@@ -10,7 +10,7 @@ import { partitionName } from '@siteadapter/browser-electron'
 import { BrowserWindow, type Rectangle, screen, session, type WebContents } from 'electron'
 import { parseRoute } from '../../renderer/lib/routes'
 import type { HashRoute } from '../../shared/api'
-import { aboveWindow, topRight, underTrayIcon } from '../core/geometry'
+import { bannerBeside, handoffLayout, topRight, underTrayIcon } from '../core/geometry'
 import type { AppWindow, WindowRole } from '../core/ipc'
 import { isAppPage, type Page, pageUrl, type RendererBase, windowTitle } from '../core/launch'
 
@@ -35,6 +35,8 @@ export class AppWindows {
   private tray: BrowserWindow | null = null
   private readonly confirmations = new Map<string, BrowserWindow>()
   private readonly banners = new Map<string, BrowserWindow>()
+  /** Per banner: stops it following its auth window. */
+  private readonly unfollow = new Map<string, () => void>()
 
   constructor(private readonly options: WindowsOptions) {}
 
@@ -171,7 +173,11 @@ export class AppWindows {
     if (window !== undefined && !window.isDestroyed()) window.destroy()
   }
 
-  /** The hand-off banner, above the adapter's auth window (found by its partition). */
+  /**
+   * The hand-off banner, beside the adapter's auth window (found by its partition) and never over
+   * it: the auth window is moved down, and shortened if need be, to make room above it
+   * (handoffLayout), and the banner follows the window as the person moves or resizes it.
+   */
   showNeedsUser(adapterId: string): void {
     const authWindow = BrowserWindow.getAllWindows().find(
       (w) =>
@@ -179,11 +185,14 @@ export class AppWindows {
     )
     const target = authWindow?.getBounds() ?? null
     const display = target === null ? screen.getPrimaryDisplay() : screen.getDisplayMatching(target)
-    const bounds = aboveWindow(target, BANNER_HEIGHT, display.workArea)
+    const layout = handoffLayout(target, BANNER_HEIGHT, display.workArea)
+    if (authWindow !== undefined && layout.window !== null) authWindow.setBounds(layout.window)
+    const bounds = layout.banner
     const existing = this.banners.get(adapterId)
     if (existing !== undefined && !existing.isDestroyed()) {
       existing.setBounds(bounds)
       existing.showInactive()
+      if (authWindow !== undefined) this.follow(adapterId, existing, authWindow)
       return
     }
     const window = this.create(
@@ -203,14 +212,43 @@ export class AppWindows {
       adapterId,
     )
     window.once('ready-to-show', () => window.showInactive())
-    window.on('closed', () => this.banners.delete(adapterId))
+    window.on('closed', () => {
+      if (this.banners.get(adapterId) === window) {
+        this.banners.delete(adapterId)
+        this.stopFollowing(adapterId)
+      }
+    })
     this.banners.set(adapterId, window)
+    if (authWindow !== undefined) this.follow(adapterId, window, authWindow)
   }
 
   closeNeedsUser(adapterId: string): void {
     const window = this.banners.get(adapterId)
     this.banners.delete(adapterId)
+    this.stopFollowing(adapterId)
     if (window !== undefined && !window.isDestroyed()) window.destroy()
+  }
+
+  /** Keeps `banner` beside `authWindow` as the person moves or resizes it. */
+  private follow(adapterId: string, banner: BrowserWindow, authWindow: BrowserWindow): void {
+    this.stopFollowing(adapterId)
+    const place = () => {
+      if (banner.isDestroyed() || authWindow.isDestroyed()) return
+      const bounds = authWindow.getBounds()
+      banner.setBounds(bannerBeside(bounds, BANNER_HEIGHT, screen.getDisplayMatching(bounds).workArea))
+    }
+    authWindow.on('move', place)
+    authWindow.on('resize', place)
+    this.unfollow.set(adapterId, () => {
+      if (authWindow.isDestroyed()) return
+      authWindow.off('move', place)
+      authWindow.off('resize', place)
+    })
+  }
+
+  private stopFollowing(adapterId: string): void {
+    this.unfollow.get(adapterId)?.()
+    this.unfollow.delete(adapterId)
   }
 
   closeAll(): void {

@@ -2,7 +2,14 @@
 // Launch mode, the app's own pages, window titles, window placement and client snippets.
 
 import { describe, expect, it } from 'vitest'
-import { aboveWindow, topRight, underTrayIcon } from '../../src/main/core/geometry'
+import {
+  bannerBeside,
+  handoffLayout,
+  MIN_AUTH_WINDOW_HEIGHT,
+  type Rect,
+  topRight,
+  underTrayIcon,
+} from '../../src/main/core/geometry'
 import {
   isAppPage,
   launchMode,
@@ -159,16 +166,72 @@ describe('placement', () => {
     )
   })
 
-  it('puts the confirmation top right and the banner above the auth window', () => {
+  it('puts the confirmation top right', () => {
     expect(topRight({ width: 460, height: 620 }, work)).toEqual({ x: 964, y: 41, width: 460, height: 620 })
-    expect(aboveWindow({ x: 100, y: 300, width: 800, height: 600 }, 168, work)).toEqual({
-      x: 100,
-      y: 132,
+  })
+
+  const overlaps = (a: Rect, b: Rect) =>
+    a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height
+
+  it('puts the banner directly above the auth window when there is room, and leaves the window', () => {
+    const target = { x: 100, y: 300, width: 800, height: 500 }
+    expect(handoffLayout(target, 168, work)).toEqual({
+      banner: { x: 100, y: 132, width: 800, height: 168 },
+      window: null,
+    })
+    expect(handoffLayout(null, 168, work)).toEqual({
+      banner: { x: 340, y: 25, width: 760, height: 168 },
+      window: null,
+    })
+  })
+
+  it('moves the usual 900 px auth window down to make room, never covering its title bar', () => {
+    // The demo's case: the auth window centred at y=109 on a 1440x900 screen.
+    const target = { x: 80, y: 109, width: 1280, height: 791 }
+    const layout = handoffLayout(target, 168, work)
+    expect(layout.banner).toEqual({ x: 80, y: 25, width: 1280, height: 168 })
+    expect(layout.window).toEqual({ x: 80, y: 193, width: 1280, height: 707 })
+    expect(overlaps(layout.banner, layout.window as Rect)).toBe(false)
+    // Inside the work area.
+    expect((layout.window as Rect).y + (layout.window as Rect).height).toBe(work.y + work.height)
+  })
+
+  it('moves a short window down without shrinking it', () => {
+    const layout = handoffLayout({ x: 0, y: 25, width: 900, height: 500 }, 168, work)
+    expect(layout.window).toEqual({ x: 0, y: 193, width: 900, height: 500 })
+  })
+
+  it('on a screen too small to shrink the window that far, puts the banner below or at the bottom', () => {
+    const small = { x: 0, y: 25, width: 1024, height: 540 }
+    const tall = { x: 0, y: 25, width: 1000, height: 540 }
+    const layout = handoffLayout(tall, 168, small)
+    expect(layout.window).toBeNull()
+    // No room above or below: the bottom of the work area, clear of the title bar.
+    expect(layout.banner).toEqual({ x: 0, y: 397, width: 1000, height: 168 })
+    expect(layout.banner.y).toBeGreaterThan(tall.y + 28)
+    expect(MIN_AUTH_WINDOW_HEIGHT).toBeGreaterThan(540 - 168)
+  })
+
+  it('follows the window as it moves: above, else below, else along the bottom', () => {
+    expect(bannerBeside({ x: 10, y: 400, width: 800, height: 300 }, 168, work)).toEqual({
+      x: 10,
+      y: 232,
       width: 800,
       height: 168,
     })
-    expect(aboveWindow({ x: 100, y: 60, width: 800, height: 600 }, 168, work).y).toBe(25)
-    expect(aboveWindow(null, 168, work)).toEqual({ x: 340, y: 25, width: 760, height: 168 })
+    expect(bannerBeside({ x: 10, y: 60, width: 800, height: 300 }, 168, work)).toEqual({
+      x: 10,
+      y: 360,
+      width: 800,
+      height: 168,
+    })
+    expect(bannerBeside({ x: 10, y: 60, width: 800, height: 800 }, 168, work).y).toBe(732)
+    // Kept on screen sideways, and no wider than the screen.
+    expect(bannerBeside({ x: 1000, y: 400, width: 800, height: 300 }, 168, work).x).toBe(640)
+    expect(bannerBeside({ x: -50, y: 400, width: 2000, height: 300 }, 168, work)).toMatchObject({
+      x: 0,
+      width: 1440,
+    })
   })
 })
 
