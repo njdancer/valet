@@ -105,7 +105,8 @@ Tools throw, never a raw error or a result that describes the failure:
 
 Cart tools throw rather than returning a "please log in" result so the runtime records a failed
 call. `NeedsUserError` ends the run as `needsUser` with a reason code (`captcha`, `otp-required`,
-`account-locked`, `login-required`, `other`), and the app shows the person the login window. The
+`account-locked`, `login-required`, `terms-update`, `site-changed`), and the app shows the person
+the login window. The
 auth steps' notes, which say what happened in words, are shown only in the app; nothing but the
 code reaches the MCP client.
 
@@ -133,12 +134,22 @@ So:
 
 - `navigation` is `[www, auth]`. The `login` secret (`username`, `password`) is requested for the
   auth origin only, where both are typed and both forms post.
-- `egress` and `session.cookieDomains` stay on www. Auth0's own cookies (its session, "remember
-  this device") are host-only on the auth origin, so the hand-off never copies them, and the
-  tool partition never talks to the auth origin.
+- `egress` and `session.cookieDomains` stay on www, and the tool partition never talks to the
+  auth origin. `cookieDomains` is `[woolworths.com.au, www.woolworths.com.au]`: the bare-host
+  entry is what matches a cookie set with `Domain=.woolworths.com.au`, from either origin. Auth0's
+  own cookies (its session, "remember this device") are assumed host-only on the auth origin, so
+  the hand-off never copies them; a cookie the login pages set for the whole domain (analytics,
+  say) _is_ copied, which shows the tool partition nothing a browser wouldn't already send to
+  www. If Auth0's session cookie turned out to be domain-wide, it would cross too: a live check.
 - The probe stays `GET /api/ui/v2/bootstrap` → `ShopperDetails.IsLoggedIn === true`, with 401 as
   the logged-out status. Anonymous visitors get `wow-auth-token` cookies, so a cookie probe would
   lie; an anonymous bootstrap answers 200 with `IsLoggedIn: false`.
+- **The probe depends on a core change.** The runtime makes it in the tool page, inside the
+  tool's run, and core v2's driver holds every request there to the request surface and the
+  ceiling. Bootstrap is deliberately not declared, so that tool code can't read the shopper
+  details it probably returns once logged in. Under core v2 as it is, every cart tool's
+  `ensure()` is therefore refused at the probe (`request-surface` / `undeclared-request`), and
+  only `search_products` and `get_product` work. The e2e shows both (core change requests).
 
 The steps go to the login link, then handle each page only if it is the page expected, by its path
 and its field together:
@@ -191,19 +202,32 @@ The worst case is 40 s of pauses (four settles of 10 s: after the goto, the emai
 and the code), plus the wait for the SMS, which the auth flow polls for until its own deadline.
 So the stall exits stay typed `needsUser`s only if:
 
-- the auth flow's `flowTimeoutMs` is at least 40 s plus the time an SMS takes to arrive (about
-  60 s is enough: **90 s** is the setting this adapter expects), and
-- the runtime's tool timeout is longer than `flowTimeoutMs` plus the tool's own calls, which are
-  paced at 2.5 s (`limits.minGapMs`) and come to at most eight in the 401-retry path below: the
-  default 120 s (`DEFAULT_TOOL_TIMEOUT_MS`) is just enough for a 90 s flow.
+- the auth flow's `flowTimeoutMs` is at least 40 s plus the time an SMS takes to arrive: **90 s**
+  is the setting this adapter expects, and
+- the runtime's tool timeout is longer than `flowTimeoutMs` plus everything else in the run. The
+  worst run is `add_to_cart`'s 401 retry: eight tool-partition requests (the tool page's first
+  navigation, four probes, two reads and the write), paced 2.5 s apart (`limits.minGapMs`), so
+  about 20 s, plus a second, silent login of a few seconds. The default 120 s
+  (`DEFAULT_TOOL_TIMEOUT_MS`) covers a 90 s flow with little to spare; a longer flow timeout
+  needs a longer tool timeout.
 
 Otherwise a slow but legitimate login ends as `timeout` / `timed-out` instead of the `needsUser`
 the security model wants. Core has no way to declare these per adapter (core change requests).
 
 The request surface lists exactly the calls the tools make, and a test fails if a declaration goes
-unused. The login probe is not on it: the runtime makes the probe itself, outside the tool-code
-surface guard, so tool code can't read the shopper details that endpoint probably returns once
-logged in.
+unused. The login probe is not on it, so tool code can't read the shopper details that endpoint
+probably returns once logged in; see above for what that costs until core allows the runtime's
+probe.
+
+### The CAPTCHA's frame
+
+Auth0's bot detection renders its challenge in a third-party iframe: Auth Challenge uses
+Cloudflare Turnstile, and the alternatives are reCAPTCHA, hCaptcha and Arkose. Core v2's driver
+lets an auth page's subframes load only from `navigation` plus `auth.frameOrigins`, and the
+manifest leaves `frameOrigins` empty until the provider is confirmed live. Until then the
+`captcha` exit hands the person a window whose challenge frame was refused, so they can't solve it
+there (the e2e shows it). `createManifest({ captchaFrameOrigins })` declares the origin once it
+is known; a frame origin is never a secret origin, so nothing is typed into it.
 
 ## Verified live and assumed
 
@@ -221,6 +245,10 @@ From the probe of 2026-11-07 ([findings](../../docs/findings/2026-11-07-woolwort
 | Password page `/u/login/password`, `input#password[name=password]`                                                       | **Assumed** (Auth0 standard; not viewed, as that meant entering Nick's email)                                                                             |
 | Errors as `.ulp-input-error-message`, blocked account as `[data-error-code="user-blocked"]`                              | **Assumed** (Auth0 standard)                                                                                                                              |
 | CAPTCHA as `.ulp-captcha-container`                                                                                      | **Assumed** (Auth0 bot detection)                                                                                                                         |
+| The CAPTCHA provider and the origin its iframe loads from                                                                | **To be confirmed** live (Turnstile would be `https://challenges.cloudflare.com`). Until then `auth.frameOrigins` is empty and the challenge can't show   |
+| Every Universal Login page, error pages included, renders in `main._widget`                                              | **Assumed** (Auth0 standard). If wrong, an Auth0 page off the login paths reaches `assertLoggedIn` and ends as `probe` / `not-logged-in`                  |
+| New terms and consent prompts at `/u/terms` and `/u/consent`                                                             | **Assumed** (Auth0 standard). Elsewhere they end as `site-changed`                                                                                        |
+| A cart call on an expired login answers 401, not an anonymous trolley                                                    | **Assumed.** If the site serves an anonymous trolley instead, the 401 retry never fires and the next call's probe finds the expired session               |
 | MFA pages `/u/mfa-{sms,email,otp}-challenge`, `input#code`, `input[name=rememberBrowser]`                                | **Assumed** (Auth0 standard). Whether Nick's account has MFA, and which factor, is decision D4                                                            |
 | Messages sender `Woolworths` and a six-digit code                                                                        | **To be confirmed** when Nick next gets a code. The person approves the real sender when granting Messages access                                         |
 | The remember-device checkbox is visible to a click                                                                       | **Assumed.** If Auth0 styles the real input invisible, the tick is skipped and MFA is asked every login                                                   |
@@ -247,15 +275,27 @@ tool's side effect. `auth-steps.test.ts` walks the auth steps against scripted A
 combination included, and checks that the flow never runs off the end and types each secret at
 most once.
 
-`e2e.test.ts` runs the adapter against `@siteadapter/fake-woolworths-site` over real HTTPS
-(a test certificate from `openssl`; skipped without it), through `test/e2e/`: a stand-in for the
-runtime and the Electron driver, with a cookie jar per partition, a minimal DOM, the secret-fill
-guards, `ensure()` with the probe and hand-off, and each tool run held to the request surface,
-side effect and ceiling. It interprets only the steps this manifest uses, and resolves only the
-test hostnames, to 127.0.0.1. It proves the login through both origins (SMS and authenticator
-MFA, remember-device, silent re-login), each `needsUser` exit, the hostile form-action and
-field-type variants, every cart tool on the handed-off session, and that checkout is refused
-however it is spelled.
+`e2e.test.ts` runs the adapter against `@siteadapter/fake-woolworths-site` over real HTTPS, with
+a test certificate from `openssl`. Without openssl the suite fails; `SITEADAPTER_SKIP_E2E=1`
+skips it on purpose. It runs through `test/e2e/`, a stand-in for the runtime and the Electron
+driver: a cookie jar per partition that honours `Domain=`, a minimal DOM with one level of
+iframes (loaded only from the origins core v2 allows), the secret-fill guards, `ensure()` as the
+runtime runs it (probe in the tool page under the run's policy, login, hand-off, probe again),
+every hop of a tool-partition navigation or fetch held to the run's egress, surface, side effect
+and ceiling, and output redaction. It interprets only the steps this manifest uses, and resolves
+only the test hostnames, to 127.0.0.1.
+
+It proves the login through both origins (SMS and authenticator MFA, remember-device, silent
+re-login), each `needsUser` exit, every cart tool on the handed-off session, and that checkout is
+refused however it is spelled. Against a hostile site: a password form posting elsewhere, fields
+of the wrong type (password and code), a login form in a frame from an undeclared origin and from
+a declared non-secret one, Auth0 or www's callback redirecting off-site after the login, a www
+redirect off the egress list from a tool's fetch and from its navigation, and a stale SMS code.
+
+`HarnessDriver`'s `probeAllowance` models the probe: `'none'` is core v2 as it is (the e2e shows
+every cart tool refused), `'uncounted'` (the default) is the allowance requested below, and
+`'counted'` the same allowance counted against the ceiling, which the 401-retry test shows
+overflowing it.
 
 Fixtures in `test/fixtures` were trimmed from the captured responses in
 `spikes/02-woolworths-shapes/results/shapes.json` (gitignored): `Aggregations` cut to one entry and
@@ -264,7 +304,33 @@ each product's `AdditionalAttributes` cut to a few keys. No cookies. `search-mil
 is synthesised as described above. Edge cases are made in each test by copying a fixture and
 changing one field.
 
+## Open questions for Nick
+
+- **Which CAPTCHA does Auth0 show on auth.woolworths.com.au, and from which origin does its frame
+  load?** Next time a challenge appears in a normal browser, the frame's `src` in the inspector is
+  enough. That origin then goes in `auth.frameOrigins`.
+- Is the Messages sender for the SMS code shown as `Woolworths`, and is the code six digits?
+- Does the account have MFA, and by SMS, email or an authenticator app (decision D4)?
+
 ## Core change requests
+
+- **A runtime-probe allowance in the tool partition.** Core v2's driver holds every request in
+  the run to the request surface and the ceiling, the runtime's own `session.probe` included, so a
+  fetch probe on an undeclared path is refused and every login-needing tool fails before it can
+  log in. Declaring the probe path would hand it to tool code. Requested: the driver admits
+  exactly `GET <home origin><session.probe.path>` (no query) when the runtime makes it, through a
+  handle tool code never holds, still held to egress, the breaker and the rate budget, and either
+  not counted against `requestsPerRun` or counted separately. Counted, `add_to_cart`'s 401-retry
+  path costs eight requests (navigation, four probes, two reads, the write) against a ceiling of
+  six; counted apart, the tool's own share is four.
+- **Timeouts that end as needsUser, and timing per adapter.** A `waitFor` with an `onTimeout`
+  (a needsUser reason) would replace the nested-`when` settles. The flow also needs a
+  `flowTimeoutMs` long enough for four 10 s settles plus an SMS (90 s here), and a tool timeout
+  longer than that plus the run's paced requests (about 20 s in the worst run); today both are
+  runtime-wide constants (`DEFAULT_TOOL_TIMEOUT_MS` 120 s), so a manifest can't say what it needs.
+- **An origin-aware condition.** Conditions see only path and query, so "off the login pages" is
+  a path test, and an Auth0 page outside the known prefixes is told apart from www by Auth0's
+  `main._widget` container. `{ urlOrigin: … }` would make both exact.
 
 - **Serialise a site's write tools.** `add_to_cart` reads then writes an absolute quantity, so
   two parallel calls lose an addition. The runtime should queue `write` and `irreversible` tool
