@@ -1,4 +1,5 @@
 export * from './item-ref'
 export * from './keychain'
 export * from './onepassword-cli'
+export * from './onepassword-sdk'
 export * from './process'
