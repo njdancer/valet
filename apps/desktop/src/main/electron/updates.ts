@@ -5,7 +5,7 @@
 import { execFile } from 'node:child_process'
 import { resolve } from 'node:path'
 import { app, session } from 'electron'
-import type { FeedDefines } from '../core/feed-defines'
+import { type FeedDefines, feedNeedsLoopback } from '../core/feed-defines'
 import {
   type BundleSignature,
   controllerUpdates,
@@ -71,6 +71,8 @@ export function electronUpdates(context: UpdatesContext): (hooks: UpdatesHooks) 
       highestVersionRun: hooks.highestVersionRun,
       whenIdle: hooks.whenIdle,
       feed: decision.feed,
+      // A non-release build's loopback feed (the updater end-to-end build); never a release's.
+      allowLoopbackFeed: feedNeedsLoopback(decision.feed.url),
       requestGuard: guard,
       clock: {
         now: () => Date.now(),

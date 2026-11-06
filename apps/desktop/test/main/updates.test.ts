@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { feedDefines } from '../../src/main/core/feed-defines'
+import { feedDefines, feedNeedsLoopback } from '../../src/main/core/feed-defines'
 import {
   controllerUpdates,
   disabledUpdates,
@@ -46,14 +46,14 @@ describe('feedDefines', () => {
     })
   })
 
-  it('fails the build for half a feed, a feed that isn’t public https, or a key that isn’t one', () => {
+  it('fails the build for half a feed, a feed that isn’t https (or loopback http), or a key that isn’t one', () => {
     expect(() => feedDefines({ SITEADAPTER_UPDATE_URL: URL }, true, readKey)).toThrow(/both/)
     expect(() => feedDefines({ SITEADAPTER_FEED_PUBLIC_KEY_FILE: '/keys/feed.pub' }, true, readKey)).toThrow(
       /both/,
     )
     for (const url of [
       'http://updates.example.com/mac/',
-      'https://127.0.0.1/mac/',
+      'http://192.168.1.10:4555/',
       'https://updates.example.com/mac',
     ])
       expect(() =>
@@ -62,7 +62,7 @@ describe('feedDefines', () => {
           true,
           readKey,
         ),
-      ).toThrow(/https directory/)
+      ).toThrow(/https directory URL, or http on loopback/)
     expect(() =>
       feedDefines(
         { SITEADAPTER_UPDATE_URL: URL, SITEADAPTER_FEED_PUBLIC_KEY_FILE: '/keys/feed.pub' },
@@ -77,6 +77,41 @@ describe('feedDefines', () => {
         () => `${KEY}\n${KEY}`,
       ),
     ).toThrow(/SPKI/)
+  })
+
+  it('takes a loopback feed outside a release, as electron-builder.config.ts does', () => {
+    for (const url of ['http://127.0.0.1:4555/', 'https://127.0.0.1/mac/', 'http://localhost:4555/feed/'])
+      expect(
+        feedDefines(
+          { SITEADAPTER_UPDATE_URL: url, SITEADAPTER_FEED_PUBLIC_KEY_FILE: '/keys/feed.pub' },
+          true,
+          readKey,
+        ).url,
+      ).toBe(url)
+    expect(feedNeedsLoopback('http://127.0.0.1:4555/')).toBe(true)
+    expect(feedNeedsLoopback('https://127.0.0.1/mac/')).toBe(true)
+    expect(feedNeedsLoopback(URL)).toBe(false)
+    expect(feedNeedsLoopback('')).toBe(false)
+  })
+
+  it('for a release, needs the feed, on public https, from a plain build', () => {
+    const both = { SITEADAPTER_UPDATE_URL: URL, SITEADAPTER_FEED_PUBLIC_KEY_FILE: '/keys/feed.pub' }
+    const release = { ...both, SITEADAPTER_RELEASE: '1' }
+    expect(feedDefines(release, true, readKey)).toEqual({ url: URL, publicKey: `${KEY}\n` })
+    expect(() => feedDefines({ SITEADAPTER_RELEASE: '1' }, true, readKey)).toThrow(/release build needs/)
+    expect(() =>
+      feedDefines({ SITEADAPTER_RELEASE: '1', SITEADAPTER_UPDATE_URL: URL }, true, readKey),
+    ).toThrow(/release build needs/)
+    expect(() => feedDefines(release, false, readKey)).toThrow(/plain/)
+    for (const url of ['http://127.0.0.1:4555/', 'https://127.0.0.1/mac/', 'https://updates.local/mac/'])
+      expect(() => feedDefines({ ...release, SITEADAPTER_UPDATE_URL: url }, true, readKey)).toThrow(
+        /public host name/,
+      )
+    // Anything but 1 is not a release here; electron-builder.config.ts refuses those values itself.
+    expect(feedDefines({ ...both, SITEADAPTER_RELEASE: '0' }, false, readKey)).toEqual({
+      url: '',
+      publicKey: '',
+    })
   })
 
   it('reads the key file from disk by default', () => {
