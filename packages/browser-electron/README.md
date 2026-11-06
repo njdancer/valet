@@ -25,6 +25,7 @@ rules it serves are in [docs/security-model.md](../../docs/security-model.md).
 | `cookies.ts`           | Which cookies hand off, and how to recreate them exactly          |
 | `page-core.ts`         | Tolerant loads, step timeouts, frame lookup, trusted click/typing |
 | `auth-page.ts`         | `AuthPage`: navigation poisoning, origin-bound secret typing      |
+| `session-fetch.ts`     | The auth probe's GET: navigation origins every hop, cap, parsing  |
 | `tool-page.ts`         | `ToolPage`: goto, click, fill, extract, evaluate, fetch           |
 | `driver.ts`            | Partitions, runs, the request filter, the handoff, redaction data |
 | `session-values.ts`    | Every value session cookies and storage keys held, for redaction  |
@@ -142,6 +143,41 @@ to measure a decision or an opt-in rather than to test the default.
   by the auth partition's `webRequest` filter (which sees an iframe's first load too), without
   poisoning the page. The auth partition's other requests are not filtered: the site's own
   scripts are out of scope there.
+- **The auth partition's refusals are reported, as the page's.** Each refused main-frame
+  navigation (an escape, which also poisons the page, including an off-list commit that slipped
+  past the guard), and each refused subframe, goes to a reporter as a core `BlockedRequest` with
+  initiator `page`, method `GET` (the guard can't see a form's method), the origin alone as the
+  target, and `host-not-allowed` (or `bad-url` for a URL with no network origin). The reporter is
+  `openAuthPage({ onBlocked })`'s, for that page's own refusals and for the request filter's while
+  it is the newest open auth page (the filter can't tell which page asked), and otherwise
+  `DriverOptions.onAuthBlocked`. Never the tool partition's reporters. Each distinct refusal is
+  reported once per page, up to 200: a main-frame navigation reaches the guard twice
+  (`will-frame-navigate` and `will-navigate`), and pages retry. Like the tool partition's, these
+  reports must pass output redaction before the audit log.
+- **The session probe is a GET from the main process, not from the page.** `AuthPage.fetch(url)`
+  goes through Electron's `net.request` on the auth partition's session, with its cookies
+  (`credentials: 'include'`, so what the answer sets is kept in the auth partition too),
+  `cache: 'no-store'` (a cached answer from before a login or logout would make the probe lie),
+  no referrer, and the clean Chrome UA, `Accept-Language: en-AU,en;q=0.9` and `Accept: */*`
+  restated (with `userAgent: 'electron'`, only `Accept`). No script runs, so the site can't see or
+  shape it. It may go only to the manifest's navigation origins, over https, with no credentials
+  in the URL (`probe/host-not-allowed`, or `probe/invalid` for `user:pass@`), and the fragment is
+  dropped. Redirects are `manual`: each hop is put to the main frame's navigation rule before
+  anything is sent there, so one that leaves the navigation origins (or drops to http) is refused,
+  not followed (`probe/host-not-allowed`), and more than 5 hops is `probe/unavailable`. It runs
+  under the step timeout (`timeout/timed-out`, and the request is aborted), reads at most 1 MiB
+  (`probe/unexpected-shape` past that), and answers per core's `FetchResult`: the body parsed as
+  JSON when the content type is JSON (`application/json`, `+json`, `text/json`) and it parses,
+  otherwise the text, or `null` when empty. Error statuses and block pages come back as answers,
+  for the interpreter to classify. A poisoned page refuses it like every other primitive.
+  `AuthPage.cookieNames(domains)` returns the auth partition's cookie names on those domains (the
+  handoff's matching), never values. The request names the target's origin as its initiator, so
+  it goes out with `Sec-Fetch-Site: same-origin` and `Sec-Fetch-Dest: empty` as the page's own
+  `fetch()` would, but with `Sec-Fetch-Mode: no-cors` where the page's says `cors`: Electron's
+  `net` can't ask for that mode, and a site that checks it can tell the probe isn't the page. The
+  e2e suite records exactly what it sends. Whether the auth partition's `webRequest` filter sees
+  it doesn't matter: the filter only judges subframes, and the probe holds itself to the
+  navigation origins every hop, in the main process.
 - **The clean Chrome UA and en-AU are the default, on both partitions.** Each partition gets
   `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)
   Chrome/<real major>.0.0.0 Safari/537.36` and the languages `en-AU,en` (sent as

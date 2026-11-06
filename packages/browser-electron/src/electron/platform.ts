@@ -147,6 +147,8 @@ class ElectronPartition implements PartitionSession {
           referrerPolicy: 'no-referrer',
           // Each hop is put to allowRedirect before anything is sent there.
           redirect: 'manual',
+          // Initiated by the page's own origin, as its fetch() would be (Sec-Fetch-Site).
+          origin: new URL(request.url).origin,
         })
         for (const [name, value] of Object.entries(request.headers)) client.setHeader(name, value)
       } catch {

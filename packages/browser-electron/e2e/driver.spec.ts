@@ -396,6 +396,16 @@ test('the auth probe GETs from the main process with the auth partition’s cook
   expect(headers['accept-language']).toBe('en-AU,en;q=0.9')
   expect(headers.accept).toBe('*/*')
   expect(headers.referer).toBeUndefined()
+  // Fetch metadata as from the page's origin, except the mode: the page's own fetch() says cors, and
+  // Electron's net has no way to ask for that. Recorded, since a site can tell by it.
+  const fetchMetadata = Object.fromEntries(
+    Object.entries(headers).filter(([name]) => /^(sec-|origin$)/.test(name)),
+  )
+  expect(fetchMetadata).toEqual({
+    'sec-fetch-dest': 'empty',
+    'sec-fetch-mode': 'no-cors',
+    'sec-fetch-site': 'same-origin',
+  })
   // The fragment never left, and the probe reached exactly one URL.
   expect(result.probeSeen).toEqual([{ host: 'site.test', path: '/probe' }])
   // Names only, and the cookie the probe's own answer set is kept in the auth partition.

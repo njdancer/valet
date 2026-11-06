@@ -94,8 +94,9 @@ export interface PartitionSession {
   setCookie(details: CookieSetDetails): Promise<void>
   /**
    * GETs a URL from the main process with the partition's cookies (sending them, and storing what
-   * the response sets), never from a page: no script runs. Uncached, no referrer, redirects only
-   * as `allowRedirect` says, and it never resolves with an exception: every failure is a value.
+   * the response sets), never from a page: no script runs. Uncached, no referrer, initiated by the
+   * URL's own origin (so Sec-Fetch-Site says same-origin, as the page's fetch would), redirects
+   * only as `allowRedirect` says, and it never rejects: every failure is a value.
    */
   fetch(request: SessionFetchRequest): Promise<SessionFetchResponse>
   /**
