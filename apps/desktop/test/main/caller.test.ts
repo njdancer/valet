@@ -152,8 +152,9 @@ describe('the preload’s API', () => {
       const fn = parts.length === 1 ? api[parts[0] as string] : api[parts[0] as string]?.[parts[1] as string]
       expect(typeof fn).toBe('function')
     }
-    await (api.adapters?.get as (id: string) => Promise<unknown>)('woolworths')
-    await (api.runs?.list as (q?: unknown) => Promise<unknown>)(undefined)
+    const typed = buildApi(fake)
+    await typed.adapters.get('woolworths')
+    await typed.runs.list(undefined)
     expect(invoked).toEqual([
       { channel: invokeChannel('adapters.get'), args: ['woolworths'] },
       { channel: invokeChannel('runs.list'), args: [] },
