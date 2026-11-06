@@ -4,14 +4,15 @@
 
 import { tokensEqual } from './token'
 
-const LOOPBACK_NAMES = ['127.0.0.1', 'localhost']
 const LOCAL_ORIGIN_HOSTS = ['127.0.0.1', 'localhost', '[::1]']
 
-/** True when the Host header names this server by a loopback name and its exact port. */
+/**
+ * True when the Host header is exactly 127.0.0.1:<port>. A client that reached this server through
+ * "localhost" happened to resolve it to IPv4; next time it may resolve to ::1, where this server
+ * isn't listening and another local process could be, so that URL is refused rather than rewarded.
+ */
 export function hostAllowed(host: string | undefined, port: number): boolean {
-  if (host === undefined) return false
-  const lower = host.toLowerCase()
-  return LOOPBACK_NAMES.some((name) => lower === `${name}:${port}`)
+  return host === `127.0.0.1:${port}`
 }
 
 /**

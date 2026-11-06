@@ -1,5 +1,5 @@
 // The file the app writes for the stdio bridge: where the endpoint is and its token. The bridge
-// sends the token to whatever URL the file names, so only a loopback /mcp URL is accepted.
+// sends the token to whatever URL the file names, so only the URL the endpoint reports is accepted.
 
 import { SiteAdapterError } from '@siteadapter/core'
 import { z } from 'zod'
@@ -19,7 +19,11 @@ const configSchema = z
   })
   .strict()
 
-/** True for http://127.0.0.1:<port>/mcp or http://localhost:<port>/mcp and nothing else. */
+/**
+ * True for http://127.0.0.1:<port>/mcp and nothing else. Not localhost: Node resolves it to ::1
+ * first, and the endpoint binds only 127.0.0.1, so any local account could listen on [::1]:<port>
+ * and be handed the token.
+ */
 export function isLoopbackEndpoint(url: string): boolean {
   let parsed: URL
   try {
@@ -29,7 +33,7 @@ export function isLoopbackEndpoint(url: string): boolean {
   }
   return (
     parsed.protocol === 'http:' &&
-    (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost') &&
+    parsed.hostname === '127.0.0.1' &&
     parsed.port !== '' &&
     parsed.username === '' &&
     parsed.password === '' &&

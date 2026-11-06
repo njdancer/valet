@@ -47,7 +47,12 @@ function collect(stream: PassThrough): () => string {
 describe('isLoopbackEndpoint', () => {
   it('accepts the loopback /mcp URL the server reports', () => {
     expect(isLoopbackEndpoint('http://127.0.0.1:52011/mcp')).toBe(true)
-    expect(isLoopbackEndpoint('http://localhost:52011/mcp')).toBe(true)
+  })
+
+  it('refuses localhost, which Node resolves to ::1 where the endpoint is not listening', () => {
+    expect(isLoopbackEndpoint('http://localhost:52011/mcp')).toBe(false)
+    expect(isLoopbackEndpoint('http://LOCALHOST:52011/mcp')).toBe(false)
+    expect(isLoopbackEndpoint('http://[::1]:52011/mcp')).toBe(false)
   })
 
   it('refuses any URL that could send the token off the machine or elsewhere', () => {
@@ -85,6 +90,15 @@ describe('writeBridgeConfig and readBridgeConfig', () => {
     const path = join(dir, 'bridge.json')
     await writePrivateFile(path, JSON.stringify({ url: 'http://attacker.example:80/mcp', token: TOKEN }))
     await expect(readBridgeConfig(path)).rejects.toEqual(new SiteAdapterError('credential', 'invalid'))
+  })
+
+  it('refuses a config whose URL says localhost, which another account could answer on ::1', async () => {
+    const path = join(dir, 'bridge.json')
+    await writePrivateFile(path, JSON.stringify({ url: 'http://localhost:52011/mcp', token: TOKEN }))
+    await expect(readBridgeConfig(path)).rejects.toEqual(new SiteAdapterError('credential', 'invalid'))
+    await expect(
+      writeBridgeConfig(path, { url: 'http://localhost:52011/mcp', token: TOKEN }),
+    ).rejects.toEqual(new SiteAdapterError('credential', 'invalid'))
   })
 
   it('refuses a config readable by other accounts', async () => {

@@ -42,11 +42,14 @@ bundles the bridge, this is the only way to launch it.
   an exception from the runtime never has its message sent.
 - **Audit inputs.** Each call carries the client's self-reported name from `initialize`, with
   control characters removed and capped at 100 characters, plus a fresh call id.
-- **HTTP.** The Host header must be `127.0.0.1:<port>` or `localhost:<port>`, and any Origin
-  must be a localhost origin (DNS-rebinding protection, answered 403). Then
+- **HTTP.** The Host header must be `127.0.0.1:<port>`, and any Origin must be a localhost
+  origin (DNS-rebinding protection, answered 403). Register HTTP-native clients with the
+  `127.0.0.1` URL `endpoint.url` reports, never `localhost`: Node resolves `localhost` to `::1`
+  first, where the endpoint isn't listening and another local account could be, and would be
+  handed the token. Requests that say `localhost` are refused so that URL never seems to work. Then
   `Authorization: Bearer <token>` is required on every request (401), compared in constant
   time. Bodies over 1 MiB are refused. At most 32 sessions are kept; the least recently used goes
   first.
 - **Bridge.** It writes nothing but JSON-RPC to stdout. Upstream failures become JSON-RPC errors
-  with fixed text. The config file must be mode 0600, owned by this user, and name a loopback
-  `/mcp` URL, so an edited file can't send the token elsewhere.
+  with fixed text. The config file must be mode 0600, owned by this user, and name
+  `http://127.0.0.1:<port>/mcp`, so an edited file can't send the token elsewhere.

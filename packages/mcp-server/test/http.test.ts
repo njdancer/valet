@@ -262,10 +262,14 @@ describe('bearer token', () => {
 })
 
 describe('DNS rebinding protection', () => {
-  it('accepts Host 127.0.0.1:<port> and localhost:<port>', async () => {
+  it('accepts Host 127.0.0.1:<port>', async () => {
     const running = await start(new FakeCaller([searchProducts]))
     expect((await rawPost(running.port, { host: `127.0.0.1:${running.port}` })).status).toBe(200)
-    expect((await rawPost(running.port, { host: `localhost:${running.port}` })).status).toBe(200)
+  })
+
+  it('refuses Host localhost:<port>, so a client is never left registered with that URL', async () => {
+    const running = await start(new FakeCaller([searchProducts]))
+    expect((await rawPost(running.port, { host: `localhost:${running.port}` })).status).toBe(403)
   })
 
   it('rejects a rebound hostname even with the right token', async () => {
@@ -394,9 +398,10 @@ describe('routing', () => {
 })
 
 describe('hostAllowed', () => {
-  it('requires a loopback name and the exact port', () => {
+  it('requires 127.0.0.1 and the exact port', () => {
     expect(hostAllowed('127.0.0.1:8080', 8080)).toBe(true)
-    expect(hostAllowed('LOCALHOST:8080', 8080)).toBe(true)
+    expect(hostAllowed('localhost:8080', 8080)).toBe(false)
+    expect(hostAllowed('LOCALHOST:8080', 8080)).toBe(false)
     expect(hostAllowed('127.0.0.1', 8080)).toBe(false)
     expect(hostAllowed('127.0.0.1:80800', 8080)).toBe(false)
     expect(hostAllowed('localhost.attacker.example:8080', 8080)).toBe(false)
