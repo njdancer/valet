@@ -7,7 +7,7 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['packages/*/src/**', 'adapters/*/src/**', 'fakes/*/src/**'],
-      exclude: ['**/index.ts', '**/*.d.ts'],
+      exclude: ['**/index.ts', '**/*.d.ts', 'packages/browser-electron/src/electron/**'],
       reporter: ['text-summary', 'html', 'json-summary'],
       thresholds: { lines: 90, functions: 90, statements: 90, branches: 85 },
     },

@@ -1,0 +1,291 @@
+// Fakes for BrowserPlatform, its sessions and surfaces, plus timers the test drives by hand.
+// Frames run the real page scripts against FakeWindow, so these tests exercise the scripts too.
+
+import type {
+  BrowserPlatform,
+  BrowserSurface,
+  CookieRecord,
+  CookieSetDetails,
+  FrameHandle,
+  LoadResult,
+  NavigationEvent,
+  OutgoingRequest,
+  PartitionSession,
+  PendingNavigation,
+  Timers,
+} from '../src/platform'
+import { FakeWindow } from './fake-dom'
+
+export class FakeFrame implements FrameHandle {
+  readonly scripts: string[] = []
+  fail = false
+
+  constructor(
+    public origin: string,
+    public url: string,
+    readonly parentIndex: number | null,
+    readonly window: FakeWindow = new FakeWindow(),
+  ) {}
+
+  async run(code: string): Promise<unknown> {
+    this.scripts.push(code)
+    if (this.fail) throw new Error('Script failed to execute: frame detached')
+    return this.window.run(code)
+  }
+}
+
+export class FakeSurface implements BrowserSurface {
+  frameList: FakeFrame[]
+  readonly loads: string[] = []
+  /** How load() answers. The default commits the URL in the main frame and succeeds. */
+  onLoad: (url: string) => LoadResult | Promise<LoadResult> = (url) => {
+    this.commit(url)
+    return { ok: true }
+  }
+  loading = false
+  readonly clicks: { x: number; y: number }[] = []
+  readonly chars: string[] = []
+  focusCalls = 0
+  stopCalls = 0
+  readonly shown: string[] = []
+  hideCalls = 0
+  destroyed = false
+  private currentUrl = ''
+  private stopWaiters: (() => void)[] = []
+  private closeHandler: (() => boolean) | null = null
+  private readonly destroyedHandlers: (() => void)[] = []
+  private guard: ((navigation: PendingNavigation) => boolean) | null = null
+  private readonly listeners: ((event: NavigationEvent) => void)[] = []
+  /** Called after each sendChar, to let a test act mid-typing. */
+  afterChar: ((index: number) => void) | null = null
+
+  constructor(
+    readonly partition: string,
+    frames?: FakeFrame[],
+  ) {
+    this.frameList = frames ?? [new FakeFrame('https://www.example.com', 'https://www.example.com/', null)]
+  }
+
+  async load(url: string): Promise<LoadResult> {
+    this.loads.push(url)
+    return this.onLoad(url)
+  }
+
+  isLoading(): boolean {
+    return this.loading
+  }
+
+  nextStopLoading(): Promise<void> {
+    return new Promise((resolve) => this.stopWaiters.push(resolve))
+  }
+
+  stop(): void {
+    this.stopCalls++
+  }
+
+  url(): string {
+    return this.currentUrl
+  }
+
+  frames(): readonly FrameHandle[] {
+    return this.frameList
+  }
+
+  click(x: number, y: number): void {
+    this.clicks.push({ x, y })
+  }
+
+  sendChar(char: string): void {
+    this.chars.push(char)
+    this.afterChar?.(this.chars.length - 1)
+  }
+
+  focus(): void {
+    this.focusCalls++
+  }
+
+  show(title: string): void {
+    this.shown.push(title)
+  }
+
+  hide(): void {
+    this.hideCalls++
+  }
+
+  onCloseRequested(handler: () => boolean): void {
+    this.closeHandler = handler
+  }
+
+  onDestroyed(handler: () => void): void {
+    this.destroyedHandlers.push(handler)
+  }
+
+  guardNavigation(allow: (navigation: PendingNavigation) => boolean): void {
+    this.guard = allow
+  }
+
+  onNavigation(listener: (event: NavigationEvent) => void): void {
+    this.listeners.push(listener)
+  }
+
+  destroy(): void {
+    if (this.destroyed) return
+    this.destroyed = true
+    for (const handler of this.destroyedHandlers) handler()
+  }
+
+  isDestroyed(): boolean {
+    return this.destroyed
+  }
+
+  // Test controls.
+
+  /** Offers a navigation to the guard, as will-frame-navigate would. Returns whether it may proceed. */
+  attemptNavigation(url: string, isMainFrame = true): boolean {
+    return this.guard === null ? true : this.guard({ url, isMainFrame })
+  }
+
+  commit(url: string, isMainFrame = true): void {
+    if (isMainFrame) this.currentUrl = url
+    for (const listener of this.listeners) listener({ kind: 'commit', url, isMainFrame })
+  }
+
+  redirect(url: string, isMainFrame = true): void {
+    for (const listener of this.listeners) listener({ kind: 'redirect', url, isMainFrame })
+  }
+
+  finishLoading(): void {
+    this.loading = false
+    const waiters = this.stopWaiters
+    this.stopWaiters = []
+    for (const resolve of waiters) resolve()
+  }
+
+  /** The person clicks the window's close button. Returns true if the window stayed open. */
+  requestClose(): boolean {
+    const kept = this.closeHandler?.() === true
+    if (!kept) this.destroy()
+    return kept
+  }
+}
+
+export class FakeSession implements PartitionSession {
+  userAgent: string | null = null
+  hardened = 0
+  filter: ((request: OutgoingRequest) => boolean) | null = null
+  readonly headers: [string, string][] = []
+  cookies: CookieRecord[] = []
+  readonly setCalls: CookieSetDetails[] = []
+  getCalls = 0
+
+  constructor(readonly partition: string) {}
+
+  setUserAgent(userAgent: string): void {
+    this.userAgent = userAgent
+  }
+
+  harden(): void {
+    this.hardened++
+  }
+
+  filterRequests(allow: (request: OutgoingRequest) => boolean): void {
+    this.filter = allow
+  }
+
+  addResponseHeader(name: string, value: string): void {
+    this.headers.push([name, value])
+  }
+
+  async getCookies(): Promise<readonly CookieRecord[]> {
+    this.getCalls++
+    return this.cookies
+  }
+
+  async setCookie(details: CookieSetDetails): Promise<void> {
+    this.setCalls.push(details)
+  }
+}
+
+export class FakePlatform implements BrowserPlatform {
+  readonly chromeVersion = '142.0.7444.59'
+  readonly os = 'darwin' as NodeJS.Platform
+  readonly sessions = new Map<string, FakeSession>()
+  readonly surfaces: FakeSurface[] = []
+  /** Builds each new surface. Tests replace it to give pages frames. */
+  makeSurface: (partition: string) => FakeSurface = (partition) => new FakeSurface(partition)
+
+  session(partition: string): FakeSession {
+    let session = this.sessions.get(partition)
+    if (session === undefined) {
+      session = new FakeSession(partition)
+      this.sessions.set(partition, session)
+    }
+    return session
+  }
+
+  openSurface(partition: string): FakeSurface {
+    const surface = this.makeSurface(partition)
+    this.surfaces.push(surface)
+    return surface
+  }
+}
+
+/** Timers that only move when the test says so. */
+export class ManualTimers implements Timers {
+  now = 0
+  readonly requested: number[] = []
+  private nextId = 1
+  private queue: { id: number; at: number; callback: () => void }[] = []
+
+  setTimeout(callback: () => void, ms: number): unknown {
+    const id = this.nextId++
+    this.requested.push(ms)
+    this.queue.push({ id, at: this.now + ms, callback })
+    return id
+  }
+
+  clearTimeout(handle: unknown): void {
+    this.queue = this.queue.filter((entry) => entry.id !== handle)
+  }
+
+  get pending(): number {
+    return this.queue.length
+  }
+
+  /** Fires timers in time order, letting promises run in between, until `promise` settles. */
+  async settle<T>(promise: Promise<T>): Promise<T> {
+    let settled = false
+    promise.then(
+      () => (settled = true),
+      () => (settled = true),
+    )
+    for (;;) {
+      await flush()
+      if (settled) return promise
+      const next = [...this.queue].sort((a, b) => a.at - b.at)[0]
+      if (next === undefined) throw new Error('promise is stuck: no timers left to fire')
+      this.queue = this.queue.filter((entry) => entry !== next)
+      this.now = next.at
+      next.callback()
+    }
+  }
+
+  /** Fires every timer due by now + ms. */
+  async advance(ms: number): Promise<void> {
+    const target = this.now + ms
+    for (;;) {
+      await flush()
+      const next = [...this.queue].sort((a, b) => a.at - b.at)[0]
+      if (next === undefined || next.at > target) break
+      this.queue = this.queue.filter((entry) => entry !== next)
+      this.now = next.at
+      next.callback()
+    }
+    this.now = target
+    await flush()
+  }
+}
+
+export function flush(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve))
+}
