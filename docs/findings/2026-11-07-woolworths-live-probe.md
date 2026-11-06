@@ -67,7 +67,7 @@ Raw output is in `spikes/02-woolworths-shapes/results/` (gitignored); the scrubb
   token (`Claude/4.4212.0`).
 - So the block isn't on the IP alone (Nick is on CGNAT) and isn't on "Electron" alone.
 - **Leading hypothesis:** Akamai keyed the block on IP plus fingerprint, and the UA is part of
-  that fingerprint. Electron's default UA contains the *app name*
+  that fingerprint. Electron's default UA contains the _app name_
   (`spike-02-woolworths-shapes/0.0.0 … Electron/44.10.2`), and that exact UA is the one that made
   the scripted burst.
 - **Untested.** A fresh session with a clean Chrome UA was refused by Claude Code's permission
@@ -110,10 +110,10 @@ Raw output is in `spikes/02-woolworths-shapes/results/` (gitignored); the scrubb
 Nick authorised a diagnostic after the permission system had refused it. A fresh in-memory
 session in the same Electron build loaded the homepage only, twice:
 
-| UA | Result |
-|---|---|
+| UA                                                                                                                                                              | Result            |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
 | Electron default: `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.7977.169 Electron/44.10.2 Safari/537.36` | 403 Access Denied |
-| Clean Chrome: `… Chrome/152.0.0.0 Safari/537.36` | Homepage loads |
+| Clean Chrome: `… Chrome/152.0.0.0 Safari/537.36`                                                                                                                | Homepage loads    |
 
 Everything else was identical: the window was hidden (the page saw `visibilityState: visible`
 and `hasFocus: false`), and the IP, engine, client hints and TLS stack were the same. So
