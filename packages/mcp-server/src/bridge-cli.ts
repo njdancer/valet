@@ -24,14 +24,21 @@ export async function main(args: readonly string[], io: CliIo): Promise<number> 
     io.errors.write(USAGE)
     return 2
   }
+  const readConfig = io.readConfig ?? readBridgeConfig
   let config: Awaited<ReturnType<typeof readBridgeConfig>>
   try {
-    config = await (io.readConfig ?? readBridgeConfig)(configPath)
+    config = await readConfig(configPath)
   } catch (error) {
     io.errors.write(`siteadapter-bridge: ${configProblem(error)}\n`)
     return 1
   }
-  const bridge = await (io.run ?? runBridge)({ ...config, input: io.input, output: io.output })
+  const bridge = await (io.run ?? runBridge)({
+    ...config,
+    input: io.input,
+    output: io.output,
+    // The app rewrites the file with its new port and token each time it starts.
+    reconnect: () => readConfig(configPath),
+  })
   await bridge.done
   return 0
 }

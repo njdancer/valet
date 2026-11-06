@@ -140,6 +140,26 @@ describe('main', () => {
     expect(written()).toContain('mode 0600')
   })
 
+  it('re-reads the config file when the bridge reconnects', async () => {
+    const path = join(dir, 'bridge.json')
+    await writeBridgeConfig(path, { url: URL_, token: TOKEN })
+    let reconnect: (() => Promise<unknown>) | undefined
+    const code = await main([path], {
+      input: new PassThrough(),
+      output: new PassThrough(),
+      errors: new PassThrough(),
+      run: async (options) => {
+        reconnect = options.reconnect
+        return { done: Promise.resolve(), close: async () => {} }
+      },
+    })
+    const restarted = 'http://127.0.0.1:52999/mcp'
+    await writeBridgeConfig(path, { url: restarted, token: TOKEN })
+
+    expect(code).toBe(0)
+    expect(await reconnect?.()).toEqual({ url: restarted, token: TOKEN })
+  })
+
   it('bridges a stdio client to a running endpoint until the client goes away', async () => {
     const caller = new FakeCaller([viewCart])
     caller.answer = async () => ({ status: 'ok', output: { items: 4 } })

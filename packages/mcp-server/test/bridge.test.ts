@@ -1,5 +1,8 @@
+import { createServer, type Server } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { PassThrough } from 'node:stream'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js'
 import {
@@ -8,7 +11,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { type RunningBridge, runBridge } from '../src/bridge'
+import { type BridgeTarget, type RunningBridge, runBridge } from '../src/bridge'
 import { type RunningHttpServer, startHttpServer } from '../src/http'
 import type { ListedTool } from '../src/tool-caller'
 import { FakeCaller } from './fake-caller'
@@ -302,5 +305,227 @@ describe('runBridge', () => {
     const { bridge } = await wireBridge(server.url)
     await Promise.all([bridge.close(), bridge.close()])
     await bridge.done
+  })
+})
+
+describe('reconnecting after the app restarts', () => {
+  async function bridgeWithReconnect(
+    target: { current: BridgeTarget },
+    name: string,
+    extra: { fetch?: FetchLike; reconnectTimeoutMs?: number; onReconnect?: () => void } = {},
+  ): Promise<Client> {
+    const toBridge = new PassThrough()
+    const fromBridge = new PassThrough()
+    const bridge = await runBridge({
+      ...target.current,
+      input: toBridge,
+      output: fromBridge,
+      reconnect: async () => {
+        extra.onReconnect?.()
+        return target.current
+      },
+      ...(extra.fetch === undefined ? {} : { fetch: extra.fetch }),
+      ...(extra.reconnectTimeoutMs === undefined ? {} : { reconnectTimeoutMs: extra.reconnectTimeoutMs }),
+    })
+    cleanup.push(() => bridge.close())
+    const client = new Client({ name, version: '1.0.0' })
+    await client.connect(new StdioServerTransport(fromBridge, toBridge))
+    cleanup.push(() => client.close())
+    return client
+  }
+
+  /** An endpoint stand-in that answers initialize with a JSON-RPC error, or never answers. */
+  async function startBrokenEndpoint(mode: 'error' | 'silent'): Promise<{ url: string; server: Server }> {
+    const server = createServer((req, res) => {
+      let body = ''
+      req.on('data', (chunk) => {
+        body += chunk
+      })
+      req.on('end', () => {
+        if (req.method !== 'POST') {
+          res.writeHead(405).end()
+          return
+        }
+        const { id } = JSON.parse(body)
+        if (mode === 'silent') {
+          res.writeHead(200, { 'content-type': 'text/event-stream', 'mcp-session-id': 's' })
+          res.write(': waiting\n\n')
+          return
+        }
+        res.writeHead(200, { 'content-type': 'application/json', 'mcp-session-id': 's' })
+        res.end(JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32600, message: 'no' } }))
+      })
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    cleanup.push(
+      () =>
+        new Promise<void>((resolve) => {
+          server.close(() => resolve())
+          server.closeAllConnections()
+        }),
+    )
+    return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/mcp`, server }
+  }
+
+  it('replays the client initialize into the new endpoint and retries the call', async () => {
+    const before = new FakeCaller([viewCart])
+    before.answer = async () => ({ status: 'ok', output: { items: 1 } })
+    const first = await startHttpServer({ caller: before, token: TOKEN })
+    const target = { current: { url: first.url, token: TOKEN } }
+    const client = await bridgeWithReconnect(target, 'long-lived-client')
+    await client.callTool({ name: 'woolworths_view_cart', arguments: {} })
+
+    await first.close()
+    const after = new FakeCaller([viewCart])
+    after.answer = async () => ({ status: 'ok', output: { items: 7 } })
+    // A restarted app has a new port and a new token.
+    const newToken = 'ZYXWVUTSRQPONMLKJIHGFEDCBAzyxwvutsrqponmlkj'
+    const second = await startHttpServer({ caller: after, token: newToken })
+    cleanup.push(() => second.close())
+    target.current = { url: second.url, token: newToken }
+    const relisted = new Promise<void>((resolve) => {
+      client.setNotificationHandler(ToolListChangedNotificationSchema, () => resolve())
+    })
+
+    const result = await client.callTool({ name: 'woolworths_view_cart', arguments: {} })
+
+    expect(result.structuredContent).toEqual({ items: 7 })
+    expect(after.calls.map((c) => c.client)).toEqual(['long-lived-client'])
+    await relisted
+  })
+
+  it('rebuilds a session the endpoint evicted', async () => {
+    const caller = new FakeCaller([viewCart])
+    caller.answer = async () => ({ status: 'ok', output: { items: 2 } })
+    const server = await startHttpServer({ caller, token: TOKEN, maxSessions: 1 })
+    cleanup.push(() => server.close())
+    let reconnects = 0
+    const client = await bridgeWithReconnect({ current: { url: server.url, token: TOKEN } }, 'evicted', {
+      onReconnect: () => {
+        reconnects++
+      },
+    })
+    await client.listTools()
+    const transport = new StreamableHTTPClientTransport(new URL(server.url), {
+      requestInit: { headers: { authorization: `Bearer ${TOKEN}` } },
+    })
+    const other = new Client({ name: 'other', version: '1' })
+    await other.connect(transport)
+    cleanup.push(() => other.close())
+
+    const result = await client.callTool({ name: 'woolworths_view_cart', arguments: {} })
+
+    expect(result.structuredContent).toEqual({ items: 2 })
+    expect(reconnects).toBe(1)
+  })
+
+  it('answers with the fixed error when the endpoint is still down', async () => {
+    const server = await startHttpServer({ caller: new FakeCaller([viewCart]), token: TOKEN })
+    const client = await bridgeWithReconnect({ current: { url: server.url, token: TOKEN } }, 'c')
+    await client.listTools()
+    await server.close()
+
+    await expect(client.callTool({ name: 'woolworths_view_cart', arguments: {} })).rejects.toThrow(
+      'siteadapter is not reachable; make sure the app is running',
+    )
+  })
+
+  it('answers with the fixed error when the new endpoint refuses the replayed initialize', async () => {
+    const server = await startHttpServer({ caller: new FakeCaller([viewCart]), token: TOKEN })
+    const target = { current: { url: server.url, token: TOKEN } }
+    const client = await bridgeWithReconnect(target, 'c')
+    await client.listTools()
+    await server.close()
+    target.current = { url: (await startBrokenEndpoint('error')).url, token: TOKEN }
+
+    await expect(client.callTool({ name: 'woolworths_view_cart', arguments: {} })).rejects.toThrow(
+      'siteadapter is not reachable; make sure the app is running',
+    )
+  })
+
+  it('gives up when the replayed initialize is never answered', async () => {
+    const server = await startHttpServer({ caller: new FakeCaller([viewCart]), token: TOKEN })
+    const target = { current: { url: server.url, token: TOKEN } }
+    const client = await bridgeWithReconnect(target, 'c', { reconnectTimeoutMs: 50 })
+    await client.listTools()
+    await server.close()
+    target.current = { url: (await startBrokenEndpoint('silent')).url, token: TOKEN }
+
+    await expect(client.callTool({ name: 'woolworths_view_cart', arguments: {} })).rejects.toThrow(
+      'siteadapter is not reachable; make sure the app is running',
+    )
+  })
+
+  it('tries again on the next call after a failed reconnect', async () => {
+    const first = await startHttpServer({ caller: new FakeCaller([viewCart]), token: TOKEN })
+    const target = { current: { url: first.url, token: TOKEN } }
+    let reconnects = 0
+    const client = await bridgeWithReconnect(target, 'patient-client', {
+      reconnectTimeoutMs: 50,
+      onReconnect: () => {
+        reconnects++
+      },
+    })
+    await client.listTools()
+    await first.close()
+    target.current = { url: (await startBrokenEndpoint('error')).url, token: TOKEN }
+    await expect(client.callTool({ name: 'woolworths_view_cart', arguments: {} })).rejects.toThrow()
+
+    const caller = new FakeCaller([viewCart])
+    caller.answer = async () => ({ status: 'ok', output: { items: 9 } })
+    target.current = { url: (await startServer(caller)).url, token: TOKEN }
+    const result = await client.callTool({ name: 'woolworths_view_cart', arguments: {} })
+
+    expect(result.structuredContent).toEqual({ items: 9 })
+    expect(caller.calls.map((c) => c.client)).toEqual(['patient-client'])
+    expect(reconnects).toBe(2)
+  })
+
+  it('does not treat a refusal as a restart', async () => {
+    const server = await startServer(new FakeCaller([viewCart]))
+    let hostile = false
+    let reconnects = 0
+    const fetchMaybeCrossSite: FetchLike = (url, init) => {
+      const headers = new Headers(init?.headers)
+      if (hostile) headers.set('origin', 'https://attacker.example')
+      return fetch(url, { ...init, headers })
+    }
+    const client = await bridgeWithReconnect({ current: { url: server.url, token: TOKEN } }, 'c', {
+      fetch: fetchMaybeCrossSite,
+      onReconnect: () => {
+        reconnects++
+      },
+    })
+    hostile = true
+
+    await expect(client.callTool({ name: 'woolworths_view_cart', arguments: {} })).rejects.toThrow(
+      'siteadapter refused the request',
+    )
+    expect(reconnects).toBe(0)
+  })
+
+  it('does not reconnect before the client has initialized', async () => {
+    const server = await startHttpServer({ caller: new FakeCaller([]), token: TOKEN })
+    await server.close()
+    let reconnects = 0
+    const toBridge = new PassThrough()
+    const fromBridge = new PassThrough()
+    const bridge = await runBridge({
+      url: server.url,
+      token: TOKEN,
+      input: toBridge,
+      output: fromBridge,
+      reconnect: async () => {
+        reconnects++
+        return { url: server.url, token: TOKEN }
+      },
+    })
+    cleanup.push(() => bridge.close())
+
+    const reply = nextLine(fromBridge)
+    toBridge.write(`${JSON.stringify(INITIALIZE)}\n`)
+
+    expect((await reply).error.message).toBe('siteadapter is not reachable; make sure the app is running')
+    expect(reconnects).toBe(0)
   })
 })
