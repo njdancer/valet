@@ -2103,7 +2103,7 @@
 .ob-flow {
   display: grid;
   grid-template-columns: 1fr 36px 1.25fr 36px 1fr;
-  align-items: center;
+  align-items: stretch;
   gap: 0;
   margin: var(--space-2) 0 var(--space-5);
 }
@@ -2124,6 +2124,7 @@
 }
 
 .ob-flow .arrow {
+  align-self: center;
   height: 1.5px;
   background: var(--border-strong);
   position: relative;

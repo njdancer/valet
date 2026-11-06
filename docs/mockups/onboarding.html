@@ -146,15 +146,15 @@
             </div>
             <div class="ob-step" data-step="2">
               <span class="n">2</span>
-              <div><div class="title">Connect a client</div><div class="sub">Claude Code connected</div></div>
+              <div><div class="title">Connect a client</div><div class="sub" data-done="Claude Code connected">Claude Code, Claude Desktop</div></div>
             </div>
             <div class="ob-step" data-step="3">
               <span class="n">3</span>
-              <div><div class="title">1Password</div><div class="sub">Where logins come from</div></div>
+              <div><div class="title">1Password</div><div class="sub" data-done="Service account connected">Where logins come from</div></div>
             </div>
             <div class="ob-step" data-step="4">
               <span class="n">4</span>
-              <div><div class="title">Text-message codes</div><div class="sub">Optional</div></div>
+              <div><div class="title">Text-message codes</div><div class="sub" data-done="Skipped">Optional</div></div>
             </div>
             <div class="ob-step" data-step="5">
               <span class="n">5</span>
@@ -196,8 +196,8 @@
                   <div class="card">
                     <div class="h3"><span class="i sm i-key secret-text"></span>Adapters never see a password</div>
                     <div class="muted">
-                      Logins run in a separate session from 1Password. Adapter code never runs there, and gets a logged-in page
-                      afterwards.
+                      Logins run in a separate browser session, with values from 1Password. Adapter code never runs there, and
+                      gets a logged-in page afterwards.
                     </div>
                   </div>
                   <div class="card">
@@ -273,8 +273,8 @@
                         <span class="h3">A service account for one vault</span><span class="pill ok">Recommended</span>
                       </div>
                       <div class="desc">
-                        Works while your Mac is locked or 1Password is closed, so tools keep working when you're away. It can
-                        read only the vault you give it, and you can revoke it in 1Password.
+                        Works while 1Password is closed or locked, so logins don't wait for Touch ID. It can read only the vault
+                        you give it, and you can revoke it in 1Password.
                       </div>
                       <ol class="numlist">
                         <li class="done">
@@ -283,7 +283,10 @@
                         <li class="done">
                           <span
                             >Move or copy in the logins to use
-                            <span class="hint">Service accounts can't read your personal vaults. Found: Woolworths.</span></span
+                            <span class="hint"
+                              >Service accounts can't read your personal vaults. You let the op CLI look up item titles: Woolworths,
+                              in Personal.</span
+                            ></span
                           ><span></span>
                         </li>
                         <li class="done">
@@ -300,6 +303,15 @@
                       <div class="connected">
                         <span class="i i-check"></span>Connected: vault siteadapter, 4 items. Token saved to your Keychain.
                       </div>
+                      <div class="callout warn" style="margin-top: 10px">
+                        <span class="i i-warn"></span>
+                        <div>
+                          <strong>One honest caveat.</strong> In this version, each app start asks once via a macOS prompt
+                          naming <span class="mono">security</span>, not siteadapter, so the first login after a restart waits
+                          for you. Allow it each time. Never choose <strong>Always Allow</strong>: any app you run could then
+                          read the token.
+                        </div>
+                      </div>
                     </div>
                   </div>
                   <div class="stack gap-3 side">
@@ -312,14 +324,6 @@
                           for you.
                         </div>
                         <div class="xs tertiary" style="margin-top: 6px">Found op 2.32 · app integration on</div>
-                      </div>
-                    </div>
-                    <div class="callout warn">
-                      <span class="i i-warn"></span>
-                      <div>
-                        <strong>One honest caveat.</strong> In this version, reading the token shows a macOS prompt naming
-                        <span class="mono">security</span>, not siteadapter. Allow it each time. Never choose
-                        <strong>Always Allow</strong>: any app you run could then read the token.
                       </div>
                     </div>
                   </div>
@@ -382,14 +386,14 @@
                   <div class="install">
                     <span class="avatar lg wow">W</span>
                     <div>
-                      <div class="row"><span class="h2">Woolworths</span><span class="pill">0.1.0</span><span class="hash">9f3c1a7e…e0f1</span></div>
+                      <div class="row"><span class="h2">Woolworths</span><span class="pill">0.1.0</span><span class="hash">c3e94b20…7f15</span></div>
                       <div class="muted small">Search products and manage your trolley. Bundled with siteadapter.</div>
                     </div>
                     <span class="badge read">can't check out</span>
                   </div>
                   <dl class="perm-grid">
                     <dt>Login may visit</dt>
-                    <dd><span class="hash">https://www.woolworths.com.au</span><span class="hash">https://auth.woolworths.com.au</span></dd>
+                    <dd><span class="hash">https://www.woolworths.com.au</span></dd>
                     <dt>Tools may contact</dt>
                     <dd><span class="hash">www.woolworths.com.au</span><span class="hash">cdn0.woolworths.media</span><span class="hash">acs.woolworths.com.au</span></dd>
                     <dt>Tools</dt>
@@ -400,7 +404,7 @@
                     <dt>Asks for a login</dt>
                     <dd>
                       <span class="badge secret">login</span> username, password and one-time code, on
-                      <span class="mono">auth.woolworths.com.au</span>
+                      <span class="mono">www.woolworths.com.au</span>
                     </dd>
                   </dl>
                   <div class="bind-row">
@@ -414,8 +418,9 @@
                 <div class="callout info" style="margin-top: var(--space-4)">
                   <span class="i i-user"></span>
                   <div>
-                    The first login is from a new browser, so Woolworths may ask for a code or a check. siteadapter shows you
-                    the window when it does. It never solves checks for you.
+                    Woolworths now logs in on <span class="mono">auth.woolworths.com.au</span>, which 0.1.0 doesn't list, so
+                    its login stops there and shows you the window. 0.2.0 adds that origin and comes to you as an update to
+                    review. siteadapter never solves checks for you.
                   </div>
                 </div>
               </section>
@@ -450,6 +455,10 @@
             item.classList.toggle('on', n === step)
             item.classList.toggle('done', n < step)
             item.querySelector('.n').innerHTML = n < step ? '<span class="i i-check"></span>' : String(n)
+            // A step only reads as done once it is: until then its subtitle is neutral.
+            const sub = item.querySelector('.sub')
+            sub.dataset.todo ??= sub.textContent
+            sub.textContent = n < step && sub.dataset.done !== undefined ? sub.dataset.done : sub.dataset.todo
           }
           document.querySelectorAll('.ob-foot .dots i').forEach((dot, i) => {
             dot.classList.toggle('on', i + 1 === step)
