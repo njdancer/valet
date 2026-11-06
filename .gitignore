@@ -3,3 +3,4 @@ spikes/*/results/
 coverage/
 dist/
 out/
+.claude/worktrees/
