@@ -1,0 +1,190 @@
+# Woolworths adapter
+
+Searches woolworths.com.au and manages the online cart. It never checks out: no declared request
+touches a checkout or payment path, and no tool is `irreversible`.
+
+```ts
+import adapter, { createAdapter } from '@siteadapter/adapter-woolworths'
+
+adapter // the real site
+createAdapter({ origin: 'https://www.woolworths.test' }) // the fake site, for tests and e2e
+```
+
+`createManifest({ origin })` does the same for the manifest alone. With a fake origin, egress is
+that host only, so an e2e run can't reach the live site even by mistake.
+
+## Tools
+
+All site calls are in-page `fetch`es with paths relative to the page, so cookies stay in the
+browser and the same code serves both origins. Output is reshaped into plain fields; raw
+Woolworths JSON never reaches the client.
+
+| Tool                | Side effect | Login  | Site calls                                    |
+| ------------------- | ----------- | ------ | --------------------------------------------- |
+| `search_products`   | read        | no     | `POST /apis/ui/Search/products`               |
+| `get_product`       | read        | no     | `GET /apis/ui/product/detail/:stockcode`      |
+| `get_cart`          | read        | ensure | `GET /apis/ui/Trolley`                        |
+| `add_to_cart`       | write       | ensure | `GET /apis/ui/Trolley`, then `POST …/update`  |
+| `set_cart_quantity` | write       | ensure | `POST /api/v3/ui/trolley/update`              |
+| `remove_from_cart`  | write       | ensure | `POST /api/v3/ui/trolley/update` (quantity 0) |
+
+- **`search_products { query, page = 1, pageSize = 12 (≤ 36), specialsOnly = false }`** returns
+  `{ total, suggestedQuery, products: [{ stockcode, name, brand, size, price, cupPrice, wasPrice,
+onSpecial, available, imageUrl }] }`. `wasPrice` is set only for specials whose was-price is above
+  the price. `imageUrl` is null unless it is https. The query goes in the POST body, never the URL.
+- **`get_product { stockcode }`** returns the summary fields plus `description` (HTML turned into
+  plain text), `ingredients`, `allergens { contains, mayBePresent, statement }`, `dietary`,
+  `healthStarRating`, `countryOfOrigin`, `category { department, aisle }` and `nutrition
+{ servingSize, servingsPerPack, per100: [{ nutrient, amount }] }` (null when there's no panel).
+- **`get_cart {}`** returns `{ items, unavailable, subtotal, savings, itemCount, totalQuantity,
+notices }`. Each item is `{ stockcode, name, quantity, price, lineTotal, available }`; an
+  unavailable one adds a `reason` for the trolley bucket it came from (`unavailable`,
+  `over-supply-limit`, `over-stock-limit`, `conflicted`, `restricted`, `needs-id-verification`, …).
+  `itemCount` is distinct products and `totalQuantity` units, both as the site counts them.
+  `notices` are the site's own cart messages, such as a minimum spend, then the adapter's.
+- **`add_to_cart { stockcode, quantity = 1 }`** reads the current quantity and sets
+  current + quantity, because the update endpoint sets absolute quantities. It refuses to go over
+  50 on one line, makes no write if the call is cancelled after the read, and makes no write if
+  the trolley it read isn't complete (below), since the write could shrink a line it can't see.
+- **`set_cart_quantity { stockcode, quantity 0..50 }`** and **`remove_from_cart { stockcode }`**
+  make one write each.
+
+### What the write tools report
+
+Every write returns `{ stockcode, quantity, confirmed, cart, notices }`, plus `requestedQuantity`
+(and `previousQuantity` for `add_to_cart`), or `removed` for `remove_from_cart`:
+
+- When the reply is a trolley, `quantity` is the line's quantity **in that trolley**, not the one
+  asked for, and `confirmed` is true. The site clamps to its own supply limits (often 36), so
+  `set_cart_quantity { quantity: 50 }` can return `quantity: 36`; a notice then says the two
+  differ. A line missing from a complete reply counts as 0. `removed` is `quantity === 0`.
+- When the reply isn't a trolley, `quantity`, `cart` and `removed` are null, `confirmed` is false,
+  and a notice says to call `get_cart`. The write may or may not have happened. The tools don't
+  spend another request finding out.
+- When the reply is a trolley the adapter can't fully read and the line isn't in the part it
+  can, `quantity` is null and `confirmed` false.
+- A 2xx reply with `Success: false`, or a non-trolley reply with a non-empty `Errors`, throws
+  `tool-run` / `invalid`: the site refused the change.
+
+A trolley is **complete** when every item in every bucket parses, no product sits in two buckets,
+and the products read add up to the site's `TrolleyItemCount`. The buckets beyond `AvailableItems`
+were all empty in the captured trolley, so their item shape is assumed; `BundleItems` is never
+read. An incomplete trolley gets a fixed notice in `get_cart`, and `add_to_cart` refuses it.
+
+**Parallel writes.** `add_to_cart` is a read-modify-write, and nothing in the adapter serialises
+it. Two parallel `add_to_cart(88436, 1)` calls can both read 2 and both write 3, and both see 3
+in the reply, so the lost addition goes unnoticed. A runtime retry after the POST reached the site
+would instead add twice; that one shows up as a "stored more than asked for" notice. The runtime
+must run a site's write tools one at a time and must not retry a write whose request may have been
+sent (core change requests below).
+
+### Failures
+
+Tools throw `SiteAdapterError`, never a raw error or a result that describes the failure:
+
+| Situation                                   | Stage / class                                                                                   |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `ensure()` says `needsUser`                 | `auth-step` / `not-logged-in`                                                                   |
+| `ensure()` failed                           | its own stage and class, if both are in the core vocabularies, else `auth-step` / `auth-failed` |
+| HTTP 401                                    | `tool-run` / `not-logged-in`                                                                    |
+| HTTP 403 or 429 (Akamai)                    | `tool-run` / `blocked-by-site`                                                                  |
+| 2xx that is HTML (block page or login page) | `tool-run` / `blocked-by-site`                                                                  |
+| 2xx that is neither JSON nor HTML           | `tool-run` / `unavailable`                                                                      |
+| HTTP 404, or detail with no `Product`       | `tool-run` / `not-found`                                                                        |
+| Other non-2xx, or `fetch` threw             | `tool-run` / `unavailable`                                                                      |
+| JSON not in the expected shape              | `tool-run` / `invalid`                                                                          |
+| Signal aborted before a call                | `tool-run` / `aborted`                                                                          |
+| `add_to_cart` would exceed 50               | `tool-input` / `invalid`                                                                        |
+| `add_to_cart` read an incomplete trolley    | `tool-run` / `invalid`                                                                          |
+| Update reply says the site refused          | `tool-run` / `invalid`                                                                          |
+
+Cart tools throw rather than returning a "please log in" result so the runtime records a failed
+call and can re-run the auth action or show the login window. The `needsUser` reason is free text
+and is never passed on.
+
+`needsUser` deliberately leaves as a different pair from a 401. The security model has the runtime
+re-run the auth action when a tool hits an expired session (`tool-run` / `not-logged-in`); after a
+`needsUser` that would resubmit the password on a session the site has just challenged, instead of
+showing the person the window. `auth-step` / `not-logged-in` stands in until core has a typed
+`needsUser` signal (see core change requests below).
+
+An HTML 2xx can be Akamai's challenge or the login page served to an expired session; nothing in
+the response tells them apart. It is reported as `blocked-by-site`, as the runtime's own block
+detection does, so the runtime backs off; its next `ensure()` probe then finds an expired session.
+
+A `SiteAdapterError` thrown by the runtime's own guards (for example the request ceiling) passes
+through unchanged.
+
+## Login
+
+The auth steps open the login page, fill the username and password from the `login` item, submit,
+fill the one-time code if a code prompt appears, and assert the login with the probe. Each wait
+for the page to change is a `settle`: nested `when`s with pauses between looks (20 s in all),
+which return as soon as the page moves on and never fail. There is no `waitFor`, because its
+timeout ends the flow as `condition-timeout`, and the security model sends challenges and
+unexpected prompts to the person instead. So:
+
+- no sign-in form (an Akamai interstitial, a redesigned page): `needsUser` before any secret is
+  typed;
+- still on the login page after submit or after the code (a CAPTCHA, a rejected password, a
+  prompt nobody scripted): `needsUser`. The password and the code are each typed once per run.
+
+The worst case is about 60 s of pauses, so the runtime's flow timeout must be longer than that or a
+stalled login ends as `timeout` / `timed-out` instead. `test/auth-steps.test.ts` walks the steps
+against scripted pages for each of these cases.
+
+The request surface lists exactly the calls the tools make, and a test fails if a declaration goes
+unused. The login probe (`GET /api/ui/v2/bootstrap`) is not on it: the runtime makes the probe
+itself, outside the tool-code surface guard, so tool code can't read the shopper details that
+endpoint probably returns once logged in.
+
+## Verified live and assumed
+
+From the anonymous probe of 2026-11-07
+([findings](../../docs/findings/2026-11-07-woolworths-live-probe.md)):
+
+| Item                                                                                                                  | Status                                                                                                                                                                                     |
+| --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Search POST body keys `SearchTerm`, `PageSize`, `PageNumber`, `SortType`, and the response shape                      | Verified                                                                                                                                                                                   |
+| Product detail path and response shape                                                                                | Verified                                                                                                                                                                                   |
+| Empty trolley response shape (`AvailableItems`, `Totals`, `Errors`, …)                                                | Verified                                                                                                                                                                                   |
+| Egress hosts: www, `cdn0.woolworths.media`, `acs.woolworths.com.au`                                                   | Verified as needed; whether the site works with analytics hosts blocked is untested                                                                                                        |
+| Search `IsSpecial` flag                                                                                               | **Assumed.** The tool also filters to specials locally, so results are right either way, but `total` is then the site's count                                                              |
+| Trolley item shape: product tiles with `QuantityInTrolley`                                                            | **Assumed.** The anonymous trolley was empty, so `trolley-two-items.json` is synthesised from real search tiles                                                                            |
+| Update body `{ items: [{ stockcode, quantity }] }`, absolute quantities, quantity 0 removes                           | **Assumed** from community code. Real clients may send more fields (`source`, `diagnostics`, …)                                                                                            |
+| Update response is the updated trolley                                                                                | **Assumed.** Otherwise the write is reported unconfirmed                                                                                                                                   |
+| Other trolley buckets hold product tiles; `ExceededSupplyLimitGroups` holds `{ Items }` groups                        | **Assumed.** Captured empty. An item that doesn't parse makes the trolley incomplete, so `add_to_cart` refuses it                                                                          |
+| A refused update replies 2xx with `Success: false` or a non-empty `Errors`                                            | **Assumed** from other Woolworths endpoints. A refusal in some other shape is reported unconfirmed, not as success                                                                         |
+| Login selectors `#loginForm-Email`, `#loginForm-Password`, `#loginForm-Submit`, `input[autocomplete="one-time-code"]` | **Assumed.** These are the fake site's. The real login page was behind Akamai's block during the probe; the real selectors must be recorded live, in a logged-in session with Nick present |
+| OTP step: a code input appears after submit, filled from the `login` item, and the page moves on by itself            | **Assumed.** Woolworths may send codes by SMS or email instead, which would need a `messages` OTP source, and may need a separate submit click                                             |
+| Login stays on www (no redirect to a separate identity host)                                                          | **Assumed.** A redirect elsewhere would abort the auth action until `navigation` lists it                                                                                                  |
+| Login probe `GET /api/ui/v2/bootstrap` → `ShopperDetails.IsLoggedIn === true`                                         | **Assumed.** The endpoint exists and returned 200 anonymously; the field path is unconfirmed. A token cookie is not a usable probe: anonymous visitors get `wow-auth-token` too            |
+
+The live site flagged four scripted calls in ten seconds (run 2 of the probe). Each tool makes at
+most two calls and the manifest caps a run at six, but pacing, caching and a backoff circuit
+breaker belong in the runtime.
+
+## Tests
+
+`test/fake-context.ts` is a `ToolContext` whose `page.fetch` serves fixtures and, like the runtime,
+refuses any request `decideRequest` would refuse for the manifest. `request-surface.test.ts` runs
+every tool against both the real and the fake manifest and checks each call's purpose against the
+tool's side effect.
+
+Fixtures in `test/fixtures` were trimmed from the captured responses in
+`spikes/02-woolworths-shapes/results/shapes.json` (gitignored): `Aggregations` cut to one entry and
+each product's `AdditionalAttributes` cut to a few keys. No cookies. `search-milk.json`,
+`product-detail-88436.json` and `trolley-empty.json` are real responses; `trolley-two-items.json`
+is synthesised as described above. Edge cases are made in each test by copying a fixture and
+changing one field.
+
+## Core change requests
+
+- **A typed `needsUser` signal for tool failures.** `EnsureResult` has one, but a tool can only
+  throw `SiteAdapterError(stage, errorClass)`, so the adapter borrows `auth-step` /
+  `not-logged-in`. A dedicated class (say `needs-user`) would let the runtime show the window
+  without guessing from the stage.
+- **Serialise a site's write tools.** `add_to_cart` reads then writes an absolute quantity, so
+  two parallel calls lose an addition. The runtime should queue `write` and `irreversible` tool
+  runs per adapter (reads can stay parallel), and should not retry a write tool after its request
+  may have reached the site.
