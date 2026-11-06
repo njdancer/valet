@@ -5,7 +5,8 @@
 // MCP, and the old grants don't carry. Approved and granted again, the now-irreversible tool asks
 // the person in the confirmation panel: a decline reaches the client as declined, an approval runs it.
 
-import { rmSync } from 'node:fs'
+import { readFileSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
 import { expect, type Page, test } from '@playwright/test'
 import {
   appWindows,
@@ -225,6 +226,46 @@ test('the irreversible tool asks first; Decline in the panel returns declined to
   expect(result.isError).toBe(true)
   expect(result.text).toMatch(/declined/)
   if (launched === null) throw new Error('not launched')
+  expect(await siteTrolley(launched)).toEqual([{ stockcode, quantity: 3 }])
+})
+
+test('a client that cancels while the panel waits: the panel closes, and the tool never runs', async () => {
+  if (launched === null) throw new Error('not launched')
+  const cancel = new AbortController()
+  const call = mcp()
+    .callTool({ name: 'woolworths_remove_from_cart', arguments: { stockcode } }, undefined, {
+      signal: cancel.signal,
+      timeout: 150_000,
+    })
+    .then(
+      () => 'answered',
+      () => 'cancelled',
+    )
+  const panel = await confirmationPanel()
+  await expect(panel.getByText('Remove from cart').first()).toBeVisible()
+  cancel.abort()
+  expect(await call).toBe('cancelled')
+  // The cancel reaches the runtime: the panel goes, the answer is on record as declined, and the call
+  // as aborted.
+  await expect.poll(() => panel.isClosed()).toBe(true)
+  const finished = () =>
+    readFileSync(join(userData, 'audit.jsonl'), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => (JSON.parse(line) as { event: Record<string, unknown> }).event)
+      .filter((e) => e['type'] === 'tool-finished' || e['type'] === 'confirmation')
+      .slice(-2)
+  await expect
+    .poll(finished)
+    .toEqual([
+      expect.objectContaining({ type: 'confirmation', answer: 'declined' }),
+      expect.objectContaining({
+        type: 'tool-finished',
+        outcome: 'failed',
+        stage: 'tool-run',
+        errorClass: 'aborted',
+      }),
+    ])
   expect(await siteTrolley(launched)).toEqual([{ stockcode, quantity: 3 }])
 })
 
