@@ -46,7 +46,10 @@ afterEach(async () => {
   for (const step of cleanup.splice(0).reverse()) await step()
 })
 
-async function start(caller: FakeCaller, extra: { maxSessions?: number } = {}): Promise<RunningHttpServer> {
+async function start(
+  caller: FakeCaller,
+  extra: { maxSessions?: number; port?: number } = {},
+): Promise<RunningHttpServer> {
   const running = await startHttpServer({ caller, token: TOKEN, ...extra })
   cleanup.push(() => running.close())
   return running
@@ -232,6 +235,21 @@ describe('startHttpServer', () => {
     await expect(oldest.listTools()).resolves.toBeDefined()
   })
 
+  it('listens on the port it was given', async () => {
+    const first = await start(new FakeCaller([searchProducts]))
+    const { port } = first
+    await first.close()
+    const second = await start(new FakeCaller([searchProducts]), { port })
+    expect(second.port).toBe(port)
+  })
+
+  it('fails with a fixed error, rather than moving, when the port it was given is taken', async () => {
+    const holder = await start(new FakeCaller([searchProducts]))
+    await expect(
+      startHttpServer({ caller: new FakeCaller([searchProducts]), token: TOKEN, port: holder.port }),
+    ).rejects.toEqual(new SiteAdapterError('config', 'unavailable'))
+  })
+
   it('stops accepting connections once closed', async () => {
     const running = await startHttpServer({ caller: new FakeCaller([searchProducts]), token: TOKEN })
     await connectClient(running.url)
@@ -314,6 +332,47 @@ describe('bearer token', () => {
     const running = await start(new FakeCaller([searchProducts]))
     const response = await rawPost(running.port, { authorization: `bearer ${TOKEN}` })
     expect(response.status).toBe(200)
+  })
+})
+
+describe('setToken', () => {
+  const OTHER = 'zyxwvutsrqponmlkjihgfedcbaZYXWVUTSRQPONMLKJ'
+
+  it('accepts only the new token from then on', async () => {
+    const running = await start(new FakeCaller([searchProducts]))
+    await running.setToken(OTHER)
+    expect((await rawPost(running.port, {})).status).toBe(401)
+    expect((await rawPost(running.port, { authorization: `Bearer ${OTHER}` })).status).toBe(200)
+  })
+
+  it('closes every session, so none opened with the old token carries on', async () => {
+    const caller = new FakeCaller([searchProducts])
+    const running = await start(caller)
+    const init = await rawPost(running.port, {})
+    const sessionId = init.headers['mcp-session-id'] as string
+
+    await running.setToken(OTHER)
+    const response = await rawPost(
+      running.port,
+      { 'mcp-session-id': sessionId, authorization: `Bearer ${OTHER}` },
+      {
+        jsonrpc: '2.0',
+        id: 2,
+        method: 'tools/call',
+        params: { name: 'woolworths_search_products', arguments: { query: 'x' } },
+      },
+    )
+
+    expect(response.status).toBe(404)
+    expect(caller.calls).toEqual([])
+  })
+
+  it('refuses a malformed token and keeps the old one', async () => {
+    const running = await start(new FakeCaller([searchProducts]))
+    for (const token of ['', 'short', `${OTHER} `]) {
+      await expect(running.setToken(token)).rejects.toEqual(new SiteAdapterError('config', 'invalid'))
+    }
+    expect((await rawPost(running.port, {})).status).toBe(200)
   })
 })
 

@@ -20,7 +20,11 @@ export interface HttpServerOptions {
   readonly caller: ToolCaller
   /** From generateToken(). Anything else is refused, so a blank token can't open the endpoint. */
   readonly token: string
-  /** 0, the default, picks a free port. */
+  /**
+   * 0, the default, picks a free port. Any other port must be free: if it isn't, startHttpServer
+   * fails rather than move, because clients configured for it would not follow. startEndpoint
+   * handles the fallback.
+   */
   readonly port?: number
   readonly info?: ServerInfo
   readonly newCallId?: () => string
@@ -38,6 +42,11 @@ export interface RunningHttpServer {
    * throws SiteAdapterError and every session keeps the tools it had.
    */
   refresh(): readonly SkippedTool[]
+  /**
+   * Replaces the bearer token and closes every session, so nothing opened with the old token
+   * outlives it. Throws SiteAdapterError('config', 'invalid') for a malformed token.
+   */
+  setToken(token: string): Promise<void>
   close(): Promise<void>
 }
 
@@ -48,6 +57,7 @@ interface Session {
 
 export async function startHttpServer(options: HttpServerOptions): Promise<RunningHttpServer> {
   if (!isWellFormedToken(options.token)) throw new SiteAdapterError('config', 'invalid')
+  let token = options.token
   const info = options.info ?? { name: 'siteadapter', version: '0.0.0' }
   const newSessionId = options.newSessionId ?? randomUUID
   const maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS
@@ -91,7 +101,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
     if (!hostAllowed(req.headers.host, port) || !originAllowed(req.headers.origin)) {
       return reject(res, 403, 'Forbidden')
     }
-    if (!bearerAuthorized(req.headers.authorization, options.token)) {
+    if (!bearerAuthorized(req.headers.authorization, token)) {
       return reject(res, 401, 'Unauthorized', { 'www-authenticate': 'Bearer' })
     }
     if ((req.url ?? '').split('?')[0] !== MCP_PATH) return reject(res, 404, 'Not found')
@@ -115,9 +125,11 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
     })
   })
   await new Promise<void>((resolve, reject) => {
-    server.once('error', reject)
+    // Usually EADDRINUSE. Node's message names the address; only the class leaves.
+    const failed = (): void => reject(new SiteAdapterError('config', 'unavailable'))
+    server.once('error', failed)
     server.listen({ port: options.port ?? 0, host: '127.0.0.1' }, () => {
-      server.off('error', reject)
+      server.off('error', failed)
       resolve()
     })
   })
@@ -137,6 +149,11 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
       }
       for (const session of sessions.values()) session.endpoint.apply(plan)
       return plan.skipped
+    },
+    async setToken(next) {
+      if (!isWellFormedToken(next)) throw new SiteAdapterError('config', 'invalid')
+      token = next
+      await Promise.all([...sessions.keys()].map(closeSession))
     },
     async close() {
       await Promise.all([...sessions.keys()].map(closeSession))

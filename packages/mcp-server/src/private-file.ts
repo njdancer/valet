@@ -10,12 +10,17 @@ const PRIVATE_MODE = 0o600
 // Never follow a planted symlink, and never block on a planted FIFO.
 const READ_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
 
-/** Writes `contents` to `path` with mode 0600, replacing any existing file in one step. */
+/**
+ * Writes `contents` to `path` with mode 0600, replacing any existing file in one step. Throws
+ * SiteAdapterError('config', 'unavailable') when it can't.
+ */
 export async function writePrivateFile(path: string, contents: string): Promise<void> {
   // Never open the final path for writing: a file planted there could be a symlink or keep its
   // looser mode. A fresh temp file opened with O_EXCL is ours alone.
   const temp = `${path}.${randomBytes(8).toString('hex')}.tmp`
-  const handle = await open(temp, 'wx', PRIVATE_MODE)
+  const handle = await open(temp, 'wx', PRIVATE_MODE).catch(() => {
+    throw new SiteAdapterError('config', 'unavailable')
+  })
   try {
     try {
       await handle.writeFile(contents, 'utf8')
@@ -26,9 +31,9 @@ export async function writePrivateFile(path: string, contents: string): Promise<
       await handle.close()
     }
     await rename(temp, path)
-  } catch (error) {
+  } catch {
     await rm(temp, { force: true })
-    throw error
+    throw new SiteAdapterError('config', 'unavailable')
   }
 }
 
