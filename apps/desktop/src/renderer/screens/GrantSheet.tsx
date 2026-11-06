@@ -3,6 +3,8 @@
 // them, never widen. Items are listed by title: the renderer never sees an item's fields.
 
 import type { ProviderKind } from '@siteadapter/core'
+// From core's browser-safe vocabulary: core's index pulls in Node modules the renderer can't load.
+import { MESSAGES_SECRET } from '@siteadapter/core/vocab'
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { AdapterDetail, GrantInfo, ProviderStatus, VaultItem } from '../../shared/api'
 import { ActionFailed, Avatar, Icon, SecretBadge } from '../components/ui'
@@ -11,8 +13,7 @@ import { hostOf, plural, shortHash } from '../lib/format'
 import { href, navigate } from '../lib/router'
 import { FIELD_WORDING, PROVIDER_WORDING } from '../lib/wording'
 
-/** Core's MESSAGES_SECRET. Not imported: core's index pulls in Node modules the renderer can't load. */
-export const MESSAGES_SECRET = 'messages'
+export { MESSAGES_SECRET }
 
 /** Vault providers. The test provider is offered only when the main process reports it (demo mode). */
 const ONEPASSWORD: readonly ProviderKind[] = ['onepassword-service-account', 'onepassword-cli', 'fake']
