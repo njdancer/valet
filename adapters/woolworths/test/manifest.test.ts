@@ -108,7 +108,7 @@ describe('the real manifest', () => {
     expect(manifest.auth.frameOrigins).toEqual(['https://challenges.cloudflare.com'])
     expect(manifest.navigation).toEqual(realManifest.navigation)
     expect(manifest.egress).toEqual(realManifest.egress)
-    expect(manifest.secrets.login?.origins).toEqual([REAL_AUTH_ORIGIN])
+    expect(manifest.secrets['login']?.origins).toEqual([REAL_AUTH_ORIGIN])
   })
 
   it('refuses a CAPTCHA frame origin core would not accept as an origin', () => {

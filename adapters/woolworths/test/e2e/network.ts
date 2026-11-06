@@ -73,53 +73,73 @@ export class Network {
 export interface Cookie {
   readonly name: string
   readonly value: string
-  /** Host-only, as every cookie the fake sets is. Ports don't separate cookies, as in a browser. */
+  /** The host a host-only cookie came from, or a domain cookie's Domain (without its leading dot). */
   readonly host: string
+  /** True without a Domain attribute: sent to `host` only. Otherwise to `host` and every host under it. */
+  readonly hostOnly: boolean
   readonly httpOnly: boolean
 }
 
-/** One browser partition's cookies. */
+/** One browser partition's cookies. Ports don't separate cookies, as in a browser. */
 export class CookieJar {
   private readonly cookies = new Map<string, Cookie>()
 
-  /** Applies one Set-Cookie header received from `url`. */
+  /** Applies one Set-Cookie header received from `url`, Domain= included, as a browser would. */
   receive(url: string, header: string): void {
-    const host = new URL(url).hostname
+    const from = new URL(url).hostname
     const [pair = '', ...attributes] = header.split(';').map((part) => part.trim())
     const index = pair.indexOf('=')
     if (index <= 0) return
     const name = pair.slice(0, index)
     const lowered = attributes.map((attribute) => attribute.toLowerCase())
+    const domainAttribute = lowered.findLast((attribute) => attribute.startsWith('domain='))
+    const domain = domainAttribute?.slice('domain='.length).replace(/^\./, '')
+    // A Domain must be the host itself or a parent of it; anything else is dropped, as browsers do.
+    if (domain !== undefined && domain !== '' && !domainMatches(from, domain)) return
+    const hostOnly = domain === undefined || domain === ''
+    const host = hostOnly ? from : domain
     if (lowered.includes('max-age=0')) {
-      this.cookies.delete(`${host};${name}`)
+      this.cookies.delete(keyOf(host, hostOnly, name))
       return
     }
-    this.set({ name, value: pair.slice(index + 1), host, httpOnly: lowered.includes('httponly') })
+    this.set({ name, value: pair.slice(index + 1), host, hostOnly, httpOnly: lowered.includes('httponly') })
   }
 
   set(cookie: Cookie): void {
-    this.cookies.set(`${cookie.host};${cookie.name}`, cookie)
+    this.cookies.set(keyOf(cookie.host, cookie.hostOnly, cookie.name), cookie)
   }
 
   /** The Cookie header for a request to `url`. */
   header(url: string): string {
     const host = new URL(url).hostname
     return this.all()
-      .filter((cookie) => cookie.host === host)
+      .filter((cookie) => (cookie.hostOnly ? cookie.host === host : domainMatches(host, cookie.host)))
       .map((cookie) => `${cookie.name}=${cookie.value}`)
       .join('; ')
   }
 
+  /** Whether a host-only cookie `name` is set for `host`. */
   has(host: string, name: string): boolean {
-    return this.cookies.has(`${host};${name}`)
+    return this.cookies.has(keyOf(host, true, name))
   }
 
   all(): Cookie[] {
     return [...this.cookies.values()]
   }
 
-  /** Cookies whose host matches one of the manifest's cookie-domain patterns. */
+  /**
+   * Cookies whose host or Domain matches one of the manifest's cookie-domain patterns, as the
+   * driver's hand-off picks them: a Domain=woolworths.test cookie matches "woolworths.test".
+   */
   on(domains: readonly string[]): Cookie[] {
     return this.all().filter((cookie) => hostAllowed(cookie.host, domains))
   }
+}
+
+function keyOf(host: string, hostOnly: boolean, name: string): string {
+  return `${hostOnly ? 'host' : 'domain'};${host};${name}`
+}
+
+function domainMatches(host: string, domain: string): boolean {
+  return host === domain || host.endsWith(`.${domain}`)
 }

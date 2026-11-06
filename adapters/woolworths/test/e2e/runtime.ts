@@ -1,23 +1,29 @@
 // A stand-in for the runtime around the adapter, just big enough for its manifest: an interpreter
 // for the auth steps this manifest uses (no waitFor or retry), the secret-fill guards from
-// docs/security-model.md, session.ensure() with the probe and the cookie hand-off, and tool runs
-// held to the manifest's request surface. packages/auth-flow and packages/runtime are the real ones;
-// this exists so the adapter can be proven against the fake without them or Electron.
+// docs/security-model.md, session.ensure() as packages/runtime runs it (probe in the tool page
+// under the run's policy, login, hand-off, probe again), tool runs held to the manifest's request
+// surface, and output redaction. packages/auth-flow and packages/runtime are the real ones; this
+// exists so the adapter can be proven against the fake without them or Electron.
 
 import {
   type AdapterDefinition,
   type AuthPage,
   type AuthStep,
   type Condition,
+  CredentialError,
   type EnsureResult,
+  ERROR_CLASSES,
+  type ErrorClass,
   MESSAGES_SECRET,
   type MessagesOtpQuery,
   type NeedsUserReason,
   originAllowed,
   type SecretField,
-  type SecretValue,
+  SecretValue,
   SiteAdapterError,
+  type Stage,
   type ToolContext,
+  type ToolPage,
   toReportable,
 } from '@siteadapter/core'
 import type { HarnessDriver } from './browser'
@@ -38,7 +44,13 @@ export interface HarnessDeps {
   /** The credential provider: a fresh SecretValue per call, which the filler disposes. */
   readonly resolve: (itemRef: string, field: SecretField) => Promise<SecretValue>
   readonly otpReader: { latest(query: MessagesOtpQuery, notBefore: Date): Promise<SecretValue> }
+  /** The clock for the flow's start, which Messages codes must not predate. Defaults to now. */
+  readonly now?: () => Date
 }
+
+/** Cookie values shorter than this are flags, not credentials, as packages/runtime has it. */
+const MIN_REDACTED_LENGTH = 8
+export const REDACTED = '[redacted]'
 
 class Halt {
   constructor(
@@ -54,6 +66,8 @@ export class HarnessRuntime {
   readonly notes: string[] = []
   /** "<secret>.<field>@<origin>" for each secret typed. */
   readonly secretsUsed: string[] = []
+  /** When the current auth flow started. */
+  private flowStartedAt = new Date(0)
 
   constructor(
     readonly adapter: AdapterDefinition,
@@ -86,59 +100,101 @@ export class HarnessRuntime {
         confirm: async () => false,
         signal,
       }
-      const output = await implementation.run(ctx, implementation.input.parse(input))
-      return implementation.output.parse(output)
+      const output = implementation.output.parse(
+        await implementation.run(ctx, implementation.input.parse(input)),
+      )
+      const { cookieDomains, storage } = this.manifest.session
+      return redact(output, await this.deps.driver.sessionSecrets(cookieDomains, storage))
     } finally {
       this.deps.driver.endRun()
     }
   }
 
+  /** As packages/runtime's session does: probe, log in, hand off, probe again. */
   async ensure(): Promise<EnsureResult> {
-    await this.deps.driver.toolPage()
+    const page = await this.deps.driver.runtimePage()
     try {
-      if (await this.probe(this.deps.driver.toolCookies(this.manifest.home))) return { status: 'ok' }
+      if (await this.probe(page)) return { status: 'ok' }
     } catch (error) {
       const { stage, errorClass } = toReportable(error, 'probe')
       return { status: 'failed', stage, errorClass }
     }
-    const page = await this.deps.driver.openAuthPage()
+    const authPage = await this.deps.driver.openAuthPage()
     try {
-      await this.runSteps(page, this.manifest.auth.steps)
+      this.flowStartedAt = (this.deps.now ?? (() => new Date()))()
+      await this.runSteps(authPage, this.manifest.auth.steps)
     } catch (error) {
       if (error instanceof Halt) {
         this.logins.push(`needsUser:${error.reason}`)
         if (error.note !== undefined) this.notes.push(error.note)
-        await page.handToUser(error.reason)
+        await authPage.handToUser(error.reason)
         return { status: 'needsUser', reason: error.reason }
       }
-      const { stage, errorClass } = toReportable(error, 'auth-step')
-      this.logins.push(`failed:${stage}/${errorClass}`)
-      return { status: 'failed', stage, errorClass }
+      return this.failed(error, 'auth-step')
     } finally {
-      await page.close()
+      await authPage.close()
     }
     await this.deps.driver.handoff(this.manifest.session.cookieDomains, this.manifest.session.storage)
+    try {
+      if (!(await this.probe(page)))
+        return this.failed(new SiteAdapterError('probe', 'not-logged-in'), 'probe')
+    } catch (error) {
+      return this.failed(error, 'probe')
+    }
     this.logins.push('ok')
     return { status: 'ok' }
   }
 
-  /** The manifest's fetch probe, made by the runtime itself (outside the tool surface) with `cookie`. */
-  private async probe(cookie: string): Promise<boolean> {
-    const probe = this.manifest.session.probe
-    if (probe.kind !== 'fetch') throw new Error('the harness only runs fetch probes')
+  private failed(error: unknown, fallback: Stage): EnsureResult {
+    const { stage, errorClass } = toReportable(error, fallback)
+    this.logins.push(`failed:${stage}/${errorClass}`)
+    return { status: 'failed', stage, errorClass }
+  }
+
+  /** The manifest's fetch probe, made through the tool page (the runtime's handle on it). */
+  private async probe(page: ToolPage): Promise<boolean> {
+    const probe = this.fetchProbe()
+    const result = await page.fetch(new URL(probe.path, this.manifest.home).href, {
+      method: 'GET',
+      headers: { accept: 'application/json' },
+    })
+    return this.answer(result.status, result.body)
+  }
+
+  /** assertLoggedIn's probe, which auth-flow makes from the auth partition, outside any tool run. */
+  private async authProbe(): Promise<boolean> {
+    const probe = this.fetchProbe()
+    const url = new URL(probe.path, this.manifest.home).href
+    const cookie = this.deps.driver.authJar.header(url)
     const headers: Record<string, string> = { accept: 'application/json' }
     if (cookie !== '') Object.assign(headers, { cookie })
-    const response = await this.deps.network.send(
-      'GET',
-      new URL(probe.path, this.manifest.home).href,
-      headers,
-    )
-    if (probe.loggedOutStatuses.includes(response.status)) return false
-    if (response.status !== probe.expectStatus) throw new SiteAdapterError('probe', 'unexpected-shape')
-    let value: unknown = JSON.parse(response.body)
+    const response = await this.deps.network.send('GET', url, headers)
+    let body: unknown = response.body
+    try {
+      body = JSON.parse(response.body)
+    } catch {
+      // Left as text, which answer() treats as no value.
+    }
+    return this.answer(response.status, body)
+  }
+
+  private fetchProbe() {
+    const probe = this.manifest.session.probe
+    if (probe.kind !== 'fetch') throw new Error('the harness only runs fetch probes')
+    return probe
+  }
+
+  /** As packages/runtime reads a probe: logged-out statuses, the expected status, the JSON path. */
+  private answer(status: number, body: unknown): boolean {
+    const probe = this.fetchProbe()
+    if (probe.loggedOutStatuses.includes(status)) return false
+    if (status !== probe.expectStatus) throw new SiteAdapterError('probe', 'unavailable')
+    let value: unknown = body
     for (const key of (probe.jsonPath ?? '').split('.').filter((part) => part !== '')) {
       value =
-        value !== null && typeof value === 'object' ? (value as Record<string, unknown>)[key] : undefined
+        value !== null && typeof value === 'object' && Object.hasOwn(value, key)
+          ? (value as Record<string, unknown>)[key]
+          : undefined
     }
     return probe.equals === undefined ? Boolean(value) : value === probe.equals
   }
@@ -176,13 +232,9 @@ export class HarnessRuntime {
           (await this.holds(page, step.condition)) ? step.steps : (step.otherwise ?? []),
         )
         return
-      case 'assertLoggedIn': {
-        const www = new URL(this.manifest.home).href
-        if (!(await this.probe(this.deps.driver.authJar.header(www)))) {
-          throw new SiteAdapterError('probe', 'not-logged-in')
-        }
+      case 'assertLoggedIn':
+        if (!(await this.authProbe())) throw new SiteAdapterError('probe', 'not-logged-in')
         return
-      }
       case 'needsUser':
         throw new Halt(step.reason, step.note)
       case 'fail':
@@ -225,7 +277,7 @@ export class HarnessRuntime {
     if (request === undefined || grant === undefined) throw new SiteAdapterError('grant', 'not-granted')
     const origins = grant.origins.filter((origin) => request.origins.includes(origin))
     await this.guard(page, selector, field, origins)
-    const value = await this.deps.resolve(grant.itemRef, field)
+    const value = await resolveSecret(() => this.deps.resolve(grant.itemRef, field), 'credential')
     try {
       await this.type(page, selector, value, origins)
       this.secretsUsed.push(`${secret}.${field}@${new URL(page.currentUrl()).origin}`)
@@ -242,8 +294,8 @@ export class HarnessRuntime {
     const grant = this.deps.grants.find((g) => g.secret === MESSAGES_SECRET && g.itemRef === query.sender)
     if (grant === undefined) throw new SiteAdapterError('grant', 'not-granted')
     await this.guard(page, selector, 'otp', grant.origins)
-    const notBefore = new Date(Date.now() - query.maxAgeSeconds * 1000)
-    const value = await this.deps.otpReader.latest(query, notBefore)
+    // As auth-flow does: a code that arrived before this flow started is never accepted.
+    const value = await resolveSecret(() => this.deps.otpReader.latest(query, this.flowStartedAt), 'otp')
     try {
       await this.type(page, selector, value, grant.origins)
       this.secretsUsed.push(`messages.otp@${new URL(page.currentUrl()).origin}`)
@@ -287,4 +339,33 @@ export class HarnessRuntime {
     await page.focus(selector)
     await page.type(value, { delayMs: 0, allowedOrigins: origins })
   }
+}
+
+/** A provider's failure as `<stage>: <failure>`, and nothing more, as auth-flow reports it. */
+async function resolveSecret(resolve: () => Promise<SecretValue>, stage: Stage): Promise<SecretValue> {
+  let value: unknown
+  try {
+    value = await resolve()
+  } catch (error) {
+    if (error instanceof CredentialError && (ERROR_CLASSES as readonly string[]).includes(error.failure)) {
+      throw new SiteAdapterError(stage, error.failure as ErrorClass)
+    }
+    throw new SiteAdapterError(stage, 'internal')
+  }
+  if (!(value instanceof SecretValue)) throw new SiteAdapterError(stage, 'internal')
+  return value
+}
+
+/** Replaces every string holding a session secret, as packages/runtime's redaction does. */
+function redact(output: unknown, secrets: readonly string[]): unknown {
+  const needles = secrets.filter((value) => value.length >= MIN_REDACTED_LENGTH)
+  const walk = (value: unknown): unknown => {
+    if (typeof value === 'string') return needles.some((needle) => value.includes(needle)) ? REDACTED : value
+    if (Array.isArray(value)) return value.map(walk)
+    if (value !== null && typeof value === 'object') {
+      return Object.fromEntries(Object.entries(value).map(([key, inner]) => [walk(key), walk(inner)]))
+    }
+    return value
+  }
+  return walk(JSON.parse(JSON.stringify(output ?? null)))
 }
