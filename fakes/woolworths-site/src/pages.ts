@@ -63,33 +63,73 @@ export function homePage(context: PageContext): string {
   )
 }
 
-export function loginPage(context: PageContext, error: string | null, action = '/auth/login'): string {
+/** The login form. `action` and `passwordType` differ from the defaults only for hostile variants. */
+function loginForm(action: string, passwordType: string): string {
+  return `    <form id="loginForm" method="post" action="${escapeHtml(action)}">
+      <label for="loginForm-Email">Email address</label>
+      <input id="loginForm-Email" name="email" type="email" autocomplete="username" required>
+      <label for="loginForm-Password">Password</label>
+      <input id="loginForm-Password" name="password" type="${escapeHtml(passwordType)}" autocomplete="current-password" required>
+      <button id="loginForm-Submit" type="submit">Log in</button>
+    </form>`
+}
+
+export function loginPage(
+  context: PageContext,
+  error: string | null,
+  action = '/auth/login',
+  passwordType = 'password',
+): string {
   const alert = error === null ? '' : `    <p class="login-error" role="alert">${escapeHtml(error)}</p>\n`
   return layout(
     'Log in | Woolworths',
     context,
     `    <h1>Log in or sign up</h1>
-${alert}    <form id="loginForm" method="post" action="${escapeHtml(action)}">
-      <label for="loginForm-Email">Email address</label>
-      <input id="loginForm-Email" name="email" type="email" autocomplete="username" required>
-      <label for="loginForm-Password">Password</label>
-      <input id="loginForm-Password" name="password" type="password" autocomplete="current-password" required>
-      <button id="loginForm-Submit" type="submit">Log in</button>
-    </form>
+${alert}${loginForm(action, passwordType)}
     <a class="login-forgot" href="/shop/securelogin/forgotpassword">Forgot your password?</a>`,
   )
 }
 
-export function verifyPage(context: PageContext, error: string | null): string {
+/** The hostile login page whose form lives in a cross-origin iframe at `frameSrc`. */
+export function loginInFramePage(context: PageContext, frameSrc: string): string {
+  return layout(
+    'Log in | Woolworths',
+    context,
+    `    <h1>Log in or sign up</h1>
+    <iframe id="loginFrame" title="Log in" src="${escapeHtml(frameSrc)}"></iframe>`,
+  )
+}
+
+/** What that iframe holds: the login form on its own, as an embedded sign-in widget would be. */
+export function loginFramePage(action: string, passwordType = 'password'): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Log in</title>
+</head>
+<body>
+${loginForm(action, passwordType)}
+</body>
+</html>
+`
+}
+
+export function verifyPage(
+  context: PageContext,
+  error: string | null,
+  action = '/auth/verify',
+  codeType = 'text',
+): string {
   const alert = error === null ? '' : `    <p class="login-error" role="alert">${escapeHtml(error)}</p>\n`
   return layout(
     'Verify it’s you | Woolworths',
     context,
     `    <h1>Verify it’s you</h1>
     <p>We sent a 6-digit code to your mobile.</p>
-${alert}    <form id="verifyForm" method="post" action="/auth/verify">
+${alert}    <form id="verifyForm" method="post" action="${escapeHtml(action)}">
       <label for="verify-Code">Verification code</label>
-      <input id="verify-Code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required>
+      <input id="verify-Code" name="code" type="${escapeHtml(codeType)}" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required>
       <label><input id="verify-RememberDevice" name="rememberDevice" type="checkbox" value="true"> Remember this device</label>
       <button id="verify-Submit" type="submit">Verify</button>
     </form>`,

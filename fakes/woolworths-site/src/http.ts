@@ -9,12 +9,23 @@ export interface RecordedRequest {
   readonly method: string
   /** Hostname from the Host header, without the port. */
   readonly host: string
-  /** Path without the query string. */
+  /**
+   * The request target exactly as it arrived on the request line, query string included. Search
+   * this, not `path` or `query`, when asserting a secret never arrived: they are convenience views
+   * that drop data (dot segments, repeated keys).
+   */
+  readonly target: string
+  /** Path without the query string, with dot segments resolved. A leading `//` is kept. */
   readonly path: string
-  /** Query parameters; a repeated key keeps its last value. */
+  /** Query parameters; a repeated key keeps its last value. `target` has them all. */
   readonly query: Readonly<Record<string, string>>
-  /** Lower-cased header names. Repeated headers are joined with ", ". */
+  /**
+   * Lower-cased header names. Repeated headers are joined with ", ", except that Node keeps only
+   * the first of some (authorization, referer, user-agent, host, …). `rawHeaders` has them all.
+   */
   readonly headers: Readonly<Record<string, string>>
+  /** Every header line as received, as Node's flat `[name, value, name, value, …]` list. */
+  readonly rawHeaders: readonly string[]
   /** The body as UTF-8, cut at `MAX_BODY_BYTES`. */
   readonly body: string
   /** When the request arrived, from the server's clock (ms). */
@@ -60,8 +71,33 @@ export function hostnameOf(hostHeader: string | undefined): string {
   }
 }
 
+export interface RequestTarget {
+  /** The path, dot segments resolved, otherwise as sent: not decoded, slashes not collapsed. */
+  readonly path: string
+  readonly params: URLSearchParams
+}
+
+/**
+ * Splits a request target into path and query. A raw target must never be resolved against a base
+ * URL: `//evil/x` would then read `evil` as a host name and lose it from the path.
+ */
+export function parseTarget(target: string): RequestTarget {
+  if (target.startsWith('/')) {
+    const url = new URL(`http://fake.invalid${target}`)
+    return { path: url.pathname, params: url.searchParams }
+  }
+  // Absolute form (`GET http://host/path`), sent to proxies. Anything else, such as `*`, has no path.
+  try {
+    const url = new URL(target)
+    return { path: url.pathname, params: url.searchParams }
+  } catch {
+    return { path: '/', params: new URLSearchParams() }
+  }
+}
+
 export function recordRequest(request: IncomingMessage, body: string, at: number): RecordedRequest {
-  const url = new URL(request.url ?? '/', 'http://fake.invalid')
+  const target = request.url ?? '/'
+  const { path, params } = parseTarget(target)
   const headers: Record<string, string> = {}
   for (const [name, value] of Object.entries(request.headers)) {
     if (value !== undefined) headers[name] = Array.isArray(value) ? value.join(', ') : value
@@ -69,9 +105,11 @@ export function recordRequest(request: IncomingMessage, body: string, at: number
   return {
     method: request.method ?? 'GET',
     host: hostnameOf(request.headers.host),
-    path: url.pathname,
-    query: Object.fromEntries(url.searchParams),
+    target,
+    path,
+    query: Object.fromEntries(params),
     headers,
+    rawHeaders: [...(request.rawHeaders ?? [])],
     body,
     at,
   }

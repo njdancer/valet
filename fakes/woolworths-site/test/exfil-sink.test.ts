@@ -1,6 +1,8 @@
 import { request as httpRequest } from 'node:http'
+import { connect } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
 import { type ExfilSink, startExfilSink } from '../src/exfil-sink'
+import { rawRequest } from './support/client'
 
 describe('WebSocket attempts', () => {
   it('records an upgrade request, which never reaches the normal request handler', async () => {
@@ -34,6 +36,34 @@ describe('WebSocket attempts', () => {
       body: '',
     })
     expect(sink.requests[0]?.headers['upgrade']).toBe('websocket')
+  })
+
+  it('survives clients resetting upgrade connections, as a browser cancelling a WebSocket can', async () => {
+    const sink = await start()
+    const handshake = [
+      'GET /socket?c=canary-reset HTTP/1.1',
+      `Host: 127.0.0.1:${sink.port}`,
+      'Connection: Upgrade',
+      'Upgrade: websocket',
+      'Sec-WebSocket-Version: 13',
+      'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
+      '',
+      '',
+    ].join('\r\n')
+    for (let i = 0; i < 20; i++) {
+      const recorded = sink.requests.length
+      const socket = connect(sink.port, '127.0.0.1')
+      socket.on('error', () => {})
+      await new Promise<void>((resolve) => socket.once('connect', resolve))
+      socket.write(handshake)
+      // Reset as soon as the sink has the handshake, while it is still answering.
+      while (sink.requests.length === recorded) await new Promise((resolve) => setImmediate(resolve))
+      socket.resetAndDestroy()
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect((await fetch(`${sink.origin}/after`)).status).toBe(200)
+    expect(sink.requests).toHaveLength(21)
+    expect(sink.requests[0]?.target).toBe('/socket?c=canary-reset')
   })
 })
 
@@ -120,5 +150,40 @@ describe('startExfilSink', () => {
     const sink = await start()
     await fetch(`${sink.origin}/big`, { method: 'POST', body: 'y'.repeat(1_200_000) })
     expect(sink.requests[0]?.body).toHaveLength(1_000_000)
+  })
+})
+
+describe('nothing a leak could hide in is dropped from the record', () => {
+  it('keeps a canary in a leading path segment that a URL parser would read as a host', async () => {
+    const sink = await start()
+    expect((await rawRequest(sink.port, 'GET', '//canary-host-segment/x')).status).toBe(200)
+    expect(sink.requests[0]?.target).toBe('//canary-host-segment/x')
+    expect(sink.requests[0]?.path).toBe('//canary-host-segment/x')
+  })
+
+  it('keeps a canary in the first of two repeated query parameters', async () => {
+    const sink = await start()
+    await rawRequest(sink.port, 'GET', '/x?leak=canary-first&leak=decoy')
+    expect(sink.requests[0]?.query).toEqual({ leak: 'decoy' })
+    expect(JSON.stringify(sink.requests[0])).toContain('canary-first')
+  })
+
+  it('keeps a canary in a duplicate of a header Node keeps only one of', async () => {
+    const sink = await start()
+    await rawRequest(sink.port, 'GET', '/x', {
+      authorization: ['Bearer decoy', 'Bearer canary-second-auth'],
+      referer: ['https://decoy.test/', 'https://evil.test/canary-second-referer'],
+    })
+    expect(sink.requests[0]?.headers['authorization']).toBe('Bearer decoy')
+    const record = JSON.stringify(sink.requests[0])
+    expect(record).toContain('canary-second-auth')
+    expect(record).toContain('canary-second-referer')
+  })
+
+  it('keeps the target verbatim, dot segments and encoding included', async () => {
+    const sink = await start()
+    await rawRequest(sink.port, 'GET', '/a/../%63anary?q=%2e')
+    expect(sink.requests[0]?.target).toBe('/a/../%63anary?q=%2e')
+    expect(sink.requests[0]?.path).toBe('/%63anary')
   })
 })

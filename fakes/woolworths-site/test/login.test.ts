@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { type FakeWoolworths, startFakeWoolworths } from '../src/server'
-import { Client } from './support/client'
+import { Client, rawRequest } from './support/client'
 
 const PLAIN = { username: 'plain@example.test', password: 'plain-password', firstName: 'Pat' }
 const TWO_FACTOR = {
@@ -420,6 +420,120 @@ describe('hostile variants', () => {
     expect(page.text).toContain('action="/auth/login"')
     const reply = await client.postForm('/auth/login', { email: PLAIN.username, password: PLAIN.password })
     expect(reply.headers.get('location')).toBe('/shop/myaccount')
+  })
+
+  it('carries returnUrl through the 2FA step and redirects off-site after the code', async () => {
+    const site = await startFakeWoolworths({
+      accounts: [TWO_FACTOR],
+      hostile: { openRedirectAfterLogin: true },
+    })
+    sites.push(site)
+    const client = await browsing(site)
+    const password = await client.postForm('/auth/login?returnUrl=https%3A%2F%2Fevil.test%2Flanded', {
+      email: TWO_FACTOR.username,
+      password: TWO_FACTOR.password,
+    })
+    expect(password.headers.get('location')).toBe('/auth/verify?returnUrl=https%3A%2F%2Fevil.test%2Flanded')
+    const page = await client.get('/auth/verify?returnUrl=https%3A%2F%2Fevil.test%2Flanded')
+    expect(page.text).toContain(
+      '<form id="verifyForm" method="post" action="/auth/verify?returnUrl=https%3A%2F%2Fevil.test%2Flanded">',
+    )
+    const wrong = await client.postForm('/auth/verify?returnUrl=https%3A%2F%2Fevil.test%2Flanded', {
+      code: '000000',
+    })
+    expect(wrong.text).toContain('action="/auth/verify?returnUrl=https%3A%2F%2Fevil.test%2Flanded"')
+    const reply = await client.postForm('/auth/verify?returnUrl=https%3A%2F%2Fevil.test%2Flanded', {
+      code: TWO_FACTOR.otpCode,
+    })
+    expect(reply.status).toBe(302)
+    expect(reply.headers.get('location')).toBe('https://evil.test/landed')
+  })
+
+  it('ignores returnUrl on the 2FA step unless the variant is on', async () => {
+    const site = await start()
+    const client = await browsing(site)
+    const password = await client.postForm('/auth/login?returnUrl=https%3A%2F%2Fevil.test%2F', {
+      email: TWO_FACTOR.username,
+      password: TWO_FACTOR.password,
+    })
+    expect(password.headers.get('location')).toBe('/auth/verify')
+    const page = await client.get('/auth/verify?returnUrl=https%3A%2F%2Fevil.test%2F')
+    expect(page.text).toContain('<form id="verifyForm" method="post" action="/auth/verify">')
+    const reply = await client.postForm('/auth/verify?returnUrl=https%3A%2F%2Fevil.test%2F', {
+      code: TWO_FACTOR.otpCode,
+    })
+    expect(reply.headers.get('location')).toBe('/shop/myaccount')
+  })
+
+  it('can put the login form in a cross-origin iframe, for the frame-origin guard', async () => {
+    const site = await startFakeWoolworths({
+      accounts: [PLAIN],
+      hostile: { loginInFrame: 'login.evil.test' },
+    })
+    sites.push(site)
+    const page = await new Client(site.origin).get('/shop/securelogin')
+    expect(page.text).not.toContain('<form id="loginForm"')
+    expect(page.text).toContain(
+      `<iframe id="loginFrame" title="Log in" src="http://login.evil.test:${site.port}/shop/securelogin/frame"></iframe>`,
+    )
+    // The same server answers for the frame's host, so the framed form is a working one.
+    const frame = await rawRequest(site.port, 'GET', '/shop/securelogin/frame', {
+      host: `login.evil.test:${site.port}`,
+    })
+    expect(frame.status).toBe(200)
+    expect(frame.text).toContain('<form id="loginForm" method="post" action="/auth/login">')
+    expect(frame.text).toContain('<input id="loginForm-Password" name="password" type="password"')
+    expect(site.requests.at(-1)?.host).toBe('login.evil.test')
+  })
+
+  it('escapes a hostile frame host rather than breaking out of the attribute', async () => {
+    const site = await startFakeWoolworths({ hostile: { loginInFrame: '"><script>x</script>' } })
+    sites.push(site)
+    const page = await new Client(site.origin).get('/shop/securelogin')
+    expect(page.text).toContain('src="http://&quot;&gt;&lt;script&gt;x&lt;/script&gt;:')
+  })
+
+  it('serves no login frame unless the variant is on', async () => {
+    const site = await start()
+    expect((await new Client(site.origin).get('/shop/securelogin/frame')).status).toBe(404)
+  })
+
+  it('can give the password field the wrong type, for the element-type guard', async () => {
+    const site = await startFakeWoolworths({ accounts: [PLAIN], hostile: { passwordInputType: 'text' } })
+    sites.push(site)
+    const client = await browsing(site)
+    const page = await client.get('/shop/securelogin')
+    expect(page.text).toContain('<input id="loginForm-Password" name="password" type="text"')
+    const wrong = await client.postForm('/auth/login', { email: PLAIN.username, password: 'no' })
+    expect(wrong.text).toContain('<input id="loginForm-Password" name="password" type="text"')
+  })
+
+  it('keeps the wrong password type inside the login frame too', async () => {
+    const site = await startFakeWoolworths({
+      hostile: { loginInFrame: 'login.evil.test', passwordInputType: 'search' },
+    })
+    sites.push(site)
+    const frame = await new Client(site.origin).get('/shop/securelogin/frame')
+    expect(frame.text).toContain('<input id="loginForm-Password" name="password" type="search"')
+  })
+
+  it('can give the one-time-code field the wrong type, for the element-type guard', async () => {
+    const site = await startFakeWoolworths({
+      accounts: [TWO_FACTOR],
+      hostile: { codeInputType: 'search' },
+    })
+    sites.push(site)
+    const client = await browsing(site)
+    await client.postForm('/auth/login', { email: TWO_FACTOR.username, password: TWO_FACTOR.password })
+    const page = await client.get('/auth/verify')
+    expect(page.text).toContain('<input id="verify-Code" name="code" type="search"')
+  })
+
+  it('escapes a hostile field type rather than breaking out of the attribute', async () => {
+    const site = await startFakeWoolworths({ hostile: { passwordInputType: '"><script>x</script>' } })
+    sites.push(site)
+    const page = await new Client(site.origin).get('/shop/securelogin')
+    expect(page.text).toContain('type="&quot;&gt;&lt;script&gt;x&lt;/script&gt;"')
   })
 
   it('ignores returnUrl entirely unless the variant is on', async () => {

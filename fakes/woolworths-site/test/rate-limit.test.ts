@@ -67,3 +67,34 @@ describe('RateLimiter', () => {
     expect(limiter.hit('a')).toBe(false)
   })
 })
+
+describe('RateLimiter.extendBlock', () => {
+  it("blocks another key until the blocked key's block ends, not for a fresh cool-down", () => {
+    let now = 0
+    const limiter = new RateLimiter(limit, () => now)
+    for (let i = 0; i < 4; i++) limiter.hit('a')
+    now = 3000
+    limiter.extendBlock('b', 'a')
+    expect(limiter.isBlocked('b')).toBe(true)
+    now = 4999
+    expect(limiter.isBlocked('b')).toBe(true)
+    now = 5000
+    expect(limiter.isBlocked('b')).toBe(false)
+  })
+
+  it('does nothing when the other key is not blocked', () => {
+    const limiter = new RateLimiter(limit, () => 0)
+    limiter.hit('a')
+    limiter.extendBlock('b', 'a')
+    expect(limiter.isBlocked('b')).toBe(false)
+  })
+
+  it('does nothing once the other key has served its cool-down', () => {
+    let now = 0
+    const limiter = new RateLimiter(limit, () => now)
+    for (let i = 0; i < 4; i++) limiter.hit('a')
+    now = 5000
+    limiter.extendBlock('b', 'a')
+    expect(limiter.isBlocked('b')).toBe(false)
+  })
+})

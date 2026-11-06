@@ -2,6 +2,8 @@
 // browser would that matters here: keeps cookies, and runs the sensor script's one effect (setting
 // `_abck`) when told to. Redirects are not followed, so tests can assert on them.
 
+import { request as httpRequest } from 'node:http'
+
 export interface Reply {
   readonly status: number
   readonly headers: Headers
@@ -74,4 +76,37 @@ export class Client {
     if (sensor !== null && !this.cookies.has('_abck')) this.cookies.set('_abck', sensor)
     return reply
   }
+}
+
+/**
+ * Sends one request with the target exactly as given, which `fetch` won't do: it resolves `//x`
+ * as a host and normalises the path. Headers may repeat (an array value sends one line each).
+ */
+export function rawRequest(
+  port: number,
+  method: string,
+  target: string,
+  headers: Record<string, string | string[]> = {},
+  body?: string,
+): Promise<Reply> {
+  return new Promise<Reply>((resolve, reject) => {
+    const req = httpRequest({ host: '127.0.0.1', port, method, path: target, headers }, (res) => {
+      const chunks: Buffer[] = []
+      res.on('data', (chunk: Buffer) => chunks.push(chunk))
+      res.on('end', () => {
+        const replyHeaders = new Headers()
+        for (const [name, value] of Object.entries(res.headers)) {
+          if (typeof value === 'string') replyHeaders.set(name, value)
+        }
+        resolve({
+          status: res.statusCode ?? 0,
+          headers: replyHeaders,
+          text: Buffer.concat(chunks).toString('utf8'),
+          setCookies: res.headers['set-cookie'] ?? [],
+        })
+      })
+    })
+    req.on('error', reject)
+    req.end(body)
+  })
 }

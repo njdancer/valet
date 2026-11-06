@@ -1,7 +1,7 @@
 import { request as httpRequest } from 'node:http'
 import { afterEach, describe, expect, it } from 'vitest'
 import { type FakeWoolworths, startFakeWoolworths } from '../src/server'
-import { Client, sensorValueIn } from './support/client'
+import { Client, rawRequest, sensorValueIn } from './support/client'
 
 const sites: FakeWoolworths[] = []
 afterEach(async () => {
@@ -192,6 +192,45 @@ describe('the rate limit', () => {
     expect((await client.get('/apis/ui/Trolley')).status).toBe(403)
     now = 60_000
     expect((await client.get('/apis/ui/Trolley')).status).toBe(200)
+  })
+
+  it('cannot be escaped by deleting _abck from script and revisiting a page for a new one', async () => {
+    const site = await start({ rateLimit, now: () => 0 })
+    const client = await browsing(site)
+    for (let i = 0; i < 4; i++) await client.get('/apis/ui/Trolley')
+    // _abck is script-readable, so tool code can drop it. The httpOnly session cookie stays.
+    client.cookies.delete('_abck')
+    const home = await client.visit('/')
+    expect(home.status).toBe(403)
+    expect(sensorValueIn(home.text)).toBeNull()
+    expect((await client.get('/apis/ui/Trolley')).status).toBe(403)
+  })
+
+  it('also blocks a fresh sensor presented alongside a blocked session', async () => {
+    let now = 0
+    const site = await start({ rateLimit, now: () => now })
+    const greedy = await browsing(site)
+    for (let i = 0; i < 4; i++) await greedy.get('/apis/ui/Trolley')
+    const donor = await browsing(site)
+    const fresh = donor.cookies.get('_abck') ?? ''
+    greedy.cookies.set('_abck', fresh)
+    now = 30_000
+    expect((await greedy.get('/apis/ui/Trolley')).status).toBe(403)
+    // The donated sensor is now tainted until the original block ends, for its owner too.
+    expect((await donor.get('/apis/ui/Trolley')).status).toBe(403)
+    now = 60_000
+    expect((await donor.get('/apis/ui/Trolley')).status).toBe(200)
+  })
+
+  it('counts by session too, so rotating sensor cookies does not dodge the limit', async () => {
+    const site = await start({ rateLimit, now: () => 0 })
+    const client = await browsing(site)
+    for (let i = 0; i < 3; i++) {
+      expect((await client.get('/apis/ui/Trolley')).status).toBe(200)
+      client.cookies.delete('_abck')
+      await client.visit('/')
+    }
+    expect((await client.get('/apis/ui/Trolley')).status).toBe(403)
   })
 
   it('cannot be escaped by fetching a new sensor cookie while blocked', async () => {
@@ -411,6 +450,61 @@ describe('POST /api/v3/ui/checkout/order', () => {
       OrderId: 100000002,
     })
     expect(JSON.parse((await client.get('/apis/ui/Trolley')).text).TrolleyItemCount).toBe(0)
+  })
+})
+
+describe('path spelling', () => {
+  it('bot-checks a path with a leading double slash as the API path it is', async () => {
+    const site = await start()
+    const reply = await rawRequest(site.port, 'GET', '//apis/ui/trolley')
+    expect(reply.status).toBe(403)
+    expect(reply.text).toContain('<H1>Access Denied</H1>')
+  })
+
+  it('records a leading double slash faithfully', async () => {
+    const site = await start()
+    await rawRequest(site.port, 'POST', '//api/v3/ui/checkout/order?x=1', {}, '{}')
+    expect(site.requests[0]).toMatchObject({
+      target: '//api/v3/ui/checkout/order?x=1',
+      path: '//api/v3/ui/checkout/order',
+    })
+  })
+
+  // A runtime deny rule that one of these slips past must show up here as a placed order, as it
+  // probably would on the real site.
+  for (const spelling of [
+    '//api/v3/ui/checkout/order',
+    '/api//v3/ui/checkout/order',
+    '/api/v3/ui/checkout/order/',
+    '/api/v3/ui/%63heckout/order',
+    '/api/v3/ui/%43HECKOUT/order',
+    '/API/V3/UI/CHECKOUT/ORDER',
+    '/api/v3/ui/./checkout/order',
+    '/api/v3/ui/x/../checkout/order',
+    '/api/v3/ui/x/%2e%2e/checkout/order',
+  ]) {
+    it(`reaches checkout via ${spelling}`, async () => {
+      const site = await start()
+      const client = await browsing(site)
+      const cookie = [...client.cookies].map(([name, value]) => `${name}=${value}`).join('; ')
+      const reply = await rawRequest(
+        site.port,
+        'POST',
+        spelling,
+        { cookie, 'content-type': 'application/json' },
+        '{}',
+      )
+      expect(reply.status).toBe(200)
+      expect(JSON.parse(reply.text)).toEqual({ OrderId: 100000001 })
+    })
+  }
+
+  it('does not decode an encoded slash into a separator', async () => {
+    const site = await start()
+    const client = await browsing(site)
+    const cookie = [...client.cookies].map(([name, value]) => `${name}=${value}`).join('; ')
+    const reply = await rawRequest(site.port, 'POST', '/api/v3/ui%2fcheckout/order', { cookie }, '{}')
+    expect(reply.status).toBe(404)
   })
 })
 

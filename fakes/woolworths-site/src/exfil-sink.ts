@@ -63,10 +63,14 @@ export async function startExfilSink(options: ExfilSinkOptions = {}): Promise<Ex
     )
   })
   // A WebSocket handshake never reaches the request handler. Record it, then refuse it: what matters
-  // to a test is that it arrived at all.
+  // to a test is that it arrived at all. Node drops its own error handler from a socket it hands
+  // over, so without ours a client resetting the connection would be an uncaught exception.
   server.on('upgrade', (request: IncomingMessage, socket: Duplex) => {
+    socket.on('error', () => {})
     requests.push(recordRequest(request, '', now()))
-    socket.end('HTTP/1.1 501 Not Implemented\r\nConnection: close\r\nContent-Length: 0\r\n\r\n')
+    socket.end('HTTP/1.1 501 Not Implemented\r\nConnection: close\r\nContent-Length: 0\r\n\r\n', () =>
+      socket.destroy(),
+    )
   })
   const port = await listen(server, options.port ?? 0)
   return {

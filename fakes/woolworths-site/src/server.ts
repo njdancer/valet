@@ -19,6 +19,7 @@ import {
   listen,
   originFor,
   parseCookies,
+  parseTarget,
   type RecordedRequest,
   readBody,
   recordRequest,
@@ -27,6 +28,8 @@ import {
 } from './http'
 import {
   homePage,
+  loginFramePage,
+  loginInFramePage,
   loginPage,
   myAccountPage,
   notFoundPage,
@@ -35,6 +38,7 @@ import {
   verifyPage,
 } from './pages'
 import { type RateLimit, RateLimiter } from './rate-limit'
+import { routePath } from './route-path'
 import {
   MAX_PAGE_SIZE,
   productDetailResponse,
@@ -65,8 +69,20 @@ export interface FakeWoolworthsOptions {
   readonly hostile?: {
     /** Where the login form posts instead of /auth/login, e.g. the exfil sink's origin. */
     readonly loginFormAction?: string
-    /** After a correct password (no 2FA), redirect to the `returnUrl` query parameter unchecked. */
+    /**
+     * After a correct password, or a correct one-time code for 2FA accounts, redirect to the
+     * `returnUrl` query parameter unchecked.
+     */
     readonly openRedirectAfterLogin?: boolean
+    /**
+     * Serve the login form inside an iframe from this other hostname (same port, same server), so
+     * the form's frame is cross-origin to the page. The caller maps the hostname to 127.0.0.1.
+     */
+    readonly loginInFrame?: string
+    /** The `type` of the password field instead of `password`, e.g. `text` or `search`. */
+    readonly passwordInputType?: string
+    /** The `type` of the one-time-code field instead of `text`, e.g. `search`. */
+    readonly codeInputType?: string
   }
 }
 
@@ -136,6 +152,30 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
     return send(exchange, 302, HTML_TYPE, '')
   }
 
+  /**
+   * Akamai's view of a client: its sensor cookie (script-readable, so tool code can drop it) and
+   * its session cookie (httpOnly, so it can't). Counting and blocking under both means a blocked
+   * client can't get out by deleting `_abck` and fetching a new one.
+   */
+  const clientKeys = (sensor: string | null, sessionToken: string | undefined): string[] => {
+    const keys: string[] = []
+    if (sensor !== null) keys.push(`sensor:${sensor}`)
+    if (sessionToken !== undefined) keys.push(`session:${sessionToken}`)
+    return keys
+  }
+  /** Blocks every key once one is blocked. Returns whether the client is blocked. */
+  const blocked = (keys: readonly string[]): boolean => {
+    const blockedKey = keys.find((key) => limiter.isBlocked(key))
+    if (blockedKey === undefined) return false
+    for (const key of keys) limiter.extendBlock(key, blockedKey)
+    return true
+  }
+  /** Counts an API request under every key. Returns whether it tipped the client into a block. */
+  const tipped = (keys: readonly string[]): boolean => {
+    const results = keys.map((key) => limiter.hit(key))
+    return results.some((hit) => hit) && blocked(keys)
+  }
+
   /** Akamai answers before the site does, so no site cookies are set on a denial. */
   const deny = (request: IncomingMessage, response: ServerResponse): Sent => {
     deniedCount += 1
@@ -164,38 +204,49 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
 
   const hostile = options.hostile ?? {}
   const openRedirect = hostile.openRedirectAfterLogin === true
+  let port = 0
+
+  /** `path`, carrying returnUrl along when the open-redirect variant is on and one was given. */
+  const withReturnUrl = (exchange: Exchange, path: string): string => {
+    const returnUrl = exchange.params.get('returnUrl')
+    if (!openRedirect || returnUrl === null) return path
+    return `${path}?returnUrl=${encodeURIComponent(returnUrl)}`
+  }
+  /** Where to go after logging in: the account page, or anywhere at all for the open-redirect variant. */
+  const afterLogin = (exchange: Exchange): string =>
+    (openRedirect ? exchange.params.get('returnUrl') : null) ?? '/shop/myaccount'
 
   /** The login form's action: normally /auth/login, carrying returnUrl only for the open-redirect variant. */
-  const loginAction = (exchange: Exchange): string => {
-    if (hostile.loginFormAction !== undefined) return hostile.loginFormAction
-    const returnUrl = exchange.params.get('returnUrl')
-    if (!openRedirect || returnUrl === null) return '/auth/login'
-    return `/auth/login?returnUrl=${encodeURIComponent(returnUrl)}`
-  }
+  const loginAction = (exchange: Exchange): string =>
+    hostile.loginFormAction ?? withReturnUrl(exchange, '/auth/login')
+
+  const renderLogin = (exchange: Exchange, error: string | null): string =>
+    loginPage(page(exchange), error, loginAction(exchange), hostile.passwordInputType)
 
   const login = (exchange: Exchange): Sent => {
     const form = new URLSearchParams(exchange.body)
     const username = form.get('email') ?? ''
     const state = store.authenticate(username, form.get('password') ?? '')
-    if (state === null) {
-      return html(exchange, 200, loginPage(page(exchange), WRONG_CREDENTIALS, loginAction(exchange)))
-    }
+    if (state === null) return html(exchange, 200, renderLogin(exchange, WRONG_CREDENTIALS))
     const needsCode =
       state.account.otpCode !== undefined &&
       !store.deviceRemembered(exchange.cookies.get(DEVICE_COOKIE), username)
     if (needsCode) {
       switchVisitor(exchange, { pendingUsername: username })
-      return redirect(exchange, '/auth/verify')
+      return redirect(exchange, withReturnUrl(exchange, '/auth/verify'))
     }
     switchVisitor(exchange, { username })
-    return redirect(exchange, (openRedirect ? exchange.params.get('returnUrl') : null) ?? '/shop/myaccount')
+    return redirect(exchange, afterLogin(exchange))
   }
+
+  const renderVerify = (exchange: Exchange, error: string | null): string =>
+    verifyPage(page(exchange), error, withReturnUrl(exchange, '/auth/verify'), hostile.codeInputType)
 
   const verify = (exchange: Exchange): Sent => {
     const pending = exchange.visitor.pendingUsername
     const state = pending === null ? null : store.account(pending)
     if (pending === null || state === null) return redirect(exchange, '/shop/securelogin')
-    if (exchange.method === 'GET') return html(exchange, 200, verifyPage(page(exchange), null))
+    if (exchange.method === 'GET') return html(exchange, 200, renderVerify(exchange, null))
     const form = new URLSearchParams(exchange.body)
     if (form.get('code') === state.account.otpCode) {
       switchVisitor(exchange, { username: pending })
@@ -205,14 +256,14 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
           serializeCookie(DEVICE_COOKIE, device, { httpOnly: true, secure, maxAge: DEVICE_COOKIE_MAX_AGE }),
         )
       }
-      return redirect(exchange, '/shop/myaccount')
+      return redirect(exchange, afterLogin(exchange))
     }
     exchange.visitor.verifyFailures += 1
     if (exchange.visitor.verifyFailures >= MAX_VERIFY_FAILURES) {
       switchVisitor(exchange, {})
       return redirect(exchange, '/shop/securelogin')
     }
-    return html(exchange, 200, verifyPage(page(exchange), WRONG_CODE))
+    return html(exchange, 200, renderVerify(exchange, WRONG_CODE))
   }
 
   const parseJson = (text: string): unknown => {
@@ -266,7 +317,14 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
     if (method === 'GET' && path === '/') return html(exchange, 200, homePage(page(exchange)))
     if (method === 'GET' && path === '/shop/securelogin') {
       if (loggedIn) return redirect(exchange, '/shop/myaccount')
-      return html(exchange, 200, loginPage(page(exchange), null, loginAction(exchange)))
+      if (hostile.loginInFrame !== undefined) {
+        const frame = `${originFor(options.tls, hostile.loginInFrame, port)}/shop/securelogin/frame`
+        return html(exchange, 200, loginInFramePage(page(exchange), frame))
+      }
+      return html(exchange, 200, renderLogin(exchange, null))
+    }
+    if (method === 'GET' && path === '/shop/securelogin/frame' && hostile.loginInFrame !== undefined) {
+      return html(exchange, 200, loginFramePage(loginAction(exchange), hostile.passwordInputType))
     }
     if (method === 'POST' && path === '/auth/login') return login(exchange)
     if ((method === 'GET' || method === 'POST') && path === '/auth/verify') return verify(exchange)
@@ -299,16 +357,17 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
       response.writeHead(413, { 'content-type': 'text/plain', connection: 'close' }).end('Payload Too Large')
       return 'sent'
     }
-    const url = new URL(request.url ?? '/', 'http://fake.invalid')
-    const path = url.pathname.toLowerCase()
+    const target = parseTarget(request.url ?? '/')
+    const path = routePath(target.path)
     const cookies = parseCookies(request.headers.cookie)
 
     // The bot-protection layer, in front of everything.
     const presented = cookies.get(SENSOR_COOKIE)
     const sensor = presented !== undefined && issuedSensors.has(presented) ? presented : null
-    if (blockingAll || (sensor !== null && limiter.isBlocked(sensor))) return deny(request, response)
+    const keys = clientKeys(sensor, cookies.get(SESSION_COOKIE))
+    if (blockingAll || blocked(keys)) return deny(request, response)
     const isApi = path.startsWith('/api/') || path.startsWith('/apis/')
-    if (isApi && (sensor === null || limiter.hit(sensor))) return deny(request, response)
+    if (isApi && (sensor === null || tipped(keys))) return deny(request, response)
 
     // Every visitor gets a session token, logged in or not, as on the live site.
     const setCookies: string[] = []
@@ -322,7 +381,7 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
       response,
       method: (request.method ?? 'GET').toUpperCase(),
       path,
-      params: url.searchParams,
+      params: target.params,
       cookies,
       body: body.text,
       setCookies,
@@ -340,7 +399,7 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
       },
     )
   })
-  const port = await listen(server, options.port ?? 0)
+  port = await listen(server, options.port ?? 0)
 
   return {
     origin: originFor(options.tls, options.hostname ?? '127.0.0.1', port),

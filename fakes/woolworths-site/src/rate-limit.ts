@@ -1,5 +1,7 @@
 // Per-session rate limiting, modelled on what happened live: a burst of scripted API calls got the
-// session blocked outright, pages included, for a cool-down.
+// session blocked outright, pages included, for a cool-down. Keys are opaque; the server counts
+// and blocks under several keys per client (the sensor cookie and the session cookie) so that
+// dropping one of them is not a way out.
 
 export interface RateLimit {
   /** More than this many API requests inside `windowMs` blocks the session. */
@@ -32,6 +34,12 @@ export class RateLimiter {
     this.blockedUntil.delete(key)
     this.hits.delete(key)
     return false
+  }
+
+  /** Blocks `key` until `blockedKey`'s block ends. Does nothing if `blockedKey` is not blocked. */
+  extendBlock(key: string, blockedKey: string): void {
+    const until = this.blockedUntil.get(blockedKey)
+    if (until !== undefined && this.isBlocked(blockedKey)) this.blockedUntil.set(key, until)
   }
 
   /** Counts one API request. Returns true when this request tips the session into a block. */
