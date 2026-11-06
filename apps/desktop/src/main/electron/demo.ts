@@ -6,9 +6,6 @@
 // sets to false, so this chunk, the fake site, its certificate generator and the test account are
 // left out of it.
 
-// Electron glue: covered by the smoke test (test/smoke) and the e2e suite, not by unit tests.
-/* v8 ignore start */
-
 import { X509Certificate } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
 import { connect } from 'node:net'
@@ -127,4 +124,3 @@ export function trustDemoCertificate(adapterId: string, fingerprint: string): vo
     })
   }
 }
-/* v8 ignore stop */

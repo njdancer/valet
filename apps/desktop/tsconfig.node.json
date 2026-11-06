@@ -1,0 +1,7 @@
+// The main process and the preload, in plain Node: no DOM, as they run in Electron's main process
+// and its sandboxed preload. The root typecheck runs it beside the renderer's project (tsconfig.json,
+// DOM and JSX), which also reaches these files through the tests.
+{
+  "extends": "../../tsconfig.base.json",
+  "include": ["src/main", "src/preload", "src/shared", "electron-builder.config.ts", "scripts/*.d.mts"]
+}
