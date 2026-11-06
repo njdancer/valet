@@ -154,59 +154,52 @@
                         <span>Transport</span><span>Streamable HTTP, this Mac only</span><span class="xs muted">stdio via bridge</span>
                       </div>
                       <div class="setting">
-                        <span>Bearer token</span><span class="mono">sat_••••••••••••••••••••c7d2</span>
-                        <span class="row"
-                          ><button type="button" class="btn">Copy</button
-                          ><button type="button" class="btn danger">Rotate…</button></span
-                        >
+                        <span>Tokens</span><span>One per client, issued by “Connect a client…”</span
+                        ><span class="xs muted">3 issued</span>
                       </div>
                     </div>
                   </div>
 
                   <div class="card">
                     <div class="card-head">
-                      <span class="h3">Connected clients</span><span class="muted">2 active · 1 revoked</span>
+                      <span class="h3">Client tokens</span><span class="muted">2 active · 1 revoked</span>
                     </div>
                     <table class="table tight">
                       <thead>
                         <tr>
-                          <th>Client</th>
-                          <th>May call</th>
-                          <th class="num">Today</th>
-                          <th>Last call</th>
+                          <th>Token name <span class="tertiary">(yours)</span></th>
+                          <th>May call <span class="pill" style="height: 16px">proposal</span></th>
                           <th></th>
                         </tr>
                       </thead>
                       <tbody>
                         <tr>
                           <td>
-                            <span class="row"><span class="client-icon cc">CC</span><span><span style="display:block">Claude Code</span><span class="xs muted">stdio bridge</span></span></span>
+                            <span class="row"><span class="client-icon cc">CC</span><span><span style="display:block">Claude Code</span><span class="xs muted"><span class="mono">sat_…c7d2</span> · says “claude-code” · stdio</span></span></span>
                           </td>
                           <td><span class="select">All tools</span></td>
-                          <td class="num">31</td>
-                          <td class="xs"><span class="row"><span class="dot ok"></span>9:47 pm</span></td>
-                          <td><button type="button" class="btn ghost">Revoke</button></td>
+                          <td><span class="row"><button type="button" class="btn ghost">Rotate</button><button type="button" class="btn ghost">Revoke</button></span></td>
                         </tr>
                         <tr>
                           <td>
-                            <span class="row"><span class="client-icon cd">CD</span><span><span style="display:block">Claude Desktop</span><span class="xs muted">HTTP</span></span></span>
+                            <span class="row"><span class="client-icon cd">CD</span><span><span style="display:block">Claude Desktop</span><span class="xs muted"><span class="mono">sat_…41e9</span> · says “claude-ai” · HTTP</span></span></span>
                           </td>
                           <td><span class="select">Read only</span></td>
-                          <td class="num">6</td>
-                          <td class="xs"><span class="row"><span class="dot ok"></span>3:58 pm</span></td>
-                          <td><button type="button" class="btn ghost">Revoke</button></td>
+                          <td><span class="row"><button type="button" class="btn ghost">Rotate</button><button type="button" class="btn ghost">Revoke</button></span></td>
                         </tr>
                         <tr>
                           <td>
-                            <span class="row tertiary"><span class="client-icon cu">Cu</span><span><span style="display:block">Cursor</span><span class="xs muted">HTTP</span></span></span>
+                            <span class="row tertiary"><span class="client-icon cu">Cu</span><span><span style="display:block">Cursor</span><span class="xs muted"><span class="mono">sat_…0b5a</span> · revoked Tue</span></span></span>
                           </td>
                           <td><span class="pill">Revoked</span></td>
-                          <td class="num tertiary">0</td>
-                          <td class="xs muted">Tue</td>
                           <td></td>
                         </tr>
                       </tbody>
                     </table>
+                    <div class="card-body xs muted" style="padding-top: 6px">
+                      Calls are attributed to the token that made them. What a client says its name is appears in grey and
+                      proves nothing. Revoking a token stops only that client.
+                    </div>
                   </div>
 
                   <div class="card">
@@ -221,8 +214,8 @@
   <span class="s">"/Applications/siteadapter.app/Contents/Resources/bin/siteadapter-mcp"</span>
 } } }</pre>
                       <div class="row xs muted">
-                        <span class="i sm i-lock"></span>The bridge reads the token from your Keychain, so it never sits in a
-                        config file.
+                        <span class="i sm i-lock"></span>The bridge reads Claude Code's token from your Keychain, so it never
+                        sits in a config file.
                       </div>
                     </div>
                   </div>
@@ -231,9 +224,17 @@
                 <div class="stack gap-4">
                   <div class="card" id="remote">
                     <div class="card-head">
-                      <span class="h3">Remote access</span><span class="muted">use your tools away from this Mac</span>
+                      <span class="h3">Remote access</span><span class="pill warn">Proposal · not in v0</span>
+                      <span class="muted">use your tools away from this Mac</span>
                     </div>
                     <div class="card-body stack gap-3">
+                      <div class="callout" style="padding: 8px 12px">
+                        <span class="i i-warn"></span>
+                        <div class="xs">
+                          Not covered by the security model yet. Needs your call: whether v0 has it at all, which tools a
+                          remote caller may use (proposed: read only), and a separate token for each remote device.
+                        </div>
+                      </div>
                       <span class="segmented"
                         ><span class="on">Tailscale</span><span>cloudflared</span><span>Relay <span class="pill" style="height: 16px">later</span></span></span
                       >
@@ -249,15 +250,15 @@
                         </li>
                         <li>
                           <div>
-                            Point the remote client at <span class="mono xs">https://macbook.tail1c2d.ts.net/mcp</span> with the
-                            bearer token.
+                            Point the remote client at <span class="mono xs">https://macbook.tail1c2d.ts.net/mcp</span> with a
+                            token issued for that device.
                           </div>
                         </li>
                       </ol>
                       <div class="callout warn" style="padding: 8px 12px">
                         <span class="i i-warn"></span>
                         <div class="xs">
-                          Anyone with tailnet access and the token can call read and write tools. Irreversible tools still wait
+                          Anyone on the tailnet with that token can call whatever it's scoped to. Irreversible tools still wait
                           for you on this Mac. Don't use <span class="mono">tailscale funnel</span>; it makes the endpoint public.
                         </div>
                       </div>
