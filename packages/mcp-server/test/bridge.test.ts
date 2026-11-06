@@ -147,11 +147,10 @@ describe('runBridge', () => {
     const heard = new Promise<void>((resolve) => {
       client.setNotificationHandler(ToolListChangedNotificationSchema, () => resolve())
     })
-    await new Promise((resolve) => setTimeout(resolve, 50))
-
     caller.tools = [searchProducts, viewCart]
-    server.refresh()
-    await heard
+    // The bridge's SSE stream opens in the background; refreshing again is harmless.
+    const retry = setInterval(() => server.refresh(), 20)
+    await heard.finally(() => clearInterval(retry))
 
     expect((await client.listTools()).tools).toHaveLength(2)
   })

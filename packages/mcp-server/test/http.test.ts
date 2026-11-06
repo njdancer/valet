@@ -155,12 +155,11 @@ describe('startHttpServer', () => {
           client.setNotificationHandler(ToolListChangedNotificationSchema, () => resolve())
         }),
     )
-    // Give each client's standalone SSE stream time to open before notifying.
-    await new Promise((resolve) => setTimeout(resolve, 50))
-
     caller.tools = [searchProducts, viewCart]
-    running.refresh()
-    await Promise.all(heard)
+    // A notification only reaches a client once its standalone SSE stream is open, which happens
+    // in the background after connect; refreshing again is harmless, so repeat until both hear.
+    const retry = setInterval(() => running.refresh(), 20)
+    await Promise.all(heard).finally(() => clearInterval(retry))
 
     const { tools } = await clients[0]!.listTools()
     expect(tools.map((t) => t.name).sort()).toEqual(['woolworths_search_products', 'woolworths_view_cart'])
