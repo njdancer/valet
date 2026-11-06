@@ -85,7 +85,7 @@ test accounts.
 | Request                                   | Behaviour                                                                                            |
 | ----------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | Any www page                              | An inline "sensor" script sets a script-readable `_abck` cookie if there is none                     |
-| Any `/api/…` or `/apis/…`                 | Without an `_abck` the site issued: 403 with Akamai's "Access Denied" page                           |
+| Any `/api/…` or `/apis/…`                 | No `_abck`: 403 with Akamai's "Access Denied" page. One it never issued is replaced                  |
 | `GET /shop/search/products?searchTerm=`   | HTML results, `.product-tile[data-stockcode]`                                                        |
 | `GET /api/ui/v2/bootstrap`                | `{ ShopperDetails: { IsLoggedIn, FirstName } }`; 200 with `IsLoggedIn: false` when anonymous         |
 | `GET` or `POST /apis/ui/Search/products`  | Search over a 30-product catalogue, in the real response shape                                       |
@@ -106,6 +106,12 @@ exactly, as Auth0 does.
 
 ## Controls
 
+- `unknownSensor` / `setUnknownSensor(mode)`: what Akamai does with an `_abck` it never issued,
+  such as one a persistent partition kept from an earlier run. `'reissue'` (the default) sets a
+  fresh script-readable `_abck` (`Path=/`, a year) and lets the request through, as the real one
+  tends to; the fresh value counts towards the rate limit. `'deny'` answers Access Denied, as the
+  fake did before. A blocked session is denied either way, and an API request with no `_abck` at
+  all is still denied.
 - `setRateLimit(limit | null)`: more than `maxRequests` API calls in `windowMs` from one `_abck`
   or one `wow-auth-token` blocks that client, pages included, for `cooldownMs`. Both cookies are
   blocked together, and a cookie presented alongside a blocked one is blocked with it, so deleting
@@ -147,11 +153,28 @@ exactly, as Auth0 does.
   `iframe#loginFrame`, whose `src` is the same page plus `/frame` on that hostname and the auth
   port, so the form is in a cross-origin frame, for the frame-origin guard. The auth server
   answers for the frame; the caller maps the hostname to 127.0.0.1.
+- `hostile.pageBeacon: { host, port, intervalMs? }` (or `setPageBeacon(beacon | null)` while
+  running): every www page carries an inline script, `script#page-beacon`, that sends
+  `document.cookie` to `host:port` every `intervalMs` (default 200), by `sendBeacon`, `fetch` over
+  http and https, an image and a WebSocket. It is the site's own script, in the page's main world,
+  for the tool partition's policy on page-initiated traffic. www pages only, never the auth origin
+  or API answers. The host must be a DNS name and the port 1 to 65535, since both go into the
+  script.
 - `hostile.passwordInputType` and `hostile.codeInputType`: the `type` of `#password` and `#code`
   (normally `password` and `text`), for the element-type guard.
 
 The exfil sink answers every request with 200 and permissive CORS, preflights included, so a leak
 shows up as a success rather than an error. It also records WebSocket upgrade attempts.
+
+## Fixtures in a bundle
+
+The fake loads its fixtures as JSON modules (`src/fixture-data.ts`), so a bundler inlines them and
+a bundle that imports the fake needs no `fixtures/` folder beside it. `fixtureFile(name)` returns
+one, parsed, as a fresh copy; the module is also exported as
+`@siteadapter/fake-woolworths-site/fixtures`. `readFixtureFile(name, directory?)` reads the same
+file from disk (by default this package's `fixtures/`, or a copied folder by path or URL), and
+`FIXTURE_NAMES` lists them. A test checks the two agree. A copied `fixtures/` folder still works,
+but nothing needs it any more.
 
 `generateTestCertificate(hosts, { spawn?, tempRoot?, days? })` runs `openssl req` without a shell
 in a temp directory it then deletes. It returns `{ key, cert, fingerprint, chromiumFingerprint }`.

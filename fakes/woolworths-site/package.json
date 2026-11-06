@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./fixtures": "./src/fixture-data.ts"
   },
   "scripts": {
     "start": "tsx src/cli.ts"
