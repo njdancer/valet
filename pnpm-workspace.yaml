@@ -1,0 +1,9 @@
+packages:
+  - packages/*
+  - adapters/*
+  - fakes/*
+  - apps/*
+  - spikes/*
+onlyBuiltDependencies:
+  - electron
+  - esbuild

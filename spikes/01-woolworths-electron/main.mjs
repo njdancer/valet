@@ -7,9 +7,9 @@
 // You log in by hand in the window that opens, then close it. The spike never types
 // credentials. Results go to results/<ua-mode>.json, which holds no cookie values or cart contents.
 
-import { app, BrowserWindow, session } from 'electron'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { app, BrowserWindow, session } from 'electron'
 
 const ORIGIN = 'https://www.woolworths.com.au'
 const LOGIN_URL = `${ORIGIN}/shop/securelogin`
@@ -92,7 +92,10 @@ async function probe(win) {
   const result = {}
   for (const [world, run] of [
     ['main', () => win.webContents.executeJavaScript(TROLLEY_PROBE)],
-    ['isolated', () => win.webContents.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [{ code: TROLLEY_PROBE }])],
+    [
+      'isolated',
+      () => win.webContents.executeJavaScriptInIsolatedWorld(ISOLATED_WORLD_ID, [{ code: TROLLEY_PROBE }]),
+    ],
   ]) {
     try {
       result[world] = await run()
@@ -110,10 +113,17 @@ async function run() {
   console.log(`[spike] user agent mode: ${uaMode}`)
   console.log('[spike] Log in to Woolworths in the window, then close the window.')
 
-  const authWin = new BrowserWindow({ width: 1280, height: 900, title: 'Log in, then close this window', webPreferences: { partition: AUTH_PARTITION } })
+  const authWin = new BrowserWindow({
+    width: 1280,
+    height: 900,
+    title: 'Log in, then close this window',
+    webPreferences: { partition: AUTH_PARTITION },
+  })
   const closed = waitForClose(authWin)
   const blockedPageSeen = { value: false }
-  authWin.webContents.on('did-navigate', (_e, url) => console.log(`[spike] auth navigated: ${new URL(url).pathname}`))
+  authWin.webContents.on('did-navigate', (_e, url) =>
+    console.log(`[spike] auth navigated: ${new URL(url).pathname}`),
+  )
   authWin.webContents.on('did-finish-load', async () => {
     const title = await authWin.webContents.executeJavaScript('document.title').catch(() => '')
     if (/access denied|blocked|pardon our interruption/i.test(title)) blockedPageSeen.value = true
@@ -125,7 +135,12 @@ async function run() {
   const copied = await copyCookies(auth, tool)
   console.log(`[spike] copied ${copied} cookies to the tool partition`)
 
-  const toolWin = new BrowserWindow({ show: false, width: 1440, height: 900, webPreferences: { partition: TOOL_PARTITION } })
+  const toolWin = new BrowserWindow({
+    show: false,
+    width: 1440,
+    height: 900,
+    webPreferences: { partition: TOOL_PARTITION },
+  })
   await navigate(toolWin, `${ORIGIN}/`)
   await sleep(5000) // let Akamai's script run and refresh its cookies
   const toolProbe = await probe(toolWin)
@@ -154,7 +169,10 @@ async function run() {
 }
 
 app.on('window-all-closed', () => {})
-app.whenReady().then(run).catch((error) => {
-  console.error('[spike] failed:', error)
-  app.exit(1)
-})
+app
+  .whenReady()
+  .then(run)
+  .catch((error) => {
+    console.error('[spike] failed:', error)
+    app.exit(1)
+  })

@@ -1,0 +1,32 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "files": {
+    "includes": [
+      "**",
+      "!**/node_modules",
+      "!**/dist",
+      "!**/out",
+      "!**/coverage",
+      "!spikes/*/results",
+      "!docs/mockups/vendor"
+    ]
+  },
+  "formatter": { "indentStyle": "space", "indentWidth": 2, "lineWidth": 110 },
+  "javascript": { "formatter": { "quoteStyle": "single", "semicolons": "asNeeded" } },
+  "linter": {
+    "rules": {
+      "preset": "recommended",
+      "suspicious": { "noExplicitAny": "error" },
+      "style": { "noNonNullAssertion": "error", "useConst": "error" },
+      "correctness": { "noUnusedImports": "error", "noUnusedVariables": "error" }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["**/test/**", "**/*.test.ts"],
+      "linter": {
+        "rules": { "suspicious": { "noExplicitAny": "off" }, "style": { "noNonNullAssertion": "off" } }
+      }
+    }
+  ]
+}

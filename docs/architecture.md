@@ -51,12 +51,12 @@ transactions and how `amasolov/woolworths-mcp` gets past Akamai.
 
 For Woolworths:
 
-| Purpose | Request |
-|---|---|
-| Read cart | `GET /apis/ui/Trolley` |
+| Purpose                           | Request                                                                     |
+| --------------------------------- | --------------------------------------------------------------------------- |
+| Read cart                         | `GET /apis/ui/Trolley`                                                      |
 | Add, set or remove (quantity `0`) | `POST /api/v3/ui/trolley/update`, `{ items: [{ stockcode, quantity, … }] }` |
-| Search | `/apis/ui/Search/products` |
-| Product detail | `/apis/ui/product/detail/<stockcode>` |
+| Search                            | `/apis/ui/Search/products`                                                  |
+| Product detail                    | `/apis/ui/product/detail/<stockcode>`                                       |
 
 These are from community code and still to be confirmed.
 

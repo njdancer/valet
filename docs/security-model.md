@@ -21,14 +21,14 @@ Out of scope:
 
 An adapter defines two kinds of action, and they never share a browser session.
 
-| | Auth action | Tool action |
-|---|---|---|
-| Purpose | Establish a logged-in session | Search, read an account, change the cart, … |
-| Form | Declarative steps only | Declarative steps, or TypeScript code |
-| Secrets | May fill secrets | Never |
-| Adapter-authored JS in the page | Never | Allowed |
-| Browser session | `auth:<site>` partition | `tool:<site>` partition |
-| Exposed over MCP | No. It runs only on demand from a tool | Yes |
+|                                 | Auth action                            | Tool action                                 |
+| ------------------------------- | -------------------------------------- | ------------------------------------------- |
+| Purpose                         | Establish a logged-in session          | Search, read an account, change the cart, … |
+| Form                            | Declarative steps only                 | Declarative steps, or TypeScript code       |
+| Secrets                         | May fill secrets                       | Never                                       |
+| Adapter-authored JS in the page | Never                                  | Allowed                                     |
+| Browser session                 | `auth:<site>` partition                | `tool:<site>` partition                     |
+| Exposed over MCP                | No. It runs only on demand from a tool | Yes                                         |
 
 ### Why pages aren't enough: separate partitions
 
@@ -96,8 +96,8 @@ How a secret is filled:
 
 ### Grants are separate from manifests
 
-A manifest *requests*, for example "secret `login` for origins `https://www.woolworths.com.au`".
-The person *grants* it by binding a 1Password item to the request, for one adapter content hash.
+A manifest _requests_, for example "secret `login` for origins `https://www.woolworths.com.au`".
+The person _grants_ it by binding a 1Password item to the request, for one adapter content hash.
 A manifest can't name a 1Password item. If an adapter changes, it doesn't inherit a grant.
 
 ## Tool actions
