@@ -3,7 +3,7 @@
 
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
+import type { DatabaseSync } from 'node:sqlite'
 import {
   CredentialError,
   type MessagesOtpQuery,
@@ -66,7 +66,7 @@ export class MessagesOtpReader implements OtpReader {
       throw new SiteAdapterError('otp', 'invalid')
     }
     const sinceMs = Math.max(notBefore.getTime(), this.#now().getTime() - query.maxAgeSeconds * 1000)
-    for (const row of this.#recent(sinceMs, query.sender ?? null)) {
+    for (const row of await this.#recent(sinceMs, query.sender ?? null)) {
       // SQL bounds whole seconds for old rows; this keeps the cut-off exact.
       if (unixMs(row.date) < sinceMs) continue
       const text = row.text ?? (row.body === null ? null : attributedBodyText(row.body))
@@ -78,10 +78,12 @@ export class MessagesOtpReader implements OtpReader {
     throw new CredentialError('not-found')
   }
 
-  #recent(sinceMs: number, sender: string | null): Row[] {
+  async #recent(sinceMs: number, sender: string | null): Promise<Row[]> {
     let db: DatabaseSync
     try {
-      db = new DatabaseSync(this.#path, { readOnly: true, timeout: 1_000 })
+      // Loaded on first use, so a runtime without node:sqlite can still import this package.
+      const sqlite = await import('node:sqlite')
+      db = new sqlite.DatabaseSync(this.#path, { readOnly: true, timeout: 1_000 })
     } catch {
       // SQLITE_CANTOPEN or SQLITE_AUTH: almost always missing Full Disk Access.
       throw new CredentialError('unavailable')
