@@ -20,7 +20,9 @@ const host = new ToolHost({
 })
 host.register({ definition, bundleHash, driver }) // driver: SessionDriver for this adapter's site
 await host.listTools() // approved adapters only
-await host.call({ adapterId, tool, input, client, callId }) // ToolCallResult
+await host.call({ adapterId, tool, input, client, callId, signal, transport }) // ToolCallResult
+await host.runLoginStep(adapterId, async (ctx) => { ... }, { waitMs, timeoutMs, signal })
+await host.siteHealth() // SiteHealthSnapshot[]
 
 // When the person approves or rejects a bundle in the app; both write their own audit event.
 await approvals.approve(adapterId, bundleHash, manifest.version)
@@ -39,6 +41,9 @@ outcome has auth-flow's shape, so `runAuthFlow`'s result can be passed straight 
 `blocked` with `errorClass` `blocked-by-site` or `rate-limited`.
 
 ## Order of checks in `call()`
+
+`signal` and `transport` are optional. An aborted `signal` ends the call `failed tool-run/aborted`
+at whichever step it reaches; see "Cancelling a call" below.
 
 1. `callId` matches `/^[A-Za-z0-9_-]{1,64}$/`, else `failed tool-input/invalid` with nothing audited.
 2. Adapter registered and its exact bundle hash approved, else `failed manifest/not-granted`.
@@ -79,6 +84,78 @@ running past that bound, it gets `failed probe/unavailable`.
 **One call per adapter at a time, reads included.** The driver holds one run policy per session, so
 calls on one adapter never overlap; calls on different adapters do.
 
+## Cancelling a call
+
+`ToolCallRequest.signal` is the caller's `AbortSignal`, for an MCP client that cancels or goes away.
+Every case ends `failed tool-run/aborted`, audited as `tool-finished` like any other outcome:
+
+- Already aborted: nothing runs and the driver isn't touched.
+- Aborted while waiting for the adapter's lock: the call leaves the queue. Its turn still comes,
+  and it hands the lock straight on, so calls behind it keep their order.
+- Aborted during the irreversible confirmation: the prompt's signal aborts and the answer is
+  recorded as `declined`. A `yes` that lands after the abort doesn't run the tool either.
+- Aborted while the tool runs: the tool's own `ctx.signal` aborts, the call returns at once, and
+  the lock and the driver's run stay held until the runtime work the call started has settled, as
+  after a timeout. A `ctx.confirm()` in progress answers no.
+- A login the call started gets the same abort through `AuthRunRequest.signal`. A runner that
+  stops part-way leaves the attempt marker set, so the next login waits for the person
+  (`login-attempt-pending`), as after a crash.
+
+A value that isn't an `AbortSignal` is ignored.
+
+## The client's transport
+
+`ToolCallRequest.transport` is `'stdio-bridge'` or `'http'`: how the client reached the MCP
+endpoint. The runtime passes it to `ConfirmationRequest.transport`, for both kinds of
+confirmation, so the prompt can say which way the client came in. Any other value is dropped.
+
+It is a label, not a permission. The bridge names itself, so any local client could claim to be
+it. Nothing the runtime decides depends on it, and core's audit events don't carry it yet.
+
+## Login steps the person drives
+
+`runLoginStep(adapterId, step, options)` runs the app's own work on an adapter's login (opening
+the login window, finishing a hand-off) under the protections a tool call gets:
+
+1. The adapter is registered and its exact hash approved, else `manifest/not-granted`. The step
+   is checked again once it holds the lock.
+2. It takes the adapter's lock, in turn behind running calls and their settling. Calls that
+   arrive later wait for it. It waits at most `waitMs` (default 30 s), else `login/timed-out`.
+3. The site's breaker must be closed, persisted state included, else `login/rate-limited`.
+4. It waits for one slot of the site's rate budget (`minGapMs`, paced like a tool request), and
+   checks the breaker again, since another adapter on the host may have been blocked meanwhile.
+5. `step(ctx)` runs under `timeoutMs` (default the tool timeout). On timeout, `login/timed-out`,
+   and the lock stays held until the step settles, up to the settle bound.
+
+`ctx` has:
+
+- `signal`, which aborts on the deadline, on `options.signal`, or when the step returns;
+- `pace()`, to call before each further request the step makes (a navigation, a form post). It
+  takes another budget slot and refuses with `login/rate-limited` while the breaker is open, or
+  `login/aborted` once `signal` has aborted;
+- `reportBlocked(cause)`, for a step that lands on the block page or gets a 429. It opens the
+  site's breaker with `callId: null`, so `breaker-opened` is audited and later calls fail fast.
+
+`options.signal` gives up the wait, or stops waiting for the step: `login/aborted`. Whatever the
+step throws is passed on unchanged, since it is the app's own code. The runtime writes no audit
+event of its own for a step, and doesn't touch the login marker: the app owns both.
+
+## Site health
+
+`siteHealth()` returns one `SiteHealthSnapshot` per registered site host, in registration order,
+after loading the persisted breaker state. It reads only: no budget slot is taken and nothing is
+written. Times are epoch milliseconds from the runtime's clock.
+
+- `host` and `adapterIds`: every registered adapter on the host, approved or not.
+- `breaker` (`open` or `closed`), `retryAt` (while open) and `retryAfterMs`.
+- `cooldownMs`: the cooldown the current run of blocks applied, 0 when there is none.
+  `nextCooldownMs`: the cooldown the next block would start, after doubling, within the maximum.
+- `budget.minGapMs` (the most cautious gap any adapter on the host declares) and `budget.waitMs`
+  (how long a request asking now would wait).
+
+The cause of the last block isn't kept here; it is in the `breaker-opened` audit event.
+`SiteCircuitBreaker.status()` and `RateBudget.waitMs()` are the per-site views it is built from.
+
 ## Results and audit events
 
 `ToolCallResult` is `ok`, `needsUser` (a `NeedsUserReason` code only; the app renders its own
@@ -94,7 +171,8 @@ calls are on record too; a call that can't be audited doesn't run. `tool-finishe
 every outcome, with `adapterId`, the outcome (`ok`, `needsUser` with its reason, `failed` with stage
 and class, `blocked`, `declined`) and the duration. `confirmation` carries the client. The client
 name is stripped of control and format characters and cut to 100 characters once, and that one
-value goes to both the audit log and the confirmation prompt.
+value goes to both the audit log and the confirmation prompt, with the transport when the call
+gave one.
 
 `ApprovalStore.approve(id, hash, version)` replaces the adapter's previous approval and audits
 `adapter-approved` with `previousHash`; approving the hash already approved does nothing.

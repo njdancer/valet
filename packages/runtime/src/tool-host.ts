@@ -60,15 +60,20 @@ import { probeDeclaration } from './probe'
 import { redactOutput } from './redaction'
 import { knownReason, type LoginBackoff, SessionGate } from './session'
 import { isSiteRefusal, type SiteGuards, SiteProtection } from './site-protection'
-import type {
-  AuthRunner,
-  ConfirmationAnswer,
-  ConfirmationPrompt,
-  ConfirmationRequest,
-  ListedTool,
-  RuntimeDiagnostic,
-  ToolCallRequest,
-  ToolCallResult,
+import {
+  type AuthRunner,
+  CLIENT_TRANSPORTS,
+  type ClientTransport,
+  type ConfirmationAnswer,
+  type ConfirmationPrompt,
+  type ConfirmationRequest,
+  type ListedTool,
+  type LoginStepContext,
+  type LoginStepOptions,
+  type RuntimeDiagnostic,
+  type SiteHealthSnapshot,
+  type ToolCallRequest,
+  type ToolCallResult,
 } from './types'
 
 export const DEFAULT_TOOL_TIMEOUT_MS = 120_000
@@ -78,6 +83,8 @@ export const DEFAULT_VALIDATION_TIMEOUT_MS = 10_000
 export const DEFAULT_CONFIRMATION_TIMEOUT_MS = 5 * 60_000
 /** How long a finished call's leftover runtime work may hold the adapter's lock. */
 export const DEFAULT_SETTLE_TIMEOUT_MS = 30_000
+/** How long a login step waits for running calls on its adapter before giving up. */
+export const DEFAULT_LOGIN_STEP_WAIT_MS = 30_000
 /** Distinct request-blocked events recorded per call. A page whose analytics are all blocked is chatty. */
 export const MAX_BLOCKED_EVENTS_PER_CALL = 50
 const MAX_CONFIRM_MESSAGE = 500
@@ -117,12 +124,15 @@ export interface ToolHostOptions {
 interface Entry extends RegisteredAdapter {
   readonly gate: SessionGate
   readonly site: SiteGuards
+  /** The site host its guards are keyed by. */
+  readonly host: string
 }
 
 type Raced<T> =
   | { readonly kind: 'returned'; readonly value: T }
   | { readonly kind: 'threw'; readonly error: unknown }
   | { readonly kind: 'timed-out' }
+  | { readonly kind: 'aborted' }
 
 export class ToolHost {
   private readonly adapters = new Map<string, Entry>()
@@ -160,7 +170,8 @@ export class ToolHost {
     const manifest = manifestSchema.parse(adapter.definition.manifest)
     const definition = defineAdapter({ manifest, tools: adapter.definition.tools })
     if (this.adapters.has(manifest.id)) throw new Error(`adapter ${manifest.id} is already registered`)
-    const site = this.protection.forSite(new URL(manifest.home).hostname, manifest.limits)
+    const host = new URL(manifest.home).hostname.toLowerCase()
+    const site = this.protection.forSite(host, manifest.limits)
     const gate = new SessionGate({
       adapterId: manifest.id,
       adapterHash: bundleHash,
@@ -172,7 +183,7 @@ export class ToolHost {
       clock: this.clock,
       ...(this.options.loginBackoff === undefined ? {} : { backoff: this.options.loginBackoff }),
     })
-    this.adapters.set(manifest.id, { definition, bundleHash, driver, gate, site })
+    this.adapters.set(manifest.id, { definition, bundleHash, driver, gate, site, host })
   }
 
   /** The tools of every adapter whose registered hash is approved. */
@@ -195,6 +206,113 @@ export class ToolHost {
       }
     }
     return listed
+  }
+
+  /**
+   * Runs one step of a login the person drives (opening the login window, finishing a hand-off)
+   * under the protections a tool call gets:
+   *
+   * - the adapter must be registered with its exact hash approved, before and after the wait;
+   * - it takes the adapter's lock, in turn behind running calls (and their settling), and calls
+   *   that arrive later wait for it;
+   * - it refuses while the site's breaker is open, then waits for and takes one slot of the site's
+   *   rate budget before `step` runs; `ctx.pace()` takes another before each further request;
+   * - `step` runs under a deadline, and the lock stays held until it settles, up to the settle bound.
+   *
+   * Rejects with SiteAdapterError: `manifest/not-granted`, `login/rate-limited` (the breaker is open,
+   * before the step or at a `pace()`), `login/timed-out` (the wait or the step ran out of time) or
+   * `login/aborted`. Whatever `step` throws is passed on unchanged: it is the app's own code.
+   */
+  async runLoginStep<T>(
+    adapterId: string,
+    step: (ctx: LoginStepContext) => Promise<T>,
+    options: LoginStepOptions = {},
+  ): Promise<T> {
+    const entry = this.adapters.get(adapterId)
+    if (entry === undefined || !(await this.isApproved(entry)))
+      throw new SiteAdapterError('manifest', 'not-granted')
+    const external = signalOf(options.signal)
+    if (external?.aborted) throw new SiteAdapterError('login', 'aborted')
+    // A block persisted by an earlier run of the app must be in force before anything is sent.
+    await this.protection.ready()
+    const lock = await this.acquireLock(adapterId, options.waitMs ?? DEFAULT_LOGIN_STEP_WAIT_MS, external)
+    if (lock === 'aborted') throw new SiteAdapterError('login', 'aborted')
+    if (lock === 'timed-out') throw new SiteAdapterError('login', 'timed-out')
+    const release = lock
+    const controller = new AbortController()
+    const stop = (): void => controller.abort()
+    external?.addEventListener('abort', stop, { once: true })
+    let unsettled: Promise<unknown> | null = null
+    try {
+      if (!(await this.isApproved(entry))) throw new SiteAdapterError('manifest', 'not-granted')
+      const pace = async (): Promise<void> => {
+        if (controller.signal.aborted) throw new SiteAdapterError('login', 'aborted')
+        if (entry.site.breaker.isOpen()) throw new SiteAdapterError('login', 'rate-limited')
+        try {
+          await entry.site.budget.acquire(controller.signal)
+        } catch {
+          throw new SiteAdapterError('login', 'aborted')
+        }
+        // Another adapter on the same host may have been blocked while this one waited.
+        if (entry.site.breaker.isOpen()) throw new SiteAdapterError('login', 'rate-limited')
+        if (controller.signal.aborted) throw new SiteAdapterError('login', 'aborted')
+      }
+      await pace()
+      const ctx: LoginStepContext = {
+        signal: controller.signal,
+        pace,
+        reportBlocked: (cause) => {
+          entry.site.breaker.trip(cause === 'rate-limited' ? 'rate-limited' : 'blocked-by-site', null)
+        },
+      }
+      const work = Promise.resolve().then(() => step(ctx))
+      unsettled = work
+      const outcome = await this.race(() => work, options.timeoutMs ?? this.timeoutMs, controller.signal)
+      if (outcome.kind === 'returned') {
+        unsettled = null
+        return outcome.value
+      }
+      if (outcome.kind === 'threw') {
+        unsettled = null
+        throw outcome.error
+      }
+      throw new SiteAdapterError('login', outcome.kind === 'timed-out' ? 'timed-out' : 'aborted')
+    } finally {
+      external?.removeEventListener('abort', stop)
+      controller.abort()
+      const left = unsettled
+      if (left === null) release()
+      else void this.race(() => left, this.settleTimeoutMs).finally(release)
+    }
+  }
+
+  /**
+   * Each registered site's breaker and rate budget, read from memory once the persisted state is
+   * loaded, so the app never reads breakers.json itself. Reads only: it takes no budget slot and
+   * changes nothing.
+   */
+  async siteHealth(): Promise<SiteHealthSnapshot[]> {
+    await this.protection.ready()
+    const sites = new Map<string, { site: SiteGuards; adapterIds: string[] }>()
+    for (const entry of this.adapters.values()) {
+      const id = entry.definition.manifest.id
+      const known = sites.get(entry.host)
+      if (known === undefined) sites.set(entry.host, { site: entry.site, adapterIds: [id] })
+      else known.adapterIds.push(id)
+    }
+    return [...sites].map(([host, { site, adapterIds }]) => {
+      const status = site.breaker.status()
+      return {
+        host,
+        adapterIds,
+        breaker: status.open ? 'open' : 'closed',
+        retryAt: status.retryAt,
+        retryAfterMs: status.retryAfterMs,
+        cooldownMs: status.cooldownMs,
+        nextCooldownMs: status.nextCooldownMs,
+        budget: { minGapMs: site.budget.gapMs, waitMs: site.budget.waitMs() },
+      }
+    })
   }
 
   async call(request: ToolCallRequest): Promise<ToolCallResult> {
@@ -224,7 +342,7 @@ export class ToolHost {
     await this.protection.ready()
     let result: ToolCallResult
     try {
-      result = await this.execute(entry, request, client)
+      result = await this.execute(entry, request, client, transportOf(request.transport))
     } catch (error) {
       result = fromError(error, entry.site)
     }
@@ -232,7 +350,14 @@ export class ToolHost {
     return result
   }
 
-  private async execute(entry: Entry, request: ToolCallRequest, client: string): Promise<ToolCallResult> {
+  private async execute(
+    entry: Entry,
+    request: ToolCallRequest,
+    client: string,
+    transport: ClientTransport | undefined,
+  ): Promise<ToolCallResult> {
+    const external = signalOf(request.signal)
+    if (external?.aborted) return failed('tool-run', 'aborted')
     if (!(await this.isApproved(entry))) return failed('manifest', 'not-granted')
     const manifest = entry.definition.manifest
     const declaration = manifest.tools.find((t) => t.name === request.tool)
@@ -243,21 +368,33 @@ export class ToolHost {
 
     // One lock per adapter, for reads and writes alike: the driver holds one run policy at a time,
     // so two calls on one session can't safely overlap.
-    const release = await this.locks.acquire(manifest.id)
+    const lock = await this.acquireLock(manifest.id, undefined, external)
+    if (typeof lock !== 'function') return failed('tool-run', 'aborted')
+    const release = lock
     const controller = new AbortController()
+    // The caller giving up stops the tool the way a timeout does.
+    const stop = (): void => controller.abort()
+    external?.addEventListener('abort', stop, { once: true })
     const state = new CallState(request.callId, controller.signal, () => entry.gate.secrets)
     let running = false
     try {
+      if (external?.aborted) return failed('tool-run', 'aborted')
       // Again, because a revocation can land while this call waits for the lock.
       if (!(await this.isApproved(entry))) return failed('manifest', 'not-granted')
       if (entry.site.breaker.isOpen()) return blocked(entry.site)
       const irreversible = declaration.sideEffect === 'irreversible'
       if (irreversible) {
-        const answer = await this.ask(entry, declaration, request.callId, client, {
-          kind: 'irreversible-tool',
-          message: declaration.description,
-          input: input.output,
-        })
+        const answer = await this.ask(
+          entry,
+          declaration,
+          request.callId,
+          client,
+          { kind: 'irreversible-tool', message: declaration.description, input: input.output },
+          external,
+          transport,
+        )
+        // Even a yes doesn't run a tool whose caller has gone.
+        if (external?.aborted) return failed('tool-run', 'aborted')
         if (answer !== 'approved') return { status: 'declined' }
       }
       try {
@@ -276,8 +413,18 @@ export class ToolHost {
         // Without the driver's policy in force, nothing tool code does would be held to it.
         return fromReportable(toReportable(error, 'egress'))
       }
-      return await this.run(entry, declaration, implementation, client, input.output, state, controller)
+      return await this.run(
+        entry,
+        declaration,
+        implementation,
+        client,
+        transport,
+        input.output,
+        state,
+        controller,
+      )
     } finally {
+      external?.removeEventListener('abort', stop)
       // Capabilities die with the call, so promises tool code left running can't act afterwards.
       controller.abort()
       const finish = (): void => {
@@ -300,6 +447,7 @@ export class ToolHost {
     declaration: ToolDeclaration,
     implementation: ToolImplementation,
     client: string,
+    transport: ClientTransport | undefined,
     input: unknown,
     state: CallState,
     controller: AbortController,
@@ -332,17 +480,19 @@ export class ToolHost {
           client,
           { kind: 'tool-request', message: String(message).slice(0, MAX_CONFIRM_MESSAGE) },
           controller.signal,
+          transport,
         )
         return (await state.track(asking)) === 'approved'
       },
       signal: controller.signal,
     }
 
-    const outcome = await this.race(() => implementation.run(ctx, input), this.timeoutMs)
+    const outcome = await this.race(() => implementation.run(ctx, input), this.timeoutMs, controller.signal)
     // Capabilities die with the call, so promises tool code left running can't act afterwards.
     controller.abort()
 
     if (outcome.kind === 'timed-out') return failed('timeout', 'timed-out')
+    if (outcome.kind === 'aborted') return failed('tool-run', 'aborted')
     if (state.blocked) return blocked(entry.site)
     if (state.violation !== null) return failed(state.violation.stage, state.violation.errorClass)
     if (outcome.kind === 'threw') return fromThrown(outcome.error, state, entry.site)
@@ -370,7 +520,7 @@ export class ToolHost {
   ): Promise<{ readonly status: 'ok'; readonly output: unknown } | ToolCallResult> {
     const parsed = await this.race(() => schema.safeParseAsync(value), this.validationTimeoutMs)
     if (parsed.kind === 'timed-out') return failed(stage, 'timed-out')
-    if (parsed.kind === 'threw' || !parsed.value.success) return failed(stage, 'invalid')
+    if (parsed.kind !== 'returned' || !parsed.value.success) return failed(stage, 'invalid')
     return { status: 'ok', output: parsed.value.data }
   }
 
@@ -457,7 +607,8 @@ export class ToolHost {
     callId: string,
     client: string,
     question: Pick<ConfirmationRequest, 'kind' | 'message' | 'input'>,
-    callSignal?: AbortSignal,
+    callSignal: AbortSignal | undefined,
+    transport: ClientTransport | undefined,
   ): Promise<ConfirmationAnswer> {
     const manifest = entry.definition.manifest
     const deadline = new AbortController()
@@ -472,11 +623,13 @@ export class ToolHost {
             toolTitle: declaration.title,
             callId,
             client,
+            ...(transport === undefined ? {} : { transport }),
             ...question,
           },
           signal,
         ),
       this.confirmationTimeoutMs,
+      callSignal,
     )
     deadline.abort()
     let answer: ConfirmationAnswer =
@@ -496,10 +649,10 @@ export class ToolHost {
   }
 
   /**
-   * Runs `task` against a deadline kept with the injected sleep. The task itself can't be stopped
-   * (callers abort their own signals), only stopped being waited for.
+   * Runs `task` against a deadline kept with the injected sleep, and against `signal` when given.
+   * The task itself can't be stopped (callers abort their own signals), only stopped being waited for.
    */
-  private async race<T>(task: () => Promise<T>, ms: number): Promise<Raced<T>> {
+  private async race<T>(task: () => Promise<T>, ms: number, signal?: AbortSignal): Promise<Raced<T>> {
     const timer = new AbortController()
     const running: Promise<Raced<T>> = Promise.resolve()
       .then(task)
@@ -507,13 +660,47 @@ export class ToolHost {
         (value) => ({ kind: 'returned', value }),
         (error: unknown) => ({ kind: 'threw', error }),
       )
-    const timeout: Promise<Raced<T>> = this.sleep(ms, timer.signal).then(
-      () => ({ kind: 'timed-out' }),
-      () => running,
-    )
-    const outcome = await Promise.race([running, timeout])
+    const contenders: Promise<Raced<T>>[] = [running]
+    // An unbounded wait needs no timer.
+    if (Number.isFinite(ms)) {
+      contenders.push(
+        this.sleep(ms, timer.signal).then(
+          () => ({ kind: 'timed-out' }),
+          () => running,
+        ),
+      )
+    }
+    let onAbort: (() => void) | undefined
+    if (signal !== undefined) {
+      contenders.push(
+        new Promise<Raced<T>>((resolve) => {
+          onAbort = () => resolve({ kind: 'aborted' })
+          if (signal.aborted) onAbort()
+          else signal.addEventListener('abort', onAbort, { once: true })
+        }),
+      )
+    }
+    const outcome = await Promise.race(contenders)
     timer.abort()
+    if (onAbort !== undefined) signal?.removeEventListener('abort', onAbort)
     return outcome
+  }
+
+  /**
+   * Joins the adapter's queue. Gives up after `waitMs` (when given) or when `signal` aborts. A waiter
+   * that gave up still takes its turn and hands it straight on, so the queue keeps its order.
+   */
+  private async acquireLock(
+    adapterId: string,
+    waitMs: number | undefined,
+    signal: AbortSignal | undefined,
+  ): Promise<(() => void) | 'timed-out' | 'aborted'> {
+    const pending = this.locks.acquire(adapterId)
+    if (waitMs === undefined && signal === undefined) return pending
+    const outcome = await this.race(() => pending, waitMs ?? Number.POSITIVE_INFINITY, signal)
+    if (outcome.kind === 'returned') return outcome.value
+    void pending.then((release) => release())
+    return outcome.kind === 'aborted' ? 'aborted' : 'timed-out'
   }
 
   /** Cookie values and handed-off storage values, old and new, so output can't carry them. */
@@ -573,6 +760,16 @@ function runPolicy(manifest: AdapterManifest, declaration: ToolDeclaration): Too
 function implementationOf(entry: RegisteredAdapter, name: string): ToolImplementation | undefined {
   // hasOwn, so a tool named "constructor" or "__proto__" can't reach Object.prototype.
   return Object.hasOwn(entry.definition.tools, name) ? entry.definition.tools[name] : undefined
+}
+
+/** A transport the runtime knows, or none: the label is never invented or passed on unchecked. */
+function transportOf(value: unknown): ClientTransport | undefined {
+  return CLIENT_TRANSPORTS.find((t) => t === value)
+}
+
+/** The caller's signal, if it is one. Anything else is ignored rather than trusted to behave. */
+function signalOf(value: unknown): AbortSignal | undefined {
+  return value instanceof AbortSignal ? value : undefined
 }
 
 /** One string for both the audit log and the prompt: printable, and at most MAX_CLIENT long. */
