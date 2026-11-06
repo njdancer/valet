@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SiteAdapterError } from '@siteadapter/core'
 import type { RunningEndpoint, ToolCaller } from '@siteadapter/mcp-server'
+import { LoginAttemptMarker } from '@siteadapter/runtime'
 import { afterEach, describe, expect, it } from 'vitest'
 import { dataPaths } from '../../src/main/core/constants'
 import { disabledOtpReader } from '../../src/main/core/credentials'
@@ -272,6 +273,48 @@ describe('grants', () => {
       provider: 'fake',
       origins: ['https://login.shop.test'],
     })
+  })
+})
+
+describe('a grant and the runtime’s login hold', () => {
+  const request = (s: Awaited<ReturnType<typeof approved>>) => ({
+    adapterId: 'shop',
+    adapterHash: s.adapter.hash,
+    secret: 'login',
+    provider: 'fake' as const,
+    itemRef: 'demo-woolworths',
+    origins: ['https://login.shop.test'],
+  })
+  const markers = (s: Awaited<ReturnType<typeof approved>>) =>
+    new LoginAttemptMarker(s.paths.loginMarkers, { now: () => Date.parse('2026-11-07T00:00:00.000Z') })
+
+  it('releases a hold left by a login that couldn’t fill or was refused: granting is the person acting', async () => {
+    const s = await approved()
+    await markers(s).hold('shop', 1, Date.parse('2026-11-07T01:00:00.000Z'))
+    await s.api.grants.make(request(s))
+    expect(await markers(s).read('shop')).toEqual({ kind: 'unset' })
+
+    await markers(s).hold('shop', 2, null, 'login-required')
+    await s.api.grants.make(request(s))
+    expect(await markers(s).read('shop')).toEqual({ kind: 'unset' })
+  })
+
+  it('keeps a hold no grant can fix, an unfinished attempt, and any hold while the login window is open', async () => {
+    const s = await approved()
+    for (const reason of ['account-locked', 'captcha', 'terms-update', 'site-changed'] as const) {
+      await markers(s).hold('shop', 1, null, reason)
+      await s.api.grants.make(request(s))
+      expect(await markers(s).read('shop'), reason).toMatchObject({ kind: 'held', reason })
+    }
+    await markers(s).set('shop', 'call_1')
+    await s.api.grants.make(request(s))
+    expect(await markers(s).read('shop')).toEqual({ kind: 'in-progress' })
+
+    await markers(s).clear('shop')
+    await s.api.openLoginWindow('shop')
+    await markers(s).hold('shop', 1, null, 'login-required')
+    await s.api.grants.make(request(s))
+    expect(await markers(s).read('shop')).toMatchObject({ kind: 'held', reason: 'login-required' })
   })
 })
 

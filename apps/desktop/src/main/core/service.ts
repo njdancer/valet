@@ -13,6 +13,7 @@ import {
   type AuditSink,
   type Grant,
   MESSAGES_SECRET,
+  type NeedsUserReason,
   type ProviderKind,
   type SecretField,
   type SessionDriver,
@@ -147,6 +148,17 @@ const EVENTS_FOR: Readonly<Partial<Record<AuditEvent['type'], readonly AppEvent[
   'breaker-closed': ['health-changed'],
   confirmation: ['runs-changed'],
 }
+
+/**
+ * The runtime's needs-person reasons (packages/runtime session.ts): a hold for one of these waits for
+ * the person whatever they grant, since another automatic login could only make it worse.
+ */
+const HOLDS_A_GRANT_CANNOT_FIX: ReadonlySet<NeedsUserReason> = new Set<NeedsUserReason>([
+  'account-locked',
+  'captcha',
+  'terms-update',
+  'site-changed',
+])
 
 const titlesSchema = z.record(z.string().max(512), z.string().max(200))
 const endpointMetaSchema = z.object({ tokenRotatedAt: z.iso.datetime().nullable() }).strict()
@@ -428,6 +440,23 @@ export class AppService {
     })
   }
 
+  /**
+   * A new grant is the person acting on a login that couldn't fill (not-granted) or was refused
+   * (auth-failed): the runtime's hold on automatic logins exists to wait for exactly that. Without
+   * this, the next call after granting was told the person had been asked to act, when nothing was
+   * asking them (the e2e suite found it). Holds a grant can't fix stay: a locked account, a CAPTCHA,
+   * new terms or a changed site, and an attempt that never finished (in progress). So does any hold
+   * while the person has the login window open, which they finish or give up themselves.
+   */
+  private async releaseLoginHold(adapterId: string): Promise<void> {
+    if (this.handoffs.has(adapterId)) return
+    const marker = await this.markers.read(adapterId).catch(() => null)
+    if (marker?.kind !== 'held') return
+    if (marker.reason !== undefined && HOLDS_A_GRANT_CANNOT_FIX.has(marker.reason)) return
+    await this.markers.clear(adapterId)
+    if (this.sessions.get(adapterId).state === 'needs-user') this.sessions.set(adapterId, 'expired')
+  }
+
   /** Whether the site's circuit breaker is open now: no login may start, nor a hand-off reach it. */
   private async siteBlocked(adapterId: string): Promise<boolean> {
     const sites = await this.api.health.sites()
@@ -567,6 +596,7 @@ export class AppService {
           if (grant.provider !== 'messages') {
             await this.titles.update((titles) => ({ ...titles, [grant.itemRef]: checked.title }))
           }
+          await this.releaseLoginHold(grant.adapterId)
           this.emit('grants-changed')
         },
         revoke: async (adapterId, secret) => {
