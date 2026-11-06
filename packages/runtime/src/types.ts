@@ -55,6 +55,15 @@ export type AuthRunner = (request: AuthRunRequest) => Promise<AuthOutcome>
 
 export type ConfirmationAnswer = 'approved' | 'declined' | 'timed-out'
 
+/**
+ * How the MCP client reached the endpoint: through the stdio bridge, or plain HTTP. A label for the
+ * person and the log only. The bridge says so itself, so any local client could claim it; nothing
+ * may grant or refuse anything on it.
+ */
+export type ClientTransport = 'stdio-bridge' | 'http'
+
+export const CLIENT_TRANSPORTS: readonly ClientTransport[] = ['stdio-bridge', 'http']
+
 export interface ConfirmationRequest {
   readonly adapterId: string
   readonly adapterName: string
@@ -63,6 +72,8 @@ export interface ConfirmationRequest {
   readonly callId: string
   /** The MCP client that made the call, so the person knows who is asking. */
   readonly client: string
+  /** How that client reached the endpoint, when the call says. A label, never a permission. */
+  readonly transport?: ClientTransport
   /**
    * `irreversible-tool`: the runtime asking before an irreversible tool runs; `message` is the
    * tool's declared description and `input` its validated input. `tool-request`: tool code calling
@@ -93,6 +104,14 @@ export interface ToolCallRequest {
   /** The MCP client's name, for the audit log and the confirmation prompt. */
   readonly client: string
   readonly callId: string
+  /**
+   * Aborts the call, e.g. when the MCP client cancels or disconnects. Before the lock it leaves the
+   * queue; during a confirmation the prompt's signal aborts and the answer counts as declined; while
+   * the tool runs, the tool's own signal aborts. Each ends the call `failed tool-run/aborted`.
+   */
+  readonly signal?: AbortSignal
+  /** How the client reached the endpoint, passed on to the confirmation prompt. A label only. */
+  readonly transport?: ClientTransport
 }
 
 export interface ListedTool {
@@ -102,6 +121,51 @@ export interface ListedTool {
   readonly declaration: ToolDeclaration
   readonly input: z.ZodType
   readonly output: z.ZodType
+}
+
+export interface LoginStepOptions {
+  /** How long to wait for running calls on the adapter. Default 30 s; then `login/timed-out`. */
+  readonly waitMs?: number
+  /** How long the step itself may run. Defaults to the tool timeout (2 min). */
+  readonly timeoutMs?: number
+  /** Gives up the wait, or stops waiting for the step: `login/aborted`. */
+  readonly signal?: AbortSignal
+}
+
+/** What a login step gets from the runtime. */
+export interface LoginStepContext {
+  /** Aborts when the step's deadline passes, its caller aborts, or it returns. */
+  readonly signal: AbortSignal
+  /**
+   * Call before each further request the step makes to the site (a navigation, a form post): waits
+   * for the site's rate budget. Rejects with `login/rate-limited` while the breaker is open, and
+   * `login/aborted` once the signal has aborted. The first slot is taken before the step starts.
+   */
+  pace(): Promise<void>
+  /** The step landed on the site's block page, or got a 429: opens the site's breaker. */
+  reportBlocked(cause: 'blocked-by-site' | 'rate-limited'): void
+}
+
+/** One site host as the app shows it. Times are epoch milliseconds, from the runtime's clock. */
+export interface SiteHealthSnapshot {
+  readonly host: string
+  /** Registered adapters on this host, in registration order. */
+  readonly adapterIds: readonly string[]
+  readonly breaker: 'open' | 'closed'
+  /** When calls may resume, while open. */
+  readonly retryAt: number | null
+  /** 0 when closed. */
+  readonly retryAfterMs: number
+  /** The cooldown the current run of blocks applied; 0 when there is none. */
+  readonly cooldownMs: number
+  /** The cooldown the next block would start, after doubling, within the maximum. */
+  readonly nextCooldownMs: number
+  readonly budget: {
+    /** The gap between requests: the most cautious any adapter on the host declares. */
+    readonly minGapMs: number
+    /** How long a request asking now would wait. */
+    readonly waitMs: number
+  }
 }
 
 /** Things the app may want to show or log that are not audit events. Never carries page text. */

@@ -113,8 +113,8 @@ describe('bot protection', () => {
     expect((await client.postJson('/api/v3/ui/trolley/update', { items: [] })).status).toBe(403)
   })
 
-  it('denies a forged sensor cookie the site never issued', async () => {
-    const site = await start()
+  it('denies a forged sensor cookie the site never issued, when told to deny', async () => {
+    const site = await start({ unknownSensor: 'deny' })
     const client = new Client(site.origin)
     client.cookies.set('_abck', 'A'.repeat(48).concat('~0~-1~-1'))
     expect((await client.get('/apis/ui/Trolley')).status).toBe(403)

@@ -1,8 +1,9 @@
-// Loads the scrubbed fixtures captured from woolworths.com.au (see fixtures/README.md). Every
+// The scrubbed fixtures captured from woolworths.com.au (see fixtures/README.md), typed. They come
+// from fixture-data.ts, which imports the JSON as modules, so a bundle carries them inline. Every
 // accessor returns a fresh deep copy, so request handlers can fill one in without touching the
 // shared original.
 
-import { readFileSync } from 'node:fs'
+import { type FixtureName, fixtureFile } from './fixture-data'
 
 /** A product exactly as the site's search and detail APIs return it. Most fields pass through untyped. */
 export interface Product {
@@ -41,16 +42,7 @@ export interface CatalogueEntry {
   readonly available: boolean
 }
 
-const cache = new Map<string, unknown>()
-
-function load(name: string): unknown {
-  let value = cache.get(name)
-  if (value === undefined) {
-    value = JSON.parse(readFileSync(new URL(`../fixtures/${name}`, import.meta.url), 'utf8'))
-    cache.set(name, value)
-  }
-  return structuredClone(value)
-}
+const load = (name: FixtureName): unknown => fixtureFile(name)
 
 // The envelope types below name only the fields the fake fills in; the rest pass through as captured.
 

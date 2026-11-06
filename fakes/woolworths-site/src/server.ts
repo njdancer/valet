@@ -7,6 +7,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { AccountStore, type FakeAccount, SESSION_COOKIE, type Visitor } from './accounts'
 import { accessDeniedHtml, newSensorValue, SENSOR_COOKIE } from './akamai'
 import { type AuthHostile, FakeAuth0, type SentMessage } from './auth-server'
+import { beaconScript, type PageBeacon, validBeacon } from './beacon'
 import {
   closeServer,
   createServer,
@@ -65,6 +66,12 @@ export interface FakeWoolworthsOptions {
   /** Auth0's bot detection: a CAPTCHA on the identifier and password pages that refuses every submit. */
   readonly captcha?: boolean
   /**
+   * What Akamai does with an `_abck` it never issued (one from an earlier run of the fake, say):
+   * `'reissue'`, the default, sets a fresh one and lets the request through, as the real one tends
+   * to; `'deny'` answers Access Denied. An API request with no `_abck` at all is denied either way.
+   */
+  readonly unknownSensor?: UnknownSensor
+  /**
    * The hostname the CAPTCHA's iframe loads from, on the auth server's port. Defaults to
    * challenges.captcha.test; the caller maps it to 127.0.0.1.
    */
@@ -77,10 +84,15 @@ export interface FakeWoolworthsOptions {
   readonly hostile?: Hostile
 }
 
-/** The hostile variants: Auth0's, plus one on www. */
+/** See FakeWoolworthsOptions.unknownSensor. */
+export type UnknownSensor = 'reissue' | 'deny'
+
+/** The hostile variants: Auth0's, plus those on www. */
 export interface Hostile extends AuthHostile {
   /** www answers every request for `path` (any method, after Akamai) with a 302 to `to`. */
   readonly wwwRedirect?: { readonly path: string; readonly to: string }
+  /** Every www page carries a script that sends document.cookie to this host (beacon.ts). */
+  readonly pageBeacon?: PageBeacon
 }
 
 export interface FakeWoolworths {
@@ -111,6 +123,10 @@ export interface FakeWoolworths {
   expireAuthSessions(): void
   /** Turns Auth0's CAPTCHA on or off. */
   setCaptcha(on: boolean): void
+  /** Starts (or, with null, stops) the hostile page beacon on www pages served from now on. */
+  setPageBeacon(beacon: PageBeacon | null): void
+  /** Switches what Akamai does with an `_abck` it never issued; see the option. */
+  setUnknownSensor(mode: UnknownSensor): void
 }
 
 /** The path and query of the live site's login link: www's /auth/login, back to `path` after. */
@@ -165,6 +181,8 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
   const limiter = new RateLimiter(options.rateLimit ?? null, now)
   const issuedSensors = new Set<string>()
   const requests: RecordedRequest[] = []
+  let unknownSensor: UnknownSensor = sensorMode(options.unknownSensor ?? 'reissue')
+  let pageScript = options.hostile?.pageBeacon === undefined ? '' : beaconScript(options.hostile.pageBeacon)
   let blockingAll = false
   let deniedCount = 0
   let nextOrderId = 100_000_001
@@ -221,7 +239,7 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
   const page = (exchange: Exchange): PageContext => {
     const sensorValue = newSensorValue()
     issuedSensors.add(sensorValue)
-    return { sensorValue, shopper: store.firstNameOf(exchange.visitor) }
+    return { sensorValue, shopper: store.firstNameOf(exchange.visitor), pageScript }
   }
 
   const switchVisitor = (exchange: Exchange, username: string | null): void => {
@@ -355,9 +373,18 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
 
     // The bot-protection layer, in front of everything.
     const presented = cookies.get(SENSOR_COOKIE)
-    const sensor = presented !== undefined && issuedSensors.has(presented) ? presented : null
+    let sensor = presented !== undefined && issuedSensors.has(presented) ? presented : null
     const keys = clientKeys(sensor, cookies.get(SESSION_COOKIE))
     if (blockingAll || blocked(keys)) return deny(request, response)
+    // A sensor cookie it never issued gets a fresh one rather than a denial, unless told otherwise.
+    // Checked after the block, so a blocked session can't get out with a made-up cookie.
+    let reissued: string | null = null
+    if (presented !== undefined && sensor === null && unknownSensor === 'reissue') {
+      reissued = newSensorValue()
+      issuedSensors.add(reissued)
+      sensor = reissued
+      keys.unshift(`sensor:${reissued}`)
+    }
     const isApi = path.startsWith('/api/') || path.startsWith('/apis/')
     if (isApi && (sensor === null || tipped(keys))) return deny(request, response)
 
@@ -377,6 +404,12 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
     // Every visitor gets a session token, logged in or not, as on the live site, and Akamai a
     // cookie on the parent domain when there is one.
     const setCookies: string[] = []
+    if (reissued !== null) {
+      // Script-readable, as the sensor script's own is.
+      setCookies.push(
+        serializeCookie(SENSOR_COOKIE, reissued, { httpOnly: false, secure, maxAge: SENSOR_MAX_AGE_SECONDS }),
+      )
+    }
     let visitor = store.visitor(token)
     if (visitor === null) {
       visitor = store.startVisitor()
@@ -476,7 +509,21 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
     setCaptcha(on) {
       auth0.captcha = on
     },
+    setPageBeacon(beacon) {
+      pageScript = beacon === null ? '' : beaconScript(validBeacon(beacon))
+    },
+    setUnknownSensor(mode) {
+      unknownSensor = sensorMode(mode)
+    },
   }
+}
+
+/** The sensor cookie's lifetime, as the sensor script sets it: a year. */
+const SENSOR_MAX_AGE_SECONDS = 31_536_000
+
+function sensorMode(mode: UnknownSensor): UnknownSensor {
+  if (mode !== 'reissue' && mode !== 'deny') throw new Error("unknownSensor must be 'reissue' or 'deny'")
+  return mode
 }
 
 /** auth.woolworths.test for www.woolworths.test; 127.0.0.1 when there is no hostname. */

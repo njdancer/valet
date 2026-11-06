@@ -108,6 +108,12 @@ describe('canary secrets', () => {
               throw new Error(`error resolving ${reference} with ${TOKEN}: no item matched ${PASSWORD}`)
             },
           },
+          vaults: { list: async () => [{ id: 'v1', title: 'siteadapter' }] },
+          items: {
+            list: async () => {
+              throw new Error(`listing with ${TOKEN} failed near ${PASSWORD}`)
+            },
+          },
         }
       },
       timers: new ManualTimers(),
@@ -116,6 +122,7 @@ describe('canary secrets', () => {
     expect(value.reveal((plaintext) => plaintext)).toBe(PASSWORD)
     expect(seenToken).toBe(TOKEN)
     expectNoCanary(rendered(await caught(provider.resolve('op://siteadapter/Woolworths', 'username'))))
+    expectNoCanary(rendered(await caught(provider.listItems('siteadapter'))))
 
     const deniedKeychain = new KeychainTokenSource({
       service: 'siteadapter',

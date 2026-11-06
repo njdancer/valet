@@ -13,6 +13,11 @@ export interface ItemRef {
   readonly item: string
 }
 
+/** True when `value` may be a vault or item segment of a reference. */
+export function isItemName(value: string): boolean {
+  return NAME.test(value)
+}
+
 /** Parses `op://<vault>/<item>`, or returns null for anything else. */
 export function parseItemRef(value: string): ItemRef | null {
   if (!value.startsWith('op://')) return null

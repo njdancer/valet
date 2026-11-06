@@ -41,6 +41,11 @@ export class RateBudget {
     this.minGapMs = Math.max(this.minGapMs, minGapMs)
   }
 
+  /** How long a request asking now would wait for its slot. Reads only; takes no slot. */
+  waitMs(): number {
+    return Math.max(0, this.nextSlot - this.clock.now())
+  }
+
   /** Waits for this request's slot. An aborted wait still uses up its slot, erring on the slow side. */
   async acquire(signal?: AbortSignal): Promise<void> {
     const now = this.clock.now()
@@ -62,6 +67,18 @@ export interface BreakerEvents {
   closed(): void
   /** Its state changed and should be persisted; see snapshot(). */
   changed(): void
+}
+
+export interface BreakerStatus {
+  readonly open: boolean
+  /** When calls may resume (epoch ms), while open. */
+  readonly retryAt: number | null
+  /** 0 when closed. */
+  readonly retryAfterMs: number
+  /** The cooldown the current run of blocks applied; 0 after a normal answer. */
+  readonly cooldownMs: number
+  /** The cooldown the next block would apply, after doubling, within the maximum. */
+  readonly nextCooldownMs: number
 }
 
 export class SiteCircuitBreaker {
@@ -95,6 +112,19 @@ export class SiteCircuitBreaker {
 
   isOpen(): boolean {
     return this.retryAfterMs() > 0
+  }
+
+  /** What the breaker is doing now, for the app to show. Reads only. */
+  status(): BreakerStatus {
+    const retryAfterMs = this.retryAfterMs()
+    const { cooldownMs, maxCooldownMs } = this.options
+    return {
+      open: retryAfterMs > 0,
+      retryAt: retryAfterMs > 0 ? this.openUntil : null,
+      retryAfterMs,
+      cooldownMs: this.cooldown,
+      nextCooldownMs: Math.min(maxCooldownMs, this.cooldown === 0 ? cooldownMs : this.cooldown * 2),
+    }
   }
 
   trip(cause: BlockCause, callId: string | null): void {

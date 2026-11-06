@@ -46,6 +46,8 @@ function recordingClient(answer: (reference: string) => Promise<string>): {
           return answer(reference)
         },
       },
+      vaults: { list: () => Promise.reject(new Error('not used here')) },
+      items: { list: () => Promise.reject(new Error('not used here')) },
     },
   }
 }
