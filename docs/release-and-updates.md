@@ -244,8 +244,8 @@ Notes on choices that aren't obvious:
 config, unsigned, in a temporary directory, inspects the result and launches it. It passes none of
 the caller's `CSC_*`, `APPLE_*` or `SITEADAPTER_*` variables to electron-builder, launches with a
 temporary `--user-data-dir` and Chromium's mock keychain, and deletes everything afterwards, pass
-or fail. Every item below is asserted: a mismatch is listed under `failures` and the script exits
-1. It builds from a copy-on-write clone of the installed Electron with `default_app.asar`
+or fail. Every item below is asserted: a mismatch is listed under `failures` and the script's exit
+code is 1. It builds from a copy-on-write clone of the installed Electron with `default_app.asar`
 removed, because electron-builder skips its own clean-up when given `electronDist`, and the bundle
 should match what a release (which downloads Electron) contains. On electron-builder 26.18.0 and
 Electron 44.10.2 (arm64), 2026-11-07:
