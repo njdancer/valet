@@ -1,6 +1,6 @@
 # Development plan
 
-Draft, 2026-11-07, updated after round 1. Covers the work from here to a v1 open-source release. Nick reviews it and
+Draft, 2026-11-07, updated after round 4. Covers the work from here to a v1 open-source release. Nick reviews it and
 answers the [decisions](#decisions). It sits on top of [security-model.md](security-model.md) and
 [architecture.md](architecture.md), and doesn't repeat them. Where this plan finds a gap in either,
 it says so.
@@ -24,57 +24,51 @@ it says so.
 
 ## Where we are
 
-Round 1 is merged on `main` (`bc0ec97`). Round 2 starts from branch `core-v2`, where `core` has
-new contracts (commits `3289104` and `c7aa6fb`) that the other packages are adopting.
+After four overnight rounds, everything below is merged on `main`, and `pnpm check` is green. Every
+package is on core v4. The app runs end to end against the fake site: an MCP client calls a
+Woolworths tool, the runtime logs in on the fake Auth0, hands the session over, runs the tool and
+writes the audit log. Nothing has touched the live site while logged in, and nothing is signed.
 
-| Area                                       | State                                                                                                                                                                                                                                                                                                                                                                           |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Docs                                       | Security model, architecture and this plan, updated after round 1. One live finding, four runs. Mockups of the screens the security model leans on. Drafts for remote access (`relay.md`) and the authoring agent are on the unmerged branch `wip/docs-platform`, so links to `relay.md` are broken until it lands.                                                             |
-| `packages/core`                            | Contracts v2: `needsUser` reason codes and `NeedsUserError`, typed `EnsureResult`, `urlContains`/`urlRegex` with screened patterns, `messages` grants, origin-bound `type()`, `inputReachable`, `auth.frameOrigins`, `beginRun(policy)`/`unlockIrreversible()`/`endRun()`, `sessionSecrets()`, `revealEach()` and `clone()`, rate and breaker limits, new audit events. Tested. |
-| `packages/runtime`                         | Built: `ToolHost` (approval, lock, deadlines, confirmation before `run()`, guarded tool page, output parse, plain-JSON conversion and redaction), the hash-chained audit log, the attempt marker with holds and backoff, the per-site rate budget and circuit breaker.                                                                                                          |
-| `packages/auth-flow`                       | Built: `runAuthFlow`, the interpreter, the secret filler with every pre-fill check, Messages OTP behind a grant, canary tests.                                                                                                                                                                                                                                                  |
-| `packages/credentials`                     | Built: 1Password SDK and `op` providers, the resolver, the file grant store, the Keychain token source (with the v0 ACL gap), the Messages OTP reader (exact sender, screened pattern in a worker).                                                                                                                                                                             |
-| `packages/browser-electron`                | Built: the Electron `SessionDriver`, focus-bound typing, the tool partition's request filter on every request, the CONNECT egress proxy, cookie and storage handoff. 21 Electron e2e tests against a local HTTPS site (`check:e2e`, needs a GUI session).                                                                                                                       |
-| `packages/mcp-server`                      | Built: Streamable HTTP on `127.0.0.1` with a bearer token and Host/Origin checks, derived annotations, schema-parsed results with fixed error text, the stdio bridge.                                                                                                                                                                                                           |
-| `adapters/woolworths`                      | Built against the fake: six tools (search, product, cart, add, set, remove). Login is still the round-1 same-origin shape, not Auth0.                                                                                                                                                                                                                                           |
-| `fakes/woolworths-site`                    | Built: one origin, recording every request, an Akamai-like limiter, hostile variants for each guard, an exfil sink, a certificate generator. No separate auth origin yet.                                                                                                                                                                                                       |
-| `apps/desktop`                             | Dependencies only, no source.                                                                                                                                                                                                                                                                                                                                                   |
-| Tests                                      | 1,814 unit tests green on `main`, about 99% line coverage (thresholds 90/90/90/85); 21 Electron e2e tests. On `core-v2` the packages other than `core` don't compile until round 2 lands.                                                                                                                                                                                       |
-| Spike 1 (`spikes/01-woolworths-electron`)  | Code written. **Not run.** It needs Nick to log in by hand, with the clean Chrome UA set.                                                                                                                                                                                                                                                                                       |
-| Live probe (`spikes/02-woolworths-shapes`) | Run four times. See [the finding](findings/2026-11-07-woolworths-live-probe.md) and the summary below.                                                                                                                                                                                                                                                                          |
-| Packaging, CI, releases                    | Nothing yet. The repo is local-only, with no remote and no CI.                                                                                                                                                                                                                                                                                                                  |
+| Area                                       | State                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/core`                            | Contracts v4: v3 plus the `update` error stage, `update-downloaded`/`update-installed` audit events, which partition refused a request, and `openAuthPage({ onBlocked })`.                                                                                                                                                                                                                                                                                |
+| `packages/runtime`                         | `ToolHost` with approval, the adapter lock, deadlines, confirmations (with the client's transport), cancel through an `AbortSignal`, the run-scoped network policy, redaction, the hash-chained audit log, the attempt marker, and the per-site budget and breaker, persisted. New in round 4: `runLoginStep` (the app's own login work under the lock, breaker and budget) and `siteHealth()`.                                                           |
+| `packages/auth-flow`                       | `runAuthFlow` on the Auth0 identifier-first shape, the secret filler with every pre-fill check, one password submit per login, Messages OTP behind a grant, canary tests.                                                                                                                                                                                                                                                                                 |
+| `packages/credentials`                     | 1Password service account (SDK) and `op` providers, both able to list the vault's items; the resolver, the grant store, the Keychain token source (v0 ACL gap), the Messages OTP reader. No test touches the real 1Password, Keychain or Messages.                                                                                                                                                                                                        |
+| `packages/browser-electron`                | The Electron `SessionDriver`: clean Chrome UA, `keyDown`/`char`/`keyUp` typing bound to the focused field, the request filter on both partitions with refusals reported, the egress proxy, one-way cookie and storage hand-off. 37 Electron e2e tests.                                                                                                                                                                                                    |
+| `packages/mcp-server`                      | Streamable HTTP on `127.0.0.1` with a bearer token and Host/Origin checks, the stdio bridge, live session counts. Session ids never leave it.                                                                                                                                                                                                                                                                                                             |
+| `adapters/woolworths`                      | Six tools (search, product, cart, add, set quantity, remove) and an Auth0 login with an optional TOTP or SMS step, against the fake. Site calls are 10 s apart ([D28](#d28-rate-budget-defaults)). 40 e2e tests.                                                                                                                                                                                                                                          |
+| `fakes/woolworths-site`                    | www and auth origins over local TLS, the identifier-first flow with MFA variants, an Akamai-like limiter that reissues `_abck`, hostile variants including a page beacon that tries five exfiltration routes, an exfil sink, a recorder.                                                                                                                                                                                                                  |
+| `apps/desktop`                             | The menu-bar app: tray, control panel (adapters, approval and update review, grants, credentials, clients, run traces, audit log, settings), the login window and hand-off, the confirmation panel, demo mode (`pnpm demo`). Served from `app://renderer`. Updater wired to an Ed25519-signed feed, off unless the build is packaged, Developer ID signed and has a feed compiled in. Refuses unexpected argv and `ELECTRON_*`/`NODE_*` variables.        |
+| Packaging                                  | `pnpm package:smoke` builds an unsigned, ad-hoc signed `.app`, checks the fuses, Info.plist and asar contents, makes eight launches that must be refused, then launches it under a temporary HOME and checks the control panel over DevTools. The release path (Developer ID, notarisation) is written and refuses to run without its feed, but has never run ([D60](#d60-the-stdio-bridge-in-a-packaged-app), [D61](#d61-the-update-feeds-signing-key)). |
+| Tests                                      | 3,356 unit and integration tests, coverage 98.6 / 94.9 / 97.9 / 99.3 (statements, branches, functions, lines; thresholds 90/85/90/90). Electron e2e: 24 desktop (6 screenshot specs skip by design), 37 browser-electron. Lint and both typecheck projects clean.                                                                                                                                                                                         |
+| Spike 1 (`spikes/01-woolworths-electron`)  | Code written. **Not run.** It needs Nick to log in by hand.                                                                                                                                                                                                                                                                                                                                                                                               |
+| Live probe (`spikes/02-woolworths-shapes`) | Run four times, anonymous only. See [the finding](findings/2026-11-07-woolworths-live-probe.md) and the summary below.                                                                                                                                                                                                                                                                                                                                    |
+| CI, releases                               | None. The repo is local-only.                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
-What round 1 did not do, or did differently from the docs. Each is round-2 work unless marked:
+So [M1](#m1-vertical-slice-against-fakes)'s exit is met, and more: the desktop e2e suite drives a real MCP client through the packaged-style app, not only plain Node. [M2](#m2-electron-driver-and-live-woolworths)'s code is in place; what's left of M2 is live work with Nick.
 
-- **Nothing is wired end to end.** Each package is tested on its own against `core` and fakes. No
-  test drives an MCP client through the runtime, the auth flow and a driver, and the app doesn't
-  exist. This is still [M1](#m1-vertical-slice-against-fakes)'s exit.
-- **The user agent.** D9 decided the clean Chrome UA, but the driver still defaults to Electron's
-  and sets no `Accept-Language`.
-- **Woolworths login.** The adapter and the fake still model a same-origin login on www with the
-  fake's selectors, not Auth0 on `auth.woolworths.com.au`.
-- **The run's network policy.** The driver enforces it in `webRequest` with its own
-  `beginRun(sideEffect)`, but the runtime never calls it, so the allowance is always a read
-  tool's. Core v2's `beginRun(policy, onBlocked)` replaces both.
-- **Redaction after dispose.** The runtime's redaction set loses each secret when the filler
-  disposes it. Core v2's run-scoped `clone()` fixes that.
-- **Breaker and budget.** In memory only, with the code's defaults (2 s gap, 10 min cool-down
-  doubling to 2 h), looser than [D28](#d28-rate-budget-defaults)'s
-  ([D33](#d33-breaker-defaults-and-persistence)).
-- **One password submit.** AC10's limit holds across logins (the marker holds after
-  `auth-failed`), but not inside one: `retry` re-runs after `auth-step/auth-failed`, so a flow
-  with a `retry` around its fill could submit the password twice
-  ([D32](#d32-which-failures-retry)).
-- **Hand-off.** Nothing calls `AuthPage.handToUser()` yet. `needsUser` reaches the client, but no
-  window is shown.
-- **Free-text reasons.** The adapter's `needsUser` steps and its tool errors still use free text
-  and borrowed error classes; core v2's reason codes and `NeedsUserError` replace them.
-- **Tool code isn't in a separate process.** The architecture's `utilityProcess` was never built;
-  tool code runs in the main process. Planned for M3, with the sandbox in M7.
+Still not done, or done differently from the docs:
 
-Round 2, in progress on `wip2/*` branches: each package adopts core v2; the Woolworths adapter
-and fake move to the Auth0 shape; the desktop app's renderer and its `window.siteadapter` API;
-and these docs.
+- **Anything live while logged in.** Spike 1, the rest of the Auth0 flow (password page, MFA,
+  silent re-login), the login probe (`/api/ui/v2/bootstrap` is still a guess), the checkout paths
+  and the site's own traffic counts all need Nick ([What Nick has to do](#what-nick-has-to-do-in-person)).
+- **Pacing inside the login.** The app's own login steps are paced and watched for block pages.
+  The automated login inside a call, and the person's own navigation in the login window, are not
+  ([D55](#d55-driver-level-budget-and-block-detection)).
+- **Cancelling a login.** The auth flow takes no `AbortSignal`, so a cancelled call's automatic
+  login runs on to its own deadline. If it stops part-way, the attempt marker stays set until the
+  person clears it. A clean stop needs a core change: the auth runner would report whether any
+  secret was filled yet.
+- **The stdio bridge in a packaged build.** Refused by the argv check until
+  [D60](#d60-the-stdio-bridge-in-a-packaged-app) is decided; clients use Streamable HTTP for now.
+- **Tool code isn't in a separate process.** It runs in the main process, behind the guarded
+  page. Planned for M3, with the sandbox in M7.
+- **Never exercised for real:** the 1Password service account and `op` (the Keychain prompt
+  included), Full Disk Access for Messages, a Developer ID signature, notarisation, an x64 build.
+- **Small things in the UI.** The tray says "N clients connected" but counts open MCP sessions;
+  the tray icon is generic; the run trace shows only the blocked count, because the main process
+  can't count what was sent.
 
 What the live probe established (all on 2026-11-07, from Nick's IP):
 
@@ -300,10 +294,9 @@ answered on time.
 
 ### M1. Vertical slice against fakes
 
-- Status after round 1: every package exists and is tested against `core` and fakes, with its
-  guards in place package by package. Not done: the wiring, the whole-path canary and
-  hostile-adapter suites, the replay of the run 1 pattern through the runtime's budget, and the
-  fake site's separate auth origin. Round 2 adopts core v2 first, so the wiring is written once.
+- Status after round 4: done. The desktop e2e suite drives a real MCP client through the app,
+  the runtime, the Auth0 login and the Electron driver against the two-origin fake, with the
+  canary egress and hostile-page checks; `pnpm check` is green on `main`.
 - Scope:
   - Review and merge the overnight branches; resolve their interface disagreements.
   - Wire the whole path in plain Node: an MCP client calls a tool over Streamable HTTP; the
@@ -326,9 +319,9 @@ answered on time.
 
 ### M2. Electron driver and live Woolworths
 
-- Status after round 1: `browser-electron` is built, with an Electron e2e suite against a local
-  HTTPS site. Not done: the clean UA as the default, `keyDown`/`keyUp` typing
-  ([D38](#d38-keystroke-events)), the hand-off window, the app, and anything live.
+- Status after round 4: the code is in place (the clean UA, `keyDown`/`char`/`keyUp` typing, the
+  hand-off window, the app, an unsigned packaged build). Not done: everything live, and
+  [D55](#d55-driver-level-budget-and-block-detection)'s pacing inside the login.
 - Scope:
   - Every live request in M2 runs under the [D28](#d28-rate-budget-defaults) defaults. The run 1
     pacing (4 scripted calls 2.5 s apart) is the known-bad baseline and is never repeated.
@@ -472,8 +465,7 @@ M0 ─ M1 ─ M2 ─ M3 (MVP) ─ M4 ─┬─ M5 ─ M6 ─┐
 ```
 
 M5 and M7 can run in parallel. M7 must finish before M8. M9 can start any time after M3 if Nick
-wants remote access for himself earlier: the app-side remote mode in [relay.md](relay.md)
-(draft, on `wip/docs-platform`), with
+wants remote access for himself earlier: the app-side remote mode in [relay.md](relay.md), with
 Tailscale Funnel as the transport, is most of M9 without the service. Tunnelling the local
 endpoint directly is not a stopgap (see the security model's "Remote access").
 
@@ -725,7 +717,7 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
 - Starts in M9 at the earliest. The first step is app-side remote mode (a separate listener, an
   OAuth server in the app, consent on the Mac, per-tool remote policy, a kill switch), with
   Tailscale Funnel or cloudflared documented as the transport in front of it, never in front of the
-  local endpoint. Design: [relay.md](relay.md) (draft, on `wip/docs-platform`).
+  local endpoint. Design: [relay.md](relay.md).
 - If built: a Cloudflare Worker with a Durable Object per user, holding a WebSocket the app opens
   outwards. The Worker is the OAuth 2.1 authorisation server for MCP clients (expect claude.ai's
   remote connectors to need this). Nick has built a Cloudflare OAuth server for another project's MCP endpoint; reuse
@@ -1075,7 +1067,7 @@ by run 4 of the live probe and now the architecture's default) and
 D31 to D54 are the questions round 1 raised. Each has options and a recommendation; none blocks
 round 2. D55 to D59 came out of the review of the round-2 docs; D55 and D58 block M2's live work.
 D60 to D65 came out of round 3 (the desktop app, the auth probe, packaging); D60 and D61 block
-the first signed build.
+the first signed build. D66 to D68 came out of round 4; none blocks anything yet.
 
 ### D1. Product name
 
@@ -1265,8 +1257,7 @@ the first signed build.
   also the only obvious thing to charge for. cloudflared and Tailscale work today for technical
   users but don't give claude.ai a proper OAuth flow without more setup.
 - Recommendation: for Nick's own remote use after M3, build the app-side remote mode and
-  document Funnel (then cloudflared) in front of it, as [relay.md](relay.md) (draft, on
-  `wip/docs-platform`) recommends; no tunnel
+  document Funnel (then cloudflared) in front of it, as [relay.md](relay.md) recommends; no tunnel
   in front of the local endpoint. Build the hosted relay only after M8, and only after a waitlist
   shows demand.
 - Blocks: M9.
@@ -2011,6 +2002,38 @@ the first signed build.
   endpoint) so the app has none.
 - Recommendation: move what can go into the fake (round 4 adds a hostile page-script variant to
   it), keep the rest, and keep the check that a production build has no demo chunk.
+- Blocks: nothing.
+### D66. A block page in the person's login window
+
+- Today (round 4): when the person opens the login window and its first page is Akamai's block
+  page, the app opens the site's breaker, closes the window and reports `login/blocked-by-site`.
+  The person never sees the block page.
+- Options: keep that; show the person the page (they may be able to clear it, and the breaker
+  still opens); show a short explanation in the app instead, with the time the breaker reopens.
+- Recommendation: the explanation in the app. A block page in front of the person invites
+  retrying, which deepens the block, and they can't do anything useful on it.
+- Blocks: nothing.
+
+### D67. Stopping a login when the call is cancelled
+
+- Today (round 4): a client can cancel a call, and the runtime stops at once, but the automatic
+  login it started runs on to the auth flow's own deadline. If that login stops part-way, the
+  attempt marker stays set (`login-attempt-pending`) until the person clears it, as after a crash.
+- Options: keep it (conservative: the person looks before another password fill); let
+  `runAuthFlow` take a signal and report whether any secret was filled, so a cancel before the
+  first fill clears the marker by itself. That's a core change to the `AuthRunner` contract.
+- Recommendation: the core change, in M2, before the first automated live login. A cancel
+  before any fill costs nothing at the site and shouldn't need the person.
+- Blocks: nothing before M2's live login.
+
+### D68. What the tray counts
+
+- Today (round 4): the tray says "N clients connected", but N is the number of open MCP
+  sessions. One client can hold several, and the bridge/HTTP split isn't shown anywhere.
+- Options: say "N sessions"; count distinct clients by the name they give at `initialize`;
+  show both in Settings → Clients.
+- Recommendation: count distinct clients in the tray, and list sessions by transport in
+  Settings → Clients. The names are the client's own claim, so the list says so.
 - Blocks: nothing.
 
 ---

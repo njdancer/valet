@@ -51,24 +51,26 @@
 <body>
 <main>
   <h1>siteadapter: overnight review</h1>
-  <p class="muted">Draft, 7 November 2026. Built from <code>docs/plan.md</code> and <code>docs/review/status.json</code> by <code>node docs/review/build.mjs</code>.</p>
+  <p class="muted">Morning of 7 November 2026, after round 4 (main at the commit that built this page). Built from <code>docs/plan.md</code> and <code>docs/review/status.json</code> by <code>node docs/review/build.mjs</code>.</p>
   <nav class="tabs">
     <a href="#overview" data-tab="overview">Overview</a>
-    <a href="#decisions-tab" data-tab="decisions-tab">Decisions (66)</a>
+    <a href="#decisions-tab" data-tab="decisions-tab">Decisions (69)</a>
     <a href="#todo" data-tab="todo">In person</a>
     <a href="#screens" data-tab="screens">Screens</a>
     <a href="#material" data-tab="material">Material</a>
   </nav>
 
   <section id="overview" data-panel>
-    <p>Placeholder headline.</p>
-    <div class="stats"><div class="stat"><div class="value">2,573</div><div class="label">tests</div></div></div>
+    <p>The app works end to end against a local fake of Woolworths. An MCP client calls <code>add_to_cart</code>; the runtime logs in on the fake Auth0 (email, password, SMS code) in an isolated login partition, hands the session one way to the tool partition, runs the tool and writes a hash-chained audit log. No adapter code ever sees a secret. Nothing is signed, nothing has touched the live site while logged in, and the next step needs you: answer the 16 decisions under “Answer these first”, then a session at the keyboard for spike 1 and the rest of the Auth0 flow.</p>
+    <div class="stats"><div class="stat"><div class="value">3,356</div><div class="label">unit and integration tests</div></div><div class="stat"><div class="value">61</div><div class="label">Electron e2e tests</div></div><div class="stat"><div class="value">99.3%</div><div class="label">line coverage</div></div><div class="stat"><div class="value">94.9%</div><div class="label">branch coverage</div></div><div class="stat"><div class="value">69</div><div class="label">decisions</div></div></div>
     <h2>Try it</h2>
-    <div class="panel"><p>Run <code>pnpm demo</code>.</p></div>
+    <div class="panel"><p>Everything runs against the local fake; no real account, 1Password, Keychain or Messages is touched.</p>
+<ol><li><code>mise install &amp;&amp; pnpm install</code></li><li><code>pnpm demo</code> builds the demo and launches the menu-bar app (a DEMO badge in the menu bar). It serves the fake on <code>www.woolworths.test</code> and <code>auth.woolworths.test</code> over TLS, inside the app.</li><li>In the control panel: approve Woolworths, grant <code>login</code> from “Woolworths (demo account)” and Messages codes from <code>Woolworths</code>.</li><li>Settings → Clients: copy the snippet into Claude Code's MCP config (server <code>siteadapter-demo</code>).</li><li>Ask Claude Code to search for milk (no login), then add some to the cart. The first cart tool logs in through the hidden auth window; open the run trace to see each fill and its checks. Calls are spaced 10 s apart, as they will be on the real site.</li></ol>
+<p>Checks: <code>pnpm check</code> (lint, both typechecks, tests with coverage), <code>pnpm test:e2e</code> (the desktop suite, about 5 minutes), <code>pnpm package:smoke</code> (an unsigned .app, launched under a temporary HOME).</p></div>
     <h2>What exists</h2>
-    <div class="panel"><table><tbody><tr><td><code>packages/core</code></td><td>Contracts v3.</td></tr></tbody></table></div>
+    <div class="panel"><table><tbody><tr><td><code>packages/core</code></td><td>Contracts v4: manifests, the declarative auth flow, <code>SecretValue</code>, run policy, audit events, error codes.</td></tr><tr><td><code>packages/auth-flow</code></td><td>The login interpreter and the secret filler, with every pre-fill origin and focus check; one password submit per login; OTP from Messages or TOTP.</td></tr><tr><td><code>packages/runtime</code></td><td><code>ToolHost</code>: approval, lock, deadlines, confirmations, cancel, redaction, the hash-chained audit log, the attempt marker, the per-site budget and persisted breaker, login steps, site health.</td></tr><tr><td><code>packages/credentials</code></td><td>1Password service account and <code>op</code>, both listing the vault; grants; Keychain token; Messages OTP reader. Never run against the real services.</td></tr><tr><td><code>packages/browser-electron</code></td><td>The Electron driver: auth and tool partitions, clean Chrome UA, focus-bound typing, request filter and egress proxy, one-way session hand-off. 37 e2e tests.</td></tr><tr><td><code>packages/mcp-server</code></td><td>Streamable HTTP on 127.0.0.1 with a bearer token and Host/Origin checks; the stdio bridge; live session counts.</td></tr><tr><td><code>adapters/woolworths</code></td><td>Six tools: search, product, cart, add, set quantity, remove. Auth0 identifier-first login with optional SMS or TOTP. 40 e2e tests against the fake.</td></tr><tr><td><code>fakes/woolworths-site</code></td><td>www and auth origins over TLS, MFA variants, an Akamai-like limiter, hostile variants (page beacon, exfil sink).</td></tr><tr><td><code>apps/desktop</code></td><td>Menu-bar app and control panel, login window and hand-off, confirmation panel, demo mode, <code>app://</code> renderer, argv guard, signed-feed updater (off until a signed release). 24 e2e tests.</td></tr><tr><td><code>Packaging</code></td><td>Unsigned .app with fuses, entitlements and asar checks, plus a launch smoke under a temporary HOME. The Developer ID and notarisation path is written but never run.</td></tr><tr><td><code>Docs</code></td><td>Plan (69 decisions), security model, architecture, release and updates, relay, authoring agent, registry and sandbox, the live-probe finding, 15 mockups.</td></tr></tbody></table></div>
     <h2>Known gaps and risks</h2>
-    <div class="panel"><ul><li>Placeholder gap.</li></ul></div>
+    <div class="panel"><ul><li>Nothing live while logged in: spike 1, the Auth0 password and MFA pages, the silent re-login, the login probe and the checkout paths all need you at the keyboard.</li><li>The automated login inside a call isn't paced or watched for block pages yet (<a href="../../plan.md#d55-driver-level-budget-and-block-detection">D55</a>); the app's own login steps are.</li><li>A cancelled call's login runs on to its own deadline and can leave the attempt marker set (<a href="../../plan.md#d67-stopping-a-login-when-the-call-is-cancelled">D67</a>).</li><li>The stdio bridge is refused in a packaged build until <a href="../../plan.md#d60-the-stdio-bridge-in-a-packaged-app">D60</a>; the update feed has no signing key until <a href="../../plan.md#d61-the-update-feeds-signing-key">D61</a>.</li><li>Tool code runs in the main process behind the guarded page, not in a separate process yet (M3; sandbox in M7).</li><li>Never exercised for real: 1Password, the Keychain prompt, Full Disk Access, a Developer ID signature, notarisation, an x64 build.</li><li>Fixed tonight: the Woolworths adapter spaced calls 2.5 s apart, the pace Akamai blocked in the live probe. It's now 10 s.</li><li>Small UI gaps: the tray counts sessions but says clients (<a href="../../plan.md#d68-what-the-tray-counts">D68</a>); the tray icon is generic; the run trace shows only the blocked count.</li></ul></div>
   </section>
 
   <section id="decisions-tab" data-panel hidden>
@@ -337,8 +339,8 @@
     
     <span class="blocks">Blocks M9</span>
   </header>
-  <p class="rec"><strong>Recommendation.</strong> For Nick's own remote use after M3, build the app-side remote mode and document Funnel (then cloudflared) in front of it, as <a href="../relay.md">relay.md</a> (draft, on <code>wip/docs-platform</code>) recommends; no tunnel in front of the local endpoint. Build the hosted relay only after M8, and only after a waitlist shows demand.</p>
-  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Options: build a relay (Worker plus Durable Object, outbound WebSocket from the app, OAuth for MCP clients); document cloudflared or Tailscale Funnel; both.</li><li>Considerations: the relay is the only piece that's a service with uptime, abuse and cost. It's also the only obvious thing to charge for. cloudflared and Tailscale work today for technical users but don't give claude.ai a proper OAuth flow without more setup.</li><li>Recommendation: for Nick's own remote use after M3, build the app-side remote mode and document Funnel (then cloudflared) in front of it, as <a href="../relay.md">relay.md</a> (draft, on <code>wip/docs-platform</code>) recommends; no tunnel in front of the local endpoint. Build the hosted relay only after M8, and only after a waitlist shows demand.</li></ul></div></details>
+  <p class="rec"><strong>Recommendation.</strong> For Nick's own remote use after M3, build the app-side remote mode and document Funnel (then cloudflared) in front of it, as <a href="../relay.md">relay.md</a> recommends; no tunnel in front of the local endpoint. Build the hosted relay only after M8, and only after a waitlist shows demand.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Options: build a relay (Worker plus Durable Object, outbound WebSocket from the app, OAuth for MCP clients); document cloudflared or Tailscale Funnel; both.</li><li>Considerations: the relay is the only piece that's a service with uptime, abuse and cost. It's also the only obvious thing to charge for. cloudflared and Tailscale work today for technical users but don't give claude.ai a proper OAuth flow without more setup.</li><li>Recommendation: for Nick's own remote use after M3, build the app-side remote mode and document Funnel (then cloudflared) in front of it, as <a href="../relay.md">relay.md</a> recommends; no tunnel in front of the local endpoint. Build the hosted relay only after M8, and only after a waitlist shows demand.</li></ul></div></details>
   <fieldset class="answer">
     <label><input type="radio" name="D14" value="accept"> Accept the recommendation</label>
     <label><input type="radio" name="D14" value="other"> Something else</label>
@@ -1326,14 +1328,71 @@
     <span class="blocks">Blocks nothing</span>
   </header>
   <p class="rec"><strong>Recommendation.</strong> Move what can go into the fake (round 4 adds a hostile page-script variant to it), keep the rest, and keep the check that a production build has no demo chunk.</p>
-  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today (round 3): a demo build launched for e2e maps <code>evil.test</code> to <code>127.0.0.1</code> and exposes a main-process global <code>__siteadapterE2e</code> (switch the fake to block everything; read the fake's trolley). A production <code>electron-vite build</code> contains no demo code, no fixtures and no test account; only <code>build --mode demo</code> does, and a packaged app can't start in demo mode.</li><li>Options: accept hooks in demo builds only; move every hook into the fake site (an HTTP control endpoint) so the app has none.</li><li>Recommendation: move what can go into the fake (round 4 adds a hostile page-script variant to it), keep the rest, and keep the check that a production build has no demo chunk.</li></ul>
-<p>---</p></div></details>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today (round 3): a demo build launched for e2e maps <code>evil.test</code> to <code>127.0.0.1</code> and exposes a main-process global <code>__siteadapterE2e</code> (switch the fake to block everything; read the fake's trolley). A production <code>electron-vite build</code> contains no demo code, no fixtures and no test account; only <code>build --mode demo</code> does, and a packaged app can't start in demo mode.</li><li>Options: accept hooks in demo builds only; move every hook into the fake site (an HTTP control endpoint) so the app has none.</li><li>Recommendation: move what can go into the fake (round 4 adds a hostile page-script variant to it), keep the rest, and keep the check that a production build has no demo chunk.</li></ul></div></details>
   <fieldset class="answer">
     <label><input type="radio" name="D65" value="accept"> Accept the recommendation</label>
     <label><input type="radio" name="D65" value="other"> Something else</label>
     <label><input type="radio" name="D65" value="discuss"> Discuss with me</label>
     <label><input type="radio" name="D65" value="later"> Later</label>
     <textarea name="D65-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d66" data-id="D66" data-title="A block page in the person's login window">
+  <header>
+    <span class="id">D66</span>
+    <h3>A block page in the person's login window</h3>
+    
+    
+    <span class="blocks">Blocks nothing</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> The explanation in the app. A block page in front of the person invites retrying, which deepens the block, and they can't do anything useful on it.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today (round 4): when the person opens the login window and its first page is Akamai's block page, the app opens the site's breaker, closes the window and reports <code>login/blocked-by-site</code>. The person never sees the block page.</li><li>Options: keep that; show the person the page (they may be able to clear it, and the breaker still opens); show a short explanation in the app instead, with the time the breaker reopens.</li><li>Recommendation: the explanation in the app. A block page in front of the person invites retrying, which deepens the block, and they can't do anything useful on it.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D66" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D66" value="other"> Something else</label>
+    <label><input type="radio" name="D66" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D66" value="later"> Later</label>
+    <textarea name="D66-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d67" data-id="D67" data-title="Stopping a login when the call is cancelled">
+  <header>
+    <span class="id">D67</span>
+    <h3>Stopping a login when the call is cancelled</h3>
+    
+    
+    <span class="blocks">Blocks nothing before M2's live login</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> The core change, in M2, before the first automated live login. A cancel before any fill costs nothing at the site and shouldn't need the person.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today (round 4): a client can cancel a call, and the runtime stops at once, but the automatic login it started runs on to the auth flow's own deadline. If that login stops part-way, the attempt marker stays set (<code>login-attempt-pending</code>) until the person clears it, as after a crash.</li><li>Options: keep it (conservative: the person looks before another password fill); let <code>runAuthFlow</code> take a signal and report whether any secret was filled, so a cancel before the first fill clears the marker by itself. That's a core change to the <code>AuthRunner</code> contract.</li><li>Recommendation: the core change, in M2, before the first automated live login. A cancel before any fill costs nothing at the site and shouldn't need the person.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D67" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D67" value="other"> Something else</label>
+    <label><input type="radio" name="D67" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D67" value="later"> Later</label>
+    <textarea name="D67-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d68" data-id="D68" data-title="What the tray counts">
+  <header>
+    <span class="id">D68</span>
+    <h3>What the tray counts</h3>
+    
+    
+    <span class="blocks">Blocks nothing</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Count distinct clients in the tray, and list sessions by transport in Settings → Clients. The names are the client's own claim, so the list says so.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today (round 4): the tray says &quot;N clients connected&quot;, but N is the number of open MCP sessions. One client can hold several, and the bridge/HTTP split isn't shown anywhere.</li><li>Options: say &quot;N sessions&quot;; count distinct clients by the name they give at <code>initialize</code>; show both in Settings → Clients.</li><li>Recommendation: count distinct clients in the tray, and list sessions by transport in Settings → Clients. The names are the client's own claim, so the list says so.</li></ul>
+<p>---</p></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D68" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D68" value="other"> Something else</label>
+    <label><input type="radio" name="D68" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D68" value="later"> Later</label>
+    <textarea name="D68-note" rows="2" placeholder="Notes, or your answer"></textarea>
   </fieldset>
 </article>
   </section>
@@ -1344,11 +1403,11 @@
   </section>
 
   <section id="screens" data-panel hidden>
-    <div class="gallery"><figure><a href="../mockups/screens/menubar-light.png"><img loading="lazy" src="../mockups/screens/menubar-light.png" alt="Menu bar"></a><figcaption>Menu bar</figcaption></figure></div>
+    <div class="gallery"><figure><a href="../../apps/desktop/screens/live/adapters.png"><img loading="lazy" src="../../apps/desktop/screens/live/adapters.png" alt="Live demo app. Control panel: Woolworths approved, signed in, breaker closed."></a><figcaption>Live demo app. Control panel: Woolworths approved, signed in, breaker closed.</figcaption></figure><figure><a href="../../apps/desktop/screens/live/approve-adapter.png"><img loading="lazy" src="../../apps/desktop/screens/live/approve-adapter.png" alt="Live demo app. Approving the adapter: what it may reach, what it may never do."></a><figcaption>Live demo app. Approving the adapter: what it may reach, what it may never do.</figcaption></figure><figure><a href="../../apps/desktop/screens/live/grant-secret.png"><img loading="lazy" src="../../apps/desktop/screens/live/grant-secret.png" alt="Live demo app. Granting the login secret: one vault item, bound to the sign-in origin."></a><figcaption>Live demo app. Granting the login secret: one vault item, bound to the sign-in origin.</figcaption></figure><figure><a href="../../apps/desktop/screens/live/credentials.png"><img loading="lazy" src="../../apps/desktop/screens/live/credentials.png" alt="Live demo app. Credentials: the providers and what each can see."></a><figcaption>Live demo app. Credentials: the providers and what each can see.</figcaption></figure><figure><a href="../../apps/desktop/screens/live/adapter-detail.png"><img loading="lazy" src="../../apps/desktop/screens/live/adapter-detail.png" alt="Live demo app. Adapter detail: tools, limits, grants and site health."></a><figcaption>Live demo app. Adapter detail: tools, limits, grants and site health.</figcaption></figure><figure><a href="../../apps/desktop/screens/live/run-trace.png"><img loading="lazy" src="../../apps/desktop/screens/live/run-trace.png" alt="Live demo app. Run trace of add_to_cart: three login fills, each with its checks, output redacted."></a><figcaption>Live demo app. Run trace of add_to_cart: three login fills, each with its checks, output redacted.</figcaption></figure><figure><a href="../../apps/desktop/screens/live/audit-log.png"><img loading="lazy" src="../../apps/desktop/screens/live/audit-log.png" alt="Live demo app. Audit log, hash-chained, filterable by category."></a><figcaption>Live demo app. Audit log, hash-chained, filterable by category.</figcaption></figure><figure><a href="../../apps/desktop/screens/live/needs-user.png"><img loading="lazy" src="../../apps/desktop/screens/live/needs-user.png" alt="Live demo app. Hand-off: the login needs the person, with the reason."></a><figcaption>Live demo app. Hand-off: the login needs the person, with the reason.</figcaption></figure><figure><a href="../../apps/desktop/screens/live/confirm-irreversible.png"><img loading="lazy" src="../../apps/desktop/screens/live/confirm-irreversible.png" alt="Live demo app. Confirmation panel for an irreversible tool, with the calling client and transport."></a><figcaption>Live demo app. Confirmation panel for an irreversible tool, with the calling client and transport.</figcaption></figure><figure><a href="../../apps/desktop/screens/live/approve-update.png"><img loading="lazy" src="../../apps/desktop/screens/live/approve-update.png" alt="Live demo app. Reviewing an adapter update: the permission diff."></a><figcaption>Live demo app. Reviewing an adapter update: the permission diff.</figcaption></figure><figure><a href="../../apps/desktop/screens/live/clients-settings.png"><img loading="lazy" src="../../apps/desktop/screens/live/clients-settings.png" alt="Live demo app. Clients: the connection snippet and live sessions."></a><figcaption>Live demo app. Clients: the connection snippet and live sessions.</figcaption></figure><figure><a href="../../apps/desktop/screens/live/adapters-breaker-open.png"><img loading="lazy" src="../../apps/desktop/screens/live/adapters-breaker-open.png" alt="Live demo app. The site breaker open after a block, with the reopen time."></a><figcaption>Live demo app. The site breaker open after a block, with the reopen time.</figcaption></figure><figure><a href="../mockups/screens/onboarding-step1.png"><img loading="lazy" src="../mockups/screens/onboarding-step1.png" alt="Mockup, not built yet. Onboarding."></a><figcaption>Mockup, not built yet. Onboarding.</figcaption></figure><figure><a href="../mockups/screens/menubar.png"><img loading="lazy" src="../mockups/screens/menubar.png" alt="Mockup, not built yet. Menu-bar popover."></a><figcaption>Mockup, not built yet. Menu-bar popover.</figcaption></figure><figure><a href="../mockups/screens/ide-workspace.png"><img loading="lazy" src="../mockups/screens/ide-workspace.png" alt="Mockup, not built yet. IDE workspace."></a><figcaption>Mockup, not built yet. IDE workspace.</figcaption></figure><figure><a href="../mockups/screens/ide-recorder.png"><img loading="lazy" src="../mockups/screens/ide-recorder.png" alt="Mockup, not built yet. IDE recorder."></a><figcaption>Mockup, not built yet. IDE recorder.</figcaption></figure><figure><a href="../mockups/screens/ide-agent.png"><img loading="lazy" src="../mockups/screens/ide-agent.png" alt="Mockup, not built yet. IDE authoring agent."></a><figcaption>Mockup, not built yet. IDE authoring agent.</figcaption></figure><figure><a href="../mockups/screens/ide-tests.png"><img loading="lazy" src="../mockups/screens/ide-tests.png" alt="Mockup, not built yet. IDE tests."></a><figcaption>Mockup, not built yet. IDE tests.</figcaption></figure></div>
   </section>
 
   <section id="material" data-panel hidden>
-    <section class="links"><h3>Docs</h3><ul><li><a href="../plan.md">Plan</a></li></ul></section>
+    <section class="links"><h3>Read first</h3><ul><li><a href="../plan.md">Development plan</a> <span class="muted">Where we are, milestones, all 69 decisions</span></li><li><a href="../security-model.md">Security model</a></li><li><a href="../architecture.md">Architecture</a></li><li><a href="../findings/2026-11-07-woolworths-live-probe.md">Live probe finding</a> <span class="muted">why the clean Chrome UA and the 10 s gap</span></li></ul></section><section class="links"><h3>Design drafts</h3><ul><li><a href="../release-and-updates.md">Release and updates</a></li><li><a href="../relay.md">Relay (remote access)</a></li><li><a href="../authoring-agent.md">Authoring agent</a></li><li><a href="../registry-and-sandbox.md">Registry and sandbox</a></li><li><a href="../mockups/index.html">Mockups</a></li></ul></section><section class="links"><h3>Package READMEs</h3><ul><li><a href="../../apps/desktop/README.md">apps/desktop</a> <span class="muted">demo mode, packaging, the main process</span></li><li><a href="../../packages/runtime/README.md">packages/runtime</a></li><li><a href="../../packages/auth-flow/README.md">packages/auth-flow</a></li><li><a href="../../packages/credentials/README.md">packages/credentials</a></li><li><a href="../../packages/browser-electron/README.md">packages/browser-electron</a></li><li><a href="../../packages/mcp-server/README.md">packages/mcp-server</a></li><li><a href="../../adapters/woolworths/README.md">adapters/woolworths</a></li><li><a href="../../fakes/woolworths-site/README.md">fakes/woolworths-site</a></li></ul></section>
   </section>
 </main>
 <script>

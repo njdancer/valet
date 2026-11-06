@@ -1,10 +1,245 @@
 {
-  "generated": "Draft, 7 November 2026",
-  "headline": "Placeholder headline.",
-  "numbers": [{ "label": "tests", "value": "2,573" }],
-  "tryIt": "Run `pnpm demo`.",
-  "built": [{ "area": "packages/core", "state": "Contracts v3." }],
-  "gaps": ["Placeholder gap."],
-  "links": [{ "title": "Docs", "items": [{ "label": "Plan", "href": "../plan.md" }] }],
-  "screens": [{ "src": "../mockups/screens/menubar-light.png", "caption": "Menu bar" }]
+  "generated": "Morning of 7 November 2026, after round 4 (main at the commit that built this page)",
+  "headline": "The app works end to end against a local fake of Woolworths. An MCP client calls `add_to_cart`; the runtime logs in on the fake Auth0 (email, password, SMS code) in an isolated login partition, hands the session one way to the tool partition, runs the tool and writes a hash-chained audit log. No adapter code ever sees a secret. Nothing is signed, nothing has touched the live site while logged in, and the next step needs you: answer the 16 decisions under “Answer these first”, then a session at the keyboard for spike 1 and the rest of the Auth0 flow.",
+  "numbers": [
+    {
+      "label": "unit and integration tests",
+      "value": "3,356"
+    },
+    {
+      "label": "Electron e2e tests",
+      "value": "61"
+    },
+    {
+      "label": "line coverage",
+      "value": "99.3%"
+    },
+    {
+      "label": "branch coverage",
+      "value": "94.9%"
+    },
+    {
+      "label": "decisions",
+      "value": "69"
+    }
+  ],
+  "tryIt": "Everything runs against the local fake; no real account, 1Password, Keychain or Messages is touched.\n\n1. `mise install && pnpm install`\n2. `pnpm demo` builds the demo and launches the menu-bar app (a DEMO badge in the menu bar). It serves the fake on `www.woolworths.test` and `auth.woolworths.test` over TLS, inside the app.\n3. In the control panel: approve Woolworths, grant `login` from “Woolworths (demo account)” and Messages codes from `Woolworths`.\n4. Settings → Clients: copy the snippet into Claude Code's MCP config (server `siteadapter-demo`).\n5. Ask Claude Code to search for milk (no login), then add some to the cart. The first cart tool logs in through the hidden auth window; open the run trace to see each fill and its checks. Calls are spaced 10 s apart, as they will be on the real site.\n\nChecks: `pnpm check` (lint, both typechecks, tests with coverage), `pnpm test:e2e` (the desktop suite, about 5 minutes), `pnpm package:smoke` (an unsigned .app, launched under a temporary HOME).",
+  "built": [
+    {
+      "area": "packages/core",
+      "state": "Contracts v4: manifests, the declarative auth flow, `SecretValue`, run policy, audit events, error codes."
+    },
+    {
+      "area": "packages/auth-flow",
+      "state": "The login interpreter and the secret filler, with every pre-fill origin and focus check; one password submit per login; OTP from Messages or TOTP."
+    },
+    {
+      "area": "packages/runtime",
+      "state": "`ToolHost`: approval, lock, deadlines, confirmations, cancel, redaction, the hash-chained audit log, the attempt marker, the per-site budget and persisted breaker, login steps, site health."
+    },
+    {
+      "area": "packages/credentials",
+      "state": "1Password service account and `op`, both listing the vault; grants; Keychain token; Messages OTP reader. Never run against the real services."
+    },
+    {
+      "area": "packages/browser-electron",
+      "state": "The Electron driver: auth and tool partitions, clean Chrome UA, focus-bound typing, request filter and egress proxy, one-way session hand-off. 37 e2e tests."
+    },
+    {
+      "area": "packages/mcp-server",
+      "state": "Streamable HTTP on 127.0.0.1 with a bearer token and Host/Origin checks; the stdio bridge; live session counts."
+    },
+    {
+      "area": "adapters/woolworths",
+      "state": "Six tools: search, product, cart, add, set quantity, remove. Auth0 identifier-first login with optional SMS or TOTP. 40 e2e tests against the fake."
+    },
+    {
+      "area": "fakes/woolworths-site",
+      "state": "www and auth origins over TLS, MFA variants, an Akamai-like limiter, hostile variants (page beacon, exfil sink)."
+    },
+    {
+      "area": "apps/desktop",
+      "state": "Menu-bar app and control panel, login window and hand-off, confirmation panel, demo mode, `app://` renderer, argv guard, signed-feed updater (off until a signed release). 24 e2e tests."
+    },
+    {
+      "area": "Packaging",
+      "state": "Unsigned .app with fuses, entitlements and asar checks, plus a launch smoke under a temporary HOME. The Developer ID and notarisation path is written but never run."
+    },
+    {
+      "area": "Docs",
+      "state": "Plan (69 decisions), security model, architecture, release and updates, relay, authoring agent, registry and sandbox, the live-probe finding, 15 mockups."
+    }
+  ],
+  "gaps": [
+    "Nothing live while logged in: spike 1, the Auth0 password and MFA pages, the silent re-login, the login probe and the checkout paths all need you at the keyboard.",
+    "The automated login inside a call isn't paced or watched for block pages yet ([D55](../plan.md#d55-driver-level-budget-and-block-detection)); the app's own login steps are.",
+    "A cancelled call's login runs on to its own deadline and can leave the attempt marker set ([D67](../plan.md#d67-stopping-a-login-when-the-call-is-cancelled)).",
+    "The stdio bridge is refused in a packaged build until [D60](../plan.md#d60-the-stdio-bridge-in-a-packaged-app); the update feed has no signing key until [D61](../plan.md#d61-the-update-feeds-signing-key).",
+    "Tool code runs in the main process behind the guarded page, not in a separate process yet (M3; sandbox in M7).",
+    "Never exercised for real: 1Password, the Keychain prompt, Full Disk Access, a Developer ID signature, notarisation, an x64 build.",
+    "Fixed tonight: the Woolworths adapter spaced calls 2.5 s apart, the pace Akamai blocked in the live probe. It's now 10 s.",
+    "Small UI gaps: the tray counts sessions but says clients ([D68](../plan.md#d68-what-the-tray-counts)); the tray icon is generic; the run trace shows only the blocked count."
+  ],
+  "links": [
+    {
+      "title": "Read first",
+      "items": [
+        {
+          "label": "Development plan",
+          "href": "../plan.md",
+          "note": "Where we are, milestones, all 69 decisions"
+        },
+        {
+          "label": "Security model",
+          "href": "../security-model.md"
+        },
+        {
+          "label": "Architecture",
+          "href": "../architecture.md"
+        },
+        {
+          "label": "Live probe finding",
+          "href": "../findings/2026-11-07-woolworths-live-probe.md",
+          "note": "why the clean Chrome UA and the 10 s gap"
+        }
+      ]
+    },
+    {
+      "title": "Design drafts",
+      "items": [
+        {
+          "label": "Release and updates",
+          "href": "../release-and-updates.md"
+        },
+        {
+          "label": "Relay (remote access)",
+          "href": "../relay.md"
+        },
+        {
+          "label": "Authoring agent",
+          "href": "../authoring-agent.md"
+        },
+        {
+          "label": "Registry and sandbox",
+          "href": "../registry-and-sandbox.md"
+        },
+        {
+          "label": "Mockups",
+          "href": "../mockups/index.html"
+        }
+      ]
+    },
+    {
+      "title": "Package READMEs",
+      "items": [
+        {
+          "label": "apps/desktop",
+          "href": "../../apps/desktop/README.md",
+          "note": "demo mode, packaging, the main process"
+        },
+        {
+          "label": "packages/runtime",
+          "href": "../../packages/runtime/README.md"
+        },
+        {
+          "label": "packages/auth-flow",
+          "href": "../../packages/auth-flow/README.md"
+        },
+        {
+          "label": "packages/credentials",
+          "href": "../../packages/credentials/README.md"
+        },
+        {
+          "label": "packages/browser-electron",
+          "href": "../../packages/browser-electron/README.md"
+        },
+        {
+          "label": "packages/mcp-server",
+          "href": "../../packages/mcp-server/README.md"
+        },
+        {
+          "label": "adapters/woolworths",
+          "href": "../../adapters/woolworths/README.md"
+        },
+        {
+          "label": "fakes/woolworths-site",
+          "href": "../../fakes/woolworths-site/README.md"
+        }
+      ]
+    }
+  ],
+  "screens": [
+    {
+      "src": "../../apps/desktop/screens/live/adapters.png",
+      "caption": "Live demo app. Control panel: Woolworths approved, signed in, breaker closed."
+    },
+    {
+      "src": "../../apps/desktop/screens/live/approve-adapter.png",
+      "caption": "Live demo app. Approving the adapter: what it may reach, what it may never do."
+    },
+    {
+      "src": "../../apps/desktop/screens/live/grant-secret.png",
+      "caption": "Live demo app. Granting the login secret: one vault item, bound to the sign-in origin."
+    },
+    {
+      "src": "../../apps/desktop/screens/live/credentials.png",
+      "caption": "Live demo app. Credentials: the providers and what each can see."
+    },
+    {
+      "src": "../../apps/desktop/screens/live/adapter-detail.png",
+      "caption": "Live demo app. Adapter detail: tools, limits, grants and site health."
+    },
+    {
+      "src": "../../apps/desktop/screens/live/run-trace.png",
+      "caption": "Live demo app. Run trace of add_to_cart: three login fills, each with its checks, output redacted."
+    },
+    {
+      "src": "../../apps/desktop/screens/live/audit-log.png",
+      "caption": "Live demo app. Audit log, hash-chained, filterable by category."
+    },
+    {
+      "src": "../../apps/desktop/screens/live/needs-user.png",
+      "caption": "Live demo app. Hand-off: the login needs the person, with the reason."
+    },
+    {
+      "src": "../../apps/desktop/screens/live/confirm-irreversible.png",
+      "caption": "Live demo app. Confirmation panel for an irreversible tool, with the calling client and transport."
+    },
+    {
+      "src": "../../apps/desktop/screens/live/approve-update.png",
+      "caption": "Live demo app. Reviewing an adapter update: the permission diff."
+    },
+    {
+      "src": "../../apps/desktop/screens/live/clients-settings.png",
+      "caption": "Live demo app. Clients: the connection snippet and live sessions."
+    },
+    {
+      "src": "../../apps/desktop/screens/live/adapters-breaker-open.png",
+      "caption": "Live demo app. The site breaker open after a block, with the reopen time."
+    },
+    {
+      "src": "../mockups/screens/onboarding-step1.png",
+      "caption": "Mockup, not built yet. Onboarding."
+    },
+    {
+      "src": "../mockups/screens/menubar.png",
+      "caption": "Mockup, not built yet. Menu-bar popover."
+    },
+    {
+      "src": "../mockups/screens/ide-workspace.png",
+      "caption": "Mockup, not built yet. IDE workspace."
+    },
+    {
+      "src": "../mockups/screens/ide-recorder.png",
+      "caption": "Mockup, not built yet. IDE recorder."
+    },
+    {
+      "src": "../mockups/screens/ide-agent.png",
+      "caption": "Mockup, not built yet. IDE authoring agent."
+    },
+    {
+      "src": "../mockups/screens/ide-tests.png",
+      "caption": "Mockup, not built yet. IDE tests."
+    }
+  ]
 }
