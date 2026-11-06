@@ -1065,6 +1065,8 @@ to answer first: they block M2 or M3, or they're expensive to change later.
 | D41 | **Stable MCP port and token rotation**      | The bridge for every client; rotate on demand; a token per client                             | M3         |
 | D55 | **Driver-level budget and block detection** | The driver reports block signatures to the breaker and paces navigations                      | M2         |
 | D58 | **Page-initiated traffic**                  | Separate ceilings; host-scoped declarations for the site's own non-GET calls; numbers from M2 | M2         |
+| D60 | **The stdio bridge in a packaged app**      | A small signed Swift proxy inside the app bundle                                              | M3         |
+| D61 | **The update feed's signing key**           | 1Password, in its own vault, Touch ID from the release script                                 | M3         |
 
 Already decided, recorded for completeness: [D9](#d9-user-agent) (the clean Chrome UA, decided
 by run 4 of the live probe and now the architecture's default) and
@@ -1072,6 +1074,8 @@ by run 4 of the live probe and now the architecture's default) and
 
 D31 to D54 are the questions round 1 raised. Each has options and a recommendation; none blocks
 round 2. D55 to D59 came out of the review of the round-2 docs; D55 and D58 block M2's live work.
+D60 to D65 came out of round 3 (the desktop app, the auth probe, packaging); D60 and D61 block
+the first signed build.
 
 ### D1. Product name
 
@@ -1640,6 +1644,9 @@ round 2. D55 to D59 came out of the review of the round-2 docs; D55 and D58 bloc
   kept only for clients that can't launch a command, with the risk stated next to the option.
   Rotate tokens on demand ("Reset access" per client in the app), never on a timer, and move to
   per-client tokens (D42).
+- Round 3: the app keeps its port (the bridge reads it from `bridge.json`) and issues a new token
+  at every launch, since no HTTP-native setup exists yet to use a long-lived one. The bridge
+  follows the new token on its own.
 - Blocks: M3 (onboarding, AC3).
 
 ### D42. Per-client tool scopes
@@ -1919,6 +1926,92 @@ round 2. D55 to D59 came out of the review of the round-2 docs; D55 and D58 bloc
 - Recommendation: one sender per adapter for now, as a parse-time rule (C19), and a grant per
   sender if a real site needs two.
 - Blocks: nothing for Woolworths.
+
+### D60. The stdio bridge in a packaged app
+
+- Today: client snippets start the bridge with `tsx` from the repo, which needs Node 24 on
+  `PATH`. A packaged build has no bridge command and shows no snippets. The `RunAsNode` fuse is
+  off, so the app's own Electron binary can't run the bridge as Node.
+- Options: a tiny separate binary in the app bundle (a Node single-executable app, or a small
+  Swift or Go stdio-to-HTTP proxy), signed with the app; a second, unfused helper Electron
+  binary; tell people to install Node and run `npx`.
+- Considerations: the bridge only reads `bridge.json` (0600) and forwards bytes, so it is small
+  in any language. A Node SEA is about 90 MB; a Swift or Go proxy is about 2 MB and has no runtime
+  to keep patched. A second Electron binary doubles the bundle and brings back the fuse problem.
+  `npx` asks every user to install Node and trusts a registry at every start.
+- Recommendation: a small Swift proxy in `Contents/MacOS/`, signed with the app and covered by
+  its designated requirement. Snippets point at its absolute path in the installed app.
+- Blocks: M3 (onboarding, AC3).
+
+### D61. The update feed's signing key
+
+- Today (round 3): the feed carries an Ed25519 envelope over `latest-mac.yml` with an expiry, a
+  version floor and the yml's hash. The app verifies it with a public key fixed at build time,
+  before electron-updater sees the yml. Apple's signature on the zip is checked as well. Nothing
+  yet decides where the private key lives.
+- Options: an offline key in 1Password (a "siteadapter release" item, used by the release script
+  through `op read`); a key in the release Mac's Keychain; a hardware key (YubiKey, Ed25519 over
+  PIV or OpenPGP).
+- Considerations: the envelope only matters if the feed host (D23) is compromised, and must expire
+  (62 days at most), so the release script re-signs the feed regularly even without a release.
+  A hardware key makes that chore manual; 1Password keeps it scriptable with Touch ID.
+- Recommendation: 1Password, in a vault apart from the "siteadapter" credentials vault, read by
+  the release script with Touch ID. Re-sign the feed monthly from a reminder.
+- Blocks: M3 (first signed build).
+
+### D62. Electron 44's unnamed ninth fuse
+
+- Today: `@electron/fuses` 1.8.0 names eight fuses. Electron 44's fuse wire has nine, and the
+  ninth is left as shipped (on). The packaged smoke reads the wire and checks the eight it knows.
+- Options: leave it as shipped until `@electron/fuses` names it; read Electron's source for what
+  it is and decide now.
+- Recommendation: look it up when we bump `@electron/fuses`, before the first signed build; until
+  then, the smoke fails if the wire's length changes again.
+- Blocks: M3.
+
+### D63. What the auth probe can't hide
+
+- Today (round 3): the login probe (`AuthPage.fetch`) is a main-process `net.request` in the auth
+  partition, built to send what the auth page's own `fetch(url, {credentials: 'include'})` sends:
+  the same headers in Chrome's order and casing, client hints, `Origin` and `Referer` by the
+  page's policy, and `Sec-Fetch-Mode: cors`. An Electron e2e test diffs the two. Known
+  differences: `Sec-Fetch-Storage-Access` on cross-site targets (Chromium strips it from
+  `net.request`), high-entropy client hints a site asks for with `Accept-CH`, and `Sec-Fetch-Site`
+  across a chain of redirects.
+- Options: keep `net.request` and accept the differences; run the probe as a `fetch` in the auth
+  page's own main world (no differences; the site's scripts can see and change it, but the probe
+  only reads a boolean and never carries a secret); probe by navigating a hidden auth page.
+- Considerations: Woolworths' probe is same-site (`www` and `auth` share a site), so none of the
+  known differences apply to it. A page-world `fetch` would be exactly the page, but trusts page
+  scripts not to fake the answer.
+- Recommendation: keep `net.request` and measure in M2's live session. Move to a page-world fetch
+  only if Akamai reacts to the probe.
+- Blocks: nothing until M2.
+
+### D64. Group-writable `op` installs
+
+- Today (round 3, decided in code, needs Nick's yes): D44's rule "nothing writable by anyone but
+  root or the person" refused Homebrew's own layout, where `/opt/homebrew` and its links are
+  `0775` with group `admin`. The app now accepts a group-writable file or directory only when its
+  group is `admin` (gid 80) and the person is in `admin`. World-writable paths and every other
+  group are still refused, and the code signature check still runs.
+- Considerations: any admin can become root anyway, and on a one-person Mac the only admin is the
+  person. On a shared Mac with several admins, any of them could swap `op`, but they could also
+  replace the app.
+- Recommendation: keep the admin exception, stated in the security model.
+- Blocks: M3.
+
+### D65. Demo-build test hooks
+
+- Today (round 3): a demo build launched for e2e maps `evil.test` to `127.0.0.1` and exposes a
+  main-process global `__siteadapterE2e` (switch the fake to block everything; read the fake's
+  trolley). A production `electron-vite build` contains no demo code, no fixtures and no test
+  account; only `build --mode demo` does, and a packaged app can't start in demo mode.
+- Options: accept hooks in demo builds only; move every hook into the fake site (an HTTP control
+  endpoint) so the app has none.
+- Recommendation: move what can go into the fake (round 4 adds a hostile page-script variant to
+  it), keep the rest, and keep the check that a production build has no demo chunk.
+- Blocks: nothing.
 
 ---
 

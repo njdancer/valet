@@ -54,7 +54,7 @@
   <p class="muted">Draft, 7 November 2026. Built from <code>docs/plan.md</code> and <code>docs/review/status.json</code> by <code>node docs/review/build.mjs</code>.</p>
   <nav class="tabs">
     <a href="#overview" data-tab="overview">Overview</a>
-    <a href="#decisions-tab" data-tab="decisions-tab">Decisions (60)</a>
+    <a href="#decisions-tab" data-tab="decisions-tab">Decisions (66)</a>
     <a href="#todo" data-tab="todo">In person</a>
     <a href="#screens" data-tab="screens">Screens</a>
     <a href="#material" data-tab="material">Material</a>
@@ -870,7 +870,7 @@
     <span class="blocks">Blocks M3 (onboarding, AC3)</span>
   </header>
   <p class="rec"><strong>Recommendation.</strong> Make the bridge the default setup for every client. Offer a port chosen once and kept only for clients that can't launch a command, with the risk stated next to the option. Rotate tokens on demand (&quot;Reset access&quot; per client in the app), never on a timer, and move to per-client tokens (D42).</p>
-  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: a free port each launch, and one token written to a 0600 file. The stdio bridge re-reads its config, so bridged clients survive a restart. HTTP-native clients (Claude Code over HTTP) keep the URL and token in their own config, and break on every restart.</li><li>Options for the port: random each launch (today); fixed and configurable; chosen once at first run and kept. For the token: never rotated; rotated on demand from the app; rotated every launch; one per client (D42).</li><li>Considerations: a fixed port has a cost. While the app isn't running, another local account can bind it, and an HTTP-native client would hand it the token. The bridge doesn't have that problem: it reads the current port from a file only the person can read.</li><li>Recommendation: make the bridge the default setup for every client. Offer a port chosen once and kept only for clients that can't launch a command, with the risk stated next to the option. Rotate tokens on demand (&quot;Reset access&quot; per client in the app), never on a timer, and move to per-client tokens (D42).</li></ul></div></details>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: a free port each launch, and one token written to a 0600 file. The stdio bridge re-reads its config, so bridged clients survive a restart. HTTP-native clients (Claude Code over HTTP) keep the URL and token in their own config, and break on every restart.</li><li>Options for the port: random each launch (today); fixed and configurable; chosen once at first run and kept. For the token: never rotated; rotated on demand from the app; rotated every launch; one per client (D42).</li><li>Considerations: a fixed port has a cost. While the app isn't running, another local account can bind it, and an HTTP-native client would hand it the token. The bridge doesn't have that problem: it reads the current port from a file only the person can read.</li><li>Recommendation: make the bridge the default setup for every client. Offer a port chosen once and kept only for clients that can't launch a command, with the risk stated next to the option. Rotate tokens on demand (&quot;Reset access&quot; per client in the app), never on a timer, and move to per-client tokens (D42).</li><li>Round 3: the app keeps its port (the bridge reads it from <code>bridge.json</code>) and issues a new token at every launch, since no HTTP-native setup exists yet to use a long-lived one. The bridge follows the new token on its own.</li></ul></div></details>
   <fieldset class="answer">
     <label><input type="radio" name="D41" value="accept"> Accept the recommendation</label>
     <label><input type="radio" name="D41" value="other"> Something else</label>
@@ -1212,14 +1212,128 @@
     <span class="blocks">Blocks nothing for Woolworths</span>
   </header>
   <p class="rec"><strong>Recommendation.</strong> One sender per adapter for now, as a parse-time rule (C19), and a grant per sender if a real site needs two.</p>
-  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: a grant is one record per adapter, content hash and secret, and Messages codes are granted under the reserved secret <code>messages</code> with the sender handle as <code>itemRef</code>. So an adapter has one <code>messages</code> grant and one sender. <code>messagesSourcesIn()</code> can return several senders, and a manifest with two can't be fully granted.</li><li>Options: one Messages sender per adapter, enforced when the manifest is parsed; a grant per sender (the secret becomes <code>messages:&lt;sender&gt;</code>, or the grant's key gains the sender); one grant whose <code>itemRef</code> holds a list.</li><li>Considerations: sites that send codes from two numbers exist (a short code and a long number, or a change of provider), but none we target does. A list in <code>itemRef</code> muddies a field every other provider uses for one item. A grant per sender keeps each approval explicit.</li><li>Recommendation: one sender per adapter for now, as a parse-time rule (C19), and a grant per sender if a real site needs two.</li></ul>
-<p>---</p></div></details>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: a grant is one record per adapter, content hash and secret, and Messages codes are granted under the reserved secret <code>messages</code> with the sender handle as <code>itemRef</code>. So an adapter has one <code>messages</code> grant and one sender. <code>messagesSourcesIn()</code> can return several senders, and a manifest with two can't be fully granted.</li><li>Options: one Messages sender per adapter, enforced when the manifest is parsed; a grant per sender (the secret becomes <code>messages:&lt;sender&gt;</code>, or the grant's key gains the sender); one grant whose <code>itemRef</code> holds a list.</li><li>Considerations: sites that send codes from two numbers exist (a short code and a long number, or a change of provider), but none we target does. A list in <code>itemRef</code> muddies a field every other provider uses for one item. A grant per sender keeps each approval explicit.</li><li>Recommendation: one sender per adapter for now, as a parse-time rule (C19), and a grant per sender if a real site needs two.</li></ul></div></details>
   <fieldset class="answer">
     <label><input type="radio" name="D59" value="accept"> Accept the recommendation</label>
     <label><input type="radio" name="D59" value="other"> Something else</label>
     <label><input type="radio" name="D59" value="discuss"> Discuss with me</label>
     <label><input type="radio" name="D59" value="later"> Later</label>
     <textarea name="D59-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision first" id="d60" data-id="D60" data-title="The stdio bridge in a packaged app">
+  <header>
+    <span class="id">D60</span>
+    <h3>The stdio bridge in a packaged app</h3>
+    <span class="badge write">Answer first</span>
+    
+    <span class="blocks">Blocks M3 (onboarding, AC3)</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> A small Swift proxy in <code>Contents/MacOS/</code>, signed with the app and covered by its designated requirement. Snippets point at its absolute path in the installed app.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: client snippets start the bridge with <code>tsx</code> from the repo, which needs Node 24 on <code>PATH</code>. A packaged build has no bridge command and shows no snippets. The <code>RunAsNode</code> fuse is off, so the app's own Electron binary can't run the bridge as Node.</li><li>Options: a tiny separate binary in the app bundle (a Node single-executable app, or a small Swift or Go stdio-to-HTTP proxy), signed with the app; a second, unfused helper Electron binary; tell people to install Node and run <code>npx</code>.</li><li>Considerations: the bridge only reads <code>bridge.json</code> (0600) and forwards bytes, so it is small in any language. A Node SEA is about 90 MB; a Swift or Go proxy is about 2 MB and has no runtime to keep patched. A second Electron binary doubles the bundle and brings back the fuse problem. <code>npx</code> asks every user to install Node and trusts a registry at every start.</li><li>Recommendation: a small Swift proxy in <code>Contents/MacOS/</code>, signed with the app and covered by its designated requirement. Snippets point at its absolute path in the installed app.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D60" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D60" value="other"> Something else</label>
+    <label><input type="radio" name="D60" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D60" value="later"> Later</label>
+    <textarea name="D60-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision first" id="d61" data-id="D61" data-title="The update feed's signing key">
+  <header>
+    <span class="id">D61</span>
+    <h3>The update feed's signing key</h3>
+    <span class="badge write">Answer first</span>
+    
+    <span class="blocks">Blocks M3 (first signed build)</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> 1Password, in a vault apart from the &quot;siteadapter&quot; credentials vault, read by the release script with Touch ID. Re-sign the feed monthly from a reminder.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today (round 3): the feed carries an Ed25519 envelope over <code>latest-mac.yml</code> with an expiry, a version floor and the yml's hash. The app verifies it with a public key fixed at build time, before electron-updater sees the yml. Apple's signature on the zip is checked as well. Nothing yet decides where the private key lives.</li><li>Options: an offline key in 1Password (a &quot;siteadapter release&quot; item, used by the release script through <code>op read</code>); a key in the release Mac's Keychain; a hardware key (YubiKey, Ed25519 over PIV or OpenPGP).</li><li>Considerations: the envelope only matters if the feed host (D23) is compromised, and must expire (62 days at most), so the release script re-signs the feed regularly even without a release. A hardware key makes that chore manual; 1Password keeps it scriptable with Touch ID.</li><li>Recommendation: 1Password, in a vault apart from the &quot;siteadapter&quot; credentials vault, read by the release script with Touch ID. Re-sign the feed monthly from a reminder.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D61" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D61" value="other"> Something else</label>
+    <label><input type="radio" name="D61" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D61" value="later"> Later</label>
+    <textarea name="D61-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d62" data-id="D62" data-title="Electron 44's unnamed ninth fuse">
+  <header>
+    <span class="id">D62</span>
+    <h3>Electron 44's unnamed ninth fuse</h3>
+    
+    
+    <span class="blocks">Blocks M3</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Look it up when we bump <code>@electron/fuses</code>, before the first signed build; until then, the smoke fails if the wire's length changes again.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today: <code>@electron/fuses</code> 1.8.0 names eight fuses. Electron 44's fuse wire has nine, and the ninth is left as shipped (on). The packaged smoke reads the wire and checks the eight it knows.</li><li>Options: leave it as shipped until <code>@electron/fuses</code> names it; read Electron's source for what it is and decide now.</li><li>Recommendation: look it up when we bump <code>@electron/fuses</code>, before the first signed build; until then, the smoke fails if the wire's length changes again.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D62" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D62" value="other"> Something else</label>
+    <label><input type="radio" name="D62" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D62" value="later"> Later</label>
+    <textarea name="D62-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d63" data-id="D63" data-title="What the auth probe can't hide">
+  <header>
+    <span class="id">D63</span>
+    <h3>What the auth probe can't hide</h3>
+    
+    
+    <span class="blocks">Blocks nothing until M2</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Keep <code>net.request</code> and measure in M2's live session. Move to a page-world fetch only if Akamai reacts to the probe.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today (round 3): the login probe (<code>AuthPage.fetch</code>) is a main-process <code>net.request</code> in the auth partition, built to send what the auth page's own <code>fetch(url, {credentials: 'include'})</code> sends: the same headers in Chrome's order and casing, client hints, <code>Origin</code> and <code>Referer</code> by the page's policy, and <code>Sec-Fetch-Mode: cors</code>. An Electron e2e test diffs the two. Known differences: <code>Sec-Fetch-Storage-Access</code> on cross-site targets (Chromium strips it from <code>net.request</code>), high-entropy client hints a site asks for with <code>Accept-CH</code>, and <code>Sec-Fetch-Site</code> across a chain of redirects.</li><li>Options: keep <code>net.request</code> and accept the differences; run the probe as a <code>fetch</code> in the auth page's own main world (no differences; the site's scripts can see and change it, but the probe only reads a boolean and never carries a secret); probe by navigating a hidden auth page.</li><li>Considerations: Woolworths' probe is same-site (<code>www</code> and <code>auth</code> share a site), so none of the known differences apply to it. A page-world <code>fetch</code> would be exactly the page, but trusts page scripts not to fake the answer.</li><li>Recommendation: keep <code>net.request</code> and measure in M2's live session. Move to a page-world fetch only if Akamai reacts to the probe.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D63" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D63" value="other"> Something else</label>
+    <label><input type="radio" name="D63" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D63" value="later"> Later</label>
+    <textarea name="D63-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d64" data-id="D64" data-title="Group-writable `op` installs">
+  <header>
+    <span class="id">D64</span>
+    <h3>Group-writable <code>op</code> installs</h3>
+    
+    
+    <span class="blocks">Blocks M3</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Keep the admin exception, stated in the security model.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today (round 3, decided in code, needs Nick's yes): D44's rule &quot;nothing writable by anyone but root or the person&quot; refused Homebrew's own layout, where <code>/opt/homebrew</code> and its links are <code>0775</code> with group <code>admin</code>. The app now accepts a group-writable file or directory only when its group is <code>admin</code> (gid 80) and the person is in <code>admin</code>. World-writable paths and every other group are still refused, and the code signature check still runs.</li><li>Considerations: any admin can become root anyway, and on a one-person Mac the only admin is the person. On a shared Mac with several admins, any of them could swap <code>op</code>, but they could also replace the app.</li><li>Recommendation: keep the admin exception, stated in the security model.</li></ul></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D64" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D64" value="other"> Something else</label>
+    <label><input type="radio" name="D64" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D64" value="later"> Later</label>
+    <textarea name="D64-note" rows="2" placeholder="Notes, or your answer"></textarea>
+  </fieldset>
+</article>
+
+<article class="decision" id="d65" data-id="D65" data-title="Demo-build test hooks">
+  <header>
+    <span class="id">D65</span>
+    <h3>Demo-build test hooks</h3>
+    
+    
+    <span class="blocks">Blocks nothing</span>
+  </header>
+  <p class="rec"><strong>Recommendation.</strong> Move what can go into the fake (round 4 adds a hostile page-script variant to it), keep the rest, and keep the check that a production build has no demo chunk.</p>
+  <details><summary>Options and reasoning</summary><div class="body"><ul><li>Today (round 3): a demo build launched for e2e maps <code>evil.test</code> to <code>127.0.0.1</code> and exposes a main-process global <code>__siteadapterE2e</code> (switch the fake to block everything; read the fake's trolley). A production <code>electron-vite build</code> contains no demo code, no fixtures and no test account; only <code>build --mode demo</code> does, and a packaged app can't start in demo mode.</li><li>Options: accept hooks in demo builds only; move every hook into the fake site (an HTTP control endpoint) so the app has none.</li><li>Recommendation: move what can go into the fake (round 4 adds a hostile page-script variant to it), keep the rest, and keep the check that a production build has no demo chunk.</li></ul>
+<p>---</p></div></details>
+  <fieldset class="answer">
+    <label><input type="radio" name="D65" value="accept"> Accept the recommendation</label>
+    <label><input type="radio" name="D65" value="other"> Something else</label>
+    <label><input type="radio" name="D65" value="discuss"> Discuss with me</label>
+    <label><input type="radio" name="D65" value="later"> Later</label>
+    <textarea name="D65-note" rows="2" placeholder="Notes, or your answer"></textarea>
   </fieldset>
 </article>
   </section>
