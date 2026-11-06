@@ -47,11 +47,13 @@ export function launchMode(
 
 /** The release app's name, and so its userData folder's. */
 export const RELEASE_DATA_NAME = 'siteadapter'
+/** A development package's name (electron-builder.config.ts), and every unpackaged run's folder. */
+export const DEV_DATA_NAME = 'siteadapter-dev'
 
 /**
  * An install's userData: ~/Library/Application Support/<name>. `name` is the packaged app's own
  * (app.getName(): siteadapter for a release, siteadapter-dev for a development package, so the two
- * never share data); an unpackaged run uses the release name.
+ * never share data); an unpackaged run uses the development name (electron/app.ts).
  */
 export function realDataDir(appData: string, name: string = RELEASE_DATA_NAME): string {
   return join(appData, name)

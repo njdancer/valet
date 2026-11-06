@@ -15,7 +15,7 @@ import { builtinAdapters } from '../adapters'
 import { APP_SCHEME, APP_SCHEME_PRIVILEGES, createAppSchemeHandler } from '../core/app-scheme'
 import { dataPaths } from '../core/constants'
 import { checkOpBinary, defaultOpCheckDeps, realCredentials } from '../core/credentials'
-import { demoResolverRules, launchMode, RELEASE_DATA_NAME, rendererBase, userDataDir } from '../core/launch'
+import { DEV_DATA_NAME, demoResolverRules, launchMode, rendererBase, userDataDir } from '../core/launch'
 import { AppService } from '../core/service'
 import type { BridgeCommand } from '../core/snippets'
 import type { DemoSite } from './demo'
@@ -35,13 +35,15 @@ const mode = launchMode(process.argv, process.env, {
  * app:// scheme the renderer is served from (it must be privileged before ready to be standard and
  * secure, so module scripts and the page's CSP 'self' work there).
  *
- * A package's own name (siteadapter-dev for a development package), so it never shares the release
- * app's data; an unpackaged run keeps the release name.
+ * userData is named after the package (siteadapter-dev for a development package), so a
+ * development build never shares the release app's data. An unpackaged run (`pnpm start`,
+ * `electron .`) is development code too: it uses siteadapter-dev, never the release folder, so it
+ * can't raise the release's version floor or write update-installed events into its audit log.
  */
 function beforeReady(): void {
   app.setPath(
     'userData',
-    userDataDir(mode, app.getPath('appData'), app.isPackaged ? app.getName() : RELEASE_DATA_NAME),
+    userDataDir(mode, app.getPath('appData'), app.isPackaged ? app.getName() : DEV_DATA_NAME),
   )
   hardenProcess(app)
   if (mode.demo) app.commandLine.appendSwitch('host-resolver-rules', demoResolverRules(mode))
