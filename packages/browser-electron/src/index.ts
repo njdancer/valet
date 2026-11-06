@@ -4,11 +4,12 @@ import type { Dial } from './egress-proxy'
 
 export { type AuthPageOptions, SurfaceAuthPage } from './auth-page'
 export { cookieHost, cookieSetDetails, cookiesForDomains } from './cookies'
-export type { DriverOptions, ManifestOptions } from './driver'
+export type { AuthPageRequest, DriverOptions, ManifestOptions } from './driver'
 export { ElectronSessionDriver } from './driver'
 export { type Dial, parseAuthority, startEgressProxy } from './egress-proxy'
 export {
   apiRoots,
+  authBlock,
   authNavigationAllowed,
   type BlockReason,
   type Budget,
@@ -24,14 +25,30 @@ export { needsUserTitle } from './needs-user'
 export { partitionName } from './partitions'
 export type * from './platform'
 export { CHROMIUM_SWITCHES, hardenProcess } from './process-hardening'
+export {
+  type ChainState,
+  hopHeaders,
+  MAX_PROBE_BYTES,
+  MAX_PROBE_REDIRECTS,
+  PROBE_ACCEPT,
+  ProbeRedirects,
+  type ProbeRequest,
+  probeFailure,
+  probeResult,
+  probeTarget,
+  referrerFor,
+  sessionProbe,
+} from './session-fetch'
 export { SessionValues } from './session-values'
 export { type Announce, SurfaceToolPage } from './tool-page'
 export {
+  ACCEPT_LANGUAGE,
   type ClientHintBrands,
   chromeUserAgentOverride,
   cleanChromeUserAgent,
   type EngineInfo,
   LANGUAGES,
+  pageIdentityHeaders,
   type UserAgentMode,
 } from './user-agent'
 

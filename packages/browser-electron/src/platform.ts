@@ -39,6 +39,46 @@ export interface OutgoingRequest {
   readonly resourceType: string
 }
 
+/** Request headers in the order they go out, names in the case they are sent in. */
+export type HeaderList = readonly (readonly [string, string])[]
+
+/**
+ * One GET the driver makes itself, from the main process, with a partition's cookies. One hop: a
+ * redirect is handed back, never followed, so that the caller can check where it goes and word the
+ * next hop's headers itself.
+ */
+export interface SessionFetchRequest {
+  /** An absolute https URL. The caller has already checked it. */
+  readonly url: string
+  /**
+   * The origin the request is made on behalf of: the page's. Chromium computes Sec-Fetch-Site from
+   * it, and refuses a Referer that its referrer policy wouldn't send to `url`.
+   */
+  readonly initiator: string
+  /**
+   * Sent in this order, ahead of what the network stack adds itself (Referer, Accept-Encoding and
+   * the cookies, in that order).
+   */
+  readonly headers: HeaderList
+  /** The Referer, or null for none. Must be one strict-origin-when-cross-origin would send. */
+  readonly referrer: string | null
+  /** The most body bytes to read. A response with more is abandoned. */
+  readonly maxBytes: number
+  /** Aborting it cancels the request. */
+  readonly signal: AbortSignal
+}
+
+export type SessionFetchResponse =
+  | {
+      readonly kind: 'response'
+      readonly status: number
+      readonly contentType: string | null
+      readonly body: Uint8Array
+    }
+  /** A redirect, not followed: the request was cancelled there. What it set is kept. */
+  | { readonly kind: 'redirect'; readonly location: string }
+  | { readonly kind: 'failed'; readonly failure: 'too-large' | 'network' | 'aborted' }
+
 /** A local proxy a partition's TCP connections go through. */
 export interface ProxyHandle {
   /** Proxy rules for the session, e.g. http://127.0.0.1:53211. */
@@ -66,6 +106,13 @@ export interface PartitionSession {
   addResponseHeader(name: string, value: string): void
   getCookies(): Promise<readonly CookieRecord[]>
   setCookie(details: CookieSetDetails): Promise<void>
+  /**
+   * GETs a URL from the main process with the partition's cookies (sending them, and storing what
+   * the response sets, a redirect's included), never from a page: no script runs. Uncached, with
+   * exactly the headers and referrer given, on behalf of `initiator`. It never follows a redirect
+   * and never rejects: every failure is a value.
+   */
+  fetch(request: SessionFetchRequest): Promise<SessionFetchResponse>
   /**
    * Calls `listener` for every cookie the partition adds, changes or removes, with its value: the
    * old value when one is removed or overwritten, so that a value never goes unseen.

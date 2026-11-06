@@ -178,6 +178,9 @@ function routes(
       ),
     }
   }
+  if (host === 'site.test' && path === '/redirect-cookie') {
+    return { status: 302, headers: { location: '/probe', 'set-cookie': 'hop=1; Path=/; Secure' }, body: '' }
+  }
   if (host === 'site.test' && path === '/redirect') {
     return { status: 302, headers: { location: query.get('to') ?? '/' }, body: '' }
   }
@@ -273,6 +276,32 @@ export async function startTestSite(): Promise<TestSite> {
       ) {
         response.writeHead(200, { 'content-type': 'application/json' })
         response.end(JSON.stringify({ host, cookie: request.headers.cookie ?? '' }))
+        return
+      }
+      // Stands in for a login probe: what arrived, headers and all, and a cookie it sets in return.
+      if (url.pathname === '/probe') {
+        // A cross-origin page fetch() may read it, for comparing what the page and the probe send.
+        const origin = request.headers.origin
+        response.writeHead(200, {
+          'content-type': 'application/json; charset=utf-8',
+          'set-cookie': 'probed=yes; Path=/; Secure; SameSite=Lax',
+          ...(origin === undefined
+            ? {}
+            : { 'access-control-allow-origin': origin, 'access-control-allow-credentials': 'true' }),
+        })
+        // rawHeaders keeps the names' case and order as they arrived.
+        response.end(JSON.stringify({ host, headers: request.headers, raw: request.rawHeaders }))
+        return
+      }
+      // More than the probe reads: 2 MiB of text.
+      if (url.pathname === '/big') {
+        response.writeHead(200, { 'content-type': 'text/plain' })
+        response.end('x'.repeat(2 * 1024 * 1024))
+        return
+      }
+      // Doesn't answer for 15 s, for timeouts.
+      if (url.pathname === '/hang') {
+        setTimeout(() => response.destroy(), 15_000).unref()
         return
       }
       const route = routes(site, host, url.pathname, url.searchParams)

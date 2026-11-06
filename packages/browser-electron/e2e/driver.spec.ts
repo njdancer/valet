@@ -377,6 +377,129 @@ test('workers, service workers and cross-site frames present the same clean UA a
   }
 })
 
+/** A raw header list (rawHeaders: name, value, name, value…) as pairs, Cookie aside. */
+function wire(raw: string[] | undefined): [string, string][] {
+  const pairs: [string, string][] = []
+  for (let i = 0; i + 1 < (raw?.length ?? 0); i += 2) pairs.push([raw?.[i] ?? '', raw?.[i + 1] ?? ''])
+  return pairs.filter(([name]) => name.toLowerCase() !== 'cookie')
+}
+
+test('the auth probe GETs from the main process with the auth partition’s cookies', async () => {
+  const result = await scenario(app, 'authProbe')
+  const probe = result.probe as {
+    ok: { status: number; contentType: string; body: { host: string; headers: Record<string, string> } }
+  }
+  expect(probe.ok.status).toBe(200)
+  expect(probe.ok.contentType).toBe('application/json; charset=utf-8')
+  expect(probe.ok.body.host).toBe('site.test')
+  const headers = probe.ok.body.headers
+  // The cookies a prior navigation in the auth partition set, path rules and all.
+  expect(headers.cookie).toContain('sid=host-only-sid')
+  expect(headers.cookie).toContain('shared=domain-shared')
+  expect(headers.cookie).not.toContain('narrow')
+  expect(headers['user-agent']).toMatch(
+    /^Mozilla\/5\.0 \(Macintosh; Intel Mac OS X 10_15_7\) AppleWebKit\/537\.36 \(KHTML, like Gecko\) Chrome\/\d+\.0\.0\.0 Safari\/537\.36$/,
+  )
+  // The fragment never left, and the probe reached exactly one URL.
+  expect(result.probeSeen).toEqual([{ host: 'site.test', path: '/probe' }])
+  // Names only, and the cookie the probe's own answer set is kept in the auth partition.
+  expect([...(result.names as { ok: string[] }).ok].sort()).toEqual(['narrow', 'shared', 'sid'])
+  expect(JSON.stringify(result.names)).not.toContain('host-only-sid')
+  expect([...(result.namesAfter as { ok: string[] }).ok].sort()).toEqual([
+    'narrow',
+    'probed',
+    'shared',
+    'sid',
+  ])
+  expect(result.toolCookies).not.toContain('probed')
+  // A redirect's cookie is kept too, though the probe takes each hop as a request of its own.
+  expect(result.redirectCookie).toBe(200)
+  expect(result.hopCookie).toBe(1)
+  // The probe isn't a navigation: the page didn't move.
+  expect(result.committed).toEqual([expect.stringContaining('/set-session')])
+})
+
+test('the auth probe sends what the page’s own fetch() sends, header for header, in order', async () => {
+  const result = await scenario(app, 'authProbe')
+  const pairs = result.pairs as Record<string, { page: { raw: string[] } | null; probe: { raw?: string[] } }>
+  for (const name of ['same', 'redirectSame']) {
+    const pair = pairs[name]
+    const page = wire(pair?.page?.raw)
+    expect(page.length, name).toBeGreaterThan(5)
+    // Names, case, order and values: the client hints, UA, language, Accept, cors fetch metadata,
+    // the page's URL as Referer, Accept-Encoding. Only the cookies are left out of the diff.
+    expect(wire(pair?.probe.raw), name).toEqual(page)
+    expect(page, name).toContainEqual(['Sec-Fetch-Mode', 'cors'])
+    expect(page, name).toContainEqual(['Referer', expect.stringMatching(/\/set-session$/)])
+  }
+  // Cross-site, the page's fetch() also says Sec-Fetch-Storage-Access, which Chromium strips from a
+  // request the main process makes (see the README). Everything else matches, Origin and the
+  // origin-only Referer included.
+  for (const name of ['cross', 'redirectCross']) {
+    const pair = pairs[name]
+    const page = wire(pair?.page?.raw)
+    expect(page, name).toContainEqual(['Sec-Fetch-Site', 'cross-site'])
+    expect(page, name).toContainEqual(['Origin', expect.stringMatching(/^https:\/\/site\.test:\d+$/)])
+    expect(
+      page.filter(([header]) => header === 'Sec-Fetch-Storage-Access'),
+      name,
+    ).toEqual([['Sec-Fetch-Storage-Access', 'active']])
+    expect(wire(pair?.probe.raw), name).toEqual(
+      page.filter(([header]) => header !== 'Sec-Fetch-Storage-Access'),
+    )
+  }
+})
+
+test('the auth probe is refused off the navigation origins, and refuses a redirect off them', async () => {
+  const result = await scenario(app, 'authProbe')
+  expect(result.offList).toEqual({ error: { stage: 'probe', errorClass: 'host-not-allowed' } })
+  expect(result.redirectOff).toEqual({ error: { stage: 'probe', errorClass: 'host-not-allowed' } })
+  // A redirect to another navigation origin is followed.
+  expect(result.redirectOn).toMatchObject({ ok: { status: 200, body: { host: 'login.test' } } })
+  const hosts = result.hosts as string[]
+  expect(hosts.filter((h) => h.startsWith('evil.test'))).toEqual([])
+  expect(hosts).toContain('site.test/redirect')
+  expect(hosts).toContain('login.test/probe')
+})
+
+test('the auth probe caps the body and hands back HTML and error statuses as text', async () => {
+  const result = await scenario(app, 'authProbe')
+  expect(result.big).toEqual({ error: { stage: 'probe', errorClass: 'unexpected-shape' } })
+  expect(result.html).toEqual({ status: 200, contentType: 'text/html; charset=utf-8', bodyType: 'string' })
+  expect(result.notFound).toEqual({
+    status: 404,
+    contentType: 'text/html; charset=utf-8',
+    bodyType: 'string',
+  })
+})
+
+test('an auth probe that never answers gives up at the step timeout', async () => {
+  const result = await scenario(app, 'authProbeTimeout')
+  expect(result.hung).toEqual({ error: { stage: 'timeout', errorClass: 'timed-out' } })
+  expect(result.elapsedMs).toBeGreaterThanOrEqual(1400)
+  expect(result.elapsedMs).toBeLessThan(5000)
+  expect(result.after).toEqual({ status: 200 })
+  expect(result.reached).toEqual(['/hang', '/probe'])
+})
+
+test('the auth partition’s refused subframes and escapes are reported as the page’s', async () => {
+  const result = await scenario(app, 'authBlocks')
+  expect(result.escaped).toEqual({ error: { stage: 'navigate', errorClass: 'navigation-escaped' } })
+  const reports = result.reports as { method: string; target: string; reason: string; initiator: string }[]
+  const origin = (host: string) =>
+    expect.stringMatching(new RegExp(`^https://${host.replace('.', '\\.')}:\\d+$`))
+  expect(reports).toEqual(
+    expect.arrayContaining([
+      { method: 'GET', target: origin('widget.test'), reason: 'host-not-allowed', initiator: 'page' },
+      { method: 'GET', target: origin('evil.test'), reason: 'host-not-allowed', initiator: 'page' },
+    ]),
+  )
+  // Each once, origin only, nothing from the query.
+  expect(reports).toHaveLength(2)
+  expect(JSON.stringify(reports)).not.toContain('secret')
+  expect(result.toolBlocked).toEqual([])
+})
+
 test('handToUser shows the window, and closing it hides the page instead of destroying it', async () => {
   expect(await scenario(app, 'handToUser')).toEqual({
     hiddenBefore: true,

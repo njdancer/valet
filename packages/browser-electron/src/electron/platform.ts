@@ -5,6 +5,7 @@ import {
   app,
   BrowserWindow,
   session as electronSession,
+  net,
   type Session,
   type WebContents,
   webFrameMain,
@@ -23,6 +24,8 @@ import type {
   PartitionSession,
   PendingNavigation,
   ProxyHandle,
+  SessionFetchRequest,
+  SessionFetchResponse,
   StorageValue,
   UserAgentOverride,
 } from '../platform'
@@ -111,6 +114,81 @@ class ElectronPartition implements PartitionSession {
 
   setCookie(details: CookieSetDetails): Promise<void> {
     return this.ses.cookies.set({ ...details })
+  }
+
+  fetch(request: SessionFetchRequest): Promise<SessionFetchResponse> {
+    return new Promise((resolve) => {
+      let settled = false
+      let client: Electron.ClientRequest | null = null
+      // Settles first and only then aborts, so that the abort's own event can't overtake the answer.
+      const finish = (response: SessionFetchResponse, abort = false) => {
+        if (settled) return
+        settled = true
+        request.signal.removeEventListener('abort', onAbort)
+        resolve(response)
+        if (abort) client?.abort()
+      }
+      const onAbort = () => finish({ kind: 'failed', failure: 'aborted' }, true)
+      if (request.signal.aborted) {
+        finish({ kind: 'failed', failure: 'aborted' })
+        return
+      }
+      request.signal.addEventListener('abort', onAbort, { once: true })
+      try {
+        client = net.request({
+          method: 'GET',
+          url: request.url,
+          session: this.ses,
+          // The session's cookies go out, and what the response sets is kept, as for the page.
+          credentials: 'include',
+          // A cached answer from before a login or logout would make the probe lie.
+          cache: 'no-store',
+          // The page's default. Chromium refuses an explicit Referer this policy wouldn't send.
+          referrerPolicy: 'strict-origin-when-cross-origin',
+          // Every redirect comes back to the caller, which decides about the next hop itself.
+          redirect: 'manual',
+          // The page's origin: Chromium computes Sec-Fetch-Site from it, in place of the header's
+          // placeholder value.
+          origin: request.initiator,
+        })
+        // setHeader keeps the order and the case. The network stack puts the Referer straight after
+        // these, then Accept-Encoding and the cookies, as Chrome sends a page's fetch().
+        for (const [name, value] of request.headers) client.setHeader(name, value)
+        if (request.referrer !== null) client.setHeader('Referer', request.referrer)
+      } catch {
+        finish({ kind: 'failed', failure: 'network' }, true)
+        return
+      }
+      const current = client
+      current.on('redirect', (_status, _method, location) =>
+        finish({ kind: 'redirect', location: String(location) }, true),
+      )
+      // HTTP authentication is never answered: cancel it.
+      current.on('login', (_info, callback) => callback())
+      current.on('error', () => finish({ kind: 'failed', failure: 'network' }))
+      current.on('abort', () => finish({ kind: 'failed', failure: 'aborted' }))
+      current.on('response', (response) => {
+        const chunks: Buffer[] = []
+        let size = 0
+        response.on('data', (chunk: Buffer) => {
+          if (settled) return
+          size += chunk.length
+          if (size > request.maxBytes) {
+            finish({ kind: 'failed', failure: 'too-large' }, true)
+            return
+          }
+          chunks.push(chunk)
+        })
+        response.on('end', () => {
+          const header = response.headers['content-type']
+          const contentType = Array.isArray(header) ? (header[0] ?? null) : (header ?? null)
+          finish({ kind: 'response', status: response.statusCode, contentType, body: Buffer.concat(chunks) })
+        })
+        response.on('error', () => finish({ kind: 'failed', failure: 'network' }))
+        response.on('aborted', () => finish({ kind: 'failed', failure: 'aborted' }))
+      })
+      current.end()
+    })
   }
 
   onCookieChanged(listener: (cookie: CookieRecord) => void): void {

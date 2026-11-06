@@ -18,7 +18,13 @@ import {
 } from '@siteadapter/core'
 import { SurfaceAuthPage } from './auth-page'
 import { cookieSetDetails, cookiesForDomains } from './cookies'
-import { authNavigationAllowed, type BlockReason, decideToolRequest, requestTarget } from './guards'
+import {
+  authBlock,
+  authNavigationAllowed,
+  type BlockReason,
+  decideToolRequest,
+  requestTarget,
+} from './guards'
 import { isRecord, type PageTiming } from './page-core'
 import { partitionName } from './partitions'
 import type {
@@ -26,6 +32,7 @@ import type {
   BrowserSurface,
   CookieRecord,
   FrameHandle,
+  HeaderList,
   KeyEvents,
   OutgoingRequest,
   PartitionSession,
@@ -43,6 +50,7 @@ import {
   chromeUserAgentOverride,
   cleanChromeUserAgent,
   LANGUAGES,
+  pageIdentityHeaders,
   type UserAgentMode,
 } from './user-agent'
 
@@ -101,7 +109,33 @@ export interface DriverOptions {
   readonly storageDocumentPath?: string
   /** Where requests blocked between runs are reported. During a run, beginRun's reporter is used. */
   readonly onBlocked?: (blocked: BlockedRequest) => void
+  /**
+   * Where the auth partition's refused navigations are reported (initiator 'page'), unless the auth
+   * page they belong to was opened with a reporter of its own: the main frame leaving the
+   * navigation origins, and subframes off navigation and frameOrigins.
+   */
+  readonly onAuthBlocked?: (blocked: BlockedRequest) => void
+  /**
+   * Called once for each reporter that onAuthBlocked stands in for, the first time a refusal is
+   * not reported because that reporter's budget is spent (see AuthPageRequest.onBlocked). The
+   * refusal itself still holds.
+   */
+  readonly onAuthReportsDropped?: () => void
   readonly timers?: Timers
+}
+
+/** What openAuthPage() may be given besides core's contract. */
+export interface AuthPageRequest {
+  /**
+   * Told about the auth partition's refused navigations while this page is open, in place of
+   * DriverOptions.onAuthBlocked: its own frames' refused navigations, and the partition's
+   * request-filter refusals while it is the newest open auth page with a reporter. Each distinct
+   * refusal once, up to MAX_AUTH_REPORTS_PER_PAGE subframe refusals and, counted apart so that
+   * widgets can't spend it, MAX_AUTH_ESCAPES_PER_PAGE main-frame escapes.
+   */
+  readonly onBlocked?: (blocked: BlockedRequest) => void
+  /** Called once, the first time one of this page's refusals goes unreported for the budget. */
+  readonly onReportsDropped?: () => void
 }
 
 export type ManifestOptions = Omit<
@@ -115,6 +149,14 @@ const DEFAULT_REQUESTS_PER_RUN = 50
 const ASSETS_PER_REQUEST = 100
 const MIN_ASSETS_PER_RUN = 1000
 const DEFAULT_EGRESS_PORTS: readonly number[] = [443]
+/** Distinct subframe refusals reported per auth page; a page whose widgets are all refused is chatty. */
+const MAX_AUTH_REPORTS_PER_PAGE = 200
+/**
+ * Distinct main-frame escapes reported per auth page, budgeted apart from subframes so that no
+ * number of refused widgets can keep an escape out of the audit. The first escape poisons the page;
+ * this only bounds a poisoned page that keeps trying.
+ */
+const MAX_AUTH_ESCAPES_PER_PAGE = 50
 
 type StorageRequest = readonly { readonly origin: string; readonly keys: readonly string[] }[]
 
@@ -161,6 +203,12 @@ export class ElectronSessionDriver implements SessionDriver {
   private readonly snapshots = new Set<Promise<void>>()
   private readonly timing: PageTiming
   private readonly authPages = new Map<BrowserSurface, SurfaceAuthPage>()
+  /** Each auth page's reporter and what it has already been told, newest page last. No helpers. */
+  private readonly authReports = new Map<BrowserSurface, AuthReports>()
+  /** onAuthBlocked's, for refusals no open page's reporter takes. Fresh after close(). */
+  private fallbackReports: AuthReports
+  /** Refusals that went unreported because their reporter's budget was spent. */
+  private droppedReports = 0
   private readonly helpers = new Set<BrowserSurface>()
   private tool: ToolSlot | null = null
 
@@ -179,6 +227,7 @@ export class ElectronSessionDriver implements SessionDriver {
       keyEvents: options.keyEvents ?? 'char',
     }
     this.run = this.betweenRuns()
+    this.fallbackReports = this.newFallbackReports()
   }
 
   /**
@@ -202,11 +251,19 @@ export class ElectronSessionDriver implements SessionDriver {
     this.run = this.betweenRuns()
   }
 
-  async openAuthPage(): Promise<AuthPage> {
+  /**
+   * Opens a page in the auth partition. `request.onBlocked` gets this page's refused navigations
+   * instead of DriverOptions.onAuthBlocked (see AuthPageRequest); core's SessionDriver contract
+   * passes nothing.
+   */
+  async openAuthPage(request: AuthPageRequest = {}): Promise<AuthPage> {
     const surface = await this.open('auth')
-    const page = this.authPage(surface)
+    const page = await this.authPage(surface, request)
     this.authPages.set(surface, page)
-    surface.onDestroyed(() => this.authPages.delete(surface))
+    surface.onDestroyed(() => {
+      this.authPages.delete(surface)
+      this.authReports.delete(surface)
+    })
     return page
   }
 
@@ -299,11 +356,23 @@ export class ElectronSessionDriver implements SessionDriver {
   }
 
   /** Closes every window this driver opened, and the tool partition's proxy. */
+  /**
+   * How many auth-partition refusals went unreported because their reporter's budget was spent,
+   * since the driver was made. The refusals themselves held.
+   */
+  droppedAuthReports(): number {
+    return this.droppedReports
+  }
+
   async close(): Promise<void> {
+    // Closing a page first cancels any probe it has in flight.
+    for (const page of this.authPages.values()) await page.close()
     const surfaces = [...this.authPages.keys(), ...this.helpers]
     if (this.tool?.surface) surfaces.push(this.tool.surface)
     for (const surface of surfaces) if (!surface.isDestroyed()) surface.destroy()
     this.authPages.clear()
+    this.authReports.clear()
+    this.fallbackReports = this.newFallbackReports()
     this.helpers.clear()
     this.tool = null
     const proxy = this.proxy
@@ -339,11 +408,99 @@ export class ElectronSessionDriver implements SessionDriver {
     }
   }
 
-  private authPage(surface: BrowserSurface): SurfaceAuthPage {
+  /**
+   * The auth page on `surface`. A real one (openAuthPage's) reports to its own reporter and joins
+   * authReports. A storage-handoff helper (`request` null) is left out of it: it never takes the
+   * request filter's refusals, and its own go wherever the filter's would.
+   */
+  private async authPage(surface: BrowserSurface, request: AuthPageRequest | null): Promise<SurfaceAuthPage> {
+    const session = await this.session('auth')
+    let onBlocked: (blocked: BlockedRequest, context: { readonly mainFrame: boolean }) => void
+    if (request === null) {
+      onBlocked = (blocked, { mainFrame }) => this.reportAuthShared(blocked, mainFrame)
+    } else {
+      const reports = this.newReports(request.onBlocked, request.onReportsDropped)
+      this.authReports.set(surface, reports)
+      onBlocked = (blocked, { mainFrame }) => this.reportAuth(reports, blocked, mainFrame)
+    }
     return new SurfaceAuthPage(surface, this.options.navigation, this.timing, {
       frameOrigins: this.options.frameOrigins ?? [],
       siteName: this.options.siteName ?? this.options.adapterId,
+      session,
+      identity: this.probeIdentity(),
+      onBlocked,
     })
+  }
+
+  /** What the auth page's fetch() restates so that it presents as the page does. */
+  private probeIdentity(): HeaderList {
+    if (this.options.userAgent === 'electron') return []
+    const { chromeVersion, os, systemVersion, arch } = this.platform
+    const brands = this.options.clientHints ?? 'engine'
+    return pageIdentityHeaders(chromeUserAgentOverride({ chromeVersion, os, systemVersion, arch }, brands))
+  }
+
+  /** A page's reporter, falling back to onAuthBlocked when the page brought none. */
+  private newReports(
+    reporter: ((blocked: BlockedRequest) => void) | undefined,
+    onDropped: (() => void) | undefined,
+  ): AuthReports {
+    if (reporter === undefined) return this.newFallbackReports()
+    return { reporter, onDropped, seen: new Set(), escapes: new Set(), dropped: false }
+  }
+
+  private newFallbackReports(): AuthReports {
+    return {
+      reporter: this.options.onAuthBlocked,
+      onDropped: this.options.onAuthReportsDropped,
+      seen: new Set(),
+      escapes: new Set(),
+      dropped: false,
+    }
+  }
+
+  /**
+   * A refusal no single page owns: the request filter's, which can't tell which page asked, and a
+   * handoff helper's. It goes to the newest open auth page that has a reporter, or to
+   * onAuthBlocked when none has.
+   */
+  private reportAuthShared(blocked: BlockedRequest, mainFrame: boolean): void {
+    const open = [...this.authReports.entries()].filter(
+      ([surface, reports]) => !surface.isDestroyed() && reports.reporter !== undefined,
+    )
+    this.reportAuth(open[open.length - 1]?.[1] ?? this.fallbackReports, blocked, mainFrame)
+  }
+
+  /**
+   * Tells `reports.reporter` about a refusal it hasn't heard of yet. A main-frame navigation reaches
+   * the guard more than once (will-frame-navigate and will-navigate), and a page can retry, so each
+   * distinct refusal is reported once per page. Escapes and subframes are counted apart, each up to
+   * its own budget; past it, the first drop is announced once and every drop is counted.
+   */
+  private reportAuth(reports: AuthReports, blocked: BlockedRequest, mainFrame: boolean): void {
+    if (reports.reporter === undefined) return
+    const seen = mainFrame ? reports.escapes : reports.seen
+    const budget = mainFrame ? MAX_AUTH_ESCAPES_PER_PAGE : MAX_AUTH_REPORTS_PER_PAGE
+    const key = `${blocked.method} ${blocked.target} ${blocked.reason}`
+    if (seen.has(key)) return
+    if (seen.size >= budget) {
+      this.droppedReports++
+      if (!reports.dropped) {
+        reports.dropped = true
+        try {
+          reports.onDropped?.()
+        } catch {
+          // A failing reporter must not turn a block into an allow.
+        }
+      }
+      return
+    }
+    seen.add(key)
+    try {
+      reports.reporter(blocked)
+    } catch {
+      // A failing reporter must not turn a block into an allow.
+    }
   }
 
   private toolPageOn(surface: BrowserSurface): SurfaceToolPage {
@@ -416,7 +573,7 @@ export class ElectronSessionDriver implements SessionDriver {
       surface = await this.open(role)
       this.helpers.add(surface)
       const url = new URL(this.options.storageDocumentPath ?? '/robots.txt', origin).href
-      const page = role === 'auth' ? this.authPage(surface) : this.toolPageOn(surface)
+      const page = role === 'auth' ? await this.authPage(surface, null) : this.toolPageOn(surface)
       await page.goto(url)
       if (surface.frames()[0]?.origin !== wanted)
         throw new SiteAdapterError('session-handoff', 'origin-mismatch')
@@ -510,15 +667,13 @@ export class ElectronSessionDriver implements SessionDriver {
       // will-frame-navigate is the first line for subframes; this holds the frames it doesn't
       // report, such as an iframe's first load, to the same rule at the network layer.
       const frameOrigins = this.options.frameOrigins ?? []
-      session.filterRequests(
-        (request) =>
-          request.resourceType !== 'subFrame' ||
-          authNavigationAllowed(
-            { url: request.url, isMainFrame: false },
-            this.options.navigation,
-            frameOrigins,
-          ),
-      )
+      session.filterRequests((request) => {
+        if (request.resourceType !== 'subFrame') return true
+        const pending = { url: request.url, isMainFrame: false }
+        if (authNavigationAllowed(pending, this.options.navigation, frameOrigins)) return true
+        this.reportAuthShared(authBlock(request.url), false)
+        return false
+      })
       return session
     }
     session.filterRequests((request) => this.allowToolRequest(request))
@@ -623,6 +778,18 @@ function ceilingOf(policy: ToolRunPolicy): number {
 /** Method and URL without the fragment, which never reaches the network. */
 function announcementKey(method: string, url: string): string {
   return `${method.toUpperCase()} ${url.split('#')[0]}`
+}
+
+/** One reporter, and the refusals it has been told about. */
+interface AuthReports {
+  readonly reporter: ((blocked: BlockedRequest) => void) | undefined
+  readonly onDropped: (() => void) | undefined
+  /** Subframe refusals reported. */
+  readonly seen: Set<string>
+  /** Main-frame escapes reported, counted apart. */
+  readonly escapes: Set<string>
+  /** Whether onDropped has been called. */
+  dropped: boolean
 }
 
 interface ToolSlot {

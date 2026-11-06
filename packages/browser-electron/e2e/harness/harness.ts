@@ -169,6 +169,7 @@ async function setup() {
     'persist:tool:e2e',
     'persist:auth:e2e-keys',
     'persist:tool:e2e-keys',
+    'persist:auth:e2e-probe',
     'e2e-control',
   ]) {
     session.fromPartition(partition).setCertificateVerifyProc((request, callback) => {
@@ -198,6 +199,12 @@ async function setup() {
   const keysDriver = await createElectronSessionDriver(
     manifest(site, 'e2e-keys'),
     { ...options, keyEvents: 'full' },
+    local,
+  )
+  // The same site with a short step timeout, for a probe that never answers.
+  const probeDriver = await createElectronSessionDriver(
+    manifest(site, 'e2e-probe'),
+    { ...options, stepTimeoutMs: 1500 },
     local,
   )
   /** Starts a run with the manifest's own egress and surface, reporting into `blocked`. */
@@ -886,6 +893,114 @@ async function setup() {
       const secondCloseDestroyed = window?.isDestroyed()
       await page.close()
       return { hiddenBefore, shown, title, hiddenAfter, aliveAfterClose, secondCloseDestroyed }
+    },
+
+    // The session probe: a GET from the main process with the auth partition's cookies.
+    authProbe: async () => {
+      const page = await driver.openAuthPage()
+      await page.goto(site.url('site.test', '/set-session'))
+      const names = await settle(page.cookieNames(['site.test']))
+      const from = site.requests.length
+      const probe = await settle(page.fetch(site.url('site.test', '/probe?x=1#fragment')))
+      const probeSeen = site.requests.slice(from).map((r) => ({ host: r.host, path: r.path }))
+      // Before the page's own fetch() sets the same cookie.
+      const namesAfter = await settle(page.cookieNames(['site.test']))
+      // The same requests from the page's own fetch(), credentials and all, for the spec to diff.
+      const contents = windowAt(site.url('site.test', '/set-session'))?.webContents
+      const pageFetch = async (url: string) =>
+        contents === undefined
+          ? null
+          : ((await contents.executeJavaScript(
+              `fetch(${JSON.stringify(url)}, { credentials: 'include' }).then((r) => r.json())`,
+            )) as { raw: string[] })
+      const viaProbe = async (url: string) => {
+        const outcome = await settle(page.fetch(url))
+        return 'ok' in outcome ? (outcome.ok.body as { raw: string[] }) : outcome
+      }
+      const sameUrl = site.url('site.test', '/probe?pair=same')
+      const crossUrl = site.url('login.test', '/probe?pair=cross')
+      const redirectSame = site.url('site.test', `/redirect?to=${encodeURIComponent(sameUrl)}`)
+      const redirectCross = site.url('site.test', `/redirect?to=${encodeURIComponent(crossUrl)}`)
+      const pairs = {
+        same: { page: await pageFetch(sameUrl), probe: await viaProbe(sameUrl) },
+        redirectSame: { page: await pageFetch(redirectSame), probe: await viaProbe(redirectSame) },
+        cross: { page: await pageFetch(crossUrl), probe: await viaProbe(crossUrl) },
+        redirectCross: { page: await pageFetch(redirectCross), probe: await viaProbe(redirectCross) },
+      }
+      // What a redirect sets is kept, though the probe takes each hop as a request of its own.
+      const redirectCookie = await settle(page.fetch(site.url('site.test', '/redirect-cookie')))
+      const offList = await settle(page.fetch(site.url('evil.test', '/probe')))
+      const toEvil = encodeURIComponent(site.url('evil.test', '/collect'))
+      const redirectOff = await settle(page.fetch(site.url('site.test', `/redirect?to=${toEvil}`)))
+      const toLogin = encodeURIComponent(site.url('login.test', '/probe'))
+      const redirectOn = await settle(page.fetch(site.url('site.test', `/redirect?to=${toLogin}`)))
+      const big = await settle(page.fetch(site.url('site.test', '/big')))
+      const html = await settle(page.fetch(site.url('site.test', '/')))
+      const notFound = await settle(page.fetch(site.url('site.test', '/nothing')))
+      const toolCookies = (await session.fromPartition('persist:tool:e2e').cookies.get({})).map((c) => c.name)
+      const committed = page.committedUrls()
+      await page.close()
+      const summary = (outcome: Outcome<{ status: number; contentType: string | null; body: unknown }>) =>
+        'ok' in outcome
+          ? {
+              status: outcome.ok.status,
+              contentType: outcome.ok.contentType,
+              bodyType: typeof outcome.ok.body,
+            }
+          : outcome
+      const hopCookie = (await session.fromPartition('persist:auth:e2e').cookies.get({ name: 'hop' })).length
+      return {
+        probe,
+        probeSeen,
+        pairs,
+        redirectCookie: 'ok' in redirectCookie ? redirectCookie.ok.status : redirectCookie,
+        hopCookie,
+        names,
+        offList,
+        redirectOff,
+        redirectOn,
+        big,
+        html: summary(html),
+        notFound: summary(notFound),
+        namesAfter,
+        toolCookies,
+        committed,
+        hosts: site.requests.slice(from).map((r) => `${r.host}${r.path}`),
+      }
+    },
+
+    // A probe whose server never answers gives up at the step timeout.
+    authProbeTimeout: async () => {
+      const page = await probeDriver.openAuthPage()
+      const from = site.requests.length
+      const started = Date.now()
+      const hung = await settle(page.fetch(site.url('site.test', '/hang')))
+      const elapsedMs = Date.now() - started
+      // The partition still answers once the hung request was given up on.
+      const after = await settle(page.fetch(site.url('site.test', '/probe')))
+      await page.close()
+      return {
+        hung,
+        elapsedMs,
+        after: 'ok' in after ? { status: after.ok.status } : after,
+        // Only the probe's paths: an earlier scenario's service worker may check for updates.
+        reached: site.requests
+          .slice(from)
+          .map((r) => r.path)
+          .filter((path) => path === '/hang' || path === '/probe'),
+      }
+    },
+
+    // The auth partition's refusals, reported as the page's to the page's own reporter.
+    authBlocks: async () => {
+      const reports: BlockedRequest[] = []
+      const page = await driver.openAuthPage({ onBlocked: (b) => reports.push(b) })
+      await page.goto(site.url('site.test', '/framed'))
+      await sleep(1000)
+      const target = encodeURIComponent(site.url('evil.test', '/landing?c=secret'))
+      const escaped = await settle(page.goto(site.url('site.test', `/redirect?to=${target}`)))
+      await page.close()
+      return { reports, escaped, toolBlocked: blocked.filter((b) => b.target.includes('widget.test')) }
     },
 
     close: async () => {
