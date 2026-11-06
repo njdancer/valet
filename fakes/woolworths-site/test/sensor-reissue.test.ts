@@ -74,6 +74,27 @@ describe('an _abck the site never issued', () => {
     expect(reply.setCookies).toEqual([])
   })
 
+  it('keeps a blocked session blocked when it drops its _abck, on a page or an API call', async () => {
+    const rateLimit = { maxRequests: 1, windowMs: 10_000, cooldownMs: 60_000 }
+    const site = await start({ rateLimit, now: () => 0 })
+    const client = new Client(site.origin)
+    await client.visit('/')
+    await client.get('/apis/ui/Trolley')
+    expect((await client.get('/apis/ui/Trolley')).status).toBe(403)
+    expect(client.cookies.has('wow-auth-token')).toBe(true)
+    client.cookies.delete('_abck')
+    const page = await client.get('/')
+    expect(page.status).toBe(403)
+    expect(page.setCookies).toEqual([])
+    client.cookies.delete('_abck')
+    expect((await client.get('/apis/ui/Trolley')).status).toBe(403)
+    // A made-up sensor after that is still not reissued.
+    client.cookies.set('_abck', STALE)
+    const forged = await client.get('/apis/ui/Trolley')
+    expect(forged.status).toBe(403)
+    expect(forged.setCookies).toEqual([])
+  })
+
   it('counts the reissued sensor towards the rate limit', async () => {
     const rateLimit = { maxRequests: 2, windowMs: 10_000, cooldownMs: 60_000 }
     const site = await start({ rateLimit, now: () => 0 })

@@ -111,7 +111,9 @@ exactly, as Auth0 does.
   fresh script-readable `_abck` (`Path=/`, a year) and lets the request through, as the real one
   tends to; the fresh value counts towards the rate limit. `'deny'` answers Access Denied, as the
   fake did before. A blocked session is denied either way, and an API request with no `_abck` at
-  all is still denied.
+  all is still denied. So in reissue mode a forged or stale `_abck` gets through on its own. A test
+  that needs a forged sensor to be refused must set `'deny'`. Under `'reissue'` only the session
+  key (`wow-auth-token`) stops a blocked client that swaps or drops its `_abck`.
 - `setRateLimit(limit | null)`: more than `maxRequests` API calls in `windowMs` from one `_abck`
   or one `wow-auth-token` blocks that client, pages included, for `cooldownMs`. Both cookies are
   blocked together, and a cookie presented alongside a blocked one is blocked with it, so deleting
@@ -159,7 +161,10 @@ exactly, as Auth0 does.
   http and https, an image and a WebSocket. It is the site's own script, in the page's main world,
   for the tool partition's policy on page-initiated traffic. www pages only, never the auth origin
   or API answers. The host must be a DNS name and the port 1 to 65535, since both go into the
-  script.
+  script. After each round the script sets `<html data-beacon-rounds="n">` (exported as
+  `BEACON_ROUNDS_ATTRIBUTE`). A test that expects nothing to reach `host` should first wait for
+  the count to reach 2 or more. Otherwise a beacon that never ran would pass it too. The fake's
+  own tests run the script in a sandbox with recording stand-ins, so it is known to parse and fire.
 - `hostile.passwordInputType` and `hostile.codeInputType`: the `type` of `#password` and `#code`
   (normally `password` and `text`), for the element-type guard.
 

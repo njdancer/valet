@@ -9,7 +9,7 @@ export {
   REMEMBER_DEVICE_COOKIE,
   type SentMessage,
 } from './auth-server'
-export { DEFAULT_BEACON_INTERVAL_MS, type PageBeacon } from './beacon'
+export { BEACON_ROUNDS_ATTRIBUTE, DEFAULT_BEACON_INTERVAL_MS, type PageBeacon } from './beacon'
 export { catalogue, findProduct } from './catalogue'
 export {
   type CertificateOptions,
