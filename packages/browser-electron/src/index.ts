@@ -8,19 +8,23 @@ export type { DriverOptions, ManifestOptions } from './driver'
 export { ElectronSessionDriver } from './driver'
 export { type Dial, parseAuthority, startEgressProxy } from './egress-proxy'
 export {
+  apiRoots,
   authNavigationAllowed,
   type BlockReason,
+  type Budget,
   decideToolRequest,
   egressAllowed,
   isApiCall,
   purposeAllowed,
   type RequestDecision,
   requestTarget,
+  underApiRoot,
 } from './guards'
 export { needsUserTitle } from './needs-user'
 export { partitionName } from './partitions'
 export type * from './platform'
 export { CHROMIUM_SWITCHES, hardenProcess } from './process-hardening'
+export { SessionValues } from './session-values'
 export { type Announce, SurfaceToolPage } from './tool-page'
 export {
   type ClientHintBrands,

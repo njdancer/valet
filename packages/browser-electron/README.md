@@ -70,7 +70,10 @@ to measure a decision or an opt-in rather than to test the default.
     written, or once each segment is percent-decoded (up to three times) with `;` parameters
     dropped, or once encoded slashes are split and dot segments resolved
     (`/static/..%2Fapis/x`). A declaration with no literal segment (`/*`, `/:id`) makes every
-    path an API path: that fails closed, and such a manifest must declare its pages;
+    path an API path: that fails closed, and such a manifest must declare its pages. A GET with
+    a side effect on a path outside every root (a page at `/shop/cart/add?id=1`, say) is still
+    reachable as a page or an asset: nothing in the manifest says it is an API, so only the asset
+    budget limits it;
   - an `irreversible` declaration stays refused until `unlockIrreversible()`, which only works in
     a run whose `maxPurpose` is `irreversible`, and only until that run ends;
   - deny segments (checkout, payment, payee, …, also when encoded) are refused for navigations and
