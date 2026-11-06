@@ -2,7 +2,7 @@
 // browser. Every failure leaves as a SiteAdapterError: response bodies and exception messages can
 // carry page text, so none of it is passed on.
 
-import { type FetchInit, SiteAdapterError, type ToolContext } from '@siteadapter/core'
+import { type FetchInit, type FetchResult, SiteAdapterError, type ToolContext } from '@siteadapter/core'
 import type { z } from 'zod'
 
 export const PATHS = {
@@ -37,7 +37,7 @@ async function call<Schema extends z.ZodType>(
 ): Promise<z.infer<Schema>> {
   // Checked before every call so that a cancelled add_to_cart never reaches its write.
   if (ctx.signal.aborted) throw new SiteAdapterError('tool-run', 'aborted')
-  let response: Awaited<ReturnType<ToolContext['page']['fetch']>>
+  let response: FetchResult
   try {
     response = await ctx.page.fetch(path, init)
   } catch (error) {
@@ -46,9 +46,26 @@ async function call<Schema extends z.ZodType>(
     throw new SiteAdapterError('tool-run', 'unavailable')
   }
   throwForStatus(response.status)
+  throwForContentType(response)
   const parsed = schema.safeParse(response.body)
   if (!parsed.success) throw new SiteAdapterError('tool-run', 'invalid')
   return parsed.data
+}
+
+/**
+ * A 2xx that isn't JSON is never the API's answer. HTML is either Akamai's challenge page or the
+ * login page served to an expired session, and the two can't be told apart from here. Both are
+ * reported as blocked-by-site, as the runtime's own block detection does: the runtime backs off,
+ * and its next ensure() finds an expired session. Reporting not-logged-in instead would send a
+ * flagged session straight back to the scripted login. 'invalid' is kept for JSON of the wrong shape.
+ */
+function throwForContentType(response: FetchResult): void {
+  const type = response.contentType?.toLowerCase() ?? ''
+  if (type.includes('json')) return
+  if (type.includes('html') || (typeof response.body === 'string' && /^\s*</.test(response.body))) {
+    throw new SiteAdapterError('tool-run', 'blocked-by-site')
+  }
+  throw new SiteAdapterError('tool-run', 'unavailable')
 }
 
 function throwForStatus(status: number): void {

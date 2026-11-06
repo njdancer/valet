@@ -239,15 +239,47 @@ describe('search_products failures', () => {
     expect((await failure(ctx)).errorClass).toBe('unavailable')
   })
 
-  it('reports a 200 that is not the expected JSON as invalid, without echoing it', async () => {
+  it('reports a 200 HTML page as blocked-by-site, so the runtime backs off, without echoing it', async () => {
     const ctx = new FakeToolContext().on('POST', SEARCH, {
       status: 200,
       contentType: 'text/html',
       body: '<html>Please verify you are human: canary-7f3a</html>',
     })
     const error = await failure(ctx)
-    expect([error.stage, error.errorClass]).toEqual(['tool-run', 'invalid'])
+    expect([error.stage, error.errorClass]).toEqual(['tool-run', 'blocked-by-site'])
     expect(JSON.stringify({ ...error, message: error.message })).not.toContain('canary-7f3a')
+  })
+
+  it('reports an HTML body with no content type as blocked-by-site', async () => {
+    const ctx = new FakeToolContext().on('POST', SEARCH, {
+      status: 200,
+      contentType: null,
+      body: '  <!DOCTYPE html><html>Sign in</html>',
+    })
+    expect((await failure(ctx)).errorClass).toBe('blocked-by-site')
+  })
+
+  it('reports a 200 that is neither JSON nor HTML as unavailable', async () => {
+    const ctx = new FakeToolContext().on('POST', SEARCH, {
+      status: 200,
+      contentType: 'text/plain',
+      body: 'ok',
+    })
+    expect((await failure(ctx)).errorClass).toBe('unavailable')
+  })
+
+  it('refuses a JSON-looking body that is not labelled JSON', async () => {
+    const ctx = new FakeToolContext().on('POST', SEARCH, {
+      status: 200,
+      contentType: null,
+      body: loadFixture('search-milk.json'),
+    })
+    expect((await failure(ctx)).errorClass).toBe('unavailable')
+  })
+
+  it('reports JSON of the wrong shape as invalid', async () => {
+    const ctx = new FakeToolContext().on('POST', SEARCH, json({ Products: 'not a list' }))
+    expect((await failure(ctx)).errorClass).toBe('invalid')
   })
 
   it('replaces a thrown error with a class, dropping its message', async () => {

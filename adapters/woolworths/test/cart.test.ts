@@ -302,7 +302,7 @@ describe('cart tools without a login', () => {
         .on('POST', UPDATE, json({}))
       ctx.ensureResult = { status: 'needsUser', reason: 'CAPTCHA shown' }
       const error = await run(ctx).catch((e: unknown) => e)
-      expect(error).toEqual(new SiteAdapterError('tool-run', 'not-logged-in'))
+      expect(error).toEqual(new SiteAdapterError('auth-step', 'not-logged-in'))
       expect(ctx.fetches).toEqual([])
     })
 

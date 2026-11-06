@@ -53,22 +53,36 @@ isn't trolley-shaped. They don't spend another request fetching it; call `get_ca
 
 Tools throw `SiteAdapterError`, never a raw error or a result that describes the failure:
 
-| Situation                             | Stage / class                                                                                    |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `ensure()` says `needsUser`           | `tool-run` / `not-logged-in`                                                                     |
-| `ensure()` failed                     | its own stage and class, if both are in the core vocabularies, else `tool-run` / `not-logged-in` |
-| HTTP 401                              | `tool-run` / `not-logged-in`                                                                     |
-| HTTP 403 or 429 (Akamai)              | `tool-run` / `blocked-by-site`                                                                   |
-| HTTP 404, or detail with no `Product` | `tool-run` / `not-found`                                                                         |
-| Other non-2xx, or `fetch` threw       | `tool-run` / `unavailable`                                                                       |
-| Response not in the expected shape    | `tool-run` / `invalid`                                                                           |
-| Signal aborted before a call          | `tool-run` / `aborted`                                                                           |
-| `add_to_cart` would exceed 50         | `tool-input` / `invalid`                                                                         |
+| Situation                                   | Stage / class                                                                                   |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `ensure()` says `needsUser`                 | `auth-step` / `not-logged-in`                                                                   |
+| `ensure()` failed                           | its own stage and class, if both are in the core vocabularies, else `auth-step` / `auth-failed` |
+| HTTP 401                                    | `tool-run` / `not-logged-in`                                                                    |
+| HTTP 403 or 429 (Akamai)                    | `tool-run` / `blocked-by-site`                                                                  |
+| 2xx that is HTML (block page or login page) | `tool-run` / `blocked-by-site`                                                                  |
+| 2xx that is neither JSON nor HTML           | `tool-run` / `unavailable`                                                                      |
+| HTTP 404, or detail with no `Product`       | `tool-run` / `not-found`                                                                        |
+| Other non-2xx, or `fetch` threw             | `tool-run` / `unavailable`                                                                      |
+| JSON not in the expected shape              | `tool-run` / `invalid`                                                                          |
+| Signal aborted before a call                | `tool-run` / `aborted`                                                                          |
+| `add_to_cart` would exceed 50               | `tool-input` / `invalid`                                                                        |
 
 Cart tools throw rather than returning a "please log in" result so the runtime records a failed
 call and can re-run the auth action or show the login window. The `needsUser` reason is free text
-and is never passed on. A `SiteAdapterError` thrown by the runtime's own guards (for example the
-request ceiling) passes through unchanged.
+and is never passed on.
+
+`needsUser` deliberately leaves as a different pair from a 401. The security model has the runtime
+re-run the auth action when a tool hits an expired session (`tool-run` / `not-logged-in`); after a
+`needsUser` that would resubmit the password on a session the site has just challenged, instead of
+showing the person the window. `auth-step` / `not-logged-in` stands in until core has a typed
+`needsUser` signal (see core change requests below).
+
+An HTML 2xx can be Akamai's challenge or the login page served to an expired session; nothing in
+the response tells them apart. It is reported as `blocked-by-site`, as the runtime's own block
+detection does, so the runtime backs off; its next `ensure()` probe then finds an expired session.
+
+A `SiteAdapterError` thrown by the runtime's own guards (for example the request ceiling) passes
+through unchanged.
 
 ## Verified live and assumed
 
@@ -107,3 +121,10 @@ each product's `AdditionalAttributes` cut to a few keys. No cookies. `search-mil
 `product-detail-88436.json` and `trolley-empty.json` are real responses; `trolley-two-items.json`
 is synthesised as described above. Edge cases are made in each test by copying a fixture and
 changing one field.
+
+## Core change requests
+
+- **A typed `needsUser` signal for tool failures.** `EnsureResult` has one, but a tool can only
+  throw `SiteAdapterError(stage, errorClass)`, so the adapter borrows `auth-step` /
+  `not-logged-in`. A dedicated class (say `needs-user`) would let the runtime show the window
+  without guessing from the stage.
