@@ -1,6 +1,6 @@
 import type { ElementInfo } from '@siteadapter/core'
 import { describe, expect, it } from 'vitest'
-import { allowedOrigins, requestedOrigins, suitsField } from '../src/guards'
+import { allowedOrigins, suitsField } from '../src/guards'
 
 const PASSWORD_INPUT: ElementInfo = {
   visible: true,
@@ -10,6 +10,7 @@ const PASSWORD_INPUT: ElementInfo = {
   inputMode: null,
   frameOrigin: 'https://login.shop.test',
   formActionOrigin: 'https://login.shop.test',
+  inputReachable: true,
 }
 
 describe('suitsField: password', () => {
@@ -139,30 +140,31 @@ describe('allowedOrigins', () => {
     expect(allowedOrigins(['https://LOGIN.shop.test'], ['https://login.shop.test'])).toEqual([])
   })
 
-  it('keeps a granted origin with a trailing slash', () => {
+  it('keeps a granted origin with a trailing slash, in the origin form the driver compares', () => {
     expect(allowedOrigins(['https://login.shop.test/'], ['https://login.shop.test'])).toEqual([
-      'https://login.shop.test/',
+      'https://login.shop.test',
     ])
   })
-})
 
-describe('requestedOrigins', () => {
-  it('collects the origins of every secret request once each', () => {
+  it('lists an origin granted twice once', () => {
     expect(
-      requestedOrigins({
-        secrets: {
-          login: { description: 'Login', fields: ['password'], origins: ['https://login.shop.test'] },
-          card: {
-            description: 'Card',
-            fields: ['otp'],
-            origins: ['https://pay.shop.test', 'https://login.shop.test'],
-          },
-        },
-      }),
-    ).toEqual(['https://login.shop.test', 'https://pay.shop.test'])
+      allowedOrigins(['https://login.shop.test', 'https://login.shop.test/'], ['https://login.shop.test']),
+    ).toEqual(['https://login.shop.test'])
   })
 
-  it('is empty for a manifest that requests no secrets, so a code can be typed nowhere', () => {
-    expect(requestedOrigins({ secrets: {} })).toEqual([])
+  it('drops a wildcard grant even when the bound has the same wildcard', () => {
+    expect(allowedOrigins(['https://*.shop.test'], ['https://*.shop.test'])).toEqual([])
+  })
+
+  it('drops an IP literal grant even when the bound has the same literal', () => {
+    expect(allowedOrigins(['https://127.0.0.1'], ['https://127.0.0.1'])).toEqual([])
+    expect(allowedOrigins(['https://[::1]'], ['https://[::1]'])).toEqual([])
+  })
+
+  it('keeps a port, which must match the bound exactly', () => {
+    expect(allowedOrigins(['https://login.shop.test:8443'], ['https://login.shop.test:8443'])).toEqual([
+      'https://login.shop.test:8443',
+    ])
+    expect(allowedOrigins(['https://login.shop.test:8443'], ['https://login.shop.test'])).toEqual([])
   })
 })

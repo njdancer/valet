@@ -3,7 +3,7 @@
 // place a canary may reach, and only as a SecretValue.
 
 import { inspect } from 'node:util'
-import { CredentialError, type SecretValue } from '@siteadapter/core'
+import { CredentialError, type Probe, type SecretValue } from '@siteadapter/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { runAuthFlow } from '../src/run-auth-flow'
 import { CANARY, EVIL, LOGIN_PAGE, manifestWithSteps, START, world } from './fixtures'
@@ -26,6 +26,15 @@ const EVERY_SECRET = manifestWithSteps([
   { op: 'click', selector: '#submit' },
   { op: 'assertLoggedIn' },
 ])
+
+/** A fetch probe for the scenarios that need one: logged in when shopper.id is present. */
+const FETCH_PROBE: Probe = {
+  kind: 'fetch',
+  path: '/api/me',
+  expectStatus: 200,
+  loggedOutStatuses: [401],
+  jsonPath: 'shopper.id',
+}
 
 function arrange(w: World): void {
   w.input.manifest = EVERY_SECRET
@@ -63,12 +72,52 @@ const SCENARIOS: Record<string, (w: World) => void> = {
     })
   },
   'the probe fails with the secret in the error': (w) => {
-    w.input.probe = async () => {
+    w.probe.cookies = () => {
       throw new Error(`probe saw ${CANARY.password} in the page`)
     }
   },
   'the probe says not logged in': (w) => {
-    w.input.probe = async () => false
+    w.probe.cookies = () => []
+  },
+  'a fetch probe answers an unexpected status with the secret in its body': (w) => {
+    w.input.manifest = {
+      ...EVERY_SECRET,
+      session: { ...EVERY_SECRET.session, probe: FETCH_PROBE },
+    }
+    w.probe.respond = () => ({
+      status: 500,
+      contentType: 'text/plain',
+      body: `error near ${CANARY.password}`,
+    })
+  },
+  'a fetch probe answers logged in with the secret in its body': (w) => {
+    w.input.manifest = {
+      ...EVERY_SECRET,
+      session: { ...EVERY_SECRET.session, probe: FETCH_PROBE },
+    }
+    w.probe.respond = () => ({
+      status: 200,
+      contentType: 'application/json',
+      body: { shopper: { id: 7, password: CANARY.password } },
+    })
+  },
+  'the runtime cannot take its copy, with the secret in the error': (w) => {
+    w.input.rememberSecret = (secret) => {
+      throw new Error(`could not keep ${secret.reveal((plaintext) => plaintext)}`)
+    }
+  },
+  'the page navigates while the password is being typed': (w) => {
+    w.page.site['https://www.shop.test/login'] = structuredClone(w.page.site[LOGIN_PAGE]!)
+    w.page.beforeKeystroke = (index) => {
+      if (index === 4 && w.page.focused === '#password') w.page.navigate('https://www.shop.test/login')
+    }
+  },
+  'a fail step ends the flow after the password is typed': (w) => {
+    w.input.manifest = manifestWithSteps([
+      { op: 'goto', url: LOGIN_PAGE },
+      { op: 'fill', selector: '#password', value: { secret: 'login', field: 'password' } },
+      { op: 'fail', errorClass: 'auth-failed', note: 'Wrong password' },
+    ])
   },
   'the page moves off the allowlist after the password is typed': (w) => {
     w.page.site[LOGIN_PAGE] = {

@@ -9,8 +9,22 @@ describe('runAuthFlow', () => {
     expect(outcome).toEqual({ status: 'ok' })
     expect(w.page.currentUrl()).toBe(ACCOUNT_PAGE)
     expect(w.page.typed).toEqual([
-      { selector: '#email', url: LOGIN_PAGE, text: CANARY.username, secret: true, delayMs: 40 },
-      { selector: '#password', url: LOGIN_PAGE, text: CANARY.password, secret: true, delayMs: 40 },
+      {
+        selector: '#email',
+        url: LOGIN_PAGE,
+        text: CANARY.username,
+        secret: true,
+        delayMs: 40,
+        allowedOrigins: [LOGIN],
+      },
+      {
+        selector: '#password',
+        url: LOGIN_PAGE,
+        text: CANARY.password,
+        secret: true,
+        delayMs: 40,
+        allowedOrigins: [LOGIN],
+      },
     ])
     expect(w.page.clicked).toEqual(['#submit'])
   })
@@ -77,7 +91,7 @@ describe('runAuthFlow', () => {
 
   it('audits a failure with its stage and class', async () => {
     const w = world()
-    w.input.manifest = manifestWithSteps([{ op: 'fail', reason: 'the site said no' }])
+    w.input.manifest = manifestWithSteps([{ op: 'fail', errorClass: 'auth-failed' }])
     const outcome = await runAuthFlow(w.input)
     expect(outcome).toEqual({ status: 'failed', stage: 'auth-step', errorClass: 'auth-failed' })
     expect(w.audit.events.at(-1)).toEqual({
@@ -89,21 +103,30 @@ describe('runAuthFlow', () => {
     })
   })
 
-  it('audits needsUser', async () => {
+  it('audits needsUser with its reason code', async () => {
     const w = world()
     w.input.manifest = manifestWithSteps([{ op: 'needsUser', reason: 'captcha' }])
     expect(await runAuthFlow(w.input)).toEqual({ status: 'needsUser', reason: 'captcha' })
-    expect(w.audit.events.at(-1)).toEqual({ type: 'login-finished', adapterId: 'shop', outcome: 'needsUser' })
-  })
-
-  it('audits a block as a failure with the blocked-by-site class', async () => {
-    const w = world()
-    w.page.site[LOGIN_PAGE] = { blocked: true }
-    expect(await runAuthFlow(w.input)).toEqual({ status: 'blocked' })
     expect(w.audit.events.at(-1)).toEqual({
       type: 'login-finished',
       adapterId: 'shop',
-      outcome: 'failed',
+      outcome: 'needsUser',
+      needsUser: 'captcha',
+    })
+  })
+
+  it('audits a block as blocked, with its stage and class', async () => {
+    const w = world()
+    w.page.site[LOGIN_PAGE] = { blocked: true }
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'blocked',
+      stage: 'auth-step',
+      errorClass: 'blocked-by-site',
+    })
+    expect(w.audit.events.at(-1)).toEqual({
+      type: 'login-finished',
+      adapterId: 'shop',
+      outcome: 'blocked',
       stage: 'auth-step',
       errorClass: 'blocked-by-site',
     })

@@ -6,6 +6,7 @@ import {
   type AuditSink,
   CredentialError,
   type CredentialProvider,
+  type FetchResult,
   type Grant,
   type GrantStore,
   type MessagesOtpQuery,
@@ -13,6 +14,9 @@ import {
   type SecretField,
   SecretValue,
 } from '@siteadapter/core'
+import type { AuthProbe } from '../src/types'
+import type { UrlPatternMatcher } from '../src/url-matcher'
+import type { FakeAuthPage } from './fake-auth-page'
 
 /** Thrown by FakeClock when the code under test has slept too often or too long. Tests only. */
 export class RunawayLoop extends Error {
@@ -139,7 +143,7 @@ export class FakeOtpReader implements OtpReader {
       .filter((m) => m.at <= this.clock.now)
       .filter((m) => m.at >= notBefore.getTime())
       .filter((m) => m.at >= this.clock.now - query.maxAgeSeconds * 1000)
-      .filter((m) => query.sender === undefined || m.sender === query.sender)
+      .filter((m) => m.sender === query.sender)
       .sort((a, b) => b.at - a.at)
     for (const message of candidates) {
       const match = pattern.exec(message.body)
@@ -153,6 +157,36 @@ export class FakeOtpReader implements OtpReader {
   }
 }
 
+/**
+ * The auth partition's probe hook. By default it reads the fake page's cookie jar, and answers a
+ * fetch with whatever `respond` returns. Tests replace either to script what the site says.
+ */
+export class FakeProbe implements AuthProbe {
+  readonly fetched: string[] = []
+  readonly cookieQueries: (readonly string[])[] = []
+  cookies: () => readonly string[]
+  respond: (url: string) => FetchResult = () => ({ status: 404, contentType: null, body: null })
+
+  constructor(page: FakeAuthPage) {
+    this.cookies = () => [...page.cookies]
+  }
+
+  /** How many times the flow asked, by either route. */
+  get calls(): number {
+    return this.fetched.length + this.cookieQueries.length
+  }
+
+  async fetch(url: string): Promise<FetchResult> {
+    this.fetched.push(url)
+    return this.respond(url)
+  }
+
+  async cookieNames(cookieDomains: readonly string[]): Promise<readonly string[]> {
+    this.cookieQueries.push(cookieDomains)
+    return this.cookies()
+  }
+}
+
 export class RecordingAudit implements AuditSink {
   readonly events: AuditEvent[] = []
   /** When set, appending an event of this type throws. */
@@ -162,5 +196,23 @@ export class RecordingAudit implements AuditSink {
     if (event.type === this.failOn) throw new Error('audit log unavailable')
     this.events.push(event)
     return { seq: this.events.length, at: '2026-11-07T00:00:00.000Z', event, prev: '', hash: '' }
+  }
+}
+
+/**
+ * Runs urlRegex patterns on this thread, so flow tests stay deterministic and quick. The real
+ * matcher runs them in a worker under a deadline; url-matcher.test.ts tests that one.
+ */
+export class InProcessUrlMatcher implements UrlPatternMatcher {
+  readonly tests: { pattern: string; text: string }[] = []
+  closed = false
+
+  async test(pattern: string, text: string): Promise<boolean> {
+    this.tests.push({ pattern, text })
+    return new RegExp(pattern).test(text)
+  }
+
+  close(): void {
+    this.closed = true
   }
 }

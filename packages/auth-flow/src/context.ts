@@ -1,6 +1,13 @@
 // State shared by the interpreter's modules for one run, and the checks every step is followed by.
 
-import { SiteAdapterError, type Stage, urlOriginAllowed } from '@siteadapter/core'
+import {
+  type FailClass,
+  type NeedsUserReason,
+  SiteAdapterError,
+  type Stage,
+  urlOriginAllowed,
+} from '@siteadapter/core'
+import type { UrlRegexes } from './conditions'
 import type { AuthFlowInput } from './types'
 
 export interface FlowContext {
@@ -9,21 +16,36 @@ export interface FlowContext {
   readonly startedAt: Date
   /** Epoch milliseconds after which the flow has timed out. */
   readonly deadline: number
+  /** Every urlRegex in the flow, compiled before the first step. */
+  readonly regexes: UrlRegexes
+  /**
+   * True when the last thing the flow did was a probe that said logged in. Any other step clears
+   * it, and the flow probes once more before reporting ok unless it is set.
+   */
+  probed: boolean
 }
 
 /** Thrown to end the flow with needsUser. Not an error: the flow asked for the person. */
 export class NeedsUserHalt extends Error {
-  constructor(readonly reason: string) {
+  constructor(
+    readonly reason: NeedsUserReason,
+    /** The manifest's note, for the app only. */
+    readonly note: string | undefined,
+  ) {
     super('needs user')
     this.name = 'NeedsUserHalt'
   }
 }
 
-/** Thrown to end the flow when the site's bot protection has refused us. */
-export class BlockedHalt extends Error {
-  constructor() {
-    super('blocked by site')
-    this.name = 'BlockedHalt'
+/** A manifest fail step. A SiteAdapterError, so retry treats it like any other, plus its note. */
+export class FailStep extends SiteAdapterError {
+  constructor(
+    errorClass: FailClass,
+    /** The manifest's note, for the app only. */
+    readonly note: string | undefined,
+  ) {
+    super('auth-step', errorClass)
+    this.name = 'FailStep'
   }
 }
 
@@ -70,8 +92,11 @@ export async function checkNavigation(ctx: FlowContext): Promise<void> {
   }
 }
 
+/** The site's bot protection showing its block page ends the flow as blocked, never retried. */
 export async function checkBlocked(ctx: FlowContext): Promise<void> {
-  if (await guarded('auth-step', () => ctx.input.isBlockedPage())) throw new BlockedHalt()
+  if (await guarded('auth-step', () => ctx.input.isBlockedPage())) {
+    throw new SiteAdapterError('auth-step', 'blocked-by-site')
+  }
 }
 
 /** The checks that follow every step and every poll. Navigation first: an escape is the worse news. */

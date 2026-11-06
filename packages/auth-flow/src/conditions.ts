@@ -1,61 +1,102 @@
 // Conditions for waitFor and when. They only ever read the page through AuthPage, which takes
 // selectors and text as data; nothing here evaluates script.
 
-import { type AuthPage, type AuthStep, type Condition, SiteAdapterError } from '@siteadapter/core'
+import {
+  type AuthPage,
+  type AuthStep,
+  type Condition,
+  isScreenedPattern,
+  SiteAdapterError,
+} from '@siteadapter/core'
+import type { UrlPatternMatcher } from './url-matcher'
 
-export async function evaluateCondition(page: AuthPage, condition: Condition): Promise<boolean> {
+/** Every urlRegex pattern in a flow, screened before its first step, and what runs them. */
+export interface UrlRegexes {
+  readonly patterns: ReadonlySet<string>
+  readonly matcher: UrlPatternMatcher
+}
+
+export async function evaluateCondition(
+  page: AuthPage,
+  condition: Condition,
+  regexes: UrlRegexes,
+): Promise<boolean> {
   if ('visible' in condition) return (await page.inspect(condition.visible))?.visible === true
-  if ('urlMatches' in condition) return urlMatches(page.currentUrl(), condition.urlMatches)
+  if ('urlContains' in condition) return urlContains(page.currentUrl(), condition.urlContains)
+  if ('urlRegex' in condition) {
+    // compileUrlRegexes saw every condition in the flow; one it didn't is not from this manifest.
+    if (!regexes.patterns.has(condition.urlRegex)) throw new SiteAdapterError('manifest', 'invalid')
+    return urlRegexMatches(page.currentUrl(), condition.urlRegex, regexes.matcher)
+  }
   if ('textPresent' in condition) return page.textPresent(condition.textPresent)
-  if ('not' in condition) return !(await evaluateCondition(page, condition.not))
+  if ('not' in condition) return !(await evaluateCondition(page, condition.not, regexes))
   if ('any' in condition) {
     for (const inner of condition.any) {
-      if (await evaluateCondition(page, inner)) return true
+      if (await evaluateCondition(page, inner, regexes)) return true
     }
     return false
   }
   for (const inner of condition.all) {
-    if (!(await evaluateCondition(page, inner))) return false
+    if (!(await evaluateCondition(page, inner, regexes))) return false
   }
   return true
 }
 
 /**
- * The longest path and query a regular expression is run against. The regex runs synchronously in
- * the main process on a URL the site chose, and this engine backtracks, so the input is bounded;
- * a longer URL simply doesn't match a regex. Substring patterns have no such limit.
+ * The longest path and query a regular expression is run against; a longer URL simply doesn't
+ * match. The worker's deadline is what bounds a slow pattern; this keeps what crosses to the worker
+ * small, and keeps an honest pattern well inside the deadline.
  */
 export const MAX_REGEX_INPUT = 2048
 
 /**
- * Matches against the URL's path and query only, so that a pattern can't be satisfied by the host
- * (the navigation allowlist covers hosts). A pattern wrapped in slashes, like `/^\/account/`, is a
- * regular expression; anything else is a substring.
+ * The URL's path and query, which is all a condition may look at: never the host (the navigation
+ * allowlist covers hosts, and a pattern must not be satisfiable by an attacker's domain), and never
+ * the fragment. Null for a URL that doesn't parse.
  */
-export function urlMatches(url: string, pattern: string): boolean {
-  let target: string
+function pathAndQuery(url: string): string | null {
   try {
     const parsed = new URL(url)
-    target = parsed.pathname + parsed.search
+    return parsed.pathname + parsed.search
   } catch {
-    return false
+    return null
   }
-  const regex = asRegex(pattern)
-  if (regex === null) return target.includes(pattern)
-  return target.length <= MAX_REGEX_INPUT && regex.test(target)
+}
+
+/** True when the URL's path and query contain `text`. A substring test can't backtrack. */
+export function urlContains(url: string, text: string): boolean {
+  return pathAndQuery(url)?.includes(text) ?? false
 }
 
 /**
- * True when every urlMatches pattern anywhere in the steps, in every branch, compiles. The flow
- * checks this before its first step, so that a bad pattern fails the manifest up front.
+ * True when the URL's path and query match `pattern`, if they are short enough to try. The pattern
+ * runs in `matcher`'s worker, never on this thread.
  */
-export function patternsValid(steps: readonly AuthStep[]): boolean {
-  try {
-    for (const condition of conditionsIn(steps)) checkCondition(condition)
-    return true
-  } catch {
-    return false
+export async function urlRegexMatches(
+  url: string,
+  pattern: string,
+  matcher: UrlPatternMatcher,
+): Promise<boolean> {
+  const target = pathAndQuery(url)
+  if (target === null || target.length > MAX_REGEX_INPUT) return false
+  return (await matcher.test(pattern, target)) === true
+}
+
+/**
+ * Every urlRegex anywhere in the steps, in every branch, or null if any fails to compile or to pass
+ * core's backtracking screen. The manifest schema screens them already; this runs again because the
+ * flow can't know its manifest was parsed, and because a bad pattern in a branch the flow rarely
+ * takes would otherwise only fail mid-flow, perhaps after secrets were typed. Compiling is cheap
+ * and happens here; matching, which is not, happens in the worker.
+ */
+export function compileUrlRegexes(steps: readonly AuthStep[]): Set<string> | null {
+  const patterns = new Set<string>()
+  for (const pattern of urlRegexesIn(conditionsIn(steps))) {
+    if (patterns.has(pattern)) continue
+    if (typeof pattern !== 'string' || !isScreenedPattern(pattern)) return null
+    patterns.add(pattern)
   }
+  return patterns
 }
 
 function conditionsIn(steps: readonly AuthStep[]): Condition[] {
@@ -70,18 +111,13 @@ function conditionsIn(steps: readonly AuthStep[]): Condition[] {
   return conditions
 }
 
-function checkCondition(condition: Condition): void {
-  if ('urlMatches' in condition) asRegex(condition.urlMatches)
-  if ('not' in condition) checkCondition(condition.not)
-  if ('any' in condition) for (const inner of condition.any) checkCondition(inner)
-  if ('all' in condition) for (const inner of condition.all) checkCondition(inner)
-}
-
-function asRegex(pattern: string): RegExp | null {
-  if (pattern.length < 3 || !pattern.startsWith('/') || !pattern.endsWith('/')) return null
-  try {
-    return new RegExp(pattern.slice(1, -1))
-  } catch {
-    throw new SiteAdapterError('manifest', 'invalid')
+function urlRegexesIn(conditions: readonly Condition[]): string[] {
+  const patterns: string[] = []
+  for (const condition of conditions) {
+    if ('urlRegex' in condition) patterns.push(condition.urlRegex)
+    if ('not' in condition) patterns.push(...urlRegexesIn([condition.not]))
+    if ('any' in condition) patterns.push(...urlRegexesIn(condition.any))
+    if ('all' in condition) patterns.push(...urlRegexesIn(condition.all))
   }
+  return patterns
 }

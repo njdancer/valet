@@ -5,6 +5,8 @@ import {
   type AuthStep,
   type Condition,
   type ErrorClass,
+  FAIL_CLASSES,
+  NEEDS_USER_REASONS,
   SiteAdapterError,
   type Stage,
   urlOriginAllowed,
@@ -15,12 +17,14 @@ import {
   checkBlocked,
   checkDeadline,
   checkNavigation,
+  FailStep,
   type FlowContext,
   guarded,
   NeedsUserHalt,
   now,
   remainingMs,
 } from './context'
+import { probeLoggedIn } from './probe'
 import { fillMessagesOtp, fillSecret } from './secret-fill'
 
 /** How often waitFor re-checks its condition. */
@@ -50,9 +54,22 @@ function isRetryable(error: unknown): boolean {
 export async function runSteps(ctx: FlowContext, steps: readonly AuthStep[]): Promise<void> {
   for (const step of steps) {
     checkDeadline(ctx)
+    // when and retry don't act themselves; the steps inside them clear or set it.
+    if (step.op !== 'when' && step.op !== 'retry') ctx.probed = false
     await runStep(ctx, step)
     await checkAfterStep(ctx)
   }
+}
+
+/**
+ * Runs the probe, and fails with probe: not-logged-in unless it says logged in. The flow ends with
+ * this whether or not the manifest asked for it: a flow that ran out of steps hasn't shown it
+ * logged in, and handing its session to tool code on that basis would hand over whatever the page
+ * was left with.
+ */
+export async function assertLoggedIn(ctx: FlowContext): Promise<void> {
+  if (!(await probeLoggedIn(ctx))) throw new SiteAdapterError('probe', 'not-logged-in')
+  ctx.probed = true
 }
 
 async function runStep(ctx: FlowContext, step: AuthStep): Promise<void> {
@@ -92,7 +109,7 @@ async function runStep(ctx: FlowContext, step: AuthStep): Promise<void> {
       await ctx.input.sleep(Math.min(step.ms, remainingMs(ctx)))
       return
     case 'when': {
-      const holds = await guarded('auth-step', () => evaluateCondition(page, step.condition))
+      const holds = await guarded('auth-step', () => evaluateCondition(page, step.condition, ctx.regexes))
       await runSteps(ctx, holds ? step.steps : (step.otherwise ?? []))
       return
     }
@@ -100,14 +117,16 @@ async function runStep(ctx: FlowContext, step: AuthStep): Promise<void> {
       await retry(ctx, step.times, step.steps)
       return
     case 'assertLoggedIn':
-      if (!(await guarded('probe', () => ctx.input.probe()))) {
-        throw new SiteAdapterError('probe', 'not-logged-in')
-      }
+      await assertLoggedIn(ctx)
       return
+    // The vocabularies are checked again here, not only at parse time: the reason reaches the MCP
+    // client, and free text there would be an injection channel for whoever wrote the manifest.
     case 'needsUser':
-      throw new NeedsUserHalt(step.reason)
+      if (!NEEDS_USER_REASONS.includes(step.reason)) throw new SiteAdapterError('manifest', 'invalid')
+      throw new NeedsUserHalt(step.reason, step.note)
     case 'fail':
-      throw new SiteAdapterError('auth-step', 'auth-failed')
+      if (!FAIL_CLASSES.includes(step.errorClass)) throw new SiteAdapterError('manifest', 'invalid')
+      throw new FailStep(step.errorClass, step.note)
   }
 }
 
@@ -130,7 +149,7 @@ async function retry(ctx: FlowContext, times: number, steps: readonly AuthStep[]
 async function waitFor(ctx: FlowContext, condition: Condition, timeoutMs: number): Promise<void> {
   const stepDeadline = now(ctx) + timeoutMs
   for (;;) {
-    if (await guarded('auth-step', () => evaluateCondition(ctx.input.page, condition))) return
+    if (await guarded('auth-step', () => evaluateCondition(ctx.input.page, condition, ctx.regexes))) return
     await checkNavigation(ctx)
     await checkBlocked(ctx)
     checkDeadline(ctx)
