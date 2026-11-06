@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Run trace · siteadapter mockups</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="app.css" />
+    <script src="app.js"></script>
+    <style>
+      .trace {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        padding: var(--space-3) var(--space-4) var(--space-4);
+      }
+      .run-head {
+        display: flex;
+        align-items: center;
+        gap: var(--space-4);
+        padding: var(--space-3) var(--space-5);
+        border-bottom: 0.5px solid var(--border);
+        background: var(--bg-surface);
+      }
+      .run-head .kpi {
+        display: grid;
+        gap: 0;
+        font-size: var(--text-xs);
+        color: var(--text-secondary);
+      }
+      .run-head .kpi strong {
+        white-space: nowrap;
+        font-size: var(--text-md);
+        color: var(--text);
+        font-weight: 600;
+      }
+      .partition {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 0 6px;
+        border-radius: 4px;
+        font: 600 10.5px / 17px var(--font-mono);
+      }
+      .partition.auth {
+        color: var(--secret-text);
+        background: var(--secret-bg);
+      }
+      .partition.tool {
+        color: var(--accent);
+        background: var(--bg-selected);
+      }
+      .step .label code {
+        font: var(--text-sm) var(--font-mono);
+      }
+      .req {
+        display: grid;
+        grid-template-columns: 44px minmax(0, 1fr) auto;
+        gap: var(--space-2);
+        align-items: center;
+      }
+      .req .m {
+        font: 600 var(--text-xs) var(--font-mono);
+        color: var(--text-secondary);
+      }
+      .inspector .code {
+        font-size: 11.5px;
+        line-height: 1.5;
+        padding: 10px 12px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="desktop">
+      <header class="sysbar">
+        <span class="i i-apple"></span>
+        <span class="app-name">siteadapter</span>
+        <span>File</span><span>Edit</span><span>View</span><span>Adapter</span><span>Window</span><span>Help</span>
+        <span class="spacer"></span>
+        <span class="status">
+          <span class="tray"><span class="i i-logo"></span><span class="dot"></span></span>
+          <span class="i i-wifi"></span>
+          <span class="i i-battery" style="width: 22px"></span>
+          <span>Sat 7 Nov&nbsp; 9:53 pm</span>
+        </span>
+      </header>
+
+      <div class="window">
+        <div class="body">
+          <aside class="sidebar">
+            <div class="traffic"><span></span><span></span><span></span></div>
+            <div class="group-label">siteadapter</div>
+            <a class="nav-item" href="control-adapters.html"
+              ><span class="i i-adapter"></span>Adapters<span class="count alert">2</span></a
+            >
+            <a class="nav-item active" href="run-trace.html"><span class="i i-activity"></span>Activity<span class="count">37</span></a>
+            <a class="nav-item" href="audit-log.html"><span class="i i-audit"></span>Audit log</a>
+            <a class="nav-item" href="clients-settings.html"><span class="i i-clients"></span>Clients<span class="count">2</span></a>
+            <a class="nav-item" href="grant-secret.html"><span class="i i-key"></span>Credentials</a>
+            <a class="nav-item" href="clients-settings.html"><span class="i i-gear"></span>Settings</a>
+            <div class="group-label">Today</div>
+            <a class="nav-item" href="run-trace.html"
+              ><span class="dot warn"></span><span class="mono xs">get_trolley</span><span class="count">9:47</span></a
+            >
+            <a class="nav-item" href="run-trace.html"
+              ><span class="dot warn"></span><span class="mono xs">checkout</span><span class="count">9:46</span></a
+            >
+            <a class="nav-item active" href="run-trace.html"
+              ><span class="dot ok"></span><span class="mono xs">update_trolley</span><span class="count">9:31</span></a
+            >
+            <a class="nav-item" href="run-trace.html"
+              ><span class="dot ok"></span><span class="mono xs">search_products</span><span class="count">9:30</span></a
+            >
+            <a class="nav-item" href="run-trace.html"
+              ><span class="dot ok"></span><span class="mono xs">get_balances</span><span class="count">9:12</span></a
+            >
+            <a class="nav-item" href="run-trace.html"
+              ><span class="dot bad"></span><span class="mono xs">get_trolley</span><span class="count">3:58</span></a
+            >
+            <div class="foot">
+              <span class="row"><span class="dot ok"></span>MCP on · 127.0.0.1:47821</span>
+              <span class="row"><span class="i sm i-shield ok-text"></span>Audit chain intact</span>
+            </div>
+          </aside>
+
+          <main class="main">
+            <div class="titlebar">
+              <div class="row">
+                <span class="muted">Activity</span><span class="i sm i-chevron tertiary"></span
+                ><span class="title mono">woolworths.update_trolley</span>
+              </div>
+              <div class="tools">
+                <span class="segmented"><span class="on">Timeline</span><span>Requests</span><span>Raw</span></span>
+                <button type="button" class="btn"><span class="i sm i-download"></span>Export trace</button>
+              </div>
+            </div>
+
+            <div class="run-head">
+              <span class="avatar wow">W</span>
+              <div class="kpi"><span>Outcome</span><strong class="row"><span class="dot ok"></span>ok</strong></div>
+              <div class="kpi"><span>Client</span><strong>Claude Code</strong></div>
+              <div class="kpi"><span>Call</span><strong class="mono small">c_8f2e1b</strong></div>
+              <div class="kpi"><span>Adapter</span><strong>0.3.0 <span class="hash">9f3c1a7e…e0f1</span></strong></div>
+              <div class="kpi"><span>Duration</span><strong>4.8 s</strong></div>
+              <div class="kpi"><span>Requests</span><strong>2 sent · 2 blocked</strong></div>
+              <div class="kpi"><span>Secrets used</span><strong class="secret-text">login (2 fields)</strong></div>
+            </div>
+
+            <div class="body">
+              <div class="trace">
+                <div class="timeline">
+                  <div class="step phase">
+                    <span class="t">0.000</span><span class="node"><span class="dot info"></span></span>
+                    <div class="label">Tool called by Claude Code <span class="badge write">write</span></div>
+                    <span class="dur"></span>
+                  </div>
+                  <div class="step phase">
+                    <span class="t">0.004</span><span class="node"><span class="dot info"></span></span>
+                    <div class="label">
+                      session.ensure() <span class="partition tool">tool:woolworths</span>
+                      <div class="xs muted">Probe <code>GET /api/ui/v2/bootstrap</code> → 200, IsLoggedIn false → not logged in</div>
+                    </div>
+                    <span class="dur">212 ms</span>
+                  </div>
+                  <div class="step phase">
+                    <span class="t">0.220</span><span class="node"><span class="dot" style="background: var(--secret)"></span></span>
+                    <div class="label">Login <span class="partition auth">auth:woolworths</span> <span class="xs muted">declarative steps, no adapter code</span></div>
+                    <span class="dur">2.94 s</span>
+                  </div>
+                  <div class="step sub">
+                    <span class="t">0.221</span><span class="node"><span class="dot"></span></span>
+                    <div class="label"><code>goto(https://www.woolworths.com.au/shop/securelogin)</code> <span class="xs ok-text">on allowlist</span></div>
+                    <span class="dur">1.10 s</span>
+                  </div>
+                  <div class="step sub">
+                    <span class="t">1.322</span><span class="node"><span class="dot"></span></span>
+                    <div class="label"><code>waitFor(visible #loginForm-Email)</code></div>
+                    <span class="dur">180 ms</span>
+                  </div>
+                  <div class="step sub selected">
+                    <span class="t">1.502</span><span class="node"><span class="dot" style="background: var(--secret)"></span></span>
+                    <div class="label">
+                      <code>fill(#loginForm-Email, <span class="redacted">secret:login.username</span>)</code>
+                      <div class="checks">
+                        <span><span class="i sm i-check"></span>frame origin www.woolworths.com.au</span>
+                        <span><span class="i sm i-check"></span>input type email</span>
+                        <span><span class="i sm i-check"></span>typed as paced keystrokes</span>
+                      </div>
+                    </div>
+                    <span class="dur">640 ms</span>
+                  </div>
+                  <div class="step sub">
+                    <span class="t">2.143</span><span class="node"><span class="dot" style="background: var(--secret)"></span></span>
+                    <div class="label">
+                      <code>fill(#loginForm-Password, <span class="redacted">secret:login.password</span>)</code>
+                      <div class="checks">
+                        <span><span class="i sm i-check"></span>frame origin</span>
+                        <span><span class="i sm i-check"></span>input type password</span>
+                        <span><span class="i sm i-check"></span>form submits to www.woolworths.com.au</span>
+                      </div>
+                    </div>
+                    <span class="dur">520 ms</span>
+                  </div>
+                  <div class="step sub">
+                    <span class="t">2.664</span><span class="node"><span class="dot"></span></span>
+                    <div class="label"><code>click(button[type=submit])</code> · <code>when(textPresent "Remember this device")</code> <span class="xs muted">skipped</span></div>
+                    <span class="dur">30 ms</span>
+                  </div>
+                  <div class="step sub">
+                    <span class="t">3.158</span><span class="node"><span class="dot ok"></span></span>
+                    <div class="label"><code>assertLoggedIn</code> <span class="xs ok-text">IsLoggedIn true</span></div>
+                    <span class="dur">402 ms</span>
+                  </div>
+                  <div class="step phase">
+                    <span class="t">3.162</span><span class="node"><span class="dot info"></span></span>
+                    <div class="label">
+                      Handoff <span class="partition auth">auth</span> → <span class="partition tool">tool</span>
+                      <span class="xs muted">14 cookies on *.woolworths.com.au, 0 storage keys. Nothing flows back.</span>
+                    </div>
+                    <span class="dur">9 ms</span>
+                  </div>
+                  <div class="step phase">
+                    <span class="t">3.171</span><span class="node"><span class="dot info"></span></span>
+                    <div class="label">Tool code <span class="partition tool">tool:woolworths</span> <span class="xs muted">utility process</span></div>
+                    <span class="dur">1.62 s</span>
+                  </div>
+                  <div class="step sub">
+                    <span class="t">3.302</span><span class="node"><span class="dot ok"></span></span>
+                    <div class="label req">
+                      <span class="m">GET</span><code>/apis/ui/Trolley</code><span class="xs ok-text">allowed · read · 200</span>
+                    </div>
+                    <span class="dur">412 ms</span>
+                  </div>
+                  <div class="step sub blocked">
+                    <span class="t">3.720</span><span class="node"><span class="dot bad"></span></span>
+                    <div class="label req">
+                      <span class="m">POST</span><code>/apis/ui/Trolley/Recommendations</code><span class="xs danger-text"><strong>blocked</strong> · undeclared request</span>
+                    </div>
+                    <span class="dur">0 ms</span>
+                  </div>
+                  <div class="step sub blocked">
+                    <span class="t">3.731</span><span class="node"><span class="dot bad"></span></span>
+                    <div class="label req">
+                      <span class="m">POST</span><code>collect.tealiumiq.com/…</code><span class="xs danger-text"><strong>blocked</strong> · host not allowed</span>
+                    </div>
+                    <span class="dur">0 ms</span>
+                  </div>
+                  <div class="step sub">
+                    <span class="t">4.120</span><span class="node"><span class="dot ok"></span></span>
+                    <div class="label req">
+                      <span class="m">POST</span><code>/api/v3/ui/trolley/update</code><span class="xs ok-text">allowed · write · 200</span>
+                    </div>
+                    <span class="dur">566 ms</span>
+                  </div>
+                  <div class="step phase">
+                    <span class="t">4.792</span><span class="node"><span class="dot ok"></span></span>
+                    <div class="label">Output redacted and returned <span class="xs muted">2 exact matches replaced</span></div>
+                    <span class="dur"></span>
+                  </div>
+                </div>
+              </div>
+
+              <aside class="inspector stack gap-3" style="align-content: start; width: 360px">
+                <div>
+                  <div class="eyebrow">Blocked request</div>
+                  <div class="callout bad" style="margin-top: 6px; padding: 9px 12px">
+                    <span class="i i-shield"></span>
+                    <div class="stack" style="gap: 3px">
+                      <div><strong class="mono small">POST /apis/ui/Trolley/Recommendations</strong></div>
+                      <div class="xs">
+                        Tool code asked for this, but the manifest declares no matching request. Cancelled before it left the
+                        page. Reported as <span class="mono">request-surface / undeclared-request</span>.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <div class="eyebrow">Input from Claude Code</div>
+                  <div class="mono xs" style="margin-top: 4px">{ "stockcode": 133211, "quantity": 2 }</div>
+                </div>
+                <div>
+                  <div class="eyebrow row between"><span>Output sent to Claude Code</span><span class="tertiary">412 B</span></div>
+                  <pre class="code" style="margin-top: 6px">{
+  <span class="k">"items"</span>: [
+    { <span class="k">"name"</span>: <span class="s">"Cavendish Bananas"</span>, <span class="k">"qty"</span>: <span class="n">2</span> },
+    { <span class="k">"name"</span>: <span class="s">"Full Cream Milk 3L"</span>, <span class="k">"qty"</span>: <span class="n">1</span> },
+    { <span class="k">"name"</span>: <span class="s">"Helga's Wholemeal"</span>, <span class="k">"qty"</span>: <span class="n">1</span> },
+    <span class="c">… 20 more</span>
+  ],
+  <span class="k">"subtotal"</span>: <span class="n">187.42</span>,
+  <span class="k">"email"</span>: <span class="redacted">[secret:login.username]</span>,
+  <span class="k">"trackingId"</span>: <span class="redacted">[session cookie]</span>
+}</pre>
+                </div>
+                <div class="callout secret" style="padding: 9px 12px">
+                  <span class="i i-eye-off"></span>
+                  <div class="xs">
+                    siteadapter knows every secret it filled and the current cookie values, and replaces exact matches in
+                    results and traces before anything leaves the app.
+                  </div>
+                </div>
+              </aside>
+            </div>
+          </main>
+        </div>
+      </div>
+    </div>
+    <nav class="mockbar" aria-label="Mockup">
+      <a href="index.html">All screens</a>
+      <button type="button" data-theme-toggle>Light / dark</button>
+    </nav>
+  </body>
+</html>

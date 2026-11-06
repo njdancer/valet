@@ -510,6 +510,7 @@ a {
 
 .stack {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-2);
 }
 
@@ -910,15 +911,16 @@ a {
   background: var(--row-alt);
 }
 
-.table tr.selected td {
+.table tbody tr.selected td {
   background: var(--bg-selected);
 }
 
-.table tr.alert td {
+.table tbody tr.alert td {
   background: var(--irreversible-bg);
 }
 
 .table .row,
+.table td.xs,
 .table td > .xs {
   white-space: nowrap;
 }
@@ -1385,7 +1387,7 @@ a {
 
 .step {
   display: grid;
-  grid-template-columns: 64px 22px 1fr auto;
+  grid-template-columns: 64px 22px minmax(0, 1fr) auto;
   gap: var(--space-2);
   align-items: start;
   padding: 5px var(--space-3);
