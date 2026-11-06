@@ -170,10 +170,10 @@ function GrantForm({
 
   // Once items load, re-select the item an earlier grant used, by title.
   useEffect(() => {
-    if (target.kind !== 'onepassword' || item !== null || target.existing === null) return
+    if (target.kind !== 'onepassword' || item !== null || target.existing?.provider !== provider) return
     const previous = vaultItems.find((v) => v.title === target.existing?.itemTitle)
     if (previous !== undefined) setItem(previous.id)
-  }, [vaultItems, item, target])
+  }, [vaultItems, item, target, provider])
 
   const toggle = (origin: string, on: boolean) =>
     setOrigins((current) =>
@@ -281,7 +281,9 @@ function GrantForm({
                         aria-selected={item === v.id}
                         onClick={() => setItem(v.id)}
                       >
-                        <span className="op">{v.title.trim().charAt(0).toUpperCase() || '?'}</span>
+                        <span className="op" aria-hidden="true">
+                          {v.title.trim().charAt(0).toUpperCase() || '?'}
+                        </span>
                         <span>{v.title}</span>
                         {item === v.id ? <Icon name="check" /> : <span />}
                       </button>

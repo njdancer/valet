@@ -380,8 +380,7 @@
   font-size: 11.5px;
   line-height: 1.5;
   padding: 10px 12px;
-  white-space: pre-wrap;
-  word-break: break-word;
+  overflow-x: auto;
 }
 
 .run-list a.nav-item {
@@ -679,10 +678,10 @@
 
 .tray-body {
   display: flex;
+  align-items: flex-start;
   justify-content: center;
   min-height: 100vh;
   padding: 0;
-  background: transparent;
 }
 
 .popover .head {

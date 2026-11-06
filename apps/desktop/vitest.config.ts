@@ -9,6 +9,7 @@ export default defineProject({
     name: 'desktop',
     environment: 'jsdom',
     include: ['test/**/*.test.ts', 'test/**/*.test.tsx'],
+    setupFiles: ['test/setup.ts'],
     // Times render in the person's zone; tests pin one so the wording is stable.
     env: { TZ: 'Australia/Sydney' },
   },
