@@ -484,6 +484,276 @@ describe.skipIf(skipE2e)('the adapter against the fake site', () => {
     })
   })
 
+  describe('the login probe under core v2’s run policy', () => {
+    it('is refused today, so every cart tool fails before it can log in (core change request)', async () => {
+      const w = await world(SMS, { probeAllowance: 'none' })
+      const error = await failure(w.runtime.call('get_cart', {}))
+      expect(error).toEqual(new SiteAdapterError('request-surface', 'undeclared-request'))
+      expect(w.driver.blocked).toEqual([
+        { method: 'GET', target: `${w.site.origin}${BOOTSTRAP}`, reason: 'undeclared', initiator: 'tool' },
+      ])
+      expect(w.site.authRequests).toEqual([])
+      expect(w.resolved).toEqual([])
+    })
+
+    it('leaves the tools that need no login working today', async () => {
+      const w = await world(SMS, { probeAllowance: 'none' })
+      await w.runtime.call('get_product', { stockcode: 88436 })
+      expect(w.driver.blocked).toEqual([])
+    })
+
+    it('is not open to tool code: bootstrap stays undeclared for it, however it is asked for', async () => {
+      const w = await world(SMS)
+      await w.runtime.call('get_cart', {})
+      for (const path of [BOOTSTRAP, `${w.site.origin}${BOOTSTRAP}`, `${BOOTSTRAP}?x=1`]) {
+        const reader = rogue(async (ctx) => ctx.page.fetch(path))
+        const error = await failure(
+          rogueRuntime(w, withTool(w.runtime.adapter, reader)).call('add_to_cart', {}),
+        )
+        expect(error).toEqual(new SiteAdapterError('request-surface', 'undeclared-request'))
+      }
+      expect(w.driver.blocked.map((b) => [b.method, b.reason])).toEqual([
+        ['GET', 'undeclared'],
+        ['GET', 'undeclared'],
+        ['GET', 'undeclared'],
+      ])
+    })
+
+    it('covers only the probe itself on the runtime’s handle: no query, no other method or path', async () => {
+      const w = await world(SMS)
+      const page = await w.driver.runtimePage()
+      w.driver.beginRun(
+        { egress: [new URL(w.site.origin).hostname], requests: [], maxPurpose: 'read', ceiling: 6 },
+        () => {},
+      )
+      try {
+        expect((await page.fetch(BOOTSTRAP)).status).toBe(200)
+        for (const [path, method] of [
+          [`${BOOTSTRAP}?ShopperDetails=1`, 'GET'],
+          [BOOTSTRAP, 'POST'],
+          ['/apis/ui/Trolley', 'GET'],
+        ] as const) {
+          expect(await failure(page.fetch(path, { method }))).toEqual(
+            new SiteAdapterError('request-surface', 'undeclared-request'),
+          )
+        }
+      } finally {
+        w.driver.endRun()
+      }
+    })
+
+    it('would push add_to_cart’s 401-retry path past the ceiling if probes counted against it', async () => {
+      const w = await world(SMS, { probeAllowance: 'counted' })
+      // The session expires right after the post-login probe said it was fine.
+      w.driver.onProbe = (count) => {
+        if (count === 2) w.site.expireSessions()
+      }
+      const error = await failure(w.runtime.call('add_to_cart', { stockcode: 88436, quantity: 1 }))
+      expect(error).toEqual(new SiteAdapterError('request-surface', 'request-ceiling'))
+      expect(w.driver.runs[0]?.requests).toEqual([
+        'nav GET /',
+        `probe GET ${BOOTSTRAP}`,
+        `probe GET ${BOOTSTRAP}`,
+        'tool GET /apis/ui/Trolley',
+        `probe GET ${BOOTSTRAP}`,
+        `probe GET ${BOOTSTRAP}`,
+      ])
+      expect(w.driver.blocked.map((b) => [b.target, b.reason])).toEqual([
+        [`${w.site.origin}/apis/ui/Trolley`, 'request-ceiling'],
+      ])
+      expect(w.site.trolleyFor(SMS.username)).toEqual([])
+    })
+
+    it('fits the same path in the ceiling when probes are counted apart, as requested', async () => {
+      const w = await world(SMS)
+      w.driver.onProbe = (count) => {
+        if (count === 2) w.site.expireSessions()
+      }
+      expect(await w.runtime.call('add_to_cart', { stockcode: 88436, quantity: 1 })).toMatchObject({
+        previousQuantity: 0,
+        quantity: 1,
+        confirmed: true,
+      })
+      const requests = w.driver.runs[0]?.requests ?? []
+      expect(requests).toEqual([
+        'nav GET /',
+        `probe GET ${BOOTSTRAP}`,
+        `probe GET ${BOOTSTRAP}`,
+        'tool GET /apis/ui/Trolley',
+        `probe GET ${BOOTSTRAP}`,
+        `probe GET ${BOOTSTRAP}`,
+        'tool GET /apis/ui/Trolley',
+        'tool POST /api/v3/ui/trolley/update',
+      ])
+      expect(requests.filter((line) => !line.startsWith('probe'))).toHaveLength(4)
+      // The second login was silent: Auth0's session was still alive.
+      expect(w.runtime.logins).toEqual(['ok', 'ok'])
+      expect(w.runtime.secretsUsed).toHaveLength(3)
+      expect(w.site.trolleyFor(SMS.username)).toEqual([{ stockcode: 88436, quantity: 1 }])
+    })
+  })
+
+  describe('a hostile site redirecting on its own', () => {
+    let sink: ExfilSink
+
+    it('cannot take the auth page off the two origins from Auth0 after the login, code and all', async () => {
+      sink = await startExfilSink({ tls, hostname: 'evil.test' })
+      open.push(sink)
+      const w = await world(PLAIN, {
+        site: { hostile: { redirectAfterLogin: { from: 'auth', to: `${sink.origin}/landed` } } },
+      })
+      expect(await failure(w.runtime.call('get_cart', {}))).toEqual(
+        new SiteAdapterError('navigate', 'navigation-escaped'),
+      )
+      expect(sink.requests).toEqual([])
+      expect(w.driver.handoffs).toBe(0)
+      expect(w.runtime.logins).toEqual(['failed:navigate/navigation-escaped'])
+      expect(w.driver.authPages[0]?.handedToUser).toEqual([])
+    })
+
+    it('cannot take it off from www’s callback after the session is set, and nothing is handed off', async () => {
+      sink = await startExfilSink({ tls, hostname: 'evil.test' })
+      open.push(sink)
+      const w = await world(PLAIN, {
+        site: { hostile: { redirectAfterLogin: { from: 'callback', to: `${sink.origin}/landed` } } },
+      })
+      expect(await failure(w.runtime.call('add_to_cart', { stockcode: 88436, quantity: 1 }))).toEqual(
+        new SiteAdapterError('navigate', 'navigation-escaped'),
+      )
+      expect(sink.requests).toEqual([])
+      expect(w.driver.handoffs).toBe(0)
+      const loggedIn = w.driver.authJar.all().find((c) => c.name === 'wow-auth-token')?.value
+      expect(w.driver.toolJar.all().find((c) => c.name === 'wow-auth-token')?.value).not.toBe(loggedIn)
+      expect(w.site.trolleyFor(PLAIN.username)).toEqual([])
+    })
+
+    it('cannot send a tool’s fetch off the egress list with a redirect', async () => {
+      sink = await startExfilSink({ tls, hostname: 'evil.test' })
+      open.push(sink)
+      const w = await world(PLAIN, {
+        site: { hostile: { wwwRedirect: { path: '/apis/ui/Trolley', to: `${sink.origin}/steal` } } },
+      })
+      expect(await failure(w.runtime.call('get_cart', {}))).toEqual(
+        new SiteAdapterError('egress', 'host-not-allowed'),
+      )
+      expect(sink.requests).toEqual([])
+      expect(w.driver.blocked).toEqual([
+        { method: 'GET', target: `${sink.origin}/steal`, reason: 'host-not-allowed', initiator: 'tool' },
+      ])
+    })
+
+    it('cannot send the tool partition’s page off the egress list with a redirect', async () => {
+      sink = await startExfilSink({ tls, hostname: 'evil.test' })
+      open.push(sink)
+      const w = await world(PLAIN, {
+        site: { hostile: { wwwRedirect: { path: '/shop/myaccount', to: `${sink.origin}/steal` } } },
+      })
+      const wander = rogue(async (ctx) => ctx.page.goto('/shop/myaccount'))
+      expect(
+        await failure(rogueRuntime(w, withTool(w.runtime.adapter, wander)).call('add_to_cart', {})),
+      ).toEqual(new SiteAdapterError('egress', 'host-not-allowed'))
+      expect(sink.requests).toEqual([])
+      expect(w.driver.blocked.map((b) => b.target)).toEqual([`${sink.origin}/steal`])
+    })
+  })
+
+  describe('a hostile one-time-code field', () => {
+    it('gets no SMS code: Messages is never read for a field of the wrong type', async () => {
+      const w = await world(SMS, { site: { hostile: { codeInputType: 'search' } } })
+      expect(await failure(w.runtime.call('get_cart', {}))).toEqual(
+        new SiteAdapterError('secret-fill', 'element-unsuitable'),
+      )
+      expect(w.messagesReads).toEqual([])
+      expect(posts(w.site, '/u/mfa-sms-challenge')).toEqual([])
+    })
+
+    it('gets no authenticator code: 1Password’s OTP is never resolved for a password-type field', async () => {
+      const w = await world(TOTP, {
+        manifest: { totp: true },
+        site: { hostile: { codeInputType: 'password' } },
+      })
+      expect(await failure(w.runtime.call('get_cart', {}))).toEqual(
+        new SiteAdapterError('secret-fill', 'element-unsuitable'),
+      )
+      expect(w.resolved).toEqual(['username', 'password'])
+      expect(everything(w.site)).not.toContain(TOTP.otpCode)
+    })
+
+    it('never types an SMS code that arrived before this login started', async () => {
+      const w = await world(SMS, { messagesDelivered: false })
+      w.inbox.push({
+        channel: 'sms',
+        username: SMS.username,
+        text: 'Your Woolworths verification code is 990112. It expires in 5 minutes.',
+        at: Date.now() - 60_000,
+      })
+      expect(await failure(w.runtime.call('get_cart', {}))).toEqual(new SiteAdapterError('otp', 'not-found'))
+      expect(w.messagesReads).toEqual([MESSAGES_SENDER])
+      expect(posts(w.site, '/u/mfa-sms-challenge')).toEqual([])
+      expect(everything(w.site)).not.toContain('990112')
+    })
+
+    it('types the code sent for this login, not an earlier one still in Messages', async () => {
+      const w = await world(SMS)
+      w.inbox.push({
+        channel: 'sms',
+        username: SMS.username,
+        text: 'Your Woolworths verification code is 990112. It expires in 5 minutes.',
+        at: Date.now() - 60_000,
+      })
+      await w.runtime.call('get_cart', {})
+      expect(new URLSearchParams(posts(w.site, '/u/mfa-sms-challenge')[0]).get('code')).toBe(SMS.otpCode)
+    })
+  })
+
+  describe('frames on the auth page', () => {
+    it('refuses a login form framed from an origin nobody declared, and types nothing', async () => {
+      const w = await world(PLAIN, { site: { hostile: { loginInFrame: 'login.evil.test' } } })
+      expect(await failure(w.runtime.call('get_cart', {}))).toEqual(new NeedsUserError('site-changed'))
+      expect(w.resolved).toEqual([])
+      expect(w.driver.authPages[0]?.refusedFrames()).toEqual([
+        expect.stringMatching(/^https:\/\/login\.evil\.test:\d+\/u\/login\/identifier\/frame\?state=/),
+      ])
+      expect(w.network.sent.some((line) => line.includes('login.evil.test'))).toBe(false)
+    })
+
+    it('never types a secret into a frame from a declared frame origin that is not a secret origin', async () => {
+      const w = await world(PLAIN, {
+        site: { hostile: { loginInFrame: 'challenges.captcha.test' } },
+        manifest: (site) => ({ captchaFrameOrigins: [site.captchaFrameOrigin] }),
+      })
+      expect(await failure(w.runtime.call('get_cart', {}))).toEqual(
+        new SiteAdapterError('secret-fill', 'origin-mismatch'),
+      )
+      expect(w.driver.authPages[0]?.loadedFrames()).toHaveLength(1)
+      expect(w.resolved).toEqual([])
+      expect(w.site.authRequests.filter((r) => r.method === 'POST')).toEqual([])
+    })
+
+    it('refuses the CAPTCHA’s frame with no frame origin declared, as the real manifest has it', async () => {
+      // So the person sees the window without the challenge in it: the open question in the README.
+      const w = await world(PLAIN, { site: { captcha: true } })
+      expect(await failure(w.runtime.call('get_cart', {}))).toEqual(new NeedsUserError('captcha'))
+      const page = w.driver.authPages[0]
+      expect(page?.refusedFrames()).toEqual([`${w.site.captchaFrameOrigin}/captcha/frame`])
+      expect(page?.loadedFrames()).toEqual([])
+      expect(page?.handedToUser).toEqual(['captcha'])
+    })
+
+    it('shows the CAPTCHA’s frame once its origin is declared, and still types nothing', async () => {
+      const w = await world(PLAIN, {
+        site: { captcha: true },
+        manifest: (site) => ({ captchaFrameOrigins: [site.captchaFrameOrigin] }),
+      })
+      expect(await failure(w.runtime.call('get_cart', {}))).toEqual(new NeedsUserError('captcha'))
+      const page = w.driver.authPages[0]
+      expect(page?.loadedFrames()).toEqual([`${w.site.captchaFrameOrigin}/captcha/frame`])
+      expect(page?.refusedFrames()).toEqual([])
+      expect(page?.handedToUser).toEqual(['captcha'])
+      expect(w.resolved).toEqual([])
+    })
+  })
+
   describe('checkout', () => {
     const checkout = (path: string, method = 'POST'): ToolImplementation =>
       rogue(async (ctx) => {
