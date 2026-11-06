@@ -939,6 +939,30 @@ describe('guard: trusted input can reach the element', () => {
   })
 })
 
+describe('auth frame origins', () => {
+  it('never lets a secret into a frame the manifest allows only as a subframe, such as a CAPTCHA', async () => {
+    const w = world()
+    const captcha = 'https://captcha.example.com'
+    const manifest = parseManifest({
+      ...structuredClone(MANIFEST),
+      auth: { steps: structuredClone(MANIFEST.auth.steps), frameOrigins: [captcha] },
+    })
+    w.input.manifest = { ...manifest, auth: { ...manifest.auth, steps: FILL_PASSWORD.auth.steps } }
+    w.grants.grants[0] = { ...GRANT, origins: [LOGIN, captcha] }
+    w.page.site[LOGIN_PAGE] = {
+      frames: { challenge: captcha },
+      forms: { login: captcha },
+      elements: { '#password': { inputType: 'password', frame: 'challenge', form: 'login' } },
+    }
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'secret-fill',
+      errorClass: 'origin-mismatch',
+    })
+    expectNothingReleased(w)
+  })
+})
+
 describe('the driver holds typing to the allowed origins', () => {
   it('passes only origins both granted and requested, not every granted one', async () => {
     const w = world()

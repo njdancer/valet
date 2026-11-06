@@ -503,6 +503,43 @@ describe('otp from Messages', () => {
     expect(w.otpReader.issued[0]?.disposed).toBe(true)
   })
 
+  it('drops granted origins that are off the navigation allowlist from where the code may go', async () => {
+    const w = world()
+    w.page.cookies.add('session')
+    w.grants.grants[1] = { ...MESSAGES_GRANT, origins: [EVIL, LOGIN, 'https://*.shop.test'] }
+    w.otpReader.messages.push({ at: START, sender: SENDER, body: `code is ${CANARY.sms}` })
+    w.input.manifest = SMS
+    expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
+    expect(w.page.typed.map((typed) => typed.allowedOrigins)).toEqual([[LOGIN]])
+  })
+
+  it('hands the runtime a copy of the code for redaction', async () => {
+    const w = world()
+    w.otpReader.messages.push({ at: START, sender: SENDER, body: `code is ${CANARY.sms}` })
+    w.input.manifest = SMS
+    await runAuthFlow(w.input)
+    expect(w.remembered).toHaveLength(1)
+    expect(w.remembered[0]?.occursIn(`your code ${CANARY.sms}`)).toBe(true)
+    expect(w.otpReader.issued[0]?.disposed).toBe(true)
+  })
+
+  it('stops typing the code if the page navigates partway through it', async () => {
+    const w = world()
+    w.page.site[`${WWW}/verify`] = structuredClone(w.page.site[LOGIN_PAGE]!)
+    w.page.beforeKeystroke = (index) => {
+      if (index === 2) w.page.navigate(`${WWW}/verify`)
+    }
+    w.otpReader.messages.push({ at: START, sender: SENDER, body: `code is ${CANARY.sms}` })
+    w.input.manifest = SMS
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'secret-fill',
+      errorClass: 'origin-mismatch',
+    })
+    expect(w.page.typed.map((typed) => typed.text)).toEqual([CANARY.sms.slice(0, 2)])
+    expect(w.otpReader.issued[0]?.disposed).toBe(true)
+  })
+
   it('disposes the code after typing it', async () => {
     const w = world()
     w.otpReader.messages.push({ at: START, sender: 'ShopSMS', body: `code is ${CANARY.sms}` })
