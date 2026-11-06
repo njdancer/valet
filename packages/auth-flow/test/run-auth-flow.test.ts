@@ -15,6 +15,24 @@ describe('runAuthFlow', () => {
     expect(w.page.clicked).toEqual(['#submit'])
   })
 
+  it('confirms the login from the auth partition, where the site set its session cookie', async () => {
+    const w = world()
+    expect(w.page.cookies.has('session')).toBe(false)
+    expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
+    expect(w.page.cookies.has('session')).toBe(true)
+  })
+
+  it('reports not-logged-in when the site never set a session, wherever the page ended up', async () => {
+    const w = world()
+    w.page.site[ACCOUNT_PAGE] = { text: ['Welcome back'] }
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'probe',
+      errorClass: 'not-logged-in',
+    })
+    expect(w.page.currentUrl()).toBe(ACCOUNT_PAGE)
+  })
+
   it('disposes every secret it fetched', async () => {
     const w = world()
     await runAuthFlow(w.input)

@@ -31,6 +31,8 @@ export interface FakeState {
   readonly clicks?: Readonly<Record<string, string>>
   /** The site's bot-block page. */
   readonly blocked?: boolean
+  /** Cookies the site sets on arrival here, e.g. a session cookie once login succeeds. */
+  readonly setsCookies?: readonly string[]
 }
 
 export type FakeSite = Record<string, FakeState>
@@ -53,6 +55,8 @@ export class FakeAuthPage implements AuthPage {
   readonly clicked: string[] = []
   readonly typed: Typed[] = []
   readonly handedToUser: string[] = []
+  /** The auth partition's cookie jar, by name. The probe reads this; nothing copies it anywhere. */
+  readonly cookies = new Set<string>()
   closed = false
 
   constructor(readonly site: FakeSite) {}
@@ -63,6 +67,7 @@ export class FakeAuthPage implements AuthPage {
     for (let hops = 0; next !== undefined && hops < 10; hops++) {
       this.url = next
       this.history.push(next)
+      for (const cookie of this.state().setsCookies ?? []) this.cookies.add(cookie)
       next = this.state().redirectTo
     }
   }

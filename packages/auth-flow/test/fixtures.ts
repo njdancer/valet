@@ -41,7 +41,7 @@ export const MANIFEST: ManifestInput = {
   },
   session: {
     cookieDomains: ['www.shop.test'],
-    probe: { kind: 'fetch', path: '/api/me', expectStatus: 200 },
+    probe: { kind: 'cookie', name: 'session' },
   },
   auth: {
     steps: [
@@ -70,7 +70,7 @@ export const SITE: FakeSite = {
     text: ['Sign in to Shop'],
     clicks: { '#submit': ACCOUNT_PAGE },
   },
-  [ACCOUNT_PAGE]: { text: ['Welcome back'] },
+  [ACCOUNT_PAGE]: { text: ['Welcome back'], setsCookies: ['session'] },
 }
 
 export const GRANT: Grant = {
@@ -124,7 +124,9 @@ export function world() {
     grants,
     providers: { fake: provider },
     otpReader,
-    probe: async () => page.currentUrl() === ACCOUNT_PAGE,
+    // A cookie probe against the auth partition, which is where the flow runs and the only place
+    // the session exists until the caller copies it.
+    probe: async () => page.cookies.has('session'),
     isBlockedPage: async () => page.isBlocked(),
     audit,
     clock: clock.clock,

@@ -44,6 +44,10 @@ manifest's `auth.steps` against an `AuthPage` and returns `ok`, `needsUser(reaso
   than the flow's start, then fails `otp: not-found`. It is audited as secret `messages`.
 - **`blocked`** is audited as `login-finished { outcome: 'failed', errorClass: 'blocked-by-site' }`
   until the audit vocabulary has a `blocked` outcome.
+- **`assertLoggedIn`** calls `input.probe`, which runs against the **auth** partition (a cookie
+  read from the auth session, or a fetch from the auth page). Nothing has been copied to the
+  tool partition while the flow runs; the caller copies cookies auth → tool only after an `ok`
+  outcome, so a failed or half-finished login never reaches tool code.
 - **Timeouts are cooperative.** The deadline is checked between steps and on every poll. A driver
   primitive that hangs is bounded by the driver's own per-primitive timeout, not by this package.
 
