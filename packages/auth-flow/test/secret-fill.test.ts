@@ -623,10 +623,54 @@ describe('resolving the value', () => {
 })
 
 describe('checking again after resolving', () => {
-  it('refuses when the page navigated to another origin while the person approved Touch ID', async () => {
+  it('refuses when the page left the allowlist while the person approved Touch ID', async () => {
     const w = world()
     w.page.site[`${EVIL}/login`] = structuredClone(w.page.site[LOGIN_PAGE]!)
     w.provider.beforeResolve = () => w.page.navigate(`${EVIL}/login`)
+    w.input.manifest = FILL_PASSWORD
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'navigate',
+      errorClass: 'navigation-escaped',
+    })
+    expect(w.page.typed).toEqual([])
+    expect(w.provider.issued[0]?.disposed).toBe(true)
+  })
+
+  it('refuses when the page bounced through another host and came back while resolving', async () => {
+    const w = world()
+    w.provider.beforeResolve = () => {
+      w.page.navigate(`${EVIL}/x`)
+      w.page.navigate(LOGIN_PAGE)
+    }
+    w.input.manifest = FILL_PASSWORD
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'navigate',
+      errorClass: 'navigation-escaped',
+    })
+    expect(w.page.url).toBe(LOGIN_PAGE)
+    expect(w.page.typed).toEqual([])
+    expect(w.audit.events.filter((e) => e.type === 'secret-used')).toEqual([])
+    expect(w.provider.issued).toHaveLength(1)
+    expect(w.provider.issued[0]?.disposed).toBe(true)
+  })
+
+  it('stops when the page became a block page while resolving', async () => {
+    const w = world()
+    w.page.site[`${LOGIN}/denied`] = { ...structuredClone(w.page.site[LOGIN_PAGE]!), blocked: true }
+    w.provider.beforeResolve = () => w.page.navigate(`${LOGIN}/denied`)
+    w.input.manifest = FILL_PASSWORD
+    expect(await runAuthFlow(w.input)).toEqual({ status: 'blocked' })
+    expect(w.page.typed).toEqual([])
+    expect(w.audit.events.filter((e) => e.type === 'secret-used')).toEqual([])
+    expect(w.provider.issued[0]?.disposed).toBe(true)
+  })
+
+  it('refuses when the page moved to an allowed origin the secret was not granted for', async () => {
+    const w = world()
+    w.page.site[`${WWW}/login`] = structuredClone(w.page.site[LOGIN_PAGE]!)
+    w.provider.beforeResolve = () => w.page.navigate(`${WWW}/login`)
     w.input.manifest = FILL_PASSWORD
     expect(await runAuthFlow(w.input)).toEqual({
       status: 'failed',
@@ -635,6 +679,25 @@ describe('checking again after resolving', () => {
     })
     expect(w.page.typed).toEqual([])
     expect(w.provider.issued[0]?.disposed).toBe(true)
+  })
+
+  it('checks the navigation history before resolving, so an escaped page costs no Touch ID', async () => {
+    const w = world()
+    vi.spyOn(w.page, 'goto').mockImplementation(async (url) => {
+      w.page.navigate(`${EVIL}/x`)
+      w.page.navigate(url)
+    })
+    // Hide the history from the two after-step checks so that only the fill's own check can see it.
+    let calls = 0
+    const committed = w.page.committedUrls.bind(w.page)
+    vi.spyOn(w.page, 'committedUrls').mockImplementation(() => (++calls <= 2 ? [] : committed()))
+    w.input.manifest = FILL_PASSWORD
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'navigate',
+      errorClass: 'navigation-escaped',
+    })
+    expect(w.provider.calls).toEqual([])
   })
 
   it('refuses when the field was swapped for an unsuitable one while resolving', async () => {

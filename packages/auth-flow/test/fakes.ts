@@ -93,6 +93,8 @@ export class FakeOtpReader implements OtpReader {
   readonly calls: { query: MessagesOtpQuery; notBefore: Date }[] = []
   readonly issued: SecretValue[] = []
   failWith: CredentialError | null = null
+  /** Runs before each read, for tests where the page moves while the reader looks for a code. */
+  beforeRead: (() => void) | null = null
 
   constructor(
     readonly clock: FakeClock,
@@ -101,6 +103,7 @@ export class FakeOtpReader implements OtpReader {
 
   async latest(query: MessagesOtpQuery, notBefore: Date): Promise<SecretValue> {
     this.calls.push({ query, notBefore })
+    this.beforeRead?.()
     if (this.failWith !== null) throw this.failWith
     const pattern = new RegExp(query.pattern)
     const candidates = this.messages

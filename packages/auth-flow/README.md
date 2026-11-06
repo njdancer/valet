@@ -21,10 +21,11 @@ manifest's `auth.steps` against an `AuthPage` and returns `ok`, `needsUser(reaso
 - **After every step, and on every poll:** every committed URL must be on `navigation`
   (`navigate: navigation-escaped`), then `isBlockedPage()` (`blocked`), then the flow deadline
   (`timeout: timed-out`). A fresh page's `about:blank` is allowed in the history.
-- **Secret fill order:** grant (`not-granted`) → manifest field (`invalid`) → element visible
-  (`element-missing`) → frame origin, then page origin, in granted ∩ requested
+- **Secret fill order:** grant (`not-granted`) → manifest field (`invalid`) → every committed
+  URL on `navigation` (`navigate: navigation-escaped`) → not a block page (`blocked`) → element
+  visible (`element-missing`) → frame origin, then page origin, in granted ∩ requested
   (`origin-mismatch`) → element suits field (`element-unsuitable`) → password form action
-  (`form-action-mismatch`) → resolve (`credential: <failure>`) → **the element checks again** →
+  (`form-action-mismatch`) → resolve (`credential: <failure>`) → **the history, block and element checks again** →
   focus → audit `secret-used` → type → dispose. Auditing comes before typing, so a fill that
   can't be audited doesn't happen.
 - **`retry: { times: n }`** runs its steps up to `n + 1` times. Only `condition-timeout`,

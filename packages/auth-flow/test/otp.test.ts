@@ -275,6 +275,38 @@ describe('otp from Messages', () => {
     expect(w.otpReader.issued[0]?.disposed).toBe(true)
   })
 
+  it('refuses a code that arrives after the page bounced through another host and came back', async () => {
+    const w = world()
+    w.otpReader.messages.push({ at: START, sender: 'ShopSMS', body: `code is ${CANARY.sms}` })
+    w.otpReader.beforeRead = () => {
+      w.page.navigate(`${EVIL}/x`)
+      w.page.navigate(LOGIN_PAGE)
+    }
+    w.input.manifest = SMS
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'navigate',
+      errorClass: 'navigation-escaped',
+    })
+    expect(w.page.typed).toEqual([])
+    expect(w.audit.events.filter((e) => e.type === 'secret-used')).toEqual([])
+    expect(w.otpReader.issued).toHaveLength(1)
+    expect(w.otpReader.issued[0]?.disposed).toBe(true)
+  })
+
+  it('refuses a code that arrives after a bounce during a poll', async () => {
+    const w = world()
+    w.otpReader.messages.push({ at: START + 1000, sender: 'ShopSMS', body: `code is ${CANARY.sms}` })
+    w.clock.onSleep = () => {
+      w.page.navigate(`${EVIL}/x`)
+      w.page.navigate(LOGIN_PAGE)
+    }
+    w.input.manifest = SMS
+    expect(await runAuthFlow(w.input)).toMatchObject({ errorClass: 'navigation-escaped' })
+    expect(w.page.typed).toEqual([])
+    expect(w.otpReader.issued[0]?.disposed).toBe(true)
+  })
+
   it('disposes the code after typing it', async () => {
     const w = world()
     w.otpReader.messages.push({ at: START, sender: 'ShopSMS', body: `code is ${CANARY.sms}` })

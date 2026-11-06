@@ -120,7 +120,12 @@ async function resolveSecret(resolve: () => Promise<SecretValue>, stage: Stage):
   return value
 }
 
-/** The element checks, in the order docs/security-model.md gives them. Returns the element. */
+/**
+ * The page and element checks, in the order docs/security-model.md gives them. Returns the element.
+ * They run before the value is fetched and again once it is in hand, and the second run matters
+ * most: the page may have bounced through another host while the person approved Touch ID, and the
+ * after-step checks only see that once the step, and so the typing, is over.
+ */
 async function checkTarget(
   ctx: FlowContext,
   selector: string,
@@ -128,6 +133,8 @@ async function checkTarget(
   origins: readonly string[],
 ): Promise<ElementInfo> {
   const { page } = ctx.input
+  await checkNavigation(ctx)
+  await checkBlocked(ctx)
   const element = await guarded('secret-fill', () => page.inspect(selector))
   if (element === null || !element.visible) throw new SiteAdapterError('secret-fill', 'element-missing')
   if (!originAllowed(element.frameOrigin, origins)) {
