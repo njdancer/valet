@@ -517,6 +517,24 @@ describe('retry', () => {
     expect(w.clock.sleeps).toEqual([200, 100])
   })
 
+  it('does not start another attempt once a failed one has used up the flow', async () => {
+    const w = world()
+    w.input.flowTimeoutMs = 1000
+    let probes = 0
+    w.input.probe = async () => {
+      probes++
+      w.clock.now += 2000
+      return false
+    }
+    w.input.manifest = manifestWithSteps([{ op: 'retry', times: 3, steps: [{ op: 'assertLoggedIn' }] }])
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'timeout',
+      errorClass: 'timed-out',
+    })
+    expect(probes).toBe(1)
+  })
+
   it('nests inside when, and when inside retry', async () => {
     const w = world()
     let probes = 0
