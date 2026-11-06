@@ -11,7 +11,8 @@ export default defineConfig({
         '**/index.ts',
         '**/*.d.ts',
         'packages/browser-electron/src/electron/**',
-        '**/renderer/dev/screenshot.mjs',
+        // The renderer's dev fake is test scaffolding, not shipped code.
+        '**/src/renderer/dev/**',
         '**/*.html',
       ],
       reporter: ['text-summary', 'html', 'json-summary'],

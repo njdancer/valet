@@ -1,3 +1,5 @@
+// The renderer and its tests, with DOM and JSX. Kept out of the root tsconfig so the Node packages
+// typecheck without browser globals: run `tsc --noEmit -p apps/desktop` as well as the root check.
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
