@@ -5,21 +5,35 @@
 // - signals: ToolHost.call takes no abort signal, so a client's cancel can't stop a run. The call
 //   runs to its own deadlines; the endpoint drops the late answer.
 //
-// The app's own refusals come first and never reach the runtime: while paused, every call is
-// blocked; a client whose name the person revoked is refused (a label, see clients.ts).
+// The app's own refusals come first and never reach the runtime, but are audited like any call
+// (hooks.refused writes tool-called and tool-finished for them). Both fail at stage `config`, which
+// the runtime never reports for a call, so the log and the client can tell them from the runtime's:
+// - while paused: config: unavailable (not a rate limit: the site isn't involved, and a retry
+//   succeeds only once the person resumes);
+// - a client whose name the person revoked (a label, see clients.ts): config: not-granted.
+//
+// A call that runs enters the adapter's gate first (adapter-gate.ts), so the app's own login work
+// never overlaps it.
 
 import type { CallOutcome, ListedTool, ToolCall, ToolCaller } from '@siteadapter/mcp-server'
 import type { ToolCallResult, ToolHost } from '@siteadapter/runtime'
 
-/** How long a paused call tells the client to wait before trying again. */
-export const PAUSED_RETRY_MS = 5 * 60_000
+/** A call the app refused before the runtime saw it. */
+export type AppRefusal = Extract<ToolCallResult, { readonly status: 'failed' }>
+
+export const PAUSED_REFUSAL: AppRefusal = { status: 'failed', stage: 'config', errorClass: 'unavailable' }
+export const REVOKED_REFUSAL: AppRefusal = { status: 'failed', stage: 'config', errorClass: 'not-granted' }
 
 export interface CallerHooks {
   readonly paused: () => boolean
   readonly revoked: (client: string) => boolean
-  /** A call is about to run (or was refused before running). */
+  /** A call is about to run. */
   readonly started: (call: ToolCall) => void
   readonly finished: (call: ToolCall, result: ToolCallResult) => void
+  /** The app refused a call itself: audit it. A refusal that can't be recorded is still a refusal. */
+  readonly refused: (call: ToolCall, refusal: AppRefusal) => Promise<void>
+  /** Waits until the call may use the adapter; the result is called once the call is done. */
+  readonly enter: (adapterId: string) => Promise<() => void>
 }
 
 export class RuntimeToolCaller implements ToolCaller {
@@ -48,26 +62,30 @@ export class RuntimeToolCaller implements ToolCaller {
   }
 
   async call(call: ToolCall): Promise<CallOutcome> {
-    if (this.hooks.paused()) {
-      return {
-        status: 'blocked',
-        stage: 'tool-run',
-        errorClass: 'rate-limited',
-        retryAfterMs: PAUSED_RETRY_MS,
-      }
+    const refusal = this.hooks.paused()
+      ? PAUSED_REFUSAL
+      : this.hooks.revoked(call.client)
+        ? REVOKED_REFUSAL
+        : null
+    if (refusal !== null) {
+      await this.hooks.refused(call, refusal).catch(() => undefined)
+      return outcomeOf(refusal)
     }
-    if (this.hooks.revoked(call.client))
-      return { status: 'failed', stage: 'manifest', errorClass: 'not-granted' }
-    this.hooks.started(call)
-    const result = await this.host.call({
-      adapterId: call.adapterId,
-      tool: call.tool,
-      input: call.input,
-      client: call.client,
-      callId: call.callId,
-    })
-    this.hooks.finished(call, result)
-    return outcomeOf(result)
+    const leave = await this.hooks.enter(call.adapterId)
+    try {
+      this.hooks.started(call)
+      const result = await this.host.call({
+        adapterId: call.adapterId,
+        tool: call.tool,
+        input: call.input,
+        client: call.client,
+        callId: call.callId,
+      })
+      this.hooks.finished(call, result)
+      return outcomeOf(result)
+    } finally {
+      leave()
+    }
   }
 }
 

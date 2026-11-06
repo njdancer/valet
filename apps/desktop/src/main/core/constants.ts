@@ -21,6 +21,12 @@ export const CONFIRMATION_TIMEOUT_MS = 2 * 60_000
 /** How long a login hand-off window stays up before it is closed and logins wait (D50). */
 export const HANDOFF_WINDOW_MS = 15 * 60_000
 
+/**
+ * How long the person's own login work (opening the login window, the hand-off after "I'm done")
+ * waits for the adapter's tool calls and runs to finish before it gives up; new calls wait meanwhile.
+ */
+export const LOGIN_WAIT_MS = 30_000
+
 /** The auth flow's own budget, including waiting for a one-time code. */
 export const AUTH_FLOW_TIMEOUT_MS = 90_000
 export const TYPING_DELAY_MS = 60

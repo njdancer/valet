@@ -5,6 +5,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { SiteAdapterError } from '@siteadapter/core'
 import type { RunningEndpoint, ToolCaller } from '@siteadapter/mcp-server'
 import { afterEach, describe, expect, it } from 'vitest'
 import { dataPaths } from '../../src/main/core/constants'
@@ -296,22 +297,82 @@ describe('tool calls', () => {
     expect((await s.api.endpoint.status()).connectedClients).toBe(1)
   })
 
-  it('refuses every call while paused, and calls under a revoked name', async () => {
+  it('refuses every call while paused, and calls under a revoked name, and audits both', async () => {
     const s = await approved()
     await s.api.app.setPaused(true)
     expect(await s.api.app.status()).toEqual({ paused: true, version: '0.1.0', demo: true })
-    expect((await s.call('echo', { text: 'x' })).status).toBe('blocked')
+    // The app's refusal, not the site's: no rate limit, and the stage says it was the app's config.
+    expect(await s.call('echo', { text: 'x' }, 'Claude Code', 'call_paused')).toEqual({
+      status: 'failed',
+      stage: 'config',
+      errorClass: 'unavailable',
+    })
+    expect(s.driver.runs).toBe(0)
     await s.api.app.setPaused(false)
     expect((await s.call('echo', { text: 'x' })).status).toBe('ok')
     const [client] = await s.api.clients.list()
     await s.api.clients.revoke(client?.id as string)
     await expect(s.api.clients.revoke('c_0000000000000000')).rejects.toThrow()
-    expect(await s.call('echo', { text: 'x' })).toEqual({
+    expect(await s.call('echo', { text: 'x' }, 'Claude Code', 'call_revoked')).toEqual({
       status: 'failed',
-      stage: 'manifest',
+      stage: 'config',
       errorClass: 'not-granted',
     })
     expect((await s.call('echo', { text: 'x' }, 'Another')).status).toBe('ok')
+
+    const page = await s.api.audit.page({ category: 'tool-calls' })
+    const events = page.records.map((r) => r.event)
+    for (const [callId, errorClass] of [
+      ['call_paused', 'unavailable'],
+      ['call_revoked', 'not-granted'],
+    ] as const) {
+      expect(events).toContainEqual({
+        type: 'tool-called',
+        adapterId: 'shop',
+        adapterHash: s.adapter.hash,
+        tool: 'echo',
+        client: 'Claude Code',
+        callId,
+      })
+      expect(events).toContainEqual({
+        type: 'tool-finished',
+        adapterId: 'shop',
+        callId,
+        outcome: 'failed',
+        stage: 'config',
+        errorClass,
+        durationMs: 0,
+      })
+    }
+    expect((await s.api.runs.list()).map((r) => r.callId)).toEqual(
+      expect.arrayContaining(['call_paused', 'call_revoked']),
+    )
+  })
+
+  it('audits a refused call’s undeclared tool and unprintable client the way the runtime would', async () => {
+    const s = await approved()
+    await s.api.app.setPaused(true)
+    await s.call('no_such_tool', {}, 'Claude\u0007 Code\u200b', 'call_odd')
+    // A call id the runtime wouldn't take, or an adapter that isn't installed, isn't recorded.
+    await s.call('echo', {}, 'Claude Code', 'bad id!')
+    await (s.endpoint.caller as ToolCaller).call({
+      adapterId: 'nope',
+      tool: 'echo',
+      input: {},
+      client: 'x',
+      callId: 'call_nope',
+    })
+    const events = (await s.api.audit.page({ category: 'tool-calls' })).records.map((r) => r.event)
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'tool-called',
+        tool: '(invalid)',
+        client: 'Claude Code',
+        callId: 'call_odd',
+      }),
+    )
+    expect(JSON.stringify(events)).not.toContain('bad id!')
+    expect(JSON.stringify(events)).not.toContain('call_nope')
   })
 
   it('asks the person in the confirmation panel, and only an armed approval from it counts', async () => {
@@ -381,6 +442,65 @@ describe('the login window', () => {
     await s.api.closeLoginWindow('shop')
     expect(s.driver.pages[1]?.closed).toBe(true)
     expect(s.ui.banners).toContain('close shop')
+  })
+  it('is refused while the site’s circuit breaker is open, opening and finishing alike', async () => {
+    const s = await approved()
+    await s.api.openLoginWindow('shop')
+    const page = s.driver.pages[0]
+    if (page !== undefined) page.cookies = ['sid']
+    await s.api.closeLoginWindow('shop')
+    const later = Date.parse('2026-11-07T01:00:00.000Z')
+    writeFileSync(
+      s.paths.breakers,
+      JSON.stringify({ version: 1, hosts: { 'www.shop.test': { retryAt: later, cooldownMs: 60_000 } } }),
+    )
+    expect((await s.api.health.sites())[0]?.breaker).toBe('open')
+    await expect(s.api.openLoginWindow('shop')).rejects.toEqual(new SiteAdapterError('login', 'rate-limited'))
+    expect(s.driver.pages).toHaveLength(1)
+    expect(s.service.hasHandoff('shop')).toBe(false)
+
+    // A window already up when the breaker opened can't hand off either.
+    writeFileSync(s.paths.breakers, JSON.stringify({ version: 1, hosts: {} }))
+    await s.api.openLoginWindow('shop')
+    const second = s.driver.pages[1]
+    if (second !== undefined) second.cookies = ['sid']
+    writeFileSync(
+      s.paths.breakers,
+      JSON.stringify({ version: 1, hosts: { 'www.shop.test': { retryAt: later, cooldownMs: 60_000 } } }),
+    )
+    await expect(s.api.finishLogin('shop')).rejects.toEqual(new SiteAdapterError('login', 'rate-limited'))
+    expect(s.driver.handoffs).toEqual([])
+    expect(s.service.hasHandoff('shop')).toBe(true)
+    // Once the cool-down is over it goes through.
+    s.advance(60 * 60_000)
+    await s.api.finishLogin('shop')
+    expect(s.driver.handoffs).toHaveLength(1)
+  })
+
+  it('hands off only once no call or run is going on, and holds new calls until it has', async () => {
+    const s = await approved()
+    await s.api.openLoginWindow('shop')
+    const page = s.driver.pages[0]
+    if (page !== undefined) page.cookies = ['sid']
+    // A call waiting on the person's confirmation is in flight, with its run open.
+    const pending = s.call('add', { item: 'milk' })
+    for (let i = 0; i < 50 && s.ui.shownConfirmations.length === 0; i++)
+      await new Promise((r) => setTimeout(r, 10))
+    let handedOff = false
+    const finishing = s.api.finishLogin('shop').then(() => {
+      handedOff = true
+    })
+    await new Promise((r) => setTimeout(r, 30))
+    expect(handedOff).toBe(false)
+    expect(s.driver.handoffs).toEqual([])
+    // A call that arrives now waits for the hand-off.
+    const echo = s.call('echo', { text: 'x' })
+    await s.api.answerConfirmation(s.ui.shownConfirmations[0] as string, false, 'tray')
+    expect(await pending).toEqual({ status: 'ok', output: { added: false } })
+    await finishing
+    expect((await echo).status).toBe('ok')
+    // The add's run ended before the hand-off, and the echo's run began after it.
+    expect(s.driver.log).toEqual(['begin', 'end', 'handoff', 'begin', 'end'])
   })
 })
 

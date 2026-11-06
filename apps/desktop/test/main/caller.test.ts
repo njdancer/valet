@@ -16,7 +16,13 @@ import {
   runTrace,
   statsToday,
 } from '../../src/main/core/audit-view'
-import { outcomeOf, PAUSED_RETRY_MS, RuntimeToolCaller } from '../../src/main/core/caller'
+import {
+  type AppRefusal,
+  outcomeOf,
+  PAUSED_REFUSAL,
+  REVOKED_REFUSAL,
+  RuntimeToolCaller,
+} from '../../src/main/core/caller'
 import { INVOKE_METHODS, invokeChannel } from '../../src/main/core/channels'
 import { previewParts, RunMemory } from '../../src/main/core/run-memory'
 import { buildApi, eventFrom, type IpcLike } from '../../src/preload/api'
@@ -53,6 +59,8 @@ describe('RuntimeToolCaller', () => {
       revoked: () => false,
       started: () => {},
       finished: () => {},
+      refused: async () => {},
+      enter: async () => () => {},
     })
     expect(caller.listTools()).toEqual([])
     await caller.refresh()
@@ -68,41 +76,90 @@ describe('RuntimeToolCaller', () => {
       revoked: () => false,
       started: (c) => seen.push(`started ${c.callId}`),
       finished: (c, r) => seen.push(`finished ${c.callId} ${r.status}`),
+      refused: async () => {
+        seen.push('refused')
+      },
+      enter: async (adapterId) => {
+        seen.push(`enter ${adapterId}`)
+        return () => seen.push(`leave ${adapterId}`)
+      },
     })
     expect(await caller.call({ ...call, signal: new AbortController().signal })).toEqual({
       status: 'ok',
       output: { text: 'hi' },
     })
     expect(h.calls).toEqual([call])
-    expect(seen).toEqual(['started c1', 'finished c1 ok'])
+    expect(seen).toEqual(['enter shop', 'started c1', 'finished c1 ok', 'leave shop'])
   })
 
   it('refuses while paused and for a revoked client name, before the runtime sees the call', async () => {
     const h = host()
-    const paused = new RuntimeToolCaller(h.host, {
+    const refused: [string, AppRefusal][] = []
+    const entered: string[] = []
+    const hooks = {
+      started: () => {},
+      finished: () => {},
+      refused: async (c: { callId: string }, r: AppRefusal) => {
+        refused.push([c.callId, r])
+      },
+      enter: async (adapterId: string) => {
+        entered.push(adapterId)
+        return () => {}
+      },
+    }
+    const paused = new RuntimeToolCaller(h.host, { ...hooks, paused: () => true, revoked: () => false })
+    // Not a rate limit: the site isn't involved, and the class says the app refused.
+    expect(await paused.call(call)).toEqual({ status: 'failed', stage: 'config', errorClass: 'unavailable' })
+    const revoked = new RuntimeToolCaller(h.host, {
+      ...hooks,
+      paused: () => false,
+      revoked: (c) => c === 'Claude Code',
+    })
+    expect(await revoked.call(call)).toEqual({ status: 'failed', stage: 'config', errorClass: 'not-granted' })
+    expect(h.calls).toEqual([])
+    expect(entered).toEqual([])
+    expect(refused).toEqual([
+      ['c1', PAUSED_REFUSAL],
+      ['c1', REVOKED_REFUSAL],
+    ])
+  })
+
+  it('still refuses when the refusal can’t be audited', async () => {
+    const h = host()
+    const caller = new RuntimeToolCaller(h.host, {
       paused: () => true,
       revoked: () => false,
       started: () => {},
       finished: () => {},
+      refused: async () => {
+        throw new Error('disk full')
+      },
+      enter: async () => () => {},
     })
-    expect(await paused.call(call)).toEqual({
-      status: 'blocked',
-      stage: 'tool-run',
-      errorClass: 'rate-limited',
-      retryAfterMs: PAUSED_RETRY_MS,
-    })
-    const revoked = new RuntimeToolCaller(h.host, {
-      paused: () => false,
-      revoked: (c) => c === 'Claude Code',
-      started: () => {},
-      finished: () => {},
-    })
-    expect(await revoked.call(call)).toEqual({
-      status: 'failed',
-      stage: 'manifest',
-      errorClass: 'not-granted',
-    })
+    expect(await caller.call(call)).toEqual(outcomeOf(PAUSED_REFUSAL))
     expect(h.calls).toEqual([])
+  })
+
+  it('leaves the gate even when the runtime throws', async () => {
+    const left: string[] = []
+    const caller = new RuntimeToolCaller(
+      {
+        listTools: async () => [],
+        call: async () => {
+          throw new Error('boom')
+        },
+      },
+      {
+        paused: () => false,
+        revoked: () => false,
+        started: () => {},
+        finished: () => {},
+        refused: async () => {},
+        enter: async (adapterId) => () => left.push(adapterId),
+      },
+    )
+    await expect(caller.call(call)).rejects.toThrow('boom')
+    expect(left).toEqual(['shop'])
   })
 
   it('maps every runtime result onto the endpoint’s outcome', () => {

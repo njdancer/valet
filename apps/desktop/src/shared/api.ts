@@ -483,6 +483,11 @@ export interface NeedsUserItem {
   readonly reason: NeedsUserReason
   /** The manifest's note for this needsUser step, shown in the app only. */
   readonly note: string | null
+  /**
+   * 'call': a tool call's login stopped and needs the person. 'person': they opened the login
+   * window themselves from the app, and no automated attempt ran.
+   */
+  readonly startedBy: 'call' | 'person'
   readonly tool: string | null
   readonly client: string | null
   readonly callId: string | null

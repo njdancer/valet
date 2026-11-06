@@ -19,7 +19,7 @@ import {
   SiteAdapterError,
 } from '@siteadapter/core'
 import { FileGrantStore } from '@siteadapter/credentials'
-import type { RunningEndpoint, ToolCaller } from '@siteadapter/mcp-server'
+import type { RunningEndpoint, ToolCall, ToolCaller } from '@siteadapter/mcp-server'
 import {
   ApprovalStore,
   AuditLog,
@@ -38,6 +38,7 @@ import type {
   Settings,
   UpdateStatus,
 } from '../../shared/api'
+import { AdapterGate } from './adapter-gate'
 import {
   type AdapterLookup,
   AuditReader,
@@ -47,7 +48,7 @@ import {
   runTrace,
   statsToday,
 } from './audit-view'
-import { RuntimeToolCaller } from './caller'
+import { type AppRefusal, RuntimeToolCaller } from './caller'
 import { ClientRegistry } from './clients'
 import { ConfirmationBroker, type Timers } from './confirmations'
 import {
@@ -55,6 +56,7 @@ import {
   CONFIRMATION_TIMEOUT_MS,
   type DataPaths,
   HANDOFF_WINDOW_MS,
+  LOGIN_WAIT_MS,
   MCP_SERVER_NAME,
   TYPING_DELAY_MS,
 } from './constants'
@@ -166,6 +168,7 @@ export class AppService {
   private readonly broker: ConfirmationBroker
   private readonly handoffs: Handoffs
   private readonly drivers = new Map<string, SessionDriver>()
+  private readonly gate: AdapterGate
   /** When each installed hash was approved, for the confirmation panel (which reads synchronously). */
   private readonly approvedAt = new Map<string, string>()
   private caller: RuntimeToolCaller | null = null
@@ -194,6 +197,7 @@ export class AppService {
       true,
     )
     this.reader = new AuditReader(paths.audit)
+    this.gate = new AdapterGate(deps.timers)
     this.sessions = new SessionTracker(date, () => this.emit('adapters-changed'))
     const newId = deps.newId ?? (() => randomBytes(12).toString('hex'))
     this.broker = new ConfirmationBroker({
@@ -270,8 +274,10 @@ export class AppService {
       diagnostics: (d) => this.deps.diagnostics?.(d),
     })
     for (const adapter of this.deps.adapters) {
-      const driver = await this.deps.createDriver(adapter.definition.manifest)
-      this.drivers.set(adapter.definition.manifest.id, driver)
+      const id = adapter.definition.manifest.id
+      // The runtime gets the tracked driver, so the gate sees its runs (adapter-gate.ts).
+      const driver = this.gate.track(id, await this.deps.createDriver(adapter.definition.manifest))
+      this.drivers.set(id, driver)
       host.register({ definition: adapter.definition, bundleHash: adapter.hash, driver })
     }
     this.caller = new RuntimeToolCaller(host, {
@@ -284,6 +290,8 @@ export class AppService {
       },
       finished: (call, result) =>
         this.memory.finished(call.callId, result.status === 'ok' ? result.output : undefined),
+      refused: (call, refusal) => this.auditRefusal(call, refusal),
+      enter: (adapterId) => this.gate.enter(adapterId),
     })
     await this.caller.refresh()
     // Reads approval times into the cache the confirmation panel uses.
@@ -390,6 +398,40 @@ export class AppService {
     const records = await this.reader.records()
     const grants = await this.grants.list().catch(() => [] as readonly Grant[])
     return Promise.all(this.deps.adapters.map((a) => this.state(a, records, grants)))
+  }
+
+  /**
+   * A call the app refused before the runtime saw it, audited the way the runtime audits one: the
+   * client's name made printable, an undeclared tool as "(invalid)". A call id the runtime wouldn't
+   * accept, or an adapter that isn't installed, has nothing to attribute it to and isn't recorded.
+   */
+  private async auditRefusal(call: ToolCall, refusal: AppRefusal): Promise<void> {
+    const adapter = this.adapter(call.adapterId)
+    if (adapter === null || !CALL_ID.test(call.callId)) return
+    const manifest = adapter.definition.manifest
+    await this.audit.append({
+      type: 'tool-called',
+      adapterId: manifest.id,
+      adapterHash: adapter.hash,
+      tool: manifest.tools.some((t) => t.name === call.tool) ? call.tool : '(invalid)',
+      client: printableClient(call.client),
+      callId: call.callId,
+    })
+    await this.audit.append({
+      type: 'tool-finished',
+      adapterId: manifest.id,
+      callId: call.callId,
+      outcome: 'failed',
+      stage: refusal.stage,
+      errorClass: refusal.errorClass,
+      durationMs: 0,
+    })
+  }
+
+  /** Whether the site's circuit breaker is open now: no login may start, nor a hand-off reach it. */
+  private async siteBlocked(adapterId: string): Promise<boolean> {
+    const sites = await this.api.health.sites()
+    return sites.some((s) => s.adapterIds.includes(adapterId) && s.breaker === 'open')
   }
 
   private async filledFor(
@@ -625,6 +667,8 @@ export class AppService {
       answerConfirmation: async (confirmationId: string, approved: boolean, from: WindowRole) => {
         this.broker.answer(confirmationId, approved, from)
       },
+      // The person's own login work: never while the site's breaker is open, and never alongside a
+      // tool call or run on the adapter (it waits for them, and new calls wait for it).
       openLoginWindow: async (adapterId) => {
         if (this.handoffs.show(adapterId)) return
         const adapter = this.requireAdapter(adapterId)
@@ -634,23 +678,33 @@ export class AppService {
           throw new SiteAdapterError('manifest', 'not-granted')
         const driver = this.drivers.get(adapterId)
         if (driver === undefined) throw new SiteAdapterError('manifest', 'not-found')
-        const page = await driver.openAuthPage()
-        const first = manifest.auth.steps.find((s) => s.op === 'goto')
-        if (first?.op === 'goto') await page.goto(first.url).catch(() => undefined)
-        this.handoffs.start({
-          manifest,
-          driver,
-          page,
-          reason: 'login-required',
-          note: null,
-          callId: null,
-          tool: null,
-          client: null,
-          filled: [],
-          filledOrigin: null,
+        await this.gate.exclusive(adapterId, LOGIN_WAIT_MS, async () => {
+          // A call's login may have handed a window to the person while this waited.
+          if (this.handoffs.show(adapterId)) return
+          if (await this.siteBlocked(adapterId)) throw new SiteAdapterError('login', 'rate-limited')
+          const page = await driver.openAuthPage()
+          const first = manifest.auth.steps.find((s) => s.op === 'goto')
+          if (first?.op === 'goto') await page.goto(first.url).catch(() => undefined)
+          this.handoffs.start({
+            manifest,
+            driver,
+            page,
+            reason: 'login-required',
+            note: null,
+            startedBy: 'person',
+            callId: null,
+            tool: null,
+            client: null,
+            filled: [],
+            filledOrigin: null,
+          })
         })
       },
-      finishLogin: (adapterId) => this.handoffs.finish(adapterId),
+      finishLogin: (adapterId) =>
+        this.gate.exclusive(adapterId, LOGIN_WAIT_MS, async () => {
+          if (await this.siteBlocked(adapterId)) throw new SiteAdapterError('login', 'rate-limited')
+          await this.handoffs.finish(adapterId)
+        }),
       closeLoginWindow: (adapterId) => this.handoffs.close(adapterId),
       settings: {
         get: () => this.settings.get(),
@@ -702,6 +756,15 @@ export class AppService {
       },
     }
   }
+}
+
+/** The runtime's call-id alphabet: what ToolHost.call accepts. */
+const CALL_ID = /^[A-Za-z0-9_-]{1,64}$/
+
+/** A client name as the runtime records it: printable, trimmed, at most 100 characters. */
+export function printableClient(client: string): string {
+  const printable = client.replace(/[\p{Cc}\p{Cf}]/gu, '').trim()
+  return printable.length === 0 ? '(unknown)' : printable.slice(0, 100)
 }
 
 /** The selector the manifest fills this secret field into, for the run trace. */

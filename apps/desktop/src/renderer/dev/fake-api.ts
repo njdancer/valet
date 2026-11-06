@@ -460,6 +460,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       adapterName: 'Woolworths',
       reason: 'captcha',
       note: 'Auth0 showed a challenge after the password page.',
+      startedBy: 'call',
       tool: 'get_cart',
       client: 'claude-code',
       callId: 'c_9a71d0',

@@ -6,6 +6,10 @@
 // it, and the call returns needsUser at once (D50). The window closes itself after HANDOFF_WINDOW_MS.
 // When the person says they're done, the login probe runs in the auth partition; only if it says
 // logged in is the session handed to the tool partition and the login hold cleared.
+//
+// The person can also open the login window themselves, from the control panel (startedBy
+// 'person'). That hand-off leaves the session's state alone: giving up on it changes nothing, and
+// only a probe that passes marks the session logged in.
 
 import type { AuthProbe } from '@siteadapter/auth-flow'
 import { readJsonPath, runAuthFlow } from '@siteadapter/auth-flow'
@@ -137,6 +141,8 @@ export interface HandoffStart {
   readonly page: AuthPage
   readonly reason: NeedsUserReason
   readonly note: string | null
+  /** 'call': a tool call's login needed the person. 'person': they opened the window themselves. */
+  readonly startedBy: NeedsUserItem['startedBy']
   readonly callId: string | null
   readonly tool: string | null
   readonly client: string | null
@@ -171,6 +177,7 @@ export class Handoffs {
       adapterName: start.manifest.name,
       reason: start.reason,
       note: start.note,
+      startedBy: start.startedBy,
       tool: start.tool,
       client: start.client,
       callId: start.callId,
@@ -188,7 +195,7 @@ export class Handoffs {
       manifest: start.manifest,
       timer,
     })
-    this.options.sessions.set(adapterId, 'needs-user', start.reason)
+    if (start.startedBy === 'call') this.options.sessions.set(adapterId, 'needs-user', start.reason)
     this.reveal(adapterId)
     this.options.onChange()
   }
@@ -217,12 +224,15 @@ export class Handoffs {
     this.options.onChange()
   }
 
-  /** The person gives up, or the window's time ran out: close it without a hand-off. */
+  /**
+   * The person gives up, or the window's time ran out: close it without a hand-off. A call's
+   * hand-off leaves the session expired; one the person opened leaves it as it was.
+   */
   async close(adapterId: string): Promise<void> {
     const handoff = this.open_.get(adapterId)
     if (handoff === undefined) return
     this.dispose(adapterId, handoff)
-    this.options.sessions.set(adapterId, 'expired')
+    if (handoff.item.startedBy === 'call') this.options.sessions.set(adapterId, 'expired')
     this.options.onChange()
   }
 
@@ -327,6 +337,7 @@ export function createAuthRunner(options: AuthRunnerOptions): AuthRunner {
             reason: outcome.reason,
             // The manifest's note, for the banner only: never returned to the runtime or a client.
             note: outcome.appNote ?? null,
+            startedBy: 'call',
             callId,
             tool: info.tool,
             client: info.client,

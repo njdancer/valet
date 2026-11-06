@@ -37,6 +37,8 @@ function Banner({ item }: { readonly item: NeedsUserItem }) {
   const api = useApi()
   const now = useNow(1000)
   const action = useAction()
+  // A window the person opened themselves: no automated attempt ran, so no reason to give.
+  const byPerson = item.startedBy === 'person'
   const wording = needsUserWording(item.reason)
   return (
     <>
@@ -44,7 +46,16 @@ function Banner({ item }: { readonly item: NeedsUserItem }) {
         <Avatar adapterId={item.adapterId} name={item.adapterName} />
         <div className="grow">
           <div>
-            <strong>{item.adapterName} needs you to finish logging in.</strong> {wording.detail}
+            {byPerson ? (
+              <>
+                <strong>Sign in to {item.adapterName} in this window.</strong> You opened it from siteadapter;
+                nothing was filled in for you.
+              </>
+            ) : (
+              <>
+                <strong>{item.adapterName} needs you to finish logging in.</strong> {wording.detail}
+              </>
+            )}
           </div>
           <div className="xs muted">
             {item.tool !== null ? (

@@ -151,6 +151,8 @@ export class FakeDriver implements SessionDriver {
   sessionValues: string[] = []
   toolCookies: string[] = ['sid']
   runs = 0
+  /** Runs and hand-offs in the order they happened. */
+  readonly log: string[] = []
   closed = false
   nextPage: () => FakeAuthPage = () => new FakeAuthPage()
 
@@ -164,6 +166,7 @@ export class FakeDriver implements SessionDriver {
   }
   async handoff(cookieDomains: readonly string[], storage: readonly unknown[]): Promise<void> {
     this.handoffs.push({ cookieDomains, storage })
+    this.log.push('handoff')
   }
   async sessionSecrets(): Promise<readonly string[]> {
     return this.sessionValues
@@ -173,9 +176,12 @@ export class FakeDriver implements SessionDriver {
   }
   beginRun(): void {
     this.runs++
+    this.log.push('begin')
   }
   unlockIrreversible(): void {}
-  endRun(): void {}
+  endRun(): void {
+    this.log.push('end')
+  }
   async close(): Promise<void> {
     this.closed = true
   }

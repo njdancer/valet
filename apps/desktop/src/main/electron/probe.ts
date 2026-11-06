@@ -34,11 +34,12 @@ export function partitionProbe(manifest: AdapterManifest): AuthProbe {
           request.abort()
           reject(new SiteAdapterError('probe', 'timed-out'))
         }, TIMEOUT_MS)
-        request.on('redirect', () => {
+        request.on('redirect', (statusCode) => {
           clearTimeout(timer)
           request.abort()
-          // A redirect is an answer about the session (usually "log in"), never followed.
-          resolve({ status: 302, contentType: null, body: null })
+          // A redirect is an answer about the session (usually "log in"), never followed. Its own
+          // status goes back, so a manifest expecting 301, 303, 307 or 308 reads it as the site sent it.
+          resolve({ status: statusCode, contentType: null, body: null })
         })
         request.on('response', (response) => {
           const chunks: Buffer[] = []

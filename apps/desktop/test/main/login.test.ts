@@ -229,6 +229,7 @@ describe('createAuthRunner', () => {
         adapterId: 'shop',
         reason: 'captcha',
         note: 'Solve the puzzle in this window.',
+        startedBy: 'call',
         tool: 'add',
         client: 'Claude Code',
         callId: 'call1',
@@ -252,7 +253,7 @@ describe('createAuthRunner', () => {
 })
 
 describe('Handoffs', () => {
-  function started() {
+  function started(startedBy: 'call' | 'person' = 'call') {
     const s = setup()
     const page = new FakeAuthPage()
     const driver = new FakeDriver()
@@ -263,6 +264,7 @@ describe('Handoffs', () => {
       page,
       reason: 'login-required',
       note: null,
+      startedBy,
       callId: null,
       tool: null,
       client: null,
@@ -314,6 +316,31 @@ describe('Handoffs', () => {
     expect(timed.page.closed).toBe(true)
   })
 
+  it('leaves the session as it was when the person gives up on a window they opened', async () => {
+    const h = started('person')
+    // Opening it doesn't say the session needs the person: the tool partition may be logged in.
+    expect(h.sessions.get('shop').state).toBe('unknown')
+    expect(h.handoffs.list()[0]?.startedBy).toBe('person')
+    h.sessions.set('shop', 'logged-in')
+    await h.handoffs.close('shop')
+    expect(h.sessions.get('shop').state).toBe('logged-in')
+    expect(h.page.closed).toBe(true)
+
+    const timed = started('person')
+    timed.sessions.set('shop', 'logged-in')
+    timed.timers.fire()
+    await Promise.resolve()
+    expect(timed.sessions.get('shop').state).toBe('logged-in')
+  })
+
+  it('marks the session logged in once a window the person opened passes the probe', async () => {
+    const h = started('person')
+    h.page.cookies = ['sid']
+    await h.handoffs.finish('shop')
+    expect(h.sessions.get('shop').state).toBe('logged-in')
+    expect(h.driver.handoffs).toHaveLength(1)
+  })
+
   it('replaces an earlier hand-off for the same adapter, and closes them all on quit', () => {
     const h = started()
     const second = new FakeAuthPage()
@@ -323,6 +350,7 @@ describe('Handoffs', () => {
       page: second,
       reason: 'otp-required',
       note: null,
+      startedBy: 'call',
       callId: null,
       tool: null,
       client: null,
