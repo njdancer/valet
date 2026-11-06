@@ -42,7 +42,8 @@ memory as of November 2026; anything marked _verify_ must be checked on the firs
     two attack rows are what confirm it.
   - On top of that, the feed's metadata is signed with an offline Ed25519 key and carries an
     expiry and a version floor, which stops downgrade and freeze attacks the stock updater
-    allows.
+    allows. The controller refuses to enable updates without the feed key, and every request
+    electron-updater makes, redirect hops included, is confined to the feed base.
 - **Channels:** `latest` and `beta`. Rollback means rolling forward.
 - **Updater test:** end to end against a local fake update server, including the attacks.
 
@@ -113,15 +114,15 @@ electron-builder --mac --config electron-builder.config.ts --publish never
 
 What the environment decides:
 
-| Variable                                                | Release (`SITEADAPTER_RELEASE=1`)                                                | Development (unset or `0`)                                            |
-| ------------------------------------------------------- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| Bundle ID, product name                                 | `me.dncr.siteadapter`, `siteadapter`                                             | `me.dncr.siteadapter.dev`, `siteadapter-dev`                          |
-| `SITEADAPTER_TEAM_ID`                                   | Required, 10 letters or digits; fills the designated requirement                 | Optional; with an identity, fills the dev requirement                 |
-| `SITEADAPTER_UPDATE_URL`                                | Required: https, a directory (`/` at the end), no query, fragment or credentials | Optional; http to `127.0.0.1` also allowed, for a local feed          |
-| `CSC_NAME` or `CSC_LINK`                                | Required. `CSC_NAME` must be `<name> (<TEAM_ID>)` (no prefix) or a SHA-1         | Optional. Without one the build is unsigned: `mac.identity` is `null` |
-| `CSC_IDENTITY_AUTO_DISCOVERY=false`                     | Refused                                                                          | Allowed (and has the same effect as naming no identity)               |
-| `APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER` | All three, or `APPLE_KEYCHAIN_PROFILE`, required: release builds are notarised   | Ignored: development builds are never notarised                       |
-| `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`               | Refused (electron-builder would prefer the Apple ID over an API key)             | Refused                                                               |
+| Variable                                                | Release (`SITEADAPTER_RELEASE=1`)                                                                                                                                                    | Development (unset or `0`)                                                                                                                                |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Bundle ID, product name                                 | `me.dncr.siteadapter`, `siteadapter`                                                                                                                                                 | `me.dncr.siteadapter.dev`, `siteadapter-dev`                                                                                                              |
+| `SITEADAPTER_TEAM_ID`                                   | Required, 10 letters or digits; fills the designated requirement                                                                                                                     | Optional; with an identity, fills the dev requirement                                                                                                     |
+| `SITEADAPTER_UPDATE_URL`                                | Required: https to a public host name (no IP literal, `localhost`, single label or `.local`/`.internal`-style name), a directory (`/` at the end), no query, fragment or credentials | Optional; http to `127.0.0.1` also allowed, for a local feed                                                                                              |
+| `CSC_NAME` or `CSC_LINK`                                | Required. `CSC_NAME` must be `<name> (<TEAM_ID>)` (no prefix) or a SHA-1                                                                                                             | Optional. `CSC_NAME` only, as the SHA-1 of an Apple Development identity; `CSC_LINK` refused. Without one the build is unsigned: `mac.identity` is `null` |
+| `CSC_IDENTITY_AUTO_DISCOVERY=false`                     | Refused                                                                                                                                                                              | Allowed (and has the same effect as naming no identity)                                                                                                   |
+| `APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER` | All three, or `APPLE_KEYCHAIN_PROFILE`, required: release builds are notarised                                                                                                       | Ignored: development builds are never notarised                                                                                                           |
+| `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`               | Refused (electron-builder would prefer the Apple ID over an API key)                                                                                                                 | Refused                                                                                                                                                   |
 
 The parts of the configuration that matter, as `createBuilderConfig` returns them for a release:
 
@@ -142,7 +143,7 @@ The parts of the configuration that matter, as `createBuilderConfig` returns the
     enableEmbeddedAsarIntegrityValidation: true,
     onlyLoadAppFromAsar: true, // with the above: no app/ folder swapped in beside the asar
     enableCookieEncryption: true, // cookies at rest encrypted with a Keychain key; one-way
-    grantFileProtocolExtraPrivileges: false,
+    grantFileProtocolExtraPrivileges: false, // so the renderer is served from app://, never loadFile
     loadBrowserProcessSpecificV8Snapshot: false,
     resetAdHocDarwinSignature: false, // true only for an unsigned development build
   },
@@ -180,7 +181,11 @@ Notes on choices that aren't obvious:
   `@electron/osx-sign` that electron-builder itself uses and passes the requirement inline
   (`-r=designated => …`) for the outer `.app` only. No requirement file is written to disk.
   `@electron/osx-sign` isn't a dependency of `apps/desktop`, so the wrapper reaches electron-builder's
-  own copy through `createRequire`; making it a direct devDependency would be cleaner.
+  own copy through `createRequire`; making it a direct devDependency would be cleaner. A custom
+  `mac.sign` replaces electron-builder's default signing, retries included, so the wrapper retries
+  the same way (three retries, 5 s apart plus 5 s of backoff each time): one timestamp-server
+  hiccup during `codesign --timestamp` of any of the nested binaries would otherwise fail the
+  release.
 - **No channel in `publish`.** electron-builder takes the channel from the version
   (`1.3.0-beta.1` publishes to `beta`). A `channel: 'latest'` there would publish betas to stable.
 - **Development builds.** A different bundle ID and product name (so a different `userData`,
@@ -191,6 +196,26 @@ Notes on choices that aren't obvious:
   broken signature. A dev build signed with an Apple Development identity and `SITEADAPTER_TEAM_ID`
   gets `build/designated-requirement.dev.txt`, which pins the team and the WWDR intermediate for the
   `.dev` bundle ID.
+- **A dev build's identity is a SHA-1, never a name.** For a non-MAS `type: 'development'` build,
+  electron-builder searches both "Mac Developer" and "Developer ID Application" certificates for
+  `CSC_NAME` (`MacTargetHelper.getCertificateTypes`), so a name in the release's
+  `<name> (<TEAM_ID>)` form would find the Developer ID key, and the `.dev` bundle would carry the
+  release key's signature (or, with `SITEADAPTER_TEAM_ID`, fail at verify against the dev
+  requirement). The config takes a dev `CSC_NAME` only as the 40-character SHA-1 of an Apple
+  Development identity (`security find-identity -v -p codesigning`), and refuses `CSC_LINK` for
+  dev builds, since what a `.p12` holds can't be checked before electron-builder imports it.
+- **`grantFileProtocolExtraPrivileges` off, so no `loadFile`.** With the fuse off, a `file://`
+  page gets only what a browser gives it, and Vite's `<script type="module">` never runs there
+  (checked on Electron 44.10.2 with only this fuse flipped; dropping `crossorigin` doesn't help).
+  The renderer is served from a privileged custom scheme instead,
+  [`src/main/updater/app-scheme.ts`](../apps/desktop/src/main/updater/app-scheme.ts) (in the
+  packaging unit's directory for now; the main process adopts it):
+  `protocol.registerSchemesAsPrivileged([{ scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true } }])`
+  before `ready`, then `protocol.handle('app', createAppSchemeHandler({ root: <appPath>/out/renderer, readFile }))`
+  and `loadURL('app://renderer/index.html')`. The handler answers only `app://renderer/…`, only
+  GET and HEAD, only files under the root with an extension the build emits (no `.map`), with a
+  fixed `content-type` and `nosniff`, and 404s anything else: other hosts, query strings, dot,
+  hidden or encoded-separator segments. The renderer's CSP `'self'` is then `app://renderer`.
 - **`enableCookieEncryption`: decided on, and one-way.** Without it, the `auth:` and `tool:`
   partitions' cookies (live site sessions) sit in plaintext SQLite under `userData`, readable and
   replayable by any process running as the person. With it, Chromium encrypts them with a key in a
@@ -205,19 +230,33 @@ Notes on choices that aren't obvious:
   doesn't have one yet (the main process is being written). The workspace packages export
   TypeScript source, which Electron won't load from `node_modules`, so the main build must bundle
   them; electron-builder still copies production `dependencies` into the asar unless the main build
-  makes them unnecessary and `files` says so.
+  makes them unnecessary and `files` says so. The main process bundles everything except Electron,
+  Node built-ins and `@1password/sdk` (loaded lazily, with a wasm file beside it), so `files` can't
+  simply exclude `node_modules`; narrowing it to the SDK needs a real build of the main process to
+  check, and none has been packaged yet.
+- **Typechecking.** `tsc --noEmit -p apps/desktop/src/main/updater` checks the updater, the app://
+  scheme and `electron-builder.config.ts` in plain Node, with no DOM; `-p apps/desktop` reaches
+  them too, through the tests.
 
 ### What a development build looks like
 
 `node scripts/package-smoke.mjs [--target zip]` packages a placeholder main process with this
 config, unsigned, in a temporary directory, inspects the result and launches it. It passes none of
 the caller's `CSC_*`, `APPLE_*` or `SITEADAPTER_*` variables to electron-builder, launches with a
-temporary `--user-data-dir` and Chromium's mock keychain, and deletes everything afterwards. On
-electron-builder 26.18.0 and Electron 44.10.2 (arm64), 2026-11-07:
+temporary `--user-data-dir` and Chromium's mock keychain, and deletes everything afterwards, pass
+or fail. Every item below is asserted: a mismatch is listed under `failures` and the script exits
+1. It builds from a copy-on-write clone of the installed Electron with `default_app.asar`
+removed, because electron-builder skips its own clean-up when given `electronDist`, and the bundle
+should match what a release (which downloads Electron) contains. On electron-builder 26.18.0 and
+Electron 44.10.2 (arm64), 2026-11-07:
 
 - `siteadapter-dev.app`: `CFBundleIdentifier` `me.dncr.siteadapter.dev`, `LSUIElement` true,
-  `ElectronAsarIntegrity` set for `Resources/app.asar`; the asar holds `out/**` and `package.json`
-  and no source map; no `Resources/app` folder.
+  `ElectronAsarIntegrity` for `Resources/app.asar` only; the asar holds exactly the placeholder's
+  `out/**` files and `package.json`, and no source map; no `Resources/app` folder and no
+  `default_app.asar`.
+- The placeholder's renderer page, a module script that sets the title, in a hidden window:
+  served from `app://` through `app-scheme.ts` (the real file, types stripped), the script runs;
+  the same page through `loadFile` never runs it.
 - The fuse wire in `Electron Framework` reads exactly as configured. Electron 44's wire has a
   ninth fuse that `@electron/fuses` 1.8.0 doesn't name; it is left as Electron ships it (on).
 - Signature: ad hoc (`flags=0x2(adhoc)`, no Team ID, no hardened runtime, no entitlements), as an
@@ -595,65 +634,70 @@ plainly instead of waiting for the next scheduled check.
 The release script re-signs the envelope monthly even with no release, so `expiresAt` never lapses
 for a quiet project. That's a scheduled reminder for Nick, not automation holding the key.
 
-A sketch, in the repo's style. electron-updater exports `Provider` from its entry point, and its
-`parseUpdateInfo` and `resolveFiles` helpers are reachable at `electron-updater/out/providers/Provider`
-(the package has no `exports` map).
+It is built: [`feed-envelope.ts`](../apps/desktop/src/main/updater/feed-envelope.ts) (`verifyFeed`,
+pure apart from `node:crypto`) and [`feed-provider.ts`](../apps/desktop/src/main/updater/feed-provider.ts)
+(`signedFeedProvider`, the electron-updater provider around it).
 
-**One source for the feed URL: a constant compiled into the asar.** At start-up the app calls
-`autoUpdater.setFeedURL({ provider: 'custom', updateProvider: SignedFeedProvider })`. Given
-options, electron-updater 6.8.11 builds the provider from them and never reads the provider
-settings in `app-update.yml` (`AppUpdater.setFeedURL` sets `clientPromise` directly). The
-provider ignores its `options` and uses `FEED_BASE_URL`, so nothing outside the asar can name a
-feed. electron-builder still writes `app-update.yml` from `publish` (electron-updater reads its
-cache directory name from it), and the release check asserts its `url` equals `FEED_BASE_URL`, so
-the two can't drift into telling different stories.
+**One source for the feed URL: a constant compiled into the asar.** `createUpdater` calls
+`autoUpdater.setFeedURL({ provider: 'custom', updateProvider: signedFeedProvider({ baseUrl, publicKey, now, stagingId }) })`.
+Given options, electron-updater 6.8.11 builds the provider from them and never reads the provider
+settings in `app-update.yml` (`AppUpdater.setFeedURL` sets `clientPromise` directly), so nothing
+outside the asar can name a feed. electron-builder still writes `app-update.yml` from `publish`
+(electron-updater reads its cache directory name from it), and the release check asserts its `url`
+equals `FEED_BASE_URL`, so the two can't drift into telling different stories.
+
+**The precondition.** `createUpdater({ enabled: true })` without `feed: { url, publicKey }` throws
+`config: invalid`; so does a key that isn't an Ed25519 SPKI PEM public key (a private key PEM, from
+which Node would happily derive the public half, is refused too). A build can't switch updates on
+and trust unsigned metadata.
+
+What the provider does for each check:
+
+1. Fetches `<channel>-mac.yml`, `<channel>-mac.envelope.json` and `<channel>-mac.envelope.json.sig`
+   from the feed base, with the constant staging id. A 404 for either signing file is
+   `feed-unverified`, not an unreachable feed.
+2. `verifyFeed` checks, in order, and returns only a fixed reason, never feed text:
+   - the signature: base64 of exactly 64 bytes (one trailing newline tolerated), Ed25519 over the
+     envelope's exact bytes (`signature-invalid`);
+   - the envelope: printable ASCII, at most 1 KiB, and byte-for-byte the canonical JSON (keys in
+     `ENVELOPE_KEYS` order, no whitespace, no escapes, so no extra, missing or duplicate keys);
+     canonical versions with `minimumVersion` at or below `version`; a lowercase hex SHA-256; ISO
+     times (`envelope-invalid`);
+   - `channel` is the one asked for (`channel-mismatch`);
+   - `now` is before `expiresAt`, `issuedAt` is at most a day ahead of this clock, and the window
+     is at most 62 days (`expired`);
+   - the yml's SHA-256 matches `ymlSha256`, and only then is the yml parsed, and its `version`
+     must equal the envelope's (`yml-mismatch`).
+3. Returns the update info parsed from the bytes that were checked, after checking every file URL
+   in it resolves under the feed base.
+
+The controller then applies its own forward-only rules ([When updates happen](#when-updates-happen)),
+so a replayed, unexpired envelope for an older version is "up to date", never a downgrade. The
+refusals map to `feed-unverified` (signature, envelope, channel, yml, a file outside the feed) and
+`feed-expired` in `UPDATE_ERROR_REASONS`. `minimumVersion` is checked for consistency but not yet
+surfaced: the tray can't say "this version is unsafe" until the renderer contract has a place for
+it.
+
+### Redirects
+
+electron-updater's Electron executor follows redirects with no check on scheme or host
+(`ElectronHttpExecutor.addRedirectHandlers` calls builder-util-runtime 9.7.0's
+`prepareRedirectUrlOptions`, which only strips a few headers on a cross-origin hop and accepts
+`http:`). One 30x from the feed host or a CDN to `http://…` would put the yml and the zip within
+reach of anyone on the network. All of electron-updater's requests go through the
+`electron-updater` session partition, and each redirect hop is a new request there, so main
+confines that partition before the first check:
 
 ```ts
-// The update feed, verified. electron-updater authenticates nothing about versions: this provider
-// refuses metadata not signed by the feed key, or that would move the install backwards. The yml
-// is fetched once and the bytes that were checked are the bytes that are parsed. It also drops
-// the per-install staging id electron-updater sends with every request.
-
-export class SignedFeedProvider extends Provider<UpdateInfo> {
-  constructor(
-    _options: CustomPublishOptions, // ignored: the feed is FEED_BASE_URL, compiled in
-    private readonly updater: AppUpdater,
-    runtime: ProviderRuntimeOptions,
-  ) {
-    super(runtime)
-  }
-
-  override setRequestHeaders(headers: OutgoingHttpHeaders | null): void {
-    const { 'x-user-staging-id': _dropped, ...rest } = headers ?? {}
-    super.setRequestHeaders(rest)
-  }
-
-  async getLatestVersion(): Promise<UpdateInfo> {
-    const channel = this.updater.channel ?? 'latest'
-    const url = (name: string) => new URL(`${channel}-mac.${name}`, FEED_BASE_URL)
-    const yml = await this.httpRequest(url('yml'))
-    const envelope = await this.httpRequest(url('envelope.json'))
-    const signature = await this.httpRequest(url('envelope.json.sig'))
-    const verdict = verifyFeed(
-      { yml, envelope, signature },
-      { publicKey: FEED_PUBLIC_KEY, channel, now: deps.clock.now(), floor: deps.versions.highestRun() },
-    )
-    // A fixed reason, never the server's text: the error reaches logs and the tray.
-    if (!verdict.ok) throw new UpdateRejected(verdict.reason)
-    return parseUpdateInfo(yml, `${channel}-mac.yml`, url('yml'))
-  }
-
-  resolveFiles(info: UpdateInfo): ResolvedUpdateFileInfo[] {
-    return resolveFiles(info, FEED_BASE_URL)
-  }
-}
+const guard = confineUpdaterSession(session.fromPartition(UPDATER_PARTITION, { cache: false }), FEED_BASE_URL)
 ```
 
-`verifyFeed` is a pure function and is where the tests aim. electron-updater constructs the
-provider itself with a fixed signature, so `deps` (the injected clock and the record of the
-highest version run) is bound in a factory around the class. `UpdateRejected` is local to the
-desktop app until core has an `'update'` stage ([Core changes](#core-changes)). The envelope must
-be ASCII, so the bytes signed and the string `httpRequest` returns can't differ by encoding.
+[`request-guard.ts`](../apps/desktop/src/main/updater/request-guard.ts) cancels, in
+`webRequest.onBeforeRequest`, anything that isn't a GET or HEAD under the feed base: another scheme,
+host or port, credentials, a path outside the base after dot-segment resolution, or an encoded
+slash or backslash. It counts what it cancels; the controller takes it as `requestGuard` and
+reports a check or download that failed after a cancellation as `request-refused`, whatever
+Electron's error says.
 
 ### When updates happen
 
@@ -671,7 +715,8 @@ const updater = createUpdater({
   autoInstallOnQuit: () => settings.autoInstallUpdates,
   highestVersionRun: () => versions.highestRun(), // recorded in userData
   whenIdle: () => runtime.drainAdapters(), // resolves when no adapter run or login holds a lock
-  feedUrl: FEED_BASE_URL, // optional: compiled in, replaces app-update.yml's url
+  feed: { url: FEED_BASE_URL, publicKey: FEED_PUBLIC_KEY }, // required when enabled; compiled in
+  requestGuard: guard, // confineUpdaterSession(...), above
   clock,
   random: Math.random,
   log: (entry) => appLog.write('updater', entry),
@@ -683,8 +728,9 @@ interface Updater {
   stop(): void
   checkNow(): Promise<UpdaterStatus> // the tray's "Check now"
   status(): UpdaterStatus // toUpdateStatus(status, signed) gives the renderer's UpdateStatus
+  // (signed is forced false while disabled; up-to-date with checkedAt null means never checked)
   onStatus(listener): () => void
-  installAndRestart(): Promise<boolean> // the tray's "Restart to update"
+  installAndRestart(): Promise<boolean> // the tray's "Restart to update": true once handed over
 }
 ```
 
@@ -702,6 +748,19 @@ interface Updater {
   Squirrel.Mac also installs a downloaded update when the app next quits; the quit path itself
   must wait for adapter locks. A restart mid-login would leave the durable attempt marker set,
   which by design stops further logins until the person clears it.
+- **Handed over is not quitting.** `installAndRestart()` resolves true once `quitAndInstall` has
+  the update. With install-on-quit off, `MacUpdater.quitAndInstall` only then asks Squirrel.Mac to
+  fetch the zip from its local proxy, and the app quits once Squirrel.Mac has it. If Squirrel.Mac
+  refuses it instead (MacUpdater re-emits nativeUpdater's errors), or `quitAndInstall` throws, the
+  status becomes `install-failed` and the schedule that was stopped for the hand-off resumes, so a
+  refused update doesn't end checking for the session.
+- **Where a Squirrel.Mac refusal lands.** With install-on-quit on, electron-updater 6.8.11
+  resolves `downloadUpdate()` on the proxy response's `finish`, once Squirrel.Mac has received the
+  bytes but before it has checked their signature, and removes its reject listener. The refusal
+  then normally arrives as an `error` event while the update is `ready` (`install-failed`). If it
+  lands while the controller is still in `downloading` (before its continuation runs), it is
+  remembered, and a download that then resolves is `install-failed` too, never `ready`. A failed
+  download rejects as well as emitting `error`, so it is still classified by its rejection.
 - **Quiet.** electron-updater's logger is switched off: it logs feed and download URLs, file names
   and the staging id. The controller logs one entry per state change with versions, the channel and
   a reason code (`UPDATE_ERROR_REASONS`), never a URL or an error message. Errors are classified by
@@ -711,14 +770,15 @@ interface Updater {
   local feed test asserts no request carries the UUID). Staged rollouts still work: electron-updater
   decides those locally from the UUID on disk.
 - **The feed URL** is checked by `validateFeedUrl` (also used by the build config): https, a
-  directory, no query, fragment or credentials, already canonical, so no token can be in it.
+  directory, no query, fragment or credentials, already canonical, so no token can be in it; and,
+  for a release build and an updater not built for the end-to-end test, a public host name (no IP
+  literal, `localhost`, single label, or `.local`, `.internal`, `.home.arpa`, `.test` name).
 - Main sets `process.env.PATH` to the system default at start-up. electron-updater runs `uname` and
   `sysctl` by name to detect the architecture; the credentials package already uses an absolute
   path to `security` for the same reason.
-- **Not built yet:** the signed envelope ([Signed feed metadata](#signed-feed-metadata)). Until it
-  is, the version floor is only as good as the `highestVersionRun` record, and a feed attacker can
-  still freeze updates or serve an old, genuinely signed build under a new version number that
-  passes the floor.
+- **The signed envelope is required** ([Signed feed metadata](#signed-feed-metadata)): a yml
+  rewritten to `99.0.0` around a genuine old zip, a feed signed by another key, an unsigned feed and
+  a frozen one past its expiry are all refused before any zip is fetched (`feed-server.test.ts`).
 
 ## Channels
 
@@ -730,7 +790,7 @@ interface Updater {
 - **Switching to beta** sets `autoUpdater.channel = 'beta'`. electron-updater then **silently sets
   `allowDowngrade = true`** (it's in `AppUpdater`'s channel setter). The controller sets it back to
   `false` straight after, at every check, and refuses a version at or below the running one
-  itself. The envelope's version floor is the backstop, once built.
+  itself. The envelope's version check is the backstop.
 - **No channel in the build's `publish`.** electron-builder takes the channel from the version, so
   the config sets none (`channel: 'latest'` there would put betas on stable). The renderer's
   `stable` setting is the feed's `latest` (`FEED_CHANNELS`).
@@ -793,38 +853,52 @@ In `apps/desktop/test/updater`:
   older version left alone on the beta channel where electron-updater by itself would downgrade, a
   version below the floor or a prerelease on stable refused before the zip is fetched, missing and
   garbled channel files, and no request carrying the per-install UUID.
+  With the signed provider and the session guard in place: the attacks above, the beta envelope
+  served as stable, a signed yml naming a zip on another host, and 302s of the zip to another
+  origin, of the yml to https on the same host and of the envelope to another port, each cancelled
+  by the guard (`node-updater.ts` shows every request, redirect hops included, to the partition's
+  `onBeforeRequest`, as Electron does) and reported as `request-refused`; a redirect within the
+  base still works.
+- `feed-envelope.test.ts`: `verifyFeed`, one test per way of getting it wrong (below), against
+  envelopes written and signed by `make-feed.mjs`. `request-guard.test.ts`: the guard's URL rule.
+  `app-scheme.test.ts`: the app:// handler's path rules.
 - `make-feed.test.ts`: `scripts/make-feed.mjs` (below), including what it refuses to write.
 - `packaging.test.ts`: the build configuration ([electron-builder](#electron-builder),
   [Entitlements](#entitlements)), and that this doc names the config file, both bundle IDs, the
   variables and every fuse with its value.
 
-Still to build, with the signed envelope: its verifier and the adversarial cases for it, one test
-per attempt:
-
-- a signature by another key;
-- a valid signature over different bytes;
-- an expired envelope;
-- an envelope for the other channel;
-- a yml whose hash differs by one byte;
-- a yml whose version differs from the envelope's;
-- a version equal to the current one;
-- a version lower than the highest ever run;
-- an envelope with extra or duplicate keys;
-- a signature file that's empty, too long, or not base64.
+The verifier's adversarial cases, one test each: a signature by another key; a valid signature over
+different bytes; an empty, short, long or non-base64 signature; an expired envelope, one issued too
+far ahead and one with too long a window; an envelope for the other channel; a yml whose hash
+differs by one byte; a yml rewritten to a higher version; a yml whose version differs from the
+envelope's with matching bytes; an envelope with extra, missing, reordered or duplicate keys,
+whitespace, escapes or non-ASCII, even when signed. A version equal to the current one is the
+controller's "up to date", not a verifier refusal.
 
 And with the main process: the crash counter, and the fake feed's remaining misbehaviours (serve
-a different file under a name, stall, drop the connection halfway, redirect to another host,
-return 404 for the envelope).
+a different file under a name, stall, drop the connection halfway).
 
 ### The channel files
 
 electron-builder writes `latest-mac.yml` (and `beta-mac.yml`, `alpha-mac.yml`) during a build.
-`node scripts/make-feed.mjs --version <v> [--release-date <iso>] [--out <dir>] <zip>...` writes them
-for zips that already exist: for re-issuing a channel file, publishing zips built earlier, and the
-tests. A stable version goes to `latest` and `beta`; `1.3.0-beta.N` to `beta` only; other
-prerelease tags, non-canonical versions, zip names that don't carry the version or could escape
-the feed directory, two zips for one architecture, and malformed digests or dates are refused. The
-smoke build checks that its output has the same fields as electron-builder's for the same zip.
+`node scripts/make-feed.mjs --version <v> (--signing-key <pem> | --unsigned) [--minimum-version <v>] [--valid-days <n>] [--release-date <iso>] [--out <dir>] <zip>...`
+writes them for zips that already exist: for re-issuing a channel file, publishing zips built
+earlier, and the tests. A stable version goes to `latest` and `beta`; `1.3.0-beta.N` to `beta`
+only; other prerelease tags, non-canonical versions, zip names that don't carry the version or
+could escape the feed directory, two zips for one architecture, and malformed digests or dates are
+refused. It also:
+
+- reads `Contents/Info.plist` of the one `.app` in each zip (`unzip -Z1`, `unzip -p`, `plutil`;
+  nothing extracted) and refuses a zip whose `CFBundleIdentifier` isn't the release bundle ID (a
+  dev build) or whose `CFBundleShortVersionString` isn't `--version` (a stale zip renamed);
+- leaves `beta-mac.yml` alone when it already names a newer version than the stable release being
+  published, so a hotfix (`1.3.1`) doesn't take an in-flight `1.4.0-beta.1` off the beta channel;
+- with `--signing-key` (the offline feed key as a PKCS#8 PEM, never the Developer ID key), writes
+  each channel's `<channel>-mac.envelope.json` and `.sig`, valid from the release date for
+  `--valid-days` (default 30, at most 62). `--unsigned` writes channel files only, which the app
+  refuses; one of the two must be given.
+
+The smoke build checks that its output has the same fields as electron-builder's for the same zip.
 
 ### End to end, with real signing
 
@@ -958,10 +1032,13 @@ What else changes when the repo goes public:
   prompt names.
 - **For Nick: cookie encryption on.** The config turns `enableCookieEncryption` on for every build,
   as recommended above. It is one-way once a real session exists; say now if you'd rather not.
-- Whether the renderer loads with `grantFileProtocolExtraPrivileges` off. Electron's guidance with
-  that fuse off is a privileged custom protocol rather than `loadFile`. The smoke build couldn't
-  answer it: the agent shell it ran in doesn't let Chromium's helper processes start. The main
-  process should load the renderer the way it will ship and check on a real login session.
+- The main process still loads the renderer with a `file://` URL. With
+  `grantFileProtocolExtraPrivileges` off that leaves the packaged control panel blank; it must
+  switch to `app-scheme.ts` (`appPageUrl`, and `isAppPage` comparing against `app://renderer`)
+  before the first packaged build. The smoke shows the scheme working in a packaged window.
+- Where `FEED_PUBLIC_KEY` comes from at build time (an electron-vite `define` from a file in the
+  repo is the obvious choice: it is public), and a release check that the key in the asar is the
+  one the release script signs with.
 - **For Nick: bridge mode instead of WS9's signed helper.** [The stdio bridge](#the-stdio-bridge)
   departs from WS9. Accept it, or say which cost of a helper you'd rather pay.
 - **For Nick: where the Developer ID key lives.** A separate release keychain is the minimum;
