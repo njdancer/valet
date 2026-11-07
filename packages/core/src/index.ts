@@ -1,6 +1,7 @@
 export * from './adapter'
 export * from './audit'
 export * from './credentials'
+export * from './drift'
 export * from './errors'
 export * from './hash'
 export * from './manifest'

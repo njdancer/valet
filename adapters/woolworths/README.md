@@ -48,7 +48,7 @@ notices }`. Each item is `{ stockcode, name, quantity, price, lineTotal, availab
   current + quantity, because the update endpoint sets absolute quantities. It refuses to go over
   50 on one line, makes no write if the call is cancelled after the read, and makes no write if
   the trolley it read isn't complete (below), since the write could shrink a line it can't see
-  (`tool-run` / `unexpected-shape`).
+  (`tool-run` / `site-changed`).
 - **`set_cart_quantity { stockcode, quantity 0..50 }`** and **`remove_from_cart { stockcode }`**
   make one write each.
 
@@ -97,10 +97,10 @@ Tools throw, never a raw error or a result that describes the failure:
 | 2xx that is neither JSON nor HTML           | `tool-run` / `unavailable`                                                                                        |
 | HTTP 404, or detail with no `Product`       | `tool-run` / `not-found`                                                                                          |
 | Other non-2xx, or `fetch` threw             | `tool-run` / `unavailable`                                                                                        |
-| JSON not in the expected shape              | `tool-run` / `unexpected-shape`                                                                                   |
+| JSON not in the expected shape              | `tool-run` / `site-changed` (see [Drift detection](#drift-detection))                                             |
 | Signal aborted before a call                | `tool-run` / `aborted`                                                                                            |
 | `add_to_cart` would exceed 50               | `tool-input` / `invalid`                                                                                          |
-| `add_to_cart` read an incomplete trolley    | `tool-run` / `unexpected-shape`                                                                                   |
+| `add_to_cart` read an incomplete trolley    | `tool-run` / `site-changed`                                                                                       |
 | Update reply says the site refused          | `tool-run` / `invalid`                                                                                            |
 
 Cart tools throw rather than returning a "please log in" result so the runtime records a failed
@@ -265,6 +265,36 @@ From the probe of 2026-11-07 ([findings](../../docs/findings/2026-11-07-woolwort
 The live site flagged four scripted calls in ten seconds (run 2 of the probe). Each tool makes at
 most two calls, the manifest caps a run at six requests and asks for at least 2.5 s between
 requests (`limits.minGapMs`); the rest of the pacing and the circuit breaker are the runtime's.
+
+## Drift detection
+
+The site will change what it sends one day. When it does, the tools fail rather than return wrong
+data, and drift detection says which field changed, without ever copying a value.
+
+- **In the tools.** Every response is parsed with the zod schemas in `src/wire.ts`. JSON that
+  fails is `tool-run` / `site-changed`: retrying won't help, the adapter needs an update.
+  (`unexpected-shape` stays for answers of the wrong kind, such as HTML where JSON was asked for.)
+- **The checks.** `checkResponse(endpoint, body)` in `src/drift.ts` runs the tool's own schema,
+  reads the trolley's unconfirmed buckets item by item as `get_cart` does, and also lists declared
+  fields the body didn't carry. Most fields are nullish, so a renamed field still parses (the
+  tool would show no price, say); the absent list is where that shows up. Reports hold paths,
+  zod codes and JSON type names only (core's `checkShape` and `describeShape`).
+- **Against fixtures** (`test/drift.test.ts`). Every recorded fixture, here and in the fake site,
+  must pass with nothing absent, and a new fixture file fails the test until it's listed. So must
+  every response the fake builds: searches, every catalogue product's detail, the not-found body,
+  and empty and full trolleys. The fake's `setShapeDrift('renamed-field' | 'changed-type')` makes
+  it drift, and the e2e suite checks every tool then fails with `site-changed` and writes nothing.
+- **The smoke test** (`smoke/`, `pnpm test:smoke`). The three reads (a 3-product search, that
+  product's detail, the trolley) through the real `ElectronSessionDriver` with this manifest's
+  egress and request surface at purpose `read`, in a fresh temporary profile. It stops at the
+  first 403, 429 or HTML answer. The dry run against the fake runs in CI, once clean and once
+  with each drift. The live run skips unless `VALET_LIVE_SMOKE=1`: anonymous, 8 s for the home
+  page to settle, then 10 s between reads, at most once a day, run by Nick by hand
+  (`VALET_LIVE_SMOKE=1 pnpm --filter @valet/adapter-woolworths test:smoke`). Each run writes its
+  report, with every response's keys and types, to `out/smoke/`.
+- **Not covered yet.** The login probe's `/api/ui/v2/bootstrap` (it goes through the driver's
+  probe, not a tool), the update endpoint's reply, and a logged-in trolley with items, whose shape
+  is still assumed. Those wait for M2's sessions with Nick.
 
 ## Tests
 

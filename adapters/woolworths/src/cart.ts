@@ -42,7 +42,7 @@ export const UNAVAILABLE_REASONS = [
 type UnavailableReason = (typeof UNAVAILABLE_REASONS)[number]
 
 /** Buckets of plain product tiles, and the reason each one stands for. */
-const TILE_BUCKETS = [
+export const TILE_BUCKETS = [
   ['ExceededAtpLimitItems', 'over-stock-limit'],
   ['ConflictedItems', 'conflicted'],
   ['RestrictedItems', 'restricted'],
@@ -238,8 +238,9 @@ export const addToCart = tool({
     return withLogin(ctx, async () => {
       const read = readTrolley(await getJson(ctx, PATHS.trolley, trolleyWire))
       // The write replaces the line's quantity, so a line hidden in a bucket the adapter can't read
-      // would be overwritten with just the added amount. Refuse rather than shrink it.
-      if (!read.complete) throw new ValetError('tool-run', 'unexpected-shape')
+      // would be overwritten with just the added amount. Refuse rather than shrink it. A line the
+      // adapter can't read means the trolley's item shape isn't the one it expects.
+      if (!read.complete) throw new ValetError('tool-run', 'site-changed')
       const previousQuantity = read.quantities.get(input.stockcode) ?? 0
       const requestedQuantity = previousQuantity + input.quantity
       if (requestedQuantity > MAX_LINE_QUANTITY) throw new ValetError('tool-input', 'invalid')

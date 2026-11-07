@@ -126,6 +126,7 @@ export const ERROR_WORDING: Readonly<Record<ErrorClass, string>> = {
   'request-ceiling': 'Too many requests',
   'ambiguous-path': 'Ambiguous path',
   'unexpected-shape': 'Unexpected response',
+  'site-changed': 'Site changed, adapter needs an update',
   'input-unreachable': 'Field unreachable',
   'insecure-file': 'Insecure file permissions',
   'login-in-progress': 'Login already running',

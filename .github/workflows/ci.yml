@@ -36,6 +36,10 @@ jobs:
           pnpm --filter @valet/browser-electron test:e2e --trace off
       - name: desktop end to end
         run: pnpm --filter @valet/desktop test:e2e --trace off
+      - name: drift smoke test, dry run against the fake (the live run skips without VALET_LIVE_SMOKE)
+        run: |
+          pnpm --filter @valet/adapter-woolworths typecheck:smoke
+          pnpm --filter @valet/adapter-woolworths test:smoke --trace off
 
   swift-bridge:
     # The native binaries the packaged app ships: the stdio bridge (D60), run against the same suite

@@ -278,9 +278,9 @@ describe('search_products failures', () => {
     expect((await failure(ctx)).errorClass).toBe('unavailable')
   })
 
-  it('reports JSON of the wrong shape as unexpected-shape', async () => {
+  it('reports JSON of the wrong shape as site-changed', async () => {
     const ctx = new FakeToolContext().on('POST', SEARCH, json({ Products: 'not a list' }))
-    expect((await failure(ctx)).errorClass).toBe('unexpected-shape')
+    expect((await failure(ctx)).errorClass).toBe('site-changed')
   })
 
   it('replaces a thrown error with a class, dropping its message', async () => {

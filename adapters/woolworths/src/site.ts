@@ -48,8 +48,9 @@ async function call<Schema extends z.ZodType>(
   throwForStatus(response.status)
   throwForContentType(response)
   const parsed = schema.safeParse(response.body)
-  // JSON the adapter can't read means the site changed, not that the input was bad.
-  if (!parsed.success) throw new ValetError('tool-run', 'unexpected-shape')
+  // JSON the adapter can't read means the site changed, not that the input was bad. Which field
+  // changed is left to drift detection (drift.ts), which can say so without copying a value.
+  if (!parsed.success) throw new ValetError('tool-run', 'site-changed')
   return parsed.data
 }
 
@@ -58,7 +59,7 @@ async function call<Schema extends z.ZodType>(
  * login page served to an expired session, and the two can't be told apart from here. Both are
  * reported as blocked-by-site, as the runtime's own block detection does: the runtime backs off,
  * and its next ensure() finds an expired session. Reporting not-logged-in instead would send a
- * flagged session straight back to the scripted login. JSON of the wrong shape is unexpected-shape.
+ * flagged session straight back to the scripted login. JSON of the wrong shape is site-changed.
  */
 function throwForContentType(response: FetchResult): void {
   const type = response.contentType?.toLowerCase() ?? ''

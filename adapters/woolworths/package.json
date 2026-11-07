@@ -7,11 +7,18 @@
   "exports": {
     ".": "./src/index.ts"
   },
+  "scripts": {
+    "test:smoke": "playwright test -c smoke/playwright.config.ts",
+    "typecheck:smoke": "tsc -p smoke/tsconfig.json"
+  },
   "dependencies": {
     "@valet/core": "workspace:*",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@valet/fake-woolworths-site": "workspace:*"
+    "@playwright/test": "^1.65.0",
+    "@valet/browser-electron": "workspace:*",
+    "@valet/fake-woolworths-site": "workspace:*",
+    "electron": "^44.10.2"
   }
 }
