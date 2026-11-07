@@ -548,6 +548,46 @@ the release keychain with the notary profile ([Identity](#identity)), not the lo
 Versioned files get `Cache-Control: public, max-age=31536000, immutable`; the yml and envelope
 get `no-cache`.
 
+### Built, and its dry run
+
+The script is [`apps/desktop/scripts/release.mjs`](../apps/desktop/scripts/release.mjs), and its
+decisions are in [`release-lib.ts`](../apps/desktop/scripts/release-lib.ts), tested in
+`test/updater/release.test.ts`. The version must already be in `apps/desktop/package.json`: the
+script changes no file in the repo.
+
+```bash
+pnpm release 0.1.0 --dry-run [--skip-check] [--allow-dirty] [--arch both|arm64|x64]
+pnpm release 0.1.0 --no-publish   # Nick's Mac, with the release variables below
+```
+
+`--dry-run` is the same command with three effects swapped, and CI's `release-dry-run` job runs it
+on every push:
+
+- **Signing is ad hoc.** `VALET_RELEASE_DRY_RUN=1` gives electron-builder the `-` identity for the
+  release bundle (`me.dncr.valet`, the same fuses, entitlements, targets and feed), never notarises,
+  and refuses any `CSC_*`, `APPLE_*` or `VALET_TEAM_ID` variable. The DMG is signed ad hoc as well.
+  The designated requirement isn't compared, because an ad hoc signature's requirement is its own
+  cdhash.
+- **The feed key is a throwaway.** A new Ed25519 key is made in a temporary folder and deleted when
+  the run ends. The feed URL is `https://updates.example.com/valet-dry-run/mac/`.
+- **Stubs print what they stand for.** Notarising, stapling, both Gatekeeper assessments, the
+  upload and the tag are printed and recorded in `release-summary.json`, and never run.
+
+Everything else runs for real: the Swift bridge, the release `electron-vite build` with the feed
+compiled in, electron-builder's DMG and zip for both architectures, `codesign --verify --deep
+--strict`, the hardened-runtime flag, the entitlements and fuses, `app-update.yml`, the asar's
+contents, the command-line refusal launches (host architecture only), mounting each DMG and
+verifying the app inside it, `make-feed`'s channel files and envelopes checked with the app's own
+`verifyFeed` and the compiled-in public key (plus a tampered file that must be refused), and the
+upload order.
+
+A real release needs `VALET_TEAM_ID`, `VALET_UPDATE_URL`, `CSC_NAME`, `APPLE_KEYCHAIN_PROFILE` and
+`VALET_FEED_KEY_REF`, an `op://` reference that `op read` uses to get the feed's private key with
+Touch ID ([D61](plan.md#d61-the-update-feeds-signing-key)). It also needs `--no-publish` until the
+feed host ([D23](plan.md#d23-update-feed-host)) is decided. It then stops with the files staged in
+`<out>/publish`, in upload order, not uploaded and not tagged. The real path has not run yet; the
+first one is Nick's, with his identity.
+
 ## Auto-update
 
 ### Feed host
