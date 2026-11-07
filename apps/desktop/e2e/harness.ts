@@ -273,6 +273,26 @@ export function changedAdapterBuild(): string {
 interface DemoHook {
   blockAll(on: boolean): void
   trolley(): readonly { readonly stockcode: number; readonly quantity: number }[]
+  wrongPassword(on: boolean): void
+  passwordPosts(): number
+}
+
+/** Logs the demo account out everywhere and makes the fake refuse its password, or stop. */
+export async function wrongPassword(launched: Launched, on: boolean): Promise<void> {
+  await launched.app.evaluate((_electron, on) => {
+    const hook = (globalThis as { __valetE2e?: DemoHook }).__valetE2e
+    if (hook === undefined) throw new Error('no e2e hook: not a demo build in e2e mode')
+    hook.wrongPassword(on)
+  }, on)
+}
+
+/** Password form posts the fake's Auth0 has received since launch. */
+export async function passwordPosts(launched: Launched): Promise<number> {
+  return launched.app.evaluate(() => {
+    const hook = (globalThis as { __valetE2e?: DemoHook }).__valetE2e
+    if (hook === undefined) throw new Error('no e2e hook: not a demo build in e2e mode')
+    return hook.passwordPosts()
+  })
 }
 
 /** Makes the fake site answer every request with its Access Denied page, or stop. */

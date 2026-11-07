@@ -270,6 +270,16 @@ describe('the password page', () => {
     }
   })
 
+  it('refuses the right password while passwords are rejected, and takes it again after', async () => {
+    const site = await start()
+    site.rejectPasswords(true)
+    const refused = await signIn(site, await browser(site), PLAIN)
+    expect(refused.status).toBe(400)
+    expect(refused.text).toContain('data-error-code="wrong-credentials"')
+    site.rejectPasswords(false)
+    expect((await signIn(site, await browser(site), PLAIN)).status).not.toBe(400)
+  })
+
   it('matches credentials exactly, not by case or prefix', async () => {
     const site = await start()
     for (const password of [

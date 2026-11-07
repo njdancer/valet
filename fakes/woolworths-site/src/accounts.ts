@@ -46,6 +46,8 @@ export class AccountStore {
   private readonly visitors = new Map<string, Visitor>()
   /** Tokens of logged-in sessions that expireSessions() ended. */
   private readonly expired = new Set<string>()
+  /** While true, every password is wrong, as if the person had changed theirs elsewhere. */
+  passwordsRejected = false
 
   constructor(accounts: readonly FakeAccount[]) {
     for (const account of accounts) {
@@ -61,6 +63,7 @@ export class AccountStore {
   /** The account whose username and password both match exactly, or null. */
   authenticate(username: string, password: string): AccountState | null {
     const state = this.accounts.get(username)
+    if (this.passwordsRejected) return null
     return state !== undefined && state.account.password === password ? state : null
   }
 
