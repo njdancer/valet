@@ -97,7 +97,9 @@ describe('valet-verify-audit', () => {
     expect((await run([path])).stdout).toMatch(/^ok: 1 record, head [0-9a-f]{64}\n$/)
   })
 
-  it('fails when any byte of any line is changed', async () => {
+  // Thousands of write-and-verify rounds, one per tampered byte: about 2 s alone, and it ran past
+  // vitest's 5 s default once on a busy macOS runner. The work is fixed, so give it room.
+  it('fails when any byte of any line is changed', { timeout: 30_000 }, async () => {
     const { bytes } = await writeLog()
     for (let i = 0; i < bytes.length; i++) {
       for (const replacement of [bytes[i]! ^ 0x01, bytes[i]! ^ 0x20, 0x20]) {
