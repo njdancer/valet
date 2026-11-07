@@ -240,8 +240,31 @@ describe('permissionDiff', () => {
     expect(addsPermissions(tighter)).toBe(false)
   })
 
-  // `destructive` arrives with manifest-derived MCP annotations (C9), overnight queue item 6.
-  it.todo('flags a tool that becomes destructive')
+  it('flags a tool that becomes destructive', () => {
+    const additive = after((m) => ({
+      ...m,
+      tools: m.tools.map((t) => (t.name === 'add' ? { ...t, destructive: false } : t)),
+    }))
+    const diff = permissionDiff(additive, before)
+    expect(diff.tools.added).toEqual([
+      { name: 'add', title: 'Add', sideEffect: 'write', destructive: true, idempotent: false },
+    ])
+    expect(diff.tools.removed).toEqual([
+      { name: 'add', title: 'Add', sideEffect: 'write', destructive: false, idempotent: false },
+    ])
+    expect(addsPermissions(diff)).toBe(true)
+  })
+
+  it('flags a tool that stops being destructive or becomes idempotent: clients may stop asking', () => {
+    for (const hints of [{ destructive: false }, { idempotent: true }]) {
+      const diff = permissionDiff(
+        before,
+        after((m) => ({ ...m, tools: m.tools.map((t) => (t.name === 'add' ? { ...t, ...hints } : t)) })),
+      )
+      expect(diff.tools.added.map((t) => t.name)).toEqual(['add'])
+      expect(addsPermissions(diff)).toBe(true)
+    }
+  })
 
   it('flags any probe change', () => {
     const diff = permissionDiff(

@@ -156,10 +156,22 @@ test('the changed bundle waits for review: tools off MCP, no grants, a diff agai
   expect(review?.to.hash).toMatch(/^[0-9a-f]{64}$/)
   expect(review?.to.hash).not.toBe(firstHash)
   expect(review?.diff.tools.added).toEqual([
-    { name: 'remove_from_cart', title: 'Remove from cart', sideEffect: 'irreversible' },
+    {
+      name: 'remove_from_cart',
+      title: 'Remove from cart',
+      sideEffect: 'irreversible',
+      destructive: true,
+      idempotent: false,
+    },
   ])
   expect(review?.diff.tools.removed).toEqual([
-    { name: 'remove_from_cart', title: 'Remove from cart', sideEffect: 'write' },
+    {
+      name: 'remove_from_cart',
+      title: 'Remove from cart',
+      sideEffect: 'write',
+      destructive: true,
+      idempotent: true,
+    },
   ])
   expect(review?.files.map((f) => [f.path, f.status])).toEqual([['src/manifest.ts', 'modified']])
 
