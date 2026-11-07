@@ -1672,6 +1672,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D42. Per-client tool scopes
 
+- Nick's answer (2026-11-07): Accepted: a token per client in M3.
 - Today: any client with the token sees every approved tool, and the audit log's client name is
   whatever the client says in `initialize`.
 - Options: one token, all tools (today); a token per client, named by the person, with identity
@@ -1969,7 +1970,8 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D61. The update feed's signing key
 
-- Nick's answer (2026-11-07): Wants to discuss before deciding (blocks the first signed build).
+- Nick's answer (2026-11-07): 1Password, not a hardware key. The key goes in its own vault, apart
+  from the credentials vault, and the release script reads it with Touch ID.
 - Today (round 3): the feed carries an Ed25519 envelope over `latest-mac.yml` with an expiry, a
   version floor and the yml's hash. The app verifies it with a public key fixed at build time,
   before electron-updater sees the yml. Apple's signature on the zip is checked as well. Nothing
