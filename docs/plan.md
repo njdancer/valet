@@ -1651,7 +1651,10 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D41. Stable MCP port and token rotation
 
-- Nick's answer (2026-11-07): Wants to discuss before deciding.
+- Nick's answer (2026-11-07): Valet must work from cloud environments, which need an HTTP MCP
+  endpoint, and that comes right after the MVP. So: local clients use the bridge (no fixed port);
+  cloud clients use the app-side remote mode from [relay.md](relay.md), built straight after M3
+  rather than in M9, with as few duplicate code paths as possible. Details still being discussed.
 - Today: a free port each launch, and one token written to a 0600 file. The stdio bridge re-reads
   its config, so bridged clients survive a restart. HTTP-native clients (Claude Code over HTTP)
   keep the URL and token in their own config, and break on every restart.
