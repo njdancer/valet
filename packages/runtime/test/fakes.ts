@@ -10,6 +10,7 @@ import {
   type FetchResult,
   type NeedsUserReason,
   type SessionDriver,
+  type SiteWatcher,
   type ToolPage,
   type ToolRunPolicy,
   ValetError,
@@ -101,6 +102,12 @@ export class FakeSessionDriver implements SessionDriver {
   onBlocked: ((request: BlockedRequest) => void) | null = null
   toolPageCalls = 0
   onHandoff: () => void | Promise<void> = () => {}
+  /** The site's breaker, as the tool host connected it. */
+  watcher: SiteWatcher | null = null
+
+  watchSite(watcher: SiteWatcher): void {
+    this.watcher = watcher
+  }
 
   async openAuthPage(): Promise<never> {
     throw new Error('only the auth flow opens auth pages')

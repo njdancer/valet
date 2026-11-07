@@ -29,6 +29,17 @@ export interface CookieSetDetails {
   readonly sameSite: 'unspecified' | 'no_restriction' | 'lax' | 'strict'
 }
 
+/** A response's headers, as webRequest's onHeadersReceived reports them. */
+export interface ObservedResponse {
+  readonly url: string
+  readonly method: string
+  /** As OutgoingRequest's. */
+  readonly resourceType: string
+  readonly status: number
+  /** The content-type header, or null without one. */
+  readonly contentType: string | null
+}
+
 export interface OutgoingRequest {
   readonly url: string
   readonly method: string
@@ -102,6 +113,11 @@ export interface PartitionSession {
    * limited to proxied traffic, that takes in the sockets webRequest never sees.
    */
   useProxy(proxy: ProxyHandle): Promise<void>
+  /**
+   * Calls `listener` with the status and content type of every response the partition receives,
+   * the session's own fetch() and redirects included, as its headers arrive. The only listener.
+   */
+  watchResponses(listener: (response: ObservedResponse) => void): void
   /** Adds a response header to every response, e.g. to switch off DNS prefetch per document. */
   addResponseHeader(name: string, value: string): void
   getCookies(): Promise<readonly CookieRecord[]>

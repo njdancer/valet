@@ -18,6 +18,7 @@ import {
   type Purpose,
   parseManifest,
   SecretValue,
+  type SiteRefusal,
   ValetError,
 } from '@valet/core'
 import { app, BrowserWindow, type Cookie, session, type WebFrameMain } from 'electron'
@@ -1001,6 +1002,39 @@ async function setup() {
       const escaped = await settle(page.goto(site.url('site.test', `/redirect?to=${target}`)))
       await page.close()
       return { reports, escaped, toolBlocked: blocked.filter((b) => b.target.includes('widget.test')) }
+    },
+
+    siteRefusals: async () => {
+      const refusals: SiteRefusal[] = []
+      let held = false
+      driver.watchSite({
+        refused: (refusal) => {
+          refusals.push(refusal)
+          held = true
+        },
+        held: () => held,
+      })
+      try {
+        const auth = await driver.openAuthPage()
+        const denied = await settle(auth.goto(site.url('login.test', '/denied?state=secret')))
+        await sleep(300)
+        await auth.close()
+        held = false
+        begin()
+        const page = await driver.toolPage()
+        await page.goto(site.url('site.test', '/'))
+        const limited = await settle(page.evaluate(`fetch('/api/cart?status=429').then((r) => r.status)`))
+        await sleep(300)
+        const before = site.requests.length
+        const whileHeld = await settle(
+          page.evaluate(`fetch('/api/cart').then((r) => r.status, () => 'refused')`),
+        )
+        const reachedWhileHeld = site.requests.slice(before).filter((r) => r.path === '/api/cart').length
+        driver.endRun()
+        return { refusals, denied, limited, held, whileHeld, reachedWhileHeld }
+      } finally {
+        driver.watchSite({ refused: () => {}, held: () => false })
+      }
     },
 
     close: async () => {

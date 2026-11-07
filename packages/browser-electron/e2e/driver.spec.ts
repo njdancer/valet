@@ -482,6 +482,36 @@ test('an auth probe that never answers gives up at the step timeout', async () =
   expect(result.reached).toEqual(['/hang', '/probe'])
 })
 
+test('block signatures in either partition reach the site’s breaker, and an open one holds the tool partition (D55)', async () => {
+  const result = await scenario(app, 'siteRefusals')
+  const at = (host: string, path: string) =>
+    expect.stringMatching(new RegExp(`^https://${host.replace('.', '\\.')}:\\d+${path}$`))
+  expect(result.refusals).toEqual([
+    {
+      partition: 'auth',
+      cause: 'blocked-by-site',
+      status: 403,
+      target: at('login.test', '/denied'),
+      resourceType: 'mainFrame',
+    },
+    {
+      partition: 'tool',
+      cause: 'rate-limited',
+      status: 429,
+      target: at('site.test', '/api/cart'),
+      resourceType: 'xhr',
+    },
+  ])
+  expect(JSON.stringify(result.refusals)).not.toContain('secret')
+  // The block page still loads: the person may need to see it.
+  expect(result.denied).toEqual({})
+  expect(result.limited).toEqual({ ok: 429 })
+  expect(result.held).toBe(true)
+  // Held: the page's next request never left.
+  expect(result.whileHeld).toEqual({ ok: 'refused' })
+  expect(result.reachedWhileHeld).toBe(0)
+})
+
 test('the auth partition’s refused subframes and escapes are reported as the page’s', async () => {
   const result = await scenario(app, 'authBlocks')
   expect(result.escaped).toEqual({ error: { stage: 'navigate', errorClass: 'navigation-escaped' } })

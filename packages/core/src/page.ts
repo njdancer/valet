@@ -134,8 +134,34 @@ export interface SessionDriver {
    */
   unlockIrreversible(): void
   endRun(): void
+  /**
+   * Connects the site's breaker (D55). From now on the driver tells `watcher` about every block
+   * signature it sees in either partition, and cancels every tool-partition request while
+   * `watcher.held()` is true. Optional: a driver without it leaves blocks to the runtime's own checks.
+   */
+  watchSite?(watcher: SiteWatcher): void
   /** Closes every window this driver opened. */
   close(): Promise<void>
+}
+
+/**
+ * A response that looks like the site refusing us: a 429, or a 403 HTML page (Akamai's Access
+ * Denied page is one), on a main-frame navigation or an API call (xhr or fetch) to the site.
+ */
+export interface SiteRefusal {
+  readonly partition: 'auth' | 'tool'
+  readonly cause: 'blocked-by-site' | 'rate-limited'
+  readonly status: number
+  /** Origin and path only. */
+  readonly target: string
+  readonly resourceType: string
+}
+
+/** The runtime's side of watchSite(). Neither method may throw. */
+export interface SiteWatcher {
+  refused(refusal: SiteRefusal): void
+  /** True while the site's breaker is open. */
+  held(): boolean
 }
 
 /** The network policy for one tool run. */

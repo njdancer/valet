@@ -66,6 +66,12 @@ export interface AuthRunRequest {
    * gives up while waiting.
    */
   pace(): Promise<void>
+  /**
+   * True once the site has refused us since this login started, in either partition, as the
+   * driver reported it to the site's breaker (D55). The auth flow treats it as a block page: the
+   * login ends as blocked at its next check.
+   */
+  siteRefused(): boolean
 }
 
 /**

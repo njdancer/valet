@@ -55,9 +55,14 @@ Still not done, or done differently from the docs:
   and the site's own traffic counts all need Nick ([What Nick has to do](#what-nick-has-to-do-in-person)).
 - **Pacing inside the login** ([D55](#d55-driver-level-budget-and-block-detection), in part,
   2026-11-07). The automated login inside a call now waits on the site's budget before each `goto`,
-  each `click` and each probe request, and its block pages already open the breaker. Still not done:
-  the person's own clicks in the login window are watched but deliberately not paced, and in the
-  tool partition, block pages served to page-initiated requests don't reach the breaker yet.
+  each `click` and each probe request, and its block pages already open the breaker. The person's
+  own clicks in the login window are watched but deliberately not paced.
+- **Block signatures in the driver** ([D55](#d55-driver-level-budget-and-block-detection), in part,
+  2026-11-07). The driver now watches every main-frame and API response in both partitions, the
+  person's login window included. A 429, or a 403 HTML page, on the site's hosts opens the site's
+  breaker (`SessionDriver.watchSite`). An open breaker stops the tool partition sending anything,
+  and a login in progress ends as `blocked` at its next check. Still not done: pacing main-frame
+  navigations that the page starts itself, and AC7's request count at the fake site.
 - **Cancelling a login** ([D67](#d67-stopping-a-login-when-the-call-is-cancelled), built
   2026-11-07). A cancelled call now stops its automatic login at the next step, poll or pause, and
   before any secret is typed. If no password or code had been typed, the attempt marker clears by
