@@ -385,7 +385,14 @@ async function setup() {
       await page.type(secret, { allowedOrigins: [site.url('site.test')] })
       secret.dispose()
       const frame = subframeWithOrigin(login, site.url('site.test'))
-      const keydowns = await frame?.executeJavaScript('window.__keydowns')
+      // Input events reach the renderer asynchronously, so the last keyDown can still be queued
+      // when type() resolves (seen once on CI: 14 of 15). Wait for the count to settle.
+      let keydowns: unknown
+      for (let i = 0; i < 40; i++) {
+        keydowns = await frame?.executeJavaScript('window.__keydowns')
+        if (keydowns === CANARY.length) break
+        await sleep(50)
+      }
       await page.click('#code-submit')
       const post = await until(() => site.posts.slice(from).find((p) => p.path === '/session-code'))
       await page.close()
