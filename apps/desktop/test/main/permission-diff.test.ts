@@ -1,6 +1,7 @@
 // @vitest-environment node
-// The permission diff: each permission-expanding change, one test each (security-model.md, "Approval
-// and audit"), and that nothing in it comes from a step's note.
+// The permission diff: each permission-expanding change in AC15 (docs/plan.md) and security-model.md's
+// "Approval and audit", one test each, and that nothing in it comes from a step's note. How the
+// review screen shows each one is test/review-ac15.test.tsx.
 
 import { createManifest } from '@valet/adapter-woolworths'
 import { type AuthStep, type ManifestInput, parseManifest } from '@valet/core'
@@ -96,8 +97,24 @@ describe('permissionDiff', () => {
       (d) => d.requests.added,
     ],
     [
-      'a tool whose side effect went up',
+      'a new tool',
+      (m) => ({
+        ...m,
+        tools: [...m.tools, { name: 'pay', title: 'Pay', description: 'Pays.', sideEffect: 'irreversible' }],
+      }),
+      (d) => d.tools.added,
+    ],
+    [
+      'a tool whose side effect went from read to write',
       (m) => ({ ...m, tools: m.tools.map((t) => (t.name === 'echo' ? { ...t, sideEffect: 'write' } : t)) }),
+      (d) => d.tools.added,
+    ],
+    [
+      'a tool whose side effect went to irreversible',
+      (m) => ({
+        ...m,
+        tools: m.tools.map((t) => (t.name === 'add' ? { ...t, sideEffect: 'irreversible' } : t)),
+      }),
       (d) => d.tools.added,
     ],
     [
@@ -197,26 +214,34 @@ describe('permissionDiff', () => {
     expect(addsPermissions(diff)).toBe(true)
   })
 
-  it('flags each loosened limit, and not a tightened one', () => {
-    const loosen = [
-      { requestsPerRun: 6 },
-      { minGapMs: 500 },
-      { cooldownSeconds: 300 },
-      { cooldownSeconds: 300, maxCooldownSeconds: 3600 },
-    ]
-    for (const limits of loosen) {
+  // SHOP's limits: 5 requests per run, 1 s apart, and the core defaults for the cool-downs.
+  const loosened: [string, Record<string, number>][] = [
+    ['a higher requestsPerRun', { requestsPerRun: 6 }],
+    ['a lower minGapMs', { minGapMs: 500 }],
+    ['a lower cooldownSeconds', { cooldownSeconds: 300 }],
+    ['a lower maxCooldownSeconds', { maxCooldownSeconds: 3600 }],
+  ]
+  for (const [name, limits] of loosened) {
+    it(`flags ${name}`, () => {
       const diff = permissionDiff(
         before,
         after((m) => ({ ...m, limits: { ...m.limits, ...limits } })),
       )
+      expect(diff.limits?.before).not.toEqual(diff.limits?.after)
       expect(addsPermissions(diff)).toBe(true)
-    }
+    })
+  }
+
+  it('does not flag tightened limits', () => {
     const tighter = permissionDiff(
       before,
       after((m) => ({ ...m, limits: { requestsPerRun: 4, minGapMs: 2000 } })),
     )
     expect(addsPermissions(tighter)).toBe(false)
   })
+
+  // `destructive` arrives with manifest-derived MCP annotations (C9), overnight queue item 6.
+  it.todo('flags a tool that becomes destructive')
 
   it('flags any probe change', () => {
     const diff = permissionDiff(

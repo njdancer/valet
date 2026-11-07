@@ -5,6 +5,8 @@ import {
   limitsChanged,
   probeText,
   sameProbe,
+  secretChanges,
+  toolChanges,
 } from '../src/renderer/lib/permissions'
 import type { PermissionDiff, ProbeInfo } from '../src/shared/api'
 
@@ -261,5 +263,48 @@ describe('additionBadges', () => {
       '+1 write path',
       '+1 read path',
     ])
+  })
+})
+
+describe('changed secrets and tools', () => {
+  it('reads a secret on both sides as what it gained, and badges that rather than a new secret', () => {
+    const login = {
+      name: 'login',
+      description: 'Woolworths',
+      fields: ['username', 'password'] as const,
+      origins: ['https://auth.woolworths.com.au'],
+    }
+    const diff: PermissionDiff = {
+      ...NOTHING_NEW,
+      secrets: {
+        added: [
+          {
+            ...login,
+            fields: ['username', 'password', 'otp'],
+            origins: [...login.origins, 'https://www.woolworths.com.au'],
+          },
+        ],
+        removed: [{ ...login, fields: [...login.fields] }],
+        unchanged: [],
+      },
+    }
+    expect(secretChanges(diff)).toEqual([
+      expect.objectContaining({ newFields: ['otp'], newOrigins: ['https://www.woolworths.com.au'] }),
+    ])
+    expect(additionBadges(diff).map((b) => b.label)).toEqual(['+1 secret field', '+1 secret origin'])
+    expect(addsPermissions(diff)).toBe(true)
+  })
+
+  it('marks a tool raised only when its side effect goes up', () => {
+    const tool = (sideEffect: 'read' | 'write' | 'irreversible') => ({ name: 't', title: 'T', sideEffect })
+    const change = (from: 'read' | 'write' | 'irreversible', to: 'read' | 'write' | 'irreversible') =>
+      toolChanges({ ...NOTHING_NEW, tools: { added: [tool(to)], removed: [tool(from)], unchanged: [] } })[0]
+    expect(change('read', 'write')).toMatchObject({ was: 'read', raised: true })
+    expect(change('read', 'irreversible')).toMatchObject({ raised: true })
+    expect(change('write', 'irreversible')).toMatchObject({ raised: true })
+    expect(change('write', 'read')).toMatchObject({ was: 'write', raised: false })
+    expect(
+      toolChanges({ ...NOTHING_NEW, tools: { added: [tool('read')], removed: [], unchanged: [] } }),
+    ).toEqual([{ tool: tool('read'), was: null, raised: false }])
   })
 })
