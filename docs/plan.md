@@ -1208,6 +1208,8 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D10. Analytics hosts
 
+- Nick's answer (2026-11-07): Ideally yes: block the analytics and ad hosts (strict), if the site
+  still works without them. Session 2 of the [M2 runbook](m2-runbook.md) checks that.
 - Hosts in play, by partition:
   - **Auth partition navigation:** `https://www.woolworths.com.au` and
     `https://auth.woolworths.com.au`. The Auth0 pages' subresources aren't restricted by the

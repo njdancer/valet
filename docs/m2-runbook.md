@@ -8,8 +8,8 @@ It has two parts. **Part 1** is solo work that needs nothing live and must land 
 is three sessions on Nick's Mac with Nick present, spread over at least two days so live contact
 stays sparse.
 
-Decisions are cited by number, with whether Nick has answered them. Four that matter here are still
-open (D10, D24a, D66, D67); they're collected in [Open decisions](#open-decisions-for-nick), with
+Decisions are cited by number, with whether Nick has answered them. Two that matter here are still
+open (D66, D67); they're collected, with D10 and D24a, which Nick answered on 2026-11-07, in [Open decisions](#open-decisions-for-nick), with
 the session each one is needed by.
 
 ## Rules for every live step
@@ -212,7 +212,7 @@ Uses spike 1's persisted partitions, so it starts from yesterday's Auth0 session
    This one walk gives: the real checkout and payment request paths (method, host, path) for AC13;
    per page view, the site's own navigations and API calls and its non-GET background calls by
    host for D58; and which requests touch a deny segment, by resource type, for R17.
-4. **Strict egress check, if D10 is answered strict.** One more trolley page load with only the
+4. **Strict egress check** (D10, answered: ideally strict). One more trolley page load with only the
    strict hosts allowed (www, `cdn0.woolworths.media`, `acs.woolworths.com.au`). Does the trolley
    render, does Akamai object. Skip it if Session 2 has shown anything odd.
 5. Read the results together and agree the scrubbed finding.
@@ -266,8 +266,8 @@ the D28 pacing.
 
 | Decision | Question | Recommendation | Needed by |
 | --- | --- | --- | --- |
-| [D10](plan.md#d10-analytics-hosts) (open) | Block the ~40 analytics and ad hosts in the tool partition, or allow them? | Strict by default (www, `cdn0.woolworths.media`, `acs.woolworths.com.au`), with Session 2's strict check as the evidence. Add hosts only if the site breaks without them. | Session 2, step 4 |
-| [D24a](plan.md#d24a-client-hint-brands) (open) | If a logged-in block is traced to the `Chromium` client-hint brand, match Chrome's brands over CDP? | Leave `Chromium` until a block is traced to it. Matching is within D24, but it's a claim about the product, so it's Nick's call if it comes up. | Only if Session 1 or 3 sees a block after login |
+| [D10](plan.md#d10-analytics-hosts) (answered 2026-11-07: ideally yes) | Block the ~40 analytics and ad hosts in the tool partition, or allow them? | Strict by default (www, `cdn0.woolworths.media`, `acs.woolworths.com.au`), with Session 2's strict check as the evidence. Add hosts only if the site breaks without them. | Session 2, step 4 |
+| [D24a](plan.md#d24a-client-hint-brands) (answered 2026-11-07, in the bot-detection thread) | Send `Google Chrome` rather than `Chromium` in the client-hint brands? | Nick chose to match Chrome: the default flips to `clientHints: 'chrome'`. Nothing left here. | Done |
 | [D66](plan.md#d66-a-block-page-in-the-persons-login-window) (open) | When the person's login window opens on a block page, keep closing it silently, show the page, or explain in the app? | Explain in the app, with the time the breaker reopens. | Before Session 3, which is the first time the app's own login window meets the live site |
 | [D67](plan.md#d67-stopping-a-login-when-the-call-is-cancelled) (open) | Let `runAuthFlow` take a signal and report whether a secret was filled, so a cancel before any fill clears the marker by itself? | Yes, the core change, built in Part 1 step 2 on a branch. | Merge before Session 3 |
 
