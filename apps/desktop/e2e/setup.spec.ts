@@ -165,16 +165,17 @@ test('Claude Code’s token lists the six namespaced tools with manifest-derived
   for (const read of ['woolworths_get_cart', 'woolworths_get_product', 'woolworths_search_products']) {
     expect(byName[read]).toMatchObject({ readOnlyHint: true, openWorldHint: true })
   }
-  // Until C9, every write is advertised destructive and not idempotent (AC3).
-  for (const write of [
-    'woolworths_add_to_cart',
-    'woolworths_remove_from_cart',
-    'woolworths_set_cart_quantity',
-  ]) {
-    expect(byName[write]).toMatchObject({
+  // C9, from the manifest: every write destructive (add_to_cart until D30); setting a quantity or
+  // removing a line twice is the same cart (AC3), adding twice is not.
+  for (const [write, idempotentHint] of [
+    ['woolworths_add_to_cart', false],
+    ['woolworths_remove_from_cart', true],
+    ['woolworths_set_cart_quantity', true],
+  ] as const) {
+    expect(byName[write]).toEqual({
       readOnlyHint: false,
       destructiveHint: true,
-      idempotentHint: false,
+      idempotentHint,
       openWorldHint: true,
     })
   }
