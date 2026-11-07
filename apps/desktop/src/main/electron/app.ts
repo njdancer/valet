@@ -56,12 +56,13 @@ const FEED_BASE_URL = __VALET_FEED_BASE_URL__
 const FEED_PUBLIC_KEY = __VALET_FEED_PUBLIC_KEY__
 
 /** The stdio bridge from the repo, until the app bundles it (packaging's job): tsx and its CLI. */
-function bridgeCommand(configPath: string): BridgeCommand | null {
+function bridgeCommand(): ((configPath: string) => BridgeCommand) | null {
   if (app.isPackaged) return null
   const root = resolve(app.getAppPath(), '../..')
   const tsx = join(root, 'node_modules/.bin/tsx')
   const cli = join(root, 'packages/mcp-server/src/bridge-cli.ts')
-  return existsSync(tsx) && existsSync(cli) ? { command: tsx, args: [cli, configPath] } : null
+  if (!existsSync(tsx) || !existsSync(cli)) return null
+  return (configPath) => ({ command: tsx, args: [cli, configPath] })
 }
 
 async function main(): Promise<void> {
@@ -129,14 +130,15 @@ async function main(): Promise<void> {
         demoSite === null ? {} : { dial: demoSite.dial },
       ),
     credentials: demoSite === null ? realCredentials(opDeps) : demoSite.credentials,
-    startEndpoint: (caller, configPath, onSessionsChanged) =>
+    startEndpoint: (caller, clients, onSessionsChanged) =>
       startEndpoint({
         caller,
-        configPath,
+        clients,
         onSessionsChanged,
-        // D41: the bridge for every client. The port is kept (the bridge reads it from bridge.json)
-        // and the token is new at every launch, so one collected by whatever held the saved port
-        // while the app was down stops working at the next start. The bridge follows on its own.
+        // D41, D42: the bridge for every client, each with its own token. The port is kept (each
+        // bridge reads it from its client's file) and tokens are new at every launch, so one
+        // collected by whatever held the saved port while the app was down stops working at the
+        // next start. The bridge follows on its own.
         // 'on-reset' waits for an HTTP-client setup that shows the token and states that risk.
         stablePort: true,
         tokenRotation: 'every-launch',
@@ -168,7 +170,7 @@ async function main(): Promise<void> {
       quit: () => app.quit(),
     },
     emit: (event) => broadcast(windows, event),
-    bridge: bridgeCommand(paths.bridgeConfig),
+    bridge: bridgeCommand(),
     updates: electronUpdates({
       feed: { url: FEED_BASE_URL, publicKey: FEED_PUBLIC_KEY },
       demo: mode.demo,

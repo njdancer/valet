@@ -2,8 +2,6 @@
 // keep out web pages in the person's own browser. A page can't read the token, but DNS rebinding
 // could point a hostile name at 127.0.0.1, so the Host and Origin headers must both say localhost.
 
-import { tokensEqual } from './token'
-
 const LOCAL_ORIGIN_HOSTS = ['127.0.0.1', 'localhost', '[::1]']
 
 /**
@@ -32,10 +30,7 @@ export function originAllowed(origin: string | undefined): boolean {
   return LOCAL_ORIGIN_HOSTS.includes(parsed.hostname)
 }
 
-/** True when the Authorization header carries exactly `Bearer <expected>`. */
-export function bearerAuthorized(authorization: string | undefined, expected: string): boolean {
-  const match = /^Bearer ([^\s]+)$/i.exec(authorization ?? '')
-  // Compare even when the header is malformed, so its shape isn't visible in the timing either.
-  const presented = match?.[1] ?? ''
-  return tokensEqual(presented, expected) && match !== null
+/** The token in an Authorization header of exactly `Bearer <token>`, or null. */
+export function bearerToken(authorization: string | undefined): string | null {
+  return /^Bearer ([^\s]+)$/i.exec(authorization ?? '')?.[1] ?? null
 }

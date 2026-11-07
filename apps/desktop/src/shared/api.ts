@@ -425,6 +425,8 @@ export interface AuditQuery {
   readonly category?: AuditCategory
   readonly adapterId?: string
   readonly client?: string
+  /** The credential's client, `local:<id>` or `remote:<id>`: the filter the Clients list offers. */
+  readonly clientId?: string
   readonly since?: IsoTime
   /** Matches call ids, tool names and hosts. */
   readonly search?: string
@@ -466,22 +468,33 @@ export interface EndpointStatus {
   readonly url: string | null
   /** MCP sessions open now, over the bridge or plain HTTP. */
   readonly connectedClients: number
-  readonly tokenRotatedAt: IsoTime | null
 }
 
-/** A setup snippet. Never contains the token: the bridge reads it from its own 0600 config file. */
+/**
+ * A setup snippet for one client. Never contains the token: the bridge reads that client's token
+ * from its own 0600 config file.
+ */
 export interface ClientSnippet {
   readonly client: ClientKind
   readonly text: string
 }
 
+/**
+ * A client the person added. It has its own token (D42), so calls are attributed to it, and its
+ * access can be reset or revoked without touching any other client.
+ */
 export interface ClientInfo {
   readonly id: string
-  /** What the client says its name is, from MCP initialize. Proves nothing. */
-  readonly reportedName: string
-  readonly transport: 'http' | 'stdio'
-  readonly firstSeen: IsoTime
-  readonly lastSeen: IsoTime
+  /** The person's name for it. */
+  readonly name: string
+  readonly addedAt: IsoTime
+  /** When its token was last replaced with "Reset access"; null if never. */
+  readonly accessResetAt: IsoTime | null
+  /** Its last call; null until it makes one. */
+  readonly lastSeen: IsoTime | null
+  /** What the client last said its name is, from MCP initialize. Proves nothing. */
+  readonly reportedName: string | null
+  readonly transport: 'http' | 'stdio' | null
   readonly calls7d: number
   readonly revokedAt: IsoTime | null
 }
@@ -536,7 +549,7 @@ export interface ConfirmationItem {
    * How that client reached the endpoint, as the endpoint labelled its session. The bridge names
    * itself in a header, so this is a label like the name, never a permission.
    */
-  readonly clientTransport: ClientInfo['transport']
+  readonly clientTransport: 'http' | 'stdio'
   readonly callId: string
   readonly requestedAt: IsoTime
   readonly expiresAt: IsoTime
@@ -692,15 +705,20 @@ export interface ValetApi {
   readonly endpoint: {
     status(): Promise<EndpointStatus>
     setListening(listening: boolean): Promise<void>
-    /** Issues a new token and rewrites the bridge config. The token never reaches the renderer. */
-    rotateToken(): Promise<void>
-    snippets(): Promise<readonly ClientSnippet[]>
-    copyClientConfig(client: ClientKind): Promise<void>
     copyUrl(): Promise<void>
   }
+  /** Tokens never reach the renderer: each lives in its client's bridge config file and the endpoint. */
   readonly clients: {
     list(): Promise<readonly ClientInfo[]>
+    /** Adds a client under the person's name for it, with its own token. */
+    add(name: string): Promise<ClientInfo>
+    /** "Reset access": a new token for this client only; its open sessions end and its bridge follows. */
+    resetAccess(clientId: string): Promise<void>
+    /** Withdraws the client's token for good and deletes its bridge config file. */
     revoke(clientId: string): Promise<void>
+    /** Setup snippets that launch the bridge with this client's config file. */
+    snippets(clientId: string): Promise<readonly ClientSnippet[]>
+    copyConfig(clientId: string, kind: ClientKind): Promise<void>
   }
   readonly attention: {
     list(): Promise<readonly AttentionItem[]>

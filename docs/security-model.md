@@ -544,8 +544,10 @@ boundary.
   **Contract**).
 - The client name is the self-reported name from MCP `initialize`, stripped of control and
   format characters and cut to 100 characters (**Enforced**). It is a label, not an identity.
-  Identity from a per-client bearer token is **Designed**
-  ([D42](plan.md#d42-per-client-tool-scopes)).
+- The identity is the client the bearer token names: each client the person adds gets its own
+  token, and `tool-called` records it as `clientId` (`local:<id>`, later `remote:<id>`) beside the
+  self-reported name (**Enforced**, [D42](plan.md#d42-per-client-tool-scopes), C12). Records from
+  before per-client tokens have no `clientId`.
 
 ## The MCP endpoint
 
@@ -555,15 +557,22 @@ boundary.
   `Origin` must be a localhost origin (DNS-rebinding protection). `localhost` URLs are refused,
   because Node resolves `localhost` to `::1` first, where another local account could be
   listening and would be handed the token.
-- A bearer token on every request, 32 random bytes, compared in constant time. Bodies over 1 MiB
-  are refused; at most 32 sessions are kept.
-- The stdio bridge reads the endpoint URL and token from a config file that must be mode 0600,
-  owned by the person, and name `http://127.0.0.1:<port>/mcp`, so an edited file can't send the
-  token elsewhere.
+- A bearer token on every request, one per client the person added, 32 random bytes each. The
+  endpoint keeps only their SHA-256 and looks a presented token up by its hash, so there is no
+  byte-by-byte comparison to time. A session answers only the client whose token opened it.
+  "Reset access" replaces one client's token and ends its sessions; revoking withdraws it and
+  deletes its file. No other client is touched. Bodies over 1 MiB are refused; at most 32 sessions
+  are kept.
+- Each client's stdio bridge reads the endpoint URL and that client's token from its own config
+  file, which must be mode 0600, owned by the person, and name `http://127.0.0.1:<port>/mcp`, so an
+  edited file can't send the token elsewhere.
+- The checks above are the local listener's `authenticate` hook. The handler behind it is the one a
+  remote listener will use with its own hook ([D41](plan.md#d41-stable-mcp-port-and-token-rotation)),
+  so there is no second request path to keep in step.
 - Tool names are `<adapter id>_<tool>`. If two tools map to one name both are withheld, so one
   adapter can't shadow another's tool.
 
-Where the token lives and when it rotates is [D41](plan.md#d41-stable-mcp-port-and-token-rotation).
+Where the tokens live and when they rotate is [D41](plan.md#d41-stable-mcp-port-and-token-rotation).
 
 ## Remote access
 

@@ -12,7 +12,6 @@ import { formatDuration, formatSeconds, formatTime, hostOf, tinyHash } from '../
 import { href } from '../lib/router'
 import {
   blockedWording,
-  clientLabel,
   errorWording,
   needsUserWording,
   PROVIDER_WORDING,
@@ -85,7 +84,7 @@ export function AuditLogPage() {
   const query = {
     ...(category === 'all' ? {} : { category }),
     ...(adapterId === '' ? {} : { adapterId }),
-    ...(client === '' ? {} : { client }),
+    ...(client === '' ? {} : { clientId: client }),
     ...(days === null ? {} : { since: new Date(now - days * 86_400_000).toISOString() }),
     ...(search.trim() === '' ? {} : { search: search.trim() }),
     limit: 50,
@@ -218,8 +217,8 @@ export function AuditLogPage() {
           <option value="">Any client</option>
           {clients.status === 'ready'
             ? clients.data.map((c) => (
-                <option key={c.id} value={c.reportedName}>
-                  {clientLabel(c.reportedName)}
+                <option key={c.id} value={`local:${c.id}`}>
+                  {c.name}
                 </option>
               ))
             : null}
@@ -520,7 +519,7 @@ const EVENT_FIELDS = {
   'adapter-rejected': ['type', 'adapterId', 'adapterHash', 'version'],
   'grant-made': ['type', 'adapterId', 'adapterHash', 'secret', 'provider', 'origins'],
   'grant-revoked': ['type', 'adapterId', 'secret'],
-  'tool-called': ['type', 'adapterId', 'adapterHash', 'tool', 'client', 'callId'],
+  'tool-called': ['type', 'adapterId', 'adapterHash', 'tool', 'client', 'clientId', 'callId'],
   'tool-finished': [
     'type',
     'adapterId',

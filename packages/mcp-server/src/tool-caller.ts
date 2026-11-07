@@ -4,6 +4,7 @@
 
 import type { ErrorClass, NeedsUserReason, Stage, ToolDeclaration } from '@valet/core'
 import type { z } from 'zod'
+import type { ClientIdentity } from './auth'
 
 export interface ListedTool {
   readonly adapterId: string
@@ -27,6 +28,12 @@ export interface ToolCall {
   readonly input: unknown
   /** The MCP client's self-reported name, for the audit log. Untrusted. */
   readonly client: string
+  /**
+   * The client the session's credential names: the app's id for it and whether it came over the
+   * local or a remote listener. Unlike `client`, this is not the client's own claim. Absent only
+   * for a server made without one (createMcpServer used directly, as in tests).
+   */
+  readonly identity?: ClientIdentity
   readonly callId: string
   /** Aborts when the client cancels the request or disconnects. */
   readonly signal?: AbortSignal

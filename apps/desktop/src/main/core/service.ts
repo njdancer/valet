@@ -20,7 +20,14 @@ import {
   ValetError,
 } from '@valet/core'
 import { FileGrantStore } from '@valet/credentials'
-import type { LiveSessions, SessionReportingEndpoint, ToolCall, ToolCaller } from '@valet/mcp-server'
+import {
+  type EndpointClient,
+  identityLabel,
+  type LiveSessions,
+  type SessionReportingEndpoint,
+  type ToolCall,
+  type ToolCaller,
+} from '@valet/mcp-server'
 import {
   ApprovalStore,
   AuditLog,
@@ -35,6 +42,7 @@ import type {
   AppEvent,
   AttentionItem,
   ChainStatus,
+  ClientInfo,
   ClientSnippet,
   EndpointStatus,
   HashRoute,
@@ -109,16 +117,19 @@ export interface ServiceDeps {
   /** Builds an adapter's driver, with the reporters its refusals outside a run go to. */
   readonly createDriver: (manifest: AdapterManifest, reporters: DriverReporters) => Promise<SessionDriver>
   readonly credentials: Credentials
-  /** Starts the MCP endpoint; it reports its live sessions to `onSessionsChanged`. */
+  /**
+   * Starts the MCP endpoint with a token for each of `clients`, written to its config file; it
+   * reports its live sessions to `onSessionsChanged`.
+   */
   readonly startEndpoint: (
     caller: ToolCaller,
-    configPath: string,
+    clients: readonly EndpointClient[],
     onSessionsChanged: (sessions: LiveSessions) => void,
   ) => Promise<SessionReportingEndpoint>
   readonly ui: UiPort
   readonly emit: (event: AppEvent) => void
-  /** The stdio bridge's command line, for client snippets; null when it can't be launched. */
-  readonly bridge: BridgeCommand | null
+  /** The stdio bridge's command line for a client's config file, for snippets; null when it can't be launched. */
+  readonly bridge: ((configPath: string) => BridgeCommand) | null
   /** Checks a chosen op binary (checkOpBinary); the resolved path, or null to refuse it. */
   readonly checkOp: (path: string) => Promise<string | null>
   /**
@@ -185,7 +196,6 @@ const HOLDS_A_GRANT_CANNOT_FIX: ReadonlySet<NeedsUserReason> = new Set<NeedsUser
 ])
 
 const titlesSchema = z.record(z.string().max(512), z.string().max(200))
-const endpointMetaSchema = z.object({ tokenRotatedAt: z.iso.datetime().nullable() }).strict()
 
 export class AppService {
   readonly api: MainApi
@@ -203,7 +213,6 @@ export class AppService {
   private readonly snapshots: SnapshotStore
   private readonly clients: ClientRegistry
   private readonly titles: JsonDocument<Record<string, string>>
-  private readonly endpointMeta: JsonDocument<{ tokenRotatedAt: string | null }>
   private readonly reader: AuditReader
   private readonly memory = new RunMemory()
   private readonly sessions: SessionTracker
@@ -234,14 +243,8 @@ export class AppService {
     this.settings = new SettingsStore(paths.settings)
     this.versions = new VersionStore(paths.versions)
     this.snapshots = new SnapshotStore(paths.manifests)
-    this.clients = new ClientRegistry(paths.clients, date)
+    this.clients = new ClientRegistry(paths.clients, paths.clientConfigs, date)
     this.titles = new JsonDocument(paths.grantItems, titlesSchema, () => ({}), true)
-    this.endpointMeta = new JsonDocument(
-      paths.endpoint,
-      endpointMetaSchema,
-      () => ({ tokenRotatedAt: null }),
-      true,
-    )
     this.reader = new AuditReader(paths.audit)
     this.blocked = new BlockedAudit({
       audit: this.audit,
@@ -305,6 +308,10 @@ export class AppService {
     const { paths } = this.deps
     await ensurePrivateDir(paths.dir)
     await mkdir(paths.loginMarkers, { recursive: true, mode: 0o700 })
+    await mkdir(paths.clientConfigs, { recursive: true, mode: 0o700 })
+    // Before per-client tokens, every client shared one token in this file. Nothing reads it now,
+    // and a token left lying there would be one more copy to leak.
+    await rm(paths.legacyBridgeConfig, { force: true }).catch(() => undefined)
     this.settingsNow = await this.settings.get()
     // Updates first, before any adapter, credential or endpoint: a release that fails further on can
     // still be replaced by the next one.
@@ -353,11 +360,12 @@ export class AppService {
     }
     this.caller = new RuntimeToolCaller(host, {
       paused: () => this.paused,
-      revoked: (client) => this.clients.isRevoked(client),
       started: (call) => {
         this.memory.started(call.callId, call.tool, call.client, call.input)
-        // The transport is the endpoint's label for the session: the bridge names itself.
-        if (this.clients.seen(call.client, shownTransport(call.transport))) this.emit('clients-changed')
+        // The token named the client; the transport is the endpoint's label for the session.
+        const id = call.identity?.origin === 'local' ? call.identity.clientId : null
+        if (id !== null && this.clients.seen(id, call.client, shownTransport(call.transport)))
+          this.emit('clients-changed')
       },
       finished: (call, result) =>
         this.memory.finished(call.callId, result.status === 'ok' ? result.output : undefined),
@@ -556,6 +564,7 @@ export class AppService {
       adapterHash: adapter.hash,
       tool: manifest.tools.some((t) => t.name === call.tool) ? call.tool : '(invalid)',
       client: printableClient(call.client),
+      ...(call.identity === undefined ? {} : { clientId: identityLabel(call.identity) }),
       callId: call.callId,
     })
     await this.audit.append({
@@ -626,17 +635,31 @@ export class AppService {
 
   private async startListening(): Promise<void> {
     if (this.endpoint !== null || this.caller === null) return
-    this.endpoint = await this.deps.startEndpoint(this.caller, this.deps.paths.bridgeConfig, () =>
+    this.endpoint = await this.deps.startEndpoint(this.caller, this.clients.active(), () =>
       this.emit('endpoint-changed'),
     )
     this.endpoint.refresh()
     this.emit('endpoint-changed')
   }
 
-  private snippets(): ClientSnippet[] {
-    if (this.deps.bridge === null) return []
+  /** Snippets that launch the bridge with this client's own config file. */
+  private snippets(clientId: string): ClientSnippet[] {
+    if (this.deps.bridge === null || !this.clients.isActive(clientId)) return []
     const name = this.deps.demo ? `${MCP_SERVER_NAME}-demo` : MCP_SERVER_NAME
-    return clientSnippets(name, this.deps.bridge)
+    return clientSnippets(name, this.deps.bridge(this.clients.configPath(clientId)))
+  }
+
+  /** The client as the screens show it, with its calls over the last seven days. */
+  private async clientInfos(): Promise<ClientInfo[]> {
+    const records = await this.reader.records()
+    const since = this.deps.now() - 7 * 24 * 60 * 60_000
+    const counts = new Map<string, number>()
+    for (const r of records) {
+      if (r.event.type !== 'tool-called' || r.event.clientId === undefined || Date.parse(r.at) < since)
+        continue
+      counts.set(r.event.clientId, (counts.get(r.event.clientId) ?? 0) + 1)
+    }
+    return this.clients.list((id) => counts.get(`local:${id}`) ?? 0)
   }
 
   private async available(): Promise<Set<ProviderKind>> {
@@ -776,7 +799,6 @@ export class AppService {
           url: this.endpoint?.url ?? null,
           // Sessions open now, bridged or HTTP, as the endpoint counts them.
           connectedClients: this.endpoint?.sessions().total ?? 0,
-          tokenRotatedAt: (await this.endpointMeta.read()).tokenRotatedAt,
         }),
         setListening: async (listening) => {
           if (listening) {
@@ -788,41 +810,47 @@ export class AppService {
             this.emit('endpoint-changed')
           }
         },
-        rotateToken: async () => {
-          if (this.endpoint !== null) {
-            await this.endpoint.resetToken()
-          } else {
-            // Stopped: drop the saved token, so the next start makes a new one.
-            await rm(deps.paths.bridgeConfig, { force: true })
-          }
-          await this.endpointMeta.update(() => ({ tokenRotatedAt: new Date(deps.now()).toISOString() }))
-          this.emit('endpoint-changed')
-        },
-        snippets: async () => this.snippets(),
-        copyClientConfig: async (client) => {
-          const text = snippetFor(this.snippets(), client)
-          if (text === null) throw new ValetError('config', 'unavailable')
-          deps.ui.writeClipboard(text)
-        },
         copyUrl: async () => {
           if (this.endpoint === null) throw new ValetError('config', 'unavailable')
           deps.ui.writeClipboard(this.endpoint.url)
         },
       },
       clients: {
-        list: async () => {
-          const records = await this.reader.records()
-          const since = deps.now() - 7 * 24 * 60 * 60_000
-          return this.clients.list(
-            (name) =>
-              records.filter(
-                (r) => r.event.type === 'tool-called' && r.event.client === name && Date.parse(r.at) >= since,
-              ).length,
-          )
+        list: async () => this.clientInfos(),
+        add: async (name) => {
+          const client = await this.clients.add(name)
+          // A stopped endpoint issues the client its token when it next starts.
+          await this.endpoint?.addClient({ id: client.id, configPath: this.clients.configPath(client.id) })
+          this.emit('clients-changed')
+          return (await this.clientInfos()).find((c) => c.id === client.id) as ClientInfo
+        },
+        resetAccess: async (clientId) => {
+          if (!this.clients.isActive(clientId)) throw new ValetError('config', 'not-found')
+          if (this.endpoint !== null) {
+            // The new token is written to the client's file first; if that fails, nothing changes.
+            await this.endpoint.resetClient(clientId)
+          } else {
+            // Stopped: drop the saved token, so the next start can't keep it whatever the rotation.
+            await rm(this.clients.configPath(clientId), { force: true })
+          }
+          await this.clients.reset(clientId)
+          this.emit('clients-changed')
+          this.emit('endpoint-changed')
         },
         revoke: async (clientId) => {
-          if (!(await this.clients.revoke(clientId))) throw new ValetError('config', 'not-found')
+          if (!this.clients.isActive(clientId)) throw new ValetError('config', 'not-found')
+          // The registry first: if the app quits part-way, the next start issues it no token.
+          await this.clients.revoke(clientId)
+          await this.endpoint?.removeClient(clientId)
+          await rm(this.clients.configPath(clientId), { force: true })
           this.emit('clients-changed')
+          this.emit('endpoint-changed')
+        },
+        snippets: async (clientId) => this.snippets(clientId),
+        copyConfig: async (clientId, kind) => {
+          const text = snippetFor(this.snippets(clientId), kind)
+          if (text === null) throw new ValetError('config', 'unavailable')
+          deps.ui.writeClipboard(text)
         },
       },
       attention: {

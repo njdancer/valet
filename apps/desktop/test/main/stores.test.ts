@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { ValetError } from '@valet/core'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { ClientRegistry, clientId, shownTransport } from '../../src/main/core/clients'
+import { ClientRegistry, cleanClientName, shownTransport } from '../../src/main/core/clients'
 import { ensurePrivateDir, JsonDocument, readJsonFile, writeJsonFile } from '../../src/main/core/files'
 import { builtinAdapter, MANIFEST_ENTRY, SnapshotStore } from '../../src/main/core/registry'
 import { DEFAULT_SETTINGS, SettingsStore } from '../../src/main/core/settings'
@@ -119,29 +119,100 @@ describe('built-in adapters and snapshots', () => {
 })
 
 describe('ClientRegistry', () => {
-  it('records clients by reported name and refuses a revoked name, as a label', async () => {
-    let now = Date.parse('2026-11-07T00:00:00.000Z')
+  it('adds clients under the person’s names, each with its own config file', async () => {
+    const now = Date.parse('2026-11-07T00:00:00.000Z')
     const path = join(dir(), 'clients.json')
-    const registry = new ClientRegistry(path, () => new Date(now))
+    let n = 0
+    const registry = new ClientRegistry(
+      path,
+      '/configs',
+      () => new Date(now),
+      () => `c_${String(++n).padStart(16, '0')}`,
+    )
     await registry.load()
-    expect(registry.seen('Claude Code', 'http')).toBe(true)
-    expect(registry.seen('Claude Code', 'http')).toBe(false)
-    expect(registry.seen('Other', 'stdio')).toBe(true)
-    expect(registry.list(() => 0).map((c) => c.transport)).toEqual(['http', 'stdio'])
-    const id = clientId('Claude Code')
+    const code = await registry.add('  Claude\u0000 Code  ')
+    const desktop = await registry.add('Claude Desktop')
+    expect(code).toMatchObject({
+      id: 'c_0000000000000001',
+      name: 'Claude Code',
+      reportedName: null,
+      lastSeen: null,
+    })
+    expect(registry.configPath(code.id)).toBe('/configs/c_0000000000000001.json')
+    expect(registry.active()).toEqual([
+      { id: code.id, configPath: '/configs/c_0000000000000001.json' },
+      { id: desktop.id, configPath: '/configs/c_0000000000000002.json' },
+    ])
+    await expect(registry.add('   ')).rejects.toEqual(new ValetError('config', 'invalid'))
+    await expect(registry.add(42)).rejects.toEqual(new ValetError('config', 'invalid'))
+  })
+
+  it('records what a client says it is beside the person’s name, as a claim', async () => {
+    let now = Date.parse('2026-11-07T00:00:00.000Z')
+    const registry = new ClientRegistry(join(dir(), 'clients.json'), '/configs', () => new Date(now))
+    await registry.load()
+    const { id } = await registry.add('Claude Code')
+    expect(registry.seen(id, 'claude-code', 'stdio')).toBe(true)
+    now += 60_000
+    expect(registry.seen(id, 'claude-code', 'stdio')).toBe(false)
+    expect(registry.seen(id, 'cursor', 'stdio')).toBe(true)
+    expect(registry.seen('c_ffffffffffffffff', 'x', 'http')).toBe(false)
+    expect(registry.list(() => 3)[0]).toMatchObject({
+      name: 'Claude Code',
+      reportedName: 'cursor',
+      transport: 'stdio',
+      lastSeen: new Date(now).toISOString(),
+      calls7d: 3,
+    })
+  })
+
+  it('resets and revokes a client, which stays listed but holds no token', async () => {
+    const now = Date.parse('2026-11-07T00:00:00.000Z')
+    const path = join(dir(), 'clients.json')
+    const registry = new ClientRegistry(path, '/configs', () => new Date(now))
+    await registry.load()
+    const { id } = await registry.add('Claude Code')
+    expect(await registry.reset(id)).toBe(true)
+    expect(registry.get(id)?.accessResetAt).toBe(new Date(now).toISOString())
     expect(await registry.revoke(id)).toBe(true)
     expect(await registry.revoke(id)).toBe(false)
+    expect(await registry.reset(id)).toBe(false)
     expect(await registry.revoke('c_0000000000000000')).toBe(false)
-    expect(registry.isRevoked('Claude Code')).toBe(true)
-    expect(registry.isRevoked('Other')).toBe(false)
-    now += 11 * 60_000
-    expect(registry.list(() => 4).find((c) => c.id === id)).toMatchObject({
-      reportedName: 'Claude Code',
-      calls7d: 4,
-    })
-    const reloaded = new ClientRegistry(path, () => new Date(now))
+    expect(registry.active()).toEqual([])
+    const reloaded = new ClientRegistry(path, '/configs', () => new Date(now))
     await reloaded.load()
-    expect(reloaded.isRevoked('Claude Code')).toBe(true)
+    expect(reloaded.isActive(id)).toBe(false)
+    expect(reloaded.list(() => 0)).toHaveLength(1)
+  })
+
+  it('reads a file from before per-client tokens as empty: its names were labels', async () => {
+    const path = join(dir(), 'clients.json')
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 1,
+        clients: [
+          {
+            id: 'c_0123456789abcdef',
+            reportedName: 'claude-code',
+            transport: 'stdio',
+            firstSeen: '2026-11-01T00:00:00.000Z',
+            lastSeen: '2026-11-01T00:00:00.000Z',
+            revokedAt: null,
+          },
+        ],
+      }),
+    )
+    const registry = new ClientRegistry(path, '/configs', () => new Date())
+    await registry.load()
+    expect(registry.active()).toEqual([])
+  })
+
+  it('flattens the person’s name for a client', () => {
+    expect(cleanClientName('a\nb\tc')).toBe('a b c')
+    expect(cleanClientName('x'.repeat(80))).toHaveLength(60)
+    expect(cleanClientName('\u200b')).toBeNull()
+    expect(cleanClientName(null)).toBeNull()
   })
 
   it('shows the bridge’s label as stdio and anything else as HTTP', () => {

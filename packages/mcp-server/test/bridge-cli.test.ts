@@ -14,6 +14,7 @@ import { startHttpServer } from '../src/http'
 import { writePrivateFile } from '../src/private-file'
 import type { ListedTool } from '../src/tool-caller'
 import { FakeCaller } from './fake-caller'
+import { tokenAuth } from './token-auth'
 
 const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ'
 const URL_ = 'http://127.0.0.1:52011/mcp'
@@ -211,7 +212,7 @@ describe('main', () => {
   it('bridges a stdio client to a running endpoint until the client goes away', async () => {
     const caller = new FakeCaller([viewCart])
     caller.answer = async () => ({ status: 'ok', output: { items: 4 } })
-    const server = await startHttpServer({ caller, token: TOKEN })
+    const server = await startHttpServer({ caller, authenticate: tokenAuth(TOKEN) })
     try {
       const path = join(dir, 'bridge.json')
       await writeBridgeConfig(path, { url: server.url, token: TOKEN })
@@ -241,7 +242,7 @@ describe('the bridge command', () => {
   it('works as a process an MCP client launches, as Claude Code would', async () => {
     const caller = new FakeCaller([viewCart])
     caller.answer = async () => ({ status: 'ok', output: { items: 1 } })
-    const server = await startHttpServer({ caller, token: TOKEN })
+    const server = await startHttpServer({ caller, authenticate: tokenAuth(TOKEN) })
     const client = new Client({ name: 'spawning-client', version: '1' })
     try {
       const path = join(dir, 'bridge.json')

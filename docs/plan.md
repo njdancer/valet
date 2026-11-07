@@ -624,7 +624,7 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
   3. The stdio bridge: a small executable shipped in the app bundle that forwards to the HTTP
      endpoint, for Claude Desktop.
   4. Client identity in the audit log: from the bearer token (one token per client, named by
-     the person), not from the self-reported `clientInfo`.
+     the person), not from the self-reported `clientInfo`. Built (D42, C12).
   5. Long calls: login with OTP can take a minute. Use progress notifications, and return
      `needsUser` before the client's timeout rather than after.
 - Depends on: WS1.
@@ -967,7 +967,7 @@ home-page load. Count them in the rate budget.
 | C9  | Tool declarations gain `destructive: boolean` and `idempotent: boolean`, so MCP annotations are derived ([WS4](#ws4-mcp)) rather than hand-written.                                                                                                                                                                                                                      | M2                           |
 | C10 | `limits` gains a per-minute cap and a cap on direct API calls per page view, for [D28](#d28-rate-budget-defaults) and [D33](#d33-breaker-defaults-and-persistence).                                                                                                                                                                                                      | M2                           |
 | C11 | The login runner learns whether password typing started, so the attempt marker can tell a spent attempt from an interrupted page load ([D35](#d35-the-attempt-marker-after-a-timeout)).                                                                                                                                                                                  | M2                           |
-| C12 | `tool-called` carries the client id a per-client token names, alongside the self-reported name ([D42](#d42-per-client-tool-scopes)).                                                                                                                                                                                                                                     | M3                           |
+| C12 | `tool-called` carries the client id a per-client token names, alongside the self-reported name ([D42](#d42-per-client-tool-scopes)). Done: `clientId`.                                                                                                                                                                                                                   | M3                           |
 | C13 | `retry.times` is documented as extra attempts, and renamed `retries` at the next `schemaVersion` ([D31](#d31-retry-count-semantics)).                                                                                                                                                                                                                                    | Later                        |
 | C14 | `tool-finished` gains a count of redacted strings ([D36](#d36-redaction-whole-string-or-substring)).                                                                                                                                                                                                                                                                     | M4                           |
 | C15 | Tool declarations gain `unlocks: [{ method, path }]`, each naming one of the manifest's `irreversible` declarations, and `unlockIrreversible()` takes that list, so confirming a tool unlocks only what it names, for that run ([AC13](#acceptance-criteria)).                                                                                                           | Before any irreversible tool |
@@ -1683,6 +1683,12 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 ### D42. Per-client tool scopes
 
 - Nick's answer (2026-11-07): Accepted: a token per client in M3.
+- Built (2026-11-07): the person adds each client by name in Clients and settings and gets setup
+  lines for it; each has its own token in its own 0600 bridge config file
+  (`client-configs/<id>.json`), with "Reset access" and "Revoke" per client. The endpoint checks
+  tokens through the local listener's `authenticate` hook (D41), and `tool-called` records the
+  client id (C12). The old shared `bridge.json` is deleted at start, so clients registered before
+  this need adding again. Allowlists are still M4.
 - Today: any client with the token sees every approved tool, and the audit log's client name is
   whatever the client says in `initialize`.
 - Options: one token, all tools (today); a token per client, named by the person, with identity

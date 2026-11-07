@@ -16,13 +16,7 @@ import {
   runTrace,
   statsToday,
 } from '../../src/main/core/audit-view'
-import {
-  type AppRefusal,
-  outcomeOf,
-  PAUSED_REFUSAL,
-  REVOKED_REFUSAL,
-  RuntimeToolCaller,
-} from '../../src/main/core/caller'
+import { type AppRefusal, outcomeOf, PAUSED_REFUSAL, RuntimeToolCaller } from '../../src/main/core/caller'
 import { INVOKE_METHODS, invokeChannel } from '../../src/main/core/channels'
 import { previewParts, RunMemory } from '../../src/main/core/run-memory'
 import { buildApi, eventFrom, type IpcLike } from '../../src/preload/api'
@@ -56,7 +50,6 @@ describe('RuntimeToolCaller', () => {
     const h = host()
     const caller = new RuntimeToolCaller(h.host, {
       paused: () => false,
-      revoked: () => false,
       started: () => {},
       finished: () => {},
       refused: async () => {},
@@ -72,7 +65,6 @@ describe('RuntimeToolCaller', () => {
     const seen: string[] = []
     const caller = new RuntimeToolCaller(h.host, {
       paused: () => false,
-      revoked: () => false,
       started: (c) => seen.push(`started ${c.callId}`),
       finished: (c, r) => seen.push(`finished ${c.callId} ${r.status}`),
       refused: async () => {
@@ -111,7 +103,6 @@ describe('RuntimeToolCaller', () => {
       },
       {
         paused: () => false,
-        revoked: () => false,
         started: () => {},
         finished: () => {},
         refused: async () => {},
@@ -128,37 +119,40 @@ describe('RuntimeToolCaller', () => {
     expect(signals).toHaveLength(3)
   })
 
-  it('refuses while paused and for a revoked client name, before the runtime sees the call', async () => {
+  it('refuses while paused, before the runtime sees the call', async () => {
     const h = host()
     const refused: [string, AppRefusal][] = []
-    const hooks = {
+    const paused = new RuntimeToolCaller(h.host, {
       started: () => {},
       finished: () => {},
       refused: async (c: { callId: string }, r: AppRefusal) => {
         refused.push([c.callId, r])
       },
-    }
-    const paused = new RuntimeToolCaller(h.host, { ...hooks, paused: () => true, revoked: () => false })
+      paused: () => true,
+    })
     // Not a rate limit: the site isn't involved, and the class says the app refused.
     expect(await paused.call(call)).toEqual({ status: 'failed', stage: 'config', errorClass: 'unavailable' })
-    const revoked = new RuntimeToolCaller(h.host, {
-      ...hooks,
-      paused: () => false,
-      revoked: (c) => c === 'Claude Code',
-    })
-    expect(await revoked.call(call)).toEqual({ status: 'failed', stage: 'config', errorClass: 'not-granted' })
     expect(h.calls).toEqual([])
-    expect(refused).toEqual([
-      ['c1', PAUSED_REFUSAL],
-      ['c1', REVOKED_REFUSAL],
-    ])
+    expect(refused).toEqual([['c1', PAUSED_REFUSAL]])
+  })
+
+  it('passes the credential’s client to the runtime as its audit label', async () => {
+    const h = host()
+    const caller = new RuntimeToolCaller(h.host, {
+      paused: () => false,
+      started: () => {},
+      finished: () => {},
+      refused: async () => {},
+    })
+    await caller.call({ ...call, identity: { origin: 'local', clientId: 'c_0123456789abcdef' } })
+    expect(h.calls[0]).toMatchObject({ client: 'Claude Code', clientId: 'local:c_0123456789abcdef' })
+    expect(Object.keys(h.calls[0] as object)).not.toContain('identity')
   })
 
   it('still refuses when the refusal can’t be audited', async () => {
     const h = host()
     const caller = new RuntimeToolCaller(h.host, {
       paused: () => true,
-      revoked: () => false,
       started: () => {},
       finished: () => {},
       refused: async () => {
@@ -180,7 +174,6 @@ describe('RuntimeToolCaller', () => {
       },
       {
         paused: () => false,
-        revoked: () => false,
         started: () => {},
         finished: (c) => finished.push(c.callId),
         refused: async () => {},

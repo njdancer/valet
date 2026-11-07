@@ -1,14 +1,15 @@
-// The local MCP endpoint: Streamable HTTP on 127.0.0.1, one MCP server per client session. Every
-// request must pass the Host, Origin and bearer-token checks before the SDK sees it.
+// The MCP endpoint's HTTP handler: Streamable HTTP, one MCP server per client session. Every
+// request must pass the listener's authenticate hook before the SDK sees it, and a session answers
+// only the client that opened it. The local listener binds 127.0.0.1 with localAuthenticator; a
+// remote listener (after M3) runs this same handler with its own hook (D41).
 
 import { randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { toReportable, ValetError } from '@valet/core'
-import { bearerAuthorized, hostAllowed, originAllowed } from './http-guards'
+import { type Authenticate, type AuthResult, type ClientIdentity, sameIdentity } from './auth'
 import { clientLabel, createMcpServer, type ServerInfo, type ValetMcpServer } from './server'
-import { isWellFormedToken } from './token'
 import type { ClientTransport, ToolCaller } from './tool-caller'
 import { planTools, type SkippedTool, type ToolPlan } from './tool-names'
 import { TRANSPORT_HEADER, transportFrom } from './transport-label'
@@ -19,8 +20,10 @@ const DEFAULT_MAX_SESSIONS = 32
 
 export interface HttpServerOptions {
   readonly caller: ToolCaller
-  /** From generateToken(). Anything else is refused, so a blank token can't open the endpoint. */
-  readonly token: string
+  /** Names the client behind each request, or refuses it. localAuthenticator() for this Mac. */
+  readonly authenticate: Authenticate
+  /** The IPv4 address to bind. Default 127.0.0.1; the local listener must never bind anything else. */
+  readonly host?: string
   /**
    * 0, the default, picks a free port. Any other port must be free: if it isn't, startHttpServer
    * fails rather than move, because clients configured for it would not follow. startEndpoint
@@ -41,6 +44,8 @@ export interface HttpServerOptions {
 
 /** One open session, as the app shows it. Never its id, which a request could use with the token. */
 export interface LiveSession {
+  /** The client the session's credential names. */
+  readonly identity: ClientIdentity
   readonly transport: ClientTransport
   /** The client's self-reported name from initialize, flattened and capped; 'unknown' until known. */
   readonly client: string
@@ -64,10 +69,10 @@ export interface RunningHttpServer {
    */
   refresh(): readonly SkippedTool[]
   /**
-   * Replaces the bearer token and closes every session, so nothing opened with the old token
-   * outlives it. Throws ValetError('config', 'invalid') for a malformed token.
+   * Closes every session whose client matches, so nothing opened with a credential that has been
+   * withdrawn outlives it. Call it after the authenticate hook stops accepting that credential.
    */
-  setToken(token: string): Promise<void>
+  endSessions(match: (identity: ClientIdentity) => boolean): Promise<void>
   /** The sessions open now, and how each one arrived. */
   sessions(): LiveSessions
   close(): Promise<void>
@@ -77,11 +82,10 @@ interface Session {
   readonly endpoint: ValetMcpServer
   readonly transport: StreamableHTTPServerTransport
   readonly via: ClientTransport
+  readonly identity: ClientIdentity
 }
 
 export async function startHttpServer(options: HttpServerOptions): Promise<RunningHttpServer> {
-  if (!isWellFormedToken(options.token)) throw new ValetError('config', 'invalid')
-  let token = options.token
   const info = options.info ?? { name: 'valet', version: '0.0.0' }
   const newSessionId = options.newSessionId ?? randomUUID
   const maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS
@@ -92,6 +96,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
   const live = (): LiveSessions => {
     const list = [...sessions.values()].map(
       (session): LiveSession => ({
+        identity: session.identity,
         transport: session.via,
         client: clientLabel(session.endpoint.server.server.getClientVersion()?.name),
       }),
@@ -115,17 +120,22 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
     return session.endpoint.server.close()
   }
 
-  const openSession = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+  const openSession = async (
+    req: IncomingMessage,
+    res: ServerResponse,
+    identity: ClientIdentity,
+  ): Promise<void> => {
     const via = transportFrom(req.headers[TRANSPORT_HEADER])
     const endpoint = createMcpServer(options.caller, info, {
       ...(options.newCallId === undefined ? {} : { newCallId: options.newCallId }),
       transport: via,
+      identity,
     })
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: newSessionId,
       maxRequestBodySize: MAX_BODY_BYTES,
       onsessioninitialized: (id) => {
-        sessions.set(id, { endpoint, transport, via })
+        sessions.set(id, { endpoint, transport, via, identity })
         for (const oldest of sessions.keys()) {
           if (sessions.size <= maxSessions) break
           void closeSession(oldest)
@@ -146,21 +156,34 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
     }
   }
 
-  const route = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
-    if (!hostAllowed(req.headers.host, port) || !originAllowed(req.headers.origin)) {
-      return reject(res, 403, 'Forbidden')
+  const authenticated = async (req: IncomingMessage): Promise<AuthResult> => {
+    try {
+      return await options.authenticate(req, { port })
+    } catch {
+      // A hook that throws lets nothing through; route's catch answers 500.
+      throw new ValetError('config', 'unavailable')
     }
-    if (!bearerAuthorized(req.headers.authorization, token)) {
-      return reject(res, 401, 'Unauthorized', { 'www-authenticate': 'Bearer' })
+  }
+
+  const route = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    const auth = await authenticated(req)
+    if (!auth.ok) {
+      return reject(res, auth.status, auth.status === 403 ? 'Forbidden' : 'Unauthorized', auth.headers)
     }
     if ((req.url ?? '').split('?')[0] !== MCP_PATH) return reject(res, 404, 'Not found')
     const sessionId = req.headers['mcp-session-id']
     if (sessionId === undefined) {
       if (req.method !== 'POST') return reject(res, 400, 'Bad request: no session')
-      return openSession(req, res)
+      return openSession(req, res, auth.identity)
     }
     const session = typeof sessionId === 'string' ? sessions.get(sessionId) : undefined
-    if (session === undefined || typeof sessionId !== 'string') return reject(res, 404, 'Session not found')
+    // Another client's session answers like one that doesn't exist: a session id is not a credential.
+    if (
+      session === undefined ||
+      typeof sessionId !== 'string' ||
+      !sameIdentity(session.identity, auth.identity)
+    )
+      return reject(res, 404, 'Session not found')
     sessions.delete(sessionId)
     sessions.set(sessionId, session)
     return session.transport.handleRequest(req, res)
@@ -177,7 +200,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
     // Usually EADDRINUSE. Node's message names the address; only the class leaves.
     const failed = (): void => reject(new ValetError('config', 'unavailable'))
     server.once('error', failed)
-    server.listen({ port: options.port ?? 0, host: '127.0.0.1' }, () => {
+    server.listen({ port: options.port ?? 0, host: options.host ?? '127.0.0.1' }, () => {
       server.off('error', failed)
       resolve()
     })
@@ -185,7 +208,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
   port = (server.address() as AddressInfo).port
 
   return {
-    url: `http://127.0.0.1:${port}${MCP_PATH}`,
+    url: `http://${options.host ?? '127.0.0.1'}:${port}${MCP_PATH}`,
     port,
     refresh() {
       let plan: ToolPlan
@@ -199,10 +222,9 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
       for (const session of sessions.values()) session.endpoint.apply(plan)
       return plan.skipped
     },
-    async setToken(next) {
-      if (!isWellFormedToken(next)) throw new ValetError('config', 'invalid')
-      token = next
-      await Promise.all([...sessions.keys()].map(closeSession))
+    async endSessions(match) {
+      const ids = [...sessions].filter(([, session]) => match(session.identity)).map(([id]) => id)
+      await Promise.all(ids.map(closeSession))
     },
     sessions: live,
     async close() {

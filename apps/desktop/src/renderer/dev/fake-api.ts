@@ -508,28 +508,34 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
 
   let clients: ClientInfo[] = [
     {
-      id: 'cl_c7d2',
+      id: 'c_c7d2a1b2c3d4e5f6',
+      name: 'Claude Code',
+      addedAt: ago(10 * 24 * 60),
+      accessResetAt: null,
       reportedName: 'claude-code',
       transport: 'stdio',
-      firstSeen: ago(10 * 24 * 60),
       lastSeen: ago(1),
       calls7d: 141,
       revokedAt: null,
     },
     {
-      id: 'cl_41e9',
+      id: 'c_41e9a1b2c3d4e5f6',
+      name: 'Claude Desktop',
+      addedAt: ago(8 * 24 * 60),
+      accessResetAt: ago(2 * 24 * 60),
       reportedName: 'claude-ai',
-      transport: 'http',
-      firstSeen: ago(8 * 24 * 60),
+      transport: 'stdio',
       lastSeen: ago(4),
       calls7d: 28,
       revokedAt: null,
     },
     {
-      id: 'cl_0b5a',
+      id: 'c_0b5aa1b2c3d4e5f6',
+      name: 'Cursor',
+      addedAt: ago(20 * 24 * 60),
+      accessResetAt: null,
       reportedName: 'cursor',
       transport: 'http',
-      firstSeen: ago(20 * 24 * 60),
       lastSeen: ago(5 * 24 * 60),
       calls7d: 0,
       revokedAt: ago(4 * 24 * 60),
@@ -540,7 +546,6 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     listening: true,
     url: 'http://127.0.0.1:47821/mcp',
     connectedClients: 2,
-    tokenRotatedAt: ago(10 * 24 * 60),
   }
 
   let settings: Settings = {
@@ -814,26 +819,6 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         }
         emit({ type: 'endpoint-changed' })
       },
-      async rotateToken() {
-        enter('endpoint.rotateToken')
-        endpoint = { ...endpoint, tokenRotatedAt: new Date(now).toISOString() }
-        emit({ type: 'endpoint-changed' })
-      },
-      async snippets() {
-        enter('endpoint.snippets')
-        const bridge = '/Applications/Valet.app/Contents/Resources/bin/valet-mcp'
-        const list: ClientSnippet[] = [
-          { client: 'claude-code', text: `claude mcp add valet -- \\\n  ${bridge}` },
-          {
-            client: 'claude-desktop',
-            text: `{ "mcpServers": { "valet": { "command":\n  "${bridge}"\n} } }`,
-          },
-        ]
-        return list
-      },
-      async copyClientConfig(client) {
-        enter('endpoint.copyClientConfig', client)
-      },
       async copyUrl() {
         enter('endpoint.copyUrl')
       },
@@ -842,6 +827,46 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       async list() {
         enter('clients.list')
         return clone(clients)
+      },
+      async add(name) {
+        enter('clients.add', name)
+        const client: ClientInfo = {
+          id: `c_${(clients.length + 1).toString(16).padStart(16, '0')}`,
+          name: name.trim().slice(0, 60),
+          addedAt: new Date(now).toISOString(),
+          accessResetAt: null,
+          reportedName: null,
+          transport: null,
+          lastSeen: null,
+          calls7d: 0,
+          revokedAt: null,
+        }
+        clients = [...clients, client]
+        emit({ type: 'clients-changed' })
+        return clone(client)
+      },
+      async resetAccess(clientId) {
+        enter('clients.resetAccess', clientId)
+        clients = clients.map((c) =>
+          c.id === clientId ? { ...c, accessResetAt: new Date(now).toISOString() } : c,
+        )
+        emit({ type: 'clients-changed' })
+      },
+      async snippets(clientId) {
+        enter('clients.snippets', clientId)
+        const bridge = '/Applications/Valet.app/Contents/MacOS/valet-bridge'
+        const config = `~/Library/Application Support/valet/client-configs/${clientId}.json`
+        const list: ClientSnippet[] = [
+          { client: 'claude-code', text: `claude mcp add valet -- \\\n  ${bridge} \\\n  '${config}'` },
+          {
+            client: 'claude-desktop',
+            text: `{ "mcpServers": { "valet": { "command":\n  "${bridge}",\n  "args": ["${config}"]\n} } }`,
+          },
+        ]
+        return list
+      },
+      async copyConfig(clientId, kind) {
+        enter('clients.copyConfig', clientId, kind)
       },
       async revoke(clientId) {
         enter('clients.revoke', clientId)
@@ -1077,6 +1102,8 @@ function matchesAudit(record: AuditRecord, query: AuditQuery): boolean {
   if (query.adapterId !== undefined && 'adapterId' in event && event.adapterId !== query.adapterId)
     return false
   if (query.client !== undefined && !('client' in event && event.client === query.client)) return false
+  if (query.clientId !== undefined && !('clientId' in event && event.clientId === query.clientId))
+    return false
   if (query.search !== undefined && query.search.length > 0) {
     const needle = query.search.toLowerCase()
     if (!JSON.stringify(event).toLowerCase().includes(needle)) return false

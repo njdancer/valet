@@ -12,11 +12,15 @@ import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { runBridge } from '../src/bridge'
+import { readBridgeConfig } from '../src/bridge-config'
 import { startEndpoint } from '../src/endpoint'
 import { type LiveSessions, type RunningHttpServer, startHttpServer } from '../src/http'
 import type { ListedTool } from '../src/tool-caller'
 import { BRIDGE_TRANSPORT, TRANSPORT_HEADER, transportFrom } from '../src/transport-label'
 import { FakeCaller } from './fake-caller'
+import { TEST_CLIENT, tokenAuth } from './token-auth'
+
+const ID = { origin: 'local', clientId: TEST_CLIENT } as const
 
 const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ'
 
@@ -38,7 +42,7 @@ async function start(
   caller: FakeCaller,
   extra: { maxSessions?: number; onSessionsChanged?: (sessions: LiveSessions) => void } = {},
 ): Promise<RunningHttpServer> {
-  const running = await startHttpServer({ caller, token: TOKEN, ...extra })
+  const running = await startHttpServer({ caller, authenticate: tokenAuth(TOKEN), ...extra })
   cleanup.push(() => running.close())
   return running
 }
@@ -85,8 +89,8 @@ describe('live sessions', () => {
     expect({ ...live, sessions: [] }).toEqual({ total: 2, bridge: 1, http: 1, sessions: [] })
     // Use order shifts as each client's event stream touches its session, so compare as a set.
     expect([...live.sessions].sort((a, b) => a.client.localeCompare(b.client))).toEqual([
-      { transport: 'stdio-bridge', client: 'claude-desktop' },
-      { transport: 'http', client: 'cursor' },
+      { identity: ID, transport: 'stdio-bridge', client: 'claude-desktop' },
+      { identity: ID, transport: 'http', client: 'cursor' },
     ])
   })
 
@@ -165,15 +169,17 @@ describe('live sessions', () => {
     }
     const client = await connectHttp(running.url, 'late', {}, lateClaim)
     await client.listTools()
-    expect(running.sessions().sessions).toEqual([{ transport: 'http', client: 'late' }])
+    expect(running.sessions().sessions).toEqual([{ identity: ID, transport: 'http', client: 'late' }])
   })
 
   it('tells the app when sessions open, learn their client’s name, and close', async () => {
     const seen: LiveSessions[] = []
     const running = await start(new FakeCaller([viewCart]), { onSessionsChanged: (s) => seen.push(s) })
     await connectHttp(running.url, 'cursor')
-    await vi.waitFor(() => expect(seen.at(-1)?.sessions).toEqual([{ transport: 'http', client: 'cursor' }]))
-    await running.setToken('Z'.repeat(43))
+    await vi.waitFor(() =>
+      expect(seen.at(-1)?.sessions).toEqual([{ identity: ID, transport: 'http', client: 'cursor' }]),
+    )
+    await running.endSessions(() => true)
     expect(seen.at(-1)).toEqual({ total: 0, bridge: 0, http: 0, sessions: [] })
   })
 
@@ -213,7 +219,11 @@ describe('live sessions', () => {
   it('never shows a session id', async () => {
     const running = await start(new FakeCaller([viewCart]))
     await connectHttp(running.url, 'cursor')
-    expect(Object.keys(running.sessions().sessions[0] ?? {}).sort()).toEqual(['client', 'transport'])
+    expect(Object.keys(running.sessions().sessions[0] ?? {}).sort()).toEqual([
+      'client',
+      'identity',
+      'transport',
+    ])
   })
 
   it('is reported by the endpoint the app starts too', async () => {
@@ -221,17 +231,20 @@ describe('live sessions', () => {
     cleanup.push(() => rm(dir, { recursive: true, force: true }))
     const endpoint = await startEndpoint({
       caller: new FakeCaller([viewCart]),
-      configPath: join(dir, 'bridge.json'),
+      clients: [{ id: 'cursor', configPath: join(dir, 'cursor.json') }],
     })
     cleanup.push(() => endpoint.close())
     expect(endpoint.sessions().total).toBe(0)
     const transport = new StreamableHTTPClientTransport(new URL(endpoint.url), {
-      requestInit: { headers: { authorization: `Bearer ${endpoint.token}` } },
+      requestInit: {
+        headers: { authorization: `Bearer ${(await readBridgeConfig(join(dir, 'cursor.json'))).token}` },
+      },
     })
     const client = new Client({ name: 'cursor', version: '1' })
     await client.connect(transport)
     cleanup.push(() => client.close())
     expect(endpoint.sessions()).toMatchObject({ total: 1, http: 1 })
+    expect(endpoint.sessions().sessions[0]?.identity).toEqual({ origin: 'local', clientId: 'cursor' })
   })
 })
 

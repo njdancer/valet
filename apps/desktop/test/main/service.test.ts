@@ -65,6 +65,9 @@ async function setup(
     resets: 0,
     closes: 0,
     starts: 0,
+    /** The clients holding a token, by id, and each operation on them. */
+    clients: new Map<string, string>(),
+    ops: [] as string[],
     live: { total: 0, bridge: 0, http: 0, sessions: [] } as LiveSessions,
     sessionsChanged: null as ((sessions: LiveSessions) => void) | null,
   }
@@ -84,22 +87,35 @@ async function setup(
       return driver
     },
     credentials: demoCredentials(disabledOtpReader),
-    startEndpoint: async (caller, _configPath, onSessionsChanged): Promise<SessionReportingEndpoint> => {
+    startEndpoint: async (caller, clients, onSessionsChanged): Promise<SessionReportingEndpoint> => {
       endpoint.caller = caller
       endpoint.sessionsChanged = onSessionsChanged
       endpoint.starts++
-      writeFileSync(paths.bridgeConfig, JSON.stringify({ url: 'http://127.0.0.1:47000/mcp', token: TOKEN }))
+      const issue = (id: string, configPath: string) => {
+        endpoint.clients.set(id, configPath)
+        writeFileSync(configPath, JSON.stringify({ url: 'http://127.0.0.1:47000/mcp', token: TOKEN }))
+      }
+      for (const client of clients) issue(client.id, client.configPath)
       return {
         url: 'http://127.0.0.1:47000/mcp',
         port: 47000,
-        token: TOKEN,
         refresh: () => {
           endpoint.refreshes++
           return []
         },
-        resetToken: async () => {
-          endpoint.resets++
+        addClient: async ({ id, configPath }) => {
+          endpoint.ops.push(`add ${id}`)
+          issue(id, configPath)
         },
+        resetClient: async (id) => {
+          endpoint.resets++
+          endpoint.ops.push(`reset ${id}`)
+        },
+        removeClient: async (id) => {
+          endpoint.ops.push(`remove ${id}`)
+          endpoint.clients.delete(id)
+        },
+        clientIds: () => [...endpoint.clients.keys()],
         close: async () => {
           endpoint.closes++
         },
@@ -119,7 +135,7 @@ async function setup(
       quit: () => ui.quits++,
     },
     emit: (event) => events.push(event),
-    bridge: { command: '/repo/tsx', args: ['/repo/bridge-cli.ts', paths.bridgeConfig] },
+    bridge: (configPath) => ({ command: '/repo/tsx', args: ['/repo/bridge-cli.ts', configPath] }),
     checkOp: options.checkOp ?? (async (path) => (path === '/good/op' ? path : null)),
     updates: options.updates ?? (async () => disabledUpdates('0.1.0', 'development', false)),
     // The site's rate budget waits on the test's clock.
@@ -135,7 +151,7 @@ async function setup(
     input: unknown,
     client = 'Claude Code',
     callId = `call_${tool}_${Math.random().toString(36).slice(2)}`,
-    extra: Pick<ToolCall, 'signal' | 'transport'> = { transport: 'http' },
+    extra: Pick<ToolCall, 'signal' | 'transport' | 'identity'> = { transport: 'http' },
   ) => (endpoint.caller as ToolCaller).call({ adapterId: 'shop', tool, input, client, callId, ...extra })
   return {
     service,
@@ -381,8 +397,29 @@ describe('tool calls', () => {
     expect(trace?.output).not.toBeNull()
     expect(await s.api.runs.trace('call_none')).toBeNull()
     expect((await s.api.runs.statsToday()).toolCalls).toBe(1)
-    expect((await s.api.clients.list()).map((c) => [c.reportedName, c.calls7d, c.transport])).toEqual([
-      ['Claude Code', 1, 'http'],
+  })
+
+  it('attributes calls to the client whose token made them, with what it says beside it', async () => {
+    const s = await approved()
+    const code = await s.api.clients.add('Claude Code')
+    const desktop = await s.api.clients.add('Claude Desktop')
+    const as = (id: string) => ({
+      transport: 'stdio-bridge' as const,
+      identity: { origin: 'local' as const, clientId: id },
+    })
+    await s.call('echo', { text: 'x' }, 'claude-code', 'call_a', as(code.id))
+    await s.call('echo', { text: 'x' }, 'claude-code', 'call_b', as(code.id))
+    // Another client claiming the same name is still counted as itself.
+    await s.call('echo', { text: 'x' }, 'claude-code', 'call_c', as(desktop.id))
+    expect((await s.api.clients.list()).map((c) => [c.name, c.reportedName, c.calls7d, c.transport])).toEqual(
+      [
+        ['Claude Code', 'claude-code', 2, 'stdio'],
+        ['Claude Desktop', 'claude-code', 1, 'stdio'],
+      ],
+    )
+    const called = (await s.api.audit.page({ clientId: `local:${desktop.id}` })).records.map((r) => r.event)
+    expect(called).toEqual([
+      expect.objectContaining({ type: 'tool-called', callId: 'call_c', clientId: `local:${desktop.id}` }),
     ])
   })
 
@@ -394,16 +431,33 @@ describe('tool calls', () => {
       bridge: 1,
       http: 1,
       sessions: [
-        { transport: 'stdio-bridge', client: 'Claude Desktop' },
-        { transport: 'http', client: 'Claude Code' },
+        {
+          identity: { origin: 'local', clientId: 'c_0000000000000001' },
+          transport: 'stdio-bridge',
+          client: 'Claude Desktop',
+        },
+        {
+          identity: { origin: 'local', clientId: 'c_0000000000000002' },
+          transport: 'http',
+          client: 'Claude Code',
+        },
       ],
     }
     s.events.splice(0)
     s.endpoint.sessionsChanged?.(s.endpoint.live)
     expect(s.events).toEqual([{ type: 'endpoint-changed' }])
     expect((await s.api.endpoint.status()).connectedClients).toBe(2)
-    await s.call('echo', { text: 'x' }, 'Claude Desktop', 'call_bridge', { transport: 'stdio-bridge' })
-    await s.call('echo', { text: 'x' }, 'Claude Code', 'call_http', { transport: 'http' })
+    const desktop = await s.api.clients.add('Desktop')
+    const code = await s.api.clients.add('Code')
+    const id = (clientId: string) => ({ origin: 'local' as const, clientId })
+    await s.call('echo', { text: 'x' }, 'Claude Desktop', 'call_bridge', {
+      transport: 'stdio-bridge',
+      identity: id(desktop.id),
+    })
+    await s.call('echo', { text: 'x' }, 'Claude Code', 'call_http', {
+      transport: 'http',
+      identity: id(code.id),
+    })
     expect((await s.api.clients.list()).map((c) => [c.reportedName, c.transport])).toEqual([
       ['Claude Desktop', 'stdio'],
       ['Claude Code', 'http'],
@@ -442,56 +496,41 @@ describe('tool calls', () => {
     expect(await running).toEqual({ status: 'failed', stage: 'tool-run', errorClass: 'aborted' })
   })
 
-  it('refuses every call while paused, and calls under a revoked name, and audits both', async () => {
+  it('refuses every call while paused, and audits it with the client’s id', async () => {
     const s = await approved()
+    const code = await s.api.clients.add('Claude Code')
     await s.api.app.setPaused(true)
     expect(await s.api.app.status()).toEqual({ paused: true, version: '0.1.0', demo: true })
     // The app's refusal, not the site's: no rate limit, and the stage says it was the app's config.
-    expect(await s.call('echo', { text: 'x' }, 'Claude Code', 'call_paused')).toEqual({
-      status: 'failed',
-      stage: 'config',
-      errorClass: 'unavailable',
-    })
+    expect(
+      await s.call('echo', { text: 'x' }, 'Claude Code', 'call_paused', {
+        identity: { origin: 'local', clientId: code.id },
+      }),
+    ).toEqual({ status: 'failed', stage: 'config', errorClass: 'unavailable' })
     expect(s.driver.runs).toBe(0)
     await s.api.app.setPaused(false)
     expect((await s.call('echo', { text: 'x' })).status).toBe('ok')
-    const [client] = await s.api.clients.list()
-    await s.api.clients.revoke(client?.id as string)
-    await expect(s.api.clients.revoke('c_0000000000000000')).rejects.toThrow()
-    expect(await s.call('echo', { text: 'x' }, 'Claude Code', 'call_revoked')).toEqual({
-      status: 'failed',
-      stage: 'config',
-      errorClass: 'not-granted',
-    })
-    expect((await s.call('echo', { text: 'x' }, 'Another')).status).toBe('ok')
 
-    const page = await s.api.audit.page({ category: 'tool-calls' })
-    const events = page.records.map((r) => r.event)
-    for (const [callId, errorClass] of [
-      ['call_paused', 'unavailable'],
-      ['call_revoked', 'not-granted'],
-    ] as const) {
-      expect(events).toContainEqual({
-        type: 'tool-called',
-        adapterId: 'shop',
-        adapterHash: s.adapter.hash,
-        tool: 'echo',
-        client: 'Claude Code',
-        callId,
-      })
-      expect(events).toContainEqual({
-        type: 'tool-finished',
-        adapterId: 'shop',
-        callId,
-        outcome: 'failed',
-        stage: 'config',
-        errorClass,
-        durationMs: 0,
-      })
-    }
-    expect((await s.api.runs.list()).map((r) => r.callId)).toEqual(
-      expect.arrayContaining(['call_paused', 'call_revoked']),
-    )
+    const events = (await s.api.audit.page({ category: 'tool-calls' })).records.map((r) => r.event)
+    expect(events).toContainEqual({
+      type: 'tool-called',
+      adapterId: 'shop',
+      adapterHash: s.adapter.hash,
+      tool: 'echo',
+      client: 'Claude Code',
+      clientId: `local:${code.id}`,
+      callId: 'call_paused',
+    })
+    expect(events).toContainEqual({
+      type: 'tool-finished',
+      adapterId: 'shop',
+      callId: 'call_paused',
+      outcome: 'failed',
+      stage: 'config',
+      errorClass: 'unavailable',
+      durationMs: 0,
+    })
+    expect((await s.api.runs.list()).map((r) => r.callId)).toContain('call_paused')
   })
 
   it('audits a refused call’s undeclared tool and unprintable client the way the runtime would', async () => {
@@ -927,25 +966,86 @@ describe('the login window', () => {
 })
 
 describe('endpoint, settings, audit and the app', () => {
-  it('copies through the main process, rotates the token and stops and starts listening', async () => {
+  it('copies through the main process, and stops and starts listening', async () => {
     const s = await approved()
     await s.api.endpoint.copyUrl()
-    await s.api.endpoint.copyClientConfig('claude-code')
     expect(s.ui.clipboard[0]).toBe('http://127.0.0.1:47000/mcp')
-    expect(s.ui.clipboard[1]).toContain('claude mcp add valet-demo --')
-    for (const snippet of await s.api.endpoint.snippets()) expect(snippet.text).not.toContain(TOKEN)
-    await s.api.endpoint.rotateToken()
-    expect(s.endpoint.resets).toBe(1)
-    expect((await s.api.endpoint.status()).tokenRotatedAt).toBe('2026-11-07T00:00:00.000Z')
     await s.api.endpoint.setListening(false)
     expect(await s.api.endpoint.status()).toMatchObject({ listening: false, url: null, connectedClients: 0 })
     await expect(s.api.endpoint.copyUrl()).rejects.toThrow()
     await s.api.endpoint.setListening(false)
-    await s.api.endpoint.rotateToken()
-    expect(existsSync(s.paths.bridgeConfig)).toBe(false)
     await s.api.endpoint.setListening(true)
     await s.api.endpoint.setListening(true)
     expect(s.endpoint.starts).toBe(2)
+  })
+
+  it('adds a client with its own config file and setup snippets that name it, never the token', async () => {
+    const s = await approved()
+    const code = await s.api.clients.add('Claude Code')
+    expect(code).toMatchObject({ name: 'Claude Code', revokedAt: null, calls7d: 0 })
+    expect(s.endpoint.ops).toEqual([`add ${code.id}`])
+    const configPath = join(s.paths.clientConfigs, `${code.id}.json`)
+    expect(s.endpoint.clients.get(code.id)).toBe(configPath)
+    const snippets = await s.api.clients.snippets(code.id)
+    expect(snippets.map((x) => x.client)).toEqual(['claude-code', 'claude-desktop'])
+    for (const snippet of snippets) {
+      expect(snippet.text).toContain(code.id)
+      expect(snippet.text).not.toContain(TOKEN)
+    }
+    await s.api.clients.copyConfig(code.id, 'claude-code')
+    expect(s.ui.clipboard[0]).toContain('claude mcp add valet-demo --')
+    expect(s.ui.clipboard[0]).toContain(configPath)
+    expect(await s.api.clients.snippets('c_0000000000000000')).toEqual([])
+    await expect(s.api.clients.copyConfig('c_0000000000000000', 'claude-code')).rejects.toThrow()
+    await expect(s.api.clients.add('  ')).rejects.toThrow()
+  })
+
+  it('resets one client’s access on the running endpoint, or drops its saved token while stopped', async () => {
+    const s = await approved()
+    const code = await s.api.clients.add('Claude Code')
+    s.advance(60_000)
+    await s.api.clients.resetAccess(code.id)
+    expect(s.endpoint.ops).toEqual([`add ${code.id}`, `reset ${code.id}`])
+    expect((await s.api.clients.list())[0]?.accessResetAt).toBe('2026-11-07T00:01:00.000Z')
+    await s.api.endpoint.setListening(false)
+    const configPath = join(s.paths.clientConfigs, `${code.id}.json`)
+    expect(existsSync(configPath)).toBe(true)
+    await s.api.clients.resetAccess(code.id)
+    expect(existsSync(configPath)).toBe(false)
+    await expect(s.api.clients.resetAccess('c_0000000000000000')).rejects.toThrow()
+  })
+
+  it('revokes a client: its token is withdrawn, its file deleted, and it gets none at the next start', async () => {
+    const s = await approved()
+    const code = await s.api.clients.add('Claude Code')
+    const desktop = await s.api.clients.add('Claude Desktop')
+    await s.api.clients.revoke(code.id)
+    expect(s.endpoint.ops).toContain(`remove ${code.id}`)
+    expect(existsSync(join(s.paths.clientConfigs, `${code.id}.json`))).toBe(false)
+    expect((await s.api.clients.list()).map((c) => [c.name, c.revokedAt !== null])).toEqual([
+      ['Claude Code', true],
+      ['Claude Desktop', false],
+    ])
+    await expect(s.api.clients.revoke(code.id)).rejects.toThrow()
+    await expect(s.api.clients.resetAccess(code.id)).rejects.toThrow()
+    expect(await s.api.clients.snippets(code.id)).toEqual([])
+    await s.api.endpoint.setListening(false)
+    s.endpoint.clients.clear()
+    await s.api.endpoint.setListening(true)
+    expect([...s.endpoint.clients.keys()]).toEqual([desktop.id])
+  })
+
+  it('deletes the shared bridge config left from before per-client tokens', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sa-service-'))
+    dirs.push(dir)
+    const paths = dataPaths(join(dir, 'data'))
+    mkdirSync(paths.dir, { recursive: true, mode: 0o700 })
+    writeFileSync(
+      paths.legacyBridgeConfig,
+      JSON.stringify({ url: 'http://127.0.0.1:47000/mcp', token: TOKEN }),
+    )
+    await setup({ dir })
+    expect(existsSync(paths.legacyBridgeConfig)).toBe(false)
   })
 
   it('changes settings only through the patch and the main process’s own op dialog', async () => {
@@ -1025,7 +1125,6 @@ describe('nothing secret crosses', () => {
       s.api.runs.statsToday(),
       s.api.audit.page({}),
       s.api.endpoint.status(),
-      s.api.endpoint.snippets(),
       s.api.clients.list(),
       s.api.attention.list(),
       s.api.settings.get(),

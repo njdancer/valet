@@ -145,6 +145,23 @@ describe('ToolHost.call: approval and lookup', () => {
     ])
   })
 
+  it('records the credential’s client id beside the self-reported name, and only in its shape (C12)', async () => {
+    const definition = defineAdapter({
+      manifest,
+      tools: { run_test: tool({ input: z.object({}), output: z.string(), run: async () => 'done' }) },
+    })
+    const { host, audit } = fixture(definition)
+    await host.call({ ...call, clientId: 'local:c_0123456789abcdef' })
+    await host.call({ ...call, callId: 'call-2', clientId: 'claude-code' })
+    await host.call({ ...call, callId: 'call-3', clientId: 'remote:Phone\n' })
+    const called = audit.events.filter((e) => e.type === 'tool-called')
+    expect(called.map((e) => ('clientId' in e ? e.clientId : null))).toEqual([
+      'local:c_0123456789abcdef',
+      null,
+      null,
+    ])
+  })
+
   it('refuses an adapter whose exact hash is not approved, without running anything', async () => {
     const run = vi.fn()
     const { host, driver, audit } = fixture(

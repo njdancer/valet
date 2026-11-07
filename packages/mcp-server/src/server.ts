@@ -7,6 +7,7 @@ import { McpServer, type RegisteredTool } from '@modelcontextprotocol/sdk/server
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js'
 import { NeedsUserError, type ToolDeclaration, toReportable } from '@valet/core'
 import { z } from 'zod'
+import type { ClientIdentity } from './auth'
 import { failedResult, toolResult } from './results'
 import type { CallOutcome, ClientTransport, ListedTool, ToolCaller } from './tool-caller'
 import { type ExposedTool, planTools, type SkippedTool, type ToolPlan } from './tool-names'
@@ -21,6 +22,8 @@ export interface ServerOptions {
   readonly newCallId?: () => string
   /** How this session's client reached the endpoint, passed on with every call. A label only. */
   readonly transport?: ClientTransport
+  /** The client this session's credential names, passed on with every call. */
+  readonly identity?: ClientIdentity
 }
 
 export interface ValetMcpServer {
@@ -64,6 +67,7 @@ export function createMcpServer(
         callId: newCallId(),
         signal,
         ...(options.transport === undefined ? {} : { transport: options.transport }),
+        ...(options.identity === undefined ? {} : { identity: options.identity }),
       })
     } catch (error) {
       // A runtime that throws rather than returns needsUser still gets the person asked, not a failure.

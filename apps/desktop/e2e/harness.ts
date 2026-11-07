@@ -1,13 +1,22 @@
 // What every e2e spec shares: launching the built app in demo mode against a temporary userData,
 // finding its windows by the deterministic titles e2e mode gives them, an MCP client over HTTP with
-// the token the app wrote to bridge.json, and the scan for the demo account's secrets.
+// the client tokens the app wrote to client-configs/, and the scan for the demo account's secrets.
 //
 // Nothing here reaches a real site, 1Password, Messages or the Keychain: demo mode runs the fake
 // Woolworths in the app's own process, behind a host resolver rule that maps its names (and, in e2e
 // mode, the canary host) to 127.0.0.1.
 
 import { execFileSync } from 'node:child_process'
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -117,15 +126,35 @@ export interface BridgeConfig {
   readonly token: string
 }
 
-export function bridgeConfig(userData: string): BridgeConfig {
-  return JSON.parse(readFileSync(join(userData, 'bridge.json'), 'utf8')) as BridgeConfig
+const CLIENT_CONFIGS = 'client-configs'
+
+/** The bridge config file the app wrote for one client (D42): its URL and that client's token. */
+export function clientConfig(userData: string, clientId: string): BridgeConfig {
+  return JSON.parse(readFileSync(join(userData, CLIENT_CONFIGS, `${clientId}.json`), 'utf8')) as BridgeConfig
+}
+
+/** Every client token the app has written, for the secret scans. */
+export function clientTokens(userData: string): string[] {
+  const dir = join(userData, CLIENT_CONFIGS)
+  if (!existsSync(dir)) return []
+  return readdirSync(dir)
+    .filter((name) => name.endsWith('.json'))
+    .map((name) => clientConfig(userData, name.slice(0, -'.json'.length)).token)
 }
 
 export type McpClient = InstanceType<typeof Client>
 
-/** A real MCP client over Streamable HTTP, as an HTTP-native agent would connect. */
-export async function connectMcp(userData: string, name = 'e2e-agent'): Promise<McpClient> {
-  const { url, token } = bridgeConfig(userData)
+/**
+ * A real MCP client over Streamable HTTP, as an HTTP-native agent would connect, with its own token:
+ * the client called `name` is added in the app (through the control panel's API) unless it already
+ * is, and its token read from the config file the app wrote for it.
+ */
+export async function connectMcp(control: Page, userData: string, name = 'e2e-agent'): Promise<McpClient> {
+  const listed = await control.evaluate(() => window.valet?.clients.list())
+  let id = listed?.find((c) => c.name === name && c.revokedAt === null)?.id
+  if (id === undefined) id = (await control.evaluate((n) => window.valet?.clients.add(n), name))?.id
+  if (id === undefined) throw new Error('could not add an MCP client')
+  const { url, token } = clientConfig(userData, id)
   const client = new Client({ name, version: '1.0.0' })
   const transport = new StreamableHTTPClientTransport(new URL(url), {
     requestInit: { headers: { Authorization: `Bearer ${token}` } },
