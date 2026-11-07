@@ -195,6 +195,16 @@ export const OUTCOME_TONE: Readonly<Record<RunOutcome | 'running', 'ok' | 'warn'
 export const PROVIDER_WORDING: Readonly<
   Record<ProviderKind, { readonly title: string; readonly detail: string }>
 > = {
+  'keychain-copy': {
+    title: 'Copy in your Keychain',
+    detail:
+      'Copied once from your own 1Password item, with your approval there. Works while you’re away. When the password changes, re-sync it from 1Password.',
+  },
+  'onepassword-desktop': {
+    title: '1Password, approved each time',
+    detail:
+      'Asks you to approve Valet in 1Password, then reads the item you picked. Approval lapses after ten idle minutes or when 1Password locks.',
+  },
   'onepassword-service-account': {
     title: '1Password service account',
     detail:
