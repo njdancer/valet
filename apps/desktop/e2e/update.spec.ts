@@ -65,7 +65,7 @@ async function relaunch(appPath?: string): Promise<void> {
   await launched?.close()
   launched = await launch(userData, appPath)
   control = await windowWithTitle(launched.app, CONTROL)
-  client = await connectMcp(userData)
+  client = await connectMcp(control, userData)
 }
 
 function mcp(): McpClient {

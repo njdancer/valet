@@ -6,9 +6,11 @@ import { ValetError } from '@valet/core'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { type RunningHttpServer, startHttpServer } from '../src/http'
-import { bearerAuthorized, hostAllowed, originAllowed } from '../src/http-guards'
+import { bearerToken, hostAllowed, originAllowed } from '../src/http-guards'
+import { ClientTokens, localAuthenticator } from '../src/local-auth'
 import type { ListedTool } from '../src/tool-caller'
 import { FakeCaller } from './fake-caller'
+import { tokenAuth } from './token-auth'
 
 const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ'
 
@@ -50,7 +52,7 @@ async function start(
   caller: FakeCaller,
   extra: { maxSessions?: number; port?: number } = {},
 ): Promise<RunningHttpServer> {
-  const running = await startHttpServer({ caller, token: TOKEN, ...extra })
+  const running = await startHttpServer({ caller, authenticate: tokenAuth(TOKEN), ...extra })
   cleanup.push(() => running.close())
   return running
 }
@@ -113,12 +115,35 @@ describe('startHttpServer', () => {
     expect(running.url).toBe(`http://127.0.0.1:${running.port}/mcp`)
   })
 
-  it('refuses to start with a blank or malformed token', async () => {
-    for (const token of ['', 'short', `${TOKEN} `]) {
-      await expect(startHttpServer({ caller: new FakeCaller([]), token })).rejects.toEqual(
-        new ValetError('config', 'invalid'),
-      )
-    }
+  it('answers 500 and lets nothing through when the authenticate hook throws', async () => {
+    const caller = new FakeCaller([searchProducts])
+    const running = await startHttpServer({
+      caller,
+      authenticate: () => {
+        throw new Error('the hook’s secret detail')
+      },
+    })
+    cleanup.push(() => running.close())
+    const response = await rawPost(running.port, {})
+    expect(response.status).toBe(500)
+    expect(response.body).not.toContain('secret detail')
+    expect(running.sessions().total).toBe(0)
+  })
+
+  it('passes the hook the listener’s own port, and waits for an asynchronous answer', async () => {
+    const ports: number[] = []
+    const running = await startHttpServer({
+      caller: new FakeCaller([searchProducts]),
+      authenticate: async (_request, listener) => {
+        ports.push(listener.port)
+        await new Promise((resolve) => setImmediate(resolve))
+        return { ok: true, identity: { origin: 'remote', clientId: 'phone' } }
+      },
+    })
+    cleanup.push(() => running.close())
+    expect((await rawPost(running.port, {})).status).toBe(200)
+    expect(ports).toEqual([running.port])
+    expect(running.sessions().sessions[0]?.identity).toEqual({ origin: 'remote', clientId: 'phone' })
   })
 
   it('serves tools to an SDK client over Streamable HTTP', async () => {
@@ -246,12 +271,19 @@ describe('startHttpServer', () => {
   it('fails with a fixed error, rather than moving, when the port it was given is taken', async () => {
     const holder = await start(new FakeCaller([searchProducts]))
     await expect(
-      startHttpServer({ caller: new FakeCaller([searchProducts]), token: TOKEN, port: holder.port }),
+      startHttpServer({
+        caller: new FakeCaller([searchProducts]),
+        authenticate: tokenAuth(TOKEN),
+        port: holder.port,
+      }),
     ).rejects.toEqual(new ValetError('config', 'unavailable'))
   })
 
   it('stops accepting connections once closed', async () => {
-    const running = await startHttpServer({ caller: new FakeCaller([searchProducts]), token: TOKEN })
+    const running = await startHttpServer({
+      caller: new FakeCaller([searchProducts]),
+      authenticate: tokenAuth(TOKEN),
+    })
     await connectClient(running.url)
     await running.close()
     await expect(rawPost(running.port, {})).rejects.toThrow()
@@ -335,44 +367,108 @@ describe('bearer token', () => {
   })
 })
 
-describe('setToken', () => {
+describe('a token per client', () => {
   const OTHER = 'zyxwvutsrqponmlkjihgfedcbaZYXWVUTSRQPONMLKJ'
+  const CALL = {
+    jsonrpc: '2.0',
+    id: 2,
+    method: 'tools/call',
+    params: { name: 'woolworths_search_products', arguments: { query: 'x' } },
+  }
 
-  it('accepts only the new token from then on', async () => {
-    const running = await start(new FakeCaller([searchProducts]))
-    await running.setToken(OTHER)
-    expect((await rawPost(running.port, {})).status).toBe(401)
-    expect((await rawPost(running.port, { authorization: `Bearer ${OTHER}` })).status).toBe(200)
+  async function twoClients(caller: FakeCaller) {
+    const tokens = new ClientTokens()
+    tokens.set('code', TOKEN)
+    tokens.set('desktop', OTHER)
+    const running = await startHttpServer({ caller, authenticate: localAuthenticator(tokens) })
+    cleanup.push(() => running.close())
+    return { tokens, running }
+  }
+
+  it('names each session by the client whose token opened it', async () => {
+    const { running } = await twoClients(new FakeCaller([searchProducts]))
+    await rawPost(running.port, {})
+    await rawPost(running.port, { authorization: `Bearer ${OTHER}` })
+    expect(running.sessions().sessions.map((s) => s.identity)).toEqual([
+      { origin: 'local', clientId: 'code' },
+      { origin: 'local', clientId: 'desktop' },
+    ])
   })
 
-  it('closes every session, so none opened with the old token carries on', async () => {
+  it('passes the identity to the caller with every call', async () => {
     const caller = new FakeCaller([searchProducts])
-    const running = await start(caller)
+    const { running } = await twoClients(caller)
+    const client = await connectClient(running.url, 'claims-to-be-desktop', OTHER)
+    await client.callTool({ name: 'woolworths_search_products', arguments: { query: 'x' } })
+    expect(caller.calls[0]?.identity).toEqual({ origin: 'local', clientId: 'desktop' })
+    expect(caller.calls[0]?.client).toBe('claims-to-be-desktop')
+  })
+
+  it('answers a session only to the client that opened it', async () => {
+    const caller = new FakeCaller([searchProducts])
+    const { running } = await twoClients(caller)
     const init = await rawPost(running.port, {})
     const sessionId = init.headers['mcp-session-id'] as string
-
-    await running.setToken(OTHER)
     const response = await rawPost(
       running.port,
       { 'mcp-session-id': sessionId, authorization: `Bearer ${OTHER}` },
-      {
-        jsonrpc: '2.0',
-        id: 2,
-        method: 'tools/call',
-        params: { name: 'woolworths_search_products', arguments: { query: 'x' } },
-      },
+      CALL,
     )
-
     expect(response.status).toBe(404)
     expect(caller.calls).toEqual([])
   })
 
-  it('refuses a malformed token and keeps the old one', async () => {
-    const running = await start(new FakeCaller([searchProducts]))
-    for (const token of ['', 'short', `${OTHER} `]) {
-      await expect(running.setToken(token)).rejects.toEqual(new ValetError('config', 'invalid'))
-    }
-    expect((await rawPost(running.port, {})).status).toBe(200)
+  it('refuses a token once the table drops it; endSessions closes only that client’s sessions', async () => {
+    const caller = new FakeCaller([searchProducts])
+    const { tokens, running } = await twoClients(caller)
+    const code = (await rawPost(running.port, {})).headers['mcp-session-id'] as string
+    await rawPost(running.port, { authorization: `Bearer ${OTHER}` })
+
+    tokens.delete('code')
+    await running.endSessions((identity) => identity.clientId === 'code')
+
+    expect((await rawPost(running.port, {})).status).toBe(401)
+    expect((await rawPost(running.port, { 'mcp-session-id': code }, CALL)).status).toBe(401)
+    expect(running.sessions().sessions.map((s) => s.identity.clientId)).toEqual(['desktop'])
+  })
+})
+
+describe('ClientTokens', () => {
+  it('identifies a token’s client, and nothing for any other string', () => {
+    const tokens = new ClientTokens()
+    tokens.set('code', TOKEN)
+    expect(tokens.identify(TOKEN)).toBe('code')
+    for (const other of ['', TOKEN.toUpperCase(), `${TOKEN} `, TOKEN.slice(1)])
+      expect(tokens.identify(other)).toBeNull()
+  })
+
+  it('replaces a client’s token, so the old one stops working', () => {
+    const tokens = new ClientTokens()
+    tokens.set('code', TOKEN)
+    tokens.set('code', 'Z'.repeat(43))
+    expect(tokens.identify(TOKEN)).toBeNull()
+    expect(tokens.identify('Z'.repeat(43))).toBe('code')
+    expect(tokens.ids()).toEqual(['code'])
+  })
+
+  it('refuses a malformed token or id, and a token another client holds', () => {
+    const tokens = new ClientTokens()
+    tokens.set('code', TOKEN)
+    for (const token of ['', 'short', `${TOKEN} `])
+      expect(() => tokens.set('other', token)).toThrow(new ValetError('config', 'invalid'))
+    for (const id of ['', 'Code', '../x', 'a'.repeat(65)])
+      expect(() => tokens.set(id, 'Z'.repeat(43))).toThrow(new ValetError('config', 'invalid'))
+    expect(() => tokens.set('other', TOKEN)).toThrow(new ValetError('config', 'invalid'))
+    expect(tokens.identify(TOKEN)).toBe('code')
+  })
+
+  it('forgets a deleted client', () => {
+    const tokens = new ClientTokens()
+    tokens.set('code', TOKEN)
+    expect(tokens.delete('code')).toBe(true)
+    expect(tokens.delete('code')).toBe(false)
+    expect(tokens.has('code')).toBe(false)
+    expect(tokens.identify(TOKEN)).toBeNull()
   })
 })
 
@@ -551,22 +647,14 @@ describe('originAllowed', () => {
   })
 })
 
-describe('bearerAuthorized', () => {
-  it('accepts exactly Bearer <token>', () => {
-    expect(bearerAuthorized(`Bearer ${TOKEN}`, TOKEN)).toBe(true)
+describe('bearerToken', () => {
+  it('reads exactly Bearer <token>, in any case', () => {
+    expect(bearerToken(`Bearer ${TOKEN}`)).toBe(TOKEN)
+    expect(bearerToken(`bearer ${TOKEN}`)).toBe(TOKEN)
   })
 
-  it('refuses a missing, empty or malformed header', () => {
-    expect(bearerAuthorized(undefined, TOKEN)).toBe(false)
-    expect(bearerAuthorized('', TOKEN)).toBe(false)
-    expect(bearerAuthorized('Bearer', TOKEN)).toBe(false)
-    expect(bearerAuthorized('Bearer ', TOKEN)).toBe(false)
-    expect(bearerAuthorized(TOKEN, TOKEN)).toBe(false)
-    expect(bearerAuthorized(` Bearer ${TOKEN}`, TOKEN)).toBe(false)
-  })
-
-  it('never authorises against an empty expected token', () => {
-    expect(bearerAuthorized('Bearer ', '')).toBe(false)
-    expect(bearerAuthorized('', '')).toBe(false)
+  it('reads nothing from a missing, empty or malformed header', () => {
+    for (const header of [undefined, '', 'Bearer', 'Bearer ', TOKEN, ` Bearer ${TOKEN}`, `Bearer ${TOKEN} x`])
+      expect(bearerToken(header)).toBeNull()
   })
 })

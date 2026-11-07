@@ -15,6 +15,7 @@ import { type BridgeTarget, type RunningBridge, runBridge, type Schedule } from 
 import { type RunningHttpServer, startHttpServer } from '../src/http'
 import type { ListedTool } from '../src/tool-caller'
 import { FakeCaller } from './fake-caller'
+import { tokenAuth } from './token-auth'
 
 const TOKEN = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQ'
 
@@ -46,7 +47,7 @@ afterEach(async () => {
 })
 
 async function startServer(caller: FakeCaller): Promise<RunningHttpServer> {
-  const running = await startHttpServer({ caller, token: TOKEN })
+  const running = await startHttpServer({ caller, authenticate: tokenAuth(TOKEN) })
   cleanup.push(() => running.close())
   return running
 }
@@ -280,7 +281,7 @@ describe('runBridge', () => {
   })
 
   it('answers a request with a fixed error when the endpoint is down', async () => {
-    const server = await startHttpServer({ caller: new FakeCaller([]), token: TOKEN })
+    const server = await startHttpServer({ caller: new FakeCaller([]), authenticate: tokenAuth(TOKEN) })
     await server.close()
     const { toBridge, fromBridge } = await wireBridge(server.url)
 
@@ -324,7 +325,7 @@ describe('runBridge', () => {
   })
 
   it('writes nothing for a failed notification', async () => {
-    const server = await startHttpServer({ caller: new FakeCaller([]), token: TOKEN })
+    const server = await startHttpServer({ caller: new FakeCaller([]), authenticate: tokenAuth(TOKEN) })
     await server.close()
     const { toBridge, fromBridge, bridge } = await wireBridge(server.url)
     const written: string[] = []
@@ -368,7 +369,7 @@ describe('runBridge', () => {
 
   it('answers a call in flight at once when the app quits', async () => {
     const { caller, reached } = stuckCaller()
-    const server = await startHttpServer({ caller, token: TOKEN })
+    const server = await startHttpServer({ caller, authenticate: tokenAuth(TOKEN) })
     const client = await connectThroughBridge(server.url)
 
     const call = client.callTool({ name: 'woolworths_view_cart', arguments: {} }, undefined, {
@@ -528,7 +529,7 @@ describe('reconnecting after the app restarts', () => {
   it('replays the client initialize into the new endpoint and retries the call', async () => {
     const before = new FakeCaller([viewCart])
     before.answer = async () => ({ status: 'ok', output: { items: 1 } })
-    const first = await startHttpServer({ caller: before, token: TOKEN })
+    const first = await startHttpServer({ caller: before, authenticate: tokenAuth(TOKEN) })
     const target = { current: { url: first.url, token: TOKEN } }
     const client = await bridgeWithReconnect(target, 'long-lived-client')
     await client.callTool({ name: 'woolworths_view_cart', arguments: {} })
@@ -538,7 +539,7 @@ describe('reconnecting after the app restarts', () => {
     after.answer = async () => ({ status: 'ok', output: { items: 7 } })
     // A restarted app has a new port and a new token.
     const newToken = 'ZYXWVUTSRQPONMLKJIHGFEDCBAzyxwvutsrqponmlkj'
-    const second = await startHttpServer({ caller: after, token: newToken })
+    const second = await startHttpServer({ caller: after, authenticate: tokenAuth(newToken) })
     cleanup.push(() => second.close())
     target.current = { url: second.url, token: newToken }
     const relisted = new Promise<void>((resolve) => {
@@ -555,7 +556,7 @@ describe('reconnecting after the app restarts', () => {
   it('rebuilds a session the endpoint evicted', async () => {
     const caller = new FakeCaller([viewCart])
     caller.answer = async () => ({ status: 'ok', output: { items: 2 } })
-    const server = await startHttpServer({ caller, token: TOKEN, maxSessions: 1 })
+    const server = await startHttpServer({ caller, authenticate: tokenAuth(TOKEN), maxSessions: 1 })
     cleanup.push(() => server.close())
     let reconnects = 0
     const client = await bridgeWithReconnect({ current: { url: server.url, token: TOKEN } }, 'evicted', {
@@ -578,7 +579,10 @@ describe('reconnecting after the app restarts', () => {
   })
 
   it('answers with the fixed error when the endpoint is still down', async () => {
-    const server = await startHttpServer({ caller: new FakeCaller([viewCart]), token: TOKEN })
+    const server = await startHttpServer({
+      caller: new FakeCaller([viewCart]),
+      authenticate: tokenAuth(TOKEN),
+    })
     const client = await bridgeWithReconnect({ current: { url: server.url, token: TOKEN } }, 'c')
     await client.listTools()
     await server.close()
@@ -589,7 +593,10 @@ describe('reconnecting after the app restarts', () => {
   })
 
   it('answers with the fixed error when the new endpoint refuses the replayed initialize', async () => {
-    const server = await startHttpServer({ caller: new FakeCaller([viewCart]), token: TOKEN })
+    const server = await startHttpServer({
+      caller: new FakeCaller([viewCart]),
+      authenticate: tokenAuth(TOKEN),
+    })
     const target = { current: { url: server.url, token: TOKEN } }
     const client = await bridgeWithReconnect(target, 'c')
     await client.listTools()
@@ -603,7 +610,10 @@ describe('reconnecting after the app restarts', () => {
 
   it('gives up when the replayed initialize is never answered', async () => {
     const clock = manualSchedule()
-    const server = await startHttpServer({ caller: new FakeCaller([viewCart]), token: TOKEN })
+    const server = await startHttpServer({
+      caller: new FakeCaller([viewCart]),
+      authenticate: tokenAuth(TOKEN),
+    })
     const target = { current: { url: server.url, token: TOKEN } }
     const client = await bridgeWithReconnect(target, 'c', {
       reconnectTimeoutMs: 50,
@@ -624,7 +634,10 @@ describe('reconnecting after the app restarts', () => {
 
   it('gives up at once, without waiting out the timeout, when the new endpoint hangs up', async () => {
     const clock = manualSchedule()
-    const server = await startHttpServer({ caller: new FakeCaller([viewCart]), token: TOKEN })
+    const server = await startHttpServer({
+      caller: new FakeCaller([viewCart]),
+      authenticate: tokenAuth(TOKEN),
+    })
     const target = { current: { url: server.url, token: TOKEN } }
     const client = await bridgeWithReconnect(target, 'c', { schedule: clock.schedule })
     await client.listTools()
@@ -642,7 +655,10 @@ describe('reconnecting after the app restarts', () => {
   // rejection, which nothing awaited, killed the bridge process when it fired.
   it('survives the reconnect timeout after a reconnect that found the app still down', async () => {
     const clock = manualSchedule()
-    const server = await startHttpServer({ caller: new FakeCaller([viewCart]), token: TOKEN })
+    const server = await startHttpServer({
+      caller: new FakeCaller([viewCart]),
+      authenticate: tokenAuth(TOKEN),
+    })
     const target = { current: { url: server.url, token: TOKEN } }
     const client = await bridgeWithReconnect(target, 'c', {
       reconnectTimeoutMs: 50,
@@ -669,7 +685,10 @@ describe('reconnecting after the app restarts', () => {
 
   it('survives a notification that sets off a reconnect while the app is down', async () => {
     const clock = manualSchedule()
-    const server = await startHttpServer({ caller: new FakeCaller([viewCart]), token: TOKEN })
+    const server = await startHttpServer({
+      caller: new FakeCaller([viewCart]),
+      authenticate: tokenAuth(TOKEN),
+    })
     const target = { current: { url: server.url, token: TOKEN } }
     const client = await bridgeWithReconnect(target, 'c', {
       reconnectTimeoutMs: 50,
@@ -695,7 +714,7 @@ describe('reconnecting after the app restarts', () => {
 
   it('answers the calls left on the old session when it reconnects for a new one', async () => {
     const { caller, reached } = stuckCaller()
-    const first = await startHttpServer({ caller, token: TOKEN, maxSessions: 1 })
+    const first = await startHttpServer({ caller, authenticate: tokenAuth(TOKEN), maxSessions: 1 })
     cleanup.push(() => first.close())
     const target = { current: { url: first.url, token: TOKEN } }
     const client = await bridgeWithReconnect(target, 'c')
@@ -722,7 +741,10 @@ describe('reconnecting after the app restarts', () => {
   })
 
   it('tries again on the next call after a failed reconnect', async () => {
-    const first = await startHttpServer({ caller: new FakeCaller([viewCart]), token: TOKEN })
+    const first = await startHttpServer({
+      caller: new FakeCaller([viewCart]),
+      authenticate: tokenAuth(TOKEN),
+    })
     const target = { current: { url: first.url, token: TOKEN } }
     let reconnects = 0
     const client = await bridgeWithReconnect(target, 'patient-client', {
@@ -770,7 +792,7 @@ describe('reconnecting after the app restarts', () => {
   })
 
   it('does not reconnect before the client has initialized', async () => {
-    const server = await startHttpServer({ caller: new FakeCaller([]), token: TOKEN })
+    const server = await startHttpServer({ caller: new FakeCaller([]), authenticate: tokenAuth(TOKEN) })
     await server.close()
     let reconnects = 0
     const toBridge = new PassThrough()

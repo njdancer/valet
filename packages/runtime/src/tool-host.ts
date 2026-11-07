@@ -91,6 +91,8 @@ const MAX_CONFIRM_MESSAGE = 500
 const MAX_CLIENT = 100
 const TOOL_NAME = /^[a-z][a-z0-9_]{0,63}$/
 const CALL_ID = /^[A-Za-z0-9_-]{1,64}$/
+/** The endpoint's identity label: mcp-server's identityLabel(). */
+const CLIENT_ID = /^(local|remote):[a-z0-9][a-z0-9_-]{0,63}$/
 const HASH = /^[0-9a-f]{64}$/
 
 export interface RegisteredAdapter {
@@ -336,6 +338,7 @@ export class ToolHost {
         adapterHash: entry.bundleHash,
         tool: TOOL_NAME.test(request.tool) ? request.tool : '(invalid)',
         client,
+        ...clientIdOf(request.clientId),
         callId: request.callId,
       })
     } catch {
@@ -769,6 +772,11 @@ function implementationOf(entry: RegisteredAdapter, name: string): ToolImplement
 /** A transport the runtime knows, or none: the label is never invented or passed on unchecked. */
 function transportOf(value: unknown): ClientTransport | undefined {
   return CLIENT_TRANSPORTS.find((t) => t === value)
+}
+
+/** The credential's client id when it has the endpoint's shape; otherwise nothing is recorded. */
+function clientIdOf(value: unknown): { readonly clientId?: string } {
+  return typeof value === 'string' && CLIENT_ID.test(value) ? { clientId: value } : {}
 }
 
 /** The caller's signal, if it is one. Anything else is ignored rather than trusted to behave. */

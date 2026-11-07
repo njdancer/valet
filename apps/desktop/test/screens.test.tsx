@@ -305,7 +305,7 @@ describe('activity and run traces', () => {
 })
 
 describe('clients and settings', () => {
-  it('turns the endpoint off and on, rotates the token and copies config through the main process', async () => {
+  it('turns the endpoint off and on', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })
     renderAt('#/clients', api)
@@ -313,23 +313,48 @@ describe('clients and settings', () => {
     await user.click(endpointSwitch)
     expect(called(api, 'endpoint.setListening')).toEqual([[false]])
     expect(await screen.findByText('Not listening')).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: 'Rotate' }))
-    expect(called(api, 'endpoint.rotateToken')).toEqual([[]])
-    const copies = screen.getAllByRole('button', { name: 'Copy' })
-    await user.click(copies[0] as HTMLElement)
-    expect(called(api, 'endpoint.copyClientConfig')).toEqual([['claude-code']])
+    expect(screen.queryByRole('button', { name: 'Rotate' })).toBeNull()
+  })
+
+  it('adds a client under the person’s name and shows its setup, copied through the main process', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    renderAt('#/clients', api)
+    await user.click(await screen.findByRole('button', { name: 'Add a client…' }))
+    const field = screen.getByRole('textbox', { name: 'Name for the new client' })
+    await user.clear(field)
+    await user.type(field, 'Claude Code on the laptop')
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+    expect(called(api, 'clients.add')).toEqual([['Claude Code on the laptop']])
+    expect(await screen.findByText('Add to Claude Code: Claude Code on the laptop')).toBeTruthy()
+    expect(screen.getByText(/no calls yet/)).toBeTruthy()
+    const [id] = called(api, 'clients.snippets').at(-1) as [string]
+    await user.click(screen.getAllByRole('button', { name: 'Copy' })[0] as HTMLElement)
+    expect(called(api, 'clients.copyConfig')).toEqual([[id, 'claude-code']])
     expect(await screen.findByRole('button', { name: 'Copied' })).toBeTruthy()
   })
 
-  it('shows what clients say they are, and revokes one', async () => {
+  it('shows each client by the person’s name with what it says it is, resets one’s access and revokes another', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })
     renderAt('#/clients', api)
     expect(await screen.findByText(/says “claude-code” · stdio/)).toBeTruthy()
+    expect(screen.getByText('Claude Desktop')).toBeTruthy()
     expect(screen.getByText('Revoked')).toBeTruthy()
+    await user.click(screen.getAllByRole('button', { name: 'Reset access' })[0] as HTMLElement)
+    expect(called(api, 'clients.resetAccess')).toEqual([['c_c7d2a1b2c3d4e5f6']])
     await user.click(screen.getAllByRole('button', { name: 'Revoke' })[1] as HTMLElement)
-    expect(called(api, 'clients.revoke')).toEqual([['cl_41e9']])
+    expect(called(api, 'clients.revoke')).toEqual([['c_41e9a1b2c3d4e5f6']])
     await waitFor(() => expect(screen.getAllByText('Revoked')).toHaveLength(2))
+  })
+
+  it('opens a client’s setup snippets from its row', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    renderAt('#/clients', api)
+    await user.click((await screen.findAllByRole('button', { name: 'Set up' }))[0] as HTMLElement)
+    expect(await screen.findByText('Add to Claude Code: Claude Code')).toBeTruthy()
+    expect(called(api, 'clients.snippets')).toEqual([['c_c7d2a1b2c3d4e5f6']])
   })
 
   it('changes settings', async () => {

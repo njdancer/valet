@@ -1,13 +1,14 @@
-// Clients and settings (docs/mockups/clients-settings.html): the MCP endpoint, the clients that have
-// connected, setup snippets, and app settings. The endpoint token never reaches this page: rotating
-// it happens in the main process, and the snippets point at the bridge, which reads it itself.
+// Clients and settings (docs/mockups/clients-settings.html): the MCP endpoint, the clients the person
+// has added (each with its own token, D42), each client's setup snippets, and app settings. No token
+// ever reaches this page: resetting one happens in the main process, and the snippets point at the
+// bridge, which reads its client's token itself.
 
 import { useState } from 'react'
 import type { ClientInfo, ClientKind, SettingsPatch, UpdateStatus } from '../../shared/api'
 import { ActionFailed, Icon, LoadState, Segmented, Switch } from '../components/ui'
 import { useAction, useApi, useLoad, useNow } from '../lib/api-context'
 import { formatAgo, formatDay, formatTime } from '../lib/format'
-import { clientLabel, updatesOffWording } from '../lib/wording'
+import { updatesOffWording } from '../lib/wording'
 
 const SNIPPET_TITLES: Readonly<Record<ClientKind, { readonly title: string; readonly detail: string }>> = {
   'claude-code': { title: 'Add to Claude Code', detail: 'stdio bridge, bundled with the app' },
@@ -19,16 +20,31 @@ export function ClientsSettingsPage() {
   const now = useNow(60_000)
   const endpoint = useLoad((a) => a.endpoint.status(), [], ['endpoint-changed'])
   const clients = useLoad((a) => a.clients.list(), [], ['clients-changed'])
-  const snippets = useLoad((a) => a.endpoint.snippets(), [], ['endpoint-changed'])
   const endpointAction = useAction()
   const copy = useAction()
+  const add = useAction()
   const [copied, setCopied] = useState<string | null>(null)
+  const [adding, setAdding] = useState(false)
+  const [name, setName] = useState(DEFAULT_CLIENT_NAME)
+  // The client whose setup snippets are open: the one just added, or the one the person picked.
+  const [open, setOpen] = useState<string | null>(null)
 
   const active = clients.status === 'ready' ? clients.data.filter((c) => c.revokedAt === null).length : 0
   const revoked = clients.status === 'ready' ? clients.data.length - active : 0
 
   const copyThen = async (key: string, action: () => Promise<void>) => {
     if (await copy.run(action)) setCopied(key)
+  }
+  const addClient = async () => {
+    let added: ClientInfo | null = null
+    const ok = await add.run(async () => {
+      added = await api.clients.add(name)
+    })
+    if (ok && added !== null) {
+      setOpen((added as ClientInfo).id)
+      setAdding(false)
+      setName(DEFAULT_CLIENT_NAME)
+    }
   }
 
   return (
@@ -89,21 +105,9 @@ export function ClientsSettingsPage() {
                         <span className="xs muted">stdio via bridge</span>
                       </div>
                       <div className="setting">
-                        <span>Token</span>
-                        <span>
-                          One shared bearer token, kept by the app and the bridge
-                          {status.tokenRotatedAt !== null
-                            ? ` · rotated ${formatDay(status.tokenRotatedAt)}`
-                            : ''}
-                        </span>
-                        <button
-                          type="button"
-                          className="btn"
-                          disabled={endpointAction.busy}
-                          onClick={() => endpointAction.run(() => api.endpoint.rotateToken())}
-                        >
-                          Rotate
-                        </button>
+                        <span>Tokens</span>
+                        <span>One per client, new at every launch</span>
+                        <span className="xs muted">reset each below</span>
                       </div>
                     </div>
                     <div className="card-body" style={{ paddingTop: 0 }}>
@@ -120,11 +124,45 @@ export function ClientsSettingsPage() {
                 <span className="muted">
                   {active} active · {revoked} revoked
                 </span>
+                <span className="actions">
+                  {adding ? null : (
+                    <button type="button" className="btn" onClick={() => setAdding(true)}>
+                      <Icon name="plus" size="sm" />
+                      Add a client…
+                    </button>
+                  )}
+                </span>
               </div>
+              {adding ? (
+                <form
+                  className="card-body row"
+                  onSubmit={(e) => {
+                    e.preventDefault()
+                    void addClient()
+                  }}
+                >
+                  <label className="search" style={{ flex: 1 }}>
+                    <span className="sr-only">Name for the new client</span>
+                    <input
+                      value={name}
+                      maxLength={60}
+                      onChange={(e) => setName(e.target.value)}
+                      placeholder="Claude Code on this Mac"
+                    />
+                  </label>
+                  <button type="submit" className="btn primary" disabled={add.busy || name.trim() === ''}>
+                    Add
+                  </button>
+                  <button type="button" className="btn ghost" onClick={() => setAdding(false)}>
+                    Cancel
+                  </button>
+                  <ActionFailed failed={add.failed} what="add the client" />
+                </form>
+              ) : null}
               <LoadState loaded={clients} what="clients">
                 {(list) =>
                   list.length === 0 ? (
-                    <div className="empty">No client has connected yet.</div>
+                    <div className="empty">No clients yet. Add one to get its setup command.</div>
                   ) : (
                     <table className="table tight">
                       <thead>
@@ -137,7 +175,13 @@ export function ClientsSettingsPage() {
                       </thead>
                       <tbody>
                         {list.map((client) => (
-                          <ClientRow key={client.id} client={client} now={now} />
+                          <ClientRow
+                            key={client.id}
+                            client={client}
+                            now={now}
+                            open={open === client.id}
+                            onToggle={() => setOpen(open === client.id ? null : client.id)}
+                          />
                         ))}
                       </tbody>
                     </table>
@@ -145,47 +189,23 @@ export function ClientsSettingsPage() {
                 }
               </LoadState>
               <div className="card-body xs muted" style={{ paddingTop: 6 }}>
-                Names are what each client says it is, from MCP initialize: they prove nothing. Every client
-                shares the endpoint token today, so revoking a client refuses its sessions, and rotating the
-                token cuts off all of them.
+                Each client has its own token, so calls are attributed to the client you added, not to the
+                name it reports (shown in grey, which proves nothing). Reset access gives one client a new
+                token and ends its sessions; its bridge picks the new one up by itself. Revoke cuts it off for
+                good.
               </div>
             </div>
 
-            <LoadState loaded={snippets} what="setup snippets">
-              {(list) => (
-                <>
-                  {list.map((snippet) => (
-                    <div className="card" key={snippet.client}>
-                      <div className="card-head">
-                        <span className="h3">{SNIPPET_TITLES[snippet.client].title}</span>
-                        <span className="muted">{SNIPPET_TITLES[snippet.client].detail}</span>
-                        <span className="actions">
-                          <button
-                            type="button"
-                            className="btn"
-                            onClick={() =>
-                              copyThen(snippet.client, () => api.endpoint.copyClientConfig(snippet.client))
-                            }
-                          >
-                            <Icon name={copied === snippet.client ? 'check' : 'copy'} size="sm" />
-                            {copied === snippet.client ? 'Copied' : 'Copy'}
-                          </button>
-                        </span>
-                      </div>
-                      <div className="card-body stack">
-                        <pre className="code">{snippet.text}</pre>
-                      </div>
-                    </div>
-                  ))}
-                  <div className="row xs muted">
-                    <Icon name="lock" size="sm" />
-                    The bridge reads the endpoint token from its own config file (mode 0600), so it never sits
-                    in a client’s config.
-                  </div>
-                  <ActionFailed failed={copy.failed} what="copy" />
-                </>
-              )}
-            </LoadState>
+            {open !== null &&
+            clients.status === 'ready' &&
+            clients.data.some((c) => c.id === open && c.revokedAt === null) ? (
+              <ClientSetup
+                client={clients.data.find((c) => c.id === open) as ClientInfo}
+                copied={copied}
+                onCopy={copyThen}
+              />
+            ) : null}
+            <ActionFailed failed={copy.failed} what="copy" />
           </div>
 
           <div className="stack gap-4">
@@ -198,49 +218,136 @@ export function ClientsSettingsPage() {
   )
 }
 
-function ClientRow({ client, now }: { readonly client: ClientInfo; readonly now: number }) {
+const DEFAULT_CLIENT_NAME = 'Claude Code'
+
+function ClientSetup({
+  client,
+  copied,
+  onCopy,
+}: {
+  readonly client: ClientInfo
+  readonly copied: string | null
+  readonly onCopy: (key: string, action: () => Promise<void>) => Promise<void>
+}) {
+  const api = useApi()
+  const snippets = useLoad((a) => a.clients.snippets(client.id), [client.id], ['clients-changed'])
+  return (
+    <LoadState loaded={snippets} what="setup snippets">
+      {(list) => (
+        <>
+          {list.length === 0 ? (
+            <div className="card">
+              <div className="card-body muted">This build has no bridge to set {client.name} up with.</div>
+            </div>
+          ) : null}
+          {list.map((snippet) => {
+            const key = `${client.id}:${snippet.client}`
+            return (
+              <div className="card" key={snippet.client}>
+                <div className="card-head">
+                  <span className="h3">
+                    {SNIPPET_TITLES[snippet.client].title}: {client.name}
+                  </span>
+                  <span className="muted">{SNIPPET_TITLES[snippet.client].detail}</span>
+                  <span className="actions">
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => onCopy(key, () => api.clients.copyConfig(client.id, snippet.client))}
+                    >
+                      <Icon name={copied === key ? 'check' : 'copy'} size="sm" />
+                      {copied === key ? 'Copied' : 'Copy'}
+                    </button>
+                  </span>
+                </div>
+                <div className="card-body stack">
+                  <pre className="code">{snippet.text}</pre>
+                </div>
+              </div>
+            )
+          })}
+          <div className="row xs muted">
+            <Icon name="lock" size="sm" />
+            The bridge reads {client.name}’s token from its own config file (mode 0600), so it never sits in
+            the client’s config.
+          </div>
+        </>
+      )}
+    </LoadState>
+  )
+}
+
+function ClientRow({
+  client,
+  now,
+  open,
+  onToggle,
+}: {
+  readonly client: ClientInfo
+  readonly now: number
+  readonly open: boolean
+  readonly onToggle: () => void
+}) {
   const api = useApi()
   const action = useAction()
-  const label = clientLabel(client.reportedName)
-  const initials = label
+  const initials = client.name
     .split(/[\s-]+/)
     .map((w) => w.charAt(0).toUpperCase())
     .join('')
     .slice(0, 2)
   const icon = client.reportedName === 'claude-code' ? 'cc' : client.reportedName === 'claude-ai' ? 'cd' : ''
   const revoked = client.revokedAt !== null
+  const claim =
+    client.reportedName === null
+      ? 'no calls yet'
+      : `says “${client.reportedName}” · ${client.transport === 'stdio' ? 'stdio' : 'HTTP'}`
+  const since = revoked
+    ? `revoked ${formatDay(client.revokedAt)}`
+    : client.accessResetAt !== null
+      ? `access reset ${formatDay(client.accessResetAt)}`
+      : `added ${formatDay(client.addedAt)}`
   return (
     <tr>
       <td>
         <span className={`row${revoked ? ' tertiary' : ''}`}>
           <span className={`client-icon ${icon}`.trim()}>{initials || '?'}</span>
           <span>
-            <span style={{ display: 'block' }}>{label}</span>
+            <span style={{ display: 'block' }}>{client.name}</span>
             <span className="xs muted">
-              says “{client.reportedName}” · {client.transport === 'stdio' ? 'stdio' : 'HTTP'}
-              {revoked
-                ? ` · revoked ${formatDay(client.revokedAt)}`
-                : ` · since ${formatDay(client.firstSeen)}`}
+              {claim} · {since}
             </span>
           </span>
         </span>
       </td>
-      <td className="xs">{revoked ? '—' : formatAgo(client.lastSeen, now)}</td>
+      <td className="xs">{revoked || client.lastSeen === null ? '—' : formatAgo(client.lastSeen, now)}</td>
       <td className="num">{client.calls7d}</td>
       <td className="num">
         {revoked ? (
           <span className="pill">Revoked</span>
         ) : (
-          <button
-            type="button"
-            className="btn ghost"
-            disabled={action.busy}
-            onClick={() => action.run(() => api.clients.revoke(client.id))}
-          >
-            Revoke
-          </button>
+          <span className="row" style={{ justifyContent: 'flex-end' }}>
+            <button type="button" className="btn ghost" aria-expanded={open} onClick={onToggle}>
+              Set up
+            </button>
+            <button
+              type="button"
+              className="btn ghost"
+              disabled={action.busy}
+              onClick={() => action.run(() => api.clients.resetAccess(client.id))}
+            >
+              Reset access
+            </button>
+            <button
+              type="button"
+              className="btn ghost"
+              disabled={action.busy}
+              onClick={() => action.run(() => api.clients.revoke(client.id))}
+            >
+              Revoke
+            </button>
+          </span>
         )}
-        <ActionFailed failed={action.failed} what="revoke" />
+        <ActionFailed failed={action.failed} what="change this client" />
       </td>
     </tr>
   )

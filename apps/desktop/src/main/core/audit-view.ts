@@ -155,6 +155,8 @@ export function auditPage(records: readonly AuditRecord[], query: AuditQuery): A
     if (query.category !== undefined && !CATEGORY_TYPES[query.category].includes(event.type)) return false
     if (query.adapterId !== undefined && adapterOf(event) !== query.adapterId) return false
     if (query.client !== undefined && !('client' in event && event.client === query.client)) return false
+    if (query.clientId !== undefined && !('clientId' in event && event.clientId === query.clientId))
+      return false
     if (since !== null && Date.parse(record.at) < since) return false
     if (needle.length > 0 && !searchText(event).includes(needle)) return false
     return true

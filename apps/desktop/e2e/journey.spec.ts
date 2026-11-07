@@ -10,9 +10,9 @@ import { expect, type Page, test } from '@playwright/test'
 import {
   appWindows,
   blockSite,
-  bridgeConfig,
   CONTROL,
   callTool,
+  clientTokens,
   connectMcp,
   DEMO_PASSWORD,
   demoAccountMatches,
@@ -75,7 +75,7 @@ test('first launch: Woolworths waits for review, and no MCP client sees or can c
   await expect(control.getByText('Woolworths 0.2.0 is ready for review.')).toBeVisible()
   await expect(control.getByText('Not approved').first()).toBeVisible()
 
-  client = await connectMcp(userData)
+  client = await connectMcp(control, userData)
   const tools = await client.listTools()
   expect(tools.tools.map((t) => t.name)).toEqual([])
   const refused = await callTool(client, 'woolworths_search_products', { query: 'milk' })
@@ -234,19 +234,19 @@ test('the activity screen lists the calls; add_to_cart’s trace shows the login
 })
 
 test('no secret reaches an MCP result, the audit log, the renderer or the app’s logs', async () => {
-  const { token } = bridgeConfig(userData)
+  const tokens = clientTokens(userData)
   expect(results.length).toBeGreaterThan(5)
-  expect(secretsIn(results.join('\n'), [token])).toEqual([])
+  expect(secretsIn(results.join('\n'), tokens)).toEqual([])
   const audit = readFileSync(join(userData, 'audit.jsonl'), 'utf8')
   expect(audit).toContain('"login-')
-  expect(secretsIn(audit, [token])).toEqual([])
+  expect(secretsIn(audit, tokens)).toEqual([])
   // Every screen that shows run data, rendered.
   for (const section of ['Adapters', 'Activity', 'Audit log', 'Clients', 'Credentials', 'Settings']) {
     await go(section)
     await control.waitForTimeout(300)
-    expect(secretsIn(await renderedText(launched.app), [token]), section).toEqual([])
+    expect(secretsIn(await renderedText(launched.app), tokens), section).toEqual([])
   }
-  expect(secretsIn(launched.logs.join(''), [token])).toEqual([])
+  expect(secretsIn(launched.logs.join(''), tokens)).toEqual([])
   // The scan can find what it looks for: the password is in the demo's own source.
   expect(secretsIn(`x${DEMO_PASSWORD}x`)).toEqual(['demo password'])
 })

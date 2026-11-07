@@ -46,7 +46,7 @@ async function start(appPath?: string): Promise<void> {
     nativeTheme.themeSource = 'light'
   })
   control = await windowWithTitle(launched.app, CONTROL)
-  client = await connectMcp(userData, 'Claude Code')
+  client = await connectMcp(control, userData, 'Claude Code')
 }
 
 function mcp(): McpClient {

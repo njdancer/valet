@@ -218,14 +218,14 @@ describe('the audit log', () => {
     expect(await screen.findAllByText('secret-used')).toHaveLength(2)
     expect(screen.queryByText('tool-called')).toBeNull()
     await user.selectOptions(screen.getByRole('combobox', { name: 'Adapter' }), 'woolworths')
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Client' }), 'claude-code')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Client' }), 'local:c_c7d2a1b2c3d4e5f6')
     await user.selectOptions(screen.getByRole('combobox', { name: 'Period' }), 'any')
     await user.type(screen.getByRole('textbox', { name: 'Search the audit log' }), 'c_9')
     await waitFor(() =>
       expect(queries(api).at(-1)).toEqual({
         category: 'secret-use',
         adapterId: 'woolworths',
-        client: 'claude-code',
+        clientId: 'local:c_c7d2a1b2c3d4e5f6',
         search: 'c_9',
         limit: 50,
       }),

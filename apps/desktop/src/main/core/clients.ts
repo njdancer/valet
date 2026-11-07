@@ -1,26 +1,39 @@
-// The MCP clients that have called, by the name each reports in MCP initialize. Every client shares
-// one token (D42 is open), so a name is a label, not an identity: revoking one refuses calls made
-// under that name, which stops an honest client and nothing else. Rotating the token is the control
-// that cuts off everyone.
+// The MCP clients the person has added (D42). Each has its own token, kept only in its own bridge
+// config file (mode 0600) and by the endpoint, so a call is attributed to the client whose token
+// made it, and one client's access can be reset or revoked alone. What a client says its name is,
+// in MCP initialize, is kept beside it as a claim that proves nothing.
 
-import { sha256Hex } from '@valet/core'
+import { randomBytes } from 'node:crypto'
+import { join } from 'node:path'
+import { ValetError } from '@valet/core'
+import type { EndpointClient } from '@valet/mcp-server'
 import type { ClientTransport } from '@valet/runtime'
 import { z } from 'zod'
 import type { ClientInfo } from '../../shared/api'
 import { JsonDocument } from './files'
 
+export const MAX_CLIENT_NAME = 60
+const MAX_CLIENTS = 200
+
 const clientSchema = z
   .object({
     id: z.string().regex(/^c_[0-9a-f]{16}$/),
-    reportedName: z.string().min(1).max(200),
-    transport: z.enum(['http', 'stdio']),
-    firstSeen: z.iso.datetime(),
-    lastSeen: z.iso.datetime(),
+    /** The person's name for it, given when they added it. */
+    name: z.string().min(1).max(MAX_CLIENT_NAME),
+    addedAt: z.iso.datetime(),
+    accessResetAt: z.iso.datetime().nullable(),
+    lastSeen: z.iso.datetime().nullable(),
+    reportedName: z.string().min(1).max(200).nullable(),
+    transport: z.enum(['http', 'stdio']).nullable(),
     revokedAt: z.iso.datetime().nullable(),
   })
   .strict()
 
-const fileSchema = z.object({ version: z.literal(1), clients: z.array(clientSchema).max(500) }).strict()
+// Version 1 recorded clients by reported name, before tokens were per client. Such a file doesn't
+// validate and reads as empty: those records were labels, with nothing to carry over.
+const fileSchema = z
+  .object({ version: z.literal(2), clients: z.array(clientSchema).max(MAX_CLIENTS) })
+  .strict()
 
 type StoredClient = z.infer<typeof clientSchema>
 
@@ -29,12 +42,19 @@ type StoredClient = z.infer<typeof clientSchema>
  * labels each session itself; the bridge says so in a header any local client could also send, so
  * it is a label, never a permission.
  */
-export function shownTransport(transport: ClientTransport | undefined): ClientInfo['transport'] {
+export function shownTransport(transport: ClientTransport | undefined): 'http' | 'stdio' {
   return transport === 'stdio-bridge' ? 'stdio' : 'http'
 }
 
-export function clientId(reportedName: string): string {
-  return `c_${sha256Hex(reportedName).slice(0, 16)}`
+/** The person's name for a client, flattened: printable, trimmed, and at most MAX_CLIENT_NAME long. */
+export function cleanClientName(name: unknown): string | null {
+  if (typeof name !== 'string') return null
+  const flat = name
+    .replace(/[\p{Cc}\p{Cf}]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MAX_CLIENT_NAME)
+  return flat.length > 0 ? flat : null
 }
 
 export class ClientRegistry {
@@ -43,59 +63,97 @@ export class ClientRegistry {
 
   constructor(
     path: string,
+    /** The directory holding one bridge config file per client. */
+    private readonly configDir: string,
     private readonly now: () => Date,
+    private readonly newId: () => string = () => `c_${randomBytes(8).toString('hex')}`,
   ) {
-    // An unreadable file loses the list, and with it any revocations: those are labels anyway.
-    this.document = new JsonDocument(path, fileSchema, () => ({ version: 1, clients: [] }), true)
+    // An unreadable file loses the list: no client gets a token until the person adds it again,
+    // which is the safe side.
+    this.document = new JsonDocument(path, fileSchema, () => ({ version: 2, clients: [] }), true)
   }
 
   async load(): Promise<void> {
     this.clients = [...(await this.document.read()).clients]
   }
 
-  isRevoked(reportedName: string): boolean {
-    return this.clients.some((c) => c.reportedName === reportedName && c.revokedAt !== null)
+  /** Where a client's bridge config file is. */
+  configPath(id: string): string {
+    return join(this.configDir, `${id}.json`)
   }
 
-  /** Records a call from `reportedName`. Returns true when the client is new. */
-  seen(reportedName: string, transport: 'http' | 'stdio'): boolean {
-    const at = this.now().toISOString()
-    const existing = this.clients.find((c) => c.reportedName === reportedName)
-    if (existing !== undefined) {
-      this.clients = this.clients.map((c) => (c === existing ? { ...c, lastSeen: at, transport } : c))
-    } else {
-      this.clients = [
-        ...this.clients,
-        { id: clientId(reportedName), reportedName, transport, firstSeen: at, lastSeen: at, revokedAt: null },
-      ].slice(-500)
+  /** The clients that hold a token: every one added and not revoked. */
+  active(): EndpointClient[] {
+    return this.clients
+      .filter((c) => c.revokedAt === null)
+      .map((c) => ({ id: c.id, configPath: this.configPath(c.id) }))
+  }
+
+  get(id: string): StoredClient | null {
+    return this.clients.find((c) => c.id === id) ?? null
+  }
+
+  isActive(id: string): boolean {
+    return this.get(id)?.revokedAt === null
+  }
+
+  /** Adds a client under the person's name for it. Throws ValetError('config', 'invalid') for a blank name. */
+  async add(name: unknown): Promise<StoredClient> {
+    const clean = cleanClientName(name)
+    if (clean === null) throw new ValetError('config', 'invalid')
+    if (this.clients.length >= MAX_CLIENTS) throw new ValetError('config', 'unavailable')
+    const client: StoredClient = {
+      id: this.newId(),
+      name: clean,
+      addedAt: this.now().toISOString(),
+      accessResetAt: null,
+      lastSeen: null,
+      reportedName: null,
+      transport: null,
+      revokedAt: null,
     }
-    void this.save()
-    return existing === undefined
+    this.clients = [...this.clients, client]
+    await this.save()
+    return client
   }
 
-  async revoke(id: string): Promise<boolean> {
+  /** Records that the client's access was reset. False for an unknown or revoked client. */
+  async reset(id: string): Promise<boolean> {
+    if (!this.isActive(id)) return false
     const at = this.now().toISOString()
-    let found = false
-    this.clients = this.clients.map((c) => {
-      if (c.id !== id || c.revokedAt !== null) return c
-      found = true
-      return { ...c, revokedAt: at }
-    })
-    if (found) await this.save()
-    return found
+    this.clients = this.clients.map((c) => (c.id === id ? { ...c, accessResetAt: at } : c))
+    await this.save()
+    return true
   }
 
-  list(calls7d: (reportedName: string) => number): ClientInfo[] {
-    return this.clients.map((c) => ({ ...c, calls7d: calls7d(c.reportedName) }))
+  /** Marks the client revoked; the caller withdraws its token. False for an unknown or revoked client. */
+  async revoke(id: string): Promise<boolean> {
+    if (!this.isActive(id)) return false
+    const at = this.now().toISOString()
+    this.clients = this.clients.map((c) => (c.id === id ? { ...c, revokedAt: at } : c))
+    await this.save()
+    return true
   }
 
-  private save(): Promise<void> {
+  /** Records a call from a client: when, and what it says it is. Returns true when the shown row changed. */
+  seen(id: string, reportedName: string, transport: 'http' | 'stdio'): boolean {
+    const existing = this.get(id)
+    if (existing === null) return false
+    const changed = existing.reportedName !== reportedName || existing.transport !== transport
+    const at = this.now().toISOString()
+    this.clients = this.clients.map((c) =>
+      c.id === id ? { ...c, lastSeen: at, reportedName: reportedName.slice(0, 200), transport } : c,
+    )
+    void this.save().catch(() => undefined)
+    return changed || existing.lastSeen === null
+  }
+
+  list(calls7d: (id: string) => number): ClientInfo[] {
+    return this.clients.map((c) => ({ ...c, calls7d: calls7d(c.id) }))
+  }
+
+  private async save(): Promise<void> {
     const clients = this.clients
-    return this.document
-      .update(() => ({ version: 1, clients }))
-      .then(
-        () => undefined,
-        () => undefined,
-      )
+    await this.document.update(() => ({ version: 2, clients }))
   }
 }

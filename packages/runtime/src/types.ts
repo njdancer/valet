@@ -113,6 +113,11 @@ export interface ToolCallRequest {
   readonly input: unknown
   /** The MCP client's name, for the audit log and the confirmation prompt. */
   readonly client: string
+  /**
+   * The client the endpoint's credential names, `local:<id>` or `remote:<id>`, for the audit log
+   * (C12). Anything not of that shape is left out of the record rather than written.
+   */
+  readonly clientId?: string
   readonly callId: string
   /**
    * Aborts the call, e.g. when the MCP client cancels or disconnects. Before the lock it leaves the

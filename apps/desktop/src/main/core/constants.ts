@@ -46,8 +46,10 @@ export interface DataPaths {
   readonly breakers: string
   readonly settings: string
   readonly clients: string
-  readonly endpoint: string
-  readonly bridgeConfig: string
+  /** One bridge config file per client (clients.ts), each mode 0600. */
+  readonly clientConfigs: string
+  /** The one shared bridge config from before per-client tokens; deleted at start. */
+  readonly legacyBridgeConfig: string
   readonly loginMarkers: string
   /** The last and highest versions this install has run (updates.ts). */
   readonly versions: string
@@ -65,8 +67,8 @@ export function dataPaths(dir: string): DataPaths {
     breakers: join(dir, 'breakers.json'),
     settings: join(dir, 'settings.json'),
     clients: join(dir, 'clients.json'),
-    endpoint: join(dir, 'endpoint.json'),
-    bridgeConfig: join(dir, 'bridge.json'),
+    clientConfigs: join(dir, 'client-configs'),
+    legacyBridgeConfig: join(dir, 'bridge.json'),
     loginMarkers: join(dir, 'login-markers'),
     versions: join(dir, 'versions.json'),
   }

@@ -79,6 +79,10 @@ const auditQuery = z
       .optional(),
     adapterId: ADAPTER_ID.optional(),
     client: z.string().min(1).max(200).optional(),
+    clientId: z
+      .string()
+      .regex(/^(local|remote):[a-z0-9][a-z0-9_-]{0,63}$/)
+      .optional(),
     since: ISO_TIME.optional(),
     search: z.string().max(200).optional(),
     beforeSeq: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
@@ -144,14 +148,16 @@ const HANDLERS: Readonly<
   'audit.exportJsonl': entry(none, (api) => api.audit.exportJsonl()),
   'endpoint.status': entry(none, (api) => api.endpoint.status()),
   'endpoint.setListening': entry(z.tuple([z.boolean()]), (api, [on]) => api.endpoint.setListening(on)),
-  'endpoint.rotateToken': entry(none, (api) => api.endpoint.rotateToken()),
-  'endpoint.snippets': entry(none, (api) => api.endpoint.snippets()),
-  'endpoint.copyClientConfig': entry(z.tuple([z.enum(['claude-code', 'claude-desktop'])]), (api, [client]) =>
-    api.endpoint.copyClientConfig(client),
-  ),
   'endpoint.copyUrl': entry(none, (api) => api.endpoint.copyUrl()),
   'clients.list': entry(none, (api) => api.clients.list()),
+  'clients.add': entry(z.tuple([z.string().min(1).max(200)]), (api, [name]) => api.clients.add(name)),
+  'clients.resetAccess': entry(z.tuple([OPAQUE_ID]), (api, [id]) => api.clients.resetAccess(id)),
   'clients.revoke': entry(z.tuple([OPAQUE_ID]), (api, [id]) => api.clients.revoke(id)),
+  'clients.snippets': entry(z.tuple([OPAQUE_ID]), (api, [id]) => api.clients.snippets(id)),
+  'clients.copyConfig': entry(
+    z.tuple([OPAQUE_ID, z.enum(['claude-code', 'claude-desktop'])]),
+    (api, [id, kind]) => api.clients.copyConfig(id, kind),
+  ),
   'attention.list': entry(none, (api) => api.attention.list()),
   answerConfirmation: entry(z.tuple([OPAQUE_ID, z.boolean()]), (api, [id, approved], sender) =>
     // The sender's role is non-null here: untrusted senders never reach a handler.

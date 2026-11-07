@@ -9,24 +9,28 @@
 // (hooks.refused writes tool-called and tool-finished for them). Both fail at stage `config`, which
 // the runtime never reports for a call, so the log and the client can tell them from the runtime's:
 // - while paused: config: unavailable (not a rate limit: the site isn't involved, and a retry
-//   succeeds only once the person resumes);
-// - a client whose name the person revoked (a label, see clients.ts): config: not-granted.
+//   succeeds only once the person resumes).
+// A client the person revoked never gets this far: its token is gone, so the endpoint refuses it.
 //
 // The runtime's lock keeps calls and the app's own login work (ToolHost.runLoginStep) on an adapter
 // apart, so nothing here waits for either.
 
-import type { CallOutcome, ListedTool, ToolCall, ToolCaller } from '@valet/mcp-server'
+import {
+  type CallOutcome,
+  identityLabel,
+  type ListedTool,
+  type ToolCall,
+  type ToolCaller,
+} from '@valet/mcp-server'
 import type { ToolCallResult, ToolHost } from '@valet/runtime'
 
 /** A call the app refused before the runtime saw it. */
 export type AppRefusal = Extract<ToolCallResult, { readonly status: 'failed' }>
 
 export const PAUSED_REFUSAL: AppRefusal = { status: 'failed', stage: 'config', errorClass: 'unavailable' }
-export const REVOKED_REFUSAL: AppRefusal = { status: 'failed', stage: 'config', errorClass: 'not-granted' }
 
 export interface CallerHooks {
   readonly paused: () => boolean
-  readonly revoked: (client: string) => boolean
   /** A call is about to run. */
   readonly started: (call: ToolCall) => void
   readonly finished: (call: ToolCall, result: ToolCallResult) => void
@@ -67,14 +71,9 @@ export class RuntimeToolCaller implements ToolCaller {
   }
 
   async call(call: ToolCall): Promise<CallOutcome> {
-    const refusal = this.hooks.paused()
-      ? PAUSED_REFUSAL
-      : this.hooks.revoked(call.client)
-        ? REVOKED_REFUSAL
-        : null
-    if (refusal !== null) {
-      await this.hooks.refused(call, refusal).catch(() => undefined)
-      return outcomeOf(refusal)
+    if (this.hooks.paused()) {
+      await this.hooks.refused(call, PAUSED_REFUSAL).catch(() => undefined)
+      return outcomeOf(PAUSED_REFUSAL)
     }
     this.hooks.started(call)
     const result = await this.host.call({
@@ -82,6 +81,7 @@ export class RuntimeToolCaller implements ToolCaller {
       tool: call.tool,
       input: call.input,
       client: call.client,
+      ...(call.identity === undefined ? {} : { clientId: identityLabel(call.identity) }),
       callId: call.callId,
       signal:
         call.signal instanceof AbortSignal

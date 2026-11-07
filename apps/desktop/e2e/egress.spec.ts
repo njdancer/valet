@@ -58,7 +58,7 @@ test.beforeAll(async () => {
   userData = tempDir('egress')
   launched = await launch(userData)
   control = await windowWithTitle(launched.app, CONTROL)
-  client = await connectMcp(userData)
+  client = await connectMcp(control, userData)
 })
 
 test.afterAll(async () => {

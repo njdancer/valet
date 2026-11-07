@@ -34,7 +34,13 @@ export type AuditEvent =
       readonly adapterId: string
       readonly adapterHash: string
       readonly tool: string
+      /** The client's self-reported name from MCP initialize. A claim, not an identity. */
       readonly client: string
+      /**
+       * The client the call's credential names, `local:<id>` or `remote:<id>` (C12, D42). Absent in
+       * records from before per-client tokens, and for calls that came with no credential.
+       */
+      readonly clientId?: string
       readonly callId: string
     }
   | {
