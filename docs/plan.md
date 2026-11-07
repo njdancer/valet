@@ -119,13 +119,9 @@ What the live probe established (all on 2026-11-07, from Nick's IP):
 
 ### Non-goals for v1
 
-- **Evading bot detection.** The browser should look like the person's own browser, and no
-  more. Presenting a clean Chrome UA with the engine's real Chromium version and the person's
-  language is allowed, because that is what the person's own Chrome sends. Stealth plugins,
-  patching `navigator` to hide automation, CAPTCHA solving, proxies, and randomised or rotated
-  fingerprints are not. When a site objects, the person sees the window (`needsUser`) or the
-  call fails as `blocked-by-site`. This is a principle, not just a scope cut
-  ([D24](#d24-bot-detection-posture)).
+- **Solving CAPTCHAs.** Bot-detection countermeasures are in scope as far as the law allows
+  ([D24](#d24-bot-detection-posture)), but a CAPTCHA or other interactive challenge always hands
+  the window to the person (`needsUser`), and a block ends the call as `blocked-by-site`.
 - **Checkout, payment or any money movement** in the Woolworths adapter. The framework supports
   `irreversible` tools; v1 adapters don't ship one ([D18](#d18-irreversible-tools-in-shipped-adapters)).
 - **Windows and Linux.** The design avoids macOS lock-in where it's cheap, but Messages OTP, the
@@ -797,7 +793,7 @@ Likelihood and impact are High, Medium or Low.
 
 | #   | Risk                                                                                                                                                                                                                                                                   | L                    | I   | Mitigation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Residual                                                                                                                                                                                                                                                                                                                     |
 | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| R1  | **Bot detection.** Akamai blocked our second anonymous probe within minutes. Automated login, or a burst of tool calls, gets Nick's session or IP blocked, possibly affecting his normal shopping.                                                                     | H                    | H   | Headed hidden windows, Electron's real Chromium, and a clean Chrome UA with the real major version and `en-AU`, because run 4 showed the Electron UA blocked and the clean one not ([D9](#d9-user-agent)); nothing beyond matching the person's own browser ([D24](#d24-bot-detection-posture)). Runtime-owned rate budget set well below the known-bad run 1 pacing, upward-only jitter, a session read cache and a cool-down ([D28](#d28-rate-budget-defaults)). Prefer page-initiated requests for reads. `needsUser` instead of fighting. Live tests rare and paced.                                                                                                                                         | High. We won't evade, so some sites will simply not work unattended. That's a product limit to state openly.                                                                                                                                                                                                                 |
+| R1  | **Bot detection.** Akamai blocked our second anonymous probe within minutes. Automated login, or a burst of tool calls, gets Nick's session or IP blocked, possibly affecting his normal shopping.                                                                     | H                    | H   | Headed hidden windows, Electron's real Chromium, and a clean Chrome UA with the real major version and `en-AU`, because run 4 showed the Electron UA blocked and the clean one not ([D9](#d9-user-agent)); lawful countermeasures in the runtime as blocks call for them, never CAPTCHA solving ([D24](#d24-bot-detection-posture)). Runtime-owned rate budget set well below the known-bad run 1 pacing, upward-only jitter, a session read cache and a cool-down ([D28](#d28-rate-budget-defaults)). Prefer page-initiated requests for reads. `needsUser` instead of fighting. Live tests rare and paced.                                                                                                                                         | Medium. Countermeasures narrow the gap, but a site that challenges with a CAPTCHA still needs the person. That's a product limit to state openly.                                                                                                                                                                                                                 |
 | R2  | **Site changes.** Woolworths changes its login, endpoints or response shapes.                                                                                                                                                                                          | H                    | M   | Zod output schemas; drift detection in smoke tests; `failed` with a clear class rather than wrong data; the authoring agent (M6) to repair; fixtures recorded from live.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Medium. Every site adapter is maintenance forever.                                                                                                                                                                                                                                                                           |
 | R3  | **Terms of service and legal.** Woolworths' terms likely prohibit automated access. Publishing an adapter for it, or a marketplace of them, invites a takedown or worse.                                                                                               | M                    | H   | Personal use is the person automating their own account. For the release: the person runs it on their own machine with their own credentials; no hosted automation; adapters distributed separately from the framework if advice says so; no evasion. Get advice before M8 ([D25](#d25-adapter-legal-posture)).                                                                                                                                                                                                                                                                                                                                                                                                  | Medium until advised. This plan isn't legal advice.                                                                                                                                                                                                                                                                          |
 | R4  | **1Password limits.** Service accounts can't read personal vaults; rate limits apply; plan eligibility unconfirmed; the desktop-app path needs an unlocked app.                                                                                                        | M                    | M   | Dedicated vault; cache nothing, but fetch only at login; desktop-app fallback; `needsUser` with a clear reason when neither works.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Low once [D6](#d6-1password-setup) is answered.                                                                                                                                                                                                                                                                              |
@@ -1047,7 +1043,7 @@ them on 2026-11-07; each section starts with his answer. The rest get answered a
 | D6  | **1Password setup**                         | Service account on a new "Valet" vault; move the item                                         | M2–M3      |
 | D8  | **Full Disk Access for Messages**           | Helper before release; whole app acceptable for M3                                            | M3         |
 | D18 | **Irreversible tools in shipped adapters**  | None in v1                                                                                    | M3, M8     |
-| D24 | **Bot-detection posture**                   | Look like the person's own browser, nothing more; stated publicly                             | Everything |
+| D24 | **Bot-detection posture**                   | Any lawful countermeasure, in the runtime; no CAPTCHA solving; stated publicly                             | Everything |
 | D28 | **Rate budget defaults**                    | ≥10 s between API calls, 2 per page view, session cache                                       | M2         |
 | D32 | **Which failures retry**                    | Only "page not ready"; never a second password fill; never retry a write                      | M2         |
 | D35 | **The attempt marker after a timeout**      | Hold for the person only if password typing started                                           | M2         |
@@ -1253,7 +1249,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
   AppleWebKit/537.36 (KHTML, like Gecko) Chrome/<major>.0.0.0 Safari/537.36`, where `<major>` is
   the bundled Chromium's real major version, and `Accept-Language: en-AU`. This is what Nick's
   own Chrome sends, so it is within [D24](#d24-bot-detection-posture).
-- Still open: client-hint brands ([D24a](#d24a-client-hint-brands)).
+- Client-hint brands: `Google Chrome`, decided in [D24a](#d24a-client-hint-brands).
 - In code: `cleanChromeUserAgent()` exists, but the round-1 driver still defaults to Electron's UA
   and sends no `Accept-Language`. Round 2 makes both the default.
 
@@ -1416,49 +1412,48 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
   to, but terms-of-service objections are each person's call, and the techniques listed here are all
   on the table. Open: which of them to build, and in what order. Agent-side limit: Claude doesn't
   solve CAPTCHAs or bypass bot challenges; those stay a needsUser hand-off.
-- Recommendation: state it as a principle in the README and docs: Valet drives a real
-  browser at human pace on the person's own account and machine, presents itself as the
-  person's own browser would, and stops when a site objects.
-  - **Allowed:** matching what the person's own browser sends: a clean Chrome UA with the
-    engine's real version, the person's language, and their real IP and machine.
-  - **Not allowed:** stealth plugins; patching `navigator` or other properties to hide
-    automation; CAPTCHA solving; proxies; randomised, rotated or invented fingerprints; claiming
-    to be a different browser, OS or device than the one actually running.
-
-  In one sentence, worded the same way everywhere: we match the person's own browser, never go
-  further to hide automation, and never solve a CAPTCHA.
-
-  It's the honest position, it simplifies the legal story, and it's what makes a
-  security-focused audience trust it.
-- Build order (proposed 2026-11-07). Nick's answer puts every technique on the table, but the
-  project rule stops at looking like his own browser, so everything below the line waits for
-  Nick to change the rule. Ranked by how far the gap is from his own browser and how cheap it is
-  to close:
+- Nick's revision (2026-11-07, later the same day): drop the "look like the person's own
+  browser, nothing more" rule. The only limit is the law; any countermeasure that helps Valet
+  work is allowed. The project rule was changed to match.
+- Decided posture: Valet drives a real browser on the person's own account and machine, and may
+  use any lawful bot-detection countermeasure to keep working. Three things still hold:
+  - **No CAPTCHA solving**, by code or by a service. A challenge is a `needsUser` hand-off.
+    Nick's first answer recorded this as Claude's own limit, and it stays one.
+  - **Pacing, the breaker and the cool-down stay.** They protect Nick's account and IP from a
+    ban, which no countermeasure undoes. Nothing retries around a block.
+  - **Countermeasures belong to the runtime, not to adapters**, so they are reviewed once and an
+    adapter can't ship its own page patches.
+- Legal check before the heavier items (patching page properties, hiding automation): whether
+  Akamai counts as a technological protection measure under Australia's Copyright Act (the
+  registry doc already flags this, with DMCA §1201 for the US). Getting into your own account and
+  trolley is hard to frame as circumvention, but this isn't settled legal advice, and it matters
+  more once other people run Valet against other sites.
+- Build order. Build what's cheap and matches a real Chrome first. Build the rest when a block
+  is traced to the signal it hides, not on spec:
   1. **Stop cancelling the site's own traffic** ([D58](#d58-page-initiated-traffic), accepted;
-     C17). Under the v2 policy Akamai's sensor POSTs are cancelled, the largest difference from
-     a real browser we'd ship. Needed before any M2 live run anyway.
+     C17). Akamai's sensor POSTs are cancelled under the v2 policy. Needed before any M2 live
+     run anyway.
   2. **Full key events by default** ([D38](#d38-keystroke-events), accepted). Built as
      `keyEvents: 'full'`; the driver still defaults to `'char'`. Flip the default.
-  3. **Typing at a person's cadence.** `typingDelayMs` is one fixed interval; a perfectly even
-     rhythm is unlike anyone. Draw each gap from a range, upward-only like D28's jitter. Small.
-  4. **Consistent client hints** ([D24a](#d24a-client-hint-brands)). Built as
-     `clientHints: 'chrome'`, default `'engine'`. Flipping it is one line, but it's Nick's call.
-  5. **Keep the DevTools footprint small.** The driver attaches the debugger for the UA override
-     and only enables `Emulation`, `Target` and `DOMStorage`. Add a test that it never enables
-     `Runtime` or `Console` on a site page, the domains pages can detect. A guard, not a change.
-  6. **Measure, don't change, the auth probe** ([D63](#d63-what-the-auth-probe-cant-hide)) and
-     pacing ([D28](#d28-rate-budget-defaults)) in M2's live session.
-
-  Past the line, for Nick to decide (recommendation: don't build any):
-  - Filling in what Chrome has and Electron lacks (`window.chrome.runtime`, Chrome's PDF entry in
-    `navigator.plugins`): this patches `navigator`, already on the not-allowed list.
-  - Hiding the attached debugger or other automation traces.
-  - Synthetic mouse paths. The driver sends a `mouseMove` before each click, which matches a
-    person; curves and jitter would invent behaviour.
-  - Stealth plugins, proxies, rotated fingerprints: on the not-allowed list.
-
-  CAPTCHA solving isn't on the list at all: the project rule and Claude's own limit both exclude
-  it, and a challenge stays a `needsUser` hand-off.
+  3. **Consistent client hints** ([D24a](#d24a-client-hint-brands)): flip `clientHints` to
+     `'chrome'`. One line.
+  4. **Typing at a person's cadence.** `typingDelayMs` is one fixed interval. Draw each gap from
+     a range, upward-only like D28's jitter. Small.
+  5. **Keep the DevTools footprint small.** The driver only enables `Emulation`, `Target` and
+     `DOMStorage`. Add a test that it never enables `Runtime` or `Console` on a site page.
+  6. **Measure in M2's live session**: the auth probe ([D63](#d63-what-the-auth-probe-cant-hide))
+     and pacing ([D28](#d28-rate-budget-defaults)).
+  7. **When a block points at it:** fill in what Chrome has and Electron lacks
+     (`window.chrome.runtime`, Chrome's PDF entry in `navigator.plugins`, and similar), applied
+     before page scripts run in every frame and worker; hide remaining automation traces;
+     pointer paths with natural curves and timing.
+  8. **Not planned**, though allowed: proxies and rotated fingerprints. For one logged-in account
+     they don't help. The account links every session anyway, and a new IP or device is more
+     likely to trigger Auth0's MFA or a fraud check than to avoid a block.
+- Public wording, the same everywhere: Valet uses lawful countermeasures to work on sites that
+  try to block automation, never solves CAPTCHAs, and stops when blocked. The security-focused
+  audience D24 originally aimed at may like this less. Say it plainly anyway, rather than leave
+  it for someone to discover.
 - Blocks: D25, marketing. (D9 was decided within it.)
 
 ### D24a. Client-hint brands
@@ -1478,11 +1473,10 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 - Update (2026-11-07): the CDP cost above is already paid. The driver sets the UA through
   `Emulation.setUserAgentOverride` with full `userAgentMetadata` on every target, and the
   `clientHints: 'chrome'` option (`packages/browser-electron/src/user-agent.ts`) adds
-  `Google Chrome` in Chrome's GREASE order. What's left is the choice. Today the UA says Chrome
-  while the hints say only Chromium, which no real Chrome sends, so `'chrome'` is the closer match
-  to Nick's own browser if that browser is Chrome. Revised recommendation: if Nick shops in
-  Chrome, flip the default to `'chrome'` before M2's first logged-in run; if he uses Safari or
-  another browser, leave `'engine'`, since neither choice then matches him.
+  `Google Chrome` in Chrome's GREASE order. Today the UA says Chrome while the hints say only
+  Chromium, and no real Chrome sends that combination.
+- Decided (2026-11-07, under the revised D24): flip the default to `'chrome'` before M2's first
+  logged-in run. Nick uses Chrome some of the time.
 - Blocks: nothing now; M2 if a logged-in block appears.
 
 ### D25. Adapter legal posture

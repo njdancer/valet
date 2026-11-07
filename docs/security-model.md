@@ -594,18 +594,17 @@ the internet. A tunnel belongs in front of the separate remote listener, once it
 
 ## Bot detection
 
-The browser presents itself as the person's own browser would, and no more
-([D24](plan.md#d24-bot-detection-posture)):
+The runtime may use any lawful bot-detection countermeasure
+([D24](plan.md#d24-bot-detection-posture)), built as a block calls for it:
 
-- **Allowed:** what the person's own Chrome sends. A clean Chrome user agent naming the bundled
-  Chromium's real major version (`… Chrome/<major>.0.0.0 Safari/537.36`), the person's language
-  (`en-AU`), their real IP and machine, and a real, headed (if hidden) browser window.
-- **Not allowed:** stealth plugins; patching `navigator` or anything else to hide automation;
-  CAPTCHA solving, by code or by a service; proxies or VPNs that change the IP or location the
-  site sees (the local egress proxy above doesn't); randomised, rotated or invented
-  fingerprints; claiming a browser, OS or device other than the one running.
+- **In the runtime, never in adapters.** Countermeasures live in the browser driver, where they
+  are reviewed once. An adapter can't add page patches of its own.
+- **Never:** CAPTCHA solving, by code or by a service.
 - **When a site objects:** a challenge hands the window to the person (`needsUser`); a block
   ends the call as `blocked` and opens the breaker. Nothing retries around it.
+- **Not planned:** proxies or VPNs that change the IP or location the site sees (the local
+  egress proxy above doesn't), and rotated fingerprints. For one logged-in account they invite
+  MFA and fraud checks rather than avoid blocks.
 
 The clean Chrome UA is decided ([D9](plan.md#d9-user-agent)): run 4 of the live probe showed
 Electron's default UA blocked from Nick's IP and the clean one not. The round-1 driver still
