@@ -69,8 +69,10 @@ test('trusted typing and a trusted click reach a main-frame form', async () => {
   expect(post).toMatchObject({ host: 'site.test', path: '/session' })
   // The page's own listeners saw no untrusted event.
   expect((post as { body: string }).body).toBe('user=nick%40example.test&hidden=&untrusted=0')
-  // Char events alone, by default: the page sees no keydown.
-  expect(keydowns).toBe(0)
+  // Char events alone, by default. On Linux the page then sees no keydown; on macOS, Chromium
+  // turns each char event into a native key event, and the page sees a keydown per character
+  // (CI's macOS runner saw 17 for these 17 characters).
+  expect(keydowns).toBe(process.platform === 'darwin' ? 'nick@example.test'.length : 0)
 })
 
 test('a secret typed into a same-origin iframe reaches only that form', async () => {
