@@ -91,18 +91,22 @@ export interface DriverOptions {
    */
   readonly userAgent?: UserAgentMode
   /**
-   * Client-hint brands (D24a, undecided). `engine`, the default, restates what Chromium reports
-   * itself. `chrome` also names Google Chrome, as Nick's own Chrome does. Only with the chrome user
-   * agent. Electron sends no Sec-CH-UA header either way; this is navigator.userAgentData.
+   * Client-hint brands (D24a). `chrome`, the default, also names Google Chrome, as a real Chrome
+   * does, so the hints agree with the Chrome user agent. `engine` restates only what Chromium
+   * reports itself. Only with the chrome user agent. Electron sends no Sec-CH-UA header either way; this is navigator.userAgentData.
    */
   readonly clientHints?: ClientHintBrands
   /**
-   * The key events each typed character sends. `char`, the default, sends one char event; `full`
-   * sends keyDown, char and keyUp, as a keyboard does. Which one sites prefer is Nick's call.
+   * The key events each typed character sends. `full`, the default, sends keyDown, char and keyUp,
+   * as a keyboard does (D38); `char` sends one char event.
    */
   readonly keyEvents?: KeyEvents
   readonly stepTimeoutMs?: number
   readonly typingDelayMs?: number
+  /** Up to this much is added to each typing gap, drawn per keystroke. Default 80 ms. */
+  readonly typingJitterMs?: number
+  /** A uniform draw in [0, 1) for the typing jitter. Defaults to Math.random. */
+  readonly random?: () => number
   /**
    * Path of a light document on each storage origin, loaded only when the storage handoff needs a
    * page on that origin and none is open. Its own content doesn't matter; its origin does.
@@ -146,6 +150,7 @@ export type ManifestOptions = Omit<
 
 const DEFAULT_STEP_TIMEOUT_MS = 30_000
 const DEFAULT_TYPING_DELAY_MS = 60
+const DEFAULT_TYPING_JITTER_MS = 80
 const DEFAULT_REQUESTS_PER_RUN = 50
 const ASSETS_PER_REQUEST = 100
 const MIN_ASSETS_PER_RUN = 1000
@@ -225,7 +230,9 @@ export class ElectronSessionDriver implements SessionDriver {
       timers: options.timers ?? realTimers,
       stepTimeoutMs: options.stepTimeoutMs ?? DEFAULT_STEP_TIMEOUT_MS,
       typingDelayMs: options.typingDelayMs ?? DEFAULT_TYPING_DELAY_MS,
-      keyEvents: options.keyEvents ?? 'char',
+      keyEvents: options.keyEvents ?? 'full',
+      typingJitterMs: options.typingJitterMs ?? DEFAULT_TYPING_JITTER_MS,
+      ...(options.random === undefined ? {} : { random: options.random }),
     }
     this.run = this.betweenRuns()
     this.fallbackReports = this.newFallbackReports()
@@ -437,7 +444,7 @@ export class ElectronSessionDriver implements SessionDriver {
   private probeIdentity(): HeaderList {
     if (this.options.userAgent === 'electron') return []
     const { chromeVersion, os, systemVersion, arch } = this.platform
-    const brands = this.options.clientHints ?? 'engine'
+    const brands = this.options.clientHints ?? 'chrome'
     return pageIdentityHeaders(chromeUserAgentOverride({ chromeVersion, os, systemVersion, arch }, brands))
   }
 
@@ -610,7 +617,7 @@ export class ElectronSessionDriver implements SessionDriver {
     try {
       if (this.options.userAgent !== 'electron') {
         const { chromeVersion, os, systemVersion, arch } = this.platform
-        const brands = this.options.clientHints ?? 'engine'
+        const brands = this.options.clientHints ?? 'chrome'
         const override = chromeUserAgentOverride({ chromeVersion, os, systemVersion, arch }, brands)
         await withTimeout(this.timing.timers, this.timing.stepTimeoutMs, () =>
           surface.overrideUserAgent(override),

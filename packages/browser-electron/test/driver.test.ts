@@ -19,6 +19,7 @@ const OPTIONS = {
   egress: ['www.example.com', 'login.example.com', '*.cdn.example.com'],
   stepTimeoutMs: 1000,
   typingDelayMs: 10,
+  random: () => 0,
 }
 
 const AUTH = 'persist:auth:example'
@@ -196,9 +197,9 @@ describe('partition set-up', () => {
     expect(platform.defaultUserAgents).toEqual([clean, clean])
   })
 
-  it('overrides every page before its first load, so navigator.language is en-AU, with the engine’s own brands', async () => {
+  it('overrides every page before its first load, so navigator.language is en-AU, with the engine’s own brands when asked', async () => {
     const { platform } = browserLike()
-    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    const driver = new ElectronSessionDriver(platform, { ...OPTIONS, clientHints: 'engine' })
     await (await driver.openAuthPage()).goto('https://www.example.com/')
     await driver.toolPage()
     expect(platform.surfaces).toHaveLength(2)
@@ -213,12 +214,28 @@ describe('partition set-up', () => {
     }
   })
 
-  it('names Google Chrome in the client hints only when asked (D24a)', async () => {
+  it('names Google Chrome in the client hints by default (D24a)', async () => {
     const { platform } = browserLike()
-    const driver = new ElectronSessionDriver(platform, { ...OPTIONS, clientHints: 'chrome' })
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
     await driver.toolPage()
     const [{ override }] = platform.surfaces[0]!.overrides as [(typeof platform.surfaces)[0]['overrides'][0]]
     expect(override.userAgentMetadata.brands.map((b) => b.brand)).toContain('Google Chrome')
+  })
+
+  it('types with full key events and a jittered rhythm by default (D24, D38)', async () => {
+    const { platform } = browserLike()
+    const timers = new ManualTimers()
+    const draws = [0.5, 0.25]
+    const page = await new ElectronSessionDriver(platform, {
+      ...OPTIONS,
+      timers,
+      random: () => draws.shift() ?? 0,
+    }).openAuthPage()
+    timers.requested.length = 0
+    await timers.settle(page.type('abc'))
+    expect(platform.surfaces[0]!.keyEvents).toEqual(['full', 'full', 'full'])
+    // The default jitter is 80 ms on top of the 10 ms delay.
+    expect(timers.requested.slice(-2)).toEqual([10 + 40, 10 + 20])
   })
 
   it('gives up on an override that never answers, and destroys the page', async () => {
@@ -1498,7 +1515,10 @@ describe('close', () => {
 describe('auth page probe', () => {
   it('fetches through the auth partition’s session, presenting as the page: hints, clean UA, en-AU', async () => {
     const { platform } = browserLike()
-    const page = await new ElectronSessionDriver(platform, OPTIONS).openAuthPage()
+    const page = await new ElectronSessionDriver(platform, {
+      ...OPTIONS,
+      clientHints: 'engine',
+    }).openAuthPage()
     await page.goto('https://www.example.com/login')
     await page.fetch('https://www.example.com/api/ui/v2/bootstrap')
     const auth = platform.session(AUTH)
