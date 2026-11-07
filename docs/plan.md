@@ -1654,7 +1654,14 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 - Nick's answer (2026-11-07): Valet must work from cloud environments, which need an HTTP MCP
   endpoint, and that comes right after the MVP. So: local clients use the bridge (no fixed port);
   cloud clients use the app-side remote mode from [relay.md](relay.md), built straight after M3
-  rather than in M9, with as few duplicate code paths as possible. Details still being discussed.
+  rather than in M9, with as few duplicate code paths as possible. The shape agreed: one
+  Streamable HTTP handler and one MCP server, mounted on two listeners that differ only in an
+  `authenticate(request)` hook returning a client identity marked `local` or `remote` (the local
+  listener checks a per-client token, D42; the remote one checks OAuth access tokens from the
+  in-app authorisation server). The remote policy is a wrapper around the same `ToolCaller`, and
+  every call still goes through the same `ToolHost`. The bridge and Funnel only move bytes. Open:
+  whether cloud Claude Code sessions can finish an interactive OAuth sign-in; if not, a
+  long-lived per-client token through the same hook.
 - Today: a free port each launch, and one token written to a 0600 file. The stdio bridge re-reads
   its config, so bridged clients survive a restart. HTTP-native clients (Claude Code over HTTP)
   keep the URL and token in their own config, and break on every restart.
@@ -1956,7 +1963,10 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D60. The stdio bridge in a packaged app
 
-- Nick's answer (2026-11-07): Wants to discuss before deciding (blocks the first signed build).
+- Nick's answer (2026-11-07): The small Swift proxy, as recommended. Off-the-shelf `mcp-remote`
+  was considered and rejected: it needs Node and npm at every start, and it pins a fixed URL and
+  token, which brings back D41's port problem. The Swift proxy is a second implementation of the
+  TypeScript bridge, so both run against one shared test suite.
 - Today: client snippets start the bridge with `tsx` from the repo, which needs Node 24 on
   `PATH`. A packaged build has no bridge command and shows no snippets. The `RunAsNode` fuse is
   off, so the app's own Electron binary can't run the bridge as Node.
