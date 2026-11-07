@@ -1,12 +1,6 @@
 // Pure checks on where a secret may be typed. See "Before a secret fill" in docs/security-model.md.
 
-import {
-  type ElementInfo,
-  httpsOrigin,
-  isBareOrigin,
-  originAllowed,
-  type SecretField,
-} from '@siteadapter/core'
+import { type ElementInfo, httpsOrigin, isBareOrigin, originAllowed, type SecretField } from '@valet/core'
 
 /**
  * The origins a secret may be typed on: those the person granted that are also in `bound` (what

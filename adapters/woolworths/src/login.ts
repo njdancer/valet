@@ -16,11 +16,11 @@ import {
   NEEDS_USER_REASONS,
   NeedsUserError,
   type NeedsUserReason,
-  SiteAdapterError,
   STAGES,
   type Stage,
   type ToolContext,
-} from '@siteadapter/core'
+  ValetError,
+} from '@valet/core'
 
 export async function requireLogin(ctx: ToolContext): Promise<void> {
   const result = await ctx.session.ensure()
@@ -31,11 +31,11 @@ export async function requireLogin(ctx: ToolContext): Promise<void> {
     throw new NeedsUserError(isNeedsUserReason(result.reason) ? result.reason : 'other')
   }
   if (isStage(result.stage) && isErrorClass(result.errorClass)) {
-    throw new SiteAdapterError(result.stage, result.errorClass)
+    throw new ValetError(result.stage, result.errorClass)
   }
   // ensure() has already run the auth action, so its failure is the auth action's, not an
   // expired session for the runtime to log in again over.
-  throw new SiteAdapterError('auth-step', 'auth-failed')
+  throw new ValetError('auth-step', 'auth-failed')
 }
 
 /**
@@ -54,9 +54,7 @@ export async function withLogin<T>(ctx: ToolContext, call: () => Promise<T>): Pr
 }
 
 function sessionExpired(error: unknown): boolean {
-  return (
-    error instanceof SiteAdapterError && error.stage === 'tool-run' && error.errorClass === 'not-logged-in'
-  )
+  return error instanceof ValetError && error.stage === 'tool-run' && error.errorClass === 'not-logged-in'
 }
 
 function isNeedsUserReason(value: string): value is NeedsUserReason {

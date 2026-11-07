@@ -3,8 +3,8 @@
 // text), plus the in-memory previews of recent calls' input and output (RunMemory).
 
 import { type FileHandle, open } from 'node:fs/promises'
-import type { AuditEvent, AuditRecord, Purpose } from '@siteadapter/core'
-import { verifyAuditLog } from '@siteadapter/runtime'
+import type { AuditEvent, AuditRecord, Purpose } from '@valet/core'
+import { verifyAuditLog } from '@valet/runtime'
 import type {
   AuditCategory,
   AuditPage,

@@ -11,7 +11,7 @@ import {
   bundleHash,
   canonicalJson,
   parseManifest,
-} from '@siteadapter/core'
+} from '@valet/core'
 import { z } from 'zod'
 import { JsonDocument } from './files'
 

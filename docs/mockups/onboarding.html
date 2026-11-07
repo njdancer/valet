@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Onboarding · siteadapter mockups</title>
+    <title>Onboarding · Valet mockups</title>
     <link rel="stylesheet" href="tokens.css" />
     <link rel="stylesheet" href="app.css" />
     <link rel="stylesheet" href="ide.css" />
@@ -118,7 +118,7 @@
     <div class="desktop center">
       <header class="sysbar">
         <span class="i i-apple"></span>
-        <span class="app-name">siteadapter</span>
+        <span class="app-name">Valet</span>
         <span>File</span><span>Edit</span><span>Window</span><span>Help</span>
         <span class="spacer"></span>
         <span class="status">
@@ -136,13 +136,13 @@
             <div class="ob-brand">
               <span class="logo"><span class="i i-logo"></span></span>
               <div>
-                <div class="h3">Set up siteadapter</div>
+                <div class="h3">Set up Valet</div>
                 <div class="xs muted">About 5 minutes</div>
               </div>
             </div>
             <div class="ob-step" data-step="1">
               <span class="n">1</span>
-              <div><div class="title">Welcome</div><div class="sub">What siteadapter does</div></div>
+              <div><div class="title">Welcome</div><div class="sub">What Valet does</div></div>
             </div>
             <div class="ob-step" data-step="2">
               <span class="n">2</span>
@@ -168,12 +168,12 @@
 
           <main class="ob-main">
             <div class="ob-content">
-              <!-- 1. What siteadapter is -->
+              <!-- 1. What Valet is -->
               <section class="ob-pane" data-step="1" hidden>
                 <div class="kicker">Step 1 of 5</div>
                 <h1>Let your AI tools use websites, not your passwords</h1>
                 <p class="lede">
-                  siteadapter runs small adapters for sites without a public API, like Woolworths, and offers their tools to
+                  Valet runs small adapters for sites without a public API, like Woolworths, and offers their tools to
                   Claude over MCP. It runs on this Mac only: no account, no cloud.
                 </p>
                 <div class="ob-flow">
@@ -183,7 +183,7 @@
                   </div>
                   <div class="arrow"></div>
                   <div class="box">
-                    <div class="h3"><span class="i sm i-logo"></span>siteadapter</div>
+                    <div class="h3"><span class="i sm i-logo"></span>Valet</div>
                     <div class="muted">Runs the adapter in a browser session and checks every request against its manifest</div>
                   </div>
                   <div class="arrow"></div>
@@ -227,8 +227,8 @@
                   <div class="card client-card">
                     <div class="card-body">
                       <div class="row"><span class="h3">Claude Code</span><span class="pill ok" style="margin-left: auto">Connected</span></div>
-                      <pre class="code">claude mcp add siteadapter -- \
-  /Applications/siteadapter.app/Contents/Resources/bin/siteadapter-mcp</pre>
+                      <pre class="code">claude mcp add valet -- \
+  /Applications/Valet.app/Contents/Resources/bin/valet-mcp</pre>
                       <div class="row">
                         <button type="button" class="btn"><span class="i sm i-copy"></span>Copy</button>
                         <span class="xs muted">First call 9:12 pm: <span class="mono">tools/list</span></span>
@@ -238,8 +238,8 @@
                   <div class="card client-card">
                     <div class="card-body">
                       <div class="row"><span class="h3">Claude Desktop</span><span class="pill" style="margin-left: auto">Not yet</span></div>
-                      <pre class="code">{ <span class="k">"mcpServers"</span>: { <span class="k">"siteadapter"</span>: {
-  <span class="k">"command"</span>: <span class="s">"/Applications/siteadapter.app/Contents/Resources/bin/siteadapter-mcp"</span>
+                      <pre class="code">{ <span class="k">"mcpServers"</span>: { <span class="k">"valet"</span>: {
+  <span class="k">"command"</span>: <span class="s">"/Applications/Valet.app/Contents/Resources/bin/valet-mcp"</span>
 } } }</pre>
                       <div class="row">
                         <button type="button" class="btn primary">Add to Claude Desktop…</button>
@@ -262,7 +262,7 @@
                 <div class="kicker">Step 3 of 5</div>
                 <h1>Where logins come from</h1>
                 <p class="lede">
-                  siteadapter reads one field from 1Password when a login runs, types it into the site and forgets it.
+                  Valet reads one field from 1Password when a login runs, types it into the site and forgets it.
                   Adapters never see it, and you pick the item each one may use.
                 </p>
                 <div class="cols">
@@ -278,7 +278,7 @@
                       </div>
                       <ol class="numlist">
                         <li class="done">
-                          <span>Create a vault called <strong>siteadapter</strong></span><span></span>
+                          <span>Create a vault called <strong>Valet</strong></span><span></span>
                         </li>
                         <li class="done">
                           <span
@@ -301,13 +301,13 @@
                         </li>
                       </ol>
                       <div class="connected">
-                        <span class="i i-check"></span>Connected: vault siteadapter, 4 items. Token saved to your Keychain.
+                        <span class="i i-check"></span>Connected: vault Valet, 4 items. Token saved to your Keychain.
                       </div>
                       <div class="callout warn" style="margin-top: 10px">
                         <span class="i i-warn"></span>
                         <div>
                           <strong>One honest caveat.</strong> In this version, each app start asks once via a macOS prompt
-                          naming <span class="mono">security</span>, not siteadapter, so the first login after a restart waits
+                          naming <span class="mono">security</span>, not Valet, so the first login after a restart waits
                           for you. Allow it each time. Never choose <strong>Always Allow</strong>: any app you run could then
                           read the token.
                         </div>
@@ -335,7 +335,7 @@
                 <div class="kicker">Step 4 of 5 · optional</div>
                 <h1>Text-message codes</h1>
                 <p class="lede">
-                  Some sites text you a code when you log in. siteadapter can read it from Messages so the login finishes
+                  Some sites text you a code when you log in. Valet can read it from Messages so the login finishes
                   without you. It needs more access than that sounds like, so skipping is fine.
                 </p>
                 <div class="cols even">
@@ -343,15 +343,15 @@
                     <div class="card" style="border: 0">
                       <div class="h3"><span class="i sm i-warn warn-text"></span>What it needs: Full Disk Access</div>
                       <div class="muted">
-                        macOS has no permission for Messages alone. Full Disk Access lets siteadapter read any file you can,
-                        including mail, photos and documents. You'd be trusting the siteadapter app with all of it, not just
+                        macOS has no permission for Messages alone. Full Disk Access lets Valet read any file you can,
+                        including mail, photos and documents. You'd be trusting the Valet app with all of it, not just
                         your texts.
                       </div>
                     </div>
                   </div>
                   <div class="card side">
                     <div class="card" style="border: 0">
-                      <div class="h3"><span class="i sm i-message"></span>What siteadapter does with it</div>
+                      <div class="h3"><span class="i sm i-message"></span>What Valet does with it</div>
                       <ul>
                         <li>Reads Messages only when a login step asks for a code</li>
                         <li>Only recent texts matching the adapter's sender and pattern</li>
@@ -387,7 +387,7 @@
                     <span class="avatar lg wow">W</span>
                     <div>
                       <div class="row"><span class="h2">Woolworths</span><span class="pill">0.1.0</span><span class="hash">c3e94b20…7f15</span></div>
-                      <div class="muted small">Search products and manage your trolley. Bundled with siteadapter.</div>
+                      <div class="muted small">Search products and manage your trolley. Bundled with valet.</div>
                     </div>
                     <span class="badge read">can't check out</span>
                   </div>
@@ -410,7 +410,7 @@
                   <div class="bind-row">
                     <span class="i i-key secret-text"></span>
                     <span>Use</span>
-                    <span class="select">Woolworths · vault siteadapter</span>
+                    <span class="select">Woolworths · vault Valet</span>
                     <span>for <span class="badge secret">login</span></span>
                     <span class="xs muted" style="margin-left: auto">Only this version can use it</span>
                   </div>
@@ -420,7 +420,7 @@
                   <div>
                     Woolworths now logs in on <span class="mono">auth.woolworths.com.au</span>, which 0.1.0 doesn't list, so
                     its login stops there and shows you the window. 0.2.0 adds that origin and comes to you as an update to
-                    review. siteadapter never solves checks for you.
+                    review. Valet never solves checks for you.
                   </div>
                 </div>
               </section>

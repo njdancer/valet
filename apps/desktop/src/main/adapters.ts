@@ -4,7 +4,7 @@
 // the hash is over exactly the code this build runs: in a packaged build and under `electron-vite
 // dev` (which rebuilds on change) alike. Transitive imports (core, zod) are not covered (D11).
 
-import { createAdapter, type ManifestOptions } from '@siteadapter/adapter-woolworths'
+import { createAdapter, type ManifestOptions } from '@valet/adapter-woolworths'
 import { type BuiltinAdapter, builtinAdapter } from './core/registry'
 
 const WOOLWORTHS_SOURCES = import.meta.glob<string>('../../../../adapters/woolworths/src/**/*.ts', {

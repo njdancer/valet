@@ -2,7 +2,7 @@
 // adapter code, and SecretValue.reveal() is reserved for the privileged filler.
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
-import { SiteAdapterError } from '@siteadapter/core'
+import { ValetError } from '@valet/core'
 import { readPrivateFile, writePrivateFile } from './private-file'
 
 const TOKEN_BYTES = 32
@@ -28,13 +28,13 @@ export function tokensEqual(presented: string, expected: string): boolean {
 }
 
 export async function writeTokenFile(path: string, token: string): Promise<void> {
-  if (!isWellFormedToken(token)) throw new SiteAdapterError('config', 'invalid')
+  if (!isWellFormedToken(token)) throw new ValetError('config', 'invalid')
   await writePrivateFile(path, `${token}\n`)
 }
 
-/** Throws SiteAdapterError('config', 'not-found' | 'insecure-file' | 'invalid' | 'unavailable'). */
+/** Throws ValetError('config', 'not-found' | 'insecure-file' | 'invalid' | 'unavailable'). */
 export async function readTokenFile(path: string): Promise<string> {
   const token = (await readPrivateFile(path)).trim()
-  if (!isWellFormedToken(token)) throw new SiteAdapterError('config', 'invalid')
+  if (!isWellFormedToken(token)) throw new ValetError('config', 'invalid')
   return token
 }

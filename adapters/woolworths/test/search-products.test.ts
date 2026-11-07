@@ -1,4 +1,4 @@
-import { SiteAdapterError } from '@siteadapter/core'
+import { ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { searchProducts } from '../src/products'
 import { FakeToolContext, json, loadFixture } from './fake-context'
@@ -206,10 +206,10 @@ describe('search_products input', () => {
 })
 
 describe('search_products failures', () => {
-  async function failure(ctx: FakeToolContext): Promise<SiteAdapterError> {
+  async function failure(ctx: FakeToolContext): Promise<ValetError> {
     const error = await run(ctx, { query: 'milk' }).catch((e: unknown) => e)
-    expect(error).toBeInstanceOf(SiteAdapterError)
-    return error as SiteAdapterError
+    expect(error).toBeInstanceOf(ValetError)
+    return error as ValetError
   }
 
   it('reports an Akamai "Access Denied" page as blocked-by-site', async () => {
@@ -294,7 +294,7 @@ describe('search_products failures', () => {
 
   it("passes the runtime guard's own error through unchanged", async () => {
     const ctx = new FakeToolContext().on('POST', SEARCH, () => {
-      throw new SiteAdapterError('request-surface', 'request-ceiling')
+      throw new ValetError('request-surface', 'request-ceiling')
     })
     const error = await failure(ctx)
     expect([error.stage, error.errorClass]).toEqual(['request-surface', 'request-ceiling'])

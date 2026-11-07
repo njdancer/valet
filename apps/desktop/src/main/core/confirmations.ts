@@ -8,8 +8,8 @@
 //   so a click already on its way in another app can't land on Approve;
 // - the request is still pending and hasn't expired. Unanswered, it declines itself at expiry.
 
-import type { AdapterManifest } from '@siteadapter/core'
-import type { ConfirmationAnswer, ConfirmationPrompt, ConfirmationRequest } from '@siteadapter/runtime'
+import type { AdapterManifest } from '@valet/core'
+import type { ConfirmationAnswer, ConfirmationPrompt, ConfirmationRequest } from '@valet/runtime'
 import { CONFIRM_ARM_MS, type ConfirmationItem, type PreviewPart } from '../../shared/api'
 import { shownTransport } from './clients'
 import type { AppWindow } from './ipc'

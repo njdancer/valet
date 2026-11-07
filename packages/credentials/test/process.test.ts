@@ -201,7 +201,7 @@ describe('nodeSpawner', () => {
   })
 
   it('reports a binary that does not exist as missing', async () => {
-    const outcome = await runProcess(nodeSpawner, '/nonexistent/siteadapter-op', [], {
+    const outcome = await runProcess(nodeSpawner, '/nonexistent/valet-op', [], {
       timeoutMs: 10_000,
       maxStdoutBytes: 1024,
       timers: nodeTimers,

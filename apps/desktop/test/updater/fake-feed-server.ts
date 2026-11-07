@@ -19,7 +19,7 @@ export async function writeAppZip(
   payload: Buffer,
 ): Promise<void> {
   const staging = `${zipPath}.staging`
-  const app = join(staging, `${info.appName ?? 'siteadapter'}.app`)
+  const app = join(staging, `${info.appName ?? 'valet'}.app`)
   await mkdir(join(app, 'Contents', 'MacOS'), { recursive: true })
   await writeFile(
     join(app, 'Contents', 'Info.plist'),
@@ -30,7 +30,7 @@ export async function writeAppZip(
       `<key>CFBundleShortVersionString</key><string>${info.version}</string>` +
       '</dict></plist>\n',
   )
-  await writeFile(join(app, 'Contents', 'MacOS', 'siteadapter'), payload)
+  await writeFile(join(app, 'Contents', 'MacOS', 'valet'), payload)
   await mkdir(dirname(zipPath), { recursive: true })
   await promisify(execFile)('/usr/bin/ditto', ['-c', '-k', '--keepParent', app, zipPath])
 }

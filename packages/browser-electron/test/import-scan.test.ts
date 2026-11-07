@@ -101,6 +101,6 @@ describe('importsElectron', () => {
     expect(importsElectron("import { app } from 'electron'")).toBe(true)
     expect(importsElectron("import { app } from 'electron/main'")).toBe(true)
     expect(importsElectron("import { app } from 'electron-store'")).toBe(false)
-    expect(importsElectron("import { app } from '@siteadapter/browser-electron'")).toBe(false)
+    expect(importsElectron("import { app } from '@valet/browser-electron'")).toBe(false)
   })
 })

@@ -1,7 +1,7 @@
 // Site protection through the tool host: pacing every guarded request, and backing off for a
 // cooldown when the site's bot protection blocks us (see the 2026-11-07 Woolworths live probe).
 
-import { defineAdapter, tool } from '@siteadapter/core'
+import { defineAdapter, tool } from '@valet/core'
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { akamaiDenied, FakeClock, FakeSessionDriver, flush, MemoryJsonStore } from './fakes'
@@ -153,8 +153,8 @@ describe('circuit breaker', () => {
     expect(run).not.toHaveBeenCalled()
   })
 
-  it('reports a SiteAdapterError blocked-by-site from tool code as blocked', async () => {
-    const { SiteAdapterError } = await import('@siteadapter/core')
+  it('reports a ValetError blocked-by-site from tool code as blocked', async () => {
+    const { ValetError } = await import('@valet/core')
     const { host } = fixture(
       defineAdapter({
         manifest,
@@ -163,7 +163,7 @@ describe('circuit breaker', () => {
             input: z.object({}),
             output: z.unknown(),
             run: async () => {
-              throw new SiteAdapterError('tool-run', 'blocked-by-site')
+              throw new ValetError('tool-run', 'blocked-by-site')
             },
           }),
         },

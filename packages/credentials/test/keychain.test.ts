@@ -1,5 +1,5 @@
 import { inspect } from 'node:util'
-import { CredentialError } from '@siteadapter/core'
+import { CredentialError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { KeychainTokenSource } from '../src/keychain'
 import { type FakeChild, ManualTimers, scriptedSpawner } from './fake-process'
@@ -20,7 +20,7 @@ describe('KeychainTokenSource', () => {
   it('reads the token with security find-generic-password -w and strips the newline', async () => {
     const { spawner, calls } = scriptedSpawner((child) => child.finish(0, `${CANARY}\n`))
     const source = new KeychainTokenSource({
-      service: 'siteadapter',
+      service: 'valet',
       account: 'op-sa',
       spawner,
       timers: new ManualTimers(),
@@ -28,7 +28,7 @@ describe('KeychainTokenSource', () => {
     const token = await source.token()
     expect(token.reveal((plaintext) => plaintext)).toBe(CANARY)
     expect(calls[0]?.command).toBe('/usr/bin/security')
-    expect(calls[0]?.args).toEqual(['find-generic-password', '-s', 'siteadapter', '-a', 'op-sa', '-w'])
+    expect(calls[0]?.args).toEqual(['find-generic-password', '-s', 'valet', '-a', 'op-sa', '-w'])
   })
 
   it('keeps a token that has no trailing newline intact', async () => {

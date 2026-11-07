@@ -36,11 +36,11 @@ import {
   hostAllowed,
   type Purpose,
   pathMatches,
-  SiteAdapterError,
   type Stage,
   type ToolPage,
   touchesDeniedSegment,
-} from '@siteadapter/core'
+  ValetError,
+} from '@valet/core'
 import type { CallState } from './call-state'
 import {
   type BlockCause,
@@ -160,7 +160,7 @@ export class GuardedToolPage implements ToolPage {
     // HTML where an API answer was expected: an error page or a redirect to a login page. Not a
     // block, so the site's breaker (shared with other adapters) stays closed.
     if (expectsJson(request.headers) && isHtml(result)) {
-      throw new SiteAdapterError('tool-run', 'unexpected-shape')
+      throw new ValetError('tool-run', 'unexpected-shape')
     }
     return result
   }
@@ -211,7 +211,7 @@ export class GuardedToolPage implements ToolPage {
     raw: unknown,
   ): Promise<never> {
     const { state, adapterId, audit } = this.options
-    const error = new SiteAdapterError(stage, errorClass)
+    const error = new ValetError(stage, errorClass)
     state.violation ??= error
     await audit({
       type: 'request-blocked',

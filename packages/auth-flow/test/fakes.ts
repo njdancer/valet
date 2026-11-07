@@ -13,7 +13,7 @@ import {
   type OtpReader,
   type SecretField,
   SecretValue,
-} from '@siteadapter/core'
+} from '@valet/core'
 import type { AuthProbe } from '../src/types'
 import type { UrlPatternMatcher } from '../src/url-matcher'
 import type { FakeAuthPage } from './fake-auth-page'

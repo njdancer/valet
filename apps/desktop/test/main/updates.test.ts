@@ -28,51 +28,39 @@ describe('feedDefines', () => {
 
   it('compiles in the feed for a plain build that names both', () => {
     expect(
-      feedDefines(
-        { SITEADAPTER_UPDATE_URL: URL, SITEADAPTER_FEED_PUBLIC_KEY_FILE: '/keys/feed.pub' },
-        true,
-        readKey,
-      ),
+      feedDefines({ VALET_UPDATE_URL: URL, VALET_FEED_PUBLIC_KEY_FILE: '/keys/feed.pub' }, true, readKey),
     ).toEqual({ url: URL, publicKey: `${KEY}\n` })
   })
 
   it('compiles in nothing for a dev or demo build, or with neither set', () => {
-    const both = { SITEADAPTER_UPDATE_URL: URL, SITEADAPTER_FEED_PUBLIC_KEY_FILE: '/keys/feed.pub' }
+    const both = { VALET_UPDATE_URL: URL, VALET_FEED_PUBLIC_KEY_FILE: '/keys/feed.pub' }
     expect(feedDefines(both, false, readKey)).toEqual({ url: '', publicKey: '' })
     expect(feedDefines({}, true, readKey)).toEqual({ url: '', publicKey: '' })
-    expect(feedDefines({ SITEADAPTER_UPDATE_URL: '', SITEADAPTER_FEED_PUBLIC_KEY_FILE: '' }, true)).toEqual({
+    expect(feedDefines({ VALET_UPDATE_URL: '', VALET_FEED_PUBLIC_KEY_FILE: '' }, true)).toEqual({
       url: '',
       publicKey: '',
     })
   })
 
   it('fails the build for half a feed, a feed that isn’t https (or loopback http), or a key that isn’t one', () => {
-    expect(() => feedDefines({ SITEADAPTER_UPDATE_URL: URL }, true, readKey)).toThrow(/both/)
-    expect(() => feedDefines({ SITEADAPTER_FEED_PUBLIC_KEY_FILE: '/keys/feed.pub' }, true, readKey)).toThrow(
-      /both/,
-    )
+    expect(() => feedDefines({ VALET_UPDATE_URL: URL }, true, readKey)).toThrow(/both/)
+    expect(() => feedDefines({ VALET_FEED_PUBLIC_KEY_FILE: '/keys/feed.pub' }, true, readKey)).toThrow(/both/)
     for (const url of [
       'http://updates.example.com/mac/',
       'http://192.168.1.10:4555/',
       'https://updates.example.com/mac',
     ])
       expect(() =>
-        feedDefines(
-          { SITEADAPTER_UPDATE_URL: url, SITEADAPTER_FEED_PUBLIC_KEY_FILE: '/keys/feed.pub' },
-          true,
-          readKey,
-        ),
+        feedDefines({ VALET_UPDATE_URL: url, VALET_FEED_PUBLIC_KEY_FILE: '/keys/feed.pub' }, true, readKey),
       ).toThrow(/https directory URL, or http on loopback/)
     expect(() =>
-      feedDefines(
-        { SITEADAPTER_UPDATE_URL: URL, SITEADAPTER_FEED_PUBLIC_KEY_FILE: '/keys/feed.pub' },
-        true,
-        () => KEY.replace('PUBLIC', 'PRIVATE'),
+      feedDefines({ VALET_UPDATE_URL: URL, VALET_FEED_PUBLIC_KEY_FILE: '/keys/feed.pub' }, true, () =>
+        KEY.replace('PUBLIC', 'PRIVATE'),
       ),
     ).toThrow(/SPKI/)
     expect(() =>
       feedDefines(
-        { SITEADAPTER_UPDATE_URL: URL, SITEADAPTER_FEED_PUBLIC_KEY_FILE: '/keys/feed.pub' },
+        { VALET_UPDATE_URL: URL, VALET_FEED_PUBLIC_KEY_FILE: '/keys/feed.pub' },
         true,
         () => `${KEY}\n${KEY}`,
       ),
@@ -82,11 +70,8 @@ describe('feedDefines', () => {
   it('takes a loopback feed outside a release, as electron-builder.config.ts does', () => {
     for (const url of ['http://127.0.0.1:4555/', 'https://127.0.0.1/mac/', 'http://localhost:4555/feed/'])
       expect(
-        feedDefines(
-          { SITEADAPTER_UPDATE_URL: url, SITEADAPTER_FEED_PUBLIC_KEY_FILE: '/keys/feed.pub' },
-          true,
-          readKey,
-        ).url,
+        feedDefines({ VALET_UPDATE_URL: url, VALET_FEED_PUBLIC_KEY_FILE: '/keys/feed.pub' }, true, readKey)
+          .url,
       ).toBe(url)
     expect(feedNeedsLoopback('http://127.0.0.1:4555/')).toBe(true)
     expect(feedNeedsLoopback('https://127.0.0.1/mac/')).toBe(true)
@@ -95,20 +80,20 @@ describe('feedDefines', () => {
   })
 
   it('for a release, needs the feed, on public https, from a plain build', () => {
-    const both = { SITEADAPTER_UPDATE_URL: URL, SITEADAPTER_FEED_PUBLIC_KEY_FILE: '/keys/feed.pub' }
-    const release = { ...both, SITEADAPTER_RELEASE: '1' }
+    const both = { VALET_UPDATE_URL: URL, VALET_FEED_PUBLIC_KEY_FILE: '/keys/feed.pub' }
+    const release = { ...both, VALET_RELEASE: '1' }
     expect(feedDefines(release, true, readKey)).toEqual({ url: URL, publicKey: `${KEY}\n` })
-    expect(() => feedDefines({ SITEADAPTER_RELEASE: '1' }, true, readKey)).toThrow(/release build needs/)
-    expect(() =>
-      feedDefines({ SITEADAPTER_RELEASE: '1', SITEADAPTER_UPDATE_URL: URL }, true, readKey),
-    ).toThrow(/release build needs/)
+    expect(() => feedDefines({ VALET_RELEASE: '1' }, true, readKey)).toThrow(/release build needs/)
+    expect(() => feedDefines({ VALET_RELEASE: '1', VALET_UPDATE_URL: URL }, true, readKey)).toThrow(
+      /release build needs/,
+    )
     expect(() => feedDefines(release, false, readKey)).toThrow(/plain/)
     for (const url of ['http://127.0.0.1:4555/', 'https://127.0.0.1/mac/', 'https://updates.local/mac/'])
-      expect(() => feedDefines({ ...release, SITEADAPTER_UPDATE_URL: url }, true, readKey)).toThrow(
+      expect(() => feedDefines({ ...release, VALET_UPDATE_URL: url }, true, readKey)).toThrow(
         /public host name/,
       )
     // Anything but 1 is not a release here; electron-builder.config.ts refuses those values itself.
-    expect(feedDefines({ ...both, SITEADAPTER_RELEASE: '0' }, false, readKey)).toEqual({
+    expect(feedDefines({ ...both, VALET_RELEASE: '0' }, false, readKey)).toEqual({
       url: '',
       publicKey: '',
     })
@@ -119,10 +104,8 @@ describe('feedDefines', () => {
     try {
       writeFileSync(join(dir, 'feed.pub'), KEY)
       expect(
-        feedDefines(
-          { SITEADAPTER_UPDATE_URL: URL, SITEADAPTER_FEED_PUBLIC_KEY_FILE: join(dir, 'feed.pub') },
-          true,
-        ).publicKey,
+        feedDefines({ VALET_UPDATE_URL: URL, VALET_FEED_PUBLIC_KEY_FILE: join(dir, 'feed.pub') }, true)
+          .publicKey,
       ).toBe(`${KEY}\n`)
     } finally {
       rmSync(dir, { recursive: true, force: true })
@@ -133,8 +116,8 @@ describe('feedDefines', () => {
 describe('parseSignature', () => {
   it('takes a Developer ID Application leaf with a Team ID', () => {
     const report = [
-      'Executable=/Applications/siteadapter.app/Contents/MacOS/siteadapter',
-      'Identifier=me.dncr.siteadapter',
+      'Executable=/Applications/Valet.app/Contents/MacOS/Valet',
+      'Identifier=me.dncr.valet',
       'Authority=Developer ID Application: Nick Dancer (ABCDE12345)',
       'Authority=Developer ID Certification Authority',
       'Authority=Apple Root CA',

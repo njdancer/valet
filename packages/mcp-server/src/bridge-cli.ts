@@ -1,9 +1,9 @@
-// The stdio bridge as a command: `siteadapter-bridge <config file>`. An MCP client launches it and
+// The stdio bridge as a command: `valet-bridge <config file>`. An MCP client launches it and
 // speaks MCP on its stdin and stdout; diagnostics go to stderr only.
 
 import type { Readable, Writable } from 'node:stream'
 import { pathToFileURL } from 'node:url'
-import { SiteAdapterError } from '@siteadapter/core'
+import { ValetError } from '@valet/core'
 import { runBridge } from './bridge'
 import { readBridgeConfig } from './bridge-config'
 
@@ -15,7 +15,7 @@ export interface CliIo {
   readonly run?: typeof runBridge
 }
 
-export const USAGE = 'usage: siteadapter-bridge <config file>\n'
+export const USAGE = 'usage: valet-bridge <config file>\n'
 
 /** Runs the bridge until the client goes away. Resolves to the process exit code. */
 export async function main(args: readonly string[], io: CliIo): Promise<number> {
@@ -29,7 +29,7 @@ export async function main(args: readonly string[], io: CliIo): Promise<number> 
   try {
     config = await readConfig(configPath)
   } catch (error) {
-    io.errors.write(`siteadapter-bridge: ${configProblem(error)}\n`)
+    io.errors.write(`valet-bridge: ${configProblem(error)}\n`)
     return 1
   }
   const bridge = await (io.run ?? runBridge)({
@@ -44,12 +44,12 @@ export async function main(args: readonly string[], io: CliIo): Promise<number> 
 }
 
 function configProblem(error: unknown): string {
-  const errorClass = error instanceof SiteAdapterError ? error.errorClass : null
+  const errorClass = error instanceof ValetError ? error.errorClass : null
   switch (errorClass) {
     case 'not-found':
-      return 'the config file does not exist; start siteadapter to write it'
+      return 'the config file does not exist; start Valet to write it'
     case 'insecure-file':
-      return 'the config file must be a regular file owned by you with mode 0600; start siteadapter to rewrite it'
+      return 'the config file must be a regular file owned by you with mode 0600; start Valet to rewrite it'
     case 'invalid':
       return 'the config file must hold only the endpoint url (http://127.0.0.1:<port>/mcp) and token'
     default:

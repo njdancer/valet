@@ -2,7 +2,7 @@
 // across frames, trusted clicks and paced trusted typing. Everything that comes back from a page is
 // checked before use: subframes run our scripts in their own world, so their answers are untrusted.
 
-import { type ErrorClass, originAllowed, SiteAdapterError, type Stage } from '@siteadapter/core'
+import { type ErrorClass, originAllowed, type Stage, ValetError } from '@valet/core'
 import type { BrowserSurface, FrameHandle, KeyEvents, Timers } from './platform'
 import { sleep } from './platform'
 import { focusedScript, focusScript, frameOffsetScript, pointScript } from './scripts'
@@ -78,14 +78,14 @@ export class PageCore {
     return [...this.mainFrameUrls]
   }
 
-  /** Runs one primitive under the step timeout. Anything that isn't a SiteAdapterError becomes internal. */
+  /** Runs one primitive under the step timeout. Anything that isn't a ValetError becomes internal. */
   async step<T>(stage: Stage, work: (signal: AbortSignal) => Promise<T>, extraMs = 0): Promise<T> {
-    if (this.surface.isDestroyed()) throw new SiteAdapterError(stage, 'aborted')
+    if (this.surface.isDestroyed()) throw new ValetError(stage, 'aborted')
     try {
       return await withTimeout(this.timing.timers, this.timing.stepTimeoutMs + extraMs, work)
     } catch (error) {
-      if (error instanceof SiteAdapterError) throw error
-      throw new SiteAdapterError(stage, 'internal')
+      if (error instanceof ValetError) throw error
+      throw new ValetError(stage, 'internal')
     }
   }
 
@@ -116,7 +116,7 @@ export class PageCore {
     for (const [frameIndex, frame] of this.surface.frames().entries()) {
       assertLive(stage, signal)
       const raw = await runQuietly(frame, script)
-      if (isRecord(raw) && raw['error'] === 'invalid-selector') throw new SiteAdapterError(stage, 'invalid')
+      if (isRecord(raw) && raw['error'] === 'invalid-selector') throw new ValetError(stage, 'invalid')
       const value = parse(raw)
       if (value !== null) return { frameIndex, frame, value }
     }
@@ -130,10 +130,10 @@ export class PageCore {
    */
   async click(stage: Stage, selector: string, signal: AbortSignal): Promise<void> {
     const match = await this.locate(stage, signal, pointScript(selector), parsePoint)
-    if (match === null) throw new SiteAdapterError(stage, 'element-missing')
+    if (match === null) throw new ValetError(stage, 'element-missing')
     const point = match.value
-    if (point === 'not-visible' || !point.hit) throw new SiteAdapterError(stage, 'element-unsuitable')
-    if (!match.frame.receivesInput) throw new SiteAdapterError(stage, 'element-unsuitable')
+    if (point === 'not-visible' || !point.hit) throw new ValetError(stage, 'element-unsuitable')
+    if (!match.frame.receivesInput) throw new ValetError(stage, 'element-unsuitable')
     const frames = this.surface.frames()
     let { x, y } = point
     let childIndex = point.indexInParent
@@ -142,11 +142,11 @@ export class PageCore {
     while (frame !== undefined && frame.parentIndex !== null) {
       const parent: FrameHandle | undefined = frames[frame.parentIndex]
       if (parent === undefined || childIndex === null || !parent.receivesInput) {
-        throw new SiteAdapterError(stage, 'element-unsuitable')
+        throw new ValetError(stage, 'element-unsuitable')
       }
       assertLive(stage, signal)
       const offset = parseOffset(await runQuietly(parent, frameOffsetScript(childIndex)))
-      if (offset === null) throw new SiteAdapterError(stage, 'element-unsuitable')
+      if (offset === null) throw new ValetError(stage, 'element-unsuitable')
       x += offset.x
       y += offset.y
       childIndex = offset.indexInParent
@@ -165,13 +165,13 @@ export class PageCore {
     this.surface.focus()
     const match = await this.locate(stage, signal, focusScript(selector), parseFocus)
     assertLive(stage, signal)
-    if (match === null) throw new SiteAdapterError(stage, 'element-missing')
+    if (match === null) throw new ValetError(stage, 'element-missing')
     if (
       !match.value.focused ||
       !match.frame.receivesInput ||
       this.surface.focusedFrameId() !== match.frame.id
     ) {
-      throw new SiteAdapterError(stage, 'element-unsuitable')
+      throw new ValetError(stage, 'element-unsuitable')
     }
     return { frameId: match.frame.id, origin: match.frame.origin, selector }
   }
@@ -227,7 +227,7 @@ export class PageCore {
    * that moved fails with `guard.moved`, since the remaining characters would land somewhere else.
    */
   async beforeKey(guard: TypingGuard, mark: CommitMark, signal: AbortSignal): Promise<void> {
-    const fail = (errorClass: ErrorClass) => new SiteAdapterError(guard.stage, errorClass)
+    const fail = (errorClass: ErrorClass) => new ValetError(guard.stage, errorClass)
     const live = () => {
       guard.before?.()
       if (signal.aborted || this.surface.isDestroyed()) throw fail('aborted')
@@ -281,7 +281,7 @@ export class PageCore {
 
 /** Throws once the step has been given up on, so nothing more is sent to the page. */
 function assertLive(stage: Stage, signal: AbortSignal): void {
-  if (signal.aborted) throw new SiteAdapterError(stage, 'aborted')
+  if (signal.aborted) throw new ValetError(stage, 'aborted')
 }
 
 async function runQuietly(frame: FrameHandle, script: string): Promise<unknown> {

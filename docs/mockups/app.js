@@ -3,7 +3,7 @@
 // then the system setting. ?clean hides the mockup navigation bar.
 
 ;(() => {
-  const KEY = 'siteadapter-mockup-theme'
+  const KEY = 'valet-mockup-theme'
   const root = document.documentElement
   const params = new URLSearchParams(location.search)
 

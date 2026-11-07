@@ -10,7 +10,7 @@
 // exactly what the engine reports (a GREASE brand and Chromium). Naming Google Chrome too is D24a,
 // still open, and only happens when the driver is asked to.
 
-import { SiteAdapterError } from '@siteadapter/core'
+import { ValetError } from '@valet/core'
 import type { HeaderList, UserAgentOverride } from './platform'
 
 /** `chrome`: the clean Chrome UA and en-AU (the default). `electron`: Electron's own, untouched. */
@@ -153,6 +153,6 @@ export function pageIdentityHeaders(override: UserAgentOverride): HeaderList {
 
 function chromeMajor(chromeVersion: string): number {
   const major = /^(\d+)\./.exec(chromeVersion)?.[1]
-  if (major === undefined) throw new SiteAdapterError('manifest', 'invalid')
+  if (major === undefined) throw new ValetError('manifest', 'invalid')
   return Number(major)
 }

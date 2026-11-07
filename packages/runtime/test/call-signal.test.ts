@@ -1,7 +1,7 @@
 // ToolCallRequest.signal (the MCP client cancelling or going away) and .transport (how it reached
 // the endpoint, a label passed on to the confirmation prompt).
 
-import { defineAdapter, tool } from '@siteadapter/core'
+import { defineAdapter, tool } from '@valet/core'
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { flush } from './fakes'

@@ -32,7 +32,7 @@ let server: FakeFeedServer
 const zips = new Map<string, Buffer>()
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'siteadapter-feed-'))
+  dir = await mkdtemp(join(tmpdir(), 'valet-feed-'))
   server = new FakeFeedServer()
   await server.start()
   zips.clear()
@@ -40,7 +40,7 @@ beforeEach(async () => {
   // replaces its provider; electron-updater still reads the cache directory name from it.
   await writeFile(
     join(dir, 'app-update.yml'),
-    `provider: generic\nurl: ${server.url}\nupdaterCacheDirName: siteadapter-updater\n`,
+    `provider: generic\nurl: ${server.url}\nupdaterCacheDirName: valet-updater\n`,
   )
 })
 
@@ -57,7 +57,7 @@ async function publish(
   const build = join(dir, 'build', version)
   const paths: string[] = []
   for (const arch of ['arm64', 'x64']) {
-    const name = `siteadapter-${version}-${arch}.zip`
+    const name = `valet-${version}-${arch}.zip`
     const path = join(build, name)
     await writeAppZip(path, { bundleId: RELEASE_APP_ID, version }, randomBytes(48 * 1024))
     const bytes = await readFile(path)
@@ -132,7 +132,7 @@ function setup(
 }
 
 async function downloaded(): Promise<Buffer[]> {
-  const pending = join(dir, 'cache', 'siteadapter-updater', 'pending')
+  const pending = join(dir, 'cache', 'valet-updater', 'pending')
   const names = await readdir(pending).catch(() => [] as string[])
   return Promise.all(names.filter((n) => n.endsWith('.zip')).map((n) => readFile(join(pending, n))))
 }
@@ -148,12 +148,12 @@ describe('the updater against a local signed feed', () => {
     const { updater, nodeUpdater } = setup()
     const status = await updater.checkNow()
     expect(status).toMatchObject({ state: 'ready', available: '1.1.0', reason: null })
-    expect(await downloaded()).toEqual([zips.get('siteadapter-1.1.0-arm64.zip')])
+    expect(await downloaded()).toEqual([zips.get('valet-1.1.0-arm64.zip')])
     expect(server.requested('/latest-mac.yml')).toBe(1)
     expect(server.requested('/latest-mac.envelope.json')).toBe(1)
     expect(server.requested('/latest-mac.envelope.json.sig')).toBe(1)
-    expect(server.requested('/siteadapter-1.1.0-arm64.zip')).toBe(1)
-    expect(server.requested('/siteadapter-1.1.0-x64.zip')).toBe(0)
+    expect(server.requested('/valet-1.1.0-arm64.zip')).toBe(1)
+    expect(server.requested('/valet-1.1.0-x64.zip')).toBe(0)
     expect(nodeUpdater.installs).toEqual([])
   })
 
@@ -161,15 +161,15 @@ describe('the updater against a local signed feed', () => {
     await publish('1.1.0')
     const { updater } = setup({ arm64: false })
     expect((await updater.checkNow()).state).toBe('ready')
-    expect(await downloaded()).toEqual([zips.get('siteadapter-1.1.0-x64.zip')])
-    expect(server.requested('/siteadapter-1.1.0-arm64.zip')).toBe(0)
+    expect(await downloaded()).toEqual([zips.get('valet-1.1.0-x64.zip')])
+    expect(server.requested('/valet-1.1.0-arm64.zip')).toBe(0)
   })
 
   it('uses the compiled-in feed, never app-update.yml’s', async () => {
     await publish('1.1.0')
     await writeFile(
       join(dir, 'app-update.yml'),
-      'provider: generic\nurl: https://wrong.example.invalid/\nupdaterCacheDirName: siteadapter-updater\n',
+      'provider: generic\nurl: https://wrong.example.invalid/\nupdaterCacheDirName: valet-updater\n',
     )
     const { updater } = setup()
     expect((await updater.checkNow()).state).toBe('ready')
@@ -194,10 +194,10 @@ describe('the updater against a local signed feed', () => {
 
   it('refuses a zip whose bytes differ from the feed’s SHA-512, and never offers it', async () => {
     await publish('1.1.0')
-    const original = zips.get('siteadapter-1.1.0-arm64.zip') as Buffer
+    const original = zips.get('valet-1.1.0-arm64.zip') as Buffer
     const tampered = Buffer.from(original)
     tampered[1000] = (tampered[1000] as number) ^ 0x01
-    server.files.set('/siteadapter-1.1.0-arm64.zip', tampered)
+    server.files.set('/valet-1.1.0-arm64.zip', tampered)
     const { updater, nodeUpdater } = setup()
     const status = await updater.checkNow()
     expect(status).toMatchObject({ state: 'error', reason: 'checksum-mismatch', available: null })
@@ -225,7 +225,7 @@ describe('the updater against a local signed feed', () => {
 
     const { updater } = setup({ channel: (): UpdateChannelSetting => 'beta' })
     expect((await updater.checkNow()).state).toBe('up-to-date')
-    expect(server.requested('/siteadapter-0.9.0-arm64.zip')).toBe(0)
+    expect(server.requested('/valet-0.9.0-arm64.zip')).toBe(0)
   })
 
   it('refuses a version below the highest this install has run, before downloading anything', async () => {
@@ -265,7 +265,7 @@ describe('the updater against a local signed feed', () => {
 
   it('reports a zip that has gone missing as a failed download', async () => {
     await publish('1.1.0')
-    server.files.delete('/siteadapter-1.1.0-arm64.zip')
+    server.files.delete('/valet-1.1.0-arm64.zip')
     const { updater } = setup()
     expect((await updater.checkNow()).reason).toBe('download-failed')
   })
@@ -301,7 +301,7 @@ describe('the signed feed against an attacker who controls the feed', () => {
     const yml = (old.get('/latest-mac.yml') as Buffer).toString().replaceAll('0.9.0', '99.0.0')
     server.files.set('/latest-mac.yml', Buffer.from(yml))
     for (const arch of ['arm64', 'x64']) {
-      server.files.set(`/siteadapter-99.0.0-${arch}.zip`, zips.get(`siteadapter-0.9.0-${arch}.zip`) as Buffer)
+      server.files.set(`/valet-99.0.0-${arch}.zip`, zips.get(`valet-0.9.0-${arch}.zip`) as Buffer)
     }
     const { updater, logs } = setup()
     expect(await updater.checkNow()).toMatchObject({
@@ -321,7 +321,7 @@ describe('the signed feed against an attacker who controls the feed', () => {
       '/latest-mac.yml',
       Buffer.from((old.get('/latest-mac.yml') as Buffer).toString().replaceAll('0.9.0', '99.0.0')),
     )
-    server.files.set('/siteadapter-99.0.0-arm64.zip', zips.get('siteadapter-0.9.0-arm64.zip') as Buffer)
+    server.files.set('/valet-99.0.0-arm64.zip', zips.get('valet-0.9.0-arm64.zip') as Buffer)
     const { updater } = setup()
     expect((await updater.checkNow()).reason).toBe('feed-unverified')
     expect(zipRequests()).toEqual([])
@@ -368,10 +368,10 @@ describe('the signed feed against an attacker who controls the feed', () => {
     const yml = [
       "version: '1.1.0'",
       'files:',
-      "  - url: 'http://localhost:1/siteadapter-1.1.0-arm64.zip'",
+      "  - url: 'http://localhost:1/valet-1.1.0-arm64.zip'",
       `    sha512: '${'A'.repeat(86)}=='`,
       '    size: 10',
-      "path: 'siteadapter-1.1.0-arm64.zip'",
+      "path: 'valet-1.1.0-arm64.zip'",
       `sha512: '${'A'.repeat(86)}=='`,
       `releaseDate: '${RELEASE_DATE}'`,
       '',
@@ -386,14 +386,11 @@ describe('the session guard against redirects', () => {
   it('cancels a redirect of the zip to another origin before anything is fetched there', async () => {
     await publish('1.1.0')
     const elsewhere = server.url.replace('127.0.0.1', 'localhost')
-    server.redirects.set('/siteadapter-1.1.0-arm64.zip', `${elsewhere}elsewhere/siteadapter-1.1.0-arm64.zip`)
-    server.files.set(
-      '/elsewhere/siteadapter-1.1.0-arm64.zip',
-      zips.get('siteadapter-1.1.0-arm64.zip') as Buffer,
-    )
+    server.redirects.set('/valet-1.1.0-arm64.zip', `${elsewhere}elsewhere/valet-1.1.0-arm64.zip`)
+    server.files.set('/elsewhere/valet-1.1.0-arm64.zip', zips.get('valet-1.1.0-arm64.zip') as Buffer)
     const { updater, nodeUpdater, guard } = setup()
     expect(await updater.checkNow()).toMatchObject({ state: 'error', reason: 'request-refused' })
-    expect(server.requested('/elsewhere/siteadapter-1.1.0-arm64.zip')).toBe(0)
+    expect(server.requested('/elsewhere/valet-1.1.0-arm64.zip')).toBe(0)
     expect(guard.refusals()).toBe(1)
     expect(nodeUpdater.partition.seen.at(-1)).toContain('localhost')
     expect(await downloaded()).toEqual([])
@@ -421,8 +418,8 @@ describe('the session guard against redirects', () => {
 
   it('lets a redirect within the feed base through', async () => {
     await publish('1.1.0')
-    server.redirects.set('/siteadapter-1.1.0-arm64.zip', `${server.url}moved/siteadapter-1.1.0-arm64.zip`)
-    server.files.set('/moved/siteadapter-1.1.0-arm64.zip', zips.get('siteadapter-1.1.0-arm64.zip') as Buffer)
+    server.redirects.set('/valet-1.1.0-arm64.zip', `${server.url}moved/valet-1.1.0-arm64.zip`)
+    server.files.set('/moved/valet-1.1.0-arm64.zip', zips.get('valet-1.1.0-arm64.zip') as Buffer)
     const { updater, guard } = setup()
     expect((await updater.checkNow()).state).toBe('ready')
     expect(guard.refusals()).toBe(0)
@@ -433,16 +430,16 @@ describe('make-feed’s checks on what it publishes', () => {
   it('refuses a development build’s zip, or one holding another version', async () => {
     const build = join(dir, 'bad')
     await mkdir(build, { recursive: true })
-    const dev = join(build, 'siteadapter-dev-1.2.0-arm64.zip')
+    const dev = join(build, 'valet-dev-1.2.0-arm64.zip')
     await writeAppZip(
       dev,
-      { bundleId: `${RELEASE_APP_ID}.dev`, version: '1.2.0', appName: 'siteadapter-dev' },
+      { bundleId: `${RELEASE_APP_ID}.dev`, version: '1.2.0', appName: 'valet-dev' },
       randomBytes(64),
     )
     await expect(makeFeed({ version: '1.2.0', zips: [dev], outDir: join(build, 'feed') })).rejects.toThrow(
       'not the release app',
     )
-    const stale = join(build, 'siteadapter-1.2.0-arm64.zip')
+    const stale = join(build, 'valet-1.2.0-arm64.zip')
     await writeAppZip(stale, { bundleId: RELEASE_APP_ID, version: '1.1.0' }, randomBytes(64))
     await expect(makeFeed({ version: '1.2.0', zips: [stale], outDir: join(build, 'feed') })).rejects.toThrow(
       'another version',

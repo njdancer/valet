@@ -1,4 +1,4 @@
-// Runs the fake standalone for manual development: `pnpm --filter @siteadapter/fake-woolworths-site start`.
+// Runs the fake standalone for manual development: `pnpm --filter @valet/fake-woolworths-site start`.
 // Plain HTTP on a fixed port by default, and the auth origin on the next one; pass --port 0 for
 // any free ports.
 

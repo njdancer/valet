@@ -1,4 +1,4 @@
-import { SiteAdapterError } from '@siteadapter/core'
+import { ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { characters, PageCore, typingDelay } from '../src/page-core'
 import { FakeFrame, FakeSurface, ManualTimers } from './fake-browser'
@@ -122,7 +122,7 @@ describe('PageCore.beforeKey', () => {
   it('runs the guard’s own check first, and lets its error through', async () => {
     const { surface, target } = focusedInput()
     const before = () => {
-      throw new SiteAdapterError('navigate', 'navigation-escaped')
+      throw new ValetError('navigate', 'navigation-escaped')
     }
     const error = await core(surface)
       .beforeKey({ ...ANYWHERE, target, before }, START, new AbortController().signal)
@@ -154,7 +154,7 @@ describe('PageCore.click with malformed answers', () => {
     const error = await core(surface)
       .click('auth-step', '#go', new AbortController().signal)
       .catch((e: unknown) => e)
-    expect(error).toBeInstanceOf(SiteAdapterError)
+    expect(error).toBeInstanceOf(ValetError)
     expect(error).toMatchObject({ errorClass: 'element-missing' })
   })
 

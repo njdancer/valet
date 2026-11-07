@@ -31,12 +31,12 @@ import {
   NEEDS_USER_REASONS,
   type NeedsUserReason,
   type SessionDriver,
-  SiteAdapterError,
   STAGES,
   type Stage,
   type ToolPage,
   toReportable,
-} from '@siteadapter/core'
+  ValetError,
+} from '@valet/core'
 import type { Clock } from './clock'
 import type { LoginMarkerState, LoginMarkerStore } from './login-marker'
 import { probeLoggedIn } from './probe'
@@ -319,5 +319,5 @@ export function knownReason(reason: unknown): NeedsUserReason {
 }
 
 function isPassThrough(error: unknown): boolean {
-  return isSiteRefusal(error) || (error instanceof SiteAdapterError && error.errorClass === 'aborted')
+  return isSiteRefusal(error) || (error instanceof ValetError && error.errorClass === 'aborted')
 }

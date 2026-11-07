@@ -1,4 +1,4 @@
-/* siteadapter design tokens. Every mockup imports this file; components live in each page's own CSS.
+/* Valet design tokens. Every mockup imports this file; components live in each page's own CSS.
    Native macOS feel: system font, quiet surfaces, one accent, semantic colours for risk levels. */
 
 :root {

@@ -6,12 +6,12 @@
 // condition fails as auth-step: invalid. The same approach as credentials' pattern-worker.ts.
 
 import { Worker } from 'node:worker_threads'
-import { SiteAdapterError } from '@siteadapter/core'
+import { ValetError } from '@valet/core'
 
 /** Tests a screened pattern against a URL's path and query, off the main thread. */
 export interface UrlPatternMatcher {
   /**
-   * Whether `pattern` matches `text`. Rejects with SiteAdapterError('auth-step', 'invalid') when
+   * Whether `pattern` matches `text`. Rejects with ValetError('auth-step', 'invalid') when
    * the pattern fails or runs out of time, and 'auth-step: internal' when it can't run at all.
    */
   test(pattern: string, text: string): Promise<boolean>
@@ -118,14 +118,14 @@ export class WorkerUrlMatcher implements UrlPatternMatcher {
   #run(pattern: string, text: string): Promise<boolean> {
     return new Promise((resolve, reject) => {
       if (this.#closed) {
-        reject(new SiteAdapterError('auth-step', 'internal'))
+        reject(new ValetError('auth-step', 'internal'))
         return
       }
       let worker: WorkerLike
       try {
         worker = this.#worker ?? this.#start()
       } catch {
-        reject(new SiteAdapterError('auth-step', 'internal'))
+        reject(new ValetError('auth-step', 'internal'))
         return
       }
       const timer = this.#timers.setTimeout(() => {
@@ -138,7 +138,7 @@ export class WorkerUrlMatcher implements UrlPatternMatcher {
         this.#pending = null
         this.#timers.clearTimeout(timer)
         if (typeof answer === 'boolean') resolve(answer)
-        else reject(new SiteAdapterError('auth-step', 'invalid'))
+        else reject(new ValetError('auth-step', 'invalid'))
       }
       this.#pending = settle
       worker.postMessage({ pattern, text })

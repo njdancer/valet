@@ -1,5 +1,5 @@
 {
-  "name": "@siteadapter/mcp-server",
+  "name": "@valet/mcp-server",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -8,11 +8,11 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
-    "@siteadapter/core": "workspace:*",
-    "@siteadapter/runtime": "workspace:*",
+    "@valet/core": "workspace:*",
+    "@valet/runtime": "workspace:*",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@siteadapter/adapter-woolworths": "workspace:*"
+    "@valet/adapter-woolworths": "workspace:*"
   }
 }

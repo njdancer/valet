@@ -1,7 +1,7 @@
 // The fixture adapter and host most tests start from. Tests copy the manifest and change one thing
 // rather than parameterising a builder.
 
-import { type AdapterDefinition, type AdapterManifest, parseManifest } from '@siteadapter/core'
+import { type AdapterDefinition, type AdapterManifest, parseManifest } from '@valet/core'
 import { vi } from 'vitest'
 import { ToolHost, type ToolHostOptions } from '../src/tool-host'
 import type { AuthRunner } from '../src/types'

@@ -1,5 +1,5 @@
 // The confirmation panel (docs/mockups/confirm-irreversible.html), opened by the main process in its
-// own window at #/confirm/<id>. What siteadapter checked itself comes first and is worded by the app;
+// own window at #/confirm/<id>. What Valet checked itself comes first and is worded by the app;
 // the adapter's own text comes second, quieter, attributed and marked unverified. Only the person
 // can answer: MCP clients have no way to reach this window.
 //
@@ -159,7 +159,7 @@ function Confirm({
         <div>
           <div className="source">
             <Icon name="shield" size="sm" />
-            Checked by siteadapter
+            Checked by Valet
           </div>
           <div className="verified">
             <Icon name="check" size="sm" />
@@ -207,13 +207,13 @@ function Confirm({
                 <Icon name="adapter" size="sm" />
                 Shown by the {item.adapterName} adapter
               </span>
-              <span className="pill warn">Not verified by siteadapter</span>
+              <span className="pill warn">Not verified by Valet</span>
             </div>
             <div className="note" data-testid="adapter-note">
               {capText(item.adapterNote, 600)}
             </div>
             <div className="xs tertiary" style={{ marginTop: 6 }}>
-              The adapter wrote this. siteadapter can’t check what it says.
+              The adapter wrote this. Valet can’t check what it says.
             </div>
           </div>
         ) : null}

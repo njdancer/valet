@@ -1,4 +1,4 @@
-import { SiteAdapterError } from '@siteadapter/core'
+import { ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { getProduct } from '../src/products'
 import { FakeToolContext, json, loadFixture } from './fake-context'
@@ -117,13 +117,13 @@ describe('get_product mapping', () => {
     body.Product = null
     const ctx = new FakeToolContext().on('GET', DETAIL, json(body))
     const error = await run(ctx, { stockcode: 88436 }).catch((e: unknown) => e)
-    expect(error).toEqual(new SiteAdapterError('tool-run', 'not-found'))
+    expect(error).toEqual(new ValetError('tool-run', 'not-found'))
   })
 
   it('reports a 404 as not-found', async () => {
     const ctx = new FakeToolContext().on('GET', '/apis/ui/product/detail/1', json({}, 404))
     const error = await run(ctx, { stockcode: 1 }).catch((e: unknown) => e)
-    expect(error).toEqual(new SiteAdapterError('tool-run', 'not-found'))
+    expect(error).toEqual(new ValetError('tool-run', 'not-found'))
   })
 })
 

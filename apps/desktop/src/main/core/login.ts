@@ -13,8 +13,8 @@
 // 'person'). That hand-off leaves the session's state alone: giving up on it changes nothing, and
 // only a probe that passes marks the session logged in.
 
-import type { AuthProbe } from '@siteadapter/auth-flow'
-import { readJsonPath, runAuthFlow } from '@siteadapter/auth-flow'
+import type { AuthProbe } from '@valet/auth-flow'
+import { readJsonPath, runAuthFlow } from '@valet/auth-flow'
 import {
   type AdapterManifest,
   type AuditSink,
@@ -23,8 +23,8 @@ import {
   type NeedsUserReason,
   type SecretField,
   type SessionDriver,
-  SiteAdapterError,
-} from '@siteadapter/core'
+  ValetError,
+} from '@valet/core'
 import {
   type AuthOutcome,
   type AuthRunner,
@@ -32,7 +32,7 @@ import {
   blockCause,
   type LoginMarkerStore,
   type LoginStepContext,
-} from '@siteadapter/runtime'
+} from '@valet/runtime'
 import type { NeedsUserItem, SessionStatus } from '../../shared/api'
 import type { BlockedAudit, LoginSecrets } from './blocked'
 import type { Timers } from './confirmations'
@@ -85,7 +85,7 @@ function onHomeOrigin(manifest: AdapterManifest, url: string): boolean {
 export function authProbe(manifest: AdapterManifest, page: AuthPage): AuthProbe {
   return {
     async fetch(url) {
-      if (!onHomeOrigin(manifest, url)) throw new SiteAdapterError('probe', 'host-not-allowed')
+      if (!onHomeOrigin(manifest, url)) throw new ValetError('probe', 'host-not-allowed')
       return page.fetch(url)
     },
     cookieNames: (domains) => page.cookieNames(domains),
@@ -107,7 +107,7 @@ export function steppedProbe(manifest: AdapterManifest, page: AuthPage, step: Lo
       const cause = blockCause(result)
       if (cause !== null) {
         step.reportBlocked(cause)
-        throw new SiteAdapterError('login', cause)
+        throw new ValetError('login', cause)
       }
       return result
     },
@@ -239,10 +239,10 @@ export class Handoffs {
    */
   async finish(adapterId: string, step: LoginStepHooks): Promise<void> {
     const handoff = this.open_.get(adapterId)
-    if (handoff === undefined) throw new SiteAdapterError('login', 'not-found')
+    if (handoff === undefined) throw new ValetError('login', 'not-found')
     const { manifest, page, driver } = handoff
     const probe = steppedProbe(manifest, page, step)
-    if (!(await probeLoggedIn(manifest, probe))) throw new SiteAdapterError('probe', 'not-logged-in')
+    if (!(await probeLoggedIn(manifest, probe))) throw new ValetError('probe', 'not-logged-in')
     // Cookies are copied inside the browser; storage keys are read and written in loaded pages.
     if (manifest.session.storage.length > 0) await step.pace()
     await driver.handoff(manifest.session.cookieDomains, manifest.session.storage)

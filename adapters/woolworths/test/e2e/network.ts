@@ -5,7 +5,7 @@
 import type { IncomingHttpHeaders } from 'node:http'
 import { request } from 'node:https'
 import type { LookupFunction } from 'node:net'
-import { hostAllowed } from '@siteadapter/core'
+import { hostAllowed } from '@valet/core'
 
 export interface HttpResponse {
   readonly status: number

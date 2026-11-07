@@ -7,9 +7,9 @@ import {
   type ManifestInput,
   parseManifest,
   type SecretValue,
-  SiteAdapterError,
-} from '@siteadapter/core'
-import type { AuthRunRequest, LoginMarkerStore } from '@siteadapter/runtime'
+  ValetError,
+} from '@valet/core'
+import type { AuthRunRequest, LoginMarkerStore } from '@valet/runtime'
 import { describe, expect, it } from 'vitest'
 import { BlockedAudit, LoginSecrets } from '../../src/main/core/blocked'
 import { disabledOtpReader } from '../../src/main/core/credentials'
@@ -106,9 +106,9 @@ describe('probe hooks', () => {
     await probe.fetch('https://www.shop.test/api/me')
     expect(page.fetched).toEqual(['https://www.shop.test/api/me'])
     await expect(probe.fetch('https://login.shop.test/api/me')).rejects.toEqual(
-      new SiteAdapterError('probe', 'host-not-allowed'),
+      new ValetError('probe', 'host-not-allowed'),
     )
-    await expect(probe.fetch('not a url')).rejects.toEqual(new SiteAdapterError('probe', 'host-not-allowed'))
+    await expect(probe.fetch('not a url')).rejects.toEqual(new ValetError('probe', 'host-not-allowed'))
     expect(await probe.cookieNames(['www.shop.test'])).toEqual(['sid'])
   })
 
@@ -158,16 +158,16 @@ describe('probe hooks', () => {
     expect((await probe.fetch('https://www.shop.test/api/me')).status).toBe(200)
     page.fetchResult = { status: 429, contentType: null, body: null }
     await expect(probe.fetch('https://www.shop.test/api/me')).rejects.toEqual(
-      new SiteAdapterError('login', 'rate-limited'),
+      new ValetError('login', 'rate-limited'),
     )
     page.fetchResult = { status: 403, contentType: 'text/html', body: '<p>Forbidden</p>' }
     await expect(probe.fetch('https://www.shop.test/api/me')).rejects.toEqual(
-      new SiteAdapterError('login', 'blocked-by-site'),
+      new ValetError('login', 'blocked-by-site'),
     )
     expect(step.seen).toEqual(['blocked rate-limited', 'blocked blocked-by-site'])
     // Still home's origin only, and nothing reported for a refusal of our own.
     await expect(probe.fetch('https://login.shop.test/api/me')).rejects.toEqual(
-      new SiteAdapterError('probe', 'host-not-allowed'),
+      new ValetError('probe', 'host-not-allowed'),
     )
     expect(step.seen).toHaveLength(2)
     page.cookies = ['sid']
@@ -341,7 +341,7 @@ describe('Handoffs', () => {
     const h = started()
     const step = stepHooks()
     await expect(h.handoffs.finish('shop', step.hooks)).rejects.toEqual(
-      new SiteAdapterError('probe', 'not-logged-in'),
+      new ValetError('probe', 'not-logged-in'),
     )
     expect(h.driver.handoffs).toEqual([])
     expect(h.handoffs.has('shop')).toBe(true)
@@ -354,9 +354,7 @@ describe('Handoffs', () => {
     expect(h.page.closed).toBe(true)
     expect(h.handoffs.list()).toEqual([])
     expect(h.sessions.get('shop').state).toBe('logged-in')
-    await expect(h.handoffs.finish('shop', step.hooks)).rejects.toEqual(
-      new SiteAdapterError('login', 'not-found'),
-    )
+    await expect(h.handoffs.finish('shop', step.hooks)).rejects.toEqual(new ValetError('login', 'not-found'))
   })
 
   it('paces the storage copy, and opens the breaker when the probe meets a block, leaving the window up', async () => {
@@ -371,7 +369,7 @@ describe('Handoffs', () => {
     const step = stepHooks()
     h.page.fetchResult = { status: 429, contentType: null, body: null }
     await expect(h.handoffs.finish('shop', step.hooks)).rejects.toEqual(
-      new SiteAdapterError('login', 'rate-limited'),
+      new ValetError('login', 'rate-limited'),
     )
     expect(step.seen).toEqual(['blocked rate-limited'])
     expect(h.driver.handoffs).toEqual([])

@@ -2,7 +2,7 @@
 // The update controller's policy, against a fake autoUpdater and a manual clock. No Electron.
 
 import { generateKeyPairSync } from 'node:crypto'
-import { SiteAdapterError } from '@siteadapter/core'
+import { ValetError } from '@valet/core'
 import type { AppUpdater } from 'electron-updater'
 import { describe, expect, it } from 'vitest'
 import {
@@ -50,7 +50,7 @@ describe('createUpdater: construction', () => {
     for (const currentVersion of ['v1.0.0', '1.0', '', '1.0.0 ', '01.0.0']) {
       const fake = new FakeAutoUpdater()
       const make = () => createUpdater({ ...baseOptions(fake, new ManualClock(), []), currentVersion })
-      expect(make).toThrow(SiteAdapterError)
+      expect(make).toThrow(ValetError)
       expect(make).toThrow('config: invalid')
     }
   })
@@ -67,7 +67,7 @@ describe('createUpdater: construction', () => {
     const fake = new FakeAutoUpdater()
     const { feed: _feed, ...options } = baseOptions(fake, new ManualClock(), [])
     const make = () => createUpdater(options)
-    expect(make).toThrow(SiteAdapterError)
+    expect(make).toThrow(ValetError)
     expect(make).toThrow('config: invalid')
     expect(fake.feeds).toEqual([])
     // A disabled build needs no feed: it never contacts one.
@@ -96,7 +96,7 @@ describe('createUpdater: construction', () => {
         ...baseOptions(fake, new ManualClock(), []),
         feed: { ...TEST_FEED, url: 'https://updates.example.com/mac/?t=x' },
       })
-    expect(make).toThrow(SiteAdapterError)
+    expect(make).toThrow(ValetError)
     expect(fake.feeds).toEqual([])
   })
 
@@ -112,7 +112,7 @@ describe('createUpdater: construction', () => {
       const fake = new FakeAutoUpdater()
       expect(() =>
         createUpdater({ ...baseOptions(fake, new ManualClock(), []), feed: { ...TEST_FEED, url } }),
-      ).toThrow(SiteAdapterError)
+      ).toThrow(ValetError)
       expect(fake.feeds).toEqual([])
     }
   })
@@ -120,9 +120,7 @@ describe('createUpdater: construction', () => {
   it('refuses a loopback http feed unless the end-to-end build asks for it', () => {
     const fake = new FakeAutoUpdater()
     const feed = { ...TEST_FEED, url: 'http://127.0.0.1:4555/' }
-    expect(() => createUpdater({ ...baseOptions(fake, new ManualClock(), []), feed })).toThrow(
-      SiteAdapterError,
-    )
+    expect(() => createUpdater({ ...baseOptions(fake, new ManualClock(), []), feed })).toThrow(ValetError)
     createUpdater({ ...baseOptions(fake, new ManualClock(), []), feed, allowLoopbackFeed: true })
     expect(fake.feeds).toHaveLength(1)
   })
@@ -529,11 +527,11 @@ describe('createUpdater: failures', () => {
     const fake = new FakeAutoUpdater()
     const updater = createUpdater(baseOptions(fake, new ManualClock(), []))
     fake.onCheck = async () => {
-      throw codedError('ERR_SITEADAPTER_FEED_UNVERIFIED')
+      throw codedError('ERR_VALET_FEED_UNVERIFIED')
     }
     expect((await updater.checkNow()).reason).toBe('feed-unverified')
     fake.onCheck = async () => {
-      throw codedError('ERR_SITEADAPTER_FEED_EXPIRED')
+      throw codedError('ERR_VALET_FEED_EXPIRED')
     }
     expect((await updater.checkNow()).reason).toBe('feed-expired')
   })

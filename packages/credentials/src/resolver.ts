@@ -1,5 +1,5 @@
 // Resolves a granted secret by handing the grant's item reference to the provider the grant names.
-// This is the package's boundary: whatever a provider throws leaves as SiteAdapterError('credential').
+// This is the package's boundary: whatever a provider throws leaves as ValetError('credential').
 
 import {
   CredentialError,
@@ -9,8 +9,8 @@ import {
   type ResolveFailure,
   type SecretField,
   SecretValue,
-  SiteAdapterError,
-} from '@siteadapter/core'
+  ValetError,
+} from '@valet/core'
 
 const FAILURES: readonly ResolveFailure[] = ['locked', 'not-found', 'field-missing', 'unavailable']
 
@@ -32,7 +32,7 @@ export class CredentialResolver {
   /** Fetches one field of a granted secret. The caller disposes the value. */
   async resolve(grant: Grant, field: SecretField): Promise<SecretValue> {
     const provider = this.#providers.get(grant.provider)
-    if (provider === undefined) throw new SiteAdapterError('credential', 'unavailable')
+    if (provider === undefined) throw new ValetError('credential', 'unavailable')
     let value: unknown
     try {
       value = await provider.resolve(grant.itemRef, field)
@@ -40,10 +40,10 @@ export class CredentialResolver {
       // A provider bug can throw anything, message included; only a known failure class survives.
       const failure =
         error instanceof CredentialError && FAILURES.includes(error.failure) ? error.failure : 'unavailable'
-      throw new SiteAdapterError('credential', failure)
+      throw new ValetError('credential', failure)
     }
     // A provider that hands back a bare string has already let the secret loose; refuse it.
-    if (!(value instanceof SecretValue)) throw new SiteAdapterError('credential', 'internal')
+    if (!(value instanceof SecretValue)) throw new ValetError('credential', 'internal')
     return value
   }
 }

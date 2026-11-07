@@ -23,7 +23,7 @@
 // scripts/make-feed.mjs writes for the same zip.
 //
 // It never signs with an identity or notarises: the child gets CSC_IDENTITY_AUTO_DISCOVERY=false and
-// none of the CSC_*, APPLE_* or SITEADAPTER_* variables from the caller. The fuse flip re-signs the
+// none of the CSC_*, APPLE_* or VALET_* variables from the caller. The fuse flip re-signs the
 // bundle ad hoc ("-"), which uses no key, and which Apple silicon needs to run a modified binary at
 // all. Placeholder launches use a temporary --user-data-dir (or a temporary HOME) and Chromium's mock
 // keychain, so nothing is written to ~/Library or the Keychain. Every placeholder launch is killed
@@ -98,13 +98,13 @@ const { arch, target } = values
 if (arch !== 'arm64' && arch !== 'x64') throw new Error('--arch is arm64 or x64')
 if (target !== 'dir' && target !== 'zip') throw new Error('--target is dir or zip')
 
-const work = mkdtempSync(join(tmpdir(), 'siteadapter-package-'))
+const work = mkdtempSync(join(tmpdir(), 'valet-package-'))
 const project = join(work, 'project')
 
 function writePlaceholder() {
   mkdirSync(join(project, 'out', 'main'), { recursive: true })
   mkdirSync(join(project, 'out', 'renderer', 'assets'), { recursive: true })
-  const pkg = { name: 'siteadapter-desktop-placeholder', version: VERSION, main: 'out/main/index.js' }
+  const pkg = { name: 'valet-desktop-placeholder', version: VERSION, main: 'out/main/index.js' }
   writeFileSync(join(project, 'package.json'), JSON.stringify(pkg, null, 2))
   cpSync(join(APP_DIR, 'scripts', 'smoke', 'main.cjs'), join(project, 'out', 'main', 'index.js'))
   // The real scheme handler, types stripped (it uses erasable syntax only).
@@ -150,7 +150,7 @@ function build() {
     ],
     {
       stdio: ['ignore', 'inherit', 'inherit'],
-      env: cleanEnv({ SITEADAPTER_UPDATE_URL: 'http://127.0.0.1:4555/' }),
+      env: cleanEnv({ VALET_UPDATE_URL: 'http://127.0.0.1:4555/' }),
     },
   )
 }
@@ -191,8 +191,8 @@ function launch(app, name, { args = [], env = {}, home = null } = {}) {
     const userDataArgs = home === null ? [`--user-data-dir=${join(work, `userData-${name}`)}`] : []
     const childEnv =
       home === null
-        ? cleanEnv({ SITEADAPTER_SMOKE_REPORT: reportPath, ...env })
-        : homeEnv(home, { SITEADAPTER_SMOKE_REPORT: reportPath, ...env })
+        ? cleanEnv({ VALET_SMOKE_REPORT: reportPath, ...env })
+        : homeEnv(home, { VALET_SMOKE_REPORT: reportPath, ...env })
     const child = spawn(executable, [...userDataArgs, ...args], {
       env: childEnv,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -220,7 +220,7 @@ function launch(app, name, { args = [], env = {}, home = null } = {}) {
 
 /** A copy of the bundle, changed by `change(resourcesDir)`, for launching. */
 function variant(app, name, change) {
-  const copy = join(work, 'variants', name, 'siteadapter-dev.app')
+  const copy = join(work, 'variants', name, 'Valet Dev.app')
   mkdirSync(dirname(copy), { recursive: true })
   execFileSync('/usr/bin/ditto', [app, copy])
   change(join(copy, 'Contents', 'Resources'))
@@ -230,7 +230,7 @@ function variant(app, name, change) {
 async function run() {
   writePlaceholder()
   build()
-  const app = join(project, 'dist', arch === 'arm64' ? 'mac-arm64' : 'mac', 'siteadapter-dev.app')
+  const app = join(project, 'dist', arch === 'arm64' ? 'mac-arm64' : 'mac', 'Valet Dev.app')
   const info = plist(join(app, 'Contents', 'Info.plist'))
   const resources = join(app, 'Contents', 'Resources')
 
@@ -262,7 +262,7 @@ async function run() {
   const launches = {
     plain: await launch(app, 'plain'),
     home: await launch(app, 'home', { home: placeholderHome }),
-    window: await launch(app, 'window', { env: { SITEADAPTER_SMOKE_WINDOW: '1' } }),
+    window: await launch(app, 'window', { env: { VALET_SMOKE_WINDOW: '1' } }),
     runAsNode: await launch(app, 'run-as-node', {
       args: ['-e', `require('node:fs').writeFileSync(${JSON.stringify(runAsNodeMarker)}, 'x')`],
       env: { ELECTRON_RUN_AS_NODE: '1' },
@@ -276,7 +276,7 @@ async function run() {
   let feed = null
   if (target === 'zip') {
     const dist = join(project, 'dist')
-    const zipName = `siteadapter-dev-${VERSION}-${arch}.zip`
+    const zipName = `valet-dev-${VERSION}-${arch}.zip`
     const fromBuilder = readFileSync(join(dist, 'latest-mac.yml'), 'utf8')
     const zip = await hashZip(join(dist, zipName))
     const releaseDate = /releaseDate: '([^']+)'/.exec(fromBuilder)?.[1]
@@ -329,8 +329,8 @@ async function run() {
 
   // What a development build must look like. Each mismatch is a failure.
   expectEqual('fuses', { ...summary.fuses, version: undefined, fuse8: undefined }, { ...EXPECTED_FUSES })
-  expectEqual('CFBundleIdentifier', info.CFBundleIdentifier, 'me.dncr.siteadapter.dev')
-  expectEqual('CFBundleName', info.CFBundleName, 'siteadapter-dev')
+  expectEqual('CFBundleIdentifier', info.CFBundleIdentifier, 'me.dncr.valet.dev')
+  expectEqual('CFBundleName', info.CFBundleName, 'Valet Dev')
   expectEqual('LSUIElement', info.LSUIElement, true)
   expectEqual('ElectronAsarIntegrity', summary.infoPlist.ElectronAsarIntegrity, ['Resources/app.asar'])
   expectEqual('asar files', summary.resources.asarFiles, EXPECTED_ASAR)
@@ -340,20 +340,20 @@ async function run() {
   expectEqual('plain launch', pick(launches.plain), {
     code: 0,
     killed: false,
-    name: 'siteadapter-dev',
+    name: 'Valet Dev',
     isPackaged: true,
   })
   expectEqual('run-as-node launch started the app instead', pick(launches.runAsNode), {
     code: 0,
     killed: false,
-    name: 'siteadapter-dev',
+    name: 'Valet Dev',
     isPackaged: true,
   })
   expectEqual('run-as-node script ran', summary.runAsNodeScriptRan, false)
   expectEqual('NODE_OPTIONS launch', pick(launches.nodeOptions), {
     code: 0,
     killed: false,
-    name: 'siteadapter-dev',
+    name: 'Valet Dev',
     isPackaged: true,
   })
   expectEqual('NODE_OPTIONS preload ran', launches.nodeOptions.report?.preloadedByNodeOptions, false)

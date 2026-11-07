@@ -2,7 +2,7 @@ import { chmod, mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { createServer, type Server } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { SiteAdapterError } from '@siteadapter/core'
+import { ValetError } from '@valet/core'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { readBridgeConfig, writeBridgeConfig } from '../src/bridge-config'
@@ -29,7 +29,7 @@ let configPath: string
 const cleanup: Array<() => Promise<void>> = []
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'siteadapter-endpoint-'))
+  dir = await mkdtemp(join(tmpdir(), 'valet-endpoint-'))
   configPath = join(dir, 'bridge.json')
 })
 
@@ -221,7 +221,7 @@ describe('startEndpoint', () => {
 
     await expect(
       startEndpoint({ caller: new FakeCaller([]), configPath, generateToken: tokens(TOKEN_A), start }),
-    ).rejects.toEqual(new SiteAdapterError('config', 'unavailable'))
+    ).rejects.toEqual(new ValetError('config', 'unavailable'))
 
     expect(started).toBeDefined()
     await expect(fetch(started?.url ?? '')).rejects.toThrow()
@@ -229,11 +229,11 @@ describe('startEndpoint', () => {
 
   it('passes on a failure to start on a free port', async () => {
     const start = async (): Promise<RunningHttpServer> => {
-      throw new SiteAdapterError('config', 'unavailable')
+      throw new ValetError('config', 'unavailable')
     }
     await expect(
       startEndpoint({ caller: new FakeCaller([]), configPath, generateToken: tokens(TOKEN_A), start }),
-    ).rejects.toEqual(new SiteAdapterError('config', 'unavailable'))
+    ).rejects.toEqual(new ValetError('config', 'unavailable'))
   })
 
   it('refreshes the tools of its server', async () => {
@@ -283,7 +283,7 @@ describe('resetToken', () => {
   it('resets again after a reset that failed', async () => {
     const endpoint = await launch({ generateToken: tokens(TOKEN_A, TOKEN_B, TOKEN_C) })
     await chmod(dir, 0o500)
-    await expect(endpoint.resetToken()).rejects.toEqual(new SiteAdapterError('config', 'unavailable'))
+    await expect(endpoint.resetToken()).rejects.toEqual(new ValetError('config', 'unavailable'))
     await chmod(dir, 0o700)
 
     await endpoint.resetToken()
@@ -297,7 +297,7 @@ describe('resetToken', () => {
     const before = await readFile(configPath, 'utf8')
     await chmod(dir, 0o500)
 
-    await expect(endpoint.resetToken()).rejects.toEqual(new SiteAdapterError('config', 'unavailable'))
+    await expect(endpoint.resetToken()).rejects.toEqual(new ValetError('config', 'unavailable'))
 
     expect(endpoint.token).toBe(TOKEN_A)
     expect(await statusWith(endpoint.url, TOKEN_A)).toBe(200)

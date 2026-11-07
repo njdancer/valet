@@ -8,8 +8,8 @@ describe('validateFeedUrl', () => {
   it('accepts an https directory URL in canonical form', () => {
     expect(validateFeedUrl('https://updates.example.com/mac/')).toBe('https://updates.example.com/mac/')
     expect(validateFeedUrl('https://updates.example.com/')).toBe('https://updates.example.com/')
-    expect(validateFeedUrl('https://updates.example.com:8443/siteadapter/mac/')).toBe(
-      'https://updates.example.com:8443/siteadapter/mac/',
+    expect(validateFeedUrl('https://updates.example.com:8443/valet/mac/')).toBe(
+      'https://updates.example.com:8443/valet/mac/',
     )
   })
 

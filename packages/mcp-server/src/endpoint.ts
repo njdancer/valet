@@ -4,7 +4,7 @@
 // launch. The stdio bridge re-reads the file and follows the new token on its own. Keeping the
 // token until the person resets it is an opt-in, for HTTP clients that store the token themselves.
 
-import { SiteAdapterError } from '@siteadapter/core'
+import { ValetError } from '@valet/core'
 import { readBridgeConfig, writeBridgeConfig } from './bridge-config'
 import { type HttpServerOptions, type LiveSessions, type RunningHttpServer, startHttpServer } from './http'
 import { generateToken } from './token'
@@ -79,7 +79,7 @@ export async function startEndpoint(options: EndpointOptions): Promise<SessionRe
     await writeBridgeConfig(configPath, { url: server.url, token })
   } catch {
     await server.close()
-    throw new SiteAdapterError('config', 'unavailable')
+    throw new ValetError('config', 'unavailable')
   }
 
   // Resets run one at a time, so the token in the file is always the one the endpoint accepts.

@@ -7,10 +7,10 @@ import {
   type ErrorClass,
   FAIL_CLASSES,
   NEEDS_USER_REASONS,
-  SiteAdapterError,
   type Stage,
   urlOriginAllowed,
-} from '@siteadapter/core'
+  ValetError,
+} from '@valet/core'
 import { evaluateCondition } from './conditions'
 import {
   checkAfterStep,
@@ -46,7 +46,7 @@ const RETRYABLE: readonly (readonly [Stage, ErrorClass])[] = [
 
 function isRetryable(error: unknown): boolean {
   return (
-    error instanceof SiteAdapterError &&
+    error instanceof ValetError &&
     RETRYABLE.some(([stage, errorClass]) => error.stage === stage && error.errorClass === errorClass)
   )
 }
@@ -68,7 +68,7 @@ export async function runSteps(ctx: FlowContext, steps: readonly AuthStep[]): Pr
  * was left with.
  */
 export async function assertLoggedIn(ctx: FlowContext): Promise<void> {
-  if (!(await probeLoggedIn(ctx))) throw new SiteAdapterError('probe', 'not-logged-in')
+  if (!(await probeLoggedIn(ctx))) throw new ValetError('probe', 'not-logged-in')
   ctx.probed = true
 }
 
@@ -77,7 +77,7 @@ async function runStep(ctx: FlowContext, step: AuthStep): Promise<void> {
   switch (step.op) {
     case 'goto':
       if (!urlOriginAllowed(step.url, manifest.navigation)) {
-        throw new SiteAdapterError('navigate', 'navigation-escaped')
+        throw new ValetError('navigate', 'navigation-escaped')
       }
       await guarded('navigate', () => page.goto(step.url))
       return
@@ -122,10 +122,10 @@ async function runStep(ctx: FlowContext, step: AuthStep): Promise<void> {
     // The vocabularies are checked again here, not only at parse time: the reason reaches the MCP
     // client, and free text there would be an injection channel for whoever wrote the manifest.
     case 'needsUser':
-      if (!NEEDS_USER_REASONS.includes(step.reason)) throw new SiteAdapterError('manifest', 'invalid')
+      if (!NEEDS_USER_REASONS.includes(step.reason)) throw new ValetError('manifest', 'invalid')
       throw new NeedsUserHalt(step.reason, step.note)
     case 'fail':
-      if (!FAIL_CLASSES.includes(step.errorClass)) throw new SiteAdapterError('manifest', 'invalid')
+      if (!FAIL_CLASSES.includes(step.errorClass)) throw new ValetError('manifest', 'invalid')
       throw new FailStep(step.errorClass, step.note)
   }
 }
@@ -153,12 +153,12 @@ async function waitFor(ctx: FlowContext, condition: Condition, timeoutMs: number
     await checkNavigation(ctx)
     await checkBlocked(ctx)
     checkDeadline(ctx)
-    if (now(ctx) >= stepDeadline) throw new SiteAdapterError('auth-step', 'condition-timeout')
+    if (now(ctx) >= stepDeadline) throw new ValetError('auth-step', 'condition-timeout')
     await ctx.input.sleep(POLL_MS)
   }
 }
 
 async function requireVisible(ctx: FlowContext, selector: string): Promise<void> {
   const element = await guarded('auth-step', () => ctx.input.page.inspect(selector))
-  if (element === null || !element.visible) throw new SiteAdapterError('auth-step', 'element-missing')
+  if (element === null || !element.visible) throw new ValetError('auth-step', 'element-missing')
 }

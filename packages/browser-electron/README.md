@@ -1,7 +1,7 @@
-# @siteadapter/browser-electron
+# @valet/browser-electron
 
 The Electron browser driver: `ElectronSessionDriver` implements `SessionDriver` from
-`@siteadapter/core`, and hands out the `AuthPage` and `ToolPage` the runtime drives. The security
+`@valet/core`, and hands out the `AuthPage` and `ToolPage` the runtime drives. The security
 rules it serves are in [docs/security-model.md](../../docs/security-model.md).
 
 ## Layout
@@ -37,12 +37,12 @@ rules it serves are in [docs/security-model.md](../../docs/security-model.md).
 
 ```bash
 mise exec -- pnpm check                                          # from the repo root
-mise exec -- pnpm --filter @siteadapter/browser-electron check:e2e   # typecheck:e2e + test:e2e
+mise exec -- pnpm --filter @valet/browser-electron check:e2e   # typecheck:e2e + test:e2e
 ```
 
 The e2e suite needs a GUI session, `openssl`, and Electron's binary in
 `node_modules/electron/dist`. An offline install can leave that missing; fetch it once with
-`mise exec -- pnpm --filter @siteadapter/browser-electron exec node node_modules/electron/install.js`.
+`mise exec -- pnpm --filter @valet/browser-electron exec node node_modules/electron/install.js`.
 
 The e2e suite launches the real Electron through Playwright. `e2e/harness/` is the Electron main
 process: it makes a self-signed certificate with `openssl`, serves a small HTTPS site on

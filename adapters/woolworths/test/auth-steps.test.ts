@@ -1,9 +1,9 @@
 // Walks the manifest's auth steps against scripted Auth0 pages, to check where each kind of login
 // ends up. The walker models only what these steps use; the real interpreter lives in
-// @siteadapter/auth-flow, and its own tests cover the step semantics. test/e2e.test.ts runs the
+// @valet/auth-flow, and its own tests cover the step semantics. test/e2e.test.ts runs the
 // same steps against the fake site over HTTP.
 
-import { type AuthStep, type Condition, messagesSourcesIn } from '@siteadapter/core'
+import { type AuthStep, type Condition, messagesSourcesIn } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import realManifest, {
   createManifest,

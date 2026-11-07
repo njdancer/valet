@@ -30,65 +30,61 @@ describe('launchMode', () => {
   it('turns demo on by flag or environment, and e2e only by environment', () => {
     expect(launchMode([], {}, DEV)).toEqual({ demo: false, e2e: false, userData: null })
     expect(launchMode(['electron', '.', '--demo'], {}, DEV).demo).toBe(true)
-    expect(launchMode([], { SITEADAPTER_DEMO: '1' }, DEV).demo).toBe(true)
-    expect(launchMode([], { SITEADAPTER_DEMO: 'true' }, DEV).demo).toBe(false)
-    expect(launchMode([], { SITEADAPTER_E2E: '1' }, DEV).e2e).toBe(true)
+    expect(launchMode([], { VALET_DEMO: '1' }, DEV).demo).toBe(true)
+    expect(launchMode([], { VALET_DEMO: 'true' }, DEV).demo).toBe(false)
+    expect(launchMode([], { VALET_E2E: '1' }, DEV).e2e).toBe(true)
   })
 
   it('never turns demo on in a packaged app, or in a build without demo mode', () => {
-    const asked = { SITEADAPTER_DEMO: '1' }
+    const asked = { VALET_DEMO: '1' }
     expect(launchMode(['--demo'], asked, { packaged: true, demoBuild: true }).demo).toBe(false)
     expect(launchMode(['--demo'], asked, { packaged: false, demoBuild: false }).demo).toBe(false)
     expect(launchMode(['--demo'], asked, { packaged: true, demoBuild: false }).demo).toBe(false)
   })
 
   it('takes an absolute userData override only, and none in a packaged app', () => {
-    expect(launchMode([], { SITEADAPTER_USER_DATA: '/tmp/sa' }, DEV).userData).toBe('/tmp/sa')
-    expect(launchMode([], { SITEADAPTER_USER_DATA: '/tmp/a/../sa' }, DEV).userData).toBe('/tmp/sa')
-    expect(launchMode([], { SITEADAPTER_USER_DATA: 'sa' }, DEV).userData).toBeNull()
+    expect(launchMode([], { VALET_USER_DATA: '/tmp/sa' }, DEV).userData).toBe('/tmp/sa')
+    expect(launchMode([], { VALET_USER_DATA: '/tmp/a/../sa' }, DEV).userData).toBe('/tmp/sa')
+    expect(launchMode([], { VALET_USER_DATA: 'sa' }, DEV).userData).toBeNull()
     expect(
-      launchMode([], { SITEADAPTER_USER_DATA: '/tmp/sa' }, { packaged: true, demoBuild: false }).userData,
+      launchMode([], { VALET_USER_DATA: '/tmp/sa' }, { packaged: true, demoBuild: false }).userData,
     ).toBeNull()
   })
 
   it('keeps demo data apart from the real data', () => {
     const appData = '/Users/n/Library/Application Support'
-    expect(userDataDir(launchMode([], {}, DEV), appData)).toBe(`${appData}/siteadapter`)
-    expect(userDataDir(launchMode(['--demo'], {}, DEV), appData)).toBe(`${appData}/siteadapter-demo`)
-    expect(userDataDir(launchMode(['--demo'], { SITEADAPTER_USER_DATA: '/tmp/x' }, DEV), appData)).toBe(
-      '/tmp/x',
-    )
-    expect(realDataDir(appData)).toBe(`${appData}/siteadapter`)
+    expect(userDataDir(launchMode([], {}, DEV), appData)).toBe(`${appData}/Valet`)
+    expect(userDataDir(launchMode(['--demo'], {}, DEV), appData)).toBe(`${appData}/valet-demo`)
+    expect(userDataDir(launchMode(['--demo'], { VALET_USER_DATA: '/tmp/x' }, DEV), appData)).toBe('/tmp/x')
+    expect(realDataDir(appData)).toBe(`${appData}/Valet`)
     // A development package has its own folder, apart from the release app's.
-    expect(realDataDir(appData, 'siteadapter-dev')).toBe(`${appData}/siteadapter-dev`)
-    expect(userDataDir(launchMode([], {}, DEV), appData, 'siteadapter-dev')).toBe(
-      `${appData}/siteadapter-dev`,
-    )
+    expect(realDataDir(appData, 'Valet Dev')).toBe(`${appData}/Valet Dev`)
+    expect(userDataDir(launchMode([], {}, DEV), appData, 'Valet Dev')).toBe(`${appData}/Valet Dev`)
     expect(
       userDataDir(
-        launchMode(['--demo'], { SITEADAPTER_USER_DATA: `${appData}/siteadapter-dev/x` }, DEV),
+        launchMode(['--demo'], { VALET_USER_DATA: `${appData}/Valet Dev/x` }, DEV),
         appData,
-        'siteadapter-dev',
+        'Valet Dev',
       ),
-    ).toBe(`${appData}/siteadapter-demo`)
+    ).toBe(`${appData}/valet-demo`)
   })
 
   it.each([
-    '/Users/n/Library/Application Support/siteadapter',
-    '/Users/n/Library/Application Support/siteadapter/',
-    '/Users/n/Library/Application Support/SiteAdapter',
-    '/Users/n/Library/Application Support/x/../siteadapter',
-    '/Users/n/Library/Application Support/siteadapter/sub',
+    '/Users/n/Library/Application Support/Valet',
+    '/Users/n/Library/Application Support/Valet/',
+    '/Users/n/Library/Application Support/valet',
+    '/Users/n/Library/Application Support/x/../Valet',
+    '/Users/n/Library/Application Support/Valet/sub',
   ])('never points a demo launch at the real data folder (%s)', (override) => {
     const appData = '/Users/n/Library/Application Support'
-    const mode = launchMode(['--demo'], { SITEADAPTER_USER_DATA: override }, DEV)
-    expect(userDataDir(mode, appData)).toBe(`${appData}/siteadapter-demo`)
+    const mode = launchMode(['--demo'], { VALET_USER_DATA: override }, DEV)
+    expect(userDataDir(mode, appData)).toBe(`${appData}/valet-demo`)
   })
 
   it('still lets a normal development launch use a folder beside the real one', () => {
     const appData = '/Users/n/Library/Application Support'
-    const mode = launchMode(['--demo'], { SITEADAPTER_USER_DATA: `${appData}/siteadapter-e2e` }, DEV)
-    expect(userDataDir(mode, appData)).toBe(`${appData}/siteadapter-e2e`)
+    const mode = launchMode(['--demo'], { VALET_USER_DATA: `${appData}/valet-e2e` }, DEV)
+    expect(userDataDir(mode, appData)).toBe(`${appData}/valet-e2e`)
   })
 })
 
@@ -139,7 +135,7 @@ describe('rendererBase', () => {
 describe('the app’s pages', () => {
   const files = {
     kind: 'app',
-    root: '/Applications/siteadapter.app/Contents/Resources/app.asar/out/renderer',
+    root: '/Applications/Valet.app/Contents/Resources/app.asar/out/renderer',
   } as const
   const dev = { kind: 'dev', origin: 'http://localhost:5173' } as const
 
@@ -155,7 +151,7 @@ describe('the app’s pages', () => {
   })
 
   it.each([
-    'file:///Applications/siteadapter.app/Contents/Resources/app.asar/out/renderer/index.html',
+    'file:///Applications/Valet.app/Contents/Resources/app.asar/out/renderer/index.html',
     'app://renderer/other.html',
     'app://renderer/assets/index.html',
     'app://renderer/index.html?x=1',
@@ -174,10 +170,10 @@ describe('the app’s pages', () => {
   })
 
   it('titles windows deterministically, marking demo mode', () => {
-    expect(windowTitle('control', false, false)).toBe('siteadapter')
-    expect(windowTitle('control', true, false)).toBe('siteadapter (demo)')
-    expect(windowTitle('control', true, true)).toBe('siteadapter (demo) [control]')
-    expect(windowTitle('confirmation', false, true, 'cf_1')).toBe('siteadapter: confirm [cf_1]')
+    expect(windowTitle('control', false, false)).toBe('Valet')
+    expect(windowTitle('control', true, false)).toBe('Valet (demo)')
+    expect(windowTitle('control', true, true)).toBe('Valet (demo) [control]')
+    expect(windowTitle('confirmation', false, true, 'cf_1')).toBe('Valet: confirm [cf_1]')
   })
 })
 
@@ -270,16 +266,16 @@ describe('placement', () => {
 describe('client snippets', () => {
   const bridge = {
     command: '/repo/node_modules/.bin/tsx',
-    args: ['/repo/bridge-cli.ts', '/Users/n/Library/Application Support/siteadapter/bridge.json'],
+    args: ['/repo/bridge-cli.ts', '/Users/n/Library/Application Support/Valet/bridge.json'],
   }
 
   it('launch the bridge with the config path, quoted, and never a token', () => {
-    const snippets = clientSnippets('siteadapter', bridge)
+    const snippets = clientSnippets('valet', bridge)
     expect(snippetFor(snippets, 'claude-code')).toBe(
-      "claude mcp add siteadapter -- /repo/node_modules/.bin/tsx /repo/bridge-cli.ts '/Users/n/Library/Application Support/siteadapter/bridge.json'",
+      "claude mcp add valet -- /repo/node_modules/.bin/tsx /repo/bridge-cli.ts '/Users/n/Library/Application Support/Valet/bridge.json'",
     )
     expect(JSON.parse(snippetFor(snippets, 'claude-desktop') ?? '')).toEqual({
-      mcpServers: { siteadapter: { command: bridge.command, args: bridge.args } },
+      mcpServers: { valet: { command: bridge.command, args: bridge.args } },
     })
     expect(shellQuote("it's")).toBe(`'it'\\''s'`)
     expect(snippetFor([], 'claude-code')).toBeNull()

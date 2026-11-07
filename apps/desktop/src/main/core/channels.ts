@@ -1,8 +1,8 @@
-// The IPC surface: one invoke channel per SiteAdapterApi method and one event channel. The preload
-// builds window.siteadapter from this list and nothing else, and the main process validates every
+// The IPC surface: one invoke channel per ValetApi method and one event channel. The preload
+// builds window.valet from this list and nothing else, and the main process validates every
 // channel's arguments (ipc.ts). Plain data with no imports, so the sandboxed preload can bundle it.
 
-/** Every invoke method, as its dotted path in SiteAdapterApi. */
+/** Every invoke method, as its dotted path in ValetApi. */
 export const INVOKE_METHODS = [
   'adapters.list',
   'adapters.get',
@@ -51,14 +51,14 @@ export const INVOKE_METHODS = [
 export type InvokeMethod = (typeof INVOKE_METHODS)[number]
 
 /** The prefix keeps our channels apart from anything Electron or a library registers. */
-export const CHANNEL_PREFIX = 'siteadapter:'
+export const CHANNEL_PREFIX = 'valet:'
 
 export function invokeChannel(method: InvokeMethod): string {
   return `${CHANNEL_PREFIX}${method}`
 }
 
 /** Main to renderer: live-update notices, which carry no data beyond their type (and a seq). */
-export const EVENT_CHANNEL = 'siteadapter:event'
+export const EVENT_CHANNEL = 'valet:event'
 
 export const APP_EVENT_TYPES = [
   'adapters-changed',

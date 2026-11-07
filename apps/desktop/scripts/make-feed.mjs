@@ -6,7 +6,7 @@
 //
 //   node scripts/make-feed.mjs --version 1.2.0 --signing-key ~/feed-key.pem \
 //     [--minimum-version 1.1.4] [--valid-days 30] [--release-date 2026-11-07T10:00:00.000Z] \
-//     [--out dist/feed] dist/siteadapter-1.2.0-arm64.zip dist/siteadapter-1.2.0-x64.zip
+//     [--out dist/feed] dist/valet-1.2.0-arm64.zip dist/valet-1.2.0-x64.zip
 //
 // A stable version is written to both channels, so beta installs move on to it once it overtakes
 // their beta, but beta-mac.yml is left alone when it already names a newer beta. A beta prerelease
@@ -36,7 +36,7 @@ const SHA512_BASE64 = /^[A-Za-z0-9+/]{86}==$/
 const APP_PLIST = /^[A-Za-z0-9 ._-]+\.app\/Contents\/Info\.plist$/
 
 /** electron-builder.config.ts's RELEASE_APP_ID (make-feed.test.ts holds them equal). */
-export const RELEASE_APP_ID = 'me.dncr.siteadapter'
+export const RELEASE_APP_ID = 'me.dncr.valet'
 /** The envelope's keys in signing order: feed-envelope.ts's ENVELOPE_KEYS. */
 export const ENVELOPE_KEYS = ['channel', 'version', 'ymlSha256', 'minimumVersion', 'issuedAt', 'expiresAt']
 /** feed-envelope.ts's MAX_ENVELOPE_VALIDITY_MS, in days. */

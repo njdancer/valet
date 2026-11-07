@@ -8,7 +8,7 @@ import {
   type BlockedRequest,
   parseManifest,
   SecretValue,
-} from '@siteadapter/core'
+} from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import {
   BETWEEN_RUNS_CAP,

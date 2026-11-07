@@ -5,7 +5,7 @@
 import { randomUUID } from 'node:crypto'
 import { McpServer, type RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js'
-import { NeedsUserError, type ToolDeclaration, toReportable } from '@siteadapter/core'
+import { NeedsUserError, type ToolDeclaration, toReportable } from '@valet/core'
 import { z } from 'zod'
 import { failedResult, toolResult } from './results'
 import type { CallOutcome, ClientTransport, ListedTool, ToolCaller } from './tool-caller'
@@ -23,7 +23,7 @@ export interface ServerOptions {
   readonly transport?: ClientTransport
 }
 
-export interface SiteAdapterMcpServer {
+export interface ValetMcpServer {
   readonly server: McpServer
   /**
    * Re-reads the caller's tools and, when connected, tells the client the list changed. Returns the
@@ -40,7 +40,7 @@ export function createMcpServer(
   caller: ToolCaller,
   info: ServerInfo,
   options: ServerOptions = {},
-): SiteAdapterMcpServer {
+): ValetMcpServer {
   const newCallId = options.newCallId ?? randomUUID
   const server = new McpServer(
     { name: info.name, version: info.version },
@@ -115,7 +115,7 @@ export function createMcpServer(
  * otherwise tell the agent that confirming is its job, or that no confirmation is needed.
  */
 export const IRREVERSIBLE_NOTE =
-  'The person must confirm this action in the siteadapter app before it runs. You cannot confirm it for them.'
+  'The person must confirm this action in the Valet app before it runs. You cannot confirm it for them.'
 
 /** The manifest's description, plus the fixed confirmation note for irreversible tools. */
 export function toolDescription(declaration: ToolDeclaration): string {

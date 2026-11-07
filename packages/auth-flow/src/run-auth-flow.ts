@@ -1,6 +1,6 @@
 // The entry point: runs one auth action and reports it as an outcome, never as a thrown error.
 
-import { type AdapterManifest, type AuditEvent, toReportable } from '@siteadapter/core'
+import { type AdapterManifest, type AuditEvent, toReportable } from '@valet/core'
 import { compileUrlRegexes } from './conditions'
 import { checkAfterStep, FailStep, type FlowContext, NeedsUserHalt } from './context'
 import { assertLoggedIn, runSteps } from './interpreter'

@@ -6,8 +6,8 @@
 //   Development build, unsigned (works with no Apple account at all):
 //     CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --dir --config electron-builder.config.ts
 //   Release build (the release script sets these; signing keys never live in the repo):
-//     SITEADAPTER_RELEASE=1 SITEADAPTER_TEAM_ID=… SITEADAPTER_UPDATE_URL=https://…/mac/ \
-//     CSC_NAME="<name> (TEAMID)" APPLE_KEYCHAIN_PROFILE=siteadapter-notary \
+//     VALET_RELEASE=1 VALET_TEAM_ID=… VALET_UPDATE_URL=https://…/mac/ \
+//     CSC_NAME="<name> (TEAMID)" APPLE_KEYCHAIN_PROFILE=valet-notary \
 //     electron-builder --mac --config electron-builder.config.ts --publish never
 //
 // Development builds get their own bundle ID and product name, so they never share Keychain items,
@@ -21,11 +21,11 @@ import type { Configuration } from 'electron-builder'
 import { SMOKE_BUILD_MARKER } from './src/main/core/smoke'
 import { validateFeedUrl } from './src/main/updater/feed-url'
 
-/** The release bundle ID. D1 (the product name) is pending; this is the only place it is written. */
-export const RELEASE_APP_ID = 'me.dncr.siteadapter'
+/** The release bundle ID. D1 settled the name (Valet); this is the only place it is written. */
+export const RELEASE_APP_ID = 'me.dncr.valet'
 export const DEV_APP_ID = `${RELEASE_APP_ID}.dev`
-export const RELEASE_PRODUCT_NAME = 'siteadapter'
-export const DEV_PRODUCT_NAME = 'siteadapter-dev'
+export const RELEASE_PRODUCT_NAME = 'Valet'
+export const DEV_PRODUCT_NAME = 'Valet Dev'
 
 /**
  * Electron fuses, flipped in the Electron binary before signing. With these off, no local process can
@@ -85,9 +85,9 @@ export const DEV_REQUIREMENT_TEMPLATE = 'designated-requirement.dev.txt'
 
 /** The environment the config reads. The named variables are the ones it acts on. */
 export interface BuildEnv {
-  readonly SITEADAPTER_RELEASE?: string
-  readonly SITEADAPTER_TEAM_ID?: string
-  readonly SITEADAPTER_UPDATE_URL?: string
+  readonly VALET_RELEASE?: string
+  readonly VALET_TEAM_ID?: string
+  readonly VALET_UPDATE_URL?: string
   readonly CSC_NAME?: string
   readonly CSC_LINK?: string
   readonly CSC_IDENTITY_AUTO_DISCOVERY?: string
@@ -137,16 +137,14 @@ export interface ConfigDeps {
 export function checkReleaseBundle(bundle: string | null, feedUrl: string): void {
   if (bundle === null)
     throw new BuildConfigError(
-      'a release packages out/: run `electron-vite build` with SITEADAPTER_RELEASE=1 first',
+      'a release packages out/: run `electron-vite build` with VALET_RELEASE=1 first',
     )
   if (!bundle.includes(JSON.stringify(feedUrl)))
     throw new BuildConfigError(
-      'out/main was not built with this SITEADAPTER_UPDATE_URL: rebuild it with SITEADAPTER_RELEASE=1 and the same feed variables',
+      'out/main was not built with this VALET_UPDATE_URL: rebuild it with VALET_RELEASE=1 and the same feed variables',
     )
   if (!bundle.includes('-----BEGIN PUBLIC KEY-----'))
-    throw new BuildConfigError(
-      'out/main has no feed public key: rebuild it with SITEADAPTER_FEED_PUBLIC_KEY_FILE',
-    )
+    throw new BuildConfigError('out/main has no feed public key: rebuild it with VALET_FEED_PUBLIC_KEY_FILE')
   if (bundle.includes(SMOKE_BUILD_MARKER))
     throw new BuildConfigError('out/main is a smoke build: rebuild it with a plain `electron-vite build`')
 }
@@ -176,8 +174,7 @@ function set(env: BuildEnv, name: string): boolean {
  * template's comments and line breaks removed.
  */
 export function renderRequirement(template: string, values: { appId: string; teamId: string }): string {
-  if (!TEAM_ID.test(values.teamId))
-    throw new BuildConfigError('SITEADAPTER_TEAM_ID must be 10 letters or digits')
+  if (!TEAM_ID.test(values.teamId)) throw new BuildConfigError('VALET_TEAM_ID must be 10 letters or digits')
   if (!/^[A-Za-z0-9.-]+$/.test(values.appId))
     throw new BuildConfigError('bundle ID has unexpected characters')
   const text = template
@@ -239,21 +236,23 @@ function notarisationCredentials(env: BuildEnv): boolean {
 
 /** The configuration for the given environment. Pure apart from deps; throws BuildConfigError. */
 export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configuration {
-  const releaseFlag = env.SITEADAPTER_RELEASE
+  const releaseFlag = env.VALET_RELEASE
   if (releaseFlag !== undefined && releaseFlag !== '' && releaseFlag !== '0' && releaseFlag !== '1') {
-    throw new BuildConfigError('SITEADAPTER_RELEASE must be 1 for a release build, or unset')
+    throw new BuildConfigError('VALET_RELEASE must be 1 for a release build, or unset')
   }
   const release = releaseFlag === '1'
   const appId = release ? RELEASE_APP_ID : DEV_APP_ID
   const productName = release ? RELEASE_PRODUCT_NAME : DEV_PRODUCT_NAME
+  // File and package names: no capitals or spaces.
+  const slug = release ? 'valet' : 'valet-dev'
   const identityGiven = set(env, 'CSC_NAME') || set(env, 'CSC_LINK')
   const canNotarise = notarisationCredentials(env)
-  const teamId = env.SITEADAPTER_TEAM_ID
+  const teamId = env.VALET_TEAM_ID
   if (teamId !== undefined && teamId !== '' && !TEAM_ID.test(teamId)) {
-    throw new BuildConfigError('SITEADAPTER_TEAM_ID must be 10 letters or digits')
+    throw new BuildConfigError('VALET_TEAM_ID must be 10 letters or digits')
   }
 
-  const rawFeed = env.SITEADAPTER_UPDATE_URL
+  const rawFeed = env.VALET_UPDATE_URL
   const feedUrl =
     rawFeed === undefined || rawFeed === ''
       ? null
@@ -261,16 +260,15 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
   if (rawFeed !== undefined && rawFeed !== '' && feedUrl === null) {
     throw new BuildConfigError(
       release
-        ? 'SITEADAPTER_UPDATE_URL must be an https directory URL ending in "/" on a public host name (no IP, localhost or single label), with no query, fragment or credentials'
-        : 'SITEADAPTER_UPDATE_URL must be an https directory URL ending in "/", with no query, fragment or credentials',
+        ? 'VALET_UPDATE_URL must be an https directory URL ending in "/" on a public host name (no IP, localhost or single label), with no query, fragment or credentials'
+        : 'VALET_UPDATE_URL must be an https directory URL ending in "/", with no query, fragment or credentials',
     )
   }
 
   let requirement: string | null = null
   if (release) {
-    if (!set(env, 'SITEADAPTER_TEAM_ID'))
-      throw new BuildConfigError('a release build needs SITEADAPTER_TEAM_ID')
-    if (feedUrl === null) throw new BuildConfigError('a release build needs SITEADAPTER_UPDATE_URL')
+    if (!set(env, 'VALET_TEAM_ID')) throw new BuildConfigError('a release build needs VALET_TEAM_ID')
+    if (feedUrl === null) throw new BuildConfigError('a release build needs VALET_UPDATE_URL')
     checkReleaseBundle(deps.readMainBundle(), feedUrl)
     if (!identityGiven) throw new BuildConfigError('a release build needs CSC_NAME or CSC_LINK')
     if (env.CSC_IDENTITY_AUTO_DISCOVERY === 'false') {
@@ -282,9 +280,7 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
     const name = env.CSC_NAME
     if (name !== undefined && name !== '' && !SHA1_IDENTITY.test(name)) {
       if (name.includes(':') || !name.endsWith(` (${teamId})`) || name.length <= ` (${teamId})`.length) {
-        throw new BuildConfigError(
-          'CSC_NAME must be "<name> (SITEADAPTER_TEAM_ID)", without a prefix, or a SHA-1',
-        )
+        throw new BuildConfigError('CSC_NAME must be "<name> (VALET_TEAM_ID)", without a prefix, or a SHA-1')
       }
     }
     if (!canNotarise) {
@@ -339,7 +335,7 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
     // The packaged package.json names the app, which sets userData, the cookie-encryption Keychain
     // item, the single-instance lock and electron-updater's cache directory: dev and release must
     // differ there too.
-    extraMetadata: { name: productName, productName },
+    extraMetadata: { name: slug, productName },
     asar: true,
     npmRebuild: false,
     forceCodeSigning: release,
@@ -352,8 +348,8 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
         { target: 'zip', arch: ['arm64', 'x64'] },
       ],
       // electron-updater picks the zip for the machine by "arm64" in its name.
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: electron-builder's own macros
-      artifactName: '${productName}-${version}-${arch}.${ext}',
+      // The escaped ${...} are electron-builder's own macros.
+      artifactName: `${slug}-\${version}-\${arch}.\${ext}`,
       ...(signs ? {} : { identity: null }),
       type: release ? 'distribution' : 'development',
       hardenedRuntime: true,

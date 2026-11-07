@@ -8,18 +8,18 @@
 // - renderer: the same root, pages and CSP as vite.config.ts.
 //
 // Build-time constants (src/main/build-flags.d.ts) decide what the main bundle carries:
-// __SITEADAPTER_DEMO_BUILD__ (demo mode, the fake site and its fixtures) is true for `dev` and for
-// `build --mode demo` only, and __SITEADAPTER_DEV_SERVER__ (trusting the dev server's URL) for `dev`
+// __VALET_DEMO_BUILD__ (demo mode, the fake site and its fixtures) is true for `dev` and for
+// `build --mode demo` only, and __VALET_DEV_SERVER__ (trusting the dev server's URL) for `dev`
 // only. The fake imports its fixtures as JSON modules, so they are inlined in the demo chunk and no
-// folder is copied beside it. __SITEADAPTER_SMOKE_BUILD__ (the package smoke's own argv and self-check, core/smoke.ts) is
+// folder is copied beside it. __VALET_SMOKE_BUILD__ (the package smoke's own argv and self-check, core/smoke.ts) is
 // true for `build --mode smoke` only. A plain `build`, which packaging uses, has none of them. Only
 // a plain build compiles in an update feed, and only when its environment names both
-// SITEADAPTER_UPDATE_URL and SITEADAPTER_FEED_PUBLIC_KEY_FILE (__SITEADAPTER_FEED_BASE_URL__,
-// __SITEADAPTER_FEED_PUBLIC_KEY__); with SITEADAPTER_RELEASE=1 it must (core/feed-defines.ts).
+// VALET_UPDATE_URL and VALET_FEED_PUBLIC_KEY_FILE (__VALET_FEED_BASE_URL__,
+// __VALET_FEED_PUBLIC_KEY__); with VALET_RELEASE=1 it must (core/feed-defines.ts).
 //
-//   mise exec -- pnpm --filter @siteadapter/desktop dev     # electron-vite dev
-//   mise exec -- pnpm --filter @siteadapter/desktop build   # to out/, without demo mode
-//   mise exec -- pnpm --filter @siteadapter/desktop demo    # a demo build, launched against the fake site
+//   mise exec -- pnpm --filter @valet/desktop dev     # electron-vite dev
+//   mise exec -- pnpm --filter @valet/desktop build   # to out/, without demo mode
+//   mise exec -- pnpm --filter @valet/desktop demo    # a demo build, launched against the fake site
 
 import { resolve } from 'node:path'
 import react from '@vitejs/plugin-react'
@@ -35,11 +35,11 @@ export default defineConfig(({ command, mode }) => {
   return {
     main: {
       define: {
-        __SITEADAPTER_DEMO_BUILD__: JSON.stringify(command === 'serve' || mode === 'demo'),
-        __SITEADAPTER_DEV_SERVER__: JSON.stringify(command === 'serve'),
-        __SITEADAPTER_SMOKE_BUILD__: JSON.stringify(command === 'build' && mode === 'smoke'),
-        __SITEADAPTER_FEED_BASE_URL__: JSON.stringify(feed.url),
-        __SITEADAPTER_FEED_PUBLIC_KEY__: JSON.stringify(feed.publicKey),
+        __VALET_DEMO_BUILD__: JSON.stringify(command === 'serve' || mode === 'demo'),
+        __VALET_DEV_SERVER__: JSON.stringify(command === 'serve'),
+        __VALET_SMOKE_BUILD__: JSON.stringify(command === 'build' && mode === 'smoke'),
+        __VALET_FEED_BASE_URL__: JSON.stringify(feed.url),
+        __VALET_FEED_PUBLIC_KEY__: JSON.stringify(feed.publicKey),
       },
       build: {
         outDir: resolve(here, 'out/main'),

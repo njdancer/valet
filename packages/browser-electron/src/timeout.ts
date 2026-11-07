@@ -1,7 +1,7 @@
 // Step timeouts. Every primitive runs under one, measured in Node: a page's own timers die with it
 // when it navigates.
 
-import { SiteAdapterError } from '@siteadapter/core'
+import { ValetError } from '@valet/core'
 import type { Timers } from './platform'
 
 /**
@@ -17,7 +17,7 @@ export function withTimeout<T>(
   return new Promise<T>((resolve, reject) => {
     const handle = timers.setTimeout(() => {
       controller.abort()
-      reject(new SiteAdapterError('timeout', 'timed-out'))
+      reject(new ValetError('timeout', 'timed-out'))
     }, ms)
     Promise.resolve()
       .then(() => work(controller.signal))

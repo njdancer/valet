@@ -14,7 +14,7 @@ from Electron. Where we copy it or deliberately depart from it, this doc says so
 - **Only the browser driver's Electron layer and the desktop app import `electron`.** Everything
   else is plain TypeScript, tested in plain Node with fakes. A test in `browser-electron` scans
   every source file in the repo and fails on any other importer.
-- **Packages export TypeScript source** and depend on `@siteadapter/core` for every contract they
+- **Packages export TypeScript source** and depend on `@valet/core` for every contract they
   share. No package imports another's implementation; the app wires them together. In particular
   the runtime doesn't import `auth-flow` (the login comes in as an injected `AuthRunner`), and the
   MCP server doesn't import the runtime (it calls a `ToolCaller` interface).
@@ -90,7 +90,7 @@ Wiring it, first in plain Node and then in the app, is the next job
   `hardenProcess(app)` before `ready`.
 - **Renderer windows are views.** The control panel, onboarding, adapter approval, grant picker,
   confirmation dialog, audit viewer and the hand-off banner run with `contextIsolation`,
-  `sandbox: true`, no Node integration and a strict CSP. Each sees only the `window.siteadapter`
+  `sandbox: true`, no Node integration and a strict CSP. Each sees only the `window.valet`
   API that a preload script exposes, typed in `apps/desktop/src/shared/api.ts` (being written in
   round 2). The renderer never receives a `SecretValue`, a credential item's contents, the
   endpoint token or a session cookie; it receives display data and sends intents ("approve
@@ -102,7 +102,7 @@ Wiring it, first in plain Node and then in the app, is the next job
 - **Tool code** runs in the main process in v0 (see the caveat in security-model.md), moves to a
   `utilityProcess` with the capability API over a message port, and then into the sandbox chosen
   in [D12](plan.md#d12-sandbox-technology) before third-party adapters.
-- **Data files** live under `~/Library/Application Support/siteadapter/` (the final name waits on
+- **Data files** live under `~/Library/Application Support/valet/` (the final name waits on
   [D1](plan.md#d1-product-name)): `approvals.json`, `grants.json`, `audit.jsonl`,
   `login-markers/`, the endpoint token and `bridge.json`, all owner-only
   ([D45](plan.md#d45-grant-file-location)).
@@ -256,7 +256,7 @@ Providers in `packages/credentials`, preferred first:
 Also here:
 
 - **`CredentialResolver`** dispatches a grant to the provider its `provider` field names, and
-  turns anything a provider throws into `SiteAdapterError('credential', …)`.
+  turns anything a provider throws into `ValetError('credential', …)`.
 - **`FileGrantStore`**: grants keyed by adapter id, exact hash and secret name.
 - **`MessagesOtpReader`**: SMS codes from `chat.db`, opened read-only in place per lookup, from
   one exact sender handle, matched by a screened pattern in a worker under a deadline. Granted as

@@ -51,20 +51,19 @@ export interface Launched {
 }
 
 export function tempDir(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), `siteadapter-e2e-${prefix}-`))
+  return mkdtempSync(join(tmpdir(), `valet-e2e-${prefix}-`))
 }
 
 /** Launches the built app (or a copy of it at `appPath`) in demo and e2e mode on `userData`. */
 export async function launch(userData: string, appPath = appDir): Promise<Launched> {
   const env: Record<string, string> = {}
   for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && !key.startsWith('SITEADAPTER_') && key !== 'ELECTRON_RUN_AS_NODE')
-      env[key] = value
+    if (value !== undefined && !key.startsWith('VALET_') && key !== 'ELECTRON_RUN_AS_NODE') env[key] = value
   }
   const app = await _electron.launch({
     executablePath: electronPath,
     args: [appPath],
-    env: { ...env, SITEADAPTER_DEMO: '1', SITEADAPTER_E2E: '1', SITEADAPTER_USER_DATA: userData },
+    env: { ...env, VALET_DEMO: '1', VALET_E2E: '1', VALET_USER_DATA: userData },
   })
   const logs: string[] = []
   app.process().stdout?.on('data', (chunk) => logs.push(String(chunk)))
@@ -250,7 +249,7 @@ interface DemoHook {
 /** Makes the fake site answer every request with its Access Denied page, or stop. */
 export async function blockSite(launched: Launched, on: boolean): Promise<void> {
   await launched.app.evaluate((_electron, on) => {
-    const hook = (globalThis as { __siteadapterE2e?: DemoHook }).__siteadapterE2e
+    const hook = (globalThis as { __valetE2e?: DemoHook }).__valetE2e
     if (hook === undefined) throw new Error('no e2e hook: not a demo build in e2e mode')
     hook.blockAll(on)
   }, on)
@@ -261,7 +260,7 @@ export async function siteTrolley(
   launched: Launched,
 ): Promise<{ readonly stockcode: number; readonly quantity: number }[]> {
   return launched.app.evaluate(() => {
-    const hook = (globalThis as { __siteadapterE2e?: DemoHook }).__siteadapterE2e
+    const hook = (globalThis as { __valetE2e?: DemoHook }).__valetE2e
     if (hook === undefined) throw new Error('no e2e hook: not a demo build in e2e mode')
     return [...hook.trolley()]
   })

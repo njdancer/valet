@@ -38,7 +38,7 @@ describe('isUnderFeedBase', () => {
     for (const url of [
       `${BASE}latest-mac.yml`,
       `${BASE}latest-mac.yml?noCache=1abc`,
-      `${BASE}siteadapter-1.2.0-arm64.zip`,
+      `${BASE}valet-1.2.0-arm64.zip`,
       `${BASE}sub/dir/file.zip`,
       `${BASE}a/../latest-mac.yml`,
     ]) {
@@ -85,13 +85,13 @@ describe('confineUpdaterSession', () => {
     const guard = confineUpdaterSession(session, BASE)
     expect(guard.refusals()).toBe(0)
     expect(request(`${BASE}latest-mac.yml`)).toBe(true)
-    expect(request(`${BASE}siteadapter-1.2.0-arm64.zip`, 'GET')).toBe(true)
-    expect(request(`${BASE}siteadapter-1.2.0-arm64.zip.blockmap`, 'HEAD')).toBe(true)
+    expect(request(`${BASE}valet-1.2.0-arm64.zip`, 'GET')).toBe(true)
+    expect(request(`${BASE}valet-1.2.0-arm64.zip.blockmap`, 'HEAD')).toBe(true)
     expect(guard.refusals()).toBe(0)
 
     // A redirect hop is a new request in the partition: to plain http, and to another host.
-    expect(request('http://updates.example.com/mac/siteadapter-1.2.0-arm64.zip')).toBe(false)
-    expect(request('https://cdn.evil.example/siteadapter-1.2.0-arm64.zip')).toBe(false)
+    expect(request('http://updates.example.com/mac/valet-1.2.0-arm64.zip')).toBe(false)
+    expect(request('https://cdn.evil.example/valet-1.2.0-arm64.zip')).toBe(false)
     expect(request(`${BASE}latest-mac.yml`, 'POST')).toBe(false)
     expect(guard.refusals()).toBe(3)
   })

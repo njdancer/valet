@@ -1,5 +1,5 @@
 {
-  "name": "@siteadapter/auth-flow",
+  "name": "@valet/auth-flow",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -7,6 +7,6 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@siteadapter/core": "workspace:*"
+    "@valet/core": "workspace:*"
   }
 }

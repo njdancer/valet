@@ -3,7 +3,7 @@
 // whole. Matching is exact substring matching: no normalisation, so an encoded copy of a secret is
 // not caught.
 
-import { SecretValue, SiteAdapterError } from '@siteadapter/core'
+import { SecretValue, ValetError } from '@valet/core'
 
 export const REDACTED = '[redacted]'
 
@@ -90,7 +90,7 @@ export function redactString(text: string, sensitive: Sensitive): string {
  * serialises whatever we hand it, so redacting anything other than the exact data that will be
  * serialised would redact the wrong thing.
  *
- * Throws SiteAdapterError('tool-output', 'invalid') for output that isn't JSON-serialisable (a
+ * Throws ValetError('tool-output', 'invalid') for output that isn't JSON-serialisable (a
  * cycle, a BigInt, a throwing getter), and ('tool-output', 'internal') if anything sensitive
  * survives redaction.
  */
@@ -98,7 +98,7 @@ export function redactOutput(value: unknown, sensitive: Sensitive): unknown {
   const plain = toPlainJson(value)
   const redacted = redactDeep(plain, sensitive)
   if (redacted !== undefined && sensitive(JSON.stringify(redacted))) {
-    throw new SiteAdapterError('tool-output', 'internal')
+    throw new ValetError('tool-output', 'internal')
   }
   return redacted
 }
@@ -109,7 +109,7 @@ function toPlainJson(value: unknown): unknown {
   try {
     text = JSON.stringify(value, refuseBinary)
   } catch {
-    throw new SiteAdapterError('tool-output', 'invalid')
+    throw new ValetError('tool-output', 'invalid')
   }
   // undefined, a function or a symbol at the top level: there is nothing to send.
   if (text === undefined) return undefined

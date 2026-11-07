@@ -2,7 +2,7 @@
 // scripts, is held to it between beginRun() and endRun(), and what the driver refuses is reported
 // back. Each test here is either the policy being set up wrongly, or something trying to get past it.
 
-import { defineAdapter, type ToolContext, tool } from '@siteadapter/core'
+import { defineAdapter, type ToolContext, tool } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { MAX_BLOCKED_EVENTS_PER_CALL } from '../src/tool-host'

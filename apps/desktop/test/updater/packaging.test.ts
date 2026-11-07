@@ -40,11 +40,11 @@ const APP_DIR = resolve(import.meta.dirname, '../..')
 const DOC = readFileSync(resolve(APP_DIR, '../../docs/release-and-updates.md'), 'utf8')
 
 const RELEASE_ENV: BuildEnv = {
-  SITEADAPTER_RELEASE: '1',
-  SITEADAPTER_TEAM_ID: 'ABCDE12345',
-  SITEADAPTER_UPDATE_URL: 'https://updates.example.com/mac/',
+  VALET_RELEASE: '1',
+  VALET_TEAM_ID: 'ABCDE12345',
+  VALET_UPDATE_URL: 'https://updates.example.com/mac/',
   CSC_NAME: 'Example Person (ABCDE12345)',
-  APPLE_KEYCHAIN_PROFILE: 'siteadapter-notary',
+  APPLE_KEYCHAIN_PROFILE: 'valet-notary',
 }
 
 /** A release's out/main, built with RELEASE_ENV's feed. */
@@ -65,7 +65,7 @@ const DEPS: ConfigDeps = {
 const config = (env: BuildEnv): any => createBuilderConfig(env, DEPS)
 
 const RELEASE_REQUIREMENT =
-  '=designated => identifier "me.dncr.siteadapter" and anchor apple generic and ' +
+  '=designated => identifier "me.dncr.valet" and anchor apple generic and ' +
   'certificate 1[field.1.2.840.113635.100.6.2.6] and certificate leaf[field.1.2.840.113635.100.6.1.13] and ' +
   'certificate leaf[subject.OU] = "ABCDE12345"'
 
@@ -73,9 +73,9 @@ describe('a release build', () => {
   it('has the release identity, is signed with the hardened runtime and notarised', () => {
     const c = config(RELEASE_ENV)
     expect(c.appId).toBe(RELEASE_APP_ID)
-    expect(c.appId).toBe('me.dncr.siteadapter')
-    expect(c.productName).toBe('siteadapter')
-    expect(c.extraMetadata).toEqual({ name: RELEASE_PRODUCT_NAME, productName: RELEASE_PRODUCT_NAME })
+    expect(c.appId).toBe('me.dncr.valet')
+    expect(c.productName).toBe('Valet')
+    expect(c.extraMetadata).toEqual({ name: 'valet', productName: RELEASE_PRODUCT_NAME })
     expect(c.forceCodeSigning).toBe(true)
     expect(c.mac.hardenedRuntime).toBe(true)
     expect(c.mac.notarize).toBe(true)
@@ -91,7 +91,7 @@ describe('a release build', () => {
       { target: 'zip', arch: ['arm64', 'x64'] },
     ])
     // biome-ignore lint/suspicious/noTemplateCurlyInString: electron-builder's own macros
-    expect(c.mac.artifactName).toBe('${productName}-${version}-${arch}.${ext}')
+    expect(c.mac.artifactName).toBe('valet-${version}-${arch}.${ext}')
     expect(c.dmg).toEqual({ sign: false })
   })
 
@@ -121,7 +121,7 @@ describe('a release build', () => {
     const c = config(RELEASE_ENV)
     expect(c.mac.requirements).toBeUndefined()
     signCalls.length = 0
-    const app = '/dist/mac-arm64/siteadapter.app'
+    const app = '/dist/mac-arm64/valet.app'
     await c.mac.sign({
       app,
       identity: 'ABCDEF',
@@ -134,7 +134,7 @@ describe('a release build', () => {
       entitlements: 'e.plist',
       requirements: RELEASE_REQUIREMENT,
     })
-    expect(options.optionsForFile?.(`${app}/Contents/Frameworks/siteadapter Helper.app`)).toEqual({
+    expect(options.optionsForFile?.(`${app}/Contents/Frameworks/valet Helper.app`)).toEqual({
       hardenedRuntime: true,
       entitlements: 'e.plist',
       requirements: undefined,
@@ -186,8 +186,8 @@ describe('a release build refuses to be built weaker', () => {
   }
 
   it('without a Team ID, or with one that could change the requirement', () => {
-    refuses({ ...RELEASE_ENV, SITEADAPTER_TEAM_ID: undefined }, 'SITEADAPTER_TEAM_ID')
-    refuses({ ...RELEASE_ENV, SITEADAPTER_TEAM_ID: '' }, 'SITEADAPTER_TEAM_ID')
+    refuses({ ...RELEASE_ENV, VALET_TEAM_ID: undefined }, 'VALET_TEAM_ID')
+    refuses({ ...RELEASE_ENV, VALET_TEAM_ID: '' }, 'VALET_TEAM_ID')
     for (const teamId of [
       'abcde12345',
       'ABCDE1234',
@@ -195,12 +195,12 @@ describe('a release build refuses to be built weaker', () => {
       'ABCDE12345" or anchor apple',
       'ABCDE 2345',
     ]) {
-      refuses({ ...RELEASE_ENV, SITEADAPTER_TEAM_ID: teamId }, 'SITEADAPTER_TEAM_ID')
+      refuses({ ...RELEASE_ENV, VALET_TEAM_ID: teamId }, 'VALET_TEAM_ID')
     }
   })
 
   it('without an https feed, or with a token in it', () => {
-    refuses({ ...RELEASE_ENV, SITEADAPTER_UPDATE_URL: undefined }, 'SITEADAPTER_UPDATE_URL')
+    refuses({ ...RELEASE_ENV, VALET_UPDATE_URL: undefined }, 'VALET_UPDATE_URL')
     for (const url of [
       'http://updates.example.com/mac/',
       'http://127.0.0.1:4555/',
@@ -208,7 +208,7 @@ describe('a release build refuses to be built weaker', () => {
       'https://user:pw@updates.example.com/mac/',
       'https://updates.example.com/mac',
     ]) {
-      refuses({ ...RELEASE_ENV, SITEADAPTER_UPDATE_URL: url }, 'SITEADAPTER_UPDATE_URL')
+      refuses({ ...RELEASE_ENV, VALET_UPDATE_URL: url }, 'VALET_UPDATE_URL')
     }
   })
 
@@ -221,7 +221,7 @@ describe('a release build refuses to be built weaker', () => {
       'https://updates/mac/',
       'https://updates.local/mac/',
     ]) {
-      refuses({ ...RELEASE_ENV, SITEADAPTER_UPDATE_URL: url }, 'public host name')
+      refuses({ ...RELEASE_ENV, VALET_UPDATE_URL: url }, 'public host name')
     }
   })
 
@@ -255,8 +255,8 @@ describe('a release build refuses to be built weaker', () => {
     const withBundle = (bundle: string | null) => () =>
       createBuilderConfig(RELEASE_ENV, { ...DEPS, readMainBundle: () => bundle })
     expect(withBundle(null)).toThrow(/run `electron-vite build`/)
-    expect(withBundle('const FEED_BASE_URL = "";')).toThrow(/not built with this SITEADAPTER_UPDATE_URL/)
-    expect(withBundle(RELEASE_BUNDLE.replace('/mac/', '/mac/beta/'))).toThrow(/SITEADAPTER_UPDATE_URL/)
+    expect(withBundle('const FEED_BASE_URL = "";')).toThrow(/not built with this VALET_UPDATE_URL/)
+    expect(withBundle(RELEASE_BUNDLE.replace('/mac/', '/mac/beta/'))).toThrow(/VALET_UPDATE_URL/)
     expect(withBundle(RELEASE_BUNDLE.replace('BEGIN PUBLIC KEY', 'nothing'))).toThrow(/public key/)
     expect(withBundle(`${RELEASE_BUNDLE}\nconst m = "${SMOKE_BUILD_MARKER}";`)).toThrow(/smoke build/)
     for (const bundle of [null, ''])
@@ -277,7 +277,7 @@ describe('a release build refuses to be built weaker', () => {
 
   it('when the release flag is anything but 1', () => {
     for (const flag of ['true', 'yes', '2', 'release']) {
-      refuses({ ...RELEASE_ENV, SITEADAPTER_RELEASE: flag }, 'SITEADAPTER_RELEASE')
+      refuses({ ...RELEASE_ENV, VALET_RELEASE: flag }, 'VALET_RELEASE')
     }
   })
 })
@@ -286,10 +286,10 @@ describe('a development build', () => {
   it('has its own bundle ID and name, so it shares no Keychain items or userData with release', () => {
     const c = config({})
     expect(c.appId).toBe(DEV_APP_ID)
-    expect(c.appId).toBe('me.dncr.siteadapter.dev')
+    expect(c.appId).toBe('me.dncr.valet.dev')
     expect(c.productName).toBe(DEV_PRODUCT_NAME)
-    expect(c.extraMetadata).toEqual({ name: 'siteadapter-dev', productName: 'siteadapter-dev' })
-    expect(config({ SITEADAPTER_RELEASE: '0' }).appId).toBe(DEV_APP_ID)
+    expect(c.extraMetadata).toEqual({ name: 'valet-dev', productName: 'Valet Dev' })
+    expect(config({ VALET_RELEASE: '0' }).appId).toBe(DEV_APP_ID)
   })
 
   it('is unsigned unless an identity is named, and re-signed ad hoc after the fuses flip', () => {
@@ -313,7 +313,7 @@ describe('a development build', () => {
 
   it('is never notarised, even with credentials in the environment', () => {
     const c = config({
-      APPLE_KEYCHAIN_PROFILE: 'siteadapter-notary',
+      APPLE_KEYCHAIN_PROFILE: 'valet-notary',
       CSC_NAME: DEV_IDENTITY,
     })
     expect(c.mac.notarize).toBe(false)
@@ -321,14 +321,14 @@ describe('a development build', () => {
   })
 
   it('pins a signed dev build to the team with the Apple Development requirement, for the .dev ID', async () => {
-    const c = config({ CSC_NAME: DEV_IDENTITY, SITEADAPTER_TEAM_ID: 'ABCDE12345' })
+    const c = config({ CSC_NAME: DEV_IDENTITY, VALET_TEAM_ID: 'ABCDE12345' })
     expect('identity' in c.mac).toBe(false)
     expect(c.electronFuses.resetAdHocDarwinSignature).toBe(false)
     signCalls.length = 0
-    await c.mac.sign({ app: '/x/siteadapter-dev.app', optionsForFile: () => ({}) })
-    expect(signCalls[0]?.optionsForFile?.('/x/siteadapter-dev.app')).toEqual({
+    await c.mac.sign({ app: '/x/valet-dev.app', optionsForFile: () => ({}) })
+    expect(signCalls[0]?.optionsForFile?.('/x/valet-dev.app')).toEqual({
       requirements:
-        '=designated => identifier "me.dncr.siteadapter.dev" and anchor apple generic and ' +
+        '=designated => identifier "me.dncr.valet.dev" and anchor apple generic and ' +
         'certificate 1[field.1.2.840.113635.100.6.2.1] and certificate leaf[subject.OU] = "ABCDE12345"',
     })
   })
@@ -349,9 +349,7 @@ describe('a development build', () => {
       `${DEV_IDENTITY}0`,
     ]) {
       expect(() => config({ CSC_NAME: name }), name).toThrow('SHA-1 of an Apple Development identity')
-      expect(() => config({ CSC_NAME: name, SITEADAPTER_TEAM_ID: 'ABCDE12345' }), name).toThrow(
-        BuildConfigError,
-      )
+      expect(() => config({ CSC_NAME: name, VALET_TEAM_ID: 'ABCDE12345' }), name).toThrow(BuildConfigError)
     }
     expect(() => config({ CSC_LINK: '/tmp/developer-id.p12' })).toThrow('unset CSC_LINK')
     expect(() => config({ CSC_LINK: '/tmp/x.p12', CSC_NAME: DEV_IDENTITY })).toThrow('unset CSC_LINK')
@@ -359,11 +357,11 @@ describe('a development build', () => {
 
   it('may point at a local feed, and has none by default', () => {
     expect(config({}).publish).toBeNull()
-    expect(config({ SITEADAPTER_UPDATE_URL: 'http://127.0.0.1:4555/' }).publish).toEqual([
+    expect(config({ VALET_UPDATE_URL: 'http://127.0.0.1:4555/' }).publish).toEqual([
       { provider: 'generic', url: 'http://127.0.0.1:4555/' },
     ])
-    expect(() => config({ SITEADAPTER_UPDATE_URL: 'http://updates.example.com/' })).toThrow(BuildConfigError)
-    expect(() => config({ SITEADAPTER_TEAM_ID: 'nope' })).toThrow(BuildConfigError)
+    expect(() => config({ VALET_UPDATE_URL: 'http://updates.example.com/' })).toThrow(BuildConfigError)
+    expect(() => config({ VALET_TEAM_ID: 'nope' })).toThrow(BuildConfigError)
   })
 
   it('still refuses an Apple ID for notarisation', () => {
@@ -525,9 +523,9 @@ describe('docs/release-and-updates.md', () => {
       'electron-builder.config.ts',
       RELEASE_APP_ID,
       DEV_APP_ID,
-      'SITEADAPTER_RELEASE',
-      'SITEADAPTER_TEAM_ID',
-      'SITEADAPTER_UPDATE_URL',
+      'VALET_RELEASE',
+      'VALET_TEAM_ID',
+      'VALET_UPDATE_URL',
       'CSC_IDENTITY_AUTO_DISCOVERY=false',
       'scripts/make-feed.mjs',
     ]) {

@@ -5,7 +5,7 @@ import { PassThrough } from 'node:stream'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { SiteAdapterError } from '@siteadapter/core'
+import { ValetError } from '@valet/core'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { main, USAGE } from '../src/bridge-cli'
@@ -29,7 +29,7 @@ const viewCart: ListedTool = {
 let dir: string
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'siteadapter-bridge-'))
+  dir = await mkdtemp(join(tmpdir(), 'valet-bridge-'))
 })
 
 afterEach(async () => {
@@ -79,7 +79,7 @@ describe('writeBridgeConfig and readBridgeConfig', () => {
 
   it('refuses to write a non-loopback URL or a malformed token', async () => {
     const path = join(dir, 'bridge.json')
-    const invalid = new SiteAdapterError('config', 'invalid')
+    const invalid = new ValetError('config', 'invalid')
     await expect(writeBridgeConfig(path, { url: 'http://example.com:1/mcp', token: TOKEN })).rejects.toEqual(
       invalid,
     )
@@ -89,31 +89,31 @@ describe('writeBridgeConfig and readBridgeConfig', () => {
   it('refuses a config someone edited to point the token elsewhere', async () => {
     const path = join(dir, 'bridge.json')
     await writePrivateFile(path, JSON.stringify({ url: 'http://attacker.example:80/mcp', token: TOKEN }))
-    await expect(readBridgeConfig(path)).rejects.toEqual(new SiteAdapterError('config', 'invalid'))
+    await expect(readBridgeConfig(path)).rejects.toEqual(new ValetError('config', 'invalid'))
   })
 
   it('refuses a config whose URL says localhost, which another account could answer on ::1', async () => {
     const path = join(dir, 'bridge.json')
     await writePrivateFile(path, JSON.stringify({ url: 'http://localhost:52011/mcp', token: TOKEN }))
-    await expect(readBridgeConfig(path)).rejects.toEqual(new SiteAdapterError('config', 'invalid'))
+    await expect(readBridgeConfig(path)).rejects.toEqual(new ValetError('config', 'invalid'))
     await expect(
       writeBridgeConfig(path, { url: 'http://localhost:52011/mcp', token: TOKEN }),
-    ).rejects.toEqual(new SiteAdapterError('config', 'invalid'))
+    ).rejects.toEqual(new ValetError('config', 'invalid'))
   })
 
   it('refuses a config readable by other accounts', async () => {
     const path = join(dir, 'bridge.json')
     await writeBridgeConfig(path, { url: URL_, token: TOKEN })
     await chmod(path, 0o644)
-    await expect(readBridgeConfig(path)).rejects.toEqual(new SiteAdapterError('config', 'insecure-file'))
+    await expect(readBridgeConfig(path)).rejects.toEqual(new ValetError('config', 'insecure-file'))
   })
 
   it('refuses a config that is not JSON or has extra keys', async () => {
     const path = join(dir, 'bridge.json')
     await writePrivateFile(path, 'url=x')
-    await expect(readBridgeConfig(path)).rejects.toEqual(new SiteAdapterError('config', 'invalid'))
+    await expect(readBridgeConfig(path)).rejects.toEqual(new ValetError('config', 'invalid'))
     await writePrivateFile(path, JSON.stringify({ url: URL_, token: TOKEN, extra: true }))
-    await expect(readBridgeConfig(path)).rejects.toEqual(new SiteAdapterError('config', 'invalid'))
+    await expect(readBridgeConfig(path)).rejects.toEqual(new ValetError('config', 'invalid'))
   })
 })
 
@@ -137,9 +137,7 @@ describe('main', () => {
     const code = await main([join(dir, 'missing.json')], { input: new PassThrough(), output, errors })
 
     expect(code).toBe(1)
-    expect(written()).toBe(
-      'siteadapter-bridge: the config file does not exist; start siteadapter to write it\n',
-    )
+    expect(written()).toBe('valet-bridge: the config file does not exist; start Valet to write it\n')
     expect(stdout()).toBe('')
   })
 
@@ -154,7 +152,7 @@ describe('main', () => {
     expect(code).toBe(1)
     expect(written()).not.toContain('secret-looking-value')
     expect(written()).toBe(
-      'siteadapter-bridge: the config file must hold only the endpoint url (http://127.0.0.1:<port>/mcp) and token\n',
+      'valet-bridge: the config file must hold only the endpoint url (http://127.0.0.1:<port>/mcp) and token\n',
     )
   })
 
@@ -176,7 +174,7 @@ describe('main', () => {
     const errors = new PassThrough()
     const written = collect(errors)
     const readConfig = async (): Promise<never> => {
-      throw new SiteAdapterError('config', 'unavailable')
+      throw new ValetError('config', 'unavailable')
     }
 
     const code = await main(['bridge.json'], {
@@ -187,7 +185,7 @@ describe('main', () => {
     })
 
     expect(code).toBe(1)
-    expect(written()).toBe('siteadapter-bridge: the config file cannot be read\n')
+    expect(written()).toBe('valet-bridge: the config file cannot be read\n')
   })
 
   it('re-reads the config file when the bridge reconnects', async () => {

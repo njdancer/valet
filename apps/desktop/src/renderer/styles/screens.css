@@ -603,7 +603,7 @@
   background: var(--bg-sunken);
 }
 
-/* Adapter-supplied text: deliberately quieter than what siteadapter checked itself. */
+/* Adapter-supplied text: deliberately quieter than what Valet checked itself. */
 .unverified .note {
   color: var(--text-secondary);
   font-size: var(--text-sm);

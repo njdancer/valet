@@ -17,7 +17,7 @@ import {
   type NeedsUserReason,
   parseManifest,
   type SecretField,
-} from '@siteadapter/core'
+} from '@valet/core'
 
 export const REAL_ORIGIN = 'https://www.woolworths.com.au'
 export const REAL_AUTH_ORIGIN = 'https://auth.woolworths.com.au'

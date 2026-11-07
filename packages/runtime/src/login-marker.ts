@@ -8,7 +8,7 @@
 
 import { open, stat, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
-import { NEEDS_USER_REASONS, type NeedsUserReason, SiteAdapterError } from '@siteadapter/core'
+import { NEEDS_USER_REASONS, type NeedsUserReason, ValetError } from '@valet/core'
 import { ADAPTER_ID } from './approvals'
 import type { Clock } from './clock'
 import { isErrno, syncDirectory, writeFileAtomic, writeFileSynced } from './files'
@@ -83,9 +83,9 @@ export class LoginAttemptMarker implements LoginMarkerStore {
     retryAt: number | null,
     reason?: NeedsUserReason,
   ): Promise<void> {
-    if (!Number.isSafeInteger(failures) || failures < 1) throw new SiteAdapterError('login', 'invalid')
+    if (!Number.isSafeInteger(failures) || failures < 1) throw new ValetError('login', 'invalid')
     if (reason !== undefined && !NEEDS_USER_REASONS.includes(reason)) {
-      throw new SiteAdapterError('login', 'invalid')
+      throw new ValetError('login', 'invalid')
     }
     const heldAt = new Date(this.clock.now()).toISOString()
     // Atomic, so a crash mid-write leaves the in-progress marker rather than a torn hold.
@@ -122,7 +122,7 @@ export class LoginAttemptMarker implements LoginMarkerStore {
 
   private pathFor(adapterId: string): string {
     // Ids become file names; refuse anything that could walk out of the directory.
-    if (!ADAPTER_ID.test(adapterId)) throw new SiteAdapterError('manifest', 'invalid')
+    if (!ADAPTER_ID.test(adapterId)) throw new ValetError('manifest', 'invalid')
     return join(this.dir, `${adapterId}.login-attempt`)
   }
 }

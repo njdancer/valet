@@ -147,7 +147,7 @@ const firstTable = decisionsText.slice(decisionsText.indexOf('### Answer these f
 const answerFirst = new Set(
   [...firstTable.slice(0, firstTable.indexOf('\n### D')).matchAll(/^\| (D\d+a?) /gm)].map((m) => m[1]),
 )
-const decided = new Set(['D9', 'D39'])
+const decided = new Set(['D1', 'D9', 'D39'])
 
 const decisions = [...decisionsText.matchAll(/^### (D\d+a?)\. (.+)\n([\s\S]*?)(?=^### |(?![\s\S]))/gm)].map(
   ([, id, title, body]) => {
@@ -289,7 +289,7 @@ const intro = ARTIFACT
   : 'Answers stay in this browser. When you’re done, copy them and paste them into the chat, or save <code>answers.md</code> into <code>docs/review/</code>.'
 
 const content = `<main>
-  <h1>siteadapter: overnight review</h1>
+  <h1>valet: overnight review</h1>
   <p class="muted">${escapeHtml(status.generated)}. Built from <code>docs/plan.md</code> and <code>docs/review/status.json</code> by <code>node docs/review/build.mjs${ARTIFACT ? ' --artifact' : ''}</code>.</p>
   <nav class="tabs">
     <a href="#overview" data-tab="overview">Overview</a>
@@ -430,9 +430,9 @@ const content = `<main>
   general.addEventListener('input', () => later('general', () => write('notes', 'general', { text: general.value, at: new Date().toISOString() })))
 
   function localBackend() {
-    const KEY = 'siteadapter-review'
+    const KEY = 'valet-review'
     try {
-      const saved = JSON.parse(localStorage.getItem(KEY) || 'null') || { answers: JSON.parse(localStorage.getItem('siteadapter-review-answers') || '{}') }
+      const saved = JSON.parse(localStorage.getItem(KEY) || 'null') || { answers: JSON.parse(localStorage.getItem('valet-review-answers') || '{}') }
       state.answers = saved.answers || {}
       state.todo = saved.todo || {}
       state.notes = saved.notes || {}
@@ -532,7 +532,7 @@ if (ARTIFACT) {
   mkdirSync(out, { recursive: true })
   writeFileSync(
     join(out, 'index.html'),
-    `<title>siteadapter review</title>
+    `<title>Valet review</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <style>
 ${tokens}
@@ -552,7 +552,7 @@ ${content}`,
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>siteadapter review</title>
+<title>Valet review</title>
 <link rel="stylesheet" href="../mockups/tokens.css">
 <style>${css}</style>
 </head>

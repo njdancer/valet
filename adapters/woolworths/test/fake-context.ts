@@ -9,10 +9,10 @@ import {
   type EnsureResult,
   type FetchInit,
   type FetchResult,
-  SiteAdapterError,
   type ToolContext,
   type ToolPage,
-} from '@siteadapter/core'
+  ValetError,
+} from '@valet/core'
 import { createManifest } from '../src/manifest'
 
 export const FAKE_ORIGIN = 'https://www.woolworths.test'
@@ -73,7 +73,7 @@ export class FakeToolContext implements ToolContext {
       const decision = decideRequest(method, url, this.manifest.egress, this.manifest.requests)
       if (!decision.allowed) {
         this.blocked.push({ method, url, reason: decision.reason })
-        throw new SiteAdapterError('request-surface', 'undeclared-request')
+        throw new ValetError('request-surface', 'undeclared-request')
       }
       const path = new URL(url).pathname
       const request = { method, url, path, json: init?.json }

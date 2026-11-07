@@ -2,7 +2,7 @@ import { request } from 'node:http'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js'
-import { SiteAdapterError } from '@siteadapter/core'
+import { ValetError } from '@valet/core'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { type RunningHttpServer, startHttpServer } from '../src/http'
@@ -116,7 +116,7 @@ describe('startHttpServer', () => {
   it('refuses to start with a blank or malformed token', async () => {
     for (const token of ['', 'short', `${TOKEN} `]) {
       await expect(startHttpServer({ caller: new FakeCaller([]), token })).rejects.toEqual(
-        new SiteAdapterError('config', 'invalid'),
+        new ValetError('config', 'invalid'),
       )
     }
   })
@@ -208,20 +208,20 @@ describe('startHttpServer', () => {
       thrown = error
     }
 
-    expect(thrown).toEqual(new SiteAdapterError('tool-run', 'internal'))
+    expect(thrown).toEqual(new ValetError('tool-run', 'internal'))
     expect((thrown as Error).message).not.toContain('secret')
     for (const client of clients) {
       expect((await client.listTools()).tools.map((t) => t.name)).toEqual(['woolworths_search_products'])
     }
   })
 
-  it('reports a SiteAdapterError from the runtime by its own stage and class', async () => {
+  it('reports a ValetError from the runtime by its own stage and class', async () => {
     const caller = new FakeCaller([searchProducts])
     const running = await start(caller)
     caller.listTools = () => {
-      throw new SiteAdapterError('grant', 'locked')
+      throw new ValetError('grant', 'locked')
     }
-    expect(() => running.refresh()).toThrow(new SiteAdapterError('grant', 'locked'))
+    expect(() => running.refresh()).toThrow(new ValetError('grant', 'locked'))
   })
 
   it('closes the least recently used session beyond the limit', async () => {
@@ -247,7 +247,7 @@ describe('startHttpServer', () => {
     const holder = await start(new FakeCaller([searchProducts]))
     await expect(
       startHttpServer({ caller: new FakeCaller([searchProducts]), token: TOKEN, port: holder.port }),
-    ).rejects.toEqual(new SiteAdapterError('config', 'unavailable'))
+    ).rejects.toEqual(new ValetError('config', 'unavailable'))
   })
 
   it('stops accepting connections once closed', async () => {
@@ -370,7 +370,7 @@ describe('setToken', () => {
   it('refuses a malformed token and keeps the old one', async () => {
     const running = await start(new FakeCaller([searchProducts]))
     for (const token of ['', 'short', `${OTHER} `]) {
-      await expect(running.setToken(token)).rejects.toEqual(new SiteAdapterError('config', 'invalid'))
+      await expect(running.setToken(token)).rejects.toEqual(new ValetError('config', 'invalid'))
     }
     expect((await rawPost(running.port, {})).status).toBe(200)
   })

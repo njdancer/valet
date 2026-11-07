@@ -13,11 +13,7 @@ the login on `https://auth.woolworths.com.au`
 ## Use
 
 ```ts
-import {
-  generateTestCertificate,
-  startExfilSink,
-  startFakeWoolworths,
-} from '@siteadapter/fake-woolworths-site'
+import { generateTestCertificate, startExfilSink, startFakeWoolworths } from '@valet/fake-woolworths-site'
 
 const tls = await generateTestCertificate(['www.woolworths.test', 'auth.woolworths.test', 'evil.test'])
 const site = await startFakeWoolworths({
@@ -51,7 +47,7 @@ others). To assert a secret never arrived, search the whole record, e.g.
 Without `hostname`, both servers report `127.0.0.1` on their own ports. A browser shares cookies
 across ports on one host, so use hostnames when cookie separation between the origins matters.
 
-Run it by hand with `mise exec -- pnpm --filter @siteadapter/fake-woolworths-site start` (plain
+Run it by hand with `mise exec -- pnpm --filter @valet/fake-woolworths-site start` (plain
 HTTP on port 8417, auth on 8418; `-- --port 0` for any free ports). It prints both origins and two
 test accounts.
 
@@ -176,7 +172,7 @@ shows up as a success rather than an error. It also records WebSocket upgrade at
 The fake loads its fixtures as JSON modules (`src/fixture-data.ts`), so a bundler inlines them and
 a bundle that imports the fake needs no `fixtures/` folder beside it. `fixtureFile(name)` returns
 one, parsed, as a fresh copy; the module is also exported as
-`@siteadapter/fake-woolworths-site/fixtures`. `readFixtureFile(name, directory?)` reads the same
+`@valet/fake-woolworths-site/fixtures`. `readFixtureFile(name, directory?)` reads the same
 file from disk (by default this package's `fixtures/`, or a copied folder by path or URL), and
 `FIXTURE_NAMES` lists them. A test checks the two agree. A copied `fixtures/` folder still works,
 but nothing needs it any more.

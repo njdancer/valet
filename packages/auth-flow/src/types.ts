@@ -14,7 +14,7 @@ import type {
   ProviderKind,
   SecretValue,
   Stage,
-} from '@siteadapter/core'
+} from '@valet/core'
 import type { UrlPatternMatcher } from './url-matcher'
 
 export type AuthOutcome =
@@ -50,7 +50,7 @@ export interface AuthProbe {
    * GETs `url` from inside the auth partition with its cookies, as the page would, and returns
    * whatever the site answered. `url` is always on the manifest's home origin and on `navigation`.
    * The flow itself reads a 429, an HTML 403 or Akamai's block page as the site refusing us and
-   * ends as blocked. The hook may also throw SiteAdapterError('probe', 'blocked-by-site' |
+   * ends as blocked. The hook may also throw ValetError('probe', 'blocked-by-site' |
    * 'rate-limited') itself, e.g. when the site's breaker is open; anything else thrown becomes
    * probe: internal.
    */

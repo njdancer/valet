@@ -3,10 +3,10 @@ import { act } from 'react'
 import { describe, expect, it } from 'vitest'
 import { boot, devFake, resolveApi } from '../src/renderer/boot'
 import { createFakeApi } from '../src/renderer/dev/fake-api'
-import type { SiteAdapterApi } from '../src/shared/api'
+import type { ValetApi } from '../src/shared/api'
 
-function windowWith(api: SiteAdapterApi | undefined): Window {
-  return { siteadapter: api } as unknown as Window
+function windowWith(api: ValetApi | undefined): Window {
+  return { valet: api } as unknown as Window
 }
 
 describe('boot', () => {
@@ -49,6 +49,6 @@ describe('boot', () => {
     await act(async () => {
       await import('../src/renderer/tray')
     })
-    expect(await screen.findByText('Quit siteadapter')).toBeTruthy()
+    expect(await screen.findByText('Quit Valet')).toBeTruthy()
   })
 })

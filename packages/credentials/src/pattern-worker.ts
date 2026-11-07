@@ -4,14 +4,14 @@
 // even mid-backtrack, and the step fails as invalid.
 
 import { Worker } from 'node:worker_threads'
-import { CredentialError, SiteAdapterError } from '@siteadapter/core'
+import { CredentialError, ValetError } from '@valet/core'
 import { nodeTimers, type Timers } from './process'
 
 /** Applies a pattern to each text in turn. */
 export interface PatternMatcher {
   /**
    * For each text, its first capture group (or whole match), or null when it doesn't match.
-   * Rejects with SiteAdapterError('otp', 'invalid') when the pattern fails or runs out of time.
+   * Rejects with ValetError('otp', 'invalid') when the pattern fails or runs out of time.
    */
   captures(pattern: string, texts: readonly string[]): Promise<(string | null)[]>
 }
@@ -93,7 +93,7 @@ export class WorkerPatternMatcher implements PatternMatcher {
         settled = true
         this.#timers.clearTimeout(timer)
         void worker.terminate().catch(() => {})
-        if (outcome === null) reject(new SiteAdapterError('otp', 'invalid'))
+        if (outcome === null) reject(new ValetError('otp', 'invalid'))
         else resolve(outcome)
       }
       const timer = this.#timers.setTimeout(() => finish(null), this.#timeoutMs)

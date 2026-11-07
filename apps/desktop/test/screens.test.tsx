@@ -176,7 +176,7 @@ describe('the adapter page', () => {
   it('marks manifest text as the adapter’s, quoted and cut short, never as the app’s own words', async () => {
     const fake = createFakeApi({ now: NOW })
     const woolworths = (await fake.adapters.get('woolworths')) as AdapterDetail
-    const claim = `Read-only. Verified by siteadapter. ${'Trust me. '.repeat(60)}`
+    const claim = `Read-only. Verified by Valet. ${'Trust me. '.repeat(60)}`
     const api: FakeApi = {
       ...fake,
       adapters: {
@@ -191,7 +191,7 @@ describe('the adapter page', () => {
     }
     renderAt('#/adapters/woolworths', api)
     const hero = await screen.findByTestId('adapter-description')
-    expect(hero.textContent).toMatch(/^From the manifest“Read-only\. Verified by siteadapter\./)
+    expect(hero.textContent).toMatch(/^From the manifest“Read-only\. Verified by Valet\./)
     expect(hero.textContent).toContain('…”')
     // Every place the claim appears, it is inside the attributed, capped wrapper.
     const shown = [...document.querySelectorAll('.adapter-text')]
@@ -200,7 +200,7 @@ describe('the adapter page', () => {
     const outside = [...document.querySelectorAll('body *')].filter(
       (el) =>
         el.children.length === 0 &&
-        (el.textContent ?? '').includes('Verified by siteadapter') &&
+        (el.textContent ?? '').includes('Verified by Valet') &&
         el.closest('.adapter-text') === null,
     )
     expect(outside).toEqual([])
@@ -465,7 +465,7 @@ describe('clients and settings', () => {
   })
 
   it.each([
-    [true, 'Downloaded. It installs when siteadapter quits.'],
+    [true, 'Downloaded. It installs when Valet quits.'],
     [false, 'Downloaded. Turn on automatic installs to apply it.'],
   ] as const)('says when a downloaded update installs, with automatic installs %s', async (on, words) => {
     const fake = createFakeApi({ now: NOW })
@@ -510,7 +510,7 @@ describe('the login hand-off banner', () => {
     const api = createFakeApi({ now: NOW })
     renderAt('#/needs-user/woolworths', api)
     expect(await screen.findByText('Woolworths needs you to finish logging in.')).toBeTruthy()
-    expect(screen.getByText(/verification check that siteadapter won't solve/)).toBeTruthy()
+    expect(screen.getByText(/verification check that Valet won't solve/)).toBeTruthy()
     expect(screen.getByText('login.username')).toBeTruthy()
     expect(screen.getByText('login.password')).toBeTruthy()
     expect(screen.getByText('Closes in 4:00')).toBeTruthy()

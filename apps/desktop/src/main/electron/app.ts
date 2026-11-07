@@ -4,12 +4,8 @@
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import {
-  createElectronSessionDriver,
-  hardenProcess,
-  type ManifestOptions,
-} from '@siteadapter/browser-electron'
-import { startEndpoint } from '@siteadapter/mcp-server'
+import { createElectronSessionDriver, hardenProcess, type ManifestOptions } from '@valet/browser-electron'
+import { startEndpoint } from '@valet/mcp-server'
 import { app, clipboard, dialog, protocol } from 'electron'
 import { builtinAdapters } from '../adapters'
 import { APP_SCHEME, APP_SCHEME_PRIVILEGES, createAppSchemeHandler } from '../core/app-scheme'
@@ -27,7 +23,7 @@ import { AppWindows } from './windows'
 
 const mode = launchMode(process.argv, process.env, {
   packaged: app.isPackaged,
-  demoBuild: __SITEADAPTER_DEMO_BUILD__,
+  demoBuild: __VALET_DEMO_BUILD__,
 })
 
 /**
@@ -35,9 +31,9 @@ const mode = launchMode(process.argv, process.env, {
  * app:// scheme the renderer is served from (it must be privileged before ready to be standard and
  * secure, so module scripts and the page's CSP 'self' work there).
  *
- * userData is named after the package (siteadapter-dev for a development package), so a
+ * userData is named after the package (Valet Dev for a development package), so a
  * development build never shares the release app's data. An unpackaged run (`pnpm start`,
- * `electron .`) is development code too: it uses siteadapter-dev, never the release folder, so it
+ * `electron .`) is development code too: it uses Valet Dev, never the release folder, so it
  * can't raise the release's version floor or write update-installed events into its audit log.
  */
 function beforeReady(): void {
@@ -53,11 +49,11 @@ function beforeReady(): void {
 /** How long quitting may take to close the endpoint, the drivers and the demo site. */
 const QUIT_BOUND_MS = 5_000
 
-const log = (line: string) => process.stderr.write(`siteadapter: ${line}\n`)
+const log = (line: string) => process.stderr.write(`valet: ${line}\n`)
 
 /** The update feed, compiled in: empty in a dev, demo or unconfigured build (updates then stay off). */
-const FEED_BASE_URL = __SITEADAPTER_FEED_BASE_URL__
-const FEED_PUBLIC_KEY = __SITEADAPTER_FEED_PUBLIC_KEY__
+const FEED_BASE_URL = __VALET_FEED_BASE_URL__
+const FEED_PUBLIC_KEY = __VALET_FEED_PUBLIC_KEY__
 
 /** The stdio bridge from the repo, until the app bundles it (packaging's job): tsx and its CLI. */
 function bridgeCommand(configPath: string): BridgeCommand | null {
@@ -76,7 +72,7 @@ async function main(): Promise<void> {
 
   const base = rendererBase(
     process.env['ELECTRON_RENDERER_URL'],
-    { packaged: app.isPackaged, devServerBuild: __SITEADAPTER_DEV_SERVER__ },
+    { packaged: app.isPackaged, devServerBuild: __VALET_DEV_SERVER__ },
     join(import.meta.dirname, '../renderer'),
   )
   // The built renderer (inside app.asar when packaged; Electron's fs reads it there), on the default
@@ -100,7 +96,7 @@ async function main(): Promise<void> {
 
   let demo: DemoSite | null = null
   // The constant first, so a production build drops the import, and with it the demo chunk.
-  if (__SITEADAPTER_DEMO_BUILD__ && mode.demo) {
+  if (__VALET_DEMO_BUILD__ && mode.demo) {
     const { exposeToE2e, startDemoSite, trustDemoCertificate } = await import('./demo')
     demo = await startDemoSite(app.getPath('userData'))
     trustDemoCertificate('woolworths', demo.fingerprint)
@@ -144,7 +140,7 @@ async function main(): Promise<void> {
         // 'on-reset' waits for an HTTP-client setup that shows the token and states that risk.
         stablePort: true,
         tokenRotation: 'every-launch',
-        info: { name: 'siteadapter', version: app.getVersion() },
+        info: { name: 'valet', version: app.getVersion() },
       }),
     ui: {
       writeClipboard: (text) => clipboard.writeText(text),
@@ -217,7 +213,7 @@ async function main(): Promise<void> {
   if (mode.demo || mode.e2e || attention.length > 0) windows.openControlPanel(null)
 
   // A smoke build only: the packaged main process loads what it loads lazily, and says so.
-  if (__SITEADAPTER_SMOKE_BUILD__) {
+  if (__VALET_SMOKE_BUILD__) {
     const { smokeSelfCheck } = await import('./smoke')
     await smokeSelfCheck(app.getPath('userData'))
   }

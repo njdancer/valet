@@ -17,7 +17,7 @@ import { readFileSync, rmSync } from 'node:fs'
 import { connect, createServer, type Server } from 'node:net'
 import { join } from 'node:path'
 import { expect, type Page, test } from '@playwright/test'
-import { BEACON_ROUNDS_ATTRIBUTE, type ExfilSink, startExfilSink } from '@siteadapter/fake-woolworths-site'
+import { BEACON_ROUNDS_ATTRIBUTE, type ExfilSink, startExfilSink } from '@valet/fake-woolworths-site'
 import {
   appWindows,
   CONTROL,
@@ -132,9 +132,9 @@ test('the canary works: evil.test, as the app resolves it, reaches the sink', as
 })
 
 test('approved and searched, the app itself sends nothing to evil.test', async () => {
-  const pending = await control.evaluate(() => window.siteadapter?.approvals.pending())
+  const pending = await control.evaluate(() => window.valet?.approvals.pending())
   const hash = pending?.[0]?.to.hash ?? ''
-  await control.evaluate((hash) => window.siteadapter?.approvals.approve('woolworths', hash), hash)
+  await control.evaluate((hash) => window.valet?.approvals.approve('woolworths', hash), hash)
   await expect.poll(async () => (await client.listTools()).tools.length).toBe(6)
   const found = await callTool(client, 'woolworths_search_products', { query: 'bread' })
   expect(found.isError, found.text).toBe(false)
@@ -144,9 +144,8 @@ test('approved and searched, the app itself sends nothing to evil.test', async (
 test('a hostile page script beaconing to evil.test is blocked, and audited as the page’s', async () => {
   // From now on every www page the fake serves carries the beacon, as its own script.
   await launched.app.evaluate((_electron, port) => {
-    const hook = (
-      globalThis as { __siteadapterE2e?: { pageBeacon(t: { host: string; port: number }): void } }
-    ).__siteadapterE2e
+    const hook = (globalThis as { __valetE2e?: { pageBeacon(t: { host: string; port: number }): void } })
+      .__valetE2e
     if (hook === undefined) throw new Error('not an e2e launch of a demo build')
     hook.pageBeacon({ host: 'evil.test', port })
   }, doorPort)

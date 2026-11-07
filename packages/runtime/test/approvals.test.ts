@@ -12,7 +12,7 @@ const hashA = 'a'.repeat(64)
 const hashB = 'b'.repeat(64)
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'siteadapter-approvals-'))
+  dir = await mkdtemp(join(tmpdir(), 'valet-approvals-'))
   path = join(dir, 'approvals.json')
   audit = new MemoryAudit()
 })

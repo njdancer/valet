@@ -1,5 +1,5 @@
 // The contract between the renderer and the main process: what the preload exposes as
-// `window.siteadapter` through contextBridge. The renderer is untrusted UI. It reads plain JSON and
+// `window.valet` through contextBridge. The renderer is untrusted UI. It reads plain JSON and
 // asks the main process to act; it never receives a secret value, a 1Password item reference's
 // contents, a session cookie or the endpoint token, and nothing here can carry one.
 //
@@ -22,7 +22,7 @@ import type {
   RunOutcome,
   SecretField,
   Stage,
-} from '@siteadapter/core'
+} from '@valet/core'
 
 /** An ISO 8601 timestamp. */
 export type IsoTime = string
@@ -275,7 +275,7 @@ export interface ProviderStatus {
   readonly grantCount: number
 }
 
-/** An item in the siteadapter vault. Title only: no fields, no URLs, no usernames. */
+/** An item in the Valet vault. Title only: no fields, no URLs, no usernames. */
 export interface VaultItem {
   readonly id: string
   readonly title: string
@@ -654,7 +654,7 @@ export type AppEventType = AppEvent['type']
 
 // ---------- The API ----------
 
-export interface SiteAdapterApi {
+export interface ValetApi {
   readonly adapters: {
     list(): Promise<readonly AdapterSummary[]>
     /** Null when no adapter has that id. */
@@ -669,7 +669,7 @@ export interface SiteAdapterApi {
   readonly grants: {
     list(): Promise<readonly GrantInfo[]>
     providers(): Promise<readonly ProviderStatus[]>
-    /** Items in the siteadapter vault, title only. */
+    /** Items in the Valet vault, title only. */
     vaultItems(provider: ProviderKind): Promise<readonly VaultItem[]>
     /** The main process checks origins ⊆ the manifest's request for that hash, and refuses otherwise. */
     make(request: GrantRequest): Promise<void>
@@ -760,6 +760,6 @@ export type { AuditEvent, AuditRecord }
 declare global {
   interface Window {
     /** Set by the preload. Absent in a plain browser, where the dev entry uses the fake. */
-    readonly siteadapter?: SiteAdapterApi
+    readonly valet?: ValetApi
   }
 }

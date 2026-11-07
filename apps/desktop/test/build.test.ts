@@ -10,7 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { WOOLWORTHS_HASH } from '../src/renderer/dev/fake-api'
 import { CONTENT_SECURITY_POLICY } from '../vite.config'
 
-const out = mkdtempSync(join(tmpdir(), 'siteadapter-renderer-'))
+const out = mkdtempSync(join(tmpdir(), 'valet-renderer-'))
 
 beforeAll(async () => {
   // Vitest sets NODE_ENV=test, which Vite would honour with a dev build (DEV true, fake included).

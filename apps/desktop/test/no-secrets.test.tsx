@@ -6,15 +6,15 @@
 // What they can't hold: a secret the main process put inside a field a screen does render (an item
 // title, a request target, preview text) would be shown. That half is the main process's guarantee.
 
-import type { AuditRecord } from '@siteadapter/core'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { AuditRecord } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { ControlPanel } from '../src/renderer/control/App'
 import { createFakeApi } from '../src/renderer/dev/fake-api'
 import { ApiProvider } from '../src/renderer/lib/api-context'
 import { TrayPopover } from '../src/renderer/tray/TrayPopover'
-import type { SiteAdapterApi } from '../src/shared/api'
+import type { ValetApi } from '../src/shared/api'
 
 const NOW = Date.parse('2026-11-07T21:48:00+11:00')
 const CANARY = 'canary-7f3a91-SECRET'
@@ -30,7 +30,7 @@ function leak(value: unknown): unknown {
   return copy
 }
 
-function leaky(api: SiteAdapterApi): SiteAdapterApi {
+function leaky(api: ValetApi): ValetApi {
   const wrap = <T extends object>(group: T): T => {
     const out: Record<string, unknown> = {}
     for (const [key, fn] of Object.entries(group)) {

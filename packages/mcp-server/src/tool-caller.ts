@@ -2,7 +2,7 @@
 // imports the runtime, so the endpoint can be tested against a fake and the runtime can change
 // behind this seam.
 
-import type { ErrorClass, NeedsUserReason, Stage, ToolDeclaration } from '@siteadapter/core'
+import type { ErrorClass, NeedsUserReason, Stage, ToolDeclaration } from '@valet/core'
 import type { z } from 'zod'
 
 export interface ListedTool {

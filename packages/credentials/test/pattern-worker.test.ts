@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { CredentialError, SiteAdapterError } from '@siteadapter/core'
+import { CredentialError, ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { type WorkerFactory, type WorkerLike, WorkerPatternMatcher } from '../src/pattern-worker'
 import { ManualTimers } from './fake-process'
@@ -29,11 +29,8 @@ async function invalid(promise: Promise<unknown>): Promise<void> {
     () => undefined,
     (e: unknown) => e,
   )
-  expect(error).toBeInstanceOf(SiteAdapterError)
-  expect([(error as SiteAdapterError).stage, (error as SiteAdapterError).errorClass]).toEqual([
-    'otp',
-    'invalid',
-  ])
+  expect(error).toBeInstanceOf(ValetError)
+  expect([(error as ValetError).stage, (error as ValetError).errorClass]).toEqual(['otp', 'invalid'])
 }
 
 describe('WorkerPatternMatcher with a real worker', () => {

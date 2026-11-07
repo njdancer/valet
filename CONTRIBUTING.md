@@ -28,8 +28,8 @@ conventional-style subjects (`feat(runtime): …`, `test(core): …`, `docs: …
   `packages/credentials` reveals the 1Password service-account token once, straight into the SDK's
   `createClient`, which only accepts a string. A test in `packages/credentials` fails if any other
   module there calls `reveal()`.
-- **Errors.** Errors that cross a package boundary are `SiteAdapterError(stage, errorClass)` from
-  `@siteadapter/core`. Never put page text, URLs with query strings, or exception messages into
+- **Errors.** Errors that cross a package boundary are `ValetError(stage, errorClass)` from
+  `@valet/core`. Never put page text, URLs with query strings, or exception messages into
   anything that leaves the runtime.
 - **Injected effects.** Inject clocks, sleeps, process spawners and network access, so that tests
   are deterministic and never touch the real world.

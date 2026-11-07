@@ -74,12 +74,12 @@ function mcp(): McpClient {
 }
 
 async function grantBoth(hash: string): Promise<void> {
-  const detail = await control.evaluate(() => window.siteadapter?.adapters.get('woolworths'))
+  const detail = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
   const login = detail?.secretRequests.find((s) => s.name === 'login')?.origins ?? []
   await control.evaluate(
     ({ hash, login }) =>
       Promise.all([
-        window.siteadapter?.grants.make({
+        window.valet?.grants.make({
           adapterId: 'woolworths',
           adapterHash: hash,
           secret: 'login',
@@ -87,7 +87,7 @@ async function grantBoth(hash: string): Promise<void> {
           itemRef: 'demo-woolworths',
           origins: login,
         }),
-        window.siteadapter?.grants.make({
+        window.valet?.grants.make({
           adapterId: 'woolworths',
           adapterHash: hash,
           secret: 'messages',
@@ -102,10 +102,10 @@ async function grantBoth(hash: string): Promise<void> {
 
 test('the built app, approved and granted, logs in and adds a line', async () => {
   await relaunch()
-  const pending = await control.evaluate(() => window.siteadapter?.approvals.pending())
+  const pending = await control.evaluate(() => window.valet?.approvals.pending())
   firstHash = pending?.[0]?.to.hash ?? ''
   expect(firstHash).toMatch(/^[0-9a-f]{64}$/)
-  await control.evaluate((hash) => window.siteadapter?.approvals.approve('woolworths', hash), firstHash)
+  await control.evaluate((hash) => window.valet?.approvals.approve('woolworths', hash), firstHash)
   await grantBoth(firstHash)
   await expect.poll(async () => (await mcp().listTools()).tools.map((t) => t.name).sort()).toEqual(TOOLS)
 
@@ -120,8 +120,8 @@ test('the built app, approved and granted, logs in and adds a line', async () =>
 test('a restart of the same build keeps the approval and the grants', async () => {
   // The demo site comes back on the same ports, so the adapter's origins, and its hash, are the same.
   await relaunch()
-  expect(await control.evaluate(() => window.siteadapter?.approvals.pending())).toEqual([])
-  const detail = await control.evaluate(() => window.siteadapter?.adapters.get('woolworths'))
+  expect(await control.evaluate(() => window.valet?.approvals.pending())).toEqual([])
+  const detail = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
   expect(detail?.hash).toBe(firstHash)
   expect(detail?.approval).toBe('approved')
   expect(detail?.secretRequests.map((s) => s.grant?.itemTitle)).toEqual(['Woolworths (demo account)'])
@@ -135,7 +135,7 @@ test('a restart of the same build keeps the approval and the grants', async () =
 test('the changed bundle waits for review: tools off MCP, no grants, a diff against the approved one', async () => {
   // A new launch is a new fake site: its trolley starts empty, and Auth0's session is gone.
   await relaunch(changedAdapterBuild())
-  const pending = await control.evaluate(() => window.siteadapter?.approvals.pending())
+  const pending = await control.evaluate(() => window.valet?.approvals.pending())
   expect(pending).toHaveLength(1)
   const review = pending?.[0]
   expect(review?.from?.hash).toBe(firstHash)
@@ -153,14 +153,14 @@ test('the changed bundle waits for review: tools off MCP, no grants, a diff agai
   expect((await mcp().listTools()).tools.map((t) => t.name)).toEqual([])
   const refused = await callTool(mcp(), 'woolworths_get_cart', {})
   expect(refused.isError).toBe(true)
-  const detail = await control.evaluate(() => window.siteadapter?.adapters.get('woolworths'))
+  const detail = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
   expect(detail?.approval).toBe('unapproved')
   expect(detail?.secretRequests.map((s) => s.grant)).toEqual([null])
   expect(detail?.messages.map((m) => m.grant)).toEqual([null])
   // The old hash can't be approved in its place.
   const old = await control.evaluate(
     (hash) =>
-      window.siteadapter?.approvals.approve('woolworths', hash).then(
+      window.valet?.approvals.approve('woolworths', hash).then(
         () => 'approved',
         () => 'refused',
       ),
@@ -180,7 +180,7 @@ test('the review screen shows the change, and Approve waits for the acknowledgem
   await control.getByRole('checkbox', { name: 'I’ve read the highlighted additions' }).check()
   await approve.click()
   await expect.poll(async () => (await mcp().listTools()).tools.map((t) => t.name).sort()).toEqual(TOOLS)
-  const detail = await control.evaluate(() => window.siteadapter?.adapters.get('woolworths'))
+  const detail = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
   expect(detail?.approval).toBe('approved')
   expect(detail?.secretRequests.map((s) => s.grant)).toEqual([null])
 })
@@ -212,7 +212,7 @@ test('without new grants the login can’t fill; granted again, the next call lo
 
 async function confirmationPanel(): Promise<Page> {
   if (launched === null) throw new Error('not launched')
-  return windowWithTitle(launched.app, 'siteadapter: confirm', 30_000)
+  return windowWithTitle(launched.app, 'Valet: confirm', 30_000)
 }
 
 test('the irreversible tool asks first; Decline in the panel returns declined to the client', async () => {
@@ -275,7 +275,7 @@ test('only the panel itself can approve; approved there once armed, the tool run
   // The control panel is one of the app's windows, but not the one opened for this confirmation.
   const elsewhere = await control.evaluate(
     (id) =>
-      window.siteadapter?.answerConfirmation(id, true).then(
+      window.valet?.answerConfirmation(id, true).then(
         () => 'approved',
         () => 'refused',
       ),

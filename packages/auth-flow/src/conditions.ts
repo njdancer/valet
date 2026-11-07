@@ -1,13 +1,7 @@
 // Conditions for waitFor and when. They only ever read the page through AuthPage, which takes
 // selectors and text as data; nothing here evaluates script.
 
-import {
-  type AuthPage,
-  type AuthStep,
-  type Condition,
-  isScreenedPattern,
-  SiteAdapterError,
-} from '@siteadapter/core'
+import { type AuthPage, type AuthStep, type Condition, isScreenedPattern, ValetError } from '@valet/core'
 import type { UrlPatternMatcher } from './url-matcher'
 
 /** Every urlRegex pattern in a flow, screened before its first step, and what runs them. */
@@ -25,7 +19,7 @@ export async function evaluateCondition(
   if ('urlContains' in condition) return urlContains(page.currentUrl(), condition.urlContains)
   if ('urlRegex' in condition) {
     // compileUrlRegexes saw every condition in the flow; one it didn't is not from this manifest.
-    if (!regexes.patterns.has(condition.urlRegex)) throw new SiteAdapterError('manifest', 'invalid')
+    if (!regexes.patterns.has(condition.urlRegex)) throw new ValetError('manifest', 'invalid')
     return urlRegexMatches(page.currentUrl(), condition.urlRegex, regexes.matcher)
   }
   if ('textPresent' in condition) return page.textPresent(condition.textPresent)

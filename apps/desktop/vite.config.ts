@@ -2,7 +2,7 @@
 // against the in-memory fake API (src/renderer/dev). The Electron build (electron-vite, later)
 // reuses src/renderer as its renderer root.
 //
-//   mise exec -- pnpm --filter @siteadapter/desktop exec vite
+//   mise exec -- pnpm --filter @valet/desktop exec vite
 //   then open /index.html (control panel) or /tray.html (tray popover)
 
 import { dirname, resolve } from 'node:path'
@@ -30,7 +30,7 @@ export const CONTENT_SECURITY_POLICY = [
 
 export function contentSecurityPolicy(): Plugin {
   return {
-    name: 'siteadapter-csp',
+    name: 'valet-csp',
     apply: 'build',
     transformIndexHtml: () => [
       {

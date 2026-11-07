@@ -1,13 +1,13 @@
 // Names and numbers the app decides once. Keychain and vault names outlive renames (D43), so they
-// live here and nowhere else; each is still pending Nick's decision on D1/D6/D43.
+// live here and nowhere else; D1 named the product Valet; D6 and D43 are still pending.
 
 import { join } from 'node:path'
 
 /** Keychain item holding the 1Password service-account token (D43, pending). */
-export const KEYCHAIN_SERVICE = 'siteadapter'
+export const KEYCHAIN_SERVICE = 'valet'
 export const KEYCHAIN_ACCOUNT = 'onepassword-service-account'
 /** The 1Password vault every granted item lives in (D6, pending). */
-export const VAULT = 'siteadapter'
+export const VAULT = 'Valet'
 
 /** 1Password's Apple Developer Team ID: the op binary must be signed by it (D44). */
 export const ONEPASSWORD_TEAM_ID = '2BUA8C4S2C'
@@ -34,7 +34,7 @@ export const TYPING_DELAY_MS = 60
 /** Runs whose input and output previews are kept in memory for the run trace. Nothing is persisted. */
 export const RUN_MEMORY = 200
 
-export const MCP_SERVER_NAME = 'siteadapter'
+export const MCP_SERVER_NAME = 'valet'
 
 export interface DataPaths {
   readonly dir: string

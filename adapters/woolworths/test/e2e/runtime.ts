@@ -20,12 +20,12 @@ import {
   originAllowed,
   type SecretField,
   SecretValue,
-  SiteAdapterError,
   type Stage,
   type ToolContext,
   type ToolPage,
   toReportable,
-} from '@siteadapter/core'
+  ValetError,
+} from '@valet/core'
 import type { HarnessDriver } from './browser'
 import type { Network } from './network'
 
@@ -136,8 +136,7 @@ export class HarnessRuntime {
     }
     await this.deps.driver.handoff(this.manifest.session.cookieDomains, this.manifest.session.storage)
     try {
-      if (!(await this.probe(page)))
-        return this.failed(new SiteAdapterError('probe', 'not-logged-in'), 'probe')
+      if (!(await this.probe(page))) return this.failed(new ValetError('probe', 'not-logged-in'), 'probe')
     } catch (error) {
       return this.failed(error, 'probe')
     }
@@ -188,7 +187,7 @@ export class HarnessRuntime {
   private answer(status: number, body: unknown): boolean {
     const probe = this.fetchProbe()
     if (probe.loggedOutStatuses.includes(status)) return false
-    if (status !== probe.expectStatus) throw new SiteAdapterError('probe', 'unavailable')
+    if (status !== probe.expectStatus) throw new ValetError('probe', 'unavailable')
     let value: unknown = body
     for (const key of (probe.jsonPath ?? '').split('.').filter((part) => part !== '')) {
       value =
@@ -207,7 +206,7 @@ export class HarnessRuntime {
     switch (step.op) {
       case 'goto':
         if (!originAllowed(new URL(step.url).origin, this.manifest.navigation)) {
-          throw new SiteAdapterError('navigate', 'navigation-escaped')
+          throw new ValetError('navigate', 'navigation-escaped')
         }
         await page.goto(step.url)
         return
@@ -233,12 +232,12 @@ export class HarnessRuntime {
         )
         return
       case 'assertLoggedIn':
-        if (!(await this.authProbe())) throw new SiteAdapterError('probe', 'not-logged-in')
+        if (!(await this.authProbe())) throw new ValetError('probe', 'not-logged-in')
         return
       case 'needsUser':
         throw new Halt(step.reason, step.note)
       case 'fail':
-        throw new SiteAdapterError('auth-step', step.errorClass)
+        throw new ValetError('auth-step', step.errorClass)
       default:
         throw new Error(`the harness does not model ${step.op}`)
     }
@@ -261,8 +260,7 @@ export class HarnessRuntime {
   }
 
   private async requireVisible(page: AuthPage, selector: string): Promise<void> {
-    if ((await page.inspect(selector))?.visible !== true)
-      throw new SiteAdapterError('auth-step', 'element-missing')
+    if ((await page.inspect(selector))?.visible !== true) throw new ValetError('auth-step', 'element-missing')
   }
 
   /** The guards from docs/security-model.md, then a paced, origin-checked fill. */
@@ -274,7 +272,7 @@ export class HarnessRuntime {
   ): Promise<void> {
     const request = Object.hasOwn(this.manifest.secrets, secret) ? this.manifest.secrets[secret] : undefined
     const grant = this.deps.grants.find((g) => g.secret === secret)
-    if (request === undefined || grant === undefined) throw new SiteAdapterError('grant', 'not-granted')
+    if (request === undefined || grant === undefined) throw new ValetError('grant', 'not-granted')
     const origins = grant.origins.filter((origin) => request.origins.includes(origin))
     await this.guard(page, selector, field, origins)
     const value = await resolveSecret(() => this.deps.resolve(grant.itemRef, field), 'credential')
@@ -292,7 +290,7 @@ export class HarnessRuntime {
     query: { readonly sender: string; readonly pattern: string; readonly maxAgeSeconds: number },
   ): Promise<void> {
     const grant = this.deps.grants.find((g) => g.secret === MESSAGES_SECRET && g.itemRef === query.sender)
-    if (grant === undefined) throw new SiteAdapterError('grant', 'not-granted')
+    if (grant === undefined) throw new ValetError('grant', 'not-granted')
     await this.guard(page, selector, 'otp', grant.origins)
     // As auth-flow does: a code that arrived before this flow started is never accepted.
     const value = await resolveSecret(() => this.deps.otpReader.latest(query, this.flowStartedAt), 'otp')
@@ -311,22 +309,21 @@ export class HarnessRuntime {
     origins: readonly string[],
   ): Promise<void> {
     const info = await page.inspect(selector)
-    if (info === null || !info.visible) throw new SiteAdapterError('auth-step', 'element-missing')
-    if (!originAllowed(info.frameOrigin, origins))
-      throw new SiteAdapterError('secret-fill', 'origin-mismatch')
-    if (!info.inputReachable) throw new SiteAdapterError('secret-fill', 'input-unreachable')
+    if (info === null || !info.visible) throw new ValetError('auth-step', 'element-missing')
+    if (!originAllowed(info.frameOrigin, origins)) throw new ValetError('secret-fill', 'origin-mismatch')
+    if (!info.inputReachable) throw new ValetError('secret-fill', 'input-unreachable')
     const suits =
       field === 'password'
         ? info.inputType === 'password'
         : field === 'username'
           ? ['email', 'text', 'tel'].includes(info.inputType ?? '')
           : ['text', 'tel', 'number'].includes(info.inputType ?? '')
-    if (info.tagName !== 'INPUT' || !suits) throw new SiteAdapterError('secret-fill', 'element-unsuitable')
+    if (info.tagName !== 'INPUT' || !suits) throw new ValetError('secret-fill', 'element-unsuitable')
     if (
       field === 'password' &&
       (info.formActionOrigin === null || !originAllowed(info.formActionOrigin, origins))
     ) {
-      throw new SiteAdapterError('secret-fill', 'form-action-mismatch')
+      throw new ValetError('secret-fill', 'form-action-mismatch')
     }
   }
 
@@ -348,11 +345,11 @@ async function resolveSecret(resolve: () => Promise<SecretValue>, stage: Stage):
     value = await resolve()
   } catch (error) {
     if (error instanceof CredentialError && (ERROR_CLASSES as readonly string[]).includes(error.failure)) {
-      throw new SiteAdapterError(stage, error.failure as ErrorClass)
+      throw new ValetError(stage, error.failure as ErrorClass)
     }
-    throw new SiteAdapterError(stage, 'internal')
+    throw new ValetError(stage, 'internal')
   }
-  if (!(value instanceof SecretValue)) throw new SiteAdapterError(stage, 'internal')
+  if (!(value instanceof SecretValue)) throw new ValetError(stage, 'internal')
   return value
 }
 

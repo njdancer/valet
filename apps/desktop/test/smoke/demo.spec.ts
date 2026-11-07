@@ -16,15 +16,15 @@ let app: ElectronApplication
 let userData: string
 
 test.beforeAll(async () => {
-  userData = mkdtempSync(join(tmpdir(), 'siteadapter-smoke-'))
+  userData = mkdtempSync(join(tmpdir(), 'valet-smoke-'))
   app = await _electron.launch({
     executablePath: electronPath,
     args: [appDir],
     env: {
       ...process.env,
-      SITEADAPTER_DEMO: '1',
-      SITEADAPTER_E2E: '1',
-      SITEADAPTER_USER_DATA: userData,
+      VALET_DEMO: '1',
+      VALET_E2E: '1',
+      VALET_USER_DATA: userData,
     } as Record<string, string>,
   })
 })
@@ -46,13 +46,13 @@ async function controlPanel(): Promise<Page> {
 
 test('the control panel shows the Woolworths adapter waiting for review, in demo mode', async () => {
   const page = await controlPanel()
-  await expect(page).toHaveTitle('siteadapter (demo) [control]')
+  await expect(page).toHaveTitle('valet (demo) [control]')
   await expect(page.getByText('DEMO').first()).toBeVisible()
   await expect(page.getByText('Woolworths').first()).toBeVisible()
   await expect(page.getByText('Not approved').first()).toBeVisible()
-  const pending = await page.evaluate(() => window.siteadapter?.approvals.pending())
+  const pending = await page.evaluate(() => window.valet?.approvals.pending())
   expect(pending?.map((r) => [r.adapterId, r.from])).toEqual([['woolworths', null]])
-  expect(await page.evaluate(() => window.siteadapter?.app.status())).toMatchObject({
+  expect(await page.evaluate(() => window.valet?.app.status())).toMatchObject({
     demo: true,
     paused: false,
   })
@@ -63,7 +63,7 @@ test('the renderer has no Node, and the main process refuses what the contract d
   expect(await page.evaluate(() => typeof (globalThis as { require?: unknown }).require)).toBe('undefined')
   expect(await page.evaluate(() => typeof (globalThis as { process?: unknown }).process)).toBe('undefined')
   const refused = await page.evaluate(() =>
-    window.siteadapter?.app.openControlPanel('https://evil.test/#/adapters' as `#/${string}`).then(
+    window.valet?.app.openControlPanel('https://evil.test/#/adapters' as `#/${string}`).then(
       () => 'opened',
       () => 'refused',
     ),

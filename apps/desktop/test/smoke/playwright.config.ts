@@ -1,7 +1,7 @@
 // The smoke test: the built app (out/), launched in demo mode with Playwright's _electron. Needs a
 // GUI session and openssl, so it isn't part of `pnpm check`:
 //
-//   mise exec -- pnpm --filter @siteadapter/desktop test:smoke
+//   mise exec -- pnpm --filter @valet/desktop test:smoke
 
 import { defineConfig } from '@playwright/test'
 

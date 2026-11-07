@@ -56,7 +56,7 @@ describe('generateTestCertificate with a fake spawner', () => {
     ).rejects.toThrow('openssl exited with 1')
     expect(calls).toHaveLength(1)
     expect(calls[0]?.command).toBe('openssl')
-    expect(calls[0]?.cwd.startsWith(join(tempRoot, 'siteadapter-cert-'))).toBe(true)
+    expect(calls[0]?.cwd.startsWith(join(tempRoot, 'valet-cert-'))).toBe(true)
     const args = calls[0]?.args ?? []
     expect(args.slice(0, 2)).toEqual(['req', '-x509'])
     expect(args).toContain('-nodes')

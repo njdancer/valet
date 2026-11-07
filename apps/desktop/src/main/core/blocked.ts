@@ -12,14 +12,8 @@
 // an adapter is kept (bounded), as the runtime keeps every value seen during a call: a cookie that
 // rotated in between still matches.
 
-import type {
-  AdapterManifest,
-  AuditSink,
-  AuthPageOptions,
-  BlockedRequest,
-  SecretValue,
-} from '@siteadapter/core'
-import { REDACTED, SecretRedactionSet, sensitiveMatcher } from '@siteadapter/runtime'
+import type { AdapterManifest, AuditSink, AuthPageOptions, BlockedRequest, SecretValue } from '@valet/core'
+import { REDACTED, SecretRedactionSet, sensitiveMatcher } from '@valet/runtime'
 
 /** The secret sets kept per adapter: the latest successful login's, and any login still going. */
 const MAX_SETS_PER_ADAPTER = 4

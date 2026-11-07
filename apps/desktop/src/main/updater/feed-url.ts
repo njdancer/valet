@@ -1,5 +1,5 @@
 // The update feed's base URL, checked in one place: electron-builder.config.ts checks
-// SITEADAPTER_UPDATE_URL with it before writing app-update.yml, and createUpdater checks a feed URL
+// VALET_UPDATE_URL with it before writing app-update.yml, and createUpdater checks a feed URL
 // passed to it. The feed is a static directory (latest-mac.yml, beta-mac.yml and the zips), so a
 // URL that needs anything more than a host and a path is a mistake or a token, and is refused.
 

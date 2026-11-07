@@ -4,7 +4,7 @@
 
 import type { ClientTransport } from './tool-caller'
 
-export const TRANSPORT_HEADER = 'x-siteadapter-transport'
+export const TRANSPORT_HEADER = 'x-valet-transport'
 export const BRIDGE_TRANSPORT = 'stdio-bridge'
 
 /** The transport an opening request names. Anything but the bridge's exact value is plain HTTP. */

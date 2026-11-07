@@ -13,7 +13,7 @@ import { classifyArgv, refusedEnv } from '../core/argv'
 import { SMOKE_ARGV } from '../core/smoke'
 
 /** A smoke build's own argv; a plain build drops it, and accepts only the normal shapes. */
-const SMOKE_EXTRA: readonly string[] | null = __SITEADAPTER_SMOKE_BUILD__ ? SMOKE_ARGV : null
+const SMOKE_EXTRA: readonly string[] | null = __VALET_SMOKE_BUILD__ ? SMOKE_ARGV : null
 
 function check(): boolean {
   if (!app.isPackaged) return false
@@ -21,8 +21,8 @@ function check(): boolean {
   if (argv.mode === 'app' && refusedEnv(process.env).length === 0) return false
   process.stderr.write(
     argv.mode === 'bridge'
-      ? 'siteadapter: bridge mode is not built yet\n'
-      : 'siteadapter: refused to start: unexpected arguments or environment\n',
+      ? 'valet: bridge mode is not built yet\n'
+      : 'valet: refused to start: unexpected arguments or environment\n',
   )
   return true
 }

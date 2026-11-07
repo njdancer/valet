@@ -14,11 +14,11 @@ import {
   type NeedsUserReason,
   originAllowed,
   SecretValue,
-  SiteAdapterError,
   type Stage,
   type TypeOptions,
   urlOriginAllowed,
-} from '@siteadapter/core'
+  ValetError,
+} from '@valet/core'
 import { cookiesForDomains } from './cookies'
 import { authBlock, authNavigationAllowed } from './guards'
 import { needsUserTitle } from './needs-user'
@@ -122,12 +122,12 @@ export class SurfaceAuthPage implements AuthPage {
 
   async goto(url: string): Promise<void> {
     this.assertInside('navigate')
-    if (!urlOriginAllowed(url, this.navigation)) throw new SiteAdapterError('navigate', 'navigation-escaped')
+    if (!urlOriginAllowed(url, this.navigation)) throw new ValetError('navigate', 'navigation-escaped')
     this.forget()
     await this.core.step('navigate', async () => {
       const failure = await this.core.load(url)
       this.assertInside('navigate')
-      if (failure !== null) throw new SiteAdapterError('navigate', 'unavailable')
+      if (failure !== null) throw new ValetError('navigate', 'unavailable')
     })
   }
 
@@ -184,14 +184,14 @@ export class SurfaceAuthPage implements AuthPage {
       const target = await this.core.focus('auth-step', selector, signal)
       // The step timed out, or the page moved on, while we waited: leave no target behind.
       if (signal.aborted || generation !== this.generation) {
-        throw new SiteAdapterError('auth-step', 'aborted')
+        throw new ValetError('auth-step', 'aborted')
       }
       const inspected = this.inspected.get(selector)
       if (
         inspected !== undefined &&
         (inspected.frameId !== target.frameId || inspected.origin !== target.origin)
       ) {
-        throw new SiteAdapterError('auth-step', 'element-unsuitable')
+        throw new ValetError('auth-step', 'element-unsuitable')
       }
       this.focusTarget = { ...target, inspected: inspected !== undefined }
     })
@@ -212,7 +212,7 @@ export class SurfaceAuthPage implements AuthPage {
     const target = this.focusTarget
     const allowedOrigins = options?.allowedOrigins
     if (allowedOrigins !== undefined && target === null) {
-      throw new SiteAdapterError('auth-step', 'origin-mismatch')
+      throw new ValetError('auth-step', 'origin-mismatch')
     }
     const guard: TypingGuard = {
       stage: 'auth-step',
@@ -226,10 +226,10 @@ export class SurfaceAuthPage implements AuthPage {
       async (signal) => {
         this.assertInside('auth-step')
         if (target !== null && !(await this.core.stillFocused(target))) {
-          throw new SiteAdapterError('auth-step', 'element-unsuitable')
+          throw new ValetError('auth-step', 'element-unsuitable')
         }
         if (allowedOrigins !== undefined && !originAllowed(target?.origin ?? '', allowedOrigins)) {
-          throw new SiteAdapterError('auth-step', 'origin-mismatch')
+          throw new ValetError('auth-step', 'origin-mismatch')
         }
         await this.core.typeChars(guard, signal, chars.length, delayMs, (i) =>
           this.core.sendChar(chars[i] ?? ''),
@@ -264,7 +264,7 @@ export class SurfaceAuthPage implements AuthPage {
       const session = this.session
       if (session === null) {
         probeTarget(url, this.navigation)
-        throw new SiteAdapterError('probe', 'unsupported')
+        throw new ValetError('probe', 'unsupported')
       }
       const dispose = this.surface.onDestroyed(() => this.closed.abort())
       try {
@@ -289,9 +289,9 @@ export class SurfaceAuthPage implements AuthPage {
     return this.core.step('probe', async () => {
       this.assertInside('probe')
       const session = this.session
-      if (session === null) throw new SiteAdapterError('probe', 'unsupported')
+      if (session === null) throw new ValetError('probe', 'unsupported')
       if (!Array.isArray(cookieDomains) || cookieDomains.some((domain) => typeof domain !== 'string')) {
-        throw new SiteAdapterError('probe', 'invalid')
+        throw new ValetError('probe', 'invalid')
       }
       const cookies = cookiesForDomains(await session.getCookies(), cookieDomains)
       this.assertOpen('probe')
@@ -346,14 +346,14 @@ export class SurfaceAuthPage implements AuthPage {
     this.assertInside(stage)
     const allowedOrigins = options?.allowedOrigins
     if (allowedOrigins === undefined || allowedOrigins.length === 0) {
-      throw new SiteAdapterError(stage, 'origin-mismatch')
+      throw new ValetError(stage, 'origin-mismatch')
     }
     const target = this.focusTarget
-    if (target === null || !target.inspected) throw new SiteAdapterError(stage, 'element-unsuitable')
+    if (target === null || !target.inspected) throw new ValetError(stage, 'element-unsuitable')
     if (httpsOrigin(target.origin) === null || !originAllowed(target.origin, allowedOrigins)) {
-      throw new SiteAdapterError(stage, 'origin-mismatch')
+      throw new ValetError(stage, 'origin-mismatch')
     }
-    if (secret.disposed) throw new SiteAdapterError(stage, 'aborted')
+    if (secret.disposed) throw new ValetError(stage, 'aborted')
     const guard: TypingGuard = {
       stage,
       target,
@@ -364,7 +364,7 @@ export class SurfaceAuthPage implements AuthPage {
     const mark = this.core.commitMark(target)
     await this.core.step(stage, async () => {
       this.assertInside(stage)
-      if (!(await this.core.stillFocused(target))) throw new SiteAdapterError(stage, 'element-unsuitable')
+      if (!(await this.core.stillFocused(target))) throw new ValetError(stage, 'element-unsuitable')
     })
     let index = 0
     try {
@@ -376,9 +376,9 @@ export class SurfaceAuthPage implements AuthPage {
         })
       })
     } catch (error) {
-      if (error instanceof SiteAdapterError) throw error
+      if (error instanceof ValetError) throw error
       // revealEach found the secret disposed partway.
-      throw new SiteAdapterError(stage, 'aborted')
+      throw new ValetError(stage, 'aborted')
     }
   }
 
@@ -398,13 +398,13 @@ export class SurfaceAuthPage implements AuthPage {
   }
 
   private assertInside(stage: Stage): void {
-    if (this.escaped) throw new SiteAdapterError('navigate', 'navigation-escaped')
+    if (this.escaped) throw new ValetError('navigate', 'navigation-escaped')
     this.assertOpen(stage)
   }
 
   /** Throws `stage`/aborted once the page was closed or its window went. */
   private assertOpen(stage: Stage): void {
-    if (this.closed.signal.aborted || this.surface.isDestroyed()) throw new SiteAdapterError(stage, 'aborted')
+    if (this.closed.signal.aborted || this.surface.isDestroyed()) throw new ValetError(stage, 'aborted')
   }
 }
 

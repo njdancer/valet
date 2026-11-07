@@ -16,8 +16,8 @@ import {
   MESSAGES_SECRET,
   messagesSourcesIn,
   type ProviderKind,
-  SiteAdapterError,
-} from '@siteadapter/core'
+  ValetError,
+} from '@valet/core'
 import type { GrantInfo, GrantRequest, VaultItem } from '../../shared/api'
 import { VAULT } from './constants'
 
@@ -42,28 +42,28 @@ const VAULT_ITEM_ID = /^[A-Za-z0-9_-]{1,64}$/
 export async function checkGrantRequest(request: GrantRequest, check: GrantCheck): Promise<CheckedGrant> {
   const { manifest } = check
   if (request.adapterId !== manifest.id || request.adapterHash !== check.installedHash) {
-    throw new SiteAdapterError('grant', 'invalid')
+    throw new ValetError('grant', 'invalid')
   }
-  if (!check.available.has(request.provider)) throw new SiteAdapterError('grant', 'unavailable')
+  if (!check.available.has(request.provider)) throw new ValetError('grant', 'unavailable')
 
   let requested: readonly string[]
   let itemRef: string
   let title: string
   if (request.provider === 'messages') {
-    if (request.secret !== MESSAGES_SECRET) throw new SiteAdapterError('grant', 'invalid')
+    if (request.secret !== MESSAGES_SECRET) throw new ValetError('grant', 'invalid')
     const declared = messagesSourcesIn(manifest.auth.steps).some((s) => s.sender === request.itemRef)
-    if (!declared) throw new SiteAdapterError('grant', 'not-granted')
+    if (!declared) throw new ValetError('grant', 'not-granted')
     requested = manifest.navigation
     itemRef = request.itemRef
     title = request.itemRef
   } else {
     if (request.secret === MESSAGES_SECRET || !Object.hasOwn(manifest.secrets, request.secret)) {
-      throw new SiteAdapterError('grant', 'not-granted')
+      throw new ValetError('grant', 'not-granted')
     }
     requested = manifest.secrets[request.secret]?.origins ?? []
-    if (!VAULT_ITEM_ID.test(request.itemRef)) throw new SiteAdapterError('grant', 'invalid')
+    if (!VAULT_ITEM_ID.test(request.itemRef)) throw new ValetError('grant', 'invalid')
     const item = (await check.vaultItems(request.provider)).find((i) => i.id === request.itemRef)
-    if (item === undefined) throw new SiteAdapterError('grant', 'not-found')
+    if (item === undefined) throw new ValetError('grant', 'not-found')
     itemRef = itemRefFor(request.provider, item.id)
     title = item.title
   }
@@ -74,7 +74,7 @@ export async function checkGrantRequest(request: GrantRequest, check: GrantCheck
     origins.length !== request.origins.length ||
     !origins.every((o) => isBareOrigin(o) && requested.includes(o))
   ) {
-    throw new SiteAdapterError('grant', 'origin-mismatch')
+    throw new ValetError('grant', 'origin-mismatch')
   }
   // In the manifest's order, so the stored grant reads like the request it narrows.
   const ordered = requested.filter((o) => origins.includes(o))

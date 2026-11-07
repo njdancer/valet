@@ -69,7 +69,7 @@ export async function generateTestCertificate(
 ): Promise<TestCertificate> {
   const sans = subjectAltNames(hosts)
   const run = options.spawn ?? spawnProcess
-  const dir = await mkdtemp(join(options.tempRoot ?? tmpdir(), 'siteadapter-cert-'))
+  const dir = await mkdtemp(join(options.tempRoot ?? tmpdir(), 'valet-cert-'))
   try {
     const args = [
       'req',

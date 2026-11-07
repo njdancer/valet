@@ -5,7 +5,7 @@ answers the [decisions](#decisions). It sits on top of [security-model.md](secur
 [architecture.md](architecture.md), and doesn't repeat them. Where this plan finds a gap in either,
 it says so.
 
-"siteadapter" is a working name throughout ([D1](#d1-product-name)).
+The product is called Valet ([D1](#d1-product-name), decided 2026-11-07).
 
 ## Contents
 
@@ -376,8 +376,7 @@ answered on time.
   - Two weeks of real use; fix what breaks.
 - Exit: every [acceptance criterion](#acceptance-criteria) met.
 - Effort: 6–9 agent-days. Nick: 4–6 hours, plus the two weeks of using it.
-- Decisions needed: [D1](#d1-product-name) (bundle ID, Keychain service names and partition names
-  are hard to change once grants and Full Disk Access exist), [D7](#d7-1password-fallback),
+- Decisions needed: [D7](#d7-1password-fallback),
   [D8](#d8-full-disk-access-for-messages), [D17](#d17-ui-stack), [D23](#d23-update-feed-host).
 
 ### M4. Daily-driver hardening
@@ -434,7 +433,7 @@ answered on time.
 - Exit: someone who isn't Nick installs it from the site, connects Claude, and uses an adapter
   without help.
 - Effort: 5–8 agent-days. Nick: 6–10 hours (writing in his own voice, the launch itself).
-- Decisions needed: [D1](#d1-product-name), [D2](#d2-licence),
+- Decisions needed: [D2](#d2-licence),
   [D3](#d3-repository-hosting-and-going-public), [D15](#d15-telemetry),
   [D21](#d21-mcp-client-support), [D22](#d22-second-adapter), [D25](#d25-adapter-legal-posture).
 
@@ -1043,10 +1042,9 @@ to answer first: they block M2 or M3, or they're expensive to change later.
 
 | #   | Decision                                    | Recommendation                                                                                | Blocks     |
 | --- | ------------------------------------------- | --------------------------------------------------------------------------------------------- | ---------- |
-| D1  | **Product name**                            | Pick before the first signed build                                                            | M3         |
 | D4  | **Woolworths 2FA (Auth0 MFA)**              | Check his account's factor in M2; SMS via Messages, TOTP via 1Password, else needsUser        | M2–M3      |
 | D5  | **Which Woolworths account**                | Nick's real account, with the one-attempt limit in place first                                | M2         |
-| D6  | **1Password setup**                         | Service account on a new "siteadapter" vault; move the item                                   | M2–M3      |
+| D6  | **1Password setup**                         | Service account on a new "Valet" vault; move the item                                         | M2–M3      |
 | D8  | **Full Disk Access for Messages**           | Helper before release; whole app acceptable for M3                                            | M3         |
 | D18 | **Irreversible tools in shipped adapters**  | None in v1                                                                                    | M3, M8     |
 | D24 | **Bot-detection posture**                   | Look like the person's own browser, nothing more; stated publicly                             | Everything |
@@ -1060,7 +1058,7 @@ to answer first: they block M2 or M3, or they're expensive to change later.
 | D60 | **The stdio bridge in a packaged app**      | A small signed Swift proxy inside the app bundle                                              | M3         |
 | D61 | **The update feed's signing key**           | 1Password, in its own vault, Touch ID from the release script                                 | M3         |
 
-Already decided, recorded for completeness: [D9](#d9-user-agent) (the clean Chrome UA, decided
+Already decided, recorded for completeness: [D1](#d1-product-name) (the name, Valet), [D9](#d9-user-agent) (the clean Chrome UA, decided
 by run 4 of the live probe and now the architecture's default) and
 [D39](#d39-auth-subframe-origins) (auth subframes pinned to a list, decided by core v2).
 
@@ -1071,7 +1069,12 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D1. Product name
 
-- Options: keep "siteadapter"; pick a new name now; pick one at M8.
+- Decided 2026-11-07: **Valet**. Bundle ID `me.dncr.valet` (development builds `me.dncr.valet.dev`),
+  display name "Valet" ("Valet Dev" for development builds), package scope `@valet`, environment
+  variables `VALET_*`, home page `valet.dncr.me`, Homebrew cask `valet`. The valet key is the
+  idea: it drives the car but can't open the glovebox. Laravel Valet (a PHP development server)
+  shares the word but not the audience.
+- Options: keep "siteadapter" (the working name); pick a new name now; pick one at M8.
 - Considerations: the bundle ID, Keychain service names, partition names, the npm scope, the
   domain and the GitHub organisation all derive from it. Changing the bundle ID after the first
   signed build orphans Keychain grants and Full Disk Access. "siteadapter" is descriptive but
@@ -1144,9 +1147,9 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 - Questions for Nick: which plan (Individual, Families, Teams)? Are service accounts available
   on it? Is there a vault he's happy to dedicate?
-- Options: move the Woolworths item into a new "siteadapter" vault; duplicate it there; skip
+- Options: move the Woolworths item into a new "valet" vault; duplicate it there; skip
   service accounts and use only the desktop-app path.
-- Recommendation: a new vault holding only items granted to siteadapter; **move** the item (a
+- Recommendation: a new vault holding only items granted to Valet; **move** the item (a
   duplicate is a second copy to rotate, which is exactly what the architecture rejects for the
   Keychain). Autofill in his browser keeps working from any vault he can access. A service
   account scoped read-only to that vault.
@@ -1207,7 +1210,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 - Considerations: npm brings install scripts and dependency trees nobody reviews. A single
   compiled file is what the sandbox will load anyway, and it's what the approval hash covers.
   Adapters with dependencies get them bundled in at build time.
-- Recommendation: `.siteadapter` zip with a fixed layout. Authors use TypeScript and a build
+- Recommendation: `.valet` zip with a fixed layout. Authors use TypeScript and a build
   command; the app only ever loads the built bundle, and the loader hashes exactly the bytes it
   imports, so nothing outside the hash can run. Approvals and grants keyed by the hash depend on
   that: today `ToolHost.register()` takes the hash from its caller, and no loader exists. npm and
@@ -1339,7 +1342,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D24. Bot-detection posture
 
-- Recommendation: state it as a principle in the README and docs: siteadapter drives a real
+- Recommendation: state it as a principle in the README and docs: Valet drives a real
   browser at human pace on the person's own account and machine, presents itself as the
   person's own browser would, and stops when a site objects.
   - **Allowed:** matching what the person's own browser sends: a clean Chrome UA with the
@@ -1661,7 +1664,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
   - Keychain items named from the bundle ID: service `<bundle id>.onepassword-service-account`
     for the token (account: the 1Password account's sign-in address), and
     `<bundle id>.mcp-client.<name>` per client token if those move from files to the Keychain.
-  - The 1Password vault called "siteadapter" until D1 picks a name.
+  - The 1Password vault called "Valet".
   - Grants store item references by vault and item **ID**, not name (`op://<vault id>/<item id>`
     is already accepted), so renaming a vault or item in 1Password doesn't silently break or
     redirect a grant. The grant picker shows names.
@@ -1940,13 +1943,13 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
   version floor and the yml's hash. The app verifies it with a public key fixed at build time,
   before electron-updater sees the yml. Apple's signature on the zip is checked as well. Nothing
   yet decides where the private key lives.
-- Options: an offline key in 1Password (a "siteadapter release" item, used by the release script
+- Options: an offline key in 1Password (a "valet release" item, used by the release script
   through `op read`); a key in the release Mac's Keychain; a hardware key (YubiKey, Ed25519 over
   PIV or OpenPGP).
 - Considerations: the envelope only matters if the feed host (D23) is compromised, and must expire
   (62 days at most), so the release script re-signs the feed regularly even without a release.
   A hardware key makes that chore manual; 1Password keeps it scriptable with Touch ID.
-- Recommendation: 1Password, in a vault apart from the "siteadapter" credentials vault, read by
+- Recommendation: 1Password, in a vault apart from the "valet" credentials vault, read by
   the release script with Touch ID. Re-sign the feed monthly from a reminder.
 - Blocks: M3 (first signed build).
 
@@ -1995,7 +1998,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 ### D65. Demo-build test hooks
 
 - Today (round 3): a demo build launched for e2e maps `evil.test` to `127.0.0.1` and exposes a
-  main-process global `__siteadapterE2e` (switch the fake to block everything; read the fake's
+  main-process global `__valetE2e` (switch the fake to block everything; read the fake's
   trolley). A production `electron-vite build` contains no demo code, no fixtures and no test
   account; only `build --mode demo` does, and a packaged app can't start in demo mode.
 - Options: accept hooks in demo builds only; move every hook into the fake site (an HTTP control
@@ -2042,7 +2045,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 Collected from the above, so tomorrow's review can schedule it.
 
-1. Answer the decisions in [Answer these first](#answer-these-first): D1, D4 (as far as he
+1. Answer the decisions in [Answer these first](#answer-these-first): D4 (as far as he
    knows: is MFA on his Woolworths account, and which kind?), D5, D6, D8, D18, D24 and D28. Look
    through the [mockups](mockups/index.html) while doing it. Then the round-1 decisions that block
    M2 and M3: D32, D35, D38 and D41.

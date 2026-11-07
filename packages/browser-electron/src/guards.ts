@@ -21,7 +21,7 @@ import {
   type ToolRunPolicy,
   touchesDeniedSegment,
   urlOriginAllowed,
-} from '@siteadapter/core'
+} from '@valet/core'
 import type { OutgoingRequest, PendingNavigation } from './platform'
 
 const LOCAL_SUBFRAME_URLS = new Set(['about:blank', 'about:srcdoc'])

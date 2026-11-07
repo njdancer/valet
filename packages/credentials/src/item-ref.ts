@@ -2,7 +2,7 @@
 // grant; the runtime picks it from the manifest's secret request, so a grant can't be pointed at a
 // different field, section or query attribute by smuggling one into the reference.
 
-import type { SecretField } from '@siteadapter/core'
+import type { SecretField } from '@valet/core'
 
 // Vault and item names or IDs. No "/", "?", "#", quotes or control characters, and no
 // leading or trailing space, so the reference can't grow extra segments or query parameters.

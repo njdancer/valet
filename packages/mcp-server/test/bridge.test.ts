@@ -132,7 +132,7 @@ const INITIALIZE = {
   params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'raw', version: '1' } },
 }
 
-const SESSION_ENDED = 'the siteadapter session ended before this request was answered'
+const SESSION_ENDED = 'the Valet session ended before this request was answered'
 
 /** A caller whose view_cart never answers, and a promise that resolves once each call reaches it. */
 function stuckCaller(): { caller: FakeCaller; reached: (count: number) => Promise<void> } {
@@ -202,7 +202,7 @@ describe('runBridge', () => {
     expect(result.content).toEqual([
       {
         type: 'text',
-        text: 'The person did not approve this action in the siteadapter app (stage confirm: declined).',
+        text: 'The person did not approve this action in the Valet app (stage confirm: declined).',
       },
     ])
   })
@@ -275,7 +275,7 @@ describe('runBridge', () => {
     expect(await reply).toEqual({
       jsonrpc: '2.0',
       id: 1,
-      error: { code: -32000, message: 'siteadapter refused the bridge token; check the bridge config' },
+      error: { code: -32000, message: 'valet refused the bridge token; check the bridge config' },
     })
   })
 
@@ -289,7 +289,7 @@ describe('runBridge', () => {
 
     expect((await reply).error).toEqual({
       code: -32000,
-      message: 'siteadapter is not reachable; make sure the app is running',
+      message: 'valet is not reachable; make sure the app is running',
     })
   })
 
@@ -305,7 +305,7 @@ describe('runBridge', () => {
     const reply = nextLine(fromBridge)
     toBridge.write(`${JSON.stringify(INITIALIZE)}\n`)
 
-    expect((await reply).error.message).toBe('the siteadapter session has ended; restart this MCP server')
+    expect((await reply).error.message).toBe('the Valet session has ended; restart this MCP server')
   })
 
   it('answers with a fixed error when the endpoint refuses the request', async () => {
@@ -320,7 +320,7 @@ describe('runBridge', () => {
     const reply = nextLine(fromBridge)
     toBridge.write(`${JSON.stringify(INITIALIZE)}\n`)
 
-    expect((await reply).error.message).toBe('siteadapter refused the request')
+    expect((await reply).error.message).toBe('valet refused the request')
   })
 
   it('writes nothing for a failed notification', async () => {
@@ -346,7 +346,7 @@ describe('runBridge', () => {
     const reply = nextLine(fromBridge)
     toBridge.write(`${JSON.stringify(INITIALIZE)}\n`)
 
-    expect((await reply).result.serverInfo.name).toBe('siteadapter')
+    expect((await reply).result.serverInfo.name).toBe('valet')
   })
 
   it('ends the session upstream when the stdio client goes away', async () => {
@@ -584,7 +584,7 @@ describe('reconnecting after the app restarts', () => {
     await server.close()
 
     await expect(client.callTool({ name: 'woolworths_view_cart', arguments: {} })).rejects.toThrow(
-      'siteadapter is not reachable; make sure the app is running',
+      'valet is not reachable; make sure the app is running',
     )
   })
 
@@ -597,7 +597,7 @@ describe('reconnecting after the app restarts', () => {
     target.current = { url: (await startBrokenEndpoint('error')).url, token: TOKEN }
 
     await expect(client.callTool({ name: 'woolworths_view_cart', arguments: {} })).rejects.toThrow(
-      'siteadapter is not reachable; make sure the app is running',
+      'valet is not reachable; make sure the app is running',
     )
   })
 
@@ -619,7 +619,7 @@ describe('reconnecting after the app restarts', () => {
     timer.run()
 
     expect(timer.ms).toBe(50)
-    await expect(call).rejects.toThrow('siteadapter is not reachable; make sure the app is running')
+    await expect(call).rejects.toThrow('valet is not reachable; make sure the app is running')
   })
 
   it('gives up at once, without waiting out the timeout, when the new endpoint hangs up', async () => {
@@ -632,7 +632,7 @@ describe('reconnecting after the app restarts', () => {
     target.current = { url: (await startBrokenEndpoint('hangup')).url, token: TOKEN }
 
     await expect(client.callTool({ name: 'woolworths_view_cart', arguments: {} })).rejects.toThrow(
-      'siteadapter is not reachable; make sure the app is running',
+      'valet is not reachable; make sure the app is running',
     )
     expect(clock.timers).toHaveLength(1)
     expect(clock.timers[0]?.cancelled).toBe(true)
@@ -652,7 +652,7 @@ describe('reconnecting after the app restarts', () => {
     await server.close()
 
     await expect(client.callTool({ name: 'woolworths_view_cart', arguments: {} })).rejects.toThrow(
-      'siteadapter is not reachable; make sure the app is running',
+      'valet is not reachable; make sure the app is running',
     )
     expect(clock.timers).toHaveLength(1)
     expect(clock.timers[0]?.cancelled).toBe(true)
@@ -764,7 +764,7 @@ describe('reconnecting after the app restarts', () => {
     hostile = true
 
     await expect(client.callTool({ name: 'woolworths_view_cart', arguments: {} })).rejects.toThrow(
-      'siteadapter refused the request',
+      'valet refused the request',
     )
     expect(reconnects).toBe(0)
   })
@@ -790,7 +790,7 @@ describe('reconnecting after the app restarts', () => {
     const reply = nextLine(fromBridge)
     toBridge.write(`${JSON.stringify(INITIALIZE)}\n`)
 
-    expect((await reply).error.message).toBe('siteadapter is not reachable; make sure the app is running')
+    expect((await reply).error.message).toBe('valet is not reachable; make sure the app is running')
     expect(reconnects).toBe(0)
   })
 })

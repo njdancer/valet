@@ -1,4 +1,4 @@
-import type { RequestDeclaration, ToolRunPolicy } from '@siteadapter/core'
+import type { RequestDeclaration, ToolRunPolicy } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import {
   apiRoots,

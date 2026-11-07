@@ -6,7 +6,7 @@
 
 import { z } from 'zod'
 import { parseRoute } from '../../renderer/lib/routes'
-import type { HashRoute, SiteAdapterApi } from '../../shared/api'
+import type { HashRoute, ValetApi } from '../../shared/api'
 import { CHANNEL_PREFIX, INVOKE_METHODS, type InvokeMethod } from './channels'
 
 /** Which of the app's windows sent a request. The main process assigns it when it opens the window. */
@@ -36,13 +36,13 @@ export interface Sender {
 /** What a refused or failed request rejects with. Deliberately says nothing. */
 export class IpcRefused extends Error {
   constructor() {
-    super('siteadapter: request refused')
+    super('valet: request refused')
     this.name = 'IpcRefused'
   }
 }
 
 /** The service behind the channels: the API, plus who sent a confirmation answer. */
-export type MainApi = Omit<SiteAdapterApi, 'onEvent' | 'answerConfirmation'> & {
+export type MainApi = Omit<ValetApi, 'onEvent' | 'answerConfirmation'> & {
   answerConfirmation(confirmationId: string, approved: boolean, from: AppWindow): Promise<void>
 }
 

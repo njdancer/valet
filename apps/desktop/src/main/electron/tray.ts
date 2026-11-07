@@ -13,7 +13,7 @@ export function createTray(windows: AppWindows, api: MainApi, demo: boolean): Tr
   const icon = nativeImage.createFromBuffer(Buffer.from(ICON_PNG, 'base64'), { scaleFactor: 2 })
   icon.setTemplateImage(true)
   const tray = new Tray(icon)
-  tray.setToolTip(demo ? 'siteadapter (demo)' : 'siteadapter')
+  tray.setToolTip(demo ? 'Valet (demo)' : 'Valet')
   if (demo) tray.setTitle('DEMO')
   tray.on('click', () => windows.toggleTray(tray.getBounds()))
   tray.on('right-click', () => {
@@ -25,7 +25,7 @@ export function createTray(windows: AppWindows, api: MainApi, demo: boolean): Tr
           click: () => void api.app.setPaused(!status.paused),
         },
         { type: 'separator' },
-        { label: 'Quit siteadapter', click: () => void api.app.quit() },
+        { label: 'Quit Valet', click: () => void api.app.quit() },
       ])
       tray.popUpContextMenu(menu)
     })

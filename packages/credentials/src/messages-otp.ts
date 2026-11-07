@@ -20,8 +20,8 @@ import {
   type MessagesOtpQuery,
   type OtpReader,
   SecretValue,
-  SiteAdapterError,
-} from '@siteadapter/core'
+  ValetError,
+} from '@valet/core'
 import { type OtpSender, parseOtpSender, sameOtpSender } from './otp-sender'
 import { type PatternMatcher, WorkerPatternMatcher } from './pattern-worker'
 import { attributedBodyText } from './typedstream'
@@ -68,7 +68,7 @@ function checkGrant(grant: Grant | null | undefined, sender: unknown): void {
     typeof sender !== 'string' ||
     !sameOtpSender(grant.itemRef, sender)
   ) {
-    throw new SiteAdapterError('otp', 'not-granted')
+    throw new ValetError('otp', 'not-granted')
   }
 }
 
@@ -124,7 +124,7 @@ export class MessagesOtpReader implements OtpReader {
     // typed into the page. The type and the manifest schema both require one; this check stands in
     // case a query is built some other way (from JSON, say) and the types were never checked.
     const sender = typeof query.sender === 'string' ? parseOtpSender(query.sender) : null
-    if (sender === null || !isScreenedPattern(query.pattern)) throw new SiteAdapterError('otp', 'invalid')
+    if (sender === null || !isScreenedPattern(query.pattern)) throw new ValetError('otp', 'invalid')
     const sinceMs = Math.max(notBefore.getTime(), this.#now().getTime() - query.maxAgeSeconds * 1000)
     const texts: string[] = []
     for (const row of await this.#recent(sinceMs, sender)) {

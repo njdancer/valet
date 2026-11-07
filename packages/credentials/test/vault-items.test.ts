@@ -1,5 +1,5 @@
 import { inspect } from 'node:util'
-import { CredentialError, SecretValue, type TokenSource } from '@siteadapter/core'
+import { CredentialError, SecretValue, type TokenSource } from '@valet/core'
 import { describe, expect, it, vi } from 'vitest'
 import { OnePasswordCliProvider } from '../src/onepassword-cli'
 import {
@@ -14,7 +14,7 @@ const OP_PATH = '/opt/homebrew/bin/op'
 const FOUND = { searchPath: null, isExecutable: async (path: string) => path === OP_PATH }
 const TOKEN = 'ops_canary-token-list-5c19'
 const FIELD_CANARY = 'canary-field-value-e03b'
-const VAULT = 'siteadapter'
+const VAULT = 'valet'
 const VAULT_ID = 'vaultid000000000000000001'
 const ITEM_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaa'
 const ITEM_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbb'

@@ -1,4 +1,4 @@
-import { defineAdapter, SecretValue, SiteAdapterError, tool } from '@siteadapter/core'
+import { defineAdapter, SecretValue, tool, ValetError } from '@valet/core'
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { ToolHost } from '../src/tool-host'
@@ -293,7 +293,7 @@ describe('ToolHost.call: errors never leak', () => {
     expect(await host.call(call)).toEqual({ status: 'failed', stage: 'tool-run', errorClass: 'internal' })
   })
 
-  it('keeps the stage and class of a SiteAdapterError', async () => {
+  it('keeps the stage and class of a ValetError', async () => {
     const { host } = fixture(
       defineAdapter({
         manifest,
@@ -302,7 +302,7 @@ describe('ToolHost.call: errors never leak', () => {
             input: z.object({}),
             output: z.unknown(),
             run: async () => {
-              throw new SiteAdapterError('navigate', 'element-missing')
+              throw new ValetError('navigate', 'element-missing')
             },
           }),
         },
@@ -876,7 +876,7 @@ describe('ToolHost.call: redaction', () => {
 
 describe('ToolHost.call: needsUser', () => {
   it('ends the run as needsUser when tool code throws NeedsUserError, and audits the reason', async () => {
-    const { NeedsUserError } = await import('@siteadapter/core')
+    const { NeedsUserError } = await import('@valet/core')
     const { host, audit } = fixture(
       defineAdapter({
         manifest,
@@ -904,7 +904,7 @@ describe('ToolHost.call: needsUser', () => {
   })
 
   it('passes on the reason ensure() gave, as tool code is told to', async () => {
-    const { NeedsUserError } = await import('@siteadapter/core')
+    const { NeedsUserError } = await import('@valet/core')
     const { host, page, markers } = fixture(
       defineAdapter({
         manifest,
@@ -928,7 +928,7 @@ describe('ToolHost.call: needsUser', () => {
   })
 
   it('sends only a reason code: a made-up reason from tool code becomes other', async () => {
-    const { NeedsUserError } = await import('@siteadapter/core')
+    const { NeedsUserError } = await import('@valet/core')
     const { host, audit } = fixture(
       defineAdapter({
         manifest,
@@ -949,7 +949,7 @@ describe('ToolHost.call: needsUser', () => {
   })
 
   it('does not let NeedsUserError hide a guard violation', async () => {
-    const { NeedsUserError } = await import('@siteadapter/core')
+    const { NeedsUserError } = await import('@valet/core')
     const { host } = fixture(
       defineAdapter({
         manifest,

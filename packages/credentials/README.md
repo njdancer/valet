@@ -1,7 +1,7 @@
-# @siteadapter/credentials
+# @valet/credentials
 
 Credential providers, the grant store and the Messages OTP reader. Every secret leaves this package
-as a `SecretValue`, and every failure as `SiteAdapterError(stage, errorClass)` or
+as a `SecretValue`, and every failure as `ValetError(stage, errorClass)` or
 `CredentialError(failure)`: never with a value, an item name or a provider's message in it.
 
 ## Providers

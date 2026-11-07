@@ -5,6 +5,6 @@
  * to Apple, with a Developer ID intermediate and a Developer ID Application leaf, issued to this
  * team. Keychain item ACLs, Full Disk Access grants and Squirrel.Mac's update check key on it, so it
  * must not change between releases. __BUNDLE_ID__ comes from the config, __TEAM_ID__ from
- * SITEADAPTER_TEAM_ID.
+ * VALET_TEAM_ID.
  */
 designated => identifier "__BUNDLE_ID__" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = "__TEAM_ID__"

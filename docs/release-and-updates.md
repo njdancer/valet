@@ -29,7 +29,7 @@ memory as of November 2026; anything marked _verify_ must be checked on the firs
     the earlier app's.
 
   Without the fuses and the switch allowlist, the designated requirement protects little: any
-  local process could run JavaScript _as_ siteadapter, or drive its renderers over the DevTools
+  local process could run JavaScript _as_ Valet, or drive its renderers over the DevTools
   protocol, and read what the app can read.
 - **Notarisation:** `notarytool` with an App Store Connect API key. Locally it's a `notarytool`
   Keychain profile on Nick's Mac; in CI, the key comes from the environment. The release script
@@ -49,13 +49,13 @@ memory as of November 2026; anything marked _verify_ must be checked on the firs
 
 ## Identity
 
-| Identity                  | Release builds                              | Development builds                                     |
-| ------------------------- | ------------------------------------------- | ------------------------------------------------------ |
-| Bundle ID                 | `me.dncr.siteadapter` (D1)                  | `me.dncr.siteadapter.dev`                              |
-| Signing certificate       | Developer ID Application                    | Apple Development, or ad hoc                           |
-| Keychain service names    | `siteadapter.*`                             | `siteadapter-dev.*`                                    |
-| `userData` and partitions | `~/Library/Application Support/siteadapter` | `…/siteadapter-dev`                                    |
-| 1Password vault           | `siteadapter`                               | a separate vault with test items, or the fake provider |
+| Identity                  | Release builds                        | Development builds                                     |
+| ------------------------- | ------------------------------------- | ------------------------------------------------------ |
+| Bundle ID                 | `me.dncr.valet` (D1)                  | `me.dncr.valet.dev`                                    |
+| Signing certificate       | Developer ID Application              | Apple Development, or ad hoc                           |
+| Keychain service names    | `valet.*`                             | `valet-dev.*`                                          |
+| `userData` and partitions | `~/Library/Application Support/valet` | `…/valet-dev`                                          |
+| 1Password vault           | `valet`                               | a separate vault with test items, or the fake provider |
 
 Why separate: an honest local build, including code an agent changed on a `wip/*` branch, then
 never touches production data by accident. What actually keeps a _dishonest_ build away from the
@@ -64,13 +64,13 @@ production token is different, and depends on where the token is read:
 - **In v0**, the token is read through `/usr/bin/security`
   ([security-model.md](security-model.md#the-service-account-token)), so the Keychain sees Apple's
   tool, not the app, and the bundle ID plays no part. What keeps a dev build away from the
-  production item is only that it asks for `siteadapter-dev.*`, not `siteadapter.*`. An agent's
+  production item is only that it asks for `valet-dev.*`, not `valet.*`. An agent's
   change can rename that back, and the resulting prompt names `security` either way. So in v0
   there is no technical control: allow the prompt only when you've just started the release app
   yourself, and deny one you didn't expect.
 - **Once the read moves in process**, the item's ACL is the release designated requirement. A
   changed build satisfies it only if it has the release bundle ID _and_ a Developer ID signature
-  from Nick's team. An agent can set the bundle ID back to `me.dncr.siteadapter` in one line. So
+  from Nick's team. An agent can set the bundle ID back to `me.dncr.valet` in one line. So
   the real control is **access to the Developer ID private key**: if `codesign` can use it without
   asking, any process running as Nick can sign a build that passes.
 
@@ -107,18 +107,18 @@ before electron-builder runs if a release would come out weaker than intended, a
 CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac --dir --config electron-builder.config.ts
 
 # Release build (the release script sets these; no key is in the repo or the environment file).
-SITEADAPTER_RELEASE=1 SITEADAPTER_TEAM_ID=<TEAM_ID> SITEADAPTER_UPDATE_URL=https://updates.<domain>/mac/ \
-CSC_NAME="<name> (<TEAM_ID>)" APPLE_KEYCHAIN_PROFILE=siteadapter-notary \
+VALET_RELEASE=1 VALET_TEAM_ID=<TEAM_ID> VALET_UPDATE_URL=https://updates.<domain>/mac/ \
+CSC_NAME="<name> (<TEAM_ID>)" APPLE_KEYCHAIN_PROFILE=valet-notary \
 electron-builder --mac --config electron-builder.config.ts --publish never
 ```
 
 What the environment decides:
 
-| Variable                                                | Release (`SITEADAPTER_RELEASE=1`)                                                                                                                                                    | Development (unset or `0`)                                                                                                                                |
+| Variable                                                | Release (`VALET_RELEASE=1`)                                                                                                                                                          | Development (unset or `0`)                                                                                                                                |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Bundle ID, product name                                 | `me.dncr.siteadapter`, `siteadapter`                                                                                                                                                 | `me.dncr.siteadapter.dev`, `siteadapter-dev`                                                                                                              |
-| `SITEADAPTER_TEAM_ID`                                   | Required, 10 letters or digits; fills the designated requirement                                                                                                                     | Optional; with an identity, fills the dev requirement                                                                                                     |
-| `SITEADAPTER_UPDATE_URL`                                | Required: https to a public host name (no IP literal, `localhost`, single label or `.local`/`.internal`-style name), a directory (`/` at the end), no query, fragment or credentials | Optional; http to `127.0.0.1` also allowed, for a local feed                                                                                              |
+| Bundle ID, product name                                 | `me.dncr.valet`, `valet`                                                                                                                                                             | `me.dncr.valet.dev`, `valet-dev`                                                                                                                          |
+| `VALET_TEAM_ID`                                         | Required, 10 letters or digits; fills the designated requirement                                                                                                                     | Optional; with an identity, fills the dev requirement                                                                                                     |
+| `VALET_UPDATE_URL`                                      | Required: https to a public host name (no IP literal, `localhost`, single label or `.local`/`.internal`-style name), a directory (`/` at the end), no query, fragment or credentials | Optional; http to `127.0.0.1` also allowed, for a local feed                                                                                              |
 | `CSC_NAME` or `CSC_LINK`                                | Required. `CSC_NAME` must be `<name> (<TEAM_ID>)` (no prefix) or a SHA-1                                                                                                             | Optional. `CSC_NAME` only, as the SHA-1 of an Apple Development identity; `CSC_LINK` refused. Without one the build is unsigned: `mac.identity` is `null` |
 | `CSC_IDENTITY_AUTO_DISCOVERY=false`                     | Refused                                                                                                                                                                              | Allowed (and has the same effect as naming no identity)                                                                                                   |
 | `APPLE_API_KEY`, `APPLE_API_KEY_ID`, `APPLE_API_ISSUER` | All three, or `APPLE_KEYCHAIN_PROFILE`, required: release builds are notarised                                                                                                       | Ignored: development builds are never notarised                                                                                                           |
@@ -128,9 +128,9 @@ The parts of the configuration that matter, as `createBuilderConfig` returns the
 
 ```js
 {
-  appId: 'me.dncr.siteadapter', // RELEASE_APP_ID; D1 pending
-  productName: 'siteadapter',
-  extraMetadata: { name: 'siteadapter', productName: 'siteadapter' }, // app.getName(), userData, updater cache
+  appId: 'me.dncr.valet', // RELEASE_APP_ID (D1)
+  productName: 'valet',
+  extraMetadata: { name: 'valet', productName: 'valet' }, // app.getName(), userData, updater cache
   directories: { output: 'dist', buildResources: 'build' },
   files: ['out/**/*', 'package.json', '!**/*.map'], // electron-vite's output only
   asar: true,
@@ -165,7 +165,7 @@ The parts of the configuration that matter, as `createBuilderConfig` returns the
     extendInfo: { LSUIElement: true }, // menu-bar app: no Dock icon
   },
   dmg: { sign: false }, // signed, notarised and stapled by the release script
-  publish: [{ provider: 'generic', url: SITEADAPTER_UPDATE_URL }], // no channel: see "Channels"
+  publish: [{ provider: 'generic', url: VALET_UPDATE_URL }], // no channel: see "Channels"
   generateUpdatesFilesForAllChannels: true, // so beta users are offered newer stable releases
 }
 ```
@@ -193,14 +193,14 @@ Notes on choices that aren't obvious:
   explicit `CSC_NAME`/`CSC_LINK` they are never signed, rather than electron-builder finding the
   Developer ID key in the login keychain on its own, and `resetAdHocDarwinSignature` re-signs the
   bundle ad hoc after the fuse flip, because Apple silicon refuses to run a modified binary with a
-  broken signature. A dev build signed with an Apple Development identity and `SITEADAPTER_TEAM_ID`
+  broken signature. A dev build signed with an Apple Development identity and `VALET_TEAM_ID`
   gets `build/designated-requirement.dev.txt`, which pins the team and the WWDR intermediate for the
   `.dev` bundle ID.
 - **A dev build's identity is a SHA-1, never a name.** For a non-MAS `type: 'development'` build,
   electron-builder searches both "Mac Developer" and "Developer ID Application" certificates for
   `CSC_NAME` (`MacTargetHelper.getCertificateTypes`), so a name in the release's
   `<name> (<TEAM_ID>)` form would find the Developer ID key, and the `.dev` bundle would carry the
-  release key's signature (or, with `SITEADAPTER_TEAM_ID`, fail at verify against the dev
+  release key's signature (or, with `VALET_TEAM_ID`, fail at verify against the dev
   requirement). The config takes a dev `CSC_NAME` only as the 40-character SHA-1 of an Apple
   Development identity (`security find-identity -v -p codesigning`), and refuses `CSC_LINK` for
   dev builds, since what a `.p12` holds can't be checked before electron-builder imports it.
@@ -218,7 +218,7 @@ Notes on choices that aren't obvious:
 - **`enableCookieEncryption`: decided on, and one-way.** Without it, the `auth:` and `tool:`
   partitions' cookies (live site sessions) sit in plaintext SQLite under `userData`, readable and
   replayable by any process running as the person. With it, Chromium encrypts them with a key in a
-  Keychain item named after the app (`siteadapter Safe Storage`, `siteadapter-dev Safe Storage`),
+  Keychain item named after the app (`valet Safe Storage`, `valet-dev Safe Storage`),
   whose ACL is the app's designated requirement: one more reason the requirement must be stable.
   Turning it off later makes the existing store unreadable, so it is on from the first build. Nick
   can still reverse this before any real session exists ([Open questions](#open-questions)).
@@ -240,7 +240,7 @@ Notes on choices that aren't obvious:
 
 `node scripts/package-smoke.mjs [--target zip]` packages a placeholder main process with this
 config, unsigned, in a temporary directory, inspects the result and launches it. It passes none of
-the caller's `CSC_*`, `APPLE_*` or `SITEADAPTER_*` variables to electron-builder, launches with a
+the caller's `CSC_*`, `APPLE_*` or `VALET_*` variables to electron-builder, launches with a
 temporary `--user-data-dir` and Chromium's mock keychain, and deletes everything afterwards, pass
 or fail. Every item below is asserted: a mismatch is listed under `failures` and the script's exit
 code is 1. It builds from a copy-on-write clone of the installed Electron with `default_app.asar`
@@ -248,7 +248,7 @@ removed, because electron-builder skips its own clean-up when given `electronDis
 should match what a release (which downloads Electron) contains. On electron-builder 26.18.0 and
 Electron 44.10.2 (arm64), 2026-11-07:
 
-- `siteadapter-dev.app`: `CFBundleIdentifier` `me.dncr.siteadapter.dev`, `LSUIElement` true,
+- `valet-dev.app`: `CFBundleIdentifier` `me.dncr.valet.dev`, `LSUIElement` true,
   `ElectronAsarIntegrity` for `Resources/app.asar` only; the asar holds exactly the placeholder's
   `out/**` files and `package.json`, and no source map; no `Resources/app` folder and no
   `default_app.asar`.
@@ -325,7 +325,7 @@ check ([below](#command-line-switches)). The test runs in `pnpm check`, which is
 
 [`build/designated-requirement.txt`](../apps/desktop/build/designated-requirement.txt) is a
 template; the config fills `__BUNDLE_ID__` from `RELEASE_APP_ID` and `__TEAM_ID__` from
-`SITEADAPTER_TEAM_ID` (10 letters or digits, so it can't rewrite the requirement), drops the
+`VALET_TEAM_ID` (10 letters or digits, so it can't rewrite the requirement), drops the
 comments, and hands the result to codesign inline for the outer bundle:
 
 ```
@@ -347,10 +347,10 @@ requirement and the signature can't name different teams.
 - The earlier app needed its file for a different reason. It's signed with an **Apple Development**
   certificate, whose default requirement pins the certificate's common name. Its file pins the
   Team ID and the Apple Worldwide Developer Relations intermediate (`…6.2.1`) instead.
-- siteadapter's release file pins the Developer ID intermediate (`…6.2.6`) and leaf (`…6.1.13`).
+- Valet's release file pins the Developer ID intermediate (`…6.2.6`) and leaf (`…6.1.13`).
   That's deliberate: an Apple Development-signed build of the same bundle ID does _not_ satisfy
   it.
-- The Team ID comes from `SITEADAPTER_TEAM_ID`, which the release script sets. The earlier app's
+- The Team ID comes from `VALET_TEAM_ID`, which the release script sets. The earlier app's
   `scripts/require-signing-identity.ts` derives it from the signing identity instead; the release
   script could do the same and export it, so it isn't hand-copied.
 - Development builds signed with an Apple Development identity use
@@ -435,16 +435,16 @@ see it.
 
 ## The stdio bridge
 
-MCP clients launch the bridge (`siteadapter-bridge <config file>`) as a command. The usual Electron
+MCP clients launch the bridge (`valet-bridge <config file>`) as a command. The usual Electron
 trick is to run the app binary with `ELECTRON_RUN_AS_NODE=1`. That needs the `runAsNode` fuse,
 and that fuse lets any process run any script with the app's signature, Keychain access included.
 So it stays off. Options:
 
-| Option                                                                                                 | Cost                                                                                                                                            |
-| ------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Bridge mode in the app binary:** `siteadapter --mcp-bridge <config>`, dispatched first thing in main | No new identity, no new runtime. Starts Electron for each client launch (a few hundred ms). Runs only our bridge code, so the fuses still hold. |
-| A Node single-executable application, signed as a helper                                               | A second Node runtime in the bundle (about 100 MB), its own identifier and requirement, its own `allow-jit`                                     |
-| A small native bridge (Swift)                                                                          | Small and fast, but a second implementation of the MCP client side to maintain                                                                  |
+| Option                                                                                           | Cost                                                                                                                                            |
+| ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Bridge mode in the app binary:** `valet --mcp-bridge <config>`, dispatched first thing in main | No new identity, no new runtime. Starts Electron for each client launch (a few hundred ms). Runs only our bridge code, so the fuses still hold. |
+| A Node single-executable application, signed as a helper                                         | A second Node runtime in the bundle (about 100 MB), its own identifier and requirement, its own `allow-jit`                                     |
+| A small native bridge (Swift)                                                                    | Small and fast, but a second implementation of the MCP client side to maintain                                                                  |
 
 Recommendation: bridge mode in the app binary.
 
@@ -459,7 +459,7 @@ Recommendation: bridge mode in the app binary.
   `--mcp-bridge <absolute path>`.
 - In bridge mode it runs `runBridge` and nothing else: no window, no partition, no credential
   code.
-- Claude Desktop's config then points at `/Applications/siteadapter.app/Contents/MacOS/siteadapter`
+- Claude Desktop's config then points at `/Applications/Valet.app/Contents/MacOS/Valet`
   with those arguments.
 
 Revisit if start-up time annoys in practice.
@@ -477,11 +477,11 @@ Use an **App Store Connect team API key** with the Developer role, not Nick's Ap
 scoped and revocable, and doesn't trip two-factor prompts.
 
 - **On Nick's Mac:** store it once in the Keychain and delete the downloaded file. The release
-  script then sets only `APPLE_KEYCHAIN_PROFILE=siteadapter-notary`. Nothing secret is in the repo,
+  script then sets only `APPLE_KEYCHAIN_PROFILE=valet-notary`. Nothing secret is in the repo,
   the shell history or an environment file.
 
   ```bash
-  xcrun notarytool store-credentials siteadapter-notary \
+  xcrun notarytool store-credentials valet-notary \
     --key ~/Downloads/AuthKey_ABC123XYZ.p8 --key-id ABC123XYZ --issuer <issuer-uuid>
   rm -P ~/Downloads/AuthKey_ABC123XYZ.p8
   ```
@@ -496,7 +496,7 @@ Gatekeeper:
 
 ```bash
 codesign --sign "Developer ID Application: <name> (<TEAM_ID>)" --timestamp "$DMG"
-xcrun notarytool submit "$DMG" --keychain-profile siteadapter-notary --wait
+xcrun notarytool submit "$DMG" --keychain-profile valet-notary --wait
 xcrun stapler staple "$DMG"
 ```
 
@@ -516,7 +516,7 @@ Then, stopping at the first failure:
 2. **Verify the app before anything leaves the machine:**
 
    ```bash
-   APP=dist/mac-arm64/siteadapter.app
+   APP=dist/mac-arm64/valet.app
    codesign --verify --deep --strict --verbose=2 "$APP"
    codesign -d -r- "$APP"                       # same requirement as the rendered template
    codesign -d --entitlements - --xml "$APP"    # same entitlements as build/entitlements.mac.plist
@@ -904,7 +904,7 @@ This can't run in `pnpm check`: Squirrel.Mac only installs signed apps, and sign
 identity. It's a separate command, `pnpm test:updater-e2e`, run on Nick's Mac before each release
 that touches the updater, and before the first release.
 
-- **A third identity:** bundle ID `me.dncr.siteadapter.updatetest`, signed with Nick's Developer ID
+- **A third identity:** bundle ID `me.dncr.valet.updatetest`, signed with Nick's Developer ID
   but not notarised (an update fetched by the app carries no quarantine flag, so Gatekeeper isn't
   involved; _verify_). It has its own `userData`, Keychain names and requirement file, so the
   test can't touch the real app's data.
@@ -988,7 +988,7 @@ jobs:
         run: |
           export APPLE_API_KEY="$RUNNER_TEMP/AuthKey.p8"
           printf '%s' "$APPLE_API_KEY_P8" > "$APPLE_API_KEY"
-          mise exec -- pnpm --filter @siteadapter/desktop release:build
+          mise exec -- pnpm --filter @valet/desktop release:build
       # The envelope is signed on Nick's Mac and uploaded by the release script there.
 ```
 
@@ -1014,8 +1014,6 @@ What else changes when the repo goes public:
 
 ## Open questions
 
-- The final bundle ID and display name (D1). Everything above uses `me.dncr.siteadapter`; the
-  config's `RELEASE_APP_ID` is the only place it is written.
 - Whether Squirrel.Mac in Electron 44 still verifies the update against the running app's
   designated requirement: the first two E2E attack rows answer it.
 - Whether Developer ID's default requirement equals the explicit one exactly.

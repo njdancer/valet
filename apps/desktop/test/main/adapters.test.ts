@@ -3,7 +3,7 @@
 
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { bundleHash, canonicalJson } from '@siteadapter/core'
+import { bundleHash, canonicalJson } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { builtinAdapters, relativeSources } from '../../src/main/adapters'
 import { MANIFEST_ENTRY } from '../../src/main/core/registry'

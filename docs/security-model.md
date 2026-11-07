@@ -31,7 +31,7 @@ marketplace author wrote it, the runtime must guarantee two things:
 Out of scope:
 
 - The site itself, and the third-party scripts it loads. They see the password by design.
-- The siteadapter host process. The main process is the trusted computing base.
+- The Valet host process. The main process is the trusted computing base.
 - Malware already on the machine.
 
 **v0 caveat.** Tool code is imported into the main process today. It has no sandbox, not even a
@@ -138,7 +138,7 @@ Anything that crosses to an MCP client is a code from a fixed vocabulary (**Cont
 
 A step's `note` (up to 200 characters) is manifest text the person approved. It is shown in the
 app's hand-off banner only, and never sent to the MCP client, where an adapter could use it as an
-injection channel. Errors otherwise leave as `SiteAdapterError(stage, errorClass)`, never as page
+injection channel. Errors otherwise leave as `ValetError(stage, errorClass)`, never as page
 text, URLs with query strings or exception messages (**Enforced**).
 
 ### Adapter-supplied regular expressions
@@ -615,23 +615,23 @@ making both the default is round-2 work. Client-hint brands still say `Chromium`
 
 ## The service-account token
 
-The 1Password service-account token unlocks every item in the siteadapter vault, so it is the
+The 1Password service-account token unlocks every item in the Valet vault, so it is the
 most valuable secret the app holds.
 
 - **Where it is revealed.** Only once per client, in `sdkClientFactory`, which passes it straight
   to `@1password/sdk`. That is the one `reveal()` outside the privileged filler (see
   CONTRIBUTING.md), pinned by a test.
 - **Where it lives.** The design is a Keychain item whose ACL names the signed app's designated
-  requirement, pinned to the Team ID, so only siteadapter can read it without a prompt.
+  requirement, pinned to the Team ID, so only Valet can read it without a prompt.
 - **How `op` runs.** The CLI fallback and `security` run with a minimal environment, without
   inherited `OP_*` variables, and the secret is read from stdout into a buffer, never argv or an
   error (**Enforced**). Which `op` binary runs is [D44](plan.md#d44-op-install-path).
 
 **v0 gap: the designated-requirement property does not hold yet.** `KeychainTokenSource` reads
 the item by running `/usr/bin/security`. The Keychain checks its ACL against the calling binary,
-which is Apple's `security` tool, not siteadapter. So:
+which is Apple's `security` tool, not valet. So:
 
-- every read prompts, and the prompt names `security` rather than siteadapter;
+- every read prompts, and the prompt names `security` rather than Valet;
 - **never click "Always Allow" on that prompt.** It adds `/usr/bin/security` to the item's ACL.
   After that, any process running as the person, including v0 adapter tool code (which has no
   sandbox), can read the token silently with `security find-generic-password -w`.

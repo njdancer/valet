@@ -1,5 +1,5 @@
 {
-  "name": "siteadapter",
+  "name": "valet",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.34.9",
@@ -13,9 +13,9 @@
     "test": "vitest run",
     "coverage": "vitest run --coverage",
     "check": "pnpm lint && pnpm typecheck && pnpm coverage",
-    "demo": "pnpm --filter @siteadapter/desktop demo",
-    "test:e2e": "pnpm --filter @siteadapter/desktop test:e2e",
-    "package:smoke": "pnpm --filter @siteadapter/desktop package:smoke"
+    "demo": "pnpm --filter @valet/desktop demo",
+    "test:e2e": "pnpm --filter @valet/desktop test:e2e",
+    "package:smoke": "pnpm --filter @valet/desktop package:smoke"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.6",

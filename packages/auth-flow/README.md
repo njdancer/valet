@@ -1,4 +1,4 @@
-# @siteadapter/auth-flow
+# @valet/auth-flow
 
 The declarative auth interpreter and the privileged secret filler. `runAuthFlow(input)` runs a
 manifest's `auth.steps` against an `AuthPage` and returns `ok`, `needsUser(reason)`,
@@ -28,7 +28,7 @@ Messages reader, the caller supplies:
   reads the manifest's probe itself; the hooks never decide. `fetch` returns what the site said:
   the flow reads a 429 as `rate-limited` and an HTML 403 or Akamai's "Access Denied" page as
   `blocked-by-site`, as the runtime's `looksBlocked` does for the tool partition. It may also
-  throw `SiteAdapterError('probe', 'blocked-by-site' | 'rate-limited')` itself (an open breaker),
+  throw `ValetError('probe', 'blocked-by-site' | 'rate-limited')` itself (an open breaker),
   and should obey the site's rate budget.
 - **`rememberSecret(copy)`**, called with an independent `clone()` of every secret just before it
   is typed. The runtime keeps it to redact tool output for the rest of the run, and disposes it.

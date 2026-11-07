@@ -24,14 +24,14 @@ export function TrayPopover() {
 
   return (
     <div className="tray-body">
-      <div className="popover" role="dialog" aria-label="siteadapter">
+      <div className="popover" role="dialog" aria-label="Valet">
         <div className="head">
           <span className="logo">
             <Icon name="logo" size="lg" />
           </span>
           <div className="grow">
             <div className="h3">
-              siteadapter{' '}
+              Valet{' '}
               {app.status === 'ready' && app.data.demo ? (
                 <span
                   className="pill warn"
@@ -150,7 +150,7 @@ export function TrayPopover() {
             {paused ? 'Resume adapters' : 'Pause all adapters'}
           </button>
           <button type="button" className="menu-row" onClick={() => action.run(() => api.app.quit())}>
-            Quit siteadapter <span className="kbd">⌘Q</span>
+            Quit Valet <span className="kbd">⌘Q</span>
           </button>
           <ActionFailed failed={action.failed} what="do that" />
         </section>

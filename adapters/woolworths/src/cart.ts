@@ -8,7 +8,7 @@
 // (README, core change requests). What the adapter can do is report the quantity the site stored,
 // not the one it asked for, and say when they differ.
 
-import { SiteAdapterError, type ToolContext, tool } from '@siteadapter/core'
+import { type ToolContext, tool, ValetError } from '@valet/core'
 import { z } from 'zod'
 import { withLogin } from './login'
 import { productName, stockcodeSchema } from './products'
@@ -191,7 +191,7 @@ async function setQuantity(ctx: ToolContext, stockcode: number, requested: numbe
     z.unknown(),
   )
   const trolley = trolleyWire.safeParse(body)
-  if (reportsRejection(body, trolley.success)) throw new SiteAdapterError('tool-run', 'invalid')
+  if (reportsRejection(body, trolley.success)) throw new ValetError('tool-run', 'invalid')
   if (!trolley.success)
     return { quantity: null, confirmed: false, cart: null, notices: [NOTICES.unconfirmed] }
   const read = readTrolley(trolley.data)
@@ -239,10 +239,10 @@ export const addToCart = tool({
       const read = readTrolley(await getJson(ctx, PATHS.trolley, trolleyWire))
       // The write replaces the line's quantity, so a line hidden in a bucket the adapter can't read
       // would be overwritten with just the added amount. Refuse rather than shrink it.
-      if (!read.complete) throw new SiteAdapterError('tool-run', 'unexpected-shape')
+      if (!read.complete) throw new ValetError('tool-run', 'unexpected-shape')
       const previousQuantity = read.quantities.get(input.stockcode) ?? 0
       const requestedQuantity = previousQuantity + input.quantity
-      if (requestedQuantity > MAX_LINE_QUANTITY) throw new SiteAdapterError('tool-input', 'invalid')
+      if (requestedQuantity > MAX_LINE_QUANTITY) throw new ValetError('tool-input', 'invalid')
       const outcome = await setQuantity(ctx, input.stockcode, requestedQuantity)
       return { stockcode: input.stockcode, previousQuantity, requestedQuantity, ...outcome }
     })

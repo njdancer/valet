@@ -2,7 +2,7 @@
 // verification, and a record inspector. Records are core's AuditRecord as written; the inspector
 // shows only the fields core's audit format defines for each event type.
 
-import type { AuditEvent, AuditRecord } from '@siteadapter/core'
+import type { AuditEvent, AuditRecord } from '@valet/core'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import type { AuditCategory, AuditPage, ChainStatus } from '../../shared/api'
 import { highlight } from '../components/Preview'

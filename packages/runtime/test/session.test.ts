@@ -1,7 +1,7 @@
 // session.ensure() as tool code calls it: probe, login through the injected auth runner, handoff,
 // re-probe, guarded by the durable login attempt marker.
 
-import { defineAdapter, type EnsureResult, parseManifest, SiteAdapterError, tool } from '@siteadapter/core'
+import { defineAdapter, type EnsureResult, parseManifest, tool, ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { probeDeclaration, probeLoggedIn } from '../src/probe'
@@ -241,10 +241,10 @@ describe('session.ensure', () => {
     expect(JSON.stringify(audit.events)).not.toContain('hunter2')
   })
 
-  it('keeps the stage and class when the auth runner throws a SiteAdapterError', async () => {
+  it('keeps the stage and class when the auth runner throws a ValetError', async () => {
     const { host, page, authRunner } = fixture(ensureOnce)
     page.route('GET', SESSION_URL, loggedOut)
-    authRunner.mockRejectedValue(new SiteAdapterError('otp', 'not-found'))
+    authRunner.mockRejectedValue(new ValetError('otp', 'not-found'))
 
     expect(await host.call(call)).toMatchObject({
       output: { status: 'failed', stage: 'otp', errorClass: 'not-found' },
@@ -1142,7 +1142,7 @@ describe('a login that outlives its call', () => {
     authRunner.mockImplementationOnce(
       (request) =>
         new Promise((_, reject) => {
-          request.signal.addEventListener('abort', () => reject(new SiteAdapterError('tool-run', 'aborted')))
+          request.signal.addEventListener('abort', () => reject(new ValetError('tool-run', 'aborted')))
         }),
     )
 

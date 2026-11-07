@@ -1,4 +1,4 @@
-import { SiteAdapterError } from '@siteadapter/core'
+import { ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import type { HeaderList, SessionFetchRequest, SessionFetchResponse } from '../src/platform'
 import {
@@ -15,12 +15,12 @@ import {
 
 const NAVIGATION = ['https://www.example.com', 'https://login.example.com']
 
-function thrown(run: () => unknown): SiteAdapterError {
+function thrown(run: () => unknown): ValetError {
   try {
     run()
   } catch (error) {
-    if (error instanceof SiteAdapterError) return error
-    throw new Error(`expected a SiteAdapterError, got ${String(error)}`)
+    if (error instanceof ValetError) return error
+    throw new Error(`expected a ValetError, got ${String(error)}`)
   }
   throw new Error('expected it to throw')
 }

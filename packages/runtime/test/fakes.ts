@@ -10,10 +10,10 @@ import {
   type FetchResult,
   type NeedsUserReason,
   type SessionDriver,
-  SiteAdapterError,
   type ToolPage,
   type ToolRunPolicy,
-} from '@siteadapter/core'
+  ValetError,
+} from '@valet/core'
 import type { JsonStore } from '../src/breaker-state'
 import type { LoginMarkerState, LoginMarkerStore } from '../src/login-marker'
 import type { ConfirmationAnswer, ConfirmationPrompt, ConfirmationRequest } from '../src/types'
@@ -250,7 +250,7 @@ export class FakeClock {
   sleep = (ms: number, signal?: AbortSignal): Promise<void> =>
     new Promise((resolve, reject) => {
       if (signal?.aborted) {
-        reject(new SiteAdapterError('tool-run', 'aborted'))
+        reject(new ValetError('tool-run', 'aborted'))
         return
       }
       if (ms <= 0) {
@@ -261,7 +261,7 @@ export class FakeClock {
       this.timers.push(timer)
       signal?.addEventListener('abort', () => {
         this.timers = this.timers.filter((t) => t !== timer)
-        reject(new SiteAdapterError('tool-run', 'aborted'))
+        reject(new ValetError('tool-run', 'aborted'))
       })
     })
 
@@ -271,7 +271,7 @@ export class FakeClock {
    */
   readonly paced: number[] = []
   pacingSleep = async (ms: number, signal?: AbortSignal): Promise<void> => {
-    if (signal?.aborted) throw new SiteAdapterError('tool-run', 'aborted')
+    if (signal?.aborted) throw new ValetError('tool-run', 'aborted')
     this.paced.push(ms)
     await this.advance(ms)
   }

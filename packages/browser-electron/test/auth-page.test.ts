@@ -1,5 +1,5 @@
 import { inspect } from 'node:util'
-import { type BlockedRequest, SecretValue, SiteAdapterError } from '@siteadapter/core'
+import { type BlockedRequest, SecretValue, ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { SurfaceAuthPage } from '../src/auth-page'
 import { needsUserTitle } from '../src/needs-user'
@@ -17,13 +17,12 @@ function timing(timers: ManualTimers) {
   return { timers, stepTimeoutMs: 1000, typingDelayMs: 50 }
 }
 
-async function rejection(promise: Promise<unknown>): Promise<SiteAdapterError> {
+async function rejection(promise: Promise<unknown>): Promise<ValetError> {
   const error = await promise.then(
     () => null,
     (e: unknown) => e,
   )
-  if (!(error instanceof SiteAdapterError))
-    throw new Error(`expected a SiteAdapterError, got ${String(error)}`)
+  if (!(error instanceof ValetError)) throw new Error(`expected a ValetError, got ${String(error)}`)
   return error
 }
 
@@ -934,7 +933,7 @@ describe('AuthPage.handToUser', () => {
     let done = false
     const handed = page.handToUser('captcha').then(() => (done = true))
     expect(surface.shown).toEqual([
-      'The site showed a verification check that siteadapter won’t solve for you. Close this window when you’re done.',
+      'The site showed a verification check that Valet won’t solve for you. Close this window when you’re done.',
     ])
     await new Promise((resolve) => setImmediate(resolve))
     expect(done).toBe(false)

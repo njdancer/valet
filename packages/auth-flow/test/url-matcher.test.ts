@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { isScreenedPattern, SiteAdapterError } from '@siteadapter/core'
+import { isScreenedPattern, ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { runAuthFlow } from '../src/run-auth-flow'
 import { type Timers, type WorkerFactory, type WorkerLike, WorkerUrlMatcher } from '../src/url-matcher'
@@ -67,8 +67,8 @@ async function rejection(promise: Promise<unknown>): Promise<[string, string]> {
     () => undefined,
     (e: unknown) => e,
   )
-  expect(error).toBeInstanceOf(SiteAdapterError)
-  return [(error as SiteAdapterError).stage, (error as SiteAdapterError).errorClass]
+  expect(error).toBeInstanceOf(ValetError)
+  return [(error as ValetError).stage, (error as ValetError).errorClass]
 }
 
 /** The polynomial shape core's screen lets through, and a query that makes it take minutes. */

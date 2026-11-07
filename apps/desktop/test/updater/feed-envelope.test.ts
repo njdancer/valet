@@ -22,7 +22,7 @@ import {
 } from '../../src/main/updater'
 import { TEST_FEED_KEYS } from './fakes'
 
-const YML = "version: '1.3.0'\nfiles:\n  - url: 'siteadapter-1.3.0-arm64.zip'\n"
+const YML = "version: '1.3.0'\nfiles:\n  - url: 'valet-1.3.0-arm64.zip'\n"
 const ISSUED = '2026-11-07T10:00:00.000Z'
 const EXPIRES = '2026-12-07T10:00:00.000Z'
 const NOW = Date.parse('2026-11-10T00:00:00.000Z')

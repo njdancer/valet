@@ -17,7 +17,7 @@
 //   header, which lets a feed host count and follow installs, is overwritten with a constant.
 
 import type { OutgoingHttpHeaders } from 'node:http'
-import { SiteAdapterError } from '@siteadapter/core'
+import { ValetError } from '@valet/core'
 import type { IsoTime, Settings, UpdateStatus } from '../../shared/api'
 import { classifyUpdateError, type UpdateErrorReason } from './errors'
 import { loadFeedPublicKey } from './feed-envelope'
@@ -193,7 +193,7 @@ function delayOrDefault(value: number | undefined, fallback: number): number {
 
 export function createUpdater(options: UpdaterOptions): Updater {
   const parsedCurrent = parseVersion(options.currentVersion)
-  if (parsedCurrent === null) throw new SiteAdapterError('config', 'invalid')
+  if (parsedCurrent === null) throw new ValetError('config', 'invalid')
   const current: Version = parsedCurrent
   const autoUpdater = options.autoUpdater
   const intervalMs = delayOrDefault(options.intervalMs, CHECK_INTERVAL_MS)
@@ -203,19 +203,19 @@ export function createUpdater(options: UpdaterOptions): Updater {
   // Before anything can make a request: no logging of URLs, and the signed feed from the asar.
   autoUpdater.logger = null
   autoUpdater.autoDownload = false
-  if (options.enabled && options.feed === undefined) throw new SiteAdapterError('config', 'invalid')
+  if (options.enabled && options.feed === undefined) throw new ValetError('config', 'invalid')
   if (options.feed !== undefined) {
     const loopback = options.allowLoopbackFeed === true
     const url = validateFeedUrl(options.feed.url, {
       allowLoopbackHttp: loopback,
       requirePublicHost: !loopback,
     })
-    if (url === null) throw new SiteAdapterError('config', 'invalid')
+    if (url === null) throw new ValetError('config', 'invalid')
     let publicKey: ReturnType<typeof loadFeedPublicKey>
     try {
       publicKey = loadFeedPublicKey(options.feed.publicKey)
     } catch {
-      throw new SiteAdapterError('config', 'invalid')
+      throw new ValetError('config', 'invalid')
     }
     autoUpdater.setFeedURL({
       provider: 'custom',

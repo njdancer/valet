@@ -11,10 +11,10 @@
 // The launch must not touch the real userData folder, the real Keychain or the person's own
 // session state. So the child gets a temporary HOME (and CFFIXED_USER_HOME, which CoreFoundation
 // reads for the home directory), Chromium's mock keychain, and none of the caller's CSC_*, APPLE_*,
-// SITEADAPTER_*, ELECTRON_* or NODE_OPTIONS variables. package-smoke.mjs first launches the
+// VALET_*, ELECTRON_* or NODE_OPTIONS variables. package-smoke.mjs first launches the
 // placeholder the same way and refuses to go on unless app.getPath('appData') moved under the
 // temporary HOME; afterwards this checks that the app's data did land there, and that the real
-// ~/Library/Application Support/siteadapter(-dev) folders are as they were.
+// ~/Library/Application Support/valet(-dev) folders are as they were.
 //
 // The control panel is read over the DevTools protocol: --remote-debugging-port=0, the port taken
 // from Chromium's "DevTools listening on" line. Playwright's Electron launcher needs --inspect,
@@ -55,7 +55,8 @@ export function inside(path, dir) {
 function realFolders() {
   const support = join(homedir(), 'Library', 'Application Support')
   const state = {}
-  for (const name of ['siteadapter', 'siteadapter-dev']) state[name] = snapshot(join(support, name))
+  for (const name of ['Valet', 'Valet Dev', 'valet', 'valet-dev', 'siteadapter', 'siteadapter-dev'])
+    state[name] = snapshot(join(support, name))
   return state
 }
 
@@ -126,7 +127,7 @@ const READ_PANEL = `JSON.stringify({
   title: document.title,
   rootChildren: document.getElementById('root')?.childElementCount ?? 0,
   text: (document.body?.innerText ?? '').slice(0, 4000),
-  api: typeof window.siteadapter,
+  api: typeof window.valet,
   node: typeof process,
 })`
 
@@ -249,7 +250,7 @@ async function launchRefused(app, home, args, extraEnv = {}) {
       done({ code, signal, timedOut: false })
     })
   })
-  const userData = join(home, 'Library', 'Application Support', 'siteadapter-dev')
+  const userData = join(home, 'Library', 'Application Support', 'Valet Dev')
   const written = existsSync(userData)
     ? readdirSync(userData).filter((name) =>
         ['audit.jsonl', 'bridge.json', 'versions.json', 'settings.json', SMOKE_REPORT_FILE].includes(name),
@@ -259,7 +260,7 @@ async function launchRefused(app, home, args, extraEnv = {}) {
     exit,
     ms: Date.now() - started,
     refusedMessage:
-      output.includes('siteadapter: refused to start') || output.includes('bridge mode is not built yet'),
+      output.includes('valet: refused to start') || output.includes('bridge mode is not built yet'),
     devtoolsListened: /DevTools listening on/.test(output),
     written,
   }
@@ -297,8 +298,8 @@ export async function smokeRealApp({ work, arch, dist, home, expectEqual, expect
   const files = asarFiles(join(resources, 'app.asar'))
   const unexpected = files.filter((f) => !ASAR_ALLOWED.some((pattern) => pattern.test(f)))
 
-  expectEqual('real: CFBundleIdentifier', info.CFBundleIdentifier, 'me.dncr.siteadapter.dev')
-  expectEqual('real: CFBundleName', info.CFBundleName, 'siteadapter-dev')
+  expectEqual('real: CFBundleIdentifier', info.CFBundleIdentifier, 'me.dncr.valet.dev')
+  expectEqual('real: CFBundleName', info.CFBundleName, 'Valet Dev')
   expectEqual('real: LSUIElement', info.LSUIElement, true)
   expectEqual('real: ElectronAsarIntegrity', Object.keys(info.ElectronAsarIntegrity ?? {}), [
     'Resources/app.asar',
@@ -324,7 +325,7 @@ export async function smokeRealApp({ work, arch, dist, home, expectEqual, expect
   )
 
   const before = realFolders()
-  const userData = join(home, 'Library', 'Application Support', 'siteadapter-dev')
+  const userData = join(home, 'Library', 'Application Support', 'Valet Dev')
   const launch = await launchReal(app, home, userData)
   const refusals = {}
   for (const [i, refusal] of REFUSALS.entries()) {
@@ -391,7 +392,7 @@ export async function smokeRealApp({ work, arch, dist, home, expectEqual, expect
         { code: r.exit.code, ms: r.ms, devtoolsListened: r.devtoolsListened },
       ]),
     ),
-    output: launch.output.split('\n').filter((l) => l.startsWith('siteadapter:')),
+    output: launch.output.split('\n').filter((l) => l.startsWith('valet:')),
   }
 }
 

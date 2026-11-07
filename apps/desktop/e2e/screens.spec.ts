@@ -2,7 +2,7 @@
 // ones in screens/ are the renderer alone on the fake API). Light, 1440x900 at device scale 2, as
 // src/renderer/dev/screenshot.mjs takes them. Off unless asked, since it rewrites committed files:
 //
-//   mise exec -- pnpm --filter @siteadapter/desktop screens:live
+//   mise exec -- pnpm --filter @valet/desktop screens:live
 
 import { mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
@@ -23,7 +23,7 @@ import {
 } from './harness'
 
 test.describe.configure({ mode: 'serial' })
-test.skip(process.env['SITEADAPTER_E2E_SCREENS'] !== '1', 'set SITEADAPTER_E2E_SCREENS=1 (screens:live)')
+test.skip(process.env['VALET_E2E_SCREENS'] !== '1', 'set VALET_E2E_SCREENS=1 (screens:live)')
 
 const OUT = join(appDir, 'screens/live')
 let userData: string | undefined
@@ -66,7 +66,7 @@ async function shot(page: Page, name: string, width = 1440, height = 900): Promi
 }
 
 async function route(hash: string): Promise<void> {
-  await control.evaluate((hash) => window.siteadapter?.app.openControlPanel(hash as `#/${string}`), hash)
+  await control.evaluate((hash) => window.valet?.app.openControlPanel(hash as `#/${string}`), hash)
   await control.waitForTimeout(300)
 }
 
@@ -84,7 +84,7 @@ test('first run: the adapter waits for review', async () => {
   if (await ack.isVisible()) await ack.check()
   await control.getByRole('button', { name: 'Approve 0.2.0' }).click()
   await expect
-    .poll(async () => (await control.evaluate(() => window.siteadapter?.approvals.pending()))?.length)
+    .poll(async () => (await control.evaluate(() => window.valet?.approvals.pending()))?.length)
     .toBe(0)
   await control.waitForTimeout(500)
 })
@@ -111,7 +111,7 @@ test('the grant sheet, then the approved adapter', async () => {
 })
 
 test('the run trace of the call that logged in, and the audit log verified', async () => {
-  const runs = await control.evaluate(() => window.siteadapter?.runs.list())
+  const runs = await control.evaluate(() => window.valet?.runs.list())
   const login = runs?.find((r) => r.tool === 'add_to_cart')
   await route(`#/activity/${login?.callId ?? ''}`)
   await expect(control.getByText('declarative steps, no adapter code')).toBeVisible()
@@ -127,9 +127,9 @@ test('the run trace of the call that logged in, and the audit log verified', asy
 })
 
 test('the login window the person opens, with the banner above it', async () => {
-  await control.evaluate(() => window.siteadapter?.openLoginWindow('woolworths'))
+  await control.evaluate(() => window.valet?.openLoginWindow('woolworths'))
   if (launched === null) throw new Error('not launched')
-  const banner = await windowWithTitle(launched.app, 'siteadapter: sign in')
+  const banner = await windowWithTitle(launched.app, 'Valet: sign in')
   await expect(banner.getByRole('button', { name: 'Give up' })).toBeVisible()
   const size = await banner.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }))
   await shot(banner, 'needs-user', size.width, size.height)
@@ -143,12 +143,12 @@ test('a changed bundle under review, and its irreversible tool’s confirmation'
   await shot(control, 'approve-update')
   await control.getByRole('checkbox', { name: 'I’ve read the highlighted additions' }).check()
   await control.getByRole('button', { name: 'Approve 0.2.0' }).click()
-  const detail = await control.evaluate(() => window.siteadapter?.adapters.get('woolworths'))
+  const detail = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
   const origins = detail?.secretRequests[0]?.origins ?? []
   await control.evaluate(
     ({ hash, origins }) =>
       Promise.all([
-        window.siteadapter?.grants.make({
+        window.valet?.grants.make({
           adapterId: 'woolworths',
           adapterHash: hash,
           secret: 'login',
@@ -156,7 +156,7 @@ test('a changed bundle under review, and its irreversible tool’s confirmation'
           itemRef: 'demo-woolworths',
           origins,
         }),
-        window.siteadapter?.grants.make({
+        window.valet?.grants.make({
           adapterId: 'woolworths',
           adapterHash: hash,
           secret: 'messages',
@@ -169,7 +169,7 @@ test('a changed bundle under review, and its irreversible tool’s confirmation'
   )
   const call: Promise<ToolResult> = callTool(mcp(), 'woolworths_remove_from_cart', { stockcode })
   if (launched === null) throw new Error('not launched')
-  const panel = await windowWithTitle(launched.app, 'siteadapter: confirm', 60_000)
+  const panel = await windowWithTitle(launched.app, 'Valet: confirm', 60_000)
   await expect(panel.getByRole('button', { name: 'Approve Remove from cart' })).toBeEnabled()
   await shot(panel, 'confirm-irreversible', 460, 620)
   await panel.getByRole('button', { name: 'Decline' }).click()

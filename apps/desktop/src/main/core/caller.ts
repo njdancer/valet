@@ -15,8 +15,8 @@
 // The runtime's lock keeps calls and the app's own login work (ToolHost.runLoginStep) on an adapter
 // apart, so nothing here waits for either.
 
-import type { CallOutcome, ListedTool, ToolCall, ToolCaller } from '@siteadapter/mcp-server'
-import type { ToolCallResult, ToolHost } from '@siteadapter/runtime'
+import type { CallOutcome, ListedTool, ToolCall, ToolCaller } from '@valet/mcp-server'
+import type { ToolCallResult, ToolHost } from '@valet/runtime'
 
 /** A call the app refused before the runtime saw it. */
 export type AppRefusal = Extract<ToolCallResult, { readonly status: 'failed' }>

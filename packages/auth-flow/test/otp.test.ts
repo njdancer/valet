@@ -1,4 +1,4 @@
-import { CredentialError, MESSAGES_SECRET } from '@siteadapter/core'
+import { CredentialError, MESSAGES_SECRET } from '@valet/core'
 import { describe, expect, it, vi } from 'vitest'
 import { runAuthFlow } from '../src/run-auth-flow'
 import { OTP_POLL_MS } from '../src/secret-fill'
@@ -40,7 +40,7 @@ describe('otp from a 1Password TOTP field', () => {
     w.page.cookies.add('session')
     w.input.manifest = TOTP
     expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
-    expect(w.provider.calls).toEqual([{ itemRef: 'op://siteadapter/Shop', field: 'otp' }])
+    expect(w.provider.calls).toEqual([{ itemRef: 'op://valet/Shop', field: 'otp' }])
     expect(w.page.typed).toEqual([
       {
         selector: '#otp',

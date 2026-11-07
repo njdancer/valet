@@ -1,4 +1,4 @@
-import { NeedsUserError, SiteAdapterError } from '@siteadapter/core'
+import { NeedsUserError, ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { addToCart, getCart, NOTICES, removeFromCart, setCartQuantity } from '../src/cart'
 import { FakeToolContext, json, loadFixture } from './fake-context'
@@ -199,7 +199,7 @@ describe('get_cart', () => {
     delete body.Totals
     const ctx = new FakeToolContext().on('GET', TROLLEY, json(body))
     const error = await getCart.run(ctx, {}).catch((e: unknown) => e)
-    expect(error).toEqual(new SiteAdapterError('tool-run', 'unexpected-shape'))
+    expect(error).toEqual(new ValetError('tool-run', 'unexpected-shape'))
   })
 
   it('logs in once more after a 401 partway through, and reads the trolley again', async () => {
@@ -216,7 +216,7 @@ describe('get_cart', () => {
   it('reports a second 401 as not-logged-in, without trying a third time', async () => {
     const ctx = new FakeToolContext().on('GET', TROLLEY, json({}, 401))
     const error = await getCart.run(ctx, {}).catch((e: unknown) => e)
-    expect(error).toEqual(new SiteAdapterError('tool-run', 'not-logged-in'))
+    expect(error).toEqual(new ValetError('tool-run', 'not-logged-in'))
     expect(ctx.events).toEqual(['ensure', 'GET /apis/ui/Trolley', 'ensure', 'GET /apis/ui/Trolley'])
   })
 
@@ -233,7 +233,7 @@ describe('get_cart', () => {
   it('does not log in again for anything but a 401', async () => {
     const ctx = new FakeToolContext().on('GET', TROLLEY, json({}, 403))
     const error = await getCart.run(ctx, {}).catch((e: unknown) => e)
-    expect(error).toEqual(new SiteAdapterError('tool-run', 'blocked-by-site'))
+    expect(error).toEqual(new ValetError('tool-run', 'blocked-by-site'))
     expect(ctx.events).toEqual(['ensure', 'GET /apis/ui/Trolley'])
   })
 })
@@ -309,7 +309,7 @@ describe('add_to_cart', () => {
       const error = await addToCart
         .run(ctx, addToCart.input.parse({ stockcode: 888137, quantity: 1 }))
         .catch((e: unknown) => e)
-      expect(error).toEqual(new SiteAdapterError('tool-run', 'unexpected-shape'))
+      expect(error).toEqual(new ValetError('tool-run', 'unexpected-shape'))
       expect(ctx.events).toEqual(['ensure', 'GET /apis/ui/Trolley'])
     }
   })
@@ -351,7 +351,7 @@ describe('add_to_cart', () => {
     const error = await addToCart
       .run(ctx, addToCart.input.parse({ stockcode: 88436, quantity: 3 }))
       .catch((e: unknown) => e)
-    expect(error).toEqual(new SiteAdapterError('tool-run', 'invalid'))
+    expect(error).toEqual(new ValetError('tool-run', 'invalid'))
     expect(String(error)).not.toContain('canary-0b2e')
   })
 
@@ -409,7 +409,7 @@ describe('add_to_cart', () => {
     const error = await addToCart
       .run(ctx, addToCart.input.parse({ stockcode: 88436, quantity: 6 }))
       .catch((e: unknown) => e)
-    expect(error).toEqual(new SiteAdapterError('tool-input', 'invalid'))
+    expect(error).toEqual(new ValetError('tool-input', 'invalid'))
     expect(ctx.events).toEqual(['ensure', 'GET /apis/ui/Trolley'])
   })
 
@@ -424,7 +424,7 @@ describe('add_to_cart', () => {
     const error = await addToCart
       .run(ctx, addToCart.input.parse({ stockcode: 64746 }))
       .catch((e: unknown) => e)
-    expect(error).toEqual(new SiteAdapterError('tool-run', 'aborted'))
+    expect(error).toEqual(new ValetError('tool-run', 'aborted'))
     expect(ctx.events).toEqual(['ensure', 'GET /apis/ui/Trolley'])
   })
 
@@ -435,7 +435,7 @@ describe('add_to_cart', () => {
     const error = await addToCart
       .run(ctx, addToCart.input.parse({ stockcode: 64746 }))
       .catch((e: unknown) => e)
-    expect(error).toEqual(new SiteAdapterError('tool-run', 'blocked-by-site'))
+    expect(error).toEqual(new ValetError('tool-run', 'blocked-by-site'))
     expect(ctx.fetches.map((f) => f.method)).toEqual(['GET'])
   })
 
@@ -450,7 +450,7 @@ describe('add_to_cart', () => {
     const error = await addToCart
       .run(ctx, addToCart.input.parse({ stockcode: 64746 }))
       .catch((e: unknown) => e)
-    expect(error).toEqual(new SiteAdapterError('tool-run', 'blocked-by-site'))
+    expect(error).toEqual(new ValetError('tool-run', 'blocked-by-site'))
     expect(ctx.fetches.map((f) => f.method)).toEqual(['GET'])
   })
 
@@ -511,7 +511,7 @@ describe('set_cart_quantity', () => {
     for (const body of refusals) {
       const ctx = new FakeToolContext().on('POST', UPDATE, json(body))
       const error = await set(ctx, 88436, 3).catch((e: unknown) => e)
-      expect(error).toEqual(new SiteAdapterError('tool-run', 'invalid'))
+      expect(error).toEqual(new ValetError('tool-run', 'invalid'))
     }
   })
 
@@ -557,7 +557,7 @@ describe('set_cart_quantity', () => {
   it('reports a blocked write as blocked-by-site', async () => {
     const ctx = new FakeToolContext().on('POST', UPDATE, json({}, 403))
     const error = await set(ctx, 88436, 2).catch((e: unknown) => e)
-    expect(error).toEqual(new SiteAdapterError('tool-run', 'blocked-by-site'))
+    expect(error).toEqual(new ValetError('tool-run', 'blocked-by-site'))
   })
 
   it('bounds the quantity to 0..50 whole units', () => {
@@ -636,7 +636,7 @@ describe('cart tools without a login', () => {
         .on('POST', UPDATE, json({}))
       ctx.ensureResult = { status: 'failed', stage: 'credential', errorClass: 'locked' }
       const error = await run(ctx).catch((e: unknown) => e)
-      expect(error).toEqual(new SiteAdapterError('credential', 'locked'))
+      expect(error).toEqual(new ValetError('credential', 'locked'))
       expect(ctx.fetches).toEqual([])
     })
   }

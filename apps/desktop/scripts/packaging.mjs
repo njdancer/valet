@@ -13,14 +13,14 @@ export const CONFIG = join(APP_DIR, 'electron-builder.config.ts')
 
 /**
  * The caller's environment without anything that could sign, notarise, make a release or reach
- * into Electron's or Node's start-up: no CSC_*, APPLE_*, SITEADAPTER_* (but `keep`), ELECTRON_* or
+ * into Electron's or Node's start-up: no CSC_*, APPLE_*, VALET_* (but `keep`), ELECTRON_* or
  * NODE_OPTIONS. Never signing with an identity: CSC_IDENTITY_AUTO_DISCOVERY=false.
  */
 export function cleanEnv(extra = {}, keep = []) {
   const env = { ...process.env }
   for (const name of Object.keys(env)) {
     if (keep.includes(name)) continue
-    if (/^(CSC_|APPLE_|SITEADAPTER_|ELECTRON_|NODE_OPTIONS)/.test(name)) delete env[name]
+    if (/^(CSC_|APPLE_|VALET_|ELECTRON_|NODE_OPTIONS)/.test(name)) delete env[name]
   }
   return { ...env, CSC_IDENTITY_AUTO_DISCOVERY: 'false', ...extra }
 }
@@ -78,7 +78,7 @@ export function mainBundle(dir = join(APP_DIR, 'out', 'main')) {
 }
 
 /** The .app electron-builder made in `output` for `arch`. */
-export function appPath(output, arch, productName = 'siteadapter-dev') {
+export function appPath(output, arch, productName = 'Valet Dev') {
   return join(output, arch === 'arm64' ? 'mac-arm64' : 'mac', `${productName}.app`)
 }
 

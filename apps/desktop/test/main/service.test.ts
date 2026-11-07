@@ -5,9 +5,9 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { SiteAdapterError } from '@siteadapter/core'
-import type { LiveSessions, SessionReportingEndpoint, ToolCall, ToolCaller } from '@siteadapter/mcp-server'
-import { LoginAttemptMarker } from '@siteadapter/runtime'
+import { ValetError } from '@valet/core'
+import type { LiveSessions, SessionReportingEndpoint, ToolCall, ToolCaller } from '@valet/mcp-server'
+import { LoginAttemptMarker } from '@valet/runtime'
 import { afterEach, describe, expect, it } from 'vitest'
 import { dataPaths } from '../../src/main/core/constants'
 import { disabledOtpReader } from '../../src/main/core/credentials'
@@ -836,7 +836,7 @@ describe('the login window', () => {
         nextCooldownSeconds: 120,
       },
     ])
-    await expect(s.api.openLoginWindow('shop')).rejects.toEqual(new SiteAdapterError('login', 'rate-limited'))
+    await expect(s.api.openLoginWindow('shop')).rejects.toEqual(new ValetError('login', 'rate-limited'))
     expect(s.driver.pages).toEqual([])
     expect(s.service.hasHandoff('shop')).toBe(false)
     // Once the cool-down is over it opens.
@@ -859,9 +859,7 @@ describe('the login window', () => {
       page.text = ['Access Denied … Reference #18.abc']
       return page
     }
-    await expect(s.api.openLoginWindow('shop')).rejects.toEqual(
-      new SiteAdapterError('login', 'blocked-by-site'),
-    )
+    await expect(s.api.openLoginWindow('shop')).rejects.toEqual(new ValetError('login', 'blocked-by-site'))
     expect(s.driver.pages[1]?.closed).toBe(true)
     expect(s.service.hasHandoff('shop')).toBe(false)
     expect((await s.api.health.sites())[0]).toMatchObject({ breaker: 'open', cause: 'blocked-by-site' })
@@ -875,7 +873,7 @@ describe('the login window', () => {
     expect((await s.call('echo', { text: 'x' })).status).toBe('blocked')
     // Open: no window opens, and no page is even made.
     s.driver.nextPage = () => new FakeAuthPage()
-    await expect(s.api.openLoginWindow('shop')).rejects.toEqual(new SiteAdapterError('login', 'rate-limited'))
+    await expect(s.api.openLoginWindow('shop')).rejects.toEqual(new ValetError('login', 'rate-limited'))
     expect(s.driver.pages).toHaveLength(2)
     // After the cool-down a window opens, and a hand-off goes through.
     s.advance(60 * 60_000)
@@ -884,7 +882,7 @@ describe('the login window', () => {
     if (third !== undefined) third.cookies = ['sid']
     await s.api.finishLogin('shop')
     expect(s.driver.handoffs).toHaveLength(1)
-    await expect(s.api.finishLogin('shop')).rejects.toEqual(new SiteAdapterError('login', 'not-found'))
+    await expect(s.api.finishLogin('shop')).rejects.toEqual(new ValetError('login', 'not-found'))
   })
 
   it('takes a slot of the site’s rate budget for each step', async () => {
@@ -934,7 +932,7 @@ describe('endpoint, settings, audit and the app', () => {
     await s.api.endpoint.copyUrl()
     await s.api.endpoint.copyClientConfig('claude-code')
     expect(s.ui.clipboard[0]).toBe('http://127.0.0.1:47000/mcp')
-    expect(s.ui.clipboard[1]).toContain('claude mcp add siteadapter-demo --')
+    expect(s.ui.clipboard[1]).toContain('claude mcp add valet-demo --')
     for (const snippet of await s.api.endpoint.snippets()) expect(snippet.text).not.toContain(TOKEN)
     await s.api.endpoint.rotateToken()
     expect(s.endpoint.resets).toBe(1)

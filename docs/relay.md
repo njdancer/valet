@@ -267,7 +267,7 @@ tie to the browser the person is holding:
 
 1. The client sends the person's browser (on their phone, say) to `/authorize`.
 2. The page there shows a code (8 characters from an unambiguous 32-symbol alphabet, about 40
-   bits) and says: "Type this code into siteadapter on your Mac. If you didn't just add a
+   bits) and says: "Type this code into Valet on your Mac. If you didn't just add a
    connector, close this page."
 3. The menu-bar app shows a notification and one window. It shows, for each pending request,
    when it arrived and from which address, and the client's _claimed_ identity (its metadata
@@ -373,7 +373,7 @@ claude.ai ──HTTPS──▶ relay (Worker + Durable Object per Mac) ◀──
   on long calls so streams stay alive, and the relay doesn't impose a shorter timeout than the
   client's. What claude.ai's own timeout is, is unknown (_verify_).
 - **Mac offline or asleep.** The relay answers at once with a tool error saying the Mac running
-  siteadapter isn't connected. It never queues calls for later: a queued `set_cart_quantity`
+  Valet isn't connected. It never queues calls for later: a queued `set_cart_quantity`
   replayed hours later is worse than a failure. The app can hold a power assertion while remote
   mode is on, as an opt-in, with the battery cost stated.
 
@@ -401,7 +401,7 @@ What D1 can do about it:
 - **Minimise.** Forward and forget: payloads live in memory only for the life of a request.
   Nothing is written to Durable Object storage except the routing table. Workers Logs, Logpush,
   tail workers and request sampling are off for payload-bearing routes, and error paths log a
-  stage and class, never a body (the same rule as `SiteAdapterError`).
+  stage and class, never a body (the same rule as `ValetError`).
 - **Say so.** The relay's privacy page says what it can see, what it keeps (routing and billing),
   and that its host (Cloudflare) terminates TLS too.
 - **Shape what's exposed.** The remote policy keeps sensitive tools local. Adapters can offer

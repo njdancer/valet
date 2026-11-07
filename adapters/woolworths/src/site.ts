@@ -1,8 +1,8 @@
 // Calls to the site's own JSON API, made through the page so the session's cookies never leave the
-// browser. Every failure leaves as a SiteAdapterError: response bodies and exception messages can
+// browser. Every failure leaves as a ValetError: response bodies and exception messages can
 // carry page text, so none of it is passed on.
 
-import { type FetchInit, type FetchResult, SiteAdapterError, type ToolContext } from '@siteadapter/core'
+import { type FetchInit, type FetchResult, type ToolContext, ValetError } from '@valet/core'
 import type { z } from 'zod'
 
 export const PATHS = {
@@ -36,20 +36,20 @@ async function call<Schema extends z.ZodType>(
   schema: Schema,
 ): Promise<z.infer<Schema>> {
   // Checked before every call so that a cancelled add_to_cart never reaches its write.
-  if (ctx.signal.aborted) throw new SiteAdapterError('tool-run', 'aborted')
+  if (ctx.signal.aborted) throw new ValetError('tool-run', 'aborted')
   let response: FetchResult
   try {
     response = await ctx.page.fetch(path, init)
   } catch (error) {
-    // The runtime's own guards throw SiteAdapterError; keep their stage and class.
-    if (error instanceof SiteAdapterError) throw error
-    throw new SiteAdapterError('tool-run', 'unavailable')
+    // The runtime's own guards throw ValetError; keep their stage and class.
+    if (error instanceof ValetError) throw error
+    throw new ValetError('tool-run', 'unavailable')
   }
   throwForStatus(response.status)
   throwForContentType(response)
   const parsed = schema.safeParse(response.body)
   // JSON the adapter can't read means the site changed, not that the input was bad.
-  if (!parsed.success) throw new SiteAdapterError('tool-run', 'unexpected-shape')
+  if (!parsed.success) throw new ValetError('tool-run', 'unexpected-shape')
   return parsed.data
 }
 
@@ -64,18 +64,18 @@ function throwForContentType(response: FetchResult): void {
   const type = response.contentType?.toLowerCase() ?? ''
   if (type.includes('json')) return
   if (type.includes('html') || (typeof response.body === 'string' && /^\s*</.test(response.body))) {
-    throw new SiteAdapterError('tool-run', 'blocked-by-site')
+    throw new ValetError('tool-run', 'blocked-by-site')
   }
-  throw new SiteAdapterError('tool-run', 'unavailable')
+  throw new ValetError('tool-run', 'unavailable')
 }
 
 function throwForStatus(status: number): void {
   if (status >= 200 && status < 300) return
-  if (status === 401) throw new SiteAdapterError('tool-run', 'not-logged-in')
+  if (status === 401) throw new ValetError('tool-run', 'not-logged-in')
   // Akamai answers a flagged session with a 403 "Access Denied" page (live probe, run 2). A 429 is
   // the site asking for less, which the runtime's breaker treats differently from a block.
-  if (status === 403) throw new SiteAdapterError('tool-run', 'blocked-by-site')
-  if (status === 429) throw new SiteAdapterError('tool-run', 'rate-limited')
-  if (status === 404) throw new SiteAdapterError('tool-run', 'not-found')
-  throw new SiteAdapterError('tool-run', 'unavailable')
+  if (status === 403) throw new ValetError('tool-run', 'blocked-by-site')
+  if (status === 429) throw new ValetError('tool-run', 'rate-limited')
+  if (status === 404) throw new ValetError('tool-run', 'not-found')
+  throw new ValetError('tool-run', 'unavailable')
 }

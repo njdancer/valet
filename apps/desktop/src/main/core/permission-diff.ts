@@ -9,7 +9,7 @@ import {
   canonicalJson,
   messagesSourcesIn,
   type OtpSource,
-} from '@siteadapter/core'
+} from '@valet/core'
 import type {
   AuthStepEntry,
   FileChange,

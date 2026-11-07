@@ -1,5 +1,5 @@
 {
-  "name": "@siteadapter/adapter-woolworths",
+  "name": "@valet/adapter-woolworths",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -7,10 +7,10 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@siteadapter/core": "workspace:*",
+    "@valet/core": "workspace:*",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@siteadapter/fake-woolworths-site": "workspace:*"
+    "@valet/fake-woolworths-site": "workspace:*"
   }
 }

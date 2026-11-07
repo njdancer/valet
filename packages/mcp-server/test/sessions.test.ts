@@ -217,7 +217,7 @@ describe('live sessions', () => {
   })
 
   it('is reported by the endpoint the app starts too', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'siteadapter-sessions-'))
+    const dir = await mkdtemp(join(tmpdir(), 'valet-sessions-'))
     cleanup.push(() => rm(dir, { recursive: true, force: true }))
     const endpoint = await startEndpoint({
       caller: new FakeCaller([viewCart]),

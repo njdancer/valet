@@ -9,8 +9,8 @@ import {
   MESSAGES_SECRET,
   messagesSourcesIn,
   type Purpose,
-} from '@siteadapter/core'
-import type { SiteHealthSnapshot } from '@siteadapter/runtime'
+} from '@valet/core'
+import type { SiteHealthSnapshot } from '@valet/runtime'
 import type {
   AdapterDetail,
   AdapterSummary,

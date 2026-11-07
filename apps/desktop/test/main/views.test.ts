@@ -2,7 +2,7 @@
 // View models copy named fields only: whatever a store holds (an op:// reference, a session value,
 // a token) never reaches what the renderer receives.
 
-import { type AuditRecord, type Grant, parseManifest } from '@siteadapter/core'
+import { type AuditRecord, type Grant, parseManifest } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { builtinAdapter } from '../../src/main/core/registry'
 import {
@@ -18,14 +18,14 @@ import {
 import { SHOP, SHOP_FILES, shopDefinition } from './fixtures'
 
 const adapter = builtinAdapter(shopDefinition(), SHOP_FILES)
-const CANARIES = ['op://siteadapter/item1', 'cookie-value-canary-123', 'token-canary-456']
+const CANARIES = ['op://Valet/item1', 'cookie-value-canary-123', 'token-canary-456']
 
 const loginGrant: Grant = {
   adapterId: 'shop',
   adapterHash: adapter.hash,
   secret: 'login',
   provider: 'onepassword-cli',
-  itemRef: 'op://siteadapter/item1',
+  itemRef: 'op://Valet/item1',
   origins: ['https://login.shop.test'],
   grantedAt: '2026-11-07T00:00:00.000Z',
 }
@@ -37,7 +37,7 @@ const state: AdapterState = {
   rejected: false,
   previous: null,
   grants: [loginGrant, { ...loginGrant, secret: 'messages', provider: 'messages', itemRef: 'ShopBank' }],
-  titles: { 'op://siteadapter/item1': 'Shop' },
+  titles: { 'op://Valet/item1': 'Shop' },
   session: { state: 'logged-in', checkedAt: null, needsUser: null, since: null },
   calls: new Map([
     ['shop', 3],

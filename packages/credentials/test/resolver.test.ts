@@ -1,11 +1,5 @@
 import { inspect } from 'node:util'
-import {
-  CredentialError,
-  type CredentialProvider,
-  type Grant,
-  SecretValue,
-  SiteAdapterError,
-} from '@siteadapter/core'
+import { CredentialError, type CredentialProvider, type Grant, SecretValue, ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { FakeCredentialProvider } from '../src/fake'
 import { CredentialResolver } from '../src/resolver'
@@ -22,14 +16,14 @@ const grant: Grant = {
   grantedAt: '2026-11-07T00:00:00.000Z',
 }
 
-async function errorOf(promise: Promise<unknown>): Promise<SiteAdapterError> {
+async function errorOf(promise: Promise<unknown>): Promise<ValetError> {
   try {
     await promise
   } catch (error) {
-    if (error instanceof SiteAdapterError) return error
+    if (error instanceof ValetError) return error
     throw error
   }
-  throw new Error('expected a SiteAdapterError')
+  throw new Error('expected a ValetError')
 }
 
 describe('CredentialResolver', () => {
@@ -58,7 +52,7 @@ describe('CredentialResolver', () => {
 
   it('never falls back to another provider when the named one is missing', async () => {
     const fake = new FakeCredentialProvider({
-      items: { 'op://siteadapter/Woolworths': { password: CANARY } },
+      items: { 'op://valet/Woolworths': { password: CANARY } },
     })
     const resolver = new CredentialResolver([fake])
     const error = await errorOf(resolver.resolve({ ...grant, provider: 'onepassword-cli' }, 'password'))

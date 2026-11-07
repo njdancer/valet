@@ -1,4 +1,4 @@
-import type { ElementInfo } from '@siteadapter/core'
+import type { ElementInfo } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { allowedOrigins, suitsField } from '../src/guards'
 

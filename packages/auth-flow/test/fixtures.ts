@@ -8,7 +8,7 @@ import {
   MESSAGES_SECRET,
   parseManifest,
   type SecretValue,
-} from '@siteadapter/core'
+} from '@valet/core'
 import type { AuthFlowInput } from '../src/types'
 import { FakeAuthPage, type FakeSite } from './fake-auth-page'
 import {
@@ -27,7 +27,7 @@ export const EVIL = 'https://evil.test'
 export const LOGIN_PAGE = 'https://login.shop.test/'
 export const ACCOUNT_PAGE = 'https://www.shop.test/account'
 export const HASH = '3f1e0c2b9a8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c4d3e2f'
-export const ITEM = 'op://siteadapter/Shop'
+export const ITEM = 'op://valet/Shop'
 export const START = Date.parse('2026-11-07T10:00:00.000Z')
 
 /** Unique values that must reach the page and nothing else. */

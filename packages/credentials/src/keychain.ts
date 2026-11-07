@@ -7,7 +7,7 @@
 // would let any process read the token. See "The service-account token" in docs/security-model.md;
 // the replacement reads in process through SecItemCopyMatching behind the same TokenSource.
 
-import { CredentialError, SecretValue, type TokenSource } from '@siteadapter/core'
+import { CredentialError, SecretValue, type TokenSource } from '@valet/core'
 import { nodeSpawner, nodeTimers, runProcess, type Spawner, type Timers } from './process'
 
 export interface KeychainTokenOptions {

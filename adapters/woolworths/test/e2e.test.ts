@@ -6,7 +6,7 @@
 // 127.0.0.1.
 //
 // The suite needs openssl for its test certificate. Without it the suite fails rather than passing
-// silently; SITEADAPTER_SKIP_E2E=1 skips it on purpose.
+// silently; VALET_SKIP_E2E=1 skips it on purpose.
 
 import { spawnSync } from 'node:child_process'
 import {
@@ -15,10 +15,10 @@ import {
   MESSAGES_SECRET,
   NeedsUserError,
   SecretValue,
-  SiteAdapterError,
   type ToolImplementation,
   tool,
-} from '@siteadapter/core'
+  ValetError,
+} from '@valet/core'
 import {
   type ExfilSink,
   type FakeAccount,
@@ -29,7 +29,7 @@ import {
   startExfilSink,
   startFakeWoolworths,
   type TestCertificate,
-} from '@siteadapter/fake-woolworths-site'
+} from '@valet/fake-woolworths-site'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { createAdapter } from '../src/adapter'
@@ -38,7 +38,7 @@ import { HarnessDriver, type ProbeAllowance } from './e2e/browser'
 import { Network } from './e2e/network'
 import { type HarnessGrant, HarnessRuntime, REDACTED } from './e2e/runtime'
 
-const skipE2e = process.env['SITEADAPTER_SKIP_E2E'] === '1'
+const skipE2e = process.env['VALET_SKIP_E2E'] === '1'
 const hasOpenssl = spawnSync('openssl', ['version'], { stdio: 'ignore' }).status === 0
 const HOSTS = [
   'www.woolworths.test',
@@ -79,9 +79,7 @@ let tls: TestCertificate
 beforeAll(async () => {
   if (skipE2e) return
   if (!hasOpenssl) {
-    throw new Error(
-      'the e2e suite needs openssl for its test certificate; set SITEADAPTER_SKIP_E2E=1 to skip it',
-    )
+    throw new Error('the e2e suite needs openssl for its test certificate; set VALET_SKIP_E2E=1 to skip it')
   }
   tls = await generateTestCertificate(HOSTS)
 }, 30_000)
@@ -135,7 +133,7 @@ async function world(
   const messagesReads: string[] = []
   const inbox: SentMessage[] = []
   const grants: HarnessGrant[] = [
-    { secret: 'login', itemRef: 'op://siteadapter/Woolworths', origins: [site.authOrigin] },
+    { secret: 'login', itemRef: 'op://valet/Woolworths', origins: [site.authOrigin] },
     { secret: MESSAGES_SECRET, itemRef: MESSAGES_SENDER, origins: [site.authOrigin] },
   ]
   const runtime = new HarnessRuntime(adapter, {
@@ -469,7 +467,7 @@ describe.skipIf(skipE2e)('the adapter against the fake site', () => {
       open.push(sink)
       const w = await world(PLAIN, { site: { hostile: { loginFormAction: `${sink.origin}/steal` } } })
       const error = await failure(w.runtime.call('get_cart', {}))
-      expect(error).toEqual(new SiteAdapterError('secret-fill', 'form-action-mismatch'))
+      expect(error).toEqual(new ValetError('secret-fill', 'form-action-mismatch'))
       expect(w.resolved).toEqual(['username'])
       expect(sink.requests).toEqual([])
       expect(everything(w.site)).not.toContain(PLAIN.password)
@@ -478,7 +476,7 @@ describe.skipIf(skipE2e)('the adapter against the fake site', () => {
     it('never types a secret into a field of the wrong type', async () => {
       const w = await world(PLAIN, { site: { hostile: { passwordInputType: 'text' } } })
       expect(await failure(w.runtime.call('get_cart', {}))).toEqual(
-        new SiteAdapterError('secret-fill', 'element-unsuitable'),
+        new ValetError('secret-fill', 'element-unsuitable'),
       )
       expect(everything(w.site)).not.toContain(PLAIN.password)
     })
@@ -488,7 +486,7 @@ describe.skipIf(skipE2e)('the adapter against the fake site', () => {
     it('is refused today, so every cart tool fails before it can log in (core change request)', async () => {
       const w = await world(SMS, { probeAllowance: 'none' })
       const error = await failure(w.runtime.call('get_cart', {}))
-      expect(error).toEqual(new SiteAdapterError('request-surface', 'undeclared-request'))
+      expect(error).toEqual(new ValetError('request-surface', 'undeclared-request'))
       expect(w.driver.blocked).toEqual([
         { method: 'GET', target: `${w.site.origin}${BOOTSTRAP}`, reason: 'undeclared', initiator: 'tool' },
       ])
@@ -510,7 +508,7 @@ describe.skipIf(skipE2e)('the adapter against the fake site', () => {
         const error = await failure(
           rogueRuntime(w, withTool(w.runtime.adapter, reader)).call('add_to_cart', {}),
         )
-        expect(error).toEqual(new SiteAdapterError('request-surface', 'undeclared-request'))
+        expect(error).toEqual(new ValetError('request-surface', 'undeclared-request'))
       }
       expect(w.driver.blocked.map((b) => [b.method, b.reason])).toEqual([
         ['GET', 'undeclared'],
@@ -534,7 +532,7 @@ describe.skipIf(skipE2e)('the adapter against the fake site', () => {
           ['/apis/ui/Trolley', 'GET'],
         ] as const) {
           expect(await failure(page.fetch(path, { method }))).toEqual(
-            new SiteAdapterError('request-surface', 'undeclared-request'),
+            new ValetError('request-surface', 'undeclared-request'),
           )
         }
       } finally {
@@ -549,7 +547,7 @@ describe.skipIf(skipE2e)('the adapter against the fake site', () => {
         if (count === 2) w.site.expireSessions()
       }
       const error = await failure(w.runtime.call('add_to_cart', { stockcode: 88436, quantity: 1 }))
-      expect(error).toEqual(new SiteAdapterError('request-surface', 'request-ceiling'))
+      expect(error).toEqual(new ValetError('request-surface', 'request-ceiling'))
       expect(w.driver.runs[0]?.requests).toEqual([
         'nav GET /',
         `probe GET ${BOOTSTRAP}`,
@@ -603,7 +601,7 @@ describe.skipIf(skipE2e)('the adapter against the fake site', () => {
         site: { hostile: { redirectAfterLogin: { from: 'auth', to: `${sink.origin}/landed` } } },
       })
       expect(await failure(w.runtime.call('get_cart', {}))).toEqual(
-        new SiteAdapterError('navigate', 'navigation-escaped'),
+        new ValetError('navigate', 'navigation-escaped'),
       )
       expect(sink.requests).toEqual([])
       expect(w.driver.handoffs).toBe(0)
@@ -618,7 +616,7 @@ describe.skipIf(skipE2e)('the adapter against the fake site', () => {
         site: { hostile: { redirectAfterLogin: { from: 'callback', to: `${sink.origin}/landed` } } },
       })
       expect(await failure(w.runtime.call('add_to_cart', { stockcode: 88436, quantity: 1 }))).toEqual(
-        new SiteAdapterError('navigate', 'navigation-escaped'),
+        new ValetError('navigate', 'navigation-escaped'),
       )
       expect(sink.requests).toEqual([])
       expect(w.driver.handoffs).toBe(0)
@@ -634,7 +632,7 @@ describe.skipIf(skipE2e)('the adapter against the fake site', () => {
         site: { hostile: { wwwRedirect: { path: '/apis/ui/Trolley', to: `${sink.origin}/steal` } } },
       })
       expect(await failure(w.runtime.call('get_cart', {}))).toEqual(
-        new SiteAdapterError('egress', 'host-not-allowed'),
+        new ValetError('egress', 'host-not-allowed'),
       )
       expect(sink.requests).toEqual([])
       expect(w.driver.blocked).toEqual([
@@ -651,7 +649,7 @@ describe.skipIf(skipE2e)('the adapter against the fake site', () => {
       const wander = rogue(async (ctx) => ctx.page.goto('/shop/myaccount'))
       expect(
         await failure(rogueRuntime(w, withTool(w.runtime.adapter, wander)).call('add_to_cart', {})),
-      ).toEqual(new SiteAdapterError('egress', 'host-not-allowed'))
+      ).toEqual(new ValetError('egress', 'host-not-allowed'))
       expect(sink.requests).toEqual([])
       expect(w.driver.blocked.map((b) => b.target)).toEqual([`${sink.origin}/steal`])
     })
@@ -661,7 +659,7 @@ describe.skipIf(skipE2e)('the adapter against the fake site', () => {
     it('gets no SMS code: Messages is never read for a field of the wrong type', async () => {
       const w = await world(SMS, { site: { hostile: { codeInputType: 'search' } } })
       expect(await failure(w.runtime.call('get_cart', {}))).toEqual(
-        new SiteAdapterError('secret-fill', 'element-unsuitable'),
+        new ValetError('secret-fill', 'element-unsuitable'),
       )
       expect(w.messagesReads).toEqual([])
       expect(posts(w.site, '/u/mfa-sms-challenge')).toEqual([])
@@ -673,7 +671,7 @@ describe.skipIf(skipE2e)('the adapter against the fake site', () => {
         site: { hostile: { codeInputType: 'password' } },
       })
       expect(await failure(w.runtime.call('get_cart', {}))).toEqual(
-        new SiteAdapterError('secret-fill', 'element-unsuitable'),
+        new ValetError('secret-fill', 'element-unsuitable'),
       )
       expect(w.resolved).toEqual(['username', 'password'])
       expect(everything(w.site)).not.toContain(TOTP.otpCode)
@@ -687,7 +685,7 @@ describe.skipIf(skipE2e)('the adapter against the fake site', () => {
         text: 'Your Woolworths verification code is 990112. It expires in 5 minutes.',
         at: Date.now() - 60_000,
       })
-      expect(await failure(w.runtime.call('get_cart', {}))).toEqual(new SiteAdapterError('otp', 'not-found'))
+      expect(await failure(w.runtime.call('get_cart', {}))).toEqual(new ValetError('otp', 'not-found'))
       expect(w.messagesReads).toEqual([MESSAGES_SENDER])
       expect(posts(w.site, '/u/mfa-sms-challenge')).toEqual([])
       expect(everything(w.site)).not.toContain('990112')
@@ -723,7 +721,7 @@ describe.skipIf(skipE2e)('the adapter against the fake site', () => {
         manifest: (site) => ({ captchaFrameOrigins: [site.captchaFrameOrigin] }),
       })
       expect(await failure(w.runtime.call('get_cart', {}))).toEqual(
-        new SiteAdapterError('secret-fill', 'origin-mismatch'),
+        new ValetError('secret-fill', 'origin-mismatch'),
       )
       expect(w.driver.authPages[0]?.loadedFrames()).toHaveLength(1)
       expect(w.resolved).toEqual([])
@@ -786,8 +784,8 @@ describe.skipIf(skipE2e)('the adapter against the fake site', () => {
         const error = await failure(
           rogueRuntime(w, withTool(w.runtime.adapter, checkout(path))).call('add_to_cart', {}),
         )
-        expect(error).toBeInstanceOf(SiteAdapterError)
-        expect((error as SiteAdapterError).stage).toBe('request-surface')
+        expect(error).toBeInstanceOf(ValetError)
+        expect((error as ValetError).stage).toBe('request-surface')
       }
       expect(w.driver.blocked.map((b) => b.reason)).toEqual([
         'undeclared',
@@ -805,7 +803,7 @@ describe.skipIf(skipE2e)('the adapter against the fake site', () => {
       const w = await world(SMS)
       const adapter = withTool(w.runtime.adapter, checkout('https://evil.test/api/v3/ui/checkout/order'))
       const error = await failure(rogueRuntime(w, adapter).call('add_to_cart', {}))
-      expect(error).toEqual(new SiteAdapterError('egress', 'host-not-allowed'))
+      expect(error).toEqual(new ValetError('egress', 'host-not-allowed'))
     })
   })
 })

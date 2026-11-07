@@ -12,9 +12,9 @@ import {
   type AdapterManifest,
   type AuditEvent,
   type FetchResult,
-  SiteAdapterError,
   type ToolPage,
-} from '@siteadapter/core'
+  ValetError,
+} from '@valet/core'
 import { type BreakerState, type JsonStore, parseBreakerFile, serialiseBreakerFile } from './breaker-state'
 import type { Clock, Sleep } from './clock'
 import type { RuntimeDiagnostic } from './types'
@@ -377,19 +377,19 @@ export function isHtml(result: FetchResult): boolean {
 }
 
 /** What tool code gets when the site refused a request: the site's block, or its 429. */
-export function siteRefusal(cause: BlockCause): SiteAdapterError {
-  return new SiteAdapterError('tool-run', cause)
+export function siteRefusal(cause: BlockCause): ValetError {
+  return new ValetError('tool-run', cause)
 }
 
 /** What tool code gets when our own breaker refuses to send anything while the site cools down. */
-export function breakerRefusal(): SiteAdapterError {
-  return new SiteAdapterError('tool-run', 'rate-limited')
+export function breakerRefusal(): ValetError {
+  return new ValetError('tool-run', 'rate-limited')
 }
 
 /** True for an error that means the site is refusing us, by its own answer or our breaker. */
 export function isSiteRefusal(error: unknown): boolean {
   return (
-    error instanceof SiteAdapterError &&
+    error instanceof ValetError &&
     (error.errorClass === 'blocked-by-site' || error.errorClass === 'rate-limited')
   )
 }

@@ -1,5 +1,5 @@
 {
-  "name": "@siteadapter/runtime",
+  "name": "@valet/runtime",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -7,12 +7,12 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@siteadapter/auth-flow": "workspace:*",
-    "@siteadapter/core": "workspace:*",
+    "@valet/auth-flow": "workspace:*",
+    "@valet/core": "workspace:*",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@siteadapter/adapter-woolworths": "workspace:*",
-    "@siteadapter/fake-woolworths-site": "workspace:*"
+    "@valet/adapter-woolworths": "workspace:*",
+    "@valet/fake-woolworths-site": "workspace:*"
   }
 }

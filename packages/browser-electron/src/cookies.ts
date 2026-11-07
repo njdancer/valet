@@ -2,7 +2,7 @@
 // site set, because a cookie that loses hostOnly or sameSite behaves differently on the next request
 // and bot-protection cookies are checked against exactly that.
 
-import { hostAllowed } from '@siteadapter/core'
+import { hostAllowed } from '@valet/core'
 import type { CookieRecord, CookieSetDetails } from './platform'
 
 /** The host a cookie belongs to: its domain without the leading dot Chromium adds. */

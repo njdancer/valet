@@ -9,14 +9,14 @@
 // Output redaction checks against the session values seen during the call, kept here for exactly
 // its length, and the clones of the latest login's secrets, which the adapter's session gate keeps.
 
-import { type EnsureResult, SiteAdapterError } from '@siteadapter/core'
+import { type EnsureResult, ValetError } from '@valet/core'
 import { REDACTED, type SecretRedactionSet, type Sensitive, sensitiveMatcher } from './redaction'
 import type { CallLogin } from './session'
 import { breakerRefusal } from './site-protection'
 
 export class CallState {
   requests = 0
-  violation: SiteAdapterError | null = null
+  violation: ValetError | null = null
   /** The site refused us, or its breaker opened, during this call. */
   blocked = false
   /** The last ensure() result when it was not ok; a tool that then throws reports this instead. */
@@ -53,7 +53,7 @@ export class CallState {
 
   /** Throws if the call may no longer act: it was aborted, blocked by the site, or broke a guard. */
   assertLive(): void {
-    if (this.signal.aborted) throw new SiteAdapterError('tool-run', 'aborted')
+    if (this.signal.aborted) throw new ValetError('tool-run', 'aborted')
     if (this.blocked) throw breakerRefusal()
     if (this.violation !== null) throw this.violation
   }

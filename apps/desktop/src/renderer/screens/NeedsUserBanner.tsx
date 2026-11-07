@@ -48,7 +48,7 @@ function Banner({ item }: { readonly item: NeedsUserItem }) {
           <div>
             {byPerson ? (
               <>
-                <strong>Sign in to {item.adapterName} in this window.</strong> You opened it from siteadapter;
+                <strong>Sign in to {item.adapterName} in this window.</strong> You opened it from Valet;
                 nothing was filled in for you.
               </>
             ) : (
@@ -70,7 +70,7 @@ function Banner({ item }: { readonly item: NeedsUserItem }) {
           {item.filled.length > 0 ? (
             <div className="filled-list">
               <Icon name="key" size="sm" className="secret-text" />
-              Filled by siteadapter:
+              Filled by valet:
               {item.filled.map((f) => (
                 <span key={`${f.secret}.${f.field}`} className="badge secret">
                   {f.secret}.{f.field}

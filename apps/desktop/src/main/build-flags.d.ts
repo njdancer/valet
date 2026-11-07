@@ -4,15 +4,15 @@
 // (core/feed-defines.ts); a dev or demo build never has them.
 
 /** electron-vite dev, or `electron-vite build --mode demo`: demo mode may be switched on. */
-declare const __SITEADAPTER_DEMO_BUILD__: boolean
+declare const __VALET_DEMO_BUILD__: boolean
 /** electron-vite dev: the renderer may come from the dev server (ELECTRON_RENDERER_URL). */
-declare const __SITEADAPTER_DEV_SERVER__: boolean
-/** The update feed's base URL (SITEADAPTER_UPDATE_URL at build time), or ''. */
-declare const __SITEADAPTER_FEED_BASE_URL__: string
-/** The SPKI PEM public key the feed's envelopes are signed for (SITEADAPTER_FEED_PUBLIC_KEY_FILE), or ''. */
-declare const __SITEADAPTER_FEED_PUBLIC_KEY__: string
+declare const __VALET_DEV_SERVER__: boolean
+/** The update feed's base URL (VALET_UPDATE_URL at build time), or ''. */
+declare const __VALET_FEED_BASE_URL__: string
+/** The SPKI PEM public key the feed's envelopes are signed for (VALET_FEED_PUBLIC_KEY_FILE), or ''. */
+declare const __VALET_FEED_PUBLIC_KEY__: string
 /**
  * `electron-vite build --mode smoke`, for scripts/package-smoke.mjs only: the smoke's own argv
  * (core/smoke.ts) and a self-check report. electron-builder.config.ts refuses a release from it.
  */
-declare const __SITEADAPTER_SMOKE_BUILD__: boolean
+declare const __VALET_SMOKE_BUILD__: boolean

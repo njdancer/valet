@@ -1,5 +1,5 @@
 import { inspect } from 'node:util'
-import { CredentialError, SecretValue, type TokenSource } from '@siteadapter/core'
+import { CredentialError, SecretValue, type TokenSource } from '@valet/core'
 import { describe, expect, it, vi } from 'vitest'
 import {
   classifySdkError,
@@ -16,7 +16,7 @@ vi.mock('@1password/sdk', () => ({
 
 const CANARY = 'canary-pw-0b9d4e17'
 const TOKEN = 'ops_canary-token-77aa31'
-const ITEM = 'op://siteadapter/Woolworths'
+const ITEM = 'op://valet/Woolworths'
 
 class CountingTokenSource implements TokenSource {
   handedOut: SecretValue[] = []
@@ -72,7 +72,7 @@ describe('OnePasswordServiceAccountProvider', () => {
     })
     const secret = await provider.resolve(ITEM, 'password')
     expect(secret.reveal((plaintext) => plaintext)).toBe(CANARY)
-    expect(references).toEqual(['op://siteadapter/Woolworths/password'])
+    expect(references).toEqual(['op://valet/Woolworths/password'])
     expect(provider.kind).toBe('onepassword-service-account')
   })
 
@@ -86,8 +86,8 @@ describe('OnePasswordServiceAccountProvider', () => {
     await provider.resolve(ITEM, 'otp')
     await provider.resolve(ITEM, 'username')
     expect(references).toEqual([
-      'op://siteadapter/Woolworths/one-time password?attribute=totp',
-      'op://siteadapter/Woolworths/username',
+      'op://valet/Woolworths/one-time password?attribute=totp',
+      'op://valet/Woolworths/username',
     ])
   })
 
@@ -120,7 +120,7 @@ describe('OnePasswordServiceAccountProvider', () => {
       clientFactory: factory,
       timers: new ManualTimers(),
     })
-    for (const bad of ['op://siteadapter/Woolworths/password', 'op://v/i?attribute=otp', 'x']) {
+    for (const bad of ['op://valet/Woolworths/password', 'op://v/i?attribute=otp', 'x']) {
       expect((await failureOf(provider.resolve(bad, 'password'))).failure).toBe('not-found')
     }
     expect(factory).not.toHaveBeenCalled()
@@ -413,7 +413,7 @@ describe('sdkClientFactory', () => {
     expect(sdk.createClient).toHaveBeenCalledTimes(1)
     expect(client.config).toEqual({
       auth: TOKEN,
-      integrationName: 'siteadapter',
+      integrationName: 'valet',
       integrationVersion: '0.0.0',
     })
   })

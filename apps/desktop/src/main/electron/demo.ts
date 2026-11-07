@@ -2,7 +2,7 @@
 // auth.woolworths.test (mapped to 127.0.0.1 by a host resolver rule set before ready). Its
 // certificate is trusted for exactly those two hosts, on exactly the adapter's two partitions;
 // everything else keeps Chromium's own verification. Loaded only in demo mode, and bundled only
-// into a demo build: app.ts imports it behind __SITEADAPTER_DEMO_BUILD__, which a production build
+// into a demo build: app.ts imports it behind __VALET_DEMO_BUILD__, which a production build
 // sets to false, so this chunk, the fake site, its certificate generator and the test account are
 // left out of it.
 
@@ -10,13 +10,13 @@ import { X509Certificate } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
 import { connect } from 'node:net'
 import { join } from 'node:path'
-import { MESSAGES_SENDER } from '@siteadapter/adapter-woolworths'
-import { partitionName } from '@siteadapter/browser-electron'
+import { MESSAGES_SENDER } from '@valet/adapter-woolworths'
+import { partitionName } from '@valet/browser-electron'
 import {
   type FakeWoolworths,
   generateTestCertificate,
   startFakeWoolworths,
-} from '@siteadapter/fake-woolworths-site'
+} from '@valet/fake-woolworths-site'
 import { session } from 'electron'
 import type { Credentials } from '../core/credentials'
 import {
@@ -96,7 +96,7 @@ export function exposeToE2e(demo: DemoSite): void {
     pageBeacon: (target) =>
       demo.site.setPageBeacon(target === null ? null : { host: target.host, port: target.port }),
   }
-  Object.defineProperty(globalThis, '__siteadapterE2e', { value: Object.freeze(hook) })
+  Object.defineProperty(globalThis, '__valetE2e', { value: Object.freeze(hook) })
 }
 
 /** Trusts the demo certificate for the demo hosts on the adapter's partitions. Call before any load. */

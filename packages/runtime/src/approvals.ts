@@ -8,7 +8,7 @@
 // under-reports.
 
 import { readFile } from 'node:fs/promises'
-import { type AuditSink, SiteAdapterError } from '@siteadapter/core'
+import { type AuditSink, ValetError } from '@valet/core'
 import { z } from 'zod'
 import { isErrno, writeFileAtomic } from './files'
 
@@ -83,7 +83,7 @@ export class ApprovalStore implements ApprovalLookup {
     change: (hashes: readonly string[]) => Promise<readonly string[] | null>,
   ): Promise<void> {
     if (!ADAPTER_ID.test(adapterId) || !HASH.test(adapterHash) || !VERSION.test(version)) {
-      return Promise.reject(new SiteAdapterError('manifest', 'invalid'))
+      return Promise.reject(new ValetError('manifest', 'invalid'))
     }
     const done = this.queue.then(async () => {
       // Throws on a corrupt file rather than overwriting approvals we couldn't read.
@@ -108,13 +108,13 @@ export class ApprovalStore implements ApprovalLookup {
       text = await readFile(this.path, 'utf8')
     } catch (error) {
       if (isErrno(error, 'ENOENT')) return new Map()
-      throw new SiteAdapterError('config', 'unavailable')
+      throw new ValetError('config', 'unavailable')
     }
     let parsed: z.infer<typeof fileSchema>
     try {
       parsed = fileSchema.parse(JSON.parse(text))
     } catch {
-      throw new SiteAdapterError('config', 'invalid')
+      throw new ValetError('config', 'invalid')
     }
     return new Map(Object.entries(parsed.approved))
   }

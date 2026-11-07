@@ -103,7 +103,7 @@ class NodeHttpExecutor extends runtime.HttpExecutor {
 }
 
 export class NodeAppAdapter implements AppAdapter {
-  readonly name = 'siteadapter'
+  readonly name = 'valet'
   readonly isPackaged = true
   constructor(
     readonly version: string,

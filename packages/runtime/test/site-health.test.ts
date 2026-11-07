@@ -1,7 +1,7 @@
 // siteHealth(): what the app shows about each site, read from the runtime's own breakers and budgets
 // rather than from breakers.json.
 
-import { defineAdapter, tool } from '@siteadapter/core'
+import { defineAdapter, tool } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { serialiseBreakerFile } from '../src/breaker-state'

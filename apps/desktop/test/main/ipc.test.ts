@@ -10,7 +10,7 @@ import { isAppPage as isAppPageFor } from '../../src/main/core/launch'
 
 const BASE = {
   kind: 'app',
-  root: '/Applications/siteadapter.app/Contents/Resources/app.asar/out/renderer',
+  root: '/Applications/Valet.app/Contents/Resources/app.asar/out/renderer',
 } as const
 const PAGE = 'app://renderer/index.html#/adapters'
 // The main process's own check (core/launch.ts), as electron/ipc.ts gives it to the dispatcher.
@@ -48,12 +48,12 @@ function dispatcher() {
 
 describe('channels', () => {
   it('maps only our exact channel names to methods', () => {
-    expect(methodOf('siteadapter:adapters.list')).toBe('adapters.list')
+    expect(methodOf('valet:adapters.list')).toBe('adapters.list')
     expect(methodOf('adapters.list')).toBeNull()
-    expect(methodOf('siteadapter:adapters.list ')).toBeNull()
-    expect(methodOf('siteadapter:__proto__')).toBeNull()
-    expect(methodOf('siteadapter:constructor')).toBeNull()
-    expect(methodOf('siteadapter:adapters')).toBeNull()
+    expect(methodOf('valet:adapters.list ')).toBeNull()
+    expect(methodOf('valet:__proto__')).toBeNull()
+    expect(methodOf('valet:constructor')).toBeNull()
+    expect(methodOf('valet:adapters')).toBeNull()
   })
 
   it('reaches the API for a valid request', async () => {
@@ -75,7 +75,7 @@ describe('who may send', () => {
       'our window showing the renderer by file://',
       {
         ...control,
-        frameUrl: 'file:///Applications/siteadapter.app/Contents/Resources/app.asar/out/renderer/index.html',
+        frameUrl: 'file:///Applications/Valet.app/Contents/Resources/app.asar/out/renderer/index.html',
       },
     ],
     ['our window showing another app:// host', { ...control, frameUrl: 'app://evil/index.html' }],
@@ -92,7 +92,7 @@ describe('who may send', () => {
 
   it('refuses an unknown channel before looking at anything else', async () => {
     const { d, calls, refused } = dispatcher()
-    await expect(d.dispatch('siteadapter:grants.export', [], control)).rejects.toBeInstanceOf(IpcRefused)
+    await expect(d.dispatch('valet:grants.export', [], control)).rejects.toBeInstanceOf(IpcRefused)
     expect(calls).toEqual([])
     expect(refused).toHaveBeenCalledWith(null, 'channel')
   })
@@ -144,7 +144,7 @@ describe('arguments', () => {
   })
 
   it.each([
-    ['an extra key', { ...grant, itemRefContents: 'op://siteadapter/Woolworths/password' }],
+    ['an extra key', { ...grant, itemRefContents: 'op://Valet/Woolworths/password' }],
     ['an opPath key smuggled in', { ...grant, opPath: '/tmp/op' }],
     ['no origins', { ...grant, origins: [] }],
     ['too many origins', { ...grant, origins: Array.from({ length: 21 }, (_, i) => `https://o${i}.test`) }],
@@ -240,14 +240,14 @@ describe('failures', () => {
       grants: {
         ...api.grants,
         list: async () => {
-          throw new Error('grant file at /Users/nick/Library has op://siteadapter/Woolworths')
+          throw new Error('grant file at /Users/nick/Library has op://Valet/Woolworths')
         },
       },
     } as MainApi
     const d = createDispatcher(failing, { isAppPage })
     const error = await d.dispatch(invokeChannel('grants.list'), [], control).catch((e: unknown) => e)
     expect(error).toBeInstanceOf(IpcRefused)
-    expect((error as Error).message).toBe('siteadapter: request refused')
+    expect((error as Error).message).toBe('valet: request refused')
   })
 })
 

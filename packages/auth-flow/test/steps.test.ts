@@ -1,4 +1,4 @@
-import { SiteAdapterError } from '@siteadapter/core'
+import { ValetError } from '@valet/core'
 import { describe, expect, it, vi } from 'vitest'
 import { POLL_MS } from '../src/interpreter'
 import { runAuthFlow } from '../src/run-auth-flow'
@@ -82,9 +82,9 @@ describe('goto', () => {
     })
   })
 
-  it('passes a driver SiteAdapterError through unchanged', async () => {
+  it('passes a driver ValetError through unchanged', async () => {
     const w = world()
-    vi.spyOn(w.page, 'goto').mockRejectedValue(new SiteAdapterError('navigate', 'timed-out'))
+    vi.spyOn(w.page, 'goto').mockRejectedValue(new ValetError('navigate', 'timed-out'))
     w.input.manifest = manifestWithSteps([{ op: 'goto', url: LOGIN_PAGE }])
     expect(await runAuthFlow(w.input)).toEqual({
       status: 'failed',
@@ -569,7 +569,7 @@ describe('retry', () => {
 
   it('never retries a credential failure, so the person is not asked twice', async () => {
     const w = world()
-    w.provider.items['op://siteadapter/Shop'] = {}
+    w.provider.items['op://valet/Shop'] = {}
     w.input.manifest = manifestWithSteps([
       { op: 'goto', url: LOGIN_PAGE },
       {

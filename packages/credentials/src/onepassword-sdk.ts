@@ -8,7 +8,7 @@ import {
   type SecretField,
   SecretValue,
   type TokenSource,
-} from '@siteadapter/core'
+} from '@valet/core'
 import { parseItemRef, secretReference } from './item-ref'
 import { nodeTimers, type Timers } from './process'
 import { isVaultName, summariseItems, type VaultItemLister, type VaultItemSummary } from './vault-items'
@@ -46,7 +46,7 @@ export type SecretsClientFactory = (token: SecretValue) => Promise<SecretsClient
 export const sdkClientFactory: SecretsClientFactory = async (token) => {
   const sdk = await import('@1password/sdk')
   return token.reveal((plaintext) =>
-    sdk.createClient({ auth: plaintext, integrationName: 'siteadapter', integrationVersion: '0.0.0' }),
+    sdk.createClient({ auth: plaintext, integrationName: 'valet', integrationVersion: '0.0.0' }),
   )
 }
 

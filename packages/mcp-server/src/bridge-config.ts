@@ -1,7 +1,7 @@
 // The file the app writes for the stdio bridge: where the endpoint is and its token. The bridge
 // sends the token to whatever URL the file names, so only the URL the endpoint reports is accepted.
 
-import { SiteAdapterError } from '@siteadapter/core'
+import { ValetError } from '@valet/core'
 import { z } from 'zod'
 import { MCP_PATH } from './http'
 import { readPrivateFile, writePrivateFile } from './private-file'
@@ -45,12 +45,12 @@ export function isLoopbackEndpoint(url: string): boolean {
 
 export async function writeBridgeConfig(path: string, config: BridgeConfig): Promise<void> {
   const parsed = configSchema.safeParse(config)
-  if (!parsed.success) throw new SiteAdapterError('config', 'invalid')
+  if (!parsed.success) throw new ValetError('config', 'invalid')
   await writePrivateFile(path, `${JSON.stringify(parsed.data, null, 2)}\n`)
 }
 
 /**
- * Throws SiteAdapterError('config', …): `not-found`, `insecure-file` (loose permissions, another
+ * Throws ValetError('config', …): `not-found`, `insecure-file` (loose permissions, another
  * owner, a symlink), `invalid` (not the JSON shape above) or `unavailable`.
  */
 export async function readBridgeConfig(path: string): Promise<BridgeConfig> {
@@ -59,9 +59,9 @@ export async function readBridgeConfig(path: string): Promise<BridgeConfig> {
   try {
     json = JSON.parse(text)
   } catch {
-    throw new SiteAdapterError('config', 'invalid')
+    throw new ValetError('config', 'invalid')
   }
   const parsed = configSchema.safeParse(json)
-  if (!parsed.success) throw new SiteAdapterError('config', 'invalid')
+  if (!parsed.success) throw new ValetError('config', 'invalid')
   return parsed.data
 }

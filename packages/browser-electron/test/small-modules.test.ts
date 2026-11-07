@@ -1,4 +1,4 @@
-import { NEEDS_USER_REASONS, SiteAdapterError } from '@siteadapter/core'
+import { NEEDS_USER_REASONS, ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { needsUserTitle } from '../src/needs-user'
 import { partitionName } from '../src/partitions'
@@ -16,7 +16,7 @@ describe('partitionName', () => {
 
   it('refuses an id that could reach another partition or path', () => {
     for (const id of ['woolworths:x', '../woolworths', 'Woolworths', 'w', '', 'a b', 'tool:woolworths']) {
-      expect(() => partitionName('auth', id), id).toThrow(SiteAdapterError)
+      expect(() => partitionName('auth', id), id).toThrow(ValetError)
     }
   })
 })
@@ -138,7 +138,7 @@ describe('chromeUserAgentOverride', () => {
 
   it('refuses a version it cannot read', () => {
     expect(() => chromeUserAgentOverride({ ...MAC_ARM, chromeVersion: 'latest' }, 'engine')).toThrow(
-      SiteAdapterError,
+      ValetError,
     )
   })
 })
@@ -151,7 +151,7 @@ describe('needsUserTitle', () => {
       expect(title, reason).toMatch(/Close this window when you’re done\.$/)
     }
     expect(needsUserTitle('captcha', 'Woolworths')).toBe(
-      'Woolworths showed a verification check that siteadapter won’t solve for you. Close this window when you’re done.',
+      'Woolworths showed a verification check that Valet won’t solve for you. Close this window when you’re done.',
     )
   })
 
@@ -186,7 +186,7 @@ describe('withTimeout', () => {
   it('passes the work’s own error through and clears its timer', async () => {
     const timers = new ManualTimers()
     const failing = withTimeout(timers, 1000, async () => {
-      throw new SiteAdapterError('navigate', 'unavailable')
+      throw new ValetError('navigate', 'unavailable')
     })
     await expect(failing).rejects.toMatchObject({ stage: 'navigate', errorClass: 'unavailable' })
     expect(timers.pending).toBe(0)

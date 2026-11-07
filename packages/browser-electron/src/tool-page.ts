@@ -4,7 +4,7 @@
 // every request to the request surface however it was made; the checks here only fail early and
 // with a clear error class.
 
-import { type FetchInit, type FetchResult, SiteAdapterError, type ToolPage } from '@siteadapter/core'
+import { type FetchInit, type FetchResult, type ToolPage, ValetError } from '@valet/core'
 import { egressAllowed } from './guards'
 import { characters, isRecord, PageCore, type PageTiming } from './page-core'
 import type { BrowserSurface, FrameHandle } from './platform'
@@ -38,8 +38,8 @@ export class SurfaceToolPage implements ToolPage {
       const target = this.resolve(url)
       const withdraw = this.announce('GET', target)
       const failure = await this.core.load(target).finally(withdraw)
-      if (failure === 'ERR_BLOCKED_BY_CLIENT') throw new SiteAdapterError('egress', 'host-not-allowed')
-      if (failure !== null) throw new SiteAdapterError('navigate', 'unavailable')
+      if (failure === 'ERR_BLOCKED_BY_CLIENT') throw new ValetError('egress', 'host-not-allowed')
+      if (failure !== null) throw new ValetError('navigate', 'unavailable')
     })
   }
 
@@ -53,7 +53,7 @@ export class SurfaceToolPage implements ToolPage {
 
   /** Types literal text as trusted input. Tool pages never receive secrets. */
   async fill(selector: string, text: string): Promise<void> {
-    if (typeof text !== 'string') throw new SiteAdapterError('tool-input', 'invalid')
+    if (typeof text !== 'string') throw new ValetError('tool-input', 'invalid')
     const chars = characters(text)
     const delayMs = this.timing.typingDelayMs
     await this.core.step(
@@ -76,29 +76,29 @@ export class SurfaceToolPage implements ToolPage {
     const script = extractScript(selector, options?.attribute ?? null, options?.all ?? false)
     return this.core.step('tool-run', async () => {
       const raw = await this.mainFrame().run(script)
-      if (!isRecord(raw)) throw new SiteAdapterError('tool-run', 'internal')
-      if (raw['error'] === 'invalid-selector') throw new SiteAdapterError('tool-run', 'invalid')
+      if (!isRecord(raw)) throw new ValetError('tool-run', 'internal')
+      if (raw['error'] === 'invalid-selector') throw new ValetError('tool-run', 'invalid')
       return raw['value'] ?? null
     })
   }
 
   async evaluate(source: string, args?: unknown): Promise<unknown> {
-    if (typeof source !== 'string') throw new SiteAdapterError('tool-input', 'invalid')
+    if (typeof source !== 'string') throw new ValetError('tool-input', 'invalid')
     let script: string
     try {
       script = evaluateScript(source, args)
     } catch {
-      throw new SiteAdapterError('tool-input', 'invalid')
+      throw new ValetError('tool-input', 'invalid')
     }
     return this.core.step('tool-run', () => this.mainFrame().runAdapter(script))
   }
 
   async fetch(pathOrUrl: string, init?: FetchInit): Promise<FetchResult> {
     const method = (init?.method ?? 'GET').toUpperCase()
-    if (!METHOD.test(method)) throw new SiteAdapterError('tool-input', 'invalid')
+    if (!METHOD.test(method)) throw new ValetError('tool-input', 'invalid')
     const headers = init?.headers ?? {}
     if (!isRecord(headers) || Object.values(headers).some((value) => typeof value !== 'string')) {
-      throw new SiteAdapterError('tool-input', 'invalid')
+      throw new ValetError('tool-input', 'invalid')
     }
     const hasJson = init !== undefined && 'json' in init && init.json !== undefined
     let script: string
@@ -113,15 +113,14 @@ export class SurfaceToolPage implements ToolPage {
         json: hasJson ? init.json : null,
       })
     } catch (error) {
-      if (error instanceof SiteAdapterError) throw error
-      throw new SiteAdapterError('tool-input', 'invalid')
+      if (error instanceof ValetError) throw error
+      throw new ValetError('tool-input', 'invalid')
     }
     return this.core.step('tool-run', async () => {
       const withdraw = this.announce(method, url)
       const raw = await this.mainFrame().run(script).finally(withdraw)
-      if (isRecord(raw) && raw['error'] === 'network') throw new SiteAdapterError('tool-run', 'unavailable')
-      if (!isRecord(raw) || typeof raw['status'] !== 'number')
-        throw new SiteAdapterError('tool-run', 'internal')
+      if (isRecord(raw) && raw['error'] === 'network') throw new ValetError('tool-run', 'unavailable')
+      if (!isRecord(raw) || typeof raw['status'] !== 'number') throw new ValetError('tool-run', 'internal')
       const contentType = raw['contentType']
       return {
         status: raw['status'],
@@ -142,17 +141,17 @@ export class SurfaceToolPage implements ToolPage {
       // Before the first load there is no page URL, and only an absolute URL makes sense.
       url = new URL(pathOrUrl, this.surface.url() || undefined)
     } catch {
-      throw new SiteAdapterError('tool-input', 'invalid')
+      throw new ValetError('tool-input', 'invalid')
     }
     if (url.protocol !== 'https:' || !egressAllowed(url.href, this.egress)) {
-      throw new SiteAdapterError('egress', 'host-not-allowed')
+      throw new ValetError('egress', 'host-not-allowed')
     }
     return url.href
   }
 
   private mainFrame(): FrameHandle {
     const frame = this.surface.frames()[0]
-    if (frame === undefined) throw new SiteAdapterError('tool-run', 'aborted')
+    if (frame === undefined) throw new ValetError('tool-run', 'aborted')
     return frame
   }
 }

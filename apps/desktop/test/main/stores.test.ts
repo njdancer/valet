@@ -4,7 +4,7 @@
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { SiteAdapterError } from '@siteadapter/core'
+import { ValetError } from '@valet/core'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { ClientRegistry, clientId, shownTransport } from '../../src/main/core/clients'
@@ -35,16 +35,16 @@ describe('files', () => {
   it('refuses a file that is not JSON or not the shape', async () => {
     const path = join(dir(), 'x.json')
     writeFileSync(path, '{')
-    await expect(readJsonFile(path, z.object({}))).rejects.toEqual(new SiteAdapterError('config', 'invalid'))
+    await expect(readJsonFile(path, z.object({}))).rejects.toEqual(new ValetError('config', 'invalid'))
     writeFileSync(path, '{"a": "1"}')
     await expect(readJsonFile(path, z.object({ a: z.number() }))).rejects.toEqual(
-      new SiteAdapterError('config', 'invalid'),
+      new ValetError('config', 'invalid'),
     )
   })
 
   it('reports a write it could not make', async () => {
     await expect(writeJsonFile(join(dir(), 'no', 'such', 'dir.json'), {})).rejects.toEqual(
-      new SiteAdapterError('config', 'unavailable'),
+      new ValetError('config', 'unavailable'),
     )
   })
 
@@ -60,7 +60,7 @@ describe('files', () => {
     await Promise.all([1, 2, 3].map(() => doc.update((c) => ({ n: c.n + 1 }))))
     expect(await doc.read()).toEqual({ n: 3 })
     writeFileSync(path, 'nope')
-    await expect(doc.read()).rejects.toBeInstanceOf(SiteAdapterError)
+    await expect(doc.read()).rejects.toBeInstanceOf(ValetError)
     const recovering = new JsonDocument(path, z.object({ n: z.number() }), () => ({ n: 0 }), true)
     expect(await recovering.read()).toEqual({ n: 0 })
   })

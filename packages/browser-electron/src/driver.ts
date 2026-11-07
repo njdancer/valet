@@ -13,10 +13,10 @@ import {
   originAllowed,
   type RequestDeclaration,
   type SessionDriver,
-  SiteAdapterError,
   type ToolPage,
   type ToolRunPolicy,
-} from '@siteadapter/core'
+  ValetError,
+} from '@valet/core'
 import { SurfaceAuthPage } from './auth-page'
 import { cookieSetDetails, cookiesForDomains } from './cookies'
 import {
@@ -306,7 +306,7 @@ export class ElectronSessionDriver implements SessionDriver {
         await tool.setCookie(cookieSetDetails(cookie))
       }
     } catch {
-      throw new SiteAdapterError('session-handoff', 'internal')
+      throw new ValetError('session-handoff', 'internal')
     }
     for (const { origin, keys } of storage) await this.copyStorage(origin, keys)
   }
@@ -330,17 +330,17 @@ export class ElectronSessionDriver implements SessionDriver {
     await Promise.all([...this.snapshots])
     for (const { origin, keys } of storage) {
       const wanted = httpsOrigin(origin)
-      if (wanted === null || !isBareOrigin(origin)) throw new SiteAdapterError('session-handoff', 'invalid')
+      if (wanted === null || !isBareOrigin(origin)) throw new ValetError('session-handoff', 'invalid')
       this.values.watch(wanted, keys)
       const open = this.openSurfaces('tool').find((surface) => surface.frames()[0]?.origin === wanted)
       if (open !== undefined) {
         try {
           await open.storageSettled()
         } catch {
-          throw new SiteAdapterError('session-handoff', 'internal')
+          throw new ValetError('session-handoff', 'internal')
         }
         const raw = await this.runIn(open, (frame) => frame.run(readStorageScript(keys)))
-        if (!isRecord(raw)) throw new SiteAdapterError('session-handoff', 'internal')
+        if (!isRecord(raw)) throw new ValetError('session-handoff', 'internal')
         for (const key of keys) {
           const value = raw[key]
           if (typeof value === 'string') values.add(value)
@@ -405,7 +405,7 @@ export class ElectronSessionDriver implements SessionDriver {
       const tool = await this.session('tool')
       return cookiesForDomains(await tool.getCookies(), cookieDomains)
     } catch {
-      throw new SiteAdapterError('session-handoff', 'internal')
+      throw new ValetError('session-handoff', 'internal')
     }
   }
 
@@ -511,18 +511,17 @@ export class ElectronSessionDriver implements SessionDriver {
   }
 
   private async copyStorage(origin: string, keys: readonly string[]): Promise<void> {
-    if (!isBareOrigin(origin)) throw new SiteAdapterError('session-handoff', 'invalid')
+    if (!isBareOrigin(origin)) throw new ValetError('session-handoff', 'invalid')
     if (!originAllowed(origin, this.options.navigation)) {
-      throw new SiteAdapterError('session-handoff', 'origin-mismatch')
+      throw new ValetError('session-handoff', 'origin-mismatch')
     }
     const host = new URL(origin).hostname
-    if (!hostAllowed(host, this.options.egress))
-      throw new SiteAdapterError('session-handoff', 'host-not-allowed')
+    if (!hostAllowed(host, this.options.egress)) throw new ValetError('session-handoff', 'host-not-allowed')
     const wanted = httpsOrigin(origin) ?? origin
     // From now on a tool page's writes to these keys are recorded, the site's rotations included.
     this.values.watch(wanted, keys)
     const raw = await this.inDocument('auth', origin, (frame) => frame.run(readStorageScript(keys)))
-    if (!isRecord(raw)) throw new SiteAdapterError('session-handoff', 'internal')
+    if (!isRecord(raw)) throw new ValetError('session-handoff', 'internal')
     const entries: [string, string][] = []
     for (const key of keys) {
       const value = raw[key]
@@ -576,12 +575,11 @@ export class ElectronSessionDriver implements SessionDriver {
       const url = new URL(this.options.storageDocumentPath ?? '/robots.txt', origin).href
       const page = role === 'auth' ? await this.authPage(surface, null) : this.toolPageOn(surface)
       await page.goto(url)
-      if (surface.frames()[0]?.origin !== wanted)
-        throw new SiteAdapterError('session-handoff', 'origin-mismatch')
+      if (surface.frames()[0]?.origin !== wanted) throw new ValetError('session-handoff', 'origin-mismatch')
       return await this.runIn(surface, use)
     } catch (error) {
-      if (error instanceof SiteAdapterError && error.stage === 'session-handoff') throw error
-      throw new SiteAdapterError('session-handoff', 'unavailable')
+      if (error instanceof ValetError && error.stage === 'session-handoff') throw error
+      throw new ValetError('session-handoff', 'unavailable')
     } finally {
       if (surface !== null) {
         this.helpers.delete(surface)
@@ -592,11 +590,11 @@ export class ElectronSessionDriver implements SessionDriver {
 
   private async runIn<T>(surface: BrowserSurface, use: (frame: FrameHandle) => Promise<T>): Promise<T> {
     const frame = surface.frames()[0]
-    if (frame === undefined) throw new SiteAdapterError('session-handoff', 'internal')
+    if (frame === undefined) throw new ValetError('session-handoff', 'internal')
     try {
       return await use(frame)
     } catch {
-      throw new SiteAdapterError('session-handoff', 'internal')
+      throw new ValetError('session-handoff', 'internal')
     }
   }
 
@@ -625,8 +623,8 @@ export class ElectronSessionDriver implements SessionDriver {
       }
     } catch (error) {
       surface.destroy()
-      if (error instanceof SiteAdapterError) throw error
-      throw new SiteAdapterError(role === 'tool' ? 'egress' : 'navigate', 'internal')
+      if (error instanceof ValetError) throw error
+      throw new ValetError(role === 'tool' ? 'egress' : 'navigate', 'internal')
     }
     return surface
   }
@@ -649,8 +647,8 @@ export class ElectronSessionDriver implements SessionDriver {
     try {
       return await this.configureUnchecked(role)
     } catch (error) {
-      if (error instanceof SiteAdapterError) throw error
-      throw new SiteAdapterError(role === 'tool' ? 'egress' : 'navigate', 'internal')
+      if (error instanceof ValetError) throw error
+      throw new ValetError(role === 'tool' ? 'egress' : 'navigate', 'internal')
     }
   }
 
@@ -705,7 +703,7 @@ export class ElectronSessionDriver implements SessionDriver {
     })
     this.proxy = proxy
     return proxy.catch(() => {
-      throw new SiteAdapterError('egress', 'unavailable')
+      throw new ValetError('egress', 'unavailable')
     })
   }
 

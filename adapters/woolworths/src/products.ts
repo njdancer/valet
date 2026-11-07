@@ -1,6 +1,6 @@
 // Product tools: search and detail. Both work anonymously, so neither calls session.ensure().
 
-import { SiteAdapterError, tool } from '@siteadapter/core'
+import { tool, ValetError } from '@valet/core'
 import { z } from 'zod'
 import { getJson, PATHS, postJson } from './site'
 import { htmlToText, httpsUrl, list, text } from './text'
@@ -123,7 +123,7 @@ export const getProduct = tool({
   output: productDetailSchema,
   async run(ctx, input) {
     const body = await getJson(ctx, PATHS.productDetail(input.stockcode), productDetailWire)
-    if (body.Product == null) throw new SiteAdapterError('tool-run', 'not-found')
+    if (body.Product == null) throw new ValetError('tool-run', 'not-found')
     return toProductDetail(body.Product, body)
   },
 })

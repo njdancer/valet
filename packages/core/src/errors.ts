@@ -69,13 +69,13 @@ export const ERROR_CLASSES = [
 ] as const
 export type ErrorClass = (typeof ERROR_CLASSES)[number]
 
-export class SiteAdapterError extends Error {
+export class ValetError extends Error {
   constructor(
     readonly stage: Stage,
     readonly errorClass: ErrorClass,
   ) {
     super(`${stage}: ${errorClass}`)
-    this.name = 'SiteAdapterError'
+    this.name = 'ValetError'
   }
 }
 
@@ -105,6 +105,6 @@ export class NeedsUserError extends Error {
 
 /** Collapses anything thrown into a reportable stage and class. Unknown errors become `internal`. */
 export function toReportable(error: unknown, fallbackStage: Stage): { stage: Stage; errorClass: ErrorClass } {
-  if (error instanceof SiteAdapterError) return { stage: error.stage, errorClass: error.errorClass }
+  if (error instanceof ValetError) return { stage: error.stage, errorClass: error.errorClass }
   return { stage: fallbackStage, errorClass: 'internal' }
 }

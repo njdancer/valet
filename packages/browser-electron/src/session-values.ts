@@ -5,7 +5,7 @@
 // cookie change event (which carries the old value of a removed or overwritten cookie), and every
 // storage write to a key it was asked to hand off or redact.
 
-import { hostAllowed } from '@siteadapter/core'
+import { hostAllowed } from '@valet/core'
 import { cookieHost } from './cookies'
 import type { CookieRecord, StorageValue } from './platform'
 

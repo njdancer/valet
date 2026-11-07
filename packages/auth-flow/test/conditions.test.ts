@@ -1,4 +1,4 @@
-import { SiteAdapterError } from '@siteadapter/core'
+import { ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import {
   compileUrlRegexes,
@@ -118,7 +118,7 @@ describe('urlRegexMatches', () => {
 
   it('passes on the matcher refusing a pattern', async () => {
     const matcher = {
-      test: () => Promise.reject(new SiteAdapterError('auth-step', 'invalid')),
+      test: () => Promise.reject(new ValetError('auth-step', 'invalid')),
       close: () => {},
     }
     await expect(urlRegexMatches('https://www.shop.test/', '.', matcher)).rejects.toMatchObject({
@@ -229,7 +229,7 @@ describe('evaluateCondition', () => {
 
   it('urlRegex refuses a pattern that was not compiled up front, rather than compiling it now', async () => {
     const outcome = evaluateCondition(pageAtLogin(), { urlRegex: '^/$' }, NO_REGEXES)
-    await expect(outcome).rejects.toThrow(SiteAdapterError)
+    await expect(outcome).rejects.toThrow(ValetError)
     await expect(outcome).rejects.toMatchObject({ stage: 'manifest', errorClass: 'invalid' })
   })
 

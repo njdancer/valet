@@ -18,7 +18,7 @@ export interface Grant {
   readonly adapterHash: string
   readonly secret: string
   readonly provider: ProviderKind
-  /** Provider-specific item reference, e.g. op://siteadapter/Woolworths. Never shown to adapter code. */
+  /** Provider-specific item reference, e.g. op://valet/Woolworths. Never shown to adapter code. */
   readonly itemRef: string
   /** Origins the person allowed this secret on: a subset of what the manifest asked for. */
   readonly origins: readonly string[]

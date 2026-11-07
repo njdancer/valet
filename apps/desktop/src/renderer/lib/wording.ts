@@ -10,7 +10,7 @@ import type {
   ProviderKind,
   RunOutcome,
   Stage,
-} from '@siteadapter/core'
+} from '@valet/core'
 import type { FillCheck, SessionState } from '../../shared/api'
 
 export interface ReasonWording {
@@ -23,23 +23,23 @@ export interface ReasonWording {
 export const NEEDS_USER_WORDING: Readonly<Record<NeedsUserReason, ReasonWording>> = {
   'login-required': {
     short: 'Login needed',
-    detail: "It needs you to sign in yourself; siteadapter couldn't do it with the secrets you granted.",
+    detail: "It needs you to sign in yourself; Valet couldn't do it with the secrets you granted.",
   },
   'otp-required': {
     short: 'One-time code',
-    detail: 'It asked for a one-time code that siteadapter has no grant to read.',
+    detail: 'It asked for a one-time code that Valet has no grant to read.',
   },
   captcha: {
     short: 'Verification check',
-    detail: "It showed a verification check that siteadapter won't solve for you.",
+    detail: "It showed a verification check that Valet won't solve for you.",
   },
   'account-locked': {
     short: 'Account locked',
-    detail: 'It says the account is locked. siteadapter has stopped trying so it is not locked out further.',
+    detail: 'It says the account is locked. Valet has stopped trying so it is not locked out further.',
   },
   'terms-update': {
     short: 'Terms to accept',
-    detail: 'It wants you to read and accept updated terms. siteadapter never accepts them for you.',
+    detail: 'It wants you to read and accept updated terms. Valet never accepts them for you.',
   },
   'site-changed': {
     short: 'Site changed',
@@ -47,12 +47,11 @@ export const NEEDS_USER_WORDING: Readonly<Record<NeedsUserReason, ReasonWording>
   },
   'login-attempt-pending': {
     short: 'Earlier login unfinished',
-    detail:
-      'An earlier login attempt never finished, so siteadapter won’t try again until you check the account.',
+    detail: 'An earlier login attempt never finished, so Valet won’t try again until you check the account.',
   },
   other: {
     short: 'Needs you',
-    detail: 'It stopped at a step siteadapter can’t finish by itself.',
+    detail: 'It stopped at a step Valet can’t finish by itself.',
   },
 }
 
@@ -199,7 +198,7 @@ export const PROVIDER_WORDING: Readonly<
   'onepassword-service-account': {
     title: '1Password service account',
     detail:
-      'Vault “siteadapter” only. Works while your Mac is locked or 1Password is closed. Revoke it any time at 1password.com.',
+      'Vault “Valet” only. Works while your Mac is locked or 1Password is closed. Revoke it any time at 1password.com.',
   },
   'onepassword-cli': {
     title: '1Password app',

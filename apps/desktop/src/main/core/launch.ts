@@ -13,7 +13,7 @@ export interface LaunchMode {
    * host mapping and the demo site's hook (electron/demo.ts, exposeToE2e); nothing else.
    */
   readonly e2e: boolean
-  /** SITEADAPTER_USER_DATA: an absolute directory to use as userData instead of the default. */
+  /** VALET_USER_DATA: an absolute directory to use as userData instead of the default. */
   readonly userData: string | null
 }
 
@@ -35,24 +35,24 @@ export function launchMode(
   env: Readonly<Record<string, string | undefined>>,
   context: LaunchContext,
 ): LaunchMode {
-  const override = context.packaged ? undefined : env['SITEADAPTER_USER_DATA']
+  const override = context.packaged ? undefined : env['VALET_USER_DATA']
   const demoAllowed = context.demoBuild && !context.packaged
   return {
-    demo: demoAllowed && (env['SITEADAPTER_DEMO'] === '1' || argv.includes('--demo')),
-    e2e: env['SITEADAPTER_E2E'] === '1',
+    demo: demoAllowed && (env['VALET_DEMO'] === '1' || argv.includes('--demo')),
+    e2e: env['VALET_E2E'] === '1',
     // A relative path would land wherever the app was started from; it is ignored.
     userData: override !== undefined && isAbsolute(override) ? resolve(override) : null,
   }
 }
 
 /** The release app's name, and so its userData folder's. */
-export const RELEASE_DATA_NAME = 'siteadapter'
+export const RELEASE_DATA_NAME = 'Valet'
 /** A development package's name (electron-builder.config.ts), and every unpackaged run's folder. */
-export const DEV_DATA_NAME = 'siteadapter-dev'
+export const DEV_DATA_NAME = 'Valet Dev'
 
 /**
  * An install's userData: ~/Library/Application Support/<name>. `name` is the packaged app's own
- * (app.getName(): siteadapter for a release, siteadapter-dev for a development package, so the two
+ * (app.getName(): Valet for a release, Valet Dev for a development package, so the two
  * never share data); an unpackaged run uses the development name (electron/app.ts).
  */
 export function realDataDir(appData: string, name: string = RELEASE_DATA_NAME): string {
@@ -65,7 +65,7 @@ export function realDataDir(appData: string, name: string = RELEASE_DATA_NAME): 
  * would reuse the real grants, approvals and bridge.json.
  */
 export function userDataDir(mode: LaunchMode, appData: string, name: string = RELEASE_DATA_NAME): string {
-  const demoDir = join(appData, 'siteadapter-demo')
+  const demoDir = join(appData, 'valet-demo')
   if (mode.userData !== null) {
     if (
       mode.demo &&
@@ -166,10 +166,10 @@ export function isAppPage(base: RendererBase, url: string): boolean {
 /** Window titles: fixed words, and in e2e mode a stable suffix the suite can find windows by. */
 export function windowTitle(role: WindowRole, demo: boolean, e2e: boolean, detail = ''): string {
   const names: Record<WindowRole, string> = {
-    control: 'siteadapter',
-    tray: 'siteadapter menu',
-    confirmation: 'siteadapter: confirm',
-    'needs-user': 'siteadapter: sign in',
+    control: 'Valet',
+    tray: 'Valet menu',
+    confirmation: 'Valet: confirm',
+    'needs-user': 'Valet: sign in',
   }
   const title = `${names[role]}${demo ? ' (demo)' : ''}`
   return e2e && detail !== '' ? `${title} [${detail}]` : e2e ? `${title} [${role}]` : title

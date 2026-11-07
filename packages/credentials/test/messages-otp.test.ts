@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { inspect } from 'node:util'
-import { CredentialError, type Grant, type MessagesOtpQuery, SiteAdapterError } from '@siteadapter/core'
+import { CredentialError, type Grant, type MessagesOtpQuery, ValetError } from '@valet/core'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { defaultMessagesDbPath, MessagesOtpReader, messagesQueryFor } from '../src/messages-otp'
 import { archived } from './typedstream-fixture'
@@ -41,7 +41,7 @@ let db: DatabaseSync
 
 // The subset of the Messages schema the reader touches, with the columns it doesn't read left out.
 beforeEach(async () => {
-  dir = await fs.mkdtemp(join(tmpdir(), 'siteadapter-messages-'))
+  dir = await fs.mkdtemp(join(tmpdir(), 'valet-messages-'))
   path = join(dir, 'chat.db')
   db = new DatabaseSync(path)
   db.exec(`
@@ -363,11 +363,8 @@ describe('MessagesOtpReader', () => {
       await new MessagesOtpReader({ path, now }).latest({ ...WOOLWORTHS, pattern: '(' }, NOT_BEFORE)
       expect.unreachable()
     } catch (error) {
-      expect(error).toBeInstanceOf(SiteAdapterError)
-      expect([(error as SiteAdapterError).stage, (error as SiteAdapterError).errorClass]).toEqual([
-        'otp',
-        'invalid',
-      ])
+      expect(error).toBeInstanceOf(ValetError)
+      expect([(error as ValetError).stage, (error as ValetError).errorClass]).toEqual(['otp', 'invalid'])
     }
   })
 
@@ -438,7 +435,7 @@ describe('MessagesOtpReader with a grant', () => {
     const reader = new MessagesOtpReader({ path: join(dir, 'missing.db'), now })
     for (const sender of ['+61400000000', 'Woolworths1', 'fake.woolworths@icloud.com']) {
       await expect(reader.latest({ ...WOOLWORTHS, sender }, NOT_BEFORE, WOOLWORTHS_GRANT)).rejects.toEqual(
-        new SiteAdapterError('otp', 'not-granted'),
+        new ValetError('otp', 'not-granted'),
       )
     }
   })
@@ -452,7 +449,7 @@ describe('MessagesOtpReader with a grant', () => {
       { ...WOOLWORTHS_GRANT, itemRef: '%' },
     ]) {
       await expect(reader.latest(WOOLWORTHS, NOT_BEFORE, grant)).rejects.toEqual(
-        new SiteAdapterError('otp', 'not-granted'),
+        new ValetError('otp', 'not-granted'),
       )
     }
   })
@@ -462,17 +459,15 @@ describe('MessagesOtpReader with a grant', () => {
     const reader = new MessagesOtpReader({ path, now })
     await expect(
       reader.latest(anySender as unknown as MessagesOtpQuery, NOT_BEFORE, WOOLWORTHS_GRANT),
-    ).rejects.toEqual(new SiteAdapterError('otp', 'not-granted'))
+    ).rejects.toEqual(new ValetError('otp', 'not-granted'))
   })
 
   it('with requireGrant, refuses a lookup that comes without a grant', async () => {
     insert({ text: 'code is 482913', date: appleNanos(at('00:09:00')) })
     const reader = new MessagesOtpReader({ path, now, requireGrant: true })
-    await expect(reader.latest(WOOLWORTHS, NOT_BEFORE)).rejects.toEqual(
-      new SiteAdapterError('otp', 'not-granted'),
-    )
+    await expect(reader.latest(WOOLWORTHS, NOT_BEFORE)).rejects.toEqual(new ValetError('otp', 'not-granted'))
     await expect(reader.latest(WOOLWORTHS, NOT_BEFORE, null as unknown as Grant)).rejects.toEqual(
-      new SiteAdapterError('otp', 'not-granted'),
+      new ValetError('otp', 'not-granted'),
     )
   })
 })
@@ -485,13 +480,13 @@ describe('messagesQueryFor', () => {
 
   it('refuses a source whose sender is not the granted one', () => {
     expect(() => messagesQueryFor(WOOLWORTHS_GRANT, { ...WOOLWORTHS, sender: '+61400000000' })).toThrow(
-      new SiteAdapterError('otp', 'not-granted'),
+      new ValetError('otp', 'not-granted'),
     )
   })
 
   it('refuses a grant from a credential provider', () => {
     expect(() => messagesQueryFor({ ...WOOLWORTHS_GRANT, provider: 'onepassword-cli' }, WOOLWORTHS)).toThrow(
-      new SiteAdapterError('otp', 'not-granted'),
+      new ValetError('otp', 'not-granted'),
     )
   })
 })

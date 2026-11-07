@@ -1,4 +1,4 @@
-// The privileged filler: the only code in siteadapter that hands a secret to a page. It checks the
+// The privileged filler: the only code in Valet that hands a secret to a page. It checks the
 // grant, the manifest and the target element before fetching the value, fetches it just in time,
 // checks the target again (the person may have taken a while over Touch ID), and disposes the value
 // whatever happens.
@@ -16,10 +16,10 @@ import {
   type SecretField,
   type SecretRef,
   SecretValue,
-  SiteAdapterError,
   type Stage,
   urlOriginAllowed,
-} from '@siteadapter/core'
+  ValetError,
+} from '@valet/core'
 import { checkBlocked, checkNavigation, type FlowContext, guarded, now, remainingMs } from './context'
 import { allowedOrigins, suitsField } from './guards'
 
@@ -32,20 +32,20 @@ const RESOLVE_FAILURES: readonly ResolveFailure[] = ['locked', 'not-found', 'fie
 export async function fillSecret(ctx: FlowContext, selector: string, ref: SecretRef): Promise<void> {
   const { manifest, providers } = ctx.input
   // The schema reserves the name; a manifest that uses it anyway would read a Messages grant as its own.
-  if (ref.secret === MESSAGES_SECRET) throw new SiteAdapterError('secret-fill', 'invalid')
+  if (ref.secret === MESSAGES_SECRET) throw new ValetError('secret-fill', 'invalid')
   const grant = await findGrant(ctx, ref.secret)
   // A Messages grant names a sender, not a credential item, and is never resolved through a provider.
-  if (grant.provider === 'messages') throw new SiteAdapterError('secret-fill', 'not-granted')
+  if (grant.provider === 'messages') throw new ValetError('secret-fill', 'not-granted')
   // hasOwn, because a secret named "constructor" would otherwise find Object's.
   const request = Object.hasOwn(manifest.secrets, ref.secret) ? manifest.secrets[ref.secret] : undefined
   if (request === undefined || !request.fields.includes(ref.field)) {
-    throw new SiteAdapterError('secret-fill', 'invalid')
+    throw new ValetError('secret-fill', 'invalid')
   }
   const origins = allowedOrigins(grant.origins, request.origins)
   await checkTarget(ctx, selector, ref.field, origins)
 
   const provider = providers[grant.provider]
-  if (provider === undefined) throw new SiteAdapterError('credential', 'unavailable')
+  if (provider === undefined) throw new ValetError('credential', 'unavailable')
   const secret = await resolveSecret(() => provider.resolve(grant.itemRef, ref.field), 'credential')
   try {
     await checkTarget(ctx, selector, ref.field, origins)
@@ -75,11 +75,11 @@ export async function fillMessagesOtp(
     source.sender.length === 0 ||
     Object.hasOwn(manifest.secrets, MESSAGES_SECRET)
   ) {
-    throw new SiteAdapterError('secret-fill', 'invalid')
+    throw new ValetError('secret-fill', 'invalid')
   }
   const grant = await findGrant(ctx, MESSAGES_SECRET)
   if (grant.provider !== 'messages' || grant.itemRef !== source.sender) {
-    throw new SiteAdapterError('secret-fill', 'not-granted')
+    throw new ValetError('secret-fill', 'not-granted')
   }
   const origins = allowedOrigins(grant.origins, manifest.navigation)
   await checkTarget(ctx, selector, 'otp', origins)
@@ -109,7 +109,7 @@ async function findGrant(ctx: FlowContext, secret: string): Promise<Grant> {
     grant.adapterHash !== adapterHash ||
     grant.secret !== secret
   ) {
-    throw new SiteAdapterError('secret-fill', 'not-granted')
+    throw new ValetError('secret-fill', 'not-granted')
   }
   return grant
 }
@@ -123,11 +123,11 @@ async function readOtp(ctx: FlowContext, query: MessagesOtpQuery): Promise<Secre
     try {
       return await resolveSecret(() => ctx.input.otpReader.latest(query, ctx.startedAt), 'otp')
     } catch (error) {
-      if (!(error instanceof SiteAdapterError) || error.errorClass !== 'not-found') throw error
+      if (!(error instanceof ValetError) || error.errorClass !== 'not-found') throw error
     }
     await checkNavigation(ctx)
     await checkBlocked(ctx)
-    if (now(ctx) >= ctx.deadline) throw new SiteAdapterError('otp', 'not-found')
+    if (now(ctx) >= ctx.deadline) throw new ValetError('otp', 'not-found')
     await ctx.input.sleep(Math.min(OTP_POLL_MS, remainingMs(ctx)))
   }
 }
@@ -139,12 +139,12 @@ async function resolveSecret(resolve: () => Promise<SecretValue>, stage: Stage):
     value = await resolve()
   } catch (error) {
     if (error instanceof CredentialError && RESOLVE_FAILURES.includes(error.failure)) {
-      throw new SiteAdapterError(stage, error.failure satisfies ErrorClass)
+      throw new ValetError(stage, error.failure satisfies ErrorClass)
     }
-    throw new SiteAdapterError(stage, 'internal')
+    throw new ValetError(stage, 'internal')
   }
   // A provider that hands back a plain string has already let the value out of its box.
-  if (!(value instanceof SecretValue)) throw new SiteAdapterError(stage, 'internal')
+  if (!(value instanceof SecretValue)) throw new ValetError(stage, 'internal')
   return value
 }
 
@@ -164,23 +164,23 @@ async function checkTarget(
   await checkNavigation(ctx)
   await checkBlocked(ctx)
   const element = await guarded('secret-fill', () => page.inspect(selector))
-  if (element === null || !element.visible) throw new SiteAdapterError('secret-fill', 'element-missing')
+  if (element === null || !element.visible) throw new ValetError('secret-fill', 'element-missing')
   if (!originAllowed(element.frameOrigin, origins)) {
-    throw new SiteAdapterError('secret-fill', 'origin-mismatch')
+    throw new ValetError('secret-fill', 'origin-mismatch')
   }
   const currentUrl = await guarded('secret-fill', () => page.currentUrl())
-  if (!urlOriginAllowed(currentUrl, origins)) throw new SiteAdapterError('secret-fill', 'origin-mismatch')
+  if (!urlOriginAllowed(currentUrl, origins)) throw new ValetError('secret-fill', 'origin-mismatch')
   // Strictly true: the driver can't deliver trusted keystrokes into an out-of-process frame, and
   // finding that out only after the person approved Touch ID would ask them again for nothing.
-  if (element.inputReachable !== true) throw new SiteAdapterError('secret-fill', 'input-unreachable')
-  if (!suitsField(element, field)) throw new SiteAdapterError('secret-fill', 'element-unsuitable')
+  if (element.inputReachable !== true) throw new ValetError('secret-fill', 'input-unreachable')
+  if (!suitsField(element, field)) throw new ValetError('secret-fill', 'element-unsuitable')
   // A password typed into a form that posts elsewhere, or into no form at all (a search box), ends
   // up in URLs, history and analytics.
   if (
     field === 'password' &&
     (element.formActionOrigin === null || !originAllowed(element.formActionOrigin, origins))
   ) {
-    throw new SiteAdapterError('secret-fill', 'form-action-mismatch')
+    throw new ValetError('secret-fill', 'form-action-mismatch')
   }
   return element
 }
@@ -247,6 +247,6 @@ function remember(value: SecretValue, rememberSecret: (secret: SecretValue) => v
     rememberSecret(copy)
   } catch {
     copy.dispose()
-    throw new SiteAdapterError('secret-fill', 'internal')
+    throw new ValetError('secret-fill', 'internal')
   }
 }

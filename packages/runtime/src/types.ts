@@ -1,6 +1,6 @@
 // The runtime's own contracts: what it needs injected (the auth runner, the confirmation prompt)
 // and what it returns. The auth runner is a function type so that this package never imports
-// @siteadapter/auth-flow; the app wires the real one in.
+// @valet/auth-flow; the app wires the real one in.
 
 import type {
   AdapterManifest,
@@ -10,7 +10,7 @@ import type {
   SessionDriver,
   Stage,
   ToolDeclaration,
-} from '@siteadapter/core'
+} from '@valet/core'
 import type { z } from 'zod'
 
 /**

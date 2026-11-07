@@ -1,4 +1,4 @@
-// An in-memory SiteAdapterApi with realistic Woolworths data, for `vite` dev in a plain browser and
+// An in-memory ValetApi with realistic Woolworths data, for `vite` dev in a plain browser and
 // for tests. It behaves like the main process where the renderer could get it wrong (a grant for
 // origins the manifest didn't request is refused; approving a stale hash is refused), so tests that
 // pass against it hold against the real thing. Nothing here is a real secret: there are none to have.
@@ -6,7 +6,7 @@
 // Times are minutes before `now`, so the data reads the same whenever it is loaded. The worked
 // example is Sat 7 Nov 2026, 9:48 pm in Sydney, as in docs/mockups.
 
-import type { AuditEvent, AuditRecord, ProviderKind, RequestDeclaration } from '@siteadapter/core'
+import type { AuditEvent, AuditRecord, ProviderKind, RequestDeclaration } from '@valet/core'
 import type {
   AdapterDetail,
   AdapterSummary,
@@ -31,10 +31,10 @@ import type {
   RunSummary,
   RunTrace,
   Settings,
-  SiteAdapterApi,
   SiteHealth,
   TraceStep,
   UpdateStatus,
+  ValetApi,
   VaultItem,
 } from '../../shared/api'
 
@@ -59,7 +59,7 @@ export interface FakeControls {
   readonly calls: { readonly method: string; readonly args: readonly unknown[] }[]
 }
 
-export type FakeApi = SiteAdapterApi & { readonly fake: FakeControls }
+export type FakeApi = ValetApi & { readonly fake: FakeControls }
 
 export const WOOLWORTHS_HASH = '9f3c1a7e52d4a4c123b1612dd272d1371c17149d439536b3216fdaeec8d9e0f1'
 export const WOOLWORTHS_NEXT_HASH = '4b7e2d91c0a8f3e65d21b7a9c48e0f13a6d5b2c97e4f1a08d3c6b9e2f5a7a83c'
@@ -821,12 +821,12 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       },
       async snippets() {
         enter('endpoint.snippets')
-        const bridge = '/Applications/siteadapter.app/Contents/Resources/bin/siteadapter-mcp'
+        const bridge = '/Applications/Valet.app/Contents/Resources/bin/valet-mcp'
         const list: ClientSnippet[] = [
-          { client: 'claude-code', text: `claude mcp add siteadapter -- \\\n  ${bridge}` },
+          { client: 'claude-code', text: `claude mcp add valet -- \\\n  ${bridge}` },
           {
             client: 'claude-desktop',
-            text: `{ "mcpServers": { "siteadapter": { "command":\n  "${bridge}"\n} } }`,
+            text: `{ "mcpServers": { "valet": { "command":\n  "${bridge}"\n} } }`,
           },
         ]
         return list

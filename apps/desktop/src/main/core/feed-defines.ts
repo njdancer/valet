@@ -11,11 +11,11 @@ export interface FeedBuildEnv {
    * The feed's base URL: an https directory, the same one electron-builder publishes. On a public
    * host for a release; outside one, http on loopback is allowed too (the updater end-to-end build).
    */
-  readonly SITEADAPTER_UPDATE_URL?: string
+  readonly VALET_UPDATE_URL?: string
   /** Path to the SPKI PEM public half of the offline feed key. */
-  readonly SITEADAPTER_FEED_PUBLIC_KEY_FILE?: string
+  readonly VALET_FEED_PUBLIC_KEY_FILE?: string
   /** 1 for a release: the feed is then required, and must be public https. */
-  readonly SITEADAPTER_RELEASE?: string
+  readonly VALET_RELEASE?: string
   readonly [name: string]: string | undefined
 }
 
@@ -29,7 +29,7 @@ export interface FeedDefines {
  * one; dev, demo and smoke builds never do. Neither set: no feed, and the updater is off. One
  * without the other, or a URL the rule for this build refuses, fails the build rather than shipping
  * an updater that can't verify what it fetches or contacts the wrong host. The rule is the one
- * electron-builder.config.ts applies to the same variable: for a release (SITEADAPTER_RELEASE=1)
+ * electron-builder.config.ts applies to the same variable: for a release (VALET_RELEASE=1)
  * https on a public host, and the feed is required; otherwise https to any host, or http on
  * loopback.
  */
@@ -39,27 +39,27 @@ export function feedDefines(
   readKey: (path: string) => string = (path) => readFileSync(path, 'utf8'),
 ): FeedDefines {
   const none = { url: '', publicKey: '' }
-  const release = env.SITEADAPTER_RELEASE === '1'
+  const release = env.VALET_RELEASE === '1'
   if (release && !plainBuild)
     throw new Error('a release is a plain `electron-vite build`: not dev, demo or smoke')
   if (!plainBuild) return none
-  const rawUrl = env.SITEADAPTER_UPDATE_URL ?? ''
-  const keyFile = env.SITEADAPTER_FEED_PUBLIC_KEY_FILE ?? ''
+  const rawUrl = env.VALET_UPDATE_URL ?? ''
+  const keyFile = env.VALET_FEED_PUBLIC_KEY_FILE ?? ''
   if (release && (rawUrl === '' || keyFile === ''))
-    throw new Error('a release build needs SITEADAPTER_UPDATE_URL and SITEADAPTER_FEED_PUBLIC_KEY_FILE')
+    throw new Error('a release build needs VALET_UPDATE_URL and VALET_FEED_PUBLIC_KEY_FILE')
   if (rawUrl === '' && keyFile === '') return none
   if (rawUrl === '' || keyFile === '')
-    throw new Error('set both SITEADAPTER_UPDATE_URL and SITEADAPTER_FEED_PUBLIC_KEY_FILE, or neither')
+    throw new Error('set both VALET_UPDATE_URL and VALET_FEED_PUBLIC_KEY_FILE, or neither')
   const url = validateFeedUrl(rawUrl, { allowLoopbackHttp: !release, requirePublicHost: release })
   if (url === null)
     throw new Error(
       release
-        ? 'SITEADAPTER_UPDATE_URL must be an https directory URL on a public host name'
-        : 'SITEADAPTER_UPDATE_URL must be an https directory URL, or http on loopback',
+        ? 'VALET_UPDATE_URL must be an https directory URL on a public host name'
+        : 'VALET_UPDATE_URL must be an https directory URL, or http on loopback',
     )
   const publicKey = readKey(keyFile).trim()
   if (!/^-----BEGIN PUBLIC KEY-----\n[A-Za-z0-9+/=\n]+\n-----END PUBLIC KEY-----$/.test(publicKey))
-    throw new Error('SITEADAPTER_FEED_PUBLIC_KEY_FILE must hold one SPKI PEM public key')
+    throw new Error('VALET_FEED_PUBLIC_KEY_FILE must hold one SPKI PEM public key')
   return { url, publicKey: `${publicKey}\n` }
 }
 

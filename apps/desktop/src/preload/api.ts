@@ -1,4 +1,4 @@
-// window.siteadapter, built over an ipcRenderer-shaped object so it is tested without Electron.
+// window.valet, built over an ipcRenderer-shaped object so it is tested without Electron.
 
 import {
   APP_EVENT_TYPES,
@@ -7,7 +7,7 @@ import {
   type InvokeMethod,
   invokeChannel,
 } from '../main/core/channels'
-import type { AppEvent, SiteAdapterApi } from '../shared/api'
+import type { AppEvent, ValetApi } from '../shared/api'
 
 /** The slice of ipcRenderer the preload uses. */
 export interface IpcLike {
@@ -39,7 +39,7 @@ export function eventFrom(message: unknown): AppEvent | null {
   return { type } as AppEvent
 }
 
-export function buildApi(ipc: IpcLike): SiteAdapterApi {
+export function buildApi(ipc: IpcLike): ValetApi {
   const api: Tree = {}
   for (const method of INVOKE_METHODS) {
     const parts = method.split('.')
@@ -60,5 +60,5 @@ export function buildApi(ipc: IpcLike): SiteAdapterApi {
       ipc.removeListener(EVENT_CHANNEL, handler)
     }
   }
-  return { ...(api as unknown as Omit<SiteAdapterApi, 'onEvent'>), onEvent }
+  return { ...(api as unknown as Omit<ValetApi, 'onEvent'>), onEvent }
 }

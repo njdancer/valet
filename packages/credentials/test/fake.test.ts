@@ -1,4 +1,4 @@
-import { CredentialError } from '@siteadapter/core'
+import { CredentialError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { FakeCredentialProvider } from '../src/fake'
 

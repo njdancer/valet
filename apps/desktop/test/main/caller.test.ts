@@ -4,8 +4,8 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { AuditEvent, AuditRecord } from '@siteadapter/core'
-import { AuditLog, REDACTED } from '@siteadapter/runtime'
+import type { AuditEvent, AuditRecord } from '@valet/core'
+import { AuditLog, REDACTED } from '@valet/runtime'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   type AdapterLookup,
@@ -252,7 +252,7 @@ describe('the preload’s API', () => {
     const got: unknown[] = []
     const off = api.onEvent((e) => got.push(e))
     const deliver = (message: unknown) => {
-      for (const l of listeners.get('siteadapter:event') ?? []) l({}, message)
+      for (const l of listeners.get('valet:event') ?? []) l({}, message)
     }
     deliver({ type: 'grants-changed', token: 'leak' })
     deliver({ type: 'audit-appended', seq: 7, record: { secret: 'x' } })

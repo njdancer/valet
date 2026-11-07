@@ -1,5 +1,5 @@
 {
-  "name": "@siteadapter/browser-electron",
+  "name": "@valet/browser-electron",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -12,11 +12,11 @@
     "check:e2e": "pnpm typecheck:e2e && pnpm test:e2e"
   },
   "dependencies": {
-    "@siteadapter/core": "workspace:*"
+    "@valet/core": "workspace:*"
   },
   "devDependencies": {
     "@playwright/test": "^1.65.0",
-    "@siteadapter/fake-woolworths-site": "workspace:*",
+    "@valet/fake-woolworths-site": "workspace:*",
     "electron": "^44.10.2"
   }
 }

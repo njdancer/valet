@@ -28,12 +28,12 @@ export class FeedRefusedError extends Error {
 }
 
 export const FEED_REFUSAL_CODES: Readonly<Record<FeedRefusal | 'file-outside-feed', string>> = {
-  'signature-invalid': 'ERR_SITEADAPTER_FEED_UNVERIFIED',
-  'envelope-invalid': 'ERR_SITEADAPTER_FEED_UNVERIFIED',
-  'channel-mismatch': 'ERR_SITEADAPTER_FEED_UNVERIFIED',
-  'yml-mismatch': 'ERR_SITEADAPTER_FEED_UNVERIFIED',
-  'file-outside-feed': 'ERR_SITEADAPTER_FEED_UNVERIFIED',
-  expired: 'ERR_SITEADAPTER_FEED_EXPIRED',
+  'signature-invalid': 'ERR_VALET_FEED_UNVERIFIED',
+  'envelope-invalid': 'ERR_VALET_FEED_UNVERIFIED',
+  'channel-mismatch': 'ERR_VALET_FEED_UNVERIFIED',
+  'yml-mismatch': 'ERR_VALET_FEED_UNVERIFIED',
+  'file-outside-feed': 'ERR_VALET_FEED_UNVERIFIED',
+  expired: 'ERR_VALET_FEED_EXPIRED',
 }
 
 export interface SignedFeedDeps {

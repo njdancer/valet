@@ -197,7 +197,7 @@ describe('the confirmation panel', () => {
     expect(shown.textContent).toBe(note)
     expect(shown.querySelector('img')).toBeNull()
     expect(shown.querySelector('b')).toBeNull()
-    expect(screen.getByText('Not verified by siteadapter')).toBeTruthy()
+    expect(screen.getByText('Not verified by Valet')).toBeTruthy()
     // The heading is the app's own wording from structured fields, not the note.
     expect(screen.getByText('Run Place order on Woolworths?')).toBeTruthy()
   })

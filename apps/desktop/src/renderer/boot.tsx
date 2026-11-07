@@ -4,10 +4,10 @@
 
 import { type ReactNode, StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import type { SiteAdapterApi } from '../shared/api'
+import type { ValetApi } from '../shared/api'
 import { ApiProvider } from './lib/api-context'
 
-export type FakeLoader = () => Promise<SiteAdapterApi>
+export type FakeLoader = () => Promise<ValetApi>
 
 /**
  * The dev fake, or null in a production build. The condition is the compile-time constant at the
@@ -20,8 +20,8 @@ export const devFake: FakeLoader | null = import.meta.env.DEV
     }
   : null
 
-export async function resolveApi(win: Window, fake: FakeLoader | null): Promise<SiteAdapterApi | null> {
-  if (win.siteadapter !== undefined) return win.siteadapter
+export async function resolveApi(win: Window, fake: FakeLoader | null): Promise<ValetApi | null> {
+  if (win.valet !== undefined) return win.valet
   return fake === null ? null : fake()
 }
 
@@ -36,7 +36,7 @@ export async function boot(
     <StrictMode>
       {api === null ? (
         <div className="empty" role="alert">
-          siteadapter couldn’t reach its main process. Quit and open it again.
+          Valet couldn’t reach its main process. Quit and open it again.
         </div>
       ) : (
         <ApiProvider api={api}>{page}</ApiProvider>

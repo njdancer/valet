@@ -43,7 +43,7 @@ export interface TestSite {
 
 /** A self-signed certificate for the test hosts, made with openssl in a fresh temp directory. */
 function makeCertificate(): { key: Buffer; cert: Buffer } {
-  const dir = mkdtempSync(join(tmpdir(), 'siteadapter-e2e-cert-'))
+  const dir = mkdtempSync(join(tmpdir(), 'valet-e2e-cert-'))
   const key = join(dir, 'key.pem')
   const cert = join(dir, 'cert.pem')
   execFileSync(

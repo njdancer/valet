@@ -8,7 +8,7 @@ let dir: string
 const clock = { now: () => Date.UTC(2026, 10, 7, 9, 0, 0) }
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'siteadapter-markers-'))
+  dir = await mkdtemp(join(tmpdir(), 'valet-markers-'))
 })
 
 afterEach(async () => {

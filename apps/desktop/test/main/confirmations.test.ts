@@ -2,8 +2,8 @@
 // The confirmation broker: only the confirmation window approves, only once armed, only before
 // expiry; anything else declines or is refused.
 
-import { parseManifest } from '@siteadapter/core'
-import type { ConfirmationRequest } from '@siteadapter/runtime'
+import { parseManifest } from '@valet/core'
+import type { ConfirmationRequest } from '@valet/runtime'
 import { describe, expect, it } from 'vitest'
 import { ConfirmationBroker, ConfirmationRefused } from '../../src/main/core/confirmations'
 import { CONFIRM_ARM_MS } from '../../src/shared/api'

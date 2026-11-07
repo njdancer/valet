@@ -60,9 +60,9 @@ read.
 | Reach the authoring tools from MCP   | The authoring server is a separate endpoint, off unless the person has an authoring session open, bound to the one client the person picked (see [The authoring server](#the-authoring-server)).                                                                                                                                                                     | A client of the shopping MCP server lists tools and calls `page_evaluate` by name; a second client presents the session's connect token after the first bound; a client connects when no session is open; assert none succeeds.                                                                                                                                                                                                                                                                                                                                                  |
 | Touch files outside the draft bundle | Bundle file tools resolve paths against the bundle root and refuse `..`, absolute paths, symlinks and the reserved provenance path.                                                                                                                                                                                                                                  | `../`, `%2e%2e/`, an absolute path, a symlink planted by a previous write, and `provenance.json` in several cases.                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
-The "never" list holds only for the tools siteadapter provides. In the
+The "never" list holds only for the tools Valet provides. In the
 [MCP-inverted](#model-access) mode the agent is the person's own client, which may also have a
-shell, a filesystem and web fetch. siteadapter can't take those away. That changes some of the
+shell, a filesystem and web fetch. Valet can't take those away. That changes some of the
 guarantees, as described in [MCP-inverted mode](#mcp-inverted-mode).
 
 ## Where the agent's browser runs
@@ -103,7 +103,7 @@ orders, addresses, the name on the account. That's inherent to letting it write 
 pages. The scrubber limits what reaches the model, but the agent can still `evaluate` in the page,
 so treat logged-in authoring as handing the model provider the account's visible data, and say so
 in the UI. Its egress is limited to the allowlisted first-party hosts, so the data can't leave
-through siteadapter's tools to anywhere but the site itself, which has it already.
+through Valet's tools to anywhere but the site itself, which has it already.
 
 ### The authoring driver
 
@@ -455,7 +455,7 @@ Two things protect approvals and grants, in every mode:
 
 The same tool set serves the built-in agent and the MCP-inverted mode. All results are JSON.
 Page-derived strings are wrapped in `{ "untrusted": "…" }` and truncated. Every call is in the
-authoring audit trail. Errors are `SiteAdapterError(stage, errorClass)`, reported as
+authoring audit trail. Errors are `ValetError(stage, errorClass)`, reported as
 `{ stage, errorClass }`, never with messages. Every browser tool refuses while `scratch` is in
 person-driven discovery.
 
@@ -635,14 +635,14 @@ Nothing here stops 5, and nothing fully stops 9 while the client has a shell. Se
 
 ### MCP-inverted mode
 
-In this mode the agent is the person's own client. siteadapter controls its own tools, not the
+In this mode the agent is the person's own client. Valet controls its own tools, not the
 client's, so:
 
 - **The stance doesn't hold as written.** A client with a shell or web fetch can send what it
   reads anywhere (5), run code as the person, and try to self-approve (9).
 - **A client profile is a precondition, not advice.** The setup guide documents a profile with no
   shell and no web fetch, and starting an authoring session in this mode requires the person to
-  confirm their client runs with it. siteadapter can't verify that confirmation, so it doesn't
+  confirm their client runs with it. Valet can't verify that confirmation, so it doesn't
   turn the mode into the BYO-key guarantee.
 - **Self-approval needs the gesture.** Touch ID can't be scripted. The typed-hash fallback can be
   scripted by an app with Accessibility permission, and the MAC on the stores is ineffective until
@@ -653,13 +653,13 @@ client's, so:
 
 ## Model access
 
-| Option                                                                                                                       | Policy status                                                                                                                                                              | Notes                                                                                                                                                                                                                                                                                                         |
-| ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Bring your own API key** (Anthropic, OpenAI, Gemini)                                                                       | Clearly fine. It's the sanctioned way to build on each provider's API, including Anthropic's Agent SDK with an API key.                                                    | The tool surface is exactly ours, so this is the mode the stance and the "never" table describe. The residue is G1: requests to the site's own hosts that write through GET or a link. The key goes in the Keychain, never a file, with the same v0 caveat as the 1Password token. The person pays per token. |
-| **MCP-inverted**: the IDE's tools as an MCP server, driven by the person's own Claude Code, Claude Desktop or another client | Fine. Connecting a local MCP server to your own client is the intended use, and siteadapter offers no model access at all.                                                 | Uses the person's subscription with no product involvement. But the client brings its own shell, filesystem and web fetch, so the guarantees weaken as described in [MCP-inverted mode](#mcp-inverted-mode), and it waits for the approval gesture before it's a product feature.                             |
-| **claude.ai login or subscription limits inside siteadapter** (Agent SDK with OAuth)                                         | Not allowed. Anthropic's Agent SDK docs say third-party developers may not offer claude.ai login or rate limits for their products without Anthropic's prior approval.     | Don't build it. Revisit only with written approval.                                                                                                                                                                                                                                                           |
-| **Shelling out to the person's installed `claude` CLI**                                                                      | Grey. It's the person's own tool and subscription, but siteadapter would be offering subscription-backed agent features in its product, which is what the policy is about. | Also fragile: flags and output formats change, and the CLI brings its own tools, which have to be locked down with flags we'd need to track.                                                                                                                                                                  |
-| **Local models**                                                                                                             | Fine.                                                                                                                                                                      | Quality unknown for this task. The eval suite decides.                                                                                                                                                                                                                                                        |
+| Option                                                                                                                       | Policy status                                                                                                                                                          | Notes                                                                                                                                                                                                                                                                                                         |
+| ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Bring your own API key** (Anthropic, OpenAI, Gemini)                                                                       | Clearly fine. It's the sanctioned way to build on each provider's API, including Anthropic's Agent SDK with an API key.                                                | The tool surface is exactly ours, so this is the mode the stance and the "never" table describe. The residue is G1: requests to the site's own hosts that write through GET or a link. The key goes in the Keychain, never a file, with the same v0 caveat as the 1Password token. The person pays per token. |
+| **MCP-inverted**: the IDE's tools as an MCP server, driven by the person's own Claude Code, Claude Desktop or another client | Fine. Connecting a local MCP server to your own client is the intended use, and Valet offers no model access at all.                                                   | Uses the person's subscription with no product involvement. But the client brings its own shell, filesystem and web fetch, so the guarantees weaken as described in [MCP-inverted mode](#mcp-inverted-mode), and it waits for the approval gesture before it's a product feature.                             |
+| **claude.ai login or subscription limits inside Valet** (Agent SDK with OAuth)                                               | Not allowed. Anthropic's Agent SDK docs say third-party developers may not offer claude.ai login or rate limits for their products without Anthropic's prior approval. | Don't build it. Revisit only with written approval.                                                                                                                                                                                                                                                           |
+| **Shelling out to the person's installed `claude` CLI**                                                                      | Grey. It's the person's own tool and subscription, but Valet would be offering subscription-backed agent features in its product, which is what the policy is about.   | Also fragile: flags and output formats change, and the CLI brings its own tools, which have to be locked down with flags we'd need to track.                                                                                                                                                                  |
+| **Local models**                                                                                                             | Fine.                                                                                                                                                                  | Quality unknown for this task. The eval suite decides.                                                                                                                                                                                                                                                        |
 
 **Recommended stance.** This matches [Sequencing](#running-agent-written-code) and the open
 questions below.

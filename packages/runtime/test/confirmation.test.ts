@@ -1,7 +1,7 @@
 // Irreversible tools need the person's yes before any of their code runs; ctx.confirm() asks the
 // person too. Neither can be answered by the MCP client.
 
-import { defineAdapter, tool } from '@siteadapter/core'
+import { defineAdapter, tool } from '@valet/core'
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { flush, json } from './fakes'

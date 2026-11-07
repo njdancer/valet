@@ -1,7 +1,7 @@
 // runLoginStep: the person's own login work (opening the login window, finishing a hand-off) under
 // the same lock, breaker and rate budget a tool call gets.
 
-import { defineAdapter, SiteAdapterError, tool } from '@siteadapter/core'
+import { defineAdapter, tool, ValetError } from '@valet/core'
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { serialiseBreakerFile } from '../src/breaker-state'
@@ -9,14 +9,14 @@ import { DEFAULT_LOGIN_STEP_WAIT_MS } from '../src/tool-host'
 import { akamaiDenied, FakeSessionDriver, flush, MemoryJsonStore } from './fakes'
 import { call, fixture, HASH, HOME, manifest } from './fixtures'
 
-async function errorOf(promise: Promise<unknown>): Promise<SiteAdapterError> {
+async function errorOf(promise: Promise<unknown>): Promise<ValetError> {
   try {
     await promise
   } catch (error) {
-    if (error instanceof SiteAdapterError) return error
+    if (error instanceof ValetError) return error
     throw error
   }
-  throw new Error('expected a SiteAdapterError')
+  throw new Error('expected a ValetError')
 }
 
 /** A tool that runs until the test releases it, recording when it starts and ends. */

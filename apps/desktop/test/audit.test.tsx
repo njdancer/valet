@@ -1,6 +1,6 @@
-import type { AuditEvent, AuditRecord } from '@siteadapter/core'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { AuditEvent, AuditRecord } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { ControlPanel } from '../src/renderer/control/App'
 import { createFakeApi, type FakeApi, WOOLWORTHS_HASH } from '../src/renderer/dev/fake-api'

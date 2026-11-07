@@ -30,7 +30,7 @@ const SYSTEM_PATH = '/usr/bin:/bin:/usr/sbin:/sbin'
 /** What codesign says the running bundle is signed with. Unpackaged, or unreadable: 'other'. */
 export function bundleSignature(): Promise<BundleSignature> {
   if (!app.isPackaged) return Promise.resolve('other')
-  // .../siteadapter.app/Contents/MacOS/siteadapter → .../siteadapter.app
+  // .../Valet.app/Contents/MacOS/Valet → .../Valet.app
   const bundle = resolve(app.getPath('exe'), '../../..')
   return new Promise((done) => {
     execFile(

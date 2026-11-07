@@ -3,7 +3,7 @@
 // place a canary may reach, and only as a SecretValue.
 
 import { inspect } from 'node:util'
-import { CredentialError, type Probe, type SecretValue } from '@siteadapter/core'
+import { CredentialError, type Probe, type SecretValue } from '@valet/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { runAuthFlow } from '../src/run-auth-flow'
 import { CANARY, EVIL, LOGIN_PAGE, manifestWithSteps, START, world } from './fixtures'
@@ -213,6 +213,6 @@ describe('canaries', () => {
     const w = world()
     arrange(w)
     SCENARIOS['the provider fails with the secret in the error']?.(w)
-    await expect(w.provider.resolve('op://siteadapter/Shop', 'password')).rejects.toThrow(CANARY.password)
+    await expect(w.provider.resolve('op://valet/Shop', 'password')).rejects.toThrow(CANARY.password)
   })
 })

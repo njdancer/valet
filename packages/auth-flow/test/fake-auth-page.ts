@@ -10,9 +10,9 @@ import {
   type NeedsUserReason,
   originAllowed,
   SecretValue,
-  SiteAdapterError,
   type TypeOptions,
-} from '@siteadapter/core'
+  ValetError,
+} from '@valet/core'
 
 export interface FakeElement {
   /** Defaults to "input". */
@@ -168,7 +168,7 @@ export class FakeAuthPage implements AuthPage {
     let typed = ''
     const stop = (): never => {
       this.typed.push({ ...record, text: typed, secret })
-      if (secret) throw new SiteAdapterError('secret-fill', 'origin-mismatch')
+      if (secret) throw new ValetError('secret-fill', 'origin-mismatch')
       throw new Error('focus moved')
     }
     const keystroke = async (character: string): Promise<void> => {
@@ -195,11 +195,11 @@ export class FakeAuthPage implements AuthPage {
 
   // The flow probes through its AuthProbe hook, never through the page; these exist for the contract.
   async fetch(_url: string): Promise<FetchResult> {
-    throw new SiteAdapterError('probe', 'unsupported')
+    throw new ValetError('probe', 'unsupported')
   }
 
   async cookieNames(_cookieDomains: readonly string[]): Promise<readonly string[]> {
-    throw new SiteAdapterError('probe', 'unsupported')
+    throw new ValetError('probe', 'unsupported')
   }
 
   async textPresent(text: string): Promise<boolean> {

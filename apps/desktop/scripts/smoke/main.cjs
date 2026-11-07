@@ -1,5 +1,5 @@
 // The placeholder main process package-smoke.mjs packages: it reports what the packaged app sees and
-// exits. With SITEADAPTER_SMOKE_WINDOW=1 it also loads the renderer page in two hidden windows, once
+// exits. With VALET_SMOKE_WINDOW=1 it also loads the renderer page in two hidden windows, once
 // from app:// through src/main/core/app-scheme.ts (as the real main process must) and once with
 // loadFile, and reports each window's title: the page's module script sets it, so a title of
 // 'module-ok' means the script ran. With grantFileProtocolExtraPrivileges off, only app:// should.
@@ -11,7 +11,7 @@ const path = require('node:path')
 // Cookie encryption is on; the smoke run must not create or read a Keychain item.
 app.commandLine.appendSwitch('use-mock-keychain')
 
-const withWindow = process.env.SITEADAPTER_SMOKE_WINDOW === '1'
+const withWindow = process.env.VALET_SMOKE_WINDOW === '1'
 // Before ready, synchronously; the report checks these equal app-scheme.ts's constants.
 const SCHEME = 'app'
 const PRIVILEGES = { standard: true, secure: true, supportFetchAPI: true }
@@ -72,7 +72,7 @@ app.whenReady().then(async () => {
       report.window = { error: String(error?.name) }
     }
   }
-  const out = process.env.SITEADAPTER_SMOKE_REPORT
+  const out = process.env.VALET_SMOKE_REPORT
   if (out) fs.writeFileSync(out, JSON.stringify(report))
   app.exit(0)
 })

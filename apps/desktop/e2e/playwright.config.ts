@@ -2,7 +2,7 @@
 // driven through its real windows where the person acts and through a real MCP client where an agent
 // does. Needs a GUI session and openssl, so it isn't part of `pnpm check`:
 //
-//   mise exec -- pnpm --filter @siteadapter/desktop test:e2e
+//   mise exec -- pnpm --filter @valet/desktop test:e2e
 //
 // Each spec file launches its own app with its own temporary userData, one at a time: the app takes
 // a single-instance lock and the endpoint keeps its port in userData.

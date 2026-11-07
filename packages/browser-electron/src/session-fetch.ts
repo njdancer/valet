@@ -9,7 +9,7 @@
 // two on the wire. Redirects are taken one hop at a time, so that each hop is checked before
 // anything is sent there and is worded as Chrome would word it after that redirect.
 
-import { type FetchResult, SiteAdapterError, urlOriginAllowed } from '@siteadapter/core'
+import { type FetchResult, urlOriginAllowed, ValetError } from '@valet/core'
 import type { HeaderList, PartitionSession, SessionFetchResponse } from './platform'
 
 /** The most body a probe reads. A login probe's answer is small; anything bigger is not one. */
@@ -27,17 +27,17 @@ export const PROBE_ACCEPT = '*/*'
  * carries a username or password, which would be sent as HTTP authentication.
  */
 export function probeTarget(url: string, navigation: readonly string[]): string {
-  if (typeof url !== 'string') throw new SiteAdapterError('probe', 'invalid')
+  if (typeof url !== 'string') throw new ValetError('probe', 'invalid')
   let parsed: URL
   try {
     parsed = new URL(url)
   } catch {
-    throw new SiteAdapterError('probe', 'host-not-allowed')
+    throw new ValetError('probe', 'host-not-allowed')
   }
   if (parsed.protocol !== 'https:' || !urlOriginAllowed(parsed.href, navigation)) {
-    throw new SiteAdapterError('probe', 'host-not-allowed')
+    throw new ValetError('probe', 'host-not-allowed')
   }
-  if (parsed.username !== '' || parsed.password !== '') throw new SiteAdapterError('probe', 'invalid')
+  if (parsed.username !== '' || parsed.password !== '') throw new ValetError('probe', 'invalid')
   // The fragment never reaches the network; dropping it keeps it out of anything logged.
   parsed.hash = ''
   return parsed.href
@@ -119,9 +119,9 @@ export async function sessionProbe(
     if (response.kind === 'response') return probeResult(response)
     if (response.kind === 'failed') throw probeFailure(response.failure)
     if (!redirects.allow(response.location)) {
-      throw new SiteAdapterError('probe', redirects.refusal ?? 'host-not-allowed')
+      throw new ValetError('probe', redirects.refusal ?? 'host-not-allowed')
     }
-    if (request.signal.aborted) throw new SiteAdapterError('probe', 'aborted')
+    if (request.signal.aborted) throw new ValetError('probe', 'aborted')
     const next = new URL(response.location)
     next.hash = ''
     // The fetch spec's tainted origin: a redirect to another origin from one that isn't the page's.
@@ -192,7 +192,7 @@ export function referrerFor(page: URL, target: URL): string {
  */
 export function probeResult(response: Extract<SessionFetchResponse, { kind: 'response' }>): FetchResult {
   if (!Number.isInteger(response.status) || response.status < 100 || response.status > 599) {
-    throw new SiteAdapterError('probe', 'unavailable')
+    throw new ValetError('probe', 'unavailable')
   }
   const contentType = response.contentType === null ? null : response.contentType.slice(0, 200)
   return { status: response.status, contentType, body: parseBody(contentType, response.body) }
@@ -201,14 +201,14 @@ export function probeResult(response: Extract<SessionFetchResponse, { kind: 'res
 /** A failed hop as a probe error that says nothing about the response. */
 export function probeFailure(
   failure: Extract<SessionFetchResponse, { kind: 'failed' }>['failure'],
-): SiteAdapterError {
+): ValetError {
   switch (failure) {
     case 'too-large':
-      return new SiteAdapterError('probe', 'unexpected-shape')
+      return new ValetError('probe', 'unexpected-shape')
     case 'aborted':
-      return new SiteAdapterError('probe', 'aborted')
+      return new ValetError('probe', 'aborted')
     default:
-      return new SiteAdapterError('probe', 'unavailable')
+      return new ValetError('probe', 'unavailable')
   }
 }
 

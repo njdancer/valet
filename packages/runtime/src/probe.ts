@@ -14,9 +14,9 @@ import {
   hostAllowed,
   type RequestDeclaration,
   type SessionDriver,
-  SiteAdapterError,
   type ToolPage,
-} from '@siteadapter/core'
+  ValetError,
+} from '@valet/core'
 import {
   blockCause,
   breakerRefusal,
@@ -40,7 +40,7 @@ export interface ProbeOptions {
  * Resolves true when logged in and false when the site says logged out: for a fetch probe, the
  * expected status with the wrong value, or one of the probe's loggedOutStatuses; for a cookie probe,
  * the cookie being absent. Throws blocked-by-site or rate-limited for a block (a 429 included) or an
- * open breaker, and SiteAdapterError('probe', 'unavailable') for any other answer, which must not
+ * open breaker, and ValetError('probe', 'unavailable') for any other answer, which must not
  * start a login.
  */
 export async function probeLoggedIn(options: ProbeOptions): Promise<boolean> {
@@ -53,7 +53,7 @@ export async function probeLoggedIn(options: ProbeOptions): Promise<boolean> {
   // The schema refuses "//" and backslashes, but a hand-built manifest might not have been parsed.
   const url = new URL(probe.path, manifest.home)
   if (url.protocol !== 'https:' || !hostAllowed(url.hostname, manifest.egress)) {
-    throw new SiteAdapterError('probe', 'host-not-allowed')
+    throw new ValetError('probe', 'host-not-allowed')
   }
   if (!sameOrigin(page, url)) {
     const admitted = await pace(site, signal)
@@ -65,7 +65,7 @@ export async function probeLoggedIn(options: ProbeOptions): Promise<boolean> {
     }
     site.breaker.recordSuccess(admitted)
     // Redirected elsewhere: a probe from here would say nothing about the session.
-    if (!sameOrigin(page, url)) throw new SiteAdapterError('probe', 'unavailable')
+    if (!sameOrigin(page, url)) throw new ValetError('probe', 'unavailable')
   }
   const admitted = await pace(site, signal)
   const result = await page.fetch(url.href, { method: 'GET', headers: { accept: 'application/json' } })
@@ -79,11 +79,11 @@ export async function probeLoggedIn(options: ProbeOptions): Promise<boolean> {
     // Only an answer that says "not logged in" may start a login. An outage, a rate limit or a
     // moved endpoint turning every tool call into a full login is how accounts get locked.
     if (probe.loggedOutStatuses.includes(result.status)) return false
-    throw new SiteAdapterError('probe', 'unavailable')
+    throw new ValetError('probe', 'unavailable')
   }
   if (probe.jsonPath === undefined) return true
   // HTML where the probe expected JSON is an error or interstitial page, not an answer.
-  if (isHtml(result)) throw new SiteAdapterError('probe', 'unavailable')
+  if (isHtml(result)) throw new ValetError('probe', 'unavailable')
   const value = readJsonPath(result.body, probe.jsonPath)
   return probe.equals === undefined ? Boolean(value) : value === probe.equals
 }

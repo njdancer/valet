@@ -73,7 +73,7 @@ export function Sidebar({ route }: { readonly route: Route }) {
   return (
     <aside className="sidebar" aria-label="Sections">
       <div className="group-label">
-        siteadapter{' '}
+        Valet{' '}
         {demo ? (
           <span className="pill warn" title="A local fake Woolworths and a test account, never a real one">
             DEMO

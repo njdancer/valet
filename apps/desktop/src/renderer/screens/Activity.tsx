@@ -209,8 +209,8 @@ function Trace({ trace, view }: { readonly trace: RunTrace; readonly view: 'time
           <div className="callout secret" style={{ padding: '9px 12px' }}>
             <Icon name="eye-off" />
             <div className="xs">
-              siteadapter knows every secret it filled and the current cookie values, and replaces exact
-              matches in results and traces before anything leaves the app.
+              Valet knows every secret it filled and the current cookie values, and replaces exact matches in
+              results and traces before anything leaves the app.
             </div>
           </div>
         </aside>

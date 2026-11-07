@@ -1,4 +1,4 @@
-import { SecretValue, SiteAdapterError } from '@siteadapter/core'
+import { SecretValue, ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import {
   REDACTED,
@@ -163,7 +163,7 @@ describe('redactOutput', () => {
     } catch (error) {
       thrown = error
     }
-    expect(thrown).toBeInstanceOf(SiteAdapterError)
+    expect(thrown).toBeInstanceOf(ValetError)
     expect(thrown).toMatchObject({ stage: 'tool-output', errorClass })
   }
 

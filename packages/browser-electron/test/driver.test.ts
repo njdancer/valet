@@ -2,9 +2,9 @@ import {
   type AdapterManifest,
   type BlockedRequest,
   parseManifest,
-  SiteAdapterError,
   type ToolRunPolicy,
-} from '@siteadapter/core'
+  ValetError,
+} from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { type DriverOptions, ElectronSessionDriver } from '../src/driver'
 import type { CookieRecord, SessionFetchResponse } from '../src/platform'
@@ -24,13 +24,12 @@ const OPTIONS = {
 const AUTH = 'persist:auth:example'
 const TOOL = 'persist:tool:example'
 
-async function rejection(promise: Promise<unknown>): Promise<SiteAdapterError> {
+async function rejection(promise: Promise<unknown>): Promise<ValetError> {
   const error = await promise.then(
     () => null,
     (e: unknown) => e,
   )
-  if (!(error instanceof SiteAdapterError))
-    throw new Error(`expected a SiteAdapterError, got ${String(error)}`)
+  if (!(error instanceof ValetError)) throw new Error(`expected a ValetError, got ${String(error)}`)
   return error
 }
 
@@ -113,7 +112,7 @@ describe('ElectronSessionDriver.forManifest', () => {
 
   it('refuses an adapter id that is not a safe partition name', () => {
     expect(() => new ElectronSessionDriver(new FakePlatform(), { ...OPTIONS, adapterId: '../x' })).toThrow(
-      SiteAdapterError,
+      ValetError,
     )
   })
 })
@@ -859,7 +858,7 @@ describe('tool partition proxy', () => {
 })
 
 describe('partition set-up failures', () => {
-  it('turns a platform failure into a SiteAdapterError without its message', async () => {
+  it('turns a platform failure into a ValetError without its message', async () => {
     const { platform } = browserLike()
     platform.session = () => {
       throw new Error('profile directory locked: /Users/nick')
@@ -879,7 +878,7 @@ describe('partition set-up failures', () => {
     })
   })
 
-  it('reports a Chrome version it cannot read as a SiteAdapterError, from every entry point', async () => {
+  it('reports a Chrome version it cannot read as a ValetError, from every entry point', async () => {
     const { platform } = browserLike()
     Object.defineProperty(platform, 'chromeVersion', { value: 'unknown' })
     const driver = new ElectronSessionDriver(platform, OPTIONS)

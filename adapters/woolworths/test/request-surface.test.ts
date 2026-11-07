@@ -2,7 +2,7 @@
 // ships with, or the tool breaks in production. The fake context already refuses undeclared calls;
 // these tests also check the purpose of each call against the tool's declared side effect.
 
-import { decideRequest, parseManifest, SiteAdapterError } from '@siteadapter/core'
+import { decideRequest, parseManifest, ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { createAdapter } from '../src/adapter'
 import { createManifest, REAL_ORIGIN } from '../src/manifest'
@@ -85,7 +85,7 @@ describe('the fake guard', () => {
       ctx.page.fetch('/apis/ui/Trolley', { method: 'DELETE' }),
     ]
     for (const attempt of attempts) {
-      await expect(attempt).rejects.toEqual(new SiteAdapterError('request-surface', 'undeclared-request'))
+      await expect(attempt).rejects.toEqual(new ValetError('request-surface', 'undeclared-request'))
     }
     expect(ctx.blocked.map((b) => b.reason)).toEqual([
       'undeclared',
@@ -109,7 +109,7 @@ describe('the fake guard', () => {
       ctx.page.fetch('/api/v3/ui/Pay', { method: 'POST', json: {} }),
     ]
     for (const attempt of attempts) {
-      await expect(attempt).rejects.toEqual(new SiteAdapterError('request-surface', 'undeclared-request'))
+      await expect(attempt).rejects.toEqual(new ValetError('request-surface', 'undeclared-request'))
     }
     expect(ctx.blocked.map((b) => b.reason)).toEqual(['denied-path', 'denied-path', 'denied-path'])
     expect(ctx.fetches).toEqual([])

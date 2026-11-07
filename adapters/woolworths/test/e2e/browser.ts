@@ -19,12 +19,12 @@ import {
   type Purpose,
   SecretValue,
   type SessionDriver,
-  SiteAdapterError,
   type ToolPage,
   type ToolRunPolicy,
   type TypeOptions,
   urlOriginAllowed,
-} from '@siteadapter/core'
+  ValetError,
+} from '@valet/core'
 import { type Doc, type Element, isVisible, parseHtml, query } from './dom'
 import { CookieJar, type Network } from './network'
 
@@ -93,7 +93,7 @@ class Tab {
       await this.loadFrames()
       return
     }
-    throw new SiteAdapterError('navigate', 'invalid')
+    throw new ValetError('navigate', 'invalid')
   }
 
   /** The fake's inline sensor script sets a script-readable `_abck` when there is none. */
@@ -140,7 +140,7 @@ class Tab {
   element(selector: string): Located {
     const located = this.locate(selector)
     if (located === null || !isVisible(located.element)) {
-      throw new SiteAdapterError('auth-step', 'element-missing')
+      throw new ValetError('auth-step', 'element-missing')
     }
     return located
   }
@@ -148,7 +148,7 @@ class Tab {
   /** Submits the form `submitter` is in, as a browser would, with the submitter's own name and value. */
   async submit({ element: submitter, doc }: Located): Promise<void> {
     // Navigating a frame isn't modelled; the guards stop every framed flow before a submit.
-    if (doc !== this.doc) throw new SiteAdapterError('auth-step', 'unsupported')
+    if (doc !== this.doc) throw new ValetError('auth-step', 'unsupported')
     if (submitter.form === null) return
     const form = this.doc.forms[submitter.form] as Element
     const fields = new URLSearchParams()
@@ -193,7 +193,7 @@ export class HarnessAuthPage implements AuthPage {
       jar,
       (url) => {
         // Every hop, redirects included, before it is requested: an open redirect stops here.
-        if (!urlOriginAllowed(url, navigation)) throw new SiteAdapterError('navigate', 'navigation-escaped')
+        if (!urlOriginAllowed(url, navigation)) throw new ValetError('navigate', 'navigation-escaped')
       },
       // Subframes only from navigation's origins and the manifest's frameOrigins (core v2).
       (url) => urlOriginAllowed(url, [...navigation, ...frameOrigins]),
@@ -263,17 +263,17 @@ export class HarnessAuthPage implements AuthPage {
 
   async type(text: string | SecretValue, options: TypeOptions = {}): Promise<void> {
     const focused = this.focused
-    if (focused === null) throw new SiteAdapterError('auth-step', 'element-missing')
+    if (focused === null) throw new ValetError('auth-step', 'element-missing')
     const { allowedOrigins } = options
     if (text instanceof SecretValue && allowedOrigins === undefined) {
-      throw new SiteAdapterError('secret-fill', 'origin-mismatch')
+      throw new ValetError('secret-fill', 'origin-mismatch')
     }
     const { element, url } = focused.located
     const keystroke = async (character: string): Promise<void> => {
       // Before every key: still the same page, still focused, and the focused frame's origin allowed.
       const moved = this.tab.doc !== focused.top || this.focused !== focused
       if (moved || (allowedOrigins !== undefined && !urlOriginAllowed(url, allowedOrigins))) {
-        throw new SiteAdapterError('secret-fill', 'origin-mismatch')
+        throw new ValetError('secret-fill', 'origin-mismatch')
       }
       element.value += character
     }
@@ -286,11 +286,11 @@ export class HarnessAuthPage implements AuthPage {
 
   // The flow probes through its AuthProbe hook, never through the page; these exist for the contract.
   async fetch(_url: string): Promise<FetchResult> {
-    throw new SiteAdapterError('probe', 'unsupported')
+    throw new ValetError('probe', 'unsupported')
   }
 
   async cookieNames(_cookieDomains: readonly string[]): Promise<readonly string[]> {
-    throw new SiteAdapterError('probe', 'unsupported')
+    throw new ValetError('probe', 'unsupported')
   }
 
   async textPresent(text: string): Promise<boolean> {
@@ -309,14 +309,14 @@ export class HarnessAuthPage implements AuthPage {
 const RANK: Readonly<Record<Purpose, number>> = { read: 0, write: 1, irreversible: 2 }
 
 /** How a refused request leaves the capability API. */
-const REFUSALS: Readonly<Record<BlockedRequest['reason'], SiteAdapterError>> = {
-  'host-not-allowed': new SiteAdapterError('egress', 'host-not-allowed'),
-  undeclared: new SiteAdapterError('request-surface', 'undeclared-request'),
-  'denied-path': new SiteAdapterError('request-surface', 'denied-path'),
-  'ambiguous-path': new SiteAdapterError('request-surface', 'ambiguous-path'),
-  'purpose-exceeded': new SiteAdapterError('request-surface', 'denied-path'),
-  'request-ceiling': new SiteAdapterError('request-surface', 'request-ceiling'),
-  'bad-url': new SiteAdapterError('request-surface', 'invalid'),
+const REFUSALS: Readonly<Record<BlockedRequest['reason'], ValetError>> = {
+  'host-not-allowed': new ValetError('egress', 'host-not-allowed'),
+  undeclared: new ValetError('request-surface', 'undeclared-request'),
+  'denied-path': new ValetError('request-surface', 'denied-path'),
+  'ambiguous-path': new ValetError('request-surface', 'ambiguous-path'),
+  'purpose-exceeded': new ValetError('request-surface', 'denied-path'),
+  'request-ceiling': new ValetError('request-surface', 'request-ceiling'),
+  'bad-url': new ValetError('request-surface', 'invalid'),
 }
 
 /**
@@ -400,7 +400,7 @@ class HarnessToolPage implements ToolPage {
       const contentType = response.headers['content-type'] ?? null
       return { status: response.status, contentType, body: parseBody(contentType, response.body) }
     }
-    throw new SiteAdapterError('tool-run', 'unavailable')
+    throw new ValetError('tool-run', 'unavailable')
   }
 
   click(): Promise<void> {
@@ -430,7 +430,7 @@ function parseBody(contentType: string | null, text: string): unknown {
 }
 
 async function unsupported(): Promise<never> {
-  throw new SiteAdapterError('tool-run', 'unsupported')
+  throw new ValetError('tool-run', 'unsupported')
 }
 
 export interface HarnessDriverOptions {
@@ -548,7 +548,7 @@ export class HarnessDriver implements SessionDriver {
   /** Every hop of a tool-partition fetch: the runtime's probe allowance, else the full policy. */
   admitApiCall(method: string, url: string, initiator: Initiator): void {
     const run = this.run
-    if (run === null) throw new SiteAdapterError('request-surface', 'undeclared-request')
+    if (run === null) throw new ValetError('request-surface', 'undeclared-request')
     const parsed = new URL(url)
     if (initiator === 'runtime' && this.probeAllowance !== 'none' && this.isProbe(method, parsed)) {
       if (this.probeAllowance === 'counted') this.count(run, method, parsed, 'probe')

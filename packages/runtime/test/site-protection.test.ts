@@ -1,7 +1,7 @@
 import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { type AuditEvent, SiteAdapterError } from '@siteadapter/core'
+import { type AuditEvent, ValetError } from '@valet/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { JsonFileStore, parseBreakerFile, serialiseBreakerFile } from '../src/breaker-state'
 import {
@@ -522,7 +522,7 @@ describe('breaker state file', () => {
   let dir: string
 
   beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'siteadapter-breakers-'))
+    dir = await mkdtemp(join(tmpdir(), 'valet-breakers-'))
   })
 
   afterEach(async () => {
@@ -622,7 +622,7 @@ describe('refusals', () => {
   it('recognises only those two classes as site refusals', () => {
     expect(isSiteRefusal(siteRefusal('blocked-by-site'))).toBe(true)
     expect(isSiteRefusal(breakerRefusal())).toBe(true)
-    expect(isSiteRefusal(new SiteAdapterError('tool-run', 'internal'))).toBe(false)
+    expect(isSiteRefusal(new ValetError('tool-run', 'internal'))).toBe(false)
     expect(isSiteRefusal({ errorClass: 'blocked-by-site' })).toBe(false)
   })
 })

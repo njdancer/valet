@@ -1,10 +1,10 @@
-# @siteadapter/mcp-server
+# @valet/mcp-server
 
 The MCP endpoint. It exposes every tool the runtime lists, over Streamable HTTP on `127.0.0.1`,
 and ships a stdio bridge for clients that can only launch a command.
 
 The runtime is reached only through the `ToolCaller` interface in `src/tool-caller.ts`; this
-package never imports `@siteadapter/runtime`.
+package never imports `@valet/runtime`.
 
 ## Wiring it into the app
 
@@ -14,7 +14,7 @@ package never imports `@siteadapter/runtime`.
 const endpoint = await startEndpoint({ caller, configPath: bridgeConfigPath })
 // show endpoint.url and endpoint.token to the person for HTTP clients.
 // whenever adapters are approved, revoked or changed. One listing for every session; if the
-// runtime can't list, it throws SiteAdapterError and no session changes:
+// runtime can't list, it throws ValetError and no session changes:
 const withheld = endpoint.refresh()
 // when the person asks for a new token (one may have leaked):
 await endpoint.resetToken()
@@ -57,8 +57,8 @@ Registering with Claude Code through the bridge, which re-reads the config file 
 restarts under a running client:
 
 ```bash
-claude mcp add siteadapter -- <repo>/node_modules/.bin/tsx <repo>/packages/mcp-server/src/bridge-cli.ts \
-  "$HOME/Library/Application Support/siteadapter/bridge.json"
+claude mcp add valet -- <repo>/node_modules/.bin/tsx <repo>/packages/mcp-server/src/bridge-cli.ts \
+  "$HOME/Library/Application Support/valet/bridge.json"
 ```
 
 That runs from any working directory, but needs Node 24 on the client's `PATH`. Until the app
@@ -75,7 +75,7 @@ audit log, or `unknown` until it is known. Session ids are never shown. Pass
 name, or closes (evicted, token reset, or closed by the client). A listener that throws is
 ignored.
 
-`transport` is `'stdio-bridge'` or `'http'`. The bridge sends `x-siteadapter-transport:
+`transport` is `'stdio-bridge'` or `'http'`. The bridge sends `x-valet-transport:
 stdio-bridge` on every request (`TRANSPORT_HEADER`, `BRIDGE_TRANSPORT`). The endpoint reads it only
 on the `initialize` that opens a session, and only that exact value counts; the label then stays
 with the session. Every call passes it to the runtime as `ToolCall.transport`.
@@ -94,7 +94,7 @@ nothing.
   since MCP reads `false` as "only adds" and a write can remove cart items; `idempotentHint:
   false` for `write` and `irreversible`; and `openWorldHint` always.
 - **Titles and descriptions** are the manifest's. An `irreversible` tool's description ends with
-  fixed text, never the adapter's: "The person must confirm this action in the siteadapter app
+  fixed text, never the adapter's: "The person must confirm this action in the Valet app
   before it runs. You cannot confirm it for them."
 - **Results.** Only `ok` output reaches the client, and only after it validates against the
   tool's output schema. What is sent is the parsed value, so keys the schema doesn't declare are
@@ -107,7 +107,7 @@ nothing.
     seconds to wait, at least 1. A blocked outcome with any other class is reported as `failed`,
     with no wait: a guard's refusal never passes with time, so the agent isn't told to retry it.
   - `declined`: a tool error, `confirm: declined`, when the person said no or didn't answer.
-  - `needsUser`: the agent is told the person has been asked to act in the siteadapter app, with
+  - `needsUser`: the agent is told the person has been asked to act in the Valet app, with
     the reason code only (a manifest's note is shown in the app, never sent). It is not an error,
     except for tools that declare an output schema: MCP requires every non-error result of those to
     carry matching structured content, and the SDK on both ends rejects one that doesn't, so for
@@ -122,7 +122,7 @@ nothing.
   `Authorization: Bearer <token>` is required on every request (401), compared in constant
   time. Bodies over 1 MiB are refused. At most 32 sessions are kept; the least recently used goes
   first.
-- **Bridge.** It labels itself with `x-siteadapter-transport: stdio-bridge` (see above). It
+- **Bridge.** It labels itself with `x-valet-transport: stdio-bridge` (see above). It
   writes nothing but JSON-RPC to stdout. Upstream failures become JSON-RPC errors
   with fixed text. Every client request gets exactly one answer: if the app quits or restarts
   mid-call, or the connection resets, the call is answered at once with a fixed error instead of

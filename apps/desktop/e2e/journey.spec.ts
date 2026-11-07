@@ -71,7 +71,7 @@ test('the demo account the scan looks for is the one the app uses', () => {
 })
 
 test('first launch: Woolworths waits for review, and no MCP client sees or can call its tools', async () => {
-  await expect(control).toHaveTitle('siteadapter (demo) [control]')
+  await expect(control).toHaveTitle('Valet (demo) [control]')
   await expect(control.getByText('Woolworths 0.2.0 is ready for review.')).toBeVisible()
   await expect(control.getByText('Not approved').first()).toBeVisible()
 
@@ -116,7 +116,7 @@ test('grant login from the demo vault item, offered only the manifest’s origin
   await expect(sheet).toBeVisible()
   await expect(sheet.getByText('Let Woolworths log in with your 1Password item')).toBeVisible()
 
-  const status = await control.evaluate(() => window.siteadapter?.adapters.get('woolworths'))
+  const status = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
   const authOrigin = status?.secretRequests.find((s) => s.name === 'login')?.origins
   expect(authOrigin).toEqual([expect.stringMatching(/^https:\/\/auth\.woolworths\.test:\d+$/)])
 
@@ -135,7 +135,7 @@ test('grant login from the demo vault item, offered only the manifest’s origin
   const hash = status?.hash ?? ''
   const widened = await control.evaluate(
     ({ hash, authOrigin }) =>
-      window.siteadapter?.grants
+      window.valet?.grants
         .make({
           adapterId: 'woolworths',
           adapterHash: hash,
@@ -160,7 +160,7 @@ test('grant SMS codes from Messages for the declared sender', async () => {
   await expect(sheet.getByRole('radio', { name: /Woolworths/ })).toBeChecked()
   await sheet.getByRole('button', { name: 'Grant', exact: true }).click()
   await expect(sheet).toBeHidden()
-  const detail = await control.evaluate(() => window.siteadapter?.adapters.get('woolworths'))
+  const detail = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
   expect(detail?.secretRequests.map((s) => s.grant?.itemTitle)).toEqual(['Woolworths (demo account)'])
   expect(detail?.messages.map((m) => [m.sender, m.grant?.itemId])).toEqual([['Woolworths', 'Woolworths']])
   // Codes are typed where Auth0 asks for them, the login's origin, and nowhere else by default.
@@ -193,7 +193,7 @@ test('add_to_cart logs in on the fake Auth0 (email, password, SMS code) and adds
     quantity: 2,
   })
 
-  const detail = await control.evaluate(() => window.siteadapter?.adapters.get('woolworths'))
+  const detail = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
   expect(detail?.session.state).toBe('logged-in')
   // The site itself holds the line, in the demo account's trolley.
   expect(await siteTrolley(launched)).toEqual([{ stockcode, quantity: 2 }])

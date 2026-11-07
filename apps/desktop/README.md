@@ -1,12 +1,12 @@
-# @siteadapter/desktop
+# @valet/desktop
 
 The menu-bar app: the Electron main process that wires every package together, the preload that
-exposes [`src/shared/api.ts`](src/shared/api.ts) as `window.siteadapter`, and the renderer (the
+exposes [`src/shared/api.ts`](src/shared/api.ts) as `window.valet`, and the renderer (the
 control panel, the tray popover, the confirmation panel and the login hand-off banner, in React 19
 and plain CSS built from [docs/mockups](../../docs/mockups)).
 
 ```
-src/shared/api.ts          the window.siteadapter contract (types only)
+src/shared/api.ts          the window.valet contract (types only)
 src/main/
   index.ts                 entry: imports electron/app.ts
   adapters.ts              built-in adapters; their sources are embedded at build time and hashed
@@ -52,16 +52,16 @@ screens/                   committed screenshots, light and dark
 ## Running it
 
 ```bash
-mise exec -- pnpm --filter @siteadapter/desktop demo        # a demo build, launched against the local fake
-mise exec -- pnpm --filter @siteadapter/desktop dev         # electron-vite dev (demo mode available)
-mise exec -- pnpm --filter @siteadapter/desktop build       # main, preload and renderer to out/, no demo mode
-mise exec -- pnpm --filter @siteadapter/desktop start       # launch what build made
-mise exec -- pnpm --filter @siteadapter/desktop test:smoke  # a demo build, then the Playwright smoke test
-mise exec -- pnpm --filter @siteadapter/desktop test:e2e    # a demo build, then the end-to-end suite (e2e/)
-mise exec -- pnpm --filter @siteadapter/desktop screens:live # a demo build, then screens/live/ from the real app
-mise exec -- pnpm --filter @siteadapter/desktop package     # a plain build, then dist/: siteadapter-dev.app and its zip
-mise exec -- pnpm --filter @siteadapter/desktop package:smoke # a smoke build, packaged and launched (see Packaging)
-mise exec -- pnpm --filter @siteadapter/desktop exec vite   # the renderer alone, on the fake API
+mise exec -- pnpm --filter @valet/desktop demo        # a demo build, launched against the local fake
+mise exec -- pnpm --filter @valet/desktop dev         # electron-vite dev (demo mode available)
+mise exec -- pnpm --filter @valet/desktop build       # main, preload and renderer to out/, no demo mode
+mise exec -- pnpm --filter @valet/desktop start       # launch what build made
+mise exec -- pnpm --filter @valet/desktop test:smoke  # a demo build, then the Playwright smoke test
+mise exec -- pnpm --filter @valet/desktop test:e2e    # a demo build, then the end-to-end suite (e2e/)
+mise exec -- pnpm --filter @valet/desktop screens:live # a demo build, then screens/live/ from the real app
+mise exec -- pnpm --filter @valet/desktop package     # a plain build, then dist/: valet-dev.app and its zip
+mise exec -- pnpm --filter @valet/desktop package:smoke # a smoke build, packaged and launched (see Packaging)
+mise exec -- pnpm --filter @valet/desktop exec vite   # the renderer alone, on the fake API
 mise exec -- node apps/desktop/src/renderer/dev/screenshot.mjs      # every screen to screens/
 mise exec -- pnpm exec tsc --noEmit -p apps/desktop                    # renderer (DOM), tests
 mise exec -- pnpm exec tsc --noEmit -p apps/desktop/tsconfig.node.json # main and preload (Node)
@@ -74,15 +74,15 @@ install run `node install.js` in the electron package once (it is cached in `~/L
 
 ### Demo mode
 
-`SITEADAPTER_DEMO=1` (or `--demo`) runs the whole app against `fakes/woolworths-site`, with no real
+`VALET_DEMO=1` (or `--demo`) runs the whole app against `fakes/woolworths-site`, with no real
 account anywhere. Only a development build has it: `electron-vite dev`, or `electron-vite build
 --mode demo` (what the `demo` and `test:smoke` scripts run). A plain `build`, which packaging uses,
-sets `__SITEADAPTER_DEMO_BUILD__` to false (`src/main/build-flags.d.ts`), so the demo chunk, the fake
+sets `__VALET_DEMO_BUILD__` to false (`src/main/build-flags.d.ts`), so the demo chunk, the fake
 site, its certificate generator, its fixtures and the test account aren't in `out/main` at all; and a
 packaged app ignores both switches whatever the build. In demo mode:
 
-- its own userData, `~/Library/Application Support/siteadapter-demo`; `SITEADAPTER_USER_DATA` can
-  move it, but never to the real `siteadapter` folder or anything inside it;
+- its own userData, `~/Library/Application Support/valet-demo`; `VALET_USER_DATA` can
+  move it, but never to the real `valet` folder or anything inside it;
 - the fake site in-process over TLS on `www.woolworths.test` and `auth.woolworths.test` (a fresh
   certificate from `openssl` each launch), mapped to 127.0.0.1 by a host resolver rule appended
   before ready. That certificate is trusted for exactly those two hosts, on exactly the adapter's two
@@ -109,23 +109,23 @@ packaged app ignores both switches whatever the build. In demo mode:
 
 To try it: approve Woolworths in the control panel, grant `login` from “Woolworths (demo account)”
 and Messages codes from `Woolworths`, then add the client from the snippet in Settings (it names the
-server `siteadapter-demo` and points at the demo's `bridge.json`). `search_products` needs no login;
+server `valet-demo` and points at the demo's `bridge.json`). `search_products` needs no login;
 the first cart tool logs in (email, password, SMS code) in the hidden auth window.
 
 ### For the end-to-end suite
 
-- `SITEADAPTER_USER_DATA=/abs/dir` uses that directory as userData (a relative path is ignored). A
+- `VALET_USER_DATA=/abs/dir` uses that directory as userData (a relative path is ignored). A
   packaged app ignores it.
-- `SITEADAPTER_E2E=1` only makes window titles deterministic, and sets the same text as the document
-  title: `siteadapter (demo) [control]`, `siteadapter menu [tray]`, `siteadapter: confirm
-  [<confirmation id>]`, `siteadapter: sign in [<adapter id>]`. Outside a demo launch it exposes
+- `VALET_E2E=1` only makes window titles deterministic, and sets the same text as the document
+  title: `valet (demo) [control]`, `valet menu [tray]`, `valet: confirm
+  [<confirmation id>]`, `valet: sign in [<adapter id>]`. Outside a demo launch it exposes
   nothing else; in one, see the e2e-only switches below.
 - The control panel opens at launch on first run (something waits for review), in demo mode and in
   e2e mode.
 - **E2e-only, and only in a demo build** (the demo chunk, which a production build doesn't carry):
   in an e2e launch, `evil.test` is mapped to 127.0.0.1 alongside the demo hosts (the egress canary
   runs the fake's exfil sink there, so a request the app let out would arrive rather than fail to
-  resolve), and the main process's global `__siteadapterE2e` holds three calls on the fake site for
+  resolve), and the main process's global `__valetE2e` holds three calls on the fake site for
   Playwright's `app.evaluate`: `blockAll(on)`, `trolley()` (the demo account's lines) and
   `pageBeacon(target | null)` (the fake's hostile page script, `setPageBeacon`). No renderer can
   reach the main process's globals.
@@ -156,7 +156,7 @@ token from `bridge.json`) where an agent does:
   A client that cancels while the panel waits closes the panel: the answer is audited as declined,
   the call as `failed tool-run/aborted`, and the line stays in the trolley.
 - `screens.spec.ts`: `screens/live/`, light, 1440x900 at scale 2. Skipped unless
-  `SITEADAPTER_E2E_SCREENS=1` (the `screens:live` script), since it rewrites committed files.
+  `VALET_E2E_SCREENS=1` (the `screens:live` script), since it rewrites committed files.
 
 The MCP SDK is a devDependency here, for the harness's client. Every spec closes its app, and a
 global teardown kills any process still running this worktree's Electron binary, never another
@@ -168,7 +168,7 @@ the renderer and checks no fake chunk or fixture data is emitted. Without a prel
 page shows an error.
 
 `ELECTRON_RENDERER_URL` (the dev server) is trusted only by a bundle `electron-vite dev` built
-(`__SITEADAPTER_DEV_SERVER__`), never packaged, and only as an `http://localhost` or
+(`__VALET_DEV_SERVER__`), never packaged, and only as an `http://localhost` or
 `http://127.0.0.1` origin with a port: every page on that origin gets the preload and the app's IPC
 trust, so a value left over in a shell must not make another origin the app's.
 
@@ -188,8 +188,8 @@ start with `@vitest-environment node`.
 `package` runs a plain `electron-vite build`, then `scripts/package.mjs`: electron-builder with
 `electron-builder.config.ts` as a development build for this Mac's architecture, `dir` and `zip`,
 into `dist/`. It is never signed with an identity and never notarised. The child gets
-`CSC_IDENTITY_AUTO_DISCOVERY=false` and none of the caller's `CSC_*`, `APPLE_*` or `SITEADAPTER_*`
-variables but `SITEADAPTER_UPDATE_URL`; the fuse flip re-signs the bundle ad hoc. Electron comes
+`CSC_IDENTITY_AUTO_DISCOVERY=false` and none of the caller's `CSC_*`, `APPLE_*` or `VALET_*`
+variables but `VALET_UPDATE_URL`; the fuse flip re-signs the bundle ad hoc. Electron comes
 from the installed copy, cloned without `default_app.asar`. Release builds are the release
 script's job ([docs/release-and-updates.md](../../docs/release-and-updates.md)).
 
@@ -201,14 +201,14 @@ preload builds empty their output first, so a demo build's chunk and fixtures ne
 one.
 
 A release packages whatever `out/` holds, so `electron-builder.config.ts` checks it first: for
-`SITEADAPTER_RELEASE=1` it refuses an `out/main` that doesn't hold the same `SITEADAPTER_UPDATE_URL`
+`VALET_RELEASE=1` it refuses an `out/main` that doesn't hold the same `VALET_UPDATE_URL`
 and a feed public key, or that is a smoke build (`checkReleaseBundle`). The vite step itself refuses
 a release without a feed, or one that isn't a plain build (`core/feed-defines.ts`).
 
 `package:smoke` runs a smoke build (`electron-vite build --mode smoke`), then
 `scripts/package-smoke.mjs`, which packages twice in a temporary directory and deletes everything
 afterwards (`--keep` keeps it). A smoke build is a plain build plus two things behind
-`__SITEADAPTER_SMOKE_BUILD__` (`core/smoke.ts`): it also accepts the smoke's own argv, and once up it
+`__VALET_SMOKE_BUILD__` (`core/smoke.ts`): it also accepts the smoke's own argv, and once up it
 writes a self-check to `userData/smoke-report.json`. A plain build has neither.
 
 1. A placeholder app (`scripts/smoke/main.cjs`), for the checks that need code of its own: the fuse
@@ -229,7 +229,7 @@ writes a self-check to `userData/smoke-report.json`. A plain build has neither.
    the smoke argv with one more switch or reordered, a host resolver rule, a relative bridge config,
    `ELECTRON_ENABLE_LOGGING` and `NODE_TLS_REJECT_UNAUTHORIZED`. Each must exit with status 64 and
    write none of the app's data. Last, every entry under the real
-   `~/Library/Application Support/siteadapter` and `siteadapter-dev` (path, size, mtime) must be as it
+   `~/Library/Application Support/valet` and `valet-dev` (path, size, mtime) must be as it
    was. It doesn't launch at all unless step 1 showed the temporary `HOME` moving the data.
    Playwright can't drive it: its Electron launcher needs `--inspect`, which the fuses turn off.
 
@@ -261,8 +261,8 @@ writes a self-check to `userData/smoke-report.json`. A plain build has neither.
   load `appPageUrl(page, hash)`, and `isAppPage` (the IPC sender check and the navigation lock) and
   the default session's request filter compare against `app://renderer`. Only `electron-vite dev`
   loads from its dev server (an `http://localhost` origin), as before.
-- **IPC.** One `invoke` channel per API method, `siteadapter:<method>`, and one event channel,
-  `siteadapter:event`. Every request must come from the main frame of one of the app's windows (by
+- **IPC.** One `invoke` channel per API method, `valet:<method>`, and one event channel,
+  `valet:event`. Every request must come from the main frame of one of the app's windows (by
   the role the main process gave the window when it opened it), on one of the app's pages, and its
   arguments must parse with the channel's zod schema: strict objects (so `__proto__`, `constructor`
   or any extra key is refused), bounded strings, exact ids and hashes, no extra arguments. Anything
@@ -273,7 +273,7 @@ writes a self-check to `userData/smoke-report.json`. A plain build has neither.
   it), `settings.json`, `clients.json`,
   `endpoint.json` (when the token was last rotated), `bridge.json` (port and token, 0600),
   `versions.json` (the last and highest versions run) and `login-markers/`. userData is
-  `~/Library/Application Support/<app name>`: `siteadapter` for a release, `siteadapter-dev` for a
+  `~/Library/Application Support/<app name>`: `valet` for a release, `valet-dev` for a
   development package and for every unpackaged run (`pnpm start`, `electron .`). So no development
   code writes the release folder: it can't raise the release's version floor or audit an
   `update-installed` that never happened.
@@ -283,7 +283,7 @@ writes a self-check to `userData/smoke-report.json`. A plain build has neither.
   changed hash is reviewed as a diff against the last approved manifest and source, and has no
   grants until they are made again.
 - **Credentials**, by `grant.provider`: the service account (`KeychainTokenSource`; service
-  `siteadapter`, account `onepassword-service-account`, vault `siteadapter`, in `core/constants.ts`,
+  `valet`, account `onepassword-service-account`, vault `valet`, in `core/constants.ts`,
   pending D6/D43); `op`, only at a path that passed the checks; Messages, only while its setting is
   on; the test provider in demo mode only. The op checks: absolute; the file (after symlinks) and
   every directory above it, and above the link, owned by root or the person, never writable by
@@ -310,7 +310,7 @@ writes a self-check to `userData/smoke-report.json`. A plain build has neither.
 - **Grants** are checked against the installed hash's manifest (`core/grants.ts`): exact hash, an
   available provider, a requested secret or a declared Messages sender character for character,
   origins a non-empty subset of the request, and an item the provider lists now (stored by id, as
-  `op://siteadapter/<id>`). `grant-made` and `grant-revoked` are audited before the store changes.
+  `op://valet/<id>`). `grant-made` and `grant-revoked` are audited before the store changes.
 - **Runtime.** One `ToolHost` with each adapter on its own `createElectronSessionDriver`. The
   `AuthRunner` runs `runAuthFlow` on the driver's auth page with the grant store, the providers, the
   OTP reader, probe hooks over the page's own `AuthPage.fetch` and `cookieNames` (and only to home's
@@ -377,10 +377,10 @@ writes a self-check to `userData/smoke-report.json`. A plain build has neither.
   call, so the log tells them apart. Snippets launch the stdio bridge from the repo with `tsx` until
   packaging bundles it.
 - **Updates.** The feed is compiled in: a plain `electron-vite build` whose environment names both
-  `SITEADAPTER_UPDATE_URL` (https, a public host, a directory) and `SITEADAPTER_FEED_PUBLIC_KEY_FILE`
-  (the feed key's SPKI PEM) defines `__SITEADAPTER_FEED_BASE_URL__` and
-  `__SITEADAPTER_FEED_PUBLIC_KEY__` (`core/feed-defines.ts`); one without the other fails the
-  build. The URL rule is electron-builder's: with `SITEADAPTER_RELEASE=1` the feed is required and
+  `VALET_UPDATE_URL` (https, a public host, a directory) and `VALET_FEED_PUBLIC_KEY_FILE`
+  (the feed key's SPKI PEM) defines `__VALET_FEED_BASE_URL__` and
+  `__VALET_FEED_PUBLIC_KEY__` (`core/feed-defines.ts`); one without the other fails the
+  build. The URL rule is electron-builder's: with `VALET_RELEASE=1` the feed is required and
   must be https on a public host; otherwise https to any host or http on loopback is taken, for the
   updater end-to-end build, and the updater then accepts that loopback feed. Dev, demo and smoke
   builds never have one. At launch, before any
@@ -406,7 +406,7 @@ writes a self-check to `userData/smoke-report.json`. A plain build has neither.
 - `clients.revoke` refuses calls made under that reported name. Every client shares one token, so
   this stops an honest client only; rotating the token is the real control.
 - `ClientInfo.transport` and `ConfirmationItem.clientTransport` are the endpoint's label for the
-  session: `stdio` for a session the bridge opened (it sends `x-siteadapter-transport:
+  session: `stdio` for a session the bridge opened (it sends `x-valet-transport:
   stdio-bridge`), `http` otherwise. Any local client with the token can send that header, so it is
   a label like the name, never a permission.
 - `EndpointStatus.connectedClients` is the number of MCP sessions open now, not of distinct clients:
@@ -430,7 +430,7 @@ writes a self-check to `userData/smoke-report.json`. A plain build has neither.
 
 ## The contract for the main process and preload
 
-The preload exposes one object as `window.siteadapter`, typed `SiteAdapterApi`. Every method is
+The preload exposes one object as `window.valet`, typed `ValetApi`. Every method is
 async and takes and returns plain JSON. `onEvent(listener)` returns an unsubscribe; events carry no
 data, only which part changed, and the renderer refetches.
 

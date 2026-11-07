@@ -7,7 +7,7 @@ import { isErrno, writeFileAtomic } from '../src/files'
 let dir: string
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'siteadapter-files-'))
+  dir = await mkdtemp(join(tmpdir(), 'valet-files-'))
 })
 
 afterEach(async () => {

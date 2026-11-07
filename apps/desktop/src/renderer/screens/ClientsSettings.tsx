@@ -262,7 +262,7 @@ function SettingsCard() {
             <>
               <div className="setting">
                 <span>Start</span>
-                <span>Open siteadapter when you log in</span>
+                <span>Open Valet when you log in</span>
                 <Switch
                   label="Launch at login"
                   checked={s.launchAtLogin}
@@ -274,7 +274,7 @@ function SettingsCard() {
                 <span>
                   Read one-time codes from Messages for senders you grant
                   <span className="xs muted" style={{ display: 'block' }}>
-                    Needs Full Disk Access for siteadapter
+                    Needs Full Disk Access for Valet
                   </span>
                 </span>
                 <Switch
@@ -307,7 +307,7 @@ function OpPathSetting({ value }: { readonly value: string | null }) {
         <span className="mono xs" data-testid="op-path">
           {value ?? 'Found automatically'}
         </span>
-        <span className="xs muted">siteadapter checks the file is 1Password’s, signed, before using it.</span>
+        <span className="xs muted">Valet checks the file is 1Password’s, signed, before using it.</span>
         <ActionFailed failed={action.failed} what="use that file" />
       </span>
       <span className="row" style={{ gap: 6 }}>
@@ -401,7 +401,7 @@ function UpdatesCard({ now }: { readonly now: number }) {
             <span>Status</span>
             <span>
               {settings.data.autoInstallUpdates
-                ? 'Downloaded. It installs when siteadapter quits.'
+                ? 'Downloaded. It installs when Valet quits.'
                 : 'Downloaded. Turn on automatic installs to apply it.'}
             </span>
             <span />

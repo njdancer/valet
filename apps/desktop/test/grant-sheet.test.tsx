@@ -1,16 +1,16 @@
-import { MESSAGES_SECRET as CORE_MESSAGES_SECRET } from '@siteadapter/core'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MESSAGES_SECRET as CORE_MESSAGES_SECRET } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { ControlPanel } from '../src/renderer/control/App'
 import { COLES_HASH, createFakeApi, type FakeApi, WOOLWORTHS_HASH } from '../src/renderer/dev/fake-api'
 import { ApiProvider } from '../src/renderer/lib/api-context'
 import { MESSAGES_SECRET } from '../src/renderer/screens/GrantSheet'
-import type { AdapterDetail, GrantRequest, SiteAdapterApi } from '../src/shared/api'
+import type { AdapterDetail, GrantRequest, ValetApi } from '../src/shared/api'
 
 const NOW = Date.parse('2026-11-07T21:48:00+11:00')
 
-function renderAt(hash: string, api: SiteAdapterApi) {
+function renderAt(hash: string, api: ValetApi) {
   window.location.hash = hash
   render(
     <ApiProvider api={api} clock={{ now: () => NOW }}>

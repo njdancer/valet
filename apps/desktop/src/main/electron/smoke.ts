@@ -1,4 +1,4 @@
-// A smoke build's self-check (electron/app.ts imports this only when __SITEADAPTER_SMOKE_BUILD__):
+// A smoke build's self-check (electron/app.ts imports this only when __VALET_SMOKE_BUILD__):
 // once the app is up, the packaged main process loads what a normal launch loads only lazily, the
 // 1Password SDK (resolved and imported from app.asar, wasm included) and the bundled
 // electron-updater, and writes what happened to userData/smoke-report.json for

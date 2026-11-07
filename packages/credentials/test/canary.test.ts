@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { inspect } from 'node:util'
-import { type Grant, SecretValue } from '@siteadapter/core'
+import { type Grant, SecretValue } from '@valet/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeCredentialProvider } from '../src/fake'
 import { FileGrantStore } from '../src/grant-store'
@@ -41,7 +41,7 @@ beforeEach(async () => {
       return (write as (...args: unknown[]) => boolean)(chunk, ...rest)
     }) as typeof stream.write)
   }
-  dir = await fs.mkdtemp(join(tmpdir(), 'siteadapter-canary-'))
+  dir = await fs.mkdtemp(join(tmpdir(), 'valet-canary-'))
 })
 
 afterEach(async () => {
@@ -75,7 +75,7 @@ describe('canary secrets', () => {
       spawner: scriptedSpawner((child) => child.finish(0, PASSWORD)).spawner,
       timers: new ManualTimers(),
     })
-    const value = await ok.resolve('op://siteadapter/Woolworths', 'password')
+    const value = await ok.resolve('op://valet/Woolworths', 'password')
     expect(value.reveal((plaintext) => plaintext)).toBe(PASSWORD)
     expectNoCanary([String(value), JSON.stringify({ value }), inspect(value)].join('\n'))
 
@@ -85,13 +85,13 @@ describe('canary secrets', () => {
       spawner: scriptedSpawner((child) => child.finish(1, PASSWORD, `[ERROR] bad value ${PASSWORD}`)).spawner,
       timers: new ManualTimers(),
     })
-    expectNoCanary(rendered(await caught(failing.resolve('op://siteadapter/Woolworths', 'password'))))
+    expectNoCanary(rendered(await caught(failing.resolve('op://valet/Woolworths', 'password'))))
     expectNoCanary(output.join('\n'))
   })
 
   it('never appear in errors or output from the Keychain token source and service account provider', async () => {
     const tokenSource = new KeychainTokenSource({
-      service: 'siteadapter',
+      service: 'valet',
       account: 'sa',
       spawner: scriptedSpawner((child) => child.finish(0, `${TOKEN}\n`)).spawner,
       timers: new ManualTimers(),
@@ -108,7 +108,7 @@ describe('canary secrets', () => {
               throw new Error(`error resolving ${reference} with ${TOKEN}: no item matched ${PASSWORD}`)
             },
           },
-          vaults: { list: async () => [{ id: 'v1', title: 'siteadapter' }] },
+          vaults: { list: async () => [{ id: 'v1', title: 'valet' }] },
           items: {
             list: async () => {
               throw new Error(`listing with ${TOKEN} failed near ${PASSWORD}`)
@@ -118,14 +118,14 @@ describe('canary secrets', () => {
       },
       timers: new ManualTimers(),
     })
-    const value = await provider.resolve('op://siteadapter/Woolworths', 'password')
+    const value = await provider.resolve('op://valet/Woolworths', 'password')
     expect(value.reveal((plaintext) => plaintext)).toBe(PASSWORD)
     expect(seenToken).toBe(TOKEN)
-    expectNoCanary(rendered(await caught(provider.resolve('op://siteadapter/Woolworths', 'username'))))
-    expectNoCanary(rendered(await caught(provider.listItems('siteadapter'))))
+    expectNoCanary(rendered(await caught(provider.resolve('op://valet/Woolworths', 'username'))))
+    expectNoCanary(rendered(await caught(provider.listItems('valet'))))
 
     const deniedKeychain = new KeychainTokenSource({
-      service: 'siteadapter',
+      service: 'valet',
       account: 'sa',
       spawner: scriptedSpawner((child) => child.finish(128, TOKEN, `User canceled ${TOKEN}`)).spawner,
       timers: new ManualTimers(),
@@ -186,7 +186,7 @@ describe('canary secrets', () => {
       adapterHash: 'a'.repeat(64),
       secret: 'login',
       provider: 'onepassword-cli',
-      itemRef: 'op://siteadapter/Woolworths',
+      itemRef: 'op://valet/Woolworths',
       origins: ['https://www.woolworths.com.au'],
       grantedAt: '2026-11-07T00:00:00.000Z',
     })

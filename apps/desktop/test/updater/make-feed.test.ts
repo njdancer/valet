@@ -23,8 +23,8 @@ import { writeAppZip } from './fake-feed-server'
 import { TEST_FEED_KEYS } from './fakes'
 
 const SHA = createHash('sha512').update('zip').digest('base64')
-const ARM = { name: 'siteadapter-1.2.0-arm64.zip', sha512: SHA, size: 1234 }
-const X64 = { name: 'siteadapter-1.2.0-x64.zip', sha512: SHA, size: 5678 }
+const ARM = { name: 'valet-1.2.0-arm64.zip', sha512: SHA, size: 1234 }
+const X64 = { name: 'valet-1.2.0-x64.zip', sha512: SHA, size: 5678 }
 const DATE = '2026-11-07T10:00:00.000Z'
 const SCRIPT = resolve(import.meta.dirname, '../../scripts/make-feed.mjs')
 /** For zips that aren't real: what readZipBundleInfo would read from a release zip of `version`. */
@@ -32,7 +32,7 @@ const releaseInfo = (version: string) => () => ({ bundleId: RELEASE_APP_ID, vers
 
 let dir: string
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'siteadapter-make-feed-'))
+  dir = await mkdtemp(join(tmpdir(), 'valet-make-feed-'))
 })
 afterEach(async () => {
   await rm(dir, { recursive: true, force: true })
@@ -81,14 +81,14 @@ describe('buildFeedYaml', () => {
 
   it('refuses names that could escape the feed directory or break the YAML', () => {
     for (const name of [
-      '../siteadapter-1.2.0-arm64.zip',
-      'sub/siteadapter-1.2.0-arm64.zip',
-      "siteadapter-1.2.0-arm64'.zip",
-      'siteadapter-1.2.0-arm64.zip\n',
-      'siteadapter 1.2.0-arm64.zip',
-      'siteadapter-1.2.0-arm64.dmg',
-      '.siteadapter-1.2.0-arm64.zip',
-      'https://evil.example/siteadapter-1.2.0-arm64.zip',
+      '../valet-1.2.0-arm64.zip',
+      'sub/valet-1.2.0-arm64.zip',
+      "valet-1.2.0-arm64'.zip",
+      'valet-1.2.0-arm64.zip\n',
+      'valet 1.2.0-arm64.zip',
+      'valet-1.2.0-arm64.dmg',
+      '.valet-1.2.0-arm64.zip',
+      'https://evil.example/valet-1.2.0-arm64.zip',
     ]) {
       expect(
         () => buildFeedYaml({ version: '1.2.0', files: [{ ...ARM, name }], releaseDate: DATE }),
@@ -101,22 +101,22 @@ describe('buildFeedYaml', () => {
     expect(() =>
       buildFeedYaml({
         version: '1.2.0',
-        files: [{ ...ARM, name: 'siteadapter-1.1.0-arm64.zip' }],
+        files: [{ ...ARM, name: 'valet-1.1.0-arm64.zip' }],
         releaseDate: DATE,
       }),
     ).toThrow('must carry the version')
     expect(() =>
       buildFeedYaml({
         version: '1.2.0',
-        files: [{ ...ARM, name: 'siteadapter-1.2.0.1-arm64.zip' }],
+        files: [{ ...ARM, name: 'valet-1.2.0.1-arm64.zip' }],
         releaseDate: DATE,
       }),
     ).toThrow(FeedError)
   })
 
   it('refuses two zips for one architecture, no zips, or more than two', () => {
-    const arm2 = { ...ARM, name: 'siteadapter-1.2.0-arm64-b.zip' }
-    const x642 = { ...X64, name: 'siteadapter-1.2.0-x64-b.zip' }
+    const arm2 = { ...ARM, name: 'valet-1.2.0-arm64-b.zip' }
+    const x642 = { ...X64, name: 'valet-1.2.0-x64-b.zip' }
     expect(() => buildFeedYaml({ version: '1.2.0', files: [ARM, arm2], releaseDate: DATE })).toThrow(
       'same architecture',
     )
@@ -149,7 +149,7 @@ describe('buildFeedYaml', () => {
 describe('makeFeed', () => {
   it('hashes the zips and writes one file per channel', async () => {
     const bytes = Buffer.from('not really a zip')
-    const zip = join(dir, 'siteadapter-1.2.0-arm64.zip')
+    const zip = join(dir, 'valet-1.2.0-arm64.zip')
     await writeFile(zip, bytes)
     const written = await makeFeed({
       version: '1.2.0',
@@ -166,7 +166,7 @@ describe('makeFeed', () => {
   })
 
   it('signs an envelope for each channel it writes, which the app accepts', async () => {
-    const zip = join(dir, 'siteadapter-1.2.0-arm64.zip')
+    const zip = join(dir, 'valet-1.2.0-arm64.zip')
     await writeFile(zip, 'zip')
     const out = join(dir, 'feed')
     const written = await makeFeed({
@@ -211,7 +211,7 @@ describe('makeFeed', () => {
   })
 
   it('refuses a validity window it can’t sign, or a minimum version above the version', async () => {
-    const zip = join(dir, 'siteadapter-1.2.0-arm64.zip')
+    const zip = join(dir, 'valet-1.2.0-arm64.zip')
     await writeFile(zip, 'zip')
     const base = {
       version: '1.2.0',
@@ -225,12 +225,12 @@ describe('makeFeed', () => {
       await expect(makeFeed({ ...base, validDays }), String(validDays)).rejects.toThrow(FeedError)
     }
     await expect(makeFeed({ ...base, minimumVersion: '1.3.0' })).rejects.toThrow(FeedError)
-    expect(await readdir(dir)).toEqual(['siteadapter-1.2.0-arm64.zip'])
+    expect(await readdir(dir)).toEqual(['valet-1.2.0-arm64.zip'])
   })
 
   it('leaves beta-mac.yml alone when it names a newer beta than this stable release', async () => {
     const out = join(dir, 'feed')
-    const beta = join(dir, 'siteadapter-1.4.0-beta.1-arm64.zip')
+    const beta = join(dir, 'valet-1.4.0-beta.1-arm64.zip')
     await writeFile(beta, 'beta')
     await makeFeed({
       version: '1.4.0-beta.1',
@@ -240,7 +240,7 @@ describe('makeFeed', () => {
     })
     const betaYml = await readFile(join(out, 'beta-mac.yml'), 'utf8')
 
-    const hotfix = join(dir, 'siteadapter-1.3.1-arm64.zip')
+    const hotfix = join(dir, 'valet-1.3.1-arm64.zip')
     await writeFile(hotfix, 'hotfix')
     const written = await makeFeed({
       version: '1.3.1',
@@ -252,7 +252,7 @@ describe('makeFeed', () => {
     expect(await readFile(join(out, 'beta-mac.yml'), 'utf8')).toBe(betaYml)
 
     // Once a stable release overtakes the beta, beta installs move on to it.
-    const release = join(dir, 'siteadapter-1.4.0-arm64.zip')
+    const release = join(dir, 'valet-1.4.0-arm64.zip')
     await writeFile(release, 'release')
     expect(
       await makeFeed({
@@ -266,19 +266,19 @@ describe('makeFeed', () => {
   })
 
   it('reads the bundle ID and version from the one app in a real zip', async () => {
-    const zip = join(dir, 'siteadapter-1.2.0-arm64.zip')
+    const zip = join(dir, 'valet-1.2.0-arm64.zip')
     await writeAppZip(zip, { bundleId: RELEASE_APP_ID, version: '1.2.0' }, Buffer.from('binary'))
     expect(readZipBundleInfo(zip)).toEqual({ bundleId: RELEASE_APP_ID, version: '1.2.0' })
     expect((await makeFeed({ version: '1.2.0', zips: [zip], outDir: join(dir, 'feed') })).length).toBe(2)
   })
 
   it('refuses a zip with no app, or with two', async () => {
-    const empty = join(dir, 'siteadapter-1.2.0-arm64.zip')
+    const empty = join(dir, 'valet-1.2.0-arm64.zip')
     await writeFile(join(dir, 'readme.txt'), 'x')
     await promisify(execFile)('/usr/bin/ditto', ['-c', '-k', join(dir, 'readme.txt'), empty])
     expect(() => readZipBundleInfo(empty)).toThrow('exactly one .app')
 
-    const two = join(dir, 'two', 'siteadapter-1.2.0-x64.zip')
+    const two = join(dir, 'two', 'valet-1.2.0-x64.zip')
     await writeAppZip(
       join(dir, 'a.zip'),
       { bundleId: RELEASE_APP_ID, version: '1.2.0', appName: 'a' },
@@ -297,12 +297,12 @@ describe('makeFeed', () => {
   })
 
   it('writes nothing for a version it refuses', async () => {
-    const zip = join(dir, 'siteadapter-1.2.0-alpha.1-arm64.zip')
+    const zip = join(dir, 'valet-1.2.0-alpha.1-arm64.zip')
     await writeFile(zip, 'x')
     await expect(
       makeFeed({ version: '1.2.0-alpha.1', zips: [zip], outDir: join(dir, 'feed') }),
     ).rejects.toThrow(FeedError)
-    expect(await readdir(dir)).toEqual(['siteadapter-1.2.0-alpha.1-arm64.zip'])
+    expect(await readdir(dir)).toEqual(['valet-1.2.0-alpha.1-arm64.zip'])
   })
 
   it('hashes a file as a stream, the same as hashing its bytes', async () => {
@@ -320,7 +320,7 @@ describe('make-feed.mjs on the command line', () => {
   const run = promisify(execFile)
 
   it('writes and signs the channel files and prints their paths', async () => {
-    const zip = join(dir, 'siteadapter-1.3.0-beta.2-arm64.zip')
+    const zip = join(dir, 'valet-1.3.0-beta.2-arm64.zip')
     await writeAppZip(zip, { bundleId: RELEASE_APP_ID, version: '1.3.0-beta.2' }, Buffer.from('zip'))
     const key = join(dir, 'feed-key.pem')
     await writeFile(key, TEST_FEED_KEYS.privateKey.export({ type: 'pkcs8', format: 'pem' }))
@@ -346,7 +346,7 @@ describe('make-feed.mjs on the command line', () => {
   })
 
   it('needs a signing key or an explicit --unsigned, not both', async () => {
-    const zip = join(dir, 'siteadapter-1.2.0-arm64.zip')
+    const zip = join(dir, 'valet-1.2.0-arm64.zip')
     await writeAppZip(zip, { bundleId: RELEASE_APP_ID, version: '1.2.0' }, Buffer.from('zip'))
     await expect(run(process.execPath, [SCRIPT, '--version', '1.2.0', zip])).rejects.toMatchObject({
       code: 1,

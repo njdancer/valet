@@ -2,12 +2,12 @@
 // from core's fixed vocabulary; the wording is the app's own. Nothing a manifest or adapter wrote
 // reaches the title: a manifest's note is shown by the app's own chrome, not here.
 
-import { NEEDS_USER_REASONS, type NeedsUserReason } from '@siteadapter/core'
+import { NEEDS_USER_REASONS, type NeedsUserReason } from '@valet/core'
 
 const WORDING: Readonly<Record<NeedsUserReason, (site: string) => string>> = {
   'login-required': (site) => `${site} needs you to log in`,
   'otp-required': (site) => `${site} needs a verification code from you`,
-  captcha: (site) => `${site} showed a verification check that siteadapter won’t solve for you`,
+  captcha: (site) => `${site} showed a verification check that Valet won’t solve for you`,
   'account-locked': (site) => `${site} says your account is locked`,
   'terms-update': (site) => `${site} wants you to accept updated terms`,
   'site-changed': (site) => `${site}’s login page has changed: finish logging in yourself`,

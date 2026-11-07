@@ -7,7 +7,7 @@ import {
   parseManifest,
   secretRefsIn,
   touchesDeniedSegment,
-} from '@siteadapter/core'
+} from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { createAdapter } from '../src/adapter'
 import realManifest, {

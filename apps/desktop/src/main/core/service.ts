@@ -17,10 +17,10 @@ import {
   type ProviderKind,
   type SecretField,
   type SessionDriver,
-  SiteAdapterError,
-} from '@siteadapter/core'
-import { FileGrantStore } from '@siteadapter/credentials'
-import type { LiveSessions, SessionReportingEndpoint, ToolCall, ToolCaller } from '@siteadapter/mcp-server'
+  ValetError,
+} from '@valet/core'
+import { FileGrantStore } from '@valet/credentials'
+import type { LiveSessions, SessionReportingEndpoint, ToolCall, ToolCaller } from '@valet/mcp-server'
 import {
   ApprovalStore,
   AuditLog,
@@ -29,7 +29,7 @@ import {
   type RuntimeDiagnostic,
   type Sleep,
   ToolHost,
-} from '@siteadapter/runtime'
+} from '@valet/runtime'
 import { z } from 'zod'
 import type {
   AppEvent,
@@ -451,7 +451,7 @@ export class AppService {
           await host.runLoginStep(a.definition.manifest.id, async () => {}, { waitMs: LOGIN_WAIT_MS })
         } catch (error) {
           const idle =
-            error instanceof SiteAdapterError &&
+            error instanceof ValetError &&
             (error.errorClass === 'not-granted' || error.errorClass === 'rate-limited')
           if (!idle) throw error
         }
@@ -460,7 +460,7 @@ export class AppService {
   }
 
   private runtime(): ToolHost {
-    if (this.host === null) throw new SiteAdapterError('config', 'unavailable')
+    if (this.host === null) throw new ValetError('config', 'unavailable')
     return this.host
   }
 
@@ -480,7 +480,7 @@ export class AppService {
 
   private requireAdapter(adapterId: string): BuiltinAdapter {
     const adapter = this.adapter(adapterId)
-    if (adapter === null) throw new SiteAdapterError('manifest', 'not-found')
+    if (adapter === null) throw new ValetError('manifest', 'not-found')
     return adapter
   }
 
@@ -671,7 +671,7 @@ export class AppService {
         approve: async (adapterId, hash) => {
           const adapter = this.requireAdapter(adapterId)
           // Only the bundle installed and waiting now; a stale review's hash is refused.
-          if (adapter.hash !== hash) throw new SiteAdapterError('manifest', 'invalid')
+          if (adapter.hash !== hash) throw new ValetError('manifest', 'invalid')
           await this.approvals.approve(adapterId, hash, adapter.definition.manifest.version)
           const at = new Date(deps.now()).toISOString()
           await this.snapshots.put(adapterId, adapter, at)
@@ -680,7 +680,7 @@ export class AppService {
         },
         reject: async (adapterId, hash) => {
           const adapter = this.requireAdapter(adapterId)
-          if (adapter.hash !== hash) throw new SiteAdapterError('manifest', 'invalid')
+          if (adapter.hash !== hash) throw new ValetError('manifest', 'invalid')
           await this.approvals.reject(adapterId, hash, adapter.definition.manifest.version)
           await this.refreshTools()
         },
@@ -738,7 +738,7 @@ export class AppService {
         revoke: async (adapterId, secret) => {
           const adapter = this.requireAdapter(adapterId)
           if (secret !== MESSAGES_SECRET && !Object.hasOwn(adapter.definition.manifest.secrets, secret)) {
-            throw new SiteAdapterError('grant', 'not-found')
+            throw new ValetError('grant', 'not-found')
           }
           await this.audit.append({ type: 'grant-revoked', adapterId, secret })
           await this.grants.revoke(adapterId, secret)
@@ -765,7 +765,7 @@ export class AppService {
         },
         chainStatus: async () => this.chain,
         exportJsonl: async () => {
-          const target = await deps.ui.chooseSaveFile('siteadapter-audit.jsonl')
+          const target = await deps.ui.chooseSaveFile('valet-audit.jsonl')
           if (target === null) return
           await copyFile(deps.paths.audit, target)
         },
@@ -801,11 +801,11 @@ export class AppService {
         snippets: async () => this.snippets(),
         copyClientConfig: async (client) => {
           const text = snippetFor(this.snippets(), client)
-          if (text === null) throw new SiteAdapterError('config', 'unavailable')
+          if (text === null) throw new ValetError('config', 'unavailable')
           deps.ui.writeClipboard(text)
         },
         copyUrl: async () => {
-          if (this.endpoint === null) throw new SiteAdapterError('config', 'unavailable')
+          if (this.endpoint === null) throw new ValetError('config', 'unavailable')
           deps.ui.writeClipboard(this.endpoint.url)
         },
       },
@@ -821,7 +821,7 @@ export class AppService {
           )
         },
         revoke: async (clientId) => {
-          if (!(await this.clients.revoke(clientId))) throw new SiteAdapterError('config', 'not-found')
+          if (!(await this.clients.revoke(clientId))) throw new ValetError('config', 'not-found')
           this.emit('clients-changed')
         },
       },
@@ -845,7 +845,7 @@ export class AppService {
         const adapter = this.requireAdapter(adapterId)
         const manifest = adapter.definition.manifest
         const driver = this.drivers.get(adapterId)
-        if (driver === undefined) throw new SiteAdapterError('manifest', 'not-found')
+        if (driver === undefined) throw new ValetError('manifest', 'not-found')
         await this.runtime().runLoginStep(
           adapterId,
           async (ctx) => {
@@ -859,7 +859,7 @@ export class AppService {
               if (first?.op === 'goto') await page.goto(first.url).catch(() => undefined)
               if (await isBlockedPage(page)) {
                 ctx.reportBlocked('blocked-by-site')
-                throw new SiteAdapterError('login', 'blocked-by-site')
+                throw new ValetError('login', 'blocked-by-site')
               }
               // Gave up waiting (the step's deadline): the person was already told it failed.
               if (ctx.signal.aborted) return
@@ -885,7 +885,7 @@ export class AppService {
         )
       },
       finishLogin: async (adapterId) => {
-        if (!this.handoffs.has(adapterId)) throw new SiteAdapterError('login', 'not-found')
+        if (!this.handoffs.has(adapterId)) throw new ValetError('login', 'not-found')
         await this.runtime().runLoginStep(adapterId, (ctx) => this.handoffs.finish(adapterId, ctx), {
           waitMs: LOGIN_WAIT_MS,
         })
@@ -902,7 +902,7 @@ export class AppService {
           const chosen = await deps.ui.chooseOpFile()
           if (chosen === null) return this.settings.get()
           // Not the 1Password CLI, or not safe to run: the old value stays, and the call rejects.
-          if ((await deps.checkOp(chosen)) === null) throw new SiteAdapterError('config', 'insecure-file')
+          if ((await deps.checkOp(chosen)) === null) throw new ValetError('config', 'insecure-file')
           return this.afterSettings(await this.settings.setOpPath(chosen))
         },
         clearOpPath: async () => this.afterSettings(await this.settings.setOpPath(null)),
@@ -944,7 +944,7 @@ export function printableClient(client: string): string {
 
 /** The selector the manifest fills this secret field into, for the run trace. */
 export function fillSelector(
-  steps: readonly import('@siteadapter/core').AuthStep[],
+  steps: readonly import('@valet/core').AuthStep[],
   secret: string,
   field: string,
 ): string {

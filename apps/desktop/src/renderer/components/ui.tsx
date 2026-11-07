@@ -1,7 +1,7 @@
 // Small presentational pieces shared by every screen. Text is always rendered as React text, never
 // as HTML, so adapter-authored strings can't inject markup.
 
-import type { Purpose, RunOutcome } from '@siteadapter/core'
+import type { Purpose, RunOutcome } from '@valet/core'
 import type { ReactNode } from 'react'
 import type { Loaded } from '../lib/api-context'
 import { shortHash } from '../lib/format'
@@ -205,7 +205,7 @@ export function LoadState<T>({
   if (loaded.status === 'error') {
     return (
       <div className="empty" role="alert">
-        Couldn’t load {what}. siteadapter will try again when something changes.
+        Couldn’t load {what}. Valet will try again when something changes.
       </div>
     )
   }

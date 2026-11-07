@@ -4,7 +4,7 @@
 
 import { randomBytes } from 'node:crypto'
 import { chmod, mkdir, open, readFile, rename, rm } from 'node:fs/promises'
-import { SiteAdapterError } from '@siteadapter/core'
+import { ValetError } from '@valet/core'
 import type { z } from 'zod'
 
 /** Creates the data directory owner-only, and tightens it if it already existed looser. */
@@ -13,23 +13,23 @@ export async function ensurePrivateDir(dir: string): Promise<void> {
   await chmod(dir, 0o700)
 }
 
-/** The parsed file, or null when it doesn't exist. Throws SiteAdapterError('config', …) otherwise. */
+/** The parsed file, or null when it doesn't exist. Throws ValetError('config', …) otherwise. */
 export async function readJsonFile<T>(path: string, schema: z.ZodType<T>): Promise<T | null> {
   let text: string
   try {
     text = await readFile(path, 'utf8')
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
-    throw new SiteAdapterError('config', 'unavailable')
+    throw new ValetError('config', 'unavailable')
   }
   let json: unknown
   try {
     json = JSON.parse(text)
   } catch {
-    throw new SiteAdapterError('config', 'invalid')
+    throw new ValetError('config', 'invalid')
   }
   const parsed = schema.safeParse(json)
-  if (!parsed.success) throw new SiteAdapterError('config', 'invalid')
+  if (!parsed.success) throw new ValetError('config', 'invalid')
   return parsed.data
 }
 
@@ -48,7 +48,7 @@ export async function writeJsonFile(path: string, value: unknown): Promise<void>
     await rename(temp, path)
   } catch {
     await rm(temp, { force: true })
-    throw new SiteAdapterError('config', 'unavailable')
+    throw new ValetError('config', 'unavailable')
   }
 }
 

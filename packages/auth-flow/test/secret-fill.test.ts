@@ -5,7 +5,7 @@ import {
   parseManifest,
   type ResolveFailure,
   type SecretValue,
-} from '@siteadapter/core'
+} from '@valet/core'
 import { describe, expect, it, vi } from 'vitest'
 import { runAuthFlow } from '../src/run-auth-flow'
 import {

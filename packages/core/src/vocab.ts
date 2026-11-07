@@ -1,5 +1,5 @@
 // The fixed vocabularies, with no Node imports, so a browser bundle (the desktop renderer) can
-// import values as well as types: import { STAGES } from '@siteadapter/core/vocab'.
+// import values as well as types: import { STAGES } from '@valet/core/vocab'.
 
 export { MESSAGES_SECRET } from './credentials'
 export {

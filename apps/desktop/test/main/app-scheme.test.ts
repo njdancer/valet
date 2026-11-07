@@ -15,7 +15,7 @@ import {
   resolveAppPath,
 } from '../../src/main/core/app-scheme'
 
-const ROOT = '/Applications/siteadapter.app/Contents/Resources/app.asar/out/renderer'
+const ROOT = '/Applications/Valet.app/Contents/Resources/app.asar/out/renderer'
 
 describe('appPageUrl', () => {
   it('names a page under the one host, with a hash route', () => {
@@ -114,7 +114,7 @@ describe('resolveAppPath', () => {
 describe('createAppSchemeHandler', () => {
   let dir: string
   beforeAll(async () => {
-    dir = await mkdtemp(join(tmpdir(), 'siteadapter-scheme-'))
+    dir = await mkdtemp(join(tmpdir(), 'valet-scheme-'))
     await mkdir(join(dir, 'renderer', 'assets'), { recursive: true })
     await writeFile(join(dir, 'renderer', 'index.html'), '<!doctype html><title>x</title>')
     await writeFile(join(dir, 'renderer', 'assets', 'app.js'), "document.title = 'ok'")

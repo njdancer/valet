@@ -2,8 +2,8 @@
 // Credential wiring with injected processes and file facts: no 1Password, Keychain or Messages.
 
 import { EventEmitter } from 'node:events'
-import { CredentialError, SecretValue } from '@siteadapter/core'
-import type { ChildLike, Spawner } from '@siteadapter/credentials'
+import { CredentialError, SecretValue } from '@valet/core'
+import type { ChildLike, Spawner } from '@valet/credentials'
 import { describe, expect, it } from 'vitest'
 import {
   ADMIN_GID,
@@ -312,7 +312,7 @@ describe('realCredentials', () => {
     expect(await credentials.vaultItems('onepassword-cli')).toEqual([{ id: 'abc123', title: 'Woolworths' }])
     expect(ran.at(-1)).toEqual({
       command: '/opt/homebrew/Caskroom/op/op',
-      args: ['item', 'list', '--vault', 'siteadapter', '--format', 'json'],
+      args: ['item', 'list', '--vault', 'Valet', '--format', 'json'],
     })
     expect(await credentials.vaultItems('fake')).toEqual([])
     expect(await credentials.vaultItems('messages')).toEqual([])
@@ -339,7 +339,7 @@ describe('realCredentials', () => {
           vaults: {
             list: async () => [
               { id: 'v1', title: 'Personal' },
-              { id: 'v2', title: 'siteadapter' },
+              { id: 'v2', title: 'Valet' },
             ],
           },
           items: {

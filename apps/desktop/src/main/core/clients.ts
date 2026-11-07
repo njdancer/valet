@@ -3,8 +3,8 @@
 // under that name, which stops an honest client and nothing else. Rotating the token is the control
 // that cuts off everyone.
 
-import { sha256Hex } from '@siteadapter/core'
-import type { ClientTransport } from '@siteadapter/runtime'
+import { sha256Hex } from '@valet/core'
+import type { ClientTransport } from '@valet/runtime'
 import { z } from 'zod'
 import type { ClientInfo } from '../../shared/api'
 import { JsonDocument } from './files'

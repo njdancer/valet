@@ -20,7 +20,7 @@ import {
   type OtpReader,
   type ProviderKind,
   type SecretValue,
-} from '@siteadapter/core'
+} from '@valet/core'
 import {
   DEFAULT_OP_PATHS,
   KeychainTokenSource,
@@ -33,7 +33,7 @@ import {
   type SecretsClientFactory,
   type Spawner,
   type Timers,
-} from '@siteadapter/credentials'
+} from '@valet/credentials'
 import type { ProviderStatus, Settings, VaultItem } from '../../shared/api'
 import { KEYCHAIN_ACCOUNT, KEYCHAIN_SERVICE, ONEPASSWORD_TEAM_ID, VAULT } from './constants'
 

@@ -1,7 +1,7 @@
 // The request-surface guard, exercised the way tool code meets it: through ctx.page inside a call.
 // Each test is tool code trying to get past one guard.
 
-import { defineAdapter, type ToolContext, tool } from '@siteadapter/core'
+import { defineAdapter, type ToolContext, tool } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import { json } from './fakes'
@@ -557,7 +557,7 @@ describe('egress', () => {
   })
 
   it('redacts a login secret smuggled into a hostname, by what tool code passed', async () => {
-    const { SecretValue } = await import('@siteadapter/core')
+    const { SecretValue } = await import('@valet/core')
     const { host, audit, page, authRunner } = fixture(
       adapterRunning(async (ctx) => {
         await ctx.session.ensure()

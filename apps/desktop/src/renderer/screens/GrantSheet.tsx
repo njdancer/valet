@@ -2,9 +2,9 @@
 // only ever offers origins the manifest asked for, for the adapter's installed hash; it can narrow
 // them, never widen. Items are listed by title: the renderer never sees an item's fields.
 
-import type { ProviderKind } from '@siteadapter/core'
+import type { ProviderKind } from '@valet/core'
 // From core's browser-safe vocabulary: core's index pulls in Node modules the renderer can't load.
-import { MESSAGES_SECRET } from '@siteadapter/core/vocab'
+import { MESSAGES_SECRET } from '@valet/core/vocab'
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { AdapterDetail, GrantInfo, ProviderStatus, VaultItem } from '../../shared/api'
 import { ActionFailed, Avatar, Icon, SecretBadge } from '../components/ui'
@@ -252,7 +252,7 @@ function GrantForm({
           {target.kind === 'onepassword' ? (
             <>
               <fieldset className="stack" style={{ border: 0, margin: 0, padding: 0 }}>
-                <legend className="label">Where siteadapter gets it</legend>
+                <legend className="label">Where Valet gets it</legend>
                 {ONEPASSWORD.filter(
                   (kind) => kind !== 'fake' || providers.some((p) => p.kind === 'fake'),
                 ).map((kind) => {
@@ -287,7 +287,7 @@ function GrantForm({
 
               <div>
                 <div className="label row between">
-                  <span>Item in “siteadapter”</span>
+                  <span>Item in “Valet”</span>
                   <span className="xs muted">{plural(matching.length, 'item matches', 'items match')}</span>
                 </div>
                 <label className="field" style={{ marginBottom: 6 }}>
@@ -325,7 +325,7 @@ function GrantForm({
                   )}
                 </div>
                 <div className="xs muted" style={{ marginTop: 6 }}>
-                  Uses the item’s {target.fields} fields. siteadapter reads them only at the moment of login.
+                  Uses the item’s {target.fields} fields. Valet reads them only at the moment of login.
                 </div>
               </div>
             </>
@@ -388,9 +388,8 @@ function GrantForm({
               ))}
             </div>
             <div className="xs muted" style={{ marginTop: 6 }}>
-              Before every fill, siteadapter checks the page’s origin, the field type and where the form
-              submits. Only {plural(target.requestedOrigins.length, 'origin')} the manifest asked for can be
-              chosen.
+              Before every fill, Valet checks the page’s origin, the field type and where the form submits.
+              Only {plural(target.requestedOrigins.length, 'origin')} the manifest asked for can be chosen.
             </div>
           </fieldset>
 
@@ -400,7 +399,7 @@ function GrantForm({
               <ul className="can">
                 <li>
                   <Icon name="check" size="sm" className="ok-text" />
-                  have siteadapter type it into the sign-in form on{' '}
+                  have Valet type it into the sign-in form on{' '}
                   {chosen.map(hostOf).join(', ') || 'no origin yet'}
                 </li>
                 <li>

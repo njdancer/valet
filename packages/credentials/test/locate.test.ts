@@ -7,7 +7,7 @@ import { isExecutableFile, locateExecutable } from '../src/locate'
 let dir: string
 
 beforeEach(async () => {
-  dir = await fs.mkdtemp(join(tmpdir(), 'siteadapter-locate-'))
+  dir = await fs.mkdtemp(join(tmpdir(), 'valet-locate-'))
 })
 
 afterEach(async () => {

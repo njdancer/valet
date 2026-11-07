@@ -12,7 +12,7 @@ draft. Each one marked _verify_ must be confirmed first. Nothing here is legal a
 
 ## Summary
 
-- **Bundle:** a `.siteadapter` file with a fixed layout: a manifest, one built tool module,
+- **Bundle:** a `.valet` file with a fixed layout: a manifest, one built tool module,
   JSON Schemas for tool inputs and outputs, tests, fixtures and a bundle descriptor. Two hashes:
   - the **adapter hash** covers only what runs, and is what approvals and grants key on;
   - the **package hash** covers everything, and is what signatures cover.
@@ -65,8 +65,8 @@ this list. The sandbox isn't.
 ### Layout
 
 ```
-woolworths-1.3.0.siteadapter          a zip; the layout inside is fixed
-├── siteadapter-bundle.json           bundle descriptor (below)
+woolworths-1.3.0.valet          a zip; the layout inside is fixed
+├── valet-bundle.json           bundle descriptor (below)
 ├── manifest.json                     parsed by core's manifestSchema
 ├── tools.mjs                         one ES module, built; no imports
 ├── schemas.json                      JSON Schema per tool: { "<tool>": { "input": …, "output": … } }
@@ -129,7 +129,7 @@ Why two:
 
 ### The descriptor
 
-`siteadapter-bundle.json`. It's separate from the manifest, so core's strict `manifestSchema`
+`valet-bundle.json`. It's separate from the manifest, so core's strict `manifestSchema`
 doesn't have to grow distribution fields:
 
 ```json
@@ -149,16 +149,16 @@ doesn't have to grow distribution fields:
     "fixtures/trolley.json": "sha256:…"
   },
   "publisher": { "name": "Example Publisher", "key": "RW… (minisign public key, base64)" },
-  "source": { "repository": "https://github.com/example/siteadapter-woolworths", "commit": "40 hex" },
+  "source": { "repository": "https://github.com/example/valet-woolworths", "commit": "40 hex" },
   "license": "Apache-2.0",
-  "build": { "tool": "siteadapter-build", "toolVersion": "1.0.0", "reproducible": true }
+  "build": { "tool": "valet-build", "toolVersion": "1.0.0", "reproducible": true }
 }
 ```
 
 The app recomputes both hashes from the files and refuses the bundle if either differs from the
 descriptor. `manifest.json`'s `id` and `version` must match the descriptor's.
 
-**Reproducible builds** make `source.commit` meaningful. `siteadapter-build` pins the bundler,
+**Reproducible builds** make `source.commit` meaningful. `valet-build` pins the bundler,
 sorts inputs, strips timestamps and fixes line endings, so anyone can rebuild `tools.mjs` from the
 commit and compare hashes. The registry's checks do exactly that. A bundle that doesn't
 reproduce can still be installed from a file, but can't be listed.
@@ -488,7 +488,7 @@ main world (as if QuickJS had been broken) must fail to:
     customers not to disclose passcodes. Disclosure can shift liability for unauthorised
     transactions to the customer (_verify_ against the current ePayments Code and the bank's
     terms).
-  - siteadapter doesn't disclose the password to a third party. It's filled on the person's own
+  - Valet doesn't disclose the password to a third party. It's filled on the person's own
     machine by software they run, from their own password manager.
   - Some banks' terms also restrict using third-party software to access internet banking. That
     question is open, and it's the person's risk, not something the project can resolve.

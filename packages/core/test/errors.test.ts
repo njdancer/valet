@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { NeedsUserError, SiteAdapterError, toReportable } from '../src/errors'
+import { NeedsUserError, toReportable, ValetError } from '../src/errors'
 
 describe('toReportable', () => {
-  it('passes a SiteAdapterError through as stage and class', () => {
-    expect(toReportable(new SiteAdapterError('secret-fill', 'origin-mismatch'), 'tool-run')).toEqual({
+  it('passes a ValetError through as stage and class', () => {
+    expect(toReportable(new ValetError('secret-fill', 'origin-mismatch'), 'tool-run')).toEqual({
       stage: 'secret-fill',
       errorClass: 'origin-mismatch',
     })
@@ -20,11 +20,11 @@ describe('toReportable', () => {
   })
 })
 
-describe('SiteAdapterError', () => {
+describe('ValetError', () => {
   it('has a message made only of its vocabulary', () => {
-    const error = new SiteAdapterError('auth-step', 'condition-timeout')
+    const error = new ValetError('auth-step', 'condition-timeout')
     expect(error.message).toBe('auth-step: condition-timeout')
-    expect(error.name).toBe('SiteAdapterError')
+    expect(error.name).toBe('ValetError')
   })
 })
 

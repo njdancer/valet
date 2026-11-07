@@ -1,12 +1,6 @@
 // State shared by the interpreter's modules for one run, and the checks every step is followed by.
 
-import {
-  type FailClass,
-  type NeedsUserReason,
-  SiteAdapterError,
-  type Stage,
-  urlOriginAllowed,
-} from '@siteadapter/core'
+import { type FailClass, type NeedsUserReason, type Stage, urlOriginAllowed, ValetError } from '@valet/core'
 import type { UrlRegexes } from './conditions'
 import type { AuthFlowInput } from './types'
 
@@ -37,8 +31,8 @@ export class NeedsUserHalt extends Error {
   }
 }
 
-/** A manifest fail step. A SiteAdapterError, so retry treats it like any other, plus its note. */
-export class FailStep extends SiteAdapterError {
+/** A manifest fail step. A ValetError, so retry treats it like any other, plus its note. */
+export class FailStep extends ValetError {
   constructor(
     errorClass: FailClass,
     /** The manifest's note, for the app only. */
@@ -50,22 +44,22 @@ export class FailStep extends SiteAdapterError {
 }
 
 /**
- * Runs one injected effect. Anything it throws other than a SiteAdapterError becomes
+ * Runs one injected effect. Anything it throws other than a ValetError becomes
  * `<stage>: internal`, because effect errors can carry page text or, worse, a secret.
  */
 export async function guarded<T>(stage: Stage, effect: () => Promise<T> | T): Promise<T> {
   try {
     return await effect()
   } catch (error) {
-    if (error instanceof SiteAdapterError) throw error
-    throw new SiteAdapterError(stage, 'internal')
+    if (error instanceof ValetError) throw error
+    throw new ValetError(stage, 'internal')
   }
 }
 
 /** The injected clock's time. A clock that can't tell the time ends the flow rather than every wait. */
 export function now(ctx: FlowContext): number {
   const time = ctx.input.clock().getTime()
-  if (!Number.isFinite(time)) throw new SiteAdapterError('auth-step', 'internal')
+  if (!Number.isFinite(time)) throw new ValetError('auth-step', 'internal')
   return time
 }
 
@@ -74,7 +68,7 @@ export function remainingMs(ctx: FlowContext): number {
 }
 
 export function checkDeadline(ctx: FlowContext): void {
-  if (now(ctx) >= ctx.deadline) throw new SiteAdapterError('timeout', 'timed-out')
+  if (now(ctx) >= ctx.deadline) throw new ValetError('timeout', 'timed-out')
 }
 
 /**
@@ -87,7 +81,7 @@ export async function checkNavigation(ctx: FlowContext): Promise<void> {
   for (const url of urls) {
     if (url === 'about:blank') continue
     if (!urlOriginAllowed(url, ctx.input.manifest.navigation)) {
-      throw new SiteAdapterError('navigate', 'navigation-escaped')
+      throw new ValetError('navigate', 'navigation-escaped')
     }
   }
 }
@@ -95,7 +89,7 @@ export async function checkNavigation(ctx: FlowContext): Promise<void> {
 /** The site's bot protection showing its block page ends the flow as blocked, never retried. */
 export async function checkBlocked(ctx: FlowContext): Promise<void> {
   if (await guarded('auth-step', () => ctx.input.isBlockedPage())) {
-    throw new SiteAdapterError('auth-step', 'blocked-by-site')
+    throw new ValetError('auth-step', 'blocked-by-site')
   }
 }
 

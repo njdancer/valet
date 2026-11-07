@@ -2,7 +2,7 @@
 // and for a bounded number of calls: nothing here is ever written to disk. Output is what the
 // runtime returned, already redacted; its "[redacted]" markers become redaction parts.
 
-import { REDACTED } from '@siteadapter/runtime'
+import { REDACTED } from '@valet/runtime'
 import type { PreviewPart } from '../../shared/api'
 import { RUN_MEMORY } from './constants'
 

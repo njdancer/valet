@@ -1,7 +1,7 @@
 import { mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { AuditEvent } from '@siteadapter/core'
+import type { AuditEvent } from '@valet/core'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { AuditLog, GENESIS_HASH, recordHash, verifyAuditLog } from '../src/audit-log'
 
@@ -11,7 +11,7 @@ let now: number
 const clock = { now: () => now }
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'siteadapter-audit-'))
+  dir = await mkdtemp(join(tmpdir(), 'valet-audit-'))
   path = join(dir, 'audit.jsonl')
   now = Date.UTC(2026, 10, 7, 9, 0, 0)
 })

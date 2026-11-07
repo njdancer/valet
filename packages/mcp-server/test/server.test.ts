@@ -6,9 +6,9 @@ import {
   NeedsUserError,
   type NeedsUserReason,
   type RunOutcome,
-  SiteAdapterError,
   type Stage,
-} from '@siteadapter/core'
+  ValetError,
+} from '@valet/core'
 import { afterEach, describe, expect, expectTypeOf, it } from 'vitest'
 import { z } from 'zod'
 import { annotationsFor, clientLabel, createMcpServer, IRREVERSIBLE_NOTE } from '../src/server'
@@ -64,7 +64,7 @@ async function connect(caller: FakeCaller, clientName = 'test-client') {
   let next = 0
   const endpoint = createMcpServer(
     caller,
-    { name: 'siteadapter', version: '0.1.0' },
+    { name: 'valet', version: '0.1.0' },
     { newCallId: () => `call-${++next}` },
   )
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
@@ -150,7 +150,7 @@ describe('tool listing', () => {
     expect(tools[0]?.title).toBe('Check out')
     expect(tools[0]?.description).toBe(`Places the order.\n\n${IRREVERSIBLE_NOTE}`)
     expect(IRREVERSIBLE_NOTE).toBe(
-      'The person must confirm this action in the siteadapter app before it runs. You cannot confirm it for them.',
+      'The person must confirm this action in the Valet app before it runs. You cannot confirm it for them.',
     )
   })
 
@@ -248,7 +248,7 @@ describe('refresh', () => {
 
   it('reports the tools it withheld', () => {
     const caller = new FakeCaller([searchProducts, { ...searchProducts, input: z.string() }])
-    const endpoint = createMcpServer(caller, { name: 'siteadapter', version: '0.1.0' })
+    const endpoint = createMcpServer(caller, { name: 'valet', version: '0.1.0' })
     expect(endpoint.refresh()).toEqual([
       { adapterId: 'woolworths', tool: 'search_products', reason: 'input-not-object' },
     ])
@@ -336,7 +336,7 @@ describe('calling a tool', () => {
   it('uses a random call id by default', async () => {
     const caller = new FakeCaller([searchProducts])
     caller.answer = async () => ({ status: 'ok', output: { products: [] } })
-    const endpoint = createMcpServer(caller, { name: 'siteadapter', version: '0.1.0' })
+    const endpoint = createMcpServer(caller, { name: 'valet', version: '0.1.0' })
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
     await endpoint.server.connect(serverTransport)
     const client = new Client({ name: 'c', version: '1' })
@@ -431,7 +431,7 @@ describe('call results', () => {
     expect(result.isError).toBeUndefined()
     expect(result.structuredContent).toBeUndefined()
     expect(textOf(result)).toBe(
-      'Not done yet: the person has been asked to act in the siteadapter app (reason: captcha). ' +
+      'Not done yet: the person has been asked to act in the Valet app (reason: captcha). ' +
         'Call this tool again once they have.',
     )
   })
@@ -446,7 +446,7 @@ describe('call results', () => {
     // Without the flag the SDK would replace the text with its own output-validation error.
     expect(result.isError).toBe(true)
     expect(textOf(result)).toBe(
-      'Not done yet: the person has been asked to act in the siteadapter app (reason: login-required). ' +
+      'Not done yet: the person has been asked to act in the Valet app (reason: login-required). ' +
         'Call this tool again once they have.',
     )
   })
@@ -526,10 +526,10 @@ describe('call results', () => {
     expect(textOf(result)).toBe('The tool failed at stage tool-run: internal.')
   })
 
-  it('reports a SiteAdapterError the runtime throws by its stage and class', async () => {
+  it('reports a ValetError the runtime throws by its stage and class', async () => {
     const caller = new FakeCaller([searchProducts])
     caller.answer = async () => {
-      throw new SiteAdapterError('timeout', 'timed-out')
+      throw new ValetError('timeout', 'timed-out')
     }
     const { client } = await connect(caller)
     const result = await client.callTool({ name: 'woolworths_search_products', arguments: { query: 'milk' } })
@@ -728,7 +728,7 @@ describe('call results', () => {
 
     expect(result.isError).toBe(true)
     expect(textOf(result)).toBe(
-      'The person did not approve this action in the siteadapter app (stage confirm: declined).',
+      'The person did not approve this action in the Valet app (stage confirm: declined).',
     )
   })
 

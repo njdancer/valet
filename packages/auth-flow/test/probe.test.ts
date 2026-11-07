@@ -1,4 +1,4 @@
-import { type Probe, SiteAdapterError } from '@siteadapter/core'
+import { type Probe, ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { readJsonPath } from '../src/probe'
 import { runAuthFlow } from '../src/run-auth-flow'
@@ -185,7 +185,7 @@ describe('a fetch probe', () => {
   it('ends the flow as blocked when the hook says the site refused the probe', async () => {
     const w = world()
     w.probe.respond = () => {
-      throw new SiteAdapterError('probe', 'blocked-by-site')
+      throw new ValetError('probe', 'blocked-by-site')
     }
     w.input.manifest = {
       ...withProbe(FETCH_PROBE),
@@ -209,7 +209,7 @@ describe('a fetch probe', () => {
   it('ends the flow as blocked when the hook says the site rate-limited the probe', async () => {
     const w = world()
     w.probe.respond = () => {
-      throw new SiteAdapterError('probe', 'rate-limited')
+      throw new ValetError('probe', 'rate-limited')
     }
     w.input.manifest = withProbe(FETCH_PROBE)
     expect(await runAuthFlow(w.input)).toEqual({

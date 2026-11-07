@@ -13,7 +13,7 @@ import {
   SecretValue,
   type SessionDriver,
   type ToolPage,
-} from '@siteadapter/core'
+} from '@valet/core'
 import { z } from 'zod'
 import type { DriverReporters } from '../../src/main/core/service'
 

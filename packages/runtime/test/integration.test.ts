@@ -5,7 +5,7 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { bundleHash, defineAdapter, SecretValue, tool } from '@siteadapter/core'
+import { bundleHash, defineAdapter, SecretValue, tool } from '@valet/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { ApprovalStore } from '../src/approvals'
@@ -22,7 +22,7 @@ const CANARY_PASSWORD = 'canary-password-c41f'
 let dir: string
 
 beforeEach(async () => {
-  dir = await mkdtemp(join(tmpdir(), 'siteadapter-integration-'))
+  dir = await mkdtemp(join(tmpdir(), 'valet-integration-'))
 })
 
 afterEach(async () => {

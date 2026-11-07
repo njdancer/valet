@@ -9,8 +9,8 @@ import {
   type MessagesOtpQuery,
   type OtpReader,
   SecretValue,
-} from '@siteadapter/core'
-import { FakeCredentialProvider } from '@siteadapter/credentials'
+} from '@valet/core'
+import { FakeCredentialProvider } from '@valet/credentials'
 import type { VaultItem } from '../../shared/api'
 import type { Credentials } from './credentials'
 

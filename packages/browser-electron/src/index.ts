@@ -1,4 +1,4 @@
-import type { AdapterManifest } from '@siteadapter/core'
+import type { AdapterManifest } from '@valet/core'
 import { ElectronSessionDriver, type ManifestOptions } from './driver'
 import type { Dial } from './egress-proxy'
 

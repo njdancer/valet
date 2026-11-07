@@ -2,7 +2,7 @@
 // screen against the fake API at a fixed time.
 
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react'
-import type { AppEventType, SiteAdapterApi } from '../../shared/api'
+import type { AppEventType, ValetApi } from '../../shared/api'
 
 export interface Clock {
   now(): number
@@ -10,7 +10,7 @@ export interface Clock {
 
 export const systemClock: Clock = { now: () => Date.now() }
 
-const ApiContext = createContext<SiteAdapterApi | null>(null)
+const ApiContext = createContext<ValetApi | null>(null)
 const ClockContext = createContext<Clock>(systemClock)
 
 export function ApiProvider({
@@ -18,7 +18,7 @@ export function ApiProvider({
   clock = systemClock,
   children,
 }: {
-  readonly api: SiteAdapterApi
+  readonly api: ValetApi
   readonly clock?: Clock
   readonly children: ReactNode
 }) {
@@ -29,7 +29,7 @@ export function ApiProvider({
   )
 }
 
-export function useApi(): SiteAdapterApi {
+export function useApi(): ValetApi {
   const api = useContext(ApiContext)
   if (api === null) throw new Error('useApi outside ApiProvider')
   return api
@@ -59,7 +59,7 @@ export type Loaded<T> =
  * data loaded for other deps (adapter A's detail under adapter B's route) reads as loading.
  */
 export function useLoad<T>(
-  load: (api: SiteAdapterApi) => Promise<T>,
+  load: (api: ValetApi) => Promise<T>,
   deps: readonly unknown[],
   refreshOn: readonly AppEventType[],
 ): Loaded<T> & { readonly reload: () => void } {

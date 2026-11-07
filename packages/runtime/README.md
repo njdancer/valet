@@ -1,6 +1,6 @@
-# @siteadapter/runtime
+# @valet/runtime
 
-Runs adapter tools. Plain Node, no Electron, no `@siteadapter/auth-flow`: the browser comes in as a
+Runs adapter tools. Plain Node, no Electron, no `@valet/auth-flow`: the browser comes in as a
 `SessionDriver` and the login as an injected `AuthRunner`.
 
 ## Wiring
@@ -239,7 +239,7 @@ Only a block signature trips the breaker: a 429 (`rate-limited`), a 403 HTML pag
 probe, or a login the `AuthRunner` reports `blocked` (with its cause). After each `goto` (tool
 code's, or the probe's trip home) a read-only script in the page's isolated world looks for
 Akamai's page by its title and text; `goto` reports no status, so a 403 or 429 from a navigation
-can't be seen. Tool code sees a block as `SiteAdapterError('tool-run', cause)`, and a request
+can't be seen. Tool code sees a block as `ValetError('tool-run', cause)`, and a request
 refused because the breaker is already open as `tool-run/rate-limited`; either way the call
 returns `blocked`. Other HTML where JSON was expected (an error page, a login redirect) is
 `tool-run/unexpected-shape` and leaves the breaker alone. `breaker-opened` (host, cause, retry

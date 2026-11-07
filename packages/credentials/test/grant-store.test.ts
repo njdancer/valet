@@ -3,7 +3,7 @@ import { constants } from 'node:fs'
 import * as fs from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { type Grant, SiteAdapterError } from '@siteadapter/core'
+import { type Grant, ValetError } from '@valet/core'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { FileGrantStore, type GrantFs, isValidGrant } from '../src/grant-store'
 
@@ -15,7 +15,7 @@ const grant: Grant = {
   adapterHash: HASH_A,
   secret: 'login',
   provider: 'onepassword-cli',
-  itemRef: 'op://siteadapter/Woolworths',
+  itemRef: 'op://valet/Woolworths',
   origins: ['https://www.woolworths.com.au'],
   grantedAt: '2026-11-07T00:00:00.000Z',
 }
@@ -35,7 +35,7 @@ let dir: string
 let path: string
 
 beforeEach(async () => {
-  dir = await fs.mkdtemp(join(tmpdir(), 'siteadapter-grants-'))
+  dir = await fs.mkdtemp(join(tmpdir(), 'valet-grants-'))
   path = join(dir, 'grants.json')
 })
 
@@ -43,14 +43,14 @@ afterEach(async () => {
   await fs.rm(dir, { recursive: true, force: true })
 })
 
-async function errorOf(promise: Promise<unknown>): Promise<SiteAdapterError> {
+async function errorOf(promise: Promise<unknown>): Promise<ValetError> {
   try {
     await promise
   } catch (error) {
-    if (error instanceof SiteAdapterError) return error
+    if (error instanceof ValetError) return error
     throw error
   }
-  throw new Error('expected a SiteAdapterError')
+  throw new Error('expected a ValetError')
 }
 
 async function writeRaw(value: unknown, mode = 0o600): Promise<void> {
@@ -124,10 +124,10 @@ describe('FileGrantStore', () => {
     const store = new FileGrantStore({ path })
     await store.put(grant)
     await store.put({ ...grant, adapterHash: HASH_B })
-    await store.put({ ...grant, itemRef: 'op://siteadapter/Woolworths 2' })
+    await store.put({ ...grant, itemRef: 'op://valet/Woolworths 2' })
     expect(await store.list()).toEqual([
       { ...grant, adapterHash: HASH_B },
-      { ...grant, itemRef: 'op://siteadapter/Woolworths 2' },
+      { ...grant, itemRef: 'op://valet/Woolworths 2' },
     ])
   })
 
@@ -192,7 +192,7 @@ describe('FileGrantStore', () => {
   it('does not hand out a 1Password grant as a messages grant', async () => {
     const store = new FileGrantStore({ path })
     await store.put(grant)
-    expect(await store.findMessages('woolworths', HASH_A, 'op://siteadapter/Woolworths')).toBeNull()
+    expect(await store.findMessages('woolworths', HASH_A, 'op://valet/Woolworths')).toBeNull()
   })
 
   it('revokes one sender, whatever the hash, and keeps the others', async () => {
@@ -266,21 +266,15 @@ describe('FileGrantStore', () => {
       ['an upper-case hash', { ...grant, adapterHash: HASH_A.toUpperCase() }],
       ['an unknown provider', { ...grant, provider: 'keychain' }],
       ['an empty item ref', { ...grant, itemRef: '' }],
-      [
-        'a 1Password item ref that names a field',
-        { ...grant, itemRef: 'op://siteadapter/Woolworths/password' },
-      ],
-      [
-        'a 1Password item ref with a query',
-        { ...grant, itemRef: 'op://siteadapter/Woolworths?attribute=otp' },
-      ],
+      ['a 1Password item ref that names a field', { ...grant, itemRef: 'op://valet/Woolworths/password' }],
+      ['a 1Password item ref with a query', { ...grant, itemRef: 'op://valet/Woolworths?attribute=otp' }],
       ['a 1Password item ref that is not op://', { ...grant, itemRef: 'Woolworths' }],
       [
         'a service-account item ref that names a field',
         {
           ...grant,
           provider: 'onepassword-service-account',
-          itemRef: 'op://siteadapter/Woolworths/password',
+          itemRef: 'op://valet/Woolworths/password',
         },
       ],
       ['a 1Password grant for the reserved messages secret', { ...grant, secret: 'messages' }],

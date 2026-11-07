@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
 import { ALLOWED_ENV, classifyArgv, refusedEnv } from '../../src/main/core/argv'
 import { SMOKE_ARGV } from '../../src/main/core/smoke'
 
-const EXE = '/Applications/siteadapter.app/Contents/MacOS/siteadapter'
+const EXE = '/Applications/Valet.app/Contents/MacOS/Valet'
 const MAIN = resolve(import.meta.dirname, '../../src/main')
 
 describe('classifyArgv', () => {

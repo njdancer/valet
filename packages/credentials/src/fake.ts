@@ -7,7 +7,7 @@ import {
   type ResolveFailure,
   type SecretField,
   SecretValue,
-} from '@siteadapter/core'
+} from '@valet/core'
 
 export type FakeItem = Partial<Readonly<Record<SecretField, string>>>
 

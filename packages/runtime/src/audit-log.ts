@@ -8,9 +8,9 @@ import {
   type AuditRecord,
   type AuditSink,
   canonicalJson,
-  SiteAdapterError,
   sha256Hex,
-} from '@siteadapter/core'
+  ValetError,
+} from '@valet/core'
 import type { Clock } from './clock'
 import { isErrno } from './files'
 
@@ -79,7 +79,7 @@ export class AuditLog implements AuditSink {
   // Appending to a log whose chain is already broken would launder the break, so refuse.
   private async readHead(): Promise<{ seq: number; hash: string }> {
     const verification = await verifyAuditLog(this.path)
-    if (!verification.ok) throw new SiteAdapterError('tool-run', 'internal')
+    if (!verification.ok) throw new ValetError('tool-run', 'internal')
     return { seq: verification.records, hash: verification.head }
   }
 }

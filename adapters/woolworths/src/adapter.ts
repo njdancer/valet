@@ -1,7 +1,7 @@
 // The Woolworths adapter: its manifest plus the tool implementations. Tools call the site with
 // paths relative to the page, so the same implementations serve the real and the fake origin.
 
-import { type AdapterDefinition, defineAdapter } from '@siteadapter/core'
+import { type AdapterDefinition, defineAdapter } from '@valet/core'
 import { addToCart, getCart, removeFromCart, setCartQuantity } from './cart'
 import { createManifest, type ManifestOptions } from './manifest'
 import { getProduct, searchProducts } from './products'

@@ -18,8 +18,8 @@ import {
   type Purpose,
   parseManifest,
   SecretValue,
-  SiteAdapterError,
-} from '@siteadapter/core'
+  ValetError,
+} from '@valet/core'
 import { app, BrowserWindow, type Cookie, session, type WebFrameMain } from 'electron'
 import { createElectronSessionDriver, hardenProcess, type ManifestOptions } from '../../src/index'
 import { startTestSite, type TestSite } from './server'
@@ -30,7 +30,7 @@ if (process.env.E2E_NO_SITE_ISOLATION !== undefined) {
   app.commandLine.appendSwitch('disable-features', 'IsolateOrigins,site-per-process')
 }
 app.commandLine.appendSwitch('host-resolver-rules', 'MAP *.test 127.0.0.1')
-app.setPath('userData', mkdtempSync(join(tmpdir(), 'siteadapter-e2e-profile-')))
+app.setPath('userData', mkdtempSync(join(tmpdir(), 'valet-e2e-profile-')))
 app.on('window-all-closed', () => {})
 const readyWhenHardened = app.isReady()
 
@@ -120,8 +120,7 @@ async function settle<T>(work: Promise<T>): Promise<Outcome<T>> {
   try {
     return { ok: await work }
   } catch (error) {
-    if (error instanceof SiteAdapterError)
-      return { error: { stage: error.stage, errorClass: error.errorClass } }
+    if (error instanceof ValetError) return { error: { stage: error.stage, errorClass: error.errorClass } }
     return { error: { other: String(error) } }
   }
 }

@@ -1,4 +1,4 @@
-import { SiteAdapterError } from '@siteadapter/core'
+import { ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { SurfaceToolPage } from '../src/tool-page'
 import { FakeFrame, FakeSurface, ManualTimers } from './fake-browser'
@@ -11,13 +11,12 @@ function timing(timers: ManualTimers) {
   return { timers, stepTimeoutMs: 1000, typingDelayMs: 50 }
 }
 
-async function rejection(promise: Promise<unknown>): Promise<SiteAdapterError> {
+async function rejection(promise: Promise<unknown>): Promise<ValetError> {
   const error = await promise.then(
     () => null,
     (e: unknown) => e,
   )
-  if (!(error instanceof SiteAdapterError))
-    throw new Error(`expected a SiteAdapterError, got ${String(error)}`)
+  if (!(error instanceof ValetError)) throw new Error(`expected a ValetError, got ${String(error)}`)
   return error
 }
 

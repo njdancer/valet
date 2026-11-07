@@ -2,8 +2,8 @@
 // The permission diff: each permission-expanding change, one test each (security-model.md, "Approval
 // and audit"), and that nothing in it comes from a step's note.
 
-import { createManifest } from '@siteadapter/adapter-woolworths'
-import { type AuthStep, type ManifestInput, parseManifest } from '@siteadapter/core'
+import { createManifest } from '@valet/adapter-woolworths'
+import { type AuthStep, type ManifestInput, parseManifest } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import {
   addsPermissions,

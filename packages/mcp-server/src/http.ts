@@ -5,9 +5,9 @@ import { randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import { SiteAdapterError, toReportable } from '@siteadapter/core'
+import { toReportable, ValetError } from '@valet/core'
 import { bearerAuthorized, hostAllowed, originAllowed } from './http-guards'
-import { clientLabel, createMcpServer, type ServerInfo, type SiteAdapterMcpServer } from './server'
+import { clientLabel, createMcpServer, type ServerInfo, type ValetMcpServer } from './server'
 import { isWellFormedToken } from './token'
 import type { ClientTransport, ToolCaller } from './tool-caller'
 import { planTools, type SkippedTool, type ToolPlan } from './tool-names'
@@ -60,12 +60,12 @@ export interface RunningHttpServer {
   /**
    * Re-reads the caller's tools once, gives every session that same list and tells each client it
    * changed. Returns the tools that were withheld and why. If the caller can't list its tools,
-   * throws SiteAdapterError and every session keeps the tools it had.
+   * throws ValetError and every session keeps the tools it had.
    */
   refresh(): readonly SkippedTool[]
   /**
    * Replaces the bearer token and closes every session, so nothing opened with the old token
-   * outlives it. Throws SiteAdapterError('config', 'invalid') for a malformed token.
+   * outlives it. Throws ValetError('config', 'invalid') for a malformed token.
    */
   setToken(token: string): Promise<void>
   /** The sessions open now, and how each one arrived. */
@@ -74,15 +74,15 @@ export interface RunningHttpServer {
 }
 
 interface Session {
-  readonly endpoint: SiteAdapterMcpServer
+  readonly endpoint: ValetMcpServer
   readonly transport: StreamableHTTPServerTransport
   readonly via: ClientTransport
 }
 
 export async function startHttpServer(options: HttpServerOptions): Promise<RunningHttpServer> {
-  if (!isWellFormedToken(options.token)) throw new SiteAdapterError('config', 'invalid')
+  if (!isWellFormedToken(options.token)) throw new ValetError('config', 'invalid')
   let token = options.token
-  const info = options.info ?? { name: 'siteadapter', version: '0.0.0' }
+  const info = options.info ?? { name: 'valet', version: '0.0.0' }
   const newSessionId = options.newSessionId ?? randomUUID
   const maxSessions = options.maxSessions ?? DEFAULT_MAX_SESSIONS
   // Map order is use order: a session is moved to the end each time it is used.
@@ -175,7 +175,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
   })
   await new Promise<void>((resolve, reject) => {
     // Usually EADDRINUSE. Node's message names the address; only the class leaves.
-    const failed = (): void => reject(new SiteAdapterError('config', 'unavailable'))
+    const failed = (): void => reject(new ValetError('config', 'unavailable'))
     server.once('error', failed)
     server.listen({ port: options.port ?? 0, host: '127.0.0.1' }, () => {
       server.off('error', failed)
@@ -194,13 +194,13 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
       } catch (error) {
         // All or nothing: a session left on the old list could keep offering a revoked tool.
         const { stage, errorClass } = toReportable(error, 'tool-run')
-        throw new SiteAdapterError(stage, errorClass)
+        throw new ValetError(stage, errorClass)
       }
       for (const session of sessions.values()) session.endpoint.apply(plan)
       return plan.skipped
     },
     async setToken(next) {
-      if (!isWellFormedToken(next)) throw new SiteAdapterError('config', 'invalid')
+      if (!isWellFormedToken(next)) throw new ValetError('config', 'invalid')
       token = next
       await Promise.all([...sessions.keys()].map(closeSession))
     },

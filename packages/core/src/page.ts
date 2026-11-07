@@ -30,7 +30,7 @@ export interface TypeOptions {
   /**
    * Origins the focused element's frame must be on, checked by the driver immediately before each
    * keystroke. If the frame navigates or focus moves while typing, the driver stops and throws
-   * SiteAdapterError('secret-fill', 'origin-mismatch'). Required when typing a SecretValue.
+   * ValetError('secret-fill', 'origin-mismatch'). Required when typing a SecretValue.
    */
   readonly allowedOrigins?: readonly string[]
 }

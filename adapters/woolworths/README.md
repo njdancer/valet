@@ -4,7 +4,7 @@ Searches woolworths.com.au and manages the online cart. It never checks out: no 
 touches a checkout or payment path, and no tool is `irreversible`.
 
 ```ts
-import adapter, { createAdapter } from '@siteadapter/adapter-woolworths'
+import adapter, { createAdapter } from '@valet/adapter-woolworths'
 
 adapter // the real site: www.woolworths.com.au, signing in on auth.woolworths.com.au
 createAdapter({ origin: site.origin, authOrigin: site.authOrigin }) // the fake site, for tests and e2e
@@ -85,23 +85,23 @@ sent (core change requests below).
 
 Tools throw, never a raw error or a result that describes the failure:
 
-| Situation                                   | Thrown                                                                                                                  |
-| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `ensure()` says `needsUser`                 | `NeedsUserError(reason)`, the reason if it is in core's vocabulary, else `other`                                        |
-| `ensure()` failed                           | `SiteAdapterError` with its own stage and class, if both are in the core vocabularies, else `auth-step` / `auth-failed` |
-| HTTP 401 on a cart call                     | one more `ensure()` and a retry from the start of the tool; a second 401 is `tool-run` / `not-logged-in`                |
-| HTTP 401 on a product call                  | `tool-run` / `not-logged-in`                                                                                            |
-| HTTP 403 (Akamai)                           | `tool-run` / `blocked-by-site`                                                                                          |
-| HTTP 429                                    | `tool-run` / `rate-limited`                                                                                             |
-| 2xx that is HTML (block page or login page) | `tool-run` / `blocked-by-site`                                                                                          |
-| 2xx that is neither JSON nor HTML           | `tool-run` / `unavailable`                                                                                              |
-| HTTP 404, or detail with no `Product`       | `tool-run` / `not-found`                                                                                                |
-| Other non-2xx, or `fetch` threw             | `tool-run` / `unavailable`                                                                                              |
-| JSON not in the expected shape              | `tool-run` / `unexpected-shape`                                                                                         |
-| Signal aborted before a call                | `tool-run` / `aborted`                                                                                                  |
-| `add_to_cart` would exceed 50               | `tool-input` / `invalid`                                                                                                |
-| `add_to_cart` read an incomplete trolley    | `tool-run` / `unexpected-shape`                                                                                         |
-| Update reply says the site refused          | `tool-run` / `invalid`                                                                                                  |
+| Situation                                   | Thrown                                                                                                            |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `ensure()` says `needsUser`                 | `NeedsUserError(reason)`, the reason if it is in core's vocabulary, else `other`                                  |
+| `ensure()` failed                           | `ValetError` with its own stage and class, if both are in the core vocabularies, else `auth-step` / `auth-failed` |
+| HTTP 401 on a cart call                     | one more `ensure()` and a retry from the start of the tool; a second 401 is `tool-run` / `not-logged-in`          |
+| HTTP 401 on a product call                  | `tool-run` / `not-logged-in`                                                                                      |
+| HTTP 403 (Akamai)                           | `tool-run` / `blocked-by-site`                                                                                    |
+| HTTP 429                                    | `tool-run` / `rate-limited`                                                                                       |
+| 2xx that is HTML (block page or login page) | `tool-run` / `blocked-by-site`                                                                                    |
+| 2xx that is neither JSON nor HTML           | `tool-run` / `unavailable`                                                                                        |
+| HTTP 404, or detail with no `Product`       | `tool-run` / `not-found`                                                                                          |
+| Other non-2xx, or `fetch` threw             | `tool-run` / `unavailable`                                                                                        |
+| JSON not in the expected shape              | `tool-run` / `unexpected-shape`                                                                                   |
+| Signal aborted before a call                | `tool-run` / `aborted`                                                                                            |
+| `add_to_cart` would exceed 50               | `tool-input` / `invalid`                                                                                          |
+| `add_to_cart` read an incomplete trolley    | `tool-run` / `unexpected-shape`                                                                                   |
+| Update reply says the site refused          | `tool-run` / `invalid`                                                                                            |
 
 Cart tools throw rather than returning a "please log in" result so the runtime records a failed
 call. `NeedsUserError` ends the run as `needsUser` with a reason code (`captcha`, `otp-required`,
@@ -120,7 +120,7 @@ An HTML 2xx can be Akamai's challenge or the login page served to an expired ses
 the response tells them apart. It is reported as `blocked-by-site`, as the runtime's own block
 detection does, so the runtime backs off; its next `ensure()` probe then finds an expired session.
 
-A `SiteAdapterError` thrown by the runtime's own guards (for example the request ceiling) passes
+A `ValetError` thrown by the runtime's own guards (for example the request ceiling) passes
 through unchanged.
 
 ## Login
@@ -275,8 +275,8 @@ tool's side effect. `auth-steps.test.ts` walks the auth steps against scripted A
 combination included, and checks that the flow never runs off the end and types each secret at
 most once.
 
-`e2e.test.ts` runs the adapter against `@siteadapter/fake-woolworths-site` over real HTTPS, with
-a test certificate from `openssl`. Without openssl the suite fails; `SITEADAPTER_SKIP_E2E=1`
+`e2e.test.ts` runs the adapter against `@valet/fake-woolworths-site` over real HTTPS, with
+a test certificate from `openssl`. Without openssl the suite fails; `VALET_SKIP_E2E=1`
 skips it on purpose. It runs through `test/e2e/`, a stand-in for the runtime and the Electron
 driver: a cookie jar per partition that honours `Domain=`, a minimal DOM with one level of
 iframes (loaded only from the origins core v2 allows), the secret-fill guards, `ensure()` as the

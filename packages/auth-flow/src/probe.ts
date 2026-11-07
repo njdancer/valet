@@ -2,7 +2,7 @@
 // anything has been handed to the tool partition. The AuthProbe hook only fetches the evidence;
 // deciding what it means happens here, so that every caller reads a probe the same way.
 
-import { type FetchResult, httpsOrigin, SiteAdapterError, urlOriginAllowed } from '@siteadapter/core'
+import { type FetchResult, httpsOrigin, urlOriginAllowed, ValetError } from '@valet/core'
 import { type FlowContext, guarded } from './context'
 
 /**
@@ -17,26 +17,26 @@ export async function probeLoggedIn(ctx: FlowContext): Promise<boolean> {
   const probe = manifest.session.probe
   if (probe.kind === 'cookie') {
     const names = await guarded('probe', () => hook.cookieNames(manifest.session.cookieDomains))
-    if (!Array.isArray(names)) throw new SiteAdapterError('probe', 'internal')
+    if (!Array.isArray(names)) throw new ValetError('probe', 'internal')
     return names.includes(probe.name)
   }
   const url = probeUrl(probe.path, manifest.home, manifest.navigation)
   const result: FetchResult = await guarded('probe', () => hook.fetch(url))
   if (result === null || typeof result !== 'object' || !Number.isInteger(result.status)) {
-    throw new SiteAdapterError('probe', 'internal')
+    throw new ValetError('probe', 'internal')
   }
   // Before anything else, whatever the manifest expects: a refusal is never an answer about the
   // session, and the hook returning one rather than throwing must not turn it into an ordinary
   // failure that skips the cooldown.
   const refusal = siteRefusal(result)
-  if (refusal !== null) throw new SiteAdapterError('probe', refusal)
+  if (refusal !== null) throw new ValetError('probe', refusal)
   if (result.status !== probe.expectStatus) {
     if (probe.loggedOutStatuses.includes(result.status)) return false
-    throw new SiteAdapterError('probe', 'unavailable')
+    throw new ValetError('probe', 'unavailable')
   }
   if (probe.jsonPath === undefined) return true
   // HTML where the probe expected JSON is an error or interstitial page, not an answer.
-  if (isHtml(result)) throw new SiteAdapterError('probe', 'unavailable')
+  if (isHtml(result)) throw new ValetError('probe', 'unavailable')
   const value = readJsonPath(result.body, probe.jsonPath)
   return probe.equals === undefined ? Boolean(value) : value === probe.equals
 }
@@ -52,10 +52,10 @@ function probeUrl(path: string, home: string, navigation: readonly string[]): st
   try {
     url = new URL(path, home)
   } catch {
-    throw new SiteAdapterError('probe', 'host-not-allowed')
+    throw new ValetError('probe', 'host-not-allowed')
   }
   if (homeOrigin === null || url.origin !== homeOrigin || !urlOriginAllowed(url.href, navigation)) {
-    throw new SiteAdapterError('probe', 'host-not-allowed')
+    throw new ValetError('probe', 'host-not-allowed')
   }
   return url.href
 }

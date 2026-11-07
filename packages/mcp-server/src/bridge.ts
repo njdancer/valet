@@ -66,8 +66,8 @@ export interface RunningBridge {
 const BRIDGE_ERROR_CODE = -32000
 const DEFAULT_RECONNECT_TIMEOUT_MS = 10_000
 /** Ids for the bridge's own requests; answers to them are never passed to the client. */
-const OWN_ID_PREFIX = 'siteadapter-bridge-'
-const SESSION_ENDED = 'the siteadapter session ended before this request was answered'
+const OWN_ID_PREFIX = 'valet-bridge-'
+const SESSION_ENDED = 'the Valet session ended before this request was answered'
 
 const defaultSchedule: Schedule = (run, ms) => {
   const timer = setTimeout(run, ms)
@@ -304,9 +304,9 @@ function restartLike(error: unknown): boolean {
 /** Fixed texts only: an upstream error message could carry anything the server sent. */
 function describeFailure(error: unknown): string {
   if (error instanceof StreamableHTTPError) {
-    if (error.code === 401) return 'siteadapter refused the bridge token; check the bridge config'
-    if (error.code === 403) return 'siteadapter refused the request'
-    if (error.code === 404) return 'the siteadapter session has ended; restart this MCP server'
+    if (error.code === 401) return 'valet refused the bridge token; check the bridge config'
+    if (error.code === 403) return 'valet refused the request'
+    if (error.code === 404) return 'the Valet session has ended; restart this MCP server'
   }
-  return 'siteadapter is not reachable; make sure the app is running'
+  return 'valet is not reachable; make sure the app is running'
 }

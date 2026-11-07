@@ -39,7 +39,6 @@ import {
   manifestSchema,
   NeedsUserError,
   type SessionDriver,
-  SiteAdapterError,
   type Stage,
   type ToolContext,
   type ToolDeclaration,
@@ -47,7 +46,8 @@ import {
   type ToolPage,
   type ToolRunPolicy,
   toReportable,
-} from '@siteadapter/core'
+  ValetError,
+} from '@valet/core'
 import type { z } from 'zod'
 import type { ApprovalLookup } from './approvals'
 import type { JsonStore } from './breaker-state'
@@ -219,7 +219,7 @@ export class ToolHost {
    *   rate budget before `step` runs; `ctx.pace()` takes another before each further request;
    * - `step` runs under a deadline, and the lock stays held until it settles, up to the settle bound.
    *
-   * Rejects with SiteAdapterError: `config/invalid` (a `waitMs` or `timeoutMs` that isn't a finite
+   * Rejects with ValetError: `config/invalid` (a `waitMs` or `timeoutMs` that isn't a finite
    * number above zero, before anything else), `manifest/not-granted`, `login/rate-limited` (the breaker is open,
    * before the step or at a `pace()`), `login/timed-out` (the wait or the step ran out of time) or
    * `login/aborted`. Whatever `step` throws is passed on unchanged: it is the app's own code.
@@ -234,32 +234,32 @@ export class ToolHost {
     const timeoutMs = boundOf(options.timeoutMs, this.timeoutMs)
     const entry = this.adapters.get(adapterId)
     if (entry === undefined || !(await this.isApproved(entry)))
-      throw new SiteAdapterError('manifest', 'not-granted')
+      throw new ValetError('manifest', 'not-granted')
     const external = signalOf(options.signal)
-    if (external?.aborted) throw new SiteAdapterError('login', 'aborted')
+    if (external?.aborted) throw new ValetError('login', 'aborted')
     // A block persisted by an earlier run of the app must be in force before anything is sent.
     await this.protection.ready()
     const lock = await this.acquireLock(adapterId, waitMs, external)
-    if (lock === 'aborted') throw new SiteAdapterError('login', 'aborted')
-    if (lock === 'timed-out') throw new SiteAdapterError('login', 'timed-out')
+    if (lock === 'aborted') throw new ValetError('login', 'aborted')
+    if (lock === 'timed-out') throw new ValetError('login', 'timed-out')
     const release = lock
     const controller = new AbortController()
     const stop = (): void => controller.abort()
     external?.addEventListener('abort', stop, { once: true })
     let unsettled: Promise<unknown> | null = null
     try {
-      if (!(await this.isApproved(entry))) throw new SiteAdapterError('manifest', 'not-granted')
+      if (!(await this.isApproved(entry))) throw new ValetError('manifest', 'not-granted')
       const pace = async (): Promise<void> => {
-        if (controller.signal.aborted) throw new SiteAdapterError('login', 'aborted')
-        if (entry.site.breaker.isOpen()) throw new SiteAdapterError('login', 'rate-limited')
+        if (controller.signal.aborted) throw new ValetError('login', 'aborted')
+        if (entry.site.breaker.isOpen()) throw new ValetError('login', 'rate-limited')
         try {
           await entry.site.budget.acquire(controller.signal)
         } catch {
-          throw new SiteAdapterError('login', 'aborted')
+          throw new ValetError('login', 'aborted')
         }
         // Another adapter on the same host may have been blocked while this one waited.
-        if (entry.site.breaker.isOpen()) throw new SiteAdapterError('login', 'rate-limited')
-        if (controller.signal.aborted) throw new SiteAdapterError('login', 'aborted')
+        if (entry.site.breaker.isOpen()) throw new ValetError('login', 'rate-limited')
+        if (controller.signal.aborted) throw new ValetError('login', 'aborted')
       }
       await pace()
       const ctx: LoginStepContext = {
@@ -280,7 +280,7 @@ export class ToolHost {
         unsettled = null
         throw outcome.error
       }
-      throw new SiteAdapterError('login', outcome.kind === 'timed-out' ? 'timed-out' : 'aborted')
+      throw new ValetError('login', outcome.kind === 'timed-out' ? 'timed-out' : 'aborted')
     } finally {
       external?.removeEventListener('abort', stop)
       controller.abort()
@@ -564,7 +564,7 @@ export class ToolHost {
     const initiator = request.initiator === 'page' ? 'page' : 'tool'
     const [stage, errorClass] = BLOCKED_REASON[reason]
     if (initiator === 'tool' || VIOLATION_WHOEVER_ASKED.has(reason)) {
-      state.violation ??= new SiteAdapterError(stage, errorClass)
+      state.violation ??= new ValetError(stage, errorClass)
     }
     const method = plainMethod(request.method)
     const target = typeof request.target === 'string' ? request.target.slice(0, MAX_TARGET_LENGTH) : ''
@@ -780,7 +780,7 @@ function signalOf(value: unknown): AbortSignal | undefined {
 function boundOf(value: unknown, fallback: number): number {
   if (value === undefined) return fallback
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0)
-    throw new SiteAdapterError('config', 'invalid')
+    throw new ValetError('config', 'invalid')
   return value
 }
 

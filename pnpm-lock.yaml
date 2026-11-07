@@ -29,14 +29,14 @@ importers:
 
   adapters/woolworths:
     dependencies:
-      '@siteadapter/core':
+      '@valet/core':
         specifier: workspace:*
         version: link:../../packages/core
       zod:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
-      '@siteadapter/fake-woolworths-site':
+      '@valet/fake-woolworths-site':
         specifier: workspace:*
         version: link:../../fakes/woolworths-site
 
@@ -45,25 +45,25 @@ importers:
       '@1password/sdk':
         specifier: ^0.5.0
         version: 0.5.0
-      '@siteadapter/adapter-woolworths':
+      '@valet/adapter-woolworths':
         specifier: workspace:*
         version: link:../../adapters/woolworths
-      '@siteadapter/auth-flow':
+      '@valet/auth-flow':
         specifier: workspace:*
         version: link:../../packages/auth-flow
-      '@siteadapter/browser-electron':
+      '@valet/browser-electron':
         specifier: workspace:*
         version: link:../../packages/browser-electron
-      '@siteadapter/core':
+      '@valet/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@siteadapter/credentials':
+      '@valet/credentials':
         specifier: workspace:*
         version: link:../../packages/credentials
-      '@siteadapter/mcp-server':
+      '@valet/mcp-server':
         specifier: workspace:*
         version: link:../../packages/mcp-server
-      '@siteadapter/runtime':
+      '@valet/runtime':
         specifier: workspace:*
         version: link:../../packages/runtime
       electron-updater:
@@ -85,7 +85,7 @@ importers:
       '@playwright/test':
         specifier: ^1.65.0
         version: 1.65.0
-      '@siteadapter/fake-woolworths-site':
+      '@valet/fake-woolworths-site':
         specifier: workspace:*
         version: link:../../fakes/woolworths-site
       '@testing-library/react':
@@ -132,20 +132,20 @@ importers:
 
   packages/auth-flow:
     dependencies:
-      '@siteadapter/core':
+      '@valet/core':
         specifier: workspace:*
         version: link:../core
 
   packages/browser-electron:
     dependencies:
-      '@siteadapter/core':
+      '@valet/core':
         specifier: workspace:*
         version: link:../core
     devDependencies:
       '@playwright/test':
         specifier: ^1.65.0
         version: 1.65.0
-      '@siteadapter/fake-woolworths-site':
+      '@valet/fake-woolworths-site':
         specifier: workspace:*
         version: link:../../fakes/woolworths-site
       electron:
@@ -163,7 +163,7 @@ importers:
       '@1password/sdk':
         specifier: ^0.5.0
         version: 0.5.0
-      '@siteadapter/core':
+      '@valet/core':
         specifier: workspace:*
         version: link:../core
 
@@ -172,36 +172,36 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.32.2
         version: 1.32.2(zod@4.6.7)
-      '@siteadapter/core':
+      '@valet/core':
         specifier: workspace:*
         version: link:../core
-      '@siteadapter/runtime':
+      '@valet/runtime':
         specifier: workspace:*
         version: link:../runtime
       zod:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
-      '@siteadapter/adapter-woolworths':
+      '@valet/adapter-woolworths':
         specifier: workspace:*
         version: link:../../adapters/woolworths
 
   packages/runtime:
     dependencies:
-      '@siteadapter/auth-flow':
+      '@valet/auth-flow':
         specifier: workspace:*
         version: link:../auth-flow
-      '@siteadapter/core':
+      '@valet/core':
         specifier: workspace:*
         version: link:../core
       zod:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
-      '@siteadapter/adapter-woolworths':
+      '@valet/adapter-woolworths':
         specifier: workspace:*
         version: link:../../adapters/woolworths
-      '@siteadapter/fake-woolworths-site':
+      '@valet/fake-woolworths-site':
         specifier: workspace:*
         version: link:../../fakes/woolworths-site
 

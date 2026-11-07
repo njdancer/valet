@@ -3,7 +3,7 @@
 // and may show only the app's own pages: navigation and new windows are refused, and the default
 // session loads nothing but the renderer's files.
 
-import { partitionName } from '@siteadapter/browser-electron'
+import { partitionName } from '@valet/browser-electron'
 import { BrowserWindow, type Rectangle, screen, session, type WebContents } from 'electron'
 import { parseRoute } from '../../renderer/lib/routes'
 import type { HashRoute } from '../../shared/api'

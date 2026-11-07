@@ -11,7 +11,7 @@ import {
   type NeedsUserReason,
   STAGES,
   type Stage,
-} from '@siteadapter/core'
+} from '@valet/core'
 import type { CallOutcome } from './tool-caller'
 
 /** The classes a blocked outcome may carry. */
@@ -29,7 +29,7 @@ export function toolResult(outcome: CallOutcome, structured: boolean): CallToolR
       return okResult(outcome.output, structured)
     case 'needsUser':
       return textResult(
-        `Not done yet: the person has been asked to act in the siteadapter app (reason: ${needsUserCode(outcome.reason)}). ` +
+        `Not done yet: the person has been asked to act in the Valet app (reason: ${needsUserCode(outcome.reason)}). ` +
           'Call this tool again once they have.',
         structured,
       )
@@ -48,7 +48,7 @@ export function toolResult(outcome: CallOutcome, structured: boolean): CallToolR
     }
     case 'declined':
       return textResult(
-        'The person did not approve this action in the siteadapter app (stage confirm: declined).',
+        'The person did not approve this action in the Valet app (stage confirm: declined).',
         true,
       )
   }

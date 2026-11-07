@@ -1,11 +1,11 @@
 import { inspect } from 'node:util'
-import { CredentialError } from '@siteadapter/core'
+import { CredentialError } from '@valet/core'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { classifyOpFailure, DEFAULT_OP_PATHS, OnePasswordCliProvider } from '../src/onepassword-cli'
 import { type FakeChild, ManualTimers, scriptedSpawner } from './fake-process'
 
 const CANARY = 'canary-pw-7f3a91c2'
-const ITEM = 'op://siteadapter/Woolworths'
+const ITEM = 'op://valet/Woolworths'
 const OP_PATH = '/opt/homebrew/bin/op'
 // op is "installed" at OP_PATH only. Lookup is injected, so no test looks at the disk.
 const FOUND = { searchPath: null, isExecutable: async (path: string) => path === OP_PATH }
@@ -32,7 +32,7 @@ describe('OnePasswordCliProvider', () => {
     expect(secret.reveal((plaintext) => plaintext)).toBe(CANARY)
     expect(calls).toHaveLength(1)
     expect(calls[0]?.command).toBe(OP_PATH)
-    expect(calls[0]?.args).toEqual(['read', '--no-newline', 'op://siteadapter/Woolworths/password'])
+    expect(calls[0]?.args).toEqual(['read', '--no-newline', 'op://valet/Woolworths/password'])
     expect(provider.kind).toBe('onepassword-cli')
   })
 
@@ -42,8 +42,8 @@ describe('OnePasswordCliProvider', () => {
     await provider.resolve(ITEM, 'username')
     await provider.resolve(ITEM, 'otp')
     expect(calls.map((call) => call.args[2])).toEqual([
-      'op://siteadapter/Woolworths/username',
-      'op://siteadapter/Woolworths/one-time password?attribute=otp',
+      'op://valet/Woolworths/username',
+      'op://valet/Woolworths/one-time password?attribute=otp',
     ])
   })
 
@@ -206,11 +206,11 @@ describe('OnePasswordCliProvider', () => {
     const { spawner, calls } = scriptedSpawner((child) => child.finish(0, CANARY))
     const provider = new OnePasswordCliProvider({ ...FOUND, spawner, timers: new ManualTimers() })
     for (const bad of [
-      'op://siteadapter/Woolworths/password',
-      'op://siteadapter/Woolworths?attribute=otp',
-      'op://siteadapter',
-      'siteadapter/Woolworths',
-      'op://siteadapter/Woolworths\n--account=evil',
+      'op://valet/Woolworths/password',
+      'op://valet/Woolworths?attribute=otp',
+      'op://valet',
+      'valet/Woolworths',
+      'op://valet/Woolworths\n--account=evil',
       '',
     ]) {
       expect((await failureOf(provider.resolve(bad, 'password'))).failure).toBe('not-found')
@@ -281,15 +281,15 @@ describe('OnePasswordCliProvider', () => {
       ],
       ['[ERROR] 2026/11/07 00:00:00 1Password is locked', 'locked'],
       [
-        `[ERROR] 2026/11/07 00:00:00 could not read secret '${ITEM}/password': could not get item: "Woolworths" isn't an item in the "siteadapter" vault. Specify the item with its UUID, name, or domain.`,
+        `[ERROR] 2026/11/07 00:00:00 could not read secret '${ITEM}/password': could not get item: "Woolworths" isn't an item in the "valet" vault. Specify the item with its UUID, name, or domain.`,
         'not-found',
       ],
       [
-        `[ERROR] 2026/11/07 00:00:00 could not read secret '${ITEM}/password': "siteadapter" isn't a vault in this account. Specify the vault with its ID or name.`,
+        `[ERROR] 2026/11/07 00:00:00 could not read secret '${ITEM}/password': "valet" isn't a vault in this account. Specify the vault with its ID or name.`,
         'not-found',
       ],
       [
-        `[ERROR] 2026/11/07 00:00:00 could not read secret '${ITEM}/one-time password?attribute=otp': item 'siteadapter/Woolworths' does not have a field 'one-time password'`,
+        `[ERROR] 2026/11/07 00:00:00 could not read secret '${ITEM}/one-time password?attribute=otp': item 'valet/Woolworths' does not have a field 'one-time password'`,
         'field-missing',
       ],
       ['[ERROR] 2026/11/07 00:00:00 no field matched the secret reference', 'field-missing'],

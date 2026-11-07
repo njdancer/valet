@@ -24,8 +24,8 @@ import {
   isBareOrigin,
   MESSAGES_SECRET,
   type ProviderKind,
-  SiteAdapterError,
-} from '@siteadapter/core'
+  ValetError,
+} from '@valet/core'
 import { parseItemRef } from './item-ref'
 import { parseOtpSender, sameOtpSender } from './otp-sender'
 
@@ -97,7 +97,7 @@ export class FileGrantStore implements GrantStore {
   }
 
   put(grant: Grant): Promise<void> {
-    if (!isValidGrant(grant)) return Promise.reject(new SiteAdapterError('grant', 'invalid'))
+    if (!isValidGrant(grant)) return Promise.reject(new ValetError('grant', 'invalid'))
     const stored = copyGrant(grant)
     return this.#exclusive(async () => {
       const others = (await this.#read()).filter((g) => !sameSlot(g, stored))
@@ -141,23 +141,23 @@ export class FileGrantStore implements GrantStore {
       const handle = await this.#fs.open(this.#path, READ_FLAGS)
       try {
         const info = await handle.stat()
-        if (!info.isFile() || !safeOwnership(info)) throw new SiteAdapterError('config', 'insecure-file')
+        if (!info.isFile() || !safeOwnership(info)) throw new ValetError('config', 'insecure-file')
         raw = await handle.readFile('utf8')
       } finally {
         await handle.close()
       }
     } catch (error) {
-      if (error instanceof SiteAdapterError) throw error
+      if (error instanceof ValetError) throw error
       if (errorCode(error) === 'ENOENT') return []
       // What O_NOFOLLOW reports for a symlink.
-      if (errorCode(error) === 'ELOOP') throw new SiteAdapterError('config', 'insecure-file')
-      throw new SiteAdapterError('config', 'unavailable')
+      if (errorCode(error) === 'ELOOP') throw new ValetError('config', 'insecure-file')
+      throw new ValetError('config', 'unavailable')
     }
     let parsed: unknown
     try {
       parsed = JSON.parse(raw)
     } catch {
-      throw new SiteAdapterError('config', 'invalid')
+      throw new ValetError('config', 'invalid')
     }
     return parseGrantFile(parsed)
   }
@@ -169,7 +169,7 @@ export class FileGrantStore implements GrantStore {
     try {
       await this.#fs.mkdir(directory, { recursive: true, mode: 0o700 })
     } catch {
-      throw new SiteAdapterError('config', 'unavailable')
+      throw new ValetError('config', 'unavailable')
     }
     // mkdir's mode only applies to a directory it creates; an existing one is checked as on read.
     await this.#checkDirectory()
@@ -186,7 +186,7 @@ export class FileGrantStore implements GrantStore {
       await this.#fs.rename(temp, this.#path)
     } catch {
       await this.#fs.unlink(temp).catch(() => {})
-      throw new SiteAdapterError('config', 'unavailable')
+      throw new ValetError('config', 'unavailable')
     }
     await this.#syncDirectory(directory)
   }
@@ -201,9 +201,9 @@ export class FileGrantStore implements GrantStore {
       info = await this.#fs.lstat(dirname(this.#path))
     } catch (error) {
       if (errorCode(error) === 'ENOENT') return false
-      throw new SiteAdapterError('config', 'unavailable')
+      throw new ValetError('config', 'unavailable')
     }
-    if (!info.isDirectory() || !safeOwnership(info)) throw new SiteAdapterError('config', 'insecure-file')
+    if (!info.isDirectory() || !safeOwnership(info)) throw new ValetError('config', 'insecure-file')
     return true
   }
 
@@ -225,15 +225,15 @@ export class FileGrantStore implements GrantStore {
 /** The file's contents, all or nothing: one bad grant and none are used. */
 function parseGrantFile(value: unknown): Grant[] {
   if (!isPlainObject(value) || !hasExactKeys(value, ['version', 'grants'])) {
-    throw new SiteAdapterError('config', 'invalid')
+    throw new ValetError('config', 'invalid')
   }
   const { version, grants: candidates } = value
-  if (version !== 1 || !Array.isArray(candidates)) throw new SiteAdapterError('config', 'invalid')
+  if (version !== 1 || !Array.isArray(candidates)) throw new ValetError('config', 'invalid')
   const grants: Grant[] = []
   for (const candidate of candidates as unknown[]) {
-    if (!isValidGrant(candidate)) throw new SiteAdapterError('config', 'invalid')
+    if (!isValidGrant(candidate)) throw new ValetError('config', 'invalid')
     // Two grants in one slot means the file was edited by hand or by something else.
-    if (grants.some((g) => sameSlot(g, candidate))) throw new SiteAdapterError('config', 'invalid')
+    if (grants.some((g) => sameSlot(g, candidate))) throw new ValetError('config', 'invalid')
     grants.push(copyGrant(candidate))
   }
   return grants

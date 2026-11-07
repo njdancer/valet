@@ -1,8 +1,8 @@
-# siteadapter
+# Valet
 
 A macOS menu-bar app that turns per-site browser automation "adapters" into MCP tools, so agents
-can use websites that have no API, as you, without ever seeing your passwords. "siteadapter" is a
-working name.
+can use websites that have no API, as you, without ever seeing your passwords. Like a valet key, it can drive
+the car but can't open the glovebox.
 
 **Status: pre-alpha.** Everything runs end to end against a local fake of the first site
 (Woolworths, an Australian supermarket): log in, search, read and change the cart. It has not

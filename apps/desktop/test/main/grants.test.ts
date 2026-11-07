@@ -2,7 +2,7 @@
 // Grant requests checked against the approved manifest: the exact hash, an available provider, a
 // requested secret or declared sender, origins inside the request, an item the provider lists.
 
-import { type ProviderKind, parseManifest, SiteAdapterError } from '@siteadapter/core'
+import { type ProviderKind, parseManifest, ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import {
   checkGrantRequest,
@@ -39,8 +39,8 @@ async function refusal(promise: Promise<unknown>): Promise<string> {
     () => null,
     (e: unknown) => e,
   )
-  expect(error).toBeInstanceOf(SiteAdapterError)
-  return `${(error as SiteAdapterError).stage}/${(error as SiteAdapterError).errorClass}`
+  expect(error).toBeInstanceOf(ValetError)
+  return `${(error as ValetError).stage}/${(error as ValetError).errorClass}`
 }
 
 describe('checkGrantRequest', () => {
@@ -52,7 +52,7 @@ describe('checkGrantRequest', () => {
         adapterHash: HASH,
         secret: 'login',
         provider: 'onepassword-cli',
-        itemRef: 'op://siteadapter/item1',
+        itemRef: 'op://Valet/item1',
         origins: ['https://login.shop.test'],
         grantedAt: NOW.toISOString(),
       },
@@ -183,14 +183,14 @@ describe('checkGrantRequest', () => {
 
 describe('item references', () => {
   it('round-trips vault ids and keeps fake and Messages references as they are', () => {
-    expect(itemRefFor('onepassword-service-account', 'abc')).toBe('op://siteadapter/abc')
+    expect(itemRefFor('onepassword-service-account', 'abc')).toBe('op://Valet/abc')
     expect(itemRefFor('fake', 'demo-woolworths')).toBe('demo-woolworths')
     const grant = {
       adapterId: 'shop',
       adapterHash: HASH,
       secret: 'login',
       provider: 'onepassword-cli' as const,
-      itemRef: 'op://siteadapter/abc',
+      itemRef: 'op://Valet/abc',
       origins: ['https://login.shop.test'],
       grantedAt: NOW.toISOString(),
     }
@@ -207,11 +207,11 @@ describe('item references', () => {
       adapterHash: HASH,
       secret: 'login',
       provider: 'onepassword-cli' as const,
-      itemRef: 'op://siteadapter/abc',
+      itemRef: 'op://Valet/abc',
       origins: ['https://login.shop.test'],
       grantedAt: NOW.toISOString(),
     }
-    const info = grantInfo(grant, { 'op://siteadapter/abc': 'Shop' }, null)
+    const info = grantInfo(grant, { 'op://Valet/abc': 'Shop' }, null)
     expect(info.itemTitle).toBe('Shop')
     expect(JSON.stringify(info)).not.toContain('op://')
     expect(grantInfo(grant, {}, null).itemTitle).toBe('(item)')
