@@ -433,7 +433,7 @@ answered on time.
 - Exit: someone who isn't Nick installs it from the site, connects Claude, and uses an adapter
   without help.
 - Effort: 5–8 agent-days. Nick: 6–10 hours (writing in his own voice, the launch itself).
-- Decisions needed: [D3](#d3-repository-hosting-and-going-public), [D15](#d15-telemetry),
+- Decisions needed: [D15](#d15-telemetry),
   [D21](#d21-mcp-client-support), [D22](#d22-second-adapter), [D25](#d25-adapter-legal-posture).
 
 ### M9. Relay beta (optional)
@@ -1058,9 +1058,10 @@ to answer first: they block M2 or M3, or they're expensive to change later.
 | D61 | **The update feed's signing key**           | 1Password, in its own vault, Touch ID from the release script                                 | M3         |
 
 Already decided, recorded for completeness: [D1](#d1-product-name) (the name, Valet),
-[D2](#d2-licence) (Apache-2.0), [D9](#d9-user-agent) (the clean Chrome UA, decided by run 4 of
-the live probe and now the architecture's default) and
-[D39](#d39-auth-subframe-origins) (auth subframes pinned to a list, decided by core v2).
+[D2](#d2-licence) (Apache-2.0), [D3](#d3-repository-hosting-and-going-public) (public now),
+[D9](#d9-user-agent) (the clean Chrome UA, decided by run 4 of the live probe and now the
+architecture's default) and [D39](#d39-auth-subframe-origins) (auth subframes pinned to a list,
+decided by core v2).
 
 D31 to D54 are the questions round 1 raised. Each has options and a recommendation; none blocks
 round 2. D55 to D59 came out of the review of the round-2 docs; D55 and D58 block M2's live work.
@@ -1100,6 +1101,8 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D3. Repository hosting and going public
 
+- Decided 2026-11-07: **public now**, before M8. The README says pre-alpha, and no adapter but
+  the bundled one can be installed yet, so the M7 concern doesn't apply until that changes.
 - Options: stay local until M8; private GitHub repo now, public at M8; public now.
 - Recommendation: private GitHub repo now, for backup and later CI, public at M8. Public before
   the sandbox (M7) invites people to install third-party adapters the design can't contain yet.
