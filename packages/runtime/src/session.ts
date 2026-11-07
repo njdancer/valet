@@ -86,8 +86,11 @@ export interface EnsureCall {
 
 const OK: EnsureResult = { status: 'ok' }
 
-/** What a classified login leaves in the marker store. */
-type Disposition = 'clear' | 'backoff' | 'needs-person'
+/**
+ * What a classified login leaves in the marker store. `restore` puts back what was there before
+ * the login started: nothing, or the expired hold with its failure count.
+ */
+type Disposition = 'clear' | 'backoff' | 'needs-person' | 'restore'
 
 /**
  * needsUser reasons that an automatic retry can only make worse: retrying a locked account can
@@ -216,6 +219,14 @@ export class SessionGate {
       }
       case 'failed': {
         const { stage, errorClass } = inVocabulary(outcome.stage, outcome.errorClass)
+        if (errorClass === 'aborted') {
+          // The call gave up and the login stopped. Before any password or code was typed, the site
+          // saw no attempt, so the marker goes back to what it was. After, or if the runner can't
+          // say, it stays in progress for the person, as after a crash.
+          if (outcome.attemptStarted === false)
+            return this.finish(failed(stage, errorClass), failures, 'restore')
+          return failed(stage, errorClass)
+        }
         return this.finish(
           failed(stage, errorClass),
           failures,
@@ -265,7 +276,9 @@ export class SessionGate {
     const { adapterId, markers, clock } = this.options
     const backoff = this.options.backoff ?? DEFAULT_LOGIN_BACKOFF
     try {
-      if (disposition === 'clear') await markers.clear(adapterId)
+      if (disposition === 'clear' || (disposition === 'restore' && failures === 0))
+        await markers.clear(adapterId)
+      else if (disposition === 'restore') await markers.hold(adapterId, failures, clock.now())
       else if (disposition === 'needs-person') await markers.hold(adapterId, failures + 1, null, reason)
       else {
         const wait = Math.min(backoff.maxMs, backoff.baseMs * 2 ** failures)

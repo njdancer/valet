@@ -56,10 +56,10 @@ Still not done, or done differently from the docs:
 - **Pacing inside the login.** The app's own login steps are paced and watched for block pages.
   The automated login inside a call, and the person's own navigation in the login window, are not
   ([D55](#d55-driver-level-budget-and-block-detection)).
-- **Cancelling a login.** The auth flow takes no `AbortSignal`, so a cancelled call's automatic
-  login runs on to its own deadline. If it stops part-way, the attempt marker stays set until the
-  person clears it. A clean stop needs a core change: the auth runner would report whether any
-  secret was filled yet.
+- **Cancelling a login** ([D67](#d67-stopping-a-login-when-the-call-is-cancelled), built
+  2026-11-07). A cancelled call now stops its automatic login at the next step, poll or pause, and
+  before any secret is typed. If no password or code had been typed, the attempt marker clears by
+  itself; otherwise it waits for the person.
 - **The stdio bridge in a packaged build.** Refused by the argv check until
   [D60](#d60-the-stdio-bridge-in-a-packaged-app) is decided; clients use Streamable HTTP for now.
 - **Tool code isn't in a separate process.** It runs in the main process, behind the guarded

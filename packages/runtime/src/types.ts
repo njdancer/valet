@@ -27,7 +27,17 @@ export type AuthOutcome =
       readonly filledSecrets?: number
     }
   | { readonly status: 'needsUser'; readonly reason: NeedsUserReason }
-  | { readonly status: 'failed'; readonly stage: Stage; readonly errorClass: ErrorClass }
+  | {
+      readonly status: 'failed'
+      readonly stage: Stage
+      readonly errorClass: ErrorClass
+      /**
+       * Only on `aborted` (the request's signal fired and the login stopped): whether a password or
+       * one-time code had begun to be typed. False lets the runtime lift the attempt marker by
+       * itself; true, or absent, leaves it for the person.
+       */
+      readonly attemptStarted?: boolean
+    }
   /** The site's bot protection refused us, or told us to slow down. Trips the site's circuit breaker. */
   | { readonly status: 'blocked'; readonly errorClass: 'blocked-by-site' | 'rate-limited' }
 

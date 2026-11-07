@@ -68,13 +68,16 @@ automated login inside a tool call and the person's own login window are neither
 
 ### 2. D67: stopping a login when the call is cancelled
 
+**Built on 2026-11-07.** What follows is what was built.
+
 [D67](plan.md#d67-stopping-a-login-when-the-call-is-cancelled) was answered on 2026-11-07: build the core
 change (it changes the `AuthRunner` contract in core).
 
 - `runAuthFlow` takes an `AbortSignal`, checked between steps and before each keystroke batch.
-- The outcome reports `secretFilled: boolean` (true once any secret's typing has started). The
-  runtime clears the attempt marker by itself after a cancel with no fill; with a fill, it stays
-  for the person, as now.
+- A cancelled login ends `auth-step: aborted` and reports `attemptStarted`: true once a password
+  or one-time code has begun to be typed (the email alone costs nothing at the site). With
+  `false`, the runtime puts the attempt marker back as it was; with `true`, or if the runner
+  doesn't say, the marker stays in progress for the person.
 - Tests: cancel before the email page, after the email but before the password, and mid-password.
   Only the last needs the person.
 
@@ -262,12 +265,12 @@ the D28 pacing.
 
 ## Decisions for Nick
 
-| Decision | Question | Recommendation | Needed by |
-| --- | --- | --- | --- |
-| [D10](plan.md#d10-analytics-hosts) (answered 2026-11-07: ideally yes) | Block the ~40 analytics and ad hosts in the tool partition, or allow them? | Strict by default (www, `cdn0.woolworths.media`, `acs.woolworths.com.au`), with Session 2's strict check as the evidence. Add hosts only if the site breaks without them. | Session 2, step 4 |
-| [D24a](plan.md#d24a-client-hint-brands) (answered 2026-11-07, in the bot-detection thread) | Send `Google Chrome` rather than `Chromium` in the client-hint brands? | Nick chose to match Chrome: the default flips to `clientHints: 'chrome'`. Nothing left here. | Done |
-| [D66](plan.md#d66-a-block-page-in-the-persons-login-window) (answered 2026-11-07: accepted) | When the person's login window opens on a block page, keep closing it silently, show the page, or explain in the app? | Explain in the app, with the time the breaker reopens. | Before Session 3, which is the first time the app's own login window meets the live site |
-| [D67](plan.md#d67-stopping-a-login-when-the-call-is-cancelled) (answered 2026-11-07: accepted) | Let `runAuthFlow` take a signal and report whether a secret was filled, so a cancel before any fill clears the marker by itself? | Yes, the core change, built in Part 1 step 2 on a branch. | Merge before Session 3 |
+| Decision                                                                                       | Question                                                                                                                         | Recommendation                                                                                                                                                            | Needed by                                                                                |
+| ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| [D10](plan.md#d10-analytics-hosts) (answered 2026-11-07: ideally yes)                          | Block the ~40 analytics and ad hosts in the tool partition, or allow them?                                                       | Strict by default (www, `cdn0.woolworths.media`, `acs.woolworths.com.au`), with Session 2's strict check as the evidence. Add hosts only if the site breaks without them. | Session 2, step 4                                                                        |
+| [D24a](plan.md#d24a-client-hint-brands) (answered 2026-11-07, in the bot-detection thread)     | Send `Google Chrome` rather than `Chromium` in the client-hint brands?                                                           | Nick chose to match Chrome: the default flips to `clientHints: 'chrome'`. Nothing left here.                                                                              | Done                                                                                     |
+| [D66](plan.md#d66-a-block-page-in-the-persons-login-window) (answered 2026-11-07: accepted)    | When the person's login window opens on a block page, keep closing it silently, show the page, or explain in the app?            | Explain in the app, with the time the breaker reopens.                                                                                                                    | Before Session 3, which is the first time the app's own login window meets the live site |
+| [D67](plan.md#d67-stopping-a-login-when-the-call-is-cancelled) (answered 2026-11-07: accepted) | Let `runAuthFlow` take a signal and report whether a secret was filled, so a cancel before any fill clears the marker by itself? | Yes, the core change. Built on 2026-11-07 (Part 1, step 2).                                                                                                               | Done                                                                                     |
 
 Smaller calls this runbook makes, which Nick can overrule:
 
