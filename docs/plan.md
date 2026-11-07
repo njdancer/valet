@@ -1167,6 +1167,29 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
   duplicate is a second copy to rotate, which is exactly what the architecture rejects for the
   Keychain). Autofill in his browser keeps working from any vault he can access. A service
   account scoped read-only to that vault.
+- Research (2026-11-07): service accounts aren't a Business-only feature any more. 1Password's
+  [rate-limit page](https://1password.dev/service-accounts/rate-limits) lists limits for
+  "1Password" (Individual) and Families accounts: 1,000 reads and 100 writes an hour per token,
+  and 1,000 requests a day across the whole account (Teams 5,000, Business 50,000). Valet reads a
+  password and maybe a TOTP once per login, so that's ample. A service account still can't read
+  the built-in Personal (Private) vault, so Nick's ideal of passwords staying where they are can't
+  be had unattended on any plan. Unconfirmed until Nick looks: that his account shows
+  Developer > Service accounts on 1password.com.
+- What each path costs Nick:
+  - **Service account + "Valet" vault, item moved** (recommended): one approval at setup, then
+    unattended. One copy of the password; autofill still works because he can see the vault.
+  - **Copy-with-reference:** the copy in the Valet vault (or Keychain) is read unattended; the
+    source in his Personal vault can only be re-read through `DesktopAuth` with Nick present, so a
+    changed password breaks the next unattended login until he approves a re-sync. Two copies to
+    keep in step for no security gain over moving.
+  - **`DesktopAuth` only:** no vault change, but approval [expires after ten minutes of
+    inactivity](https://www.1password.dev/sdks/desktop-app-integrations) and whenever 1Password
+    locks, so in practice he approves most runs. That fails his "authorise once" ideal, and runs
+    while he's away fail with `needsUser`. Fine for M2, where he's present anyway.
+- Recommendation unchanged: service account on a moved item. If the plan has no service
+  accounts, copy-with-reference into the Valet vault read through `DesktopAuth` once per run is
+  not better than `DesktopAuth` alone, so fall back to `DesktopAuth` only and accept attended
+  runs. Needs Nick: his plan, and move or copy.
 - Blocks: M3 (unattended runs); M2 can use the desktop-app path.
 
 ### D7. 1Password fallback
@@ -1176,6 +1199,15 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 - Recommendation: `DesktopAuth`. No CLI install or stdout parsing, the same SDK as the service
   account path, and the person approves in 1Password's own UI. Keep `op` only if `DesktopAuth`
   turns out not to support reading TOTP or to need a newer 1Password app than Nick has.
+- Research (2026-11-07): desktop-app integration is still a public beta (macOS and Linux; Go,
+  JavaScript, Python). Nick turns on the SDK integration setting in the 1Password app. Approval is
+  per account and per process, shown with the caller's executable name and path, and lasts until
+  ten minutes of inactivity or the app locks. 1Password can't verify a third-party binary, so the
+  person is the check: the prompt must name the signed Valet app, which argues for calling it from
+  the main process only. Reading a TOTP through a secret reference's one-time-password
+  attribute still needs a manual check with Nick present; tests never touch the real app.
+- Recommendation unchanged: `DesktopAuth`, used for M2's attended runs and as the D6 fallback.
+  Drop `op` once a manual check shows it reads the password and the TOTP.
 - Blocks: M3. Needs core change C7.
 
 ### D8. Full Disk Access for Messages
@@ -1190,6 +1222,26 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
   line tool is simplest; a Node single-executable is possible).
 - Recommendation: whole app for M3 (personal, first-party adapter only), the helper before M7
   admits third-party adapters.
+- Research (2026-11-07), existing CLIs: the strongest is [`imsg`](https://github.com/steipete/imsg)
+  (Swift, MIT, Homebrew, signed builds, JSON output, `history` and `watch`). Others are exporters
+  or Python libraries. None is worth vendoring or asking the person to install:
+  - **It wouldn't isolate anything.** macOS charges a child process's file access to its
+    *responsible* process, the app that launched it
+    ([Qt on the responsible process](https://www.qt.io/blog/the-curious-case-of-the-responsible-process)).
+    A CLI Valet spawns needs Valet itself to hold Full Disk Access, which is the grant D8 is
+    trying to keep off the main app. `imsg`'s own docs say to grant FDA to the terminal for the
+    same reason.
+  - **It does far more than one query.** `imsg` reads every chat and sends messages. We'd be
+    adding a dependency with the person's whole message history and an outbound channel in reach.
+  - **Valet already has the reader.** `packages/credentials` reads `chat.db` read-only with
+    `node:sqlite` and decodes `attributedBody` (`messages-otp.ts`, `typedstream.ts`).
+- Revised recommendation (Nick asked for the helper now): write our own small Swift helper,
+  registered with `SMAppService` as a launch agent so launchd starts it and it's responsible for
+  itself, and FDA goes to "Valet Messages Helper", not Valet. It answers one XPC request ("latest
+  code from this sender matching this pattern since this time") and nothing else. Port the
+  existing query and decoder; `imsg`'s decoder is a reference (MIT). Until it's signed, the
+  in-process reader with FDA on the whole app stays the dev path. The helper is a second binary
+  to sign and notarise, which waits for Nick.
 - Blocks: M3 (if D4 needs SMS), M7.
 
 ### D9. User agent
@@ -1378,6 +1430,35 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
   It's the honest position, it simplifies the legal story, and it's what makes a
   security-focused audience trust it.
+- Build order (proposed 2026-11-07). Nick's answer puts every technique on the table, but the
+  project rule stops at looking like his own browser, so everything below the line waits for
+  Nick to change the rule. Ranked by how far the gap is from his own browser and how cheap it is
+  to close:
+  1. **Stop cancelling the site's own traffic** ([D58](#d58-page-initiated-traffic), accepted;
+     C17). Under the v2 policy Akamai's sensor POSTs are cancelled, the largest difference from
+     a real browser we'd ship. Needed before any M2 live run anyway.
+  2. **Full key events by default** ([D38](#d38-keystroke-events), accepted). Built as
+     `keyEvents: 'full'`; the driver still defaults to `'char'`. Flip the default.
+  3. **Typing at a person's cadence.** `typingDelayMs` is one fixed interval; a perfectly even
+     rhythm is unlike anyone. Draw each gap from a range, upward-only like D28's jitter. Small.
+  4. **Consistent client hints** ([D24a](#d24a-client-hint-brands)). Built as
+     `clientHints: 'chrome'`, default `'engine'`. Flipping it is one line, but it's Nick's call.
+  5. **Keep the DevTools footprint small.** The driver attaches the debugger for the UA override
+     and only enables `Emulation`, `Target` and `DOMStorage`. Add a test that it never enables
+     `Runtime` or `Console` on a site page, the domains pages can detect. A guard, not a change.
+  6. **Measure, don't change, the auth probe** ([D63](#d63-what-the-auth-probe-cant-hide)) and
+     pacing ([D28](#d28-rate-budget-defaults)) in M2's live session.
+
+  Past the line, for Nick to decide (recommendation: don't build any):
+  - Filling in what Chrome has and Electron lacks (`window.chrome.runtime`, Chrome's PDF entry in
+    `navigator.plugins`): this patches `navigator`, already on the not-allowed list.
+  - Hiding the attached debugger or other automation traces.
+  - Synthetic mouse paths. The driver sends a `mouseMove` before each click, which matches a
+    person; curves and jitter would invent behaviour.
+  - Stealth plugins, proxies, rotated fingerprints: on the not-allowed list.
+
+  CAPTCHA solving isn't on the list at all: the project rule and Claude's own limit both exclude
+  it, and a challenge stays a `needsUser` hand-off.
 - Blocks: D25, marketing. (D9 was decided within it.)
 
 ### D24a. Client-hint brands
@@ -1394,6 +1475,14 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
     not more.
 - Recommendation: leave the brands as `Chromium` until a block is traced to the mismatch. If that
   happens, matching brands is acceptable under D24, but Nick decides.
+- Update (2026-11-07): the CDP cost above is already paid. The driver sets the UA through
+  `Emulation.setUserAgentOverride` with full `userAgentMetadata` on every target, and the
+  `clientHints: 'chrome'` option (`packages/browser-electron/src/user-agent.ts`) adds
+  `Google Chrome` in Chrome's GREASE order. What's left is the choice. Today the UA says Chrome
+  while the hints say only Chromium, which no real Chrome sends, so `'chrome'` is the closer match
+  to Nick's own browser if that browser is Chrome. Revised recommendation: if Nick shops in
+  Chrome, flip the default to `'chrome'` before M2's first logged-in run; if he uses Safari or
+  another browser, leave `'engine'`, since neither choice then matches him.
 - Blocks: nothing now; M2 if a logged-in block appears.
 
 ### D25. Adapter legal posture
