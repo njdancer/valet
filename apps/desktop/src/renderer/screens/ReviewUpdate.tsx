@@ -18,11 +18,15 @@ import { formatTime, plural, shortHash } from '../lib/format'
 import {
   additionBadges,
   addsPermissions,
+  changedNames,
   limitsChanged,
   limitsLoosened,
   probeChanged,
   probeText,
+  requestsByPurpose,
+  secretChanges,
   type Tone,
+  toolChanges,
 } from '../lib/permissions'
 import { href, navigate } from '../lib/router'
 import { FIELD_WORDING } from '../lib/wording'
@@ -348,6 +352,13 @@ function Unchanged({ children }: { readonly children: ReactNode }) {
   )
 }
 
+/** The heading over each purpose's new request declarations. */
+const REQUEST_GROUP: Readonly<Record<'read' | 'write' | 'irreversible', string>> = {
+  irreversible: 'New irreversible requests: each asks you first',
+  write: 'New write requests: change your account',
+  read: 'New read requests',
+}
+
 function isEmpty<T>(diff: ListDiff<T>): boolean {
   return diff.added.length === 0 && diff.removed.length === 0 && diff.unchanged.length === 0
 }
@@ -355,6 +366,8 @@ function isEmpty<T>(diff: ListDiff<T>): boolean {
 function PermissionChanges({ review }: { readonly review: PendingReview }) {
   const { diff } = review
   const mono = (text: string) => <span className="mono xs">{text}</span>
+  const changedSecrets = changedNames(diff.secrets)
+  const changedTools = changedNames(diff.tools)
   return (
     <div className="card" style={{ overflow: 'hidden' }}>
       <div className="card-head">
@@ -517,23 +530,56 @@ function PermissionChanges({ review }: { readonly review: PendingReview }) {
             </span>
           </Unchanged>
         ))}
-        {diff.secrets.added.map((s) => (
-          <Added
-            key={s.name}
-            tone="secret"
-            tag="new secret"
-            why={`The manifest describes it as “${capText(s.description)}”. For ${s.origins.join(', ')} only.`}
-          >
+        {secretChanges(diff).map(({ secret: s, was, newFields, newOrigins }) => {
+          const fields = (
             <span className="small">
               <SecretBadge name={s.name} /> {s.fields.map((f) => FIELD_WORDING[f]).join(', ')}
             </span>
-          </Added>
-        ))}
-        {diff.secrets.removed.map((s) => (
-          <Removed key={s.name}>
-            <SecretBadge name={s.name} />
-          </Removed>
-        ))}
+          )
+          if (was === null) {
+            return (
+              <Added
+                key={s.name}
+                tone="secret"
+                tag="new secret"
+                why={`The manifest describes it as “${capText(s.description)}”. For ${s.origins.join(', ')} only.`}
+              >
+                {fields}
+              </Added>
+            )
+          }
+          const grew = [
+            newFields.length > 0
+              ? `Now also asks for ${newFields.map((f) => FIELD_WORDING[f]).join(', ')}.`
+              : null,
+            newOrigins.length > 0 ? `Now also typed on ${newOrigins.join(', ')}.` : null,
+          ].filter((line) => line !== null)
+          return (
+            <Added
+              key={s.name}
+              tone="secret"
+              tag={
+                newFields.length > 0 && newOrigins.length > 0
+                  ? 'new field and origin'
+                  : newFields.length > 0
+                    ? 'new field'
+                    : newOrigins.length > 0
+                      ? 'new origin'
+                      : 'changed secret'
+              }
+              why={`${grew.length > 0 ? `${grew.join(' ')} ` : ''}For ${s.origins.join(', ')} only.`}
+            >
+              {fields}
+            </Added>
+          )
+        })}
+        {diff.secrets.removed
+          .filter((s) => !changedSecrets.has(s.name))
+          .map((s) => (
+            <Removed key={s.name}>
+              <SecretBadge name={s.name} />
+            </Removed>
+          ))}
         {diff.messagesSources.added.map((m) => (
           <Added
             key={m.sender}
@@ -561,27 +607,29 @@ function PermissionChanges({ review }: { readonly review: PendingReview }) {
             <span className="xs muted">{plural(diff.tools.unchanged.length, 'tool')}</span>
           </Unchanged>
         ) : null}
-        {diff.tools.added.map((t) => (
+        {toolChanges(diff).map(({ tool: t, was, raised }) => (
           <Added
             key={`${t.name}-${t.sideEffect}`}
             tone={t.sideEffect}
-            tag={t.sideEffect}
-            why={
+            tag={was !== null && was !== t.sideEffect ? `${was} → ${t.sideEffect}` : t.sideEffect}
+            why={`${raised ? 'Its side effect went up. ' : ''}${
               t.sideEffect === 'irreversible'
                 ? `“${t.title}”. Can’t be undone; asks you every time.`
                 : t.sideEffect === 'write'
                   ? `“${t.title}”. Changes your account without asking.`
                   : `“${t.title}”.`
-            }
+            }`}
           >
             {mono(t.name)}
           </Added>
         ))}
-        {diff.tools.removed.map((t) => (
-          <Removed key={`${t.name}-${t.sideEffect}`} tag={<SideEffect purpose={t.sideEffect} />}>
-            {mono(t.name)}
-          </Removed>
-        ))}
+        {diff.tools.removed
+          .filter((t) => !changedTools.has(t.name))
+          .map((t) => (
+            <Removed key={`${t.name}-${t.sideEffect}`} tag={<SideEffect purpose={t.sideEffect} />}>
+              {mono(t.name)}
+            </Removed>
+          ))}
       </Section>
 
       <Section title="Request surface">
@@ -590,10 +638,15 @@ function PermissionChanges({ review }: { readonly review: PendingReview }) {
             <span className="xs muted">{plural(diff.requests.unchanged.length, 'declared request')}</span>
           </Unchanged>
         ) : null}
-        {diff.requests.added.map((r) => (
-          <Added key={`${r.method} ${r.path} ${r.purpose}`} tone={r.purpose} tag={r.purpose}>
-            {mono(`${r.method} ${r.path}`)}
-          </Added>
+        {requestsByPurpose(diff.requests.added).map((group) => (
+          <div key={group.purpose} data-testid={`requests-${group.purpose}`}>
+            <div className="perm-group xs muted">{REQUEST_GROUP[group.purpose]}</div>
+            {group.requests.map((r) => (
+              <Added key={`${r.method} ${r.path} ${r.purpose}`} tone={r.purpose} tag={r.purpose}>
+                {mono(`${r.method} ${r.path}`)}
+              </Added>
+            ))}
+          </div>
         ))}
         {diff.requests.removed.map((r) => (
           <Removed key={`${r.method} ${r.path} ${r.purpose}`} tag={<SideEffect purpose={r.purpose} />}>

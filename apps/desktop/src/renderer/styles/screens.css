@@ -128,6 +128,11 @@
   border-bottom: 0.5px solid var(--border);
 }
 
+.perm-group {
+  padding: 3px var(--space-4) 1px;
+  border-bottom: 0.5px solid var(--border);
+}
+
 .review-window .perm {
   padding-top: 3px;
   padding-bottom: 3px;
