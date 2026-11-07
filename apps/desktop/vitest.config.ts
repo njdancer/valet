@@ -1,10 +1,11 @@
 import react from '@vitejs/plugin-react'
 import { defineProject } from 'vitest/config'
+import { toolScripts } from './tool-scripts'
 
 // Renderer, shared-contract, main-process and preload tests. The renderer's run in jsdom; the main
 // process's (test/main) say `@vitest-environment node` at the top, so they run in plain Node.
 export default defineProject({
-  plugins: [react()],
+  plugins: [react(), toolScripts()],
   test: {
     name: 'desktop',
     environment: 'jsdom',

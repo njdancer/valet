@@ -23,15 +23,21 @@ export interface BuiltinAdapter {
   readonly hash: string
   /** Source files by path relative to the adapter's package, as hashed. */
   readonly files: Readonly<Record<string, string>>
+  /**
+   * The tool script built from the same sources, which the tool process runs in place of the
+   * definition's own implementations (overnight queue item 7). Null: tool code runs in this process.
+   */
+  readonly toolScript: string | null
 }
 
 export function builtinAdapter(
   definition: AdapterDefinition,
   files: Readonly<Record<string, string>>,
+  toolScript: string | null = null,
 ): BuiltinAdapter {
   if (Object.hasOwn(files, MANIFEST_ENTRY)) throw new Error('reserved bundle entry')
   const hash = bundleHash({ ...files, [MANIFEST_ENTRY]: canonicalJson(definition.manifest) })
-  return { definition, hash, files: { ...files } }
+  return { definition, hash, files: { ...files }, toolScript }
 }
 
 export interface ApprovedSnapshot {

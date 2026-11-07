@@ -25,6 +25,7 @@ import { resolve } from 'node:path'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'electron-vite'
 import { feedDefines } from './src/main/core/feed-defines'
+import { toolScripts } from './tool-scripts'
 import { contentSecurityPolicy } from './vite.config'
 
 const here = import.meta.dirname
@@ -34,6 +35,7 @@ export default defineConfig(({ command, mode }) => {
   const feed = feedDefines(process.env, plainBuild)
   return {
     main: {
+      plugins: [toolScripts()],
       define: {
         __VALET_DEMO_BUILD__: JSON.stringify(command === 'serve' || mode === 'demo'),
         __VALET_DEV_SERVER__: JSON.stringify(command === 'serve'),
@@ -47,7 +49,11 @@ export default defineConfig(({ command, mode }) => {
         emptyOutDir: true,
         externalizeDeps: false,
         rollupOptions: {
-          input: { index: resolve(here, 'src/main/index.ts') },
+          input: {
+            index: resolve(here, 'src/main/index.ts'),
+            // The tool process: the runtime's worker only, with no adapter in it.
+            'tool-process': resolve(here, 'src/main/electron/tool-process-entry.ts'),
+          },
           external: ['electron', /^node:/, '@1password/sdk', '@1password/sdk-core'],
           output: { format: 'es', entryFileNames: '[name].js' },
         },

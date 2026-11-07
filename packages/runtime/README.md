@@ -207,6 +207,35 @@ removed cleanly from the end leave a shorter valid chain, so pass `--head` with 
 earlier (from a previous run, or the control panel) to catch that too. The same entry point
 (`src/verify-audit-cli.ts`) is what a command inside the packaged app's `Contents/MacOS` will run.
 
+## Tool code in its own process
+
+`RegisteredAdapter.isolation` (`{ script, start }`) runs the adapter's tool code in a process of
+its own instead of calling `run()` here. The app sets it for every built-in adapter; tests that
+leave it out run tool code in process, with the same guards.
+
+- **The script.** `buildToolScript(entry)` (`@valet/runtime/tool-script`, build time only) bundles a
+  module that exports `tools` into one IIFE. `@valet/core` resolves to its `tool-code` entry, and an
+  import of a Node built-in or `electron` fails the build.
+- **One process per call.** `start()` gives a fresh `ToolChannel`; `runIsolated` sends it the
+  script and the run, and kills it when the call ends however it ends: done, thrown, timed out,
+  aborted, or when the process breaks the protocol. A process that exits first ends the call
+  `failed tool-run/internal`.
+- **The context.** `serveToolRuns` (`@valet/runtime/tool-worker`, the process side) evaluates the
+  script in a fresh `node:vm` context with string compilation and wasm off, and without
+  `SharedArrayBuffer`, `Atomics`, `WebAssembly` or `console`. The context holds no host object:
+  only strings cross, so no constructor chain leads out to the host's `Function`. Its `ToolContext`
+  is built from messages; `currentUrl()` is the page's URL as of the last reply.
+- **The channel is untrusted.** Every message must be plain JSON within `MAX_MESSAGE_CHARS`, a
+  capability call must name one of `CAPABILITIES`, ids can't repeat, and at most `MAX_IN_FLIGHT`
+  calls may wait at once. Anything else ends the call `failed tool-run/invalid`. Thrown errors
+  cross as a stage and class or a needsUser reason from the fixed vocabularies, nothing else.
+- **Each capability call is answered by the same guarded context** an in-process tool gets, so the
+  guards, budget, breaker, C4 checks, redaction and audit are unchanged. Input and output are
+  still validated here with the definition's schemas.
+- **Not a sandbox.** `node:vm` is not a security boundary and the app's utility process is a full
+  Node process. This is M3's crash and hang isolation in the shape M7's sandbox keeps
+  ([registry-and-sandbox.md](../../docs/registry-and-sandbox.md#the-sandbox)).
+
 ## Guarded tool page
 
 - `fetch`: `init` is read once into a frozen snapshot (method, string-valued headers, a plain copy

@@ -343,9 +343,10 @@ What it doesn't cover:
 | Precedent                          | Figma moved its plugins to QuickJS-in-WebAssembly after a realm-shim escape (_verify_ details) | Used by several plugin hosts                                      | —                                                                                                                            | Chromium's own isolation; Electron's recommended renderer setup                                                                           | MetaMask Snaps runs SES inside iframes or workers, with the iframe as the boundary |
 | Verdict                            | **Boundary of choice**                                                                         | No: in-process native addon, upgrade friction, maintenance doubts | No: not a boundary (what v0 has)                                                                                             | **Second layer**                                                                                                                          | Discipline, not a boundary                                                         |
 
-On the brief's "Electron `utilityProcess` with no Node": as far as we know there's no such
-option. A utility process forked with `utilityProcess.fork` runs Node and isn't sandboxed
-(_verify_ against Electron 44). The Node-less, sandboxed process Electron offers is a renderer,
+On the brief's "Electron `utilityProcess` with no Node": there's no such option. A utility
+process forked with `utilityProcess.fork` runs Node and isn't sandboxed. Checked on Electron 44
+(2026-11-07): it can read and write files, run `child_process` and import `electron`, and it
+ignores `--permission` in `execArgv` (`process.permission` is undefined). The Node-less, sandboxed process Electron offers is a renderer,
 which is the fourth column.
 
 ### Why not the renderer alone

@@ -75,8 +75,10 @@ Still not done, or done differently from the docs:
 - **The stdio bridge in a packaged build.** The Swift bridge
   ([D60](#d60-the-stdio-bridge-in-a-packaged-app)) ships in `Contents/MacOS`, but has not been in a
   signed build yet.
-- **Tool code isn't in a separate process.** It runs in the main process, behind the guarded
-  page. Planned for M3, with the sandbox in M7.
+- **Tool code isn't sandboxed.** Since overnight queue item 7 it runs in a utility process per
+  call, in a `node:vm` context with only the capability API over JSON messages, so a crash or a
+  hang in it can't take the app down. That is not a boundary: the sandbox is M7
+  ([D12](#d12-sandbox-technology)).
 - **Never exercised for real:** the 1Password service account and `op` (the Keychain prompt
   included), Full Disk Access for Messages, a Developer ID signature, notarisation, an x64 build.
 - **Small things in the UI.** The tray says "N clients connected" but counts open MCP sessions;
