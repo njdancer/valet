@@ -37,6 +37,7 @@ import {
   type RuntimeDiagnostic,
   type Sleep,
   ToolHost,
+  type ToolProcessFactory,
 } from '@valet/runtime'
 import { z } from 'zod'
 import type {
@@ -117,6 +118,11 @@ export interface ServiceDeps {
   readonly timers: Timers
   readonly sleep: (ms: number) => Promise<void>
   readonly adapters: readonly BuiltinAdapter[]
+  /**
+   * Starts a tool process for one call. With it, an adapter that has a tool script runs its tool
+   * code there; without it (unit tests), in this process.
+   */
+  readonly toolProcess?: ToolProcessFactory
   /** Builds an adapter's driver, with the reporters its refusals outside a run go to. */
   readonly createDriver: (manifest: AdapterManifest, reporters: DriverReporters) => Promise<SessionDriver>
   readonly credentials: Credentials
@@ -380,7 +386,15 @@ export class AppService {
         onAuthReportsDropped: () => this.deps.diagnostics?.({ type: 'auth-reports-dropped', adapterId: id }),
       })
       this.drivers.set(id, driver)
-      host.register({ definition: adapter.definition, bundleHash: adapter.hash, driver })
+      const start = this.deps.toolProcess
+      host.register({
+        definition: adapter.definition,
+        bundleHash: adapter.hash,
+        driver,
+        ...(start === undefined || adapter.toolScript === null
+          ? {}
+          : { isolation: { script: adapter.toolScript, start } }),
+      })
     }
     this.caller = new RuntimeToolCaller(host, {
       paused: () => this.paused,

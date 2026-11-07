@@ -19,6 +19,7 @@ import type { BridgeCommand } from '../core/snippets'
 import type { DemoSite } from './demo'
 import { launchRefused } from './guard'
 import { broadcast, registerIpc } from './ipc'
+import { utilityToolProcess } from './tool-process'
 import { type AppTray, createTray } from './tray'
 import { bundleSignature, electronUpdates } from './updates'
 import { AppWindows } from './windows'
@@ -155,6 +156,7 @@ async function main(): Promise<void> {
     },
     sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
     adapters,
+    toolProcess: utilityToolProcess(join(import.meta.dirname, 'tool-process.js')),
     createDriver: (manifest, reporters) =>
       createElectronSessionDriver(
         manifest,
