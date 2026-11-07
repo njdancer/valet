@@ -512,6 +512,16 @@ test('block signatures in either partition reach the site’s breaker, and an op
   expect(result.reachedWhileHeld).toBe(0)
 })
 
+test('the tool partition paces navigations the page starts, once per redirect chain, and caps run 1’s burst (D55, AC7)', async () => {
+  const result = await scenario(app, 'navigationPacing')
+  expect(result.afterGoto).toBe(0)
+  // One wait for the scripted navigation, one for the whole redirect chain.
+  expect(result.paced).toBe(2)
+  expect(result.url as string).toMatch(/\/\?two$/)
+  expect(result.burst).toEqual({ ok: expect.arrayContaining(['refused']) })
+  expect(result.reached).toBe(3)
+})
+
 test('the auth partition’s refused subframes and escapes are reported as the page’s', async () => {
   const result = await scenario(app, 'authBlocks')
   expect(result.escaped).toEqual({ error: { stage: 'navigate', errorClass: 'navigation-escaped' } })

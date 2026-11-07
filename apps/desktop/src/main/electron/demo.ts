@@ -87,6 +87,10 @@ export interface DemoE2eHook {
   blockAll(on: boolean): void
   trolley(): readonly { readonly stockcode: number; readonly quantity: number }[]
   pageBeacon(target: { readonly host: string; readonly port: number } | null): void
+  /** Ends every www and Auth0 session, and makes Auth0 refuse every password while on. */
+  wrongPassword(on: boolean): void
+  /** How many times the password form has been posted to Auth0 since launch (AC10). */
+  passwordPosts(): number
 }
 
 export function exposeToE2e(demo: DemoSite): void {
@@ -95,6 +99,14 @@ export function exposeToE2e(demo: DemoSite): void {
     trolley: () => demo.site.trolleyFor(DEMO_ACCOUNT.username).map((l) => ({ ...l })),
     pageBeacon: (target) =>
       demo.site.setPageBeacon(target === null ? null : { host: target.host, port: target.port }),
+    wrongPassword: (on) => {
+      demo.site.expireSessions()
+      demo.site.expireAuthSessions()
+      demo.site.rejectPasswords(on === true)
+    },
+    passwordPosts: () =>
+      demo.site.authRequests.filter((r) => r.method === 'POST' && r.path.startsWith('/u/login/password'))
+        .length,
   }
   Object.defineProperty(globalThis, '__valetE2e', { value: Object.freeze(hook) })
 }

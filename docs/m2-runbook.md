@@ -50,8 +50,11 @@ Session 1, except step 5, which can land between sessions.
 each `goto` and `click`, and the in-flow probe waits before each request. **Block signatures
 built on 2026-11-07:** the driver reports a 429 or a 403 HTML page on any main-frame or API
 response to the site, in either partition, to the site's breaker. An open breaker cancels every
-tool-partition request and ends a login as blocked. Still to build: pacing page-initiated
-main-frame navigations in the driver, and AC7's count at the fake site.
+tool-partition request and ends a login as blocked. **Driver pacing built on 2026-11-07:** the
+tool partition's page-initiated main-frame navigations wait on the budget, one wait per redirect
+chain. API calls from `evaluate()` are capped by the run's ceiling, not spaced one by one, and
+AC7's test counts run 1's burst at the test site. Still open: navigations the auth page starts by
+itself (a form-post callback), which only the flow's own steps pace today.
 
 [D55](plan.md#d55-driver-level-budget-and-block-detection) (answered: accepted, the split
 design, C16). Today the app's own login steps go through `ToolHost.runLoginStep`, but the
@@ -92,7 +95,10 @@ change (it changes the `AuthRunner` contract in core).
 
 **Built on 2026-11-07** (D32 and D35, with the check below in
 `packages/auth-flow/test/one-attempt.test.ts` and the marker tests in `packages/runtime`). The
-dev-app dry run against the fake is still to do before Session 3.
+dev-app dry run is now a permanent step of the app's e2e journey (`apps/desktop/e2e/journey.spec.ts`,
+2026-11-07): with the fake refusing the demo password, a call types it once (one POST counted at
+the fake), the app shows "Login window open · Login needed" and "Needs you", and the next call
+returns `login-required` without another POST.
 
 [AC10](plan.md#acceptance-criteria) is the hard gate before Session 3
 ([D5](plan.md#d5-which-woolworths-account), answered). Reading the code, two answered decisions it
@@ -271,7 +277,7 @@ Steps:
    `woolworths_add_to_cart` for one unit. Nick refreshes woolworths.com.au in Chrome and sees it
    (AC6). If he doesn't want to keep it, `woolworths_set_cart_quantity` to 0, and check again.
    This is the M2 exit.
-7. Afterwards: verify the audit log from the control panel (AC14's CLI isn't built yet); check it shows one secret use per field
+7. Afterwards: verify the audit log (`pnpm valet:verify-audit`, or the control panel); check it shows one secret use per field
    for the login; grep the app's logs, traces and audit log for the password (a first pass at
    AC16).
 

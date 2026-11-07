@@ -44,7 +44,7 @@ writes the audit log. Nothing has touched the live site while logged in, and not
 | Tests                                      | 3,356 unit and integration tests, coverage 98.6 / 94.9 / 97.9 / 99.3 (statements, branches, functions, lines; thresholds 90/85/90/90). Electron e2e: 24 desktop (6 screenshot specs skip by design), 37 browser-electron. Lint and both typecheck projects clean.                                                                                                                                                                                         |
 | Spike 1 (`spikes/01-woolworths-electron`)  | Code written. **Not run.** It needs Nick to log in by hand.                                                                                                                                                                                                                                                                                                                                                                                               |
 | Live probe (`spikes/02-woolworths-shapes`) | Run four times, anonymous only. See [the finding](findings/2026-11-07-woolworths-live-probe.md) and the summary below.                                                                                                                                                                                                                                                                                                                                    |
-| CI, releases                               | None. The repo is local-only.                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| CI, releases                               | macOS CI on every PR (`pnpm check` and both Electron e2e suites); no releases.                                                                                                                                                                                                                                                                                                                                                                            |
 
 So [M1](#m1-vertical-slice-against-fakes)'s exit is met, and more: the desktop e2e suite drives a real MCP client through the packaged-style app, not only plain Node. [M2](#m2-electron-driver-and-live-woolworths)'s code is in place; what's left of M2 is live work with Nick.
 
@@ -61,8 +61,13 @@ Still not done, or done differently from the docs:
   2026-11-07). The driver now watches every main-frame and API response in both partitions, the
   person's login window included. A 429, or a 403 HTML page, on the site's hosts opens the site's
   breaker (`SessionDriver.watchSite`). An open breaker stops the tool partition sending anything,
-  and a login in progress ends as `blocked` at its next check. Still not done: pacing main-frame
-  navigations that the page starts itself, and AC7's request count at the fake site.
+  and a login in progress ends as `blocked` at its next check. The tool partition's main-frame
+  navigations that the page starts itself (script, links, forms) now wait on the site's budget
+  too; a server redirect chain counts as one. Tool code's own `goto` and the first navigation after
+  a tool `click` aren't paced twice. API calls are not paced one by one: they follow from
+  navigations, and the run's ceiling caps a burst from `evaluate()` (AC7's test replays run 1's
+  four calls against a ceiling of three, counted at the test site). Still not done: pacing
+  navigations the auth page starts by itself, such as a form-post callback.
 - **Cancelling a login** ([D67](#d67-stopping-a-login-when-the-call-is-cancelled), built
   2026-11-07). A cancelled call now stops its automatic login at the next step, poll or pause, and
   before any secret is typed. If no password or code had been typed, the attempt marker clears by
@@ -480,6 +485,9 @@ Nick-hours** (M1 2–3, M2 4–6, M3 4–6, M4 3–4, M5 4–6, M6 2–3, M7 2�
   counted as hours.
 
 Treat all of it as ±50%.
+
+What threads can do without Nick, in order, is in [overnight-queue.md](overnight-queue.md)
+(2026-11-07).
 
 ---
 
