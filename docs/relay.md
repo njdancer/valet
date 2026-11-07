@@ -164,6 +164,36 @@ with uptime, abuse handling, cost and liability, and the only obvious thing to c
 
 Needed by B, C and D. Build it once, in the app, as one module with its own tests.
 
+### Built so far
+
+The first slice (2026-11-08), the parts every option needs, sharing the local endpoint's code:
+
+- **The listener.** `startRemoteListener` (`packages/mcp-server/src/remote.ts`) runs the same
+  `startHttpServer` handler a second time, bound to `127.0.0.1` on its own port (kept across
+  launches in `remote.json`, so a tunnel's configuration stays right). Only its `authenticate`
+  hook (`remote-auth.ts`) and the caller wrapper differ. The hook refuses any `Host` but the
+  public names the person set, so neither listener answers for the other; refuses any `Origin`;
+  and accepts only access tokens from `RemoteAccessTokens` (opaque, hashed, one hour, in memory),
+  never a local client's token.
+- **The remote policy.** `RemotePolicyCaller` (`remote-policy.ts`) wraps the local endpoint's
+  caller: tools are off for remote clients until the person turns each one on; `tools/list` shows
+  only those; a call to anything else fails `config: not-found`; each client has a cap of 120
+  calls an hour (a setting later); and a call whose identity isn't remote is refused. The app's
+  store (`apps/desktop/src/main/core/remote.ts`) records each tool's side effect when it was turned
+  on, and an adapter update that raises it turns it off again.
+- **Audit.** Remote calls are recorded through the same runtime with `clientId: remote:<id>`;
+  policy refusals are recorded like the app's own (`tool-called`, then `tool-finished` failed at
+  stage `config`). New events: `remote-state` (`on`, or `paused` with how many tokens were
+  revoked) and `remote-tool` (a tool turned on or off, with its side effect).
+- **The kill switch.** While remote access is on, the tray shows `REMOTE` beside the icon and its
+  menu has "Pause remote access", which revokes every access token, aborts remote calls in flight,
+  closes every remote session and stops the listener, with no network needed. A pause survives a
+  restart.
+
+Not built: the authorisation server (so nothing mints access tokens yet, and the listener refuses
+every request), consent, client registrations and refresh tokens, "Revoke all remote clients…",
+the control-panel screens for turning tools on and setting the public name, and any tunnel.
+
 ### A separate listener with its own guards
 
 - The local listener stays exactly as it is. Remote traffic arrives on a second listener (for
@@ -529,8 +559,8 @@ Not needed until remote mode is built:
 - `AuditEvent['tool-called']` gains `transport: 'local' | 'remote'` and a `clientRegistration`
   id, instead of encoding both in the `client` string.
 - New audit events: `remote-consent` (client host, source address, time, tool set, and approved,
-  declined, expired or cancelled by wrong codes), `remote-paused`, `remote-revoked`,
-  `remote-token-reuse`.
+  declined, expired or cancelled by wrong codes), `remote-revoked`, `remote-token-reuse`.
+  `remote-state` (on or paused) and `remote-tool` exist since the first slice.
 - An error class for "not available remotely", or a documented decision to reuse `not-granted`.
 
 ## Open questions

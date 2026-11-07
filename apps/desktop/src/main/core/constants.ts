@@ -66,6 +66,8 @@ export interface DataPaths {
   readonly versions: string
   /** Whether first-run setup is finished (setup.ts). */
   readonly setup: string
+  /** Remote access: on or paused, its names and port, and the remote-enabled tools (remote.ts). */
+  readonly remote: string
 }
 
 /** Every file the app keeps, under one owner-only directory (D45). */
@@ -85,5 +87,6 @@ export function dataPaths(dir: string): DataPaths {
     loginMarkers: join(dir, 'login-markers'),
     versions: join(dir, 'versions.json'),
     setup: join(dir, 'setup.json'),
+    remote: join(dir, 'remote.json'),
   }
 }
