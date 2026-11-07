@@ -1558,6 +1558,11 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 - Questions: can the project publish adapters for sites whose terms prohibit automated access?
   Should adapters live in a separate repository, maintained by their authors, rather than in the
   framework's repository?
+- Woolworths' current terms (read 2026-11-07, [finding](findings/2026-11-07-woolworths-terms.md)):
+  clause 1.4(b)(viii) prohibits "any robot, spider, site search and retrieval application or other
+  mechanism to retrieve or index any portion of the Site", with no personal-use exception; 1.4(b)(xv)
+  extends it to permitting another person; 1.4(b)(xiii) bars unreasonable load. Not yet answered
+  by Nick.
 - Recommendation: get a short legal opinion (Australian, plus a US view if the audience is
   global) before M8. Meanwhile, structure the code so adapters can move to a separate repo
   without changes (they already only depend on `core`).
