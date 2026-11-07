@@ -396,6 +396,10 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
       // The escaped ${...} are electron-builder's own macros.
       artifactName: `${slug}-\${version}-\${arch}.\${ext}`,
       // A dry run signs ad hoc: electron-builder's "-" identity, which uses no key and no keychain.
+      // @electron/osx-sign doesn't reach an extra executable in Contents/MacOS by itself, and the
+      // app's own signature refuses unsigned nested code: the bridge is signed first, with the same
+      // identity and options. Relative to Contents.
+      ...(deps.bridgeBuilt() ? { binaries: [`MacOS/${BRIDGE_EXECUTABLE}`] } : {}),
       ...(dryRun ? { identity: '-' } : signs ? {} : { identity: null }),
       type: release ? 'distribution' : 'development',
       hardenedRuntime: true,

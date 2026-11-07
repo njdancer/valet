@@ -329,6 +329,9 @@ describe('a release dry run', () => {
     expect(c.publish).toEqual(release.publish)
     expect(c.files).toEqual(release.files)
     expect(c.extraFiles).toEqual(release.extraFiles)
+    expect(c.mac.binaries).toEqual(['MacOS/valet-bridge'])
+    expect(release.mac.binaries).toEqual(['MacOS/valet-bridge'])
+    expect(createBuilderConfig(DRY_RUN_ENV, DEPS).mac?.binaries).toEqual(release.mac.binaries)
   })
 
   it('takes no signing identity, Team ID or notarisation credentials', () => {
