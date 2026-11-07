@@ -56,6 +56,12 @@ at whichever step it reaches; see "Cancelling a call" below.
 7. `irreversible` tool: the person confirms first, under a deadline (5 min default) whose signal
    the prompt receives. Declined, timed out, a prompt error: `declined`; an approval that can't be
    audited: `failed`. The tool's `run()` never starts.
+
+   `ctx.confirm(action)` (C4) names the declared requests the tool will make on a yes and may add
+   a note. The runtime swaps each for the manifest's own declaration and asks with those; one that
+   isn't declared, or whose purpose outranks the tool's side effect, or a malformed action, is
+   refused without asking (`failed confirm/undeclared-request` or `confirm/invalid`), and the
+   refusal sticks even if tool code catches it. A yes unlocks nothing.
 8. The session values (`driver.sessionSecrets`) are collected, so that refusals the driver reports
    while the tool page opens are redacted; if that fails, `failed tool-run/internal`. Then
    `driver.beginRun(policy, onBlocked)` with the manifest's egress, its request surface plus the

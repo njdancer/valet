@@ -528,7 +528,8 @@ export interface NeedsUserItem {
 
 /**
  * A confirmation the runtime is waiting on. Everything except `adapterNote` is the runtime's own
- * knowledge; the note is whatever the adapter passed to confirm(), shown attributed and unverified.
+ * knowledge; the note is the optional text the adapter passed to confirm(), shown attributed and
+ * unverified.
  */
 export interface ConfirmationItem {
   readonly kind: 'confirmation'
@@ -557,6 +558,12 @@ export interface ConfirmationItem {
   readonly requestCeiling: number
   /** The declared irreversible requests approving would unlock for this run. */
   readonly unlocks: readonly RequestDeclaration[]
+  /**
+   * tool-request only: the manifest's declarations for the requests the tool says it will make on
+   * a yes (C4). The runtime checked each is declared and within the tool's side effect; approving
+   * unlocks none of them. Empty for irreversible-tool.
+   */
+  readonly requests: readonly RequestDeclaration[]
   /** The validated tool input, redacted. */
   readonly input: readonly PreviewPart[]
   readonly adapterNote: string | null
