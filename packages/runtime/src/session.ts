@@ -203,6 +203,7 @@ export class SessionGate {
         signal: call.signal,
         registerForRedaction: (secret) => fresh.register(secret),
         attemptStarting: () => this.options.markers.markAttempted(adapterId),
+        pace: () => this.options.site.budget.acquire(call.signal),
       })
     } catch (error) {
       // Unclassified: the marker stays in progress, so nothing retries this login blindly.

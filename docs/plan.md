@@ -53,9 +53,11 @@ Still not done, or done differently from the docs:
 - **Anything live while logged in.** Spike 1, the rest of the Auth0 flow (password page, MFA,
   silent re-login), the login probe (`/api/ui/v2/bootstrap` is still a guess), the checkout paths
   and the site's own traffic counts all need Nick ([What Nick has to do](#what-nick-has-to-do-in-person)).
-- **Pacing inside the login.** The app's own login steps are paced and watched for block pages.
-  The automated login inside a call, and the person's own navigation in the login window, are not
-  ([D55](#d55-driver-level-budget-and-block-detection)).
+- **Pacing inside the login** ([D55](#d55-driver-level-budget-and-block-detection), in part,
+  2026-11-07). The automated login inside a call now waits on the site's budget before each `goto`,
+  each `click` and each probe request, and its block pages already open the breaker. Still not done:
+  the person's own clicks in the login window are watched but deliberately not paced, and in the
+  tool partition, block pages served to page-initiated requests don't reach the breaker yet.
 - **Cancelling a login** ([D67](#d67-stopping-a-login-when-the-call-is-cancelled), built
   2026-11-07). A cancelled call now stops its automatic login at the next step, poll or pause, and
   before any secret is typed. If no password or code had been typed, the attempt marker clears by

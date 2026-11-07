@@ -80,6 +80,7 @@ async function runStep(ctx: FlowContext, step: AuthStep): Promise<void> {
       if (!urlOriginAllowed(step.url, manifest.navigation)) {
         throw new ValetError('navigate', 'navigation-escaped')
       }
+      await paceNavigation(ctx)
       await guarded('navigate', () => page.goto(step.url))
       return
     case 'waitFor':
@@ -87,6 +88,8 @@ async function runStep(ctx: FlowContext, step: AuthStep): Promise<void> {
       return
     case 'click':
       await requireVisible(ctx, step.selector)
+      // A click may submit a form and load the next page, so it waits for a slot like a goto.
+      await paceNavigation(ctx)
       await guarded('auth-step', () => page.click(step.selector))
       return
     case 'fill':
@@ -157,6 +160,14 @@ async function waitFor(ctx: FlowContext, condition: Condition, timeoutMs: number
     if (now(ctx) >= stepDeadline) throw new ValetError('auth-step', 'condition-timeout')
     await pause(ctx, POLL_MS)
   }
+}
+
+/** Waits for the site's budget, then checks the caller hasn't given up while it waited. */
+async function paceNavigation(ctx: FlowContext): Promise<void> {
+  const pace = ctx.input.paceNavigation
+  if (pace === undefined) return
+  await guarded('navigate', pace)
+  checkDeadline(ctx)
 }
 
 async function requireVisible(ctx: FlowContext, selector: string): Promise<void> {

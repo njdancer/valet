@@ -113,6 +113,17 @@ describe('probe hooks', () => {
     expect(await probe.cookieNames(['www.shop.test'])).toEqual(['sid'])
   })
 
+  it('wait on the pace they are given before each fetch, and not for a refused URL', async () => {
+    const page = new FakeAuthPage()
+    const order: string[] = []
+    const probe = authProbe(manifestWith({}), page, async () => {
+      order.push(`pace after ${page.fetched.length}`)
+    })
+    await probe.fetch('https://www.shop.test/api/me')
+    await expect(probe.fetch('https://login.shop.test/api/me')).rejects.toBeInstanceOf(ValetError)
+    expect(order).toEqual(['pace after 0'])
+  })
+
   it('read the manifest’s probe as auth-flow does', async () => {
     const page = new FakeAuthPage()
     const cookie = manifestWith({ session: cookieProbe })
@@ -196,6 +207,7 @@ describe('createAuthRunner', () => {
     driver.nextPage = () => page
     const manifest = manifestWith({ session: cookieProbe, auth: { steps } })
     const registered: SecretValue[] = []
+    const paced: string[] = []
     const secrets = new LoginSecrets()
     const blocked = new BlockedAudit({
       audit: log.sink,
@@ -230,6 +242,9 @@ describe('createAuthRunner', () => {
       signal: new AbortController().signal,
       registerForRedaction: (secret) => registered.push(secret),
       attemptStarting: async () => {},
+      pace: async () => {
+        paced.push(page.currentUrl())
+      },
     }
     return {
       ...s,
@@ -239,6 +254,7 @@ describe('createAuthRunner', () => {
       driver,
       registered,
       blocked,
+      paced,
     }
   }
 
@@ -323,6 +339,15 @@ describe('createAuthRunner', () => {
     const blocked = runner([{ op: 'fail', errorClass: 'blocked-by-site' }])
     expect(await blocked.run()).toEqual({ status: 'blocked', errorClass: 'blocked-by-site' })
     expect(blocked.sessions.get('shop').state).toBe('expired')
+  })
+
+  it('waits on the site’s budget before each navigation and each probe request (D55)', async () => {
+    const r = runner([{ op: 'goto', url: 'https://www.shop.test/login' }, { op: 'assertLoggedIn' }])
+    r.page.cookies = ['sid']
+    await r.run()
+    // One wait before the goto (the page was still blank), none for a cookie probe, which asks the
+    // browser rather than the site.
+    expect(r.paced).toEqual(['about:blank'])
   })
 
   it('stops the login when the call gives up, and says no attempt was started', async () => {
@@ -571,6 +596,7 @@ describe('a login that fills a secret', () => {
       registerForRedaction: (secret) =>
         registered.push({ secret, matched: secret.occursIn('x twofactor@example.test') }),
       attemptStarting: async () => {},
+      pace: async () => {},
     })
     expect(outcome).toEqual({ status: 'ok' })
     expect(registered).toHaveLength(1)

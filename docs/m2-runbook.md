@@ -46,6 +46,10 @@ Session 1, except step 5, which can land between sessions.
 
 ### 1. D55: pacing and block detection inside the login
 
+**Pacing inside the login built on 2026-11-07:** the auth flow awaits the site's budget before
+each `goto` and `click`, and the in-flow probe waits before each request. Still to build: block
+signatures on page-initiated requests in the tool partition, and AC7's count at the fake site.
+
 [D55](plan.md#d55-driver-level-budget-and-block-detection) (answered: accepted, the split
 design, C16). Today the app's own login steps go through `ToolHost.runLoginStep`, but the
 automated login inside a tool call and the person's own login window are neither paced nor watched.

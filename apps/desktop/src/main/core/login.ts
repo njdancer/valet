@@ -82,10 +82,11 @@ function onHomeOrigin(manifest: AdapterManifest, url: string): boolean {
  * process with the auth partition's cookies, held to the navigation origins every hop) and
  * cookieNames. The probe is narrower still here: home's origin only.
  */
-export function authProbe(manifest: AdapterManifest, page: AuthPage): AuthProbe {
+export function authProbe(manifest: AdapterManifest, page: AuthPage, pace?: () => Promise<void>): AuthProbe {
   return {
     async fetch(url) {
       if (!onHomeOrigin(manifest, url)) throw new ValetError('probe', 'host-not-allowed')
+      await pace?.()
       return page.fetch(url)
     },
     cookieNames: (domains) => page.cookieNames(domains),
@@ -345,7 +346,9 @@ export function createAuthRunner(options: AuthRunnerOptions): AuthRunner {
         grants: options.grants,
         providers: options.credentials.providers(),
         otpReader: options.credentials.otpReader(),
-        probe: authProbe(manifest, page),
+        // The login's navigations and its probe wait on the site's budget, as tool calls do (D55).
+        probe: authProbe(manifest, page, () => request.pace()),
+        paceNavigation: () => request.pace(),
         isBlockedPage: () => isBlockedPage(page),
         // The runtime clones what it is given and keeps the clone, and so do the app's own login
         // secrets (for the audit's targets); this copy is ours to dispose.
