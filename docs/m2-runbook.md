@@ -95,7 +95,10 @@ change (it changes the `AuthRunner` contract in core).
 
 **Built on 2026-11-07** (D32 and D35, with the check below in
 `packages/auth-flow/test/one-attempt.test.ts` and the marker tests in `packages/runtime`). The
-dev-app dry run against the fake is still to do before Session 3.
+dev-app dry run is now a permanent step of the app's e2e journey (`apps/desktop/e2e/journey.spec.ts`,
+2026-11-07): with the fake refusing the demo password, a call types it once (one POST counted at
+the fake), the app shows "Login window open · Login needed" and "Needs you", and the next call
+returns `login-required` without another POST.
 
 [AC10](plan.md#acceptance-criteria) is the hard gate before Session 3
 ([D5](plan.md#d5-which-woolworths-account), answered). Reading the code, two answered decisions it

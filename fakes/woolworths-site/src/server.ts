@@ -123,6 +123,8 @@ export interface FakeWoolworths {
   expireAuthSessions(): void
   /** Turns Auth0's CAPTCHA on or off. */
   setCaptcha(on: boolean): void
+  /** While on, Auth0 refuses every password as wrong. */
+  rejectPasswords(on: boolean): void
   /** Starts (or, with null, stops) the hostile page beacon on www pages served from now on. */
   setPageBeacon(beacon: PageBeacon | null): void
   /** Switches what Akamai does with an `_abck` it never issued; see the option. */
@@ -508,6 +510,9 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
     },
     setCaptcha(on) {
       auth0.captcha = on
+    },
+    rejectPasswords(on) {
+      store.passwordsRejected = on === true
     },
     setPageBeacon(beacon) {
       pageScript = beacon === null ? '' : beaconScript(validBeacon(beacon))
