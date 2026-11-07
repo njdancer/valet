@@ -251,6 +251,30 @@ describe('session.ensure', () => {
     })
   })
 
+  it('paces the login’s navigations on the site’s budget, behind the probe that started it (D55)', async () => {
+    const { host, page, authRunner, clock } = fixture(ensureOnce)
+    page.route('GET', SESSION_URL, loggedOut)
+    const at: number[] = []
+    authRunner.mockImplementationOnce(async (request) => {
+      at.push(clock.now())
+      await request.pace()
+      at.push(clock.now())
+      await request.pace()
+      at.push(clock.now())
+      return { status: 'needsUser', reason: 'otp-required' }
+    })
+    const running = host.call(call)
+    for (let i = 0; i < 40; i++) {
+      await flush()
+      await clock.advance(100)
+    }
+    await running
+    // The probe took the first slot, so the login's two waits end a gap (1 s here) and two gaps
+    // after the runner started.
+    expect(at[1]! - at[0]!).toBeGreaterThanOrEqual(1_000)
+    expect(at[2]! - at[0]!).toBeGreaterThanOrEqual(2_000)
+  })
+
   it('records the attempt through the marker store when the runner says it is about to type', async () => {
     const { host, page, authRunner, markers } = fixture(ensureOnce)
     page.route('GET', SESSION_URL, loggedOut)

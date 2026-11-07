@@ -60,6 +60,12 @@ export interface AuthRunRequest {
    * site may now see an attempt (D35). If it rejects, type nothing and end the login.
    */
   attemptStarting(): Promise<void>
+  /**
+   * Waits for the site's rate budget, as a tool's request would (D55). Call before each navigation
+   * the login starts, and before each request its probe makes. Rejects with `aborted` if the call
+   * gives up while waiting.
+   */
+  pace(): Promise<void>
 }
 
 /**

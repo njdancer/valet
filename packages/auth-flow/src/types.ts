@@ -118,4 +118,10 @@ export interface AuthFlowInput {
    * `secret-fill: internal`.
    */
   readonly beforeAttempt?: () => Promise<void>
+  /**
+   * Awaited before each `goto` and `click`, the steps that can load a page, so the site's rate
+   * budget spaces a login's navigations as it does tool calls (D55). What it throws ends the flow:
+   * a ValetError as it is (aborted, say), anything else as `navigate: internal`.
+   */
+  readonly paceNavigation?: () => Promise<void>
 }
