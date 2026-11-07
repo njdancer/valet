@@ -274,7 +274,7 @@ Steps:
    `woolworths_add_to_cart` for one unit. Nick refreshes woolworths.com.au in Chrome and sees it
    (AC6). If he doesn't want to keep it, `woolworths_set_cart_quantity` to 0, and check again.
    This is the M2 exit.
-7. Afterwards: verify the audit log from the control panel (AC14's CLI isn't built yet); check it shows one secret use per field
+7. Afterwards: verify the audit log (`pnpm valet:verify-audit`, or the control panel); check it shows one secret use per field
    for the login; grep the app's logs, traces and audit log for the password (a first pass at
    AC16).
 

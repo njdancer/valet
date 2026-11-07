@@ -187,6 +187,20 @@ gave one.
 `reject(id, hash, version)` audits `adapter-rejected` and withdraws that hash's approval, if it had
 one. The event is written before the file: an approval that can't be audited doesn't happen.
 
+## Verifying the audit log
+
+`pnpm valet:verify-audit [--head <hash>] [path]` (AC14) runs `verifyAuditLog` over the whole file:
+every record's sequence number, back-link and hash. With no path it checks the release app's log,
+`~/Library/Application Support/Valet/audit.jsonl`; a relative path is taken from where you ran
+`pnpm`. It prints `ok: <n> records, head <hash>` and exits 0, or names the first bad line, echoes
+it (cut to 400 characters) and exits 1; bad usage exits 2. A missing file is an error here, not an
+empty log.
+
+An edited byte, a deleted, moved or swapped line, or a file cut off mid-line always fails. Records
+removed cleanly from the end leave a shorter valid chain, so pass `--head` with a head hash noted
+earlier (from a previous run, or the control panel) to catch that too. The same entry point
+(`src/verify-audit-cli.ts`) is what a command inside the packaged app's `Contents/MacOS` will run.
+
 ## Guarded tool page
 
 - `fetch`: `init` is read once into a frozen snapshot (method, string-valued headers, a plain copy
