@@ -45,33 +45,19 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { parseArgs } from 'node:util'
 import { buildFeedYaml, hashZip } from './make-feed.mjs'
-import { APP_DIR, asarFiles, BUILDER, cleanEnv, electronDist as cloneElectron, plist } from './packaging.mjs'
+import {
+  APP_DIR,
+  asarFiles,
+  BUILDER,
+  cleanEnv,
+  electronDist as cloneElectron,
+  EXPECTED_FUSES,
+  readFuses as fuses,
+  plist,
+} from './packaging.mjs'
 import { homeEnv, inside, makeHome, smokeRealApp } from './smoke/real-app.mjs'
 
-const SENTINEL = 'dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX'
-// @electron/fuses 1.8.0's names, in wire order. Electron 44's wire is longer; extra ones print as fuseN.
-const FUSE_NAMES = [
-  'RunAsNode',
-  'EnableCookieEncryption',
-  'EnableNodeOptionsEnvironmentVariable',
-  'EnableNodeCliInspectArguments',
-  'EnableEmbeddedAsarIntegrityValidation',
-  'OnlyLoadAppFromAsar',
-  'LoadBrowserProcessSpecificV8Snapshot',
-  'GrantFileProtocolExtraPrivileges',
-]
 const VERSION = '0.1.0'
-/** electron-builder.config.ts's ELECTRON_FUSES, by wire name (kept equal by hand: this is a .mjs). */
-const EXPECTED_FUSES = {
-  RunAsNode: 'off',
-  EnableCookieEncryption: 'on',
-  EnableNodeOptionsEnvironmentVariable: 'off',
-  EnableNodeCliInspectArguments: 'off',
-  EnableEmbeddedAsarIntegrityValidation: 'on',
-  OnlyLoadAppFromAsar: 'on',
-  LoadBrowserProcessSpecificV8Snapshot: 'off',
-  GrantFileProtocolExtraPrivileges: 'off',
-}
 const EXPECTED_ASAR = [
   'out/main/app-scheme.mjs',
   'out/main/index.js',
@@ -153,22 +139,6 @@ function build() {
       env: cleanEnv({ VALET_UPDATE_URL: 'http://127.0.0.1:4555/' }),
     },
   )
-}
-
-/** The fuse wire as @electron/fuses reads it: sentinel, version, length, then one byte per fuse. */
-function fuses(app) {
-  const binary = readFileSync(
-    join(app, 'Contents', 'Frameworks', 'Electron Framework.framework', 'Electron Framework'),
-  )
-  const at = binary.indexOf(SENTINEL)
-  if (at === -1) throw new Error('no fuse sentinel')
-  const wire = at + SENTINEL.length
-  const states = { 48: 'off', 49: 'on', 114: 'removed' }
-  const result = { version: binary[wire] }
-  for (let i = 0; i < binary[wire + 1]; i++) {
-    result[FUSE_NAMES[i] ?? `fuse${i}`] = states[binary[wire + 2 + i]] ?? 'unknown'
-  }
-  return result
 }
 
 function sh(script, ...args) {

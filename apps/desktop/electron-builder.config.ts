@@ -94,6 +94,7 @@ export const DEV_REQUIREMENT_TEMPLATE = 'designated-requirement.dev.txt'
 /** The environment the config reads. The named variables are the ones it acts on. */
 export interface BuildEnv {
   readonly VALET_RELEASE?: string
+  readonly VALET_RELEASE_DRY_RUN?: string
   readonly VALET_TEAM_ID?: string
   readonly VALET_UPDATE_URL?: string
   readonly CSC_NAME?: string
@@ -251,6 +252,17 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
     throw new BuildConfigError('VALET_RELEASE must be 1 for a release build, or unset')
   }
   const release = releaseFlag === '1'
+  const dryRunFlag = env.VALET_RELEASE_DRY_RUN
+  if (dryRunFlag !== undefined && dryRunFlag !== '' && dryRunFlag !== '0' && dryRunFlag !== '1') {
+    throw new BuildConfigError('VALET_RELEASE_DRY_RUN must be 1 for a release dry run, or unset')
+  }
+  // A release dry run (scripts/release.mjs --dry-run): the release identity, bundle checks, fuses and
+  // entitlements, signed ad hoc ("-", no key) and never notarised. It takes no signing or
+  // notarisation variables at all, so it can't be mistaken for, or turned into, a real release.
+  const dryRun = dryRunFlag === '1'
+  if (dryRun && !release) {
+    throw new BuildConfigError('VALET_RELEASE_DRY_RUN is a dry run of a release: set VALET_RELEASE=1 too')
+  }
   const appId = release ? RELEASE_APP_ID : DEV_APP_ID
   const productName = release ? RELEASE_PRODUCT_NAME : DEV_PRODUCT_NAME
   // File and package names: no capitals or spaces.
@@ -276,7 +288,23 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
   }
 
   let requirement: string | null = null
-  if (release) {
+  if (dryRun) {
+    if (feedUrl === null) throw new BuildConfigError('a release build needs VALET_UPDATE_URL')
+    checkReleaseBundle(deps.readMainBundle(), feedUrl)
+    const real = ['CSC_NAME', 'CSC_LINK', 'VALET_TEAM_ID', 'APPLE_KEYCHAIN_PROFILE', 'APPLE_KEYCHAIN']
+      .concat(['APPLE_API_KEY', 'APPLE_API_KEY_ID', 'APPLE_API_ISSUER', 'APPLE_TEAM_ID'])
+      .filter((name) => set(env, name))
+    if (real.length > 0) {
+      throw new BuildConfigError(
+        `a release dry run signs ad hoc and is never notarised: unset ${real.join(', ')}`,
+      )
+    }
+    if (!deps.bridgeBuilt()) {
+      throw new BuildConfigError(
+        'a release ships the stdio bridge: run `swift build -c release --arch arm64 --arch x86_64 --package-path swift-bridge` first',
+      )
+    }
+  } else if (release) {
     if (!set(env, 'VALET_TEAM_ID')) throw new BuildConfigError('a release build needs VALET_TEAM_ID')
     if (feedUrl === null) throw new BuildConfigError('a release build needs VALET_UPDATE_URL')
     checkReleaseBundle(deps.readMainBundle(), feedUrl)
@@ -367,7 +395,8 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
       // electron-updater picks the zip for the machine by "arm64" in its name.
       // The escaped ${...} are electron-builder's own macros.
       artifactName: `${slug}-\${version}-\${arch}.\${ext}`,
-      ...(signs ? {} : { identity: null }),
+      // A dry run signs ad hoc: electron-builder's "-" identity, which uses no key and no keychain.
+      ...(dryRun ? { identity: '-' } : signs ? {} : { identity: null }),
       type: release ? 'distribution' : 'development',
       hardenedRuntime: true,
       entitlements: ENTITLEMENTS_PATH,
@@ -377,7 +406,7 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
       ...(requirement === null
         ? {}
         : { sign: signWithRequirement(deps.loadSignAsync, requirement, deps.sleep) }),
-      notarize: release,
+      notarize: release && !dryRun,
       // The release script assesses with spctl itself, after stapling.
       gatekeeperAssess: false,
       extendInfo: {
