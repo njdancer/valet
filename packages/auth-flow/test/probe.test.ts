@@ -73,7 +73,7 @@ describe('a fetch probe', () => {
     expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
   })
 
-  it('reads a logged-out status as not-logged-in, which a retry may try again', async () => {
+  it('reads a logged-out status as not-logged-in, which a retry never tries again (D32)', async () => {
     const w = world()
     let calls = 0
     w.probe.respond = () => (++calls < 3 ? { status: 401, contentType: null, body: null } : LOGGED_IN)
@@ -81,8 +81,12 @@ describe('a fetch probe', () => {
       ...withProbe(FETCH_PROBE),
       auth: { steps: [{ op: 'retry', times: 2, steps: [{ op: 'assertLoggedIn' }] }], frameOrigins: [] },
     }
-    expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
-    expect(w.probe.fetched).toHaveLength(3)
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'probe',
+      errorClass: 'not-logged-in',
+    })
+    expect(w.probe.fetched).toHaveLength(1)
   })
 
   it('honours the manifest list of logged-out statuses', async () => {

@@ -364,6 +364,7 @@ export function createAuthRunner(options: AuthRunnerOptions): AuthRunner {
         flowTimeoutMs: options.flowTimeoutMs,
         // The call giving up stops the login too, so it doesn't run on to its own deadline.
         signal: request.signal,
+        beforeAttempt: () => request.attemptStarting(),
       })
       switch (outcome.status) {
         case 'ok':

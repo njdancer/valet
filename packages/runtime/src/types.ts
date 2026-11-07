@@ -55,6 +55,11 @@ export interface AuthRunRequest {
    * and disposes, the value it passed.
    */
   registerForRedaction(secret: SecretValue): void
+  /**
+   * Call, and wait for, before typing a password or one-time code. It records durably that the
+   * site may now see an attempt (D35). If it rejects, type nothing and end the login.
+   */
+  attemptStarting(): Promise<void>
 }
 
 /**

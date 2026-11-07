@@ -34,6 +34,47 @@ describe('LoginAttemptMarker', () => {
     expect(await readdir(dir)).toEqual([])
   })
 
+  it('reads a fresh marker as in progress with nothing typed, from when it was set (D35)', async () => {
+    const markers = new LoginAttemptMarker(dir, clock)
+    await markers.set('woolworths', 'call-1')
+    expect(await markers.read('woolworths')).toEqual({
+      kind: 'in-progress',
+      attempted: false,
+      startedAt: clock.now(),
+    })
+  })
+
+  it('reads a marker as attempted once a password or code is about to be typed, and keeps its start', async () => {
+    const markers = new LoginAttemptMarker(dir, clock)
+    await markers.set('woolworths', 'call-1')
+    await markers.markAttempted('woolworths')
+    expect(await markers.read('woolworths')).toEqual({ kind: 'in-progress' })
+    expect(await markers.startedAt('woolworths')).toBe('2026-11-07T09:00:00.000Z')
+  })
+
+  it('reads a marker without the attempted field, as an older app wrote it, as attempted', async () => {
+    await writeFile(
+      join(dir, 'woolworths.login-attempt'),
+      `${JSON.stringify({ startedAt: '2026-11-07T09:00:00.000Z', callId: null })}\n`,
+    )
+    expect(await new LoginAttemptMarker(dir, clock).read('woolworths')).toEqual({ kind: 'in-progress' })
+  })
+
+  it('reads a no-attempt marker with a start time it cannot parse as attempted', async () => {
+    await writeFile(
+      join(dir, 'woolworths.login-attempt'),
+      `${JSON.stringify({ startedAt: 'yesterday', callId: null, attempted: false })}\n`,
+    )
+    expect(await new LoginAttemptMarker(dir, clock).read('woolworths')).toEqual({ kind: 'in-progress' })
+  })
+
+  it('marks a marker it cannot read as attempted, by writing it again', async () => {
+    await writeFile(join(dir, 'woolworths.login-attempt'), 'not json')
+    const markers = new LoginAttemptMarker(dir, clock)
+    await markers.markAttempted('woolworths')
+    expect(await markers.read('woolworths')).toEqual({ kind: 'in-progress' })
+  })
+
   it('survives a restart, as a crash mid-login would leave it', async () => {
     await new LoginAttemptMarker(dir, clock).set('woolworths', null)
     expect(await new LoginAttemptMarker(dir, clock).isSet('woolworths')).toBe(true)
@@ -92,7 +133,11 @@ describe('LoginAttemptMarker', () => {
     expect(await markers.read('woolworths')).toEqual({ kind: 'unset' })
 
     await markers.set('woolworths', 'call-1')
-    expect(await markers.read('woolworths')).toEqual({ kind: 'in-progress' })
+    expect(await markers.read('woolworths')).toEqual({
+      kind: 'in-progress',
+      attempted: false,
+      startedAt: clock.now(),
+    })
 
     await markers.hold('woolworths', 2, Date.UTC(2026, 10, 7, 9, 10, 0))
     expect(await markers.read('woolworths')).toEqual({

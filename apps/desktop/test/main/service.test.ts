@@ -368,6 +368,7 @@ describe('a grant and the runtime’s login hold', () => {
       expect(await markers(s).read('shop'), reason).toMatchObject({ kind: 'held', reason })
     }
     await markers(s).set('shop', 'call_1')
+    await markers(s).markAttempted('shop')
     await s.api.grants.make(request(s))
     expect(await markers(s).read('shop')).toEqual({ kind: 'in-progress' })
 

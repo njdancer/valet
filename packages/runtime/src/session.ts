@@ -172,8 +172,16 @@ export class SessionGate {
     switch (marker.kind) {
       case 'unset':
         return null
-      case 'in-progress':
-        return needsUser('login-attempt-pending')
+      case 'in-progress': {
+        // D35: a login that stopped before typing anything spent no attempt at the site. It holds
+        // like a first failure's backoff, then clears itself; one that may have typed waits for
+        // the person.
+        if (marker.attempted !== false || marker.startedAt === undefined)
+          return needsUser('login-attempt-pending')
+        const backoff = this.options.backoff ?? DEFAULT_LOGIN_BACKOFF
+        if (this.options.clock.now() >= marker.startedAt + backoff.baseMs) return null
+        return needsUser('login-required')
+      }
       case 'held':
         if (marker.retryAt !== null && this.options.clock.now() >= marker.retryAt) return null
         return needsUser(marker.reason ?? 'login-required')
@@ -194,6 +202,7 @@ export class SessionGate {
         callId: call.callId,
         signal: call.signal,
         registerForRedaction: (secret) => fresh.register(secret),
+        attemptStarting: () => this.options.markers.markAttempted(adapterId),
       })
     } catch (error) {
       // Unclassified: the marker stays in progress, so nothing retries this login blindly.

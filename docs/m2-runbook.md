@@ -83,6 +83,10 @@ change (it changes the `AuthRunner` contract in core).
 
 ### 3. The AC10 one-attempt check
 
+**Built on 2026-11-07** (D32 and D35, with the check below in
+`packages/auth-flow/test/one-attempt.test.ts` and the marker tests in `packages/runtime`). The
+dev-app dry run against the fake is still to do before Session 3.
+
 [AC10](plan.md#acceptance-criteria) is the hard gate before Session 3
 ([D5](plan.md#d5-which-woolworths-account), answered). Reading the code, two answered decisions it
 depends on aren't built yet:

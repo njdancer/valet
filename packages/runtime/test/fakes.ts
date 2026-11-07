@@ -203,15 +203,31 @@ export class FakePrompt implements ConfirmationPrompt {
 
 export class MemoryMarkers implements LoginMarkerStore {
   readonly states = new Map<string, LoginMarkerState>()
-  failOn: 'read' | 'set' | 'hold' | 'clear' | null = null
+  failOn: 'read' | 'set' | 'markAttempted' | 'hold' | 'clear' | null = null
+  /** Adapter ids markAttempted() was called for, in order. */
+  readonly attempts: string[] = []
 
   async read(adapterId: string): Promise<LoginMarkerState> {
     if (this.failOn === 'read') throw new Error('EIO')
     return this.states.get(adapterId) ?? { kind: 'unset' }
   }
 
+  /** `now` stamps a new marker, as the real store does; without one, it records no start time. */
+  constructor(private readonly now?: () => number) {}
+
   async set(adapterId: string): Promise<void> {
     if (this.failOn === 'set') throw new Error('EIO')
+    this.states.set(
+      adapterId,
+      this.now === undefined
+        ? { kind: 'in-progress', attempted: false }
+        : { kind: 'in-progress', attempted: false, startedAt: this.now() },
+    )
+  }
+
+  async markAttempted(adapterId: string): Promise<void> {
+    if (this.failOn === 'markAttempted') throw new Error('EIO')
+    this.attempts.push(adapterId)
     this.states.set(adapterId, { kind: 'in-progress' })
   }
 
