@@ -56,10 +56,10 @@ Still not done, or done differently from the docs:
 - **Pacing inside the login.** The app's own login steps are paced and watched for block pages.
   The automated login inside a call, and the person's own navigation in the login window, are not
   ([D55](#d55-driver-level-budget-and-block-detection)).
-- **Cancelling a login.** The auth flow takes no `AbortSignal`, so a cancelled call's automatic
-  login runs on to its own deadline. If it stops part-way, the attempt marker stays set until the
-  person clears it. A clean stop needs a core change: the auth runner would report whether any
-  secret was filled yet.
+- **Cancelling a login** ([D67](#d67-stopping-a-login-when-the-call-is-cancelled), built
+  2026-11-07). A cancelled call now stops its automatic login at the next step, poll or pause, and
+  before any secret is typed. If no password or code had been typed, the attempt marker clears by
+  itself; otherwise it waits for the person.
 - **The stdio bridge in a packaged build.** Refused by the argv check until
   [D60](#d60-the-stdio-bridge-in-a-packaged-app) is decided; clients use Streamable HTTP for now.
 - **Tool code isn't in a separate process.** It runs in the main process, behind the guarded
@@ -349,6 +349,7 @@ answered on time.
   - Electron end-to-end tests with Playwright against the fake site served over local HTTPS, on
     two origins (www and auth).
   - A dev build of the app (unsigned is fine) with the MCP endpoint and no UI beyond the tray.
+- How the live work runs, session by session: [the M2 runbook](m2-runbook.md).
 - Hard requirement before the first live **automated** login: the attempt marker and the
   one-password-submit limit (AC10) are implemented and tested, so a bug can cost at most one
   attempt against Nick's account ([D5](#d5-which-woolworths-account)).
@@ -1279,6 +1280,8 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D10. Analytics hosts
 
+- Nick's answer (2026-11-07): Ideally yes: block the analytics and ad hosts (strict), if the site
+  still works without them. Session 2 of the [M2 runbook](m2-runbook.md) checks that.
 - Hosts in play, by partition:
   - **Auth partition navigation:** `https://www.woolworths.com.au` and
     `https://auth.woolworths.com.au`. The Auth0 pages' subresources aren't restricted by the
@@ -2161,6 +2164,8 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 - Blocks: nothing.
 ### D66. A block page in the person's login window
 
+- Nick's answer (2026-11-07): Accepted: close the window and explain in the app, with the time the
+  breaker reopens.
 - Today (round 4): when the person opens the login window and its first page is Akamai's block
   page, the app opens the site's breaker, closes the window and reports `login/blocked-by-site`.
   The person never sees the block page.
@@ -2172,6 +2177,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D67. Stopping a login when the call is cancelled
 
+- Nick's answer (2026-11-07): Accepted: build the core change before the first automated live login.
 - Today (round 4): a client can cancel a call, and the runtime stops at once, but the automatic
   login it started runs on to the auth flow's own deadline. If that login stops part-way, the
   attempt marker stays set (`login-attempt-pending`) until the person clears it, as after a crash.

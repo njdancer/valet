@@ -31,6 +31,12 @@ export type AuthOutcome =
       readonly errorClass: ErrorClass
       /** From a manifest fail step. For the app only, like needsUser's. */
       readonly appNote?: string
+      /**
+       * Only on `aborted`: whether a password or one-time code had begun to be typed before the
+       * flow stopped. False means the site saw no attempt, so the caller can clear its attempt
+       * marker without asking the person.
+       */
+      readonly attemptStarted?: boolean
     }
   /** The site's bot protection refused us, or told us to slow down. The caller cools down. */
   | {
@@ -101,4 +107,9 @@ export interface AuthFlowInput {
    * the flow starts on first use and closes when it finishes; one passed in is the caller's to close.
    */
   readonly urlMatcher?: UrlPatternMatcher
+  /**
+   * Aborts when the caller gives up (the tool call was cancelled or timed out). The flow stops at
+   * the next step, poll or pause, and before typing any secret, and ends `auth-step: aborted`.
+   */
+  readonly signal?: AbortSignal
 }

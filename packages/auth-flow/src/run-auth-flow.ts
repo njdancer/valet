@@ -47,6 +47,7 @@ async function audited(
     deadline: startedAt.getTime() + input.flowTimeoutMs,
     regexes: { patterns, matcher },
     probed: false,
+    attemptStarted: false,
   }
   if (!Number.isFinite(ctx.deadline)) return { status: 'failed', stage: 'auth-step', errorClass: 'internal' }
 
@@ -86,7 +87,11 @@ async function execute(ctx: FlowContext): Promise<AuthOutcome> {
     }
     return { status: 'ok' }
   } catch (error) {
-    return toOutcome(error)
+    const outcome = toOutcome(error)
+    if (outcome.status === 'failed' && outcome.errorClass === 'aborted') {
+      return { ...outcome, attemptStarted: ctx.attemptStarted }
+    }
+    return outcome
   }
 }
 

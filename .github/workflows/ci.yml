@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    # macOS, because the updater tests use ditto and the app only ships for macOS.
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check
+
+  e2e:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - run: pnpm install --frozen-lockfile
+      - name: browser-electron end to end
+        run: |
+          pnpm --filter @valet/browser-electron typecheck:e2e
+          pnpm --filter @valet/browser-electron test:e2e --trace off
+      - name: desktop end to end
+        run: pnpm --filter @valet/desktop test:e2e --trace off

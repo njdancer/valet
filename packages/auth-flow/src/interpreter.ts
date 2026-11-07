@@ -22,6 +22,7 @@ import {
   guarded,
   NeedsUserHalt,
   now,
+  pause,
   remainingMs,
 } from './context'
 import { probeLoggedIn } from './probe'
@@ -106,7 +107,7 @@ async function runStep(ctx: FlowContext, step: AuthStep): Promise<void> {
       }
       return
     case 'pause':
-      await ctx.input.sleep(Math.min(step.ms, remainingMs(ctx)))
+      await pause(ctx, Math.min(step.ms, remainingMs(ctx)))
       return
     case 'when': {
       const holds = await guarded('auth-step', () => evaluateCondition(page, step.condition, ctx.regexes))
@@ -154,7 +155,7 @@ async function waitFor(ctx: FlowContext, condition: Condition, timeoutMs: number
     await checkBlocked(ctx)
     checkDeadline(ctx)
     if (now(ctx) >= stepDeadline) throw new ValetError('auth-step', 'condition-timeout')
-    await ctx.input.sleep(POLL_MS)
+    await pause(ctx, POLL_MS)
   }
 }
 

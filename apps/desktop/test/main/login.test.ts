@@ -229,7 +229,15 @@ describe('createAuthRunner', () => {
       signal: new AbortController().signal,
       registerForRedaction: (secret) => registered.push(secret),
     }
-    return { ...s, run: () => run(request), log, page, driver, registered, blocked }
+    return {
+      ...s,
+      run: (signal?: AbortSignal) => run(signal === undefined ? request : { ...request, signal }),
+      log,
+      page,
+      driver,
+      registered,
+      blocked,
+    }
   }
 
   it('opens the login page with reporters that audit its refusals as the auth partition’s, for the call', async () => {
@@ -313,6 +321,19 @@ describe('createAuthRunner', () => {
     const blocked = runner([{ op: 'fail', errorClass: 'blocked-by-site' }])
     expect(await blocked.run()).toEqual({ status: 'blocked', errorClass: 'blocked-by-site' })
     expect(blocked.sessions.get('shop').state).toBe('expired')
+  })
+
+  it('stops the login when the call gives up, and says no attempt was started', async () => {
+    const r = runner([{ op: 'pause', ms: 1_000 }])
+    const controller = new AbortController()
+    controller.abort()
+    expect(await r.run(controller.signal)).toEqual({
+      status: 'failed',
+      stage: 'auth-step',
+      errorClass: 'aborted',
+      attemptStarted: false,
+    })
+    expect(r.page.closed).toBe(true)
   })
 })
 
