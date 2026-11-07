@@ -498,9 +498,10 @@ main world (as if QuickJS had been broken) must fail to:
   - Bypassing technical access controls has its own liability (DMCA §1201 in the US; the
     technological-protection-measure provisions of Australia's Copyright Act).
   - The bot-detection posture ([D24](plan.md#d24-bot-detection-posture)) matters here as well as
-    ethically: adapters that evade bot detection must not be listed, and the registry's checks
-    look for the obvious signs (stealth patches, `navigator` overrides, CAPTCHA services in
-    egress).
+    ethically. Countermeasures live in the runtime, not in adapters, so an adapter that brings
+    its own (stealth patches, `navigator` overrides, CAPTCHA services in egress) must not be
+    listed, and the registry's checks look for those signs. Whether the runtime's own
+    countermeasures count as circumventing a protection measure is the legal question D24 flags.
 - **Safe harbours.**
   - US DMCA §512 protects a service hosting user content if it registers an agent and runs a
     notice process.

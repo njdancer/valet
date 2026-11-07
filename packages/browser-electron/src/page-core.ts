@@ -14,6 +14,13 @@ export interface PageTiming {
   readonly stepTimeoutMs: number
   /** Default gap between typed characters. Sites time keystrokes. */
   readonly typingDelayMs: number
+  /**
+   * Up to this much is added to each gap, drawn afresh per keystroke, so typing never runs at one
+   * even rhythm (D24). Zero unless set.
+   */
+  readonly typingJitterMs?: number
+  /** A uniform draw in [0, 1), for the jitter. Injected so tests are deterministic. */
+  readonly random?: () => number
   /** Which key events make up one typed character: char events alone unless set. */
   readonly keyEvents?: KeyEvents
 }
@@ -213,7 +220,7 @@ export class PageCore {
   ): Promise<void> {
     const mark = this.commitMark(guard.target)
     for (let index = 0; index < count; index++) {
-      if (index > 0) await sleep(this.timing.timers, delayMs)
+      if (index > 0) await sleep(this.timing.timers, this.keystrokeGap(delayMs))
       await this.beforeKey(guard, mark, signal)
       send(index)
     }
@@ -274,6 +281,20 @@ export class PageCore {
   }
 
   /** Sends one trusted character, as the page's key-event setting says. */
+  /** The wait before the next keystroke: `delayMs`, plus up to the jitter, never less. */
+  keystrokeGap(delayMs: number): number {
+    const jitter = this.timing.typingJitterMs ?? 0
+    if (jitter <= 0) return delayMs
+    const draw = (this.timing.random ?? Math.random)()
+    const unit = Number.isFinite(draw) ? Math.min(Math.max(draw, 0), 1) : 0
+    return delayMs + Math.floor(unit * jitter)
+  }
+
+  /** The most typing `count` characters can wait in gaps, for a step's time budget. */
+  typingBudget(count: number, delayMs: number): number {
+    return count * (delayMs + (this.timing.typingJitterMs ?? 0))
+  }
+
   sendChar(char: string): void {
     this.surface.sendChar(char, this.timing.keyEvents ?? 'char')
   }

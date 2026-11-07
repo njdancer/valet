@@ -235,7 +235,7 @@ export class SurfaceAuthPage implements AuthPage {
           this.core.sendChar(chars[i] ?? ''),
         )
       },
-      chars.length * delayMs,
+      this.core.typingBudget(chars.length, delayMs),
     )
   }
 
@@ -369,7 +369,7 @@ export class SurfaceAuthPage implements AuthPage {
     let index = 0
     try {
       await secret.revealEach(async (char) => {
-        if (index++ > 0) await sleep(this.timing.timers, delayMs)
+        if (index++ > 0) await sleep(this.timing.timers, this.core.keystrokeGap(delayMs))
         await this.core.step(stage, async (signal) => {
           await this.core.beforeKey(guard, mark, signal)
           this.core.sendChar(char)

@@ -163,9 +163,9 @@ name and `Electron/44.10.2`) blocked from Nick's IP while a clean Chrome UA load
 `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/<major>.0.0.0 Safari/537.36`,
 with `<major>` read from the bundled Chromium (`process.versions.chrome`), and
 `Accept-Language: en-AU`, set before the first request. That is what Nick's own Chrome sends, and
-it is the limit: the driver matches the person's own browser and never goes further
-([D24](plan.md#d24-bot-detection-posture)). Client-hint brands stay `Chromium`
-([D24a](plan.md#d24a-client-hint-brands)).
+it is the starting point. Further countermeasures are allowed within the law and are added in
+the driver as blocks call for them, never in adapters ([D24](plan.md#d24-bot-detection-posture)).
+Client-hint brands become `Google Chrome` ([D24a](plan.md#d24a-client-hint-brands)).
 
 **On `main`:** `cleanChromeUserAgent()` exists, but `DriverOptions.userAgent` defaults to
 Electron's own UA and nothing sets `Accept-Language`. Making the clean UA and `en-AU` the default

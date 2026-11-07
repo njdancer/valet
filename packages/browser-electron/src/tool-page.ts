@@ -65,7 +65,7 @@ export class SurfaceToolPage implements ToolPage {
           this.core.sendChar(chars[index] ?? ''),
         )
       },
-      chars.length * delayMs,
+      this.core.typingBudget(chars.length, delayMs),
     )
   }
 
