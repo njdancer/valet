@@ -120,8 +120,10 @@ the first cart tool logs in (email, password, SMS code) in the hidden auth windo
   title: `valet (demo) [control]`, `valet menu [tray]`, `valet: confirm
   [<confirmation id>]`, `valet: sign in [<adapter id>]`. Outside a demo launch it exposes
   nothing else; in one, see the e2e-only switches below.
-- The control panel opens at launch on first run (something waits for review), in demo mode and in
-  e2e mode.
+- Until first-run setup is finished or skipped (`setup.json` in userData), every launch opens the
+  control panel at `#/setup`. In e2e mode setup stays closed unless `VALET_E2E_SETUP=1`, so the
+  other specs start on the adapters page; `e2e/setup.spec.ts` sets it. Otherwise the control panel
+  opens at launch when something waits for the person, in demo mode and in e2e mode.
 - **E2e-only, and only in a demo build** (the demo chunk, which a production build doesn't carry):
   in an e2e launch, `evil.test` is mapped to 127.0.0.1 alongside the demo hosts (the egress canary
   runs the fake's exfil sink there, so a request the app let out would arrive rather than fail to
@@ -498,6 +500,9 @@ Routes the main process opens (`lib/router.ts`):
 | `#/adapters/<id>/grant/<s>` | Grant sheet over the adapter page; `<s>` = `messages` for SMS codes          |
 | `#/confirm/<id>`            | Its own small window, shown inactive (see above), for a pending confirmation |
 | `#/needs-user/<adapterId>`  | A view above the auth window's web view: the hand-off banner and status bar  |
+| `#/setup`, `#/setup/<step>` | First-run setup, full window; no step resumes at the first one not done      |
+| `#/setup/approve/review`    | The bundled adapter's review, opened from setup and returning to it          |
+| `#/setup/grant/<s>`         | The grant sheet over setup's grant step, closing back to it                  |
 | `tray.html`                 | The tray popover window (400 px wide, transparent background)                |
 
 ## What differs from the mockups, and why
@@ -518,3 +523,12 @@ Routes the main process opens (`lib/router.ts`):
 - The Woolworths example follows the live probe: login on Auth0 at `auth.woolworths.com.au`, six
   write/read tools and no irreversible tool (D18), so the confirmation shown is a `confirm()` from
   `remove_from_cart`.
+- First-run setup puts 1Password before the clients and drops the mockup's Messages step: the
+  order is AC2's (where logins come from, approve, grant) and then AC3's (connect Claude). Its
+  approval and grant are the app's own review screen and grant sheet, opened from setup and
+  returning to it, so setup can approve or grant nothing those screens wouldn't. Messages codes
+  stay on the adapter's page. The mockup's 1Password pane describes a service account; Nick chose
+  a Keychain copy of the item instead (D6), so that pane shows the providers this launch has, and
+  takes the 1Password account once the Keychain copy lands. Claude Code is set up through the
+  bridge, like Claude Desktop, rather than over HTTP with a token on screen: tokens never reach the
+  renderer (D42).

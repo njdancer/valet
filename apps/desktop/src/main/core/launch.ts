@@ -15,6 +15,11 @@ export interface LaunchMode {
   readonly e2e: boolean
   /** VALET_USER_DATA: an absolute directory to use as userData instead of the default. */
   readonly userData: string | null
+  /**
+   * Whether a launch whose setup isn't finished opens it. Always, except an e2e launch that doesn't
+   * ask for it with VALET_E2E_SETUP=1: the other specs start on the adapters page, as they always have.
+   */
+  readonly setup: boolean
 }
 
 /** What this build is, decided by the build and Electron, never by argv or the environment. */
@@ -37,11 +42,13 @@ export function launchMode(
 ): LaunchMode {
   const override = context.packaged ? undefined : env['VALET_USER_DATA']
   const demoAllowed = context.demoBuild && !context.packaged
+  const e2e = env['VALET_E2E'] === '1'
   return {
     demo: demoAllowed && (env['VALET_DEMO'] === '1' || argv.includes('--demo')),
-    e2e: env['VALET_E2E'] === '1',
+    e2e,
     // A relative path would land wherever the app was started from; it is ignored.
     userData: override !== undefined && isAbsolute(override) ? resolve(override) : null,
+    setup: !e2e || env['VALET_E2E_SETUP'] === '1',
   }
 }
 

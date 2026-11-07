@@ -7,6 +7,7 @@ import { dirname, join, resolve } from 'node:path'
 import { createElectronSessionDriver, hardenProcess, type ManifestOptions } from '@valet/browser-electron'
 import { startEndpoint } from '@valet/mcp-server'
 import { app, clipboard, dialog, protocol } from 'electron'
+import { href } from '../../renderer/lib/routes'
 import { builtinAdapters } from '../adapters'
 import { APP_SCHEME, APP_SCHEME_PRIVILEGES, createAppSchemeHandler } from '../core/app-scheme'
 import { dataPaths } from '../core/constants'
@@ -214,9 +215,12 @@ async function main(): Promise<void> {
   })
   for (const signal of ['SIGTERM', 'SIGINT'] as const) process.once(signal, () => app.quit())
 
-  // First run, demo and e2e: open the control panel, where the adapter waits for review.
+  // Until setup is finished or skipped, every launch opens it (AC2). Otherwise demo and e2e open the
+  // control panel, as does anything waiting for the person.
+  const setup = await running.api.setup.status()
   const attention = await running.api.attention.list()
-  if (mode.demo || mode.e2e || attention.length > 0) windows.openControlPanel(null)
+  if (mode.setup && setup.completedAt === null) windows.openControlPanel(href.setup())
+  else if (mode.demo || mode.e2e || attention.length > 0) windows.openControlPanel(null)
 
   // A smoke build only: the packaged main process loads what it loads lazily, and says so.
   if (__VALET_SMOKE_BUILD__) {

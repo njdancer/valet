@@ -42,6 +42,8 @@ export const INVOKE_METHODS = [
   'updates.status',
   'updates.check',
   'health.sites',
+  'setup.status',
+  'setup.finish',
   'app.status',
   'app.setPaused',
   'app.openControlPanel',

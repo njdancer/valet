@@ -6,7 +6,7 @@ import type { ProviderKind } from '@valet/core'
 // From core's browser-safe vocabulary: core's index pulls in Node modules the renderer can't load.
 import { MESSAGES_SECRET } from '@valet/core/vocab'
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { AdapterDetail, GrantInfo, ProviderStatus, VaultItem } from '../../shared/api'
+import type { AdapterDetail, GrantInfo, HashRoute, ProviderStatus, VaultItem } from '../../shared/api'
 import { ActionFailed, Avatar, Icon, SecretBadge } from '../components/ui'
 import { useAction, useApi, useLoad } from '../lib/api-context'
 import { hostOf, plural, shortHash } from '../lib/format'
@@ -64,10 +64,20 @@ export function targetFor(adapter: AdapterDetail, secret: string): Target | null
   }
 }
 
-export function GrantSheet({ adapterId, secret }: { readonly adapterId: string; readonly secret: string }) {
+export function GrantSheet({
+  adapterId,
+  secret,
+  closeTo,
+}: {
+  readonly adapterId: string
+  readonly secret: string
+  /** Where closing the sheet goes: the adapter's page unless the sheet was opened from setup. */
+  readonly closeTo?: HashRoute
+}) {
   const detail = useLoad((api) => api.adapters.get(adapterId), [adapterId], ['adapters-changed'])
   const providers = useLoad((api) => api.grants.providers(), [], ['grants-changed', 'settings-changed'])
-  const close = () => navigate(href.adapter(adapterId))
+  const back = closeTo ?? href.adapter(adapterId)
+  const close = () => navigate(back)
   const sheet = useRef<HTMLDivElement>(null)
 
   // Focus moves into the sheet when it opens and back to whatever opened it (the Grant… link) when
@@ -85,11 +95,11 @@ export function GrantSheet({ adapterId, secret }: { readonly adapterId: string; 
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') navigate(href.adapter(adapterId))
+      if (event.key === 'Escape') navigate(back)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [adapterId])
+  }, [back])
 
   let body: ReactNode
   if (detail.status !== 'ready' || providers.status !== 'ready') {

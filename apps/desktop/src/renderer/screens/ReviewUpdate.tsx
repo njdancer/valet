@@ -2,7 +2,7 @@
 // reads it, additions highlighted, and Approve gated on an acknowledgement whenever anything is added.
 
 import { type ReactNode, useState } from 'react'
-import type { AuthStepEntry, LimitsInfo, ListDiff, PendingReview } from '../../shared/api'
+import type { AuthStepEntry, HashRoute, LimitsInfo, ListDiff, PendingReview } from '../../shared/api'
 import {
   ActionFailed,
   Avatar,
@@ -56,8 +56,24 @@ const SOURCE_WORDING: Readonly<Record<PendingReview['source'], string>> = {
   'authoring-agent': 'Edited by the authoring agent in the IDE',
 }
 
-export function ReviewUpdate({ adapterId }: { readonly adapterId: string }) {
+/**
+ * Where the review goes when it ends. From setup, both lead back into setup and the "grant next"
+ * choice is setup's own next step, so the tick isn't offered.
+ */
+export interface ReviewExits {
+  readonly approved: HashRoute
+  readonly closed: HashRoute
+}
+
+export function ReviewUpdate({
+  adapterId,
+  exits,
+}: {
+  readonly adapterId: string
+  readonly exits?: ReviewExits
+}) {
   const reviews = useLoad((api) => api.approvals.pending(), [], ['approvals-changed'])
+  const closeHref = exits?.closed ?? href.adapter(adapterId)
   return (
     <LoadState loaded={reviews} what="the review">
       {(list) => {
@@ -68,7 +84,7 @@ export function ReviewUpdate({ adapterId }: { readonly adapterId: string }) {
               <div className="titlebar">
                 <div className="title">Review update</div>
                 <div className="tools">
-                  <a className="btn" href={href.adapter(adapterId)}>
+                  <a className="btn" href={closeHref}>
                     Close
                   </a>
                 </div>
@@ -78,13 +94,19 @@ export function ReviewUpdate({ adapterId }: { readonly adapterId: string }) {
           )
         }
         // Keyed by the hash under review, so a different bundle starts with the tick cleared.
-        return <Review key={review.to.hash} review={review} />
+        return <Review key={review.to.hash} review={review} exits={exits} />
       }}
     </LoadState>
   )
 }
 
-function Review({ review }: { readonly review: PendingReview }) {
+function Review({
+  review,
+  exits,
+}: {
+  readonly review: PendingReview
+  readonly exits: ReviewExits | undefined
+}) {
   const api = useApi()
   const now = useNow(60_000)
   const action = useAction()
@@ -99,13 +121,17 @@ function Review({ review }: { readonly review: PendingReview }) {
     const ok = await action.run(() => api.approvals.approve(review.adapterId, review.to.hash))
     if (!ok) return
     const first = secretsToGrant[0]
-    navigate(
-      grantNext && first !== undefined ? href.grant(review.adapterId, first) : href.adapter(review.adapterId),
-    )
+    if (exits !== undefined) navigate(exits.approved)
+    else
+      navigate(
+        grantNext && first !== undefined
+          ? href.grant(review.adapterId, first)
+          : href.adapter(review.adapterId),
+      )
   }
   const reject = async () => {
     const ok = await action.run(() => api.approvals.reject(review.adapterId, review.to.hash))
-    if (ok) navigate(href.adapter(review.adapterId))
+    if (ok) navigate(exits?.closed ?? href.adapter(review.adapterId))
   }
 
   return (
@@ -119,7 +145,7 @@ function Review({ review }: { readonly review: PendingReview }) {
           </div>
         </div>
         <div className="tools">
-          <a className="btn" href={href.adapter(review.adapterId)}>
+          <a className="btn" href={exits?.closed ?? href.adapter(review.adapterId)}>
             Close
           </a>
         </div>
@@ -182,7 +208,7 @@ function Review({ review }: { readonly review: PendingReview }) {
                 <strong>Grants are tied to the content hash.</strong> On approval, {review.to.version} has no
                 secrets until you bind them.
               </div>
-              {secretsToGrant.length > 0 ? (
+              {secretsToGrant.length > 0 && exits === undefined ? (
                 <label className="row">
                   <input
                     type="checkbox"

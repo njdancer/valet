@@ -1,0 +1,203 @@
+// First-run setup, end to end (AC2, AC3): a first launch opens setup in the control panel, and the
+// person walks it in order. 1Password is demo mode's test provider; the approval is the bundled
+// Woolworths adapter's review; the grant is the demo vault item with origins exactly the fake's
+// auth origin; then Claude Code and Claude Desktop are added and their setup copied. A real MCP
+// client with Claude Code's own token then lists the adapter's six namespaced tools with their
+// annotations. Finishing closes setup for good: a relaunch opens the adapters page.
+
+import { rmSync } from 'node:fs'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { expect, type Page, test } from '@playwright/test'
+import {
+  appWindows,
+  CONTROL,
+  clientConfig,
+  type Launched,
+  launch,
+  type McpClient,
+  renderedText,
+  secretsIn,
+  tempDir,
+  windowWithTitle,
+} from './harness'
+
+test.describe.configure({ mode: 'serial' })
+
+let userData: string
+let launched: Launched
+let control: Page
+let client: McpClient | null = null
+
+test.beforeAll(async () => {
+  userData = tempDir('setup')
+  launched = await launch(userData, undefined, { setup: true })
+  control = await windowWithTitle(launched.app, CONTROL)
+})
+
+test.afterAll(async () => {
+  await client?.close().catch(() => undefined)
+  await launched?.close()
+  if (userData !== undefined) rmSync(userData, { recursive: true, force: true })
+})
+
+// biome-ignore lint/correctness/noEmptyPattern: Playwright needs the fixtures argument destructured
+test.afterEach(async ({}, testInfo) => {
+  if (testInfo.status !== testInfo.expectedStatus) {
+    for (const [i, page] of appWindows(launched.app).entries()) {
+      await page.screenshot({ path: testInfo.outputPath(`window-${i}.png`) }).catch(() => undefined)
+    }
+    await testInfo.attach('app-log', { body: launched.logs.join('') })
+  }
+})
+
+const h1 = (name: string | RegExp) => control.getByRole('heading', { level: 1, name })
+
+async function clipboard(): Promise<string> {
+  return launched.app.evaluate(({ clipboard }) => clipboard.readText())
+}
+
+test('a first launch opens setup at the welcome', async () => {
+  await expect(control).toHaveTitle('Valet (demo) [control]')
+  await expect(h1('Let your AI tools use websites, not your passwords')).toBeVisible()
+  expect(new URL(control.url()).hash).toBe('#/setup')
+  await control.getByRole('link', { name: 'Continue' }).click()
+})
+
+test('1Password: the demo’s test provider is ready', async () => {
+  await expect(h1('Where logins come from')).toBeVisible()
+  await expect(control.getByText('Test provider is ready.', { exact: false })).toBeVisible()
+  await control.getByRole('link', { name: 'Continue' }).click()
+})
+
+test('approve the bundled Woolworths adapter in its review, back into setup', async () => {
+  await expect(h1('Approve the Woolworths adapter')).toBeVisible()
+  const perms = control.locator('.setup-perms')
+  await expect(perms).toContainText(/www\.woolworths\.test/)
+  await expect(perms).toContainText(/auth\.woolworths\.test/)
+  await expect(perms).toContainText(/3 read.*3 write.*0 irreversible/)
+  await control.getByRole('link', { name: /^Review Woolworths .*…$/ }).click()
+  const approve = control.getByRole('button', { name: /^Approve \d/ })
+  await expect(approve).toBeVisible()
+  const ack = control.getByRole('checkbox', { name: 'I’ve read the highlighted additions' })
+  if (await ack.isVisible()) await ack.check()
+  await approve.click()
+  await expect(h1('Let Woolworths use your login')).toBeVisible()
+  const woolworths = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
+  expect(woolworths?.approval).toBe('approved')
+})
+
+test('grant login from the demo item, with origins exactly the auth origin', async () => {
+  await control.getByRole('link', { name: 'Choose an item…' }).click()
+  const sheet = control.getByRole('dialog', { name: 'Grant a secret' })
+  await expect(sheet).toBeVisible()
+  await sheet.getByText('Woolworths (demo account)').click()
+  await expect(sheet.getByRole('checkbox')).toHaveCount(1)
+  await expect(sheet.getByRole('checkbox')).toBeChecked()
+  await expect(sheet.getByText(/www\.woolworths\.test/)).toHaveCount(0)
+  await sheet.getByRole('button', { name: 'Grant', exact: true }).click()
+  await expect(sheet).toBeHidden()
+  await expect(control.getByText(/Uses “Woolworths \(demo account\)”/)).toBeVisible()
+
+  const grants = await control.evaluate(() => window.valet?.grants.list())
+  const login = grants?.find((g) => g.adapterId === 'woolworths' && g.secret === 'login')
+  expect(login?.origins).toEqual([expect.stringMatching(/^https:\/\/auth\.woolworths\.test:\d+$/)])
+  expect(login?.origins.some((o) => o.includes('www.'))).toBe(false)
+  const detail = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
+  expect(login?.adapterHash).toBe(detail?.hash)
+  await control.getByRole('link', { name: 'Continue' }).click()
+})
+
+test('connect Claude Code and Claude Desktop, each with its own config to copy', async () => {
+  await expect(h1('Connect Claude')).toBeVisible()
+  await control.getByRole('button', { name: 'Add Claude Code' }).click()
+  const codeSnippet = control.locator('pre.code', { hasText: 'claude mcp add valet' })
+  await expect(codeSnippet).toBeVisible()
+  await control.getByRole('button', { name: 'Copy' }).first().click()
+  await expect.poll(clipboard).toBe(await codeSnippet.textContent())
+
+  await control.getByRole('button', { name: 'Add Claude Desktop' }).click()
+  const desktopSnippet = control.locator('pre.code', { hasText: 'mcpServers' })
+  await expect(desktopSnippet).toBeVisible()
+  // Claude Code's button now says Copied, so the one left is Claude Desktop's.
+  await control.getByRole('button', { name: 'Copy', exact: true }).click()
+  await expect.poll(clipboard).toContain('mcpServers')
+  // Demo mode names the server valet-demo, so it never replaces a real install's entry.
+  const desktop = JSON.parse(await clipboard()) as {
+    mcpServers: Record<string, { command: string; args: string[] }>
+  }
+  const server = desktop.mcpServers['valet-demo']
+  expect(server?.command.length).toBeGreaterThan(0)
+
+  // Neither snippet carries a token: the bridge reads it from the client's own config file.
+  const clients = (await control.evaluate(() => window.valet?.clients.list())) ?? []
+  expect(clients.map((c) => c.name)).toEqual(['Claude Code', 'Claude Desktop'])
+  for (const c of clients) {
+    const { token } = clientConfig(userData, c.id)
+    expect(await codeSnippet.textContent()).not.toContain(token)
+    expect(await desktopSnippet.textContent()).not.toContain(token)
+    // The Desktop snippet points the bridge at that client's own file.
+    if (c.name === 'Claude Desktop') expect(server?.args.at(-1)).toContain(c.id)
+  }
+})
+
+test('Claude Code’s token lists the six namespaced tools with manifest-derived annotations', async () => {
+  const clients = (await control.evaluate(() => window.valet?.clients.list())) ?? []
+  const code = clients.find((c) => c.name === 'Claude Code')
+  if (code === undefined) throw new Error('Claude Code was not added')
+  const { url, token } = clientConfig(userData, code.id)
+  client = new Client({ name: 'claude-code', version: '1.0.0' })
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL(url), {
+      requestInit: { headers: { Authorization: `Bearer ${token}` } },
+    }),
+  )
+  const { tools } = await client.listTools()
+  const byName = Object.fromEntries(tools.map((t) => [t.name, t.annotations]))
+  expect(Object.keys(byName).sort()).toEqual([
+    'woolworths_add_to_cart',
+    'woolworths_get_cart',
+    'woolworths_get_product',
+    'woolworths_remove_from_cart',
+    'woolworths_search_products',
+    'woolworths_set_cart_quantity',
+  ])
+  for (const read of ['woolworths_get_cart', 'woolworths_get_product', 'woolworths_search_products']) {
+    expect(byName[read]).toMatchObject({ readOnlyHint: true, openWorldHint: true })
+  }
+  // Until C9, every write is advertised destructive and not idempotent (AC3).
+  for (const write of [
+    'woolworths_add_to_cart',
+    'woolworths_remove_from_cart',
+    'woolworths_set_cart_quantity',
+  ]) {
+    expect(byName[write]).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    })
+  }
+})
+
+test('finishing closes setup for good, and nothing on screen holds a secret', async () => {
+  await control.getByRole('button', { name: 'Finish' }).click()
+  await expect(control.getByRole('complementary', { name: 'Sections' })).toBeVisible()
+  expect(new URL(control.url()).hash).toBe('#/adapters')
+  const status = await control.evaluate(() => window.valet?.setup.status())
+  expect(status?.completedAt).toEqual(expect.any(String))
+
+  const tokens = ((await control.evaluate(() => window.valet?.clients.list())) ?? []).map(
+    (c) => clientConfig(userData, c.id).token,
+  )
+  const text = await renderedText(launched.app)
+  expect(secretsIn(text, tokens)).toEqual([])
+
+  await client?.close().catch(() => undefined)
+  client = null
+  await launched.close()
+  launched = await launch(userData, undefined, { setup: true })
+  control = await windowWithTitle(launched.app, CONTROL)
+  await expect(control.getByRole('complementary', { name: 'Sections' })).toBeVisible()
+  expect(new URL(control.url()).hash).not.toContain('setup')
+})
