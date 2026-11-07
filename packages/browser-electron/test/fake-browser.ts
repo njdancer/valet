@@ -10,6 +10,7 @@ import type {
   KeyEvents,
   LoadResult,
   NavigationEvent,
+  ObservedResponse,
   OutgoingRequest,
   PartitionSession,
   PendingNavigation,
@@ -285,6 +286,17 @@ export class FakeSession implements PartitionSession {
 
   async useProxy(proxy: ProxyHandle): Promise<void> {
     this.proxy = proxy
+  }
+
+  responses: ((response: ObservedResponse) => void) | null = null
+
+  watchResponses(listener: (response: ObservedResponse) => void): void {
+    this.responses = listener
+  }
+
+  /** A response's headers arriving, as webRequest's onHeadersReceived would report them. */
+  respond(response: Partial<ObservedResponse> & { readonly url: string; readonly status: number }): void {
+    this.responses?.({ method: 'GET', resourceType: 'mainFrame', contentType: 'text/html', ...response })
   }
 
   addResponseHeader(name: string, value: string): void {

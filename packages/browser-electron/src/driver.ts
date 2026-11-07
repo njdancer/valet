@@ -13,8 +13,10 @@ import {
   originAllowed,
   type RequestDeclaration,
   type SessionDriver,
+  type SiteWatcher,
   type ToolPage,
   type ToolRunPolicy,
+  urlOriginAllowed,
   ValetError,
 } from '@valet/core'
 import { SurfaceAuthPage } from './auth-page'
@@ -25,6 +27,7 @@ import {
   type BlockReason,
   decideToolRequest,
   requestTarget,
+  siteRefusal,
 } from './guards'
 import { isRecord, type PageTiming } from './page-core'
 import { partitionName } from './partitions'
@@ -35,6 +38,7 @@ import type {
   FrameHandle,
   HeaderList,
   KeyEvents,
+  ObservedResponse,
   OutgoingRequest,
   PartitionSession,
   ProxyHandle,
@@ -217,6 +221,8 @@ export class ElectronSessionDriver implements SessionDriver {
   private droppedReports = 0
   private readonly helpers = new Set<BrowserSurface>()
   private tool: ToolSlot | null = null
+  /** The site's breaker, once the runtime has connected it (watchSite). */
+  private watcher: SiteWatcher | null = null
 
   constructor(
     private readonly platform: BrowserPlatform,
@@ -246,6 +252,14 @@ export class ElectronSessionDriver implements SessionDriver {
   beginRun(policy: ToolRunPolicy, onBlocked: (request: BlockedRequest) => void): void {
     this.snapshotStorage()
     this.run = { policy, onBlocked, inRun: true, irreversibleUnlocked: false, counted: 0, assets: 0 }
+  }
+
+  /**
+   * Connects the site's breaker (D55): block signatures in either partition are reported to it,
+   * and while it holds, the tool partition sends nothing.
+   */
+  watchSite(watcher: SiteWatcher): void {
+    this.watcher = watcher
   }
 
   /** Only after the person approved this run in the app. No effect outside an irreversible run. */
@@ -669,6 +683,7 @@ export class ElectronSessionDriver implements SessionDriver {
       // reaches in time. This is process-wide: a driver with Electron's own UA doesn't undo it.
       this.platform.setDefaultUserAgent(userAgent)
     }
+    session.watchResponses((response) => this.observe(role, response))
     if (role === 'auth') {
       // will-frame-navigate is the first line for subframes; this holds the frames it doesn't
       // report, such as an iframe's first load, to the same rule at the network layer.
@@ -714,8 +729,39 @@ export class ElectronSessionDriver implements SessionDriver {
     })
   }
 
-  /** The tool partition's filter: the run's policy, then its ceiling or its asset budget. */
+  /** Tells the site's breaker about a response that is the site refusing us. */
+  private observe(role: Role, response: ObservedResponse): void {
+    const watcher = this.watcher
+    if (watcher === null) return
+    const onSite =
+      role === 'auth'
+        ? (url: URL) => urlOriginAllowed(url.href, this.options.navigation)
+        : (url: URL) => hostAllowed(url.hostname, this.options.egress)
+    const refusal = siteRefusal(response, role, onSite)
+    if (refusal === null) return
+    try {
+      watcher.refused(refusal)
+    } catch {
+      // The breaker's own failure must not break the page; the next refusal reports again.
+    }
+  }
+
+  /** Whether the site's breaker is open. A watcher that fails holds, never lets through. */
+  private held(): boolean {
+    try {
+      return this.watcher?.held() === true
+    } catch {
+      return true
+    }
+  }
+
+  /**
+   * The tool partition's filter: nothing while the site's breaker is open, then the run's policy,
+   * then its ceiling or its asset budget. Requests held for the breaker are not reported one by
+   * one: the breaker's opening is the audit event, and a page retrying would flood the log.
+   */
   private allowToolRequest(request: OutgoingRequest): boolean {
+    if (this.held()) return false
     const run = this.run
     const decision = decideToolRequest(
       request,

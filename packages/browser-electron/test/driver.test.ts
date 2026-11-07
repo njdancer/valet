@@ -2,6 +2,7 @@ import {
   type AdapterManifest,
   type BlockedRequest,
   parseManifest,
+  type SiteRefusal,
   type ToolRunPolicy,
   ValetError,
 } from '@valet/core'
@@ -1856,5 +1857,116 @@ describe('auth partition block reports', () => {
     // The helper is gone: a later filter refusal goes to onAuthBlocked again, not to a dead page.
     platform.session(AUTH).filter!(frameRequest('https://other.test/'))
     expect(fallback.map((b) => b.target)).toEqual(['https://widget.example.com', 'https://other.test'])
+  })
+})
+
+describe('the site’s breaker (D55)', () => {
+  function watched() {
+    const { platform } = browserLike()
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    const refusals: SiteRefusal[] = []
+    const breaker = { open: false }
+    driver.watchSite({
+      refused: (refusal) => {
+        refusals.push(refusal)
+        breaker.open = true
+      },
+      held: () => breaker.open,
+    })
+    return { platform, driver, refusals, breaker }
+  }
+
+  it('reports a block signature from either partition, with no query string', async () => {
+    const { platform, driver, refusals } = watched()
+    await driver.openAuthPage()
+    await driver.toolPage()
+    platform.session(AUTH).respond({ url: 'https://login.example.com/u/login/password?state=s', status: 403 })
+    platform.session(TOOL).respond({
+      url: 'https://www.example.com/apis/ui/Trolley?x=1',
+      status: 429,
+      resourceType: 'xhr',
+      contentType: 'application/json',
+    })
+    expect(refusals).toEqual([
+      {
+        partition: 'auth',
+        cause: 'blocked-by-site',
+        status: 403,
+        target: 'https://login.example.com/u/login/password',
+        resourceType: 'mainFrame',
+      },
+      {
+        partition: 'tool',
+        cause: 'rate-limited',
+        status: 429,
+        target: 'https://www.example.com/apis/ui/Trolley',
+        resourceType: 'xhr',
+      },
+    ])
+  })
+
+  it('ignores answers that are not the site refusing us', async () => {
+    const { platform, driver, refusals } = watched()
+    await driver.openAuthPage()
+    await driver.toolPage()
+    const tool = platform.session(TOOL)
+    tool.respond({ url: 'https://www.example.com/', status: 200 })
+    // A JSON 403 is an API's own answer; an image's 403 says nothing about us; a widget is not the site.
+    tool.respond({
+      url: 'https://www.example.com/api',
+      status: 403,
+      resourceType: 'xhr',
+      contentType: 'application/json',
+    })
+    tool.respond({ url: 'https://www.example.com/a.png', status: 403, resourceType: 'image' })
+    platform.session(AUTH).respond({ url: 'https://captcha.example.net/', status: 429 })
+    tool.respond({ url: 'not a url', status: 429 })
+    expect(refusals).toEqual([])
+  })
+
+  it('sends nothing from the tool partition while the breaker holds, without reporting each request', async () => {
+    const { platform, driver, breaker } = watched()
+    const reported: BlockedRequest[] = []
+    driver.beginRun({ egress: OPTIONS.egress, requests: [], maxPurpose: 'read', ceiling: 10 }, (blocked) =>
+      reported.push(blocked),
+    )
+    await driver.toolPage()
+    const filter = platform.session(TOOL).filter!
+    const home = { url: 'https://www.example.com/', method: 'GET', resourceType: 'mainFrame' }
+    expect(filter(home)).toBe(true)
+    breaker.open = true
+    expect(filter(home)).toBe(false)
+    expect(filter({ url: 'https://www.example.com/a.js', method: 'GET', resourceType: 'script' })).toBe(false)
+    expect(reported).toEqual([])
+  })
+
+  it('holds when the watcher fails, and survives a reporter that throws', async () => {
+    const { platform } = browserLike()
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    driver.watchSite({
+      refused: () => {
+        throw new Error('boom')
+      },
+      held: () => {
+        throw new Error('boom')
+      },
+    })
+    await driver.toolPage()
+    const tool = platform.session(TOOL)
+    expect(() => tool.respond({ url: 'https://www.example.com/', status: 429 })).not.toThrow()
+    expect(tool.filter!({ url: 'https://www.example.com/', method: 'GET', resourceType: 'mainFrame' })).toBe(
+      false,
+    )
+  })
+
+  it('reports nothing before a watcher is connected', async () => {
+    const { platform, driver } = (() => {
+      const { platform } = browserLike()
+      return { platform, driver: new ElectronSessionDriver(platform, OPTIONS) }
+    })()
+    await driver.toolPage()
+    expect(() =>
+      platform.session(TOOL).respond({ url: 'https://www.example.com/', status: 429 }),
+    ).not.toThrow()
   })
 })

@@ -349,7 +349,7 @@ export function createAuthRunner(options: AuthRunnerOptions): AuthRunner {
         // The login's navigations and its probe wait on the site's budget, as tool calls do (D55).
         probe: authProbe(manifest, page, () => request.pace()),
         paceNavigation: () => request.pace(),
-        isBlockedPage: () => isBlockedPage(page),
+        isBlockedPage: async () => request.siteRefused() || (await isBlockedPage(page)),
         // The runtime clones what it is given and keeps the clone, and so do the app's own login
         // secrets (for the audit's targets); this copy is ours to dispose.
         rememberSecret: (copy) => {

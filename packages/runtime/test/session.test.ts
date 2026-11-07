@@ -530,6 +530,47 @@ describe('session.ensure', () => {
 })
 
 describe('session.ensure and the site', () => {
+  const refusal = {
+    partition: 'auth',
+    cause: 'blocked-by-site',
+    status: 403,
+    target: 'https://login.example.test/u/login/password',
+    resourceType: 'mainFrame',
+  } as const
+
+  it('connects the driver to the site’s breaker: a refusal opens it, and an open one holds (D55)', async () => {
+    const { host, driver, audit } = fixture(ensureOnce)
+    expect(driver.watcher?.held()).toBe(false)
+    driver.watcher?.refused({ ...refusal, partition: 'tool', cause: 'rate-limited', status: 429 })
+    expect(driver.watcher?.held()).toBe(true)
+    expect(audit.events).toContainEqual(
+      expect.objectContaining({ type: 'breaker-opened', cause: 'rate-limited' }),
+    )
+    // AC9: the next call fails fast, without reaching the site.
+    expect(await host.call(call)).toEqual({ status: 'blocked', retryAfterMs: 60_000 })
+    expect(driver.page.fetches).toEqual([])
+  })
+
+  it('tells the login when the site refused us mid-login, and ends the call as blocked (D55)', async () => {
+    const { host, page, driver, authRunner } = fixture(ensureOnce)
+    page.route('GET', SESSION_URL, loggedOut)
+    const seen: boolean[] = []
+    authRunner.mockImplementationOnce(async (request) => {
+      seen.push(request.siteRefused())
+      driver.watcher?.refused(refusal)
+      seen.push(request.siteRefused())
+      // The next navigation the flow would make is refused before it waits.
+      const paced = await request.pace().then(
+        () => 'paced',
+        (error: unknown) => (error instanceof ValetError ? `${error.stage}/${error.errorClass}` : 'other'),
+      )
+      seen.push(paced === 'login/blocked-by-site')
+      return { status: 'blocked', errorClass: 'blocked-by-site' }
+    })
+    expect(await host.call(call)).toEqual({ status: 'blocked', retryAfterMs: 60_000 })
+    expect(seen).toEqual([false, true, true])
+  })
+
   it('turns a blocked login into a blocked call and opens the breaker', async () => {
     const { host, page, authRunner, markers, audit } = fixture(ensureOnce)
     page.route('GET', SESSION_URL, loggedOut)

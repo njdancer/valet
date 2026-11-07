@@ -192,6 +192,14 @@ export class SessionGate {
   private async login(call: EnsureCall, failures: number): Promise<EnsureResult> {
     const { adapterId, adapterHash, manifest, driver, authRunner } = this.options
     const fresh = new SecretRedactionSet()
+    const { breaker, budget } = this.options.site
+    // The breaker counts its trips; any trip after this one means the site refused us mid-login.
+    const tripsBefore = breaker.admit()
+    const pace = async (): Promise<void> => {
+      if (breaker.isOpen()) throw new ValetError('login', 'blocked-by-site')
+      await budget.acquire(call.signal)
+      if (breaker.isOpen()) throw new ValetError('login', 'blocked-by-site')
+    }
     let outcome: AuthOutcome
     try {
       outcome = await authRunner({
@@ -203,7 +211,8 @@ export class SessionGate {
         signal: call.signal,
         registerForRedaction: (secret) => fresh.register(secret),
         attemptStarting: () => this.options.markers.markAttempted(adapterId),
-        pace: () => this.options.site.budget.acquire(call.signal),
+        pace,
+        siteRefused: () => breaker.admit() !== tripsBefore,
       })
     } catch (error) {
       // Unclassified: the marker stays in progress, so nothing retries this login blindly.

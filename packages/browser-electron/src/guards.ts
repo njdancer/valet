@@ -18,11 +18,12 @@ import {
   hostAllowed,
   type Purpose,
   type RequestDeclaration,
+  type SiteRefusal,
   type ToolRunPolicy,
   touchesDeniedSegment,
   urlOriginAllowed,
 } from '@valet/core'
-import type { OutgoingRequest, PendingNavigation } from './platform'
+import type { ObservedResponse, OutgoingRequest, PendingNavigation } from './platform'
 
 const LOCAL_SUBFRAME_URLS = new Set(['about:blank', 'about:srcdoc'])
 
@@ -245,6 +246,35 @@ export function requestTarget(url: string, withPath: boolean): string {
       ? `${parsed.pathname.slice(0, MAX_REPORTED_PATH)}…`
       : parsed.pathname
   return `${parsed.origin}${path}`
+}
+
+const WATCHED_TYPES = new Set(['mainFrame', 'xhr'])
+
+/**
+ * Whether a response is the site refusing us (D55): a 429, or a 403 HTML page, on a main-frame
+ * navigation or an API call (fetch reports as xhr) to the site. Assets are left out: a missing
+ * image's 403 says nothing about us. `onSite` says which hosts are the site's: the navigation
+ * origins in the auth partition, the egress hosts in the tool partition.
+ */
+export function siteRefusal(
+  response: ObservedResponse,
+  partition: SiteRefusal['partition'],
+  onSite: (url: URL) => boolean,
+): SiteRefusal | null {
+  if (!WATCHED_TYPES.has(response.resourceType)) return null
+  const url = parse(response.url)
+  if (url === null || !onSite(url)) return null
+  let cause: SiteRefusal['cause'] | null = null
+  if (response.status === 429) cause = 'rate-limited'
+  else if (response.status === 403 && /html/i.test(response.contentType ?? '')) cause = 'blocked-by-site'
+  if (cause === null) return null
+  return {
+    partition,
+    cause,
+    status: response.status,
+    target: requestTarget(response.url, true),
+    resourceType: response.resourceType,
+  }
 }
 
 function parse(url: string): URL | null {

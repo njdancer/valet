@@ -20,6 +20,7 @@ import type {
   KeyEvents,
   LoadResult,
   NavigationEvent,
+  ObservedResponse,
   OutgoingRequest,
   PartitionSession,
   PendingNavigation,
@@ -70,6 +71,8 @@ export function electronPlatform(options: ElectronPlatformOptions = {}): Browser
 
 class ElectronPartition implements PartitionSession {
   private readonly headers: [string, string][] = []
+  private watcher: ((response: ObservedResponse) => void) | null = null
+  private listening = false
 
   constructor(private readonly ses: Session) {}
 
@@ -91,6 +94,11 @@ class ElectronPartition implements PartitionSession {
     })
   }
 
+  watchResponses(listener: (response: ObservedResponse) => void): void {
+    this.watcher = listener
+    this.listenForHeaders()
+  }
+
   async useProxy(proxy: ProxyHandle): Promise<void> {
     // "<-loopback>" removes Chromium's implicit direct route to localhost, so loopback goes through
     // the proxy too, and is refused there like any other undeclared host.
@@ -100,10 +108,38 @@ class ElectronPartition implements PartitionSession {
 
   addResponseHeader(name: string, value: string): void {
     this.headers.push([name, value])
-    if (this.headers.length > 1) return
+    this.listenForHeaders()
+  }
+
+  /**
+   * The session's one onHeadersReceived listener, for both jobs. Headers rather than onCompleted:
+   * a request cancelled or failed after its headers arrived (a page navigating away, a stopped
+   * load) never completes, and its status would go unseen.
+   */
+  private listenForHeaders(): void {
+    if (this.listening) return
+    this.listening = true
     this.ses.webRequest.onHeadersReceived((details, callback) => {
+      try {
+        const header = Object.entries(details.responseHeaders ?? {}).find(
+          ([name]) => name.toLowerCase() === 'content-type',
+        )
+        this.watcher?.({
+          url: details.url,
+          method: details.method,
+          resourceType: details.resourceType,
+          status: details.statusCode,
+          contentType: header?.[1]?.[0] ?? null,
+        })
+      } catch {
+        // A watcher's failure must not hold the response.
+      }
+      if (this.headers.length === 0) {
+        callback({})
+        return
+      }
       const responseHeaders = { ...details.responseHeaders }
-      for (const [header, headerValue] of this.headers) responseHeaders[header] = [headerValue]
+      for (const [headerName, headerValue] of this.headers) responseHeaders[headerName] = [headerValue]
       callback({ responseHeaders })
     })
   }

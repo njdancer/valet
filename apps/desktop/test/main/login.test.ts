@@ -208,6 +208,7 @@ describe('createAuthRunner', () => {
     const manifest = manifestWith({ session: cookieProbe, auth: { steps } })
     const registered: SecretValue[] = []
     const paced: string[] = []
+    const refused = { value: false }
     const secrets = new LoginSecrets()
     const blocked = new BlockedAudit({
       audit: log.sink,
@@ -245,6 +246,7 @@ describe('createAuthRunner', () => {
       pace: async () => {
         paced.push(page.currentUrl())
       },
+      siteRefused: () => refused.value,
     }
     return {
       ...s,
@@ -255,6 +257,7 @@ describe('createAuthRunner', () => {
       registered,
       blocked,
       paced,
+      refused,
     }
   }
 
@@ -339,6 +342,15 @@ describe('createAuthRunner', () => {
     const blocked = runner([{ op: 'fail', errorClass: 'blocked-by-site' }])
     expect(await blocked.run()).toEqual({ status: 'blocked', errorClass: 'blocked-by-site' })
     expect(blocked.sessions.get('shop').state).toBe('expired')
+  })
+
+  it('ends the login as blocked once the site has refused us anywhere, with no block page shown (D55)', async () => {
+    const r = runner([{ op: 'goto', url: 'https://www.shop.test/login' }, { op: 'assertLoggedIn' }])
+    r.page.cookies = ['sid']
+    // The driver saw a 403 or 429 in some request and told the breaker; the page itself looks fine.
+    r.refused.value = true
+    expect(await r.run()).toEqual({ status: 'blocked', errorClass: 'blocked-by-site' })
+    expect(r.page.closed).toBe(true)
   })
 
   it('waits on the site’s budget before each navigation and each probe request (D55)', async () => {
@@ -597,6 +609,7 @@ describe('a login that fills a secret', () => {
         registered.push({ secret, matched: secret.occursIn('x twofactor@example.test') }),
       attemptStarting: async () => {},
       pace: async () => {},
+      siteRefused: () => false,
     })
     expect(outcome).toEqual({ status: 'ok' })
     expect(registered).toHaveLength(1)

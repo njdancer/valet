@@ -174,6 +174,12 @@ export class ToolHost {
     if (this.adapters.has(manifest.id)) throw new Error(`adapter ${manifest.id} is already registered`)
     const host = new URL(manifest.home).hostname.toLowerCase()
     const site = this.protection.forSite(host, manifest.limits)
+    // D55: what the browser sees in either partition reaches this site's breaker, and an open
+    // breaker stops the tool partition sending anything at all.
+    driver.watchSite?.({
+      refused: (refusal) => site.breaker.trip(refusal.cause, null),
+      held: () => site.breaker.isOpen(),
+    })
     const gate = new SessionGate({
       adapterId: manifest.id,
       adapterHash: bundleHash,

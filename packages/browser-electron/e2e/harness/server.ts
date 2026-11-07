@@ -278,6 +278,19 @@ export async function startTestSite(): Promise<TestSite> {
         response.end(JSON.stringify({ host, cookie: request.headers.cookie ?? '' }))
         return
       }
+      // The site refusing us (D55): Akamai's 403 page on any host, and an API call's 429.
+      if (url.pathname === '/denied') {
+        response.writeHead(403, { 'content-type': 'text/html; charset=utf-8' })
+        response.end(
+          '<!doctype html><title>Access Denied</title><h1>Access Denied</h1><p>Reference #18.e2e</p>',
+        )
+        return
+      }
+      if (url.pathname === '/api/cart' && url.searchParams.get('status') === '429') {
+        response.writeHead(429, { 'content-type': 'application/json' })
+        response.end('{}')
+        return
+      }
       // Stands in for a login probe: what arrived, headers and all, and a cookie it sets in return.
       if (url.pathname === '/probe') {
         // A cross-origin page fetch() may read it, for comparing what the page and the probe send.
