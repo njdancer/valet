@@ -34,20 +34,20 @@ mode from [relay.md](relay.md) straight after M3. This queue only covers what ca
 
 ## The queue
 
-| #   | Work                                          | Milestone, criterion   | Area                                 | Size (agent-days) |
-| --- | --------------------------------------------- | ---------------------- | ------------------------------------ | ----------------- |
-| 1   | Root-cause the restart flake                  | M3, AC17               | `apps/desktop` e2e, runtime          | 0.5               |
-| 2   | Audit-log verifier CLI                        | M3, AC14               | `packages/runtime`, root scripts     | 0.5               |
-| 3   | Approval diff: one test per expanding kind    | M3, AC15               | `apps/desktop/src/main/core`         | 0.5–1             |
-| 4   | First-run onboarding                          | M3, AC2, AC3           | `apps/desktop` renderer and main     | 1.5–2             |
-| 5   | Structured confirmations (C4)                 | M3, G4                 | `core`, runtime, confirmation panel  | 1                 |
-| 6   | Manifest-derived MCP annotations (C9)         | M2/M3, AC3             | `core`, `mcp-server`, adapter        | 0.5–1             |
-| 7   | Tool code out of the main process             | M3                     | runtime, `apps/desktop` main         | 2–3               |
-| 8   | Release command dry run                       | M3, AC18               | `apps/desktop/scripts`, CI           | 1                 |
-| 9   | Drift detection against fixtures              | M4                     | adapter tests, `core` errors         | 1                 |
-| 10  | Audit rotation and trace retention (D27)      | M4                     | runtime audit, settings              | 1                 |
-| 11  | Remote mode, first slice                      | after M3, relay.md     | `mcp-server`, desktop main           | 2–3               |
-| 12  | Woolworths terms read, for D25                | M8 prep                | docs only                            | 0.25              |
+| #   | Work                                       | Milestone, criterion | Area                                | Size (agent-days) |
+| --- | ------------------------------------------ | -------------------- | ----------------------------------- | ----------------- |
+| 1   | Root-cause the restart flake               | M3, AC17             | `apps/desktop` e2e, runtime         | 0.5               |
+| 2   | Audit-log verifier CLI                     | M3, AC14             | `packages/runtime`, root scripts    | 0.5               |
+| 3   | Approval diff: one test per expanding kind | M3, AC15             | `apps/desktop/src/main/core`        | 0.5–1             |
+| 4   | First-run onboarding                       | M3, AC2, AC3         | `apps/desktop` renderer and main    | 1.5–2             |
+| 5   | Structured confirmations (C4)              | M3, G4               | `core`, runtime, confirmation panel | 1                 |
+| 6   | Manifest-derived MCP annotations (C9)      | M2/M3, AC3           | `core`, `mcp-server`, adapter       | 0.5–1             |
+| 7   | Tool code out of the main process          | M3                   | runtime, `apps/desktop` main        | 2–3               |
+| 8   | Release command dry run                    | M3, AC18             | `apps/desktop/scripts`, CI          | 1                 |
+| 9   | Drift detection against fixtures           | M4                   | adapter tests, `core` errors        | 1                 |
+| 10  | Audit rotation and trace retention (D27)   | M4                   | runtime audit, settings             | 1                 |
+| 11  | Remote mode, first slice                   | after M3, relay.md   | `mcp-server`, desktop main          | 2–3               |
+| 12  | Woolworths terms read, for D25             | M8 prep              | docs only                           | 0.25              |
 
 Items 1–3 are small, independent and unblock confidence in CI, so start them first, in parallel.
 Item 4 is the largest MVP gap that needs no Nick. Items 5 and 6 both change `core`'s manifest
