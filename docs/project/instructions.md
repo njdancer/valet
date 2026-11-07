@@ -10,4 +10,5 @@ Rules:
 - No logged-in or account actions on the live Woolworths site, and no code signing or notarisation, without Nick present.
 - Live anonymous probes stay small and paced; never solve CAPTCHAs or evade bot detection beyond looking like Nick's own browser (D24).
 - Adapter code must never see secrets; tests never touch real 1Password, Keychain or Messages.
+- Don't name Nick's other projects or his bank anywhere in the repo, including commit messages; say "an earlier app" or "a bank".
 - When answering about the plan, cite decisions by number (e.g. D28) and say whether Nick has answered them.
