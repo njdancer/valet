@@ -20,6 +20,13 @@ describe('parseRoute', () => {
     expect(parseRoute('#/settings')).toEqual({ page: 'settings' })
     expect(parseRoute('#/confirm/cf_1')).toEqual({ page: 'confirm', confirmationId: 'cf_1' })
     expect(parseRoute('#/needs-user/woolworths')).toEqual({ page: 'needs-user', adapterId: 'woolworths' })
+    const setup = { page: 'setup', review: false, secret: null }
+    expect(parseRoute('#/setup')).toEqual({ ...setup, step: null })
+    for (const step of ['welcome', 'onepassword', 'approve', 'grant', 'clients']) {
+      expect(parseRoute(`#/setup/${step}`)).toEqual({ ...setup, step })
+    }
+    expect(parseRoute('#/setup/approve/review')).toEqual({ ...setup, step: 'approve', review: true })
+    expect(parseRoute('#/setup/grant/login')).toEqual({ ...setup, step: 'grant', secret: 'login' })
   })
 
   it('refuses extra segments and unknown pages rather than guessing', () => {
@@ -34,6 +41,10 @@ describe('parseRoute', () => {
       '#/confirm/a/b',
       '#/needs-user',
       '#/needs-user/a/b',
+      '#/setup/elsewhere',
+      '#/setup/welcome/review',
+      '#/setup/approve/x',
+      '#/setup/grant/login/x',
       '#/elsewhere',
     ]) {
       expect(parseRoute(hash)).toEqual({ page: 'not-found' })
@@ -63,5 +74,19 @@ describe('parseRoute', () => {
     expect(href.credentials()).toBe('#/credentials')
     expect(href.clients()).toBe('#/clients')
     expect(href.settings()).toBe('#/settings')
+    expect(href.setup()).toBe('#/setup')
+    expect(href.setup('clients')).toBe('#/setup/clients')
+    expect(parseRoute(href.setupReview())).toEqual({
+      page: 'setup',
+      step: 'approve',
+      review: true,
+      secret: null,
+    })
+    expect(parseRoute(href.setupGrant(odd))).toEqual({
+      page: 'setup',
+      step: 'grant',
+      review: false,
+      secret: odd,
+    })
   })
 })

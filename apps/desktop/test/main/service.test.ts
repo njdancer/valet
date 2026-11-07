@@ -497,6 +497,16 @@ describe('tool calls', () => {
     expect(await running).toEqual({ status: 'failed', stage: 'tool-run', errorClass: 'aborted' })
   })
 
+  it('keeps setup unfinished until the person finishes it, across a restart', async () => {
+    const s = await setup()
+    expect(await s.api.setup.status()).toEqual({ completedAt: null })
+    expect(await s.api.setup.finish()).toEqual({ completedAt: '2026-11-07T00:00:00.000Z' })
+    expect(s.events).toContainEqual({ type: 'app-changed' })
+    await s.service.stop()
+    const again = await setup({ dir: s.dir })
+    expect(await again.api.setup.status()).toEqual({ completedAt: '2026-11-07T00:00:00.000Z' })
+  })
+
   it('refuses every call while paused, and audits it with the client’s id', async () => {
     const s = await approved()
     const code = await s.api.clients.add('Claude Code')

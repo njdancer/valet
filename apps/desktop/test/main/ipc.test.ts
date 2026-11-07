@@ -301,6 +301,8 @@ describe('every channel', () => {
     'updates.status': [],
     'updates.check': [],
     'health.sites': [],
+    'setup.status': [],
+    'setup.finish': [],
     'app.status': [],
     'app.setPaused': [true],
     'app.openControlPanel': ['#/activity'],

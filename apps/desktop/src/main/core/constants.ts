@@ -53,6 +53,8 @@ export interface DataPaths {
   readonly loginMarkers: string
   /** The last and highest versions this install has run (updates.ts). */
   readonly versions: string
+  /** Whether first-run setup is finished (setup.ts). */
+  readonly setup: string
 }
 
 /** Every file the app keeps, under one owner-only directory (D45). */
@@ -71,5 +73,6 @@ export function dataPaths(dir: string): DataPaths {
     legacyBridgeConfig: join(dir, 'bridge.json'),
     loginMarkers: join(dir, 'login-markers'),
     versions: join(dir, 'versions.json'),
+    setup: join(dir, 'setup.json'),
   }
 }

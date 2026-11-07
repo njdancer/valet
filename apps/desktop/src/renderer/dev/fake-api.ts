@@ -31,6 +31,7 @@ import type {
   RunSummary,
   RunTrace,
   Settings,
+  SetupStatus,
   SiteHealth,
   TraceStep,
   UpdateStatus,
@@ -41,6 +42,11 @@ import type {
 export interface FakeOptions {
   /** Epoch ms the data is relative to. Defaults to the moment the fake is created. */
   readonly now?: number
+  /**
+   * A first launch: Woolworths installed and waiting for its first review, no grants, no clients,
+   * no 1Password provider set up, and setup not finished. Otherwise the app has been in use for days.
+   */
+  readonly firstRun?: boolean
 }
 
 /** Test and dev hooks that the real API doesn't have. */
@@ -56,6 +62,10 @@ export interface FakeControls {
   appendAudit(event: AuditEvent): AuditRecord
   /** What the next settings.chooseOpPath() dialog picks; null is a cancelled dialog. */
   chooseOpPathResult(path: string | null): void
+  /** Makes a 1Password provider available or not, as setting it up outside the app would. */
+  setProviderAvailable(kind: ProviderKind, available: boolean): void
+  /** Records a client's first call, as the endpoint would. */
+  clientSeen(clientId: string): void
   readonly calls: { readonly method: string; readonly args: readonly unknown[] }[]
 }
 
@@ -567,6 +577,88 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
 
   let app: AppStatus = { paused: false, version: '0.1.0', demo: false }
   let chosenOpPath: string | null = '/opt/homebrew/bin/op'
+  let setup: SetupStatus = { completedAt: ago(10 * 24 * 60) }
+  const providerAvailable = new Map<ProviderKind, boolean>([
+    ['onepassword-service-account', true],
+    ['onepassword-cli', true],
+  ])
+
+  if (options.firstRun === true) {
+    // The bundled adapter as a first launch finds it: installed, never approved, its whole manifest
+    // under review. Nothing else exists yet.
+    adapters.delete('coles')
+    const firstHash = WOOLWORTHS_NEXT_HASH
+    adapters.set('woolworths', {
+      ...woolworthsBase,
+      approval: 'unapproved',
+      approvedAt: null,
+      calls7d: 0,
+      tools: woolworthsBase.tools.map((t) => ({ ...t, calls7d: 0 })),
+      session: { state: 'unknown', checkedAt: null, needsUser: null, since: null },
+    })
+    const all = <T>(added: readonly T[]) => ({ added: [...added], removed: [], unchanged: [] })
+    const login = woolworthsBase.secretRequests[0]
+    reviews = [
+      {
+        adapterId: 'woolworths',
+        name: 'Woolworths',
+        site: 'woolworths.com.au',
+        from: null,
+        to: { version: woolworthsBase.version, hash: firstHash },
+        submittedAt: ago(1),
+        source: 'import',
+        diff: {
+          navigation: all(woolworthsBase.navigation),
+          frameOrigins: all([]),
+          egress: all(woolworthsBase.egress),
+          cookieDomains: all(woolworthsBase.cookieDomains),
+          storage: all([]),
+          requests: all(WOOLWORTHS_REQUESTS),
+          tools: all(
+            woolworthsBase.tools.map(({ name, title, sideEffect }) => ({ name, title, sideEffect })),
+          ),
+          secrets: all(
+            login === undefined
+              ? []
+              : [
+                  {
+                    name: login.name,
+                    description: login.description,
+                    fields: login.fields,
+                    origins: login.origins,
+                  },
+                ],
+          ),
+          secretFills: all([
+            { selector: 'input[name=username]', secret: 'login', field: 'username' as const },
+            { selector: 'input#password', secret: 'login', field: 'password' as const },
+          ]),
+          authSteps: all(WOOLWORTHS_AUTH_STEPS),
+          messagesSources: all([]),
+          limits: null,
+          probe: null,
+        },
+        manifestDiff: [],
+        files: [],
+      },
+    ]
+    attention = [
+      {
+        kind: 'review',
+        id: 'rv_woolworths',
+        adapterId: 'woolworths',
+        adapterName: 'Woolworths',
+        version: woolworthsBase.version,
+        addsPermissions: true,
+      },
+    ]
+    grants = []
+    clients = []
+    runs = []
+    setup = { completedAt: null }
+    providerAvailable.set('onepassword-service-account', false)
+    providerAvailable.set('onepassword-cli', false)
+  }
 
   const audit: AuditRecord[] = buildAudit(ago)
   /** The last verification, as the main process keeps it: launch verified the chain as it was then. */
@@ -675,14 +767,15 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         const list: ProviderStatus[] = [
           {
             kind: 'onepassword-service-account',
-            available: true,
-            unavailableReason: null,
+            available: providerAvailable.get('onepassword-service-account') === true,
+            unavailableReason:
+              providerAvailable.get('onepassword-service-account') === true ? null : 'not-configured',
             grantCount: count('onepassword-service-account'),
           },
           {
             kind: 'onepassword-cli',
-            available: true,
-            unavailableReason: null,
+            available: providerAvailable.get('onepassword-cli') === true,
+            unavailableReason: providerAvailable.get('onepassword-cli') === true ? null : 'not-installed',
             grantCount: count('onepassword-cli'),
           },
           {
@@ -981,6 +1074,18 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         return clone(breakers)
       },
     },
+    setup: {
+      async status() {
+        enter('setup.status')
+        return clone(setup)
+      },
+      async finish() {
+        enter('setup.finish')
+        if (setup.completedAt === null) setup = { completedAt: new Date(now).toISOString() }
+        emit({ type: 'app-changed' })
+        return clone(setup)
+      },
+    },
     app: {
       async status() {
         enter('app.status')
@@ -1035,6 +1140,16 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       },
       chooseOpPathResult(path) {
         chosenOpPath = path
+      },
+      setProviderAvailable(kind, available) {
+        providerAvailable.set(kind, available)
+        emit({ type: 'grants-changed' })
+      },
+      clientSeen(clientId) {
+        clients = clients.map((c) =>
+          c.id === clientId ? { ...c, lastSeen: new Date(now).toISOString() } : c,
+        )
+        emit({ type: 'clients-changed' })
       },
       calls,
     },

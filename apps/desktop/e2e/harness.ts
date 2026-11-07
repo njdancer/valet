@@ -63,8 +63,16 @@ export function tempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), `valet-e2e-${prefix}-`))
 }
 
-/** Launches the built app (or a copy of it at `appPath`) in demo and e2e mode on `userData`. */
-export async function launch(userData: string, appPath = appDir): Promise<Launched> {
+/**
+ * Launches the built app (or a copy of it at `appPath`) in demo and e2e mode on `userData`. First-run
+ * setup stays closed unless `setup` asks for it (VALET_E2E_SETUP), so the other specs start on the
+ * adapters page.
+ */
+export async function launch(
+  userData: string,
+  appPath = appDir,
+  options: { readonly setup?: boolean } = {},
+): Promise<Launched> {
   const env: Record<string, string> = {}
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined && !key.startsWith('VALET_') && key !== 'ELECTRON_RUN_AS_NODE') env[key] = value
@@ -72,7 +80,13 @@ export async function launch(userData: string, appPath = appDir): Promise<Launch
   const app = await _electron.launch({
     executablePath: electronPath,
     args: [appPath],
-    env: { ...env, VALET_DEMO: '1', VALET_E2E: '1', VALET_USER_DATA: userData },
+    env: {
+      ...env,
+      VALET_DEMO: '1',
+      VALET_E2E: '1',
+      VALET_USER_DATA: userData,
+      ...(options.setup === true ? { VALET_E2E_SETUP: '1' } : {}),
+    },
   })
   const logs: string[] = []
   app.process().stdout?.on('data', (chunk) => logs.push(String(chunk)))

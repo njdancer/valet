@@ -638,6 +638,16 @@ export interface SiteHealth {
   readonly nextCooldownSeconds: number
 }
 
+/**
+ * First-run setup (AC2, AC3). Whether each step is done is read from the rest of the API (the
+ * providers, the approval, the grant, the clients); this is only whether the person has finished or
+ * skipped it, so the app stops opening it at launch.
+ */
+export interface SetupStatus {
+  /** When the person finished or skipped setup; null until then. */
+  readonly completedAt: IsoTime | null
+}
+
 export interface AppStatus {
   readonly paused: boolean
   readonly version: string
@@ -754,6 +764,11 @@ export interface ValetApi {
   }
   readonly health: {
     sites(): Promise<readonly SiteHealth[]>
+  }
+  readonly setup: {
+    status(): Promise<SetupStatus>
+    /** Records that setup is finished (or skipped): later launches open no setup window. */
+    finish(): Promise<SetupStatus>
   }
   readonly app: {
     status(): Promise<AppStatus>

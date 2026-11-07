@@ -173,6 +173,8 @@ const HANDLERS: Readonly<
   'updates.status': entry(none, (api) => api.updates.status()),
   'updates.check': entry(none, (api) => api.updates.check()),
   'health.sites': entry(none, (api) => api.health.sites()),
+  'setup.status': entry(none, (api) => api.setup.status()),
+  'setup.finish': entry(none, (api) => api.setup.finish()),
   'app.status': entry(none, (api) => api.app.status()),
   'app.setPaused': entry(z.tuple([z.boolean()]), (api, [paused]) => api.app.setPaused(paused)),
   'app.openControlPanel': entry(z.union([none, z.tuple([hashRoute])]), (api, args) =>

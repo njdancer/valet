@@ -4,6 +4,14 @@
 
 import type { HashRoute } from '../../shared/api'
 
+/** First-run setup's steps, in order (AC2, AC3). */
+export const SETUP_STEPS = ['welcome', 'onepassword', 'approve', 'grant', 'clients'] as const
+export type SetupStep = (typeof SETUP_STEPS)[number]
+
+function isSetupStep(value: string): value is SetupStep {
+  return (SETUP_STEPS as readonly string[]).includes(value)
+}
+
 export type Route =
   | { readonly page: 'adapters' }
   | { readonly page: 'adapter'; readonly adapterId: string }
@@ -16,6 +24,16 @@ export type Route =
   | { readonly page: 'settings' }
   | { readonly page: 'confirm'; readonly confirmationId: string }
   | { readonly page: 'needs-user'; readonly adapterId: string }
+  /**
+   * First-run setup. A null step resumes at the first one not done. On the approve step, `review`
+   * shows the adapter's review over it; on the grant step, `secret` opens the grant sheet for it.
+   */
+  | {
+      readonly page: 'setup'
+      readonly step: SetupStep | null
+      readonly review: boolean
+      readonly secret: string | null
+    }
   | { readonly page: 'not-found' }
 
 function decode(segment: string): string | null {
@@ -56,9 +74,26 @@ export function parseRoute(hash: string): Route {
         : { page: 'not-found' }
     case 'needs-user':
       return a !== undefined && b === undefined ? { page: 'needs-user', adapterId: a } : { page: 'not-found' }
+    case 'setup':
+      return setupRoute(a, b, parts.length)
     default:
       return { page: 'not-found' }
   }
+}
+
+function setupRoute(step: string | undefined, sub: string | undefined, length: number): Route {
+  const at = (s: SetupStep | null, review = false, secret: string | null = null): Route => ({
+    page: 'setup',
+    step: s,
+    review,
+    secret,
+  })
+  if (step === undefined) return at(null)
+  if (!isSetupStep(step) || length > 3) return { page: 'not-found' }
+  if (sub === undefined) return at(step)
+  if (step === 'approve' && sub === 'review') return at(step, true)
+  if (step === 'grant') return at(step, false, sub)
+  return { page: 'not-found' }
 }
 
 const enc = encodeURIComponent
@@ -77,4 +112,7 @@ export const href = {
   settings: (): HashRoute => '#/settings',
   confirm: (id: string): HashRoute => `#/confirm/${enc(id)}`,
   needsUser: (adapterId: string): HashRoute => `#/needs-user/${enc(adapterId)}`,
+  setup: (step?: SetupStep): HashRoute => (step === undefined ? '#/setup' : `#/setup/${step}`),
+  setupReview: (): HashRoute => '#/setup/approve/review',
+  setupGrant: (secret: string): HashRoute => `#/setup/grant/${enc(secret)}`,
 }

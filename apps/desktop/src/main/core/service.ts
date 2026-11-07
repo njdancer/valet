@@ -79,6 +79,7 @@ import { createAuthRunner, Handoffs, isBlockedPage, SessionTracker } from './log
 import { type ApprovedSnapshot, type BuiltinAdapter, SnapshotStore } from './registry'
 import { RunMemory } from './run-memory'
 import { DEFAULT_SETTINGS, SettingsStore } from './settings'
+import { SetupStore } from './setup'
 import { type BridgeCommand, clientSnippets, snippetFor } from './snippets'
 import { disabledUpdates, type UpdatesHooks, type UpdatesPort, VersionStore } from './updates'
 import {
@@ -207,6 +208,7 @@ export class AppService {
   /** The settings as last read or written: the updater reads them synchronously at every check. */
   private settingsNow: Settings = DEFAULT_SETTINGS
   private readonly versions: VersionStore
+  private readonly setup: SetupStore
   private updates: UpdatesPort | null = null
   /** Audit writes nothing awaits (an update downloaded); stop() waits for them. */
   private background: Promise<unknown> = Promise.resolve()
@@ -242,6 +244,7 @@ export class AppService {
     this.markers = new LoginAttemptMarker(paths.loginMarkers, clock)
     this.settings = new SettingsStore(paths.settings)
     this.versions = new VersionStore(paths.versions)
+    this.setup = new SetupStore(paths.setup, deps.now)
     this.snapshots = new SnapshotStore(paths.manifests)
     this.clients = new ClientRegistry(paths.clients, paths.clientConfigs, date)
     this.titles = new JsonDocument(paths.grantItems, titlesSchema, () => ({}), true)
@@ -946,6 +949,14 @@ export class AppService {
       health: {
         sites: async () =>
           this.host === null ? [] : siteHealth(await this.host.siteHealth(), await this.reader.records()),
+      },
+      setup: {
+        status: () => this.setup.status(),
+        finish: async () => {
+          const status = await this.setup.finish()
+          this.emit('app-changed')
+          return status
+        },
       },
       app: {
         status: async () => ({ paused: this.paused, version: deps.version, demo: deps.demo }),
