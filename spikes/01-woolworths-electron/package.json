@@ -5,7 +5,8 @@
   "type": "module",
   "main": "main.mjs",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "scrub": "node scrub.mjs"
   },
   "devDependencies": {
     "electron": "^44.3.0"

@@ -2,7 +2,7 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   test: {
-    projects: ['packages/*', 'adapters/*', 'fakes/*', 'apps/desktop'],
+    projects: ['packages/*', 'adapters/*', 'fakes/*', 'apps/desktop', 'spikes/01-woolworths-electron'],
     passWithNoTests: true,
     coverage: {
       provider: 'v8',
