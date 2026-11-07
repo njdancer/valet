@@ -567,8 +567,10 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
   ([D7](#d7-1password-fallback)). The Messages reader opens `chat.db` read-only in place per lookup
   and has only run against test databases, so whether the snapshot fallback is needed is unknown.
 - Next:
-  1. Service-account provider over the SDK, with the token from the Keychain (asynchronous,
-     bounded prompts).
+  1. Keychain credential store (D6): copy granted fields from 1Password through `DesktopAuth` with
+     a source reference, re-sync on a failed login, a live approval or a settings action, and read
+     in process (not through `/usr/bin/security`) so unattended runs don't prompt. The
+     service-account provider stays, unused, until a vault is wanted.
   2. Desktop-app provider. SDK 0.5.0 has `DesktopAuth`, which authenticates through the
      1Password app with the person's approval. That likely replaces the `op` CLI fallback
      entirely: no CLI install, no stdout parsing ([D7](#d7-1password-fallback)).
@@ -1040,7 +1042,7 @@ them on 2026-11-07; each section starts with his answer. The rest get answered a
 | --- | ------------------------------------------- | --------------------------------------------------------------------------------------------- | ---------- |
 | D4  | **Woolworths 2FA (Auth0 MFA)**              | Check his account's factor in M2; SMS via Messages, TOTP via 1Password, else needsUser        | M2–M3      |
 | D5  | **Which Woolworths account**                | Nick's real account, with the one-attempt limit in place first                                | M2         |
-| D6  | **1Password setup**                         | Service account on a new "Valet" vault; move the item                                         | M2–M3      |
+| D6  | **1Password setup**                         | Keychain copy with a source reference, re-synced through the desktop app                      | M2–M3      |
 | D8  | **Full Disk Access for Messages**           | Helper before release; whole app acceptable for M3                                            | M3         |
 | D18 | **Irreversible tools in shipped adapters**  | None in v1                                                                                    | M3, M8     |
 | D24 | **Bot-detection posture**                   | Any lawful countermeasure, in the runtime; no CAPTCHA solving; stated publicly                | Everything |
@@ -1182,10 +1184,32 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
     inactivity](https://www.1password.dev/sdks/desktop-app-integrations) and whenever 1Password
     locks, so in practice he approves most runs. That fails his "authorise once" ideal, and runs
     while he's away fail with `needsUser`. Fine for M2, where he's present anyway.
-- Recommendation unchanged: service account on a moved item. If the plan has no service
-  accounts, copy-with-reference into the Valet vault read through `DesktopAuth` once per run is
-  not better than `DesktopAuth` alone, so fall back to `DesktopAuth` only and accept attended
-  runs. Needs Nick: his plan, and move or copy.
+- Recommendation at the time: service account on a moved item. Superseded by Nick's decision
+  below.
+- **Decided (Nick, 2026-11-07): a Keychain copy, with a reference to the source item.** He
+  won't move the item into a Valet vault just because Valet uses it, and a copy in 1Password adds
+  a service account without adding protection, since that account's token would sit in the
+  Keychain anyway. So no service account and no Valet vault for now.
+  - **Copy:** at setup, with Nick approving in 1Password (`DesktopAuth`), Valet reads the granted
+    fields (password; a TOTP secret if D4 turns one up) and writes them to one Keychain item per
+    grant. Beside them it keeps the source reference (account, vault, item and field ids) and
+    the item's version when copied. Nothing about the grant's origin binding changes: the
+    resolver hands the copy to the privileged filler exactly as it would a 1Password read.
+  - **Re-sync**, always through `DesktopAuth`, so only with Nick present:
+    1. a login that fails on the password (the one-attempt limit, D5) ends `needsUser` with the
+       reason "password may have changed in 1Password" and offers a re-sync;
+    2. whenever a `DesktopAuth` approval is already live (an attended run, setup), Valet compares
+       the source item's version with the copy's and refreshes it if they differ;
+    3. a "Re-sync from 1Password" action in settings.
+       A changed Woolworths password therefore costs one failed unattended login and one prompt.
+  - **Prerequisite for unattended runs:** the Keychain read must move in process first. Today's
+    `/usr/bin/security` read prompts on every use and names `security`, not Valet (the v0 gap in
+    the security model), so it can't run while Nick is away. The native read (an addon calling
+    `SecItemCopyMatching`, or a helper signed with the Team ID) was already required before
+    release; it's now on M3's path.
+  - **What changes in the code:** the Keychain becomes a credential store, not only the token
+    source; the service-account provider stays in the tree, unused, until Nick wants a vault;
+    C7 (`onepassword-desktop`) is still needed, now for setup and re-sync.
 - Blocks: M3 (unattended runs); M2 can use the desktop-app path.
 
 ### D7. 1Password fallback

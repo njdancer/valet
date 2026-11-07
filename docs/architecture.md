@@ -237,21 +237,25 @@ The adapter only ever names a `secretRef`. The privileged filler in `auth-flow` 
 through the grant. This is where we depart from the earlier app, whose connector code holds the
 plaintext password.
 
-Providers in `packages/credentials`, preferred first:
+Providers in `packages/credentials` ([D6](plan.md#d6-1password-setup), decided 2026-11-07):
 
-1. **A 1Password service account scoped to a dedicated vault** (`OnePasswordSdkProvider`, kind
-   `onepassword-service-account`). It works unattended, which matters when an agent calls a tool
-   while the Mac is locked; it's scoped to one vault and revocable; 1Password keeps its own usage
-   log. The token comes from a `TokenSource`: in v0, `KeychainTokenSource` runs
-   `/usr/bin/security` with a bounded wait, which has the ACL gap described in the security model.
-   Service accounts can't read personal vaults, so login items are moved into that vault
-   ([D6](plan.md#d6-1password-setup)).
-2. **`op read` through the 1Password desktop app's CLI integration** (`OnePasswordCliProvider`,
-   kind `onepassword-cli`). No setup, but it needs 1Password unlocked plus Touch ID; when that
-   isn't available the provider reports `locked` and the login ends in `needsUser`. The SDK's
-   `DesktopAuth` may replace it ([D7](plan.md#d7-1password-fallback)).
-3. **Not:** copying secrets into the Keychain ahead of time, as the earlier app does. That's a second
-   copy with its own lifecycle.
+1. **A Keychain copy with a source reference** (to build; kind `keychain-copy`). At setup Valet
+   reads the granted fields from Nick's own 1Password item through the desktop app and stores
+   them in one Keychain item per grant, with the source's account, vault, item and field ids and
+   its version. Unattended runs read the copy. It is re-synced through the desktop app, with the
+   person present, after a login fails on the password, whenever an approval is already live, or
+   from settings. Nick chose this over moving the item into a dedicated vault. It is a second
+   copy with its own lifecycle, which is why re-sync is built in rather than left to the person.
+   The read must be in process (`SecItemCopyMatching` under the app's designated requirement)
+   before unattended use, because the v0 `/usr/bin/security` read prompts every time.
+2. **The 1Password desktop app** (`DesktopAuth` in the SDK, kind `onepassword-desktop`, C7;
+   [D7](plan.md#d7-1password-fallback)). Used for setup and re-sync, and as the fallback when no
+   copy exists. Approval lasts until ten idle minutes pass or 1Password locks, so on its own it
+   means attended runs. `op read` (`OnePasswordCliProvider`, kind `onepassword-cli`) is the
+   current stand-in until `DesktopAuth` is built.
+3. **A 1Password service account scoped to a dedicated vault** (`OnePasswordSdkProvider`, kind
+   `onepassword-service-account`). Built, but unused for now: it can't read personal vaults, and
+   Nick doesn't want to move items. Kept for anyone who prefers a dedicated vault.
 
 Also here:
 
