@@ -551,6 +551,16 @@ describe('session.ensure and the site', () => {
     expect(driver.page.fetches).toEqual([])
   })
 
+  it('paces the driver’s navigations on the site’s budget, and refuses them while the breaker is open (D55)', async () => {
+    const { driver, clock } = fixture(ensureOnce)
+    await driver.watcher!.pace!()
+    await driver.watcher!.pace!()
+    // The second waited out the gap (1 s here) behind the first.
+    expect(clock.paced).toEqual([1_000])
+    driver.watcher!.refused(refusal)
+    await expect(driver.watcher!.pace!()).rejects.toMatchObject({ errorClass: 'rate-limited' })
+  })
+
   it('tells the login when the site refused us mid-login, and ends the call as blocked (D55)', async () => {
     const { host, page, driver, authRunner } = fixture(ensureOnce)
     page.route('GET', SESSION_URL, loggedOut)

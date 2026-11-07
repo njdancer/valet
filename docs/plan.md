@@ -61,8 +61,13 @@ Still not done, or done differently from the docs:
   2026-11-07). The driver now watches every main-frame and API response in both partitions, the
   person's login window included. A 429, or a 403 HTML page, on the site's hosts opens the site's
   breaker (`SessionDriver.watchSite`). An open breaker stops the tool partition sending anything,
-  and a login in progress ends as `blocked` at its next check. Still not done: pacing main-frame
-  navigations that the page starts itself, and AC7's request count at the fake site.
+  and a login in progress ends as `blocked` at its next check. The tool partition's main-frame
+  navigations that the page starts itself (script, links, forms) now wait on the site's budget
+  too; a server redirect chain counts as one. Tool code's own `goto` and the first navigation after
+  a tool `click` aren't paced twice. API calls are not paced one by one: they follow from
+  navigations, and the run's ceiling caps a burst from `evaluate()` (AC7's test replays run 1's
+  four calls against a ceiling of three, counted at the test site). Still not done: pacing
+  navigations the auth page starts by itself, such as a form-post callback.
 - **Cancelling a login** ([D67](#d67-stopping-a-login-when-the-call-is-cancelled), built
   2026-11-07). A cancelled call now stops its automatic login at the next step, poll or pause, and
   before any secret is typed. If no password or code had been typed, the attempt marker clears by

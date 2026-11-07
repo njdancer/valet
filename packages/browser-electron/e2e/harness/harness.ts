@@ -1037,6 +1037,46 @@ async function setup() {
       }
     },
 
+    navigationPacing: async () => {
+      const paced: string[] = []
+      driver.watchSite({
+        refused: () => {},
+        held: () => false,
+        pace: async () => {
+          paced.push('wait')
+          await sleep(300)
+        },
+      })
+      try {
+        begin('read', 20)
+        const page = await driver.toolPage()
+        // Tool code's own goto: the runtime paces it, so the driver doesn't.
+        await page.goto(site.url('site.test', '/'))
+        const afterGoto = paced.length
+        // The page navigates itself: by script, then through a server redirect chain.
+        await settle(page.evaluate(`(location.href = '/?one', null)`))
+        await sleep(1500)
+        const target = encodeURIComponent(site.url('site.test', '/?two'))
+        await settle(page.evaluate(`(location.href = '/redirect?to=${target}', null)`))
+        await sleep(1500)
+        driver.endRun()
+        // Run 1's pattern from adapter code: four API calls back to back. The run's ceiling (3)
+        // stops the fourth; API calls follow from navigations and aren't paced one by one.
+        begin('read', 3)
+        const before = site.requests.length
+        const burst = await settle(
+          page.evaluate(
+            `Promise.all([1, 2, 3, 4].map(() => fetch('/api/cart').then((r) => r.status, () => 'refused')))`,
+          ),
+        )
+        const reached = site.requests.slice(before).filter((r) => r.path === '/api/cart').length
+        driver.endRun()
+        return { afterGoto, paced: paced.length, url: page.currentUrl(), burst, reached }
+      } finally {
+        driver.watchSite({ refused: () => {}, held: () => false })
+      }
+    },
+
     close: async () => {
       await driver.toolPage()
       await driver.openAuthPage()

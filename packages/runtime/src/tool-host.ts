@@ -59,7 +59,7 @@ import { KeyedMutex } from './mutex'
 import { probeDeclaration } from './probe'
 import { redactOutput } from './redaction'
 import { knownReason, type LoginBackoff, SessionGate } from './session'
-import { isSiteRefusal, type SiteGuards, SiteProtection } from './site-protection'
+import { breakerRefusal, isSiteRefusal, type SiteGuards, SiteProtection } from './site-protection'
 import {
   type AuthRunner,
   CLIENT_TRANSPORTS,
@@ -179,6 +179,10 @@ export class ToolHost {
     driver.watchSite?.({
       refused: (refusal) => site.breaker.trip(refusal.cause, null),
       held: () => site.breaker.isOpen(),
+      pace: async () => {
+        if (site.breaker.isOpen()) throw breakerRefusal()
+        await site.budget.acquire()
+      },
     })
     const gate = new SessionGate({
       adapterId: manifest.id,

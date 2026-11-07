@@ -29,6 +29,8 @@ export class SurfaceToolPage implements ToolPage {
     private readonly egress: readonly string[],
     private readonly timing: PageTiming,
     private readonly announce: Announce = unannounced,
+    /** Told just before each click, so a navigation the click starts isn't paced a second time. */
+    private readonly clicking: () => void = () => {},
   ) {
     this.core = new PageCore(surface, timing)
   }
@@ -48,7 +50,10 @@ export class SurfaceToolPage implements ToolPage {
   }
 
   click(selector: string): Promise<void> {
-    return this.core.step('tool-run', (signal) => this.core.click('tool-run', selector, signal))
+    return this.core.step('tool-run', (signal) => {
+      this.clicking()
+      return this.core.click('tool-run', selector, signal)
+    })
   }
 
   /** Types literal text as trusted input. Tool pages never receive secrets. */

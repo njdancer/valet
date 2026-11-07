@@ -48,6 +48,8 @@ export interface OutgoingRequest {
    * font, object, xhr, ping, cspReport, media, webSocket or other. fetch() reports as xhr.
    */
   readonly resourceType: string
+  /** The request's id: a server redirect keeps it, so its next hop has the same one. */
+  readonly id?: number
 }
 
 /** Request headers in the order they go out, names in the case they are sent in. */
@@ -106,8 +108,11 @@ export interface PartitionSession {
   setUserAgent(userAgent: string, acceptLanguages: string): void
   /** Denies permission prompts and downloads. */
   harden(): void
-  /** Installs the session's only request filter. Requests it returns false for are cancelled. */
-  filterRequests(allow: (request: OutgoingRequest) => boolean): void
+  /**
+   * Installs the session's only request filter. Requests it returns false for are cancelled; a
+   * promise holds the request until it settles, and a rejected one cancels it.
+   */
+  filterRequests(allow: (request: OutgoingRequest) => boolean | Promise<boolean>): void
   /**
    * Sends every connection the session makes, loopback included, through `proxy`. With WebRTC
    * limited to proxied traffic, that takes in the sockets webRequest never sees.

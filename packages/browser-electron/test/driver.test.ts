@@ -1970,3 +1970,86 @@ describe('the site’s breaker (D55)', () => {
     ).not.toThrow()
   })
 })
+
+describe('pacing the tool partition’s navigations (D55)', () => {
+  function paced(open = { value: false }) {
+    const { platform } = browserLike()
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    const waits: string[] = []
+    let release: () => void = () => {}
+    driver.watchSite({
+      refused: () => {},
+      held: () => open.value,
+      pace: () => {
+        waits.push('pace')
+        return new Promise<void>((resolve) => {
+          release = resolve
+        })
+      },
+    })
+    return { platform, driver, waits, open, release: () => release() }
+  }
+  const nav = (url: string, id: number) => ({ url, method: 'GET', resourceType: 'mainFrame', id })
+
+  it('holds a navigation the page starts until the budget lets it go', async () => {
+    const { platform, driver, waits, release } = paced()
+    await driver.toolPage()
+    const filter = platform.session(TOOL).filter!
+    const decision = filter(nav('https://www.example.com/shop', 1))
+    expect(decision).toBeInstanceOf(Promise)
+    await flush()
+    expect(waits).toEqual(['pace'])
+    release()
+    expect(await decision).toBe(true)
+  })
+
+  it('counts a server redirect chain as one navigation, and paces nothing else', async () => {
+    const { platform, driver, waits } = paced()
+    await driver.toolPage()
+    const filter = platform.session(TOOL).filter!
+    void filter(nav('https://www.example.com/a', 7))
+    expect(filter(nav('https://login.example.com/b', 7))).toBe(true)
+    expect(
+      filter({ url: 'https://www.example.com/a.js', method: 'GET', resourceType: 'script', id: 8 }),
+    ).toBe(true)
+    await flush()
+    expect(waits).toEqual(['pace'])
+  })
+
+  it('does not pace again what the runtime already paced: tool code’s goto, and a tool click’s navigation', async () => {
+    const { platform, driver, waits } = paced()
+    const page = await driver.toolPage()
+    const filter = platform.session(TOOL).filter!
+    const surface = platform.surfaces.find((s) => s.partition === TOOL)!
+    const load = surface.onLoad
+    const seen: unknown[] = []
+    surface.onLoad = (url) => {
+      seen.push(filter(nav(url, 20)))
+      return load(url)
+    }
+    await page.goto('https://www.example.com/shop')
+    expect(seen).toEqual([true])
+    await page.click('#home').catch(() => {})
+    expect(filter(nav('https://www.example.com/after-click', 21))).toBe(true)
+    // Only the first navigation after the click counts as the click's.
+    void filter(nav('https://www.example.com/later', 22))
+    await flush()
+    expect(waits).toEqual(['pace'])
+  })
+
+  it('cancels a navigation whose wait was refused, or whose breaker opened while it waited', async () => {
+    const { platform } = browserLike()
+    const driver = new ElectronSessionDriver(platform, OPTIONS)
+    driver.watchSite({ refused: () => {}, held: () => false, pace: () => Promise.reject(new Error('open')) })
+    await driver.toolPage()
+    expect(await platform.session(TOOL).filter!(nav('https://www.example.com/x', 30))).toBe(false)
+
+    const later = paced()
+    await later.driver.toolPage()
+    const decision = later.platform.session(TOOL).filter!(nav('https://www.example.com/y', 31))
+    await flush()
+    later.open.value = true
+    later.release()
+    expect(await decision).toBe(false)
+  })
+})
