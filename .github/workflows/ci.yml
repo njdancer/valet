@@ -1,14 +1,9 @@
-# Lint, typecheck and tests on macOS, the only platform Valet runs on: parts of the suite use macOS
-# tools (ditto for the update zips) and file-permission checks that only hold for a non-root user.
-# The end-to-end suite runs the built app in demo mode against the fake site; nothing here reaches
-# a real site, 1Password, Messages or the Keychain, and nothing is signed.
-
 name: CI
 
 on:
-  pull_request:
   push:
     branches: [main]
+  pull_request:
 
 permissions:
   contents: read
@@ -19,7 +14,8 @@ concurrency:
 
 jobs:
   check:
-    runs-on: macos-15
+    # macOS, because the updater tests use ditto and the app only ships for macOS.
+    runs-on: macos-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -28,16 +24,15 @@ jobs:
       - run: pnpm check
 
   e2e:
-    runs-on: macos-15
-    timeout-minutes: 40
+    runs-on: macos-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v2
       - run: pnpm install --frozen-lockfile
-      - run: pnpm test:e2e
-      - if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: e2e-results
-          path: apps/desktop/out/e2e-results
-          retention-days: 7
+      - name: browser-electron end to end
+        run: |
+          pnpm --filter @valet/browser-electron typecheck:e2e
+          pnpm --filter @valet/browser-electron test:e2e --trace off
+      - name: desktop end to end
+        run: pnpm --filter @valet/desktop test:e2e --trace off
