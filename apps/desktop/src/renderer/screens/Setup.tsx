@@ -13,12 +13,14 @@ import type {
   EndpointStatus,
   PendingReview,
   ProviderStatus,
+  Settings,
 } from '../../shared/api'
 import { ActionFailed, Avatar, Hash, Icon, SecretBadge, SideEffect } from '../components/ui'
 import { useAction, useApi, useLoad } from '../lib/api-context'
 import { hostOf, plural } from '../lib/format'
 import { href, navigate, SETUP_STEPS, type SetupStep } from '../lib/router'
 import { FIELD_WORDING, PROVIDER_WORDING } from '../lib/wording'
+import { OnePasswordAccountSetting } from './ClientsSettings'
 
 /** The adapter setup approves and grants: the bundled one. */
 export const SETUP_ADAPTER = 'woolworths'
@@ -47,6 +49,7 @@ export interface SetupFacts {
   readonly review: PendingReview | null
   readonly clients: readonly ClientInfo[]
   readonly endpoint: EndpointStatus
+  readonly settings: Settings
 }
 
 /** The providers a login secret can come from: everything but Messages, which only has codes. */
@@ -87,8 +90,9 @@ export function SetupPage({ step }: { readonly step: SetupStep | null }) {
   const reviews = useLoad((a) => a.approvals.pending(), [], ['approvals-changed'])
   const clients = useLoad((a) => a.clients.list(), [], ['clients-changed'])
   const endpoint = useLoad((a) => a.endpoint.status(), [], ['endpoint-changed'])
+  const settings = useLoad((a) => a.settings.get(), [], ['settings-changed'])
 
-  const all = [providers, adapter, reviews, clients, endpoint]
+  const all = [providers, adapter, reviews, clients, endpoint, settings]
   if (all.some((l) => l.status === 'error')) {
     return (
       <SetupFrame step={step ?? 'welcome'} done={null}>
@@ -103,7 +107,8 @@ export function SetupPage({ step }: { readonly step: SetupStep | null }) {
     adapter.status !== 'ready' ||
     reviews.status !== 'ready' ||
     clients.status !== 'ready' ||
-    endpoint.status !== 'ready'
+    endpoint.status !== 'ready' ||
+    settings.status !== 'ready'
   ) {
     return (
       <SetupFrame step={step ?? 'welcome'} done={null}>
@@ -117,6 +122,7 @@ export function SetupPage({ step }: { readonly step: SetupStep | null }) {
     review: reviews.data.find((r) => r.adapterId === SETUP_ADAPTER) ?? null,
     clients: clients.data,
     endpoint: endpoint.data,
+    settings: settings.data,
   }
   const done = stepsDone(facts)
   const current = step ?? resumeStep(done)
@@ -132,7 +138,7 @@ function StepView({ step, facts }: { readonly step: SetupStep; readonly facts: S
     case 'welcome':
       return <Welcome />
     case 'onepassword':
-      return <OnePassword providers={facts.providers} />
+      return <OnePassword providers={facts.providers} settings={facts.settings} />
     case 'approve':
       return <Approve adapter={facts.adapter} review={facts.review} />
     case 'grant':
@@ -318,37 +324,57 @@ function providerState(p: ProviderStatus): { readonly label: string; readonly to
   }
 }
 
-function OnePassword({ providers }: { readonly providers: readonly ProviderStatus[] }) {
+function OnePassword({
+  providers,
+  settings,
+}: {
+  readonly providers: readonly ProviderStatus[]
+  readonly settings: Settings
+}) {
+  const api = useApi()
+  const save = useAction()
   const vaults = vaultProviders(providers)
   const ready = vaults.filter((p) => p.available)
+  const copy = vaults.find((p) => p.kind === 'keychain-copy') ?? null
+  // Beside the Keychain copy (D6), only providers this launch can actually use: the rest are
+  // alternatives Nick hasn't chosen, and listing them unset would read as steps to do.
+  const others = vaults.filter((p) => p.kind !== 'keychain-copy' && p.available)
   return (
     <section aria-labelledby="setup-title">
       <h1 id="setup-title">Where logins come from</h1>
       <p className="lede">
-        Valet reads a login from 1Password when a sign-in runs, types it into the site’s sign-in page and
-        forgets it. Adapters never see it, and you pick the item each one may use.
+        Valet types a login from your own 1Password into the site’s sign-in page. Adapters never see it, and
+        you pick the item each one may use.
       </p>
       <div className="stack gap-3">
-        {vaults.map((p) => {
-          const state = providerState(p)
-          return (
-            <div className="card" key={p.kind}>
-              <div className="card-head">
-                <span className={`dot ${p.available ? 'ok' : 'warn'}`} />
-                <span className="h3">{PROVIDER_WORDING[p.kind].title}</span>
-                <span className={`pill ${state.tone}`} style={{ marginLeft: 'auto' }}>
-                  {state.label}
-                </span>
+        {copy !== null ? (
+          <div className="card">
+            <ProviderHead provider={copy} />
+            <div className="card-body stack">
+              <div className="xs muted">
+                {PROVIDER_WORDING[copy.kind].detail} Turn on “Integrate with other apps” in 1Password’s
+                Developer settings first.
               </div>
-              <div className="card-body xs muted">{PROVIDER_WORDING[p.kind].detail}</div>
+              <OnePasswordAccountSetting
+                value={settings.onePasswordAccount}
+                onSave={(account) => save.run(() => api.settings.set({ onePasswordAccount: account }))}
+              />
+              <ActionFailed failed={save.failed} what="save the account" />
             </div>
-          )
-        })}
+          </div>
+        ) : null}
+        {others.map((p) => (
+          <div className="card" key={p.kind}>
+            <ProviderHead provider={p} />
+            <div className="card-body xs muted">{PROVIDER_WORDING[p.kind].detail}</div>
+          </div>
+        ))}
       </div>
       {ready.length > 0 ? (
         <div className="setup-done">
           <Icon name="check" />
-          {PROVIDER_WORDING[ready[0]?.kind ?? 'fake'].title} is ready. You’ll pick the item in a later step.
+          {PROVIDER_WORDING[ready[0]?.kind ?? 'fake'].title} is ready. You’ll pick the item in a later step
+          {ready[0]?.kind === 'keychain-copy' ? ', and approve the copy in 1Password' : ''}.
         </div>
       ) : (
         <div className="callout warn" style={{ marginTop: 'var(--space-4)' }}>
@@ -360,6 +386,19 @@ function OnePassword({ providers }: { readonly providers: readonly ProviderStatu
         </div>
       )}
     </section>
+  )
+}
+
+function ProviderHead({ provider }: { readonly provider: ProviderStatus }) {
+  const state = providerState(provider)
+  return (
+    <div className="card-head">
+      <span className={`dot ${provider.available ? 'ok' : 'warn'}`} />
+      <span className="h3">{PROVIDER_WORDING[provider.kind].title}</span>
+      <span className={`pill ${state.tone}`} style={{ marginLeft: 'auto' }}>
+        {state.label}
+      </span>
+    </div>
   )
 }
 

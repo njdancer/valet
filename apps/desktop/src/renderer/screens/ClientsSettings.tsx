@@ -408,7 +408,7 @@ function SettingsCard() {
  * The 1Password account Keychain copies come from (D6). It names an account, never a secret: the
  * person approves each copy in 1Password itself.
  */
-function OnePasswordAccountSetting({
+export function OnePasswordAccountSetting({
   value,
   onSave,
 }: {

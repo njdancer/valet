@@ -786,6 +786,13 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
             unavailableReason: settings.messagesOtpEnabled ? null : 'disabled',
             grantCount: count('messages'),
           },
+          {
+            // As the main process has it: ready once the person names their 1Password account (D6).
+            kind: 'keychain-copy',
+            available: settings.onePasswordAccount !== null,
+            unavailableReason: settings.onePasswordAccount !== null ? null : 'not-configured',
+            grantCount: count('keychain-copy'),
+          },
         ]
         return list
       },
