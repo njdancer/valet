@@ -113,8 +113,8 @@ class ElectronPartition implements PartitionSession {
 
   /**
    * The session's one onHeadersReceived listener, for both jobs. Headers rather than onCompleted:
-   * Electron fails a main-frame load that answers 4xx, and a failed request never completes, so
-   * a block page would go unseen there.
+   * a request cancelled or failed after its headers arrived (a page navigating away, a stopped
+   * load) never completes, and its status would go unseen.
    */
   private listenForHeaders(): void {
     if (this.listening) return
