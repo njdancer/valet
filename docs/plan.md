@@ -1035,7 +1035,8 @@ security model now also marks which guarantees code enforces today.
 ## Decisions
 
 Each decision has options, a recommendation, and what it blocks. The first table lists the ones
-to answer first: they block M2 or M3, or they're expensive to change later.
+to answer first: they block M2 or M3, or they're expensive to change later. Nick answered all of
+them on 2026-11-07; each section starts with his answer. The rest get answered as they come up.
 
 ### Answer these first
 
@@ -1110,6 +1111,8 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D4. Woolworths 2FA
 
+- Nick's answer (2026-11-07): He believes Woolworths offers SMS only; use TOTP if it turns out to be
+  available, else SMS via Messages.
 - Known: login is Auth0 Universal Login, so any second factor is an Auth0 MFA challenge page
   (`/u/mfa-*-challenge`) after the password page. Unknown: whether Nick's account has MFA
   enrolled, which factors the Woolworths tenant enables, and whether it challenges only new
@@ -1134,6 +1137,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D5. Which Woolworths account
 
+- Nick's answer (2026-11-07): Accepted: his real account, with the one-attempt limit in place first.
 - Options: Nick's real account; a separate test account.
 - Considerations:
   - The MVP's point is managing his real trolley, so the real account has to work eventually.
@@ -1150,9 +1154,14 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D6. 1Password setup
 
+- Nick's answer (2026-11-07): He isn't sure which 1Password plan he has (probably a basic individual
+  one). Ideal: passwords stay in his own vaults and he authorises each use once, not every run.
+  Fallback: copy the item into a dedicated vault, or into the local Keychain, keeping a reference to
+  the source item so a changed password can be re-synced. Open: check whether his plan offers service
+  accounts, then pick the path.
 - Questions for Nick: which plan (Individual, Families, Teams)? Are service accounts available
   on it? Is there a vault he's happy to dedicate?
-- Options: move the Woolworths item into a new "valet" vault; duplicate it there; skip
+- Options: move the Woolworths item into a new "Valet" vault; duplicate it there; skip
   service accounts and use only the desktop-app path.
 - Recommendation: a new vault holding only items granted to Valet; **move** the item (a
   duplicate is a second copy to rotate, which is exactly what the architecture rejects for the
@@ -1171,6 +1180,8 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D8. Full Disk Access for Messages
 
+- Nick's answer (2026-11-07): Build the helper now. Open: check first whether a standard CLI already
+  does this (something to vendor, or to prompt the person to install) before writing one.
 - Options: grant FDA to the whole app; a small signed helper inside the bundle that holds FDA and
   answers only "latest code matching this sender and pattern since this time"; no Messages
   support.
@@ -1298,6 +1309,8 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D18. Irreversible tools in shipped adapters
 
+- Nick's answer (2026-11-07): Accepted: no irreversible tools in v1. Later he wants approvals sent
+  to his phone, not only shown on the Mac; not needed yet.
 - Options: no checkout in v1; a checkout tool behind in-app confirmation.
 - Recommendation: none in v1. The framework supports `irreversible` and the confirmation path is
   tested against the fake site, but no shipped adapter moves money until the confirmation UX has
@@ -1347,6 +1360,10 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D24. Bot-detection posture
 
+- Nick's answer (2026-11-07): He doesn't mind sites objecting: no breaking the law or helping others
+  to, but terms-of-service objections are each person's call, and the techniques listed here are all
+  on the table. Open: which of them to build, and in what order. Agent-side limit: Claude doesn't
+  solve CAPTCHAs or bypass bot challenges; those stay a needsUser hand-off.
 - Recommendation: state it as a principle in the README and docs: Valet drives a real
   browser at human pace on the person's own account and machine, presents itself as the
   person's own browser would, and stops when a site objects.
@@ -1406,6 +1423,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D28. Rate budget defaults
 
+- Nick's answer (2026-11-07): Accepted.
 - **Known-bad baseline.** Run 1 of the live probe loaded the homepage and then made 4 scripted
   API calls about 2.5 s apart, with no navigation in between. That was enough for Akamai to flag
   the UA from Nick's IP within three minutes
@@ -1479,6 +1497,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D32. Which failures retry
 
+- Nick's answer (2026-11-07): Accepted.
 - Two places retry: the `retry` step inside a login, and (designed) the runtime re-running a tool
   once after a re-login.
 - Today `retry` re-runs after `auth-step/condition-timeout`, `auth-step/element-missing`,
@@ -1546,6 +1565,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D35. The attempt marker after a timeout
 
+- Nick's answer (2026-11-07): Accepted.
 - Today: the marker is set before the login runs. A crash, abort or flow timeout leaves it set,
   and every later login returns `needsUser(login-attempt-pending)` until the person clears it.
   There's no UI to clear it yet.
@@ -1594,6 +1614,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D38. Keystroke events
 
+- Nick's answer (2026-11-07): Accepted.
 - Today: one `char` input event per character.
 - Options: `char` only; `keyDown`, `char` and `keyUp` per character, as a physical keyboard
   produces; CDP `Input.insertText`.
@@ -1630,6 +1651,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D41. Stable MCP port and token rotation
 
+- Nick's answer (2026-11-07): Wants to discuss before deciding.
 - Today: a free port each launch, and one token written to a 0600 file. The stdio bridge re-reads
   its config, so bridged clients survive a restart. HTTP-native clients (Claude Code over HTTP)
   keep the URL and token in their own config, and break on every restart.
@@ -1820,6 +1842,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D55. Driver-level budget and block detection
 
+- Nick's answer (2026-11-07): Accepted.
 - Today: the rate budget and circuit breaker live in the runtime's guarded page and probe. They
   see `page.fetch`, `goto` and the probe, nothing else. The guarded page leaves requests the page
   makes, or that `evaluate()` code makes, to the driver, and the driver has no budget or
@@ -1884,6 +1907,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D58. Page-initiated traffic
 
+- Nick's answer (2026-11-07): Accepted.
 - Today: core v2's policy holds the site's own API calls to the declarations, and counts
   navigations and API calls, the site's own included, against one ceiling
   (`limits.requestsPerRun`). The Woolworths manifest sets `requestsPerRun: 6` and declares only
@@ -1928,6 +1952,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D60. The stdio bridge in a packaged app
 
+- Nick's answer (2026-11-07): Wants to discuss before deciding (blocks the first signed build).
 - Today: client snippets start the bridge with `tsx` from the repo, which needs Node 24 on
   `PATH`. A packaged build has no bridge command and shows no snippets. The `RunAsNode` fuse is
   off, so the app's own Electron binary can't run the bridge as Node.
@@ -1944,6 +1969,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D61. The update feed's signing key
 
+- Nick's answer (2026-11-07): Wants to discuss before deciding (blocks the first signed build).
 - Today (round 3): the feed carries an Ed25519 envelope over `latest-mac.yml` with an expiry, a
   version floor and the yml's hash. The app verifies it with a public key fixed at build time,
   before electron-updater sees the yml. Apple's signature on the zip is checked as well. Nothing
