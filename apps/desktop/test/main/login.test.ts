@@ -51,6 +51,7 @@ function markers() {
   const store: LoginMarkerStore = {
     read: async () => ({ kind: 'unset' }),
     set: async () => {},
+    markAttempted: async () => {},
     hold: async () => {},
     clear: async (id) => {
       cleared.push(id)
@@ -228,6 +229,7 @@ describe('createAuthRunner', () => {
       callId: 'call1',
       signal: new AbortController().signal,
       registerForRedaction: (secret) => registered.push(secret),
+      attemptStarting: async () => {},
     }
     return {
       ...s,
@@ -568,6 +570,7 @@ describe('a login that fills a secret', () => {
       // As the runtime does: it keeps its own clone.
       registerForRedaction: (secret) =>
         registered.push({ secret, matched: secret.occursIn('x twofactor@example.test') }),
+      attemptStarting: async () => {},
     })
     expect(outcome).toEqual({ status: 'ok' })
     expect(registered).toHaveLength(1)

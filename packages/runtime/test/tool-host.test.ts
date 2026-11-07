@@ -1223,6 +1223,7 @@ describe('ToolHost defaults', () => {
       markers: {
         read: async () => ({ kind: 'unset' }),
         set: async () => {},
+        markAttempted: async () => {},
         hold: async () => {},
         clear: async () => {},
       },

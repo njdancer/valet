@@ -48,6 +48,7 @@ async function audited(
     regexes: { patterns, matcher },
     probed: false,
     attemptStarted: false,
+    passwordFills: 0,
   }
   if (!Number.isFinite(ctx.deadline)) return { status: 'failed', stage: 'auth-step', errorClass: 'internal' }
 

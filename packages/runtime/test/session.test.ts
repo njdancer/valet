@@ -251,6 +251,45 @@ describe('session.ensure', () => {
     })
   })
 
+  it('records the attempt through the marker store when the runner says it is about to type', async () => {
+    const { host, page, authRunner, markers } = fixture(ensureOnce)
+    page.route('GET', SESSION_URL, loggedOut)
+    authRunner.mockImplementationOnce(async (request) => {
+      expect(markers.states.get('example-shop')).toMatchObject({ kind: 'in-progress', attempted: false })
+      await request.attemptStarting()
+      expect(markers.states.get('example-shop')).toEqual({ kind: 'in-progress' })
+      return { status: 'needsUser', reason: 'otp-required' }
+    })
+    await host.call(call)
+    expect(markers.attempts).toEqual(['example-shop'])
+  })
+
+  it('turns a crash before anything was typed into a backoff that lifts by itself (D35)', async () => {
+    const { host, page, authRunner, clock } = fixture(ensureOnce)
+    page.route('GET', SESSION_URL, loggedOut)
+    authRunner.mockRejectedValueOnce(new Error('renderer crashed'))
+
+    await host.call(call)
+    expect(await host.call({ ...call, callId: 'call-2' })).toMatchObject({
+      output: { status: 'needsUser', reason: 'login-required' },
+    })
+    expect(authRunner).toHaveBeenCalledTimes(1)
+
+    await clock.advance(5 * 60_000)
+    await host.call({ ...call, callId: 'call-3' })
+    expect(authRunner).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps a no-attempt marker with no start time for the person', async () => {
+    const { host, page, authRunner, markers } = fixture(ensureOnce)
+    page.route('GET', SESSION_URL, loggedOut)
+    markers.states.set('example-shop', { kind: 'in-progress', attempted: false })
+    expect(await host.call(call)).toMatchObject({
+      output: { status: 'needsUser', reason: 'login-attempt-pending' },
+    })
+    expect(authRunner).not.toHaveBeenCalled()
+  })
+
   it('puts the marker back when a cancelled login stopped before any password or code was typed', async () => {
     const { host, page, authRunner, markers } = fixture(ensureOnce)
     page.route('GET', SESSION_URL, loggedOut)
@@ -287,11 +326,9 @@ describe('session.ensure', () => {
   it('leaves the marker for the person when a cancelled login had started typing a password', async () => {
     const { host, page, authRunner, markers } = fixture(ensureOnce)
     page.route('GET', SESSION_URL, loggedOut)
-    authRunner.mockResolvedValueOnce({
-      status: 'failed',
-      stage: 'auth-step',
-      errorClass: 'aborted',
-      attemptStarted: true,
+    authRunner.mockImplementationOnce(async (request) => {
+      await request.attemptStarting()
+      return { status: 'failed', stage: 'auth-step', errorClass: 'aborted', attemptStarted: true }
     })
 
     await host.call(call)
@@ -335,10 +372,13 @@ describe('session.ensure', () => {
     expect(markers.kind()).toBe('unset')
   })
 
-  it('stops a second login attempt after the first one crashed', async () => {
+  it('stops a second login attempt after the first one crashed while typing a password', async () => {
     const { host, page, authRunner } = fixture(ensureOnce)
     page.route('GET', SESSION_URL, loggedOut)
-    authRunner.mockRejectedValueOnce(new Error('renderer crashed'))
+    authRunner.mockImplementationOnce(async (request) => {
+      await request.attemptStarting()
+      throw new Error('renderer crashed')
+    })
 
     await host.call(call)
     expect(await host.call({ ...call, callId: 'call-2' })).toMatchObject({
@@ -1235,11 +1275,12 @@ describe('a login that outlives its call', () => {
     await clock.advance(1_000)
     expect(await first).toMatchObject({ stage: 'timeout' })
 
-    // The interrupted login never reached an outcome, so its marker stays and the next call is
-    // told to ask the person rather than handed the first call's result.
+    // The interrupted login never reached an outcome, so its marker stays and the next call gets
+    // its own answer rather than the first call's result. Nothing was typed, so it is a backoff
+    // hold (D35), not one for the person.
     expect(await host.call({ ...call, callId: 'call-2' })).toEqual({
       status: 'ok',
-      output: { status: 'needsUser', reason: 'login-attempt-pending' },
+      output: { status: 'needsUser', reason: 'login-required' },
     })
     expect(markers.kind()).toBe('in-progress')
     expect(authRunner).toHaveBeenCalledTimes(1)

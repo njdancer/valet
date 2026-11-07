@@ -32,8 +32,10 @@ import { fillMessagesOtp, fillSecret } from './secret-fill'
 export const POLL_MS = 250
 
 /**
- * Failures that a retry may plausibly fix, as stage and class together: the page was slow, or the
- * site refused a login it may accept next time. The stage matters as much as the class. An element
+ * Failures that a retry may plausibly fix, as stage and class together: the page wasn't ready yet
+ * (D32). A rejected login and a probe that still says logged out are never retried: both come after
+ * a password submit, and a second submit is what locks accounts (AC10). The stage matters as much
+ * as the class. An element
  * that went missing during a secret fill is a guard that fired, perhaps because the page changed
  * while the person approved Touch ID, and guard failures are never retried: retrying would only
  * give the page another chance to get past the guard, and ask the person for Touch ID again.
@@ -41,8 +43,6 @@ export const POLL_MS = 250
 const RETRYABLE: readonly (readonly [Stage, ErrorClass])[] = [
   ['auth-step', 'condition-timeout'],
   ['auth-step', 'element-missing'],
-  ['auth-step', 'auth-failed'],
-  ['probe', 'not-logged-in'],
 ]
 
 function isRetryable(error: unknown): boolean {

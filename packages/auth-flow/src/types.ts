@@ -112,4 +112,10 @@ export interface AuthFlowInput {
    * the next step, poll or pause, and before typing any secret, and ends `auth-step: aborted`.
    */
   readonly signal?: AbortSignal
+  /**
+   * Awaited before a password or one-time code is typed, so the caller can record durably that the
+   * site may see an attempt (D35). If it throws, nothing is typed and the flow ends
+   * `secret-fill: internal`.
+   */
+  readonly beforeAttempt?: () => Promise<void>
 }

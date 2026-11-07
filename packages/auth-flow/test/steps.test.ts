@@ -2,7 +2,7 @@ import { ValetError } from '@valet/core'
 import { describe, expect, it, vi } from 'vitest'
 import { POLL_MS } from '../src/interpreter'
 import { runAuthFlow } from '../src/run-auth-flow'
-import { ACCOUNT_PAGE, EVIL, LOGIN_PAGE, manifestWithSteps, START, world } from './fixtures'
+import { ACCOUNT_PAGE, EVIL, LOGIN_PAGE, manifestWithSteps, SITE, START, world } from './fixtures'
 
 // Every flow finishes with the probe. Tests about a step that doesn't itself log in start with the
 // session cookie already in the auth partition, so that the step is all they measure.
@@ -407,25 +407,51 @@ describe('when', () => {
   })
 })
 
+/** The login page with one more element on it, as if it had just rendered. */
+function withElement(selector: string) {
+  const page = structuredClone(SITE[LOGIN_PAGE])
+  return { ...page, elements: { ...page?.elements, [selector]: { tagName: 'div' } } }
+}
+
 describe('retry', () => {
   it('re-runs its steps after a retryable failure until they succeed', async () => {
     const w = world()
-    let probes = 0
-    w.probe.cookies = () => (++probes >= 3 ? ['session'] : [])
-    w.input.manifest = manifestWithSteps([{ op: 'retry', times: 3, steps: [{ op: 'assertLoggedIn' }] }])
+    w.page.cookies.add('session')
+    let sleeps = 0
+    w.clock.onSleep = () => {
+      if (++sleeps === 3) w.page.site[LOGIN_PAGE] = withElement('#late')
+    }
+    w.input.manifest = manifestWithSteps([
+      { op: 'goto', url: LOGIN_PAGE },
+      { op: 'retry', times: 3, steps: [{ op: 'waitFor', condition: { visible: '#late' }, timeoutMs: 250 }] },
+    ])
     expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
-    expect(probes).toBe(3)
+    expect(sleeps).toBe(3)
   })
 
   it('runs its steps at most times + 1 times, then reports the last failure', async () => {
     const w = world()
-    w.input.manifest = manifestWithSteps([{ op: 'retry', times: 2, steps: [{ op: 'assertLoggedIn' }] }])
+    w.input.manifest = manifestWithSteps([
+      { op: 'goto', url: LOGIN_PAGE },
+      { op: 'retry', times: 2, steps: [{ op: 'waitFor', condition: { visible: '#never' }, timeoutMs: 500 }] },
+    ])
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'auth-step',
+      errorClass: 'condition-timeout',
+    })
+    expect(w.clock.now).toBe(START + 1500)
+  })
+
+  it('never retries a probe that still says logged out, which comes after a password submit (D32)', async () => {
+    const w = world()
+    w.input.manifest = manifestWithSteps([{ op: 'retry', times: 3, steps: [{ op: 'assertLoggedIn' }] }])
     expect(await runAuthFlow(w.input)).toEqual({
       status: 'failed',
       stage: 'probe',
       errorClass: 'not-logged-in',
     })
-    expect(w.probe.calls).toBe(3)
+    expect(w.probe.calls).toBe(1)
   })
 
   it('retries a condition timeout', async () => {
@@ -438,7 +464,7 @@ describe('retry', () => {
     expect(w.clock.now).toBe(START + 1000)
   })
 
-  it('retries a fail step', async () => {
+  it('never retries a fail step, so a rejected login is not tried again (D32)', async () => {
     const w = world()
     w.input.manifest = manifestWithSteps([
       {
@@ -451,7 +477,7 @@ describe('retry', () => {
       },
     ])
     expect(await runAuthFlow(w.input)).toMatchObject({ errorClass: 'auth-failed' })
-    expect(w.clock.sleeps).toEqual([100, 100, 100])
+    expect(w.clock.sleeps).toEqual([100])
   })
 
   it('never retries a navigation escape', async () => {
@@ -618,45 +644,49 @@ describe('retry', () => {
     const w = world()
     w.input.flowTimeoutMs = 300
     w.input.manifest = manifestWithSteps([
-      {
-        op: 'retry',
-        times: 5,
-        steps: [
-          { op: 'pause', ms: 200 },
-          { op: 'fail', errorClass: 'auth-failed' },
-        ],
-      },
+      { op: 'goto', url: LOGIN_PAGE },
+      { op: 'retry', times: 5, steps: [{ op: 'waitFor', condition: { visible: '#never' }, timeoutMs: 200 }] },
     ])
     expect(await runAuthFlow(w.input)).toEqual({
       status: 'failed',
       stage: 'timeout',
       errorClass: 'timed-out',
     })
-    expect(w.clock.sleeps).toEqual([200, 100])
+    expect(w.clock.sleeps).toEqual([POLL_MS, POLL_MS])
   })
 
   it('does not start another attempt once a failed one has used up the flow', async () => {
     const w = world()
     w.input.flowTimeoutMs = 1000
-    let probes = 0
-    w.probe.cookies = () => {
-      probes++
-      w.clock.now += 2000
-      return []
+    // Each attempt finds the button missing, slowly enough to use up the flow.
+    let clicks = 0
+    const inspect = w.page.inspect.bind(w.page)
+    w.page.inspect = async (selector) => {
+      if (selector === '#never') {
+        clicks++
+        w.clock.now += 2000
+      }
+      return inspect(selector)
     }
-    w.input.manifest = manifestWithSteps([{ op: 'retry', times: 3, steps: [{ op: 'assertLoggedIn' }] }])
+    w.input.manifest = manifestWithSteps([
+      { op: 'goto', url: LOGIN_PAGE },
+      { op: 'retry', times: 3, steps: [{ op: 'click', selector: '#never' }] },
+    ])
     expect(await runAuthFlow(w.input)).toEqual({
       status: 'failed',
       stage: 'timeout',
       errorClass: 'timed-out',
     })
-    expect(probes).toBe(1)
+    expect(clicks).toBe(1)
   })
 
   it('nests inside when, and when inside retry', async () => {
     const w = world()
-    let probes = 0
-    w.probe.cookies = () => (++probes >= 2 ? ['session'] : [])
+    w.page.cookies.add('session')
+    let sleeps = 0
+    w.clock.onSleep = () => {
+      if (++sleeps === 2) w.page.site[LOGIN_PAGE] = withElement('#late')
+    }
     w.input.manifest = manifestWithSteps([
       { op: 'goto', url: LOGIN_PAGE },
       {
@@ -672,7 +702,7 @@ describe('retry', () => {
                 condition: { textPresent: 'Sign in' },
                 steps: [{ op: 'fill', selector: '#search', value: { literal: 'attempt' } }],
               },
-              { op: 'assertLoggedIn' },
+              { op: 'waitFor', condition: { visible: '#late' }, timeoutMs: 250 },
             ],
           },
         ],

@@ -22,6 +22,8 @@ export interface FlowContext {
    * spent an attempt against the account; one stopped before it has cost the site nothing.
    */
   attemptStarted: boolean
+  /** Password fills this login has started. A second is refused, whatever the steps say (D32). */
+  passwordFills: number
 }
 
 /** Thrown to end the flow with needsUser. Not an error: the flow asked for the person. */

@@ -72,8 +72,8 @@ export function fixture(definition: AdapterDefinition, overrides: Partial<ToolHo
   driver.page.route('GET', `${HOME}/api/trolley`, json({ items: [{ name: 'Milk', quantity: 2 }] }))
   const audit = new MemoryAudit()
   const prompt = new FakePrompt()
-  const markers = new MemoryMarkers()
   const clock = new FakeClock()
+  const markers = new MemoryMarkers(() => clock.now())
   const diagnostics = vi.fn()
   const authRunner = vi.fn<AuthRunner>(async () => ({ status: 'ok' }))
   const approvals = { isApproved: async (id: string, hash: string) => id === 'example-shop' && hash === HASH }

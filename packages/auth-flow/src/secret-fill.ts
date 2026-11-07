@@ -26,6 +26,7 @@ import {
   checkNavigation,
   type FlowContext,
   guarded,
+  NeedsUserHalt,
   now,
   pause,
   remainingMs,
@@ -40,6 +41,9 @@ const RESOLVE_FAILURES: readonly ResolveFailure[] = ['locked', 'not-found', 'fie
 /** Fills a secret from a credential provider: `fill` with a secret ref, or `otp` with a secret source. */
 export async function fillSecret(ctx: FlowContext, selector: string, ref: SecretRef): Promise<void> {
   const { manifest, providers } = ctx.input
+  // One password per login (D32, AC10): a second fill means the first was rejected or the flow is
+  // looping, and typing it again is how accounts get locked. Refused before the value is fetched.
+  if (ref.field === 'password' && ctx.passwordFills > 0) throw new NeedsUserHalt('login-required', undefined)
   // The schema reserves the name; a manifest that uses it anyway would read a Messages grant as its own.
   if (ref.secret === MESSAGES_SECRET) throw new ValetError('secret-fill', 'invalid')
   const grant = await findGrant(ctx, ref.secret)
@@ -230,6 +234,18 @@ async function typeSecret(
   const { page, audit, manifest, adapterHash, callId, typingDelayMs, rememberSecret } = ctx.input
   // A cancel that landed while the provider was resolving (Touch ID, say) stops before any typing.
   checkAborted(ctx)
+  // D35: the caller records that the site may now see an attempt before anything is typed or
+  // audited as used. If it can't, nothing is.
+  if (field === 'password' || field === 'otp') {
+    const { beforeAttempt } = ctx.input
+    if (beforeAttempt !== undefined) {
+      try {
+        await beforeAttempt()
+      } catch {
+        throw new ValetError('secret-fill', 'internal')
+      }
+    }
+  }
   remember(value, rememberSecret)
   await guarded('secret-fill', () =>
     audit.append({
@@ -245,6 +261,7 @@ async function typeSecret(
   )
   // Set before typing, not after: a stop part-way through a password may still have spent an attempt.
   if (field === 'password' || field === 'otp') ctx.attemptStarted = true
+  if (field === 'password') ctx.passwordFills += 1
   await guarded('secret-fill', () =>
     page.type(value, { delayMs: typingDelayMs, allowedOrigins: [...origins] }),
   )
