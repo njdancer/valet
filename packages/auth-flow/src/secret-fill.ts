@@ -20,7 +20,16 @@ import {
   urlOriginAllowed,
   ValetError,
 } from '@valet/core'
-import { checkBlocked, checkNavigation, type FlowContext, guarded, now, remainingMs } from './context'
+import {
+  checkAborted,
+  checkBlocked,
+  checkNavigation,
+  type FlowContext,
+  guarded,
+  now,
+  pause,
+  remainingMs,
+} from './context'
 import { allowedOrigins, suitsField } from './guards'
 
 /** How often to look for a one-time code that hasn't arrived yet. */
@@ -127,8 +136,9 @@ async function readOtp(ctx: FlowContext, query: MessagesOtpQuery): Promise<Secre
     }
     await checkNavigation(ctx)
     await checkBlocked(ctx)
+    checkAborted(ctx)
     if (now(ctx) >= ctx.deadline) throw new ValetError('otp', 'not-found')
-    await ctx.input.sleep(Math.min(OTP_POLL_MS, remainingMs(ctx)))
+    await pause(ctx, Math.min(OTP_POLL_MS, remainingMs(ctx)))
   }
 }
 
@@ -218,6 +228,8 @@ async function typeSecret(
   origins: readonly string[],
 ): Promise<void> {
   const { page, audit, manifest, adapterHash, callId, typingDelayMs, rememberSecret } = ctx.input
+  // A cancel that landed while the provider was resolving (Touch ID, say) stops before any typing.
+  checkAborted(ctx)
   remember(value, rememberSecret)
   await guarded('secret-fill', () =>
     audit.append({
@@ -231,6 +243,8 @@ async function typeSecret(
       callId,
     }),
   )
+  // Set before typing, not after: a stop part-way through a password may still have spent an attempt.
+  if (field === 'password' || field === 'otp') ctx.attemptStarted = true
   await guarded('secret-fill', () =>
     page.type(value, { delayMs: typingDelayMs, allowedOrigins: [...origins] }),
   )

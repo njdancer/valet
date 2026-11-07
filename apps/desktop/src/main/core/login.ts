@@ -362,6 +362,8 @@ export function createAuthRunner(options: AuthRunnerOptions): AuthRunner {
         sleep: options.sleep,
         typingDelayMs: options.typingDelayMs,
         flowTimeoutMs: options.flowTimeoutMs,
+        // The call giving up stops the login too, so it doesn't run on to its own deadline.
+        signal: request.signal,
       })
       switch (outcome.status) {
         case 'ok':
@@ -391,7 +393,12 @@ export function createAuthRunner(options: AuthRunnerOptions): AuthRunner {
         }
         case 'failed':
           options.sessions.set(adapterId, 'expired')
-          return { status: 'failed', stage: outcome.stage, errorClass: outcome.errorClass }
+          return {
+            status: 'failed',
+            stage: outcome.stage,
+            errorClass: outcome.errorClass,
+            ...(outcome.attemptStarted === undefined ? {} : { attemptStarted: outcome.attemptStarted }),
+          }
         case 'blocked':
           options.sessions.set(adapterId, 'expired')
           return { status: 'blocked', errorClass: outcome.errorClass }

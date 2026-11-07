@@ -69,8 +69,8 @@ test('trusted typing and a trusted click reach a main-frame form', async () => {
   expect(post).toMatchObject({ host: 'site.test', path: '/session' })
   // The page's own listeners saw no untrusted event.
   expect((post as { body: string }).body).toBe('user=nick%40example.test&hidden=&untrusted=0')
-  // Char events alone, by default: the page sees no keydown.
-  expect(keydowns).toBe(0)
+  // keyDown/char/keyUp by default (D38): the page sees a keydown per character.
+  expect(keydowns).toBe('nick@example.test'.length)
 })
 
 test('a secret typed into a same-origin iframe reaches only that form', async () => {
@@ -325,7 +325,7 @@ test('auth subframes load only from navigation and the manifest’s frame origin
   expect(result.poisoned).toEqual({ ok: false })
 })
 
-test('both partitions present the clean Chrome UA and en-AU by default, with the engine’s own hints', async () => {
+test('both partitions present the clean Chrome UA, en-AU and Chrome’s brands by default', async () => {
   const result = await scenario(app, 'userAgent')
   const major = (result.chrome as string).split('.')[0]
   const ua = `Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${major}.0.0.0 Safari/537.36`
@@ -337,10 +337,10 @@ test('both partitions present the clean Chrome UA and en-AU by default, with the
     expect(sees.ua).toBe(ua)
     expect(sees.language).toBe('en-AU')
     expect(sees.languages).toEqual(['en-AU', 'en'])
-    // D24a is open: the client hints are exactly the engine's own, restated.
-    expect(sees.brands).toEqual(engine.brands)
-    expect(sees.brands).not.toContain('Google Chrome')
-    expect(sees.hints).toEqual(engine.hints)
+    // D24a, decided: the brands name Google Chrome as well as the engine. client-hints.spec.ts
+    // checks that clientHints 'engine' restates the engine's own hints exactly.
+    expect(sees.brands).toEqual(expect.arrayContaining(['Google Chrome', 'Chromium']))
+    expect(engine.brands).not.toContain('Google Chrome')
   }
   const seen = result.seen as { userAgent: string; acceptLanguage: string; clientHintBrands: string }[]
   expect(seen.length).toBeGreaterThanOrEqual(2)

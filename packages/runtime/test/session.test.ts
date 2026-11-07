@@ -251,6 +251,90 @@ describe('session.ensure', () => {
     })
   })
 
+  it('puts the marker back when a cancelled login stopped before any password or code was typed', async () => {
+    const { host, page, authRunner, markers } = fixture(ensureOnce)
+    page.route('GET', SESSION_URL, loggedOut)
+    authRunner.mockResolvedValueOnce({
+      status: 'failed',
+      stage: 'auth-step',
+      errorClass: 'aborted',
+      attemptStarted: false,
+    })
+
+    await host.call(call)
+    expect(markers.kind()).toBe('unset')
+    // The next call logs in by itself: nothing was spent at the site.
+    authRunner.mockResolvedValueOnce({ status: 'needsUser', reason: 'otp-required' })
+    await host.call({ ...call, callId: 'call-2' })
+    expect(authRunner).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps an expired hold’s failure count when a cancelled login typed nothing', async () => {
+    const { host, page, authRunner, markers, clock } = fixture(ensureOnce)
+    page.route('GET', SESSION_URL, loggedOut)
+    markers.states.set('example-shop', { kind: 'held', failures: 2, retryAt: clock.now() })
+    authRunner.mockResolvedValueOnce({
+      status: 'failed',
+      stage: 'auth-step',
+      errorClass: 'aborted',
+      attemptStarted: false,
+    })
+
+    await host.call(call)
+    expect(markers.states.get('example-shop')).toEqual({ kind: 'held', failures: 2, retryAt: clock.now() })
+  })
+
+  it('leaves the marker for the person when a cancelled login had started typing a password', async () => {
+    const { host, page, authRunner, markers } = fixture(ensureOnce)
+    page.route('GET', SESSION_URL, loggedOut)
+    authRunner.mockResolvedValueOnce({
+      status: 'failed',
+      stage: 'auth-step',
+      errorClass: 'aborted',
+      attemptStarted: true,
+    })
+
+    await host.call(call)
+    expect(markers.kind()).toBe('in-progress')
+    expect(await host.call({ ...call, callId: 'call-2' })).toMatchObject({
+      output: { status: 'needsUser', reason: 'login-attempt-pending' },
+    })
+    expect(authRunner).toHaveBeenCalledTimes(1)
+  })
+
+  it('leaves the marker for the person when a cancelled login does not say whether it typed', async () => {
+    const { host, page, authRunner, markers } = fixture(ensureOnce)
+    page.route('GET', SESSION_URL, loggedOut)
+    authRunner.mockResolvedValueOnce({ status: 'failed', stage: 'auth-step', errorClass: 'aborted' })
+
+    await host.call(call)
+    expect(markers.kind()).toBe('in-progress')
+  })
+
+  it('stops the login when the call is cancelled, and lifts the marker when nothing was typed', async () => {
+    const { host, page, authRunner, markers } = fixture(ensureOnce)
+    page.route('GET', SESSION_URL, loggedOut)
+    let settled = false
+    authRunner.mockImplementation(
+      (request) =>
+        new Promise((resolve) => {
+          request.signal.addEventListener('abort', () => {
+            settled = true
+            resolve({ status: 'failed', stage: 'auth-step', errorClass: 'aborted', attemptStarted: false })
+          })
+        }),
+    )
+    const controller = new AbortController()
+    const running = host.call({ ...call, signal: controller.signal })
+    await flush()
+    expect(markers.kind()).toBe('in-progress')
+    controller.abort()
+    expect(await running).toMatchObject({ status: 'failed', errorClass: 'aborted' })
+    await flush()
+    expect(settled).toBe(true)
+    expect(markers.kind()).toBe('unset')
+  })
+
   it('stops a second login attempt after the first one crashed', async () => {
     const { host, page, authRunner } = fixture(ensureOnce)
     page.route('GET', SESSION_URL, loggedOut)

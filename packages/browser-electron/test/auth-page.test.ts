@@ -3,6 +3,7 @@ import { type BlockedRequest, SecretValue, ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { SurfaceAuthPage } from '../src/auth-page'
 import { needsUserTitle } from '../src/needs-user'
+import type { PageTiming } from '../src/page-core'
 import type { CookieRecord, HeaderList, SessionFetchRequest, SessionFetchResponse } from '../src/platform'
 import { MAX_PROBE_BYTES, MAX_PROBE_REDIRECTS } from '../src/session-fetch'
 import { FakeFrame, FakeSession, FakeSurface, flush, ManualTimers } from './fake-browser'
@@ -528,11 +529,11 @@ describe('AuthPage.focus', () => {
  * The login page with keyboard focus already on `selector`, as the interpreter leaves it: it
  * inspects the element (and checks the grant against its frame origin), then focuses it.
  */
-async function focusedOn(selector: string) {
+async function focusedOn(selector: string, extra: Partial<PageTiming> = {}) {
   const timers = new ManualTimers()
   const frames = loginFrames()
   const surface = new FakeSurface(PARTITION, [frames.main, frames.child])
-  const page = new SurfaceAuthPage(surface, NAVIGATION, timing(timers))
+  const page = new SurfaceAuthPage(surface, NAVIGATION, { ...timing(timers), ...extra })
   await page.inspect(selector)
   await page.focus(selector)
   return { timers, surface, page, ...frames }
@@ -678,6 +679,50 @@ describe('AuthPage.type', () => {
     await timers.settle(page.type(SecretValue.fromString('ab'), GRANT))
     await timers.settle(page.type('c'))
     expect(surface.keyEvents).toEqual(['full', 'full', 'full'])
+  })
+
+  it('adds a fresh draw of the jitter to each gap, never less than the delay (D24)', async () => {
+    const timers = new ManualTimers()
+    const draws = [0, 0.5, 0.999]
+    const surface = new FakeSurface(PARTITION, [loginFrames().main])
+    const page = new SurfaceAuthPage(surface, NAVIGATION, {
+      ...timing(timers),
+      typingJitterMs: 40,
+      random: () => draws.shift() ?? 0,
+    })
+    await timers.settle(page.type('abcd'))
+    expect(surface.chars.join('')).toBe('abcd')
+    // type()'s step timeout, budgeted for the largest jitter, then three gaps: +0, +20, +39.
+    expect(timers.requested).toEqual([1000 + 4 * 90, 50, 70, 89])
+  })
+
+  it('jitters the gaps in a secret too, and clamps a draw outside [0, 1)', async () => {
+    const { timers, surface, page } = await focusedOn('#password', {
+      typingJitterMs: 40,
+      random: (() => {
+        const draws = [-1, 7, Number.NaN]
+        return () => draws.shift() ?? 0
+      })(),
+    })
+    timers.requested.length = 0
+    await timers.settle(page.type(SecretValue.fromString('wxyz'), GRANT))
+    expect(surface.chars.join('')).toBe('wxyz')
+    // Each keystroke is its own 1000 ms step; between them, -1 clamps to 0, 7 to the whole jitter
+    // and NaN to 0.
+    expect(timers.requested.filter((ms) => ms !== 1000)).toEqual([50, 90, 50])
+  })
+
+  it('gives typing time for the largest jitter on top of the step budget', async () => {
+    const timers = new ManualTimers()
+    const surface = new FakeSurface(PARTITION, [loginFrames().main])
+    const page = new SurfaceAuthPage(surface, NAVIGATION, {
+      ...timing(timers),
+      typingJitterMs: 100,
+      random: () => 0.99,
+    })
+    // 20 characters at up to 150 ms is past the 1000 ms step budget on its own.
+    await timers.settle(page.type('a'.repeat(20)))
+    expect(surface.chars).toHaveLength(20)
   })
 
   it('keeps nothing of the secret on the page object', async () => {

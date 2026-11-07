@@ -56,10 +56,10 @@ Still not done, or done differently from the docs:
 - **Pacing inside the login.** The app's own login steps are paced and watched for block pages.
   The automated login inside a call, and the person's own navigation in the login window, are not
   ([D55](#d55-driver-level-budget-and-block-detection)).
-- **Cancelling a login.** The auth flow takes no `AbortSignal`, so a cancelled call's automatic
-  login runs on to its own deadline. If it stops part-way, the attempt marker stays set until the
-  person clears it. A clean stop needs a core change: the auth runner would report whether any
-  secret was filled yet.
+- **Cancelling a login** ([D67](#d67-stopping-a-login-when-the-call-is-cancelled), built
+  2026-11-07). A cancelled call now stops its automatic login at the next step, poll or pause, and
+  before any secret is typed. If no password or code had been typed, the attempt marker clears by
+  itself; otherwise it waits for the person.
 - **The stdio bridge in a packaged build.** Refused by the argv check until
   [D60](#d60-the-stdio-bridge-in-a-packaged-app) is decided; clients use Streamable HTTP for now.
 - **Tool code isn't in a separate process.** It runs in the main process, behind the guarded
@@ -119,13 +119,9 @@ What the live probe established (all on 2026-11-07, from Nick's IP):
 
 ### Non-goals for v1
 
-- **Evading bot detection.** The browser should look like the person's own browser, and no
-  more. Presenting a clean Chrome UA with the engine's real Chromium version and the person's
-  language is allowed, because that is what the person's own Chrome sends. Stealth plugins,
-  patching `navigator` to hide automation, CAPTCHA solving, proxies, and randomised or rotated
-  fingerprints are not. When a site objects, the person sees the window (`needsUser`) or the
-  call fails as `blocked-by-site`. This is a principle, not just a scope cut
-  ([D24](#d24-bot-detection-posture)).
+- **Solving CAPTCHAs.** Bot-detection countermeasures are in scope as far as the law allows
+  ([D24](#d24-bot-detection-posture)), but a CAPTCHA or other interactive challenge always hands
+  the window to the person (`needsUser`), and a block ends the call as `blocked-by-site`.
 - **Checkout, payment or any money movement** in the Woolworths adapter. The framework supports
   `irreversible` tools; v1 adapters don't ship one ([D18](#d18-irreversible-tools-in-shipped-adapters)).
 - **Windows and Linux.** The design avoids macOS lock-in where it's cheap, but Messages OTP, the
@@ -353,6 +349,7 @@ answered on time.
   - Electron end-to-end tests with Playwright against the fake site served over local HTTPS, on
     two origins (www and auth).
   - A dev build of the app (unsigned is fine) with the MCP endpoint and no UI beyond the tray.
+- How the live work runs, session by session: [the M2 runbook](m2-runbook.md).
 - Hard requirement before the first live **automated** login: the attempt marker and the
   one-password-submit limit (AC10) are implemented and tested, so a bug can cost at most one
   attempt against Nick's account ([D5](#d5-which-woolworths-account)).
@@ -571,8 +568,10 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
   ([D7](#d7-1password-fallback)). The Messages reader opens `chat.db` read-only in place per lookup
   and has only run against test databases, so whether the snapshot fallback is needed is unknown.
 - Next:
-  1. Service-account provider over the SDK, with the token from the Keychain (asynchronous,
-     bounded prompts).
+  1. Keychain credential store (D6): copy granted fields from 1Password through `DesktopAuth` with
+     a source reference, re-sync on a failed login, a live approval or a settings action, and read
+     in process (not through `/usr/bin/security`) so unattended runs don't prompt. The
+     service-account provider stays, unused, until a vault is wanted.
   2. Desktop-app provider. SDK 0.5.0 has `DesktopAuth`, which authenticates through the
      1Password app with the person's approval. That likely replaces the `op` CLI fallback
      entirely: no CLI install, no stdout parsing ([D7](#d7-1password-fallback)).
@@ -797,7 +796,7 @@ Likelihood and impact are High, Medium or Low.
 
 | #   | Risk                                                                                                                                                                                                                                                                   | L                    | I   | Mitigation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Residual                                                                                                                                                                                                                                                                                                                     |
 | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| R1  | **Bot detection.** Akamai blocked our second anonymous probe within minutes. Automated login, or a burst of tool calls, gets Nick's session or IP blocked, possibly affecting his normal shopping.                                                                     | H                    | H   | Headed hidden windows, Electron's real Chromium, and a clean Chrome UA with the real major version and `en-AU`, because run 4 showed the Electron UA blocked and the clean one not ([D9](#d9-user-agent)); nothing beyond matching the person's own browser ([D24](#d24-bot-detection-posture)). Runtime-owned rate budget set well below the known-bad run 1 pacing, upward-only jitter, a session read cache and a cool-down ([D28](#d28-rate-budget-defaults)). Prefer page-initiated requests for reads. `needsUser` instead of fighting. Live tests rare and paced.                                                                                                                                         | High. We won't evade, so some sites will simply not work unattended. That's a product limit to state openly.                                                                                                                                                                                                                 |
+| R1  | **Bot detection.** Akamai blocked our second anonymous probe within minutes. Automated login, or a burst of tool calls, gets Nick's session or IP blocked, possibly affecting his normal shopping.                                                                     | H                    | H   | Headed hidden windows, Electron's real Chromium, and a clean Chrome UA with the real major version and `en-AU`, because run 4 showed the Electron UA blocked and the clean one not ([D9](#d9-user-agent)); lawful countermeasures in the runtime as blocks call for them, never CAPTCHA solving ([D24](#d24-bot-detection-posture)). Runtime-owned rate budget set well below the known-bad run 1 pacing, upward-only jitter, a session read cache and a cool-down ([D28](#d28-rate-budget-defaults)). Prefer page-initiated requests for reads. `needsUser` instead of fighting. Live tests rare and paced.                                                                                                     | Medium. Countermeasures narrow the gap, but a site that challenges with a CAPTCHA still needs the person. That's a product limit to state openly.                                                                                                                                                                            |
 | R2  | **Site changes.** Woolworths changes its login, endpoints or response shapes.                                                                                                                                                                                          | H                    | M   | Zod output schemas; drift detection in smoke tests; `failed` with a clear class rather than wrong data; the authoring agent (M6) to repair; fixtures recorded from live.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Medium. Every site adapter is maintenance forever.                                                                                                                                                                                                                                                                           |
 | R3  | **Terms of service and legal.** Woolworths' terms likely prohibit automated access. Publishing an adapter for it, or a marketplace of them, invites a takedown or worse.                                                                                               | M                    | H   | Personal use is the person automating their own account. For the release: the person runs it on their own machine with their own credentials; no hosted automation; adapters distributed separately from the framework if advice says so; no evasion. Get advice before M8 ([D25](#d25-adapter-legal-posture)).                                                                                                                                                                                                                                                                                                                                                                                                  | Medium until advised. This plan isn't legal advice.                                                                                                                                                                                                                                                                          |
 | R4  | **1Password limits.** Service accounts can't read personal vaults; rate limits apply; plan eligibility unconfirmed; the desktop-app path needs an unlocked app.                                                                                                        | M                    | M   | Dedicated vault; cache nothing, but fetch only at login; desktop-app fallback; `needsUser` with a clear reason when neither works.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Low once [D6](#d6-1password-setup) is answered.                                                                                                                                                                                                                                                                              |
@@ -1044,10 +1043,10 @@ them on 2026-11-07; each section starts with his answer. The rest get answered a
 | --- | ------------------------------------------- | --------------------------------------------------------------------------------------------- | ---------- |
 | D4  | **Woolworths 2FA (Auth0 MFA)**              | Check his account's factor in M2; SMS via Messages, TOTP via 1Password, else needsUser        | M2–M3      |
 | D5  | **Which Woolworths account**                | Nick's real account, with the one-attempt limit in place first                                | M2         |
-| D6  | **1Password setup**                         | Service account on a new "Valet" vault; move the item                                         | M2–M3      |
+| D6  | **1Password setup**                         | Keychain copy with a source reference, re-synced through the desktop app                      | M2–M3      |
 | D8  | **Full Disk Access for Messages**           | Helper before release; whole app acceptable for M3                                            | M3         |
 | D18 | **Irreversible tools in shipped adapters**  | None in v1                                                                                    | M3, M8     |
-| D24 | **Bot-detection posture**                   | Look like the person's own browser, nothing more; stated publicly                             | Everything |
+| D24 | **Bot-detection posture**                   | Any lawful countermeasure, in the runtime; no CAPTCHA solving; stated publicly                | Everything |
 | D28 | **Rate budget defaults**                    | ≥10 s between API calls, 2 per page view, session cache                                       | M2         |
 | D32 | **Which failures retry**                    | Only "page not ready"; never a second password fill; never retry a write                      | M2         |
 | D35 | **The attempt marker after a timeout**      | Hold for the person only if password typing started                                           | M2         |
@@ -1167,6 +1166,51 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
   duplicate is a second copy to rotate, which is exactly what the architecture rejects for the
   Keychain). Autofill in his browser keeps working from any vault he can access. A service
   account scoped read-only to that vault.
+- Research (2026-11-07): service accounts aren't a Business-only feature any more. 1Password's
+  [rate-limit page](https://1password.dev/service-accounts/rate-limits) lists limits for
+  "1Password" (Individual) and Families accounts: 1,000 reads and 100 writes an hour per token,
+  and 1,000 requests a day across the whole account (Teams 5,000, Business 50,000). Valet reads a
+  password and maybe a TOTP once per login, so that's ample. A service account still can't read
+  the built-in Personal (Private) vault, so Nick's ideal of passwords staying where they are can't
+  be had unattended on any plan. Unconfirmed until Nick looks: that his account shows
+  Developer > Service accounts on 1password.com.
+- What each path costs Nick:
+  - **Service account + "Valet" vault, item moved** (recommended): one approval at setup, then
+    unattended. One copy of the password; autofill still works because he can see the vault.
+  - **Copy-with-reference:** the copy in the Valet vault (or Keychain) is read unattended; the
+    source in his Personal vault can only be re-read through `DesktopAuth` with Nick present, so a
+    changed password breaks the next unattended login until he approves a re-sync. Two copies to
+    keep in step for no security gain over moving.
+  - **`DesktopAuth` only:** no vault change, but approval [expires after ten minutes of
+    inactivity](https://www.1password.dev/sdks/desktop-app-integrations) and whenever 1Password
+    locks, so in practice he approves most runs. That fails his "authorise once" ideal, and runs
+    while he's away fail with `needsUser`. Fine for M2, where he's present anyway.
+- Recommendation at the time: service account on a moved item. Superseded by Nick's decision
+  below.
+- **Decided (Nick, 2026-11-07): a Keychain copy, with a reference to the source item.** He
+  won't move the item into a Valet vault just because Valet uses it, and a copy in 1Password adds
+  a service account without adding protection, since that account's token would sit in the
+  Keychain anyway. So no service account and no Valet vault for now.
+  - **Copy:** at setup, with Nick approving in 1Password (`DesktopAuth`), Valet reads the granted
+    fields (password; a TOTP secret if D4 turns one up) and writes them to one Keychain item per
+    grant. Beside them it keeps the source reference (account, vault, item and field ids) and
+    the item's version when copied. Nothing about the grant's origin binding changes: the
+    resolver hands the copy to the privileged filler exactly as it would a 1Password read.
+  - **Re-sync**, always through `DesktopAuth`, so only with Nick present:
+    1. a login that fails on the password (the one-attempt limit, D5) ends `needsUser` with the
+       reason "password may have changed in 1Password" and offers a re-sync;
+    2. whenever a `DesktopAuth` approval is already live (an attended run, setup), Valet compares
+       the source item's version with the copy's and refreshes it if they differ;
+    3. a "Re-sync from 1Password" action in settings.
+       A changed Woolworths password therefore costs one failed unattended login and one prompt.
+  - **Prerequisite for unattended runs:** the Keychain read must move in process first. Today's
+    `/usr/bin/security` read prompts on every use and names `security`, not Valet (the v0 gap in
+    the security model), so it can't run while Nick is away. The native read (an addon calling
+    `SecItemCopyMatching`, or a helper signed with the Team ID) was already required before
+    release; it's now on M3's path.
+  - **What changes in the code:** the Keychain becomes a credential store, not only the token
+    source; the service-account provider stays in the tree, unused, until Nick wants a vault;
+    C7 (`onepassword-desktop`) is still needed, now for setup and re-sync.
 - Blocks: M3 (unattended runs); M2 can use the desktop-app path.
 
 ### D7. 1Password fallback
@@ -1176,6 +1220,15 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 - Recommendation: `DesktopAuth`. No CLI install or stdout parsing, the same SDK as the service
   account path, and the person approves in 1Password's own UI. Keep `op` only if `DesktopAuth`
   turns out not to support reading TOTP or to need a newer 1Password app than Nick has.
+- Research (2026-11-07): desktop-app integration is still a public beta (macOS and Linux; Go,
+  JavaScript, Python). Nick turns on the SDK integration setting in the 1Password app. Approval is
+  per account and per process, shown with the caller's executable name and path, and lasts until
+  ten minutes of inactivity or the app locks. 1Password can't verify a third-party binary, so the
+  person is the check: the prompt must name the signed Valet app, which argues for calling it from
+  the main process only. Reading a TOTP through a secret reference's one-time-password
+  attribute still needs a manual check with Nick present; tests never touch the real app.
+- Recommendation unchanged: `DesktopAuth`, used for M2's attended runs and as the D6 fallback.
+  Drop `op` once a manual check shows it reads the password and the TOTP.
 - Blocks: M3. Needs core change C7.
 
 ### D8. Full Disk Access for Messages
@@ -1190,6 +1243,26 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
   line tool is simplest; a Node single-executable is possible).
 - Recommendation: whole app for M3 (personal, first-party adapter only), the helper before M7
   admits third-party adapters.
+- Research (2026-11-07), existing CLIs: the strongest is [`imsg`](https://github.com/steipete/imsg)
+  (Swift, MIT, Homebrew, signed builds, JSON output, `history` and `watch`). Others are exporters
+  or Python libraries. None is worth vendoring or asking the person to install:
+  - **It wouldn't isolate anything.** macOS charges a child process's file access to its
+    _responsible_ process, the app that launched it
+    ([Qt on the responsible process](https://www.qt.io/blog/the-curious-case-of-the-responsible-process)).
+    A CLI Valet spawns needs Valet itself to hold Full Disk Access, which is the grant D8 is
+    trying to keep off the main app. `imsg`'s own docs say to grant FDA to the terminal for the
+    same reason.
+  - **It does far more than one query.** `imsg` reads every chat and sends messages. We'd be
+    adding a dependency with the person's whole message history and an outbound channel in reach.
+  - **Valet already has the reader.** `packages/credentials` reads `chat.db` read-only with
+    `node:sqlite` and decodes `attributedBody` (`messages-otp.ts`, `typedstream.ts`).
+- Revised recommendation (Nick asked for the helper now): write our own small Swift helper,
+  registered with `SMAppService` as a launch agent so launchd starts it and it's responsible for
+  itself, and FDA goes to "Valet Messages Helper", not Valet. It answers one XPC request ("latest
+  code from this sender matching this pattern since this time") and nothing else. Port the
+  existing query and decoder; `imsg`'s decoder is a reference (MIT). Until it's signed, the
+  in-process reader with FDA on the whole app stays the dev path. The helper is a second binary
+  to sign and notarise, which waits for Nick.
 - Blocks: M3 (if D4 needs SMS), M7.
 
 ### D9. User agent
@@ -1201,12 +1274,14 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
   AppleWebKit/537.36 (KHTML, like Gecko) Chrome/<major>.0.0.0 Safari/537.36`, where `<major>` is
   the bundled Chromium's real major version, and `Accept-Language: en-AU`. This is what Nick's
   own Chrome sends, so it is within [D24](#d24-bot-detection-posture).
-- Still open: client-hint brands ([D24a](#d24a-client-hint-brands)).
+- Client-hint brands: `Google Chrome`, decided in [D24a](#d24a-client-hint-brands).
 - In code: `cleanChromeUserAgent()` exists, but the round-1 driver still defaults to Electron's UA
   and sends no `Accept-Language`. Round 2 makes both the default.
 
 ### D10. Analytics hosts
 
+- Nick's answer (2026-11-07): Ideally yes: block the analytics and ad hosts (strict), if the site
+  still works without them. Session 2 of the [M2 runbook](m2-runbook.md) checks that.
 - Hosts in play, by partition:
   - **Auth partition navigation:** `https://www.woolworths.com.au` and
     `https://auth.woolworths.com.au`. The Auth0 pages' subresources aren't restricted by the
@@ -1364,20 +1439,48 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
   to, but terms-of-service objections are each person's call, and the techniques listed here are all
   on the table. Open: which of them to build, and in what order. Agent-side limit: Claude doesn't
   solve CAPTCHAs or bypass bot challenges; those stay a needsUser hand-off.
-- Recommendation: state it as a principle in the README and docs: Valet drives a real
-  browser at human pace on the person's own account and machine, presents itself as the
-  person's own browser would, and stops when a site objects.
-  - **Allowed:** matching what the person's own browser sends: a clean Chrome UA with the
-    engine's real version, the person's language, and their real IP and machine.
-  - **Not allowed:** stealth plugins; patching `navigator` or other properties to hide
-    automation; CAPTCHA solving; proxies; randomised, rotated or invented fingerprints; claiming
-    to be a different browser, OS or device than the one actually running.
-
-  In one sentence, worded the same way everywhere: we match the person's own browser, never go
-  further to hide automation, and never solve a CAPTCHA.
-
-  It's the honest position, it simplifies the legal story, and it's what makes a
-  security-focused audience trust it.
+- Nick's revision (2026-11-07, later the same day): drop the "look like the person's own
+  browser, nothing more" rule. The only limit is the law; any countermeasure that helps Valet
+  work is allowed. The project rule was changed to match.
+- Decided posture: Valet drives a real browser on the person's own account and machine, and may
+  use any lawful bot-detection countermeasure to keep working. Three things still hold:
+  - **No CAPTCHA solving**, by code or by a service. A challenge is a `needsUser` hand-off.
+    Nick's first answer recorded this as Claude's own limit, and it stays one.
+  - **Pacing, the breaker and the cool-down stay.** They protect Nick's account and IP from a
+    ban, which no countermeasure undoes. Nothing retries around a block.
+  - **Countermeasures belong to the runtime, not to adapters**, so they are reviewed once and an
+    adapter can't ship its own page patches.
+- Legal check before the heavier items (patching page properties, hiding automation): whether
+  Akamai counts as a technological protection measure under Australia's Copyright Act (the
+  registry doc already flags this, with DMCA §1201 for the US). Getting into your own account and
+  trolley is hard to frame as circumvention, but this isn't settled legal advice, and it matters
+  more once other people run Valet against other sites.
+- Build order. Build what's cheap and matches a real Chrome first. Build the rest when a block
+  is traced to the signal it hides, not on spec:
+  1. **Stop cancelling the site's own traffic** ([D58](#d58-page-initiated-traffic), accepted;
+     C17). Akamai's sensor POSTs are cancelled under the v2 policy. Needed before any M2 live
+     run anyway.
+  2. **Full key events by default** ([D38](#d38-keystroke-events), accepted). Built as
+     `keyEvents: 'full'`; the driver still defaults to `'char'`. Flip the default.
+  3. **Consistent client hints** ([D24a](#d24a-client-hint-brands)): flip `clientHints` to
+     `'chrome'`. One line.
+  4. **Typing at a person's cadence.** `typingDelayMs` is one fixed interval. Draw each gap from
+     a range, upward-only like D28's jitter. Small.
+  5. **Keep the DevTools footprint small.** The driver only enables `Emulation`, `Target` and
+     `DOMStorage`. Add a test that it never enables `Runtime` or `Console` on a site page.
+  6. **Measure in M2's live session**: the auth probe ([D63](#d63-what-the-auth-probe-cant-hide))
+     and pacing ([D28](#d28-rate-budget-defaults)).
+  7. **When a block points at it:** fill in what Chrome has and Electron lacks
+     (`window.chrome.runtime`, Chrome's PDF entry in `navigator.plugins`, and similar), applied
+     before page scripts run in every frame and worker; hide remaining automation traces;
+     pointer paths with natural curves and timing.
+  8. **Not planned**, though allowed: proxies and rotated fingerprints. For one logged-in account
+     they don't help. The account links every session anyway, and a new IP or device is more
+     likely to trigger Auth0's MFA or a fraud check than to avoid a block.
+- Public wording, the same everywhere: Valet uses lawful countermeasures to work on sites that
+  try to block automation, never solves CAPTCHAs, and stops when blocked. The security-focused
+  audience D24 originally aimed at may like this less. Say it plainly anyway, rather than leave
+  it for someone to discover.
 - Blocks: D25, marketing. (D9 was decided within it.)
 
 ### D24a. Client-hint brands
@@ -1394,6 +1497,13 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
     not more.
 - Recommendation: leave the brands as `Chromium` until a block is traced to the mismatch. If that
   happens, matching brands is acceptable under D24, but Nick decides.
+- Update (2026-11-07): the CDP cost above is already paid. The driver sets the UA through
+  `Emulation.setUserAgentOverride` with full `userAgentMetadata` on every target, and the
+  `clientHints: 'chrome'` option (`packages/browser-electron/src/user-agent.ts`) adds
+  `Google Chrome` in Chrome's GREASE order. Today the UA says Chrome while the hints say only
+  Chromium, and no real Chrome sends that combination.
+- Decided (2026-11-07, under the revised D24): flip the default to `'chrome'` before M2's first
+  logged-in run. Nick uses Chrome some of the time.
 - Blocks: nothing now; M2 if a logged-in block appears.
 
 ### D25. Adapter legal posture
@@ -2060,6 +2170,8 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 - Blocks: nothing.
 ### D66. A block page in the person's login window
 
+- Nick's answer (2026-11-07): Accepted: close the window and explain in the app, with the time the
+  breaker reopens.
 - Today (round 4): when the person opens the login window and its first page is Akamai's block
   page, the app opens the site's breaker, closes the window and reports `login/blocked-by-site`.
   The person never sees the block page.
@@ -2071,6 +2183,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D67. Stopping a login when the call is cancelled
 
+- Nick's answer (2026-11-07): Accepted: build the core change before the first automated live login.
 - Today (round 4): a client can cancel a call, and the runtime stops at once, but the automatic
   login it started runs on to the auth flow's own deadline. If that login stops part-way, the
   attempt marker stays set (`login-attempt-pending`) until the person clears it, as after a crash.

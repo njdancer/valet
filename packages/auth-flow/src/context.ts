@@ -17,6 +17,11 @@ export interface FlowContext {
    * it, and the flow probes once more before reporting ok unless it is set.
    */
   probed: boolean
+  /**
+   * True once a password or one-time code has begun to be typed. A flow stopped after that may have
+   * spent an attempt against the account; one stopped before it has cost the site nothing.
+   */
+  attemptStarted: boolean
 }
 
 /** Thrown to end the flow with needsUser. Not an error: the flow asked for the person. */
@@ -68,7 +73,37 @@ export function remainingMs(ctx: FlowContext): number {
 }
 
 export function checkDeadline(ctx: FlowContext): void {
+  checkAborted(ctx)
   if (now(ctx) >= ctx.deadline) throw new ValetError('timeout', 'timed-out')
+}
+
+/** The caller gave up: the tool call was cancelled or timed out. */
+export function checkAborted(ctx: FlowContext): void {
+  if (ctx.input.signal?.aborted === true) throw new ValetError('auth-step', 'aborted')
+}
+
+/**
+ * The injected sleep, cut short when the caller gives up, so a long pause or poll doesn't outlive
+ * the call. Throws `auth-step: aborted` if it was.
+ */
+export async function pause(ctx: FlowContext, ms: number): Promise<void> {
+  const { signal, sleep } = ctx.input
+  checkAborted(ctx)
+  if (signal === undefined) {
+    await sleep(ms)
+    return
+  }
+  let onAbort = (): void => {}
+  const aborted = new Promise<void>((resolve) => {
+    onAbort = () => resolve()
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+  try {
+    await Promise.race([sleep(ms), aborted])
+  } finally {
+    signal.removeEventListener('abort', onAbort)
+  }
+  checkAborted(ctx)
 }
 
 /**

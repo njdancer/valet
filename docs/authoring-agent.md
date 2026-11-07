@@ -363,8 +363,8 @@ Sites change (R2). The loop has four parts, and the last two are deliberately no
 - **Smoke drift.** The person-run smoke records shapes (keys and types) and diffs them against the
   fixtures.
 
-Not everything is a repair. `blocked-by-site` is never repaired: changing an adapter to get past a
-block is evasion (D24), so it gets the cool-down and nothing else. One failure is not drift
+Not everything is a repair. `blocked-by-site` is never repaired in the adapter: countermeasures
+belong to the runtime (D24), so a block gets the cool-down and a runtime ticket, nothing else. One failure is not drift
 either. A repair ticket opens after the same stage and class on the same tool or step twice in a
 row, across at least two sessions, or after one smoke drift report.
 
