@@ -137,6 +137,35 @@ describe('first-run setup', () => {
     expect((await api.setup.status()).completedAt).toBe(new Date(NOW).toISOString())
   })
 
+  it('takes the 1Password account for the Keychain copy, which makes the step done (D6)', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW, firstRun: true })
+    renderAt('#/setup/onepassword', api)
+    await heading('Where logins come from')
+    // Only the Keychain copy is offered: providers this launch can't use aren't listed as steps.
+    expect(screen.getByText('Copy in your Keychain')).toBeTruthy()
+    expect(screen.queryByText('1Password service account')).toBeNull()
+    expect(screen.getByText('Not set up')).toBeTruthy()
+    expect(screen.getByText(/Valet can’t reach 1Password yet/)).toBeTruthy()
+    await user.type(screen.getByRole('textbox', { name: '1Password account' }), '  my.1password.com ')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await screen.findByText(/Copy in your Keychain is ready\. .*approve the copy in 1Password\./)
+    expect(called(api, 'settings.set')).toEqual([[{ onePasswordAccount: 'my.1password.com' }]])
+    expect(screen.getByText('Ready')).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Continue' })).toBeTruthy()
+  })
+
+  it('says so when saving the account fails', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW, firstRun: true })
+    renderAt('#/setup/onepassword', api)
+    await heading('Where logins come from')
+    api.fake.failNext('settings.set')
+    await user.type(screen.getByRole('textbox', { name: '1Password account' }), 'my.1password.com')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await screen.findByText('Couldn’t save the account. Try again.')
+  })
+
   it('resumes at the first step not done, and goes back a step', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW, firstRun: true })
@@ -278,6 +307,7 @@ describe('setup’s step logic', () => {
     review: (await api.approvals.pending())[0] ?? null,
     clients: await api.clients.list(),
     endpoint: await api.endpoint.status(),
+    settings: await api.settings.get(),
   })
 
   it('a first launch has nothing done and starts at the welcome', async () => {
