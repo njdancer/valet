@@ -423,8 +423,12 @@ Every tool is declared `read`, `write` or `irreversible`. For an `irreversible` 
   confirmed for; core v2 narrows that to "all of them, for this run". The fix is a per-tool list
   of the declarations it unlocks (change request C15 in the plan), which should land before any
   irreversible tool ships.
-- Still open: `confirm(message)` shows adapter-authored text. The dialog should be rendered by the
-  runtime from structured data, with the adapter's text as an attributed note (change request C4).
+- Since core v5, `confirm(action)` takes structured data (change request C4): the declared
+  requests the tool says it will make on a yes, which the runtime checks against the manifest and
+  the tool's side effect, plus an optional note. The panel is rendered by the app from the
+  runtime's own knowledge; the note is shown second, attributed and marked unverified. A yes
+  unlocks nothing, and nothing yet holds the tool to the requests it named (that would be C15's
+  per-tool list).
   Whether to require Touch ID is [D46](plan.md#d46-touch-id-on-irreversible-confirmations).
 
 No shipped adapter has an `irreversible` tool in v1 ([D18](plan.md#d18-irreversible-tools-in-shipped-adapters)).

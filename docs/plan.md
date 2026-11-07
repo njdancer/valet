@@ -25,13 +25,13 @@ The product is called Valet ([D1](#d1-product-name), decided 2026-11-07).
 ## Where we are
 
 After four overnight rounds, everything below is merged on `main`, and `pnpm check` is green. Every
-package is on core v4. The app runs end to end against the fake site: an MCP client calls a
+package is on core v5. The app runs end to end against the fake site: an MCP client calls a
 Woolworths tool, the runtime logs in on the fake Auth0, hands the session over, runs the tool and
 writes the audit log. Nothing has touched the live site while logged in, and nothing is signed.
 
 | Area                                       | State                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/core`                            | Contracts v4: v3 plus the `update` error stage, `update-downloaded`/`update-installed` audit events, which partition refused a request, and `openAuthPage({ onBlocked })`.                                                                                                                                                                                                                                                                                |
+| `packages/core`                            | Contracts v5: v4 plus a structured `confirm(action)` (C4). v4 was v3 plus the `update` error stage, `update-downloaded`/`update-installed` audit events, which partition refused a request, and `openAuthPage({ onBlocked })`.                                                                                                                                                                                                                            |
 | `packages/runtime`                         | `ToolHost` with approval, the adapter lock, deadlines, confirmations (with the client's transport), cancel through an `AbortSignal`, the run-scoped network policy, redaction, the hash-chained audit log, the attempt marker, and the per-site budget and breaker, persisted. New in round 4: `runLoginStep` (the app's own login work under the lock, breaker and budget) and `siteHealth()`.                                                           |
 | `packages/auth-flow`                       | `runAuthFlow` on the Auth0 identifier-first shape, the secret filler with every pre-fill check, one password submit per login, Messages OTP behind a grant, canary tests.                                                                                                                                                                                                                                                                                 |
 | `packages/credentials`                     | 1Password service account (SDK) and `op` providers, both able to list the vault's items; the resolver, the grant store, the Keychain token source (v0 ACL gap), the Messages OTP reader. No test touches the real 1Password, Keychain or Messages.                                                                                                                                                                                                        |
@@ -501,8 +501,8 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
   retry after a re-login ([D32](#d32-which-failures-retry)); 2 has the gap and the cool-down only,
   in memory ([D33](#d33-breaker-defaults-and-persistence)); 3 is built except the one-submit limit
   inside a login; 4 needs the Auth0 adapter, and the runtime still writes the attempt marker on the
-  silent path; 5 is built; 6 has the stores but not the diff; 7 asks before `run()` but has no
-  structured description (C4) and no scoped unlock until core v2; 8 is not started.
+  silent path; 5 is built; 6 has the stores but not the diff; 7 asks before `run()` and renders
+  `ctx.confirm()` from a structured action (C4, core v5) but has no scoped unlock (C15); 8 is not started.
 - Next:
   1. Tool-call orchestration: adapter lock, rate budget, `session.ensure()`, auth-on-demand,
      retry-once after re-login, output validation against the tool's zod output schema, output
@@ -844,7 +844,7 @@ is in security-model.md. Holding the site's own calls to the declarations raises
 though: its background traffic (Akamai's sensor POSTs among it) must now be declared, and
 declarations have no host. That is C8 in reduced form, [D58](#d58-page-initiated-traffic). The
 irreversible unlock is wider than G1 asked for (C15). G2 is partly addressed (C1). G3 is done (C3).
-G4, G5 and G6 are open. G7 and G8 are now in the security model. G9 stands.
+G4 is done (C4, core v5). G5 and G6 are open. G7 and G8 are now in the security model. G9 stands.
 
 ### G1. The request surface only covers `page.fetch`
 
@@ -931,6 +931,13 @@ rendered by the runtime from structured data (tool name, declared side effect, t
 unlocks, the calling client) with the adapter's text shown as a secondary, clearly attributed
 note. Change request C4.
 
+Status in core v5: done. `confirm(action)` takes the declared requests the tool will make on a yes
+(method and path exactly as in the manifest) and an optional note of at most 500 characters. The
+runtime replaces each with the manifest's own declaration, refuses one that isn't declared or whose
+purpose outranks the tool's side effect (`failed confirm/undeclared-request` or `confirm/invalid`,
+sticky like a guard violation), and the app renders the panel from that; the note is shown second,
+attributed and unverified. A yes still unlocks nothing; that is C15.
+
 ### G5. Declarative tool actions have no schema
 
 The security model's table says tool actions can be declarative steps or code. The manifest only
@@ -1005,7 +1012,8 @@ Status in core v2:
   D18 (no irreversible tools in v1) makes it less urgent, not less wrong. The policy also has no
   rate field, so the driver can't pace or watch for blocks (C16).
 - **C3, done.** `needsUser` reason codes, `fail` classes, app-only notes, `NeedsUserError`.
-- **C4 to C7, open.** `ProviderKind` gained `messages`, not `onepassword-desktop`.
+- **C4, done in core v5** (see G4).
+- **C5 to C7, open.** `ProviderKind` gained `messages`, not `onepassword-desktop`.
 - **C8, not needed as written** (see the status above G1). Its host-scoped telemetry list
   returns in reduced form as C17, if [D58](#d58-page-initiated-traffic) agrees.
 - **C9, open.**

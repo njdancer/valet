@@ -52,8 +52,10 @@ the _only_ thing it can use. Through that API, an approved adapter can still:
   aimed at the person's other tools. Output schemas and plain-JSON conversion limit the shape,
   not the content. Even an honest adapter passes site-authored text (product descriptions,
   messages) straight through, so this is a property of every adapter, not just malicious ones.
-- **Confirm with misleading text.** `confirm(message)` shows adapter-authored text
-  ([G4](plan.md#g4-confirm-takes-adapter-authored-text)).
+- **Confirm with misleading text.** Since core v5 the dialog is rendered from structured data and
+  the adapter's text is only an attributed note
+  ([G4](plan.md#g4-confirm-takes-adapter-authored-text)); a note can still mislead a person who
+  reads it over the runtime's own lines.
 - **Burn the person's standing with the site.** Rate budgets bound it; they don't prevent it.
 
 So the approval screen has to show the request surface and side effects clearly, not just hosts
@@ -583,8 +585,6 @@ None needed for M5. For M7:
   validating against them instead of adapter zod ([G6](plan.md#g6-tool-input-and-output-schemas-live-only-in-code)).
   This touches `ToolImplementation` and the tool host.
 - A `PublisherKey` and bundle-descriptor type, probably in a new `packages/bundle`, not core.
-- `confirm()` taking structured content rendered by the runtime rather than free adapter text
-  ([G4](plan.md#g4-confirm-takes-adapter-authored-text)). More pressing with third-party adapters.
 - Audit events for install, update (with old and new hashes) and revocation.
 - A namespaced adapter identity, `<publisher key fingerprint>/<id>` (or a structured
   `{ publisher, id }`), in `Grant`, `GrantStore.find` and `revoke`, every `AuditEvent` that

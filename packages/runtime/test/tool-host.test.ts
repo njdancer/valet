@@ -402,7 +402,7 @@ describe('ToolHost.call: errors never leak', () => {
           run_test: tool({
             input: z.object({}),
             output: z.boolean(),
-            run: (ctx) => ctx.confirm('ok?'),
+            run: (ctx) => ctx.confirm({ requests: [{ method: 'GET', path: '/api/trolley' }] }),
           }),
         },
       }),

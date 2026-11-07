@@ -33,11 +33,13 @@ import {
   type AuditEvent,
   type AuditSink,
   type BlockedRequest,
+  confirmActionSchema,
   defineAdapter,
   type EnsureResult,
   type ErrorClass,
   manifestSchema,
   NeedsUserError,
+  type RequestDeclaration,
   type SessionDriver,
   type Stage,
   type ToolContext,
@@ -53,7 +55,7 @@ import type { ApprovalLookup } from './approvals'
 import type { JsonStore } from './breaker-state'
 import { CallState } from './call-state'
 import { type Clock, type Sleep, systemClock, systemSleep } from './clock'
-import { GuardedToolPage, MAX_TARGET_LENGTH, plainMethod } from './guarded-page'
+import { GuardedToolPage, MAX_TARGET_LENGTH, PURPOSE_RANK, plainMethod } from './guarded-page'
 import type { LoginMarkerStore } from './login-marker'
 import { KeyedMutex } from './mutex'
 import { probeDeclaration } from './probe'
@@ -66,7 +68,7 @@ import {
   type ClientTransport,
   type ConfirmationAnswer,
   type ConfirmationPrompt,
-  type ConfirmationRequest,
+  type ConfirmationQuestion,
   type ListedTool,
   type LoginStepContext,
   type LoginStepOptions,
@@ -87,7 +89,6 @@ export const DEFAULT_SETTLE_TIMEOUT_MS = 30_000
 export const DEFAULT_LOGIN_STEP_WAIT_MS = 30_000
 /** Distinct request-blocked events recorded per call. A page whose analytics are all blocked is chatty. */
 export const MAX_BLOCKED_EVENTS_PER_CALL = 50
-const MAX_CONFIRM_MESSAGE = 500
 const MAX_CLIENT = 100
 const TOOL_NAME = /^[a-z][a-z0-9_]{0,63}$/
 const CALL_ID = /^[A-Za-z0-9_-]{1,64}$/
@@ -406,7 +407,7 @@ export class ToolHost {
           declaration,
           request.callId,
           client,
-          { kind: 'irreversible-tool', message: declaration.description, input: input.output },
+          { kind: 'irreversible-tool', input: input.output },
           external,
           transport,
         )
@@ -488,14 +489,20 @@ export class ToolHost {
         audit: (event) => this.record(event),
       }),
       session: { ensure: () => this.ensure(entry, state, inner) },
-      confirm: async (message) => {
+      confirm: async (action) => {
         state.assertLive()
+        const question = confirmQuestion(manifest, declaration, action)
+        if (question instanceof ValetError) {
+          // Sticky, like a guard violation: a tool can't catch the refusal and try another wording.
+          state.violation ??= question
+          throw question
+        }
         const asking = this.ask(
           entry,
           declaration,
           state.callId,
           client,
-          { kind: 'tool-request', message: String(message).slice(0, MAX_CONFIRM_MESSAGE) },
+          question,
           controller.signal,
           transport,
         )
@@ -623,7 +630,7 @@ export class ToolHost {
     declaration: ToolDeclaration,
     callId: string,
     client: string,
-    question: Pick<ConfirmationRequest, 'kind' | 'message' | 'input'>,
+    question: ConfirmationQuestion,
     callSignal: AbortSignal | undefined,
     transport: ClientTransport | undefined,
   ): Promise<ConfirmationAnswer> {
@@ -856,4 +863,28 @@ function finishedEvent(
     case 'declined':
       return { ...base, outcome: 'declined' }
   }
+}
+
+/**
+ * Turns what tool code passed to ctx.confirm() into the runtime's question: each request it names
+ * becomes the manifest's own declaration (C4). Anything malformed, undeclared or beyond the tool's
+ * side effect is refused, since the person would be shown a request the tool can't make.
+ */
+function confirmQuestion(
+  manifest: AdapterManifest,
+  declaration: ToolDeclaration,
+  action: unknown,
+): ConfirmationQuestion | ValetError {
+  const parsed = confirmActionSchema.safeParse(action)
+  if (!parsed.success) return new ValetError('confirm', 'invalid')
+  const requests: RequestDeclaration[] = []
+  for (const named of parsed.data.requests) {
+    const declared = manifest.requests.find((r) => r.method === named.method && r.path === named.path)
+    if (declared === undefined) return new ValetError('confirm', 'undeclared-request')
+    if (PURPOSE_RANK[declared.purpose] > PURPOSE_RANK[declaration.sideEffect]) {
+      return new ValetError('confirm', 'invalid')
+    }
+    if (!requests.includes(declared)) requests.push(declared)
+  }
+  return { kind: 'tool-request', requests, note: parsed.data.note ?? null }
 }

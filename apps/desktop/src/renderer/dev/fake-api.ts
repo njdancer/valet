@@ -503,6 +503,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       expiresAt: new Date(now + 112_000).toISOString(),
       requestCeiling: 6,
       unlocks: [],
+      requests: [{ method: 'POST', path: '/api/v3/ui/trolley/update', purpose: 'write' }],
       input: [{ kind: 'text', text: '{ "stockcode": 133211 }' }],
       adapterNote: 'Remove Cavendish Bananas (2 × $0.79) from the trolley?',
     },
