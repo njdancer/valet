@@ -93,13 +93,26 @@ export async function checkGrantRequest(request: GrantRequest, check: GrantCheck
   }
 }
 
+// A Keychain copy's item comes from any of the person's vaults: the grant sheet knows it as
+// `<vault id>-<item id>` (credentials.ts's desktopItems), and both ids are letters and digits.
+const COPY_ITEM_ID = /^([A-Za-z0-9]{1,31})-([A-Za-z0-9]{1,32})$/
+
 /** The stored reference for a vault item: by id, so a renamed item can't redirect a grant (D43). */
 export function itemRefFor(provider: ProviderKind, itemId: string): string {
-  return provider === 'fake' ? itemId : `op://${VAULT}/${itemId}`
+  if (provider === 'fake') return itemId
+  if (provider === 'keychain-copy') {
+    const ids = COPY_ITEM_ID.exec(itemId)
+    if (ids === null) throw new ValetError('grant', 'invalid')
+    return `op://${ids[1]}/${ids[2]}`
+  }
+  return `op://${VAULT}/${itemId}`
 }
 
 /** The opaque id the renderer knows an item by: the reverse of itemRefFor. */
 export function itemIdOf(grant: Grant): string {
+  if (grant.provider === 'keychain-copy' && grant.itemRef.startsWith('op://')) {
+    return grant.itemRef.slice('op://'.length).replace('/', '-')
+  }
   const prefix = `op://${VAULT}/`
   if (grant.provider === 'onepassword-cli' || grant.provider === 'onepassword-service-account') {
     return grant.itemRef.startsWith(prefix) ? grant.itemRef.slice(prefix.length) : grant.itemRef

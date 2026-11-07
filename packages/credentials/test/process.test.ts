@@ -217,4 +217,50 @@ describe('nodeSpawner', () => {
     })
     expect(outcome).toEqual({ kind: 'timed-out' })
   })
+
+  it('hands input to a real process on stdin, and closes it', async () => {
+    const input = Buffer.from('canary-stdin-8b1e')
+    const outcome = await runProcess(
+      nodeSpawner,
+      process.execPath,
+      [
+        '-e',
+        'let s="";process.stdin.on("data",(c)=>s+=c).on("end",()=>process.stdout.write(s.length+":"+s))',
+      ],
+      { timeoutMs: 10_000, maxStdoutBytes: 1024, timers: nodeTimers, input },
+    )
+    expect(outcome).toEqual({
+      kind: 'exited',
+      code: 0,
+      stdout: Buffer.from('17:canary-stdin-8b1e'),
+      stderr: '',
+    })
+  })
+
+  it('asks the spawner for a stdin pipe only when there is input', async () => {
+    const { spawner, calls } = scriptedSpawner((child) => child.finish(0))
+    const timers = new ManualTimers()
+    await runProcess(spawner, '/bin/x', [], { timeoutMs: 1000, maxStdoutBytes: 10, timers })
+    await runProcess(spawner, '/bin/x', [], {
+      timeoutMs: 1000,
+      maxStdoutBytes: 10,
+      timers,
+      input: Buffer.from('s'),
+    })
+    expect(calls.map((call) => call.input)).toEqual([false, true])
+    expect(calls[1]?.child.input.map(String)).toEqual(['s'])
+  })
+
+  it('fails a run whose child has no stdin to take the input', async () => {
+    const child = new FakeChild()
+    Object.defineProperty(child, 'stdin', { value: null })
+    const outcome = await runProcess(() => child, '/bin/x', [], {
+      timeoutMs: 1000,
+      maxStdoutBytes: 10,
+      timers: new ManualTimers(),
+      input: Buffer.from('s'),
+    })
+    expect(outcome).toEqual({ kind: 'failed' })
+    expect(child.kills).toEqual(['SIGKILL'])
+  })
 })

@@ -103,6 +103,17 @@ function GrantRow({ grant }: { readonly grant: GrantInfo }) {
       </td>
       <td className="xs">{grant.lastUsedAt === null ? 'Never' : formatTime(grant.lastUsedAt, now)}</td>
       <td className="num">
+        {grant.provider === 'keychain-copy' ? (
+          <button
+            type="button"
+            className="btn ghost"
+            disabled={action.busy}
+            title="Copy the item again from 1Password, after you change its password there. 1Password asks you to approve."
+            onClick={() => action.run(() => api.grants.resync(grant.adapterId, grant.secret))}
+          >
+            Re-sync from 1Password
+          </button>
+        ) : null}
         <button
           type="button"
           className="btn ghost"

@@ -14,6 +14,7 @@ export const INVOKE_METHODS = [
   'grants.vaultItems',
   'grants.make',
   'grants.revoke',
+  'grants.resync',
   'runs.list',
   'runs.trace',
   'runs.statsToday',

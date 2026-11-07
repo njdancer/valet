@@ -11,6 +11,7 @@ import {
   type AuditRecord,
   type AuditSink,
   type BlockedRequest,
+  CredentialError,
   type Grant,
   MESSAGES_SECRET,
   type NeedsUserReason,
@@ -174,6 +175,7 @@ const EVENTS_FOR: Readonly<Partial<Record<AuditEvent['type'], readonly AppEvent[
   'adapter-rejected': ['approvals-changed', 'adapters-changed', 'attention-changed'],
   'grant-made': ['grants-changed', 'adapters-changed'],
   'grant-revoked': ['grants-changed', 'adapters-changed'],
+  'grant-copied': ['grants-changed'],
   'tool-called': ['runs-changed', 'clients-changed'],
   'tool-finished': ['runs-changed', 'adapters-changed'],
   'login-started': ['runs-changed', 'adapters-changed'],
@@ -665,6 +667,23 @@ export class AppService {
     return this.clients.list((id) => counts.get(`local:${id}`) ?? 0)
   }
 
+  /** Copies a keychain-copy grant's fields from 1Password, audited, as ValetError on failure. */
+  private async copyGrantItem(grant: Grant, manifest: AdapterManifest): Promise<void> {
+    const fields = manifest.secrets[grant.secret]?.fields ?? []
+    try {
+      await this.deps.credentials.copyItem(grant.itemRef, fields)
+    } catch (error) {
+      const failure = error instanceof CredentialError ? error.failure : 'unavailable'
+      throw new ValetError('credential', failure)
+    }
+    await this.audit.append({
+      type: 'grant-copied',
+      adapterId: grant.adapterId,
+      secret: grant.secret,
+      fields: [...fields],
+    })
+  }
+
   private async available(): Promise<Set<ProviderKind>> {
     const status = await this.deps.credentials.status()
     return new Set(status.filter((s) => s.available).map((s) => s.kind))
@@ -745,6 +764,11 @@ export class AppService {
             now: () => new Date(deps.now()),
           })
           const { grant } = checked
+          // D6: a Keychain copy is made now, with the person approving in 1Password; a grant whose
+          // copy couldn't be made would only fail its first login.
+          if (grant.provider === 'keychain-copy') {
+            await this.copyGrantItem(grant, adapter.definition.manifest)
+          }
           // Audited first: a grant that can't be recorded isn't made.
           await this.audit.append({
             type: 'grant-made',
@@ -766,8 +790,24 @@ export class AppService {
           if (secret !== MESSAGES_SECRET && !Object.hasOwn(adapter.definition.manifest.secrets, secret)) {
             throw new ValetError('grant', 'not-found')
           }
+          const before = await this.grants.list()
           await this.audit.append({ type: 'grant-revoked', adapterId, secret })
           await this.grants.revoke(adapterId, secret)
+          // A copy no remaining grant uses goes too.
+          const after = await this.grants.list()
+          for (const gone of before.filter((g) => g.provider === 'keychain-copy' && !after.includes(g))) {
+            if (!after.some((g) => g.provider === 'keychain-copy' && g.itemRef === gone.itemRef)) {
+              await deps.credentials.forgetCopy(gone.itemRef).catch(() => {})
+            }
+          }
+          this.emit('grants-changed')
+        },
+        resync: async (adapterId, secret) => {
+          const adapter = this.requireAdapter(adapterId)
+          const grant = await this.grants.find(adapterId, adapter.hash, secret)
+          if (grant === null || grant.provider !== 'keychain-copy') throw new ValetError('grant', 'not-found')
+          await this.copyGrantItem(grant, adapter.definition.manifest)
+          await this.releaseLoginHold(adapterId)
           this.emit('grants-changed')
         },
       },

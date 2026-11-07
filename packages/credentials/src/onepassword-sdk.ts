@@ -11,6 +11,7 @@ import {
 } from '@valet/core'
 import { parseItemRef, secretReference } from './item-ref'
 import { nodeTimers, type Timers } from './process'
+import { SdkSession } from './sdk-session'
 import { isVaultName, summariseItems, type VaultItemLister, type VaultItemSummary } from './vault-items'
 
 /** The SDK's item filter, as `items.list` takes it. */
@@ -34,7 +35,7 @@ export interface SecretsClient {
 }
 
 // Only items the person can use: archived and deleted ones can't be resolved.
-const ACTIVE_ONLY: ItemStateFilter = { type: 'ByState', content: { active: true, archived: false } }
+export const ACTIVE_ONLY: ItemStateFilter = { type: 'ByState', content: { active: true, archived: false } }
 
 /** Creates a client from a token. The provider disposes the token once this settles. */
 export type SecretsClientFactory = (token: SecretValue) => Promise<SecretsClient>
@@ -64,32 +65,23 @@ export class OnePasswordServiceAccountProvider implements CredentialProvider, Va
   readonly kind = 'onepassword-service-account' as const
   readonly #tokenSource: TokenSource
   readonly #clientFactory: SecretsClientFactory
-  readonly #timers: Timers
-  readonly #timeoutMs: number
-  #client: Promise<SecretsClient> | null = null
+  readonly #session: SdkSession<SecretsClient>
 
   constructor(options: OnePasswordServiceAccountOptions) {
     this.#tokenSource = options.tokenSource
     this.#clientFactory = options.clientFactory ?? sdkClientFactory
-    this.#timers = options.timers ?? nodeTimers
-    this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
+    this.#session = new SdkSession(
+      () => this.#createClient(),
+      options.timers ?? nodeTimers,
+      options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    )
   }
 
   async resolve(itemRef: string, field: SecretField): Promise<SecretValue> {
     const ref = parseItemRef(itemRef)
     if (ref === null) throw new CredentialError('not-found')
     const reference = secretReference(ref, field, 'totp')
-    const pending = this.#currentClient()
-    let value: string
-    try {
-      const client = await pending
-      value = await this.#bounded(client.secrets.resolve(reference))
-    } catch (error) {
-      if (error instanceof CredentialError) throw new CredentialError(error.failure)
-      const { failure, dropClient } = classifySdkError(error)
-      if (dropClient) this.#drop(pending)
-      throw new CredentialError(failure)
-    }
+    const value = await this.#session.use((client) => client.secrets.resolve(reference), classifySdkError)
     if (value.length === 0) throw new CredentialError('field-missing')
     return SecretValue.fromString(value)
   }
@@ -99,36 +91,8 @@ export class OnePasswordServiceAccountProvider implements CredentialProvider, Va
    * but sdkClientFactory. `vault` is matched against the vaults the account can see, by exact id or
    * exact title; none, or more than one, is not-found. Only ids and titles leave this method.
    */
-  async listItems(vault: string): Promise<readonly VaultItemSummary[]> {
-    if (!isVaultName(vault)) throw new CredentialError('not-found')
-    const pending = this.#currentClient()
-    let listed: unknown
-    try {
-      const client = await pending
-      const vaults = await this.#bounded(client.vaults.list())
-      const matches = Array.isArray(vaults) ? vaults.filter((v) => v?.id === vault || v?.title === vault) : []
-      const only = matches.length === 1 ? matches[0] : undefined
-      if (only === undefined || typeof only.id !== 'string') throw new CredentialError('not-found')
-      listed = await this.#bounded(client.items.list(only.id, ACTIVE_ONLY))
-    } catch (error) {
-      if (error instanceof CredentialError) throw new CredentialError(error.failure)
-      const { failure, dropClient } = classifySdkError(error)
-      if (dropClient) this.#drop(pending)
-      // A listing has no field to miss.
-      throw new CredentialError(failure === 'field-missing' ? 'unavailable' : failure)
-    }
-    if (!Array.isArray(listed)) throw new CredentialError('unavailable')
-    return summariseItems(listed)
-  }
-
-  #currentClient(): Promise<SecretsClient> {
-    if (this.#client === null) {
-      const created = this.#createClient()
-      this.#client = created
-      // A client that failed to come up is never cached.
-      created.catch(() => this.#drop(created))
-    }
-    return this.#client
+  listItems(vault: string): Promise<readonly VaultItemSummary[]> {
+    return listVaultItems(this.#session, vault)
   }
 
   async #createClient(): Promise<SecretsClient> {
@@ -142,31 +106,35 @@ export class OnePasswordServiceAccountProvider implements CredentialProvider, Va
       throw new CredentialError(locked ? 'locked' : 'unavailable')
     }
     try {
-      return await this.#bounded(this.#clientFactory(token))
+      return await this.#session.bounded(this.#clientFactory(token))
     } finally {
       token.dispose()
     }
   }
+}
 
-  #drop(client: Promise<SecretsClient>): void {
-    if (this.#client === client) this.#client = null
-  }
-
-  #bounded<T>(work: Promise<T>): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      const timer = this.#timers.setTimeout(() => reject(new CredentialError('unavailable')), this.#timeoutMs)
-      work.then(
-        (value) => {
-          this.#timers.clearTimeout(timer)
-          resolve(value)
-        },
-        (error: unknown) => {
-          this.#timers.clearTimeout(timer)
-          reject(error)
-        },
-      )
-    })
-  }
+/** A vault's active items, by the vault's exact id or title, through `session`'s client. */
+export async function listVaultItems(
+  session: SdkSession<Pick<SecretsClient, 'vaults' | 'items'>>,
+  vault: string,
+): Promise<readonly VaultItemSummary[]> {
+  if (!isVaultName(vault)) throw new CredentialError('not-found')
+  const listed = await session.use(
+    async (client) => {
+      const vaults = await session.bounded(client.vaults.list())
+      const matches = Array.isArray(vaults) ? vaults.filter((v) => v?.id === vault || v?.title === vault) : []
+      const only = matches.length === 1 ? matches[0] : undefined
+      if (only === undefined || typeof only.id !== 'string') throw new CredentialError('not-found')
+      return (await client.items.list(only.id, ACTIVE_ONLY)) as unknown
+    },
+    (error) => {
+      const classified = classifySdkError(error)
+      // A listing has no field to miss.
+      return classified.failure === 'field-missing' ? { ...classified, failure: 'unavailable' } : classified
+    },
+  )
+  if (!Array.isArray(listed)) throw new CredentialError('unavailable')
+  return summariseItems(listed)
 }
 
 // The SDK's messages, from its error strings. Matched as phrases because only the class name of

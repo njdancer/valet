@@ -5,12 +5,12 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ValetError } from '@valet/core'
+import { CredentialError, ValetError } from '@valet/core'
 import type { LiveSessions, SessionReportingEndpoint, ToolCall, ToolCaller } from '@valet/mcp-server'
 import { LoginAttemptMarker } from '@valet/runtime'
 import { afterEach, describe, expect, it } from 'vitest'
 import { dataPaths } from '../../src/main/core/constants'
-import { disabledOtpReader } from '../../src/main/core/credentials'
+import { type Credentials, disabledOtpReader } from '../../src/main/core/credentials'
 import { DEMO_ACCOUNT, demoCredentials } from '../../src/main/core/demo'
 import { builtinAdapter } from '../../src/main/core/registry'
 import { AppService, fillSelector } from '../../src/main/core/service'
@@ -35,6 +35,7 @@ async function setup(
     dir?: string
     /** breakers.json as the runtime finds it at start. */
     breakers?: unknown
+    credentials?: Credentials
   } = {},
 ) {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'sa-service-'))
@@ -86,7 +87,7 @@ async function setup(
       driver.reporters = reporters
       return driver
     },
-    credentials: demoCredentials(disabledOtpReader),
+    credentials: options.credentials ?? demoCredentials(disabledOtpReader),
     startEndpoint: async (caller, clients, onSessionsChanged): Promise<SessionReportingEndpoint> => {
       endpoint.caller = caller
       endpoint.sessionsChanged = onSessionsChanged
@@ -272,6 +273,98 @@ describe('an update', () => {
 })
 
 describe('grants', () => {
+  /** The demo credentials plus a Keychain copy that records what it is asked to do. */
+  function copyingCredentials(fail = false) {
+    const demo = demoCredentials(disabledOtpReader)
+    const copied: { itemRef: string; fields: readonly string[] }[] = []
+    const forgotten: string[] = []
+    const credentials: Credentials = {
+      ...demo,
+      async status() {
+        return [...(await demo.status()), { kind: 'keychain-copy', available: true, unavailableReason: null }]
+      },
+      async vaultItems(provider) {
+        return provider === 'keychain-copy'
+          ? [{ id: 'vaultid1-itemid1', title: 'Woolworths (Personal)' }]
+          : demo.vaultItems(provider)
+      },
+      async copyItem(itemRef, fields) {
+        if (fail) throw new CredentialError('locked')
+        copied.push({ itemRef, fields })
+      },
+      async forgetCopy(itemRef) {
+        forgotten.push(itemRef)
+      },
+    }
+    return { credentials, copied, forgotten }
+  }
+
+  it('copies a Keychain-copy grant’s item before storing it, re-syncs it, and forgets it on revoke', async () => {
+    const { credentials, copied, forgotten } = copyingCredentials()
+    const s = await setup({ credentials })
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    const request = {
+      adapterId: 'shop',
+      adapterHash: s.adapter.hash,
+      secret: 'login',
+      provider: 'keychain-copy' as const,
+      itemRef: 'vaultid1-itemid1',
+      origins: ['https://login.shop.test'],
+    }
+    await s.api.grants.make(request)
+    expect(copied).toEqual([{ itemRef: 'op://vaultid1/itemid1', fields: ['username', 'password'] }])
+    expect(await s.api.grants.list()).toEqual([
+      expect.objectContaining({
+        provider: 'keychain-copy',
+        itemId: 'vaultid1-itemid1',
+        itemTitle: 'Woolworths (Personal)',
+      }),
+    ])
+    await s.api.grants.resync('shop', 'login')
+    expect(copied).toHaveLength(2)
+    await expect(s.api.grants.resync('shop', 'nope')).rejects.toEqual(new ValetError('grant', 'not-found'))
+    await s.api.grants.revoke('shop', 'login')
+    expect(forgotten).toEqual(['op://vaultid1/itemid1'])
+    const page = await s.api.audit.page({ category: 'approvals-grants' })
+    expect(page.records.map((r) => r.event.type)).toEqual([
+      'grant-revoked',
+      'grant-copied',
+      'grant-made',
+      'grant-copied',
+      'adapter-approved',
+    ])
+  })
+
+  it('makes no grant when 1Password won’t give the item up', async () => {
+    const { credentials } = copyingCredentials(true)
+    const s = await setup({ credentials })
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    await expect(
+      s.api.grants.make({
+        adapterId: 'shop',
+        adapterHash: s.adapter.hash,
+        secret: 'login',
+        provider: 'keychain-copy',
+        itemRef: 'vaultid1-itemid1',
+        origins: ['https://login.shop.test'],
+      }),
+    ).rejects.toEqual(new ValetError('credential', 'locked'))
+    expect(await s.api.grants.list()).toEqual([])
+  })
+
+  it('refuses to re-sync a grant that isn’t a Keychain copy', async () => {
+    const s = await approved()
+    await s.api.grants.make({
+      adapterId: 'shop',
+      adapterHash: s.adapter.hash,
+      secret: 'login',
+      provider: 'fake',
+      itemRef: 'demo-woolworths',
+      origins: ['https://login.shop.test'],
+    })
+    await expect(s.api.grants.resync('shop', 'login')).rejects.toEqual(new ValetError('grant', 'not-found'))
+  })
+
   it('makes a checked grant with an audit record, lists it by title, and revokes it', async () => {
     const s = await approved()
     const request = {

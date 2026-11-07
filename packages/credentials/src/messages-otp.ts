@@ -72,6 +72,35 @@ function checkGrant(grant: Grant | null | undefined, sender: unknown): void {
   }
 }
 
+/**
+ * The checks every lookup makes before anything reads Messages, whichever reader does the reading:
+ * the grant (when given, or required), a sender that names exactly one handle, and a screened
+ * pattern. Returns the parsed sender and the earliest time a code may have arrived.
+ */
+export function prepareOtpLookup(
+  query: MessagesOtpQuery,
+  notBefore: Date,
+  now: Date,
+  grant: Grant | undefined,
+  requireGrant: boolean,
+): { sender: OtpSender; sinceMs: number } {
+  if (grant !== undefined || requireGrant) checkGrant(grant, query.sender)
+  // Without a sender, any message from anyone (another bank's code, a private message) could be
+  // typed into the page. The type and the manifest schema both require one; this check stands in
+  // case a query is built some other way (from JSON, say) and the types were never checked.
+  const sender = typeof query.sender === 'string' ? parseOtpSender(query.sender) : null
+  if (sender === null || typeof query.pattern !== 'string' || !isScreenedPattern(query.pattern)) {
+    throw new ValetError('otp', 'invalid')
+  }
+  const sinceMs = Math.max(notBefore.getTime(), now.getTime() - query.maxAgeSeconds * 1000)
+  return { sender, sinceMs }
+}
+
+/** What a one-time code looks like; a capture of anything else is never handed to the filler. */
+export function isCodeShaped(value: string): boolean {
+  return CODE_SHAPE.test(value)
+}
+
 // Messages counts time from 2001-01-01 UTC (Core Data's reference date).
 const APPLE_EPOCH_MS = 978_307_200_000
 // Older databases store seconds, newer ones nanoseconds. Seconds won't reach 1e11 until the year 5170.
@@ -119,13 +148,7 @@ export class MessagesOtpReader implements OtpReader {
    * grant for that sender, or this throws `otp: not-granted` before opening the database.
    */
   async latest(query: MessagesOtpQuery, notBefore: Date, grant?: Grant): Promise<SecretValue> {
-    if (grant !== undefined || this.#requireGrant) checkGrant(grant, query.sender)
-    // Without a sender, any message from anyone (another bank's code, a private message) could be
-    // typed into the page. The type and the manifest schema both require one; this check stands in
-    // case a query is built some other way (from JSON, say) and the types were never checked.
-    const sender = typeof query.sender === 'string' ? parseOtpSender(query.sender) : null
-    if (sender === null || !isScreenedPattern(query.pattern)) throw new ValetError('otp', 'invalid')
-    const sinceMs = Math.max(notBefore.getTime(), this.#now().getTime() - query.maxAgeSeconds * 1000)
+    const { sender, sinceMs } = prepareOtpLookup(query, notBefore, this.#now(), grant, this.#requireGrant)
     const texts: string[] = []
     for (const row of await this.#recent(sinceMs, sender)) {
       // SQL bounds whole seconds for old rows; this keeps the cut-off exact.

@@ -565,6 +565,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     launchAtLogin: true,
     opPath: null,
     messagesOtpEnabled: false,
+    onePasswordAccount: null,
   }
 
   const updates: UpdateStatus = {
@@ -834,6 +835,10 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         emit({ type: 'grants-changed' })
         emit({ type: 'adapters-changed' })
       },
+      async resync(adapterId, secret) {
+        enter('grants.resync', adapterId, secret)
+        emit({ type: 'grants-changed' })
+      },
       async revoke(adapterId, secret) {
         enter('grants.revoke', adapterId, secret)
         grants = grants.filter((g) => !(g.adapterId === adapterId && g.secret === secret))
@@ -1036,8 +1041,15 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       async set(patch) {
         enter('settings.set', patch)
         // As the main process does: keys outside SettingsPatch are dropped, opPath above all.
-        const { updateChannel, autoInstallUpdates, launchAtLogin, messagesOtpEnabled } = patch
-        const known = { updateChannel, autoInstallUpdates, launchAtLogin, messagesOtpEnabled }
+        const { updateChannel, autoInstallUpdates, launchAtLogin, messagesOtpEnabled, onePasswordAccount } =
+          patch
+        const known = {
+          updateChannel,
+          autoInstallUpdates,
+          launchAtLogin,
+          messagesOtpEnabled,
+          onePasswordAccount,
+        }
         settings = {
           ...settings,
           ...Object.fromEntries(Object.entries(known).filter(([, v]) => v !== undefined)),
@@ -1207,6 +1219,7 @@ const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent['type']
     'adapter-rejected',
     'grant-made',
     'grant-revoked',
+    'grant-copied',
     'update-downloaded',
     'update-installed',
   ],

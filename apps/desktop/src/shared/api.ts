@@ -598,6 +598,11 @@ export interface Settings {
    */
   readonly opPath: string | null
   readonly messagesOtpEnabled: boolean
+  /**
+   * The 1Password account Keychain copies are made from (D6): its name as the 1Password app shows
+   * it at the top of the sidebar, or its UUID. Null until the person sets it.
+   */
+  readonly onePasswordAccount: string | null
 }
 
 /** What the renderer may change directly. The 1Password CLI path isn't among them. */
@@ -704,6 +709,8 @@ export interface ValetApi {
     /** The main process checks origins ⊆ the manifest's request for that hash, and refuses otherwise. */
     make(request: GrantRequest): Promise<void>
     revoke(adapterId: string, secret: string): Promise<void>
+    /** Re-copies a keychain-copy grant's item from 1Password (D6); the person approves there. */
+    resync(adapterId: string, secret: string): Promise<void>
   }
   readonly runs: {
     list(query?: { readonly adapterId?: string; readonly limit?: number }): Promise<readonly RunSummary[]>

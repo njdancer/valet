@@ -1235,6 +1235,17 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
   - **What changes in the code:** the Keychain becomes a credential store, not only the token
     source; the service-account provider stays in the tree, unused, until Nick wants a vault;
     C7 (`onepassword-desktop`) is still needed, now for setup and re-sync.
+- **Built (2026-11-07, PR #15).** `valet-keychain` (Swift, in Contents/MacOS) reads and writes
+  Valet's own Keychain items with `SecItem`, so the ACL names a binary signed with Valet's Team ID
+  and an item it wrote reads back without a prompt; a signed helper answers only a parent signed
+  by the same team. `KeychainCopyProvider` (kind `keychain-copy`) keeps one item per field under
+  `valet.copy` (`valet.dev.copy` for dev builds), account `op://<vault id>/<item id>#<field>`, with
+  the source as the item's comment. The source's "version" is the item overview's `updatedAt`, so
+  checking it reads no field. Making a keychain-copy grant copies the item first (the person
+  approves in 1Password); "Re-sync from 1Password" in Credentials re-copies it; a login refreshes a
+  changed copy only while an approval is already up, so it never prompts. A TOTP secret isn't
+  copied yet (D4 points to SMS). Still needs Nick: a signed build, a first real copy, and turning
+  on the 1Password SDK integration setting.
 - Blocks: M3 (unattended runs); M2 can use the desktop-app path.
 
 ### D7. 1Password fallback
@@ -1254,6 +1265,8 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 - Recommendation unchanged: `DesktopAuth`, used for M2's attended runs and as the D6 fallback.
   Drop `op` once a manual check shows it reads the password and the TOTP.
 - Blocks: M3. Needs core change C7.
+- **Built (2026-11-07, PR #15):** `OnePasswordDesktopProvider` (kind `onepassword-desktop`, C7),
+  used for setup and re-sync. The account comes from Settings (`onePasswordAccount`).
 
 ### D8. Full Disk Access for Messages
 
@@ -1288,6 +1301,16 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
   in-process reader with FDA on the whole app stays the dev path. The helper is a second binary
   to sign and notarise, which waits for Nick.
 - Blocks: M3 (if D4 needs SMS), M7.
+- **Built (2026-11-07, PR #15):** `valet-messages-helper`, registered with
+  `SMAppService.agent(plistName: "messages-helper.plist")` when the Messages setting is on. One
+  change from the sketch above: it listens on a Unix socket only this user can reach
+  (`~/Library/Application Support/<label>/helper.sock`) instead of XPC, because Node can't speak
+  XPC without a native addon. A signed helper checks each peer's audit token against its own Team
+  ID, which is the check an XPC listener would make. It answers one request per connection (the
+  newest code-shaped capture from one handle since a time, at most 30 minutes back), with the match
+  under a 0.5 s deadline after which it exits and launchd restarts it. The in-process
+  `MessagesOtpReader` stays the dev path; one suite runs both. Still needs Nick: a signed build,
+  allowing the agent in Login Items, and granting it Full Disk Access.
 
 ### D9. User agent
 

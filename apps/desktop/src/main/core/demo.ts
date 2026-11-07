@@ -107,5 +107,9 @@ export function demoCredentials(otp: OtpReader): Credentials {
       return provider === 'fake' ? [DEMO_ITEM] : []
     },
     async configure() {},
+    // Demo grants are fake-provider grants: there is no copy to make or keep.
+    copyItem: () => Promise.reject(new CredentialError('unavailable')),
+    async refreshCopies() {},
+    async forgetCopy() {},
   }
 }
