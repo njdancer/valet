@@ -8,6 +8,7 @@ import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   ALLOWED_ENTITLEMENTS,
+  BRIDGE_EXECUTABLE,
   BuildConfigError,
   type BuildEnv,
   type ConfigDeps,
@@ -28,6 +29,7 @@ import {
   SIGN_RETRY_BACKOFF_MS,
   SIGN_RETRY_INTERVAL_MS,
   type SignOptionsLike,
+  SWIFT_BRIDGE_BUILD,
   signWithRequirement,
 } from '../../electron-builder.config'
 import { RELEASE_APP_ID as SCRIPT_RELEASE_APP_ID } from '../../scripts/make-feed.mjs'
@@ -59,6 +61,7 @@ const DEPS: ConfigDeps = {
     signCalls.push(options)
   },
   readMainBundle: () => RELEASE_BUNDLE,
+  bridgeBuilt: () => true,
 }
 
 // The config's nested option types are electron-builder's unions; tests read them loosely.
@@ -273,6 +276,17 @@ describe('a release build refuses to be built weaker', () => {
         },
       ),
     ).not.toThrow()
+  })
+
+  it('ships the Swift stdio bridge in Contents/MacOS, and refuses a release without it', () => {
+    expect(config(RELEASE_ENV).extraFiles).toEqual([
+      { from: SWIFT_BRIDGE_BUILD, to: `MacOS/${BRIDGE_EXECUTABLE}` },
+    ])
+    expect(() => createBuilderConfig(RELEASE_ENV, { ...DEPS, bridgeBuilt: () => false })).toThrow(
+      /ships the stdio bridge/,
+    )
+    // A development build without it packages without it.
+    expect(createBuilderConfig({}, { ...DEPS, bridgeBuilt: () => false }).extraFiles).toEqual([])
   })
 
   it('when the release flag is anything but 1', () => {

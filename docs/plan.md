@@ -60,8 +60,9 @@ Still not done, or done differently from the docs:
   2026-11-07). A cancelled call now stops its automatic login at the next step, poll or pause, and
   before any secret is typed. If no password or code had been typed, the attempt marker clears by
   itself; otherwise it waits for the person.
-- **The stdio bridge in a packaged build.** Refused by the argv check until
-  [D60](#d60-the-stdio-bridge-in-a-packaged-app) is decided; clients use Streamable HTTP for now.
+- **The stdio bridge in a packaged build.** The Swift bridge
+  ([D60](#d60-the-stdio-bridge-in-a-packaged-app)) ships in `Contents/MacOS`, but has not been in a
+  signed build yet.
 - **Tool code isn't in a separate process.** It runs in the main process, behind the guarded
   page. Planned for M3, with the sandbox in M7.
 - **Never exercised for real:** the 1Password service account and `op` (the Keychain prompt
@@ -2083,6 +2084,10 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
   was considered and rejected: it needs Node and npm at every start, and it pins a fixed URL and
   token, which brings back D41's port problem. The Swift proxy is a second implementation of the
   TypeScript bridge, so both run against one shared test suite.
+- Built (2026-11-07): `swift-bridge/`, shipped as `Contents/MacOS/valet-bridge` and named by the
+  packaged app's snippets. CI builds it universal on macOS and runs
+  `packages/mcp-server/test/bridge-contract.ts` against it and the TypeScript bridge. Not yet in a
+  signed build: that needs Nick ([D61](#d61-the-update-feeds-signing-key)).
 - Today: client snippets start the bridge with `tsx` from the repo, which needs Node 24 on
   `PATH`. A packaged build has no bridge command and shows no snippets. The `RunAsNode` fuse is
   off, so the app's own Electron binary can't run the bridge as Node.

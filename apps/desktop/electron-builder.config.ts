@@ -66,6 +66,14 @@ export const ELECTRON_FUSES = {
  */
 export const PACKAGED_NODE_MODULES = ['@1password/sdk', '@1password/sdk-core'] as const
 
+/**
+ * The Swift stdio bridge (D60, swift-bridge/), built universal for both architectures:
+ * `swift build -c release --arch arm64 --arch x86_64 --package-path swift-bridge`. It ships beside
+ * the app's own executable, so the app's signature covers it and client snippets can name its path.
+ */
+export const SWIFT_BRIDGE_BUILD = '../../swift-bridge/.build/apple/Products/Release/valet-bridge'
+export const BRIDGE_EXECUTABLE = 'valet-bridge'
+
 /** The only entitlement either plist may hold. */
 export const ALLOWED_ENTITLEMENTS = ['com.apple.security.cs.allow-jit'] as const
 
@@ -125,6 +133,8 @@ export interface ConfigDeps {
    * a release only, to check it was built for this release.
    */
   readonly readMainBundle: () => string | null
+  /** Whether the Swift bridge has been built at SWIFT_BRIDGE_BUILD. */
+  readonly bridgeBuilt: () => boolean
 }
 
 /**
@@ -288,6 +298,11 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
         'a release build is notarised: set APPLE_API_KEY, APPLE_API_KEY_ID and APPLE_API_ISSUER, or APPLE_KEYCHAIN_PROFILE',
       )
     }
+    if (!deps.bridgeBuilt()) {
+      throw new BuildConfigError(
+        'a release ships the stdio bridge: run `swift build -c release --arch arm64 --arch x86_64 --package-path swift-bridge` first',
+      )
+    }
     requirement = renderRequirement(deps.readTemplate(RELEASE_REQUIREMENT_TEMPLATE), {
       appId,
       teamId: teamId as string,
@@ -336,6 +351,8 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
     // item, the single-instance lock and electron-updater's cache directory: dev and release must
     // differ there too.
     extraMetadata: { name: slug, productName },
+    // Into Contents/MacOS, signed with the app. A development build without it shows no snippets.
+    extraFiles: deps.bridgeBuilt() ? [{ from: SWIFT_BRIDGE_BUILD, to: `MacOS/${BRIDGE_EXECUTABLE}` }] : [],
     asar: true,
     npmRebuild: false,
     forceCodeSigning: release,
@@ -387,6 +404,7 @@ export const nodeDeps: ConfigDeps = {
   readTemplate: (name) => readFileSync(join(here, 'build', name), 'utf8'),
   loadSignAsync: () => signAsync as unknown as SignAsync,
   readMainBundle: () => readBundle(join(here, 'out', 'main')),
+  bridgeBuilt: () => existsSync(join(here, SWIFT_BRIDGE_BUILD)),
 }
 
 /** Every .js file under `dir`, joined, or null when `dir` has no index.js. */

@@ -446,23 +446,17 @@ So it stays off. Options:
 | A Node single-executable application, signed as a helper                                         | A second Node runtime in the bundle (about 100 MB), its own identifier and requirement, its own `allow-jit`                                     |
 | A small native bridge (Swift)                                                                    | Small and fast, but a second implementation of the MCP client side to maintain                                                                  |
 
-Recommendation: bridge mode in the app binary.
+Decided ([D60](plan.md#d60-the-stdio-bridge-in-a-packaged-app)): the small Swift bridge, in
+`swift-bridge/`. It is built universal (`swift build -c release --arch arm64 --arch x86_64
+--package-path swift-bridge`) and electron-builder copies it to `Contents/MacOS/valet-bridge`, where
+the app's signature (hardened runtime, the inherit entitlements) covers it. A release refuses to
+build without it. It is a port of `packages/mcp-server/src/bridge.ts`, and one suite
+(`packages/mcp-server/test/bridge-contract.ts`) runs against both on every CI run. A packaged
+app's setup snippets name `/Applications/Valet.app/Contents/MacOS/valet-bridge` and the client's
+own config file.
 
-- **This departs from [WS9](plan.md#ws9-packaging-and-updates)**, which says to bundle the stdio
-  bridge as a signed helper. A helper is either a second Node runtime (the second row) or needs
-  `runAsNode` (which the fuses forbid). Bridge mode keeps one identity and one runtime, at the
-  cost of an Electron start per client launch and of making argv part of the trusted path. It's
-  listed for Nick in [Open questions](#open-questions).
-- The main process dispatches on the result of the command-line check
-  ([above](#command-line-switches)), which runs before anything else: before the single-instance
-  lock, the tray, or any window. Bridge mode is reached only when argv is exactly
-  `--mcp-bridge <absolute path>`.
-- In bridge mode it runs `runBridge` and nothing else: no window, no partition, no credential
-  code.
-- Claude Desktop's config then points at `/Applications/Valet.app/Contents/MacOS/Valet`
-  with those arguments.
-
-Revisit if start-up time annoys in practice.
+The `--mcp-bridge` argv shape the command-line check still accepts is unused, and goes once the
+Swift bridge has shipped in a signed build.
 
 ## Notarisation
 
