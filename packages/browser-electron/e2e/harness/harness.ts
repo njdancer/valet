@@ -342,18 +342,27 @@ async function setup() {
       const page = await openLogin()
       await page.inspect('#code')
       await page.focus('#code')
-      const value = `${CANARY}-${'y'.repeat(30)}`
+      // Long enough that the sibling's reload commits well before the last character.
+      const value = `${CANARY}-${'y'.repeat(60)}`
       const secret = SecretValue.fromString(value)
+      // When the reload committed, from the browser's own event, so the check below can say it
+      // landed while typing was still going rather than look once and race the commit.
+      let reloadedAt: number | null = null
+      const contents = windowAt(login)?.webContents
+      const onFrameNavigate = (_event: unknown, url: string) => {
+        if (url.includes('reloaded=1') && reloadedAt === null) reloadedAt = Date.now()
+      }
+      contents?.on('did-frame-navigate', onFrameNavigate)
       const typing = settle(page.type(secret, { allowedOrigins: [site.url('site.test')] }))
       await sleep(150)
       const sibling = subframeWithOrigin(login, site.url('login.test'))
       const siblingBefore = sibling?.url
       await sibling?.executeJavaScript(`(location.href = '/frame?reloaded=1', null)`)
       const typed = await typing
+      const typedAt = Date.now()
+      contents?.off('did-frame-navigate', onFrameNavigate)
       secret.dispose()
-      const reloaded =
-        windowAt(login)?.webContents.mainFrame.framesInSubtree.some((f) => f.url.includes('reloaded=1')) ??
-        false
+      const reloaded = reloadedAt !== null && reloadedAt <= typedAt
       const frame = subframeWithOrigin(login, site.url('site.test'))
       const typedLength = await frame?.executeJavaScript(`document.querySelector('#code').value.length`)
       await page.close()
