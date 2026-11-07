@@ -479,8 +479,11 @@ main world (as if QuickJS had been broken) must fail to:
 ### The legal shape, as understood (not advice)
 
 - **Site terms.**
-  - Woolworths' website terms, as we understand them, prohibit using robots, spiders, scrapers or
-    other automated means to access the site (_verify_ the current wording before relying on it).
+  - Woolworths' shopping-site terms prohibit using "any robot, spider, site search and retrieval
+    application or other mechanism to retrieve or index any portion of the Site" (clause
+    1.4(b)(viii), read 2026-11-07; see
+    [the finding](findings/2026-11-07-woolworths-terms.md)). There is no exception for a customer
+    automating their own account.
   - Coles' and most large retailers' terms are similar.
   - A person running an adapter is a customer automating their own account, at human pace, on
     their own machine. A project _distributing_ an adapter for that site is in a different

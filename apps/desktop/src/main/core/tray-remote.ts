@@ -1,0 +1,34 @@
+// What the tray shows for remote access, as plain data so it is tested without Electron.
+
+import type { RemoteStatus } from './remote'
+
+/** What the tray needs from remote access: the service's RemoteAccess. */
+export interface TrayRemote {
+  status(): RemoteStatus
+  setEnabled(enabled: boolean): Promise<void>
+}
+
+export interface RemoteTrayState {
+  /** Next to the icon. Empty when there is nothing to say. */
+  readonly title: string
+  readonly tooltip: string
+  /** The kill switch, or resuming; null when remote access was never set up. */
+  readonly menuItem: { readonly label: string; readonly enable: boolean } | null
+}
+
+export function remoteTrayState(status: RemoteStatus, demo: boolean): RemoteTrayState {
+  const on = status.enabled
+  const words = [demo ? 'DEMO' : null, on ? 'REMOTE' : null].filter((w) => w !== null)
+  const base = demo ? 'Valet (demo)' : 'Valet'
+  const tooltip = !on
+    ? base
+    : status.listening
+      ? `${base}: remote access on, ${status.sessions} remote ${status.sessions === 1 ? 'session' : 'sessions'}`
+      : `${base}: remote access on, not listening`
+  let menuItem: RemoteTrayState['menuItem'] = null
+  // Pausing is always offered while on. Resuming only once there is something to resume: a name
+  // the tunnel forwards. Until then remote access is set up in the control panel, not here.
+  if (on) menuItem = { label: 'Pause remote access', enable: false }
+  else if (status.hosts.length > 0) menuItem = { label: 'Resume remote access', enable: true }
+  return { title: words.join(' · '), tooltip, menuItem }
+}
