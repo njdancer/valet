@@ -206,8 +206,8 @@ against the real site with Nick present.
    and remove), with MCP annotations derived from the manifest: `readOnlyHint: true` for reads;
    for `set_cart_quantity`, `readOnlyHint: false`, `destructiveHint: true` (it lowers quantities
    and removes lines) and `idempotentHint: true` (setting the same quantity twice has the same
-   effect); `openWorldHint: true` on all of them. Until C9, every `write` tool is advertised
-   `destructiveHint: true` and `idempotentHint: false`, `add_to_cart` included. `readOnlyHint` is
+   effect); `openWorldHint: true` on all of them. `add_to_cart` stays `destructiveHint: true`
+   until [D30](#d30-split-add-to-cart) is answered. `readOnlyHint` is
    backed by the run's network policy, not only by the adapter's label: a `read` tool's run
    allows only `read` declarations for every API call in the tool partition, whoever made it
    ([security model](security-model.md#the-runs-network-policy)).
@@ -617,7 +617,7 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
 
 - Exists: `packages/mcp-server`. Of the items below: 1 is built with a random port and a token
   file rather than the Keychain ([D41](#d41-stable-mcp-port-and-token-rotation)); 2 is built, with
-  every `write` destructive until C9; 3 runs from the repo with `tsx`, not bundled; 4 is
+  annotations derived from the manifest (C9); 3 runs from the repo with `tsx`, not bundled; 4 is
   [D42](#d42-per-client-tool-scopes); 5 is [D50](#d50-confirmation-and-hand-off-timeouts).
 - Next:
   1. Streamable HTTP on `127.0.0.1`, random port by default with a fixed-port option, bearer
@@ -633,9 +633,11 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
      | `write`, `destructive: true`  | false          | true              | from manifest    |
      | `irreversible`                | false          | true              | false            |
 
-     `openWorldHint` is true for every site tool. `destructive` and `idempotent` are new manifest
-     fields (change request C9); until they exist, the MCP server treats every `write` tool as
-     destructive, which is the safe default.
+     `openWorldHint` is true for every site tool. `destructive` and `idempotent` are optional
+     manifest fields on `write` tools only (change request C9, built); left out, a write is
+     destructive and not idempotent, the safe default. The approval diff flags a tool whose
+     hints change either way: one that becomes destructive, and one that stops being destructive
+     or becomes idempotent, since clients may then stop asking.
   3. The stdio bridge: a small executable shipped in the app bundle that forwards to the HTTP
      endpoint, for Claude Desktop.
   4. Client identity in the audit log: from the bearer token (one token per client, named by
@@ -1016,7 +1018,7 @@ Status in core v2:
 - **C5 to C7, open.** `ProviderKind` gained `messages`, not `onepassword-desktop`.
 - **C8, not needed as written** (see the status above G1). Its host-scoped telemetry list
   returns in reduced form as C17, if [D58](#d58-page-initiated-traffic) agrees.
-- **C9, open.**
+- **C9, done** (after core v5): `destructive` and `idempotent` on `write` tool declarations, `toolHints()`, and the MCP annotations derived from them.
 - **C15 to C20, new** from the review of the round-2 docs; all open.
 
 ### Changes to the other docs
@@ -1611,7 +1613,8 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 - Status: overtaken by round 1. The adapter already ships `add_to_cart` (and `remove_from_cart`)
   alongside `set_cart_quantity`, and the MCP server derives `destructiveHint: true` for every
   `write` tool, so `add_to_cart` is advertised as destructive and clients still prompt for it.
-  It stays that way until C9 lets a tool declare itself non-destructive.
+  C9 now lets a tool declare itself non-destructive; the Woolworths manifest still declares
+  `add_to_cart` `destructive: true` until this is answered.
 - Recommendation: keep the tools as they are, destructive, for the MVP. With C9, mark
   `add_to_cart` non-destructive in M4 if the prompts are annoying in practice, knowing its
   additive claim is the adapter's code.

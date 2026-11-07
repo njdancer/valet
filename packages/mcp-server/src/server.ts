@@ -5,7 +5,7 @@
 import { randomUUID } from 'node:crypto'
 import { McpServer, type RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js'
-import { NeedsUserError, type ToolDeclaration, toReportable } from '@valet/core'
+import { NeedsUserError, type ToolDeclaration, toolHints, toReportable } from '@valet/core'
 import { z } from 'zod'
 import type { ClientIdentity } from './auth'
 import { failedResult, toolResult } from './results'
@@ -93,7 +93,7 @@ export function createMcpServer(
         description: toolDescription(listed.declaration),
         inputSchema: input,
         ...(output === undefined ? {} : { outputSchema: output }),
-        annotations: annotationsFor(listed.declaration.sideEffect),
+        annotations: annotationsFor(listed.declaration),
       },
       (args: unknown, extra: { signal: AbortSignal }) => handle(listed, args, extra.signal),
     )
@@ -128,15 +128,20 @@ export function toolDescription(declaration: ToolDeclaration): string {
 }
 
 /**
- * MCP reads destructiveHint: false as "only additive updates". A write can remove things (taking
- * an item out of the cart), and the manifest doesn't say which writes only add, so every tool
- * that isn't a read is marked destructive.
+ * Derived from the declaration, never hand-written (C9, plan WS4). MCP reads destructiveHint: false
+ * as "only additive updates", so a write is destructive unless its manifest says otherwise. MCP
+ * gives the two hints meaning only for tools that aren't read-only, so a read leaves them out. An
+ * irreversible tool is always destructive and never idempotent, whatever the manifest says.
  */
-export function annotationsFor(sideEffect: 'read' | 'write' | 'irreversible'): ToolAnnotations {
+export function annotationsFor(
+  declaration: Pick<ToolDeclaration, 'sideEffect' | 'destructive' | 'idempotent'>,
+): ToolAnnotations {
+  if (declaration.sideEffect === 'read') return { readOnlyHint: true, openWorldHint: true }
+  const { destructive, idempotent } = toolHints(declaration)
   return {
-    readOnlyHint: sideEffect === 'read',
-    destructiveHint: sideEffect !== 'read',
-    idempotentHint: sideEffect === 'read',
+    readOnlyHint: false,
+    destructiveHint: destructive,
+    idempotentHint: idempotent,
     openWorldHint: true,
   }
 }

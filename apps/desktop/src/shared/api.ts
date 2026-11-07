@@ -181,6 +181,9 @@ export interface ToolDiffEntry {
   readonly name: string
   readonly title: string
   readonly sideEffect: Purpose
+  /** As MCP clients are told, with the manifest's defaults filled in (C9). */
+  readonly destructive: boolean
+  readonly idempotent: boolean
 }
 
 export interface SecretDiffEntry {

@@ -633,12 +633,18 @@ function PermissionChanges({ review }: { readonly review: PendingReview }) {
             <span className="xs muted">{plural(diff.tools.unchanged.length, 'tool')}</span>
           </Unchanged>
         ) : null}
-        {toolChanges(diff).map(({ tool: t, was, raised }) => (
+        {toolChanges(diff).map(({ tool: t, was, raised, becameDestructive, hintsRelaxed }) => (
           <Added
             key={`${t.name}-${t.sideEffect}`}
             tone={t.sideEffect}
             tag={was !== null && was !== t.sideEffect ? `${was} → ${t.sideEffect}` : t.sideEffect}
             why={`${raised ? 'Its side effect went up. ' : ''}${
+              becameDestructive ? 'Now marked as able to remove or overwrite things. ' : ''
+            }${
+              hintsRelaxed
+                ? 'The adapter now tells AI clients it is safe to run or retry without asking. Valet can’t check that. '
+                : ''
+            }${
               t.sideEffect === 'irreversible'
                 ? `“${t.title}”. Can’t be undone; asks you every time.`
                 : t.sideEffect === 'write'

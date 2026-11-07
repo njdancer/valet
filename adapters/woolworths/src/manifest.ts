@@ -237,18 +237,28 @@ export function createManifest({
         description:
           'Adds a quantity of a product to the cart, on top of any already there. Does not check out.',
         sideEffect: 'write',
+        // Only adds, but advertised destructive until Nick answers D30 (docs/plan.md). Not
+        // idempotent: a second call adds again.
+        destructive: true,
+        idempotent: false,
       },
       {
         name: 'set_cart_quantity',
         title: 'Set cart quantity',
         description: 'Sets the exact quantity of a product in the cart. Quantity 0 removes it.',
         sideEffect: 'write',
+        // Lowers quantities and removes lines; the same quantity twice is the same cart (AC3).
+        destructive: true,
+        idempotent: true,
       },
       {
         name: 'remove_from_cart',
         title: 'Remove from cart',
         description: 'Removes a product from the cart entirely.',
         sideEffect: 'write',
+        // A second removal finds nothing left to remove.
+        destructive: true,
+        idempotent: true,
       },
     ],
     // Every tool needs at most two site calls. The live site flagged scripted calls 2.5 s apart

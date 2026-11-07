@@ -350,9 +350,23 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
           unchanged: WOOLWORTHS_REQUESTS,
         },
         tools: {
-          added: [{ name: 'get_rewards_balance', title: 'Everyday Rewards balance', sideEffect: 'read' }],
+          added: [
+            {
+              name: 'get_rewards_balance',
+              title: 'Everyday Rewards balance',
+              sideEffect: 'read',
+              destructive: false,
+              idempotent: true,
+            },
+          ],
           removed: [],
-          unchanged: woolworthsBase.tools.map(({ name, title, sideEffect }) => ({ name, title, sideEffect })),
+          unchanged: woolworthsBase.tools.map(({ name, title, sideEffect }) => ({
+            name,
+            title,
+            sideEffect,
+            destructive: sideEffect !== 'read',
+            idempotent: sideEffect === 'read',
+          })),
         },
         secrets: {
           added: [],

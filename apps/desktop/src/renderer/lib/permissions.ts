@@ -128,12 +128,28 @@ export interface ToolChange {
   readonly was: Purpose | null
   /** Whether its side effect went up (read to write, or anything to irreversible). */
   readonly raised: boolean
+  /** An existing tool now advertised to MCP clients as destructive (C9). */
+  readonly becameDestructive: boolean
+  /**
+   * An existing tool no longer advertised as destructive, or newly idempotent: clients may now run
+   * or retry it without asking, on the adapter's word.
+   */
+  readonly hintsRelaxed: boolean
 }
 
 export function toolChanges(diff: PermissionDiff): ToolChange[] {
   return diff.tools.added.map((tool) => {
-    const was = diff.tools.removed.find((t) => t.name === tool.name)?.sideEffect ?? null
-    return { tool, was, raised: was !== null && PURPOSE_RANK[tool.sideEffect] > PURPOSE_RANK[was] }
+    const before = diff.tools.removed.find((t) => t.name === tool.name) ?? null
+    const was = before?.sideEffect ?? null
+    return {
+      tool,
+      was,
+      raised: was !== null && PURPOSE_RANK[tool.sideEffect] > PURPOSE_RANK[was],
+      becameDestructive: before !== null && !before.destructive && tool.destructive,
+      hintsRelaxed:
+        before !== null &&
+        ((before.destructive && !tool.destructive) || (!before.idempotent && tool.idempotent)),
+    }
   })
 }
 

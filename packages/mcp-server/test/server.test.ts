@@ -122,18 +122,30 @@ describe('tool listing', () => {
     expect(tools[0]?.outputSchema).toBeUndefined()
   })
 
-  it('marks read tools read-only and idempotent', async () => {
+  it('marks read tools read-only, leaving out the hints MCP only reads for writes', async () => {
     const { client } = await connect(new FakeCaller([searchProducts]))
     const { tools } = await client.listTools()
-    expect(tools[0]?.annotations).toEqual({
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: true,
-    })
+    expect(tools[0]?.annotations).toEqual({ readOnlyHint: true, openWorldHint: true })
   })
 
-  it('marks write tools destructive, and neither read-only nor idempotent', async () => {
+  it('takes a write tool’s destructive and idempotent hints from its declaration', async () => {
+    const declared = {
+      ...setQuantity,
+      declaration: { ...setQuantity.declaration, destructive: true, idempotent: true },
+    }
+    const additive = {
+      ...setQuantity,
+      declaration: { ...setQuantity.declaration, name: 'add_note', destructive: false, idempotent: false },
+    }
+    const { client } = await connect(new FakeCaller([declared, additive]))
+    const { tools } = await client.listTools()
+    expect(tools.map((t) => t.annotations)).toEqual([
+      { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+      { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    ])
+  })
+
+  it('marks a write tool that declares neither destructive and not idempotent', async () => {
     const { client } = await connect(new FakeCaller([setQuantity]))
     const { tools } = await client.listTools()
     expect(tools[0]?.annotations).toEqual({
@@ -192,13 +204,23 @@ describe('tool listing', () => {
 
 describe('annotationsFor', () => {
   // A client may skip approval for a tool that only adds; removing cart items is not that.
-  it('never tells a client a write tool is merely additive', () => {
-    expect(annotationsFor('write').destructiveHint).toBe(true)
+  it('never tells a client a write tool is merely additive unless its manifest says so', () => {
+    expect(annotationsFor({ sideEffect: 'write' }).destructiveHint).toBe(true)
+    expect(annotationsFor({ sideEffect: 'write', destructive: false }).destructiveHint).toBe(false)
   })
 
-  it('marks only read tools non-destructive', () => {
-    expect(annotationsFor('read').destructiveHint).toBe(false)
-    expect(annotationsFor('irreversible').destructiveHint).toBe(true)
+  it('keeps an irreversible tool destructive and not idempotent, whatever it declares', () => {
+    // The manifest parser refuses these; a declaration built some other way still can't relax them.
+    expect(annotationsFor({ sideEffect: 'irreversible', destructive: false, idempotent: true })).toEqual({
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    })
+  })
+
+  it('gives a read tool no destructive or idempotent hint', () => {
+    expect(annotationsFor({ sideEffect: 'read' })).toEqual({ readOnlyHint: true, openWorldHint: true })
   })
 })
 
