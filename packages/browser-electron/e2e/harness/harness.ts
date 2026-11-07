@@ -183,7 +183,8 @@ async function setup() {
     egressPorts: [site.port],
     // Small, so that the asset-budget scenario can reach it; the test pages load few assets.
     assetsPerRun: 80,
-    ...(process.env.E2E_CLIENT_HINTS === undefined ? {} : { clientHints: 'chrome' as const }),
+    // The default names Google Chrome (D24a); E2E_CLIENT_HINTS=engine checks the engine's own brands.
+    ...(process.env.E2E_CLIENT_HINTS === 'engine' ? { clientHints: 'engine' as const } : {}),
   }
   const local = {
     // The proxy resolves hostnames itself; only the test hosts exist, and they are all local.
@@ -194,7 +195,7 @@ async function setup() {
   }
   const siteManifest = manifest(site)
   const driver = await createElectronSessionDriver(siteManifest, options, local)
-  // The same site, typed with keyDown/char/keyUp instead of char events alone.
+  // The same site, typed with keyDown/char/keyUp set explicitly (also the default, D38).
   const keysDriver = await createElectronSessionDriver(
     manifest(site, 'e2e-keys'),
     { ...options, keyEvents: 'full' },
