@@ -5,3 +5,4 @@ dist/
 out/
 .claude/worktrees/
 docs/review/artifact/
+swift-bridge/.build/

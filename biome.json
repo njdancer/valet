@@ -7,6 +7,7 @@
       "!**/dist",
       "!**/out",
       "!**/coverage",
+      "!swift-bridge/.build",
       "!spikes/*/results",
       "!docs/mockups/vendor",
       "!.claude"

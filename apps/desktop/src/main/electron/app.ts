@@ -3,7 +3,7 @@
 
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { createElectronSessionDriver, hardenProcess, type ManifestOptions } from '@valet/browser-electron'
 import { startEndpoint } from '@valet/mcp-server'
 import { app, clipboard, dialog, protocol } from 'electron'
@@ -57,7 +57,11 @@ const FEED_PUBLIC_KEY = __VALET_FEED_PUBLIC_KEY__
 
 /** The stdio bridge from the repo, until the app bundles it (packaging's job): tsx and its CLI. */
 function bridgeCommand(): ((configPath: string) => BridgeCommand) | null {
-  if (app.isPackaged) return null
+  if (app.isPackaged) {
+    // D60: the Swift bridge beside the app's own executable, covered by the app's signature.
+    const bridge = join(dirname(process.execPath), 'valet-bridge')
+    return existsSync(bridge) ? (configPath) => ({ command: bridge, args: [configPath] }) : null
+  }
   const root = resolve(app.getAppPath(), '../..')
   const tsx = join(root, 'node_modules/.bin/tsx')
   const cli = join(root, 'packages/mcp-server/src/bridge-cli.ts')

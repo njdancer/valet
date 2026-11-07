@@ -36,3 +36,19 @@ jobs:
           pnpm --filter @valet/browser-electron test:e2e --trace off
       - name: desktop end to end
         run: pnpm --filter @valet/desktop test:e2e --trace off
+
+  swift-bridge:
+    # The stdio bridge the packaged app ships (D60), built and run against the same suite as the
+    # TypeScript bridge (packages/mcp-server/test/bridge-contract.ts).
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - run: pnpm install --frozen-lockfile
+      # Universal, as the packaged app ships it (electron-builder.config.ts, SWIFT_BRIDGE_BUILD).
+      - run: swift build -c release --arch arm64 --arch x86_64 --package-path swift-bridge
+      - name: shared bridge suite against the Swift bridge
+        run: pnpm exec vitest run --project mcp-server test/bridge-contract
+        env:
+          VALET_SWIFT_BRIDGE: ${{ github.workspace }}/swift-bridge/.build/apple/Products/Release/valet-bridge
