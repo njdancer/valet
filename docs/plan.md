@@ -44,7 +44,7 @@ writes the audit log. Nothing has touched the live site while logged in, and not
 | Tests                                      | 3,356 unit and integration tests, coverage 98.6 / 94.9 / 97.9 / 99.3 (statements, branches, functions, lines; thresholds 90/85/90/90). Electron e2e: 24 desktop (6 screenshot specs skip by design), 37 browser-electron. Lint and both typecheck projects clean.                                                                                                                                                                                         |
 | Spike 1 (`spikes/01-woolworths-electron`)  | Code written. **Not run.** It needs Nick to log in by hand.                                                                                                                                                                                                                                                                                                                                                                                               |
 | Live probe (`spikes/02-woolworths-shapes`) | Run four times, anonymous only. See [the finding](findings/2026-11-07-woolworths-live-probe.md) and the summary below.                                                                                                                                                                                                                                                                                                                                    |
-| CI, releases                               | None. The repo is local-only.                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| CI, releases                               | macOS CI on every PR (`pnpm check` and both Electron e2e suites); no releases.                                                                                                                                                                                                                                                                                                                                                                            |
 
 So [M1](#m1-vertical-slice-against-fakes)'s exit is met, and more: the desktop e2e suite drives a real MCP client through the packaged-style app, not only plain Node. [M2](#m2-electron-driver-and-live-woolworths)'s code is in place; what's left of M2 is live work with Nick.
 
@@ -485,6 +485,9 @@ Nick-hours** (M1 2–3, M2 4–6, M3 4–6, M4 3–4, M5 4–6, M6 2–3, M7 2�
   counted as hours.
 
 Treat all of it as ±50%.
+
+What threads can do without Nick, in order, is in [overnight-queue.md](overnight-queue.md)
+(2026-11-07).
 
 ---
 
