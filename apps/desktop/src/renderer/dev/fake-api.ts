@@ -630,7 +630,13 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
           storage: all([]),
           requests: all(WOOLWORTHS_REQUESTS),
           tools: all(
-            woolworthsBase.tools.map(({ name, title, sideEffect }) => ({ name, title, sideEffect })),
+            woolworthsBase.tools.map(({ name, title, sideEffect }) => ({
+              name,
+              title,
+              sideEffect,
+              destructive: sideEffect !== 'read',
+              idempotent: sideEffect === 'read',
+            })),
           ),
           secrets: all(
             login === undefined
