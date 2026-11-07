@@ -49,6 +49,24 @@ async function until<T>(read: () => T | undefined, ms = 5000): Promise<T | undef
   }
 }
 
+/**
+ * The page's keydown count once every character typed has landed. sendInputEvent is fire and
+ * forget, and executeJavaScript reaches the frame by another route, so reading the count straight
+ * after type() can race the last keystroke. Each character's keydown comes before its char, so once
+ * the field holds every character, every keydown has been counted.
+ */
+async function keydownsOnce(
+  frame: { executeJavaScript(code: string): Promise<unknown> } | undefined,
+  selector: string,
+  length: number,
+): Promise<unknown> {
+  const deadline = Date.now() + 5000
+  const filled = `document.querySelector(${JSON.stringify(selector)}).value.length >= ${length}`
+  while (frame !== undefined && (await frame.executeJavaScript(filled)) !== true && Date.now() < deadline)
+    await sleep(50)
+  return frame?.executeJavaScript('window.__keydowns')
+}
+
 function manifest(site: TestSite, id = 'e2e'): AdapterManifest {
   return parseManifest({
     schemaVersion: 1,
@@ -264,7 +282,7 @@ async function setup() {
       const page = await openLogin()
       await page.focus('#user')
       await page.type('nick@example.test')
-      const keydowns = await windowAt(login)?.webContents.executeJavaScript('window.__keydowns')
+      const keydowns = await keydownsOnce(windowAt(login)?.webContents, '#user', 'nick@example.test'.length)
       await page.click('#login-submit')
       const post = await until(() => site.posts.find((p) => p.host === 'site.test' && p.path === '/session'))
       await page.close()
@@ -376,7 +394,7 @@ async function setup() {
       await page.type(secret, { allowedOrigins: [site.url('site.test')] })
       secret.dispose()
       const frame = subframeWithOrigin(login, site.url('site.test'))
-      const keydowns = await frame?.executeJavaScript('window.__keydowns')
+      const keydowns = await keydownsOnce(frame, '#code', CANARY.length)
       await page.click('#code-submit')
       const post = await until(() => site.posts.slice(from).find((p) => p.path === '/session-code'))
       await page.close()

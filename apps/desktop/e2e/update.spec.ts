@@ -68,17 +68,30 @@ async function relaunch(appPath?: string): Promise<void> {
   client = await connectMcp(control, userData)
 }
 
-/** The last few audit events, for a failure message: types, outcomes and codes only, never secrets. */
+/**
+ * The last few audit events and the login marker, for a failure message: types, outcomes, codes and
+ * times only, never secrets.
+ */
 function recentAudit(): string {
+  let marker: string
   try {
-    return readFileSync(join(userData, 'audit.jsonl'), 'utf8')
+    marker = readFileSync(join(userData, 'login-markers', 'woolworths.login-attempt'), 'utf8').trim()
+  } catch (error) {
+    marker = `none (${(error as NodeJS.ErrnoException).code ?? String(error)})`
+  }
+  try {
+    const events = readFileSync(join(userData, 'audit.jsonl'), 'utf8')
       .trim()
       .split('\n')
-      .slice(-12)
-      .map((line) => JSON.stringify((JSON.parse(line) as { event: unknown }).event))
+      .slice(-16)
+      .map((line) => {
+        const record = JSON.parse(line) as { ts?: unknown; at?: unknown; event: unknown }
+        return `${String(record.ts ?? record.at ?? '')} ${JSON.stringify(record.event)}`
+      })
       .join('\n')
+    return `login marker: ${marker}\n${events}`
   } catch (error) {
-    return `no audit log: ${String(error)}`
+    return `login marker: ${marker}\nno audit log: ${String(error)}`
   }
 }
 

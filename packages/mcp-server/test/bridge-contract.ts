@@ -79,7 +79,9 @@ export function bridgeContract(name: string, launch: BridgeLauncher): void {
       child.stderr.on('data', (chunk: Buffer) => {
         err += chunk.toString('utf8')
       })
-      const exit = new Promise<number | null>((resolve) => child.on('exit', (code) => resolve(code)))
+      // 'close', not 'exit': 'exit' can fire before the last of stdout and stderr has been read, so
+      // a check of what the bridge printed straight after it would race the pipe.
+      const exit = new Promise<number | null>((resolve) => child.on('close', (code) => resolve(code)))
       cleanup.push(async () => {
         child.kill()
         await exit

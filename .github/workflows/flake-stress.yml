@@ -1,0 +1,75 @@
+name: Flake stress
+
+# Temporary: loops the specs that flaked, to find causes and to show the fixes hold. Removed before
+# the branch merges.
+
+on:
+  push:
+    branches: [claude/project-thread-vdr929]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flake-stress-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  update-spec:
+    runs-on: macos-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - run: pnpm install --frozen-lockfile
+      - name: update.spec.ts, 10 runs
+        working-directory: apps/desktop
+        run: |
+          pnpm exec electron-vite build --mode demo
+          pass=0; fail=0
+          for i in $(seq 1 10); do
+            if pnpm exec playwright test -c e2e/playwright.config.ts --trace off update.spec.ts > run.log 2>&1; then
+              pass=$((pass+1)); echo "run $i: pass ($(grep -E 'passed' run.log | tail -1))"
+            else
+              fail=$((fail+1)); echo "run $i: FAIL"; cat run.log
+            fi
+          done
+          echo "update.spec.ts: $pass passed, $fail failed"
+          test "$fail" = 0
+
+  driver-and-bridge:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - run: pnpm install --frozen-lockfile
+      - run: swift build -c release --arch arm64 --arch x86_64 --package-path swift-bridge
+      - name: bridge-contract against the Swift bridge, 20 runs
+        env:
+          VALET_SWIFT_BRIDGE: ${{ github.workspace }}/swift-bridge/.build/apple/Products/Release/valet-bridge
+        run: |
+          fail=0
+          for i in $(seq 1 20); do
+            pnpm exec vitest run --project mcp-server test/bridge-contract > run.log 2>&1 || { fail=$((fail+1)); echo "run $i: FAIL"; cat run.log; }
+          done
+          echo "bridge-contract: $fail of 20 failed"
+          test "$fail" = 0
+      - name: browser-electron e2e, 20 runs
+        if: always()
+        working-directory: packages/browser-electron
+        run: |
+          fail=0
+          for i in $(seq 1 20); do
+            if pnpm exec playwright test -c e2e/playwright.config.ts --trace off > run.log 2>&1; then
+              echo "run $i: pass"
+            else
+              fail=$((fail+1)); echo "run $i: FAIL"; cat run.log
+            fi
+          done
+          echo "browser-electron e2e: $fail of 20 failed"
+          test "$fail" = 0
