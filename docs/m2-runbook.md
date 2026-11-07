@@ -144,6 +144,14 @@ Small changes so the sessions spend Nick's time on the site, not on setup.
 
 No live request is needed to build any of this. The fake site covers the code paths.
 
+**Built on 2026-11-07.** `SPIKE_MODE` picks login (the default), silent, probe or record, and
+`SPIKE_ORIGIN` points the spike at the fake for a dry run. Every mode stops on a block page and
+writes what it has. Results carry hosts and paths, never query strings, and response key shapes,
+never values. `pnpm scrub` checks them and writes `results/findings-draft.md`. The pure parts are
+tested in `spike.test.mjs`. Probe and silent modes were dry-run against the fake. The spike sets
+only the UA string, so its client-hint brands stay the engine's own (no Google Chrome): the app
+does D24a, the spike does not, so Session 3 is the first live run with Chrome brands.
+
 ### 5. Between sessions
 
 - **After Session 1:** set the real password page, MFA page and "remember this device" selectors in
