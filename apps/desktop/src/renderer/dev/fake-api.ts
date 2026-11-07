@@ -1249,6 +1249,8 @@ const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent['type']
     'grant-copied',
     'update-downloaded',
     'update-installed',
+    'remote-state',
+    'remote-tool',
   ],
 }
 

@@ -114,6 +114,24 @@ export type AuditEvent =
       readonly to: string
     }
   | {
+      /**
+       * Remote access turned on, or paused with the tray's kill switch (relay.md). Pausing revokes
+       * every remote access token; `revokedTokens` says how many there were.
+       */
+      readonly type: 'remote-state'
+      readonly state: 'on' | 'paused'
+      readonly revokedTokens: number
+    }
+  | {
+      /** The person turned a tool on or off for remote clients. Off is the default. */
+      readonly type: 'remote-tool'
+      readonly adapterId: string
+      readonly tool: string
+      readonly enabled: boolean
+      /** The tool's side effect when this was set; a later raise turns it off again. */
+      readonly sideEffect: 'read' | 'write' | 'irreversible'
+    }
+  | {
       readonly type: 'confirmation'
       readonly adapterId: string
       readonly tool: string
