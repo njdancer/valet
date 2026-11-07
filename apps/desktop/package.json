@@ -2,6 +2,7 @@
   "name": "@valet/desktop",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "description": "valet menu-bar app",
   "main": "out/main/index.js",

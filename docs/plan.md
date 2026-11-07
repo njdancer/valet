@@ -433,8 +433,7 @@ answered on time.
 - Exit: someone who isn't Nick installs it from the site, connects Claude, and uses an adapter
   without help.
 - Effort: 5–8 agent-days. Nick: 6–10 hours (writing in his own voice, the launch itself).
-- Decisions needed: [D2](#d2-licence),
-  [D3](#d3-repository-hosting-and-going-public), [D15](#d15-telemetry),
+- Decisions needed: [D3](#d3-repository-hosting-and-going-public), [D15](#d15-telemetry),
   [D21](#d21-mcp-client-support), [D22](#d22-second-adapter), [D25](#d25-adapter-legal-posture).
 
 ### M9. Relay beta (optional)
@@ -1058,8 +1057,9 @@ to answer first: they block M2 or M3, or they're expensive to change later.
 | D60 | **The stdio bridge in a packaged app**      | A small signed Swift proxy inside the app bundle                                              | M3         |
 | D61 | **The update feed's signing key**           | 1Password, in its own vault, Touch ID from the release script                                 | M3         |
 
-Already decided, recorded for completeness: [D1](#d1-product-name) (the name, Valet), [D9](#d9-user-agent) (the clean Chrome UA, decided
-by run 4 of the live probe and now the architecture's default) and
+Already decided, recorded for completeness: [D1](#d1-product-name) (the name, Valet),
+[D2](#d2-licence) (Apache-2.0), [D9](#d9-user-agent) (the clean Chrome UA, decided by run 4 of
+the live probe and now the architecture's default) and
 [D39](#d39-auth-subframe-origins) (auth subframes pinned to a list, decided by core v2).
 
 D31 to D54 are the questions round 1 raised. Each has options and a recommendation; none blocks
@@ -1087,6 +1087,8 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D2. Licence
 
+- Decided 2026-11-07: **Apache-2.0** for the app, packages and adapters (`LICENSE`, `NOTICE`, and
+  `"license"` in every package.json). The relay is still open.
 - Options: MIT; Apache-2.0; AGPL-3.0; source-available (e.g. FSL, BSL) for the relay only.
 - Considerations: Apache-2.0 adds an explicit patent grant and is common for security-relevant
   infrastructure. AGPL discourages someone hosting the relay as a competing service, but also

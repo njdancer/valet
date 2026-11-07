@@ -1,6 +1,7 @@
 {
   "name": "spike-02-woolworths-shapes",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "main": "probe.mjs",
   "scripts": {

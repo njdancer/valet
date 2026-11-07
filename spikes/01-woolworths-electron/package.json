@@ -1,6 +1,7 @@
 {
   "name": "spike-01-woolworths-electron",
   "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "main": "main.mjs",
   "scripts": {

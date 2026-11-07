@@ -147,7 +147,7 @@ const firstTable = decisionsText.slice(decisionsText.indexOf('### Answer these f
 const answerFirst = new Set(
   [...firstTable.slice(0, firstTable.indexOf('\n### D')).matchAll(/^\| (D\d+a?) /gm)].map((m) => m[1]),
 )
-const decided = new Set(['D1', 'D9', 'D39'])
+const decided = new Set(['D1', 'D2', 'D9', 'D39'])
 
 const decisions = [...decisionsText.matchAll(/^### (D\d+a?)\. (.+)\n([\s\S]*?)(?=^### |(?![\s\S]))/gm)].map(
   ([, id, title, body]) => {

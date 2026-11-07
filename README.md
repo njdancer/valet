@@ -61,3 +61,8 @@ pnpm package:smoke  # an unsigned .app, checked and launched under a temporary H
 | `adapters/woolworths`       | The first adapter                                                 |
 | `fakes/woolworths-site`     | A local fake of the site, with hostile variants for the tests     |
 | `apps/desktop`              | The menu-bar app and control panel                                |
+
+## Licence
+
+[Apache-2.0](LICENSE). Not affiliated with any site an adapter targets; the names of those sites
+belong to their owners.
