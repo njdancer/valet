@@ -1,6 +1,7 @@
 // Audit events. The log is append-only and hash-chained; see packages/runtime for the writer.
 
 import type { ErrorClass, NeedsUserReason, Stage } from './errors'
+import type { SecretField } from './manifest'
 
 /** How a tool run or login ended. `blocked`: the site refused us. `declined`: the person said no. */
 export type RunOutcome = 'ok' | 'needsUser' | 'failed' | 'blocked' | 'declined'
@@ -29,6 +30,13 @@ export type AuditEvent =
       readonly origins: readonly string[]
     }
   | { readonly type: 'grant-revoked'; readonly adapterId: string; readonly secret: string }
+  /** A keychain-copy grant's fields copied (or re-synced) from 1Password into the Keychain (D6). */
+  | {
+      readonly type: 'grant-copied'
+      readonly adapterId: string
+      readonly secret: string
+      readonly fields: readonly SecretField[]
+    }
   | {
       readonly type: 'tool-called'
       readonly adapterId: string

@@ -5,11 +5,12 @@ import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { createElectronSessionDriver, hardenProcess, type ManifestOptions } from '@valet/browser-electron'
+import { messagesHelperSocketPath } from '@valet/credentials'
 import { startEndpoint } from '@valet/mcp-server'
 import { app, clipboard, dialog, protocol } from 'electron'
 import { builtinAdapters } from '../adapters'
 import { APP_SCHEME, APP_SCHEME_PRIVILEGES, createAppSchemeHandler } from '../core/app-scheme'
-import { dataPaths } from '../core/constants'
+import { dataPaths, nativeNames } from '../core/constants'
 import { checkOpBinary, defaultOpCheckDeps, realCredentials } from '../core/credentials'
 import { DEV_DATA_NAME, demoResolverRules, launchMode, rendererBase, userDataDir } from '../core/launch'
 import { AppService } from '../core/service'
@@ -69,6 +70,17 @@ function bridgeCommand(): ((configPath: string) => BridgeCommand) | null {
   return (configPath) => ({ command: tsx, args: [cli, configPath] })
 }
 
+/**
+ * A native helper (swift-bridge): beside the app's executable when packaged, else the debug build in
+ * the repo (`swift build --package-path swift-bridge`), or null when neither exists.
+ */
+function nativeHelper(name: string): string | null {
+  const path = app.isPackaged
+    ? join(dirname(process.execPath), name)
+    : resolve(app.getAppPath(), '../../swift-bridge/.build/debug', name)
+  return existsSync(path) ? path : null
+}
+
 async function main(): Promise<void> {
   // A menu-bar app: closing every window doesn't quit.
   app.on('window-all-closed', () => {})
@@ -114,6 +126,20 @@ async function main(): Promise<void> {
   )
   const driverOptions: ManifestOptions = demoSite === null ? {} : { egressPorts: [demoSite.site.port] }
   const opDeps = defaultOpCheckDeps()
+  // The packaged app's name is "valet" for a release and "valet-dev" otherwise (electron-builder).
+  const names = nativeNames(app.isPackaged && app.getName() === 'valet')
+  const messagesBinary = app.isPackaged ? nativeHelper('valet-messages-helper') : null
+  const credentialDeps = {
+    ...opDeps,
+    keychainHelper: nativeHelper('valet-keychain'),
+    copyService: names.copyService,
+    // Only a packaged app has the launch agent's plist for SMAppService; a dev build reads Messages
+    // in process, with Full Disk Access on the app that runs it.
+    messagesHelper:
+      messagesBinary === null
+        ? null
+        : { binary: messagesBinary, socketPath: messagesHelperSocketPath(names.messagesHelperLabel) },
+  }
   const signature = await bundleSignature()
 
   service = new AppService({
@@ -133,7 +159,7 @@ async function main(): Promise<void> {
         { ...driverOptions, ...reporters },
         demoSite === null ? {} : { dial: demoSite.dial },
       ),
-    credentials: demoSite === null ? realCredentials(opDeps) : demoSite.credentials,
+    credentials: demoSite === null ? realCredentials(credentialDeps) : demoSite.credentials,
     startEndpoint: (caller, clients, onSessionsChanged) =>
       startEndpoint({
         caller,

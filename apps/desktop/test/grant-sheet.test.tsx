@@ -200,7 +200,8 @@ describe('the grant sheet', () => {
     renderAt('#/adapters/woolworths/grant/login', api)
     const cli = (await screen.findByRole('radio', { name: /1Password app/ })) as HTMLInputElement
     expect(cli.disabled).toBe(true)
-    expect(screen.getByText('Not set up')).toBeTruthy()
+    // The CLI here, and the Keychain copy, which this list doesn't report at all.
+    expect(screen.getAllByText('Not set up')).toHaveLength(2)
   })
 
   it('says the vault couldn’t be listed when 1Password fails', async () => {

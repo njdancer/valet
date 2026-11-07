@@ -16,6 +16,16 @@ as a `SecretValue`, and every failure as `ValetError(stage, errorClass)` or
   binary planted in the working directory can't be run. An app started from Finder has a minimal `PATH`, which is why the Homebrew
   locations come first. The path found is kept until a run reports it gone. Tests inject
   `isExecutable`, so none looks at the disk.
+- **`KeychainCopyProvider`** (kind `keychain-copy`, D6) reads a Keychain copy of a granted item
+  from the person's own 1Password. The copy is made and refreshed by **`KeychainCopySync`** through
+  **`OnePasswordDesktopProvider`** (kind `onepassword-desktop`, `DesktopAuth`), which reads fields
+  into buffers that go straight to the helper's stdin, so nothing is revealed on the way.
+  `refreshIfLive()` only runs while an approval is already up and never prompts. One Keychain item
+  per field: service `valet.copy`, account `op://<vault id>/<item id>#<field>`, the source as the
+  comment (`parseCopySource` accepts exactly that shape). No TOTP secret is copied yet.
+- **`KeychainHelper`** runs `valet-keychain` (swift-bridge) by absolute path: `read`, `info` (the
+  comment only, never prompts), `write` (secret on stdin) and `delete`, with the same bounded wait
+  as `security`. `HelperKeychainTokenSource` reads the service-account token through it.
 - **`FakeCredentialProvider`** for tests and demo mode.
 
 ### Listing a vault
@@ -69,6 +79,12 @@ is a symlink, FIFO or other non-regular file; `invalid` when its contents don't 
 (one bad grant and none are used); `unavailable` when it can't be read or written.
 
 ## Messages OTP
+
+Two readers make the same checks first (`prepareOtpLookup`): `MessagesOtpReader` reads `chat.db` in
+process (development builds), and `MessagesHelperOtpReader` asks `valet-messages-helper`, the
+launch agent that alone holds Full Disk Access in a packaged app, over its user-only socket. It
+refuses a socket this user doesn't own, never asks further back than 30 minutes, and re-checks
+that the answer is code-shaped. `test/otp-contract.test.ts` runs one set of cases against both.
 
 `MessagesOtpReader` opens `chat.db` read-only per lookup and returns only a code-shaped capture
 from exactly the named sender. The query's `sender` is required by type; the reader still refuses

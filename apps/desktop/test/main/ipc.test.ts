@@ -273,6 +273,7 @@ describe('every channel', () => {
       },
     ],
     'grants.revoke': ['woolworths', 'login'],
+    'grants.resync': ['woolworths', 'login'],
     'runs.list': [{ adapterId: 'woolworths', limit: 5 }],
     'runs.trace': ['call_1'],
     'runs.statsToday': [],

@@ -259,9 +259,14 @@ process is the trusted computing base. It isn't a property to advertise.
     container, which the password grep in AC16 wouldn't notice.
 - **Full Disk Access.** Reading `chat.db` needs it, and it's the broadest permission the app asks
   for: it also covers Mail, Safari history and every process that inherits it, including v0 tool
-  code. For personal use (M3) the whole app holds it. Before third-party adapters, a small signed
-  helper holds it instead and answers only "latest code from this sender matching this pattern
-  since this time" (**Designed**, [D8](plan.md#d8-full-disk-access-for-messages)).
+  code. A packaged app reads through `valet-messages-helper` instead: a launch agent registered
+  with SMAppService, so launchd starts it and it holds Full Disk Access by itself. It answers only
+  "the newest code-shaped capture from this handle since this time" (at most 30 minutes back, 50
+  messages, 2,000 characters each, the match under a deadline) over a user-only Unix socket, and a
+  signed helper answers only a peer whose audit token is signed by its own team. Valet re-checks
+  the answer's shape (**Built**, needs a signed build to hold;
+  [D8](plan.md#d8-full-disk-access-for-messages)). A development build still reads in process,
+  with the grant on whatever runs it.
 
 ### Grants are separate from manifests
 
@@ -648,6 +653,17 @@ Before the token source is used outside development, and at the latest before th
 adapters exist, the read moves in process: a native addon calling `SecItemCopyMatching`, or a
 small helper bundled with the app and signed with its Team ID, whose own requirement is the one on
 the ACL. The `TokenSource` interface (now in `core`) and its bounded wait stay the same.
+
+**Built (2026-11-07): the helper.** `valet-keychain` ships in Contents/MacOS and reads with
+`SecItemCopyMatching` in its own process. Items it adds (the D6 Keychain copies) trust it, so it
+reads them without a prompt, and any prompt names it. A helper signed with a Team ID refuses any
+parent not signed by that team (checked by pid; the parent is the app's main process, which waits
+on the child). It touches only `valet` and `valet.<name>` services, takes secrets on stdin, and
+writes nothing but the secret or the item's comment to stdout. When the app has the helper, the
+service-account token is read through it too. A token item made earlier with `security` still
+trusts `/usr/bin/security`; the helper's first read of it prompts once, naming the helper. The gap
+closes only for a signed build: an unsigned dev helper is trusted by its code hash, and any process
+running as the person can run it.
 
 ## Personal Chrome profile mode (later)
 

@@ -321,12 +321,33 @@ export interface AuthRunnerOptions {
   ) => Promise<{ filled: { secret: string; field: SecretField }[]; origin: string | null }>
 }
 
+async function refreshCopies(
+  options: AuthRunnerOptions,
+  adapterId: string,
+  manifest: AdapterManifest,
+): Promise<void> {
+  try {
+    const copies = (await options.grants.list()).filter(
+      (g) => g.adapterId === adapterId && g.provider === 'keychain-copy',
+    )
+    if (copies.length === 0) return
+    await options.credentials.refreshCopies(
+      copies.map((g) => ({ itemRef: g.itemRef, fields: manifest.secrets[g.secret]?.fields ?? [] })),
+    )
+  } catch {
+    // The login goes ahead with the copy as it is.
+  }
+}
+
 export function createAuthRunner(options: AuthRunnerOptions): AuthRunner {
   return async (request: AuthRunRequest): Promise<AuthOutcome> => {
     const { manifest, adapterHash, driver, callId } = request
     const adapterId = manifest.id
     const startedAt = options.clock()
     options.sessions.set(adapterId, 'logging-in')
+    // D6: a Keychain copy whose 1Password item changed is refreshed first, but only while an
+    // approval in 1Password is already up (an attended moment); this never prompts.
+    await refreshCopies(options, adapterId, manifest)
     const secrets = options.secrets.begin(adapterId)
     let finished: 'ok' | 'needs-user' | 'failed' = 'failed'
     let page: AuthPage

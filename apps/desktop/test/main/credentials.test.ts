@@ -3,8 +3,14 @@
 
 import { EventEmitter } from 'node:events'
 import { CredentialError, SecretValue } from '@valet/core'
-import type { ChildLike, Spawner } from '@valet/credentials'
+import {
+  type ChildLike,
+  type DesktopClientFactory,
+  MessagesHelperOtpReader,
+  type Spawner,
+} from '@valet/credentials'
 import { describe, expect, it } from 'vitest'
+import { fakeKeychain } from '../../../../packages/credentials/test/fake-keychain'
 import {
   ADMIN_GID,
   checkOpBinary,
@@ -281,6 +287,7 @@ describe('realCredentials', () => {
       { kind: 'onepassword-service-account', available: true, unavailableReason: null },
       { kind: 'onepassword-cli', available: true, unavailableReason: null },
       { kind: 'messages', available: false, unavailableReason: 'disabled' },
+      { kind: 'keychain-copy', available: false, unavailableReason: 'not-installed' },
     ])
     expect(Object.keys(credentials.providers()).sort()).toEqual([
       'onepassword-cli',
@@ -479,6 +486,131 @@ describe('realCredentials', () => {
     await expect(
       disabledOtpReader.latest({ sender: 'x', pattern: '(\\d+)', maxAgeSeconds: 60 }, new Date()),
     ).rejects.toEqual(new CredentialError('unavailable'))
+  })
+})
+
+describe('realCredentials with the native helpers', () => {
+  const HELPER = '/Applications/Valet.app/Contents/MacOS/valet-keychain'
+  const VAULT_ID = 'abcdefghijklmnopqrstuvwxyz'
+  const ITEM_ID = 'zyxwvutsrqponmlkjihgfedcba'
+  const CANARY = 'canary-pw-desktop-4e9a'
+
+  function desktopClient(creates: string[]): DesktopClientFactory {
+    return async (account) => {
+      creates.push(account)
+      return {
+        secrets: {
+          resolve: async (reference) => (reference.endsWith('/password') ? CANARY : 'nick@example.com'),
+        },
+        vaults: { list: async () => [{ id: VAULT_ID, title: 'Personal' }] },
+        items: {
+          list: async () => [
+            { id: ITEM_ID, title: 'Woolworths', updatedAt: new Date('2026-11-01T00:00:00Z') },
+          ],
+        },
+      }
+    }
+  }
+
+  function setup() {
+    const keychain = fakeKeychain()
+    const creates: string[] = []
+    const credentials = realCredentials({
+      files: files({}),
+      spawner: keychain.spawner,
+      timers,
+      uid: UID,
+      groups: GROUPS,
+      serviceAccountReady: async () => true,
+      keychainHelper: HELPER,
+      copyService: 'valet.dev.copy',
+      messagesHelper: {
+        binary: '/Applications/Valet.app/Contents/MacOS/valet-messages-helper',
+        socketPath: '/Users/nick/Library/Application Support/me.dncr.valet.messages-helper/helper.sock',
+      },
+      desktopClient: desktopClient(creates),
+    })
+    return { keychain, creates, credentials }
+  }
+
+  it('offers the Keychain copy only once a 1Password account is set', async () => {
+    const { credentials, creates } = setup()
+    await credentials.configure(DEFAULT_SETTINGS)
+    expect((await credentials.status()).find((s) => s.kind === 'keychain-copy')).toEqual({
+      kind: 'keychain-copy',
+      available: false,
+      unavailableReason: 'not-configured',
+    })
+    expect(await credentials.vaultItems('keychain-copy')).toEqual([])
+    await expect(credentials.copyItem(`op://${VAULT_ID}/${ITEM_ID}`, ['password'])).rejects.toEqual(
+      new CredentialError('unavailable'),
+    )
+    await credentials.configure({ ...DEFAULT_SETTINGS, onePasswordAccount: 'my.1password.com' })
+    expect((await credentials.status()).find((s) => s.kind === 'keychain-copy')?.available).toBe(true)
+    expect(Object.keys(credentials.providers())).toContain('keychain-copy')
+    expect(creates).toEqual([])
+  })
+
+  it('lists every vault’s items through the desktop app, as <vault>-<item>', async () => {
+    const { credentials, creates } = setup()
+    await credentials.configure({ ...DEFAULT_SETTINGS, onePasswordAccount: 'my.1password.com' })
+    expect(await credentials.vaultItems('keychain-copy')).toEqual([
+      { id: `${VAULT_ID}-${ITEM_ID}`, title: 'Woolworths (Personal)' },
+    ])
+    expect(creates).toEqual(['my.1password.com'])
+  })
+
+  it('copies an item into the Keychain through the helper, then resolves it from the copy', async () => {
+    const { credentials, keychain } = setup()
+    await credentials.configure({ ...DEFAULT_SETTINGS, onePasswordAccount: 'my.1password.com' })
+    const itemRef = `op://${VAULT_ID}/${ITEM_ID}`
+    await credentials.copyItem(itemRef, ['username', 'password'])
+    expect(keychain.get('valet.dev.copy', `${itemRef}#password`)?.secret.toString()).toBe(CANARY)
+    expect(keychain.calls.every((call) => call.command === HELPER)).toBe(true)
+    const secret = await credentials.providers()['keychain-copy']?.resolve(itemRef, 'password')
+    expect(secret?.reveal((plaintext) => plaintext)).toBe(CANARY)
+    // An approval is up now, and the source hasn't changed: nothing is written again.
+    const writes = keychain.calls.filter((call) => call.args[0] === 'write').length
+    await credentials.refreshCopies([{ itemRef, fields: ['username', 'password'] }])
+    expect(keychain.calls.filter((call) => call.args[0] === 'write').length).toBe(writes)
+    await credentials.forgetCopy(itemRef)
+    expect(keychain.items.size).toBe(0)
+  })
+
+  it('keeps the approval when the account is unchanged, and starts over when it changes', async () => {
+    const { credentials, creates } = setup()
+    const settings = { ...DEFAULT_SETTINGS, onePasswordAccount: 'my.1password.com' }
+    await credentials.configure(settings)
+    await credentials.vaultItems('keychain-copy')
+    await credentials.configure(settings)
+    await credentials.vaultItems('keychain-copy')
+    expect(creates).toHaveLength(1)
+    await credentials.configure({ ...settings, onePasswordAccount: 'other.1password.com' })
+    await credentials.vaultItems('keychain-copy')
+    expect(creates).toEqual(['my.1password.com', 'other.1password.com'])
+  })
+
+  it('reads the service-account token’s presence through the helper, never security', async () => {
+    const { credentials, keychain } = setup()
+    await credentials.configure(DEFAULT_SETTINGS)
+    expect((await credentials.status())[0]?.unavailableReason).toBe('not-configured')
+    expect(keychain.calls.map((call) => call.args[0])).toEqual(['info'])
+    keychain.items.set('valet\u0000onepassword-service-account', { secret: Buffer.from('sa'), comment: '' })
+    expect((await credentials.status())[0]?.available).toBe(true)
+  })
+
+  it('reads Messages codes through the helper when the app ships it, registering its agent once', async () => {
+    const { credentials, keychain } = setup()
+    await credentials.configure(DEFAULT_SETTINGS)
+    const registers = () =>
+      keychain.calls.filter(
+        (call) => call.command.endsWith('/valet-messages-helper') && call.args[0] === 'register',
+      )
+    expect(registers()).toHaveLength(0)
+    await credentials.configure({ ...DEFAULT_SETTINGS, messagesOtpEnabled: true })
+    expect(credentials.otpReader()).toBeInstanceOf(MessagesHelperOtpReader)
+    await credentials.configure({ ...DEFAULT_SETTINGS, messagesOtpEnabled: true })
+    expect(registers()).toHaveLength(1)
   })
 })
 

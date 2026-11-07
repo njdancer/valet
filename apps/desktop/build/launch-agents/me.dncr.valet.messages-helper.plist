@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The Messages helper (D8), registered by "valet-messages-helper register" with SMAppService.
+  launchd starts it, so it is responsible for itself and Full Disk Access is granted to it alone.
+  The label names the socket directory: ~/Library/Application Support/<label>/helper.sock.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>me.dncr.valet.messages-helper</string>
+  <key>BundleProgram</key>
+  <string>Contents/MacOS/valet-messages-helper</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>valet-messages-helper</string>
+    <string>serve</string>
+    <string>me.dncr.valet.messages-helper</string>
+  </array>
+  <key>AssociatedBundleIdentifiers</key>
+  <array>
+    <string>me.dncr.valet</string>
+  </array>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

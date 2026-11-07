@@ -36,6 +36,7 @@ const EVENT_CLASS: Readonly<Record<AuditEvent['type'], string>> = {
   'adapter-rejected': 'admin',
   'grant-made': 'admin',
   'grant-revoked': 'admin',
+  'grant-copied': 'admin',
   'tool-called': 'tool',
   'tool-finished': 'tool',
   'login-started': 'login',
@@ -406,6 +407,12 @@ export function details(event: AuditEvent, now: number): ReactNode {
           <span className="mono xs">{event.origins.map(hostOf).join(', ')}</span>
         </>
       )
+    case 'grant-copied':
+      return (
+        <>
+          {event.adapterId} · {event.secret} <span className="xs muted">copied from 1Password</span>
+        </>
+      )
     case 'grant-revoked':
       return (
         <>
@@ -519,6 +526,7 @@ const EVENT_FIELDS = {
   'adapter-rejected': ['type', 'adapterId', 'adapterHash', 'version'],
   'grant-made': ['type', 'adapterId', 'adapterHash', 'secret', 'provider', 'origins'],
   'grant-revoked': ['type', 'adapterId', 'secret'],
+  'grant-copied': ['type', 'adapterId', 'secret', 'fields'],
   'tool-called': ['type', 'adapterId', 'adapterHash', 'tool', 'client', 'clientId', 'callId'],
   'tool-finished': [
     'type',
