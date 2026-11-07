@@ -2042,6 +2042,8 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 - Blocks: nothing.
 ### D66. A block page in the person's login window
 
+- Nick's answer (2026-11-07): Accepted: close the window and explain in the app, with the time the
+  breaker reopens.
 - Today (round 4): when the person opens the login window and its first page is Akamai's block
   page, the app opens the site's breaker, closes the window and reports `login/blocked-by-site`.
   The person never sees the block page.
@@ -2053,6 +2055,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D67. Stopping a login when the call is cancelled
 
+- Nick's answer (2026-11-07): Accepted: build the core change before the first automated live login.
 - Today (round 4): a client can cancel a call, and the runtime stops at once, but the automatic
   login it started runs on to the auth flow's own deadline. If that login stops part-way, the
   attempt marker stays set (`login-attempt-pending`) until the person clears it, as after a crash.

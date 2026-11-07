@@ -8,8 +8,7 @@ It has two parts. **Part 1** is solo work that needs nothing live and must land 
 is three sessions on Nick's Mac with Nick present, spread over at least two days so live contact
 stays sparse.
 
-Decisions are cited by number, with whether Nick has answered them. Two that matter here are still
-open (D66, D67); they're collected, with D10 and D24a, which Nick answered on 2026-11-07, in [Open decisions](#open-decisions-for-nick), with
+Decisions are cited by number, with whether Nick has answered them. The four that matter here (D10, D24a, D66, D67) were answered on 2026-11-07; they're collected in [Open decisions](#decisions-for-nick), with
 the session each one is needed by.
 
 ## Rules for every live step
@@ -69,9 +68,8 @@ automated login inside a tool call and the person's own login window are neither
 
 ### 2. D67: stopping a login when the call is cancelled
 
-[D67](plan.md#d67-stopping-a-login-when-the-call-is-cancelled) is **open**. The coordinator's plan
-and the recommendation agree on the core change, so build it on a branch and merge only once Nick
-says yes (it changes the `AuthRunner` contract in core).
+[D67](plan.md#d67-stopping-a-login-when-the-call-is-cancelled) was answered on 2026-11-07: build the core
+change (it changes the `AuthRunner` contract in core).
 
 - `runAuthFlow` takes an `AbortSignal`, checked between steps and before each keystroke batch.
 - The outcome reports `secretFilled: boolean` (true once any secret's typing has started). The
@@ -262,14 +260,14 @@ password twice, which is a bug that stops M2 until fixed.
 Live contact: one automated login, two or three page views, about four direct API calls, all at
 the D28 pacing.
 
-## Open decisions for Nick
+## Decisions for Nick
 
 | Decision | Question | Recommendation | Needed by |
 | --- | --- | --- | --- |
 | [D10](plan.md#d10-analytics-hosts) (answered 2026-11-07: ideally yes) | Block the ~40 analytics and ad hosts in the tool partition, or allow them? | Strict by default (www, `cdn0.woolworths.media`, `acs.woolworths.com.au`), with Session 2's strict check as the evidence. Add hosts only if the site breaks without them. | Session 2, step 4 |
 | [D24a](plan.md#d24a-client-hint-brands) (answered 2026-11-07, in the bot-detection thread) | Send `Google Chrome` rather than `Chromium` in the client-hint brands? | Nick chose to match Chrome: the default flips to `clientHints: 'chrome'`. Nothing left here. | Done |
-| [D66](plan.md#d66-a-block-page-in-the-persons-login-window) (open) | When the person's login window opens on a block page, keep closing it silently, show the page, or explain in the app? | Explain in the app, with the time the breaker reopens. | Before Session 3, which is the first time the app's own login window meets the live site |
-| [D67](plan.md#d67-stopping-a-login-when-the-call-is-cancelled) (open) | Let `runAuthFlow` take a signal and report whether a secret was filled, so a cancel before any fill clears the marker by itself? | Yes, the core change, built in Part 1 step 2 on a branch. | Merge before Session 3 |
+| [D66](plan.md#d66-a-block-page-in-the-persons-login-window) (answered 2026-11-07: accepted) | When the person's login window opens on a block page, keep closing it silently, show the page, or explain in the app? | Explain in the app, with the time the breaker reopens. | Before Session 3, which is the first time the app's own login window meets the live site |
+| [D67](plan.md#d67-stopping-a-login-when-the-call-is-cancelled) (answered 2026-11-07: accepted) | Let `runAuthFlow` take a signal and report whether a secret was filled, so a cancel before any fill clears the marker by itself? | Yes, the core change, built in Part 1 step 2 on a branch. | Merge before Session 3 |
 
 Smaller calls this runbook makes, which Nick can overrule:
 
