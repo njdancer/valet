@@ -353,6 +353,7 @@ answered on time.
   - Electron end-to-end tests with Playwright against the fake site served over local HTTPS, on
     two origins (www and auth).
   - A dev build of the app (unsigned is fine) with the MCP endpoint and no UI beyond the tray.
+- How the live work runs, session by session: [the M2 runbook](m2-runbook.md).
 - Hard requirement before the first live **automated** login: the attempt marker and the
   one-password-submit limit (AC10) are implemented and tested, so a bug can cost at most one
   attempt against Nick's account ([D5](#d5-which-woolworths-account)).
