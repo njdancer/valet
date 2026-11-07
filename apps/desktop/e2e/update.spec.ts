@@ -13,6 +13,7 @@ import {
   CONTROL,
   callTool,
   changedAdapterBuild,
+  clickClosing,
   connectMcp,
   type Launched,
   launch,
@@ -248,7 +249,7 @@ test('the irreversible tool asks first; Decline in the panel returns declined to
   await expect(panel.getByText('Remove from cart').first()).toBeVisible()
   // Decline has the focus, so Return declines, as a person typing elsewhere might press it.
   await expect(panel.getByRole('button', { name: 'Decline' })).toBeFocused()
-  await panel.getByRole('button', { name: 'Decline' }).click()
+  await clickClosing(panel.getByRole('button', { name: 'Decline' }))
   const result = await call
   expect(result.isError).toBe(true)
   expect(result.text).toMatch(/declined/)
@@ -312,7 +313,7 @@ test('only the panel itself can approve; approved there once armed, the tool run
   const approve = panel.getByRole('button', { name: 'Approve Remove from cart' })
   await expect(approve).toBeVisible()
   await expect(approve).toBeEnabled()
-  await approve.click()
+  await clickClosing(approve)
   const result = await call
   expect(result.isError, result.text).toBe(false)
   expect(result.structured).toMatchObject({ stockcode, removed: true })

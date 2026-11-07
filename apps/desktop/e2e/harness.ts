@@ -22,7 +22,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { _electron, type ElectronApplication, type Page } from '@playwright/test'
+import { _electron, type ElectronApplication, type Locator, type Page } from '@playwright/test'
 
 const require = createRequire(import.meta.url)
 export const electronPath = require('electron') as unknown as string
@@ -310,5 +310,18 @@ export function strayElectron(): string[] {
     return execFileSync('pgrep', ['-f', electronDist], { encoding: 'utf8' }).split('\n').filter(Boolean)
   } catch {
     return []
+  }
+}
+
+/**
+ * Clicks a button that closes its own window, such as the confirmation panel's Decline or Approve.
+ * The click can land and the window close before Playwright's click() returns, which then reports
+ * the page as closed; that is the click working. Any other failure, or a page still open, throws.
+ */
+export async function clickClosing(button: Locator): Promise<void> {
+  try {
+    await button.click()
+  } catch (error) {
+    if (!button.page().isClosed()) throw error
   }
 }
