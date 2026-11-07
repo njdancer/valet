@@ -68,6 +68,20 @@ async function relaunch(appPath?: string): Promise<void> {
   client = await connectMcp(userData)
 }
 
+/** The last few audit events, for a failure message: types, outcomes and codes only, never secrets. */
+function recentAudit(): string {
+  try {
+    return readFileSync(join(userData, 'audit.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .slice(-12)
+      .map((line) => JSON.stringify((JSON.parse(line) as { event: unknown }).event))
+      .join('\n')
+  } catch (error) {
+    return `no audit log: ${String(error)}`
+  }
+}
+
 function mcp(): McpClient {
   if (client === null) throw new Error('no client')
   return client
@@ -128,7 +142,7 @@ test('a restart of the same build keeps the approval and the grants', async () =
   await expect.poll(async () => (await mcp().listTools()).tools.map((t) => t.name).sort()).toEqual(TOOLS)
   // And the restarted demo works: the fake is new, so the cart is empty and the login runs again.
   const cart = await callTool(mcp(), 'woolworths_get_cart', {})
-  expect(cart.isError, cart.text).toBe(false)
+  expect(cart.isError, `${cart.text}\n${recentAudit()}`).toBe(false)
   expect(cart.structured).toMatchObject({ items: [] })
 })
 
