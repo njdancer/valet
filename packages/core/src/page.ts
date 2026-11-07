@@ -135,9 +135,9 @@ export interface SessionDriver {
   unlockIrreversible(): void
   endRun(): void
   /**
-   * Connects the site's breaker (D55). From now on the driver tells `watcher` about every block
-   * signature it sees in either partition, and cancels every tool-partition request while
-   * `watcher.held()` is true. Optional: a driver without it leaves blocks to the runtime's own checks.
+   * Connects the site's breaker and budget (D55). From now on the driver tells `watcher` about
+   * every block signature it sees in either partition, cancels every tool-partition request while
+   * `watcher.held()` is true, and paces the tool partition's main-frame navigations. Optional: a driver without it leaves blocks to the runtime's own checks.
    */
   watchSite?(watcher: SiteWatcher): void
   /** Closes every window this driver opened. */
@@ -162,6 +162,12 @@ export interface SiteWatcher {
   refused(refusal: SiteRefusal): void
   /** True while the site's breaker is open. */
   held(): boolean
+  /**
+   * Waits for the site's rate budget (D28, D55). The driver calls it before each main-frame
+   * navigation in the tool partition that tool code didn't already pace through the capability
+   * API. Rejects when the navigation must not go: the breaker opened, or the driver closed.
+   */
+  pace?(): Promise<void>
 }
 
 /** The network policy for one tool run. */

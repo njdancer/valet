@@ -86,11 +86,27 @@ class ElectronPartition implements PartitionSession {
     this.ses.on('will-download', (event) => event.preventDefault())
   }
 
-  filterRequests(allow: (request: OutgoingRequest) => boolean): void {
+  filterRequests(allow: (request: OutgoingRequest) => boolean | Promise<boolean>): void {
     this.ses.webRequest.onBeforeRequest((details, callback) => {
-      callback({
-        cancel: !allow({ url: details.url, method: details.method, resourceType: details.resourceType }),
-      })
+      let decision: boolean | Promise<boolean>
+      try {
+        decision = allow({
+          url: details.url,
+          method: details.method,
+          resourceType: details.resourceType,
+          id: details.id,
+        })
+      } catch {
+        decision = false
+      }
+      if (typeof decision === 'boolean') {
+        callback({ cancel: !decision })
+        return
+      }
+      decision.then(
+        (allowed) => callback({ cancel: !allowed }),
+        () => callback({ cancel: true }),
+      )
     })
   }
 

@@ -167,6 +167,10 @@ const MAX_AUTH_REPORTS_PER_PAGE = 200
  * this only bounds a poisoned page that keeps trying.
  */
 const MAX_AUTH_ESCAPES_PER_PAGE = 50
+/** Main-frame request ids remembered for redirects; navigations don't overlap by the hundred. */
+const MAX_REMEMBERED_NAVIGATIONS = 200
+/** How long after a tool click its navigation may start and still count as already paced. */
+const CLICK_GRACE_MS = 2_000
 
 type StorageRequest = readonly { readonly origin: string; readonly keys: readonly string[] }[]
 
@@ -223,6 +227,10 @@ export class ElectronSessionDriver implements SessionDriver {
   private tool: ToolSlot | null = null
   /** The site's breaker, once the runtime has connected it (watchSite). */
   private watcher: SiteWatcher | null = null
+  /** Main-frame request ids already paced or let through, so a redirect's next hop isn't paced. */
+  private readonly navigations = new Set<number>()
+  /** Until when (epoch ms) the next main-frame navigation counts as a tool click's, already paced. */
+  private clickPacedUntil = 0
 
   constructor(
     private readonly platform: BrowserPlatform,
@@ -526,8 +534,14 @@ export class ElectronSessionDriver implements SessionDriver {
   }
 
   private toolPageOn(surface: BrowserSurface): SurfaceToolPage {
-    return new SurfaceToolPage(surface, this.options.egress, this.timing, (method, url) =>
-      this.announce(method, url),
+    return new SurfaceToolPage(
+      surface,
+      this.options.egress,
+      this.timing,
+      (method, url) => this.announce(method, url),
+      () => {
+        this.clickPacedUntil = Date.now() + CLICK_GRACE_MS
+      },
     )
   }
 
@@ -760,7 +774,7 @@ export class ElectronSessionDriver implements SessionDriver {
    * then its ceiling or its asset budget. Requests held for the breaker are not reported one by
    * one: the breaker's opening is the audit event, and a page retrying would flood the log.
    */
-  private allowToolRequest(request: OutgoingRequest): boolean {
+  private allowToolRequest(request: OutgoingRequest): boolean | Promise<boolean> {
     if (this.held()) return false
     const run = this.run
     const decision = decideToolRequest(
@@ -779,7 +793,7 @@ export class ElectronSessionDriver implements SessionDriver {
       if (run.assets >= this.assetBudget(run.policy)) reason = 'request-ceiling'
       else run.assets++
     }
-    if (reason === null) return true
+    if (reason === null) return this.paceNavigation(request)
     this.report(run, {
       method: /^[A-Z]{1,16}$/i.test(request.method) ? request.method.toUpperCase() : 'INVALID',
       target: requestTarget(request.url, reason !== 'host-not-allowed' && reason !== 'bad-url'),
@@ -787,6 +801,37 @@ export class ElectronSessionDriver implements SessionDriver {
       initiator: this.announced.has(announcementKey(request.method, request.url)) ? 'tool' : 'page',
     })
     return false
+  }
+
+  /**
+   * Holds an allowed main-frame navigation for the site's budget (D55), whoever started it: the
+   * page's own script, a form, a link. Not paced again: the next hop of a server redirect (the
+   * chain is one navigation), tool code's goto() (the runtime paced it), and the first navigation
+   * after a tool click (the runtime paced the click). Other requests follow from navigations and
+   * are not paced; the run's ceiling bounds them.
+   */
+  private paceNavigation(request: OutgoingRequest): boolean | Promise<boolean> {
+    const watcher = this.watcher
+    if (request.resourceType !== 'mainFrame' || watcher?.pace === undefined) return true
+    if (request.id !== undefined) {
+      if (this.navigations.has(request.id)) return true
+      this.navigations.add(request.id)
+      if (this.navigations.size > MAX_REMEMBERED_NAVIGATIONS) {
+        const oldest = this.navigations.values().next().value
+        if (oldest !== undefined) this.navigations.delete(oldest)
+      }
+    }
+    if (this.announced.has(announcementKey(request.method, request.url))) return true
+    if (Date.now() < this.clickPacedUntil) {
+      this.clickPacedUntil = 0
+      return true
+    }
+    return Promise.resolve()
+      .then(() => watcher.pace?.())
+      .then(
+        () => !this.held(),
+        () => false,
+      )
   }
 
   private assetBudget(policy: ToolRunPolicy): number {

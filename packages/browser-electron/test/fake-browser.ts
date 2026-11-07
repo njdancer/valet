@@ -260,7 +260,7 @@ export class FakeSurface implements BrowserSurface {
 export class FakeSession implements PartitionSession {
   userAgent: string | null = null
   hardened = 0
-  filter: ((request: OutgoingRequest) => boolean) | null = null
+  filter: ((request: OutgoingRequest) => boolean | Promise<boolean>) | null = null
   proxy: ProxyHandle | null = null
   readonly headers: [string, string][] = []
   cookies: CookieRecord[] = []
@@ -280,7 +280,7 @@ export class FakeSession implements PartitionSession {
     this.hardened++
   }
 
-  filterRequests(allow: (request: OutgoingRequest) => boolean): void {
+  filterRequests(allow: (request: OutgoingRequest) => boolean | Promise<boolean>): void {
     this.filter = allow
   }
 

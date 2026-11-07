@@ -452,23 +452,25 @@ adapter, protects the site and our standing with it.
   callId }` and `breaker-closed` audit events, are a **Contract**: on `main` a 429 is
   `blocked-by-site` and breaker changes aren't audited.
 
-**What it doesn't cover.** The budget and breaker sit in the runtime's guarded page and probe.
-The driver has neither, and core v2's `ToolRunPolicy` has no rate field, so this is a gap in the
-contract, not only unfinished adoption. None of these is paced or watched for block pages:
+**What the driver adds** ([D55](plan.md#d55-driver-level-budget-and-block-detection), the split
+design, **Enforced** as of 2026-11-07). The runtime keeps the budget and breaker; the driver
+reports to them and asks them, through `SessionDriver.watchSite`:
 
-- fetches that `evaluate()` code makes with the page's own `fetch`;
-- clicks that submit a form or navigate, and navigations the page makes itself;
-- the site's own XHRs, including Akamai's sensor POSTs;
-- the automated login inside a call, and the person's own navigation inside the login window, in
-  the auth partition. (The app's own login steps, opening the window and finishing the login,
-  run through the runtime's `runLoginStep`: they take the adapter's lock, check the breaker and
-  take a budget slot before each page load, and a block page there opens the breaker.)
+- Every main-frame and API response in both partitions, the person's login window included, is
+  checked for a block signature (a 429, or a 403 HTML page) on the site's hosts. One opens the
+  site's breaker.
+- While the breaker is open, the tool partition cancels every request, whoever made it, and a
+  login in progress ends as `blocked` at its next check.
+- The tool partition's main-frame navigations that the page starts (script, links, forms) wait on
+  the site's budget. A server redirect chain is one navigation. Tool code's `goto` and the first
+  navigation after a tool `click` were already paced by the runtime and aren't paced again.
 
-So "nothing reaches the site while the breaker is open" holds only between tool calls, and
-AC7's "fails if anything bypasses the budget" can't pass yet. The recommended fix is for the
-driver to report block signatures on navigations and API calls in both partitions to the
-runtime's breaker, and to pace main-frame navigations through the same budget
-([D55](plan.md#d55-driver-level-budget-and-block-detection), **Open**).
+**What it still doesn't cover.** API calls are not paced one by one, whoever makes them: the
+site's own XHRs (Akamai's sensor POSTs among them) follow from navigations, and pacing them would
+make page loads unlike a browser's. A burst that `evaluate()` code makes with the page's own
+`fetch` is held only by the run's request ceiling (six for Woolworths), which the driver counts
+for every API call. Navigations the auth page starts by itself, such as a form-post callback, are
+watched but not paced; the flow's own steps are.
 
 Also not yet: the breaker lives in memory, so a restart closes it; and the Woolworths defaults in
 [D28](plan.md#d28-rate-budget-defaults) are stricter than the code's (**Designed**,
