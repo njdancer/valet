@@ -27,6 +27,9 @@ import type {
   PreviewPart,
   ProbeInfo,
   ProviderStatus,
+  RemoteClientItem,
+  RemoteConsentRequest,
+  RemoteConsentTool,
   RunStats,
   RunSummary,
   RunTrace,
@@ -593,6 +596,39 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
   }
 
   let app: AppStatus = { paused: false, version: '0.1.0', demo: false }
+  /** The code the fake browser shows for the one waiting remote sign-in. */
+  const remoteCode = 'ABCD2345'
+  let remoteRequests: RemoteConsentRequest[] = [
+    {
+      id: 'cs_demo',
+      clientId: 'rcdemodemodemodemodemo',
+      clientHost: 'claude.ai',
+      clientName: 'Claude',
+      source: '203.0.113.24',
+      requestedAt: new Date(now - 40_000).toISOString(),
+      expiresAt: new Date(now + 260_000).toISOString(),
+    },
+  ]
+  const remoteTools: RemoteConsentTool[] = [
+    {
+      ref: 'woolworths.view_cart',
+      adapterId: 'woolworths',
+      adapterName: 'Woolworths',
+      tool: 'view_cart',
+      toolTitle: 'View cart',
+      sideEffect: 'read',
+    },
+    {
+      ref: 'woolworths.set_cart_quantity',
+      adapterId: 'woolworths',
+      adapterName: 'Woolworths',
+      tool: 'set_cart_quantity',
+      toolTitle: 'Set cart quantity',
+      sideEffect: 'write',
+    },
+  ]
+  let remoteClients: RemoteClientItem[] = []
+  let remoteWrong = 0
   let chosenOpPath: string | null = '/opt/homebrew/bin/op'
   let setup: SetupStatus = { completedAt: ago(10 * 24 * 60) }
   const providerAvailable = new Map<ProviderKind, boolean>([
@@ -1134,6 +1170,63 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         return clone(setup)
       },
     },
+    remote: {
+      async consents() {
+        enter('remote.consents')
+        return clone({ requests: remoteRequests, tools: remoteTools })
+      },
+      async approveConsent(code, tools) {
+        enter('remote.approveConsent', code, tools)
+        const request = remoteRequests[0]
+        if (request === undefined || code.toUpperCase().replace(/[\s-]/g, '') !== remoteCode) {
+          remoteWrong++
+          if (remoteWrong < 3) return 'wrong-code'
+          remoteRequests = []
+          remoteWrong = 0
+          emit({ type: 'remote-changed' })
+          return 'cancelled'
+        }
+        remoteRequests = remoteRequests.slice(1)
+        remoteClients = [
+          ...remoteClients,
+          {
+            id: request.clientId,
+            host: request.clientHost,
+            clientName: request.clientName,
+            registeredAt: request.requestedAt,
+            grant: { tools: [...tools], grantedAt: new Date(now).toISOString() },
+          },
+        ]
+        emit({ type: 'remote-changed' })
+        return 'approved'
+      },
+      async declineConsent(id) {
+        enter('remote.declineConsent', id)
+        remoteRequests = remoteRequests.filter((r) => r.id !== id)
+        emit({ type: 'remote-changed' })
+      },
+      async declineAllConsents() {
+        enter('remote.declineAllConsents')
+        remoteRequests = []
+        emit({ type: 'remote-changed' })
+      },
+      async clients() {
+        enter('remote.clients')
+        return clone(remoteClients)
+      },
+      async revokeClient(id) {
+        enter('remote.revokeClient', id)
+        remoteClients = remoteClients.filter((c) => c.id !== id)
+        emit({ type: 'remote-changed' })
+      },
+      async revokeAllClients() {
+        enter('remote.revokeAllClients')
+        const count = remoteClients.length
+        remoteClients = []
+        emit({ type: 'remote-changed' })
+        return count
+      },
+    },
     app: {
       async status() {
         enter('app.status')
@@ -1259,6 +1352,9 @@ const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent['type']
     'update-installed',
     'remote-state',
     'remote-tool',
+    'remote-consent',
+    'remote-revoked',
+    'remote-token-reuse',
   ],
 }
 

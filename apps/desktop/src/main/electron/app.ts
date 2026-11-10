@@ -7,7 +7,7 @@ import { dirname, join, resolve } from 'node:path'
 import { createElectronSessionDriver, hardenProcess, type ManifestOptions } from '@valet/browser-electron'
 import { messagesHelperSocketPath } from '@valet/credentials'
 import { startEndpoint } from '@valet/mcp-server'
-import { app, clipboard, dialog, protocol } from 'electron'
+import { app, clipboard, dialog, Notification, protocol } from 'electron'
 import { href } from '../../renderer/lib/routes'
 import { builtinAdapters } from '../adapters'
 import { APP_SCHEME, APP_SCHEME_PRIVILEGES, createAppSchemeHandler } from '../core/app-scheme'
@@ -247,6 +247,16 @@ async function main(): Promise<void> {
       closeConfirmation: (id) => windows.closeConfirmation(id),
       showNeedsUser: (adapterId) => windows.showNeedsUser(adapterId),
       closeNeedsUser: (adapterId) => windows.closeNeedsUser(adapterId),
+      showRemoteConsent: () => {
+        // One notification and the one screen that lists every waiting request (relay.md).
+        windows.openControlPanel(href.remote())
+        if (Notification.isSupported()) {
+          new Notification({
+            title: 'A connector wants access to Valet',
+            body: 'Type the code your browser shows. If you didn’t just add a connector, decline it.',
+          }).show()
+        }
+      },
       // Only a packaged, normal launch registers itself; a dev or demo run would register Electron.
       setLaunchAtLogin: (enabled) => {
         if (app.isPackaged && !mode.demo) app.setLoginItemSettings({ openAtLogin: enabled })

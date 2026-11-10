@@ -130,6 +130,11 @@ export class RemoteClients {
     this.newSecret = options.newSecret ?? generateToken
   }
 
+  /** Replaces everything with a saved state, e.g. once the app has read its file. Not saved again. */
+  restore(state: RemoteClientsState): void {
+    this.registrations = [...state.registrations]
+  }
+
   state(): RemoteClientsState {
     return { version: 1, registrations: [...this.registrations] }
   }

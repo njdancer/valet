@@ -6,6 +6,7 @@ import type { RemoteStatus } from './remote'
 export interface TrayRemote {
   status(): RemoteStatus
   setEnabled(enabled: boolean): Promise<void>
+  revokeAllClients(): Promise<number>
 }
 
 export interface RemoteTrayState {
@@ -14,6 +15,11 @@ export interface RemoteTrayState {
   readonly tooltip: string
   /** The kill switch, or resuming; null when remote access was never set up. */
   readonly menuItem: { readonly label: string; readonly enable: boolean } | null
+  /**
+   * "Revoke all remote clients…", the destructive one (relay.md): shown while any client is kept,
+   * and it asks before it acts. Pausing keeps clients; this deletes them.
+   */
+  readonly revokeAll: boolean
 }
 
 export function remoteTrayState(status: RemoteStatus, demo: boolean): RemoteTrayState {
@@ -30,5 +36,5 @@ export function remoteTrayState(status: RemoteStatus, demo: boolean): RemoteTray
   // the tunnel forwards. Until then remote access is set up in the control panel, not here.
   if (on) menuItem = { label: 'Pause remote access', enable: false }
   else if (status.hosts.length > 0) menuItem = { label: 'Resume remote access', enable: true }
-  return { title: words.join(' · '), tooltip, menuItem }
+  return { title: words.join(' · '), tooltip, menuItem, revokeAll: status.clients > 0 }
 }

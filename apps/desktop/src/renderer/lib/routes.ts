@@ -22,6 +22,8 @@ export type Route =
   | { readonly page: 'credentials' }
   | { readonly page: 'clients' }
   | { readonly page: 'settings' }
+  /** Remote sign-in: consent requests and remote clients. */
+  | { readonly page: 'remote' }
   | { readonly page: 'confirm'; readonly confirmationId: string }
   | { readonly page: 'needs-user'; readonly adapterId: string }
   /**
@@ -67,6 +69,7 @@ export function parseRoute(hash: string): Route {
     case 'credentials':
     case 'clients':
     case 'settings':
+    case 'remote':
       return a === undefined ? { page: head } : { page: 'not-found' }
     case 'confirm':
       return a !== undefined && b === undefined
@@ -110,6 +113,7 @@ export const href = {
   credentials: (): HashRoute => '#/credentials',
   clients: (): HashRoute => '#/clients',
   settings: (): HashRoute => '#/settings',
+  remote: (): HashRoute => '#/remote',
   confirm: (id: string): HashRoute => `#/confirm/${enc(id)}`,
   needsUser: (adapterId: string): HashRoute => `#/needs-user/${enc(adapterId)}`,
   setup: (step?: SetupStep): HashRoute => (step === undefined ? '#/setup' : `#/setup/${step}`),

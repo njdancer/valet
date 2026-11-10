@@ -106,6 +106,11 @@ export interface UiPort {
   showConfirmation(id: string): void
   closeConfirmation(id: string): void
   showNeedsUser(adapterId: string): void
+  /**
+   * A remote client asked for consent: one notification and the consent screen, never a window per
+   * request (relay.md), so a flood can't bury the screen.
+   */
+  showRemoteConsent(): void
   closeNeedsUser(adapterId: string): void
   setLaunchAtLogin(enabled: boolean): void
   quit(): void
@@ -321,9 +326,14 @@ export class AppService {
     })
     this.remote = new RemoteAccess({
       path: paths.remote,
+      clientsPath: paths.remoteClients,
       info: { name: 'valet', version: deps.version },
       now: deps.now,
-      changed: () => this.emit('app-changed'),
+      changed: () => {
+        this.emit('app-changed')
+        this.emit('remote-changed')
+      },
+      consentRequested: () => deps.ui.showRemoteConsent(),
       audit: async (event) => {
         await this.audit.append(event)
       },
@@ -1067,6 +1077,49 @@ export class AppService {
           this.emit('app-changed')
           return status
         },
+      },
+      remote: {
+        consents: async () => {
+          const view = this.remote.consentView()
+          return {
+            requests: view.requests.map((r) => ({
+              ...r,
+              requestedAt: new Date(r.requestedAt).toISOString(),
+              expiresAt: new Date(r.expiresAt).toISOString(),
+            })),
+            tools: view.tools.map((t) => {
+              const manifest = this.adapter(t.adapterId)?.definition.manifest
+              const declaration = manifest?.tools.find((d) => d.name === t.tool)
+              return {
+                ...t,
+                adapterName: manifest?.name ?? t.adapterId,
+                toolTitle: declaration?.title ?? t.tool,
+              }
+            }),
+          }
+        },
+        approveConsent: (code, tools) => this.remote.approveConsent(code, tools),
+        declineConsent: async (id) => {
+          if (!this.remote.declineConsent(id)) throw new ValetError('config', 'not-found')
+        },
+        declineAllConsents: async () => {
+          this.remote.declineAllConsents()
+        },
+        clients: async () =>
+          this.remote.remoteClients().map((c) => ({
+            id: c.id,
+            host: c.host,
+            clientName: c.clientName,
+            registeredAt: new Date(c.registeredAt).toISOString(),
+            grant:
+              c.grant === null
+                ? null
+                : { tools: c.grant.tools, grantedAt: new Date(c.grant.grantedAt).toISOString() },
+          })),
+        revokeClient: async (id) => {
+          if (!(await this.remote.revokeClient(id))) throw new ValetError('config', 'not-found')
+        },
+        revokeAllClients: () => this.remote.revokeAllClients(),
       },
       app: {
         status: async () => ({ paused: this.paused, version: deps.version, demo: deps.demo }),
