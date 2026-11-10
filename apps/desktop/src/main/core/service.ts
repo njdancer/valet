@@ -384,6 +384,7 @@ export class AppService {
       }),
       markers: this.markers,
       breakerStore: new JsonFileStore(paths.breakers),
+      budgetStore: new JsonFileStore(paths.budgets),
       clock: { now: this.deps.now },
       ...(this.deps.pacingSleep === undefined ? {} : { pacingSleep: this.deps.pacingSleep }),
       confirmationTimeoutMs: CONFIRMATION_TIMEOUT_MS,

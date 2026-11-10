@@ -55,6 +55,8 @@ export interface DataPaths {
   readonly manifests: string
   readonly audit: string
   readonly breakers: string
+  /** When each site's last request went out, so a restart keeps the pace (the runtime's own). */
+  readonly budgets: string
   readonly settings: string
   readonly clients: string
   /** One bridge config file per client (clients.ts), each mode 0600. */
@@ -84,6 +86,7 @@ export function dataPaths(dir: string): DataPaths {
     manifests: join(dir, 'approved-manifests.json'),
     audit: join(dir, 'audit.jsonl'),
     breakers: join(dir, 'breakers.json'),
+    budgets: join(dir, 'budgets.json'),
     settings: join(dir, 'settings.json'),
     clients: join(dir, 'clients.json'),
     clientConfigs: join(dir, 'client-configs'),
