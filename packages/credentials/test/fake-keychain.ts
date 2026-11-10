@@ -1,4 +1,4 @@
-// An in-memory stand-in for the valet-keychain helper: a spawner that answers its four commands
+// An in-memory stand-in for the valet-keychain helper: a spawner that answers its commands
 // with its exit codes, so the TypeScript side runs without the Keychain.
 
 import { KEYCHAIN_EXIT } from '../src/keychain-helper'
@@ -40,6 +40,12 @@ export function fakeKeychain(options: { exitCode?: (args: readonly string[]) => 
             items.delete(key(service, account))
             child.finish(0)
           }
+          return
+        case 'purge':
+          for (const name of [...items.keys()]) {
+            if (name.startsWith(`${service}\u0000`)) items.delete(name)
+          }
+          child.finish(0)
           return
         default:
           child.finish(KEYCHAIN_EXIT.usage)

@@ -21,6 +21,7 @@ export const DEFAULT_SETTINGS: Settings = {
   messagesOtpEnabled: false,
   onePasswordAccount: null,
   traceRetentionDays: DEFAULT_TRACE_RETENTION_DAYS,
+  notifications: true,
 }
 
 /** What DesktopAuth takes: an account name or UUID, trimmed, without control characters. */
@@ -47,6 +48,8 @@ const settingsSchema = z
     // Absent in files written before it existed.
     onePasswordAccount: onePasswordAccountSchema.nullable().default(null),
     traceRetentionDays: traceRetentionDaysSchema.default(DEFAULT_TRACE_RETENTION_DAYS),
+    // On unless the person turns it off: a notification only opens one of the app's own windows.
+    notifications: z.boolean().default(true),
   })
   .strict()
 
@@ -70,6 +73,7 @@ export class SettingsStore {
       ...(patch.messagesOtpEnabled === undefined ? {} : { messagesOtpEnabled: patch.messagesOtpEnabled }),
       ...(patch.onePasswordAccount === undefined ? {} : { onePasswordAccount: patch.onePasswordAccount }),
       ...(patch.traceRetentionDays === undefined ? {} : { traceRetentionDays: patch.traceRetentionDays }),
+      ...(patch.notifications === undefined ? {} : { notifications: patch.notifications }),
     }
     return this.document.update((current) => ({ ...current, ...known }))
   }

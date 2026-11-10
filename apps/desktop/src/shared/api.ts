@@ -608,6 +608,12 @@ export interface Settings {
   readonly onePasswordAccount: string | null
   /** Days a run's traces and screenshots are kept before they are removed (D27): 1 to 365, 14 by default. */
   readonly traceRetentionDays: number
+  /**
+   * System notifications when Valet needs the person: a confirmation, a sign-in handed to them, a
+   * site Valet stopped calling, a downloaded update. On by default. A notification only opens one
+   * of the app's windows; nothing is approved from it.
+   */
+  readonly notifications: boolean
 }
 
 /** What the renderer may change directly. The 1Password CLI path isn't among them. */
@@ -802,6 +808,14 @@ export interface ValetApi {
     /** Writes text to the clipboard (a sandboxed renderer can't, outside a user gesture). */
     copyText(text: string): Promise<void>
     quit(): Promise<void>
+    /**
+     * Reset or uninstall: removes Valet's Keychain items, its launch agent and login item, the site
+     * sessions and the whole data folder. The main process asks first in its own native dialog,
+     * which only the person can answer; this only asks for that dialog, and only from the control
+     * panel. Resolves false when they cancelled. On a yes the app restarts as new ('reset') or
+     * moves itself to the Trash and quits ('uninstall'), so the promise may never resolve.
+     */
+    erase(kind: 'reset' | 'uninstall'): Promise<boolean>
   }
   /** Subscribes to live-update notices. Returns the unsubscribe. */
   onEvent(listener: (event: AppEvent) => void): () => void

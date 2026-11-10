@@ -23,6 +23,8 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { dataPaths } from '../../src/main/core/constants'
 import { type Credentials, disabledOtpReader } from '../../src/main/core/credentials'
 import { DEMO_ACCOUNT, demoCredentials } from '../../src/main/core/demo'
+import type { EraseKind, EraseReport } from '../../src/main/core/erase'
+import type { AppNotification } from '../../src/main/core/notifications'
 import { builtinAdapter } from '../../src/main/core/registry'
 import { AppService, fillSelector } from '../../src/main/core/service'
 import { disabledUpdates, type UpdatesHooks, type UpdatesPort } from '../../src/main/core/updates'
@@ -50,6 +52,7 @@ async function setup(
     /** breakers.json as the runtime finds it at start. */
     breakers?: unknown
     credentials?: Credentials
+    leftovers?: readonly string[]
   } = {},
 ) {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'sa-service-'))
@@ -73,6 +76,15 @@ async function setup(
     quits: 0,
     saveTo: null as string | null,
     opChoice: null as string | null,
+    notifications: [] as AppNotification[],
+    closedNotifications: [] as string[],
+    /** What the person answers in the native erase dialog, and what they were asked. */
+    eraseAnswer: false,
+    /** Set to keep the dialog open: its promise is the person's answer. */
+    eraseDialog: null as (() => Promise<boolean>) | null,
+    eraseAsked: [] as EraseKind[],
+    browserCleared: 0,
+    erased: [] as EraseReport[],
   }
   const endpoint = {
     caller: null as ToolCaller | null,
@@ -148,7 +160,18 @@ async function setup(
       closeNeedsUser: (id) => ui.banners.push(`close ${id}`),
       setLaunchAtLogin: (on) => ui.loginItem.push(on),
       quit: () => ui.quits++,
+      notify: (notification) => ui.notifications.push(notification),
+      closeNotification: (key) => ui.closedNotifications.push(key),
+      confirmErase: async (kind) => {
+        ui.eraseAsked.push(kind)
+        return ui.eraseDialog === null ? ui.eraseAnswer : ui.eraseDialog()
+      },
+      clearBrowserData: async () => {
+        ui.browserCleared++
+      },
+      finishErase: (report) => ui.erased.push(report),
     },
+    ...(options.leftovers === undefined ? {} : { leftovers: options.leftovers }),
     emit: (event) => events.push(event),
     bridge: (configPath) => ({ command: '/repo/tsx', args: ['/repo/bridge-cli.ts', configPath] }),
     checkOp: options.checkOp ?? (async (path) => (path === '/good/op' ? path : null)),
@@ -729,6 +752,189 @@ describe('tool calls', () => {
       await new Promise((r) => setTimeout(r, 10))
     await s.api.answerConfirmation(s.ui.shownConfirmations[0] as string, false, { role: 'tray', shows: null })
     expect(await pending).toEqual({ status: 'ok', output: { added: false } })
+  })
+})
+
+describe('notifications', () => {
+  it('tells the person a confirmation is waiting, without the adapter’s or the client’s words, and takes it down once answered', async () => {
+    const s = await approved()
+    const pending = s.call('add', { item: 'milk' }, 'Claude Code', 'call_note')
+    await expect.poll(() => s.ui.notifications.length).toBe(1)
+    const [id] = s.ui.shownConfirmations
+    expect(s.ui.notifications).toEqual([
+      {
+        key: `confirmation:${id}`,
+        title: 'Valet needs your approval',
+        body: 'Shop: an agent asked for something that needs your yes. Unanswered, it is declined in 2 minutes.',
+        target: { kind: 'confirmation', id },
+      },
+    ])
+    const text = JSON.stringify(s.ui.notifications)
+    for (const untrusted of ['milk', 'Add ', 'Claude Code', 'call_note'])
+      expect(text).not.toContain(untrusted)
+    await s.api.answerConfirmation(id as string, false, { role: 'tray', shows: null })
+    await pending
+    expect(s.ui.closedNotifications).toEqual([`confirmation:${id}`])
+  })
+
+  it('stays quiet when the person turned notifications off', async () => {
+    const s = await approved()
+    await s.api.settings.set({ notifications: false })
+    const pending = s.call('add', { item: 'milk' })
+    await expect.poll(() => s.ui.shownConfirmations.length).toBe(1)
+    await s.api.answerConfirmation(s.ui.shownConfirmations[0] as string, false, { role: 'tray', shows: null })
+    await pending
+    expect(s.ui.notifications).toEqual([])
+    expect(s.ui.closedNotifications).toEqual([])
+  })
+
+  it('says nothing about a login window the person opened themselves', async () => {
+    const s = await approved()
+    await s.api.openLoginWindow('shop')
+    expect((await s.api.attention.list()).map((i) => i.kind)).toEqual(['needs-user'])
+    expect(s.ui.notifications).toEqual([])
+  })
+
+  it('tells the person when a site’s breaker opens', async () => {
+    const s = await approved()
+    s.driver.nextPage = () => {
+      const page = new FakeAuthPage()
+      page.text = ['Access Denied … Reference #18.abc']
+      return page
+    }
+    await expect(s.api.openLoginWindow('shop')).rejects.toEqual(new ValetError('login', 'blocked-by-site'))
+    await expect.poll(() => s.ui.notifications.map((n) => n.key)).toEqual(['breaker:www.shop.test'])
+    expect(s.ui.notifications[0]).toMatchObject({
+      title: 'Valet stopped calling www.shop.test',
+      target: { kind: 'panel', route: '#/adapters' },
+    })
+    expect(s.ui.notifications[0]?.body).toMatch(/^The site refused Valet\. Calls to it wait \d+ minutes?\.$/)
+  })
+
+  it('tells the person a verified update is downloaded, and how it installs', async () => {
+    let hooks: UpdatesHooks | null = null
+    const s = await setup({
+      version: '0.2.0',
+      updates: async (given) => {
+        hooks = given
+        return { ...disabledUpdates('0.2.0', 'development', false), start: () => {}, stop: () => {} }
+      },
+    })
+    ;(hooks as UpdatesHooks | null)?.downloaded('0.2.0', '0.3.0')
+    await s.api.settings.set({ autoInstallUpdates: true })
+    ;(hooks as UpdatesHooks | null)?.downloaded('0.2.0', '0.3.0')
+    expect(s.ui.notifications.map((n) => [n.key, n.title, n.body])).toEqual([
+      ['update', 'Valet 0.3.0 is downloaded', 'Turn on automatic installs in Settings to apply it.'],
+      ['update', 'Valet 0.3.0 is downloaded', 'It installs when Valet quits.'],
+    ])
+  })
+
+  it('takes its notifications down when the app stops', async () => {
+    const s = await approved()
+    const pending = s.call('add', { item: 'milk' })
+    await expect.poll(() => s.ui.notifications.length).toBe(1)
+    await s.service.stop()
+    await pending
+    expect(s.ui.closedNotifications).toEqual(s.ui.notifications.map((n) => n.key))
+  })
+})
+
+describe('reset and uninstall', () => {
+  /** Credentials that record an erase, over the demo's. */
+  function erasable(failed: readonly ('keychain-copies' | 'keychain-token' | 'messages-helper')[] = []) {
+    const erases: number[] = []
+    const credentials: Credentials = {
+      ...demoCredentials(disabledOtpReader),
+      erase: async () => {
+        erases.push(Date.now())
+        return failed
+      },
+    }
+    return { credentials, erases }
+  }
+
+  it('does nothing at all unless the person agrees in the main process’s own dialog', async () => {
+    const { credentials, erases } = erasable()
+    const s = await setup({ credentials })
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    expect(await s.api.app.erase('uninstall')).toBe(false)
+    expect(s.ui.eraseAsked).toEqual(['uninstall'])
+    expect(erases).toEqual([])
+    expect(s.ui.erased).toEqual([])
+    expect(s.driver.closed).toBe(false)
+    expect(existsSync(s.paths.audit)).toBe(true)
+    expect((await s.call('echo', { text: 'still here' })).status).toBe('ok')
+  })
+
+  it('reset: stops, removes the Keychain items, the login item, the sessions and the data, keeping the version floor', async () => {
+    const { credentials, erases } = erasable()
+    const s = await setup({ credentials })
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    await s.api.clients.add('Claude Code')
+    mkdirSync(join(s.paths.dir, 'Partitions', 'auth'), { recursive: true })
+    writeFileSync(join(s.paths.dir, 'Partitions', 'auth', 'Cookies'), 'sid')
+    expect(readdirSync(s.paths.dir)).toEqual(expect.arrayContaining(['audit.jsonl', 'approvals.json']))
+    s.ui.eraseAnswer = true
+    expect(await s.api.app.erase('reset')).toBe(true)
+    expect(erases).toHaveLength(1)
+    expect(s.driver.closed).toBe(true)
+    expect(s.endpoint.closes).toBe(1)
+    expect(s.ui.loginItem).toEqual([false])
+    expect(s.ui.browserCleared).toBe(1)
+    expect(readdirSync(s.paths.dir)).toEqual(['versions.json'])
+    expect(s.ui.erased).toEqual([{ kind: 'reset', failed: [] }])
+  })
+
+  it('uninstall: removes the whole data folder and the leftovers it was given', async () => {
+    const { credentials } = erasable()
+    const dir = mkdtempSync(join(tmpdir(), 'sa-service-'))
+    dirs.push(dir)
+    const helperDir = join(dir, 'support', 'me.dncr.valet.messages-helper')
+    mkdirSync(helperDir, { recursive: true })
+    writeFileSync(join(helperDir, 'helper.sock'), '')
+    const s = await setup({ credentials, dir, leftovers: [helperDir] })
+    s.ui.eraseAnswer = true
+    expect(await s.api.app.erase('uninstall')).toBe(true)
+    expect(existsSync(s.paths.dir)).toBe(false)
+    expect(existsSync(helperDir)).toBe(false)
+    expect(existsSync(join(dir, 'support'))).toBe(true)
+    expect(s.ui.erased).toEqual([{ kind: 'uninstall', failed: [] }])
+  })
+
+  it('declines what was waiting and cancels what was running before anything is removed', async () => {
+    const { credentials } = erasable()
+    const s = await setup({ credentials })
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    const pending = s.call('add', { item: 'milk' })
+    await expect.poll(() => s.ui.shownConfirmations.length).toBe(1)
+    s.ui.eraseAnswer = true
+    await s.api.app.erase('reset')
+    expect((await pending).status).not.toBe('ok')
+    expect(s.ui.closedConfirmations).toEqual(s.ui.shownConfirmations)
+  })
+
+  it('finishes even when a Keychain item couldn’t be removed, and reports which', async () => {
+    const { credentials } = erasable(['keychain-copies'])
+    const s = await setup({ credentials })
+    s.ui.eraseAnswer = true
+    await s.api.app.erase('uninstall')
+    expect(s.ui.erased).toEqual([{ kind: 'uninstall', failed: ['keychain-copies'] }])
+    expect(existsSync(s.paths.dir)).toBe(false)
+  })
+
+  it('refuses a second erase while one is waiting for its answer', async () => {
+    const { credentials } = erasable()
+    const s = await setup({ credentials })
+    let answer: (yes: boolean) => void = () => {}
+    s.ui.eraseDialog = () =>
+      new Promise<boolean>((resolve) => {
+        answer = resolve
+      })
+    const first = s.api.app.erase('reset')
+    await expect(s.api.app.erase('uninstall')).rejects.toBeInstanceOf(ValetError)
+    answer(false)
+    expect(await first).toBe(false)
+    expect(s.ui.eraseAsked).toEqual(['reset'])
   })
 })
 

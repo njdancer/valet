@@ -614,6 +614,118 @@ describe('realCredentials with the native helpers', () => {
   })
 })
 
+describe('erasing for a reset or an uninstall', () => {
+  const HELPER = '/Applications/Valet.app/Contents/MacOS/valet-keychain'
+  const MESSAGES_HELPER = '/Applications/Valet.app/Contents/MacOS/valet-messages-helper'
+  const TOKEN_KEY = 'valet\u0000onepassword-service-account'
+
+  function setup(
+    options: {
+      ownsToken?: boolean
+      status?: { code: number; stdout?: string }
+      unregister?: number
+      keychainExit?: (args: readonly string[]) => number | undefined
+    } = {},
+  ) {
+    const keychain = fakeKeychain(
+      options.keychainExit === undefined ? {} : { exitCode: options.keychainExit },
+    )
+    // The Messages helper answers here; everything else is the fake Keychain.
+    const helper = spawner({
+      [`${MESSAGES_HELPER} status`]: options.status ?? { code: 0, stdout: 'enabled\n' },
+      [`${MESSAGES_HELPER} unregister`]: { code: options.unregister ?? 0 },
+    })
+    const spawn: Spawner = (command, args, spawnOptions) =>
+      command === MESSAGES_HELPER
+        ? helper.spawn(command, args, spawnOptions)
+        : keychain.spawner(command, args, spawnOptions)
+    const credentials = realCredentials({
+      files: files({}),
+      spawner: spawn,
+      timers,
+      uid: UID,
+      groups: GROUPS,
+      serviceAccountReady: async () => true,
+      keychainHelper: HELPER,
+      copyService: 'valet.dev.copy',
+      ...(options.ownsToken === undefined ? {} : { ownsToken: options.ownsToken }),
+      messagesHelper: { binary: MESSAGES_HELPER, socketPath: '/tmp/helper.sock' },
+    })
+    for (const name of ['valet.dev.copy\u0000a#password', 'valet.dev.copy\u0000orphan#username']) {
+      keychain.items.set(name, { secret: Buffer.from('pw'), comment: '' })
+    }
+    keychain.items.set('valet.copy\u0000release#password', { secret: Buffer.from('pw'), comment: '' })
+    keychain.items.set(TOKEN_KEY, { secret: Buffer.from('sa'), comment: '' })
+    return { keychain, credentials, helperRan: helper.ran }
+  }
+
+  it('removes every copy of this build’s, known to a grant or not, and unregisters the Messages agent', async () => {
+    const { keychain, credentials, helperRan } = setup()
+    expect(await credentials.erase()).toEqual([])
+    // The release build's copies and the shared token are another build's: a dev erase leaves them.
+    expect([...keychain.items.keys()].sort()).toEqual([TOKEN_KEY, 'valet.copy\u0000release#password'].sort())
+    expect(helperRan.map((r) => r.args[0])).toEqual(['status', 'unregister'])
+    // Nothing was read to do it: no Keychain prompt for a secret.
+    expect(keychain.calls.map((c) => c.args[0])).toEqual(['purge'])
+    expect(credentials.otpReader()).toBe(disabledOtpReader)
+  })
+
+  it('removes the service-account token too when this build owns it', async () => {
+    const { keychain, credentials } = setup({ ownsToken: true })
+    expect(await credentials.erase()).toEqual([])
+    expect(keychain.items.has(TOKEN_KEY)).toBe(false)
+    expect(keychain.calls.map((c) => c.args.slice(0, 3))).toEqual([
+      ['purge', 'valet.dev.copy'],
+      ['delete', 'valet', 'onepassword-service-account'],
+    ])
+  })
+
+  it('leaves an agent that was never registered alone', async () => {
+    const { credentials, helperRan } = setup({ status: { code: 0, stdout: 'not-registered\n' } })
+    expect(await credentials.erase()).toEqual([])
+    expect(helperRan.map((r) => r.args[0])).toEqual(['status'])
+  })
+
+  it('tries every part, and names the ones that failed', async () => {
+    const { keychain, credentials } = setup({ ownsToken: true, unregister: 1, keychainExit: () => 1 })
+    expect(await credentials.erase()).toEqual(['keychain-copies', 'keychain-token', 'messages-helper'])
+    expect(keychain.calls.map((c) => c.args[0])).toEqual(['purge', 'delete'])
+    const unknown = setup({ status: { code: 1 } })
+    expect(await unknown.credentials.erase()).toEqual(['messages-helper'])
+    expect(unknown.helperRan.map((r) => r.args[0])).toEqual(['status'])
+  })
+
+  it('deletes the token with security when the build has no helper, and a missing item is fine', async () => {
+    const run = (code: number) => {
+      const s = spawner({ '/usr/bin/security delete-generic-password': { code } })
+      const credentials = realCredentials({
+        files: files({}),
+        spawner: s.spawn,
+        timers,
+        uid: UID,
+        groups: GROUPS,
+        serviceAccountReady: async () => true,
+        ownsToken: true,
+      })
+      return { erased: credentials.erase(), ran: s.ran }
+    }
+    const done = run(0)
+    expect(await done.erased).toEqual([])
+    expect(done.ran).toEqual([
+      {
+        command: '/usr/bin/security',
+        args: ['delete-generic-password', '-s', 'valet', '-a', 'onepassword-service-account'],
+      },
+    ])
+    expect(await run(44).erased).toEqual([])
+    expect(await run(1).erased).toEqual(['keychain-token'])
+  })
+
+  it('the demo has nothing in the Keychain or launchd to remove', async () => {
+    expect(await demoCredentials(disabledOtpReader).erase()).toEqual([])
+  })
+})
+
 describe('the demo site’s saved ports', () => {
   it('reads two distinct unprivileged ports back', () => {
     expect(savedDemoPorts('{"port":50123,"authPort":50124}')).toEqual({ port: 50123, authPort: 50124 })

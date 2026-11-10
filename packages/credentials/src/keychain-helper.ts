@@ -109,6 +109,17 @@ export class KeychainHelper {
     succeeded(outcome).fill(0)
   }
 
+  /**
+   * Removes every item of one of Valet's services, whatever its account, for an uninstall or a
+   * reset: it doesn't depend on the app still knowing what it stored. Nothing there is not an error.
+   */
+  async purge(service: string): Promise<void> {
+    if (!isKeychainService(service)) throw new CredentialError('not-found')
+    const outcome = await this.#run(['purge', service], 1024)
+    if (outcome.kind === 'exited' && outcome.code === KEYCHAIN_EXIT.notFound) return
+    succeeded(outcome).fill(0)
+  }
+
   #run(args: readonly string[], maxStdoutBytes: number, input?: Buffer): Promise<ProcessOutcome> {
     const { helperPath, spawner, timers, timeoutMs } = this.#options
     return runProcess(spawner, helperPath, args, {

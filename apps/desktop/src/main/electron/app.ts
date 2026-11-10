@@ -1,17 +1,23 @@
 // The Electron main process: decides the launch mode before ready, takes the single-instance lock,
 // builds the service with Electron's ports, and puts the app in the menu bar.
 
+import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
-import { createElectronSessionDriver, hardenProcess, type ManifestOptions } from '@valet/browser-electron'
+import {
+  createElectronSessionDriver,
+  hardenProcess,
+  type ManifestOptions,
+  partitionName,
+} from '@valet/browser-electron'
 import { messagesHelperSocketPath } from '@valet/credentials'
 import { startEndpoint } from '@valet/mcp-server'
-import { app, clipboard, dialog, protocol } from 'electron'
+import { app, clipboard, dialog, protocol, session, shell } from 'electron'
 import { href } from '../../renderer/lib/routes'
 import { builtinAdapters } from '../adapters'
 import { APP_SCHEME, APP_SCHEME_PRIVILEGES, createAppSchemeHandler } from '../core/app-scheme'
-import { dataPaths, nativeNames } from '../core/constants'
+import { dataPaths, MCP_SERVER_NAME, nativeNames } from '../core/constants'
 import { checkOpBinary, defaultOpCheckDeps, realCredentials } from '../core/credentials'
 import {
   afterCrash,
@@ -19,12 +25,21 @@ import {
   type DiagnosticsLog,
   processGoneLine,
 } from '../core/diagnostics-log'
+import {
+  appBundlePath,
+  type EraseReport,
+  eraseDialog,
+  eraseFailedDetail,
+  leftoverPaths,
+  sweepCommand,
+} from '../core/erase'
 import { DEV_DATA_NAME, demoResolverRules, launchMode, rendererBase, userDataDir } from '../core/launch'
 import { AppService } from '../core/service'
 import type { BridgeCommand } from '../core/snippets'
 import type { DemoSite } from './demo'
 import { launchRefused } from './guard'
 import { broadcast, registerIpc } from './ipc'
+import { systemNotifications } from './notifications'
 import { utilityToolProcess } from './tool-process'
 import { type AppTray, createTray } from './tray'
 import { bundleSignature, electronUpdates } from './updates'
@@ -129,6 +144,51 @@ function nativeHelper(name: string): string | null {
   return existsSync(path) ? path : null
 }
 
+/**
+ * The last step of a reset or an uninstall, once the service has erased everything: say what
+ * couldn't be removed, then restart as new, or move the app to the Trash and quit. app.exit skips
+ * will-quit, whose work (stopping the service) the erase has already done.
+ */
+async function finishErase(report: EraseReport, windows: AppWindows, userData: string): Promise<void> {
+  windows.closeAll()
+  const failed = eraseFailedDetail(report)
+  if (failed !== null) {
+    await dialog
+      .showMessageBox({
+        type: 'warning',
+        message:
+          report.kind === 'reset' ? 'Valet was reset, with exceptions' : 'Valet was erased, with exceptions',
+        detail: failed,
+        buttons: ['OK'],
+      })
+      .catch(() => undefined)
+  }
+  if (report.kind === 'reset') {
+    log(`reset: data erased${report.failed.length === 0 ? '' : ` (failed: ${report.failed.join(', ')})`}`)
+    app.relaunch()
+    app.exit(0)
+    return
+  }
+  // Nothing more is written to the data folder, which the sweep below removes for good.
+  diagnostics = null
+  const bundle = app.isPackaged ? appBundlePath(process.execPath) : null
+  if (bundle !== null) await shell.trashItem(bundle).catch(() => undefined)
+  const sweep = sweepCommand(process.pid, userData)
+  if (sweep !== null) {
+    try {
+      spawn(sweep.command, [...sweep.args], {
+        detached: true,
+        stdio: 'ignore',
+        env: { PATH: '/usr/bin:/bin' },
+        cwd: '/',
+      }).unref()
+    } catch {
+      // The app's own delete has run; only Chromium's last few files stay behind.
+    }
+  }
+  app.exit(0)
+}
+
 async function main(): Promise<void> {
   // A menu-bar app: closing every window doesn't quit.
   app.on('window-all-closed', () => {})
@@ -186,6 +246,8 @@ async function main(): Promise<void> {
     ...opDeps,
     keychainHelper: nativeHelper('valet-keychain'),
     copyService: names.copyService,
+    // The token's Keychain item is shared by every build, so only the release app's erase removes it.
+    ownsToken: app.isPackaged && app.getName() === 'valet',
     // Only a packaged app has the launch agent's plist for SMAppService; a dev build reads Messages
     // in process, with Full Disk Access on the app that runs it.
     messagesHelper:
@@ -194,6 +256,13 @@ async function main(): Promise<void> {
         : { binary: messagesBinary, socketPath: messagesHelperSocketPath(names.messagesHelperLabel) },
   }
   const signature = await bundleSignature()
+  const notifications = systemNotifications((target) => {
+    // A click only ever opens the window the notification was about, if it is still waiting.
+    if (target.kind === 'confirmation') windows.focusConfirmation(target.id)
+    else if (target.kind === 'needs-user') {
+      if (service?.hasHandoff(target.adapterId)) void service.api.openLoginWindow(target.adapterId)
+    } else windows.openControlPanel(target.route)
+  }, mode.e2e)
 
   service = new AppService({
     paths,
@@ -252,7 +321,48 @@ async function main(): Promise<void> {
         if (app.isPackaged && !mode.demo) app.setLoginItemSettings({ openAtLogin: enabled })
       },
       quit: () => app.quit(),
+      notify: (notification) => notifications.show(notification),
+      closeNotification: (key) => notifications.close(key),
+      confirmErase: async (kind) => {
+        const wording = eraseDialog(kind, {
+          demo: mode.demo,
+          serverName: mode.demo ? `${MCP_SERVER_NAME}-demo` : MCP_SERVER_NAME,
+        })
+        // A menu-bar app has no Dock icon to bring it forward: without this the dialog can open
+        // behind whatever the person is using.
+        app.focus({ steal: true })
+        // Cancel is the default and the Escape key: a stray Return never erases.
+        const result = await dialog.showMessageBox({
+          type: 'warning',
+          message: wording.message,
+          detail: wording.detail,
+          buttons: ['Cancel', wording.confirm],
+          defaultId: 0,
+          cancelId: 0,
+        })
+        if (result.response !== 1) return false
+        // No window is left to ask for anything while the data goes.
+        windows.closeAll()
+        return true
+      },
+      clearBrowserData: async () => {
+        const sessions = adapters.flatMap((a) =>
+          (['auth', 'tool'] as const).map((role) =>
+            session.fromPartition(partitionName(role, a.definition.manifest.id)),
+          ),
+        )
+        for (const s of [...sessions, session.defaultSession]) {
+          await s.clearStorageData().catch(() => undefined)
+          await s.clearCache().catch(() => undefined)
+        }
+      },
+      finishErase: (report) => void finishErase(report, windows, app.getPath('userData')),
     },
+    // Only a packaged, normal launch has caches under its own bundle id and a helper's folder.
+    leftovers:
+      app.isPackaged && !mode.demo
+        ? [...leftoverPaths(names.bundleId), dirname(messagesHelperSocketPath(names.messagesHelperLabel))]
+        : [],
     emit: (event) => {
       broadcast(windows, event)
       if (event.type === 'app-changed') tray?.refresh()
