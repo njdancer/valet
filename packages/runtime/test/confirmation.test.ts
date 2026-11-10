@@ -184,13 +184,13 @@ describe('irreversible tools', () => {
     expect(await host.call({ ...order, callId: 'call-2' })).toEqual({ status: 'declined' })
   })
 
-  it('gives the person five minutes by default', async () => {
+  it('gives the person two minutes by default, then declines (D19)', async () => {
     const { host, prompt, clock } = fixture(irreversible)
     prompt.answer = 'hang'
 
     const asking = host.call(order)
     await flush()
-    await clock.advance(5 * 60_000 - 1)
+    await clock.advance(2 * 60_000 - 1)
     expect(prompt.signals[0]?.aborted).toBe(false)
     await clock.advance(1)
     expect(await asking).toEqual({ status: 'declined' })

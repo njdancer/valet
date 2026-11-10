@@ -65,7 +65,13 @@ reads the trolley and writes, so the timeout problem below is unchanged.
    stretch goal) removes the thirty searches and risks nothing with the site. Shortening the gap
    is the one change the live probe argues against.
 
-## The jitter was tried, and can't land yet
+## The jitter was tried, and couldn't land at first
+
+Since this section was written Nick answered the login part of D50 (2026-11-10): a call that has
+to log in first answers within seconds, saying a login is running and when to call again, and the
+login finishes in the background. That is built, so a login no longer counts against the 2 minutes
+and what follows no longer blocks the jitter or the per-minute cap. It is kept as the record of
+why.
 
 D28 asks for upward-only jitter of 0 to 50% on the gap, and the runtime has none. It was built
 with this benchmark and taken out again, because the desktop app's end-to-end suite failed with

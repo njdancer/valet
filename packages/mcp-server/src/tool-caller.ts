@@ -54,6 +54,8 @@ export type CallOutcome =
    * The site refused or rate-limited us, or our own rate budget or circuit breaker held the call
    * back (errorClass blocked-by-site or rate-limited). retryAfterMs is when to try again. Stage
    * tool-run with rate-limited is our own hourly cap for the site: the call was never started.
+   * Stage login with login-in-progress: the call started a login, which is running on without it;
+   * the tool did nothing else and the call is to be made again.
    *
    * Or, with errorClass busy, the call could not get its turn behind `ahead` earlier calls in the
    * time the runtime allows and was never started: nothing was sent, so it is safe to make again.

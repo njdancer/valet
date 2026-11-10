@@ -113,7 +113,8 @@ test('the grant sheet, then the approved adapter', async () => {
 
 test('the run trace of the call that logged in, and the audit log verified', async () => {
   const runs = await control.evaluate(() => window.valet?.runs.list())
-  const login = runs?.find((r) => r.tool === 'add_to_cart')
+  // Newest first: the earliest add_to_cart is the one whose login the trace shows.
+  const login = runs?.findLast((r) => r.tool === 'add_to_cart')
   await route(`#/activity/${login?.callId ?? ''}`)
   await expect(control.getByText('declarative steps, no adapter code')).toBeVisible()
   await shot(control, 'run-trace')

@@ -185,8 +185,34 @@ export interface ToolResult {
   readonly raw: string
 }
 
-/** Calls a tool; a protocol-level error (an unknown tool, say) comes back as an error result too. */
+/**
+ * Calls a tool as the server's instructions tell an agent to. A call that has to log in first is
+ * answered early (D50): "logging in, call it again in N seconds". This waits and calls again, also
+ * through "earlier calls are still running" while the login holds the adapter's turn, and returns
+ * the first result that is neither. A call that never started a login is made once.
+ */
 export async function callTool(
+  client: McpClient,
+  name: string,
+  args: Record<string, unknown>,
+  timeoutMs = 150_000,
+): Promise<ToolResult> {
+  const deadline = Date.now() + timeoutMs
+  let result = await callToolOnce(client, name, args, timeoutMs)
+  if (!LOGGING_IN.test(result.text)) return result
+  while ((LOGGING_IN.test(result.text) || BUSY.test(result.text)) && Date.now() < deadline) {
+    const seconds = Number(/again in (\d+) seconds/.exec(result.text)?.[1] ?? 10)
+    await new Promise((resolve) => setTimeout(resolve, Math.min(seconds, 30) * 1000))
+    result = await callToolOnce(client, name, args, timeoutMs)
+  }
+  return result
+}
+
+const LOGGING_IN = /stage login: login-in-progress/
+const BUSY = /stage tool-run: busy/
+
+/** One call; a protocol-level error (an unknown tool, say) comes back as an error result too. */
+export async function callToolOnce(
   client: McpClient,
   name: string,
   args: Record<string, unknown>,
