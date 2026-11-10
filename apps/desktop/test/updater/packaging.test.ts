@@ -323,6 +323,82 @@ describe('a release build refuses to be built weaker', () => {
   })
 })
 
+/** A release dry run's environment, as scripts/release.mjs --dry-run sets it. */
+const DRY_RUN_ENV: BuildEnv = {
+  VALET_RELEASE: '1',
+  VALET_RELEASE_DRY_RUN: '1',
+  VALET_UPDATE_URL: 'https://updates.example.com/mac/',
+  CSC_IDENTITY_AUTO_DISCOVERY: 'false',
+}
+
+describe('a release dry run', () => {
+  const refuses = (env: BuildEnv, message: string | RegExp) => {
+    expect(() => config(env)).toThrow(BuildConfigError)
+    expect(() => config(env)).toThrow(message)
+  }
+
+  it('is the release app, signed ad hoc with the same fuses and entitlements, never notarised', () => {
+    const c = config(DRY_RUN_ENV)
+    const release = config(RELEASE_ENV)
+    expect(c.appId).toBe(RELEASE_APP_ID)
+    expect(c.productName).toBe(RELEASE_PRODUCT_NAME)
+    expect(c.extraMetadata).toEqual(release.extraMetadata)
+    expect(c.mac.identity).toBe('-')
+    expect(c.mac.sign).toBeUndefined()
+    expect(c.mac.notarize).toBe(false)
+    expect(c.forceCodeSigning).toBe(true)
+    expect(c.electronFuses).toEqual(release.electronFuses)
+    expect(c.mac.entitlements).toBe(release.mac.entitlements)
+    expect(c.mac.entitlementsInherit).toBe(release.mac.entitlementsInherit)
+    expect(c.mac.target).toEqual(release.mac.target)
+    expect(c.mac.artifactName).toBe(release.mac.artifactName)
+    expect(c.mac.type).toBe('distribution')
+    expect(c.publish).toEqual(release.publish)
+    expect(c.files).toEqual(release.files)
+    expect(c.extraFiles).toEqual(release.extraFiles)
+    const binaries = [
+      'Contents/MacOS/valet-bridge',
+      'Contents/MacOS/valet-keychain',
+      'Contents/MacOS/valet-messages-helper',
+    ]
+    expect(c.mac.binaries).toEqual(binaries)
+    expect(release.mac.binaries).toEqual(binaries)
+    expect(createBuilderConfig(DRY_RUN_ENV, DEPS).mac?.binaries).toEqual(release.mac.binaries)
+  })
+
+  it('takes no signing identity, Team ID or notarisation credentials', () => {
+    for (const [name, value] of Object.entries({
+      CSC_NAME: 'Example Person (ABCDE12345)',
+      CSC_LINK: '/tmp/cert.p12',
+      VALET_TEAM_ID: 'ABCDE12345',
+      APPLE_KEYCHAIN_PROFILE: 'valet-notary',
+      APPLE_API_KEY: '/tmp/key.p8',
+      APPLE_API_KEY_ID: 'ABC123',
+      APPLE_API_ISSUER: 'issuer',
+      APPLE_TEAM_ID: 'ABCDE12345',
+    })) {
+      expect(() => config({ ...DRY_RUN_ENV, [name]: value }), name).toThrow(BuildConfigError)
+    }
+    refuses({ ...DRY_RUN_ENV, APPLE_ID: 'person@example.com' }, 'APPLE_ID')
+  })
+
+  it('still needs the release feed, an out/main built for it, and the bridge', () => {
+    refuses({ ...DRY_RUN_ENV, VALET_UPDATE_URL: undefined }, 'VALET_UPDATE_URL')
+    refuses({ ...DRY_RUN_ENV, VALET_UPDATE_URL: 'http://127.0.0.1:4555/' }, 'VALET_UPDATE_URL')
+    const smoke = { ...DEPS, readMainBundle: () => `${RELEASE_BUNDLE}${SMOKE_BUILD_MARKER}` }
+    expect(() => createBuilderConfig(DRY_RUN_ENV, smoke)).toThrow(/smoke build/)
+    expect(() => createBuilderConfig(DRY_RUN_ENV, { ...DEPS, bridgeBuilt: () => false })).toThrow(/bridge/)
+  })
+
+  it('is only a dry run of a release, and the flag is 1 or unset', () => {
+    refuses({ VALET_RELEASE_DRY_RUN: '1' }, 'VALET_RELEASE=1')
+    for (const flag of ['true', 'yes', '2']) {
+      refuses({ ...DRY_RUN_ENV, VALET_RELEASE_DRY_RUN: flag }, 'VALET_RELEASE_DRY_RUN')
+    }
+    expect(config({ ...RELEASE_ENV, VALET_RELEASE_DRY_RUN: '0' }).mac.notarize).toBe(true)
+  })
+})
+
 describe('a development build', () => {
   it('has its own bundle ID and name, so it shares no Keychain items or userData with release', () => {
     const c = config({})

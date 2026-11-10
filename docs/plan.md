@@ -1488,6 +1488,8 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 - Recommendation: R2 with the generic provider until the repo is public, then GitHub Releases.
   The feed only serves signed builds; the updater verifies the signature.
 - Blocks: M4 (auto-update); M3 needs only a DMG.
+- The release command (`pnpm release`) builds, signs, notarises and stages the feed, but its
+  upload step waits on this: until D23 is answered, a real release must be run with `--no-publish`.
 
 ### D24. Bot-detection posture
 

@@ -17,7 +17,8 @@
     "demo": "pnpm --filter @valet/desktop demo",
     "test:e2e": "pnpm --filter @valet/desktop test:e2e",
     "package:smoke": "pnpm --filter @valet/desktop package:smoke",
-    "valet:verify-audit": "tsx packages/runtime/src/verify-audit-cli.ts"
+    "valet:verify-audit": "tsx packages/runtime/src/verify-audit-cli.ts",
+    "release": "tsx apps/desktop/scripts/release.mjs"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.6",

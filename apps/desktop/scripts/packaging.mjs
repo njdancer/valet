@@ -102,3 +102,43 @@ export function plist(path) {
     execFileSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', path], { encoding: 'utf8' }),
   )
 }
+
+export const FUSE_SENTINEL = 'dL7pKGdnNz796PbbjQWNKmHXBZaB9tsX'
+// @electron/fuses 1.8.0's names, in wire order. Electron 44's wire is longer; extra ones print as fuseN.
+export const FUSE_NAMES = [
+  'RunAsNode',
+  'EnableCookieEncryption',
+  'EnableNodeOptionsEnvironmentVariable',
+  'EnableNodeCliInspectArguments',
+  'EnableEmbeddedAsarIntegrityValidation',
+  'OnlyLoadAppFromAsar',
+  'LoadBrowserProcessSpecificV8Snapshot',
+  'GrantFileProtocolExtraPrivileges',
+]
+/** electron-builder.config.ts's ELECTRON_FUSES, by wire name (kept equal by hand: this is a .mjs). */
+export const EXPECTED_FUSES = {
+  RunAsNode: 'off',
+  EnableCookieEncryption: 'on',
+  EnableNodeOptionsEnvironmentVariable: 'off',
+  EnableNodeCliInspectArguments: 'off',
+  EnableEmbeddedAsarIntegrityValidation: 'on',
+  OnlyLoadAppFromAsar: 'on',
+  LoadBrowserProcessSpecificV8Snapshot: 'off',
+  GrantFileProtocolExtraPrivileges: 'off',
+}
+
+/** The fuse wire as @electron/fuses reads it: sentinel, version, length, then one byte per fuse. */
+export function readFuses(app) {
+  const binary = readFileSync(
+    join(app, 'Contents', 'Frameworks', 'Electron Framework.framework', 'Electron Framework'),
+  )
+  const at = binary.indexOf(FUSE_SENTINEL)
+  if (at === -1) throw new Error('no fuse sentinel')
+  const wire = at + FUSE_SENTINEL.length
+  const states = { 48: 'off', 49: 'on', 114: 'removed' }
+  const result = { version: binary[wire] }
+  for (let i = 0; i < binary[wire + 1]; i++) {
+    result[FUSE_NAMES[i] ?? `fuse${i}`] = states[binary[wire + 2 + i]] ?? 'unknown'
+  }
+  return result
+}

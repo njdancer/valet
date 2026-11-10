@@ -79,9 +79,10 @@ function snapshot(dir) {
 }
 
 /** Every file the packaged app must carry, by pattern, and nothing else. */
-const ASAR_ALLOWED = [
+export const ASAR_ALLOWED = [
   /^package\.json$/,
   /^out\/main\/index\.js$/,
+  /^out\/main\/tool-process\.js$/,
   /^out\/main\/chunks\/[\w-]+\.js$/,
   /^out\/preload\/index\.cjs$/,
   /^out\/renderer\/(index|tray)\.html$/,
@@ -217,14 +218,14 @@ async function launchReal(app, home, userData) {
 }
 
 /** How long a refused launch may take to exit. */
-const REFUSE_TIMEOUT_MS = 10_000
+export const REFUSE_TIMEOUT_MS = 10_000
 
 /**
  * Launches the packaged app with argv or an environment it must refuse: it must exit with status 64
  * within REFUSE_TIMEOUT_MS, show no page of the app, and write none of the app's data. Whether a
  * DevTools listener came up first (Chromium parses its switches before main runs) is recorded.
  */
-async function launchRefused(app, home, args, extraEnv = {}) {
+export async function launchRefused(app, home, args, extraEnv = {}, { userDataName = 'Valet Dev' } = {}) {
   const executable = join(
     app,
     'Contents',
@@ -250,7 +251,7 @@ async function launchRefused(app, home, args, extraEnv = {}) {
       done({ code, signal, timedOut: false })
     })
   })
-  const userData = join(home, 'Library', 'Application Support', 'Valet Dev')
+  const userData = join(home, 'Library', 'Application Support', userDataName)
   const written = existsSync(userData)
     ? readdirSync(userData).filter((name) =>
         ['audit.jsonl', 'bridge.json', 'versions.json', 'settings.json', SMOKE_REPORT_FILE].includes(name),
