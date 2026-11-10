@@ -82,6 +82,7 @@ function snapshot(dir) {
 export const ASAR_ALLOWED = [
   /^package\.json$/,
   /^out\/main\/index\.js$/,
+  /^out\/main\/tool-process\.js$/,
   /^out\/main\/chunks\/[\w-]+\.js$/,
   /^out\/preload\/index\.cjs$/,
   /^out\/renderer\/(index|tray)\.html$/,
