@@ -195,7 +195,9 @@ describe('the adapter page', () => {
     expect(hero.textContent).toContain('…”')
     // Every place the claim appears, it is inside the attributed, capped wrapper.
     const shown = [...document.querySelectorAll('.adapter-text')]
-    expect(shown.length).toBe(1 + woolworths.tools.length + woolworths.secretRequests.length)
+    // The store setting adds three more of the adapter's texts: its description, and the chosen
+    // store's name and address.
+    expect(shown.length).toBe(1 + woolworths.tools.length + woolworths.secretRequests.length + 3)
     for (const el of shown) expect((el.textContent ?? '').length).toBeLessThan(320)
     const outside = [...document.querySelectorAll('body *')].filter(
       (el) =>

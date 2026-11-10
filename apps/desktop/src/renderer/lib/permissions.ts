@@ -78,6 +78,7 @@ export function addsPermissions(diff: PermissionDiff): boolean {
     diff.authSteps.added.length > 0 ||
     removedSafeguards(diff) > 0 ||
     diff.messagesSources.added.length > 0 ||
+    diff.settings.added.length > 0 ||
     (diff.limits !== null && limitsLoosened(diff.limits.before, diff.limits.after)) ||
     probeChanged(diff)
   )
@@ -214,6 +215,7 @@ export function additionBadges(diff: PermissionDiff): AdditionBadge[] {
     ),
     ...badge(tools.filter((t) => t.sideEffect === 'write').length, 'write tool', 'write tools', 'write'),
     ...badge(tools.filter((t) => t.sideEffect === 'read').length, 'read tool', 'read tools', 'read'),
+    ...badge(diff.settings.added.length, 'setting', 'settings', 'write'),
     ...badge(
       requests.filter((r) => r.purpose === 'irreversible').length,
       'irreversible path',

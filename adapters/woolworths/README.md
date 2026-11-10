@@ -46,10 +46,10 @@ notices }`. Each item is `{ stockcode, name, quantity, price, lineTotal, availab
   `notices` are the site's own cart messages, such as a minimum spend, then the adapter's.
 - **`add_to_cart { stockcode, quantity = 1 }`** reads the current quantity and sets
   current + quantity, because the update endpoint sets absolute quantities. It refuses to go over
-  50 on one line, makes no write if the call is cancelled after the read, and makes no write if
+  20 on one line (D54), makes no write if the call is cancelled after the read, and makes no write if
   the trolley it read isn't complete (below), since the write could shrink a line it can't see
   (`tool-run` / `site-changed`).
-- **`set_cart_quantity { stockcode, quantity 0..50 }`** and **`remove_from_cart { stockcode }`**
+- **`set_cart_quantity { stockcode, quantity 0..20 }`** and **`remove_from_cart { stockcode }`**
   make one write each.
 
 ### What the write tools report
@@ -58,8 +58,8 @@ Every write returns `{ stockcode, quantity, confirmed, cart, notices }`, plus `r
 (and `previousQuantity` for `add_to_cart`), or `removed` for `remove_from_cart`:
 
 - When the reply is a trolley, `quantity` is the line's quantity **in that trolley**, not the one
-  asked for, and `confirmed` is true. The site clamps to its own supply limits (often 36), so
-  `set_cart_quantity { quantity: 50 }` can return `quantity: 36`; a notice then says the two
+  asked for, and `confirmed` is true. The site clamps to its own supply limits, so
+  `set_cart_quantity { quantity: 20 }` can return `quantity: 12`; a notice then says the two
   differ. A line missing from a complete reply counts as 0. `removed` is `quantity === 0`.
 - When the reply isn't a trolley, `quantity`, `cart` and `removed` are null, `confirmed` is false,
   and a notice says to call `get_cart`. The write may or may not have happened. The tools don't
@@ -99,7 +99,7 @@ Tools throw, never a raw error or a result that describes the failure:
 | Other non-2xx, or `fetch` threw             | `tool-run` / `unavailable`                                                                                        |
 | JSON not in the expected shape              | `tool-run` / `site-changed` (see [Drift detection](#drift-detection))                                             |
 | Signal aborted before a call                | `tool-run` / `aborted`                                                                                            |
-| `add_to_cart` would exceed 50               | `tool-input` / `invalid`                                                                                          |
+| `add_to_cart` would exceed 20               | `tool-input` / `invalid`                                                                                          |
 | `add_to_cart` read an incomplete trolley    | `tool-run` / `site-changed`                                                                                       |
 | Update reply says the site refused          | `tool-run` / `invalid`                                                                                            |
 

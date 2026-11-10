@@ -256,6 +256,20 @@ export interface AuthStepEntry {
   readonly detail: string
 }
 
+/**
+ * A setting the person fills in (D69), as the review shows it: which tool lists its choices and
+ * which applies the one chosen. A setting whose tools or `required` changed is one removal plus one
+ * addition.
+ */
+export interface SettingDiffEntry {
+  readonly name: string
+  readonly title: string
+  readonly required: boolean
+  readonly choicesTool: string
+  /** Null when the adapter reads the value itself and nothing is applied before a call. */
+  readonly applyTool: string | null
+}
+
 export interface LimitsInfo {
   readonly requestsPerRun: number
   readonly minGapMs: number
@@ -276,6 +290,7 @@ export interface PermissionDiff {
   /** Every other login step: goto, click, waitFor, when/retry, otp, needsUser, fail, and so on. */
   readonly authSteps: ListDiff<AuthStepEntry>
   readonly messagesSources: ListDiff<{ readonly sender: string }>
+  readonly settings: ListDiff<SettingDiffEntry>
   /** Null for a first install. */
   readonly limits: { readonly before: LimitsInfo; readonly after: LimitsInfo } | null
   /** Null for a first install. The renderer compares the two itself. */

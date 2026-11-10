@@ -52,6 +52,7 @@ const NOTHING_NEW: PermissionDiff = {
     ],
   },
   messagesSources: { added: [], removed: [], unchanged: [] },
+  settings: { added: [], removed: [], unchanged: [] },
   limits: { before: LIMITS, after: LIMITS },
   probe: { before: PROBE, after: PROBE },
 }
@@ -116,6 +117,21 @@ describe('addsPermissions', () => {
         },
       },
       { messagesSources: { added: [{ sender: 'Woolworths' }], removed: [], unchanged: [] } },
+      {
+        settings: {
+          added: [
+            {
+              name: 'store',
+              title: 'Store',
+              required: true,
+              choicesTool: 'find_stores',
+              applyTool: 'apply_store',
+            },
+          ],
+          removed: [],
+          unchanged: [],
+        },
+      },
       {
         authSteps: {
           added: [{ op: 'click', detail: 'click button#accept-terms' }],

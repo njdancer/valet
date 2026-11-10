@@ -24,7 +24,7 @@ import {
 } from './wire'
 
 /** Per-line ceiling. The site has its own supply limits (often 36) and clamps to them. */
-export const MAX_LINE_QUANTITY = 50
+export const MAX_LINE_QUANTITY = 20
 
 /** Why a line is set aside from the buyable items, one per trolley bucket. */
 export const UNAVAILABLE_REASONS = [

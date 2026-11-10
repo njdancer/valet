@@ -13,6 +13,7 @@ import {
   CONTROL,
   callTool,
   changedAdapterBuild,
+  chooseStore,
   clickClosing,
   connectMcp,
   type Launched,
@@ -136,6 +137,8 @@ test('the built app, approved and granted, logs in and adds a line', async () =>
   await control.evaluate((hash) => window.valet?.approvals.approve('woolworths', hash), firstHash)
   await grantBoth(firstHash)
   await expect.poll(async () => (await mcp().listTools()).tools.map((t) => t.name).sort()).toEqual(TOOLS)
+  // Chosen once: the choice belongs to the adapter, not to a hash, so the changed bundle keeps it.
+  await chooseStore(control)
 
   const found = await callTool(mcp(), 'woolworths_search_products', { query: 'bread' })
   stockcode = (found.structured as { products: { stockcode: number }[] }).products[0]?.stockcode ?? 0
@@ -210,12 +213,12 @@ test('the changed bundle waits for review: tools off MCP, no grants, a diff agai
 })
 
 test('the review screen shows the change, and Approve waits for the acknowledgement', async () => {
-  await expect(control.getByText('Woolworths 0.2.0 is ready for review.')).toBeVisible()
+  await expect(control.getByText('Woolworths 0.3.0 is ready for review.')).toBeVisible()
   await control.getByRole('link', { name: 'Review changes' }).click()
   await expect(control.getByText('This update asks for more')).toBeVisible()
   await expect(control.getByText('remove_from_cart').first()).toBeVisible()
   await expect(control.getByText('src/manifest.ts')).toBeVisible()
-  const approve = control.getByRole('button', { name: 'Approve 0.2.0' })
+  const approve = control.getByRole('button', { name: 'Approve 0.3.0' })
   await expect(approve).toBeDisabled()
   await control.getByRole('checkbox', { name: 'I’ve read the highlighted additions' }).check()
   await approve.click()
