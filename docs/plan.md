@@ -1738,9 +1738,10 @@ review of 2026-11-10; Nick has answered all three.
   seconds (`session.probe.trustSeconds`). The thirty-item shop went from 122 requests and 20
   minutes to 73 and 12 ([benchmark](findings/2026-11-10-shop-benchmark.md)). The hourly cap is built
   too (`limits.requestsPerHour`), asked about when a call starts; Woolworths sets 100 rather than
-  the 60 above, which the shop doesn't fit in, also an assumption. Still unbuilt: the jitter and
-  the per-minute cap, which both wait on [D50](#d50-confirmation-and-hand-off-timeouts), and the
-  per-page-view cap.
+  the 60 above, which the shop doesn't fit in, also an assumption. The jitter and the per-minute
+  cap followed once [D50](#d50-confirmation-and-hand-off-timeouts) took the login out of a call's
+  two minutes (`limits.gapJitterPercent`, `limits.requestsPerMinute`); with them the shop is 78
+  requests and 19 minutes. Still unbuilt: the per-page-view cap.
 - **What it covers.** The budget and breaker sit in the runtime's guarded page and probe, so they
   see `page.fetch`, `goto` and the probe only. Navigations the page makes, clicks that submit,
   `evaluate()` fetches, the site's own requests and the whole login go unpaced and unwatched for

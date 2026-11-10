@@ -367,6 +367,26 @@ describe('manifestSchema', () => {
     }
   })
 
+  it('takes a per-minute cap from 1 to 240 and a jitter from 0 to 100 percent, both unset by default', () => {
+    const limits = parseManifest(VALID).limits
+    expect(limits).not.toHaveProperty('requestsPerMinute')
+    expect(limits).not.toHaveProperty('gapJitterPercent')
+    const set = copy()
+    set.limits = { requestsPerMinute: 4, gapJitterPercent: 50 }
+    expect(parseManifest(set).limits).toMatchObject({ requestsPerMinute: 4, gapJitterPercent: 50 })
+    for (const bad of [
+      { requestsPerMinute: 0 },
+      { requestsPerMinute: 241 },
+      { gapJitterPercent: -1 },
+      { gapJitterPercent: 101 },
+      { gapJitterPercent: 12.5 },
+    ]) {
+      const input = copy()
+      input.limits = bad
+      expect(issues(input)).not.toEqual([])
+    }
+  })
+
   it('bounds retry counts and pause lengths', () => {
     const tooManyRetries = copy()
     tooManyRetries.auth.steps.push({ op: 'retry', times: 50, steps: [{ op: 'pause', ms: 1 }] })

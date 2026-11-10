@@ -195,7 +195,7 @@ export async function callTool(
   client: McpClient,
   name: string,
   args: Record<string, unknown>,
-  timeoutMs = 150_000,
+  timeoutMs = 270_000,
 ): Promise<ToolResult> {
   const deadline = Date.now() + timeoutMs
   let result = await callToolOnce(client, name, args, timeoutMs)

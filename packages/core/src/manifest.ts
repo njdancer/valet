@@ -320,6 +320,16 @@ export const manifestSchema = z
          * try again and sends nothing; a call already running finishes. Unset: no hourly cap.
          */
         requestsPerHour: z.number().int().min(10).max(3600).optional(),
+        /**
+         * The most requests the runtime sends the site in any minute (D28). A request past it
+         * waits until the oldest of the minute's requests is a minute old. Unset: no such cap.
+         */
+        requestsPerMinute: z.number().int().min(1).max(240).optional(),
+        /**
+         * How far each gap between requests is stretched at random, as a percentage of minGapMs
+         * (D28): 50 makes every gap between 1 and 1.5 times minGapMs. Never shorter. Unset: none.
+         */
+        gapJitterPercent: z.number().int().min(0).max(100).optional(),
         /** First circuit-breaker cool-down after the site blocks or rate-limits us; doubles each time. */
         cooldownSeconds: z.number().int().min(60).max(86_400).default(600),
         maxCooldownSeconds: z.number().int().min(60).max(86_400).default(7200),

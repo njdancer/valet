@@ -293,7 +293,14 @@ export function createManifest({
     // D28 asked for at most 60 requests an hour, which the thirty-item shop (73 requests, more with
     // a login) can't fit. 100 holds one whole shop with room to check and correct it. An
     // assumption, not Nick's decision (docs/findings/2026-11-10-shop-benchmark.md).
-    limits: { requestsPerRun: 6, minGapMs: 10_000, requestsPerHour: REQUESTS_PER_HOUR },
+    // D28's 4 a minute and its jitter: each gap is 10 to 15 s, never less than 10.
+    limits: {
+      requestsPerRun: 6,
+      minGapMs: 10_000,
+      gapJitterPercent: 50,
+      requestsPerMinute: 4,
+      requestsPerHour: REQUESTS_PER_HOUR,
+    },
   })
 }
 

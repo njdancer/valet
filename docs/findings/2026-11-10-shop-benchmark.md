@@ -34,6 +34,22 @@ What each call sends now:
 - `set_cart_quantity` and `remove_from_cart`: one, plus the probe once a minute.
 - `get_cart`: two, always. The probe and the site's own trolley.
 
+## And with the rest of D28's pacing
+
+D28's jitter (each gap 10 to 15 s) and its cap of four requests a minute are now built too, after
+Nick's answer on D50 took the login out of a call's two minutes. The cap is what sets the time: a
+shop takes four requests a minute whatever the jitter draws.
+
+| How the agent shops                                | Requests | Time   |
+| -------------------------------------------------- | -------- | ------ |
+| `search_products` then `add_to_cart` for each item | 78       | 19 min |
+| `add_to_cart` only, stockcodes already known       | 41       | 10 min |
+| `set_cart_quantity` only, stockcodes already known | 40       | 10 min |
+
+A few more requests than the table above because a slower shop passes more of the one-minute
+login checks. This is the pacing Nick accepted, and inside D28's "roughly 15–30 minutes"; the
+"Now" column above is what the cache and the login check bought before it.
+
 ## What was built after the first measurement
 
 1. **The session read cache D28 calls for.** The manifest says which reads may be kept and for how
@@ -59,8 +75,8 @@ reads the trolley and writes, so the timeout problem below is unchanged.
    360 an hour the 10 s gap alone allows. It is asked about when a call starts, so a call is
    refused whole, with a time to try again, and never cut off halfway. A second shop in the same
    hour stops at the cap.
-3. **D28's cap of 4 a minute can't land for the same reason as the jitter** (next section): it
-   stretches a cold call, which already runs close to the tool timeout.
+3. **D28's cap of 4 a minute and its jitter waited on the login timeout** (last section), and
+   are built now.
 4. **Fewer calls beats a shorter gap.** A saved list or past orders (`list_past_orders` is a
    stretch goal) removes the thirty searches and risks nothing with the site. Shortening the gap
    is the one change the live probe argues against.

@@ -124,6 +124,9 @@ describe('the real manifest', () => {
       minGapMs: 10_000,
       cooldownSeconds: 600,
       maxCooldownSeconds: 7200,
+      // D28: each gap stretched by up to half, and at most four requests in any minute.
+      gapJitterPercent: 50,
+      requestsPerMinute: 4,
       // Enough for one thirty-item shop (73 requests, more with a login), not for two.
       requestsPerHour: 100,
     })

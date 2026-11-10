@@ -132,6 +132,8 @@ Nick hasn't been asked about ([benchmark](../../docs/findings/2026-11-10-shop-be
   check to end a shop with. The risk taken: a session that ends inside that minute sends the
   writes of that minute to an anonymous trolley, reported as successes, until the next probe logs
   in again. Set `PROBE_TRUST_SECONDS` to 0 in `manifest.ts` to take it back.
+- **Gaps of 10 to 15 s and at most 4 requests a minute** (`limits.gapJitterPercent`,
+  `limits.requestsPerMinute`), as D28 says. These two are Nick's accepted numbers, not assumptions.
 - **At most 100 requests an hour** (`limits.requestsPerHour`). D28 said 60, which a thirty-item
   shop can't fit. A call that would start past the cap is refused with a time to try again.
 - **The runtime's read cache** (D28). Search and product answers are reused for 15 minutes. The
