@@ -17,7 +17,7 @@ const host = new ToolHost({
   breakerStore: new JsonFileStore(join(dataDir, 'breakers.json')),
   budgetStore: new JsonFileStore(join(dataDir, 'budgets.json')), // optional; see "Site protection"
   // Optional: clock, sleep, pacingSleep, timeoutMs, validationTimeoutMs, confirmationTimeoutMs,
-  // settleTimeoutMs, queueWaitMs, random, loginBackoff, diagnostics.
+  // settleTimeoutMs, queueWaitMs, loginBackoff, diagnostics.
 })
 host.register({ definition, bundleHash, driver }) // driver: SessionDriver for this adapter's site
 await host.listTools() // approved adapters only
@@ -302,11 +302,6 @@ time, call) is audited when it trips, and `breaker-closed` at the first normal a
 of blocks. A normal answer that arrives while the breaker is open, or to a request admitted before
 the latest trip (one already in flight when another request was blocked), is ignored: it neither
 closes the breaker nor resets the doubling.
-
-**The gap has jitter** (D28): each wait is `minGapMs` plus up to half as much again (`GAP_JITTER`),
-drawn afresh from `ToolHostOptions.random` (`Math.random` by default), never less than the gap.
-`docs/findings/2026-11-10-shop-benchmark.md` has what this pacing costs a thirty-item shop, and
-`test/shop-benchmark.test.ts` asserts it.
 
 **Breaker state persists.** Each change is written to the injected `JsonStore` (`JsonFileStore`,
 replaced atomically), so a restart straight after a block doesn't hit the site again; the run of

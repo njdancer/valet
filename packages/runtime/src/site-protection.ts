@@ -24,40 +24,19 @@ import type { RuntimeDiagnostic } from './types'
 /** Why the site refused us: its bot protection, or a 429. */
 export type BlockCause = 'blocked-by-site' | 'rate-limited'
 
-/**
- * How much longer than the gap a wait may be, as a share of the gap (D28): each wait is the gap
- * plus up to half as much again, drawn afresh, so requests don't arrive on a metronome. Upward
- * only: never less than the gap.
- */
-export const GAP_JITTER = 0.5
-
-/**
- * Spaces requests to one site at least `minGapMs` apart, in the order they ask, and each by up to
- * GAP_JITTER more.
- */
+/** Spaces requests to one site at least `minGapMs` apart, in the order they ask. */
 export class RateBudget {
   private nextSlot = Number.NEGATIVE_INFINITY
   /** When the last request was let through, in this run or an earlier one; null before any. */
   private lastUsed: number | null = null
 
-  /**
-   * `used` is called each time a request is let through, so its owner can save lastUsedAt(). Must
-   * not throw. `draw` is a uniform draw in [0, 1) for the jitter; without one there is none.
-   */
+  /** `used` is called each time a request is let through, so its owner can save lastUsedAt(). Must not throw. */
   constructor(
     private minGapMs: number,
     private readonly clock: Clock,
     private readonly sleep: Sleep,
     private readonly used: () => void = () => {},
-    private readonly draw: () => number = () => 0,
   ) {}
-
-  /** The wait after one request: the gap, plus this request's jitter. Never less than the gap. */
-  private spacing(): number {
-    const drawn = this.draw()
-    const share = Number.isFinite(drawn) ? Math.min(1, Math.max(0, drawn)) : 1
-    return this.minGapMs + Math.round(this.minGapMs * GAP_JITTER * share)
-  }
 
   get gapMs(): number {
     return this.minGapMs
@@ -86,7 +65,7 @@ export class RateBudget {
   async acquire(signal?: AbortSignal): Promise<void> {
     const now = this.clock.now()
     const slot = Math.max(now, this.nextSlot)
-    const after = slot + this.spacing()
+    const after = slot + this.minGapMs
     this.nextSlot = after
     if (slot > now) {
       try {
@@ -102,13 +81,13 @@ export class RateBudget {
 
   /**
    * Takes up the time of the last request from an earlier run of the app: the next one waits out
-   * the rest of the gap (and its jitter). A time in the future is a clock change or a hand edit,
-   * and counts as now, so what is restored never holds a request longer than one jittered gap.
+   * the rest of the gap. A time in the future is a clock change or a hand edit, and counts as now,
+   * so what is restored never holds a request longer than one gap.
    */
   restore(lastRequestAt: number): void {
     const at = Math.min(lastRequestAt, this.clock.now())
     this.lastUsed = Math.max(this.lastUsed ?? Number.NEGATIVE_INFINITY, at)
-    this.nextSlot = Math.max(this.nextSlot, at + this.spacing())
+    this.nextSlot = Math.max(this.nextSlot, at + this.minGapMs)
   }
 }
 
@@ -252,8 +231,6 @@ export interface SiteProtectionOptions {
    * memory only, and a restart may send a request sooner than the gap after the last.
    */
   readonly budgetStore?: JsonStore
-  /** A uniform draw in [0, 1) for the gap's jitter (see GAP_JITTER). Defaults to Math.random. */
-  readonly random?: () => number
   /** Appends an audit event. Must not throw. */
   readonly audit: (event: AuditEvent) => Promise<void>
   readonly diagnostics: (diagnostic: RuntimeDiagnostic) => void
@@ -300,13 +277,7 @@ export class SiteProtection {
     let guards = this.sites.get(key)
     if (guards === undefined) {
       guards = {
-        budget: new RateBudget(
-          limits.minGapMs,
-          this.clock,
-          this.sleep,
-          () => this.persistBudgets(),
-          this.options.random ?? Math.random,
-        ),
+        budget: new RateBudget(limits.minGapMs, this.clock, this.sleep, () => this.persistBudgets()),
         breaker: new SiteCircuitBreaker(this.clock, breakerOptions, this.eventsFor(key)),
       }
       this.sites.set(key, guards)

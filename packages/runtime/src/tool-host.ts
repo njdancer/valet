@@ -146,11 +146,6 @@ export interface ToolHostOptions {
   readonly sleep?: Sleep
   /** For waiting on a site's rate budget. Defaults to `sleep`. */
   readonly pacingSleep?: Sleep
-  /**
-   * A uniform draw in [0, 1) for the jitter on each site's gap: a wait is the gap plus up to half
-   * as much again (D28). Defaults to Math.random; a test that counts waits passes `() => 0`.
-   */
-  readonly random?: () => number
   readonly timeoutMs?: number
   readonly validationTimeoutMs?: number
   readonly confirmationTimeoutMs?: number
@@ -208,7 +203,6 @@ export class ToolHost {
     this.protection = new SiteProtection(this.clock, options.pacingSleep ?? this.sleep, {
       store: options.breakerStore,
       ...(options.budgetStore === undefined ? {} : { budgetStore: options.budgetStore }),
-      ...(options.random === undefined ? {} : { random: options.random }),
       audit: (event) => this.record(event),
       diagnostics: this.diagnostics,
     })

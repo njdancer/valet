@@ -177,7 +177,6 @@ async function setup(
     checkOp: options.checkOp ?? (async (path) => (path === '/good/op' ? path : null)),
     updates: options.updates ?? (async () => disabledUpdates('0.1.0', 'development', false)),
     // The site's rate budget waits on the test's clock.
-    pacingRandom: () => 0,
     pacingSleep: async (ms) => {
       now += ms
     },

@@ -1,8 +1,7 @@
 // How long a weekly shop takes through Valet. The real tool host runs the real Woolworths adapter,
 // one call after another as the server's instructions ask, against canned site answers, on a
 // virtual clock that the rate budget moves forward. So the times below are what the site's 10 s
-// gap and its jitter of up to half as much again (D28) alone cost: no network, no login, no
-// thinking time for the agent.
+// gap (D28) alone costs: no network, no login, no thinking time for the agent.
 //
 // The numbers are asserted exactly, so a change to the pacing, to the login probe, or to how many
 // requests a tool makes shows up here and in docs/findings/2026-11-10-shop-benchmark.md together.
@@ -30,7 +29,7 @@ const fixture = (name: string): any =>
     readFileSync(new URL(`../../../adapters/woolworths/test/fixtures/${name}`, import.meta.url), 'utf8'),
   )
 
-function shop(random: () => number = () => 0) {
+function shop() {
   const definition = createAdapter()
   const home = definition.manifest.home
   const clock = new FakeClock()
@@ -60,7 +59,6 @@ function shop(random: () => number = () => 0) {
     clock,
     sleep: clock.sleep,
     pacingSleep: clock.pacingSleep,
-    random,
   })
   host.register({ definition, bundleHash: HASH, driver })
   let calls = 0
@@ -88,7 +86,7 @@ function shop(random: () => number = () => 0) {
 
 const stockcode = (i: number): number => 100_000 + i
 
-describe('a thirty-item shop at Woolworths’ pacing, at the bare 10 s gap', () => {
+describe('a thirty-item shop at Woolworths’ pacing', () => {
   it('search then add for each item, then read the cart: 61 calls, 122 requests, 20 minutes', async () => {
     const s = shop()
     for (let i = 0; i < ITEMS; i++) {
@@ -133,36 +131,5 @@ describe('a thirty-item shop at Woolworths’ pacing, at the bare 10 s gap', () 
     for (let i = 0; i < ITEMS; i++) await s.run('add_to_cart', { stockcode: stockcode(i), quantity: 1 })
     expect(s.probes()).toBe(ITEMS)
     expect(s.probes() / s.requests.length).toBeCloseTo(1 / 3, 5)
-  })
-})
-
-describe('a thirty-item shop with the gap’s jitter', () => {
-  async function searchAndAdd(random: () => number): Promise<number> {
-    const s = shop(random)
-    for (let i = 0; i < ITEMS; i++) {
-      await s.run('search_products', { query: `item ${i}` })
-      await s.run('add_to_cart', { stockcode: stockcode(i), quantity: 1 })
-    }
-    await s.run('get_cart', {})
-    return s.seconds() / 60
-  }
-
-  it('takes 25 minutes on average for search then add, and 30 at the outside', async () => {
-    expect(await searchAndAdd(() => 0.5)).toBeCloseTo(25.21, 2)
-    expect(await searchAndAdd(() => 0.999_999)).toBeCloseTo(30.25, 2)
-  })
-
-  it('takes 19 minutes on average for adds from a saved list', async () => {
-    const s = shop(() => 0.5)
-    for (let i = 0; i < ITEMS; i++) await s.run('add_to_cart', { stockcode: stockcode(i), quantity: 1 })
-    await s.run('get_cart', {})
-    expect(s.seconds() / 60).toBeCloseTo(18.96, 2)
-  })
-
-  it('takes 13 minutes on average when each quantity is set outright', async () => {
-    const s = shop(() => 0.5)
-    for (let i = 0; i < ITEMS; i++) await s.run('set_cart_quantity', { stockcode: stockcode(i), quantity: 1 })
-    await s.run('get_cart', {})
-    expect(s.seconds() / 60).toBeCloseTo(12.71, 2)
   })
 })

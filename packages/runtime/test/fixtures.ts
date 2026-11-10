@@ -92,8 +92,6 @@ export function fixture(
     clock,
     sleep: clock.sleep,
     pacingSleep: clock.pacingSleep,
-    // No jitter on the gap, so tests can count waits exactly.
-    random: () => 0,
     diagnostics,
     ...overrides,
     // A test that brings its own sleep paces with it too, unless it says otherwise.
