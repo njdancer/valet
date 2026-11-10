@@ -739,6 +739,54 @@ export interface AppStatus {
   readonly demo: boolean
 }
 
+// ---------- Remote access ----------
+
+/**
+ * A remote client's consent request waiting on the Mac (relay.md, "Consent happens on the Mac").
+ * Never its code: the person types the code their own browser shows, which selects the request.
+ */
+export interface RemoteConsentRequest {
+  readonly id: string
+  /** The registration it is for. */
+  readonly clientId: string
+  /** The client's claimed identity: its redirect URI's host. The headline. */
+  readonly clientHost: string
+  /** The client's self-chosen name. A claim: shown small, never as the headline. */
+  readonly clientName: string | null
+  /** The address the tunnel reported, or null. */
+  readonly source: string | null
+  readonly requestedAt: IsoTime
+  readonly expiresAt: IsoTime
+}
+
+/** A tool the person can grant at consent: one that is on for remote clients now. */
+export interface RemoteConsentTool {
+  /** `<adapterId>.<tool>`, what approveConsent takes. */
+  readonly ref: string
+  readonly adapterId: string
+  readonly adapterName: string
+  readonly tool: string
+  readonly toolTitle: string
+  readonly sideEffect: 'read' | 'write' | 'irreversible'
+}
+
+export interface RemoteConsentState {
+  readonly requests: readonly RemoteConsentRequest[]
+  readonly tools: readonly RemoteConsentTool[]
+}
+
+/** What typing a code did. Three wrong codes cancel every waiting request. */
+export type RemoteConsentAnswer = 'approved' | 'wrong-code' | 'cancelled'
+
+export interface RemoteClientItem {
+  readonly id: string
+  readonly host: string
+  readonly clientName: string | null
+  readonly registeredAt: IsoTime
+  /** Null for a registration nobody approved yet; it expires within the hour. */
+  readonly grant: { readonly tools: readonly string[]; readonly grantedAt: IsoTime } | null
+}
+
 // ---------- Events ----------
 
 /** Live-update notices. They carry no data: the renderer refetches what it shows. */
@@ -756,6 +804,8 @@ export type AppEvent =
   | { readonly type: 'settings-changed' }
   | { readonly type: 'health-changed' }
   | { readonly type: 'app-changed' }
+  /** Remote consent requests or remote clients changed. */
+  | { readonly type: 'remote-changed' }
 
 export type AppEventType = AppEvent['type']
 
@@ -866,6 +916,22 @@ export interface ValetApi {
     status(): Promise<SetupStatus>
     /** Records that setup is finished (or skipped): later launches open no setup window. */
     finish(): Promise<SetupStatus>
+  }
+  /** Remote clients and their consent, answered only here, on the Mac (relay.md). */
+  readonly remote: {
+    consents(): Promise<RemoteConsentState>
+    /**
+     * Approves the waiting request the typed code belongs to, granting the ticked tools (refs from
+     * consents().tools; anything else rejects). A wrong code approves nothing.
+     */
+    approveConsent(code: string, tools: readonly string[]): Promise<RemoteConsentAnswer>
+    declineConsent(requestId: string): Promise<void>
+    declineAllConsents(): Promise<void>
+    clients(): Promise<readonly RemoteClientItem[]>
+    /** Deletes one client's registration, grant and tokens, and closes its sessions. */
+    revokeClient(clientId: string): Promise<void>
+    /** Deletes every remote client. Each connector has to be added again. Returns how many. */
+    revokeAllClients(): Promise<number>
   }
   readonly app: {
     status(): Promise<AppStatus>

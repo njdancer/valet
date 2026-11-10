@@ -291,6 +291,34 @@ describe('ToolHost: the rate budget across a restart', () => {
     expect(after.page.toolFetches()).toHaveLength(1)
   })
 
+  it('lets the app wait for a write still on its way to disk, as it does before it stops', async () => {
+    // A disk that takes its time, as an fsync does.
+    let release = (): void => {}
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const budgetStore = new MemoryJsonStore()
+    const write = budgetStore.write.bind(budgetStore)
+    budgetStore.write = async (text) => {
+      await held
+      await write(text)
+    }
+    const { host } = fixture(definition, { budgetStore })
+    // The call doesn't wait for the disk.
+    expect(await host.call(call)).toEqual({ status: 'ok', output: 200 })
+    expect(budgetStore.text).toBeNull()
+
+    let flushed = false
+    const flushing = host.flushed().then(() => {
+      flushed = true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(flushed).toBe(false)
+    release()
+    await flushing
+    expect(parseBudgetFile(budgetStore.text ?? '')?.has('www.example.com')).toBe(true)
+  })
+
   it('does not hold the first request when the app has never run', async () => {
     const { host, clock } = fixture(definition, { budgetStore: new MemoryJsonStore() })
     expect(await host.call(call)).toEqual({ status: 'ok', output: 200 })

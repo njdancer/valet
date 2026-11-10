@@ -42,6 +42,7 @@ import {
   type ToolProcessFactory,
 } from '@valet/runtime'
 import { z } from 'zod'
+import { href } from '../../renderer/lib/routes'
 import type {
   AppEvent,
   AttentionItem,
@@ -359,9 +360,20 @@ export class AppService {
     })
     this.remote = new RemoteAccess({
       path: paths.remote,
+      clientsPath: paths.remoteClients,
       info: { name: 'valet', version: deps.version },
       now: deps.now,
-      changed: () => this.emit('app-changed'),
+      changed: () => {
+        if (this.remote.status().pendingConsents === 0) this.notifier.remoteConsent(0)
+        this.emit('app-changed')
+        this.emit('remote-changed')
+      },
+      // One notification and the one screen that lists every waiting request, never a window per
+      // request (relay.md), so a flood can't bury the screen.
+      consentRequested: () => {
+        this.notifier.remoteConsent(this.remote.status().pendingConsents)
+        deps.ui.openControlPanel(href.remote())
+      },
       audit: async (event) => {
         await this.audit.append(event)
       },
@@ -494,8 +506,7 @@ export class AppService {
     for (const driver of this.drivers.values()) await driver.close().catch(() => undefined)
     await this.blocked.settled()
     await this.background
-    // Breaker and pace state is written without being waited for; wait here, so nothing is still
-    // writing into the data folder once the app has stopped.
+    // Breaker and pacing state still on its way to disk: a quit must not cut the write short.
     await this.host?.flushed()
     this.loginSecrets.dispose()
   }
@@ -1180,6 +1191,49 @@ export class AppService {
           this.emit('app-changed')
           return status
         },
+      },
+      remote: {
+        consents: async () => {
+          const view = this.remote.consentView()
+          return {
+            requests: view.requests.map((r) => ({
+              ...r,
+              requestedAt: new Date(r.requestedAt).toISOString(),
+              expiresAt: new Date(r.expiresAt).toISOString(),
+            })),
+            tools: view.tools.map((t) => {
+              const manifest = this.adapter(t.adapterId)?.definition.manifest
+              const declaration = manifest?.tools.find((d) => d.name === t.tool)
+              return {
+                ...t,
+                adapterName: manifest?.name ?? t.adapterId,
+                toolTitle: declaration?.title ?? t.tool,
+              }
+            }),
+          }
+        },
+        approveConsent: (code, tools) => this.remote.approveConsent(code, tools),
+        declineConsent: async (id) => {
+          if (!this.remote.declineConsent(id)) throw new ValetError('config', 'not-found')
+        },
+        declineAllConsents: async () => {
+          this.remote.declineAllConsents()
+        },
+        clients: async () =>
+          this.remote.remoteClients().map((c) => ({
+            id: c.id,
+            host: c.host,
+            clientName: c.clientName,
+            registeredAt: new Date(c.registeredAt).toISOString(),
+            grant:
+              c.grant === null
+                ? null
+                : { tools: c.grant.tools, grantedAt: new Date(c.grant.grantedAt).toISOString() },
+          })),
+        revokeClient: async (id) => {
+          if (!(await this.remote.revokeClient(id))) throw new ValetError('config', 'not-found')
+        },
+        revokeAllClients: () => this.remote.revokeAllClients(),
       },
       app: {
         status: async () => ({ paused: this.paused, version: deps.version, demo: deps.demo }),

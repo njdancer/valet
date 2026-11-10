@@ -401,6 +401,15 @@ export class ToolHost {
   }
 
   /**
+   * Resolves once every breaker and rate-budget change so far is on disk (or has failed to be).
+   * Those writes are not waited for while calls run; the app waits for them here before it stops,
+   * so quitting doesn't lose the last request's time or a breaker that just opened.
+   */
+  flushed(): Promise<void> {
+    return this.protection.flushed()
+  }
+
+  /**
    * Each registered site's breaker and rate budget, read from memory once the persisted state is
    * loaded, so the app never reads breakers.json itself. Reads only: it takes no budget slot and
    * changes nothing.
@@ -431,14 +440,6 @@ export class ToolHost {
 
   call(request: ToolCallRequest): Promise<ToolCallResult> {
     return this.dispatch(request, false)
-  }
-
-  /**
-   * Resolves once the breaker and pace state changed so far has been written (or has failed to
-   * be). For shutdown: nothing of the runtime's is still writing into its folder afterwards.
-   */
-  flushed(): Promise<void> {
-    return this.protection.flushed()
   }
 
   /**

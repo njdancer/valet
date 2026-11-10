@@ -3,8 +3,9 @@
 // ToolHost, rate budgets, breakers, confirmations on the Mac, the audit log) is the local path.
 //
 // - Default deny. A tool is offered and callable remotely only while the policy says so; the app
-//   keeps that per tool, off until the person turns it on (relay.md, "Per-tool remote policy").
-// - tools/list shows only remote-enabled tools, so a remote client can't see what else is installed.
+//   keeps that per tool, off until the person turns it on (relay.md, "Per-tool remote policy"),
+//   and per client, as the tools the person ticked when they approved it on the Mac.
+// - tools/list shows each client only the tools it may call, so a remote client can't see what else is installed.
 //   A call to a tool turned off since the client listed fails as not-found, never as "not allowed".
 // - Each remote client has a cap on calls per hour, applied before the site's own rate budget, so a
 //   client stuck in a loop spends its own quota and not the person's standing with the site.
@@ -12,11 +13,15 @@
 // - abortInFlight() fails every running remote call with aborted, for the kill switch.
 
 import type { ToolDeclaration } from '@valet/core'
+import type { ClientIdentity } from './auth'
 import type { CallOutcome, ListedTool, ToolCall, ToolCaller } from './tool-caller'
 
 export interface RemotePolicy {
-  /** Whether this tool, as declared now, may be listed and called by remote clients. */
-  allows(adapterId: string, declaration: ToolDeclaration): boolean
+  /**
+   * Whether this tool, as declared now, may be listed and called by a remote client: the one with
+   * this registration id, whose grant must cover it, or (null) any remote client at all.
+   */
+  allows(adapterId: string, declaration: ToolDeclaration, clientId: string | null): boolean
 }
 
 /** relay.md's starting point for one person; a setting, not a constant. */
@@ -54,13 +59,19 @@ export class RemotePolicyCaller implements ToolCaller {
     this.now = options.now ?? Date.now
   }
 
-  listTools(): readonly ListedTool[] {
-    return this.inner.listTools().filter((tool) => this.allowed(tool.adapterId, tool.declaration.name))
+  listTools(identity?: ClientIdentity): readonly ListedTool[] {
+    // A local identity here is miswiring, and sees nothing.
+    if (identity !== undefined && identity.origin !== 'remote') return []
+    const clientId = identity?.clientId ?? null
+    return this.inner
+      .listTools()
+      .filter((tool) => this.policy.allows(tool.adapterId, tool.declaration, clientId))
   }
 
   async call(call: ToolCall): Promise<CallOutcome> {
     if (call.identity?.origin !== 'remote') return this.refuse(call, 'not-remote', NOT_REMOTE_ENABLED)
-    if (!this.allowed(call.adapterId, call.tool)) return this.refuse(call, 'not-enabled', NOT_REMOTE_ENABLED)
+    if (!this.allowed(call.adapterId, call.tool, call.identity.clientId))
+      return this.refuse(call, 'not-enabled', NOT_REMOTE_ENABLED)
     const retryAfterMs = this.spend(call.identity.clientId)
     if (retryAfterMs !== null) {
       return this.refuse(call, 'over-cap', {
@@ -90,11 +101,11 @@ export class RemotePolicyCaller implements ToolCaller {
   }
 
   /** Looked up afresh by name: the policy and the tool's current declaration both decide. */
-  private allowed(adapterId: string, tool: string): boolean {
+  private allowed(adapterId: string, tool: string, clientId: string): boolean {
     const listed = this.inner
       .listTools()
       .find((t) => t.adapterId === adapterId && t.declaration.name === tool)
-    return listed !== undefined && this.policy.allows(adapterId, listed.declaration)
+    return listed !== undefined && this.policy.allows(adapterId, listed.declaration, clientId)
   }
 
   /** Counts a call against the client's hour. Null when it fits; else how long until one would. */

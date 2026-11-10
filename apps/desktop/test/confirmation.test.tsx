@@ -155,7 +155,8 @@ describe('the confirmation panel', () => {
     const api = createFakeApi({ now: NOW })
     renderPanel('cf_a40f3c', api)
     const decline = await screen.findByRole('button', { name: 'Decline' })
-    expect(document.activeElement).toBe(decline)
+    // The focus moves in an effect, which can run a moment after the button is first found.
+    await waitFor(() => expect(document.activeElement).toBe(decline))
     await user.keyboard('{Enter}')
     await waitFor(() => expect(answers(api)).toEqual([['cf_a40f3c', false]]))
   })

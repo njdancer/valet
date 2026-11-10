@@ -1,5 +1,4 @@
 import { request } from 'node:http'
-import { Readable } from 'node:stream'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import type { ToolDeclaration } from '@valet/core'
@@ -12,8 +11,10 @@ import { type RemotePolicy, RemotePolicyCaller, type RemoteRefusal } from '../sr
 import type { CallOutcome, ListedTool, ToolCall } from '../src/tool-caller'
 import { FakeCaller } from './fake-caller'
 import { tokenAuth } from './token-auth'
+import { tunnelFetch as fetchVia } from './tunnel-fetch'
 
 const HOST = 'mac.example-tailnet.ts.net'
+const RESOURCE = `https://${HOST}/mcp`
 const LOCAL_TOKEN = 'llllllllllllllllllllllllllllllllllllllllllll'.slice(0, 43)
 
 const tool = (name: string, sideEffect: ToolDeclaration['sideEffect']): ListedTool => ({
@@ -35,47 +36,12 @@ class SetPolicy implements RemotePolicy {
   }
 }
 
+const tunnelFetch = (port: number, host = HOST): typeof fetch => fetchVia(port, host)
+
 const cleanup: Array<() => Promise<void>> = []
 afterEach(async () => {
   for (const step of cleanup.splice(0).reverse()) await step()
 })
-
-/**
- * fetch over node:http, so the Host header is the tunnel's public name while the connection goes to
- * 127.0.0.1. Node's own fetch always sends the URL's host.
- */
-function tunnelFetch(port: number, host = HOST): typeof fetch {
-  return (async (input: string | URL | Request, init?: RequestInit) => {
-    const url = new URL(input instanceof Request ? input.url : input.toString())
-    const headers = new Headers(init?.headers)
-    headers.set('host', host)
-    const body = init?.body === undefined || init.body === null ? undefined : String(init.body)
-    return new Promise<Response>((resolve, reject) => {
-      const req = request(
-        {
-          host: '127.0.0.1',
-          port,
-          method: init?.method ?? 'GET',
-          path: url.pathname + url.search,
-          headers: Object.fromEntries(headers),
-        },
-        (res) => {
-          const out = new Headers()
-          for (const [key, value] of Object.entries(res.headers)) {
-            if (typeof value === 'string') out.set(key, value)
-            else if (Array.isArray(value)) for (const v of value) out.append(key, v)
-          }
-          const status = res.statusCode ?? 0
-          const stream = status === 202 || status === 204 ? null : (Readable.toWeb(res) as ReadableStream)
-          resolve(new Response(stream, { status, headers: out }))
-        },
-      )
-      init?.signal?.addEventListener('abort', () => req.destroy(new Error('aborted')))
-      req.on('error', reject)
-      req.end(body)
-    })
-  }) as typeof fetch
-}
 
 interface Setup {
   readonly caller: FakeCaller
@@ -191,28 +157,28 @@ describe('RemoteAccessTokens', () => {
   it('names the client a token was issued to until it expires', () => {
     let now = 1_000
     const tokens = new RemoteAccessTokens({ now: () => now, ttlMs: 60_000 })
-    const token = tokens.issue('phone')
-    expect(tokens.identify(token)).toBe('phone')
+    const token = tokens.issue('phone', RESOURCE)
+    expect(tokens.identify(token, RESOURCE)).toBe('phone')
     now += 59_999
-    expect(tokens.identify(token)).toBe('phone')
+    expect(tokens.identify(token, RESOURCE)).toBe('phone')
     now += 1
-    expect(tokens.identify(token)).toBeNull()
+    expect(tokens.identify(token, RESOURCE)).toBeNull()
     expect(tokens.size).toBe(0)
   })
 
   it('revokes one client’s tokens, or all of them', () => {
     const tokens = new RemoteAccessTokens()
-    const phone = tokens.issue('phone')
-    const laptop = tokens.issue('laptop')
+    const phone = tokens.issue('phone', RESOURCE)
+    const laptop = tokens.issue('laptop', RESOURCE)
     expect(tokens.revokeClient('phone')).toBe(1)
-    expect(tokens.identify(phone)).toBeNull()
-    expect(tokens.identify(laptop)).toBe('laptop')
+    expect(tokens.identify(phone, RESOURCE)).toBeNull()
+    expect(tokens.identify(laptop, RESOURCE)).toBe('laptop')
     expect(tokens.revokeAll()).toBe(1)
-    expect(tokens.identify(laptop)).toBeNull()
+    expect(tokens.identify(laptop, RESOURCE)).toBeNull()
   })
 
   it('refuses a malformed client id', () => {
-    expect(() => new RemoteAccessTokens().issue('Not An Id')).toThrow()
+    expect(() => new RemoteAccessTokens().issue('Not An Id', RESOURCE)).toThrow()
   })
 })
 
@@ -224,7 +190,7 @@ describe('the remote listener’s guards', () => {
 
   it('refuses its own loopback name, so a local client can’t use it as a second local port', async () => {
     const { listener, tokens } = await setup()
-    const token = tokens.issue('phone')
+    const token = tokens.issue('phone', RESOURCE)
     expect(
       await rawStatus(listener.port, {
         host: `127.0.0.1:${listener.port}`,
@@ -235,7 +201,7 @@ describe('the remote listener’s guards', () => {
 
   it('refuses a name it wasn’t given, as a DNS-rebinding page would send', async () => {
     const { listener, tokens } = await setup()
-    const token = tokens.issue('phone')
+    const token = tokens.issue('phone', RESOURCE)
     expect(
       await rawStatus(listener.port, { host: 'attacker.example', authorization: `Bearer ${token}` }),
     ).toBe(403)
@@ -243,7 +209,7 @@ describe('the remote listener’s guards', () => {
 
   it('refuses any Origin, even with a good token', async () => {
     const { listener, tokens } = await setup()
-    const token = tokens.issue('phone')
+    const token = tokens.issue('phone', RESOURCE)
     for (const origin of [`https://${HOST}`, 'https://claude.ai', 'null']) {
       expect(await rawStatus(listener.port, { host: HOST, origin, authorization: `Bearer ${token}` })).toBe(
         403,
@@ -262,7 +228,7 @@ describe('the remote listener’s guards', () => {
 
   it('is not reachable with a remote token on the local listener', async () => {
     const { tokens } = await setup()
-    const token = tokens.issue('phone')
+    const token = tokens.issue('phone', RESOURCE)
     const local = await startHttpServer({
       caller: new FakeCaller([viewCart]),
       authenticate: tokenAuth(LOCAL_TOKEN),
@@ -277,7 +243,7 @@ describe('the remote listener’s guards', () => {
 describe('the remote policy over the listener', () => {
   it('lists nothing until the person enables a tool, then only that tool', async () => {
     const { listener, policy, tokens } = await setup()
-    const client = await connect(listener.port, tokens.issue('phone'))
+    const client = await connect(listener.port, tokens.issue('phone', RESOURCE))
     expect((await client.listTools()).tools).toEqual([])
 
     policy.enabled.add('view_cart')
@@ -288,7 +254,7 @@ describe('the remote policy over the listener', () => {
   it('passes an enabled tool’s call to the same caller, marked remote with the client’s id', async () => {
     const { listener, policy, tokens, caller } = await setup()
     policy.enabled.add('view_cart')
-    const client = await connect(listener.port, tokens.issue('phone'), 'Claude')
+    const client = await connect(listener.port, tokens.issue('phone', RESOURCE), 'Claude')
     listener.refresh()
 
     const result = await client.callTool({ name: 'woolworths_view_cart', arguments: {} })
@@ -303,7 +269,7 @@ describe('the remote policy over the listener', () => {
   it('refuses a tool turned off after the client listed it, as not-found, and reports the refusal', async () => {
     const { listener, policy, tokens, caller, refusals } = await setup()
     policy.enabled.add('set_cart_quantity')
-    const client = await connect(listener.port, tokens.issue('phone'))
+    const client = await connect(listener.port, tokens.issue('phone', RESOURCE))
     listener.refresh()
     await client.listTools()
     policy.enabled.clear()
@@ -322,8 +288,8 @@ describe('the remote policy over the listener', () => {
     let now = 0
     const { listener, policy, tokens, caller, refusals } = await setup({ callsPerHour: 2, now: () => now })
     policy.enabled.add('view_cart')
-    const phone = await connect(listener.port, tokens.issue('phone'))
-    const laptop = await connect(listener.port, tokens.issue('laptop'))
+    const phone = await connect(listener.port, tokens.issue('phone', RESOURCE))
+    const laptop = await connect(listener.port, tokens.issue('laptop', RESOURCE))
     listener.refresh()
     const call = (client: Client) => client.callTool({ name: 'woolworths_view_cart', arguments: {} })
 
@@ -345,15 +311,15 @@ describe('the remote policy over the listener', () => {
   it('ends one client’s access and sessions without touching another', async () => {
     const { listener, policy, tokens } = await setup()
     policy.enabled.add('view_cart')
-    const phoneToken = tokens.issue('phone')
+    const phoneToken = tokens.issue('phone', RESOURCE)
     await connect(listener.port, phoneToken)
-    await connect(listener.port, tokens.issue('laptop'))
+    await connect(listener.port, tokens.issue('laptop', RESOURCE))
     expect(listener.sessions().total).toBe(2)
 
     await listener.endClient('phone')
 
     expect(listener.sessions().sessions.map((s) => s.identity.clientId)).toEqual(['laptop'])
-    expect(tokens.identify(phoneToken)).toBeNull()
+    expect(tokens.identify(phoneToken, RESOURCE)).toBeNull()
   })
 })
 
@@ -361,7 +327,7 @@ describe('the kill switch', () => {
   it('revokes every access token, aborts calls in flight and stops listening', async () => {
     const { listener, policy, tokens, caller } = await setup()
     policy.enabled.add('view_cart')
-    const token = tokens.issue('phone')
+    const token = tokens.issue('phone', RESOURCE)
     const client = await connect(listener.port, token)
     listener.refresh()
     let aborted = false
@@ -386,7 +352,7 @@ describe('the kill switch', () => {
 
     expect(aborted).toBe(true)
     expect(tokens.size).toBe(0)
-    expect(tokens.identify(token)).toBeNull()
+    expect(tokens.identify(token, RESOURCE)).toBeNull()
     await expect(rawStatus(listener.port, { host: HOST, authorization: `Bearer ${token}` })).rejects.toThrow()
   })
 })

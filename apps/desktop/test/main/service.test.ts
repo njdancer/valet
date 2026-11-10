@@ -2,6 +2,7 @@
 // The whole main-process wiring in plain Node: the real runtime, stores, audit log and auth flow,
 // with a fake driver, the test credential provider, a stand-in endpoint and a recording UI.
 
+import { createHash } from 'node:crypto'
 import {
   existsSync,
   mkdirSync,
@@ -27,6 +28,7 @@ import { DEMO_ACCOUNT, demoCredentials } from '../../src/main/core/demo'
 import type { EraseKind, EraseReport } from '../../src/main/core/erase'
 import type { AppNotification } from '../../src/main/core/notifications'
 import { builtinAdapter } from '../../src/main/core/registry'
+import type { RemoteAccess } from '../../src/main/core/remote'
 import { AppService, fillSelector } from '../../src/main/core/service'
 import { disabledUpdates, type UpdatesHooks, type UpdatesPort } from '../../src/main/core/updates'
 import type { AppEvent, ConfirmationItem, HashRoute } from '../../src/shared/api'
@@ -1274,6 +1276,22 @@ describe('the login window', () => {
     expect(after - Math.max(before, Date.parse('2026-11-07T00:00:00.000Z'))).toBe(1000)
   })
 
+  it('has the site’s pacing state on disk by the time it has stopped', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sa-service-'))
+    dirs.push(dir)
+    const s = await setup({ dir })
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    await s.api.openLoginWindow('shop')
+    const page = s.driver.pages[0]
+    if (page !== undefined) page.cookies = ['sid']
+    // The hand-off's probe takes a slot; its time is written without the call waiting for the disk.
+    await s.api.finishLogin('shop')
+    await s.service.stop()
+    // No waiting here: stop() itself waited for the write.
+    const stored = readFileSync(dataPaths(join(dir, 'data')).budgets, 'utf8')
+    expect(stored).toContain('www.shop.test')
+  })
+
   it('hands off only once no call or run is going on, and holds new calls until it has', async () => {
     const s = await approved()
     await s.api.openLoginWindow('shop')
@@ -1666,6 +1684,17 @@ describe('fillSelector', () => {
 
 describe('remote access', () => {
   const HOST = 'mac.example-tailnet.ts.net'
+  const REMOTE_RESOURCE = `https://${HOST}/mcp`
+
+  /** A client the person approved for `tools`, as the authorisation server would leave it. */
+  function approvedClient(s: { service: { remote: RemoteAccess } }, tools: readonly string[]) {
+    const { registration } = s.service.remote.clients.register(
+      { redirectUris: ['https://claude.example/cb'], clientName: null, authMethod: 'none' },
+      null,
+    )
+    s.service.remote.clients.grant(registration.id, tools, REMOTE_RESOURCE)
+    return { id: registration.id, token: s.service.remote.tokens.issue(registration.id, REMOTE_RESOURCE) }
+  }
 
   async function remoteClient(port: number, token: string): Promise<Client> {
     const transport = new StreamableHTTPClientTransport(new URL(`http://${HOST}/mcp`), {
@@ -1694,6 +1723,8 @@ describe('remote access', () => {
       hosts: [],
       sessions: 0,
       tools: [],
+      clients: 0,
+      pendingConsents: 0,
     })
     expect(existsSync(s.paths.remote)).toBe(false)
   })
@@ -1705,7 +1736,8 @@ describe('remote access', () => {
     const { url } = s.service.remote.status()
     expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/)
     const port = Number(new URL(url as string).port)
-    const client = await remoteClient(port, s.service.remote.tokens.issue('phone'))
+    const phone = approvedClient(s, ['shop.echo', 'shop.add'])
+    const client = await remoteClient(port, phone.token)
 
     expect((await client.listTools()).tools).toEqual([])
     await s.service.setRemoteTool('shop', 'echo', true)
@@ -1729,7 +1761,7 @@ describe('remote access', () => {
         type: 'tool-called',
         tool: 'echo',
         client: 'claude.ai',
-        clientId: 'remote:phone',
+        clientId: `remote:${phone.id}`,
       }),
     )
     expect(s.service.remote.status()).toMatchObject({
@@ -1746,7 +1778,8 @@ describe('remote access', () => {
     await s.service.remote.setEnabled(true)
     await s.service.setRemoteTool('shop', 'add', true)
     const port = Number(new URL(s.service.remote.status().url as string).port)
-    const client = await remoteClient(port, s.service.remote.tokens.issue('phone'))
+    const phone = approvedClient(s, ['shop.add'])
+    const client = await remoteClient(port, phone.token)
     await client.listTools()
     // Off in the store, but the client still holds the old listing.
     ;(s.service.remote as unknown as { current: { tools: object } }).current.tools = {}
@@ -1757,7 +1790,7 @@ describe('remote access', () => {
     expect(s.driver.runs).toBe(0)
     const events = audited(s.paths)
     const called = events.find((e) => e.type === 'tool-called' && e.tool === 'add')
-    expect(called).toMatchObject({ clientId: 'remote:phone' })
+    expect(called).toMatchObject({ clientId: `remote:${phone.id}` })
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'tool-finished',
@@ -1775,7 +1808,7 @@ describe('remote access', () => {
     await s.service.remote.setEnabled(true)
     await s.service.setRemoteTool('shop', 'echo', true)
     const port = Number(new URL(s.service.remote.status().url as string).port)
-    const client = await remoteClient(port, s.service.remote.tokens.issue('phone'))
+    const client = await remoteClient(port, approvedClient(s, ['shop.echo']).token)
     await s.api.app.setPaused(true)
     const result = await client.callTool({ name: 'shop_echo', arguments: { text: 'x' } })
     expect(JSON.stringify(result.content)).toContain('config: unavailable')
@@ -1787,12 +1820,12 @@ describe('remote access', () => {
     await s.service.remote.setHosts([HOST])
     await s.service.remote.setEnabled(true)
     const port = Number(new URL(s.service.remote.status().url as string).port)
-    const token = s.service.remote.tokens.issue('phone')
+    const token = s.service.remote.tokens.issue('phone', REMOTE_RESOURCE)
     await remoteClient(port, token)
 
     await s.service.remote.setEnabled(false)
 
-    expect(s.service.remote.tokens.identify(token)).toBeNull()
+    expect(s.service.remote.tokens.identify(token, REMOTE_RESOURCE)).toBeNull()
     expect(s.service.remote.status()).toMatchObject({ enabled: false, listening: false, url: null })
     expect(audited(s.paths)).toContainEqual({ type: 'remote-state', state: 'paused', revokedTokens: 1 })
     expect(s.events).toContainEqual({ type: 'app-changed' })
@@ -1813,6 +1846,178 @@ describe('remote access', () => {
 
     const again = await setup({ dir: s.dir })
     expect(again.service.remote.status()).toMatchObject({ enabled: true, listening: true, url: first })
+  })
+
+  it('adds a connector end to end: registration, the browser’s code typed on the Mac, tokens, ticked tools only', async () => {
+    const s = await approved()
+    await s.service.remote.setHosts([HOST])
+    await s.service.remote.setEnabled(true)
+    await s.service.setRemoteTool('shop', 'echo', true)
+    await s.service.setRemoteTool('shop', 'add', true)
+    const port = Number(new URL(s.service.remote.status().url as string).port)
+    const web = tunnelFetch(port, HOST)
+    const base = `http://${HOST}`
+
+    const registered = await web(`${base}/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.8' },
+      body: JSON.stringify({
+        redirect_uris: ['https://claude.example/cb'],
+        token_endpoint_auth_method: 'none',
+        client_name: 'Claude',
+      }),
+    })
+    expect(registered.status).toBe(201)
+    const { client_id: clientId } = (await registered.json()) as { client_id: string }
+
+    const verifier = 'x'.repeat(64)
+    const challenge = createHash('sha256').update(verifier).digest('base64url')
+    const query = new URLSearchParams({
+      response_type: 'code',
+      client_id: clientId,
+      redirect_uri: 'https://claude.example/cb',
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+      state: 'abc',
+      resource: REMOTE_RESOURCE,
+    })
+    const page = await (
+      await web(`${base}/authorize?${query}`, { headers: { 'cf-connecting-ip': '203.0.113.8' } })
+    ).text()
+    const shown = /class="code">([0-9A-Z]{4}-[0-9A-Z]{4})</.exec(page)?.[1] as string
+    const waitUrl = /url=([^"]+)"/.exec(page)?.[1] as string
+    const wait = waitUrl.replace(/&amp;/g, '&')
+    expect(s.ui.panels).toContain('#/remote')
+    expect(s.ui.notifications).toContainEqual(expect.objectContaining({ key: 'remote-consent' }))
+
+    // The Mac lists the request by its claimed host, never with the code.
+    const consents = await s.api.remote.consents()
+    expect(consents.requests).toEqual([
+      expect.objectContaining({
+        clientId,
+        clientHost: 'claude.example',
+        clientName: 'Claude',
+        source: '203.0.113.8',
+      }),
+    ])
+    expect(JSON.stringify(consents)).not.toContain(shown.replace('-', ''))
+    expect(consents.tools.map((t) => [t.ref, t.toolTitle, t.sideEffect])).toEqual([
+      ['shop.add', 'Add', 'write'],
+      ['shop.echo', 'Echo', 'read'],
+    ])
+    await expect(s.api.remote.approveConsent(shown, ['shop.nope'])).rejects.toBeInstanceOf(ValetError)
+    expect(await s.api.remote.approveConsent('AAAA-AAAA', ['shop.echo'])).toBe('wrong-code')
+    expect(await s.api.remote.approveConsent(shown.toLowerCase(), ['shop.echo'])).toBe('approved')
+
+    const back = await web(`${base}${wait}`)
+    expect(back.status).toBe(302)
+    const code = new URL(back.headers.get('location') as string).searchParams.get('code') as string
+    const tokenRes = await web(`${base}/token`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: clientId,
+        code,
+        code_verifier: verifier,
+      }).toString(),
+    })
+    expect(tokenRes.status).toBe(200)
+    const tokens = (await tokenRes.json()) as { access_token: string; refresh_token: string }
+
+    const client = await remoteClient(port, tokens.access_token)
+    expect((await client.listTools()).tools.map((t) => t.name)).toEqual(['shop_echo'])
+    expect(audited(s.paths)).toContainEqual({
+      type: 'remote-consent',
+      clientId: `remote:${clientId}`,
+      clientHost: 'claude.example',
+      source: '203.0.113.8',
+      tools: ['shop.echo'],
+      answer: 'approved',
+    })
+    expect(s.events).toContainEqual({ type: 'remote-changed' })
+
+    // The client is kept across a restart, and its refresh token still works.
+    await s.service.stop()
+    services.splice(services.indexOf(s.service), 1)
+    const again = await setup({ dir: s.dir })
+    expect((await again.api.remote.clients()).map((c) => [c.id, c.grant?.tools])).toEqual([
+      [clientId, ['shop.echo']],
+    ])
+    const port2 = Number(new URL(again.service.remote.status().url as string).port)
+    const refresh = (token: string) =>
+      tunnelFetch(port2, HOST)(`${base}/token`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          client_id: clientId,
+          refresh_token: token,
+        }).toString(),
+      })
+    const rotated = (await (await refresh(tokens.refresh_token)).json()) as { refresh_token: string }
+    expect(rotated.refresh_token).toMatch(/^[A-Za-z0-9_-]{43}$/)
+
+    await again.api.remote.revokeClient(clientId)
+    expect((await refresh(rotated.refresh_token)).status).toBe(401)
+    expect(await again.api.remote.clients()).toEqual([])
+    expect(audited(again.paths)).toContainEqual({
+      type: 'remote-revoked',
+      clientId: `remote:${clientId}`,
+      clients: 1,
+    })
+  })
+
+  it('audits declined and cancelled consent, and revoking every client', async () => {
+    const s = await approved()
+    await s.service.remote.setHosts([HOST])
+    await s.service.remote.setEnabled(true)
+    const port = Number(new URL(s.service.remote.status().url as string).port)
+    const web = tunnelFetch(port, HOST)
+    const base = `http://${HOST}`
+    const register = async () => {
+      const res = await web(`${base}/register`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          redirect_uris: ['https://claude.example/cb'],
+          token_endpoint_auth_method: 'none',
+        }),
+      })
+      return ((await res.json()) as { client_id: string }).client_id
+    }
+    const ask = async (clientId: string) => {
+      const query = new URLSearchParams({
+        response_type: 'code',
+        client_id: clientId,
+        code_challenge: 'c'.repeat(43),
+        code_challenge_method: 'S256',
+      })
+      expect((await web(`${base}/authorize?${query}`)).status).toBe(200)
+    }
+    const a = await register()
+    await ask(a)
+    const [request] = (await s.api.remote.consents()).requests
+    await s.api.remote.declineConsent(request?.id as string)
+    await expect(s.api.remote.declineConsent('cs_gone')).rejects.toBeInstanceOf(ValetError)
+    await ask(a)
+    for (let i = 0; i < 3; i++) await s.api.remote.approveConsent('AAAA-AAAA', [])
+    await ask(a)
+    await s.api.remote.declineAllConsents()
+    // A paused Mac declines whatever is still waiting.
+    await ask(a)
+    await s.service.remote.setEnabled(false)
+    const answers = audited(s.paths)
+      .filter((e) => e.type === 'remote-consent')
+      .map((e) => e.answer)
+    expect(answers).toEqual(['declined', 'cancelled', 'declined', 'declined'])
+
+    await s.service.remote.setEnabled(true)
+    await register()
+    expect(s.service.remote.status().clients).toBe(2)
+    expect(await s.api.remote.revokeAllClients()).toBe(2)
+    await expect(s.api.remote.revokeClient(a)).rejects.toBeInstanceOf(ValetError)
+    expect(audited(s.paths)).toContainEqual({ type: 'remote-revoked', clientId: null, clients: 2 })
   })
 
   it('refuses to turn on a tool the adapter doesn’t declare, and a host that isn’t a DNS name', async () => {

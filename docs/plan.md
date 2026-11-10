@@ -1461,6 +1461,14 @@ review of 2026-11-10; Nick has answered all three.
   for remote mode, not Tailscale Funnel. He chose it knowing Cloudflare ends TLS and so can see
   tool results. Remote mode is built and tested against `cloudflared` first; Funnel is not
   documented or tested unless he asks. The hosted relay stays after M8.
+- Assumptions taken while building remote mode's second slice (2026-11-10, without asking Nick; each
+  is the plan's or relay.md's recommendation, or the smallest choice that keeps it): the OAuth
+  authorisation server lives in the app, as relay.md recommends, since a tunnel has no Worker to
+  hold it; consent is by a code the browser shows and the person types on the Mac; Client ID
+  Metadata Documents wait until the SSRF-safe fetcher is built, so clients register by DCR only;
+  public and client-secret clients are both accepted; refresh tokens live 30 days from their last
+  use (relay.md fixes no number); the source address for rate limits is cloudflared's
+  `Cf-Connecting-Ip`. See [relay.md, "Built so far"](relay.md#built-so-far).
 - Options: build a relay (Worker plus Durable Object, outbound WebSocket from the app, OAuth for
   MCP clients); document cloudflared or Tailscale Funnel; both.
 - Considerations: the relay is the only piece that's a service with uptime, abuse and cost. It's
