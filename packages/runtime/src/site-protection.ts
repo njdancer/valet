@@ -6,7 +6,8 @@
 //
 // The numbers come from each adapter's manifest.limits. Adapters that share a host share its budget
 // and breaker, which take the most cautious numbers any of them declares. Breaker state is persisted
-// (see breaker-state.ts) so a restart doesn't forget a block.
+// (see breaker-state.ts) so a restart doesn't forget a block, and so is the time of each site's last
+// request (see budget-state.ts) so a restart doesn't forget the pace.
 
 import {
   type AdapterManifest,
@@ -16,6 +17,7 @@ import {
   ValetError,
 } from '@valet/core'
 import { type BreakerState, type JsonStore, parseBreakerFile, serialiseBreakerFile } from './breaker-state'
+import { BUDGET_MEMORY_MS, parseBudgetFile, serialiseBudgetFile } from './budget-state'
 import type { Clock, Sleep } from './clock'
 import type { RuntimeDiagnostic } from './types'
 
@@ -25,20 +27,25 @@ export type BlockCause = 'blocked-by-site' | 'rate-limited'
 /** Spaces requests to one site at least `minGapMs` apart, in the order they ask. */
 export class RateBudget {
   private nextSlot = Number.NEGATIVE_INFINITY
+  /** When the last request was let through, in this run or an earlier one; null before any. */
+  private lastUsed: number | null = null
 
+  /** `used` is called each time a request is let through, so its owner can save lastUsedAt(). Must not throw. */
   constructor(
     private minGapMs: number,
     private readonly clock: Clock,
     private readonly sleep: Sleep,
+    private readonly used: () => void = () => {},
   ) {}
 
   get gapMs(): number {
     return this.minGapMs
   }
 
-  /** Raises the gap; never lowers it. */
+  /** Raises the gap; never lowers it. The wider gap counts from the last request too. */
   widen(minGapMs: number): void {
     this.minGapMs = Math.max(this.minGapMs, minGapMs)
+    if (this.lastUsed !== null) this.nextSlot = Math.max(this.nextSlot, this.lastUsed + this.minGapMs)
   }
 
   /** How long a request asking now would wait for its slot. Reads only; takes no slot. */
@@ -46,12 +53,41 @@ export class RateBudget {
     return Math.max(0, this.nextSlot - this.clock.now())
   }
 
-  /** Waits for this request's slot. An aborted wait still uses up its slot, erring on the slow side. */
+  /** When the last request was let through (epoch ms), or null when none has been. */
+  lastUsedAt(): number | null {
+    return this.lastUsed
+  }
+
+  /**
+   * Waits for this request's slot. A wait that is aborted sent nothing, so it hands its slot back
+   * when nobody has queued behind it; otherwise the slot stays spent, erring on the slow side.
+   */
   async acquire(signal?: AbortSignal): Promise<void> {
     const now = this.clock.now()
     const slot = Math.max(now, this.nextSlot)
-    this.nextSlot = slot + this.minGapMs
-    if (slot > now) await this.sleep(slot - now, signal)
+    const after = slot + this.minGapMs
+    this.nextSlot = after
+    if (slot > now) {
+      try {
+        await this.sleep(slot - now, signal)
+      } catch (error) {
+        if (this.nextSlot === after) this.nextSlot = slot
+        throw error
+      }
+    }
+    this.lastUsed = Math.max(this.lastUsed ?? Number.NEGATIVE_INFINITY, slot)
+    this.used()
+  }
+
+  /**
+   * Takes up the time of the last request from an earlier run of the app: the next one waits out
+   * the rest of the gap. A time in the future is a clock change or a hand edit, and counts as now,
+   * so what is restored never holds a request longer than one gap.
+   */
+  restore(lastRequestAt: number): void {
+    const at = Math.min(lastRequestAt, this.clock.now())
+    this.lastUsed = Math.max(this.lastUsed ?? Number.NEGATIVE_INFINITY, at)
+    this.nextSlot = Math.max(this.nextSlot, at + this.minGapMs)
   }
 }
 
@@ -190,6 +226,11 @@ export interface SiteGuards {
 export interface SiteProtectionOptions {
   /** Where breaker state survives restarts. */
   readonly store: JsonStore
+  /**
+   * Where the time of each site's last request survives restarts. Without one the pace is kept in
+   * memory only, and a restart may send a request sooner than the gap after the last.
+   */
+  readonly budgetStore?: JsonStore
   /** Appends an audit event. Must not throw. */
   readonly audit: (event: AuditEvent) => Promise<void>
   readonly diagnostics: (diagnostic: RuntimeDiagnostic) => void
@@ -211,6 +252,11 @@ export class SiteProtection {
   /** Set when the stored state couldn't be read: every host stays closed until this plus its cooldown. */
   private failClosedSince: number | null = null
   private writes: Promise<void> = Promise.resolve()
+  /** Last request times on disk when loaded, for hosts no adapter registered this run. */
+  private readonly storedBudgets = new Map<string, number>()
+  /** Set when the stored times couldn't be read: every site waits one gap from this. */
+  private budgetsUnreadableSince: number | null = null
+  private budgetWrites: Promise<void> = Promise.resolve()
 
   constructor(
     private readonly clock: Clock,
@@ -220,7 +266,7 @@ export class SiteProtection {
 
   /**
    * The guards for `host`, widened to `limits`. Usable at once; call ready() before trusting the
-   * breaker, so that state persisted by an earlier run is in force.
+   * breaker or the budget, so that state persisted by an earlier run is in force.
    */
   forSite(host: string, limits: SiteLimits): SiteGuards {
     const key = host.toLowerCase()
@@ -231,12 +277,12 @@ export class SiteProtection {
     let guards = this.sites.get(key)
     if (guards === undefined) {
       guards = {
-        budget: new RateBudget(limits.minGapMs, this.clock, this.sleep),
+        budget: new RateBudget(limits.minGapMs, this.clock, this.sleep, () => this.persistBudgets()),
         breaker: new SiteCircuitBreaker(this.clock, breakerOptions, this.eventsFor(key)),
       }
       this.sites.set(key, guards)
       if (this.loaded) {
-        this.applyStored(key, guards.breaker)
+        this.applyStored(key, guards)
         // A host first seen after an unreadable load is held too; write that down.
         if (this.failClosedSince !== null) this.persist()
       }
@@ -247,15 +293,16 @@ export class SiteProtection {
     return guards
   }
 
-  /** Loads the persisted breaker state, once. Never rejects. */
+  /** Loads the persisted breaker state and last request times, once. Never rejects. */
   ready(): Promise<void> {
     this.loading ??= this.load()
     return this.loading
   }
 
   /** Resolves once every state change so far has been written (or has failed to be). */
-  flushed(): Promise<void> {
-    return this.writes
+  async flushed(): Promise<void> {
+    await this.writes
+    await this.budgetWrites
   }
 
   private async load(): Promise<void> {
@@ -273,17 +320,46 @@ export class SiteProtection {
     } else {
       for (const [host, state] of stored) this.stored.set(host, state)
     }
+    const budgetsUnreadable = await this.loadBudgets()
     this.loaded = true
-    for (const [host, guards] of this.sites) this.applyStored(host, guards.breaker)
+    for (const [host, guards] of this.sites) this.applyStored(host, guards)
     // Replace the unreadable file at once, fail-closed holds included. Otherwise it would only be
     // rewritten when some site next trips, and every restart until then would fail closed again.
     if (stored === null) this.persist()
+    if (budgetsUnreadable) this.persistBudgets()
   }
 
-  private applyStored(host: string, breaker: SiteCircuitBreaker): void {
-    if (this.failClosedSince !== null) breaker.failClosed(this.failClosedSince)
+  /** Reads the last request times. True when there is a store and it couldn't be read. */
+  private async loadBudgets(): Promise<boolean> {
+    const store = this.options.budgetStore
+    if (store === undefined) return false
+    let stored: Map<string, number> | null
+    try {
+      const text = await store.read()
+      stored = text === null ? new Map() : parseBudgetFile(text)
+    } catch {
+      stored = null
+    }
+    if (stored === null) {
+      // We can't tell when the last request went out, so assume it just did.
+      this.budgetsUnreadableSince = this.clock.now()
+      this.options.diagnostics({ type: 'budget-state-unreadable' })
+      return true
+    }
+    const now = this.clock.now()
+    for (const [host, at] of stored) {
+      if (at + BUDGET_MEMORY_MS > now) this.storedBudgets.set(host, at)
+    }
+    return false
+  }
+
+  private applyStored(host: string, guards: SiteGuards): void {
+    if (this.failClosedSince !== null) guards.breaker.failClosed(this.failClosedSince)
     const state = this.stored.get(host)
-    if (state !== undefined) breaker.restore(state)
+    if (state !== undefined) guards.breaker.restore(state)
+    if (this.budgetsUnreadableSince !== null) guards.budget.restore(this.budgetsUnreadableSince)
+    const lastRequestAt = this.storedBudgets.get(host)
+    if (lastRequestAt !== undefined) guards.budget.restore(lastRequestAt)
   }
 
   private eventsFor(host: string): BreakerEvents {
@@ -317,6 +393,32 @@ export class SiteProtection {
         // The breaker still holds in memory; only a restart before the next good write forgets it.
         this.options.diagnostics({ type: 'breaker-state-write-failed' })
       })
+  }
+
+  /**
+   * Writes every site's last request time, after any write already queued and never before the
+   * stored times have been read. Not waited for: a request is not held up by the disk, and only a
+   * restart within the moment before the write lands forgets that one request.
+   */
+  private persistBudgets(): void {
+    const store = this.options.budgetStore
+    if (store === undefined) return
+    this.budgetWrites = this.budgetWrites
+      .then(() => this.ready())
+      .then(() => store.write(serialiseBudgetFile(this.currentBudgets())))
+      .catch(() => {
+        // The budget still holds in memory; only a restart before the next good write forgets it.
+        this.options.diagnostics({ type: 'budget-state-write-failed' })
+      })
+  }
+
+  private currentBudgets(): Map<string, number> {
+    const times = new Map(this.storedBudgets)
+    for (const [host, guards] of this.sites) {
+      const at = guards.budget.lastUsedAt()
+      if (at !== null) times.set(host, at)
+    }
+    return times
   }
 
   private current(): Map<string, BreakerState> {

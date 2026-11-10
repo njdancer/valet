@@ -271,8 +271,8 @@ writes a self-check to `userData/smoke-report.json`. A plain build has neither.
   refused or failed rejects with one fixed message. Events cross as `{ type }` (and `seq`) only.
 - **Data**, owner-only under userData: `grants.json` (credentials' FileGrantStore),
   `grant-items.json` (item titles to show), `approvals.json`, `approved-manifests.json` (what was
-  last approved, for diffs), `audit.jsonl`, `breakers.json` (the runtime's own; the app never reads
-  it), `settings.json`, `clients.json`,
+  last approved, for diffs), `audit.jsonl`, `breakers.json` and `budgets.json` (the runtime's own; the app never
+  reads them), `settings.json`, `clients.json`,
   `endpoint.json` (when the token was last rotated), `bridge.json` (port and token, 0600),
   `versions.json` (the last and highest versions run) and `login-markers/`. userData is
   `~/Library/Application Support/<app name>`: `valet` for a release, `valet-dev` for a

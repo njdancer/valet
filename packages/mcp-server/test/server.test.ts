@@ -769,6 +769,49 @@ describe('call results', () => {
     )
   })
 
+  it('tells a call that could not get its turn that nothing was sent, how many were ahead, and when to retry', async () => {
+    const caller = new FakeCaller([searchProducts])
+    caller.answer = async () => ({
+      status: 'blocked',
+      stage: 'tool-run',
+      errorClass: 'busy',
+      retryAfterMs: 20_000,
+      ahead: 2,
+    })
+    const { client } = await connect(caller)
+
+    const result = await client.callTool({ name: 'woolworths_search_products', arguments: { query: 'milk' } })
+
+    expect(result.isError).toBe(true)
+    expect(textOf(result)).toBe(
+      'Valet is still working through earlier calls (2 ahead of this one), so this call was not ' +
+        'started and nothing was sent (stage tool-run: busy). Try again in 20 seconds, one call at a time.',
+    )
+  })
+
+  it.each([
+    [undefined, 1],
+    [0, 1],
+    [2.9, 2],
+    [1e9, 99],
+    [Number.NaN, 1],
+    ['<b>many</b>' as unknown as number, 1],
+  ])('gives the number ahead as a whole number from 1 to 99 (%s)', async (ahead, shown) => {
+    const caller = new FakeCaller([searchProducts])
+    caller.answer = async () => ({
+      status: 'blocked',
+      stage: 'tool-run',
+      errorClass: 'busy',
+      retryAfterMs: 5_000,
+      ...(ahead === undefined ? {} : { ahead }),
+    })
+    const { client } = await connect(caller)
+
+    const result = await client.callTool({ name: 'woolworths_search_products', arguments: { query: 'milk' } })
+
+    expect(textOf(result)).toContain(`(${shown} ahead of this one)`)
+  })
+
   it('replaces a blocked stage outside the vocabulary rather than passing it through', async () => {
     const caller = new FakeCaller([searchProducts])
     caller.answer = async () => ({
