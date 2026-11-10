@@ -205,6 +205,40 @@ describe('permissionDiff', () => {
     })
   }
 
+  it('flags an irreversible tool that names one more request to unlock (C15)', () => {
+    const order = { name: 'order', title: 'Order', description: 'Places it.', sideEffect: 'irreversible' }
+    const requests = [
+      ...(SHOP.requests ?? []),
+      { method: 'POST', path: '/api/order', purpose: 'irreversible' },
+      { method: 'POST', path: '/api/payees/add', purpose: 'irreversible' },
+    ] as ManifestInput['requests']
+    const one = parseManifest({
+      ...SHOP,
+      requests,
+      tools: [...SHOP.tools, { ...order, unlocks: [{ method: 'POST', path: '/api/order' }] }],
+    } as ManifestInput)
+    const two = parseManifest({
+      ...SHOP,
+      requests,
+      tools: [
+        ...SHOP.tools,
+        {
+          ...order,
+          unlocks: [
+            { method: 'POST', path: '/api/order' },
+            { method: 'POST', path: '/api/payees/add' },
+          ],
+        },
+      ],
+    } as ManifestInput)
+    const diff = permissionDiff(one, two)
+    expect(diff.tools.added).toEqual([
+      expect.objectContaining({ name: 'order', unlocks: ['POST /api/order', 'POST /api/payees/add'] }),
+    ])
+    expect(addsPermissions(diff)).toBe(true)
+    expect(addsPermissions(permissionDiff(one, one))).toBe(false)
+  })
+
   it('flags a removed assertLoggedIn: a stop taken out of the login', () => {
     const diff = permissionDiff(
       before,

@@ -15,8 +15,9 @@ const host = new ToolHost({
   authRunner, // (request: AuthRunRequest) => Promise<AuthOutcome>, wrapping auth-flow's runAuthFlow
   markers: new LoginAttemptMarker(join(dataDir, 'login-markers'), systemClock),
   breakerStore: new JsonFileStore(join(dataDir, 'breakers.json')),
+  budgetStore: new JsonFileStore(join(dataDir, 'budgets.json')), // optional; see "Site protection"
   // Optional: clock, sleep, pacingSleep, timeoutMs, validationTimeoutMs, confirmationTimeoutMs,
-  // settleTimeoutMs, loginBackoff, diagnostics.
+  // settleTimeoutMs, queueWaitMs, loginBackoff, diagnostics.
 })
 host.register({ definition, bundleHash, driver }) // driver: SessionDriver for this adapter's site
 await host.listTools() // approved adapters only
@@ -50,7 +51,12 @@ at whichever step it reaches; see "Cancelling a call" below.
 3. Tool declared and implemented (own properties only), else `failed manifest/not-found`.
 4. Input parsed with the tool's zod schema, under a deadline (10 s default), else
    `failed tool-input/invalid` or `tool-input/timed-out`.
-5. Per-adapter FIFO lock. Approval is checked again once the lock is held.
+5. Per-adapter FIFO lock, waited for at most `queueWaitMs` (30 s default), else `busy` with
+   `ahead` (the calls still in front, at least 1) and `retryAfterMs`. A call that finds so many in
+   front that one `minGapMs` each would use up the wait is answered `busy` at once without joining
+   (three in front at Woolworths' 10 s gap). Either way it never started and sent nothing; it is
+   audited `failed tool-run/busy`. `retryAfterMs` is a guess, one gap per call in front, kept
+   between 5 s and 60 s. Approval is checked again once the lock is held.
 6. Site circuit breaker open (including state persisted by an earlier run): `blocked` with
    `retryAfterMs`.
 7. `irreversible` tool: the person confirms first, under a deadline (5 min default) whose signal
@@ -258,6 +264,31 @@ leave it out run tool code in process, with the same guards.
   refuses from then on. `request-blocked` events (initiator `tool`) carry origin and path only,
   redacted.
 
+## Session read cache
+
+D28: a tool's repeated read is answered from memory instead of from the site (`read-cache.ts`).
+What may be kept is declared in the manifest, never guessed:
+
+- A `read` request declaration with `cacheSeconds` (1 to 3600). Its 2xx JSON-object answer is kept
+  that long, keyed by method, URL and JSON body. A request that sets any header is always sent and
+  never kept.
+- A `write` declaration with `refreshes`, the path of a declared, cached GET read: the write's own
+  2xx JSON-object reply becomes that read's cached answer (a trolley update answers with the
+  trolley). The schema refuses either field on an `irreversible` request.
+
+An answer from the cache is marked `fromCache: true`, sends nothing, takes no slot of the rate
+budget and isn't counted against `requestsPerRun`. `fetch(path, { cache: 'reload' })` asks the site
+and replaces the kept answer. Each caller gets its own copy, and the call's output is redacted
+against the session values of the call that stored the answer as well as its own.
+
+The cache is one adapter's, in memory, at most 50 answers, and it is emptied whenever the session
+may have changed: at any login, at any `ensure()` that isn't ok, when a call ends any way but ok,
+at a login step the person drives, at every write (before it is sent, so a write cut off halfway
+leaves nothing stale), and at `click()` and `evaluate()`, which can change the site out of its
+sight. The wrapper sits outside the guarded page, so every request that is sent passes the guard
+unchanged, and only a request core's `decideRequest` allows and declares a read is ever answered
+from memory.
+
 ## What the driver refuses
 
 The driver reports each request it refuses to `onBlocked`. Each becomes a `request-blocked` audit
@@ -302,6 +333,16 @@ replaced atomically), so a restart straight after a block doesn't hit the site a
 blocks carries over too, so the next block doubles. The file is read once, before the first call
 sends anything. A persisted retry time further out than `maxCooldownSeconds` is cut back to it.
 
+**The pace persists too,** when a `budgetStore` is given. Each request let through writes the time
+it went, per host, to that store (not waited for, so the disk never holds a request up), and after
+a restart the first request to a host waits out the rest of its `minGapMs` since the last one
+before it. Nothing is held at a start with nothing stored. A stored time in the future counts as
+now, so a restored time never holds a request longer than one gap; entries a day old are dropped.
+A file that can't be read or doesn't parse fails slow, not closed: every host waits one gap from
+when it was read, `budget-state-unreadable` is raised and the file is rewritten. A failed write
+raises `budget-state-write-failed`. A wait for a slot that is aborted sent nothing, so it hands its
+slot back when no request has queued behind it.
+
 **A breaker file that can't be read or doesn't parse fails closed:** every host's breaker opens for
 its `cooldownSeconds`, counted from when the file was read, and a `breaker-state-unreadable`
 diagnostic is raised. The file is then rewritten straight away with the fail-closed holds (and
@@ -324,6 +365,16 @@ raises `breaker-state-write-failed`.
   site.
 
 No login starts while the site's breaker is open.
+
+**Resting on the last probe.** A fetch probe may set `trustSeconds` (0 to 300; unset means never).
+For that long after the probe last answered "logged in", a `write` tool's first `ensure()` in a call
+returns ok without probing. A `read` tool and an `irreversible` tool always probe: a read's whole
+worth is its answer, and nothing that can't be undone rests on an old one. The second `ensure()` in
+one call always probes too, since it means the tool met a logged-out answer. The answer is
+forgotten when a probe ends any other way, when a call ends any way but ok, at a login step the
+person drives, and at a restart; it is not used while the page is off the probe's origin. What it
+costs: a session that ends inside the window isn't noticed until the window closes, and a write sent
+meanwhile goes wherever the site sends a logged-out visitor's.
 
 Logins are rationed:
 

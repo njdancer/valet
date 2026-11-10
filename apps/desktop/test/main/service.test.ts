@@ -2,6 +2,7 @@
 // The whole main-process wiring in plain Node: the real runtime, stores, audit log and auth flow,
 // with a fake driver, the test credential provider, a stand-in endpoint and a recording UI.
 
+import { createHash } from 'node:crypto'
 import {
   existsSync,
   mkdirSync,
@@ -23,7 +24,10 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { dataPaths } from '../../src/main/core/constants'
 import { type Credentials, disabledOtpReader } from '../../src/main/core/credentials'
 import { DEMO_ACCOUNT, demoCredentials } from '../../src/main/core/demo'
+import type { EraseKind, EraseReport } from '../../src/main/core/erase'
+import type { AppNotification } from '../../src/main/core/notifications'
 import { builtinAdapter } from '../../src/main/core/registry'
+import type { RemoteAccess } from '../../src/main/core/remote'
 import { AppService, fillSelector } from '../../src/main/core/service'
 import { disabledUpdates, type UpdatesHooks, type UpdatesPort } from '../../src/main/core/updates'
 import type { AppEvent, ConfirmationItem, HashRoute } from '../../src/shared/api'
@@ -50,6 +54,7 @@ async function setup(
     /** breakers.json as the runtime finds it at start. */
     breakers?: unknown
     credentials?: Credentials
+    leftovers?: readonly string[]
   } = {},
 ) {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'sa-service-'))
@@ -73,6 +78,15 @@ async function setup(
     quits: 0,
     saveTo: null as string | null,
     opChoice: null as string | null,
+    notifications: [] as AppNotification[],
+    closedNotifications: [] as string[],
+    /** What the person answers in the native erase dialog, and what they were asked. */
+    eraseAnswer: false,
+    /** Set to keep the dialog open: its promise is the person's answer. */
+    eraseDialog: null as (() => Promise<boolean>) | null,
+    eraseAsked: [] as EraseKind[],
+    browserCleared: 0,
+    erased: [] as EraseReport[],
   }
   const endpoint = {
     caller: null as ToolCaller | null,
@@ -148,7 +162,18 @@ async function setup(
       closeNeedsUser: (id) => ui.banners.push(`close ${id}`),
       setLaunchAtLogin: (on) => ui.loginItem.push(on),
       quit: () => ui.quits++,
+      notify: (notification) => ui.notifications.push(notification),
+      closeNotification: (key) => ui.closedNotifications.push(key),
+      confirmErase: async (kind) => {
+        ui.eraseAsked.push(kind)
+        return ui.eraseDialog === null ? ui.eraseAnswer : ui.eraseDialog()
+      },
+      clearBrowserData: async () => {
+        ui.browserCleared++
+      },
+      finishErase: (report) => ui.erased.push(report),
     },
+    ...(options.leftovers === undefined ? {} : { leftovers: options.leftovers }),
     emit: (event) => events.push(event),
     bridge: (configPath) => ({ command: '/repo/tsx', args: ['/repo/bridge-cli.ts', configPath] }),
     checkOp: options.checkOp ?? (async (path) => (path === '/good/op' ? path : null)),
@@ -731,6 +756,189 @@ describe('tool calls', () => {
   })
 })
 
+describe('notifications', () => {
+  it('tells the person a confirmation is waiting, without the adapter’s or the client’s words, and takes it down once answered', async () => {
+    const s = await approved()
+    const pending = s.call('add', { item: 'milk' }, 'Claude Code', 'call_note')
+    await expect.poll(() => s.ui.notifications.length).toBe(1)
+    const [id] = s.ui.shownConfirmations
+    expect(s.ui.notifications).toEqual([
+      {
+        key: `confirmation:${id}`,
+        title: 'Valet needs your approval',
+        body: 'Shop: an agent asked for something that needs your yes. Unanswered, it is declined in 2 minutes.',
+        target: { kind: 'confirmation', id },
+      },
+    ])
+    const text = JSON.stringify(s.ui.notifications)
+    for (const untrusted of ['milk', 'Add ', 'Claude Code', 'call_note'])
+      expect(text).not.toContain(untrusted)
+    await s.api.answerConfirmation(id as string, false, { role: 'tray', shows: null })
+    await pending
+    expect(s.ui.closedNotifications).toEqual([`confirmation:${id}`])
+  })
+
+  it('stays quiet when the person turned notifications off', async () => {
+    const s = await approved()
+    await s.api.settings.set({ notifications: false })
+    const pending = s.call('add', { item: 'milk' })
+    await expect.poll(() => s.ui.shownConfirmations.length).toBe(1)
+    await s.api.answerConfirmation(s.ui.shownConfirmations[0] as string, false, { role: 'tray', shows: null })
+    await pending
+    expect(s.ui.notifications).toEqual([])
+    expect(s.ui.closedNotifications).toEqual([])
+  })
+
+  it('says nothing about a login window the person opened themselves', async () => {
+    const s = await approved()
+    await s.api.openLoginWindow('shop')
+    expect((await s.api.attention.list()).map((i) => i.kind)).toEqual(['needs-user'])
+    expect(s.ui.notifications).toEqual([])
+  })
+
+  it('tells the person when a site’s breaker opens', async () => {
+    const s = await approved()
+    s.driver.nextPage = () => {
+      const page = new FakeAuthPage()
+      page.text = ['Access Denied … Reference #18.abc']
+      return page
+    }
+    await expect(s.api.openLoginWindow('shop')).rejects.toEqual(new ValetError('login', 'blocked-by-site'))
+    await expect.poll(() => s.ui.notifications.map((n) => n.key)).toEqual(['breaker:www.shop.test'])
+    expect(s.ui.notifications[0]).toMatchObject({
+      title: 'Valet stopped calling www.shop.test',
+      target: { kind: 'panel', route: '#/adapters' },
+    })
+    expect(s.ui.notifications[0]?.body).toMatch(/^The site refused Valet\. Calls to it wait \d+ minutes?\.$/)
+  })
+
+  it('tells the person a verified update is downloaded, and how it installs', async () => {
+    let hooks: UpdatesHooks | null = null
+    const s = await setup({
+      version: '0.2.0',
+      updates: async (given) => {
+        hooks = given
+        return { ...disabledUpdates('0.2.0', 'development', false), start: () => {}, stop: () => {} }
+      },
+    })
+    ;(hooks as UpdatesHooks | null)?.downloaded('0.2.0', '0.3.0')
+    await s.api.settings.set({ autoInstallUpdates: true })
+    ;(hooks as UpdatesHooks | null)?.downloaded('0.2.0', '0.3.0')
+    expect(s.ui.notifications.map((n) => [n.key, n.title, n.body])).toEqual([
+      ['update', 'Valet 0.3.0 is downloaded', 'Turn on automatic installs in Settings to apply it.'],
+      ['update', 'Valet 0.3.0 is downloaded', 'It installs when Valet quits.'],
+    ])
+  })
+
+  it('takes its notifications down when the app stops', async () => {
+    const s = await approved()
+    const pending = s.call('add', { item: 'milk' })
+    await expect.poll(() => s.ui.notifications.length).toBe(1)
+    await s.service.stop()
+    await pending
+    expect(s.ui.closedNotifications).toEqual(s.ui.notifications.map((n) => n.key))
+  })
+})
+
+describe('reset and uninstall', () => {
+  /** Credentials that record an erase, over the demo's. */
+  function erasable(failed: readonly ('keychain-copies' | 'keychain-token' | 'messages-helper')[] = []) {
+    const erases: number[] = []
+    const credentials: Credentials = {
+      ...demoCredentials(disabledOtpReader),
+      erase: async () => {
+        erases.push(Date.now())
+        return failed
+      },
+    }
+    return { credentials, erases }
+  }
+
+  it('does nothing at all unless the person agrees in the main process’s own dialog', async () => {
+    const { credentials, erases } = erasable()
+    const s = await setup({ credentials })
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    expect(await s.api.app.erase('uninstall')).toBe(false)
+    expect(s.ui.eraseAsked).toEqual(['uninstall'])
+    expect(erases).toEqual([])
+    expect(s.ui.erased).toEqual([])
+    expect(s.driver.closed).toBe(false)
+    expect(existsSync(s.paths.audit)).toBe(true)
+    expect((await s.call('echo', { text: 'still here' })).status).toBe('ok')
+  })
+
+  it('reset: stops, removes the Keychain items, the login item, the sessions and the data, keeping the version floor', async () => {
+    const { credentials, erases } = erasable()
+    const s = await setup({ credentials })
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    await s.api.clients.add('Claude Code')
+    mkdirSync(join(s.paths.dir, 'Partitions', 'auth'), { recursive: true })
+    writeFileSync(join(s.paths.dir, 'Partitions', 'auth', 'Cookies'), 'sid')
+    expect(readdirSync(s.paths.dir)).toEqual(expect.arrayContaining(['audit.jsonl', 'approvals.json']))
+    s.ui.eraseAnswer = true
+    expect(await s.api.app.erase('reset')).toBe(true)
+    expect(erases).toHaveLength(1)
+    expect(s.driver.closed).toBe(true)
+    expect(s.endpoint.closes).toBe(1)
+    expect(s.ui.loginItem).toEqual([false])
+    expect(s.ui.browserCleared).toBe(1)
+    expect(readdirSync(s.paths.dir)).toEqual(['versions.json'])
+    expect(s.ui.erased).toEqual([{ kind: 'reset', failed: [] }])
+  })
+
+  it('uninstall: removes the whole data folder and the leftovers it was given', async () => {
+    const { credentials } = erasable()
+    const dir = mkdtempSync(join(tmpdir(), 'sa-service-'))
+    dirs.push(dir)
+    const helperDir = join(dir, 'support', 'me.dncr.valet.messages-helper')
+    mkdirSync(helperDir, { recursive: true })
+    writeFileSync(join(helperDir, 'helper.sock'), '')
+    const s = await setup({ credentials, dir, leftovers: [helperDir] })
+    s.ui.eraseAnswer = true
+    expect(await s.api.app.erase('uninstall')).toBe(true)
+    expect(existsSync(s.paths.dir)).toBe(false)
+    expect(existsSync(helperDir)).toBe(false)
+    expect(existsSync(join(dir, 'support'))).toBe(true)
+    expect(s.ui.erased).toEqual([{ kind: 'uninstall', failed: [] }])
+  })
+
+  it('declines what was waiting and cancels what was running before anything is removed', async () => {
+    const { credentials } = erasable()
+    const s = await setup({ credentials })
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    const pending = s.call('add', { item: 'milk' })
+    await expect.poll(() => s.ui.shownConfirmations.length).toBe(1)
+    s.ui.eraseAnswer = true
+    await s.api.app.erase('reset')
+    expect((await pending).status).not.toBe('ok')
+    expect(s.ui.closedConfirmations).toEqual(s.ui.shownConfirmations)
+  })
+
+  it('finishes even when a Keychain item couldn’t be removed, and reports which', async () => {
+    const { credentials } = erasable(['keychain-copies'])
+    const s = await setup({ credentials })
+    s.ui.eraseAnswer = true
+    await s.api.app.erase('uninstall')
+    expect(s.ui.erased).toEqual([{ kind: 'uninstall', failed: ['keychain-copies'] }])
+    expect(existsSync(s.paths.dir)).toBe(false)
+  })
+
+  it('refuses a second erase while one is waiting for its answer', async () => {
+    const { credentials } = erasable()
+    const s = await setup({ credentials })
+    let answer: (yes: boolean) => void = () => {}
+    s.ui.eraseDialog = () =>
+      new Promise<boolean>((resolve) => {
+        answer = resolve
+      })
+    const first = s.api.app.erase('reset')
+    await expect(s.api.app.erase('uninstall')).rejects.toBeInstanceOf(ValetError)
+    answer(false)
+    expect(await first).toBe(false)
+    expect(s.ui.eraseAsked).toEqual(['reset'])
+  })
+})
+
 describe('updates', () => {
   function audited(paths: { audit: string }) {
     return readFileSync(paths.audit, 'utf8')
@@ -1056,6 +1264,22 @@ describe('the login window', () => {
     expect(after - Math.max(before, Date.parse('2026-11-07T00:00:00.000Z'))).toBe(1000)
   })
 
+  it('has the site’s pacing state on disk by the time it has stopped', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sa-service-'))
+    dirs.push(dir)
+    const s = await setup({ dir })
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    await s.api.openLoginWindow('shop')
+    const page = s.driver.pages[0]
+    if (page !== undefined) page.cookies = ['sid']
+    // The hand-off's probe takes a slot; its time is written without the call waiting for the disk.
+    await s.api.finishLogin('shop')
+    await s.service.stop()
+    // No waiting here: stop() itself waited for the write.
+    const stored = readFileSync(dataPaths(join(dir, 'data')).budgets, 'utf8')
+    expect(stored).toContain('www.shop.test')
+  })
+
   it('hands off only once no call or run is going on, and holds new calls until it has', async () => {
     const s = await approved()
     await s.api.openLoginWindow('shop')
@@ -1289,6 +1513,17 @@ describe('fillSelector', () => {
 
 describe('remote access', () => {
   const HOST = 'mac.example-tailnet.ts.net'
+  const REMOTE_RESOURCE = `https://${HOST}/mcp`
+
+  /** A client the person approved for `tools`, as the authorisation server would leave it. */
+  function approvedClient(s: { service: { remote: RemoteAccess } }, tools: readonly string[]) {
+    const { registration } = s.service.remote.clients.register(
+      { redirectUris: ['https://claude.example/cb'], clientName: null, authMethod: 'none' },
+      null,
+    )
+    s.service.remote.clients.grant(registration.id, tools, REMOTE_RESOURCE)
+    return { id: registration.id, token: s.service.remote.tokens.issue(registration.id, REMOTE_RESOURCE) }
+  }
 
   async function remoteClient(port: number, token: string): Promise<Client> {
     const transport = new StreamableHTTPClientTransport(new URL(`http://${HOST}/mcp`), {
@@ -1317,6 +1552,8 @@ describe('remote access', () => {
       hosts: [],
       sessions: 0,
       tools: [],
+      clients: 0,
+      pendingConsents: 0,
     })
     expect(existsSync(s.paths.remote)).toBe(false)
   })
@@ -1328,7 +1565,8 @@ describe('remote access', () => {
     const { url } = s.service.remote.status()
     expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/)
     const port = Number(new URL(url as string).port)
-    const client = await remoteClient(port, s.service.remote.tokens.issue('phone'))
+    const phone = approvedClient(s, ['shop.echo', 'shop.add'])
+    const client = await remoteClient(port, phone.token)
 
     expect((await client.listTools()).tools).toEqual([])
     await s.service.setRemoteTool('shop', 'echo', true)
@@ -1352,7 +1590,7 @@ describe('remote access', () => {
         type: 'tool-called',
         tool: 'echo',
         client: 'claude.ai',
-        clientId: 'remote:phone',
+        clientId: `remote:${phone.id}`,
       }),
     )
     expect(s.service.remote.status()).toMatchObject({
@@ -1369,7 +1607,8 @@ describe('remote access', () => {
     await s.service.remote.setEnabled(true)
     await s.service.setRemoteTool('shop', 'add', true)
     const port = Number(new URL(s.service.remote.status().url as string).port)
-    const client = await remoteClient(port, s.service.remote.tokens.issue('phone'))
+    const phone = approvedClient(s, ['shop.add'])
+    const client = await remoteClient(port, phone.token)
     await client.listTools()
     // Off in the store, but the client still holds the old listing.
     ;(s.service.remote as unknown as { current: { tools: object } }).current.tools = {}
@@ -1380,7 +1619,7 @@ describe('remote access', () => {
     expect(s.driver.runs).toBe(0)
     const events = audited(s.paths)
     const called = events.find((e) => e.type === 'tool-called' && e.tool === 'add')
-    expect(called).toMatchObject({ clientId: 'remote:phone' })
+    expect(called).toMatchObject({ clientId: `remote:${phone.id}` })
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'tool-finished',
@@ -1398,7 +1637,7 @@ describe('remote access', () => {
     await s.service.remote.setEnabled(true)
     await s.service.setRemoteTool('shop', 'echo', true)
     const port = Number(new URL(s.service.remote.status().url as string).port)
-    const client = await remoteClient(port, s.service.remote.tokens.issue('phone'))
+    const client = await remoteClient(port, approvedClient(s, ['shop.echo']).token)
     await s.api.app.setPaused(true)
     const result = await client.callTool({ name: 'shop_echo', arguments: { text: 'x' } })
     expect(JSON.stringify(result.content)).toContain('config: unavailable')
@@ -1410,12 +1649,12 @@ describe('remote access', () => {
     await s.service.remote.setHosts([HOST])
     await s.service.remote.setEnabled(true)
     const port = Number(new URL(s.service.remote.status().url as string).port)
-    const token = s.service.remote.tokens.issue('phone')
+    const token = s.service.remote.tokens.issue('phone', REMOTE_RESOURCE)
     await remoteClient(port, token)
 
     await s.service.remote.setEnabled(false)
 
-    expect(s.service.remote.tokens.identify(token)).toBeNull()
+    expect(s.service.remote.tokens.identify(token, REMOTE_RESOURCE)).toBeNull()
     expect(s.service.remote.status()).toMatchObject({ enabled: false, listening: false, url: null })
     expect(audited(s.paths)).toContainEqual({ type: 'remote-state', state: 'paused', revokedTokens: 1 })
     expect(s.events).toContainEqual({ type: 'app-changed' })
@@ -1436,6 +1675,178 @@ describe('remote access', () => {
 
     const again = await setup({ dir: s.dir })
     expect(again.service.remote.status()).toMatchObject({ enabled: true, listening: true, url: first })
+  })
+
+  it('adds a connector end to end: registration, the browser’s code typed on the Mac, tokens, ticked tools only', async () => {
+    const s = await approved()
+    await s.service.remote.setHosts([HOST])
+    await s.service.remote.setEnabled(true)
+    await s.service.setRemoteTool('shop', 'echo', true)
+    await s.service.setRemoteTool('shop', 'add', true)
+    const port = Number(new URL(s.service.remote.status().url as string).port)
+    const web = tunnelFetch(port, HOST)
+    const base = `http://${HOST}`
+
+    const registered = await web(`${base}/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.8' },
+      body: JSON.stringify({
+        redirect_uris: ['https://claude.example/cb'],
+        token_endpoint_auth_method: 'none',
+        client_name: 'Claude',
+      }),
+    })
+    expect(registered.status).toBe(201)
+    const { client_id: clientId } = (await registered.json()) as { client_id: string }
+
+    const verifier = 'x'.repeat(64)
+    const challenge = createHash('sha256').update(verifier).digest('base64url')
+    const query = new URLSearchParams({
+      response_type: 'code',
+      client_id: clientId,
+      redirect_uri: 'https://claude.example/cb',
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+      state: 'abc',
+      resource: REMOTE_RESOURCE,
+    })
+    const page = await (
+      await web(`${base}/authorize?${query}`, { headers: { 'cf-connecting-ip': '203.0.113.8' } })
+    ).text()
+    const shown = /class="code">([0-9A-Z]{4}-[0-9A-Z]{4})</.exec(page)?.[1] as string
+    const waitUrl = /url=([^"]+)"/.exec(page)?.[1] as string
+    const wait = waitUrl.replace(/&amp;/g, '&')
+    expect(s.ui.panels).toContain('#/remote')
+    expect(s.ui.notifications).toContainEqual(expect.objectContaining({ key: 'remote-consent' }))
+
+    // The Mac lists the request by its claimed host, never with the code.
+    const consents = await s.api.remote.consents()
+    expect(consents.requests).toEqual([
+      expect.objectContaining({
+        clientId,
+        clientHost: 'claude.example',
+        clientName: 'Claude',
+        source: '203.0.113.8',
+      }),
+    ])
+    expect(JSON.stringify(consents)).not.toContain(shown.replace('-', ''))
+    expect(consents.tools.map((t) => [t.ref, t.toolTitle, t.sideEffect])).toEqual([
+      ['shop.add', 'Add', 'write'],
+      ['shop.echo', 'Echo', 'read'],
+    ])
+    await expect(s.api.remote.approveConsent(shown, ['shop.nope'])).rejects.toBeInstanceOf(ValetError)
+    expect(await s.api.remote.approveConsent('AAAA-AAAA', ['shop.echo'])).toBe('wrong-code')
+    expect(await s.api.remote.approveConsent(shown.toLowerCase(), ['shop.echo'])).toBe('approved')
+
+    const back = await web(`${base}${wait}`)
+    expect(back.status).toBe(302)
+    const code = new URL(back.headers.get('location') as string).searchParams.get('code') as string
+    const tokenRes = await web(`${base}/token`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: clientId,
+        code,
+        code_verifier: verifier,
+      }).toString(),
+    })
+    expect(tokenRes.status).toBe(200)
+    const tokens = (await tokenRes.json()) as { access_token: string; refresh_token: string }
+
+    const client = await remoteClient(port, tokens.access_token)
+    expect((await client.listTools()).tools.map((t) => t.name)).toEqual(['shop_echo'])
+    expect(audited(s.paths)).toContainEqual({
+      type: 'remote-consent',
+      clientId: `remote:${clientId}`,
+      clientHost: 'claude.example',
+      source: '203.0.113.8',
+      tools: ['shop.echo'],
+      answer: 'approved',
+    })
+    expect(s.events).toContainEqual({ type: 'remote-changed' })
+
+    // The client is kept across a restart, and its refresh token still works.
+    await s.service.stop()
+    services.splice(services.indexOf(s.service), 1)
+    const again = await setup({ dir: s.dir })
+    expect((await again.api.remote.clients()).map((c) => [c.id, c.grant?.tools])).toEqual([
+      [clientId, ['shop.echo']],
+    ])
+    const port2 = Number(new URL(again.service.remote.status().url as string).port)
+    const refresh = (token: string) =>
+      tunnelFetch(port2, HOST)(`${base}/token`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'refresh_token',
+          client_id: clientId,
+          refresh_token: token,
+        }).toString(),
+      })
+    const rotated = (await (await refresh(tokens.refresh_token)).json()) as { refresh_token: string }
+    expect(rotated.refresh_token).toMatch(/^[A-Za-z0-9_-]{43}$/)
+
+    await again.api.remote.revokeClient(clientId)
+    expect((await refresh(rotated.refresh_token)).status).toBe(401)
+    expect(await again.api.remote.clients()).toEqual([])
+    expect(audited(again.paths)).toContainEqual({
+      type: 'remote-revoked',
+      clientId: `remote:${clientId}`,
+      clients: 1,
+    })
+  })
+
+  it('audits declined and cancelled consent, and revoking every client', async () => {
+    const s = await approved()
+    await s.service.remote.setHosts([HOST])
+    await s.service.remote.setEnabled(true)
+    const port = Number(new URL(s.service.remote.status().url as string).port)
+    const web = tunnelFetch(port, HOST)
+    const base = `http://${HOST}`
+    const register = async () => {
+      const res = await web(`${base}/register`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          redirect_uris: ['https://claude.example/cb'],
+          token_endpoint_auth_method: 'none',
+        }),
+      })
+      return ((await res.json()) as { client_id: string }).client_id
+    }
+    const ask = async (clientId: string) => {
+      const query = new URLSearchParams({
+        response_type: 'code',
+        client_id: clientId,
+        code_challenge: 'c'.repeat(43),
+        code_challenge_method: 'S256',
+      })
+      expect((await web(`${base}/authorize?${query}`)).status).toBe(200)
+    }
+    const a = await register()
+    await ask(a)
+    const [request] = (await s.api.remote.consents()).requests
+    await s.api.remote.declineConsent(request?.id as string)
+    await expect(s.api.remote.declineConsent('cs_gone')).rejects.toBeInstanceOf(ValetError)
+    await ask(a)
+    for (let i = 0; i < 3; i++) await s.api.remote.approveConsent('AAAA-AAAA', [])
+    await ask(a)
+    await s.api.remote.declineAllConsents()
+    // A paused Mac declines whatever is still waiting.
+    await ask(a)
+    await s.service.remote.setEnabled(false)
+    const answers = audited(s.paths)
+      .filter((e) => e.type === 'remote-consent')
+      .map((e) => e.answer)
+    expect(answers).toEqual(['declined', 'cancelled', 'declined', 'declined'])
+
+    await s.service.remote.setEnabled(true)
+    await register()
+    expect(s.service.remote.status().clients).toBe(2)
+    expect(await s.api.remote.revokeAllClients()).toBe(2)
+    await expect(s.api.remote.revokeClient(a)).rejects.toBeInstanceOf(ValetError)
+    expect(audited(s.paths)).toContainEqual({ type: 'remote-revoked', clientId: null, clients: 2 })
   })
 
   it('refuses to turn on a tool the adapter doesn’t declare, and a host that isn’t a DNS name', async () => {

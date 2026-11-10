@@ -89,6 +89,17 @@ describe('SettingsStore', () => {
     expect((await store.set({ messagesOtpEnabled: true })).messagesOtpEnabled).toBe(true)
   })
 
+  it('notifies by default, and reads a file from before the setting existed as on', async () => {
+    const path = join(dir(), 'settings.json')
+    const store = new SettingsStore(path)
+    expect((await store.get()).notifications).toBe(true)
+    const { notifications: _, ...older } = { ...DEFAULT_SETTINGS, launchAtLogin: true }
+    writeFileSync(path, JSON.stringify(older))
+    expect(await store.get()).toEqual({ ...DEFAULT_SETTINGS, launchAtLogin: true })
+    expect((await store.set({ notifications: false })).notifications).toBe(false)
+    expect((await store.get()).notifications).toBe(false)
+  })
+
   it('keeps trace retention in days, 1 to 365, and reads a file from before it existed as 14', async () => {
     const path = join(dir(), 'settings.json')
     const store = new SettingsStore(path)

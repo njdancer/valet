@@ -427,6 +427,7 @@ const READ_RUN: ToolRunPolicy = {
 const TROLLEY = { url: 'https://www.example.com/apis/ui/Trolley', method: 'GET', resourceType: 'xhr' }
 const UPDATE = { url: 'https://www.example.com/apis/ui/Trolley/Update', method: 'POST', resourceType: 'xhr' }
 const PLACE = { url: 'https://www.example.com/apis/ui/Checkout/Place', method: 'POST', resourceType: 'xhr' }
+const PLACE_UNLOCK = { method: 'POST', path: '/apis/ui/Checkout/Place' }
 const SHOP = { url: 'https://www.example.com/shop', method: 'GET', resourceType: 'mainFrame' }
 const IMAGE = { url: 'https://img.cdn.example.com/a.png', method: 'GET', resourceType: 'image' }
 
@@ -672,18 +673,26 @@ describe('tool partition request surface, in a run', () => {
 
   it('refuses irreversible declarations until unlockIrreversible(), and only for that run', async () => {
     const { driver, filter, blocked, begin } = await toolFilter()
-    begin({ maxPurpose: 'irreversible', ceiling: 50 })
+    begin({ maxPurpose: 'irreversible', ceiling: 50, unlocks: [PLACE_UNLOCK] })
     expect(filter(UPDATE)).toBe(true)
     expect(filter(PLACE)).toBe(false)
     driver.unlockIrreversible()
     expect(filter(PLACE)).toBe(true)
     // A new run starts locked again.
-    begin({ maxPurpose: 'irreversible', ceiling: 50 })
+    begin({ maxPurpose: 'irreversible', ceiling: 50, unlocks: [PLACE_UNLOCK] })
     expect(filter(PLACE)).toBe(false)
     driver.unlockIrreversible()
     driver.endRun()
     expect(filter(PLACE)).toBe(false)
     expect(blocked.map((b) => b.reason)).toEqual(['purpose-exceeded', 'purpose-exceeded'])
+  })
+
+  it('unlocks nothing for a run that names no declaration (C15)', async () => {
+    const { driver, filter, blocked, begin } = await toolFilter()
+    begin({ maxPurpose: 'irreversible', ceiling: 50 })
+    driver.unlockIrreversible()
+    expect(filter(PLACE)).toBe(false)
+    expect(blocked.map((b) => b.reason)).toEqual(['purpose-exceeded'])
   })
 
   it('ignores unlockIrreversible() in a read or write run, and between runs', async () => {

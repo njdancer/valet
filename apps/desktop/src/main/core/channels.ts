@@ -45,11 +45,19 @@ export const INVOKE_METHODS = [
   'health.sites',
   'setup.status',
   'setup.finish',
+  'remote.consents',
+  'remote.approveConsent',
+  'remote.declineConsent',
+  'remote.declineAllConsents',
+  'remote.clients',
+  'remote.revokeClient',
+  'remote.revokeAllClients',
   'app.status',
   'app.setPaused',
   'app.openControlPanel',
   'app.copyText',
   'app.quit',
+  'app.erase',
 ] as const
 
 export type InvokeMethod = (typeof INVOKE_METHODS)[number]

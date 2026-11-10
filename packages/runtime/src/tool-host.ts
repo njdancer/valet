@@ -4,13 +4,17 @@
 //   1. the call id is well formed and the adapter's exact bundle hash is approved;
 //   2. the input matches the tool's schema;
 //   3. the adapter's lock is held, so one session never runs two tools at once, and the hash is
-//      still approved once we hold it;
+//      still approved once we hold it. A call waits its turn for a bounded time only: after that,
+//      or at once when the calls in front are too many to get through in that time, it ends busy,
+//      having sent nothing, with how many calls were ahead of it;
 //   4. the site's circuit breaker is closed;
 //   5. an irreversible tool has the person's confirmation, before its run() starts;
 //   6. the driver holds the whole tool partition to this run's network policy (egress, request
 //      surface, the tool's side effect, the ceiling), and only after that confirmation unlocks the
 //      run's irreversible declarations;
-//   7. the tool runs with a guarded capability object, a timeout and an abort signal;
+//   7. the tool runs with a guarded capability object, a timeout and an abort signal. Reads the
+//      manifest says may be kept can be answered from the adapter's session cache (read-cache.ts),
+//      which sits outside the guard: whatever is sent still passes it;
 //   8. the output matches the tool's schema, is converted to plain JSON, and is redacted on the
 //      way out.
 //
@@ -48,6 +52,7 @@ import {
   type ToolPage,
   type ToolRunPolicy,
   toReportable,
+  unlockedBy,
   ValetError,
 } from '@valet/core'
 import type { z } from 'zod'
@@ -60,6 +65,7 @@ import { runIsolated, type ToolProcessFactory } from './isolation/host'
 import type { LoginMarkerStore } from './login-marker'
 import { KeyedMutex } from './mutex'
 import { probeDeclaration } from './probe'
+import { CachedToolPage, ReadCache } from './read-cache'
 import { redactOutput } from './redaction'
 import { knownReason, type LoginBackoff, SessionGate } from './session'
 import { breakerRefusal, isSiteRefusal, type SiteGuards, SiteProtection } from './site-protection'
@@ -88,6 +94,17 @@ export const DEFAULT_CONFIRMATION_TIMEOUT_MS = 5 * 60_000
 export const DEFAULT_SETTLE_TIMEOUT_MS = 30_000
 /** How long a login step waits for running calls on its adapter before giving up. */
 export const DEFAULT_LOGIN_STEP_WAIT_MS = 30_000
+/**
+ * How long a tool call waits its turn behind earlier calls on its adapter before it ends busy.
+ * Short enough that the answer reaches a client with a 60 s timeout, with the queue length and a
+ * time to try again, where an unbounded wait would end in the client giving up and maybe repeating
+ * a write. It also caps the queue: a call joins only while one of the site's gaps for each call in
+ * front adds up to less than this.
+ */
+export const DEFAULT_QUEUE_WAIT_MS = 30_000
+/** The bounds of the "try again" time a busy call is given. */
+export const MIN_BUSY_RETRY_MS = 5_000
+export const MAX_BUSY_RETRY_MS = 60_000
 /** Distinct request-blocked events recorded per call. A page whose analytics are all blocked is chatty. */
 export const MAX_BLOCKED_EVENTS_PER_CALL = 50
 const MAX_CLIENT = 100
@@ -123,6 +140,11 @@ export interface ToolHostOptions {
   readonly markers: LoginMarkerStore
   /** Where site circuit breakers keep their state across restarts, e.g. a JsonFileStore. */
   readonly breakerStore: JsonStore
+  /**
+   * Where each site's last request time is kept across restarts, so a restart can't send a request
+   * sooner than the site's gap after the last one. Without it the pace is kept in memory only.
+   */
+  readonly budgetStore?: JsonStore
   readonly clock?: Clock
   /** For deadlines: tool runs, schema parses, confirmations, settling. */
   readonly sleep?: Sleep
@@ -132,6 +154,8 @@ export interface ToolHostOptions {
   readonly validationTimeoutMs?: number
   readonly confirmationTimeoutMs?: number
   readonly settleTimeoutMs?: number
+  /** How long a call waits for its adapter's lock. Default 30 s; finite and above zero. */
+  readonly queueWaitMs?: number
   readonly loginBackoff?: LoginBackoff
   readonly diagnostics?: (diagnostic: RuntimeDiagnostic) => void
 }
@@ -141,6 +165,14 @@ interface Entry extends RegisteredAdapter {
   readonly site: SiteGuards
   /** The site host its guards are keyed by. */
   readonly host: string
+  /** This adapter's session read cache (D28). */
+  readonly cache: ReadCache
+}
+
+/** A wait for the adapter's lock that ended without it. `ahead`: the calls still in front. */
+interface GaveUp {
+  readonly kind: 'timed-out' | 'aborted'
+  readonly ahead: number
 }
 
 type Raced<T> =
@@ -152,6 +184,8 @@ type Raced<T> =
 export class ToolHost {
   private readonly adapters = new Map<string, Entry>()
   private readonly locks = new KeyedMutex()
+  /** Per adapter, one ticket for each call or login step holding or waiting for its lock, in order. */
+  private readonly queues = new Map<string, symbol[]>()
   private readonly protection: SiteProtection
   private readonly clock: Clock
   private readonly sleep: Sleep
@@ -159,6 +193,7 @@ export class ToolHost {
   private readonly validationTimeoutMs: number
   private readonly confirmationTimeoutMs: number
   private readonly settleTimeoutMs: number
+  private readonly queueWaitMs: number
   private readonly diagnostics: (diagnostic: RuntimeDiagnostic) => void
 
   constructor(private readonly options: ToolHostOptions) {
@@ -168,9 +203,12 @@ export class ToolHost {
     this.validationTimeoutMs = options.validationTimeoutMs ?? DEFAULT_VALIDATION_TIMEOUT_MS
     this.confirmationTimeoutMs = options.confirmationTimeoutMs ?? DEFAULT_CONFIRMATION_TIMEOUT_MS
     this.settleTimeoutMs = options.settleTimeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS
+    // An unbounded wait is the fault this bound exists to remove, so a bad value is refused.
+    this.queueWaitMs = boundOf(options.queueWaitMs, DEFAULT_QUEUE_WAIT_MS)
     this.diagnostics = options.diagnostics ?? (() => {})
     this.protection = new SiteProtection(this.clock, options.pacingSleep ?? this.sleep, {
       store: options.breakerStore,
+      ...(options.budgetStore === undefined ? {} : { budgetStore: options.budgetStore }),
       audit: (event) => this.record(event),
       diagnostics: this.diagnostics,
     })
@@ -215,6 +253,7 @@ export class ToolHost {
       gate,
       site,
       host,
+      cache: new ReadCache(this.clock),
       ...(adapter.isolation === undefined ? {} : { isolation: adapter.isolation }),
     })
   }
@@ -273,8 +312,7 @@ export class ToolHost {
     // A block persisted by an earlier run of the app must be in force before anything is sent.
     await this.protection.ready()
     const lock = await this.acquireLock(adapterId, waitMs, external)
-    if (lock === 'aborted') throw new ValetError('login', 'aborted')
-    if (lock === 'timed-out') throw new ValetError('login', 'timed-out')
+    if (typeof lock !== 'function') throw new ValetError('login', lock.kind)
     const release = lock
     const controller = new AbortController()
     const stop = (): void => controller.abort()
@@ -282,6 +320,8 @@ export class ToolHost {
     let unsettled: Promise<unknown> | null = null
     try {
       if (!(await this.isApproved(entry))) throw new ValetError('manifest', 'not-granted')
+      // The person is logging in or out: nothing remembered about the old session holds.
+      forget(entry)
       const pace = async (): Promise<void> => {
         if (controller.signal.aborted) throw new ValetError('login', 'aborted')
         if (entry.site.breaker.isOpen()) throw new ValetError('login', 'rate-limited')
@@ -321,6 +361,15 @@ export class ToolHost {
       if (left === null) release()
       else void this.race(() => left, this.settleTimeoutMs).finally(release)
     }
+  }
+
+  /**
+   * Resolves once every breaker and rate-budget change so far is on disk (or has failed to be).
+   * Those writes are not waited for while calls run; the app waits for them here before it stops,
+   * so quitting doesn't lose the last request's time or a breaker that just opened.
+   */
+  flushed(): Promise<void> {
+    return this.protection.flushed()
   }
 
   /**
@@ -406,8 +455,15 @@ export class ToolHost {
 
     // One lock per adapter, for reads and writes alike: the driver holds one run policy at a time,
     // so two calls on one session can't safely overlap.
-    const lock = await this.acquireLock(manifest.id, undefined, external)
-    if (typeof lock !== 'function') return failed('tool-run', 'aborted')
+    // A call that can't get its turn in time is told so at once: with one of the site's gaps for
+    // each call in front, the wait would run out first. Waiting it out anyway would only keep the
+    // client for the whole wait before the same answer.
+    const inFront = this.queues.get(manifest.id)?.length ?? 0
+    if (inFront * entry.site.budget.gapMs >= this.queueWaitMs) return busy(entry.site, inFront)
+    const lock = await this.acquireLock(manifest.id, this.queueWaitMs, external)
+    if (typeof lock !== 'function') {
+      return lock.kind === 'aborted' ? failed('tool-run', 'aborted') : busy(entry.site, lock.ahead)
+    }
     const release = lock
     const controller = new AbortController()
     // The caller giving up stops the tool the way a timeout does.
@@ -451,16 +507,26 @@ export class ToolHost {
         // Without the driver's policy in force, nothing tool code does would be held to it.
         return fromReportable(toReportable(error, 'egress'))
       }
-      return await this.run(
-        entry,
-        declaration,
-        implementation,
-        client,
-        transport,
-        input.output,
-        state,
-        controller,
-      )
+      let result: ToolCallResult
+      try {
+        result = await this.run(
+          entry,
+          declaration,
+          implementation,
+          client,
+          transport,
+          input.output,
+          state,
+          controller,
+        )
+      } catch (error) {
+        forget(entry)
+        throw error
+      }
+      // Any ending but ok may mean the session isn't what it was (logged out, blocked, cut off
+      // halfway through a write), so the next call starts from the site, not from memory.
+      if (result.status !== 'ok') forget(entry)
+      return result
     } finally {
       external?.removeEventListener('abort', stop)
       // Capabilities die with the call, so promises tool code left running can't act afterwards.
@@ -498,17 +564,22 @@ export class ToolHost {
       return fromReportable(toReportable(error, 'navigate'))
     }
 
+    const guarded = new GuardedToolPage({
+      adapterId: manifest.id,
+      manifest,
+      sideEffect: declaration.sideEffect,
+      unlocks: unlockedBy(manifest.requests, declaration.unlocks),
+      inner,
+      site: entry.site,
+      state,
+      audit: (event) => this.record(event),
+    })
     const ctx: ToolContext = {
-      page: new GuardedToolPage({
-        adapterId: manifest.id,
-        manifest,
-        sideEffect: declaration.sideEffect,
-        inner,
-        site: entry.site,
-        state,
-        audit: (event) => this.record(event),
-      }),
-      session: { ensure: () => this.ensure(entry, state, inner) },
+      // Declared reads may be answered from the session's cache; everything sent goes through the guard.
+      page: new CachedToolPage({ manifest, inner: guarded, cache: entry.cache, state, clock: this.clock }),
+      // Only a write may rest on a recent login check: a read's whole worth is its answer, and an
+      // irreversible tool must know whose session it acts in.
+      session: { ensure: () => this.ensure(entry, state, inner, declaration.sideEffect === 'write') },
       confirm: async (action) => {
         state.assertLive()
         const question = confirmQuestion(manifest, declaration, action)
@@ -573,7 +644,12 @@ export class ToolHost {
     return { status: 'ok', output: parsed.value.data }
   }
 
-  private async ensure(entry: Entry, state: CallState, page: ToolPage): Promise<EnsureResult> {
+  private async ensure(
+    entry: Entry,
+    state: CallState,
+    page: ToolPage,
+    mayTrust: boolean,
+  ): Promise<EnsureResult> {
     state.assertLive()
     try {
       const result = await state.track(
@@ -582,12 +658,16 @@ export class ToolHost {
           signal: state.signal,
           page,
           login: state.login,
+          mayTrust,
         }),
       )
+      // A login, or anything but ok, is a different session from the one the cache was read in.
+      if (result.status !== 'ok' || state.login.outcome !== null) entry.cache.clear()
       state.ensureOutcome = result.status === 'ok' ? null : result
       await this.collectSessionSecrets(entry, state)
       return result
     } catch (error) {
+      entry.cache.clear()
       if (isSiteRefusal(error)) state.blocked = true
       throw error
     }
@@ -736,20 +816,42 @@ export class ToolHost {
   }
 
   /**
-   * Joins the adapter's queue. Gives up after `waitMs` (when given) or when `signal` aborts. A waiter
-   * that gave up still takes its turn and hands it straight on, so the queue keeps its order.
+   * Joins the adapter's queue. Gives up after `waitMs` or when `signal` aborts, and says how many
+   * were still ahead. A waiter that gave up still takes its turn and hands it straight on, so the
+   * queue keeps its order.
    */
   private async acquireLock(
     adapterId: string,
-    waitMs: number | undefined,
+    waitMs: number,
     signal: AbortSignal | undefined,
-  ): Promise<(() => void) | 'timed-out' | 'aborted'> {
+  ): Promise<(() => void) | GaveUp> {
+    const ticket = Symbol(adapterId)
+    let queue = this.queues.get(adapterId)
+    if (queue === undefined) {
+      queue = []
+      this.queues.set(adapterId, queue)
+    }
+    queue.push(ticket)
+    const tickets = queue
+    const leave = (): void => {
+      const index = tickets.indexOf(ticket)
+      if (index !== -1) tickets.splice(index, 1)
+      if (tickets.length === 0 && this.queues.get(adapterId) === tickets) this.queues.delete(adapterId)
+    }
     const pending = this.locks.acquire(adapterId)
-    if (waitMs === undefined && signal === undefined) return pending
-    const outcome = await this.race(() => pending, waitMs ?? Number.POSITIVE_INFINITY, signal)
-    if (outcome.kind === 'returned') return outcome.value
+    const outcome = await this.race(() => pending, waitMs, signal)
+    if (outcome.kind === 'returned') {
+      const release = outcome.value
+      return () => {
+        leave()
+        release()
+      }
+    }
+    // Everyone still in front: the holder, and those waiting who have not given up.
+    const ahead = tickets.indexOf(ticket)
+    leave()
     void pending.then((release) => release())
-    return outcome.kind === 'aborted' ? 'aborted' : 'timed-out'
+    return { kind: outcome.kind === 'aborted' ? 'aborted' : 'timed-out', ahead }
   }
 
   /** Cookie values and handed-off storage values, old and new, so output can't carry them. */
@@ -796,14 +898,26 @@ const VIOLATION_WHOEVER_ASKED: ReadonlySet<BlockedRequest['reason']> = new Set<B
 /**
  * The network policy for one run. The probe's own request is added to the declarations: it is the
  * runtime's, not tool code's, but it goes through the same partition.
+ *
+ * Of the manifest's irreversible declarations, the person's yes unlocks only the ones this tool
+ * names (C15), so it can't be spent on another tool's request, by tool code or by the page. The
+ * others stay in the request surface, still matched and still refused: taking them out would let a
+ * wider declaration further down the list match the same request.
  */
 function runPolicy(manifest: AdapterManifest, declaration: ToolDeclaration): ToolRunPolicy {
   return {
     egress: manifest.egress,
     requests: [...manifest.requests, ...probeDeclaration(manifest)],
+    unlocks: unlockedBy(manifest.requests, declaration.unlocks).map(({ method, path }) => ({ method, path })),
     maxPurpose: declaration.sideEffect,
     ceiling: manifest.limits.requestsPerRun,
   }
+}
+
+/** Drops what is remembered about an adapter's session: its cached reads and its last login check. */
+function forget(entry: Entry): void {
+  entry.cache.clear()
+  entry.gate.distrust()
 }
 
 function implementationOf(entry: RegisteredAdapter, name: string): ToolImplementation | undefined {
@@ -848,6 +962,20 @@ function blocked(site: SiteGuards): ToolCallResult {
   return { status: 'blocked', retryAfterMs: site.breaker.retryAfterMs() }
 }
 
+/**
+ * A call that gave up waiting its turn. The time to try again is a guess, since nothing says how
+ * long the calls in front will take: one of the site's gaps for each, within fixed bounds.
+ */
+function busy(site: SiteGuards, ahead: number): ToolCallResult {
+  const calls = Math.max(1, ahead)
+  const estimate = calls * site.budget.gapMs
+  return {
+    status: 'busy',
+    retryAfterMs: Math.min(MAX_BUSY_RETRY_MS, Math.max(MIN_BUSY_RETRY_MS, estimate)),
+    ahead: calls,
+  }
+}
+
 function fromReportable(reportable: { stage: Stage; errorClass: ErrorClass }): ToolCallResult {
   return failed(reportable.stage, reportable.errorClass)
 }
@@ -885,6 +1013,9 @@ function finishedEvent(
       return { ...base, outcome: 'failed', stage: result.stage, errorClass: result.errorClass }
     case 'blocked':
       return { ...base, outcome: 'blocked' }
+    case 'busy':
+      // Not the site refusing us, which is what `blocked` means in the log: our own queue was full.
+      return { ...base, outcome: 'failed', stage: 'tool-run', errorClass: 'busy' }
     case 'declined':
       return { ...base, outcome: 'declined' }
   }

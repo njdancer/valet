@@ -132,6 +132,38 @@ export type AuditEvent =
       readonly sideEffect: 'read' | 'write' | 'irreversible'
     }
   | {
+      /**
+       * A remote client's consent request ended (relay.md, "Consent happens on the Mac"): approved
+       * with the person's typed code, declined, expired unanswered, or cancelled by wrong codes.
+       */
+      readonly type: 'remote-consent'
+      /** `remote:<registration id>`, as tool-called records the client. */
+      readonly clientId: string
+      /** The client's claimed identity: its redirect URI's host. */
+      readonly clientHost: string
+      /** The address the tunnel reported, or null. */
+      readonly source: string | null
+      /** The tools granted, as `<adapterId>.<tool>`; empty unless approved. */
+      readonly tools: readonly string[]
+      readonly answer: 'approved' | 'declined' | 'expired' | 'cancelled'
+    }
+  | {
+      /** The person revoked one remote client (`remote:<id>`), or every one (null). */
+      readonly type: 'remote-revoked'
+      readonly clientId: string | null
+      readonly clients: number
+    }
+  | {
+      /**
+       * A rotated-away refresh token, or a spent authorisation code, came back. The client's grant
+       * and tokens were revoked: one of the client and a thief holds what the other has used.
+       */
+      readonly type: 'remote-token-reuse'
+      /** `remote:<registration id>`. */
+      readonly clientId: string
+      readonly token: 'refresh' | 'code'
+    }
+  | {
       readonly type: 'confirmation'
       readonly adapterId: string
       readonly tool: string

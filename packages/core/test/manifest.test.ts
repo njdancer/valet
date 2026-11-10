@@ -258,6 +258,103 @@ describe('manifestSchema', () => {
     expect(issues(typo)).not.toEqual([])
   })
 
+  it('lets only an irreversible tool name requests to unlock, and only declared irreversible ones (C15)', () => {
+    const place = { method: 'POST', path: '/api/checkout/place' }
+    const withPlace = () => {
+      const input = copy()
+      input.requests = [...(input.requests ?? []), { ...place, purpose: 'irreversible' }]
+      return input
+    }
+    const ok = withPlace()
+    ok.tools[0] = { ...ok.tools[0], sideEffect: 'irreversible', unlocks: [place] }
+    expect(issues(ok)).toEqual([])
+    expect(parseManifest(ok).tools[0]?.unlocks).toEqual([place])
+
+    for (const sideEffect of ['read', 'write']) {
+      const input = withPlace()
+      input.tools[0] = { ...input.tools[0], sideEffect, unlocks: [place] }
+      expect(issues(input)).toEqual(['only an irreversible tool may set unlocks'])
+    }
+
+    // Not declared at all, declared under another method, declared but not irreversible, and a
+    // pattern wider than the declaration.
+    const wrong = [
+      { method: 'POST', path: '/api/payees/add' },
+      { method: 'GET', path: '/api/checkout/place' },
+      { method: ok.requests[0].method, path: ok.requests[0].path },
+      { method: 'POST', path: '/api/checkout/*' },
+    ]
+    for (const unlock of wrong) {
+      const input = withPlace()
+      input.tools[0] = { ...input.tools[0], sideEffect: 'irreversible', unlocks: [unlock] }
+      expect(issues(input)).toEqual([
+        `tool ${input.tools[0].name} unlocks ${unlock.method} ${unlock.path}, which is not a declared irreversible request`,
+      ])
+    }
+
+    const empty = withPlace()
+    empty.tools[0] = { ...empty.tools[0], sideEffect: 'irreversible', unlocks: [] }
+    expect(issues(empty)).not.toEqual([])
+  })
+
+  it('lets only a read be cached, and only a write fill the cache, never an irreversible request (D28)', () => {
+    const read = { method: 'GET', path: '/api/basket', purpose: 'read', cacheSeconds: 120 }
+    const write = { method: 'POST', path: '/api/basket/set', purpose: 'write', refreshes: '/api/basket' }
+    const withRequests = (...requests: unknown[]) => {
+      const input = copy()
+      input.requests = requests
+      return input
+    }
+    const ok = parseManifest(withRequests(read, write))
+    expect(ok.requests).toEqual([read, write])
+    // Neither field appears unless a manifest sets it.
+    expect(Object.keys(parseManifest(VALID).requests[0] ?? {})).toEqual(['method', 'path', 'purpose'])
+
+    for (const purpose of ['write', 'irreversible']) {
+      expect(issues(withRequests({ ...read, purpose }))).toEqual([
+        'GET /api/basket: only a read request may set cacheSeconds',
+      ])
+    }
+    for (const purpose of ['read', 'irreversible']) {
+      expect(issues(withRequests(read, { ...write, purpose }))).toEqual([
+        'POST /api/basket/set: only a write request may set refreshes',
+      ])
+    }
+    const badTarget =
+      'POST /api/basket/set: refreshes must name a declared GET read with cacheSeconds and no ":param" or "*"'
+    // Not declared; declared without cacheSeconds; a POST; a pattern; an irreversible GET.
+    expect(issues(withRequests(write))).toEqual([badTarget])
+    expect(issues(withRequests({ method: 'GET', path: '/api/basket', purpose: 'read' }, write))).toEqual([
+      badTarget,
+    ])
+    expect(issues(withRequests({ ...read, method: 'POST' }, write))).toEqual([badTarget])
+    expect(issues(withRequests({ ...read, path: '/api/:id' }, { ...write, refreshes: '/api/:id' }))).toEqual([
+      badTarget,
+    ])
+    expect(issues(withRequests({ ...read, purpose: 'irreversible' }, write))).toEqual([
+      'GET /api/basket: only a read request may set cacheSeconds',
+      badTarget,
+    ])
+    for (const cacheSeconds of [0, 3601, 1.5]) {
+      expect(issues(withRequests({ ...read, cacheSeconds }))).not.toEqual([])
+    }
+  })
+
+  it('bounds how long a fetch probe may be trusted, and gives a cookie probe no such field', () => {
+    const trusting = copy()
+    trusting.session.probe = { ...trusting.session.probe, trustSeconds: 60 }
+    expect(parseManifest(trusting).session.probe).toMatchObject({ trustSeconds: 60 })
+    expect(parseManifest(VALID).session.probe).not.toHaveProperty('trustSeconds')
+    for (const trustSeconds of [-1, 301, 0.5]) {
+      const input = copy()
+      input.session.probe = { ...input.session.probe, trustSeconds }
+      expect(issues(input)).not.toEqual([])
+    }
+    const cookie = copy()
+    cookie.session.probe = { kind: 'cookie', name: 'sid', trustSeconds: 60 }
+    expect(issues(cookie)).not.toEqual([])
+  })
+
   it('bounds retry counts and pause lengths', () => {
     const tooManyRetries = copy()
     tooManyRetries.auth.steps.push({ op: 'retry', times: 50, steps: [{ op: 'pause', ms: 1 }] })

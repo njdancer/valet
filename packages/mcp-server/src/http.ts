@@ -45,6 +45,12 @@ export interface HttpServerOptions {
    * throw; if it does, the error is ignored.
    */
   readonly onSessionsChanged?: (sessions: LiveSessions) => void
+  /**
+   * Runs before the authenticate hook on every request and answers it when it returns true: the
+   * remote listener's OAuth endpoints (oauth-server.ts), which are reached before a client has a
+   * token. It must apply the listener's own Host and Origin guards itself. Not used locally.
+   */
+  readonly before?: (req: IncomingMessage, res: ServerResponse) => boolean | Promise<boolean>
 }
 
 /** One open session, as the app shows it. Never its id, which a request could use with the token. */
@@ -68,8 +74,8 @@ export interface RunningHttpServer {
   readonly url: string
   readonly port: number
   /**
-   * Re-reads the caller's tools once, gives every session that same list and tells each client it
-   * changed. Returns the tools that were withheld and why. If the caller can't list its tools,
+   * Re-reads the caller's tools once for each client with a session, gives each of its sessions that
+   * list and tells each client it changed. Returns the tools that were withheld and why. If the caller can't list its tools,
    * throws ValetError and every session keeps the tools it had.
    */
   refresh(): readonly SkippedTool[]
@@ -187,6 +193,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
   }
 
   const route = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
+    if (options.before !== undefined && (await options.before(req, res))) return
     const auth = await authenticated(req)
     if (!auth.ok) {
       return reject(res, auth.status, auth.status === 403 ? 'Forbidden' : 'Unauthorized', auth.headers)
@@ -232,16 +239,26 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
     url: `http://${options.host ?? '127.0.0.1'}:${port}${MCP_PATH}`,
     port,
     refresh() {
-      let plan: ToolPlan
+      // Each client's own list, once per client: a remote client sees only what its grant covers.
+      const plans = new Map<string, ToolPlan>()
+      let skipped: readonly SkippedTool[] = []
       try {
-        plan = planTools(options.caller.listTools())
+        if (sessions.size === 0) skipped = planTools(options.caller.listTools()).skipped
+        for (const { identity } of sessions.values()) {
+          const key = identityLabel(identity)
+          if (plans.has(key)) continue
+          const plan = planTools(options.caller.listTools(identity))
+          if (plans.size === 0) skipped = plan.skipped
+          plans.set(key, plan)
+        }
       } catch (error) {
         // All or nothing: a session left on the old list could keep offering a revoked tool.
         const { stage, errorClass } = toReportable(error, 'tool-run')
         throw new ValetError(stage, errorClass)
       }
-      for (const session of sessions.values()) session.endpoint.apply(plan)
-      return plan.skipped
+      for (const session of sessions.values())
+        session.endpoint.apply(plans.get(identityLabel(session.identity)) as ToolPlan)
+      return skipped
     },
     async endSessions(match) {
       const ids = [...sessions].filter(([, session]) => match(session.identity)).map(([id]) => id)

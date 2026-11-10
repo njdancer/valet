@@ -36,6 +36,7 @@ import {
   hostAllowed,
   type Purpose,
   pathMatches,
+  type RequestDeclaration,
   type Stage,
   type ToolPage,
   touchesDeniedSegment,
@@ -64,6 +65,11 @@ export interface GuardedPageOptions {
   readonly manifest: AdapterManifest
   /** The running tool's declared side effect. A request may not do more than its tool declares. */
   readonly sideEffect: Purpose
+  /**
+   * The irreversible declarations the running tool names (C15), the manifest's own objects. An
+   * irreversible declaration not among them is refused to this tool whatever its side effect.
+   */
+  readonly unlocks?: readonly RequestDeclaration[]
   readonly inner: ToolPage
   readonly site: SiteGuards
   readonly state: CallState
@@ -94,7 +100,7 @@ export class GuardedToolPage implements ToolPage {
     ) {
       return this.deny('request-surface', 'denied-path', 'GET', target, url)
     }
-    if (declared !== undefined && PURPOSE_RANK[declared.purpose] > PURPOSE_RANK[sideEffect]) {
+    if (declared !== undefined && !this.mayUse(declared)) {
       return this.deny('request-surface', 'denied-path', 'GET', target, url)
     }
     const admitted = await this.admit('GET', target, url)
@@ -102,6 +108,12 @@ export class GuardedToolPage implements ToolPage {
     const cause = await state.track(navigationBlocked(inner))
     if (cause !== null) this.siteBlocked(cause)
     site.breaker.recordSuccess(admitted)
+  }
+
+  /** Within the tool's side effect, and for an irreversible declaration, one the tool names. */
+  private mayUse(declared: RequestDeclaration): boolean {
+    if (PURPOSE_RANK[declared.purpose] > PURPOSE_RANK[this.options.sideEffect]) return false
+    return declared.purpose !== 'irreversible' || (this.options.unlocks ?? []).includes(declared)
   }
 
   currentUrl(): string {
@@ -135,7 +147,7 @@ export class GuardedToolPage implements ToolPage {
   }
 
   async fetch(pathOrUrl: string, init?: FetchInit): Promise<FetchResult> {
-    const { state, manifest, sideEffect, inner, site } = this.options
+    const { state, manifest, inner, site } = this.options
     state.assertLive()
     const target = resolve(pathOrUrl, manifest.home)
     const request = snapshotInit(init)
@@ -149,7 +161,7 @@ export class GuardedToolPage implements ToolPage {
     if (!decision.allowed) {
       return this.deny('request-surface', SURFACE_CLASS[decision.reason], method, target, pathOrUrl)
     }
-    if (PURPOSE_RANK[decision.declaration.purpose] > PURPOSE_RANK[sideEffect]) {
+    if (!this.mayUse(decision.declaration)) {
       return this.deny('request-surface', 'denied-path', method, target, pathOrUrl)
     }
     const admitted = await this.admit(method, target, pathOrUrl)

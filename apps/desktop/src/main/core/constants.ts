@@ -11,10 +11,18 @@ export const KEYCHAIN_ACCOUNT = 'onepassword-service-account'
  * label (D8, the plist in build/launch-agents). A development build keeps its own of each, so it
  * never reads or replaces the release build's.
  */
-export function nativeNames(release: boolean): { copyService: string; messagesHelperLabel: string } {
-  return release
-    ? { copyService: 'valet.copy', messagesHelperLabel: 'me.dncr.valet.messages-helper' }
-    : { copyService: 'valet.dev.copy', messagesHelperLabel: 'me.dncr.valet.dev.messages-helper' }
+export function nativeNames(release: boolean): {
+  copyService: string
+  messagesHelperLabel: string
+  /** The packaged app's bundle id (electron-builder.config.ts), which macOS files its caches under. */
+  bundleId: string
+} {
+  const bundleId = release ? 'me.dncr.valet' : 'me.dncr.valet.dev'
+  return {
+    copyService: release ? 'valet.copy' : 'valet.dev.copy',
+    messagesHelperLabel: `${bundleId}.messages-helper`,
+    bundleId,
+  }
 }
 
 /** The 1Password vault every granted item lives in (D6, pending). */
@@ -55,6 +63,8 @@ export interface DataPaths {
   readonly manifests: string
   readonly audit: string
   readonly breakers: string
+  /** When each site's last request went out, so a restart keeps the pace (the runtime's own). */
+  readonly budgets: string
   readonly settings: string
   readonly clients: string
   /** One bridge config file per client (clients.ts), each mode 0600. */
@@ -68,6 +78,8 @@ export interface DataPaths {
   readonly setup: string
   /** Remote access: on or paused, its names and port, and the remote-enabled tools (remote.ts). */
   readonly remote: string
+  /** Remote client registrations and their grants, secrets hashed (mcp-server's RemoteClients). */
+  readonly remoteClients: string
   /** Run traces and screenshots, one entry per run, pruned after Settings' retention days (D27). */
   readonly traces: string
   /** The app's own diagnostics (diagnostics-log.ts): crashes and failures, never page text. */
@@ -84,6 +96,7 @@ export function dataPaths(dir: string): DataPaths {
     manifests: join(dir, 'approved-manifests.json'),
     audit: join(dir, 'audit.jsonl'),
     breakers: join(dir, 'breakers.json'),
+    budgets: join(dir, 'budgets.json'),
     settings: join(dir, 'settings.json'),
     clients: join(dir, 'clients.json'),
     clientConfigs: join(dir, 'client-configs'),
@@ -92,6 +105,7 @@ export function dataPaths(dir: string): DataPaths {
     versions: join(dir, 'versions.json'),
     setup: join(dir, 'setup.json'),
     remote: join(dir, 'remote.json'),
+    remoteClients: join(dir, 'remote-clients.json'),
     traces: join(dir, 'traces'),
     diagnosticsLog: join(dir, 'logs', 'valet.log'),
   }

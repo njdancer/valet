@@ -7,6 +7,46 @@ it says so.
 
 The product is called Valet ([D1](#d1-product-name), decided 2026-11-07).
 
+## North Star
+
+Nick, 2026-11-10: "We should consider the top level goal that forms our North Star as completing an
+order against Woolworths via the MCP." He also said he had been more ambitious in places than an MVP
+needs, and that the strictness stays. Everything below is read against that.
+
+He then settled two things the same day. The MVP ships with the trolley tools only: Claude fills
+the trolley and Nick presses "Place order" himself, so [D18](#d18-irreversible-tools-in-shipped-adapters)
+stands for the MVP. A checkout tool that needs his Touch ID for every order
+([D46](#d46-touch-id-on-irreversible-confirmations)) is the first thing built after it. And agents
+are cheap to scale, so other work may carry on in the background; what is scarce is his time and
+attention, so nothing off this path may ask for either.
+
+**On the path, in order. Only these may ask for Nick's time.**
+
+1. The three live sessions with Nick in [the M2 runbook](m2-runbook.md): a manual login, the
+   checkout-path recording, and the first automated login. Nothing has touched the live site while
+   logged in, and only Nick can change that.
+2. The M2 exit: a real item in his real trolley, from Claude, with the login automated.
+3. A first whole shop: Claude fills the trolley and Nick checks out in his browser.
+4. After the MVP: the checkout tool, confirmed with Touch ID. Its groundwork needs nothing from
+   Nick and is built ahead: a confirmed irreversible tool unlocks only the requests it names (C15,
+   done 2026-11-10), and the real checkout paths come from Session 2.
+
+An unsigned dev build on Nick's Mac is enough for the first three.
+
+**Kept, because strictness stays.** The two security guarantees and their tests; the rate budget
+and breaker, including keeping the budget across a restart; the one-password-submit limit; the
+audit log; adversarial review of a change to a critical path ([D71](#d71-who-reviews-agent-built-code)),
+with red-team passes narrowed to the secret filler and the order confirmation.
+
+**In the background, asking Nick nothing.** Remote mode; system notifications; uninstall and reset;
+the adapter setting for the store ([D69](#d69-which-store-the-woolworths-tools-quote)); queueing and
+pacing; the scheduled red-team rotation. Where one of these meets a decision, it takes the plan's
+recommendation, records it as an assumption, and moves on.
+
+**Waiting.** Signing, notarisation and the update feed, which need Nick present; a sleeping Mac
+([D70](#d70-a-sleeping-mac)); moving CI; the sandbox; everything from M5 on. The two weeks of real
+use that define [the MVP](#the-mvp) follow the first shop, and the acceptance criteria still stand.
+
 ## Contents
 
 1. [Where we are](#where-we-are)
@@ -260,10 +300,9 @@ against the real site with Nick present.
     `page.fetch`, `page.evaluate`, a click or a form submission. The test runs against the fake
     site's copy of the **real** checkout and payment paths recorded in M2, not only against
     paths the implementers chose. While an `irreversible` tool runs, only the `irreversible`
-    declarations that tool lists are unlocked, and only for that call. Core v2 can't meet this
-    yet: its unlock covers every `irreversible` declaration in the manifest, for page-initiated
-    requests too. C15 adds the per-tool list, and must land before any irreversible tool ships
-    ([D18](#d18-irreversible-tools-in-shipped-adapters) means none in v1). (Automated; see
+    declarations that tool lists are unlocked, and only for that call. C15 (done 2026-11-10) is that per-tool
+    list: a tool's `unlocks`, enforced at the capability API and the network layer
+    ([D18](#d18-irreversible-tools-in-shipped-adapters) still means no irreversible tool in the MVP). (Automated; see
     [gap G1](#g1-the-request-surface-only-covers-pagefetch).)
 14. The audit log verifies end to end with a CLI command, and tampering with any line makes
     verification fail. (Automated.)
@@ -504,7 +543,7 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
   in memory ([D33](#d33-breaker-defaults-and-persistence)); 3 is built except the one-submit limit
   inside a login; 4 needs the Auth0 adapter, and the runtime still writes the attempt marker on the
   silent path; 5 is built; 6 has the stores but not the diff; 7 asks before `run()` and renders
-  `ctx.confirm()` from a structured action (C4, core v5) but has no scoped unlock (C15); 8 is not started.
+  `ctx.confirm()` from a structured action (C4, core v5), with the unlock scoped to the tool (C15); 8 is not started.
 - Next:
   1. Tool-call orchestration: adapter lock, rate budget, `session.ensure()`, auth-on-demand,
      retry-once after re-login, output validation against the tool's zod output schema, output
@@ -1030,7 +1069,9 @@ Status in core v2:
 - **C8, not needed as written** (see the status above G1). Its host-scoped telemetry list
   returns in reduced form as C17, if [D58](#d58-page-initiated-traffic) agrees.
 - **C9, done** (after core v5): `destructive` and `idempotent` on `write` tool declarations, `toolHints()`, and the MCP annotations derived from them.
-- **C15 to C20, new** from the review of the round-2 docs; all open.
+- **C15, done** (2026-11-10): `unlocks` on irreversible tool declarations, carried in the run's
+  policy; see the security model's "Irreversible actions".
+- **C16 to C20, new** from the review of the round-2 docs; all open.
 
 ### Changes to the other docs
 
@@ -1420,6 +1461,17 @@ review of 2026-11-10; Nick has answered all three.
   for remote mode, not Tailscale Funnel. He chose it knowing Cloudflare ends TLS and so can see
   tool results. Remote mode is built and tested against `cloudflared` first; Funnel is not
   documented or tested unless he asks. The hosted relay stays after M8.
+<<<<<<< HEAD
+=======
+- Assumptions taken while building remote mode's second slice (2026-11-10, without asking Nick; each
+  is the plan's or relay.md's recommendation, or the smallest choice that keeps it): the OAuth
+  authorisation server lives in the app, as relay.md recommends, since a tunnel has no Worker to
+  hold it; consent is by a code the browser shows and the person types on the Mac; Client ID
+  Metadata Documents wait until the SSRF-safe fetcher is built, so clients register by DCR only;
+  public and client-secret clients are both accepted; refresh tokens live 30 days from their last
+  use (relay.md fixes no number); the source address for rate limits is cloudflared's
+  `Cf-Connecting-Ip`. See [relay.md, "Built so far"](relay.md#built-so-far).
+>>>>>>> origin/main
 - Options: build a relay (Worker plus Durable Object, outbound WebSocket from the app, OAuth for
   MCP clients); document cloudflared or Tailscale Funnel; both.
 - Considerations: the relay is the only piece that's a service with uptime, abuse and cost. It's
@@ -1678,6 +1730,15 @@ review of 2026-11-10; Nick has answered all three.
   defaults (2 s; 10 minutes doubling to 2 hours, which are also core v2's `limits` defaults), in
   memory, with no jitter, no per-page-view or per-minute cap, and no read cache. Reconciling the
   two is [D33](#d33-breaker-defaults-and-persistence).
+- **Built since (2026-11-10).** The session read cache, declared per request in the manifest
+  (`cacheSeconds`, and `refreshes` for a write whose reply is the new answer to a read). Woolworths
+  keeps search and product answers 15 minutes and the trolley 2, tighter than the line above,
+  because the person can change the same account from their own browser. Not in this decision, and
+  an assumption Nick hasn't confirmed: a write tool rests on the last "logged in" probe for 60
+  seconds (`session.probe.trustSeconds`). The thirty-item shop went from 122 requests and 20
+  minutes to 73 and 12 ([benchmark](findings/2026-11-10-shop-benchmark.md)). Still unbuilt: the
+  jitter and the per-minute cap, which both wait on [D50](#d50-confirmation-and-hand-off-timeouts),
+  and the hourly and per-page-view caps.
 - **What it covers.** The budget and breaker sit in the runtime's guarded page and probe, so they
   see `page.fetch`, `goto` and the probe only. Navigations the page makes, clicks that submit,
   `evaluate()` fetches, the site's own requests and the whole login go unpaced and unwatched for
@@ -2045,6 +2106,13 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D50. Confirmation and hand-off timeouts
 
+- Nick's answer (2026-11-10), on one part only: **a call that has to log in first answers early.**
+  It returns within seconds, saying a login is running and when to call again, and the login
+  finishes in the background. The login's time no longer counts against the tool's 2 minutes. Why:
+  the [shop benchmark](findings/2026-11-10-shop-benchmark.md) shows a cart call with a login takes
+  1.7 to 1.9 minutes of the 2 allowed, and client and tunnel time limits aren't measured. The
+  confirmation and hand-off timeouts (the rest of this decision, with
+  [D19](#d19-confirmation-when-nick-is-away)) are asked but not yet answered.
 - Today: the confirmation waits 5 minutes, a tool run 2 minutes, and the auth flow has its own
   timeout (the Woolworths steps can pause for about 60 s). The hand-off isn't wired. Clients have
   their own tool-call timeouts, which haven't been measured.
@@ -2081,6 +2149,11 @@ review of 2026-11-10; Nick has answered all three.
 - Recommendation: a standalone window on top, with a notification that only opens it. It has no
   default button, so a keystroke meant for another app can't approve.
 - Blocks: M3, with C4.
+- Built as recommended (2026-11-10), not yet answered. The window was already there; the
+  notification is new (`apps/desktop/src/main/core/notifications.ts`). It has no action buttons, so
+  nothing is approved from it, and a click only brings the confirmation panel forward, which
+  re-arms the approve delay. The same goes for a sign-in a call handed to the person, a site whose
+  breaker opened and a downloaded update. Settings has one switch for all of them, on by default.
 
 ### D53. Fake trolley merge at login
 

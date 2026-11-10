@@ -163,6 +163,17 @@ export class AppWindows {
     this.confirmations.set(id, window)
   }
 
+  /**
+   * Brings a waiting confirmation panel forward, for a click on its notification. Showing and
+   * focusing re-arm the approve delay, like any other way of reaching it.
+   */
+  focusConfirmation(id: string): void {
+    const window = this.confirmations.get(id)
+    if (window === undefined || window.isDestroyed()) return
+    window.show()
+    window.focus()
+  }
+
   closeConfirmation(id: string): void {
     const window = this.confirmations.get(id)
     this.confirmations.delete(id)

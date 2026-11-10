@@ -174,11 +174,22 @@ export const probeSchema = z.discriminatedUnion('kind', [
       jsonPath: z.string().min(1).max(200).optional(),
       /** When set, the value at jsonPath must equal this. Otherwise it must be present and truthy. */
       equals: z.union([z.string(), z.number(), z.boolean()]).optional(),
+      /**
+       * How long a "logged in" answer may stand in for the next probe, for `write` tools only and
+       * only for a call's first session.ensure(). Unset or 0: every ensure() probes. A read tool
+       * and an irreversible tool always probe, so nothing the person is shown and nothing that
+       * can't be undone rests on an old answer. The cost of setting it: a session that ends inside
+       * the window is not noticed until the window closes, and a write sent meanwhile goes wherever
+       * the site sends a logged-out visitor's.
+       */
+      trustSeconds: z.number().int().min(0).max(300).optional(),
     })
     .strict(),
   z.object({ kind: z.literal('cookie'), name: z.string().min(1).max(200) }).strict(),
 ])
 export type Probe = z.infer<typeof probeSchema>
+
+const requestMethod = z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
 
 export const toolDeclarationSchema = z
   .object({
@@ -197,9 +208,27 @@ export const toolDeclarationSchema = z
      * as MCP's idempotentHint means it. Default false.
      */
     idempotent: z.boolean().optional(),
+    /**
+     * `irreversible` tools only (C15): the manifest's `irreversible` request declarations this tool
+     * may use once the person has confirmed a call to it, each named by method and path exactly as
+     * declared. Confirming unlocks these and no others, for that run. Without it, confirming
+     * unlocks nothing.
+     */
+    unlocks: z
+      .array(z.object({ method: requestMethod, path: sitePath(300) }).strict())
+      .min(1)
+      .max(20)
+      .optional(),
   })
   .strict()
   .superRefine((tool, ctx) => {
+    if (tool.sideEffect !== 'irreversible' && tool.unlocks !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['unlocks'],
+        message: 'only an irreversible tool may set unlocks',
+      })
+    }
     // A read changes nothing and an irreversible tool is always destructive and never retried, so
     // only a write may say either.
     if (tool.sideEffect === 'write') return
@@ -260,9 +289,21 @@ export const manifestSchema = z
       .array(
         z
           .object({
-            method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
+            method: requestMethod,
             path: sitePath(300),
             purpose: purposeSchema,
+            /**
+             * `read` only: how long the runtime may answer this request again from the session's
+             * read cache (D28) instead of asking the site. The cache is dropped at any login and
+             * at any write.
+             */
+            cacheSeconds: z.number().int().min(1).max(3600).optional(),
+            /**
+             * `write` only: the path of a declared, cached GET read whose answer this write's own
+             * response is (D28: a trolley update answers with the trolley). A 2xx JSON response
+             * becomes that read's cached answer.
+             */
+            refreshes: sitePath(300).optional(),
           })
           .strict(),
       )
@@ -286,6 +327,39 @@ export const manifestSchema = z
     for (const tool of manifest.tools) {
       if (toolNames.has(tool.name)) ctx.addIssue({ code: 'custom', message: `duplicate tool ${tool.name}` })
       toolNames.add(tool.name)
+      for (const unlock of tool.unlocks ?? []) {
+        if (!unlockedBy(manifest.requests, [unlock]).length) {
+          ctx.addIssue({
+            code: 'custom',
+            message: `tool ${tool.name} unlocks ${unlock.method} ${unlock.path}, which is not a declared irreversible request`,
+          })
+        }
+      }
+    }
+    for (const request of manifest.requests) {
+      const label = `${request.method} ${request.path}`
+      // Only a read may be answered from a cache, and only a write's response may fill one. An
+      // irreversible request is never cached, never fills the cache and is never replayed.
+      if (request.cacheSeconds !== undefined && request.purpose !== 'read') {
+        ctx.addIssue({ code: 'custom', message: `${label}: only a read request may set cacheSeconds` })
+      }
+      if (request.refreshes === undefined) continue
+      if (request.purpose !== 'write') {
+        ctx.addIssue({ code: 'custom', message: `${label}: only a write request may set refreshes` })
+        continue
+      }
+      const target = manifest.requests.find((r) => r.method === 'GET' && r.path === request.refreshes)
+      if (
+        target === undefined ||
+        target.purpose !== 'read' ||
+        target.cacheSeconds === undefined ||
+        !isLiteralPath(target.path)
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `${label}: refreshes must name a declared GET read with cacheSeconds and no ":param" or "*"`,
+        })
+      }
     }
     if (Object.hasOwn(manifest.secrets, MESSAGES_SECRET)) {
       ctx.addIssue({ code: 'custom', message: `secret name ${MESSAGES_SECRET} is reserved` })
@@ -313,9 +387,32 @@ export const manifestSchema = z
     }
   })
 
+/** A declared path with no ":param" or "*" segment and no query: it names exactly one URL. */
+function isLiteralPath(path: string): boolean {
+  return !path.includes('?') && path.split('/').every((part) => !part.startsWith(':') && part !== '*')
+}
+
 export type AdapterManifest = z.infer<typeof manifestSchema>
 export type ManifestInput = z.input<typeof manifestSchema>
 export type ToolDeclaration = z.infer<typeof toolDeclarationSchema>
+
+/**
+ * The `irreversible` declarations among `requests` that `unlocks` names (C15): same method, same
+ * path, character for character. A path pattern is matched as text, never expanded, so a tool
+ * can't name a wider pattern than the manifest declared.
+ */
+export function unlockedBy<
+  R extends { readonly method: string; readonly path: string; readonly purpose: string },
+>(
+  requests: readonly R[],
+  unlocks: readonly { readonly method: string; readonly path: string }[] | undefined,
+): R[] {
+  return requests.filter(
+    (request) =>
+      request.purpose === 'irreversible' &&
+      (unlocks ?? []).some((u) => u.method === request.method && u.path === request.path),
+  )
+}
 
 /** Every secret reference an auth flow makes, including OTP sources and nested steps. */
 export function secretRefsIn(steps: readonly AuthStep[]): SecretRef[] {

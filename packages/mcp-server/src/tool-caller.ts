@@ -53,18 +53,26 @@ export type CallOutcome =
   /**
    * The site refused or rate-limited us, or our own rate budget or circuit breaker held the call
    * back (errorClass blocked-by-site or rate-limited). retryAfterMs is when to try again.
+   *
+   * Or, with errorClass busy, the call could not get its turn behind `ahead` earlier calls in the
+   * time the runtime allows and was never started: nothing was sent, so it is safe to make again.
    */
   | {
       readonly status: 'blocked'
       readonly stage: Stage
       readonly errorClass: ErrorClass
       readonly retryAfterMs: number
+      /** With errorClass busy: how many calls were still in front of this one. */
+      readonly ahead?: number
     }
   /** The person declined the confirmation in the app, or didn't answer it in time. */
   | { readonly status: 'declined' }
 
 export interface ToolCaller {
-  /** Every tool that may be called right now: approved adapters only. */
-  listTools(): readonly ListedTool[]
+  /**
+   * Every tool that may be called right now: approved adapters only. With an identity, the tools
+   * that client may call (a remote client's grant narrows it); callers that don't care ignore it.
+   */
+  listTools(identity?: ClientIdentity): readonly ListedTool[]
   call(call: ToolCall): Promise<CallOutcome>
 }

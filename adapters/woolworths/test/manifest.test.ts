@@ -86,6 +86,7 @@ describe('the real manifest', () => {
       loggedOutStatuses: [401],
       jsonPath: 'ShopperDetails.IsLoggedIn',
       equals: true,
+      trustSeconds: 60,
     })
   })
 
@@ -330,7 +331,15 @@ describe('the request surface', () => {
 
   it('only lets the trolley update write', () => {
     expect(requests.filter((request) => request.purpose === 'write')).toEqual([
-      { method: 'POST', path: '/api/v3/ui/trolley/update', purpose: 'write' },
+      { method: 'POST', path: '/api/v3/ui/trolley/update', purpose: 'write', refreshes: '/apis/ui/Trolley' },
+    ])
+  })
+
+  it('lets the runtime reuse catalogue answers for a quarter of an hour and the trolley for two minutes', () => {
+    expect(requests.filter((request) => request.purpose === 'read')).toEqual([
+      { method: 'POST', path: '/apis/ui/Search/products', purpose: 'read', cacheSeconds: 900 },
+      { method: 'GET', path: '/apis/ui/product/detail/:stockcode', purpose: 'read', cacheSeconds: 900 },
+      { method: 'GET', path: '/apis/ui/Trolley', purpose: 'read', cacheSeconds: 120 },
     ])
   })
 
