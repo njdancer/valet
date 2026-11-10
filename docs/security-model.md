@@ -527,6 +527,34 @@ until round 2 adopts the reason codes.
 Product names and descriptions are still site-controlled text that reaches the model; that risk
 is R6 in the plan.
 
+### Adapter settings
+
+A manifest may declare settings the person fills in, such as the Woolworths store
+([D69](plan.md#d69-which-store-the-woolworths-tools-quote)). Each names a `read` tool that lists
+the choices for what the person typed and, optionally, a `read` or `write` tool that applies the
+chosen value to the session. Both are ordinary declared tools held to the request surface, the
+rate budget and the breaker like any other (**Enforced**), with these differences:
+
+- **Only Valet runs them.** A setting tool is left out of what MCP clients are told, and a client
+  that calls one by name gets the same `not-found` as for a tool that doesn't exist. No tool may
+  serve two settings, and an adapter whose every tool serves a setting is refused (**Enforced**).
+- **A required setting with no value stops every tool** before any tool code or site call, as
+  `needsUser` with the reason `setting-required` (**Enforced**). The client is told to ask the
+  person; it can't supply the value.
+- **The value comes from the person, from a list the adapter's own tool returned.** The app accepts
+  only a value its last search offered, keeps it in `adapter-settings.json` keyed by adapter id,
+  and audits `setting-changed` with the setting's name only. Labels are site text: the adapter
+  strips markup, the app renders them as text, and neither reaches the audit log or an MCP result.
+- **The apply tool runs as its own audited run** under the adapter's lock, before the call that
+  needs it: when the value changed, after any login, and at least every six hours. Its input is
+  the stored value alone. If it fails, the call fails and no tool code runs.
+
+A settings choice is not a grant and carries no secret. A hostile adapter gains nothing from a
+setting tool that an ordinary tool of the same side effect wouldn't give it, except that it runs
+without a client asking; so a new or changed setting is a permission-expanding change in the
+approval diff. The stored value outlives an adapter update (it is keyed by id, not hash): the new
+version's apply tool receives a value the old version's list produced, and must validate it.
+
 ### Sandbox
 
 In v0, tool code runs in a `utilityProcess` per call, in a `node:vm` context with only the
@@ -548,13 +576,14 @@ boundary.
   permission-expanding change is highlighted, each with its own test: new `navigation` origins;
   new `egress` hosts; new `auth.frameOrigins`; new secrets, new fields on a secret, and new
   origins for a secret; new Messages senders; new `requests` declarations, grouped by purpose; a
-  tool whose `sideEffect` goes up; new `cookieDomains` or storage keys; and any loosening of
-  `limits`.
+  tool whose `sideEffect` goes up; new `cookieDomains` or storage keys; a new setting, or one
+  whose tools or `required` changed; and any loosening of `limits`.
 - The audit log is append-only, hash-chained JSONL, fsynced per record. A failed append is cut
   back off and the chain re-verified before the next one (**Enforced**). It records approvals
   (with version and the hash replaced) and rejections; grants made (with origins) and revoked;
   tool calls with the MCP client and their outcome (`ok`, `needsUser` with its reason, `failed`,
-  `blocked`, `declined`); logins; every secret use; blocked requests with their initiator;
+  `blocked`, `declined`); settings chosen or cleared (the name, never the value); logins; every
+  secret use; blocked requests with their initiator;
   breaker openings and closings; and confirmations with the client (event shapes a
   **Contract**).
 - The client name is the self-reported name from MCP `initialize`, stripped of control and

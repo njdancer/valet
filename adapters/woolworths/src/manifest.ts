@@ -148,6 +148,14 @@ export interface ManifestOptions {
    * challenge's frame and the person can't solve it in the login window.
    */
   readonly captchaFrameOrigins?: readonly string[]
+  /**
+   * Hold every tool until the person has chosen a store (D69). On for a fake origin. Off for the
+   * real site until a live session has confirmed the two store requests (README, "Store"): they
+   * have never been seen live, and a required setting whose requests are wrong would hold every
+   * tool with no way through. Off, the tools run on the site's own choice of store until the
+   * person picks one, and a store that can't be applied can be cleared again.
+   */
+  readonly storeRequired?: boolean
 }
 
 export function createManifest({
@@ -155,6 +163,7 @@ export function createManifest({
   authOrigin = defaultAuthOrigin(origin),
   totp = false,
   captchaFrameOrigins = [],
+  storeRequired = origin !== REAL_ORIGIN,
 }: ManifestOptions = {}): AdapterManifest {
   const host = new URL(origin).hostname
   // A cookie set for ".woolworths.com.au" is stored against the bare host, so copy both. Auth0's
@@ -281,13 +290,14 @@ export function createManifest({
         idempotent: true,
       },
     ],
-    // D69: prices, specials and stock follow the store, so the tools don't run until one is chosen.
+    // D69: prices, specials and stock follow the store. Where it is required, the tools don't run
+    // until one is chosen.
     settings: {
       store: {
         title: 'Store',
         description:
           'The Woolworths pick-up store your agents shop at. Prices, specials and what is in stock are that store’s.',
-        required: true,
+        required: storeRequired,
         choices: { tool: 'find_stores', queryLabel: 'Postcode' },
         apply: { tool: 'apply_store' },
       },
