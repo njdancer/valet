@@ -69,6 +69,8 @@ import { ASAR_ALLOWED, launchRefused, makeHome } from './smoke/real-app.mjs'
 const ROOT = resolve(APP_DIR, '..', '..')
 const PRODUCT = 'Valet'
 const APP_ID = 'me.dncr.valet'
+/** electron-builder.config.ts's NATIVE_EXECUTABLES: shipped in Contents/MacOS. */
+const NATIVE = ['valet-bridge', 'valet-keychain', 'valet-messages-helper']
 /** docs/release-and-updates.md: each refused launch exits within two seconds. */
 const REFUSE_WITHIN_MS = 2000
 
@@ -234,15 +236,31 @@ async function release() {
     return { privateKey, publicPem, publicFile }
   })
 
-  await step('Swift stdio bridge, universal', () =>
+  await step('Swift bridge and helpers, universal, signed first', () => {
     run(
       'swift',
       ['build', '-c', 'release', '--arch', 'arm64', '--arch', 'x86_64', '--package-path', 'swift-bridge'],
-      {
-        cwd: ROOT,
-      },
-    ),
-  )
+      { cwd: ROOT },
+    )
+    // The universal build leaves them unsigned, and @electron/osx-sign signs Contents/MacOS/Valet
+    // before its siblings there (same depth, and "V" sorts first), which codesign refuses while a
+    // sibling is unsigned. So each is signed here first, with the app's identity and options;
+    // electron-builder signs them again (mac.binaries) before sealing the bundle.
+    const identity = dryRun ? '-' : signingIdentity()
+    for (const name of NATIVE) {
+      run('/usr/bin/codesign', [
+        '--sign',
+        identity,
+        '--force',
+        '--options',
+        'runtime',
+        ...(dryRun ? [] : ['--timestamp']),
+        '--entitlements',
+        join(APP_DIR, 'build', 'entitlements.mac.inherit.plist'),
+        join(ROOT, 'swift-bridge', '.build', 'apple', 'Products', 'Release', name),
+      ])
+    }
+  })
 
   await step('electron-vite build, with the release feed compiled in', () =>
     run(join(APP_DIR, 'node_modules', '.bin', 'electron-vite'), ['build'], {
@@ -417,7 +435,7 @@ async function verifyApp(app, arch, feedUrl, expect) {
     (f) => !ASAR_ALLOWED.some((p) => p.test(f)),
   )
   expect('the asar holds only the build and the SDK', unexpected.length === 0, unexpected)
-  for (const name of ['valet-bridge', 'valet-keychain', 'valet-messages-helper']) {
+  for (const name of NATIVE) {
     expect(`${name} ships in Contents/MacOS`, existsSync(join(app, 'Contents', 'MacOS', name)))
   }
   expect(
@@ -488,9 +506,7 @@ function finishDmg(dmg, expect) {
   if (dryRun) {
     run('/usr/bin/codesign', ['--sign', '-', '--force', dmg])
   } else {
-    const name = process.env.CSC_NAME
-    const identity = /^[0-9A-F]{40}$/.test(name) ? name : `Developer ID Application: ${name}`
-    run('/usr/bin/codesign', ['--sign', identity, '--timestamp', dmg])
+    run('/usr/bin/codesign', ['--sign', signingIdentity(), '--timestamp', dmg])
   }
   const verify = capture('/usr/bin/codesign', ['--verify', '--verbose=2', dmg])
   expect('codesign --verify the DMG', verify.code === 0, verify.stderr)
@@ -586,4 +602,10 @@ function sameFeedFields(a, b) {
       .sort()
       .join('\n')
   return fields(a) === fields(b)
+}
+
+/** The Developer ID identity codesign takes: CSC_NAME as a SHA-1, or its full certificate name. */
+function signingIdentity() {
+  const name = process.env.CSC_NAME
+  return /^[0-9A-F]{40}$/.test(name) ? name : `Developer ID Application: ${name}`
 }

@@ -412,9 +412,10 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
       // electron-updater picks the zip for the machine by "arm64" in its name.
       // The escaped ${...} are electron-builder's own macros.
       artifactName: `${slug}-\${version}-\${arch}.\${ext}`,
-      // @electron/osx-sign doesn't reach an extra executable in Contents/MacOS by itself, and the
-      // app's own signature refuses unsigned nested code: the native binaries are signed first, with
-      // the same identity and options. Relative to the .app.
+      // @electron/osx-sign doesn't reach an extra executable in Contents/MacOS by itself, so the
+      // native binaries are named here, signed with the app's identity and options. It signs
+      // Contents/MacOS/Valet before them, though, and codesign refuses that while a sibling is
+      // unsigned, so scripts/release.mjs signs them once beforehand. Relative to the .app.
       ...(deps.bridgeBuilt() ? { binaries: NATIVE_EXECUTABLES.map((name) => `Contents/MacOS/${name}`) } : {}),
       // A dry run signs ad hoc: electron-builder's "-" identity, which uses no key and no keychain.
       ...(dryRun ? { identity: '-' } : signs ? {} : { identity: null }),
