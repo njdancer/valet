@@ -343,7 +343,7 @@ async function release() {
     const files = []
     for (const zip of zips) files.push(await hashZip(zip))
     const ours = buildFeedYaml({ version, files, releaseDate })
-    expect('electron-builder’s latest-mac.yml matches make-feed’s', sameFeedFields(fromBuilder, ours), {
+    expect('electron-builder’s zips match make-feed’s', sameZips(fromBuilder, ours), {
       fromBuilder,
       ours,
     })
@@ -595,13 +595,23 @@ function verifyStagedFeed(publicPem, expect) {
   }
 }
 
-function sameFeedFields(a, b) {
-  const fields = (yaml) =>
-    [...yaml.matchAll(/^\s*-?\s*(url|sha512|size|path|version|releaseDate): '?([^'\n]+)'?$/gm)]
-      .map((m) => `${m[1]}=${m[2]}`)
+/**
+ * The zips two channel files list, as a set of name, SHA-512 and size. A dmg-and-zip build's own
+ * latest-mac.yml also lists the DMGs, some entries more than once; it is never published (make-feed's
+ * is), so only its zips are compared.
+ */
+function sameZips(a, b) {
+  const zips = (yaml) =>
+    [
+      ...new Set(
+        [
+          ...yaml.matchAll(/-\s*url:\s*'?([^'\n]+\.zip)'?\n\s*sha512:\s*'?([^'\n]+)'?\n\s*size:\s*(\d+)/g),
+        ].map((m) => `${m[1]} ${m[2]} ${m[3]}`),
+      ),
+    ]
       .sort()
       .join('\n')
-  return fields(a) === fields(b)
+  return zips(a) !== '' && zips(a) === zips(b)
 }
 
 /** The Developer ID identity codesign takes: CSC_NAME as a SHA-1, or its full certificate name. */
