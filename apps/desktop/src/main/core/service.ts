@@ -480,6 +480,8 @@ export class AppService {
     for (const driver of this.drivers.values()) await driver.close().catch(() => undefined)
     await this.blocked.settled()
     await this.background
+    // Breaker and pacing state still on its way to disk: a quit must not cut the write short.
+    await this.host?.flushed()
     this.loginSecrets.dispose()
   }
 
