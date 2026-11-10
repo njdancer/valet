@@ -75,10 +75,12 @@ import {
   TYPING_DELAY_MS,
 } from './constants'
 import type { Credentials } from './credentials'
+import { type EraseKind, type EraseReport, eraseEverything } from './erase'
 import { ensurePrivateDir, JsonDocument } from './files'
 import { checkGrantRequest, grantInfo } from './grants'
 import type { AppWindow, MainApi } from './ipc'
 import { createAuthRunner, Handoffs, isBlockedPage, SessionTracker } from './login'
+import { type AppNotification, Notifier } from './notifications'
 import { type ApprovedSnapshot, type BuiltinAdapter, SnapshotStore } from './registry'
 import { RemoteAccess } from './remote'
 import { RunMemory } from './run-memory'
@@ -109,6 +111,18 @@ export interface UiPort {
   closeNeedsUser(adapterId: string): void
   setLaunchAtLogin(enabled: boolean): void
   quit(): void
+  /** A system notification; a click opens its target window and does nothing else. */
+  notify(notification: AppNotification): void
+  closeNotification(key: string): void
+  /**
+   * Asks the person, in a native dialog of the main process, whether to erase everything. Only a
+   * click there says yes: the renderer that asked for it never answers it.
+   */
+  confirmErase(kind: EraseKind): Promise<boolean>
+  /** Clears what the browser sessions hold, before their files are removed. */
+  clearBrowserData(): Promise<void>
+  /** After an erase: restart as new (reset), or move the app to the Trash and quit (uninstall). */
+  finishErase(report: EraseReport): void
 }
 
 export interface ServiceDeps {
@@ -151,6 +165,8 @@ export interface ServiceDeps {
     diagnostic: RuntimeDiagnostic | { readonly type: string; readonly adapterId?: string },
   ) => void
   readonly newId?: () => string
+  /** What a reset or an uninstall removes besides the data folder (erase.ts); none by default. */
+  readonly leftovers?: readonly string[]
   /** How the runtime waits for a site's rate budget; real time by default. Tests pass their clock's. */
   readonly pacingSleep?: Sleep
 }
@@ -246,6 +262,9 @@ export class AppService {
   /** The remote listener, its policy and the kill switch (relay.md). Off unless the person turns it on. */
   readonly remote: RemoteAccess
   private paused = false
+  /** A reset or uninstall is under way: a second one is refused. */
+  private erasing = false
+  private readonly notifier: Notifier
   private chain: ChainStatus = { state: 'unverified' }
   private readonly startedAt: string
 
@@ -254,6 +273,12 @@ export class AppService {
     const clock = { now: deps.now }
     const date = () => new Date(deps.now())
     this.startedAt = date().toISOString()
+    this.notifier = new Notifier({
+      enabled: () => this.settingsNow.notifications,
+      show: (notification) => deps.ui.notify(notification),
+      close: (key) => deps.ui.closeNotification(key),
+      now: deps.now,
+    })
     this.audit = new ObservedAudit(new AuditLog(paths.audit, clock), (record) => this.observe(record))
     this.approvals = new ApprovalStore(paths.approvals, this.audit)
     this.grants = new FileGrantStore({ path: paths.grants })
@@ -447,6 +472,7 @@ export class AppService {
     this.caller?.cancelAll()
     this.broker.declineAll()
     this.handoffs.closeAll()
+    this.notifier.clear()
     await this.remote.close().catch(() => undefined)
     await this.endpoint?.close().catch(() => undefined)
     this.endpoint = null
@@ -498,6 +524,7 @@ export class AppService {
             .then(() => undefined)
             .catch(() => this.deps.diagnostics?.({ type: 'audit-write-failed' }))
           this.background = this.background.then(() => write)
+          this.notifier.updateDownloaded(to, this.settingsNow.autoInstallUpdates)
         },
         changed: () => this.emit('app-changed'),
       })
@@ -538,11 +565,17 @@ export class AppService {
   }
 
   private emit(type: Exclude<AppEvent['type'], 'audit-appended'>): void {
+    // What waits on the person changed: tell them, in case no window of Valet's is in view.
+    if (type === 'attention-changed')
+      this.notifier.attention([...this.handoffs.list(), ...this.broker.list()])
     this.deps.emit({ type })
   }
 
   private observe(record: AuditRecord): void {
     this.deps.emit({ type: 'audit-appended', seq: record.seq })
+    const { event } = record
+    if (event.type === 'breaker-opened') this.notifier.breakerOpened(event.host, event.cause, event.retryAt)
+    else if (event.type === 'breaker-closed') this.notifier.breakerClosed(event.host)
     for (const type of EVENTS_FOR[record.event.type] ?? [])
       this.emit(type as Exclude<AppEvent['type'], 'audit-appended'>)
   }
@@ -1077,6 +1110,27 @@ export class AppService {
         openControlPanel: async (route) => deps.ui.openControlPanel(route ?? null),
         copyText: async (text) => deps.ui.writeClipboard(text),
         quit: async () => deps.ui.quit(),
+        erase: async (kind) => {
+          if (this.erasing) throw new ValetError('config', 'unavailable')
+          this.erasing = true
+          try {
+            if (!(await deps.ui.confirmErase(kind))) return false
+            const report = await eraseEverything({
+              kind,
+              dataDir: deps.paths.dir,
+              leftovers: deps.leftovers ?? [],
+              stop: () => this.stop(),
+              eraseCredentials: () => deps.credentials.erase(),
+              setLaunchAtLogin: (enabled) => deps.ui.setLaunchAtLogin(enabled),
+              clearBrowserData: () => deps.ui.clearBrowserData(),
+            })
+            // Nothing is written from here on: the folder is gone, and the app is about to be.
+            deps.ui.finishErase(report)
+            return true
+          } finally {
+            this.erasing = false
+          }
+        },
       },
     }
   }

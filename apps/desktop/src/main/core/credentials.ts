@@ -70,7 +70,15 @@ export interface Credentials {
   refreshCopies(items: readonly { itemRef: string; fields: readonly SecretField[] }[]): Promise<void>
   /** Removes an item's copy, once no grant uses it. */
   forgetCopy(itemRef: string): Promise<void>
+  /**
+   * For a reset or an uninstall: removes every Keychain item this build keeps and the Messages
+   * helper's launch agent. Each part is tried whatever the others did; the ones that failed are
+   * returned. Never prompts for a secret: nothing is read.
+   */
+  erase(): Promise<readonly CredentialEraseStep[]>
 }
+
+export type CredentialEraseStep = 'keychain-copies' | 'keychain-token' | 'messages-helper'
 
 /** A reader that never reads: Messages codes are off. */
 export const disabledOtpReader: OtpReader = {
@@ -197,6 +205,12 @@ export interface RealCredentialsDeps extends OpCheckDeps {
   readonly messagesHelper?: { readonly binary: string; readonly socketPath: string } | null
   /** The desktop app's SDK client, for tests; the real SDK by default. */
   readonly desktopClient?: DesktopClientFactory
+  /**
+   * Whether erase() also removes the service-account token. Its Keychain item has one name for
+   * every build (KEYCHAIN_SERVICE), so only the release build removes it: a development build's
+   * reset must not take the release app's token.
+   */
+  readonly ownsToken?: boolean
 }
 
 /**
@@ -372,6 +386,41 @@ export function realCredentials(deps: RealCredentialsDeps): Credentials {
     },
     async forgetCopy(itemRef) {
       if (copies !== null) await copies.forget(itemRef)
+    },
+    async erase() {
+      const failed: CredentialEraseStep[] = []
+      // Every item under this build's copy service, not only the ones grants.json still names.
+      if (copies !== null) await copies.forgetAll().catch(() => failed.push('keychain-copies'))
+      if (deps.ownsToken === true) {
+        if (keychain !== null) {
+          await keychain.delete(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT).catch(() => failed.push('keychain-token'))
+        } else {
+          const gone = await run(
+            SECURITY,
+            ['delete-generic-password', '-s', KEYCHAIN_SERVICE, '-a', KEYCHAIN_ACCOUNT],
+            64 * 1024,
+            10_000,
+          )
+          if (gone.kind === 'exited') gone.stdout.fill(0)
+          // 44 is "no such item", as find-generic-password reports it.
+          if (gone.kind !== 'exited' || (gone.code !== 0 && gone.code !== 44)) failed.push('keychain-token')
+        }
+      }
+      const helper = deps.messagesHelper ?? null
+      if (helper !== null) {
+        const status = await run(helper.binary, ['status'], 1024, 10_000)
+        const state =
+          status.kind === 'exited' && status.code === 0 ? status.stdout.toString('utf8').trim() : null
+        if (state === null) failed.push('messages-helper')
+        else if (state === 'enabled' || state === 'requires-approval') {
+          const outcome = await run(helper.binary, ['unregister'], 1024, 10_000)
+          if (outcome.kind !== 'exited' || outcome.code !== 0) failed.push('messages-helper')
+        }
+        registered = false
+      }
+      reader = disabledOtpReader
+      messagesEnabled = false
+      return failed
     },
   }
 }

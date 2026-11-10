@@ -138,6 +138,24 @@ describe('KeychainHelper', () => {
     expect((await failureOf(helperWith(broken.spawner).delete('valet', 'a'))).failure).toBe('unavailable')
   })
 
+  it('purges one service and leaves the others', async () => {
+    const keychain = fakeKeychain()
+    const helper = helperWith(keychain.spawner)
+    await helper.write('valet.copy', 'a#password', Buffer.from(CANARY), '')
+    await helper.write('valet.copy', 'b#username', Buffer.from(CANARY), '')
+    await helper.write('valet.dev.copy', 'a#password', Buffer.from(CANARY), '')
+    await helper.purge('valet.copy')
+    expect(keychain.calls.at(-1)?.args).toEqual(['purge', 'valet.copy'])
+    expect([...keychain.items.keys()]).toEqual(['valet.dev.copy\u0000a#password'])
+    // Nothing left is not an error; a service outside Valet's own never reaches the helper.
+    await helper.purge('valet.copy')
+    const before = keychain.calls.length
+    expect((await failureOf(helper.purge('login'))).failure).toBe('not-found')
+    expect(keychain.calls.length).toBe(before)
+    const broken = fakeKeychain({ exitCode: () => 1 })
+    expect((await failureOf(helperWith(broken.spawner).purge('valet.copy'))).failure).toBe('unavailable')
+  })
+
   it('never puts the secret in an error', async () => {
     const { spawner } = scriptedSpawner((child) => child.finish(1, CANARY, CANARY))
     const error = await failureOf(helperWith(spawner).read('valet', 'a'))

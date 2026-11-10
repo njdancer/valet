@@ -65,6 +65,9 @@ Each item says what was checked. "Not in the plan" means a search of `docs/` fou
     ([D52](../plan.md#d52-confirmation-panel-placement) recommended one that only opens the
     window; unanswered). With him at another screen, a `needsUser` waits until the hand-off
     window times out.
+    **Built 2026-11-10:** notifications for a confirmation, a sign-in a call handed over, an
+    opened breaker and a downloaded update, each of which only opens a window (D52 as recommended;
+    still unanswered). One switch in Settings, on by default.
 11. **Nobody owns staying current.** No Dependabot, no scheduled audit, and Electron ships a major
     every eight weeks (R16). For Valet this is more than hygiene: the user agent carries the real
     Chromium major, so an old Electron is an old Chrome, which is itself a bot-detection signal
@@ -81,6 +84,10 @@ Each item says what was checked. "Not in the plan" means a search of `docs/` fou
 14. **No way out.** No uninstall or reset: the login item, the Messages helper's launch agent, the
     Keychain copies, the data folder and the entries in Claude's config all stay behind. Needed by
     M8, and useful sooner for a clean re-test of first-run setup.
+    **Built 2026-11-10:** "Reset Valet" and "Uninstall Valet" in Settings, behind a native dialog.
+    They remove the Keychain copies, the Messages launch agent, the login item, the site sessions
+    and the data folder; uninstall also moves the app to the Trash. The entries in Claude's config
+    are the person's to remove, and the dialog says so.
 15. **Smaller.** The diagnostics log has no "show in Finder" in Settings. The audit page reads only
     the live file after a rotation (known, D27). The plan's AC2 still describes pasting a
     service-account token, which D6's answer (the Keychain copy) replaced.

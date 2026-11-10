@@ -2022,6 +2022,11 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 - Recommendation: a standalone window on top, with a notification that only opens it. It has no
   default button, so a keystroke meant for another app can't approve.
 - Blocks: M3, with C4.
+- Built as recommended (2026-11-10), not yet answered. The window was already there; the
+  notification is new (`apps/desktop/src/main/core/notifications.ts`). It has no action buttons, so
+  nothing is approved from it, and a click only brings the confirmation panel forward, which
+  re-arms the approve delay. The same goes for a sign-in a call handed to the person, a site whose
+  breaker opened and a downloaded update. Settings has one switch for all of them, on by default.
 
 ### D53. Fake trolley merge at login
 

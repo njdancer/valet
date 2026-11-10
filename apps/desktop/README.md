@@ -410,6 +410,20 @@ writes a self-check to `userData/smoke-report.json`. A plain build has neither.
   system default first, for the whole main process: electron-updater runs `uname` and `sysctl` by
   name inside its own download path. Everything else main runs is by absolute path.
 
+- **Notifications** (`core/notifications.ts`, `electron/notifications.ts`). The service tells the
+  person when something waits on them and no window of Valet's may be in view: a confirmation, a
+  sign-in a call handed over (not a login window they opened themselves), a site's breaker opening,
+  and a verified update downloaded. Each is a title and a body with no buttons; a click opens the
+  window it is about. A confirmation's or a sign-in's notification is taken down when it is over.
+  `settings.notifications` turns them all off. An e2e run posts none.
+- **Reset and uninstall** (`core/erase.ts`, `app.erase`). From Settings, after the main process's
+  own dialog: stop the service, remove the Keychain items and the Messages launch agent
+  (`Credentials.erase`), the login item, the browser sessions and the data folder, then restart as
+  new (reset, which keeps `versions.json`) or move the bundle to the Trash and quit (uninstall,
+  which also removes macOS's caches for the bundle id and sweeps the data folder once more after
+  exit, since Chromium writes a few files back as it shuts down). Each step is tried whatever
+  failed before it, and the person is told what couldn't be removed.
+
 ### Where the main process departs from the contract below
 
 - `settings.set` with a key outside `SettingsPatch`, `opPath` included, is refused as a whole rather

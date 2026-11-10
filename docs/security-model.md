@@ -564,6 +564,40 @@ boundary.
   self-reported name (**Enforced**, [D42](plan.md#d42-per-client-tool-scopes), C12). Records from
   before per-client tokens have no `clientId`.
 
+## Notifications
+
+- When a confirmation is waiting, a call's sign-in was handed to the person, a site's breaker opens
+  or an update is downloaded, the app posts a macOS notification
+  ([D52](plan.md#d52-confirmation-panel-placement), built as recommended, not answered). A
+  notification has no action buttons and no reply field: a click opens the window it is about and
+  does nothing else, so nothing is approved from Notification Centre, the lock screen or a Focus
+  summary (**Enforced** in `core/notifications.ts`; the Electron glue is not under test).
+- Its text is the app's own wording plus the adapter's name or the site's host, cut to one bounded
+  line with control and direction characters removed. A tool's title, an adapter's note or
+  `confirm()` message, a client's reported name, tool input and page text never appear in one
+  (**Enforced**): outside the app nothing attributes text to the adapter that wrote it.
+
+## Reset and uninstall
+
+- Settings offers "Reset Valet" and "Uninstall Valet". Both remove every Keychain item under this
+  build's copy service (all of them, through the helper's `purge`, not only the ones `grants.json`
+  still names), the Messages helper's launch agent and socket folder, the login item, the site
+  sessions and the data folder: grants, approvals, client tokens, the audit log, traces, settings
+  and diagnostics. A reset keeps `versions.json`, the floor an update may not go below, and starts
+  the app again as new. An uninstall also removes macOS's caches for the bundle id and moves the
+  app to the Trash. The release build also deletes the service-account token; a development build
+  leaves it, because every build shares that one item.
+- This deletes the audit log, so it happens only after the person agrees in a native dialog the
+  main process shows itself, with Cancel as the default button. A renderer can ask for that dialog
+  (from the control panel only) and can never answer it (**Enforced** for the channel and the
+  service; the dialog itself is Electron glue).
+- Nothing is read to do it, so no Keychain prompt appears, and every step is tried whatever failed
+  before it; what couldn't be removed is listed to the person by fixed wording. A folder is removed
+  only if it is absolute, normalised, at least three folders deep and, inside the home folder, at
+  least three below it (**Enforced**).
+- Valet can't remove its entry from Claude Code's or Claude Desktop's config, or the rows macOS
+  keeps under Login Items and Full Disk Access. The dialog says so before the person agrees.
+
 ## The MCP endpoint
 
 **Enforced**, in `packages/mcp-server`:
