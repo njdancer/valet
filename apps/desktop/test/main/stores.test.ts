@@ -89,6 +89,19 @@ describe('SettingsStore', () => {
     expect((await store.set({ messagesOtpEnabled: true })).messagesOtpEnabled).toBe(true)
   })
 
+  it('keeps trace retention in days, 1 to 365, and reads a file from before it existed as 14', async () => {
+    const path = join(dir(), 'settings.json')
+    const store = new SettingsStore(path)
+    const { traceRetentionDays: _, ...older } = { ...DEFAULT_SETTINGS, launchAtLogin: true }
+    writeFileSync(path, JSON.stringify(older))
+    expect(await store.get()).toEqual({ ...DEFAULT_SETTINGS, launchAtLogin: true, traceRetentionDays: 14 })
+    expect((await store.set({ traceRetentionDays: 30 })).traceRetentionDays).toBe(30)
+    for (const bad of [0, 366, 1.5]) {
+      writeFileSync(path, JSON.stringify({ ...DEFAULT_SETTINGS, traceRetentionDays: bad }))
+      expect(await store.get()).toEqual(DEFAULT_SETTINGS)
+    }
+  })
+
   it('keeps the 1Password account, and reads a file from before it existed', async () => {
     const path = join(dir(), 'settings.json')
     const store = new SettingsStore(path)

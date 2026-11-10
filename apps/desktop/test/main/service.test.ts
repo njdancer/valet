@@ -2,7 +2,16 @@
 // The whole main-process wiring in plain Node: the real runtime, stores, audit log and auth flow,
 // with a fake driver, the test credential provider, a stand-in endpoint and a recording UI.
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -1438,5 +1447,31 @@ describe('remote access', () => {
       new ValetError('config', 'invalid'),
     )
     expect(s.service.remote.status().hosts).toEqual([])
+  })
+})
+
+describe('trace retention (D27)', () => {
+  it('prunes traces older than the setting at start, and again when the setting shortens', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sa-service-'))
+    dirs.push(dir)
+    const paths = dataPaths(join(dir, 'data'))
+    mkdirSync(paths.traces, { recursive: true })
+    const now = Date.parse('2026-11-07T00:00:00.000Z')
+    const day = 24 * 60 * 60_000
+    for (const [name, age] of [
+      ['run-old', 20],
+      ['run-week', 7],
+      ['run-today', 0],
+    ] as const) {
+      mkdirSync(join(paths.traces, name))
+      writeFileSync(join(paths.traces, name, 'shot.png'), 'x')
+      const at = new Date(now - age * day - 60_000)
+      utimesSync(join(paths.traces, name), at, at)
+    }
+    const s = await setup({ dir })
+    expect((await s.api.settings.get()).traceRetentionDays).toBe(14)
+    expect(readdirSync(paths.traces).sort()).toEqual(['run-today', 'run-week'])
+    expect((await s.api.settings.set({ traceRetentionDays: 1 })).traceRetentionDays).toBe(1)
+    expect(readdirSync(paths.traces)).toEqual(['run-today'])
   })
 })

@@ -4,7 +4,7 @@
 
 import { type FileHandle, open } from 'node:fs/promises'
 import type { AuditEvent, AuditRecord, Purpose } from '@valet/core'
-import { verifyAuditLog } from '@valet/runtime'
+import { verifyAuditChain } from '@valet/runtime'
 import type {
   AuditCategory,
   AuditPage,
@@ -86,17 +86,18 @@ export class AuditReader {
     const cleared = this.queue.then(() => this.reset(null))
     this.queue = cleared
     await cleared
-    const result = await verifyAuditLog(this.path)
+    // The whole chain, through every archive rotation left (D27), not only the live file.
+    const result = await verifyAuditChain(this.path)
     if (result.ok) {
       return {
         state: 'intact',
         records: result.records,
-        headSeq: result.records,
+        headSeq: result.lastSeq,
         headHash: result.head,
         verifiedAt,
       }
     }
-    return { state: 'broken', records: Math.max(0, result.line - 1), firstBadSeq: result.line, verifiedAt }
+    return { state: 'broken', records: Math.max(0, result.seq - 1), firstBadSeq: result.seq, verifiedAt }
   }
 }
 

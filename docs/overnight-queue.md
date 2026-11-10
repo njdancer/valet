@@ -153,6 +153,8 @@ loses nothing if he changes it: the audit log is never deleted; rotation starts 
 first record commits to the previous file's last hash, and the verifier (item 2) follows the
 chain across files. Traces and screenshots are kept 14 days by default, configurable in settings.
 
+Built: see the note under [D27](plan.md#d27-retention).
+
 ### 11. Remote mode, first slice
 
 Nick wants agents in the cloud to reach Valet, with remote mode straight after M3 and as little

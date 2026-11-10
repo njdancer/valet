@@ -580,6 +580,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     opPath: null,
     messagesOtpEnabled: false,
     onePasswordAccount: null,
+    traceRetentionDays: 14,
   }
 
   const updates: UpdateStatus = {
@@ -1068,14 +1069,21 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       async set(patch) {
         enter('settings.set', patch)
         // As the main process does: keys outside SettingsPatch are dropped, opPath above all.
-        const { updateChannel, autoInstallUpdates, launchAtLogin, messagesOtpEnabled, onePasswordAccount } =
-          patch
+        const {
+          updateChannel,
+          autoInstallUpdates,
+          launchAtLogin,
+          messagesOtpEnabled,
+          onePasswordAccount,
+          traceRetentionDays,
+        } = patch
         const known = {
           updateChannel,
           autoInstallUpdates,
           launchAtLogin,
           messagesOtpEnabled,
           onePasswordAccount,
+          traceRetentionDays,
         }
         settings = {
           ...settings,
