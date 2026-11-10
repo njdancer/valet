@@ -390,6 +390,27 @@ function SettingsCard() {
                   onChange={(on) => set({ messagesOtpEnabled: on })}
                 />
               </div>
+              <div className="setting">
+                <span>Traces</span>
+                <span>
+                  Keep run traces and screenshots for
+                  <span className="xs muted" style={{ display: 'block' }}>
+                    Older ones are deleted. The audit log is always kept.
+                  </span>
+                </span>
+                <select
+                  className="select"
+                  aria-label="Keep traces and screenshots for"
+                  value={s.traceRetentionDays}
+                  onChange={(e) => set({ traceRetentionDays: Number(e.target.value) })}
+                >
+                  {retentionChoices(s.traceRetentionDays).map((days) => (
+                    <option key={days} value={days}>
+                      {days === 1 ? '1 day' : `${days} days`}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <OnePasswordAccountSetting
                 value={s.onePasswordAccount}
                 onSave={(account) => set({ onePasswordAccount: account })}
@@ -611,4 +632,10 @@ function UpdatesCard({ now }: { readonly now: number }) {
       </div>
     </div>
   )
+}
+
+/** The retention choices offered, plus the current value if a settings file holds another. */
+function retentionChoices(current: number): number[] {
+  const choices = [1, 7, 14, 30, 90, 365]
+  return choices.includes(current) ? choices : [...choices, current].sort((a, b) => a - b)
 }

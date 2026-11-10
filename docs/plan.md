@@ -1592,6 +1592,19 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 - Recommendation: audit log kept (it's small and the chain needs continuity; rotation starts a
   new chain whose first record commits to the previous file's last hash). Traces and screenshots
   kept 14 days by default, configurable.
+- Built as recommended (overnight queue item 10), not yet answered. Changing the answer later
+  needs no migration of anyone's data: archives are ordinary chained files, and the retention
+  setting is one number.
+  - The live log, `audit.jsonl`, is renamed to `audit.0001.jsonl`, `audit.0002.jsonl` and so on
+    once it reaches 16 MiB. The new live file's first record links to the archive's last hash and
+    carries on its sequence numbers. `valet-verify-audit` and the app's chain check follow the
+    chain through every archive, and an archive that has been removed or emptied breaks it.
+  - Settings has "Keep run traces and screenshots for", 1 to 365 days, 14 by default. The app
+    prunes the `traces` folder at start, every hour, and whenever the setting gets shorter.
+    Nothing writes traces there yet; whatever saves them later must write one entry per run in
+    that folder.
+  - The control panel's audit page and run views still read only the live file, so a run older
+    than the last rotation drops out of them, although the chain check still covers it.
 - Blocks: M4.
 
 ### D28. Rate budget defaults

@@ -1,13 +1,15 @@
 // AC14's verifier as a command: `valet-verify-audit [--head <hash>] [path]`. It checks the whole
 // hash chain and exits 0 when it holds, 1 at the first bad line (printed), and 2 on bad usage.
 // Without a path it checks the release app's log, ~/Library/Application Support/Valet/audit.jsonl.
+// The chain is followed across rotation (D27): the archives beside the live file (audit.0001.jsonl,
+// …) first, oldest first, then the live file.
 
 import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { Writable } from 'node:stream'
 import { pathToFileURL } from 'node:url'
-import { type AuditVerification, verifyAuditLog } from './audit-log'
+import { type AuditChainVerification, archivePaths, verifyAuditChain } from './audit-log'
 import { isErrno } from './files'
 
 export interface VerifyAuditIo {
@@ -24,12 +26,13 @@ export const VERIFY_AUDIT_USAGE = 'usage: valet-verify-audit [--head <sha256 hex
 /** How much of a bad line to echo; enough to find it, not a whole event dump. */
 const SHOWN_LINE_CHARS = 400
 
-const PROBLEMS: Record<Exclude<AuditVerification, { ok: true }>['problem'], string> = {
+const PROBLEMS: Record<Exclude<AuditChainVerification, { ok: true }>['problem'], string> = {
   malformed: 'not a complete audit record (edited, merged with another line, or cut off)',
   sequence: 'out of sequence (a record was removed or moved)',
   chain: 'does not link to the record before it (a record was removed, moved or replaced)',
   hash: 'its hash does not match its contents (the record was edited)',
   'head-mismatch': 'the log ends before the expected head (records were removed from the end)',
+  'empty-archive': 'an archive holds no records (it was emptied)',
 }
 
 /** Verifies one audit log. Resolves to the process exit code. */
@@ -43,12 +46,13 @@ export async function main(args: readonly string[], io: VerifyAuditIo): Promise<
     parsed.path !== undefined
       ? resolve(io.cwd ?? process.cwd(), parsed.path)
       : join(io.dataDir ?? defaultDataDir(), 'audit.jsonl')
-  let result: AuditVerification
+  let result: AuditChainVerification
   try {
     // A missing file verifies as empty in the library (a fresh install), but asking the CLI to
-    // check a file that isn't there is almost always a typo, so say so.
-    await readFile(path)
-    result = await verifyAuditLog(path, parsed.head === undefined ? {} : { expectedHead: parsed.head })
+    // check a file that isn't there is almost always a typo, so say so. Just after a rotation the
+    // live file may not exist yet, with its archives beside it.
+    if ((await archivePaths(path)).length === 0) await readFile(path)
+    result = await verifyAuditChain(path, parsed.head === undefined ? {} : { expectedHead: parsed.head })
   } catch (error) {
     io.errors.write(
       `valet-verify-audit: ${path}: ${isErrno(error, 'ENOENT') ? 'no such file' : 'cannot be read'}\n`,
@@ -56,11 +60,14 @@ export async function main(args: readonly string[], io: VerifyAuditIo): Promise<
     return 1
   }
   if (result.ok) {
-    io.output.write(`ok: ${result.records} record${result.records === 1 ? '' : 's'}, head ${result.head}\n`)
+    const files = result.files === 1 ? '' : ` in ${result.files} files`
+    io.output.write(
+      `ok: ${result.records} record${result.records === 1 ? '' : 's'}${files}, head ${result.head}\n`,
+    )
     return 0
   }
-  io.errors.write(`FAILED: ${path}: line ${result.line}: ${PROBLEMS[result.problem]}\n`)
-  const line = await badLine(path, result.line)
+  io.errors.write(`FAILED: ${result.file}: line ${result.line}: ${PROBLEMS[result.problem]}\n`)
+  const line = await badLine(result.file, result.line)
   if (line !== null) io.errors.write(`  ${line}\n`)
   return 1
 }

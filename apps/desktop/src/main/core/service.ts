@@ -34,6 +34,7 @@ import {
   AuditLog,
   JsonFileStore,
   LoginAttemptMarker,
+  pruneOlderThan,
   type RuntimeDiagnostic,
   type Sleep,
   ToolHost,
@@ -205,6 +206,9 @@ const HOLDS_A_GRANT_CANNOT_FIX: ReadonlySet<NeedsUserReason> = new Set<NeedsUser
   'site-changed',
 ])
 
+/** How often a running app prunes expired traces (D27). */
+const PRUNE_EVERY_MS = 60 * 60_000
+
 const titlesSchema = z.record(z.string().max(512), z.string().max(200))
 
 export class AppService {
@@ -221,6 +225,7 @@ export class AppService {
   private updates: UpdatesPort | null = null
   /** Audit writes nothing awaits (an update downloaded); stop() waits for them. */
   private background: Promise<unknown> = Promise.resolve()
+  private pruneTimer: ReturnType<typeof setInterval> | null = null
   private readonly snapshots: SnapshotStore
   private readonly clients: ClientRegistry
   private readonly titles: JsonDocument<Record<string, string>>
@@ -339,10 +344,17 @@ export class AppService {
     await ensurePrivateDir(paths.dir)
     await mkdir(paths.loginMarkers, { recursive: true, mode: 0o700 })
     await mkdir(paths.clientConfigs, { recursive: true, mode: 0o700 })
+    await mkdir(paths.traces, { recursive: true, mode: 0o700 })
     // Before per-client tokens, every client shared one token in this file. Nothing reads it now,
     // and a token left lying there would be one more copy to leak.
     await rm(paths.legacyBridgeConfig, { force: true }).catch(() => undefined)
     this.settingsNow = await this.settings.get()
+    await this.pruneTraces()
+    // A long-running app still drops a trace on the day it expires, not at the next start.
+    this.pruneTimer = setInterval(() => {
+      this.background = this.background.then(() => this.pruneTraces())
+    }, PRUNE_EVERY_MS)
+    this.pruneTimer.unref?.()
     // Updates first, before any adapter, credential or endpoint: a release that fails further on can
     // still be replaced by the next one.
     await this.startUpdates()
@@ -429,6 +441,8 @@ export class AppService {
 
   async stop(): Promise<void> {
     this.updates?.stop()
+    if (this.pruneTimer !== null) clearInterval(this.pruneTimer)
+    this.pruneTimer = null
     // Calls still running are cancelled: each ends failed tool-run/aborted, its prompt declined.
     this.caller?.cancelAll()
     this.broker.declineAll()
@@ -736,8 +750,17 @@ export class AppService {
     return new Set(status.filter((s) => s.available).map((s) => s.kind))
   }
 
+  /** Removes traces and screenshots older than the retention setting (D27). Never fails a caller. */
+  private async pruneTraces(): Promise<void> {
+    await pruneOlderThan(this.deps.paths.traces, this.settingsNow.traceRetentionDays, this.deps.now()).catch(
+      () => undefined,
+    )
+  }
+
   private async afterSettings(settings: Settings): Promise<Settings> {
+    const shorter = settings.traceRetentionDays < this.settingsNow.traceRetentionDays
     this.settingsNow = settings
+    if (shorter) await this.pruneTraces()
     await this.deps.credentials.configure(settings)
     this.emit('settings-changed')
     this.emit('grants-changed')

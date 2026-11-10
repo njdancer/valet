@@ -218,3 +218,40 @@ describe('valet-verify-audit', () => {
     await expect(exec(process.execPath, ['--import', 'tsx', cli, path])).rejects.toMatchObject({ code: 1 })
   })
 })
+
+describe('valet-verify-audit across rotated files (D27)', () => {
+  async function writeRotated(): Promise<string> {
+    const log = new AuditLog(path, clock)
+    await log.append(events[0] as AuditEvent)
+    await log.rotate()
+    await log.append(events[1] as AuditEvent)
+    await log.rotate()
+    return (await log.append(events[2] as AuditEvent)).hash
+  }
+
+  it('follows the chain through every archive into the live file', async () => {
+    const head = await writeRotated()
+    expect(await run([path, '--head', head])).toEqual({
+      code: 0,
+      stdout: `ok: 3 records in 3 files, head ${head}\n`,
+      stderr: '',
+    })
+  })
+
+  it('names the file the chain breaks in when an archive is deleted', async () => {
+    await writeRotated()
+    await rm(join(dir, 'audit.0001.jsonl'))
+    const result = await run([path])
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain(`FAILED: ${join(dir, 'audit.0002.jsonl')}: line 1: out of sequence`)
+  })
+
+  it('verifies a log that has just rotated and has no live file yet', async () => {
+    const head = await writeRotated()
+    await new AuditLog(path, clock).rotate()
+    expect(await run([path, '--head', head])).toMatchObject({
+      code: 0,
+      stdout: `ok: 3 records in 4 files, head ${head}\n`,
+    })
+  })
+})

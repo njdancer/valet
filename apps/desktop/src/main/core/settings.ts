@@ -4,6 +4,11 @@
 // Messages off, no pinned op path, no launch at login.
 
 import { isOnePasswordAccount } from '@valet/credentials'
+import {
+  DEFAULT_TRACE_RETENTION_DAYS,
+  MAX_TRACE_RETENTION_DAYS,
+  MIN_TRACE_RETENTION_DAYS,
+} from '@valet/runtime'
 import { z } from 'zod'
 import type { Settings, SettingsPatch } from '../../shared/api'
 import { JsonDocument } from './files'
@@ -15,10 +20,18 @@ export const DEFAULT_SETTINGS: Settings = {
   opPath: null,
   messagesOtpEnabled: false,
   onePasswordAccount: null,
+  traceRetentionDays: DEFAULT_TRACE_RETENTION_DAYS,
 }
 
 /** What DesktopAuth takes: an account name or UUID, trimmed, without control characters. */
 export const onePasswordAccountSchema = z.string().refine(isOnePasswordAccount)
+
+/** Days a run's traces and screenshots are kept (D27). */
+export const traceRetentionDaysSchema = z
+  .number()
+  .int()
+  .min(MIN_TRACE_RETENTION_DAYS)
+  .max(MAX_TRACE_RETENTION_DAYS)
 
 const settingsSchema = z
   .object({
@@ -33,6 +46,7 @@ const settingsSchema = z
     messagesOtpEnabled: z.boolean(),
     // Absent in files written before it existed.
     onePasswordAccount: onePasswordAccountSchema.nullable().default(null),
+    traceRetentionDays: traceRetentionDaysSchema.default(DEFAULT_TRACE_RETENTION_DAYS),
   })
   .strict()
 
@@ -55,6 +69,7 @@ export class SettingsStore {
       ...(patch.launchAtLogin === undefined ? {} : { launchAtLogin: patch.launchAtLogin }),
       ...(patch.messagesOtpEnabled === undefined ? {} : { messagesOtpEnabled: patch.messagesOtpEnabled }),
       ...(patch.onePasswordAccount === undefined ? {} : { onePasswordAccount: patch.onePasswordAccount }),
+      ...(patch.traceRetentionDays === undefined ? {} : { traceRetentionDays: patch.traceRetentionDays }),
     }
     return this.document.update((current) => ({ ...current, ...known }))
   }
