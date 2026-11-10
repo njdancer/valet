@@ -375,6 +375,17 @@ describe('clients and settings', () => {
     ])
   })
 
+  it('turns notifications off, and only asks the main process for a reset or an uninstall', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    renderAt('#/settings', api)
+    await user.click(await screen.findByRole('switch', { name: 'Notify me when Valet needs me' }))
+    expect(called(api, 'settings.set')).toEqual([[{ notifications: false }]])
+    await user.click(screen.getByRole('button', { name: 'Reset Valet…' }))
+    await user.click(screen.getByRole('button', { name: 'Uninstall Valet…' }))
+    expect(called(api, 'app.erase')).toEqual([['reset'], ['uninstall']])
+  })
+
   it('changes settings', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })
