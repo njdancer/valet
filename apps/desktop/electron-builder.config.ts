@@ -414,8 +414,8 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
       artifactName: `${slug}-\${version}-\${arch}.\${ext}`,
       // @electron/osx-sign doesn't reach an extra executable in Contents/MacOS by itself, and the
       // app's own signature refuses unsigned nested code: the native binaries are signed first, with
-      // the same identity and options. Relative to Contents.
-      ...(deps.bridgeBuilt() ? { binaries: NATIVE_EXECUTABLES.map((name) => `MacOS/${name}`) } : {}),
+      // the same identity and options. Relative to the .app.
+      ...(deps.bridgeBuilt() ? { binaries: NATIVE_EXECUTABLES.map((name) => `Contents/MacOS/${name}`) } : {}),
       // A dry run signs ad hoc: electron-builder's "-" identity, which uses no key and no keychain.
       ...(dryRun ? { identity: '-' } : signs ? {} : { identity: null }),
       type: release ? 'distribution' : 'development',

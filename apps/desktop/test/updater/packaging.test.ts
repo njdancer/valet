@@ -356,7 +356,11 @@ describe('a release dry run', () => {
     expect(c.publish).toEqual(release.publish)
     expect(c.files).toEqual(release.files)
     expect(c.extraFiles).toEqual(release.extraFiles)
-    const binaries = ['MacOS/valet-bridge', 'MacOS/valet-keychain', 'MacOS/valet-messages-helper']
+    const binaries = [
+      'Contents/MacOS/valet-bridge',
+      'Contents/MacOS/valet-keychain',
+      'Contents/MacOS/valet-messages-helper',
+    ]
     expect(c.mac.binaries).toEqual(binaries)
     expect(release.mac.binaries).toEqual(binaries)
     expect(createBuilderConfig(DRY_RUN_ENV, DEPS).mac?.binaries).toEqual(release.mac.binaries)
