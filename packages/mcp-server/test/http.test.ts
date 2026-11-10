@@ -260,6 +260,27 @@ describe('startHttpServer', () => {
     await expect(oldest.listTools()).resolves.toBeDefined()
   })
 
+  it('closes a flooding client’s own sessions, never another client’s', async () => {
+    const tokens = new ClientTokens()
+    const other = 'ABCDEFGHIJKLMNOPQabcdefghijklmnopqrstuvwxyz'
+    tokens.set('quiet', TOKEN)
+    tokens.set('flood', other)
+    const running = await startHttpServer({
+      caller: new FakeCaller([searchProducts]),
+      authenticate: localAuthenticator(tokens),
+      maxSessions: 3,
+    })
+    cleanup.push(() => running.close())
+    const quiet = await connectClient(running.url, 'quiet')
+    const floods = []
+    for (let i = 0; i < 5; i += 1) floods.push(await connectClient(running.url, `flood-${i}`, other))
+
+    await expect(quiet.listTools()).resolves.toBeDefined()
+    expect(running.sessions().total).toBe(3)
+    await expect(floods[0]?.listTools()).rejects.toThrow()
+    await expect(floods[4]?.listTools()).resolves.toBeDefined()
+  })
+
   it('listens on the port it was given', async () => {
     const first = await start(new FakeCaller([searchProducts]))
     const { port } = first
