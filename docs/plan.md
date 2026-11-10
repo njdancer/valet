@@ -1357,6 +1357,8 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D11. Adapter package format
 
+- Nick's answer (2026-11-10): **Deferred until after the MVP.** Not on the path to a completed
+  Woolworths order; no thread works on it before then.
 - Options: a directory or zip with `manifest.json`, one compiled ESM `tools.mjs`, fixtures and a
   README, hashed with `bundleHash`; npm packages; git repositories.
 - Considerations: npm brings install scripts and dependency trees nobody reviews. A single
@@ -1371,6 +1373,8 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D12. Sandbox technology
 
+- Nick's answer (2026-11-10): **Deferred until after the MVP.** Not on the path to a completed
+  Woolworths order; no thread works on it before then.
 - Options:
   - **QuickJS compiled to wasm** (e.g. quickjs-emscripten): a strong boundary with nothing
     reachable but what's injected; slower, and tool code can't use Node or modern-JS features
@@ -1390,6 +1394,8 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D13. Authoring agent model access
 
+- Nick's answer (2026-11-10): **Deferred until after the MVP.** Not on the path to a completed
+  Woolworths order; no thread works on it before then.
 - Options:
   - **MCP-inverted:** the IDE exposes its authoring tools over MCP; the person's own Claude Code
     or Claude Desktop drives them. No model access in the product.
@@ -1432,6 +1438,8 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D16. Pricing
 
+- Nick's answer (2026-11-10): **Deferred until after the MVP.** Not on the path to a completed
+  Woolworths order; no thread works on it before then.
 - Options: free and open source with a paid relay; paid app; donations or sponsorship;
   marketplace revenue share.
 - Recommendation: free, open-source app. If the relay is built, a small monthly fee, tested
@@ -1489,6 +1497,8 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D22. Second adapter
 
+- Nick's answer (2026-11-10): **Deferred until after the MVP.** Not on the path to a completed
+  Woolworths order; no thread works on it before then.
 - Options: port the earlier app's bank connector (read-only transactions); another grocer
   (Coles); a utility or a government site Nick uses.
 - Considerations: a bank is the strongest test of the security model and the most valuable to
@@ -1500,6 +1510,8 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D23. Update feed host
 
+- Nick's answer (2026-11-10): **Deferred until after the MVP.** Not on the path to a completed
+  Woolworths order; no thread works on it before then.
 - Options: GitHub Releases (needs a public repo, or a token in the app for a private one, which
   is unacceptable); Cloudflare R2 or S3 with electron-updater's generic provider; no auto-update
   before M8.
@@ -1669,6 +1681,8 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D29. Pause, overnight and scheduled use
 
+- Nick's answer (2026-11-10): **Deferred until after the MVP.** Not on the path to a completed
+  Woolworths order; no thread works on it before then.
 - Question: should agents be able to call tools at any hour? A login at 3 am with no human
   activity looks odd to a bot detector, and a `needsUser` at 3 am helps nobody.
 - Recommendation: an optional "quiet hours" setting that returns `needsUser` with a clear reason
