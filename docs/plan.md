@@ -1528,6 +1528,9 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D19. Confirmation when Nick is away
 
+- Nick's answer (2026-11-10): Accepted: decline after a timeout
+  ([D50](#d50-confirmation-and-hand-off-timeouts) has the numbers). Phone confirmation stays with
+  the relay.
 - Options: decline after a timeout; push to his phone (needs the relay or a notification
   service); queue for later.
 - Recommendation: decline after a timeout in v1. Phone confirmation comes with the relay.
@@ -2107,9 +2110,10 @@ review of 2026-11-10; Nick has answered all three.
   It returns within seconds, saying a login is running and when to call again, and the login
   finishes in the background. The login's time no longer counts against the tool's 2 minutes. Why:
   the [shop benchmark](findings/2026-11-10-shop-benchmark.md) shows a cart call with a login takes
-  1.7 to 1.9 minutes of the 2 allowed, and client and tunnel time limits aren't measured. The
-  confirmation and hand-off timeouts (the rest of this decision, with
-  [D19](#d19-confirmation-when-nick-is-away)) are asked but not yet answered.
+  1.7 to 1.9 minutes of the 2 allowed, and client and tunnel time limits aren't measured.
+- Nick's answer (2026-11-10), on the rest: Accepted as recommended. A confirmation nobody answers
+  is declined after 2 minutes, and the agent can ask again. A login that needs the person returns
+  `needsUser` at once and leaves its window up for 15 minutes.
 - Today: the confirmation waits 5 minutes, a tool run 2 minutes, and the auth flow has its own
   timeout (the Woolworths steps can pause for about 60 s). The hand-off isn't wired. Clients have
   their own tool-call timeouts, which haven't been measured.
