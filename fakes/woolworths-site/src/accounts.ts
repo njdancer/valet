@@ -79,7 +79,12 @@ export class AccountStore {
   /** Starts a new visitor session, discarding `replacing` if given. */
   startVisitor(username: string | null = null, replacing?: Visitor): Visitor {
     if (replacing !== undefined) this.visitors.delete(replacing.token)
-    const visitor: Visitor = { token: newToken(), username, trolley: new Map(), fulfilment: { addressId: null } }
+    const visitor: Visitor = {
+      token: newToken(),
+      username,
+      trolley: new Map(),
+      fulfilment: { addressId: null },
+    }
     this.visitors.set(visitor.token, visitor)
     return visitor
   }
@@ -91,7 +96,9 @@ export class AccountStore {
 
   /** The pick-up address ids of the sessions now logged in to `username`, oldest first. */
   pickupAddressesOf(username: string): (number | null)[] {
-    return [...this.visitors.values()].filter((v) => v.username === username).map((v) => v.fulfilment.addressId)
+    return [...this.visitors.values()]
+      .filter((v) => v.username === username)
+      .map((v) => v.fulfilment.addressId)
   }
 
   /** The pick-up address ids of the anonymous sessions, oldest first. */

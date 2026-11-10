@@ -88,7 +88,12 @@ export const SHOP_WITH_STORE: ManifestInput = {
   tools: [
     ...SHOP.tools,
     { name: 'find_stores', title: 'Find stores', description: 'Stores to choose from.', sideEffect: 'read' },
-    { name: 'apply_store', title: 'Use store', description: 'Shops at the chosen store.', sideEffect: 'write' },
+    {
+      name: 'apply_store',
+      title: 'Use store',
+      description: 'Shops at the chosen store.',
+      sideEffect: 'write',
+    },
   ],
   settings: {
     store: {

@@ -142,8 +142,9 @@ const HANDLERS: Readonly<
   'adapters.settingChoices': entry(z.tuple([ADAPTER_ID, SETTING, z.string().max(100)]), (api, [id, s, q]) =>
     api.adapters.settingChoices(id, s, q),
   ),
-  'adapters.setSetting': entry(z.tuple([ADAPTER_ID, SETTING, z.string().min(1).max(100)]), (api, [id, s, v]) =>
-    api.adapters.setSetting(id, s, v),
+  'adapters.setSetting': entry(
+    z.tuple([ADAPTER_ID, SETTING, z.string().min(1).max(100)]),
+    (api, [id, s, v]) => api.adapters.setSetting(id, s, v),
   ),
   'adapters.clearSetting': entry(z.tuple([ADAPTER_ID, SETTING]), (api, [id, s]) =>
     api.adapters.clearSetting(id, s),

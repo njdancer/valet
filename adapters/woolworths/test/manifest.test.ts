@@ -1,4 +1,15 @@
-import { decideRequest, hostAllowed, isScreenedPattern, manifestSchema, messagesSourcesIn, parseManifest, secretRefsIn, settingToolNames, toolHints, touchesDeniedSegment } from '@valet/core'
+import {
+  decideRequest,
+  hostAllowed,
+  isScreenedPattern,
+  manifestSchema,
+  messagesSourcesIn,
+  parseManifest,
+  secretRefsIn,
+  settingToolNames,
+  toolHints,
+  touchesDeniedSegment,
+} from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { createAdapter } from '../src/adapter'
 import realManifest, {

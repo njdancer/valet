@@ -273,7 +273,8 @@ export function createManifest({
       {
         name: 'apply_store',
         title: 'Shop at your store',
-        description: 'Tells Woolworths which pick-up store this session shops at: the one you chose in Valet.',
+        description:
+          'Tells Woolworths which pick-up store this session shops at: the one you chose in Valet.',
         sideEffect: 'write',
         // Replaces the session's store with the chosen one; the same store twice is the same session.
         destructive: true,

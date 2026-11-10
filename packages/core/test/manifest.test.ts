@@ -507,7 +507,9 @@ describe('settings (D69)', () => {
     expect(settingQuerySchema.safeParse({ query: '2000' }).success).toBe(true)
     expect(settingQuerySchema.safeParse({ query: 'x'.repeat(101) }).success).toBe(false)
     expect(settingValueSchema.safeParse({ value: '' }).success).toBe(false)
-    expect(settingChoicesSchema.safeParse({ choices: [{ value: '1', label: 'A', detail: 'B' }] }).success).toBe(true)
+    expect(
+      settingChoicesSchema.safeParse({ choices: [{ value: '1', label: 'A', detail: 'B' }] }).success,
+    ).toBe(true)
     expect(settingChoicesSchema.safeParse({ choices: [{ value: '1', label: '' }] }).success).toBe(false)
   })
 })

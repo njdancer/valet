@@ -144,7 +144,11 @@ describe('apply_store', () => {
   })
 
   it('fails on a refusal, and never retries the write', async () => {
-    const ctx = new FakeToolContext().on('POST', FULFILMENT, json({ Message: 'The request is invalid.' }, 400))
+    const ctx = new FakeToolContext().on(
+      'POST',
+      FULFILMENT,
+      json({ Message: 'The request is invalid.' }, 400),
+    )
     await expect(apply(ctx, '9001201')).rejects.toEqual(new ValetError('tool-run', 'unavailable'))
     expect(ctx.fetches).toHaveLength(1)
   })

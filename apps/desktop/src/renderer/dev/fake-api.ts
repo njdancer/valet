@@ -315,8 +315,22 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         calls7d: 20,
         internal: false,
       },
-      { name: 'get_product', title: 'Product', description: 'One product.', sideEffect: 'read', calls7d: 6, internal: false, },
-      { name: 'get_trolley', title: 'Trolley', description: 'The trolley.', sideEffect: 'read', calls7d: 12, internal: false, },
+      {
+        name: 'get_product',
+        title: 'Product',
+        description: 'One product.',
+        sideEffect: 'read',
+        calls7d: 6,
+        internal: false,
+      },
+      {
+        name: 'get_trolley',
+        title: 'Trolley',
+        description: 'The trolley.',
+        sideEffect: 'read',
+        calls7d: 12,
+        internal: false,
+      },
       {
         name: 'update_trolley',
         title: 'Update',
@@ -797,7 +811,10 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         enter('adapters.settingChoices', adapterId, setting, query)
         const stores = FAKE_STORES.filter((store) => store.postcode === query.trim())
         offered = stores
-        return clone({ status: 'ok' as const, choices: stores.map(({ postcode: _postcode, ...choice }) => choice) })
+        return clone({
+          status: 'ok' as const,
+          choices: stores.map(({ postcode: _postcode, ...choice }) => choice),
+        })
       },
       async setSetting(adapterId, setting, value) {
         enter('adapters.setSetting', adapterId, setting, value)

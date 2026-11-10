@@ -1316,7 +1316,10 @@ describe('an adapter setting (D69)', () => {
       ['find_stores', true],
       ['apply_store', true],
     ])
-    expect(await s.call('apply_store', { value: '99' })).toMatchObject({ status: 'failed', errorClass: 'not-found' })
+    expect(await s.call('apply_store', { value: '99' })).toMatchObject({
+      status: 'failed',
+      errorClass: 'not-found',
+    })
     expect(s.log.applied).toEqual([])
   })
 

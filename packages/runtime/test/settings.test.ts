@@ -285,7 +285,11 @@ describe('settingChoices', () => {
     expect(await host.settingChoices(ask)).toEqual({ status: 'ok', choices: STORES })
     expect(queries).toEqual(['2000'])
     expect(driver.policies.map((p) => p.maxPurpose)).toEqual(['read'])
-    expect(audit.events[0]).toMatchObject({ type: 'tool-called', tool: 'find_stores', client: SETTINGS_CLIENT })
+    expect(audit.events[0]).toMatchObject({
+      type: 'tool-called',
+      tool: 'find_stores',
+      client: SETTINGS_CLIENT,
+    })
   })
 
   it('does not apply the current value first', async () => {
@@ -322,7 +326,9 @@ describe('settingChoices', () => {
 
   it('answers not granted for an adapter that is unknown or not approved', async () => {
     const { host } = shopFixture()
-    expect(await host.settingChoices({ ...ask, adapterId: 'other' })).toMatchObject({ errorClass: 'not-granted' })
+    expect(await host.settingChoices({ ...ask, adapterId: 'other' })).toMatchObject({
+      errorClass: 'not-granted',
+    })
     const unapproved = fixture(shop(), { approvals: { isApproved: async () => false } })
     expect(await unapproved.host.settingChoices(ask)).toMatchObject({ errorClass: 'not-granted' })
   })
@@ -333,6 +339,10 @@ describe('settingChoices', () => {
         throw new Error('page text')
       },
     })
-    expect(await host.settingChoices(ask)).toEqual({ status: 'failed', stage: 'tool-run', errorClass: 'internal' })
+    expect(await host.settingChoices(ask)).toEqual({
+      status: 'failed',
+      stage: 'tool-run',
+      errorClass: 'internal',
+    })
   })
 })

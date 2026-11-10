@@ -34,7 +34,11 @@ function own<T>(record: Readonly<Record<string, T>>, key: string): T | undefined
   return Object.hasOwn(record, key) ? record[key] : undefined
 }
 
-function withEntry<T>(record: Readonly<Record<string, T>>, key: string, value: T | undefined): Record<string, T> {
+function withEntry<T>(
+  record: Readonly<Record<string, T>>,
+  key: string,
+  value: T | undefined,
+): Record<string, T> {
   const next: Record<string, T> = {}
   for (const [k, v] of Object.entries(record)) if (k !== key) define(next, k, v)
   if (value !== undefined) define(next, key, value)
@@ -60,7 +64,8 @@ export class AdapterSettingsStore implements AdapterSettingsLookup {
   /** The runtime's view: values only. */
   async values(adapterId: string): Promise<Readonly<Record<string, string>>> {
     const values: Record<string, string> = {}
-    for (const [name, choice] of Object.entries(await this.chosen(adapterId))) define(values, name, choice.value)
+    for (const [name, choice] of Object.entries(await this.chosen(adapterId)))
+      define(values, name, choice.value)
     return values
   }
 

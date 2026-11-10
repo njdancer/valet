@@ -33,6 +33,7 @@
 // leaves here carries page text or exception messages: failures are a stage and an error class, and
 // needsUser is a reason code.
 
+import { randomUUID } from 'node:crypto'
 import {
   type AdapterDefinition,
   type AdapterManifest,
@@ -48,10 +49,10 @@ import {
   type RequestDeclaration,
   type SessionDriver,
   type SettingDeclaration,
+  type Stage,
   settingChoicesSchema,
   settingToolNames,
   settingValueSchema,
-  type Stage,
   type ToolContext,
   type ToolDeclaration,
   type ToolImplementation,
@@ -60,7 +61,6 @@ import {
   toReportable,
   ValetError,
 } from '@valet/core'
-import { randomUUID } from 'node:crypto'
 import type { z } from 'zod'
 import type { ApprovalLookup } from './approvals'
 import type { JsonStore } from './breaker-state'
@@ -667,11 +667,7 @@ export class ToolHost {
     let result: ToolCallResult
     let settled: Promise<void> = Promise.resolve()
     try {
-      const input = await this.validate(
-        setting.implementation.input,
-        { value: setting.value },
-        'tool-input',
-      )
+      const input = await this.validate(setting.implementation.input, { value: setting.value }, 'tool-input')
       if (input.status !== 'ok') {
         // The adapter no longer accepts the stored value (an update changed what a value is): the
         // person chooses again.

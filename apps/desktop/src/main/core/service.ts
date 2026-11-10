@@ -715,7 +715,11 @@ export class AppService {
    * (approved adapters only, paced, audited), and what comes back is remembered as what the person
    * was offered. A failure reaches the renderer as one of a few fixed answers, never as text.
    */
-  private async settingChoices(adapterId: string, setting: string, query: string): Promise<SettingChoicesReply> {
+  private async settingChoices(
+    adapterId: string,
+    setting: string,
+    query: string,
+  ): Promise<SettingChoicesReply> {
     this.requireSetting(adapterId, setting)
     const result = await this.runtime().settingChoices({
       adapterId,
