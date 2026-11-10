@@ -6,6 +6,7 @@ import {
   messagesSourcesIn,
   parseManifest,
   secretRefsIn,
+  toolHints,
   touchesDeniedSegment,
 } from '@valet/core'
 import { describe, expect, it } from 'vitest'
@@ -414,6 +415,17 @@ describe('the tool declarations', () => {
       add_to_cart: 'write',
       set_cart_quantity: 'write',
       remove_from_cart: 'write',
+    })
+  })
+
+  it('advertise set_cart_quantity destructive and idempotent (AC3), and add_to_cart destructive until D30', () => {
+    const hints = Object.fromEntries(
+      realManifest.tools.filter((t) => t.sideEffect === 'write').map((t) => [t.name, toolHints(t)]),
+    )
+    expect(hints).toEqual({
+      add_to_cart: { destructive: true, idempotent: false },
+      set_cart_quantity: { destructive: true, idempotent: true },
+      remove_from_cart: { destructive: true, idempotent: true },
     })
   })
 })

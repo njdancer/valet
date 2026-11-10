@@ -36,8 +36,8 @@ writes the audit log. Nothing has touched the live site while logged in, and not
 | `packages/auth-flow`                       | `runAuthFlow` on the Auth0 identifier-first shape, the secret filler with every pre-fill check, one password submit per login, Messages OTP behind a grant, canary tests.                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `packages/credentials`                     | 1Password service account (SDK) and `op` providers, both able to list the vault's items; the resolver, the grant store, the Keychain token source (v0 ACL gap), the Messages OTP reader. No test touches the real 1Password, Keychain or Messages.                                                                                                                                                                                                                                                                                                                                                               |
 | `packages/browser-electron`                | The Electron `SessionDriver`: clean Chrome UA, `keyDown`/`char`/`keyUp` typing bound to the focused field, the request filter on both partitions with refusals reported, the egress proxy, one-way cookie and storage hand-off. 37 Electron e2e tests.                                                                                                                                                                                                                                                                                                                                                           |
-| `packages/mcp-server`                      | Streamable HTTP on `127.0.0.1` with a bearer token and Host/Origin checks, the stdio bridge, live session counts. Session ids never leave it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `adapters/woolworths`                      | Six tools (search, product, cart, add, set quantity, remove) and an Auth0 login with an optional TOTP or SMS step, against the fake. Site calls are 10 s apart ([D28](#d28-rate-budget-defaults)). 41 e2e tests. Drift detection (M4): every fixture and fake response is checked against the tools' zod schemas, with declared fields that went missing reported too; a schema failure is `tool-run` / `site-changed`. The smoke test (`smoke/`) runs the three reads through the real Electron driver: a dry run against the fake in CI, and a live run that skips unless `VALET_LIVE_SMOKE=1`, for Nick only. |
+| `packages/mcp-server`                      | Streamable HTTP on `127.0.0.1` with a bearer token and Host/Origin checks, the stdio bridge, live session counts. Session ids never leave it. Remote mode's first slice ([relay.md](relay.md#built-so-far)): a second listener on the same handler with its own Host, Origin and access-token checks, and the default-deny remote policy as a `ToolCaller` wrapper; no authorisation server or tunnel yet, so no client can get a remote token.                                                                                                                                                                  |
+| `adapters/woolworths`                      | Six tools (search, product, cart, add, set quantity, remove) and an Auth0 login with an optional TOTP or SMS step, against the fake. Site calls are 10 s apart ([D28](#d28-rate-budget-defaults)). 40 e2e tests. Drift detection (M4): every fixture and fake response is checked against the tools' zod schemas, with declared fields that went missing reported too; a schema failure is `tool-run` / `site-changed`. The smoke test (`smoke/`) runs the three reads through the real Electron driver: a dry run against the fake in CI, and a live run that skips unless `VALET_LIVE_SMOKE=1`, for Nick only. |
 | `fakes/woolworths-site`                    | www and auth origins over local TLS, the identifier-first flow with MFA variants, an Akamai-like limiter that reissues `_abck`, hostile variants including a page beacon that tries five exfiltration routes, an exfil sink, a recorder.                                                                                                                                                                                                                                                                                                                                                                         |
 | `apps/desktop`                             | The menu-bar app: tray, control panel (adapters, approval and update review, grants, credentials, clients, run traces, audit log, settings), the login window and hand-off, the confirmation panel, demo mode (`pnpm demo`). Served from `app://renderer`. Updater wired to an Ed25519-signed feed, off unless the build is packaged, Developer ID signed and has a feed compiled in. Refuses unexpected argv and `ELECTRON_*`/`NODE_*` variables.                                                                                                                                                               |
 | Packaging                                  | `pnpm package:smoke` builds an unsigned, ad-hoc signed `.app`, checks the fuses, Info.plist and asar contents, makes eight launches that must be refused, then launches it under a temporary HOME and checks the control panel over DevTools. The release path (Developer ID, notarisation) is written and refuses to run without its feed, but has never run ([D60](#d60-the-stdio-bridge-in-a-packaged-app), [D61](#d61-the-update-feeds-signing-key)).                                                                                                                                                        |
@@ -75,8 +75,10 @@ Still not done, or done differently from the docs:
 - **The stdio bridge in a packaged build.** The Swift bridge
   ([D60](#d60-the-stdio-bridge-in-a-packaged-app)) ships in `Contents/MacOS`, but has not been in a
   signed build yet.
-- **Tool code isn't in a separate process.** It runs in the main process, behind the guarded
-  page. Planned for M3, with the sandbox in M7.
+- **Tool code isn't sandboxed.** Since overnight queue item 7 it runs in a utility process per
+  call, in a `node:vm` context with only the capability API over JSON messages, so a crash or a
+  hang in it can't take the app down. That is not a boundary: the sandbox is M7
+  ([D12](#d12-sandbox-technology)).
 - **Never exercised for real:** the 1Password service account and `op` (the Keychain prompt
   included), Full Disk Access for Messages, a Developer ID signature, notarisation, an x64 build.
 - **Small things in the UI.** The tray says "N clients connected" but counts open MCP sessions;
@@ -206,8 +208,8 @@ against the real site with Nick present.
    and remove), with MCP annotations derived from the manifest: `readOnlyHint: true` for reads;
    for `set_cart_quantity`, `readOnlyHint: false`, `destructiveHint: true` (it lowers quantities
    and removes lines) and `idempotentHint: true` (setting the same quantity twice has the same
-   effect); `openWorldHint: true` on all of them. Until C9, every `write` tool is advertised
-   `destructiveHint: true` and `idempotentHint: false`, `add_to_cart` included. `readOnlyHint` is
+   effect); `openWorldHint: true` on all of them. `add_to_cart` stays `destructiveHint: true`
+   until [D30](#d30-split-add-to-cart) is answered. `readOnlyHint` is
    backed by the run's network policy, not only by the adapter's label: a `read` tool's run
    allows only `read` declarations for every API call in the tool partition, whoever made it
    ([security model](security-model.md#the-runs-network-policy)).
@@ -617,7 +619,7 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
 
 - Exists: `packages/mcp-server`. Of the items below: 1 is built with a random port and a token
   file rather than the Keychain ([D41](#d41-stable-mcp-port-and-token-rotation)); 2 is built, with
-  every `write` destructive until C9; 3 runs from the repo with `tsx`, not bundled; 4 is
+  annotations derived from the manifest (C9); 3 runs from the repo with `tsx`, not bundled; 4 is
   [D42](#d42-per-client-tool-scopes); 5 is [D50](#d50-confirmation-and-hand-off-timeouts).
 - Next:
   1. Streamable HTTP on `127.0.0.1`, random port by default with a fixed-port option, bearer
@@ -633,9 +635,11 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
      | `write`, `destructive: true`  | false          | true              | from manifest    |
      | `irreversible`                | false          | true              | false            |
 
-     `openWorldHint` is true for every site tool. `destructive` and `idempotent` are new manifest
-     fields (change request C9); until they exist, the MCP server treats every `write` tool as
-     destructive, which is the safe default.
+     `openWorldHint` is true for every site tool. `destructive` and `idempotent` are optional
+     manifest fields on `write` tools only (change request C9, built); left out, a write is
+     destructive and not idempotent, the safe default. The approval diff flags a tool whose
+     hints change either way: one that becomes destructive, and one that stops being destructive
+     or becomes idempotent, since clients may then stop asking.
   3. The stdio bridge: a small executable shipped in the app bundle that forwards to the HTTP
      endpoint, for Claude Desktop.
   4. Client identity in the audit log: from the bearer token (one token per client, named by
@@ -1021,7 +1025,7 @@ Status in core v2:
 - **C5 to C7, open.** `ProviderKind` gained `messages`, not `onepassword-desktop`.
 - **C8, not needed as written** (see the status above G1). Its host-scoped telemetry list
   returns in reduced form as C17, if [D58](#d58-page-initiated-traffic) agrees.
-- **C9, open.**
+- **C9, done** (after core v5): `destructive` and `idempotent` on `write` tool declarations, `toolHints()`, and the MCP annotations derived from them.
 - **C15 to C20, new** from the review of the round-2 docs; all open.
 
 ### Changes to the other docs
@@ -1563,6 +1567,11 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 - Questions: can the project publish adapters for sites whose terms prohibit automated access?
   Should adapters live in a separate repository, maintained by their authors, rather than in the
   framework's repository?
+- Woolworths' current terms (read 2026-11-07, [finding](findings/2026-11-07-woolworths-terms.md)):
+  clause 1.4(b)(viii) prohibits "any robot, spider, site search and retrieval application or other
+  mechanism to retrieve or index any portion of the Site", with no personal-use exception; 1.4(b)(xv)
+  extends it to permitting another person; 1.4(b)(xiii) bars unreasonable load. Not yet answered
+  by Nick.
 - Recommendation: get a short legal opinion (Australian, plus a US view if the audience is
   global) before M8. Meanwhile, structure the code so adapters can move to a separate repo
   without changes (they already only depend on `core`).
@@ -1639,7 +1648,8 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 - Status: overtaken by round 1. The adapter already ships `add_to_cart` (and `remove_from_cart`)
   alongside `set_cart_quantity`, and the MCP server derives `destructiveHint: true` for every
   `write` tool, so `add_to_cart` is advertised as destructive and clients still prompt for it.
-  It stays that way until C9 lets a tool declare itself non-destructive.
+  C9 now lets a tool declare itself non-destructive; the Woolworths manifest still declares
+  `add_to_cart` `destructive: true` until this is answered.
 - Recommendation: keep the tools as they are, destructive, for the MVP. With C9, mark
   `add_to_cart` non-destructive in M4 if the prompts are annoying in practice, knowing its
   additive claim is the adapter's code.

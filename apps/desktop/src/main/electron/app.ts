@@ -19,7 +19,8 @@ import type { BridgeCommand } from '../core/snippets'
 import type { DemoSite } from './demo'
 import { launchRefused } from './guard'
 import { broadcast, registerIpc } from './ipc'
-import { createTray } from './tray'
+import { utilityToolProcess } from './tool-process'
+import { type AppTray, createTray } from './tray'
 import { bundleSignature, electronUpdates } from './updates'
 import { AppWindows } from './windows'
 
@@ -102,6 +103,7 @@ async function main(): Promise<void> {
     )
   const paths = dataPaths(app.getPath('userData'))
   let service: AppService | null = null
+  let tray: AppTray | null = null
   const windows = new AppWindows({
     base,
     preload: join(import.meta.dirname, '../preload/index.cjs'),
@@ -154,6 +156,7 @@ async function main(): Promise<void> {
     },
     sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
     adapters,
+    toolProcess: utilityToolProcess(join(import.meta.dirname, 'tool-process.js')),
     createDriver: (manifest, reporters) =>
       createElectronSessionDriver(
         manifest,
@@ -200,7 +203,10 @@ async function main(): Promise<void> {
       },
       quit: () => app.quit(),
     },
-    emit: (event) => broadcast(windows, event),
+    emit: (event) => {
+      broadcast(windows, event)
+      if (event.type === 'app-changed') tray?.refresh()
+    },
     bridge: bridgeCommand(),
     updates: electronUpdates({
       feed: { url: FEED_BASE_URL, publicKey: FEED_PUBLIC_KEY },
@@ -215,7 +221,7 @@ async function main(): Promise<void> {
 
   registerIpc(running.api, windows, base, log)
   await running.start()
-  createTray(windows, running.api, mode.demo)
+  tray = createTray(windows, running.api, mode.demo, running.remote)
 
   app.on('second-instance', () => windows.openControlPanel(null))
   let stopping = false

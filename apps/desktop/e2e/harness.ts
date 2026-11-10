@@ -264,10 +264,11 @@ export function changedAdapterBuild(): string {
   )
   const bundlePath = join(dir, 'out/main/index.js')
   let bundle = readFileSync(bundlePath, 'utf8')
+  // The write's C9 hints go too: only a write tool may declare them.
   const compiled =
-    'name: "remove_from_cart",\n\t\t\t\ttitle: "Remove from cart",\n\t\t\t\tdescription: "Removes a product from the cart entirely.",\n\t\t\t\tsideEffect: "write"'
+    'name: "remove_from_cart",\n\t\t\t\ttitle: "Remove from cart",\n\t\t\t\tdescription: "Removes a product from the cart entirely.",\n\t\t\t\tsideEffect: "write",\n\t\t\t\tdestructive: true,\n\t\t\t\tidempotent: true'
   const embedded =
-    "name: 'remove_from_cart',\\n        title: 'Remove from cart',\\n        description: 'Removes a product from the cart entirely.',\\n        sideEffect: 'write',"
+    "name: 'remove_from_cart',\\n        title: 'Remove from cart',\\n        description: 'Removes a product from the cart entirely.',\\n        sideEffect: 'write',\\n        // A second removal finds nothing left to remove.\\n        destructive: true,\\n        idempotent: true,"
   for (const [from, label] of [
     [compiled, 'compiled manifest'],
     [embedded, 'embedded source'],
@@ -277,8 +278,11 @@ export function changedAdapterBuild(): string {
       throw new Error(`the ${label} of remove_from_cart isn't in the bundle exactly once; rebuild?`)
   }
   bundle = bundle
-    .replace(compiled, compiled.replace('sideEffect: "write"', 'sideEffect: "irreversible"'))
-    .replace(embedded, embedded.replace("sideEffect: 'write'", "sideEffect: 'irreversible'"))
+    .replace(compiled, compiled.slice(0, compiled.indexOf('sideEffect')).concat('sideEffect: "irreversible"'))
+    .replace(
+      embedded,
+      embedded.slice(0, embedded.indexOf('sideEffect')).concat("sideEffect: 'irreversible',"),
+    )
   writeFileSync(bundlePath, bundle)
   return dir
 }

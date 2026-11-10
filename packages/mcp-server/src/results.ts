@@ -40,8 +40,13 @@ export function toolResult(outcome: CallOutcome, structured: boolean): CallToolR
       // request-ceiling, ...) never will, and "try again" would invite a retry loop against it.
       if (!RETRYABLE.includes(outcome.errorClass)) return failedResult(outcome.stage, outcome.errorClass)
       const { stage, errorClass } = safeCodes(outcome.stage, outcome.errorClass)
+      // Stage config is the app's own limit (the remote policy's per-client cap), not the site's.
+      const who =
+        stage === 'config'
+          ? 'Valet is limiting calls from this client'
+          : 'The site is refusing or limiting requests'
       return textResult(
-        `The site is refusing or limiting requests (stage ${stage}: ${errorClass}). ` +
+        `${who} (stage ${stage}: ${errorClass}). ` +
           `Try again in ${retryAfterSeconds(outcome.retryAfterMs)} seconds.`,
         true,
       )

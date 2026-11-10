@@ -350,9 +350,23 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
           unchanged: WOOLWORTHS_REQUESTS,
         },
         tools: {
-          added: [{ name: 'get_rewards_balance', title: 'Everyday Rewards balance', sideEffect: 'read' }],
+          added: [
+            {
+              name: 'get_rewards_balance',
+              title: 'Everyday Rewards balance',
+              sideEffect: 'read',
+              destructive: false,
+              idempotent: true,
+            },
+          ],
           removed: [],
-          unchanged: woolworthsBase.tools.map(({ name, title, sideEffect }) => ({ name, title, sideEffect })),
+          unchanged: woolworthsBase.tools.map(({ name, title, sideEffect }) => ({
+            name,
+            title,
+            sideEffect,
+            destructive: sideEffect !== 'read',
+            idempotent: sideEffect === 'read',
+          })),
         },
         secrets: {
           added: [],
@@ -617,7 +631,13 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
           storage: all([]),
           requests: all(WOOLWORTHS_REQUESTS),
           tools: all(
-            woolworthsBase.tools.map(({ name, title, sideEffect }) => ({ name, title, sideEffect })),
+            woolworthsBase.tools.map(({ name, title, sideEffect }) => ({
+              name,
+              title,
+              sideEffect,
+              destructive: sideEffect !== 'read',
+              idempotent: sideEffect === 'read',
+            })),
           ),
           secrets: all(
             login === undefined
@@ -1229,6 +1249,8 @@ const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent['type']
     'grant-copied',
     'update-downloaded',
     'update-installed',
+    'remote-state',
+    'remote-tool',
   ],
 }
 

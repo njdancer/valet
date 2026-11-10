@@ -56,6 +56,7 @@ import type { JsonStore } from './breaker-state'
 import { CallState } from './call-state'
 import { type Clock, type Sleep, systemClock, systemSleep } from './clock'
 import { GuardedToolPage, MAX_TARGET_LENGTH, PURPOSE_RANK, plainMethod } from './guarded-page'
+import { runIsolated, type ToolProcessFactory } from './isolation/host'
 import type { LoginMarkerStore } from './login-marker'
 import { KeyedMutex } from './mutex'
 import { probeDeclaration } from './probe'
@@ -101,6 +102,17 @@ export interface RegisteredAdapter {
   /** The bundle's content hash, as computed by bundleHash() when it was loaded. */
   readonly bundleHash: string
   readonly driver: SessionDriver
+  /**
+   * Runs this adapter's tool code in a process of its own, a fresh one per call, from `script`
+   * (built by buildToolScript from the same sources as `definition`). The definition's schemas still
+   * validate input and output here. Without it, tool code runs in this process.
+   */
+  readonly isolation?: ToolIsolation
+}
+
+export interface ToolIsolation {
+  readonly script: string
+  readonly start: ToolProcessFactory
 }
 
 export interface ToolHostOptions {
@@ -196,7 +208,15 @@ export class ToolHost {
       clock: this.clock,
       ...(this.options.loginBackoff === undefined ? {} : { backoff: this.options.loginBackoff }),
     })
-    this.adapters.set(manifest.id, { definition, bundleHash, driver, gate, site, host })
+    this.adapters.set(manifest.id, {
+      definition,
+      bundleHash,
+      driver,
+      gate,
+      site,
+      host,
+      ...(adapter.isolation === undefined ? {} : { isolation: adapter.isolation }),
+    })
   }
 
   /** The tools of every adapter whose registered hash is approved. */
@@ -511,7 +531,12 @@ export class ToolHost {
       signal: controller.signal,
     }
 
-    const outcome = await this.race(() => implementation.run(ctx, input), this.timeoutMs, controller.signal)
+    const isolation = entry.isolation
+    const execute =
+      isolation === undefined
+        ? () => implementation.run(ctx, input)
+        : () => runIsolated(isolation.start, isolation.script, ctx, declaration.name, input)
+    const outcome = await this.race(execute, this.timeoutMs, controller.signal)
     // Capabilities die with the call, so promises tool code left running can't act afterwards.
     controller.abort()
 

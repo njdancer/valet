@@ -34,10 +34,14 @@ Out of scope:
 - The Valet host process. The main process is the trusted computing base.
 - Malware already on the machine.
 
-**v0 caveat.** Tool code is imported into the main process today. It has no sandbox, not even a
-separate process, so a hostile adapter's tool code could import `node:fs` or open a socket and
-step around everything in this document. The guarantees hold against tool code that only uses
-its capability object. That is why no third-party adapter installs before the sandbox (M7,
+**v0 caveat.** Tool code has no sandbox yet. In the app it runs in a utility process of its own,
+started for each call and killed when the call ends, inside a `node:vm` context that holds only
+the capability object; the tool script is built so that it can't import a Node built-in or
+Electron. That stops a crash or a hang in tool code taking the app down, and it means tool code
+that keeps to its context has no `require`, files or sockets. But `node:vm` is not a security
+boundary and the utility process is a full Node process, so a hostile adapter that broke out of
+the context could still step around everything in this document. The guarantees hold against
+tool code that only uses its capability object. That is why no third-party adapter installs before the sandbox (M7,
 [D12](plan.md#d12-sandbox-technology)). The guards are built now so that the sandbox only has to
 take away ambient authority, not add checks.
 
@@ -525,9 +529,9 @@ is R6 in the plan.
 
 ### Sandbox
 
-In v0, tool code runs in the main process with no boundary (see the caveat at the top). The plan
-moves it to a `utilityProcess` with the capability API over a message port, for structure, and
-then into a real sandbox before third-party adapters exist (QuickJS-wasm, `isolated-vm`, or a
+In v0, tool code runs in a `utilityProcess` per call, in a `node:vm` context with only the
+capability API, over JSON messages (`packages/runtime/src/isolation`; see the caveat at the top).
+That is structure and crash isolation, not a boundary. The plan moves it into a real sandbox before third-party adapters exist (QuickJS-wasm, `isolated-vm`, or a
 sandboxed hidden renderer; [D12](plan.md#d12-sandbox-technology)). Node's `vm` module is not a
 boundary.
 

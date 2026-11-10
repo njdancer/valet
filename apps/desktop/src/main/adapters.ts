@@ -4,6 +4,7 @@
 // the hash is over exactly the code this build runs: in a packaged build and under `electron-vite
 // dev` (which rebuilds on change) alike. Transitive imports (core, zod) are not covered (D11).
 
+import toolScripts from 'virtual:valet-tool-scripts'
 import { createAdapter, type ManifestOptions } from '@valet/adapter-woolworths'
 import { type BuiltinAdapter, builtinAdapter } from './core/registry'
 
@@ -25,5 +26,11 @@ export function relativeSources(sources: Readonly<Record<string, string>>): Reco
 }
 
 export function builtinAdapters(woolworths: ManifestOptions = {}): BuiltinAdapter[] {
-  return [builtinAdapter(createAdapter(woolworths), relativeSources(WOOLWORTHS_SOURCES))]
+  return [
+    builtinAdapter(
+      createAdapter(woolworths),
+      relativeSources(WOOLWORTHS_SOURCES),
+      toolScripts['woolworths'] ?? null,
+    ),
+  ]
 }

@@ -8,6 +8,7 @@ import {
   messagesSourcesIn,
   parseManifest,
   secretRefsIn,
+  toolHints,
 } from '../src/manifest'
 
 // A complete, valid manifest. Each test copies it with structuredClone and changes one thing.
@@ -241,6 +242,22 @@ describe('manifestSchema', () => {
     expect(issues(input)).toContain('duplicate tool get_cart')
   })
 
+  it('lets only a write tool declare destructive and idempotent (C9)', () => {
+    const write = copy()
+    write.tools[1] = { ...write.tools[1], destructive: false, idempotent: true }
+    expect(issues(write)).toEqual([])
+    for (const sideEffect of ['read', 'irreversible']) {
+      for (const key of ['destructive', 'idempotent']) {
+        const input = copy()
+        input.tools[0] = { ...input.tools[0], sideEffect, [key]: false }
+        expect(issues(input)).toEqual([`only a write tool may set ${key}`])
+      }
+    }
+    const typo = copy()
+    typo.tools[1] = { ...typo.tools[1], destructive: 'no' }
+    expect(issues(typo)).not.toEqual([])
+  })
+
   it('bounds retry counts and pause lengths', () => {
     const tooManyRetries = copy()
     tooManyRetries.auth.steps.push({ op: 'retry', times: 50, steps: [{ op: 'pause', ms: 1 }] })
@@ -279,6 +296,27 @@ describe('manifestSchema', () => {
     const input = copy()
     input.session.probe = { kind: 'cookie', name: 'session' }
     expect(manifestSchema.safeParse(input).success).toBe(true)
+  })
+})
+
+describe('toolHints', () => {
+  it('fills in the safe defaults: a write is destructive and not idempotent unless it says', () => {
+    expect(toolHints({ sideEffect: 'write' })).toEqual({ destructive: true, idempotent: false })
+    expect(toolHints({ sideEffect: 'write', destructive: false, idempotent: true })).toEqual({
+      destructive: false,
+      idempotent: true,
+    })
+  })
+
+  it('fixes reads and irreversible tools whatever they claim', () => {
+    expect(toolHints({ sideEffect: 'read', destructive: true })).toEqual({
+      destructive: false,
+      idempotent: true,
+    })
+    expect(toolHints({ sideEffect: 'irreversible', destructive: false, idempotent: true })).toEqual({
+      destructive: true,
+      idempotent: false,
+    })
   })
 })
 

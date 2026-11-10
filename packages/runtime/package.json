@@ -5,7 +5,9 @@
   "license": "Apache-2.0",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./tool-worker": "./src/isolation/worker.ts",
+    "./tool-script": "./src/isolation/tool-script.ts"
   },
   "dependencies": {
     "@valet/auth-flow": "workspace:*",

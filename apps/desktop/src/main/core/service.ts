@@ -37,6 +37,7 @@ import {
   type RuntimeDiagnostic,
   type Sleep,
   ToolHost,
+  type ToolProcessFactory,
 } from '@valet/runtime'
 import { z } from 'zod'
 import type {
@@ -78,6 +79,7 @@ import { checkGrantRequest, grantInfo } from './grants'
 import type { AppWindow, MainApi } from './ipc'
 import { createAuthRunner, Handoffs, isBlockedPage, SessionTracker } from './login'
 import { type ApprovedSnapshot, type BuiltinAdapter, SnapshotStore } from './registry'
+import { RemoteAccess } from './remote'
 import { RunMemory } from './run-memory'
 import { DEFAULT_SETTINGS, SettingsStore } from './settings'
 import { SetupStore } from './setup'
@@ -116,6 +118,11 @@ export interface ServiceDeps {
   readonly timers: Timers
   readonly sleep: (ms: number) => Promise<void>
   readonly adapters: readonly BuiltinAdapter[]
+  /**
+   * Starts a tool process for one call. With it, an adapter that has a tool script runs its tool
+   * code there; without it (unit tests), in this process.
+   */
+  readonly toolProcess?: ToolProcessFactory
   /** Builds an adapter's driver, with the reporters its refusals outside a run go to. */
   readonly createDriver: (manifest: AdapterManifest, reporters: DriverReporters) => Promise<SessionDriver>
   readonly credentials: Credentials
@@ -231,6 +238,8 @@ export class AppService {
   private readonly approvedAt = new Map<string, string>()
   private caller: RuntimeToolCaller | null = null
   private endpoint: SessionReportingEndpoint | null = null
+  /** The remote listener, its policy and the kill switch (relay.md). Off unless the person turns it on. */
+  readonly remote: RemoteAccess
   private paused = false
   private chain: ChainStatus = { state: 'unverified' }
   private readonly startedAt: string
@@ -305,6 +314,22 @@ export class AppService {
         this.emit('adapters-changed')
       },
     })
+    this.remote = new RemoteAccess({
+      path: paths.remote,
+      info: { name: 'valet', version: deps.version },
+      now: deps.now,
+      changed: () => this.emit('app-changed'),
+      audit: async (event) => {
+        await this.audit.append(event)
+      },
+      // Audited like the app's own refusals: stage config, which the runtime never reports.
+      refused: (call, reason) =>
+        this.auditRefusal(call, {
+          status: 'failed',
+          stage: 'config',
+          errorClass: reason === 'over-cap' ? 'rate-limited' : 'not-found',
+        }),
+    })
     this.api = this.buildApi()
   }
 
@@ -361,7 +386,15 @@ export class AppService {
         onAuthReportsDropped: () => this.deps.diagnostics?.({ type: 'auth-reports-dropped', adapterId: id }),
       })
       this.drivers.set(id, driver)
-      host.register({ definition: adapter.definition, bundleHash: adapter.hash, driver })
+      const start = this.deps.toolProcess
+      host.register({
+        definition: adapter.definition,
+        bundleHash: adapter.hash,
+        driver,
+        ...(start === undefined || adapter.toolScript === null
+          ? {}
+          : { isolation: { script: adapter.toolScript, start } }),
+      })
     }
     this.caller = new RuntimeToolCaller(host, {
       paused: () => this.paused,
@@ -380,6 +413,18 @@ export class AppService {
     // Reads approval times into the cache the confirmation panel uses.
     await this.states()
     await this.startListening().catch(() => undefined)
+    // The same caller: remote calls go through the same pause, runtime and audit as local ones.
+    await this.remote.start(this.caller).catch(() => undefined)
+  }
+
+  /**
+   * Turns one of an installed adapter's tools on or off for remote clients. Throws
+   * ValetError('config', 'not-found') for a tool the adapter doesn't declare.
+   */
+  async setRemoteTool(adapterId: string, tool: string, enabled: boolean): Promise<void> {
+    const declaration = this.adapter(adapterId)?.definition.manifest.tools.find((t) => t.name === tool)
+    if (declaration === undefined) throw new ValetError('config', 'not-found')
+    await this.remote.setTool(adapterId, declaration, enabled)
   }
 
   async stop(): Promise<void> {
@@ -388,6 +433,7 @@ export class AppService {
     this.caller?.cancelAll()
     this.broker.declineAll()
     this.handoffs.closeAll()
+    await this.remote.close().catch(() => undefined)
     await this.endpoint?.close().catch(() => undefined)
     this.endpoint = null
     for (const driver of this.drivers.values()) await driver.close().catch(() => undefined)
@@ -636,6 +682,7 @@ export class AppService {
     } catch {
       // The runtime couldn't list; every session keeps what it had.
     }
+    this.remote.refresh()
   }
 
   private async startListening(): Promise<void> {
