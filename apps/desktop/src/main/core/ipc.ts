@@ -8,6 +8,7 @@ import { z } from 'zod'
 import { parseRoute } from '../../renderer/lib/routes'
 import type { HashRoute, ValetApi } from '../../shared/api'
 import { CHANNEL_PREFIX, INVOKE_METHODS, type InvokeMethod } from './channels'
+import { onePasswordAccountSchema } from './settings'
 
 /** Which of the app's windows sent a request. The main process assigns it when it opens the window. */
 export type WindowRole = 'control' | 'tray' | 'confirmation' | 'needs-user'
@@ -52,7 +53,14 @@ const HASH = z.string().regex(/^[0-9a-f]{64}$/)
 const SECRET = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)
 /** Call, confirmation and client ids: the runtime's call-id alphabet. */
 const OPAQUE_ID = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)
-const PROVIDER = z.enum(['onepassword-service-account', 'onepassword-cli', 'messages', 'fake'])
+const PROVIDER = z.enum([
+  'keychain-copy',
+  'onepassword-desktop',
+  'onepassword-service-account',
+  'onepassword-cli',
+  'messages',
+  'fake',
+])
 const ITEM_REF = z
   .string()
   .min(1)
@@ -101,6 +109,7 @@ const settingsPatch = z
     autoInstallUpdates: z.boolean().optional(),
     launchAtLogin: z.boolean().optional(),
     messagesOtpEnabled: z.boolean().optional(),
+    onePasswordAccount: onePasswordAccountSchema.nullable().optional(),
   })
   .strict()
 
@@ -137,6 +146,7 @@ const HANDLERS: Readonly<
   'grants.vaultItems': entry(z.tuple([PROVIDER]), (api, [provider]) => api.grants.vaultItems(provider)),
   'grants.make': entry(z.tuple([grantRequest]), (api, [request]) => api.grants.make(request)),
   'grants.revoke': entry(z.tuple([ADAPTER_ID, SECRET]), (api, [id, secret]) => api.grants.revoke(id, secret)),
+  'grants.resync': entry(z.tuple([ADAPTER_ID, SECRET]), (api, [id, secret]) => api.grants.resync(id, secret)),
   'runs.list': entry(z.union([none, z.tuple([runsQuery])]), (api, args) =>
     args.length === 0 ? api.runs.list() : api.runs.list(stripUndefined(args[0])),
   ),

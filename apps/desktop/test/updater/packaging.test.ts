@@ -30,6 +30,7 @@ import {
   SIGN_RETRY_INTERVAL_MS,
   type SignOptionsLike,
   SWIFT_BRIDGE_BUILD,
+  SWIFT_BUILD_DIR,
   signWithRequirement,
 } from '../../electron-builder.config'
 import { RELEASE_APP_ID as SCRIPT_RELEASE_APP_ID } from '../../scripts/make-feed.mjs'
@@ -281,12 +282,38 @@ describe('a release build refuses to be built weaker', () => {
   it('ships the Swift stdio bridge in Contents/MacOS, and refuses a release without it', () => {
     expect(config(RELEASE_ENV).extraFiles).toEqual([
       { from: SWIFT_BRIDGE_BUILD, to: `MacOS/${BRIDGE_EXECUTABLE}` },
+      { from: `${SWIFT_BUILD_DIR}/valet-keychain`, to: 'MacOS/valet-keychain' },
+      { from: `${SWIFT_BUILD_DIR}/valet-messages-helper`, to: 'MacOS/valet-messages-helper' },
+      {
+        from: 'build/launch-agents/me.dncr.valet.messages-helper.plist',
+        to: 'Library/LaunchAgents/messages-helper.plist',
+      },
     ])
+    // A development build's agent has its own label, so it never stands in for the release's.
+    expect(createBuilderConfig({}, DEPS).extraFiles).toContainEqual({
+      from: 'build/launch-agents/me.dncr.valet.dev.messages-helper.plist',
+      to: 'Library/LaunchAgents/messages-helper.plist',
+    })
     expect(() => createBuilderConfig(RELEASE_ENV, { ...DEPS, bridgeBuilt: () => false })).toThrow(
       /ships the stdio bridge/,
     )
     // A development build without it packages without it.
     expect(createBuilderConfig({}, { ...DEPS, bridgeBuilt: () => false }).extraFiles).toEqual([])
+  })
+
+  it('gives each build’s Messages helper agent its own label, socket and bundle', () => {
+    for (const appId of ['me.dncr.valet', 'me.dncr.valet.dev']) {
+      const plist = readFileSync(
+        join(import.meta.dirname, '../..', `build/launch-agents/${appId}.messages-helper.plist`),
+        'utf8',
+      )
+      expect(plist).toContain(`<key>Label</key>\n  <string>${appId}.messages-helper</string>`)
+      expect(plist).toContain(`<string>serve</string>\n    <string>${appId}.messages-helper</string>`)
+      expect(plist).toContain('<string>Contents/MacOS/valet-messages-helper</string>')
+      expect(plist).toContain(
+        `<key>AssociatedBundleIdentifiers</key>\n  <array>\n    <string>${appId}</string>`,
+      )
+    }
   })
 
   it('when the release flag is anything but 1', () => {
@@ -329,8 +356,9 @@ describe('a release dry run', () => {
     expect(c.publish).toEqual(release.publish)
     expect(c.files).toEqual(release.files)
     expect(c.extraFiles).toEqual(release.extraFiles)
-    expect(c.mac.binaries).toEqual(['MacOS/valet-bridge'])
-    expect(release.mac.binaries).toEqual(['MacOS/valet-bridge'])
+    const binaries = ['MacOS/valet-bridge', 'MacOS/valet-keychain', 'MacOS/valet-messages-helper']
+    expect(c.mac.binaries).toEqual(binaries)
+    expect(release.mac.binaries).toEqual(binaries)
     expect(createBuilderConfig(DRY_RUN_ENV, DEPS).mac?.binaries).toEqual(release.mac.binaries)
   })
 

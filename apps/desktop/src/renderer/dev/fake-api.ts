@@ -350,9 +350,23 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
           unchanged: WOOLWORTHS_REQUESTS,
         },
         tools: {
-          added: [{ name: 'get_rewards_balance', title: 'Everyday Rewards balance', sideEffect: 'read' }],
+          added: [
+            {
+              name: 'get_rewards_balance',
+              title: 'Everyday Rewards balance',
+              sideEffect: 'read',
+              destructive: false,
+              idempotent: true,
+            },
+          ],
           removed: [],
-          unchanged: woolworthsBase.tools.map(({ name, title, sideEffect }) => ({ name, title, sideEffect })),
+          unchanged: woolworthsBase.tools.map(({ name, title, sideEffect }) => ({
+            name,
+            title,
+            sideEffect,
+            destructive: sideEffect !== 'read',
+            idempotent: sideEffect === 'read',
+          })),
         },
         secrets: {
           added: [],
@@ -503,6 +517,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       expiresAt: new Date(now + 112_000).toISOString(),
       requestCeiling: 6,
       unlocks: [],
+      requests: [{ method: 'POST', path: '/api/v3/ui/trolley/update', purpose: 'write' }],
       input: [{ kind: 'text', text: '{ "stockcode": 133211 }' }],
       adapterNote: 'Remove Cavendish Bananas (2 × $0.79) from the trolley?',
     },
@@ -564,6 +579,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     launchAtLogin: true,
     opPath: null,
     messagesOtpEnabled: false,
+    onePasswordAccount: null,
   }
 
   const updates: UpdateStatus = {
@@ -615,7 +631,13 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
           storage: all([]),
           requests: all(WOOLWORTHS_REQUESTS),
           tools: all(
-            woolworthsBase.tools.map(({ name, title, sideEffect }) => ({ name, title, sideEffect })),
+            woolworthsBase.tools.map(({ name, title, sideEffect }) => ({
+              name,
+              title,
+              sideEffect,
+              destructive: sideEffect !== 'read',
+              idempotent: sideEffect === 'read',
+            })),
           ),
           secrets: all(
             login === undefined
@@ -784,6 +806,13 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
             unavailableReason: settings.messagesOtpEnabled ? null : 'disabled',
             grantCount: count('messages'),
           },
+          {
+            // As the main process has it: ready once the person names their 1Password account (D6).
+            kind: 'keychain-copy',
+            available: settings.onePasswordAccount !== null,
+            unavailableReason: settings.onePasswordAccount !== null ? null : 'not-configured',
+            grantCount: count('keychain-copy'),
+          },
         ]
         return list
       },
@@ -832,6 +861,10 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         ]
         emit({ type: 'grants-changed' })
         emit({ type: 'adapters-changed' })
+      },
+      async resync(adapterId, secret) {
+        enter('grants.resync', adapterId, secret)
+        emit({ type: 'grants-changed' })
       },
       async revoke(adapterId, secret) {
         enter('grants.revoke', adapterId, secret)
@@ -1035,8 +1068,15 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       async set(patch) {
         enter('settings.set', patch)
         // As the main process does: keys outside SettingsPatch are dropped, opPath above all.
-        const { updateChannel, autoInstallUpdates, launchAtLogin, messagesOtpEnabled } = patch
-        const known = { updateChannel, autoInstallUpdates, launchAtLogin, messagesOtpEnabled }
+        const { updateChannel, autoInstallUpdates, launchAtLogin, messagesOtpEnabled, onePasswordAccount } =
+          patch
+        const known = {
+          updateChannel,
+          autoInstallUpdates,
+          launchAtLogin,
+          messagesOtpEnabled,
+          onePasswordAccount,
+        }
         settings = {
           ...settings,
           ...Object.fromEntries(Object.entries(known).filter(([, v]) => v !== undefined)),
@@ -1206,8 +1246,11 @@ const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent['type']
     'adapter-rejected',
     'grant-made',
     'grant-revoked',
+    'grant-copied',
     'update-downloaded',
     'update-installed',
+    'remote-state',
+    'remote-tool',
   ],
 }
 

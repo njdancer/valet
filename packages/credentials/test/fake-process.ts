@@ -6,6 +6,17 @@ import type { ChildLike, Spawner, Timers } from '../src/process'
 export class FakeChild extends EventEmitter implements ChildLike {
   readonly stdout = new EventEmitter()
   readonly stderr = new EventEmitter()
+  /** What was written to stdin, copied at the time, so a later zeroing of the source shows. */
+  readonly input: Buffer[] = []
+  /** The buffers handed to stdin themselves, to check that the caller zeroes them. */
+  readonly inputSources: Buffer[] = []
+  readonly stdin = {
+    end: (chunk: Buffer): void => {
+      this.inputSources.push(chunk)
+      this.input.push(Buffer.from(chunk))
+    },
+    on: (_event: 'error', _listener: (error: Error) => void): void => {},
+  }
   readonly kills: (NodeJS.Signals | undefined)[] = []
 
   kill(signal?: NodeJS.Signals): boolean {
@@ -27,6 +38,8 @@ export interface SpawnCall {
   readonly command: string
   readonly args: readonly string[]
   readonly child: FakeChild
+  /** Whether the caller asked for a stdin pipe. */
+  readonly input: boolean
 }
 
 /** A spawner that records each call and lets `script` drive the child it returns. */
@@ -35,10 +48,11 @@ export function scriptedSpawner(script: (child: FakeChild, call: Omit<SpawnCall,
   calls: SpawnCall[]
 } {
   const calls: SpawnCall[] = []
-  const spawner: Spawner = (command, args) => {
+  const spawner: Spawner = (command, args, options) => {
     const child = new FakeChild()
-    calls.push({ command, args, child })
-    script(child, { command, args })
+    const input = options?.input === true
+    calls.push({ command, args, child, input })
+    script(child, { command, args, input })
     return child
   }
   return { spawner, calls }

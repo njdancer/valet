@@ -357,6 +357,24 @@ describe('clients and settings', () => {
     expect(called(api, 'clients.snippets')).toEqual([['c_c7d2a1b2c3d4e5f6']])
   })
 
+  it('saves the 1Password account the Keychain copies come from', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    renderAt('#/settings', api)
+    const field = await screen.findByRole('textbox', { name: '1Password account' })
+    const save = screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement
+    expect(save.disabled).toBe(true)
+    await user.type(field, '  my.1password.com ')
+    await user.click(save)
+    expect(called(api, 'settings.set')).toEqual([[{ onePasswordAccount: 'my.1password.com' }]])
+    await user.clear(field)
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(called(api, 'settings.set')).toEqual([
+      [{ onePasswordAccount: 'my.1password.com' }],
+      [{ onePasswordAccount: null }],
+    ])
+  })
+
   it('changes settings', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })
@@ -526,6 +544,27 @@ describe('credentials', () => {
     await user.click(screen.getAllByRole('button', { name: 'Revoke' })[1] as HTMLElement)
     expect(called(api, 'grants.revoke')).toEqual([['coles', 'login']])
     await waitFor(() => expect(screen.queryByText('1Password app “Coles”')).toBeNull())
+  })
+
+  it('offers a re-sync from 1Password for a Keychain copy, and only for one', async () => {
+    const user = userEvent.setup()
+    const fake = createFakeApi({ now: NOW })
+    const list = await fake.grants.list()
+    const api = {
+      ...fake,
+      grants: {
+        ...fake.grants,
+        list: async () => [
+          { ...(list[0] as (typeof list)[number]), provider: 'keychain-copy' as const },
+          ...list.slice(1),
+        ],
+      },
+    }
+    renderAt('#/credentials', api)
+    const resync = await screen.findAllByRole('button', { name: 'Re-sync from 1Password' })
+    expect(resync).toHaveLength(1)
+    await user.click(resync[0] as HTMLElement)
+    expect(called(fake, 'grants.resync')).toEqual([[list[0]?.adapterId, list[0]?.secret]])
   })
 })
 

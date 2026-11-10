@@ -5,6 +5,11 @@ import { spawn } from 'node:child_process'
 
 /** The part of a ChildProcess this module uses. */
 export interface ChildLike {
+  /** Present when the spawner was asked for input (SpawnOptions.input). */
+  readonly stdin?: {
+    end(chunk: Buffer, callback?: () => void): unknown
+    on?(event: 'error', listener: (error: Error) => void): unknown
+  } | null
   readonly stdout: { on(event: 'data', listener: (chunk: Buffer) => void): unknown } | null
   readonly stderr: { on(event: 'data', listener: (chunk: Buffer) => void): unknown } | null
   on(event: 'error', listener: (error: Error) => void): unknown
@@ -12,8 +17,13 @@ export interface ChildLike {
   kill(signal?: NodeJS.Signals): boolean
 }
 
+export interface SpawnOptions {
+  /** Open stdin as a pipe, for a secret handed over that way rather than in argv. */
+  readonly input?: boolean
+}
+
 /** Starts `command` with `args` as argv. Never through a shell. */
-export type Spawner = (command: string, args: readonly string[]) => ChildLike
+export type Spawner = (command: string, args: readonly string[], options?: SpawnOptions) => ChildLike
 
 export interface Timers {
   setTimeout(callback: () => void, ms: number): unknown
@@ -35,8 +45,12 @@ export function helperEnv(parent: NodeJS.ProcessEnv = process.env): Record<strin
   return env
 }
 
-export const nodeSpawner: Spawner = (command, args) =>
-  spawn(command, [...args], { stdio: ['ignore', 'pipe', 'pipe'], shell: false, env: helperEnv() })
+export const nodeSpawner: Spawner = (command, args, options) =>
+  spawn(command, [...args], {
+    stdio: [options?.input === true ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+    shell: false,
+    env: helperEnv(),
+  })
 
 export const nodeTimers: Timers = {
   setTimeout: (callback, ms) => setTimeout(callback, ms),
@@ -58,6 +72,11 @@ export type ProcessOutcome =
   | { readonly kind: 'failed' }
 
 export interface RunOptions {
+  /**
+   * Written to stdin, which is then closed. The caller owns it and zeroes it once the run settles
+   * (not before: the stream may still hold it).
+   */
+  readonly input?: Buffer
   readonly timeoutMs: number
   readonly maxStdoutBytes: number
   readonly timers: Timers
@@ -95,7 +114,7 @@ export function runProcess(
 
     let child: ChildLike
     try {
-      child = spawner(command, args)
+      child = options.input === undefined ? spawner(command, args) : spawner(command, args, { input: true })
     } catch (error) {
       settle({ kind: isEnoent(error) ? 'missing' : 'failed' })
       return
@@ -124,6 +143,18 @@ export function runProcess(
       stderrBytes += chunk.length
     })
     child.on('error', (error) => settle({ kind: isEnoent(error) ? 'missing' : 'failed' }))
+    if (options.input !== undefined) {
+      const stdin = child.stdin
+      if (stdin === undefined || stdin === null) {
+        child.kill('SIGKILL')
+        settle({ kind: 'failed' })
+        return
+      }
+      // A helper that exits before reading all of its input closes the pipe (EPIPE); its exit code
+      // says what happened, so the write error itself is not the outcome.
+      stdin.on?.('error', () => {})
+      stdin.end(options.input)
+    }
     child.on('close', (code) => {
       if (settled) return
       const stdout = Buffer.concat(stdoutChunks)

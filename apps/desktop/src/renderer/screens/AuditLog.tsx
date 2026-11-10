@@ -36,6 +36,7 @@ const EVENT_CLASS: Readonly<Record<AuditEvent['type'], string>> = {
   'adapter-rejected': 'admin',
   'grant-made': 'admin',
   'grant-revoked': 'admin',
+  'grant-copied': 'admin',
   'tool-called': 'tool',
   'tool-finished': 'tool',
   'login-started': 'login',
@@ -46,6 +47,8 @@ const EVENT_CLASS: Readonly<Record<AuditEvent['type'], string>> = {
   'breaker-closed': 'login',
   'update-downloaded': 'admin',
   'update-installed': 'admin',
+  'remote-state': 'admin',
+  'remote-tool': 'admin',
   confirmation: 'confirm',
 }
 
@@ -406,6 +409,12 @@ export function details(event: AuditEvent, now: number): ReactNode {
           <span className="mono xs">{event.origins.map(hostOf).join(', ')}</span>
         </>
       )
+    case 'grant-copied':
+      return (
+        <>
+          {event.adapterId} · {event.secret} <span className="xs muted">copied from 1Password</span>
+        </>
+      )
     case 'grant-revoked':
       return (
         <>
@@ -519,6 +528,7 @@ const EVENT_FIELDS = {
   'adapter-rejected': ['type', 'adapterId', 'adapterHash', 'version'],
   'grant-made': ['type', 'adapterId', 'adapterHash', 'secret', 'provider', 'origins'],
   'grant-revoked': ['type', 'adapterId', 'secret'],
+  'grant-copied': ['type', 'adapterId', 'secret', 'fields'],
   'tool-called': ['type', 'adapterId', 'adapterHash', 'tool', 'client', 'clientId', 'callId'],
   'tool-finished': [
     'type',
@@ -538,6 +548,8 @@ const EVENT_FIELDS = {
   'breaker-closed': ['type', 'host'],
   'update-downloaded': ['type', 'from', 'to'],
   'update-installed': ['type', 'from', 'to'],
+  'remote-state': ['type', 'state', 'revokedTokens'],
+  'remote-tool': ['type', 'adapterId', 'tool', 'enabled', 'sideEffect'],
   confirmation: ['type', 'adapterId', 'tool', 'client', 'callId', 'answer'],
 } as const satisfies {
   readonly [K in AuditEvent['type']]: readonly (keyof Extract<AuditEvent, { readonly type: K }>)[]

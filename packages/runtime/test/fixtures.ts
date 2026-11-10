@@ -3,7 +3,7 @@
 
 import { type AdapterDefinition, type AdapterManifest, parseManifest } from '@valet/core'
 import { vi } from 'vitest'
-import { ToolHost, type ToolHostOptions } from '../src/tool-host'
+import { ToolHost, type ToolHostOptions, type ToolIsolation } from '../src/tool-host'
 import type { AuthRunner } from '../src/types'
 import {
   FakeClock,
@@ -65,7 +65,11 @@ export const manifest: AdapterManifest = parseManifest({
 export const loggedIn = json({ shopper: { loggedIn: true } })
 export const loggedOut = json({ shopper: { loggedIn: false } })
 
-export function fixture(definition: AdapterDefinition, overrides: Partial<ToolHostOptions> = {}) {
+export function fixture(
+  definition: AdapterDefinition,
+  overrides: Partial<ToolHostOptions> = {},
+  isolation?: ToolIsolation,
+) {
   const driver = new FakeSessionDriver()
   driver.cookieValues = [COOKIE]
   driver.page.route('GET', SESSION_URL, loggedIn)
@@ -95,7 +99,7 @@ export function fixture(definition: AdapterDefinition, overrides: Partial<ToolHo
       ? { pacingSleep: overrides.sleep }
       : {}),
   })
-  host.register({ definition, bundleHash: HASH, driver })
+  host.register({ definition, bundleHash: HASH, driver, ...(isolation === undefined ? {} : { isolation }) })
   return {
     host,
     driver,

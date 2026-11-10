@@ -52,8 +52,10 @@ the _only_ thing it can use. Through that API, an approved adapter can still:
   aimed at the person's other tools. Output schemas and plain-JSON conversion limit the shape,
   not the content. Even an honest adapter passes site-authored text (product descriptions,
   messages) straight through, so this is a property of every adapter, not just malicious ones.
-- **Confirm with misleading text.** `confirm(message)` shows adapter-authored text
-  ([G4](plan.md#g4-confirm-takes-adapter-authored-text)).
+- **Confirm with misleading text.** Since core v5 the dialog is rendered from structured data and
+  the adapter's text is only an attributed note
+  ([G4](plan.md#g4-confirm-takes-adapter-authored-text)); a note can still mislead a person who
+  reads it over the runtime's own lines.
 - **Burn the person's standing with the site.** Rate budgets bound it; they don't prevent it.
 
 So the approval screen has to show the request surface and side effects clearly, not just hosts
@@ -341,9 +343,10 @@ What it doesn't cover:
 | Precedent                          | Figma moved its plugins to QuickJS-in-WebAssembly after a realm-shim escape (_verify_ details) | Used by several plugin hosts                                      | —                                                                                                                            | Chromium's own isolation; Electron's recommended renderer setup                                                                           | MetaMask Snaps runs SES inside iframes or workers, with the iframe as the boundary |
 | Verdict                            | **Boundary of choice**                                                                         | No: in-process native addon, upgrade friction, maintenance doubts | No: not a boundary (what v0 has)                                                                                             | **Second layer**                                                                                                                          | Discipline, not a boundary                                                         |
 
-On the brief's "Electron `utilityProcess` with no Node": as far as we know there's no such
-option. A utility process forked with `utilityProcess.fork` runs Node and isn't sandboxed
-(_verify_ against Electron 44). The Node-less, sandboxed process Electron offers is a renderer,
+On the brief's "Electron `utilityProcess` with no Node": there's no such option. A utility
+process forked with `utilityProcess.fork` runs Node and isn't sandboxed. Checked on Electron 44
+(2026-11-07): it can read and write files, run `child_process` and import `electron`, and it
+ignores `--permission` in `execArgv` (`process.permission` is undefined). The Node-less, sandboxed process Electron offers is a renderer,
 which is the fourth column.
 
 ### Why not the renderer alone
@@ -476,8 +479,11 @@ main world (as if QuickJS had been broken) must fail to:
 ### The legal shape, as understood (not advice)
 
 - **Site terms.**
-  - Woolworths' website terms, as we understand them, prohibit using robots, spiders, scrapers or
-    other automated means to access the site (_verify_ the current wording before relying on it).
+  - Woolworths' shopping-site terms prohibit using "any robot, spider, site search and retrieval
+    application or other mechanism to retrieve or index any portion of the Site" (clause
+    1.4(b)(viii), read 2026-11-07; see
+    [the finding](findings/2026-11-07-woolworths-terms.md)). There is no exception for a customer
+    automating their own account.
   - Coles' and most large retailers' terms are similar.
   - A person running an adapter is a customer automating their own account, at human pace, on
     their own machine. A project _distributing_ an adapter for that site is in a different
@@ -583,8 +589,6 @@ None needed for M5. For M7:
   validating against them instead of adapter zod ([G6](plan.md#g6-tool-input-and-output-schemas-live-only-in-code)).
   This touches `ToolImplementation` and the tool host.
 - A `PublisherKey` and bundle-descriptor type, probably in a new `packages/bundle`, not core.
-- `confirm()` taking structured content rendered by the runtime rather than free adapter text
-  ([G4](plan.md#g4-confirm-takes-adapter-authored-text)). More pressing with third-party adapters.
 - Audit events for install, update (with old and new hashes) and revocation.
 - A namespaced adapter identity, `<publisher key fingerprint>/<id>` (or a structured
   `{ publisher, id }`), in `Grant`, `GrantStore.find` and `revoke`, every `AuditEvent` that

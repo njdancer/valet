@@ -9,6 +9,7 @@ import {
   canonicalJson,
   messagesSourcesIn,
   type OtpSource,
+  toolHints,
 } from '@valet/core'
 import type {
   AuthStepEntry,
@@ -76,7 +77,12 @@ export function limitsInfo(manifest: AdapterManifest): LimitsInfo {
 }
 
 function tools(manifest: AdapterManifest): ToolDiffEntry[] {
-  return manifest.tools.map(({ name, title, sideEffect }) => ({ name, title, sideEffect }))
+  return manifest.tools.map((tool) => ({
+    name: tool.name,
+    title: tool.title,
+    sideEffect: tool.sideEffect,
+    ...toolHints(tool),
+  }))
 }
 
 function secrets(manifest: AdapterManifest): SecretDiffEntry[] {

@@ -11,6 +11,7 @@ import {
   type AuditRecord,
   type AuditSink,
   type BlockedRequest,
+  CredentialError,
   type Grant,
   MESSAGES_SECRET,
   type NeedsUserReason,
@@ -36,6 +37,7 @@ import {
   type RuntimeDiagnostic,
   type Sleep,
   ToolHost,
+  type ToolProcessFactory,
 } from '@valet/runtime'
 import { z } from 'zod'
 import type {
@@ -77,6 +79,7 @@ import { checkGrantRequest, grantInfo } from './grants'
 import type { AppWindow, MainApi } from './ipc'
 import { createAuthRunner, Handoffs, isBlockedPage, SessionTracker } from './login'
 import { type ApprovedSnapshot, type BuiltinAdapter, SnapshotStore } from './registry'
+import { RemoteAccess } from './remote'
 import { RunMemory } from './run-memory'
 import { DEFAULT_SETTINGS, SettingsStore } from './settings'
 import { SetupStore } from './setup'
@@ -115,6 +118,11 @@ export interface ServiceDeps {
   readonly timers: Timers
   readonly sleep: (ms: number) => Promise<void>
   readonly adapters: readonly BuiltinAdapter[]
+  /**
+   * Starts a tool process for one call. With it, an adapter that has a tool script runs its tool
+   * code there; without it (unit tests), in this process.
+   */
+  readonly toolProcess?: ToolProcessFactory
   /** Builds an adapter's driver, with the reporters its refusals outside a run go to. */
   readonly createDriver: (manifest: AdapterManifest, reporters: DriverReporters) => Promise<SessionDriver>
   readonly credentials: Credentials
@@ -174,6 +182,7 @@ const EVENTS_FOR: Readonly<Partial<Record<AuditEvent['type'], readonly AppEvent[
   'adapter-rejected': ['approvals-changed', 'adapters-changed', 'attention-changed'],
   'grant-made': ['grants-changed', 'adapters-changed'],
   'grant-revoked': ['grants-changed', 'adapters-changed'],
+  'grant-copied': ['grants-changed'],
   'tool-called': ['runs-changed', 'clients-changed'],
   'tool-finished': ['runs-changed', 'adapters-changed'],
   'login-started': ['runs-changed', 'adapters-changed'],
@@ -229,6 +238,8 @@ export class AppService {
   private readonly approvedAt = new Map<string, string>()
   private caller: RuntimeToolCaller | null = null
   private endpoint: SessionReportingEndpoint | null = null
+  /** The remote listener, its policy and the kill switch (relay.md). Off unless the person turns it on. */
+  readonly remote: RemoteAccess
   private paused = false
   private chain: ChainStatus = { state: 'unverified' }
   private readonly startedAt: string
@@ -303,6 +314,22 @@ export class AppService {
         this.emit('adapters-changed')
       },
     })
+    this.remote = new RemoteAccess({
+      path: paths.remote,
+      info: { name: 'valet', version: deps.version },
+      now: deps.now,
+      changed: () => this.emit('app-changed'),
+      audit: async (event) => {
+        await this.audit.append(event)
+      },
+      // Audited like the app's own refusals: stage config, which the runtime never reports.
+      refused: (call, reason) =>
+        this.auditRefusal(call, {
+          status: 'failed',
+          stage: 'config',
+          errorClass: reason === 'over-cap' ? 'rate-limited' : 'not-found',
+        }),
+    })
     this.api = this.buildApi()
   }
 
@@ -359,7 +386,15 @@ export class AppService {
         onAuthReportsDropped: () => this.deps.diagnostics?.({ type: 'auth-reports-dropped', adapterId: id }),
       })
       this.drivers.set(id, driver)
-      host.register({ definition: adapter.definition, bundleHash: adapter.hash, driver })
+      const start = this.deps.toolProcess
+      host.register({
+        definition: adapter.definition,
+        bundleHash: adapter.hash,
+        driver,
+        ...(start === undefined || adapter.toolScript === null
+          ? {}
+          : { isolation: { script: adapter.toolScript, start } }),
+      })
     }
     this.caller = new RuntimeToolCaller(host, {
       paused: () => this.paused,
@@ -378,6 +413,18 @@ export class AppService {
     // Reads approval times into the cache the confirmation panel uses.
     await this.states()
     await this.startListening().catch(() => undefined)
+    // The same caller: remote calls go through the same pause, runtime and audit as local ones.
+    await this.remote.start(this.caller).catch(() => undefined)
+  }
+
+  /**
+   * Turns one of an installed adapter's tools on or off for remote clients. Throws
+   * ValetError('config', 'not-found') for a tool the adapter doesn't declare.
+   */
+  async setRemoteTool(adapterId: string, tool: string, enabled: boolean): Promise<void> {
+    const declaration = this.adapter(adapterId)?.definition.manifest.tools.find((t) => t.name === tool)
+    if (declaration === undefined) throw new ValetError('config', 'not-found')
+    await this.remote.setTool(adapterId, declaration, enabled)
   }
 
   async stop(): Promise<void> {
@@ -386,6 +433,7 @@ export class AppService {
     this.caller?.cancelAll()
     this.broker.declineAll()
     this.handoffs.closeAll()
+    await this.remote.close().catch(() => undefined)
     await this.endpoint?.close().catch(() => undefined)
     this.endpoint = null
     for (const driver of this.drivers.values()) await driver.close().catch(() => undefined)
@@ -634,6 +682,7 @@ export class AppService {
     } catch {
       // The runtime couldn't list; every session keeps what it had.
     }
+    this.remote.refresh()
   }
 
   private async startListening(): Promise<void> {
@@ -663,6 +712,23 @@ export class AppService {
       counts.set(r.event.clientId, (counts.get(r.event.clientId) ?? 0) + 1)
     }
     return this.clients.list((id) => counts.get(`local:${id}`) ?? 0)
+  }
+
+  /** Copies a keychain-copy grant's fields from 1Password, audited, as ValetError on failure. */
+  private async copyGrantItem(grant: Grant, manifest: AdapterManifest): Promise<void> {
+    const fields = manifest.secrets[grant.secret]?.fields ?? []
+    try {
+      await this.deps.credentials.copyItem(grant.itemRef, fields)
+    } catch (error) {
+      const failure = error instanceof CredentialError ? error.failure : 'unavailable'
+      throw new ValetError('credential', failure)
+    }
+    await this.audit.append({
+      type: 'grant-copied',
+      adapterId: grant.adapterId,
+      secret: grant.secret,
+      fields: [...fields],
+    })
   }
 
   private async available(): Promise<Set<ProviderKind>> {
@@ -745,6 +811,11 @@ export class AppService {
             now: () => new Date(deps.now()),
           })
           const { grant } = checked
+          // D6: a Keychain copy is made now, with the person approving in 1Password; a grant whose
+          // copy couldn't be made would only fail its first login.
+          if (grant.provider === 'keychain-copy') {
+            await this.copyGrantItem(grant, adapter.definition.manifest)
+          }
           // Audited first: a grant that can't be recorded isn't made.
           await this.audit.append({
             type: 'grant-made',
@@ -766,8 +837,24 @@ export class AppService {
           if (secret !== MESSAGES_SECRET && !Object.hasOwn(adapter.definition.manifest.secrets, secret)) {
             throw new ValetError('grant', 'not-found')
           }
+          const before = await this.grants.list()
           await this.audit.append({ type: 'grant-revoked', adapterId, secret })
           await this.grants.revoke(adapterId, secret)
+          // A copy no remaining grant uses goes too.
+          const after = await this.grants.list()
+          for (const gone of before.filter((g) => g.provider === 'keychain-copy' && !after.includes(g))) {
+            if (!after.some((g) => g.provider === 'keychain-copy' && g.itemRef === gone.itemRef)) {
+              await deps.credentials.forgetCopy(gone.itemRef).catch(() => {})
+            }
+          }
+          this.emit('grants-changed')
+        },
+        resync: async (adapterId, secret) => {
+          const adapter = this.requireAdapter(adapterId)
+          const grant = await this.grants.find(adapterId, adapter.hash, secret)
+          if (grant === null || grant.provider !== 'keychain-copy') throw new ValetError('grant', 'not-found')
+          await this.copyGrantItem(grant, adapter.definition.manifest)
+          await this.releaseLoginHold(adapterId)
           this.emit('grants-changed')
         },
       },

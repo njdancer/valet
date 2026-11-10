@@ -51,7 +51,15 @@ const REMOVALS_ONLY: PendingReview = {
     requests: { added: [], removed: [], unchanged: [] },
     tools: {
       added: [],
-      removed: [{ name: 'add_to_cart', title: 'Add to cart', sideEffect: 'write' }],
+      removed: [
+        {
+          name: 'add_to_cart',
+          title: 'Add to cart',
+          sideEffect: 'write',
+          destructive: true,
+          idempotent: false,
+        },
+      ],
       unchanged: [],
     },
     secrets: { added: [], removed: [], unchanged: [] },
@@ -167,8 +175,24 @@ describe('reviewing an update', () => {
       diff: {
         ...REMOVALS_ONLY.diff,
         tools: {
-          added: [{ name: 'update_cart_line', title: 'Update cart line', sideEffect: 'irreversible' }],
-          removed: [{ name: 'update_cart_line', title: 'Update cart line', sideEffect: 'write' }],
+          added: [
+            {
+              name: 'update_cart_line',
+              title: 'Update cart line',
+              sideEffect: 'irreversible',
+              destructive: true,
+              idempotent: false,
+            },
+          ],
+          removed: [
+            {
+              name: 'update_cart_line',
+              title: 'Update cart line',
+              sideEffect: 'write',
+              destructive: true,
+              idempotent: false,
+            },
+          ],
           unchanged: [],
         },
         limits: { before: LIMITS, after: { ...LIMITS, minGapMs: 250 } },
@@ -232,10 +256,12 @@ describe('reviewing an update', () => {
         },
         tools: {
           added: [
-            { name: 'pay', title: 'Pay', sideEffect: 'irreversible' },
-            { name: 'note', title: 'Note', sideEffect: 'write' },
+            { name: 'pay', title: 'Pay', sideEffect: 'irreversible', destructive: true, idempotent: false },
+            { name: 'note', title: 'Note', sideEffect: 'write', destructive: true, idempotent: false },
           ],
-          removed: [{ name: 'old_tool', title: 'Old', sideEffect: 'read' }],
+          removed: [
+            { name: 'old_tool', title: 'Old', sideEffect: 'read', destructive: false, idempotent: true },
+          ],
           unchanged: [],
         },
         secrets: {

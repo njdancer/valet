@@ -25,18 +25,18 @@ The product is called Valet ([D1](#d1-product-name), decided 2026-11-07).
 ## Where we are
 
 After four overnight rounds, everything below is merged on `main`, and `pnpm check` is green. Every
-package is on core v4. The app runs end to end against the fake site: an MCP client calls a
+package is on core v5. The app runs end to end against the fake site: an MCP client calls a
 Woolworths tool, the runtime logs in on the fake Auth0, hands the session over, runs the tool and
 writes the audit log. Nothing has touched the live site while logged in, and nothing is signed.
 
 | Area                                       | State                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | ------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `packages/core`                            | Contracts v4: v3 plus the `update` error stage, `update-downloaded`/`update-installed` audit events, which partition refused a request, and `openAuthPage({ onBlocked })`.                                                                                                                                                                                                                                                                                |
+| `packages/core`                            | Contracts v5: v4 plus a structured `confirm(action)` (C4). v4 was v3 plus the `update` error stage, `update-downloaded`/`update-installed` audit events, which partition refused a request, and `openAuthPage({ onBlocked })`.                                                                                                                                                                                                                            |
 | `packages/runtime`                         | `ToolHost` with approval, the adapter lock, deadlines, confirmations (with the client's transport), cancel through an `AbortSignal`, the run-scoped network policy, redaction, the hash-chained audit log, the attempt marker, and the per-site budget and breaker, persisted. New in round 4: `runLoginStep` (the app's own login work under the lock, breaker and budget) and `siteHealth()`.                                                           |
 | `packages/auth-flow`                       | `runAuthFlow` on the Auth0 identifier-first shape, the secret filler with every pre-fill check, one password submit per login, Messages OTP behind a grant, canary tests.                                                                                                                                                                                                                                                                                 |
 | `packages/credentials`                     | 1Password service account (SDK) and `op` providers, both able to list the vault's items; the resolver, the grant store, the Keychain token source (v0 ACL gap), the Messages OTP reader. No test touches the real 1Password, Keychain or Messages.                                                                                                                                                                                                        |
 | `packages/browser-electron`                | The Electron `SessionDriver`: clean Chrome UA, `keyDown`/`char`/`keyUp` typing bound to the focused field, the request filter on both partitions with refusals reported, the egress proxy, one-way cookie and storage hand-off. 37 Electron e2e tests.                                                                                                                                                                                                    |
-| `packages/mcp-server`                      | Streamable HTTP on `127.0.0.1` with a bearer token and Host/Origin checks, the stdio bridge, live session counts. Session ids never leave it.                                                                                                                                                                                                                                                                                                             |
+| `packages/mcp-server`                      | Streamable HTTP on `127.0.0.1` with a bearer token and Host/Origin checks, the stdio bridge, live session counts. Session ids never leave it. Remote mode's first slice ([relay.md](relay.md#built-so-far)): a second listener on the same handler with its own Host, Origin and access-token checks, and the default-deny remote policy as a `ToolCaller` wrapper; no authorisation server or tunnel yet, so no client can get a remote token.           |
 | `adapters/woolworths`                      | Six tools (search, product, cart, add, set quantity, remove) and an Auth0 login with an optional TOTP or SMS step, against the fake. Site calls are 10 s apart ([D28](#d28-rate-budget-defaults)). 40 e2e tests.                                                                                                                                                                                                                                          |
 | `fakes/woolworths-site`                    | www and auth origins over local TLS, the identifier-first flow with MFA variants, an Akamai-like limiter that reissues `_abck`, hostile variants including a page beacon that tries five exfiltration routes, an exfil sink, a recorder.                                                                                                                                                                                                                  |
 | `apps/desktop`                             | The menu-bar app: tray, control panel (adapters, approval and update review, grants, credentials, clients, run traces, audit log, settings), the login window and hand-off, the confirmation panel, demo mode (`pnpm demo`). Served from `app://renderer`. Updater wired to an Ed25519-signed feed, off unless the build is packaged, Developer ID signed and has a feed compiled in. Refuses unexpected argv and `ELECTRON_*`/`NODE_*` variables.        |
@@ -75,8 +75,10 @@ Still not done, or done differently from the docs:
 - **The stdio bridge in a packaged build.** The Swift bridge
   ([D60](#d60-the-stdio-bridge-in-a-packaged-app)) ships in `Contents/MacOS`, but has not been in a
   signed build yet.
-- **Tool code isn't in a separate process.** It runs in the main process, behind the guarded
-  page. Planned for M3, with the sandbox in M7.
+- **Tool code isn't sandboxed.** Since overnight queue item 7 it runs in a utility process per
+  call, in a `node:vm` context with only the capability API over JSON messages, so a crash or a
+  hang in it can't take the app down. That is not a boundary: the sandbox is M7
+  ([D12](#d12-sandbox-technology)).
 - **Never exercised for real:** the 1Password service account and `op` (the Keychain prompt
   included), Full Disk Access for Messages, a Developer ID signature, notarisation, an x64 build.
 - **Small things in the UI.** The tray says "N clients connected" but counts open MCP sessions;
@@ -206,8 +208,8 @@ against the real site with Nick present.
    and remove), with MCP annotations derived from the manifest: `readOnlyHint: true` for reads;
    for `set_cart_quantity`, `readOnlyHint: false`, `destructiveHint: true` (it lowers quantities
    and removes lines) and `idempotentHint: true` (setting the same quantity twice has the same
-   effect); `openWorldHint: true` on all of them. Until C9, every `write` tool is advertised
-   `destructiveHint: true` and `idempotentHint: false`, `add_to_cart` included. `readOnlyHint` is
+   effect); `openWorldHint: true` on all of them. `add_to_cart` stays `destructiveHint: true`
+   until [D30](#d30-split-add-to-cart) is answered. `readOnlyHint` is
    backed by the run's network policy, not only by the adapter's label: a `read` tool's run
    allows only `read` declarations for every API call in the tool partition, whoever made it
    ([security model](security-model.md#the-runs-network-policy)).
@@ -501,8 +503,8 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
   retry after a re-login ([D32](#d32-which-failures-retry)); 2 has the gap and the cool-down only,
   in memory ([D33](#d33-breaker-defaults-and-persistence)); 3 is built except the one-submit limit
   inside a login; 4 needs the Auth0 adapter, and the runtime still writes the attempt marker on the
-  silent path; 5 is built; 6 has the stores but not the diff; 7 asks before `run()` but has no
-  structured description (C4) and no scoped unlock until core v2; 8 is not started.
+  silent path; 5 is built; 6 has the stores but not the diff; 7 asks before `run()` and renders
+  `ctx.confirm()` from a structured action (C4, core v5) but has no scoped unlock (C15); 8 is not started.
 - Next:
   1. Tool-call orchestration: adapter lock, rate budget, `session.ensure()`, auth-on-demand,
      retry-once after re-login, output validation against the tool's zod output schema, output
@@ -617,7 +619,7 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
 
 - Exists: `packages/mcp-server`. Of the items below: 1 is built with a random port and a token
   file rather than the Keychain ([D41](#d41-stable-mcp-port-and-token-rotation)); 2 is built, with
-  every `write` destructive until C9; 3 runs from the repo with `tsx`, not bundled; 4 is
+  annotations derived from the manifest (C9); 3 runs from the repo with `tsx`, not bundled; 4 is
   [D42](#d42-per-client-tool-scopes); 5 is [D50](#d50-confirmation-and-hand-off-timeouts).
 - Next:
   1. Streamable HTTP on `127.0.0.1`, random port by default with a fixed-port option, bearer
@@ -633,9 +635,11 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
      | `write`, `destructive: true`  | false          | true              | from manifest    |
      | `irreversible`                | false          | true              | false            |
 
-     `openWorldHint` is true for every site tool. `destructive` and `idempotent` are new manifest
-     fields (change request C9); until they exist, the MCP server treats every `write` tool as
-     destructive, which is the safe default.
+     `openWorldHint` is true for every site tool. `destructive` and `idempotent` are optional
+     manifest fields on `write` tools only (change request C9, built); left out, a write is
+     destructive and not idempotent, the safe default. The approval diff flags a tool whose
+     hints change either way: one that becomes destructive, and one that stops being destructive
+     or becomes idempotent, since clients may then stop asking.
   3. The stdio bridge: a small executable shipped in the app bundle that forwards to the HTTP
      endpoint, for Claude Desktop.
   4. Client identity in the audit log: from the bearer token (one token per client, named by
@@ -844,7 +848,7 @@ is in security-model.md. Holding the site's own calls to the declarations raises
 though: its background traffic (Akamai's sensor POSTs among it) must now be declared, and
 declarations have no host. That is C8 in reduced form, [D58](#d58-page-initiated-traffic). The
 irreversible unlock is wider than G1 asked for (C15). G2 is partly addressed (C1). G3 is done (C3).
-G4, G5 and G6 are open. G7 and G8 are now in the security model. G9 stands.
+G4 is done (C4, core v5). G5 and G6 are open. G7 and G8 are now in the security model. G9 stands.
 
 ### G1. The request surface only covers `page.fetch`
 
@@ -931,6 +935,13 @@ rendered by the runtime from structured data (tool name, declared side effect, t
 unlocks, the calling client) with the adapter's text shown as a secondary, clearly attributed
 note. Change request C4.
 
+Status in core v5: done. `confirm(action)` takes the declared requests the tool will make on a yes
+(method and path exactly as in the manifest) and an optional note of at most 500 characters. The
+runtime replaces each with the manifest's own declaration, refuses one that isn't declared or whose
+purpose outranks the tool's side effect (`failed confirm/undeclared-request` or `confirm/invalid`,
+sticky like a guard violation), and the app renders the panel from that; the note is shown second,
+attributed and unverified. A yes still unlocks nothing; that is C15.
+
 ### G5. Declarative tool actions have no schema
 
 The security model's table says tool actions can be declarative steps or code. The manifest only
@@ -1005,10 +1016,11 @@ Status in core v2:
   D18 (no irreversible tools in v1) makes it less urgent, not less wrong. The policy also has no
   rate field, so the driver can't pace or watch for blocks (C16).
 - **C3, done.** `needsUser` reason codes, `fail` classes, app-only notes, `NeedsUserError`.
-- **C4 to C7, open.** `ProviderKind` gained `messages`, not `onepassword-desktop`.
+- **C4, done in core v5** (see G4).
+- **C5 to C7, open.** `ProviderKind` gained `messages`, not `onepassword-desktop`.
 - **C8, not needed as written** (see the status above G1). Its host-scoped telemetry list
   returns in reduced form as C17, if [D58](#d58-page-initiated-traffic) agrees.
-- **C9, open.**
+- **C9, done** (after core v5): `destructive` and `idempotent` on `write` tool declarations, `toolHints()`, and the MCP annotations derived from them.
 - **C15 to C20, new** from the review of the round-2 docs; all open.
 
 ### Changes to the other docs
@@ -1227,6 +1239,17 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
   - **What changes in the code:** the Keychain becomes a credential store, not only the token
     source; the service-account provider stays in the tree, unused, until Nick wants a vault;
     C7 (`onepassword-desktop`) is still needed, now for setup and re-sync.
+- **Built (2026-11-07, PR #15).** `valet-keychain` (Swift, in Contents/MacOS) reads and writes
+  Valet's own Keychain items with `SecItem`, so the ACL names a binary signed with Valet's Team ID
+  and an item it wrote reads back without a prompt; a signed helper answers only a parent signed
+  by the same team. `KeychainCopyProvider` (kind `keychain-copy`) keeps one item per field under
+  `valet.copy` (`valet.dev.copy` for dev builds), account `op://<vault id>/<item id>#<field>`, with
+  the source as the item's comment. The source's "version" is the item overview's `updatedAt`, so
+  checking it reads no field. Making a keychain-copy grant copies the item first (the person
+  approves in 1Password); "Re-sync from 1Password" in Credentials re-copies it; a login refreshes a
+  changed copy only while an approval is already up, so it never prompts. A TOTP secret isn't
+  copied yet (D4 points to SMS). Still needs Nick: a signed build, a first real copy, and turning
+  on the 1Password SDK integration setting.
 - Blocks: M3 (unattended runs); M2 can use the desktop-app path.
 
 ### D7. 1Password fallback
@@ -1246,6 +1269,8 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 - Recommendation unchanged: `DesktopAuth`, used for M2's attended runs and as the D6 fallback.
   Drop `op` once a manual check shows it reads the password and the TOTP.
 - Blocks: M3. Needs core change C7.
+- **Built (2026-11-07, PR #15):** `OnePasswordDesktopProvider` (kind `onepassword-desktop`, C7),
+  used for setup and re-sync. The account comes from Settings (`onePasswordAccount`).
 
 ### D8. Full Disk Access for Messages
 
@@ -1280,6 +1305,16 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
   in-process reader with FDA on the whole app stays the dev path. The helper is a second binary
   to sign and notarise, which waits for Nick.
 - Blocks: M3 (if D4 needs SMS), M7.
+- **Built (2026-11-07, PR #15):** `valet-messages-helper`, registered with
+  `SMAppService.agent(plistName: "messages-helper.plist")` when the Messages setting is on. One
+  change from the sketch above: it listens on a Unix socket only this user can reach
+  (`~/Library/Application Support/<label>/helper.sock`) instead of XPC, because Node can't speak
+  XPC without a native addon. A signed helper checks each peer's audit token against its own Team
+  ID, which is the check an XPC listener would make. It answers one request per connection (the
+  newest code-shaped capture from one handle since a time, at most 30 minutes back), with the match
+  under a 0.5 s deadline after which it exits and launchd restarts it. The in-process
+  `MessagesOtpReader` stays the dev path; one suite runs both. Still needs Nick: a signed build,
+  allowing the agent in Login Items, and granting it Full Disk Access.
 
 ### D9. User agent
 
@@ -1529,6 +1564,11 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 - Questions: can the project publish adapters for sites whose terms prohibit automated access?
   Should adapters live in a separate repository, maintained by their authors, rather than in the
   framework's repository?
+- Woolworths' current terms (read 2026-11-07, [finding](findings/2026-11-07-woolworths-terms.md)):
+  clause 1.4(b)(viii) prohibits "any robot, spider, site search and retrieval application or other
+  mechanism to retrieve or index any portion of the Site", with no personal-use exception; 1.4(b)(xv)
+  extends it to permitting another person; 1.4(b)(xiii) bars unreasonable load. Not yet answered
+  by Nick.
 - Recommendation: get a short legal opinion (Australian, plus a US view if the audience is
   global) before M8. Meanwhile, structure the code so adapters can move to a separate repo
   without changes (they already only depend on `core`).
@@ -1605,7 +1645,8 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 - Status: overtaken by round 1. The adapter already ships `add_to_cart` (and `remove_from_cart`)
   alongside `set_cart_quantity`, and the MCP server derives `destructiveHint: true` for every
   `write` tool, so `add_to_cart` is advertised as destructive and clients still prompt for it.
-  It stays that way until C9 lets a tool declare itself non-destructive.
+  C9 now lets a tool declare itself non-destructive; the Woolworths manifest still declares
+  `add_to_cart` `destructive: true` until this is answered.
 - Recommendation: keep the tools as they are, destructive, for the MVP. With C9, mark
   `add_to_cart` non-destructive in M4 if the prompts are annoying in practice, knowing its
   additive claim is the adapter's code.

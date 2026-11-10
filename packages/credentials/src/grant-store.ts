@@ -38,6 +38,8 @@ export interface FileGrantStoreOptions {
 }
 
 const PROVIDERS: readonly ProviderKind[] = [
+  'keychain-copy',
+  'onepassword-desktop',
   'onepassword-service-account',
   'onepassword-cli',
   'messages',

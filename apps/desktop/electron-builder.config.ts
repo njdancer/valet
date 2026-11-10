@@ -71,8 +71,20 @@ export const PACKAGED_NODE_MODULES = ['@1password/sdk', '@1password/sdk-core'] a
  * `swift build -c release --arch arm64 --arch x86_64 --package-path swift-bridge`. It ships beside
  * the app's own executable, so the app's signature covers it and client snippets can name its path.
  */
-export const SWIFT_BRIDGE_BUILD = '../../swift-bridge/.build/apple/Products/Release/valet-bridge'
+export const SWIFT_BUILD_DIR = '../../swift-bridge/.build/apple/Products/Release'
+export const SWIFT_BRIDGE_BUILD = `${SWIFT_BUILD_DIR}/valet-bridge`
 export const BRIDGE_EXECUTABLE = 'valet-bridge'
+/**
+ * Every native binary, from the same universal build, into Contents/MacOS beside the app's own
+ * executable: the bridge (D60), the Keychain helper (D6) and the Messages helper (D8).
+ */
+export const NATIVE_EXECUTABLES = [BRIDGE_EXECUTABLE, 'valet-keychain', 'valet-messages-helper'] as const
+/**
+ * The Messages helper's launch agent, one plist per bundle ID (build/launch-agents), installed as
+ * Contents/Library/LaunchAgents/messages-helper.plist, the name SMAppService.agent(plistName:) asks for.
+ */
+export const LAUNCH_AGENT_PLIST = 'Library/LaunchAgents/messages-helper.plist'
+export const launchAgentSource = (appId: string) => `build/launch-agents/${appId}.messages-helper.plist`
 
 /** The only entitlement either plist may hold. */
 export const ALLOWED_ENTITLEMENTS = ['com.apple.security.cs.allow-jit'] as const
@@ -134,7 +146,7 @@ export interface ConfigDeps {
    * a release only, to check it was built for this release.
    */
   readonly readMainBundle: () => string | null
-  /** Whether the Swift bridge has been built at SWIFT_BRIDGE_BUILD. */
+  /** Whether the native binaries (NATIVE_EXECUTABLES) have been built in SWIFT_BUILD_DIR. */
   readonly bridgeBuilt: () => boolean
 }
 
@@ -301,7 +313,7 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
     }
     if (!deps.bridgeBuilt()) {
       throw new BuildConfigError(
-        'a release ships the stdio bridge: run `swift build -c release --arch arm64 --arch x86_64 --package-path swift-bridge` first',
+        'a release ships the stdio bridge and the helpers: run `swift build -c release --arch arm64 --arch x86_64 --package-path swift-bridge` first',
       )
     }
   } else if (release) {
@@ -328,7 +340,7 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
     }
     if (!deps.bridgeBuilt()) {
       throw new BuildConfigError(
-        'a release ships the stdio bridge: run `swift build -c release --arch arm64 --arch x86_64 --package-path swift-bridge` first',
+        'a release ships the stdio bridge and the helpers: run `swift build -c release --arch arm64 --arch x86_64 --package-path swift-bridge` first',
       )
     }
     requirement = renderRequirement(deps.readTemplate(RELEASE_REQUIREMENT_TEMPLATE), {
@@ -380,7 +392,12 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
     // differ there too.
     extraMetadata: { name: slug, productName },
     // Into Contents/MacOS, signed with the app. A development build without it shows no snippets.
-    extraFiles: deps.bridgeBuilt() ? [{ from: SWIFT_BRIDGE_BUILD, to: `MacOS/${BRIDGE_EXECUTABLE}` }] : [],
+    extraFiles: deps.bridgeBuilt()
+      ? [
+          ...NATIVE_EXECUTABLES.map((name) => ({ from: `${SWIFT_BUILD_DIR}/${name}`, to: `MacOS/${name}` })),
+          { from: launchAgentSource(appId), to: LAUNCH_AGENT_PLIST },
+        ]
+      : [],
     asar: true,
     npmRebuild: false,
     forceCodeSigning: release,
@@ -395,11 +412,11 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
       // electron-updater picks the zip for the machine by "arm64" in its name.
       // The escaped ${...} are electron-builder's own macros.
       artifactName: `${slug}-\${version}-\${arch}.\${ext}`,
-      // A dry run signs ad hoc: electron-builder's "-" identity, which uses no key and no keychain.
       // @electron/osx-sign doesn't reach an extra executable in Contents/MacOS by itself, and the
-      // app's own signature refuses unsigned nested code: the bridge is signed first, with the same
-      // identity and options. Relative to Contents.
-      ...(deps.bridgeBuilt() ? { binaries: [`MacOS/${BRIDGE_EXECUTABLE}`] } : {}),
+      // app's own signature refuses unsigned nested code: the native binaries are signed first, with
+      // the same identity and options. Relative to Contents.
+      ...(deps.bridgeBuilt() ? { binaries: NATIVE_EXECUTABLES.map((name) => `MacOS/${name}`) } : {}),
+      // A dry run signs ad hoc: electron-builder's "-" identity, which uses no key and no keychain.
       ...(dryRun ? { identity: '-' } : signs ? {} : { identity: null }),
       type: release ? 'distribution' : 'development',
       hardenedRuntime: true,
@@ -437,7 +454,7 @@ export const nodeDeps: ConfigDeps = {
   readTemplate: (name) => readFileSync(join(here, 'build', name), 'utf8'),
   loadSignAsync: () => signAsync as unknown as SignAsync,
   readMainBundle: () => readBundle(join(here, 'out', 'main')),
-  bridgeBuilt: () => existsSync(join(here, SWIFT_BRIDGE_BUILD)),
+  bridgeBuilt: () => NATIVE_EXECUTABLES.every((name) => existsSync(join(here, SWIFT_BUILD_DIR, name))),
 }
 
 /** Every .js file under `dir`, joined, or null when `dir` has no index.js. */

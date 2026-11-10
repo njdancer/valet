@@ -88,6 +88,20 @@ describe('SettingsStore', () => {
     writeFileSync(path, '{')
     expect((await store.set({ messagesOtpEnabled: true })).messagesOtpEnabled).toBe(true)
   })
+
+  it('keeps the 1Password account, and reads a file from before it existed', async () => {
+    const path = join(dir(), 'settings.json')
+    const store = new SettingsStore(path)
+    const { onePasswordAccount: _, ...older } = { ...DEFAULT_SETTINGS, messagesOtpEnabled: true }
+    writeFileSync(path, JSON.stringify(older))
+    expect(await store.get()).toEqual({ ...DEFAULT_SETTINGS, messagesOtpEnabled: true })
+    expect((await store.set({ onePasswordAccount: 'my.1password.com' })).onePasswordAccount).toBe(
+      'my.1password.com',
+    )
+    expect((await store.get()).onePasswordAccount).toBe('my.1password.com')
+    writeFileSync(path, JSON.stringify({ ...DEFAULT_SETTINGS, onePasswordAccount: ' padded' }))
+    expect(await store.get()).toEqual(DEFAULT_SETTINGS)
+  })
 })
 
 describe('built-in adapters and snapshots', () => {

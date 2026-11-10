@@ -59,7 +59,8 @@ const toolRequest: ConfirmationRequest = {
   callId: 'call1',
   client: 'Claude Code',
   kind: 'tool-request',
-  message: 'Add milk? <b>Trust me</b>',
+  requests: [{ method: 'POST', path: '/api/cart', purpose: 'write' }],
+  note: 'Add milk? <b>Trust me</b>',
 }
 
 describe('ConfirmationBroker', () => {
@@ -87,6 +88,7 @@ describe('ConfirmationBroker', () => {
         expiresAt: new Date(1_000_000 + TIMEOUT).toISOString(),
         requestCeiling: 5,
         unlocks: [],
+        requests: [{ method: 'POST', path: '/api/cart', purpose: 'write' }],
         input: [{ kind: 'text', text: '{"item":"milk"}' }],
         adapterNote: 'Add milk? <b>Trust me</b>',
       },
@@ -97,11 +99,13 @@ describe('ConfirmationBroker', () => {
     const { broker } = setup()
     void broker.ask(
       {
-        ...toolRequest,
+        adapterId: 'shop',
+        adapterName: 'Shop',
         tool: 'order',
         toolTitle: 'Order',
+        callId: 'call1',
+        client: 'Claude Code',
         kind: 'irreversible-tool',
-        message: 'Places it.',
         input: { id: 1 },
       },
       new AbortController().signal,
@@ -109,6 +113,7 @@ describe('ConfirmationBroker', () => {
     const [item] = broker.list()
     expect(item?.unlocks).toEqual([{ method: 'POST', path: '/api/order', purpose: 'irreversible' }])
     expect(item?.adapterNote).toBeNull()
+    expect(item?.requests).toEqual([])
     expect(item?.sideEffect).toBe('irreversible')
   })
 

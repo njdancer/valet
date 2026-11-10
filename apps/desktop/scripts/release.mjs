@@ -417,9 +417,12 @@ async function verifyApp(app, arch, feedUrl, expect) {
     (f) => !ASAR_ALLOWED.some((p) => p.test(f)),
   )
   expect('the asar holds only the build and the SDK', unexpected.length === 0, unexpected)
+  for (const name of ['valet-bridge', 'valet-keychain', 'valet-messages-helper']) {
+    expect(`${name} ships in Contents/MacOS`, existsSync(join(app, 'Contents', 'MacOS', name)))
+  }
   expect(
-    'the stdio bridge ships in Contents/MacOS',
-    existsSync(join(app, 'Contents', 'MacOS', 'valet-bridge')),
+    'the Messages helper’s launch agent ships',
+    existsSync(join(app, 'Contents', 'Library', 'LaunchAgents', 'messages-helper.plist')),
   )
 
   if (dryRun) {

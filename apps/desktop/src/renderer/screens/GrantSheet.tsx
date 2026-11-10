@@ -16,7 +16,13 @@ import { FIELD_WORDING, PROVIDER_WORDING } from '../lib/wording'
 export { MESSAGES_SECRET }
 
 /** Vault providers. The test provider is offered only when the main process reports it (demo mode). */
-const ONEPASSWORD: readonly ProviderKind[] = ['onepassword-service-account', 'onepassword-cli', 'fake']
+// The Keychain copy first: D6 made it the way Valet gets the person's own 1Password item.
+const ONEPASSWORD: readonly ProviderKind[] = [
+  'keychain-copy',
+  'onepassword-service-account',
+  'onepassword-cli',
+  'fake',
+]
 
 /** What the sheet is granting, resolved from the manifest. Null when the manifest asks for no such secret. */
 interface Target {
@@ -283,9 +289,7 @@ function GrantForm({
                       />
                       <div className="row between">
                         <strong>{PROVIDER_WORDING[kind].title}</strong>
-                        {kind === 'onepassword-service-account' ? (
-                          <span className="pill ok">Recommended</span>
-                        ) : null}
+                        {kind === 'keychain-copy' ? <span className="pill ok">Recommended</span> : null}
                         {usable ? null : <span className="pill">Not set up</span>}
                       </div>
                       <span />
@@ -297,7 +301,7 @@ function GrantForm({
 
               <div>
                 <div className="label row between">
-                  <span>Item in “Valet”</span>
+                  <span>{provider === 'keychain-copy' ? 'Item in your 1Password' : 'Item in “Valet”'}</span>
                   <span className="xs muted">{plural(matching.length, 'item matches', 'items match')}</span>
                 </div>
                 <label className="field" style={{ marginBottom: 6 }}>

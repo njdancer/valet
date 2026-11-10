@@ -34,10 +34,14 @@ Out of scope:
 - The Valet host process. The main process is the trusted computing base.
 - Malware already on the machine.
 
-**v0 caveat.** Tool code is imported into the main process today. It has no sandbox, not even a
-separate process, so a hostile adapter's tool code could import `node:fs` or open a socket and
-step around everything in this document. The guarantees hold against tool code that only uses
-its capability object. That is why no third-party adapter installs before the sandbox (M7,
+**v0 caveat.** Tool code has no sandbox yet. In the app it runs in a utility process of its own,
+started for each call and killed when the call ends, inside a `node:vm` context that holds only
+the capability object; the tool script is built so that it can't import a Node built-in or
+Electron. That stops a crash or a hang in tool code taking the app down, and it means tool code
+that keeps to its context has no `require`, files or sockets. But `node:vm` is not a security
+boundary and the utility process is a full Node process, so a hostile adapter that broke out of
+the context could still step around everything in this document. The guarantees hold against
+tool code that only uses its capability object. That is why no third-party adapter installs before the sandbox (M7,
 [D12](plan.md#d12-sandbox-technology)). The guards are built now so that the sandbox only has to
 take away ambient authority, not add checks.
 
@@ -259,9 +263,14 @@ process is the trusted computing base. It isn't a property to advertise.
     container, which the password grep in AC16 wouldn't notice.
 - **Full Disk Access.** Reading `chat.db` needs it, and it's the broadest permission the app asks
   for: it also covers Mail, Safari history and every process that inherits it, including v0 tool
-  code. For personal use (M3) the whole app holds it. Before third-party adapters, a small signed
-  helper holds it instead and answers only "latest code from this sender matching this pattern
-  since this time" (**Designed**, [D8](plan.md#d8-full-disk-access-for-messages)).
+  code. A packaged app reads through `valet-messages-helper` instead: a launch agent registered
+  with SMAppService, so launchd starts it and it holds Full Disk Access by itself. It answers only
+  "the newest code-shaped capture from this handle since this time" (at most 30 minutes back, 50
+  messages, 2,000 characters each, the match under a deadline) over a user-only Unix socket, and a
+  signed helper answers only a peer whose audit token is signed by its own team. Valet re-checks
+  the answer's shape (**Built**, needs a signed build to hold;
+  [D8](plan.md#d8-full-disk-access-for-messages)). A development build still reads in process,
+  with the grant on whatever runs it.
 
 ### Grants are separate from manifests
 
@@ -423,8 +432,12 @@ Every tool is declared `read`, `write` or `irreversible`. For an `irreversible` 
   confirmed for; core v2 narrows that to "all of them, for this run". The fix is a per-tool list
   of the declarations it unlocks (change request C15 in the plan), which should land before any
   irreversible tool ships.
-- Still open: `confirm(message)` shows adapter-authored text. The dialog should be rendered by the
-  runtime from structured data, with the adapter's text as an attributed note (change request C4).
+- Since core v5, `confirm(action)` takes structured data (change request C4): the declared
+  requests the tool says it will make on a yes, which the runtime checks against the manifest and
+  the tool's side effect, plus an optional note. The panel is rendered by the app from the
+  runtime's own knowledge; the note is shown second, attributed and marked unverified. A yes
+  unlocks nothing, and nothing yet holds the tool to the requests it named (that would be C15's
+  per-tool list).
   Whether to require Touch ID is [D46](plan.md#d46-touch-id-on-irreversible-confirmations).
 
 No shipped adapter has an `irreversible` tool in v1 ([D18](plan.md#d18-irreversible-tools-in-shipped-adapters)).
@@ -516,9 +529,9 @@ is R6 in the plan.
 
 ### Sandbox
 
-In v0, tool code runs in the main process with no boundary (see the caveat at the top). The plan
-moves it to a `utilityProcess` with the capability API over a message port, for structure, and
-then into a real sandbox before third-party adapters exist (QuickJS-wasm, `isolated-vm`, or a
+In v0, tool code runs in a `utilityProcess` per call, in a `node:vm` context with only the
+capability API, over JSON messages (`packages/runtime/src/isolation`; see the caveat at the top).
+That is structure and crash isolation, not a boundary. The plan moves it into a real sandbox before third-party adapters exist (QuickJS-wasm, `isolated-vm`, or a
 sandboxed hidden renderer; [D12](plan.md#d12-sandbox-technology)). Node's `vm` module is not a
 boundary.
 
@@ -650,6 +663,17 @@ Before the token source is used outside development, and at the latest before th
 adapters exist, the read moves in process: a native addon calling `SecItemCopyMatching`, or a
 small helper bundled with the app and signed with its Team ID, whose own requirement is the one on
 the ACL. The `TokenSource` interface (now in `core`) and its bounded wait stay the same.
+
+**Built (2026-11-07): the helper.** `valet-keychain` ships in Contents/MacOS and reads with
+`SecItemCopyMatching` in its own process. Items it adds (the D6 Keychain copies) trust it, so it
+reads them without a prompt, and any prompt names it. A helper signed with a Team ID refuses any
+parent not signed by that team (checked by pid; the parent is the app's main process, which waits
+on the child). It touches only `valet` and `valet.<name>` services, takes secrets on stdin, and
+writes nothing but the secret or the item's comment to stdout. When the app has the helper, the
+service-account token is read through it too. A token item made earlier with `security` still
+trusts `/usr/bin/security`; the helper's first read of it prompts once, naming the helper. The gap
+closes only for a signed build: an unsigned dev helper is trusted by its code hash, and any process
+running as the person can run it.
 
 ## Personal Chrome profile mode (later)
 

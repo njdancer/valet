@@ -173,6 +173,23 @@ function Confirm({
               Tool declared <SideEffect purpose={item.sideEffect} />
               {irreversible ? ', so only you can approve it' : ''}
             </span>
+            {item.requests.length > 0 ? (
+              <>
+                <Icon name="check" size="sm" />
+                <span data-testid="confirm-requests">
+                  If you allow it, the tool says it will make:{' '}
+                  {item.requests.map((r) => (
+                    <span key={`${r.method} ${r.path}`}>
+                      <span className="mono xs">
+                        {r.method} {r.path}
+                      </span>{' '}
+                      <SideEffect purpose={r.purpose} />{' '}
+                    </span>
+                  ))}
+                  Each is declared in the manifest and allowed for this tool. Approving doesn’t unlock them.
+                </span>
+              </>
+            ) : null}
             <Icon name="check" size="sm" />
             <span>
               Its requests stay within the manifest’s declared paths, at most {item.requestCeiling} this run

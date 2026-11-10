@@ -186,8 +186,40 @@ export const toolDeclarationSchema = z
     title: z.string().min(1).max(80),
     description: z.string().min(1).max(1000),
     sideEffect: purposeSchema,
+    /**
+     * `write` tools only (C9): whether the tool can remove or overwrite anything, as MCP's
+     * destructiveHint means it. Default true, the safe reading. A claim about the adapter's own
+     * code; the runtime can't hold a write to "only adds".
+     */
+    destructive: z.boolean().optional(),
+    /**
+     * `write` tools only (C9): whether calling it twice with the same input has no further effect,
+     * as MCP's idempotentHint means it. Default false.
+     */
+    idempotent: z.boolean().optional(),
   })
   .strict()
+  .superRefine((tool, ctx) => {
+    // A read changes nothing and an irreversible tool is always destructive and never retried, so
+    // only a write may say either.
+    if (tool.sideEffect === 'write') return
+    for (const key of ['destructive', 'idempotent'] as const) {
+      if (tool[key] !== undefined) {
+        ctx.addIssue({ code: 'custom', path: [key], message: `only a write tool may set ${key}` })
+      }
+    }
+  })
+
+/** What a tool declaration means for MCP's hints, with C9's safe defaults filled in. */
+export function toolHints(tool: {
+  readonly sideEffect: z.infer<typeof purposeSchema>
+  readonly destructive?: boolean | undefined
+  readonly idempotent?: boolean | undefined
+}): { readonly destructive: boolean; readonly idempotent: boolean } {
+  if (tool.sideEffect === 'read') return { destructive: false, idempotent: true }
+  if (tool.sideEffect === 'irreversible') return { destructive: true, idempotent: false }
+  return { destructive: tool.destructive ?? true, idempotent: tool.idempotent ?? false }
+}
 
 export const manifestSchema = z
   .object({

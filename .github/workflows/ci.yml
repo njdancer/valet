@@ -38,8 +38,9 @@ jobs:
         run: pnpm --filter @valet/desktop test:e2e --trace off
 
   swift-bridge:
-    # The stdio bridge the packaged app ships (D60), built and run against the same suite as the
-    # TypeScript bridge (packages/mcp-server/test/bridge-contract.ts).
+    # The native binaries the packaged app ships: the stdio bridge (D60), run against the same suite
+    # as the TypeScript bridge (packages/mcp-server/test/bridge-contract.ts), and the Keychain and
+    # Messages helpers (D6, D8), run against the TypeScript contract suites in packages/credentials.
     runs-on: macos-latest
     timeout-minutes: 20
     steps:
@@ -52,6 +53,14 @@ jobs:
         run: pnpm exec vitest run --project mcp-server test/bridge-contract
         env:
           VALET_SWIFT_BRIDGE: ${{ github.workspace }}/swift-bridge/.build/apple/Products/Release/valet-bridge
+      - run: swift test --package-path swift-bridge
+      # Debug, where the helpers take a throwaway keychain file and a fixture Messages database.
+      - run: swift build --package-path swift-bridge
+      - name: helper contract suites
+        run: pnpm exec vitest run --project credentials test/keychain-contract test/otp-contract
+        env:
+          VALET_SWIFT_KEYCHAIN: ${{ github.workspace }}/swift-bridge/.build/debug/valet-keychain
+          VALET_SWIFT_MESSAGES_HELPER: ${{ github.workspace }}/swift-bridge/.build/debug/valet-messages-helper
 
   release-dry-run:
     # AC18's one release command end to end, with nothing real in reach: an ad hoc signature, a

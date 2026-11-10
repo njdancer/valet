@@ -619,7 +619,7 @@ describe('sticky violations', () => {
           ['extract', () => ctx.page.extract('#price')],
           ['evaluate', () => ctx.page.evaluate('1')],
           ['ensure', () => ctx.session.ensure()],
-          ['confirm', () => ctx.confirm('ok?')],
+          ['confirm', () => ctx.confirm({ requests: [{ method: 'GET', path: '/api/trolley' }] })],
         ] as const) {
           await attempt().then(
             () => attempts.push(`${name}:allowed`),

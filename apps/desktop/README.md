@@ -451,7 +451,7 @@ What the main process must hold to, because the renderer relies on it:
 - **Codes, not text.** Reasons, stages and error classes are core's codes; the renderer words them
   in `lib/wording.ts` and never shows an unknown code's text. A rejected promise's message is never
   shown either: every failure reads "Couldn’t … Try again.".
-- **Adapter text is attributed.** Manifest descriptions and notes, and the `confirm()` message
+- **Adapter text is attributed.** Manifest descriptions and notes, and the optional `confirm()` note
   (`ConfirmationItem.adapterNote`), are shown as plain React text, quoted, labelled "From the
   manifest" or "Shown by the … adapter", and cut to a fixed length. Everything else on the
   confirmation panel must come from the runtime's own knowledge.
@@ -528,7 +528,7 @@ Routes the main process opens (`lib/router.ts`):
   approval and grant are the app's own review screen and grant sheet, opened from setup and
   returning to it, so setup can approve or grant nothing those screens wouldn't. Messages codes
   stay on the adapter's page. The mockup's 1Password pane describes a service account; Nick chose
-  a Keychain copy of the item instead (D6), so that pane shows the providers this launch has, and
-  takes the 1Password account once the Keychain copy lands. Claude Code is set up through the
+  a Keychain copy of the item instead (D6), so that pane takes the 1Password account the Keychain
+  copy reads from (the same field as in Settings) and lists any other provider this launch can use. Claude Code is set up through the
   bridge, like Claude Desktop, rather than over HTTP with a token on screen: tokens never reach the
   renderer (D42).
