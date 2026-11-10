@@ -29,6 +29,12 @@ Each item says what was checked. "Not in the plan" means a search of `docs/` fou
 
 ## Not fixed: needs Nick
 
+Nick answered all four on 2026-11-10. Item 4: auto-merge is on and `main` requires the one `ci`
+check. Item 5: the store is an adapter setting the person picks from a list
+([D69](../plan.md#d69-which-store-the-woolworths-tools-quote)). Item 6: let the Mac sleep for now
+([D70](../plan.md#d70-a-sleeping-mac)). Item 7: he doesn't read the code; adversarial review and
+red-team agents replace it ([D71](../plan.md#d71-who-reviews-agent-built-code)).
+
 4. **"Merge on green" isn't mechanical.** Threads merge by remembering to. PR #17 sat green for
    three days because one didn't. Two repository settings fix the cause: a branch protection rule
    on `main` requiring the four CI jobs (`check`, `e2e`, `swift-bridge`, `release-dry-run`), and
