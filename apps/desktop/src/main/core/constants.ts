@@ -70,6 +70,8 @@ export interface DataPaths {
   readonly remote: string
   /** Run traces and screenshots, one entry per run, pruned after Settings' retention days (D27). */
   readonly traces: string
+  /** The app's own diagnostics (diagnostics-log.ts): crashes and failures, never page text. */
+  readonly diagnosticsLog: string
 }
 
 /** Every file the app keeps, under one owner-only directory (D45). */
@@ -91,5 +93,6 @@ export function dataPaths(dir: string): DataPaths {
     setup: join(dir, 'setup.json'),
     remote: join(dir, 'remote.json'),
     traces: join(dir, 'traces'),
+    diagnosticsLog: join(dir, 'logs', 'valet.log'),
   }
 }

@@ -279,6 +279,15 @@ writes a self-check to `userData/smoke-report.json`. A plain build has neither.
   development package and for every unpackaged run (`pnpm start`, `electron .`). So no development
   code writes the release folder: it can't raise the release's version floor or audit an
   `update-installed` that never happened.
+- **Diagnostics**, in `logs/valet.log` under userData (`core/diagnostics-log.ts`), owner-only,
+  at most two files of 1 MiB. It is where the app says what a menu-bar app has no terminal for:
+  that it started and stopped, the updater's states, refused IPC, a runtime diagnostic (an audit
+  write that failed, say), a renderer or child process that died by itself, an unhandled
+  rejection, and an exception nothing caught. Every line is fixed text and codes. An error is its
+  name, its code and its stack frames, never its message, which could quote a page. After an
+  uncaught exception the app doesn't carry on: a packaged app that had been up for a minute
+  restarts once (the attempt marker, the breaker and the audit chain are on disk, so that is safe
+  at any point in a run); otherwise it exits, so a crash at start can't loop.
 - **Adapters.** Built-in only. A hash is `bundleHash` over the adapter's source files, embedded by
   the bundler from the same files it compiles, plus the effective manifest. A hash nobody approved
   waits for review and runs nothing; `approvals.approve` refuses any hash but the installed one. A

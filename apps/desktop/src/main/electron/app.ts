@@ -13,6 +13,12 @@ import { builtinAdapters } from '../adapters'
 import { APP_SCHEME, APP_SCHEME_PRIVILEGES, createAppSchemeHandler } from '../core/app-scheme'
 import { dataPaths, nativeNames } from '../core/constants'
 import { checkOpBinary, defaultOpCheckDeps, realCredentials } from '../core/credentials'
+import {
+  afterCrash,
+  createDiagnosticsLog,
+  type DiagnosticsLog,
+  processGoneLine,
+} from '../core/diagnostics-log'
 import { DEV_DATA_NAME, demoResolverRules, launchMode, rendererBase, userDataDir } from '../core/launch'
 import { AppService } from '../core/service'
 import type { BridgeCommand } from '../core/snippets'
@@ -52,7 +58,47 @@ function beforeReady(): void {
 /** How long quitting may take to close the endpoint, the drivers and the demo site. */
 const QUIT_BOUND_MS = 5_000
 
-const log = (line: string) => process.stderr.write(`valet: ${line}\n`)
+/** Set once the data directory is known; until then lines go to stderr only. */
+let diagnostics: DiagnosticsLog | null = null
+
+/** Fixed text and codes only: this goes to stderr and to the diagnostics log on disk. */
+const log = (line: string) => {
+  process.stderr.write(`valet: ${line}\n`)
+  diagnostics?.write(line)
+}
+
+/**
+ * What nothing caught. A menu-bar app has no terminal, so without this a crash leaves no trace, and
+ * Electron's own dialog would show the message (which can quote a page) over whatever is on screen.
+ * The error goes to the log by name and stack frames, never by message.
+ */
+function watchForCrashes(): void {
+  const started = Date.now()
+  process.on('uncaughtException', (error) => {
+    process.stderr.write(`valet: uncaught exception${app.isPackaged ? '' : `: ${String(error)}`}\n`)
+    diagnostics?.writeError('uncaught exception', error)
+    // The process's state can't be trusted now. The attempt marker, the breaker and the audit
+    // chain are all on disk, so stopping here is safe at any point in a run.
+    if (afterCrash({ packaged: app.isPackaged, uptimeMs: Date.now() - started }) === 'relaunch') {
+      diagnostics?.write('restarting after the crash')
+      app.relaunch()
+    }
+    app.exit(1)
+  })
+  process.on('unhandledRejection', (reason) => {
+    process.stderr.write(`valet: unhandled rejection${app.isPackaged ? '' : `: ${String(reason)}`}\n`)
+    diagnostics?.writeError('unhandled rejection', reason)
+  })
+  // A tool process is killed at the end of every call, and a window that closes exits cleanly:
+  // only a process that died by itself is worth a line.
+  const died = (reason: string): boolean => reason !== 'clean-exit' && reason !== 'killed'
+  app.on('render-process-gone', (_event, _contents, details) => {
+    if (died(details.reason)) log(processGoneLine('renderer', details.reason, details.exitCode))
+  })
+  app.on('child-process-gone', (_event, details) => {
+    if (died(details.reason)) log(processGoneLine(details.type, details.reason, details.exitCode))
+  })
+}
 
 /** The update feed, compiled in: empty in a dev, demo or unconfigured build (updates then stay off). */
 const FEED_BASE_URL = __VALET_FEED_BASE_URL__
@@ -102,6 +148,10 @@ async function main(): Promise<void> {
       createAppSchemeHandler({ root: base.root, readFile: (path) => readFile(path) }),
     )
   const paths = dataPaths(app.getPath('userData'))
+  diagnostics = createDiagnosticsLog({ path: paths.diagnosticsLog, now: () => Date.now() })
+  log(
+    `started: version ${app.getVersion()}${app.isPackaged ? '' : ' (unpackaged)'}${mode.demo ? ' (demo)' : ''}`,
+  )
   let service: AppService | null = null
   let tray: AppTray | null = null
   const windows = new AppWindows({
@@ -228,6 +278,7 @@ async function main(): Promise<void> {
   app.on('will-quit', (event) => {
     if (stopping) return
     stopping = true
+    log('stopping')
     event.preventDefault()
     // Pending confirmations are declined and the endpoint closed; a step that hangs doesn't keep
     // the app (and its endpoint port) alive past the bound.
@@ -263,15 +314,17 @@ async function main(): Promise<void> {
 
 function start(): void {
   beforeReady()
+  watchForCrashes()
   if (!app.requestSingleInstanceLock()) {
     app.quit()
     return
   }
   main().catch((error: unknown) => {
     // Only a development run prints the message: it can name local paths.
-    log(
-      `could not start: ${app.isPackaged ? (error instanceof Error ? error.name : 'error') : String(error)}`,
+    process.stderr.write(
+      `valet: could not start: ${app.isPackaged ? (error instanceof Error ? error.name : 'error') : String(error)}\n`,
     )
+    diagnostics?.writeError('could not start', error)
     app.exit(1)
   })
 }
