@@ -565,6 +565,10 @@ Not needed until remote mode is built:
 
 ## Open questions
 
+- **Answered by Nick (2026-11-10, [D14](plan.md#d14-relay)):** the tunnel is Cloudflare Tunnel on
+  his own domain, not Tailscale Funnel. Where this document recommends Funnel, read `cloudflared`
+  for Nick's setup; TLS then ends at Cloudflare, which he accepted. The Funnel questions below no
+  longer block anything.
 - Which client registration method claude.ai uses today (DCR or Client ID Metadata Documents),
   its redirect URIs, and its request timeout for tool calls.
 - Whether Funnel still terminates TLS on the node, and its current limits.
