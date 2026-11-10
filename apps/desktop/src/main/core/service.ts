@@ -494,6 +494,9 @@ export class AppService {
     for (const driver of this.drivers.values()) await driver.close().catch(() => undefined)
     await this.blocked.settled()
     await this.background
+    // Breaker and pace state is written without being waited for; wait here, so nothing is still
+    // writing into the data folder once the app has stopped.
+    await this.host?.flushed()
     this.loginSecrets.dispose()
   }
 

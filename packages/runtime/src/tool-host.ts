@@ -433,6 +433,14 @@ export class ToolHost {
   }
 
   /**
+   * Resolves once the breaker and pace state changed so far has been written (or has failed to
+   * be). For shutdown: nothing of the runtime's is still writing into its folder afterwards.
+   */
+  flushed(): Promise<void> {
+    return this.protection.flushed()
+  }
+
+  /**
    * The choices for one of an adapter's settings, for the app to show the person (D69): one run of
    * the setting's choices tool, with everything a tool call gets (approval, the lock, the breaker,
    * the rate budget, the run policy, the audit records, redaction). Its output must also be the
