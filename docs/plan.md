@@ -7,6 +7,46 @@ it says so.
 
 The product is called Valet ([D1](#d1-product-name), decided 2026-11-07).
 
+## North Star
+
+Nick, 2026-11-10: "We should consider the top level goal that forms our North Star as completing an
+order against Woolworths via the MCP." He also said he had been more ambitious in places than an MVP
+needs, and that the strictness stays. Everything below is read against that.
+
+He then settled two things the same day. The MVP ships with the trolley tools only: Claude fills
+the trolley and Nick presses "Place order" himself, so [D18](#d18-irreversible-tools-in-shipped-adapters)
+stands for the MVP. A checkout tool that needs his Touch ID for every order
+([D46](#d46-touch-id-on-irreversible-confirmations)) is the first thing built after it. And agents
+are cheap to scale, so other work may carry on in the background; what is scarce is his time and
+attention, so nothing off this path may ask for either.
+
+**On the path, in order. Only these may ask for Nick's time.**
+
+1. The three live sessions with Nick in [the M2 runbook](m2-runbook.md): a manual login, the
+   checkout-path recording, and the first automated login. Nothing has touched the live site while
+   logged in, and only Nick can change that.
+2. The M2 exit: a real item in his real trolley, from Claude, with the login automated.
+3. A first whole shop: Claude fills the trolley and Nick checks out in his browser.
+4. After the MVP: the checkout tool, confirmed with Touch ID. Its groundwork needs nothing from
+   Nick and is built ahead: a confirmed irreversible tool unlocks only the requests it names (C15,
+   done 2026-11-10), and the real checkout paths come from Session 2.
+
+An unsigned dev build on Nick's Mac is enough for the first three.
+
+**Kept, because strictness stays.** The two security guarantees and their tests; the rate budget
+and breaker, including keeping the budget across a restart; the one-password-submit limit; the
+audit log; adversarial review of a change to a critical path ([D71](#d71-who-reviews-agent-built-code)),
+with red-team passes narrowed to the secret filler and the order confirmation.
+
+**In the background, asking Nick nothing.** Remote mode; system notifications; uninstall and reset;
+the adapter setting for the store ([D69](#d69-which-store-the-woolworths-tools-quote)); queueing and
+pacing; the scheduled red-team rotation. Where one of these meets a decision, it takes the plan's
+recommendation, records it as an assumption, and moves on.
+
+**Waiting.** Signing, notarisation and the update feed, which need Nick present; a sleeping Mac
+([D70](#d70-a-sleeping-mac)); moving CI; the sandbox; everything from M5 on. The two weeks of real
+use that define [the MVP](#the-mvp) follow the first shop, and the acceptance criteria still stand.
+
 ## Contents
 
 1. [Where we are](#where-we-are)
@@ -260,10 +300,9 @@ against the real site with Nick present.
     `page.fetch`, `page.evaluate`, a click or a form submission. The test runs against the fake
     site's copy of the **real** checkout and payment paths recorded in M2, not only against
     paths the implementers chose. While an `irreversible` tool runs, only the `irreversible`
-    declarations that tool lists are unlocked, and only for that call. Core v2 can't meet this
-    yet: its unlock covers every `irreversible` declaration in the manifest, for page-initiated
-    requests too. C15 adds the per-tool list, and must land before any irreversible tool ships
-    ([D18](#d18-irreversible-tools-in-shipped-adapters) means none in v1). (Automated; see
+    declarations that tool lists are unlocked, and only for that call. C15 (done 2026-11-10) is that per-tool
+    list: a tool's `unlocks`, enforced at the capability API and the network layer
+    ([D18](#d18-irreversible-tools-in-shipped-adapters) still means no irreversible tool in the MVP). (Automated; see
     [gap G1](#g1-the-request-surface-only-covers-pagefetch).)
 14. The audit log verifies end to end with a CLI command, and tampering with any line makes
     verification fail. (Automated.)
@@ -504,7 +543,7 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
   in memory ([D33](#d33-breaker-defaults-and-persistence)); 3 is built except the one-submit limit
   inside a login; 4 needs the Auth0 adapter, and the runtime still writes the attempt marker on the
   silent path; 5 is built; 6 has the stores but not the diff; 7 asks before `run()` and renders
-  `ctx.confirm()` from a structured action (C4, core v5) but has no scoped unlock (C15); 8 is not started.
+  `ctx.confirm()` from a structured action (C4, core v5), with the unlock scoped to the tool (C15); 8 is not started.
 - Next:
   1. Tool-call orchestration: adapter lock, rate budget, `session.ensure()`, auth-on-demand,
      retry-once after re-login, output validation against the tool's zod output schema, output
@@ -1030,7 +1069,9 @@ Status in core v2:
 - **C8, not needed as written** (see the status above G1). Its host-scoped telemetry list
   returns in reduced form as C17, if [D58](#d58-page-initiated-traffic) agrees.
 - **C9, done** (after core v5): `destructive` and `idempotent` on `write` tool declarations, `toolHints()`, and the MCP annotations derived from them.
-- **C15 to C20, new** from the review of the round-2 docs; all open.
+- **C15, done** (2026-11-10): `unlocks` on irreversible tool declarations, carried in the run's
+  policy; see the security model's "Irreversible actions".
+- **C16 to C20, new** from the review of the round-2 docs; all open.
 
 ### Changes to the other docs
 

@@ -23,6 +23,7 @@ const irreversible = defineAdapter({
         title: 'Place order',
         description: 'Places the order in the trolley and pays with the saved card.',
         sideEffect: 'irreversible',
+        unlocks: [{ method: 'POST', path: '/api/checkout/place' }],
       },
     ],
   },

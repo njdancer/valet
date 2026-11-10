@@ -428,7 +428,13 @@ describe('egress', () => {
         ...manifest.requests,
         { method: 'GET' as const, path: '/checkout/confirm', purpose: 'irreversible' as const },
       ],
-      tools: [{ ...manifest.tools[0]!, sideEffect: 'irreversible' as const }],
+      tools: [
+        {
+          ...manifest.tools[0]!,
+          sideEffect: 'irreversible' as const,
+          unlocks: [{ method: 'GET' as const, path: '/checkout/confirm' }],
+        },
+      ],
     }
     const { host, page } = fixture(
       defineAdapter({
@@ -444,6 +450,42 @@ describe('egress', () => {
     )
     expect(await host.call(call)).toMatchObject({ status: 'ok' })
     expect(page.gotos).toEqual([`${HOME}/checkout/confirm`])
+  })
+
+  it('blocks an irreversible tool from an irreversible request it does not name (C15)', async () => {
+    const twoIrreversible = {
+      ...manifest,
+      requests: [
+        ...manifest.requests,
+        { method: 'GET' as const, path: '/checkout/confirm', purpose: 'irreversible' as const },
+      ],
+      tools: [
+        {
+          ...manifest.tools[0]!,
+          sideEffect: 'irreversible' as const,
+          unlocks: [{ method: 'GET' as const, path: '/checkout/confirm' }],
+        },
+      ],
+    }
+    const { host, page } = fixture(
+      defineAdapter({
+        manifest: twoIrreversible,
+        tools: {
+          run_test: tool({
+            input: z.object({}),
+            output: z.unknown(),
+            // Declared irreversible, but this tool names only the confirm page.
+            run: (ctx) => ctx.page.fetch('/api/checkout/place', { method: 'POST', json: {} }),
+          }),
+        },
+      }),
+    )
+    expect(await host.call(call)).toEqual({
+      status: 'failed',
+      stage: 'request-surface',
+      errorClass: 'denied-path',
+    })
+    expect(page.toolFetches()).toEqual([])
   })
 
   it('still blocks a write tool from a denied path declared as an irreversible GET', async () => {

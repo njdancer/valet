@@ -180,6 +180,14 @@ export function purposeAllowed(purpose: Purpose, max: Purpose, irreversibleUnloc
   return purpose !== 'irreversible' || irreversibleUnlocked
 }
 
+/** Whether the run's unlock list names this declaration: same method, same path as declared (C15). */
+function namedIn(
+  unlocks: ToolRunPolicy['unlocks'],
+  declaration: { readonly method: string; readonly path: string },
+): boolean {
+  return (unlocks ?? []).some((u) => u.method === declaration.method && u.path === declaration.path)
+}
+
 /**
  * The tool partition's decision for one request, before the budgets. `egress` is the driver's own
  * egress list: a run's policy can narrow it, never widen it. `declared` is the manifest's whole
@@ -212,7 +220,9 @@ export function decideToolRequest(
   const method = request.method.toUpperCase()
   const surface = decideRequest(method, https.href, policy.egress, policy.requests)
   const usable =
-    surface.allowed && purposeAllowed(surface.declaration.purpose, policy.maxPurpose, irreversibleUnlocked)
+    surface.allowed &&
+    purposeAllowed(surface.declaration.purpose, policy.maxPurpose, irreversibleUnlocked) &&
+    (surface.declaration.purpose !== 'irreversible' || namedIn(policy.unlocks, surface.declaration))
   const byKind = isApiCall(request)
   // Checkout, payment and payee pages are refused as navigations and assets too, unless an
   // irreversible declaration covers them and the person unlocked this run.

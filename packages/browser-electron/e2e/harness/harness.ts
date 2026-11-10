@@ -250,7 +250,14 @@ async function setup() {
   /** Starts a run with the manifest's own egress and surface, reporting into `blocked`. */
   const begin = (maxPurpose: Purpose = 'read', ceiling = 5) =>
     driver.beginRun(
-      { egress: siteManifest.egress, requests: siteManifest.requests, maxPurpose, ceiling },
+      {
+        egress: siteManifest.egress,
+        requests: siteManifest.requests,
+        maxPurpose,
+        ceiling,
+        // As a tool naming the one irreversible declaration would have it (C15).
+        unlocks: [{ method: 'POST', path: '/checkout/place' }],
+      },
       (b) => blocked.push(b),
     )
   const login = site.url('site.test', '/login')

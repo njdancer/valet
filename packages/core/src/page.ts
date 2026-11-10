@@ -181,6 +181,12 @@ export interface ToolRunPolicy {
    * declarations stay refused until unlockIrreversible().
    */
   readonly maxPurpose: Purpose
+  /**
+   * The irreversible declarations, by method and path as declared, that unlockIrreversible() makes
+   * usable in this run: the ones the tool names (C15). Any other irreversible declaration stays
+   * refused whatever the person approved. Absent means none.
+   */
+  readonly unlocks?: readonly { readonly method: string; readonly path: string }[]
   /** Navigations and API calls this run may make; static resources don't count. */
   readonly ceiling: number
 }
