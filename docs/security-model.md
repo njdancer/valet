@@ -577,7 +577,8 @@ boundary.
   byte-by-byte comparison to time. A session answers only the client whose token opened it.
   "Reset access" replaces one client's token and ends its sessions; revoking withdraws it and
   deletes its file. No other client is touched. Bodies over 1 MiB are refused; at most 32 sessions
-  are kept.
+  are kept, and when there are more, the client holding the most loses its least recently used one,
+  so a client that opens sessions without end can't close another client's or stop its running call.
 - Each client's stdio bridge reads the endpoint URL and that client's token from its own config
   file, which must be mode 0600, owned by the person, and name `http://127.0.0.1:<port>/mcp`, so an
   edited file can't send the token elsewhere.

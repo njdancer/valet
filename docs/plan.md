@@ -837,7 +837,7 @@ Likelihood and impact are High, Medium or Low.
 | R10 | **Full Disk Access is broad.** Granting it to the whole app hands every adapter's host process access to Mail, Safari history and the rest.                                                                                                                            | M                    | H   | A tiny signed helper with FDA that only answers OTP queries ([D8](#d8-full-disk-access-for-messages)).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Low with the helper.                                                                                                                                                                                                                                                                                                         |
 | R11 | **Lockouts.** A login bug burns attempts and locks Nick's Woolworths account.                                                                                                                                                                                          | M                    | M   | Attempt marker; `ambiguous` counts as a failure; at most one automated password submit before `needsUser`, enforced by the runtime rather than the manifest, and in place before the first live automated login. The silent Auth0 redirect submits nothing, so it consumes no attempt; if it loops or lands somewhere unexpected, the flow ends in `needsUser`, not a password retry.                                                                                                                                                                                                                                                                                                                            | Low. Lockouts are the main per-account risk ([D5](#d5-which-woolworths-account)).                                                                                                                                                                                                                                            |
 | R12 | **Signing and Keychain identity churn.** A bundle ID or Team ID change after launch orphans Keychain items and FDA grants.                                                                                                                                             | M                    | M   | Decide the name before the first signed build ([D1](#d1-product-name)).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Low.                                                                                                                                                                                                                                                                                                                         |
-| R13 | **Agent-built code nobody fully read.** Much of this is built overnight by agents in parallel.                                                                                                                                                                         | M                    | H   | Small commits; the security suites as the acceptance bar; Nick reviews `core`, the guards and the filler line by line; an independent review pass before M8.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Medium.                                                                                                                                                                                                                                                                                                                      |
+| R13 | **Agent-built code nobody fully read.** Much of this is built overnight by agents in parallel.                                                                                                                                                                         | M                    | H   | Small commits; the security suites as the acceptance bar; scheduled adversarial review of the critical paths and red-team agents that try to break the two guarantees ([D71](#d71-who-reviews-agent-built-code), answered: Nick doesn't read it line by line); an independent review pass before M8.                                                                                                                                                                                                                                                                                                                                                                                                             | Medium.                                                                                                                                                                                                                                                                                                                      |
 | R14 | **Market.** Few people want to run a local Electron app to give agents site access; the relay doesn't sell.                                                                                                                                                            | M                    | L   | Personal use pays off regardless. Waitlist before building the relay.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Accepted.                                                                                                                                                                                                                                                                                                                    |
 | R15 | **Anthropic terms for the authoring agent.** Offering claude.ai login in a third-party product isn't allowed without approval.                                                                                                                                         | M                    | M   | API keys, or the MCP-inverted route ([D13](#d13-authoring-agent-model-access)).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | Low.                                                                                                                                                                                                                                                                                                                         |
 | R16 | **MCP and Electron churn.** Spec revisions, SDK major versions, Electron's eight-week cadence.                                                                                                                                                                         | H                    | L   | Pinned versions; a maintenance pass per Electron major; the update feed means users get fixes. The UA's Chromium major is read at runtime, so it tracks Electron upgrades without a code change.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Low.                                                                                                                                                                                                                                                                                                                         |
@@ -1103,7 +1103,8 @@ decided by core v2).
 D31 to D54 are the questions round 1 raised. Each has options and a recommendation; none blocks
 round 2. D55 to D59 came out of the review of the round-2 docs; D55 and D58 block M2's live work.
 D60 to D65 came out of round 3 (the desktop app, the auth probe, packaging); D60 and D61 block
-the first signed build. D66 to D68 came out of round 4; none blocks anything yet.
+the first signed build. D66 to D68 came out of round 4; none blocks anything yet. D69 to D71 came out of the whole-project
+review of 2026-11-10; Nick has answered all three.
 
 ### D1. Product name
 
@@ -2291,6 +2292,60 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ---
 
+### D69. Which store the Woolworths tools quote
+
+- **Answered 2026-11-10 (Nick):** the store belongs to the adapter. The Woolworths adapter should
+  declare that it needs a default store, know how to list the stores to choose from, and the app
+  should show that list so the person picks one.
+- Today: nothing sets or reads the store. Woolworths prices, specials and availability follow the
+  delivery address or pick-up store, and Valet's browser profile is a new device to the site, so
+  the tools may quote a different shelf from the one Nick sees in Chrome
+  ([finding](findings/2026-11-10-whole-project-review.md)).
+- What it needs: a manifest form for adapter settings the person fills in (here one, `store`, with
+  a declared way to list its options, most likely a `read` request), a place in setup and on the
+  adapter's page to choose it, the choice kept with the grants (keyed to the adapter, and shown
+  again when the adapter changes), and the adapter applying it to the session before a tool runs.
+  It is a core contract change, and the approval diff must show a new or changed setting.
+- Not known until a live session: which request sets the store for a session, which lists stores,
+  and whether a logged-in session already carries the account's own address. Session 3 of the
+  [M2 runbook](m2-runbook.md) checks the last one. Build the framework part against the fake first.
+- Blocks: trusting prices and availability in M3's two weeks of use.
+
+### D70. A sleeping Mac
+
+- **Answered 2026-11-10 (Nick):** let the Mac sleep for now; keep it under consideration.
+- Today: a sleeping Mac runs nothing. A local client is asleep with it; a cloud agent using remote
+  mode gets no answer and can't tell why. AC8 covers a locked Mac, not a sleeping one.
+- Options kept open: hold the Mac awake on mains power while remote access is on
+  (`powerSaveBlocker`), with a setting; or have the tunnel or relay answer for a sleeping Mac with a
+  fixed "the Mac is asleep" error, as [relay.md](relay.md) already plans for the relay.
+- Revisit when remote mode has a real client.
+
+### D71. Who reviews agent-built code
+
+- **Answered 2026-11-10 (Nick):** not him, line by line. "Assume you're on your own." He may review
+  important parts when he chooses. The project needs strategies for periodic adversarial review of
+  critical features, and red-team agents that try to compromise the system.
+- This replaces R13's old mitigation, which had him read `core`, the guards and the secret filler,
+  and which the merge-without-review rule (2026-11-07) had already made untrue.
+- What stands in for it:
+  - **The critical paths, named.** The secret filler and its pre-fill checks (`auth-flow`), the
+    resolver and grant store (`credentials`), the request filter and partitions
+    (`browser-electron`), redaction and the audit chain (`runtime`), the endpoint's auth and
+    result shaping (`mcp-server`), IPC and the updater (`apps/desktop`), and the manifest parser
+    and permission diff (`core`, desktop).
+  - **Adversarial review on change.** A PR that touches a critical path gets a second agent that
+    didn't write it, briefed to find a way to break the security model's guarantees, before merge.
+  - **Red-team passes on a schedule.** Agents in attacker roles (a hostile adapter, a hostile page,
+    a hostile MCP client, a hostile local process, a hostile update feed) try to get a canary secret
+    out or an undeclared request sent, against the fake site only. Every success becomes a failing
+    test first, then a fix. Findings are kept in `docs/findings/`.
+  - **An independent pass before M8**, as R13 already says.
+- The brief the agents work from, the attacker roles and the record of each pass are in
+  [red-team.md](red-team.md). The first pass (a hostile MCP client) ran on 2026-11-10.
+- Open: how often the scheduled pass runs, and whether a path-based CI check should refuse to merge
+  a critical-path change without the adversarial review's sign-off.
+
 ## What Nick has to do in person
 
 Collected from the above, so tomorrow's review can schedule it.
@@ -2299,7 +2354,9 @@ Collected from the above, so tomorrow's review can schedule it.
    knows: is MFA on his Woolworths account, and which kind?), D5, D6, D8, D18, D24 and D28. Look
    through the [mockups](mockups/index.html) while doing it. Then the round-1 decisions that block
    M2 and M3: D32, D35, D38 and D41.
-2. Review `core` and the overnight branches' guards and secret filler line by line (R13).
+2. ~~Review `core` and the overnight branches' guards and secret filler line by line (R13).~~
+   Not his job ([D71](#d71-who-reviews-agent-built-code), 2026-11-10): adversarial review and red-team
+   agents replace it. He may read important parts when he chooses.
 3. Run spike 1, with the clean Chrome UA: log in by hand in the spike window, close it, read the
    result (~15 minutes).
 4. A session to confirm the rest of the Auth0 flow (password page, MFA, the silent redirect), the

@@ -8,7 +8,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { toReportable, ValetError } from '@valet/core'
-import { type Authenticate, type AuthResult, type ClientIdentity, sameIdentity } from './auth'
+import { type Authenticate, type AuthResult, type ClientIdentity, identityLabel, sameIdentity } from './auth'
 import { clientLabel, createMcpServer, type ServerInfo, type ValetMcpServer } from './server'
 import type { ClientTransport, ToolCaller } from './tool-caller'
 import { planTools, type SkippedTool, type ToolPlan } from './tool-names'
@@ -35,7 +35,10 @@ export interface HttpServerOptions {
   readonly newSessionId?: () => string
   /** How often a running call reports progress to a client that asked. See ServerOptions. */
   readonly progressIntervalMs?: number
-  /** Sessions kept at once. Beyond it, the least recently used session is closed. */
+  /**
+   * Sessions kept at once. Beyond it, a session of the client holding the most is closed, its least
+   * recently used first.
+   */
   readonly maxSessions?: number
   /**
    * Called with the live sessions whenever one opens, finishes initializing, or closes. Must not
@@ -114,6 +117,24 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
     }
   }
 
+  /**
+   * The session to close when there are too many: the least recently used one of the client that
+   * holds the most. A client that opens sessions without end spends its own, and can't end another
+   * client's session, or the call running in it.
+   */
+  const evictable = (): string => {
+    const held = new Map<string, number>()
+    for (const { identity } of sessions.values()) {
+      held.set(identityLabel(identity), (held.get(identityLabel(identity)) ?? 0) + 1)
+    }
+    const most = Math.max(...held.values())
+    for (const [id, { identity }] of sessions) {
+      if (held.get(identityLabel(identity)) === most) return id
+    }
+    /* v8 ignore next -- only called with a session open, and some client holds the most */
+    return sessions.keys().next().value as string
+  }
+
   const closeSession = (id: string): Promise<void> => {
     const session = sessions.get(id)
     sessions.delete(id)
@@ -139,10 +160,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
       maxRequestBodySize: MAX_BODY_BYTES,
       onsessioninitialized: (id) => {
         sessions.set(id, { endpoint, transport, via, identity })
-        for (const oldest of sessions.keys()) {
-          if (sessions.size <= maxSessions) break
-          void closeSession(oldest)
-        }
+        while (sessions.size > maxSessions) void closeSession(evictable())
         changed()
       },
     })
