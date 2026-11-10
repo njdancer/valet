@@ -13,6 +13,7 @@ import {
   CONTROL,
   callTool,
   changedAdapterBuild,
+  clickClosing,
   connectMcp,
   type Launched,
   launch,
@@ -172,7 +173,7 @@ test('a changed bundle under review, and its irreversible tool’s confirmation'
   const panel = await windowWithTitle(launched.app, 'Valet: confirm', 60_000)
   await expect(panel.getByRole('button', { name: 'Approve Remove from cart' })).toBeEnabled()
   await shot(panel, 'confirm-irreversible', 460, 620)
-  await panel.getByRole('button', { name: 'Decline' }).click()
+  await clickClosing(panel.getByRole('button', { name: 'Decline' }))
   expect((await call).text).toMatch(/declined/)
 })
 

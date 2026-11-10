@@ -65,6 +65,8 @@ export class PageCore {
   private readonly commitsByNode = new Map<string, number>()
   private unplacedCommits = 0
   private readonly mainFrameUrls: string[] = []
+  /** Called on every commit, for waits that must stop once a frame navigates. */
+  private readonly commitWaiters = new Set<() => void>()
 
   constructor(
     readonly surface: BrowserSurface,
@@ -75,6 +77,7 @@ export class PageCore {
         this.commits++
         if (event.frameNodeId === null) this.unplacedCommits++
         else this.commitsByNode.set(event.frameNodeId, (this.commitsByNode.get(event.frameNodeId) ?? 0) + 1)
+        for (const waiter of [...this.commitWaiters]) waiter()
       }
       if (event.isMainFrame) this.mainFrameUrls.push(event.url)
     })
@@ -255,10 +258,34 @@ export class PageCore {
       return frame
     }
     const frame = inFrame()
-    const focused = parseFocus(await runQuietly(frame, focusedScript(target.selector)))?.focused === true
+    const answer = await this.unlessMoved(mark, () => runQuietly(frame, focusedScript(target.selector)))
+    if (answer === MOVED) throw fail(guard.moved)
+    const focused = parseFocus(answer)?.focused === true
     live()
     inFrame()
     if (!focused) throw fail(guard.moved)
+  }
+
+  /**
+   * Runs `work`, but gives up on it with MOVED the moment a frame that matters commits a
+   * navigation (see movedSince). Electron's WebFrameMain.executeJavaScript can stay pending for
+   * good when the frame's document is replaced while the script waits, so without this a navigation
+   * mid-type would surface as the step's timeout rather than as the target moving.
+   */
+  private async unlessMoved<T>(mark: CommitMark, work: () => Promise<T>): Promise<T | typeof MOVED> {
+    let stop = (): void => undefined
+    const moved = new Promise<typeof MOVED>((resolve) => {
+      stop = () => {
+        if (this.movedSince(mark)) resolve(MOVED)
+      }
+    })
+    this.commitWaiters.add(stop)
+    try {
+      if (this.movedSince(mark)) return MOVED
+      return await Promise.race([work(), moved])
+    } finally {
+      this.commitWaiters.delete(stop)
+    }
   }
 
   private movedSince(mark: CommitMark): boolean {
@@ -299,6 +326,9 @@ export class PageCore {
     this.surface.sendChar(char, this.timing.keyEvents ?? 'char')
   }
 }
+
+/** What unlessMoved() answers instead of the work's result once the target has moved. */
+const MOVED: unique symbol = Symbol('moved')
 
 /** Throws once the step has been given up on, so nothing more is sent to the page. */
 function assertLive(stage: Stage, signal: AbortSignal): void {

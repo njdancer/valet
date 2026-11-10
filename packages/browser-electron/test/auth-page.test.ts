@@ -853,6 +853,19 @@ describe('AuthPage.type', () => {
     expect(surface.chars).toEqual(['h', 'u'])
   })
 
+  it('stops with origin-mismatch, not a timeout, when the frame commits while its focus check hangs', async () => {
+    const { timers, surface, page, child } = await focusedOn('#password')
+    surface.afterChar = (index) => {
+      if (index !== 1) return
+      // The next check's script never answers, as Electron's doesn't for a document being replaced.
+      child.hang = true
+      child.onHang = () => surface.commit('https://login.example.com/frame', false, child.nodeId)
+    }
+    const error = await timers.settle(rejection(page.type(SecretValue.fromString('hunter2'), GRANT)))
+    expect(error).toMatchObject({ stage: 'secret-fill', errorClass: 'origin-mismatch' })
+    expect(surface.chars).toEqual(['h', 'u'])
+  })
+
   it('types a secret on when an unrelated iframe elsewhere on the page reloads partway', async () => {
     const { timers, surface, page, main, child } = await focusedOn('#password')
     const recaptcha = new FakeFrame('https://www.example.com', 'https://www.example.com/recaptcha', 0)

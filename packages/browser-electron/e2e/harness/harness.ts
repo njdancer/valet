@@ -67,6 +67,27 @@ async function until<T>(read: () => T | undefined, ms = 5000): Promise<T | undef
   }
 }
 
+type ScriptTarget = { executeJavaScript(code: string): Promise<unknown> }
+
+/**
+ * The field's value length once it holds `length` characters, or whatever it holds after 5 s. For
+ * the same reason as settledKeydowns: a read straight after type() can race the last keystroke.
+ */
+async function lengthOnce(
+  frame: ScriptTarget | undefined,
+  selector: string,
+  length: number,
+): Promise<unknown> {
+  const read = `document.querySelector(${JSON.stringify(selector)}).value.length`
+  const deadline = Date.now() + 5000
+  for (;;) {
+    const value = await frame?.executeJavaScript(read)
+    if (frame === undefined || (typeof value === 'number' && value >= length) || Date.now() > deadline)
+      return value
+    await sleep(50)
+  }
+}
+
 function manifest(site: TestSite, id = 'e2e'): AdapterManifest {
   return parseManifest({
     schemaVersion: 1,
@@ -382,7 +403,7 @@ async function setup() {
       secret.dispose()
       const reloaded = reloadedAt !== null && reloadedAt <= typedAt
       const frame = subframeWithOrigin(login, site.url('site.test'))
-      const typedLength = await frame?.executeJavaScript(`document.querySelector('#code').value.length`)
+      const typedLength = await lengthOnce(frame, '#code', value.length)
       await page.close()
       return {
         typed,

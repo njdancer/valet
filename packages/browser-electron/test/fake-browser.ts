@@ -34,6 +34,12 @@ export class FakeFrame implements FrameHandle {
   /** What ran in the adapter's world rather than the runtime's. */
   readonly adapterScripts: string[] = []
   fail = false
+  /**
+   * Plays Electron's executeJavaScript on a frame whose document is being replaced: the script
+   * never answers. `onHang` runs once the script is sent, so a test can commit the navigation then.
+   */
+  hang = false
+  onHang: (() => void) | null = null
   /** False plays an out-of-process iframe, which trusted input can't reach. */
   receivesInput = true
 
@@ -46,6 +52,10 @@ export class FakeFrame implements FrameHandle {
 
   async run(code: string): Promise<unknown> {
     this.scripts.push(code)
+    if (this.hang) {
+      this.onHang?.()
+      return new Promise(() => undefined)
+    }
     if (this.fail) throw new Error('Script failed to execute: frame detached')
     return this.window.run(code)
   }
