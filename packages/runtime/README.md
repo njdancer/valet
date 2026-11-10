@@ -406,6 +406,18 @@ Logins are rationed:
 
 Concurrent `ensure()`s from one call share one login.
 
+**A login doesn't keep the caller (D50, answered 2026-11-10).** When a call's `ensure()` starts a
+login that is still running after `loginAnswerMs` (5 s), the call ends `logging-in` with a time to
+call again (30 s), audited as `failed login/login-in-progress`. From then on tool code gets nothing
+back and every capability refuses: the tool did nothing but find the session logged out, so making
+the call again repeats nothing. The login alone runs on, under the adapter's lock and the driver's
+run, for up to `loginTimeoutMs` (5 min) before it is stopped; a caller that goes away after its
+answer doesn't stop it. Calls that arrive meanwhile wait their turn as usual and may end `busy`.
+How the login ended, when it wasn't ok, is kept for ten minutes and given to the next call's first
+`ensure()` once, so the reason (a missing grant, a CAPTCHA) reaches a caller; after that the hold
+the login left answers. A login that finishes inside the 5 s completes within its call as before.
+An irreversible tool answered this way is asked about again on the next call.
+
 ## Redaction
 
 Output, and every `request-blocked` target, is checked against:

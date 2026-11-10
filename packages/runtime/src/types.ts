@@ -151,6 +151,12 @@ export type ToolCallResult =
    * `retryAfterMs` an estimate of when a new call would get its turn.
    */
   | { readonly status: 'busy'; readonly retryAfterMs: number; readonly ahead: number }
+  /**
+   * The call found the session logged out and started a login, which is still running in the
+   * background (D50). The tool did nothing else, and will do nothing more: make the call again
+   * after about `retryAfterMs`. If the login then needs the person, that call says so.
+   */
+  | { readonly status: 'logging-in'; readonly retryAfterMs: number }
   | { readonly status: 'declined' }
 
 export interface ToolCallRequest {

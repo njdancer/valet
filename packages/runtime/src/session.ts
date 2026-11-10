@@ -93,9 +93,16 @@ export interface EnsureCall {
    * manifest's probe sets trustSeconds. The tool host says yes for write tools only.
    */
   readonly mayTrust?: boolean
+  /**
+   * Called once, when this call is about to run a login: the probe said logged out and nothing
+   * holds the login back. The tool host uses it to answer the caller early (D50). Must not throw.
+   */
+  readonly loginStarting?: () => void
 }
 
 const OK: EnsureResult = { status: 'ok' }
+/** How long the outcome of a login nobody was waiting for is kept for the next call. */
+const UNDELIVERED_MS = 10 * 60_000
 
 /**
  * What a classified login leaves in the marker store. `restore` puts back what was there before
@@ -119,12 +126,23 @@ export class SessionGate {
   private session = new SecretRedactionSet()
   /** When the probe last answered "logged in", until anything suggests the session changed. */
   private confirmedAt: number | null = null
+  private undelivered: { readonly outcome: EnsureResult; readonly at: number } | null = null
 
   constructor(private readonly options: SessionGateOptions) {}
 
   /** Clones of the secrets the latest successful login registered; replaced by the next one. */
   get secrets(): SecretRedactionSet {
     return this.session
+  }
+
+  /**
+   * Keeps the outcome of a login whose call had already been answered (D50), for the next call's
+   * first ensure() to get in its place, once: otherwise why the login failed would reach nobody,
+   * and the next call would only see the hold it left. Null, or ten minutes, drops it.
+   */
+  leave(outcome: EnsureResult | null): void {
+    this.undelivered =
+      outcome === null || outcome.status === 'ok' ? null : { outcome, at: this.options.clock.now() }
   }
 
   /** Forgets the last "logged in" answer, so the next ensure() probes. */
@@ -170,6 +188,12 @@ export class SessionGate {
     // A second ensure() in one call means the tool met a logged-out answer: that one always probes.
     const first = call.login.asked !== true
     call.login.asked = true
+    const left = this.undelivered
+    this.undelivered = null
+    if (first && left !== null) {
+      const age = this.options.clock.now() - left.at
+      if (age >= 0 && age < UNDELIVERED_MS) return left.outcome
+    }
     if (first && earlier === null && this.trusted(call)) return OK
     const before = await this.probe(call)
     if (before !== false) return before === true ? OK : before
@@ -194,6 +218,7 @@ export class SessionGate {
     }
     // Recorded before the login runs, so nothing in this call can start a second one.
     call.login.outcome = failed('login', 'login-in-progress')
+    call.loginStarting?.()
     const outcome = await this.login(call, failures)
     call.login.outcome = outcome
     return outcome

@@ -22,12 +22,23 @@ export class CallState {
   /** The last ensure() result when it was not ok; a tool that then throws reports this instead. */
   ensureOutcome: Exclude<EnsureResult, { status: 'ok' }> | null = null
   /** At most one login per call; the session gate records it here. */
-  readonly login: CallLogin = { outcome: null }
+  readonly attempt: CallLogin = { outcome: null }
   /** Every session value (cookie or handed-off storage) seen during the call, old and new. */
   readonly sessionValues = new Set<string>()
   /** Request-blocked events already recorded for this call, so a chatty page can't flood the log. */
   readonly reportedBlocks = new Set<string>()
   private readonly work = new Set<Promise<unknown>>()
+  /**
+   * What ensure() runs under, apart from the call's own signal: once the caller has been answered
+   * early (D50), the call is over for tool code but its login goes on until this aborts.
+   */
+  readonly login = new AbortController()
+  /** A login this call started is still running. */
+  loggingIn = false
+  /** The caller was answered while the login ran on. Tool code may do nothing more. */
+  detached = false
+  /** Set by the tool host: told when this call's login starts. */
+  onLoginStarting: (() => void) | null = null
 
   /** `secrets` gives the latest login's secrets as they are now: a login during the call replaces them. */
   constructor(
@@ -53,7 +64,7 @@ export class CallState {
 
   /** Throws if the call may no longer act: it was aborted, blocked by the site, or broke a guard. */
   assertLive(): void {
-    if (this.signal.aborted) throw new ValetError('tool-run', 'aborted')
+    if (this.signal.aborted || this.detached) throw new ValetError('tool-run', 'aborted')
     if (this.blocked) throw breakerRefusal()
     if (this.violation !== null) throw this.violation
   }

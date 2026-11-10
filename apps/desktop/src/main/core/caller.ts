@@ -128,6 +128,14 @@ export function outcomeOf(result: ToolCallResult): CallOutcome {
         retryAfterMs: result.retryAfterMs,
         ahead: result.ahead,
       }
+    case 'logging-in':
+      // A wait the client can sit out, with the login as the cause.
+      return {
+        status: 'blocked',
+        stage: 'login',
+        errorClass: 'login-in-progress',
+        retryAfterMs: result.retryAfterMs,
+      }
     case 'declined':
       return { status: 'declined' }
   }

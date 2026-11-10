@@ -32,8 +32,8 @@ export const VAULT = 'Valet'
 export const ONEPASSWORD_TEAM_ID = '2BUA8C4S2C'
 
 /**
- * How long the person has to answer a confirmation before it counts as declined. D50 recommends
- * two minutes, below the clients' own tool-call timeouts; the runtime's default is five.
+ * How long the person has to answer a confirmation before it counts as declined. Two minutes
+ * (D19 and D50, answered 2026-11-10), which is the runtime's default too.
  */
 export const CONFIRMATION_TIMEOUT_MS = 2 * 60_000
 
