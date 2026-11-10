@@ -146,7 +146,10 @@ export class Notifier {
    * once none is waiting. It says nothing a client chose: not its name, not even its host.
    */
   remoteConsent(pending: number): void {
-    if (pending === 0) return this.takeDown('remote-consent')
+    if (pending === 0) {
+      this.takeDown('remote-consent')
+      return
+    }
     this.put({
       key: 'remote-consent',
       title:
