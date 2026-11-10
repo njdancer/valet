@@ -174,6 +174,15 @@ export const probeSchema = z.discriminatedUnion('kind', [
       jsonPath: z.string().min(1).max(200).optional(),
       /** When set, the value at jsonPath must equal this. Otherwise it must be present and truthy. */
       equals: z.union([z.string(), z.number(), z.boolean()]).optional(),
+      /**
+       * How long a "logged in" answer may stand in for the next probe, for `write` tools only and
+       * only for a call's first session.ensure(). Unset or 0: every ensure() probes. A read tool
+       * and an irreversible tool always probe, so nothing the person is shown and nothing that
+       * can't be undone rests on an old answer. The cost of setting it: a session that ends inside
+       * the window is not noticed until the window closes, and a write sent meanwhile goes wherever
+       * the site sends a logged-out visitor's.
+       */
+      trustSeconds: z.number().int().min(0).max(300).optional(),
     })
     .strict(),
   z.object({ kind: z.literal('cookie'), name: z.string().min(1).max(200) }).strict(),
@@ -283,6 +292,18 @@ export const manifestSchema = z
             method: requestMethod,
             path: sitePath(300),
             purpose: purposeSchema,
+            /**
+             * `read` only: how long the runtime may answer this request again from the session's
+             * read cache (D28) instead of asking the site. The cache is dropped at any login and
+             * at any write.
+             */
+            cacheSeconds: z.number().int().min(1).max(3600).optional(),
+            /**
+             * `write` only: the path of a declared, cached GET read whose answer this write's own
+             * response is (D28: a trolley update answers with the trolley). A 2xx JSON response
+             * becomes that read's cached answer.
+             */
+            refreshes: sitePath(300).optional(),
           })
           .strict(),
       )
@@ -315,6 +336,31 @@ export const manifestSchema = z
         }
       }
     }
+    for (const request of manifest.requests) {
+      const label = `${request.method} ${request.path}`
+      // Only a read may be answered from a cache, and only a write's response may fill one. An
+      // irreversible request is never cached, never fills the cache and is never replayed.
+      if (request.cacheSeconds !== undefined && request.purpose !== 'read') {
+        ctx.addIssue({ code: 'custom', message: `${label}: only a read request may set cacheSeconds` })
+      }
+      if (request.refreshes === undefined) continue
+      if (request.purpose !== 'write') {
+        ctx.addIssue({ code: 'custom', message: `${label}: only a write request may set refreshes` })
+        continue
+      }
+      const target = manifest.requests.find((r) => r.method === 'GET' && r.path === request.refreshes)
+      if (
+        target === undefined ||
+        target.purpose !== 'read' ||
+        target.cacheSeconds === undefined ||
+        !isLiteralPath(target.path)
+      ) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `${label}: refreshes must name a declared GET read with cacheSeconds and no ":param" or "*"`,
+        })
+      }
+    }
     if (Object.hasOwn(manifest.secrets, MESSAGES_SECRET)) {
       ctx.addIssue({ code: 'custom', message: `secret name ${MESSAGES_SECRET} is reserved` })
     }
@@ -340,6 +386,11 @@ export const manifestSchema = z
       }
     }
   })
+
+/** A declared path with no ":param" or "*" segment and no query: it names exactly one URL. */
+function isLiteralPath(path: string): boolean {
+  return !path.includes('?') && path.split('/').every((part) => !part.startsWith(':') && part !== '*')
+}
 
 export type AdapterManifest = z.infer<typeof manifestSchema>
 export type ManifestInput = z.input<typeof manifestSchema>

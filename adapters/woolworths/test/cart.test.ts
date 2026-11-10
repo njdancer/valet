@@ -13,6 +13,12 @@ describe('get_cart', () => {
     expect(ctx.events).toEqual(['ensure', 'GET /apis/ui/Trolley'])
   })
 
+  it('always asks the site, never the runtime’s read cache: it is the tool a cart is checked with', async () => {
+    const ctx = new FakeToolContext().on('GET', TROLLEY, json(loadFixture('trolley-two-items.json')))
+    await getCart.run(ctx, {})
+    expect(ctx.fetches.map((f) => f.reload)).toEqual([true])
+  })
+
   it('maps items, line totals and totals', async () => {
     const ctx = new FakeToolContext().on('GET', TROLLEY, json(loadFixture('trolley-two-items.json')))
     const cart = await getCart.run(ctx, {})
@@ -353,6 +359,48 @@ describe('add_to_cart', () => {
       .catch((e: unknown) => e)
     expect(error).toEqual(new ValetError('tool-run', 'invalid'))
     expect(String(error)).not.toContain('canary-0b2e')
+  })
+
+  it('starts from the trolley the runtime has cached, when it is one this adapter can fully read', async () => {
+    const cached = { ...json(loadFixture('trolley-two-items.json')), fromCache: true as const }
+    const ctx = new FakeToolContext().on('GET', TROLLEY, cached).on('POST', UPDATE, json({}))
+    const result = await addToCart.run(ctx, addToCart.input.parse({ stockcode: 888137, quantity: 1 }))
+    expect(result.previousQuantity).toBe(1)
+    expect(ctx.fetches.map((f) => [f.method, f.reload])).toEqual([
+      ['GET', undefined],
+      ['POST', undefined],
+    ])
+  })
+
+  it('asks the site instead when the cached trolley is not a trolley, or has a line it cannot read', async () => {
+    const miscounted = loadFixture('trolley-two-items.json')
+    miscounted.TrolleyItemCount = 3
+    // What the cache holds after a write whose reply wasn't the trolley after all.
+    for (const stale of [{ Success: true }, miscounted]) {
+      const ctx = new FakeToolContext()
+        .on('GET', TROLLEY, (request) =>
+          request.reload === true
+            ? json(loadFixture('trolley-two-items.json'))
+            : { ...json(stale), fromCache: true as const },
+        )
+        .on('POST', UPDATE, json({}))
+      const result = await addToCart.run(ctx, addToCart.input.parse({ stockcode: 888137, quantity: 1 }))
+      expect(result.requestedQuantity).toBe(2)
+      expect(ctx.fetches.map((f) => [f.method, f.reload])).toEqual([
+        ['GET', undefined],
+        ['GET', true],
+        ['POST', undefined],
+      ])
+    }
+  })
+
+  it('does not ask twice when the site’s own fresh answer is the unreadable one', async () => {
+    const ctx = new FakeToolContext().on('GET', TROLLEY, json({ Success: true })).on('POST', UPDATE, json({}))
+    const error = await addToCart
+      .run(ctx, addToCart.input.parse({ stockcode: 888137, quantity: 1 }))
+      .catch((e: unknown) => e)
+    expect(error).toEqual(new ValetError('tool-run', 'site-changed'))
+    expect(ctx.events).toEqual(['ensure', 'GET /apis/ui/Trolley'])
   })
 
   it('makes exactly ensure, one read and one write, in that order', async () => {

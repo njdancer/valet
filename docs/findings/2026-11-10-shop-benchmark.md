@@ -11,49 +11,56 @@ virtual clock that the rate budget moves forward. The times are what pacing alon
 gap between requests ([D28](../plan.md#d28-rate-budget-defaults), answered). Network time, the
 login, and the agent's own thinking between calls come on top. The test asserts the calls, the
 requests and the time at the 10 s gap, so a change to the pacing or to what a tool sends changes
-the test and this page together. The last column is arithmetic, not a test: what the same requests
-would take with D28's jitter of 0 to 50% on the gap, which is not built (see below).
+the test and this page together.
 
 ## The numbers
 
-Thirty items, then one `get_cart` to check the result.
+Thirty items, then one `get_cart` to check the result. "Before" is the first measurement, with a
+login probe before every cart call and no read cache. "Now" is with the session read cache and the
+minute a write may rest on the last probe, both described below.
 
-| How the agent shops                                | Calls | Requests | At the 10 s gap | With D28's jitter, if built |
-| -------------------------------------------------- | ----- | -------- | --------------- | --------------------------- |
-| `search_products` then `add_to_cart` for each item | 61    | 122      | 20 min          | 25 min average, 30 at most  |
-| `add_to_cart` only, stockcodes already known       | 31    | 92       | 15 min          | 19 min average, 23 at most  |
-| `set_cart_quantity` only, stockcodes already known | 31    | 62       | 10 min          | 13 min average, 15 at most  |
+| How the agent shops                                | Calls | Requests before | Before | Requests now | Now     |
+| -------------------------------------------------- | ----- | --------------- | ------ | ------------ | ------- |
+| `search_products` then `add_to_cart` for each item | 61    | 122             | 20 min | 73           | 12 min  |
+| `add_to_cart` only, stockcodes already known       | 31    | 92              | 15 min | 39           | 6.3 min |
+| `set_cart_quantity` only, stockcodes already known | 31    | 62              | 10 min | 37           | 6 min   |
 
-What each call sends:
+What each call sends now:
 
-- `search_products`: one request.
-- `add_to_cart`: three. The login probe, a read of the trolley (the site stores absolute
-  quantities, so an add has to know what is there), and the write.
-- `set_cart_quantity` and `remove_from_cart`: two. The probe and the write.
-- `get_cart`: two. The probe and the read.
+- `search_products`: one request, or none when the same search was made in the last 15 minutes.
+- `add_to_cart`: one, the write. The trolley it starts from is read from the site once and taken
+  from the cache after that (each write's reply is the new trolley). Once a minute a write also
+  makes the login probe.
+- `set_cart_quantity` and `remove_from_cart`: one, plus the probe once a minute.
+- `get_cart`: two, always. The probe and the site's own trolley.
+
+## What was built after the first measurement
+
+1. **The session read cache D28 calls for.** The manifest says which reads may be kept and for how
+   long, and which write's reply is the new answer to which read. The runtime keeps nothing else,
+   and forgets everything at a login, at any call that doesn't end ok, and at every write.
+   D28 says "search and product detail until the session ends; the trolley until any write". Built
+   tighter than that, because the person can change the same account from their own browser:
+   search and product answers for 15 minutes, the trolley for 2 minutes.
+2. **Fewer login probes.** A third of the first measurement's requests were probes. A write tool
+   now rests on a "logged in" probe for 60 seconds. `get_cart`, any other read, and any
+   irreversible tool always probe.
+
+Neither shortens a cold call. A cart call that has to log in still probes, logs in, probes again,
+reads the trolley and writes, so the timeout problem below is unchanged.
 
 ## What it shows
 
-1. **The plan's estimate holds.** D28 expected "roughly 15–30 minutes" for a shop of about 30
-   tool calls. A search and an add for each of thirty items is 61 calls and 20 minutes, or 25 on
-   average once the jitter is built. It is a background job, not something to wait on.
-2. **A third of a cart shop's requests are login probes.** Every cart call probes first, because
-   an anonymous visitor has a trolley too and a write to it would look like a success. Thirty adds
-   make thirty probes. Trusting a probe for a short time would cut an add from three requests to
-   two, at the risk that a session ending inside that time sends one write to an anonymous
-   trolley. That is a trade for the adapter to declare in its manifest, so it was not made here.
-3. **The read cache D28 calls for is not built, and adds would gain most from it.** D28 says to
-   keep the trolley until a write, and to take the write's own answer as the new trolley. With
-   that, an add needs no read of its own: thirty adds drop from 92 requests to about 62, the
-   `set_cart_quantity` row. With a trusted probe as well, about 32 requests, near 7 minutes.
-4. **D28's hourly cap cannot hold a shop as things are.** D28 also asks for at most 60 direct
-   calls an hour and 4 a minute. Neither is built (they need new manifest limits, change request
-   C10). At 122 requests, a search-and-add shop would take over two hours under the hourly cap.
-   Either the cap is built after the cache and the probe change, or it is raised. D28 says to
-   loosen only with evidence from M2 and M3; this is the evidence to weigh then.
-5. **Fewer calls beats a shorter gap.** A saved list or past orders (`list_past_orders` is a
-   stretch goal) removes the thirty searches, which is 5 to 6 minutes, and risks nothing with the
-   site. Shortening the gap is the one change the live probe argues against.
+1. **A shop is now well inside the plan's estimate.** D28 expected "roughly 15–30 minutes". A
+   search and an add for each of thirty items is 12 minutes of pacing.
+2. **D28's hourly cap of 60 still can't hold a search-and-add shop**, at 73 requests. The cap is
+   not built yet (it needs new manifest limits, change request C10). A cap of about 90 an hour
+   would hold a shop with room for a retry or two; that choice is made with the cap.
+3. **D28's cap of 4 a minute can't land for the same reason as the jitter** (next section): it
+   stretches a cold call, which already runs close to the tool timeout.
+4. **Fewer calls beats a shorter gap.** A saved list or past orders (`list_past_orders` is a
+   stretch goal) removes the thirty searches and risks nothing with the site. Shortening the gap
+   is the one change the live probe argues against.
 
 ## The jitter was tried, and can't land yet
 
@@ -81,7 +88,23 @@ So three things are tied together, and the jitter has to wait for the first:
 
 ## Assumptions
 
-- Nick has not been asked about any of this.
+Nick has not been asked about any of this. Each of these is a choice made on his behalf that he
+can reverse:
+
+- **A write rests on the last login probe for 60 seconds.** The plan has no recommendation on
+  this. What it risks: if the session ends inside that minute (a password changed elsewhere, the
+  site expiring it), the writes of that minute go to an anonymous trolley and are reported as
+  successes, until the next probe logs in again. `get_cart` always probes and always asks the
+  site, so ending a shop with it shows what is really in the cart, and nothing irreversible ever
+  rests on an old probe. To take it back, set `PROBE_TRUST_SECONDS` to 0 in the adapter's
+  `manifest.ts`; the thirty-item shop then takes 15 minutes instead of 12.
+- **Search and product answers are reused for 15 minutes, the trolley for 2**, both shorter than
+  D28's "until the session ends" and "until any write".
+- **An add may start from a trolley up to 2 minutes old.** If the person changed that same line in
+  their own browser meanwhile, the add overwrites it, as it already could in the 10 seconds
+  between its read and its write.
 - The canned answers stand in for the site, so a tool that needs more requests against the live
-  site than against the fixtures would take longer. Session 3 of the
-  [M2 runbook](../m2-runbook.md) is where that would show.
+  site than against the fixtures would take longer. In particular the trolley update's reply is
+  assumed to be the trolley; if it isn't, the adapter notices, asks the site, and an add costs two
+  requests instead of one. Session 3 of the [M2 runbook](../m2-runbook.md) is where that would
+  show.

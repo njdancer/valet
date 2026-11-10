@@ -97,6 +97,20 @@ async function pace(site: SiteGuards, signal: AbortSignal): Promise<number> {
   return site.breaker.admit()
 }
 
+/**
+ * Whether the page is where a fetch probe would be made from: on the probe's origin, so the page's
+ * own requests carry the session's cookies.
+ */
+export function onProbeOrigin(manifest: AdapterManifest, page: ToolPage): boolean {
+  const probe = manifest.session.probe
+  if (probe.kind !== 'fetch') return false
+  try {
+    return sameOrigin(page, new URL(probe.path, manifest.home))
+  } catch {
+    return false
+  }
+}
+
 /** Whether the page is on `url`'s origin. A page whose URL can't be read or parsed isn't. */
 function sameOrigin(page: ToolPage, url: URL): boolean {
   try {

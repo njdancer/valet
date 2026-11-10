@@ -264,6 +264,31 @@ leave it out run tool code in process, with the same guards.
   refuses from then on. `request-blocked` events (initiator `tool`) carry origin and path only,
   redacted.
 
+## Session read cache
+
+D28: a tool's repeated read is answered from memory instead of from the site (`read-cache.ts`).
+What may be kept is declared in the manifest, never guessed:
+
+- A `read` request declaration with `cacheSeconds` (1 to 3600). Its 2xx JSON-object answer is kept
+  that long, keyed by method, URL and JSON body. A request that sets any header is always sent and
+  never kept.
+- A `write` declaration with `refreshes`, the path of a declared, cached GET read: the write's own
+  2xx JSON-object reply becomes that read's cached answer (a trolley update answers with the
+  trolley). The schema refuses either field on an `irreversible` request.
+
+An answer from the cache is marked `fromCache: true`, sends nothing, takes no slot of the rate
+budget and isn't counted against `requestsPerRun`. `fetch(path, { cache: 'reload' })` asks the site
+and replaces the kept answer. Each caller gets its own copy, and the call's output is redacted
+against the session values of the call that stored the answer as well as its own.
+
+The cache is one adapter's, in memory, at most 50 answers, and it is emptied whenever the session
+may have changed: at any login, at any `ensure()` that isn't ok, when a call ends any way but ok,
+at a login step the person drives, at every write (before it is sent, so a write cut off halfway
+leaves nothing stale), and at `click()` and `evaluate()`, which can change the site out of its
+sight. The wrapper sits outside the guarded page, so every request that is sent passes the guard
+unchanged, and only a request core's `decideRequest` allows and declares a read is ever answered
+from memory.
+
 ## What the driver refuses
 
 The driver reports each request it refuses to `onBlocked`. Each becomes a `request-blocked` audit
@@ -340,6 +365,16 @@ raises `breaker-state-write-failed`.
   site.
 
 No login starts while the site's breaker is open.
+
+**Resting on the last probe.** A fetch probe may set `trustSeconds` (0 to 300; unset means never).
+For that long after the probe last answered "logged in", a `write` tool's first `ensure()` in a call
+returns ok without probing. A `read` tool and an `irreversible` tool always probe: a read's whole
+worth is its answer, and nothing that can't be undone rests on an old one. The second `ensure()` in
+one call always probes too, since it means the tool met a logged-out answer. The answer is
+forgotten when a probe ends any other way, when a call ends any way but ok, at a login step the
+person drives, and at a restart; it is not used while the page is off the probe's origin. What it
+costs: a session that ends inside the window isn't noticed until the window closes, and a write sent
+meanwhile goes wherever the site sends a logged-out visitor's.
 
 Logins are rationed:
 
