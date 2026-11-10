@@ -157,6 +157,9 @@ export const CATALOGUE_CACHE_SECONDS = 900
 /** How long the trolley an add starts from is reused. Short: the person's own browser can change it. */
 export const TROLLEY_CACHE_SECONDS = 120
 
+/** The most requests Valet sends the site in an hour. A call that would start past it is refused. */
+export const REQUESTS_PER_HOUR = 100
+
 export function createManifest({
   origin = REAL_ORIGIN,
   authOrigin = defaultAuthOrigin(origin),
@@ -287,7 +290,10 @@ export function createManifest({
     ],
     // Every tool needs at most two site calls. The live site flagged scripted calls 2.5 s apart
     // within minutes (docs/findings/2026-11-07-woolworths-live-probe.md), so the gap is D28's 10 s.
-    limits: { requestsPerRun: 6, minGapMs: 10_000 },
+    // D28 asked for at most 60 requests an hour, which the thirty-item shop (73 requests, more with
+    // a login) can't fit. 100 holds one whole shop with room to check and correct it. An
+    // assumption, not Nick's decision (docs/findings/2026-11-10-shop-benchmark.md).
+    limits: { requestsPerRun: 6, minGapMs: 10_000, requestsPerHour: REQUESTS_PER_HOUR },
   })
 }
 

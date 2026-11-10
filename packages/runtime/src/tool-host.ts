@@ -7,7 +7,7 @@
 //      still approved once we hold it. A call waits its turn for a bounded time only: after that,
 //      or at once when the calls in front are too many to get through in that time, it ends busy,
 //      having sent nothing, with how many calls were ahead of it;
-//   4. the site's circuit breaker is closed;
+//   4. the site's circuit breaker is closed, and its hourly cap, if it has one, has room;
 //   5. an irreversible tool has the person's confirmation, before its run() starts;
 //   6. the driver holds the whole tool partition to this run's network policy (egress, request
 //      surface, the tool's side effect, the ceiling), and only after that confirmation unlocks the
@@ -476,6 +476,10 @@ export class ToolHost {
       // Again, because a revocation can land while this call waits for the lock.
       if (!(await this.isApproved(entry))) return failed('manifest', 'not-granted')
       if (entry.site.breaker.isOpen()) return blocked(entry.site)
+      // The site's hourly cap (D28) is asked about here and nowhere else: before the person is
+      // asked anything and before anything is sent, so no call is cut off halfway by it.
+      const spentForMs = entry.site.budget.spentForMs()
+      if (spentForMs > 0) return { status: 'blocked', retryAfterMs: spentForMs, cause: 'hourly-cap' }
       const irreversible = declaration.sideEffect === 'irreversible'
       if (irreversible) {
         const answer = await this.ask(
@@ -1012,6 +1016,9 @@ function finishedEvent(
     case 'failed':
       return { ...base, outcome: 'failed', stage: result.stage, errorClass: result.errorClass }
     case 'blocked':
+      // In the log `blocked` means the site refused us. Our own hourly cap is not that.
+      if (result.cause === 'hourly-cap')
+        return { ...base, outcome: 'failed', stage: 'tool-run', errorClass: 'rate-limited' }
       return { ...base, outcome: 'blocked' }
     case 'busy':
       // Not the site refusing us, which is what `blocked` means in the log: our own queue was full.

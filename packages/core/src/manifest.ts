@@ -314,6 +314,12 @@ export const manifestSchema = z
         requestsPerRun: z.number().int().min(1).max(500).default(50),
         /** Minimum gap between requests to the site, across all of this adapter's runs. */
         minGapMs: z.number().int().min(250).max(60_000).default(2000),
+        /**
+         * The most requests the runtime sends the site in any hour, across all of this adapter's
+         * runs (D28). Checked when a call starts: at the cap, the call is refused with a time to
+         * try again and sends nothing; a call already running finishes. Unset: no hourly cap.
+         */
+        requestsPerHour: z.number().int().min(10).max(3600).optional(),
         /** First circuit-breaker cool-down after the site blocks or rate-limits us; doubles each time. */
         cooldownSeconds: z.number().int().min(60).max(86_400).default(600),
         maxCooldownSeconds: z.number().int().min(60).max(86_400).default(7200),

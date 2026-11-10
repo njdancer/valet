@@ -355,6 +355,18 @@ describe('manifestSchema', () => {
     expect(issues(cookie)).not.toEqual([])
   })
 
+  it('takes an hourly request cap from 10 to 3600, and has none unless one is set', () => {
+    expect(parseManifest(VALID).limits).not.toHaveProperty('requestsPerHour')
+    const capped = copy()
+    capped.limits = { requestsPerHour: 100 }
+    expect(parseManifest(capped).limits.requestsPerHour).toBe(100)
+    for (const requestsPerHour of [9, 3601, 60.5]) {
+      const input = copy()
+      input.limits = { requestsPerHour }
+      expect(issues(input)).not.toEqual([])
+    }
+  })
+
   it('bounds retry counts and pause lengths', () => {
     const tooManyRetries = copy()
     tooManyRetries.auth.steps.push({ op: 'retry', times: 50, steps: [{ op: 'pause', ms: 1 }] })

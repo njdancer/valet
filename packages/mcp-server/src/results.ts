@@ -49,6 +49,15 @@ export function toolResult(outcome: CallOutcome, structured: boolean): CallToolR
           true,
         )
       }
+      if (stage === 'tool-run' && errorClass === 'rate-limited') {
+        // Our own hourly cap for the site, not the site refusing: the call never started.
+        return textResult(
+          'Valet has sent this site as many requests as it allows itself in an hour, so this call ' +
+            `was not started and nothing was sent (stage ${stage}: ${errorClass}). ` +
+            `Try again in ${retryAfterSeconds(outcome.retryAfterMs)} seconds.`,
+          true,
+        )
+      }
       // Stage config is the app's own limit (the remote policy's per-client cap), not the site's.
       const who =
         stage === 'config'
