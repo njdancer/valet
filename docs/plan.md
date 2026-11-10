@@ -1451,6 +1451,11 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D18. Irreversible tools in shipped adapters
 
+- Nick's answer (2026-11-10), which adds to the one below: the project's top-level goal is an order
+  completed at Woolworths through the MCP, with scope kept strict. The MVP (M3) still ships cart
+  tools only, and he places the order himself. A checkout tool, `irreversible` and confirmed on the
+  Mac with Touch ID ([D46](#d46-touch-id-on-irreversible-confirmations)) for every order, is the
+  first thing built after the MVP, ahead of the rest of M4. "None in v1" no longer holds.
 - Nick's answer (2026-11-07): Accepted: no irreversible tools in v1. Later he wants approvals sent
   to his phone, not only shown on the Mac; not needed yet.
 - Options: no checkout in v1; a checkout tool behind in-app confirmation.
