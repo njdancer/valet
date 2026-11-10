@@ -1358,8 +1358,9 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D11. Adapter package format
 
-- Nick's answer (2026-11-10): **Deferred until after the MVP.** Not on the path to a completed
-  Woolworths order; no thread works on it before then.
+- Nick (2026-11-10): **not asked until after the MVP.** It isn't on the path to a completed
+  Woolworths order, and his attention is what's scarce. Background work may go on, building on the
+  recommendation below as an assumption he hasn't confirmed.
 - Options: a directory or zip with `manifest.json`, one compiled ESM `tools.mjs`, fixtures and a
   README, hashed with `bundleHash`; npm packages; git repositories.
 - Considerations: npm brings install scripts and dependency trees nobody reviews. A single
@@ -1374,8 +1375,9 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D12. Sandbox technology
 
-- Nick's answer (2026-11-10): **Deferred until after the MVP.** Not on the path to a completed
-  Woolworths order; no thread works on it before then.
+- Nick (2026-11-10): **not asked until after the MVP.** It isn't on the path to a completed
+  Woolworths order, and his attention is what's scarce. Background work may go on, building on the
+  recommendation below as an assumption he hasn't confirmed.
 - Options:
   - **QuickJS compiled to wasm** (e.g. quickjs-emscripten): a strong boundary with nothing
     reachable but what's injected; slower, and tool code can't use Node or modern-JS features
@@ -1395,8 +1397,9 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D13. Authoring agent model access
 
-- Nick's answer (2026-11-10): **Deferred until after the MVP.** Not on the path to a completed
-  Woolworths order; no thread works on it before then.
+- Nick (2026-11-10): **not asked until after the MVP.** It isn't on the path to a completed
+  Woolworths order, and his attention is what's scarce. Background work may go on, building on the
+  recommendation below as an assumption he hasn't confirmed.
 - Options:
   - **MCP-inverted:** the IDE exposes its authoring tools over MCP; the person's own Claude Code
     or Claude Desktop drives them. No model access in the product.
@@ -1439,8 +1442,9 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D16. Pricing
 
-- Nick's answer (2026-11-10): **Deferred until after the MVP.** Not on the path to a completed
-  Woolworths order; no thread works on it before then.
+- Nick (2026-11-10): **not asked until after the MVP.** It isn't on the path to a completed
+  Woolworths order, and his attention is what's scarce. Background work may go on, building on the
+  recommendation below as an assumption he hasn't confirmed.
 - Options: free and open source with a paid relay; paid app; donations or sponsorship;
   marketplace revenue share.
 - Recommendation: free, open-source app. If the relay is built, a small monthly fee, tested
@@ -1498,8 +1502,9 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D22. Second adapter
 
-- Nick's answer (2026-11-10): **Deferred until after the MVP.** Not on the path to a completed
-  Woolworths order; no thread works on it before then.
+- Nick (2026-11-10): **not asked until after the MVP.** It isn't on the path to a completed
+  Woolworths order, and his attention is what's scarce. Background work may go on, building on the
+  recommendation below as an assumption he hasn't confirmed.
 - Options: port the earlier app's bank connector (read-only transactions); another grocer
   (Coles); a utility or a government site Nick uses.
 - Considerations: a bank is the strongest test of the security model and the most valuable to
@@ -1511,8 +1516,9 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D23. Update feed host
 
-- Nick's answer (2026-11-10): **Deferred until after the MVP.** Not on the path to a completed
-  Woolworths order; no thread works on it before then.
+- Nick (2026-11-10): **not asked until after the MVP.** It isn't on the path to a completed
+  Woolworths order, and his attention is what's scarce. Background work may go on, building on the
+  recommendation below as an assumption he hasn't confirmed.
 - Options: GitHub Releases (needs a public repo, or a token in the app for a private one, which
   is unacceptable); Cloudflare R2 or S3 with electron-updater's generic provider; no auto-update
   before M8.
@@ -1682,8 +1688,9 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D29. Pause, overnight and scheduled use
 
-- Nick's answer (2026-11-10): **Deferred until after the MVP.** Not on the path to a completed
-  Woolworths order; no thread works on it before then.
+- Nick (2026-11-10): **not asked until after the MVP.** It isn't on the path to a completed
+  Woolworths order, and his attention is what's scarce. Background work may go on, building on the
+  recommendation below as an assumption he hasn't confirmed.
 - Question: should agents be able to call tools at any hour? A login at 3 am with no human
   activity looks odd to a bot detector, and a `needsUser` at 3 am helps nobody.
 - Recommendation: an optional "quiet hours" setting that returns `needsUser` with a clear reason
