@@ -1060,6 +1060,8 @@ What else changes when the repo goes public:
   as shipped. Name it (a newer `@electron/fuses`) and decide it explicitly.
 - Whether enabling cookie encryption prompts for Keychain access on first run, and what the
   prompt names.
+- **Answered by Nick (2026-11-10): cookie encryption stays on**, before the first real session.
+  The question as asked:
 - **For Nick: cookie encryption on.** The config turns `enableCookieEncryption` on for every build,
   as recommended above. It is one-way once a real session exists; say now if you'd rather not.
 - The main process still loads the renderer with a `file://` URL. With

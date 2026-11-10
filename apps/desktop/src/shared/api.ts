@@ -228,6 +228,8 @@ export interface ToolDiffEntry {
   /** As MCP clients are told, with the manifest's defaults filled in (C9). */
   readonly destructive: boolean
   readonly idempotent: boolean
+  /** The irreversible requests a confirmed call to it unlocks, as "METHOD /path" (C15). Absent for none. */
+  readonly unlocks?: readonly string[]
 }
 
 export interface SecretDiffEntry {
