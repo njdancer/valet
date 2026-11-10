@@ -94,3 +94,22 @@ jobs:
             apps/desktop/dist/release-*/publish/*-mac.envelope.json*
           if-no-files-found: ignore
           retention-days: 7
+
+  ci:
+    # The one check to require on main. It passes only when every job above passed, so the branch
+    # protection rule names this job alone and never needs editing when jobs are added or renamed.
+    # `if: always()` matters: without it a failed job would leave this one skipped, and GitHub counts
+    # a skipped required check as passed.
+    if: always()
+    needs: [check, e2e, swift-bridge, release-dry-run]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: every job passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          for result in $RESULTS; do
+            if [ "$result" != "success" ]; then exit 1; fi
+          done
