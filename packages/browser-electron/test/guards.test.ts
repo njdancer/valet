@@ -242,6 +242,9 @@ const REQUESTS: readonly RequestDeclaration[] = [
 
 const EGRESS = ['www.example.com', '*.cdn.example.com']
 
+const PLACE_ORDER = { method: 'POST', path: '/apis/ui/Checkout/Place' }
+const REVIEW_PAGE = { method: 'GET', path: '/checkout/review' }
+
 const READ: ToolRunPolicy = { egress: EGRESS, requests: REQUESTS, maxPurpose: 'read', ceiling: 50 }
 
 describe('isApiCall', () => {
@@ -673,12 +676,60 @@ describe('decideToolRequest', () => {
       method: 'POST',
       resourceType: 'xhr',
     }
-    const policy = { ...READ, maxPurpose: 'irreversible' } as const
+    const policy = { ...READ, maxPurpose: 'irreversible', unlocks: [PLACE_ORDER] } as const
     expect(decideToolRequest(place, policy, EGRESS, false)).toEqual({
       allowed: false,
       reason: 'purpose-exceeded',
     })
     expect(decideToolRequest(place, policy, EGRESS, true)).toEqual({ allowed: true, counts: 'request' })
+  })
+
+  it('keeps an irreversible declaration the run does not name refused, even once unlocked (C15)', () => {
+    const place = {
+      url: 'https://www.example.com/apis/ui/Checkout/Place',
+      method: 'POST',
+      resourceType: 'xhr',
+    }
+    const review = {
+      url: 'https://www.example.com/checkout/review',
+      method: 'GET',
+      resourceType: 'mainFrame',
+    }
+    const refused = { allowed: false, reason: 'purpose-exceeded' }
+    // No list at all, an empty one, and one naming another declaration.
+    for (const unlocks of [undefined, [], [REVIEW_PAGE]]) {
+      const policy = { ...READ, maxPurpose: 'irreversible' as const, ...(unlocks ? { unlocks } : {}) }
+      expect(decideToolRequest(place, policy, EGRESS, true)).toEqual(refused)
+    }
+    // The same path under another method, or another spelling of the path, names nothing.
+    for (const unlocks of [
+      [{ ...PLACE_ORDER, method: 'GET' }],
+      [{ ...PLACE_ORDER, path: '/apis/ui/Checkout/*' }],
+    ]) {
+      const policy = { ...READ, maxPurpose: 'irreversible' as const, unlocks }
+      expect(decideToolRequest(place, policy, EGRESS, true)).toEqual(refused)
+    }
+    // And the page it doesn't name stays a denied path as a navigation.
+    expect(
+      decideToolRequest(
+        review,
+        { ...READ, maxPurpose: 'irreversible', unlocks: [PLACE_ORDER] },
+        EGRESS,
+        true,
+      ),
+    ).toEqual({ allowed: false, reason: 'denied-path' })
+  })
+
+  it('does not let a wider write declaration stand in for an irreversible one the run does not name', () => {
+    const requests = [...REQUESTS, { method: 'POST', path: '/apis/ui/*/Place', purpose: 'write' } as const]
+    expect(
+      decideToolRequest(
+        { url: 'https://www.example.com/apis/ui/Checkout/Place', method: 'POST', resourceType: 'xhr' },
+        { ...READ, requests, maxPurpose: 'irreversible', unlocks: [REVIEW_PAGE] },
+        EGRESS,
+        true,
+      ),
+    ).toEqual({ allowed: false, reason: 'purpose-exceeded' })
   })
 
   it('opens a denied page only for its irreversible declaration, once unlocked', () => {
@@ -687,7 +738,7 @@ describe('decideToolRequest', () => {
       method: 'GET',
       resourceType: 'mainFrame',
     }
-    const policy = { ...READ, maxPurpose: 'irreversible' } as const
+    const policy = { ...READ, maxPurpose: 'irreversible', unlocks: [REVIEW_PAGE] } as const
     expect(decideToolRequest(review, policy, EGRESS, false)).toEqual({
       allowed: false,
       reason: 'denied-path',

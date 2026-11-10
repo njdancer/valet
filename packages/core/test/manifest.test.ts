@@ -258,6 +258,45 @@ describe('manifestSchema', () => {
     expect(issues(typo)).not.toEqual([])
   })
 
+  it('lets only an irreversible tool name requests to unlock, and only declared irreversible ones (C15)', () => {
+    const place = { method: 'POST', path: '/api/checkout/place' }
+    const withPlace = () => {
+      const input = copy()
+      input.requests = [...(input.requests ?? []), { ...place, purpose: 'irreversible' }]
+      return input
+    }
+    const ok = withPlace()
+    ok.tools[0] = { ...ok.tools[0], sideEffect: 'irreversible', unlocks: [place] }
+    expect(issues(ok)).toEqual([])
+    expect(parseManifest(ok).tools[0]?.unlocks).toEqual([place])
+
+    for (const sideEffect of ['read', 'write']) {
+      const input = withPlace()
+      input.tools[0] = { ...input.tools[0], sideEffect, unlocks: [place] }
+      expect(issues(input)).toEqual(['only an irreversible tool may set unlocks'])
+    }
+
+    // Not declared at all, declared under another method, declared but not irreversible, and a
+    // pattern wider than the declaration.
+    const wrong = [
+      { method: 'POST', path: '/api/payees/add' },
+      { method: 'GET', path: '/api/checkout/place' },
+      { method: ok.requests[0].method, path: ok.requests[0].path },
+      { method: 'POST', path: '/api/checkout/*' },
+    ]
+    for (const unlock of wrong) {
+      const input = withPlace()
+      input.tools[0] = { ...input.tools[0], sideEffect: 'irreversible', unlocks: [unlock] }
+      expect(issues(input)).toEqual([
+        `tool ${input.tools[0].name} unlocks ${unlock.method} ${unlock.path}, which is not a declared irreversible request`,
+      ])
+    }
+
+    const empty = withPlace()
+    empty.tools[0] = { ...empty.tools[0], sideEffect: 'irreversible', unlocks: [] }
+    expect(issues(empty)).not.toEqual([])
+  })
+
   it('bounds retry counts and pause lengths', () => {
     const tooManyRetries = copy()
     tooManyRetries.auth.steps.push({ op: 'retry', times: 50, steps: [{ op: 'pause', ms: 1 }] })

@@ -8,7 +8,7 @@
 //   so a click already on its way in another app can't land on Approve;
 // - the request is still pending and hasn't expired. Unanswered, it declines itself at expiry.
 
-import type { AdapterManifest } from '@valet/core'
+import { type AdapterManifest, unlockedBy } from '@valet/core'
 import type { ConfirmationAnswer, ConfirmationPrompt, ConfirmationRequest } from '@valet/runtime'
 import { CONFIRM_ARM_MS, type ConfirmationItem, type PreviewPart } from '../../shared/api'
 import { shownTransport } from './clients'
@@ -86,8 +86,9 @@ export class ConfirmationBroker implements ConfirmationPrompt {
       requestedAt: new Date(now).toISOString(),
       expiresAt: new Date(now + this.options.timeoutMs).toISOString(),
       requestCeiling: adapter.manifest.limits.requestsPerRun,
-      // Only the runtime's own confirmation before an irreversible tool unlocks anything.
-      unlocks: irreversible ? adapter.manifest.requests.filter((r) => r.purpose === 'irreversible') : [],
+      // Only the runtime's own confirmation before an irreversible tool unlocks anything, and only
+      // the declarations that tool names (C15).
+      unlocks: irreversible ? unlockedBy(adapter.manifest.requests, declaration.unlocks) : [],
       requests: irreversible
         ? []
         : request.requests.map(({ method, path, purpose }) => ({ method, path, purpose })),

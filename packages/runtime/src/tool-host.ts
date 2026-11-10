@@ -48,6 +48,7 @@ import {
   type ToolPage,
   type ToolRunPolicy,
   toReportable,
+  unlockedBy,
   ValetError,
 } from '@valet/core'
 import type { z } from 'zod'
@@ -503,6 +504,7 @@ export class ToolHost {
         adapterId: manifest.id,
         manifest,
         sideEffect: declaration.sideEffect,
+        unlocks: unlockedBy(manifest.requests, declaration.unlocks),
         inner,
         site: entry.site,
         state,
@@ -796,11 +798,17 @@ const VIOLATION_WHOEVER_ASKED: ReadonlySet<BlockedRequest['reason']> = new Set<B
 /**
  * The network policy for one run. The probe's own request is added to the declarations: it is the
  * runtime's, not tool code's, but it goes through the same partition.
+ *
+ * Of the manifest's irreversible declarations, the person's yes unlocks only the ones this tool
+ * names (C15), so it can't be spent on another tool's request, by tool code or by the page. The
+ * others stay in the request surface, still matched and still refused: taking them out would let a
+ * wider declaration further down the list match the same request.
  */
 function runPolicy(manifest: AdapterManifest, declaration: ToolDeclaration): ToolRunPolicy {
   return {
     egress: manifest.egress,
     requests: [...manifest.requests, ...probeDeclaration(manifest)],
+    unlocks: unlockedBy(manifest.requests, declaration.unlocks).map(({ method, path }) => ({ method, path })),
     maxPurpose: declaration.sideEffect,
     ceiling: manifest.limits.requestsPerRun,
   }

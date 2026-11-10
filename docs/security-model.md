@@ -424,20 +424,21 @@ Every tool is declared `read`, `write` or `irreversible`. For an `irreversible` 
 - Only after the person approves does the runtime call `unlockIrreversible()`. From then until
   `endRun()`, and only for that run, the run's `irreversible` declarations are usable. Before it,
   or for a run whose `maxPurpose` isn't `irreversible`, it does nothing (**Contract**).
-- **The unlock is wider than the plan asked for.** The run's policy carries the manifest's whole
-  request surface, and tools don't say which requests they use, so confirming one irreversible
-  tool unlocks **every** `irreversible` declaration in the manifest (pay, add a payee, place an
-  order), and unlocks them for page-initiated requests too, since the policy covers every
-  request in the partition. Change request C2 asked for only the declarations that call was
-  confirmed for; core v2 narrows that to "all of them, for this run". The fix is a per-tool list
-  of the declarations it unlocks (change request C15 in the plan), which should land before any
-  irreversible tool ships.
+- **A yes unlocks only what the tool names** (C15, **Enforced**, 2026-11-10). An `irreversible`
+  tool lists the `irreversible` declarations it uses, each by method and path exactly as the
+  manifest declares it (`unlocks`). The manifest is refused if a tool names anything that isn't a
+  declared irreversible request, or if a tool that isn't irreversible names any. Confirming a call
+  makes those declarations usable for that run and no others: another tool's (pay, add a payee)
+  stay refused to tool code and to the page's own requests alike, at the capability API and again
+  at the network layer. The others stay in the run's request surface, matched and refused, so a
+  wider declaration further down the list can't match in their place. A tool that names nothing
+  unlocks nothing. The confirmation panel lists exactly what the yes unlocks, and a tool that
+  names one more request is a permission change the person approves again.
 - Since core v5, `confirm(action)` takes structured data (change request C4): the declared
   requests the tool says it will make on a yes, which the runtime checks against the manifest and
   the tool's side effect, plus an optional note. The panel is rendered by the app from the
   runtime's own knowledge; the note is shown second, attributed and marked unverified. A yes
-  unlocks nothing, and nothing yet holds the tool to the requests it named (that would be C15's
-  per-tool list).
+  to `confirm(action)` unlocks nothing; only the runtime's own confirmation before the run does.
   Whether to require Touch ID is [D46](plan.md#d46-touch-id-on-irreversible-confirmations).
 
 No shipped adapter has an `irreversible` tool in v1 ([D18](plan.md#d18-irreversible-tools-in-shipped-adapters)).
