@@ -277,6 +277,11 @@ Steps:
    `woolworths_add_to_cart` for one unit. Nick refreshes woolworths.com.au in Chrome and sees it
    (AC6). If he doesn't want to keep it, `woolworths_set_cart_quantity` to 0, and check again.
    This is the M2 exit.
+   While both are open, compare the item's price, special and availability in the tool's result
+   with what Chrome shows, and note whether Valet's session has Nick's delivery address or pick-up
+   store, or none. Woolworths prices and stock follow the chosen store, and Valet's browser is a
+   new device to the site: if they differ, the tools are quoting another store's shelf
+   ([finding](findings/2026-11-10-whole-project-review.md#not-fixed-needs-nick)).
 7. Afterwards: verify the audit log (`pnpm valet:verify-audit`, or the control panel); check it shows one secret use per field
    for the login; grep the app's logs, traces and audit log for the password (a first pass at
    AC16).
