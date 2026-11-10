@@ -62,6 +62,7 @@ const CHECKOUT: ConfirmationItem = {
   expiresAt: new Date(NOW + 120_000).toISOString(),
   requestCeiling: 6,
   unlocks: [{ method: 'POST', path: '/apis/ui/Checkout/PlaceOrder', purpose: 'irreversible' }],
+  requests: [],
   input: [{ kind: 'text', text: '{ "window": "sun-8-10" }' }],
   adapterNote: null,
 }
@@ -200,6 +201,21 @@ describe('the confirmation panel', () => {
     expect(screen.getByText('Not verified by Valet')).toBeTruthy()
     // The heading is the app's own wording from structured fields, not the note.
     expect(screen.getByText('Run Place order on Woolworths?')).toBeTruthy()
+  })
+
+  it('lists the declared requests a tool request names, as Valet checked them, and unlocks nothing', async () => {
+    renderAt('#/confirm/cf_a40f3c', createFakeApi({ now: NOW }))
+    const listed = await screen.findByTestId('confirm-requests')
+    expect(listed.textContent).toContain('POST /api/v3/ui/trolley/update')
+    expect(listed.textContent).toContain('declared in the manifest')
+    expect(screen.getByText('Approving unlocks no irreversible request')).toBeTruthy()
+    expect(screen.getByTestId('adapter-note').textContent).toContain('Cavendish Bananas')
+  })
+
+  it('shows no request list for an irreversible tool', async () => {
+    renderPanel('cf_checkout', withAttention(createFakeApi({ now: NOW }), [CHECKOUT]))
+    await screen.findByText('POST /apis/ui/Checkout/PlaceOrder')
+    expect(screen.queryByTestId('confirm-requests')).toBeNull()
   })
 
   it('shows what an irreversible approval unlocks, and uses a destructive button', async () => {

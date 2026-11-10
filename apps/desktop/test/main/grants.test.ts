@@ -185,6 +185,22 @@ describe('item references', () => {
   it('round-trips vault ids and keeps fake and Messages references as they are', () => {
     expect(itemRefFor('onepassword-service-account', 'abc')).toBe('op://Valet/abc')
     expect(itemRefFor('fake', 'demo-woolworths')).toBe('demo-woolworths')
+    // A Keychain copy's item is in any of the person's vaults: <vault id>-<item id>.
+    expect(itemRefFor('keychain-copy', 'vault1-item1')).toBe('op://vault1/item1')
+    for (const bad of ['vault1', 'vault1-item1-x', 'vault_1-item1', '-item1']) {
+      expect(() => itemRefFor('keychain-copy', bad)).toThrow()
+    }
+    expect(
+      itemIdOf({
+        adapterId: 'shop',
+        adapterHash: HASH,
+        secret: 'login',
+        provider: 'keychain-copy',
+        itemRef: 'op://vault1/item1',
+        origins: ['https://login.shop.test'],
+        grantedAt: NOW.toISOString(),
+      }),
+    ).toBe('vault1-item1')
     const grant = {
       adapterId: 'shop',
       adapterHash: HASH,

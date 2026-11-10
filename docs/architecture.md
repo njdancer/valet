@@ -99,9 +99,13 @@ Wiring it, first in plain Node and then in the app, is the next job
   descriptions), so they are less trusted than the main process.
 - **Site windows are separate.** Auth and tool pages are hidden `BrowserWindow`s owned by the
   driver. A hand-off shows the auth window itself, with the app's banner in a separate renderer.
-- **Tool code** runs in the main process in v0 (see the caveat in security-model.md), moves to a
-  `utilityProcess` with the capability API over a message port, and then into the sandbox chosen
-  in [D12](plan.md#d12-sandbox-technology) before third-party adapters.
+- **Tool code** runs in a `utilityProcess`, a fresh one per call, killed when the call ends. The
+  tool script (built from the adapter's sources by `buildToolScript`, with no Node built-ins or
+  Electron allowed) is evaluated in a `node:vm` context holding only the capability API, which
+  reaches the main process as JSON messages answered by the same guarded `ToolContext` an
+  in-process tool gets (`packages/runtime/src/isolation`). Not a boundary (see the caveat in
+  security-model.md); it moves into the sandbox chosen in [D12](plan.md#d12-sandbox-technology)
+  before third-party adapters.
 - **Data files** live under `~/Library/Application Support/valet/` (the final name waits on
   [D1](plan.md#d1-product-name)): `approvals.json`, `grants.json`, `audit.jsonl`,
   `login-markers/`, the endpoint token and `bridge.json`, all owner-only

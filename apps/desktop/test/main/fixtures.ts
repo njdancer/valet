@@ -70,7 +70,12 @@ export function shopDefinition(input: ManifestInput = SHOP): AdapterDefinition {
       add: {
         input: z.object({ item: z.string() }),
         output: z.object({ added: z.boolean() }),
-        run: async (ctx, args: { item: string }) => ({ added: await ctx.confirm(`Add ${args.item}?`) }),
+        run: async (ctx, args: { item: string }) => ({
+          added: await ctx.confirm({
+            requests: [{ method: 'POST', path: '/api/cart' }],
+            note: `Add ${args.item}?`,
+          }),
+        }),
       },
     },
   })

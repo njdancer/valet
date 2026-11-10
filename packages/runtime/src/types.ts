@@ -6,6 +6,7 @@ import type {
   AdapterManifest,
   ErrorClass,
   NeedsUserReason,
+  RequestDeclaration,
   SecretValue,
   SessionDriver,
   Stage,
@@ -91,7 +92,7 @@ export type ClientTransport = 'stdio-bridge' | 'http'
 
 export const CLIENT_TRANSPORTS: readonly ClientTransport[] = ['stdio-bridge', 'http']
 
-export interface ConfirmationRequest {
+interface ConfirmationRequestBase {
   readonly adapterId: string
   readonly adapterName: string
   readonly tool: string
@@ -101,15 +102,31 @@ export interface ConfirmationRequest {
   readonly client: string
   /** How that client reached the endpoint, when the call says. A label, never a permission. */
   readonly transport?: ClientTransport
-  /**
-   * `irreversible-tool`: the runtime asking before an irreversible tool runs; `message` is the
-   * tool's declared description and `input` its validated input. `tool-request`: tool code calling
-   * ctx.confirm(); `message` is adapter-authored.
-   */
-  readonly kind: 'irreversible-tool' | 'tool-request'
-  readonly message: string
-  readonly input?: unknown
 }
+
+/**
+ * What the person is asked. Everything is the runtime's own knowledge except a tool request's
+ * `note`, which the adapter wrote (C4).
+ */
+export type ConfirmationQuestion =
+  | {
+      /** The runtime asking before an irreversible tool runs, with the tool's validated input. */
+      readonly kind: 'irreversible-tool'
+      readonly input: unknown
+    }
+  | {
+      /** Tool code calling ctx.confirm(). */
+      readonly kind: 'tool-request'
+      /**
+       * The manifest's own declarations for the requests the tool says it will make on a yes, each
+       * checked to be declared and within the tool's side effect. Approving unlocks none of them.
+       */
+      readonly requests: readonly RequestDeclaration[]
+      /** The adapter's note, unverified, or null. */
+      readonly note: string | null
+    }
+
+export type ConfirmationRequest = ConfirmationRequestBase & ConfirmationQuestion
 
 /** Asks the person in the app. The MCP client can never answer it. */
 export interface ConfirmationPrompt {

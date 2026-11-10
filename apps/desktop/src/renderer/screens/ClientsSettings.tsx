@@ -381,7 +381,7 @@ function SettingsCard() {
                 <span>
                   Read one-time codes from Messages for senders you grant
                   <span className="xs muted" style={{ display: 'block' }}>
-                    Needs Full Disk Access for Valet
+                    Needs Full Disk Access for Valet Messages Helper (or Valet, in a development build)
                   </span>
                 </span>
                 <Switch
@@ -390,12 +390,60 @@ function SettingsCard() {
                   onChange={(on) => set({ messagesOtpEnabled: on })}
                 />
               </div>
+              <OnePasswordAccountSetting
+                value={s.onePasswordAccount}
+                onSave={(account) => set({ onePasswordAccount: account })}
+              />
               <OpPathSetting value={s.opPath} />
             </>
           )}
         </LoadState>
         <ActionFailed failed={action.failed} what="save the setting" />
       </div>
+    </div>
+  )
+}
+
+/**
+ * The 1Password account Keychain copies come from (D6). It names an account, never a secret: the
+ * person approves each copy in 1Password itself.
+ */
+export function OnePasswordAccountSetting({
+  value,
+  onSave,
+}: {
+  readonly value: string | null
+  readonly onSave: (account: string | null) => void
+}) {
+  const [draft, setDraft] = useState(value ?? '')
+  const trimmed = draft.trim()
+  const changed = (trimmed === '' ? null : trimmed) !== value
+  return (
+    <div className="setting">
+      <span>1Password</span>
+      <span className="stack" style={{ gap: 2 }}>
+        <input
+          className="input"
+          aria-label="1Password account"
+          placeholder="my.1password.com"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+        />
+        <span className="xs muted">
+          The account name at the top of 1Password’s sidebar. Valet copies the items you grant into your
+          Keychain, with your approval in 1Password each time.
+        </span>
+      </span>
+      <span className="row" style={{ gap: 6 }}>
+        <button
+          type="button"
+          className="btn"
+          disabled={!changed}
+          onClick={() => onSave(trimmed === '' ? null : trimmed)}
+        >
+          Save
+        </button>
+      </span>
     </div>
   )
 }

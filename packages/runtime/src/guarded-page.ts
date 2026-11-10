@@ -52,7 +52,7 @@ import {
   siteRefusal,
 } from './site-protection'
 
-const PURPOSE_RANK: Readonly<Record<Purpose, number>> = { read: 0, write: 1, irreversible: 2 }
+export const PURPOSE_RANK: Readonly<Record<Purpose, number>> = { read: 0, write: 1, irreversible: 2 }
 
 /** Headers some servers honour to turn one method into another, which would bypass method matching. */
 const METHOD_OVERRIDE_HEADERS = ['x-http-method-override', 'x-http-method', 'x-method-override']

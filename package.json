@@ -16,12 +16,14 @@
     "check": "pnpm lint && pnpm typecheck && pnpm coverage",
     "demo": "pnpm --filter @valet/desktop demo",
     "test:e2e": "pnpm --filter @valet/desktop test:e2e",
-    "package:smoke": "pnpm --filter @valet/desktop package:smoke"
+    "package:smoke": "pnpm --filter @valet/desktop package:smoke",
+    "valet:verify-audit": "tsx packages/runtime/src/verify-audit-cli.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.6",
     "@types/node": "^24.19.2",
     "@vitest/coverage-v8": "^5.1.0",
+    "esbuild": "0.28.2",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.1.0"

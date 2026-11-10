@@ -95,7 +95,10 @@ change (it changes the `AuthRunner` contract in core).
 
 **Built on 2026-11-07** (D32 and D35, with the check below in
 `packages/auth-flow/test/one-attempt.test.ts` and the marker tests in `packages/runtime`). The
-dev-app dry run against the fake is still to do before Session 3.
+dev-app dry run is now a permanent step of the app's e2e journey (`apps/desktop/e2e/journey.spec.ts`,
+2026-11-07): with the fake refusing the demo password, a call types it once (one POST counted at
+the fake), the app shows "Login window open · Login needed" and "Needs you", and the next call
+returns `login-required` without another POST.
 
 [AC10](plan.md#acceptance-criteria) is the hard gate before Session 3
 ([D5](plan.md#d5-which-woolworths-account), answered). Reading the code, two answered decisions it
@@ -274,7 +277,7 @@ Steps:
    `woolworths_add_to_cart` for one unit. Nick refreshes woolworths.com.au in Chrome and sees it
    (AC6). If he doesn't want to keep it, `woolworths_set_cart_quantity` to 0, and check again.
    This is the M2 exit.
-7. Afterwards: verify the audit log from the control panel (AC14's CLI isn't built yet); check it shows one secret use per field
+7. Afterwards: verify the audit log (`pnpm valet:verify-audit`, or the control panel); check it shows one secret use per field
    for the login; grep the app's logs, traces and audit log for the password (a first pass at
    AC16).
 

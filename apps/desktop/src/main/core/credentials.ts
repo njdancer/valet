@@ -9,7 +9,12 @@
 //   sdkClientFactory.
 // - onepassword-cli: `op`, only at a path that passed checkOpBinary: the one the person chose, or
 //   the first of the usual places that passes. Never a PATH lookup.
-// - messages: MessagesOtpReader, only while the setting is on (it needs Full Disk Access).
+// - keychain-copy: the Keychain copy of an item from the person's own 1Password (D6), read through
+//   the valet-keychain helper. Offered when the helper is there and a 1Password account is set:
+//   making the grant copies the item, with the person approving in 1Password (DesktopAuth, C7).
+//   The helper also reads the service-account token, so neither read goes through `security`.
+// - messages: only while the setting is on. Through the Messages helper (D8) when the app ships
+//   it, so only the helper needs Full Disk Access; else MessagesOtpReader in process (dev builds).
 // - fake: demo mode only (demo.ts); a normal launch never has it.
 
 import { lstat, realpath } from 'node:fs/promises'
@@ -19,15 +24,24 @@ import {
   type CredentialProvider,
   type OtpReader,
   type ProviderKind,
+  type SecretField,
   type SecretValue,
 } from '@valet/core'
 import {
+  COPY_SERVICE,
   DEFAULT_OP_PATHS,
+  type DesktopClientFactory,
+  HelperKeychainTokenSource,
+  KeychainCopyProvider,
+  KeychainCopySync,
+  KeychainHelper,
   KeychainTokenSource,
+  MessagesHelperOtpReader,
   MessagesOtpReader,
   nodeSpawner,
   nodeTimers,
   OnePasswordCliProvider,
+  OnePasswordDesktopProvider,
   OnePasswordServiceAccountProvider,
   runProcess,
   type SecretsClientFactory,
@@ -47,6 +61,15 @@ export interface Credentials {
   vaultItems(provider: ProviderKind): Promise<readonly VaultItem[]>
   /** Rebuilds the providers after a settings change. */
   configure(settings: Settings): Promise<void>
+  /**
+   * Copies `fields` of a keychain-copy grant's item from 1Password into the Keychain, with the
+   * person approving in 1Password. Throws CredentialError.
+   */
+  copyItem(itemRef: string, fields: readonly SecretField[]): Promise<void>
+  /** Refreshes copies whose source changed, only while an approval is already up. Never prompts. */
+  refreshCopies(items: readonly { itemRef: string; fields: readonly SecretField[] }[]): Promise<void>
+  /** Removes an item's copy, once no grant uses it. */
+  forgetCopy(itemRef: string): Promise<void>
 }
 
 /** A reader that never reads: Messages codes are off. */
@@ -163,6 +186,17 @@ export interface RealCredentialsDeps extends OpCheckDeps {
   readonly serviceAccountReady?: () => Promise<boolean>
   /** The service account's SDK client, for tests; the real SDK by default. */
   readonly serviceAccountClient?: SecretsClientFactory
+  /** valet-keychain's absolute path, or null when this build has none. */
+  readonly keychainHelper?: string | null
+  /** The Keychain service copies live under; the dev build keeps its own. */
+  readonly copyService?: string
+  /**
+   * The Messages helper (D8) when this build ships it: its binary, which registers the launch agent
+   * with SMAppService, and the socket the agent listens on. Null in development builds.
+   */
+  readonly messagesHelper?: { readonly binary: string; readonly socketPath: string } | null
+  /** The desktop app's SDK client, for tests; the real SDK by default. */
+  readonly desktopClient?: DesktopClientFactory
 }
 
 /**
@@ -188,13 +222,25 @@ export async function serviceAccountReady(
 
 /** The providers of a normal launch. The fake provider is never among them. */
 export function realCredentials(deps: RealCredentialsDeps): Credentials {
+  const helperPath = deps.keychainHelper ?? null
+  const keychain =
+    helperPath === null
+      ? null
+      : new KeychainHelper({ helperPath, spawner: deps.spawner, timers: deps.timers })
+  const copies =
+    keychain === null
+      ? null
+      : new KeychainCopyProvider({ keychain, service: deps.copyService ?? COPY_SERVICE })
   const serviceAccount = new OnePasswordServiceAccountProvider({
-    tokenSource: new KeychainTokenSource({
-      service: KEYCHAIN_SERVICE,
-      account: KEYCHAIN_ACCOUNT,
-      spawner: deps.spawner,
-      timers: deps.timers,
-    }),
+    tokenSource:
+      keychain === null
+        ? new KeychainTokenSource({
+            service: KEYCHAIN_SERVICE,
+            account: KEYCHAIN_ACCOUNT,
+            spawner: deps.spawner,
+            timers: deps.timers,
+          })
+        : new HelperKeychainTokenSource(keychain, KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT),
     timers: deps.timers,
     ...(deps.serviceAccountClient === undefined ? {} : { clientFactory: deps.serviceAccountClient }),
   })
@@ -202,22 +248,38 @@ export function realCredentials(deps: RealCredentialsDeps): Credentials {
   let cli: OnePasswordCliProvider | null = null
   let messagesEnabled = false
   let reader: OtpReader = disabledOtpReader
+  let desktop: OnePasswordDesktopProvider | null = null
+  let sync: KeychainCopySync | null = null
+  let registered = false
   const run = (command: string, args: readonly string[], maxStdoutBytes: number, timeoutMs: number) =>
     runProcess(deps.spawner, command, args, { timeoutMs, maxStdoutBytes, timers: deps.timers })
   const ready = deps.serviceAccountReady ?? (() => serviceAccountReady())
   const serviceAccountStatus = async (): Promise<Omit<ProviderStatus, 'grantCount'>> => {
     const kind = 'onepassword-service-account'
     if (!(await ready())) return { kind, available: false, unavailableReason: 'not-installed' }
-    // Asks whether the item exists, never for its value (-w), so no Keychain prompt appears.
-    const keychain = await run(
-      SECURITY,
-      ['find-generic-password', '-s', KEYCHAIN_SERVICE, '-a', KEYCHAIN_ACCOUNT],
-      64 * 1024,
-      5_000,
-    )
-    if (keychain.kind === 'exited') keychain.stdout.fill(0)
-    const tokenStored = keychain.kind === 'exited' && keychain.code === 0
+    let tokenStored: boolean
+    if (keychain !== null) {
+      // The item's comment, never its value, so no Keychain prompt appears.
+      tokenStored = await keychain.info(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT).then(
+        (comment) => comment !== null,
+        () => false,
+      )
+    } else {
+      // Asks whether the item exists, never for its value (-w), so no Keychain prompt appears.
+      const found = await run(
+        SECURITY,
+        ['find-generic-password', '-s', KEYCHAIN_SERVICE, '-a', KEYCHAIN_ACCOUNT],
+        64 * 1024,
+        5_000,
+      )
+      if (found.kind === 'exited') found.stdout.fill(0)
+      tokenStored = found.kind === 'exited' && found.code === 0
+    }
     return { kind, available: tokenStored, unavailableReason: tokenStored ? null : 'not-configured' }
+  }
+  const requireSync = (): KeychainCopySync => {
+    if (sync === null) throw new CredentialError('unavailable')
+    return sync
   }
 
   return {
@@ -225,6 +287,7 @@ export function realCredentials(deps: RealCredentialsDeps): Credentials {
       return {
         'onepassword-service-account': serviceAccount,
         ...(cli === null ? {} : { 'onepassword-cli': cli }),
+        ...(copies === null ? {} : { 'keychain-copy': copies }),
       }
     },
     otpReader: () => reader,
@@ -241,12 +304,18 @@ export function realCredentials(deps: RealCredentialsDeps): Credentials {
           available: messagesEnabled,
           unavailableReason: messagesEnabled ? null : 'disabled',
         },
+        {
+          kind: 'keychain-copy',
+          available: sync !== null,
+          unavailableReason: copies === null ? 'not-installed' : sync === null ? 'not-configured' : null,
+        },
       ]
     },
     async vaultItems(provider) {
       // Both providers list the vault themselves: ids and titles only, never a field.
       if (provider === 'onepassword-cli') return cli === null ? [] : cli.listItems(VAULT)
       if (provider === 'onepassword-service-account') return serviceAccount.listItems(VAULT)
+      if (provider === 'keychain-copy') return desktop === null ? [] : desktopItems(desktop)
       return []
     },
     async configure(settings) {
@@ -263,11 +332,62 @@ export function realCredentials(deps: RealCredentialsDeps): Credentials {
               timers: deps.timers,
             })
       messagesEnabled = settings.messagesOtpEnabled
-      reader = messagesEnabled
-        ? (deps.messagesReader ?? (() => new MessagesOtpReader()))()
-        : disabledOtpReader
+      const helper = deps.messagesHelper ?? null
+      if (messagesEnabled && helper !== null && !registered) {
+        // launchd starts the agent from here on; the person may still have to allow it in System
+        // Settings > General > Login Items, and grant it Full Disk Access. Until then reads are
+        // unavailable, which a login reports.
+        registered = true
+        const outcome = await run(helper.binary, ['register'], 1024, 10_000)
+        if (outcome.kind === 'exited') outcome.stdout.fill(0)
+      }
+      const socket = helper?.socketPath ?? null
+      reader = !messagesEnabled
+        ? disabledOtpReader
+        : deps.messagesReader !== undefined
+          ? deps.messagesReader()
+          : socket !== null
+            ? new MessagesHelperOtpReader({ socketPath: socket })
+            : new MessagesOtpReader()
+      // A changed account means a new approval; the same one keeps the approval that is up.
+      if (desktop?.account !== (settings.onePasswordAccount ?? undefined)) {
+        desktop =
+          settings.onePasswordAccount === null
+            ? null
+            : new OnePasswordDesktopProvider({
+                account: settings.onePasswordAccount,
+                timers: deps.timers,
+                ...(deps.desktopClient === undefined ? {} : { clientFactory: deps.desktopClient }),
+              })
+      }
+      sync = desktop === null || copies === null ? null : new KeychainCopySync({ desktop, copies })
+    },
+    copyItem: async (itemRef, fields) => requireSync().copy(itemRef, fields),
+    async refreshCopies(items) {
+      if (sync === null) return
+      for (const item of items) {
+        // Best effort: a refresh that fails leaves the copy as it was, and the next login says so.
+        await sync.refreshIfLive(item.itemRef, item.fields).catch(() => {})
+      }
+    },
+    async forgetCopy(itemRef) {
+      if (copies !== null) await copies.forget(itemRef)
     },
   }
+}
+
+/**
+ * Every item in every vault the person's 1Password shows, for the grant sheet. An item's id is
+ * `<vault id>-<item id>` (both ids are letters and digits) and its title names its vault.
+ */
+async function desktopItems(desktop: OnePasswordDesktopProvider): Promise<VaultItem[]> {
+  const items: VaultItem[] = []
+  for (const vault of await desktop.listVaults()) {
+    for (const item of await desktop.listItems(vault.id)) {
+      items.push({ id: `${vault.id}-${item.id}`, title: `${item.title} (${vault.title})` })
+    }
+  }
+  return items
 }
 
 export const defaultOpCheckDeps = (): OpCheckDeps => ({

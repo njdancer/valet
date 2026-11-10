@@ -1,6 +1,6 @@
 // How an adapter is defined in code: its manifest plus one implementation per declared tool.
 
-import type { z } from 'zod'
+import { z } from 'zod'
 import type { ErrorClass, NeedsUserReason, Stage } from './errors'
 import type { AdapterManifest } from './manifest'
 import type { ToolPage } from './page'
@@ -9,6 +9,38 @@ export type EnsureResult =
   | { readonly status: 'ok' }
   | { readonly status: 'needsUser'; readonly reason: NeedsUserReason }
   | { readonly status: 'failed'; readonly stage: Stage; readonly errorClass: ErrorClass }
+
+/** The longest note an adapter may attach to a confirmation. */
+export const MAX_CONFIRM_NOTE = 500
+
+/**
+ * What tool code asks the person to confirm (C4). The runtime renders the dialog from this and from
+ * what it already knows (the tool, its declared side effect, the calling client); only `note` is
+ * the adapter's own words, and the app shows it second, attributed and marked unverified.
+ */
+export const confirmActionSchema = z
+  .object({
+    /**
+     * The declared requests the tool will make if the person says yes, each with `method` and `path`
+     * exactly as written in the manifest's `requests`. The runtime refuses one that isn't declared
+     * there, or whose purpose outranks the tool's side effect, and shows each one's declared purpose.
+     */
+    requests: z
+      .array(
+        z
+          .object({
+            method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
+            path: z.string().min(1).max(300),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(10),
+    /** Optional free text for the person, at most MAX_CONFIRM_NOTE characters. */
+    note: z.string().min(1).max(MAX_CONFIRM_NOTE).optional(),
+  })
+  .strict()
+export type ConfirmAction = z.infer<typeof confirmActionSchema>
 
 /** The capability object tool code receives. It is the whole of what tool code can do. */
 export interface ToolContext {
@@ -20,8 +52,13 @@ export interface ToolContext {
      */
     ensure(): Promise<EnsureResult>
   }
-  /** Asks the person (not the MCP client) to confirm. Resolves false if they decline or time out. */
-  confirm(message: string): Promise<boolean>
+  /**
+   * Asks the person (not the MCP client) to confirm `action`. Resolves false if they decline or time
+   * out. An action the runtime refuses (malformed, undeclared, or beyond the tool's side effect)
+   * rejects with `confirm` and fails the call, the way a guard violation does. A yes unlocks nothing:
+   * every request is still held to the manifest and the tool's side effect.
+   */
+  confirm(action: ConfirmAction): Promise<boolean>
   readonly signal: AbortSignal
 }
 

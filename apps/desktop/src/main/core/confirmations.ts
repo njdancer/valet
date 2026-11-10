@@ -88,8 +88,11 @@ export class ConfirmationBroker implements ConfirmationPrompt {
       requestCeiling: adapter.manifest.limits.requestsPerRun,
       // Only the runtime's own confirmation before an irreversible tool unlocks anything.
       unlocks: irreversible ? adapter.manifest.requests.filter((r) => r.purpose === 'irreversible') : [],
+      requests: irreversible
+        ? []
+        : request.requests.map(({ method, path, purpose }) => ({ method, path, purpose })),
       input: irreversible ? previewParts(request.input ?? {}).parts : (call?.input ?? []),
-      adapterNote: irreversible ? null : request.message,
+      adapterNote: irreversible ? null : request.note,
     }
     return new Promise<ConfirmationAnswer>((resolve) => {
       const settle = (answer: ConfirmationAnswer) => {

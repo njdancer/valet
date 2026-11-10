@@ -1,6 +1,7 @@
 // Audit events. The log is append-only and hash-chained; see packages/runtime for the writer.
 
 import type { ErrorClass, NeedsUserReason, Stage } from './errors'
+import type { SecretField } from './manifest'
 
 /** How a tool run or login ended. `blocked`: the site refused us. `declined`: the person said no. */
 export type RunOutcome = 'ok' | 'needsUser' | 'failed' | 'blocked' | 'declined'
@@ -29,6 +30,13 @@ export type AuditEvent =
       readonly origins: readonly string[]
     }
   | { readonly type: 'grant-revoked'; readonly adapterId: string; readonly secret: string }
+  /** A keychain-copy grant's fields copied (or re-synced) from 1Password into the Keychain (D6). */
+  | {
+      readonly type: 'grant-copied'
+      readonly adapterId: string
+      readonly secret: string
+      readonly fields: readonly SecretField[]
+    }
   | {
       readonly type: 'tool-called'
       readonly adapterId: string
@@ -104,6 +112,24 @@ export type AuditEvent =
       readonly type: 'update-installed'
       readonly from: string
       readonly to: string
+    }
+  | {
+      /**
+       * Remote access turned on, or paused with the tray's kill switch (relay.md). Pausing revokes
+       * every remote access token; `revokedTokens` says how many there were.
+       */
+      readonly type: 'remote-state'
+      readonly state: 'on' | 'paused'
+      readonly revokedTokens: number
+    }
+  | {
+      /** The person turned a tool on or off for remote clients. Off is the default. */
+      readonly type: 'remote-tool'
+      readonly adapterId: string
+      readonly tool: string
+      readonly enabled: boolean
+      /** The tool's side effect when this was set; a later raise turns it off again. */
+      readonly sideEffect: 'read' | 'write' | 'irreversible'
     }
   | {
       readonly type: 'confirmation'

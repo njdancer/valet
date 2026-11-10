@@ -2,7 +2,8 @@
 // renderer decides this from the diff itself rather than trusting a flag, so the acknowledgement
 // tick can't be skipped by a review that under-reports.
 
-import type { LimitsInfo, PermissionDiff, ProbeInfo } from '../../shared/api'
+import type { Purpose, RequestDeclaration } from '@valet/core'
+import type { LimitsInfo, PermissionDiff, ProbeInfo, SecretDiffEntry, ToolDiffEntry } from '../../shared/api'
 import { plural } from './format'
 
 export type Tone = 'read' | 'write' | 'irreversible' | 'secret'
@@ -93,6 +94,83 @@ export function limitsChanged(diff: PermissionDiff): boolean {
   )
 }
 
+/** Side effects in order of how much they let a tool do. */
+const PURPOSE_RANK: Readonly<Record<Purpose, number>> = { read: 0, write: 1, irreversible: 2 }
+
+/**
+ * An added secret, read against the removed one of the same name if there is one: the diff lists a
+ * changed secret as one removal plus one addition, and the person needs to see what grew.
+ */
+export interface SecretChange {
+  readonly secret: SecretDiffEntry
+  /** Null for a secret the installed version didn't ask for. */
+  readonly was: SecretDiffEntry | null
+  readonly newFields: readonly SecretDiffEntry['fields'][number][]
+  readonly newOrigins: readonly string[]
+}
+
+export function secretChanges(diff: PermissionDiff): SecretChange[] {
+  return diff.secrets.added.map((secret) => {
+    const was = diff.secrets.removed.find((s) => s.name === secret.name) ?? null
+    return {
+      secret,
+      was,
+      newFields: was === null ? [] : secret.fields.filter((f) => !was.fields.includes(f)),
+      newOrigins: was === null ? [] : secret.origins.filter((o) => !was.origins.includes(o)),
+    }
+  })
+}
+
+/** An added tool, read against the removed one of the same name if there is one. */
+export interface ToolChange {
+  readonly tool: ToolDiffEntry
+  /** The side effect it had before; null for a new tool. */
+  readonly was: Purpose | null
+  /** Whether its side effect went up (read to write, or anything to irreversible). */
+  readonly raised: boolean
+  /** An existing tool now advertised to MCP clients as destructive (C9). */
+  readonly becameDestructive: boolean
+  /**
+   * An existing tool no longer advertised as destructive, or newly idempotent: clients may now run
+   * or retry it without asking, on the adapter's word.
+   */
+  readonly hintsRelaxed: boolean
+}
+
+export function toolChanges(diff: PermissionDiff): ToolChange[] {
+  return diff.tools.added.map((tool) => {
+    const before = diff.tools.removed.find((t) => t.name === tool.name) ?? null
+    const was = before?.sideEffect ?? null
+    return {
+      tool,
+      was,
+      raised: was !== null && PURPOSE_RANK[tool.sideEffect] > PURPOSE_RANK[was],
+      becameDestructive: before !== null && !before.destructive && tool.destructive,
+      hintsRelaxed:
+        before !== null &&
+        ((before.destructive && !tool.destructive) || (!before.idempotent && tool.idempotent)),
+    }
+  })
+}
+
+/** Names that are on both sides of a list diff: changed entries, shown once as their new form. */
+export function changedNames(diff: {
+  readonly added: readonly { readonly name: string }[]
+  readonly removed: readonly { readonly name: string }[]
+}): Set<string> {
+  const added = new Set(diff.added.map((e) => e.name))
+  return new Set(diff.removed.filter((e) => added.has(e.name)).map((e) => e.name))
+}
+
+/** Request declarations grouped by purpose, riskiest first, empty groups left out. */
+export function requestsByPurpose(
+  requests: readonly RequestDeclaration[],
+): { readonly purpose: Purpose; readonly requests: readonly RequestDeclaration[] }[] {
+  return (['irreversible', 'write', 'read'] as const)
+    .map((purpose) => ({ purpose, requests: requests.filter((r) => r.purpose === purpose) }))
+    .filter((group) => group.requests.length > 0)
+}
+
 function badge(count: number, one: string, many: string, tone: Tone): AdditionBadge[] {
   return count > 0 ? [{ label: `+${count} ${count === 1 ? one : many}`, tone }] : []
 }
@@ -101,11 +179,24 @@ function badge(count: number, one: string, many: string, tone: Tone): AdditionBa
 export function additionBadges(diff: PermissionDiff): AdditionBadge[] {
   const tools = diff.tools.added
   const requests = diff.requests.added
+  const secrets = secretChanges(diff)
   return [
     ...badge(diff.egress.added.length, 'host', 'hosts', 'write'),
     ...badge(diff.navigation.added.length, 'login origin', 'login origins', 'write'),
     ...badge(diff.frameOrigins.added.length, 'frame origin', 'frame origins', 'write'),
-    ...badge(diff.secrets.added.length, 'secret', 'secrets', 'secret'),
+    ...badge(secrets.filter((s) => s.was === null).length, 'secret', 'secrets', 'secret'),
+    ...badge(
+      secrets.reduce((n, s) => n + s.newFields.length, 0),
+      'secret field',
+      'secret fields',
+      'secret',
+    ),
+    ...badge(
+      secrets.reduce((n, s) => n + s.newOrigins.length, 0),
+      'secret origin',
+      'secret origins',
+      'secret',
+    ),
     ...badge(diff.secretFills.added.length, 'secret fill', 'secret fills', 'secret'),
     ...badge(diff.messagesSources.added.length, 'SMS code source', 'SMS code sources', 'secret'),
     ...badge(diff.authSteps.added.length, 'login step', 'login steps', 'write'),

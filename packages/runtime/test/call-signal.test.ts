@@ -167,7 +167,7 @@ describe('ToolHost.call: the caller’s signal', () => {
             input: z.object({}),
             output: z.unknown(),
             run: async (ctx) => {
-              answered = await ctx.confirm('Proceed?')
+              answered = await ctx.confirm({ requests: [{ method: 'GET', path: '/api/trolley' }] })
               return answered
             },
           }),
@@ -210,7 +210,11 @@ describe('ToolHost.call: the client’s transport', () => {
       defineAdapter({
         manifest,
         tools: {
-          run_test: tool({ input: z.object({}), output: z.boolean(), run: (ctx) => ctx.confirm('Sure?') }),
+          run_test: tool({
+            input: z.object({}),
+            output: z.boolean(),
+            run: (ctx) => ctx.confirm({ requests: [{ method: 'GET', path: '/api/trolley' }] }),
+          }),
         },
       }),
     )

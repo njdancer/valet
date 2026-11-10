@@ -6,6 +6,17 @@ import { join } from 'node:path'
 /** Keychain item holding the 1Password service-account token (D43, pending). */
 export const KEYCHAIN_SERVICE = 'valet'
 export const KEYCHAIN_ACCOUNT = 'onepassword-service-account'
+/**
+ * Where Keychain copies of granted 1Password items live (D6), and the Messages helper's launchd
+ * label (D8, the plist in build/launch-agents). A development build keeps its own of each, so it
+ * never reads or replaces the release build's.
+ */
+export function nativeNames(release: boolean): { copyService: string; messagesHelperLabel: string } {
+  return release
+    ? { copyService: 'valet.copy', messagesHelperLabel: 'me.dncr.valet.messages-helper' }
+    : { copyService: 'valet.dev.copy', messagesHelperLabel: 'me.dncr.valet.dev.messages-helper' }
+}
+
 /** The 1Password vault every granted item lives in (D6, pending). */
 export const VAULT = 'Valet'
 
@@ -53,6 +64,10 @@ export interface DataPaths {
   readonly loginMarkers: string
   /** The last and highest versions this install has run (updates.ts). */
   readonly versions: string
+  /** Whether first-run setup is finished (setup.ts). */
+  readonly setup: string
+  /** Remote access: on or paused, its names and port, and the remote-enabled tools (remote.ts). */
+  readonly remote: string
 }
 
 /** Every file the app keeps, under one owner-only directory (D45). */
@@ -71,5 +86,7 @@ export function dataPaths(dir: string): DataPaths {
     legacyBridgeConfig: join(dir, 'bridge.json'),
     loginMarkers: join(dir, 'login-markers'),
     versions: join(dir, 'versions.json'),
+    setup: join(dir, 'setup.json'),
+    remote: join(dir, 'remote.json'),
   }
 }

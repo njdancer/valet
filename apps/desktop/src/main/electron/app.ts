@@ -5,11 +5,13 @@ import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { createElectronSessionDriver, hardenProcess, type ManifestOptions } from '@valet/browser-electron'
+import { messagesHelperSocketPath } from '@valet/credentials'
 import { startEndpoint } from '@valet/mcp-server'
 import { app, clipboard, dialog, protocol } from 'electron'
+import { href } from '../../renderer/lib/routes'
 import { builtinAdapters } from '../adapters'
 import { APP_SCHEME, APP_SCHEME_PRIVILEGES, createAppSchemeHandler } from '../core/app-scheme'
-import { dataPaths } from '../core/constants'
+import { dataPaths, nativeNames } from '../core/constants'
 import { checkOpBinary, defaultOpCheckDeps, realCredentials } from '../core/credentials'
 import { DEV_DATA_NAME, demoResolverRules, launchMode, rendererBase, userDataDir } from '../core/launch'
 import { AppService } from '../core/service'
@@ -17,7 +19,8 @@ import type { BridgeCommand } from '../core/snippets'
 import type { DemoSite } from './demo'
 import { launchRefused } from './guard'
 import { broadcast, registerIpc } from './ipc'
-import { createTray } from './tray'
+import { utilityToolProcess } from './tool-process'
+import { type AppTray, createTray } from './tray'
 import { bundleSignature, electronUpdates } from './updates'
 import { AppWindows } from './windows'
 
@@ -69,6 +72,17 @@ function bridgeCommand(): ((configPath: string) => BridgeCommand) | null {
   return (configPath) => ({ command: tsx, args: [cli, configPath] })
 }
 
+/**
+ * A native helper (swift-bridge): beside the app's executable when packaged, else the debug build in
+ * the repo (`swift build --package-path swift-bridge`), or null when neither exists.
+ */
+function nativeHelper(name: string): string | null {
+  const path = app.isPackaged
+    ? join(dirname(process.execPath), name)
+    : resolve(app.getAppPath(), '../../swift-bridge/.build/debug', name)
+  return existsSync(path) ? path : null
+}
+
 async function main(): Promise<void> {
   // A menu-bar app: closing every window doesn't quit.
   app.on('window-all-closed', () => {})
@@ -89,6 +103,7 @@ async function main(): Promise<void> {
     )
   const paths = dataPaths(app.getPath('userData'))
   let service: AppService | null = null
+  let tray: AppTray | null = null
   const windows = new AppWindows({
     base,
     preload: join(import.meta.dirname, '../preload/index.cjs'),
@@ -114,6 +129,20 @@ async function main(): Promise<void> {
   )
   const driverOptions: ManifestOptions = demoSite === null ? {} : { egressPorts: [demoSite.site.port] }
   const opDeps = defaultOpCheckDeps()
+  // The packaged app's name is "valet" for a release and "valet-dev" otherwise (electron-builder).
+  const names = nativeNames(app.isPackaged && app.getName() === 'valet')
+  const messagesBinary = app.isPackaged ? nativeHelper('valet-messages-helper') : null
+  const credentialDeps = {
+    ...opDeps,
+    keychainHelper: nativeHelper('valet-keychain'),
+    copyService: names.copyService,
+    // Only a packaged app has the launch agent's plist for SMAppService; a dev build reads Messages
+    // in process, with Full Disk Access on the app that runs it.
+    messagesHelper:
+      messagesBinary === null
+        ? null
+        : { binary: messagesBinary, socketPath: messagesHelperSocketPath(names.messagesHelperLabel) },
+  }
   const signature = await bundleSignature()
 
   service = new AppService({
@@ -127,13 +156,14 @@ async function main(): Promise<void> {
     },
     sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
     adapters,
+    toolProcess: utilityToolProcess(join(import.meta.dirname, 'tool-process.js')),
     createDriver: (manifest, reporters) =>
       createElectronSessionDriver(
         manifest,
         { ...driverOptions, ...reporters },
         demoSite === null ? {} : { dial: demoSite.dial },
       ),
-    credentials: demoSite === null ? realCredentials(opDeps) : demoSite.credentials,
+    credentials: demoSite === null ? realCredentials(credentialDeps) : demoSite.credentials,
     startEndpoint: (caller, clients, onSessionsChanged) =>
       startEndpoint({
         caller,
@@ -173,7 +203,10 @@ async function main(): Promise<void> {
       },
       quit: () => app.quit(),
     },
-    emit: (event) => broadcast(windows, event),
+    emit: (event) => {
+      broadcast(windows, event)
+      if (event.type === 'app-changed') tray?.refresh()
+    },
     bridge: bridgeCommand(),
     updates: electronUpdates({
       feed: { url: FEED_BASE_URL, publicKey: FEED_PUBLIC_KEY },
@@ -188,7 +221,7 @@ async function main(): Promise<void> {
 
   registerIpc(running.api, windows, base, log)
   await running.start()
-  createTray(windows, running.api, mode.demo)
+  tray = createTray(windows, running.api, mode.demo, running.remote)
 
   app.on('second-instance', () => windows.openControlPanel(null))
   let stopping = false
@@ -214,9 +247,12 @@ async function main(): Promise<void> {
   })
   for (const signal of ['SIGTERM', 'SIGINT'] as const) process.once(signal, () => app.quit())
 
-  // First run, demo and e2e: open the control panel, where the adapter waits for review.
+  // Until setup is finished or skipped, every launch opens it (AC2). Otherwise demo and e2e open the
+  // control panel, as does anything waiting for the person.
+  const setup = await running.api.setup.status()
   const attention = await running.api.attention.list()
-  if (mode.demo || mode.e2e || attention.length > 0) windows.openControlPanel(null)
+  if (mode.setup && setup.completedAt === null) windows.openControlPanel(href.setup())
+  else if (mode.demo || mode.e2e || attention.length > 0) windows.openControlPanel(null)
 
   // A smoke build only: the packaged main process loads what it loads lazily, and says so.
   if (__VALET_SMOKE_BUILD__) {

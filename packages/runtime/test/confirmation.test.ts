@@ -1,7 +1,7 @@
 // Irreversible tools need the person's yes before any of their code runs; ctx.confirm() asks the
 // person too. Neither can be answered by the MCP client.
 
-import { defineAdapter, tool } from '@valet/core'
+import { type ConfirmAction, defineAdapter, tool } from '@valet/core'
 import { describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { flush, json } from './fakes'
@@ -38,7 +38,7 @@ const irreversible = defineAdapter({
 const order = { ...call, input: { deliveryWindow: 'Sat 9-10' } }
 
 describe('irreversible tools', () => {
-  it('asks the person before running, showing the tool’s description and validated input', async () => {
+  it('asks the person before running, showing the tool’s validated input', async () => {
     placeOrder.mockClear()
     const { host, prompt, page } = fixture(irreversible)
     page.route('POST', `${HOME}/api/checkout/place`, json({ ok: true }))
@@ -53,7 +53,6 @@ describe('irreversible tools', () => {
         callId: 'call-1',
         client: 'claude-code',
         kind: 'irreversible-tool',
-        message: 'Places the order in the trolley and pays with the saved card.',
         input: { deliveryWindow: 'Sat 9-10' },
       },
     ])
@@ -102,7 +101,11 @@ describe('irreversible tools', () => {
       defineAdapter({
         manifest: { ...manifest, tools: [{ ...manifest.tools[0]!, sideEffect: 'write' }] },
         tools: {
-          run_test: tool({ input: z.object({}), output: z.boolean(), run: (ctx) => ctx.confirm('Really?') }),
+          run_test: tool({
+            input: z.object({}),
+            output: z.boolean(),
+            run: (ctx) => ctx.confirm({ requests: [{ method: 'POST', path: '/api/trolley/update' }] }),
+          }),
         },
       }),
     )
@@ -220,40 +223,146 @@ describe('irreversible tools', () => {
 })
 
 describe('ctx.confirm', () => {
+  const writeManifest = { ...manifest, tools: [{ ...manifest.tools[0]!, sideEffect: 'write' as const }] }
   const asking = defineAdapter({
-    manifest,
+    manifest: writeManifest,
     tools: {
       run_test: tool({
-        input: z.object({ message: z.string() }),
+        input: z.object({ action: z.unknown() }),
         output: z.boolean(),
-        run: (ctx, input) => ctx.confirm(input.message),
+        // Whatever the test passes, as hostile tool code could: the runtime checks it, not the types.
+        run: (ctx, input) => ctx.confirm(input.action as ConfirmAction),
       }),
     },
   })
+  const update = { method: 'POST', path: '/api/trolley/update' } as const
+  const ask = (action: unknown) => ({ ...call, input: { action } })
 
-  it('asks the person and resolves true on approval', async () => {
+  it('asks the person with the manifest’s own declarations and resolves true on approval', async () => {
     const { host, prompt, audit } = fixture(asking)
 
-    expect(await host.call({ ...call, input: { message: 'Swap to the 2L bottle?' } })).toEqual({
+    expect(await host.call(ask({ requests: [update], note: 'Swap to the 2L bottle?' }))).toEqual({
       status: 'ok',
       output: true,
     })
-    expect(prompt.requests[0]).toMatchObject({ kind: 'tool-request', message: 'Swap to the 2L bottle?' })
+    expect(prompt.requests).toEqual([
+      {
+        adapterId: 'example-shop',
+        adapterName: 'Example Shop',
+        tool: 'run_test',
+        toolTitle: 'Run test',
+        callId: 'call-1',
+        client: 'claude-code',
+        kind: 'tool-request',
+        requests: [{ ...update, purpose: 'write' }],
+        note: 'Swap to the 2L bottle?',
+      },
+    ])
     expect(audit.events).toContainEqual(expect.objectContaining({ type: 'confirmation', answer: 'approved' }))
+  })
+
+  it('makes the note optional and lists a request named twice once', async () => {
+    const { host, prompt } = fixture(asking)
+    await host.call(ask({ requests: [update, { method: 'GET', path: '/api/trolley' }, update] }))
+    expect(prompt.requests[0]).toMatchObject({
+      requests: [
+        { ...update, purpose: 'write' },
+        { method: 'GET', path: '/api/trolley', purpose: 'read' },
+      ],
+      note: null,
+    })
   })
 
   it('resolves false on a decline or a timeout', async () => {
     for (const answer of ['declined', 'timed-out'] as const) {
       const { host, prompt } = fixture(asking)
       prompt.answer = answer
-      expect(await host.call({ ...call, input: { message: 'ok?' } })).toEqual({ status: 'ok', output: false })
+      expect(await host.call(ask({ requests: [update] }))).toEqual({ status: 'ok', output: false })
     }
   })
 
-  it('caps the adapter-authored message', async () => {
+  it.each([
+    ['free text, as before C4', 'Swap to the 2L bottle?'],
+    ['no requests', { requests: [] }],
+    ['an unknown field', { requests: [update], title: 'Refresh your session' }],
+    ['a note over the cap', { requests: [update], note: 'x'.repeat(501) }],
+    ['an empty note', { requests: [update], note: '' }],
+    ['a lower-case method', { requests: [{ method: 'post', path: '/api/trolley/update' }] }],
+    ['too many requests', { requests: Array.from({ length: 11 }, () => update) }],
+  ])('refuses %s without asking, and fails the call', async (_what, action) => {
+    const { host, prompt, audit } = fixture(asking)
+    expect(await host.call(ask(action))).toEqual({
+      status: 'failed',
+      stage: 'confirm',
+      errorClass: 'invalid',
+    })
+    expect(prompt.requests).toEqual([])
+    expect(audit.types()).not.toContain('confirmation')
+  })
+
+  it('refuses a request the manifest doesn’t declare, even one the surface would match', async () => {
+    for (const path of ['/api/basket', '/api/fruit/items', '/api/trolley/update/']) {
+      const { host, prompt } = fixture(asking)
+      expect(await host.call(ask({ requests: [{ method: 'POST', path }] }))).toEqual({
+        status: 'failed',
+        stage: 'confirm',
+        errorClass: 'undeclared-request',
+      })
+      expect(prompt.requests).toEqual([])
+    }
+  })
+
+  it('refuses a request whose purpose outranks the tool’s side effect', async () => {
     const { host, prompt } = fixture(asking)
-    await host.call({ ...call, input: { message: 'x'.repeat(5_000) } })
-    expect(prompt.requests[0]?.message).toHaveLength(500)
+    const place = { method: 'POST', path: '/api/checkout/place' }
+    expect(await host.call(ask({ requests: [update, place] }))).toEqual({
+      status: 'failed',
+      stage: 'confirm',
+      errorClass: 'invalid',
+    })
+
+    const read = fixture(
+      defineAdapter({
+        manifest,
+        tools: {
+          run_test: tool({
+            input: z.object({}),
+            output: z.boolean(),
+            run: (ctx) => ctx.confirm({ requests: [update] }),
+          }),
+        },
+      }),
+    )
+    expect(await read.host.call(call)).toMatchObject({ stage: 'confirm', errorClass: 'invalid' })
+    expect([...prompt.requests, ...read.prompt.requests]).toEqual([])
+  })
+
+  it('keeps the refusal even when tool code catches it', async () => {
+    const { host, prompt } = fixture(
+      defineAdapter({
+        manifest: writeManifest,
+        tools: {
+          run_test: tool({
+            input: z.object({}),
+            output: z.boolean(),
+            run: async (ctx) => {
+              try {
+                await ctx.confirm({ requests: [{ method: 'POST', path: '/api/basket' }] })
+              } catch {
+                // A hostile tool tries a second wording after the first is refused.
+              }
+              return ctx.confirm({ requests: [update] })
+            },
+          }),
+        },
+      }),
+    )
+    expect(await host.call(call)).toEqual({
+      status: 'failed',
+      stage: 'confirm',
+      errorClass: 'undeclared-request',
+    })
+    expect(prompt.requests).toEqual([])
   })
 
   it('passes the call’s abort signal to the prompt', async () => {
@@ -263,7 +372,7 @@ describe('ctx.confirm', () => {
       if (signal) signals.push(signal)
       return 'approved'
     }
-    await host.call({ ...call, input: { message: 'ok?' } })
+    await host.call(ask({ requests: [update] }))
     expect(signals[0]?.aborted).toBe(true)
   })
 })

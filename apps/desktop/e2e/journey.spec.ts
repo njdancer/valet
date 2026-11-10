@@ -1,8 +1,8 @@
 // The person's and the agent's first session with the demo, in order, on one userData: review and
 // approve Woolworths, grant its login from the demo vault item and its SMS codes from Messages,
 // then search, add (which logs in on the fake's Auth0, password and SMS code), read, update and
-// remove over MCP. Then the secret scan, the audit chain (verified, then broken by an edit on disk),
-// and the site's block opening the breaker.
+// remove over MCP. Then the secret scan, a wrong password typed only once (AC10), the site's block
+// opening the breaker, and the audit chain (verified, then broken by an edit on disk).
 
 import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -19,11 +19,13 @@ import {
   type Launched,
   launch,
   type McpClient,
+  passwordPosts,
   renderedText,
   secretsIn,
   siteTrolley,
   tempDir,
   windowWithTitle,
+  wrongPassword,
 } from './harness'
 
 test.describe.configure({ mode: 'serial' })
@@ -45,7 +47,9 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await client?.close().catch(() => undefined)
   await launched?.close()
-  if (userData !== undefined) rmSync(userData, { recursive: true, force: true })
+  // Chromium may still be flushing a partition as the app exits.
+  if (userData !== undefined)
+    rmSync(userData, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
 })
 
 // biome-ignore lint/correctness/noEmptyPattern: Playwright needs the fixtures argument destructured
@@ -249,6 +253,34 @@ test('no secret reaches an MCP result, the audit log, the renderer or the app’
   expect(secretsIn(launched.logs.join(''), tokens)).toEqual([])
   // The scan can find what it looks for: the password is in the demo's own source.
   expect(secretsIn(`x${DEMO_PASSWORD}x`)).toEqual(['demo password'])
+})
+
+test('a wrong password is typed once, the login is held for the person, and the next call sends nothing (AC10)', async () => {
+  // As if the password had been changed elsewhere: logged out everywhere, and the stored one wrong.
+  await wrongPassword(launched, true)
+  const before = await passwordPosts(launched)
+  const failed = await callTool(client, 'woolworths_get_cart', {})
+  results.push(failed.raw)
+  expect(failed.text).toMatch(/login-required/)
+  expect((await passwordPosts(launched)) - before).toBe(1)
+  const detail = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
+  expect(detail?.session).toMatchObject({ state: 'needs-user', needsUser: 'login-required' })
+
+  // The held login stays with the person: the next call types nothing.
+  const again = await callTool(client, 'woolworths_get_cart', {})
+  results.push(again.raw)
+  expect(again.text).toMatch(/login-required/)
+  expect((await passwordPosts(launched)) - before).toBe(1)
+
+  await go('Adapters')
+  await expect(control.getByText('Login window open')).toBeVisible()
+  await expect(control.getByText('Needs you').first()).toBeVisible()
+  await wrongPassword(launched, false)
+  // The person closes the login window without logging in.
+  await launched.app.evaluate(({ BrowserWindow }) => {
+    for (const window of BrowserWindow.getAllWindows())
+      if (window.getTitle().includes('needs you to log in')) window.close()
+  })
 })
 
 test('the site blocking every request opens the breaker: tools return blocked, the UI shows a retry', async () => {

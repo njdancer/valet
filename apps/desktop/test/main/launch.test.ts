@@ -28,11 +28,15 @@ const DEV = { packaged: false, demoBuild: true } as const
 
 describe('launchMode', () => {
   it('turns demo on by flag or environment, and e2e only by environment', () => {
-    expect(launchMode([], {}, DEV)).toEqual({ demo: false, e2e: false, userData: null })
+    expect(launchMode([], {}, DEV)).toEqual({ demo: false, e2e: false, userData: null, setup: true })
     expect(launchMode(['electron', '.', '--demo'], {}, DEV).demo).toBe(true)
     expect(launchMode([], { VALET_DEMO: '1' }, DEV).demo).toBe(true)
     expect(launchMode([], { VALET_DEMO: 'true' }, DEV).demo).toBe(false)
     expect(launchMode([], { VALET_E2E: '1' }, DEV).e2e).toBe(true)
+    // Setup opens on a first launch, except in an e2e launch that doesn't ask for it.
+    expect(launchMode([], { VALET_E2E: '1' }, DEV).setup).toBe(false)
+    expect(launchMode([], { VALET_E2E: '1', VALET_E2E_SETUP: '1' }, DEV).setup).toBe(true)
+    expect(launchMode(['--demo'], { VALET_E2E_SETUP: '0' }, DEV).setup).toBe(true)
   })
 
   it('never turns demo on in a packaged app, or in a build without demo mode', () => {

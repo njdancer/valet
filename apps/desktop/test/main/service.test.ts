@@ -5,12 +5,14 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ValetError } from '@valet/core'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { CredentialError, ValetError } from '@valet/core'
 import type { LiveSessions, SessionReportingEndpoint, ToolCall, ToolCaller } from '@valet/mcp-server'
 import { LoginAttemptMarker } from '@valet/runtime'
 import { afterEach, describe, expect, it } from 'vitest'
 import { dataPaths } from '../../src/main/core/constants'
-import { disabledOtpReader } from '../../src/main/core/credentials'
+import { type Credentials, disabledOtpReader } from '../../src/main/core/credentials'
 import { DEMO_ACCOUNT, demoCredentials } from '../../src/main/core/demo'
 import { builtinAdapter } from '../../src/main/core/registry'
 import { AppService, fillSelector } from '../../src/main/core/service'
@@ -18,11 +20,14 @@ import { disabledUpdates, type UpdatesHooks, type UpdatesPort } from '../../src/
 import type { AppEvent, ConfirmationItem, HashRoute } from '../../src/shared/api'
 import { CONFIRM_ARM_MS } from '../../src/shared/api'
 import { FakeAuthPage, FakeDriver, SHOP, SHOP_FILES, shopDefinition } from './fixtures'
+import { tunnelFetch } from './tunnel-fetch'
 
 const TOKEN = 't'.repeat(43)
 const dirs: string[] = []
 const services: AppService[] = []
+const clientsToClose: Client[] = []
 afterEach(async () => {
+  for (const c of clientsToClose.splice(0)) await c.close().catch(() => undefined)
   for (const s of services.splice(0)) await s.stop()
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
 })
@@ -35,6 +40,7 @@ async function setup(
     dir?: string
     /** breakers.json as the runtime finds it at start. */
     breakers?: unknown
+    credentials?: Credentials
   } = {},
 ) {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'sa-service-'))
@@ -86,7 +92,7 @@ async function setup(
       driver.reporters = reporters
       return driver
     },
-    credentials: demoCredentials(disabledOtpReader),
+    credentials: options.credentials ?? demoCredentials(disabledOtpReader),
     startEndpoint: async (caller, clients, onSessionsChanged): Promise<SessionReportingEndpoint> => {
       endpoint.caller = caller
       endpoint.sessionsChanged = onSessionsChanged
@@ -272,6 +278,98 @@ describe('an update', () => {
 })
 
 describe('grants', () => {
+  /** The demo credentials plus a Keychain copy that records what it is asked to do. */
+  function copyingCredentials(fail = false) {
+    const demo = demoCredentials(disabledOtpReader)
+    const copied: { itemRef: string; fields: readonly string[] }[] = []
+    const forgotten: string[] = []
+    const credentials: Credentials = {
+      ...demo,
+      async status() {
+        return [...(await demo.status()), { kind: 'keychain-copy', available: true, unavailableReason: null }]
+      },
+      async vaultItems(provider) {
+        return provider === 'keychain-copy'
+          ? [{ id: 'vaultid1-itemid1', title: 'Woolworths (Personal)' }]
+          : demo.vaultItems(provider)
+      },
+      async copyItem(itemRef, fields) {
+        if (fail) throw new CredentialError('locked')
+        copied.push({ itemRef, fields })
+      },
+      async forgetCopy(itemRef) {
+        forgotten.push(itemRef)
+      },
+    }
+    return { credentials, copied, forgotten }
+  }
+
+  it('copies a Keychain-copy grant’s item before storing it, re-syncs it, and forgets it on revoke', async () => {
+    const { credentials, copied, forgotten } = copyingCredentials()
+    const s = await setup({ credentials })
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    const request = {
+      adapterId: 'shop',
+      adapterHash: s.adapter.hash,
+      secret: 'login',
+      provider: 'keychain-copy' as const,
+      itemRef: 'vaultid1-itemid1',
+      origins: ['https://login.shop.test'],
+    }
+    await s.api.grants.make(request)
+    expect(copied).toEqual([{ itemRef: 'op://vaultid1/itemid1', fields: ['username', 'password'] }])
+    expect(await s.api.grants.list()).toEqual([
+      expect.objectContaining({
+        provider: 'keychain-copy',
+        itemId: 'vaultid1-itemid1',
+        itemTitle: 'Woolworths (Personal)',
+      }),
+    ])
+    await s.api.grants.resync('shop', 'login')
+    expect(copied).toHaveLength(2)
+    await expect(s.api.grants.resync('shop', 'nope')).rejects.toEqual(new ValetError('grant', 'not-found'))
+    await s.api.grants.revoke('shop', 'login')
+    expect(forgotten).toEqual(['op://vaultid1/itemid1'])
+    const page = await s.api.audit.page({ category: 'approvals-grants' })
+    expect(page.records.map((r) => r.event.type)).toEqual([
+      'grant-revoked',
+      'grant-copied',
+      'grant-made',
+      'grant-copied',
+      'adapter-approved',
+    ])
+  })
+
+  it('makes no grant when 1Password won’t give the item up', async () => {
+    const { credentials } = copyingCredentials(true)
+    const s = await setup({ credentials })
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    await expect(
+      s.api.grants.make({
+        adapterId: 'shop',
+        adapterHash: s.adapter.hash,
+        secret: 'login',
+        provider: 'keychain-copy',
+        itemRef: 'vaultid1-itemid1',
+        origins: ['https://login.shop.test'],
+      }),
+    ).rejects.toEqual(new ValetError('credential', 'locked'))
+    expect(await s.api.grants.list()).toEqual([])
+  })
+
+  it('refuses to re-sync a grant that isn’t a Keychain copy', async () => {
+    const s = await approved()
+    await s.api.grants.make({
+      adapterId: 'shop',
+      adapterHash: s.adapter.hash,
+      secret: 'login',
+      provider: 'fake',
+      itemRef: 'demo-woolworths',
+      origins: ['https://login.shop.test'],
+    })
+    await expect(s.api.grants.resync('shop', 'login')).rejects.toEqual(new ValetError('grant', 'not-found'))
+  })
+
   it('makes a checked grant with an audit record, lists it by title, and revokes it', async () => {
     const s = await approved()
     const request = {
@@ -495,6 +593,16 @@ describe('tool calls', () => {
       await new Promise((r) => setTimeout(r, 10))
     await s.service.stop()
     expect(await running).toEqual({ status: 'failed', stage: 'tool-run', errorClass: 'aborted' })
+  })
+
+  it('keeps setup unfinished until the person finishes it, across a restart', async () => {
+    const s = await setup()
+    expect(await s.api.setup.status()).toEqual({ completedAt: null })
+    expect(await s.api.setup.finish()).toEqual({ completedAt: '2026-11-07T00:00:00.000Z' })
+    expect(s.events).toContainEqual({ type: 'app-changed' })
+    await s.service.stop()
+    const again = await setup({ dir: s.dir })
+    expect(await again.api.setup.status()).toEqual({ completedAt: '2026-11-07T00:00:00.000Z' })
   })
 
   it('refuses every call while paused, and audits it with the client’s id', async () => {
@@ -1167,5 +1275,168 @@ describe('fillSelector', () => {
       ),
     ).toBe('#t')
     expect(fillSelector(steps, 'login', 'otp')).toBe('')
+  })
+})
+
+describe('remote access', () => {
+  const HOST = 'mac.example-tailnet.ts.net'
+
+  async function remoteClient(port: number, token: string): Promise<Client> {
+    const transport = new StreamableHTTPClientTransport(new URL(`http://${HOST}/mcp`), {
+      requestInit: { headers: { authorization: `Bearer ${token}` } },
+      fetch: tunnelFetch(port, HOST),
+    })
+    const client = new Client({ name: 'claude.ai', version: '1' })
+    await client.connect(transport)
+    clientsToClose.push(client)
+    return client
+  }
+
+  function audited(paths: { audit: string }) {
+    return readFileSync(paths.audit, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line).event)
+  }
+
+  it('is off until the person turns it on, with no file and nothing listening', async () => {
+    const s = await approved()
+    expect(s.service.remote.status()).toEqual({
+      enabled: false,
+      listening: false,
+      url: null,
+      hosts: [],
+      sessions: 0,
+      tools: [],
+    })
+    expect(existsSync(s.paths.remote)).toBe(false)
+  })
+
+  it('serves only remote-enabled tools through the same runtime, audited as remote', async () => {
+    const s = await approved()
+    await s.service.remote.setHosts([HOST])
+    await s.service.remote.setEnabled(true)
+    const { url } = s.service.remote.status()
+    expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/)
+    const port = Number(new URL(url as string).port)
+    const client = await remoteClient(port, s.service.remote.tokens.issue('phone'))
+
+    expect((await client.listTools()).tools).toEqual([])
+    await s.service.setRemoteTool('shop', 'echo', true)
+    expect((await client.listTools()).tools.map((t) => t.name)).toEqual(['shop_echo'])
+
+    const ok = await client.callTool({ name: 'shop_echo', arguments: { text: 'hi' } })
+    expect(ok.structuredContent).toEqual({ text: 'hi' })
+    expect(s.driver.runs).toBe(1)
+
+    const events = audited(s.paths)
+    expect(events).toContainEqual({ type: 'remote-state', state: 'on', revokedTokens: 0 })
+    expect(events).toContainEqual({
+      type: 'remote-tool',
+      adapterId: 'shop',
+      tool: 'echo',
+      enabled: true,
+      sideEffect: 'read',
+    })
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'tool-called',
+        tool: 'echo',
+        client: 'claude.ai',
+        clientId: 'remote:phone',
+      }),
+    )
+    expect(s.service.remote.status()).toMatchObject({
+      enabled: true,
+      listening: true,
+      sessions: 1,
+      tools: ['shop.echo'],
+    })
+  })
+
+  it('refuses and audits a call to a tool turned off since the client listed it', async () => {
+    const s = await approved()
+    await s.service.remote.setHosts([HOST])
+    await s.service.remote.setEnabled(true)
+    await s.service.setRemoteTool('shop', 'add', true)
+    const port = Number(new URL(s.service.remote.status().url as string).port)
+    const client = await remoteClient(port, s.service.remote.tokens.issue('phone'))
+    await client.listTools()
+    // Off in the store, but the client still holds the old listing.
+    ;(s.service.remote as unknown as { current: { tools: object } }).current.tools = {}
+
+    const refused = await client.callTool({ name: 'shop_add', arguments: { item: 'milk' } })
+
+    expect(refused.isError).toBe(true)
+    expect(s.driver.runs).toBe(0)
+    const events = audited(s.paths)
+    const called = events.find((e) => e.type === 'tool-called' && e.tool === 'add')
+    expect(called).toMatchObject({ clientId: 'remote:phone' })
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'tool-finished',
+        callId: called.callId,
+        outcome: 'failed',
+        stage: 'config',
+        errorClass: 'not-found',
+      }),
+    )
+  })
+
+  it('refuses remote calls while the adapters are paused, as it does local ones', async () => {
+    const s = await approved()
+    await s.service.remote.setHosts([HOST])
+    await s.service.remote.setEnabled(true)
+    await s.service.setRemoteTool('shop', 'echo', true)
+    const port = Number(new URL(s.service.remote.status().url as string).port)
+    const client = await remoteClient(port, s.service.remote.tokens.issue('phone'))
+    await s.api.app.setPaused(true)
+    const result = await client.callTool({ name: 'shop_echo', arguments: { text: 'x' } })
+    expect(JSON.stringify(result.content)).toContain('config: unavailable')
+    expect(s.driver.runs).toBe(0)
+  })
+
+  it('pauses with the kill switch: tokens revoked, listener closed, audited, and still paused after a restart', async () => {
+    const s = await approved()
+    await s.service.remote.setHosts([HOST])
+    await s.service.remote.setEnabled(true)
+    const port = Number(new URL(s.service.remote.status().url as string).port)
+    const token = s.service.remote.tokens.issue('phone')
+    await remoteClient(port, token)
+
+    await s.service.remote.setEnabled(false)
+
+    expect(s.service.remote.tokens.identify(token)).toBeNull()
+    expect(s.service.remote.status()).toMatchObject({ enabled: false, listening: false, url: null })
+    expect(audited(s.paths)).toContainEqual({ type: 'remote-state', state: 'paused', revokedTokens: 1 })
+    expect(s.events).toContainEqual({ type: 'app-changed' })
+
+    await s.service.stop()
+    services.splice(services.indexOf(s.service), 1)
+    const again = await setup({ dir: s.dir })
+    expect(again.service.remote.status()).toMatchObject({ enabled: false, listening: false, hosts: [HOST] })
+  })
+
+  it('starts listening again at launch, on the same port, when the person left it on', async () => {
+    const s = await approved()
+    await s.service.remote.setHosts([HOST])
+    await s.service.remote.setEnabled(true)
+    const first = s.service.remote.status().url
+    await s.service.stop()
+    services.splice(services.indexOf(s.service), 1)
+
+    const again = await setup({ dir: s.dir })
+    expect(again.service.remote.status()).toMatchObject({ enabled: true, listening: true, url: first })
+  })
+
+  it('refuses to turn on a tool the adapter doesn’t declare, and a host that isn’t a DNS name', async () => {
+    const s = await approved()
+    await expect(s.service.setRemoteTool('shop', 'nope', true)).rejects.toEqual(
+      new ValetError('config', 'not-found'),
+    )
+    await expect(s.service.remote.setHosts(['127.0.0.1'])).rejects.toEqual(
+      new ValetError('config', 'invalid'),
+    )
+    expect(s.service.remote.status().hosts).toEqual([])
   })
 })

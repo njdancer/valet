@@ -63,8 +63,16 @@ export function tempDir(prefix: string): string {
   return mkdtempSync(join(tmpdir(), `valet-e2e-${prefix}-`))
 }
 
-/** Launches the built app (or a copy of it at `appPath`) in demo and e2e mode on `userData`. */
-export async function launch(userData: string, appPath = appDir): Promise<Launched> {
+/**
+ * Launches the built app (or a copy of it at `appPath`) in demo and e2e mode on `userData`. First-run
+ * setup stays closed unless `setup` asks for it (VALET_E2E_SETUP), so the other specs start on the
+ * adapters page.
+ */
+export async function launch(
+  userData: string,
+  appPath = appDir,
+  options: { readonly setup?: boolean } = {},
+): Promise<Launched> {
   const env: Record<string, string> = {}
   for (const [key, value] of Object.entries(process.env)) {
     if (value !== undefined && !key.startsWith('VALET_') && key !== 'ELECTRON_RUN_AS_NODE') env[key] = value
@@ -72,7 +80,13 @@ export async function launch(userData: string, appPath = appDir): Promise<Launch
   const app = await _electron.launch({
     executablePath: electronPath,
     args: [appPath],
-    env: { ...env, VALET_DEMO: '1', VALET_E2E: '1', VALET_USER_DATA: userData },
+    env: {
+      ...env,
+      VALET_DEMO: '1',
+      VALET_E2E: '1',
+      VALET_USER_DATA: userData,
+      ...(options.setup === true ? { VALET_E2E_SETUP: '1' } : {}),
+    },
   })
   const logs: string[] = []
   app.process().stdout?.on('data', (chunk) => logs.push(String(chunk)))
@@ -250,10 +264,11 @@ export function changedAdapterBuild(): string {
   )
   const bundlePath = join(dir, 'out/main/index.js')
   let bundle = readFileSync(bundlePath, 'utf8')
+  // The write's C9 hints go too: only a write tool may declare them.
   const compiled =
-    'name: "remove_from_cart",\n\t\t\t\ttitle: "Remove from cart",\n\t\t\t\tdescription: "Removes a product from the cart entirely.",\n\t\t\t\tsideEffect: "write"'
+    'name: "remove_from_cart",\n\t\t\t\ttitle: "Remove from cart",\n\t\t\t\tdescription: "Removes a product from the cart entirely.",\n\t\t\t\tsideEffect: "write",\n\t\t\t\tdestructive: true,\n\t\t\t\tidempotent: true'
   const embedded =
-    "name: 'remove_from_cart',\\n        title: 'Remove from cart',\\n        description: 'Removes a product from the cart entirely.',\\n        sideEffect: 'write',"
+    "name: 'remove_from_cart',\\n        title: 'Remove from cart',\\n        description: 'Removes a product from the cart entirely.',\\n        sideEffect: 'write',\\n        // A second removal finds nothing left to remove.\\n        destructive: true,\\n        idempotent: true,"
   for (const [from, label] of [
     [compiled, 'compiled manifest'],
     [embedded, 'embedded source'],
@@ -263,8 +278,11 @@ export function changedAdapterBuild(): string {
       throw new Error(`the ${label} of remove_from_cart isn't in the bundle exactly once; rebuild?`)
   }
   bundle = bundle
-    .replace(compiled, compiled.replace('sideEffect: "write"', 'sideEffect: "irreversible"'))
-    .replace(embedded, embedded.replace("sideEffect: 'write'", "sideEffect: 'irreversible'"))
+    .replace(compiled, compiled.slice(0, compiled.indexOf('sideEffect')).concat('sideEffect: "irreversible"'))
+    .replace(
+      embedded,
+      embedded.slice(0, embedded.indexOf('sideEffect')).concat("sideEffect: 'irreversible',"),
+    )
   writeFileSync(bundlePath, bundle)
   return dir
 }
@@ -273,6 +291,26 @@ export function changedAdapterBuild(): string {
 interface DemoHook {
   blockAll(on: boolean): void
   trolley(): readonly { readonly stockcode: number; readonly quantity: number }[]
+  wrongPassword(on: boolean): void
+  passwordPosts(): number
+}
+
+/** Logs the demo account out everywhere and makes the fake refuse its password, or stop. */
+export async function wrongPassword(launched: Launched, on: boolean): Promise<void> {
+  await launched.app.evaluate((_electron, on) => {
+    const hook = (globalThis as { __valetE2e?: DemoHook }).__valetE2e
+    if (hook === undefined) throw new Error('no e2e hook: not a demo build in e2e mode')
+    hook.wrongPassword(on)
+  }, on)
+}
+
+/** Password form posts the fake's Auth0 has received since launch. */
+export async function passwordPosts(launched: Launched): Promise<number> {
+  return launched.app.evaluate(() => {
+    const hook = (globalThis as { __valetE2e?: DemoHook }).__valetE2e
+    if (hook === undefined) throw new Error('no e2e hook: not a demo build in e2e mode')
+    return hook.passwordPosts()
+  })
 }
 
 /** Makes the fake site answer every request with its Access Denied page, or stop. */

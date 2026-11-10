@@ -8,7 +8,13 @@ import type { SecretValue } from './secret'
  * `messages` grants let an adapter's auth flow read one-time codes from Messages: itemRef is the
  * sender handle the person approved, and origins are where the code may be typed.
  */
-export type ProviderKind = 'onepassword-service-account' | 'onepassword-cli' | 'messages' | 'fake'
+export type ProviderKind =
+  | 'keychain-copy'
+  | 'onepassword-desktop'
+  | 'onepassword-service-account'
+  | 'onepassword-cli'
+  | 'messages'
+  | 'fake'
 
 /** The secret name a manifest's Messages OTP source is granted under. Reserved in manifests. */
 export const MESSAGES_SECRET = 'messages'

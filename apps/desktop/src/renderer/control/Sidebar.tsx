@@ -146,6 +146,10 @@ export function Sidebar({ route }: { readonly route: Route }) {
       ) : null}
 
       <div className="foot">
+        <a className="row" href={href.setup('welcome')}>
+          <Icon name="gear" size="sm" />
+          Run setup again
+        </a>
         {endpoint.status === 'ready' ? (
           <span className="row">
             <span className={`dot ${endpoint.data.listening ? 'ok' : ''}`} />
