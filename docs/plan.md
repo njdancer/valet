@@ -1406,6 +1406,10 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D14. Relay
 
+- Nick's answer (2026-11-10): **Cloudflare Tunnel on his own domain (`dncr.me`)** is the transport
+  for remote mode, not Tailscale Funnel. He chose it knowing Cloudflare ends TLS and so can see
+  tool results. Remote mode is built and tested against `cloudflared` first; Funnel is not
+  documented or tested unless he asks. The hosted relay stays after M8.
 - Options: build a relay (Worker plus Durable Object, outbound WebSocket from the app, OAuth for
   MCP clients); document cloudflared or Tailscale Funnel; both.
 - Considerations: the relay is the only piece that's a service with uptime, abuse and cost. It's
