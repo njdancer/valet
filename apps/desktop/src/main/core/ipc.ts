@@ -113,6 +113,7 @@ const settingsPatch = z
     messagesOtpEnabled: z.boolean().optional(),
     onePasswordAccount: onePasswordAccountSchema.nullable().optional(),
     traceRetentionDays: traceRetentionDaysSchema.optional(),
+    notifications: z.boolean().optional(),
   })
   .strict()
 
@@ -205,6 +206,12 @@ const HANDLERS: Readonly<
   ),
   'app.copyText': entry(z.tuple([z.string().max(MAX_TEXT)]), (api, [text]) => api.app.copyText(text)),
   'app.quit': entry(none, (api) => api.app.quit()),
+  // Settings lives in the control panel, and nowhere else may ask: a confirmation panel or a
+  // hand-off banner shows adapter text. The main process's own dialog still decides.
+  'app.erase': entry(z.tuple([z.enum(['reset', 'uninstall'])]), (api, [kind], sender) => {
+    if (sender.role !== 'control') throw new IpcRefused()
+    return api.app.erase(kind)
+  }),
 }
 
 /** The method a channel name stands for, or null for anything that isn't exactly one of ours. */

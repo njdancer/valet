@@ -261,6 +261,23 @@ describe('failures', () => {
   })
 })
 
+describe('reset and uninstall', () => {
+  it('can be asked for from the control panel only, and only by name', async () => {
+    const { d, calls } = dispatcher()
+    for (const role of ['tray', 'confirmation', 'needs-user'] as const) {
+      await expect(
+        d.dispatch(invokeChannel('app.erase'), ['uninstall'], { ...control, role, shows: null }),
+      ).rejects.toBeInstanceOf(IpcRefused)
+    }
+    for (const args of [[], ['everything'], [true], ['reset', 'now'], [{ kind: 'reset' }]]) {
+      await expect(d.dispatch(invokeChannel('app.erase'), args, control)).rejects.toBeInstanceOf(IpcRefused)
+    }
+    expect(calls).toEqual([])
+    await d.dispatch(invokeChannel('app.erase'), ['uninstall'], control)
+    expect(calls).toEqual([{ method: 'app.erase', args: ['uninstall'] }])
+  })
+})
+
 describe('every channel', () => {
   const HASH64 = 'a'.repeat(64)
   const valid: Record<(typeof INVOKE_METHODS)[number], unknown[]> = {
@@ -322,6 +339,7 @@ describe('every channel', () => {
     'app.openControlPanel': ['#/activity'],
     'app.copyText': ['hello'],
     'app.quit': [],
+    'app.erase': ['reset'],
   }
 
   it.each(INVOKE_METHODS)('%s reaches its own API method with its arguments', async (method) => {

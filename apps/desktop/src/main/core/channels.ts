@@ -53,6 +53,7 @@ export const INVOKE_METHODS = [
   'app.openControlPanel',
   'app.copyText',
   'app.quit',
+  'app.erase',
 ] as const
 
 export type InvokeMethod = (typeof INVOKE_METHODS)[number]

@@ -119,6 +119,32 @@ public final class KeychainStore {
     try check(SecItemDelete(baseQuery(item) as CFDictionary))
   }
 
+  /// Removes every item of one of Valet's services, whatever its account: an uninstall or reset,
+  /// which can't rely on the app's own list of what it stored. Returns how many passes removed
+  /// something. SecItemDelete removes one match or all of them depending on the keychain, so this
+  /// asks again until nothing is left.
+  @discardableResult
+  public func purge(service: String) throws -> Int {
+    guard isAllowedService(service) else { throw KeychainFailure.invalid }
+    var query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecMatchLimit as String: kSecMatchLimitAll,
+    ]
+    if let keychain { query[kSecMatchSearchList as String] = [keychain] }
+    var passes = 0
+    while passes < KeychainStore.maxPurgePasses {
+      let status = SecItemDelete(query as CFDictionary)
+      if status == errSecItemNotFound { return passes }
+      try check(status)
+      passes += 1
+    }
+    throw KeychainFailure.other(errSecInternalError)
+  }
+
+  /// Far more items than a service ever holds; a keychain that never empties is an error.
+  private static let maxPurgePasses = 10_000
+
   private func check(_ status: OSStatus) throws {
     switch status {
     case errSecSuccess: return

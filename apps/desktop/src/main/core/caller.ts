@@ -110,6 +110,15 @@ export function outcomeOf(result: ToolCallResult): CallOutcome {
         errorClass: 'blocked-by-site',
         retryAfterMs: result.retryAfterMs,
       }
+    case 'busy':
+      // Reported as a block the client can wait out, with our own queue as the cause, not the site.
+      return {
+        status: 'blocked',
+        stage: 'tool-run',
+        errorClass: 'busy',
+        retryAfterMs: result.retryAfterMs,
+        ahead: result.ahead,
+      }
     case 'declined':
       return { status: 'declined' }
   }

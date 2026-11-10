@@ -88,6 +88,22 @@ describe.skipIf(HELPER === undefined || HELPER === '')('valet-keychain against a
     expect(await copies.source(ITEM, 'password')).toBeNull()
   })
 
+  it('purges every item of one service and no other', async () => {
+    for (const account of ['one#username', 'one#password', 'two#password']) {
+      await helper.write('valet.copy', account, Buffer.from(CANARY), '')
+    }
+    await helper.write('valet.dev.copy', 'kept#password', Buffer.from(CANARY), 'kept')
+    await helper.purge('valet.copy')
+    for (const account of ['one#username', 'one#password', 'two#password']) {
+      expect(await helper.info('valet.copy', account)).toBeNull()
+    }
+    expect(await helper.info('valet.dev.copy', 'kept#password')).toBe('kept')
+    // Nothing left to remove is not an error.
+    await helper.purge('valet.copy')
+    await new KeychainCopyProvider({ keychain: helper, service: 'valet.dev.copy' }).forgetAll()
+    expect(await helper.info('valet.dev.copy', 'kept#password')).toBeNull()
+  })
+
   it('refuses, by itself, anything outside Valet’s own services and a secret in argv', () => {
     const run = (args: string[]) =>
       spawnSync(HELPER as string, args, { env: { ...helperEnv(), VALET_KEYCHAIN_PATH: keychainPath } })
@@ -97,6 +113,9 @@ describe.skipIf(HELPER === undefined || HELPER === '')('valet-keychain against a
     expect(run(['write', 'valet', 'a']).status).toBe(KEYCHAIN_EXIT.usage)
     expect(run(['write', 'valet', 'a', 'comment', CANARY]).status).toBe(KEYCHAIN_EXIT.usage)
     expect(run(['dump']).status).toBe(KEYCHAIN_EXIT.usage)
+    expect(run(['purge', 'login']).status).toBe(KEYCHAIN_EXIT.usage)
+    expect(run(['purge', 'valet.copy', 'extra']).status).toBe(KEYCHAIN_EXIT.usage)
+    expect(run(['purge']).status).toBe(KEYCHAIN_EXIT.usage)
     expect(run([]).status).toBe(KEYCHAIN_EXIT.usage)
   })
 

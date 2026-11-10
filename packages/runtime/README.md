@@ -15,8 +15,9 @@ const host = new ToolHost({
   authRunner, // (request: AuthRunRequest) => Promise<AuthOutcome>, wrapping auth-flow's runAuthFlow
   markers: new LoginAttemptMarker(join(dataDir, 'login-markers'), systemClock),
   breakerStore: new JsonFileStore(join(dataDir, 'breakers.json')),
+  budgetStore: new JsonFileStore(join(dataDir, 'budgets.json')), // optional; see "Site protection"
   // Optional: clock, sleep, pacingSleep, timeoutMs, validationTimeoutMs, confirmationTimeoutMs,
-  // settleTimeoutMs, loginBackoff, diagnostics.
+  // settleTimeoutMs, queueWaitMs, loginBackoff, diagnostics.
 })
 host.register({ definition, bundleHash, driver }) // driver: SessionDriver for this adapter's site
 await host.listTools() // approved adapters only
@@ -50,7 +51,12 @@ at whichever step it reaches; see "Cancelling a call" below.
 3. Tool declared and implemented (own properties only), else `failed manifest/not-found`.
 4. Input parsed with the tool's zod schema, under a deadline (10 s default), else
    `failed tool-input/invalid` or `tool-input/timed-out`.
-5. Per-adapter FIFO lock. Approval is checked again once the lock is held.
+5. Per-adapter FIFO lock, waited for at most `queueWaitMs` (30 s default), else `busy` with
+   `ahead` (the calls still in front, at least 1) and `retryAfterMs`. A call that finds so many in
+   front that one `minGapMs` each would use up the wait is answered `busy` at once without joining
+   (three in front at Woolworths' 10 s gap). Either way it never started and sent nothing; it is
+   audited `failed tool-run/busy`. `retryAfterMs` is a guess, one gap per call in front, kept
+   between 5 s and 60 s. Approval is checked again once the lock is held.
 6. Site circuit breaker open (including state persisted by an earlier run): `blocked` with
    `retryAfterMs`.
 7. `irreversible` tool: the person confirms first, under a deadline (5 min default) whose signal
@@ -301,6 +307,16 @@ closes the breaker nor resets the doubling.
 replaced atomically), so a restart straight after a block doesn't hit the site again; the run of
 blocks carries over too, so the next block doubles. The file is read once, before the first call
 sends anything. A persisted retry time further out than `maxCooldownSeconds` is cut back to it.
+
+**The pace persists too,** when a `budgetStore` is given. Each request let through writes the time
+it went, per host, to that store (not waited for, so the disk never holds a request up), and after
+a restart the first request to a host waits out the rest of its `minGapMs` since the last one
+before it. Nothing is held at a start with nothing stored. A stored time in the future counts as
+now, so a restored time never holds a request longer than one gap; entries a day old are dropped.
+A file that can't be read or doesn't parse fails slow, not closed: every host waits one gap from
+when it was read, `budget-state-unreadable` is raised and the file is rewritten. A failed write
+raises `budget-state-write-failed`. A wait for a slot that is aborted sent nothing, so it hands its
+slot back when no request has queued behind it.
 
 **A breaker file that can't be read or doesn't parse fails closed:** every host's breaker opens for
 its `cooldownSeconds`, counted from when the file was read, and a `breaker-state-unreadable`

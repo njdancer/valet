@@ -124,6 +124,7 @@ export const ERROR_WORDING: Readonly<Record<ErrorClass, string>> = {
   'not-logged-in': 'Not logged in',
   'blocked-by-site': 'Blocked by site',
   'rate-limited': 'Rate limited',
+  busy: 'Waited too long behind earlier calls',
   'undeclared-request': 'Undeclared request',
   'denied-path': 'Denied path',
   'host-not-allowed': 'Host not allowed',

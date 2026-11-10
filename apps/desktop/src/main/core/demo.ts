@@ -111,5 +111,7 @@ export function demoCredentials(otp: OtpReader): Credentials {
     copyItem: () => Promise.reject(new CredentialError('unavailable')),
     async refreshCopies() {},
     async forgetCopy() {},
+    // Nothing of the demo's is in the Keychain or launchd.
+    erase: async () => [],
   }
 }

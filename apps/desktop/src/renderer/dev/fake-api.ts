@@ -647,6 +647,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     messagesOtpEnabled: false,
     onePasswordAccount: null,
     traceRetentionDays: 14,
+    notifications: true,
   }
 
   const updates: UpdateStatus = {
@@ -1177,6 +1178,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
           messagesOtpEnabled,
           onePasswordAccount,
           traceRetentionDays,
+          notifications,
         } = patch
         const known = {
           updateChannel,
@@ -1185,6 +1187,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
           messagesOtpEnabled,
           onePasswordAccount,
           traceRetentionDays,
+          notifications,
         }
         settings = {
           ...settings,
@@ -1253,6 +1256,11 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       },
       async quit() {
         enter('app.quit')
+      },
+      async erase(kind) {
+        // The real one asks in a native dialog first; the fake's person always cancels.
+        enter('app.erase', kind)
+        return false
       },
     },
     onEvent(listener) {

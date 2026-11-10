@@ -4,7 +4,9 @@
 //   1. the call id is well formed and the adapter's exact bundle hash is approved;
 //   2. the input matches the tool's schema;
 //   3. the adapter's lock is held, so one session never runs two tools at once, and the hash is
-//      still approved once we hold it;
+//      still approved once we hold it. A call waits its turn for a bounded time only: after that,
+//      or at once when the calls in front are too many to get through in that time, it ends busy,
+//      having sent nothing, with how many calls were ahead of it;
 //   4. the site's circuit breaker is closed;
 //   5. an irreversible tool has the person's confirmation, before its run() starts;
 //   6. the driver holds the whole tool partition to this run's network policy (egress, request
@@ -102,6 +104,17 @@ export const DEFAULT_CONFIRMATION_TIMEOUT_MS = 5 * 60_000
 export const DEFAULT_SETTLE_TIMEOUT_MS = 30_000
 /** How long a login step waits for running calls on its adapter before giving up. */
 export const DEFAULT_LOGIN_STEP_WAIT_MS = 30_000
+/**
+ * How long a tool call waits its turn behind earlier calls on its adapter before it ends busy.
+ * Short enough that the answer reaches a client with a 60 s timeout, with the queue length and a
+ * time to try again, where an unbounded wait would end in the client giving up and maybe repeating
+ * a write. It also caps the queue: a call joins only while one of the site's gaps for each call in
+ * front adds up to less than this.
+ */
+export const DEFAULT_QUEUE_WAIT_MS = 30_000
+/** The bounds of the "try again" time a busy call is given. */
+export const MIN_BUSY_RETRY_MS = 5_000
+export const MAX_BUSY_RETRY_MS = 60_000
 /** Distinct request-blocked events recorded per call. A page whose analytics are all blocked is chatty. */
 export const MAX_BLOCKED_EVENTS_PER_CALL = 50
 const MAX_CLIENT = 100
@@ -149,6 +162,11 @@ export interface ToolHostOptions {
   readonly settings?: AdapterSettingsLookup
   /** Call ids for the runtime's own runs of apply tools. Random by default. */
   readonly newCallId?: () => string
+  /**
+   * Where each site's last request time is kept across restarts, so a restart can't send a request
+   * sooner than the site's gap after the last one. Without it the pace is kept in memory only.
+   */
+  readonly budgetStore?: JsonStore
   readonly clock?: Clock
   /** For deadlines: tool runs, schema parses, confirmations, settling. */
   readonly sleep?: Sleep
@@ -158,6 +176,8 @@ export interface ToolHostOptions {
   readonly validationTimeoutMs?: number
   readonly confirmationTimeoutMs?: number
   readonly settleTimeoutMs?: number
+  /** How long a call waits for its adapter's lock. Default 30 s; finite and above zero. */
+  readonly queueWaitMs?: number
   readonly loginBackoff?: LoginBackoff
   readonly diagnostics?: (diagnostic: RuntimeDiagnostic) => void
 }
@@ -182,6 +202,12 @@ interface DueSetting {
   readonly implementation: ToolImplementation
 }
 
+/** A wait for the adapter's lock that ended without it. `ahead`: the calls still in front. */
+interface GaveUp {
+  readonly kind: 'timed-out' | 'aborted'
+  readonly ahead: number
+}
+
 type Raced<T> =
   | { readonly kind: 'returned'; readonly value: T }
   | { readonly kind: 'threw'; readonly error: unknown }
@@ -191,6 +217,8 @@ type Raced<T> =
 export class ToolHost {
   private readonly adapters = new Map<string, Entry>()
   private readonly locks = new KeyedMutex()
+  /** Per adapter, one ticket for each call or login step holding or waiting for its lock, in order. */
+  private readonly queues = new Map<string, symbol[]>()
   private readonly protection: SiteProtection
   private readonly clock: Clock
   private readonly sleep: Sleep
@@ -198,6 +226,7 @@ export class ToolHost {
   private readonly validationTimeoutMs: number
   private readonly confirmationTimeoutMs: number
   private readonly settleTimeoutMs: number
+  private readonly queueWaitMs: number
   private readonly diagnostics: (diagnostic: RuntimeDiagnostic) => void
 
   constructor(private readonly options: ToolHostOptions) {
@@ -207,9 +236,12 @@ export class ToolHost {
     this.validationTimeoutMs = options.validationTimeoutMs ?? DEFAULT_VALIDATION_TIMEOUT_MS
     this.confirmationTimeoutMs = options.confirmationTimeoutMs ?? DEFAULT_CONFIRMATION_TIMEOUT_MS
     this.settleTimeoutMs = options.settleTimeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS
+    // An unbounded wait is the fault this bound exists to remove, so a bad value is refused.
+    this.queueWaitMs = boundOf(options.queueWaitMs, DEFAULT_QUEUE_WAIT_MS)
     this.diagnostics = options.diagnostics ?? (() => {})
     this.protection = new SiteProtection(this.clock, options.pacingSleep ?? this.sleep, {
       store: options.breakerStore,
+      ...(options.budgetStore === undefined ? {} : { budgetStore: options.budgetStore }),
       audit: (event) => this.record(event),
       diagnostics: this.diagnostics,
     })
@@ -315,8 +347,7 @@ export class ToolHost {
     // A block persisted by an earlier run of the app must be in force before anything is sent.
     await this.protection.ready()
     const lock = await this.acquireLock(adapterId, waitMs, external)
-    if (lock === 'aborted') throw new ValetError('login', 'aborted')
-    if (lock === 'timed-out') throw new ValetError('login', 'timed-out')
+    if (typeof lock !== 'function') throw new ValetError('login', lock.kind)
     const release = lock
     const controller = new AbortController()
     const stop = (): void => controller.abort()
@@ -487,8 +518,15 @@ export class ToolHost {
 
     // One lock per adapter, for reads and writes alike: the driver holds one run policy at a time,
     // so two calls on one session can't safely overlap.
-    const lock = await this.acquireLock(manifest.id, undefined, external)
-    if (typeof lock !== 'function') return failed('tool-run', 'aborted')
+    // A call that can't get its turn in time is told so at once: with one of the site's gaps for
+    // each call in front, the wait would run out first. Waiting it out anyway would only keep the
+    // client for the whole wait before the same answer.
+    const inFront = this.queues.get(manifest.id)?.length ?? 0
+    if (inFront * entry.site.budget.gapMs >= this.queueWaitMs) return busy(entry.site, inFront)
+    const lock = await this.acquireLock(manifest.id, this.queueWaitMs, external)
+    if (typeof lock !== 'function') {
+      return lock.kind === 'aborted' ? failed('tool-run', 'aborted') : busy(entry.site, lock.ahead)
+    }
     const release = lock
     // Once the tool's own run starts, the run releases the lock, after its leftover work settles.
     let handedOn = false
@@ -962,20 +1000,42 @@ export class ToolHost {
   }
 
   /**
-   * Joins the adapter's queue. Gives up after `waitMs` (when given) or when `signal` aborts. A waiter
-   * that gave up still takes its turn and hands it straight on, so the queue keeps its order.
+   * Joins the adapter's queue. Gives up after `waitMs` or when `signal` aborts, and says how many
+   * were still ahead. A waiter that gave up still takes its turn and hands it straight on, so the
+   * queue keeps its order.
    */
   private async acquireLock(
     adapterId: string,
-    waitMs: number | undefined,
+    waitMs: number,
     signal: AbortSignal | undefined,
-  ): Promise<(() => void) | 'timed-out' | 'aborted'> {
+  ): Promise<(() => void) | GaveUp> {
+    const ticket = Symbol(adapterId)
+    let queue = this.queues.get(adapterId)
+    if (queue === undefined) {
+      queue = []
+      this.queues.set(adapterId, queue)
+    }
+    queue.push(ticket)
+    const tickets = queue
+    const leave = (): void => {
+      const index = tickets.indexOf(ticket)
+      if (index !== -1) tickets.splice(index, 1)
+      if (tickets.length === 0 && this.queues.get(adapterId) === tickets) this.queues.delete(adapterId)
+    }
     const pending = this.locks.acquire(adapterId)
-    if (waitMs === undefined && signal === undefined) return pending
-    const outcome = await this.race(() => pending, waitMs ?? Number.POSITIVE_INFINITY, signal)
-    if (outcome.kind === 'returned') return outcome.value
+    const outcome = await this.race(() => pending, waitMs, signal)
+    if (outcome.kind === 'returned') {
+      const release = outcome.value
+      return () => {
+        leave()
+        release()
+      }
+    }
+    // Everyone still in front: the holder, and those waiting who have not given up.
+    const ahead = tickets.indexOf(ticket)
+    leave()
     void pending.then((release) => release())
-    return outcome.kind === 'aborted' ? 'aborted' : 'timed-out'
+    return { kind: outcome.kind === 'aborted' ? 'aborted' : 'timed-out', ahead }
   }
 
   /** Cookie values and handed-off storage values, old and new, so output can't carry them. */
@@ -1085,6 +1145,20 @@ function blocked(site: SiteGuards): ToolCallResult {
   return { status: 'blocked', retryAfterMs: site.breaker.retryAfterMs() }
 }
 
+/**
+ * A call that gave up waiting its turn. The time to try again is a guess, since nothing says how
+ * long the calls in front will take: one of the site's gaps for each, within fixed bounds.
+ */
+function busy(site: SiteGuards, ahead: number): ToolCallResult {
+  const calls = Math.max(1, ahead)
+  const estimate = calls * site.budget.gapMs
+  return {
+    status: 'busy',
+    retryAfterMs: Math.min(MAX_BUSY_RETRY_MS, Math.max(MIN_BUSY_RETRY_MS, estimate)),
+    ahead: calls,
+  }
+}
+
 function fromReportable(reportable: { stage: Stage; errorClass: ErrorClass }): ToolCallResult {
   return failed(reportable.stage, reportable.errorClass)
 }
@@ -1122,6 +1196,9 @@ function finishedEvent(
       return { ...base, outcome: 'failed', stage: result.stage, errorClass: result.errorClass }
     case 'blocked':
       return { ...base, outcome: 'blocked' }
+    case 'busy':
+      // Not the site refusing us, which is what `blocked` means in the log: our own queue was full.
+      return { ...base, outcome: 'failed', stage: 'tool-run', errorClass: 'busy' }
     case 'declined':
       return { ...base, outcome: 'declined' }
   }

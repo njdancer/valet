@@ -199,6 +199,14 @@ describe('RuntimeToolCaller', () => {
       errorClass: 'blocked-by-site',
       retryAfterMs: 1000,
     })
+    // Our own queue, told apart from the site's refusal by its class.
+    expect(outcomeOf({ status: 'busy', retryAfterMs: 20_000, ahead: 2 })).toEqual({
+      status: 'blocked',
+      stage: 'tool-run',
+      errorClass: 'busy',
+      retryAfterMs: 20_000,
+      ahead: 2,
+    })
     expect(outcomeOf({ status: 'declined' })).toEqual({ status: 'declined' })
   })
 })

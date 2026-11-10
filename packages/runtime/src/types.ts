@@ -140,6 +140,13 @@ export type ToolCallResult =
   | { readonly status: 'needsUser'; readonly reason: NeedsUserReason }
   | { readonly status: 'failed'; readonly stage: Stage; readonly errorClass: ErrorClass }
   | { readonly status: 'blocked'; readonly retryAfterMs: number }
+  /**
+   * The call was never started, and nothing was sent: it waited its turn behind earlier calls for
+   * the adapter for as long as the runtime allows, or too many were in front for it to get a turn
+   * in that time. `ahead` is how many calls were in front of it when it gave up (at least 1) and
+   * `retryAfterMs` an estimate of when a new call would get its turn.
+   */
+  | { readonly status: 'busy'; readonly retryAfterMs: number; readonly ahead: number }
   | { readonly status: 'declined' }
 
 export interface ToolCallRequest {
@@ -246,5 +253,8 @@ export type RuntimeDiagnostic =
   /** The persisted breaker state could not be read: every site's breaker opens for its cooldown. */
   | { readonly type: 'breaker-state-unreadable' }
   | { readonly type: 'breaker-state-write-failed' }
+  /** The persisted last request times could not be read: every site waits one gap first. */
+  | { readonly type: 'budget-state-unreadable' }
+  | { readonly type: 'budget-state-write-failed' }
   /** A run hit the cap on request-blocked audit events; later blocks in it are not recorded. */
   | { readonly type: 'request-blocked-capped'; readonly adapterId: string; readonly callId: string }
