@@ -16,28 +16,28 @@ able to act as, read from, or interfere with another.
 A change under any of these gets an adversarial review before it merges, by an agent that didn't
 write it.
 
-| Path                                                                         | What it holds                                         |
-| ---------------------------------------------------------------------------- | ----------------------------------------------------- |
-| `packages/auth-flow/src`                                                     | The secret filler and the checks before a fill        |
-| `packages/credentials/src`, `swift-bridge/Sources`                           | The resolver, the grant store, the Swift helpers      |
-| `packages/browser-electron/src`                                              | The request filter and the partitions                 |
-| `packages/runtime/src`                                                       | Redaction, the audit chain, rate budget and breaker   |
-| `packages/mcp-server/src`                                                    | The endpoint's auth, sessions and result shaping      |
-| `packages/core/src`                                                          | The manifest parser and the fixed vocabularies        |
-| `apps/desktop/src/main` (IPC, approvals, the permission diff, the updater)   | What the person approves, and what the app installs   |
+| Path                                                                       | What it holds                                       |
+| -------------------------------------------------------------------------- | --------------------------------------------------- |
+| `packages/auth-flow/src`                                                   | The secret filler and the checks before a fill      |
+| `packages/credentials/src`, `swift-bridge/Sources`                         | The resolver, the grant store, the Swift helpers    |
+| `packages/browser-electron/src`                                            | The request filter and the partitions               |
+| `packages/runtime/src`                                                     | Redaction, the audit chain, rate budget and breaker |
+| `packages/mcp-server/src`                                                  | The endpoint's auth, sessions and result shaping    |
+| `packages/core/src`                                                        | The manifest parser and the fixed vocabularies      |
+| `apps/desktop/src/main` (IPC, approvals, the permission diff, the updater) | What the person approves, and what the app installs |
 
 ## The roles
 
 Each pass plays one role, against the fake site and the test doubles only.
 
-| Role                    | Starts with                                              | Tries to                                                                                         |
-| ----------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Hostile adapter         | A manifest and tool code the person approved             | Read a canary secret; send a request to an undeclared host; get free text to the client or log   |
-| Hostile page            | Control of what the fake site serves                     | Get a secret typed into the wrong field or origin; get instructions or a secret into a result    |
-| Hostile MCP client      | One valid client token                                   | Use or disturb another client's session; skip a confirmation; exhaust the site's rate budget     |
-| Hostile local process   | The person's user account, no token                      | Read a token or secret from disk; talk to the endpoint; forge an audit entry                     |
-| Hostile update feed     | Control of the feed's bytes                              | Get an unsigned or older build installed                                                         |
-| Hostile remote client   | A remote credential (once remote mode has one)           | Reach a tool the person didn't enable remotely; outlive the kill switch                          |
+| Role                  | Starts with                                    | Tries to                                                                                       |
+| --------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Hostile adapter       | A manifest and tool code the person approved   | Read a canary secret; send a request to an undeclared host; get free text to the client or log |
+| Hostile page          | Control of what the fake site serves           | Get a secret typed into the wrong field or origin; get instructions or a secret into a result  |
+| Hostile MCP client    | One valid client token                         | Use or disturb another client's session; skip a confirmation; exhaust the site's rate budget   |
+| Hostile local process | The person's user account, no token            | Read a token or secret from disk; talk to the endpoint; forge an audit entry                   |
+| Hostile update feed   | Control of the feed's bytes                    | Get an unsigned or older build installed                                                       |
+| Hostile remote client | A remote credential (once remote mode has one) | Reach a tool the person didn't enable remotely; outlive the kill switch                        |
 
 ## Rules
 
