@@ -49,6 +49,7 @@ const EVENT_CLASS: Readonly<Record<AuditEvent['type'], string>> = {
   'update-installed': 'admin',
   'remote-state': 'admin',
   'remote-tool': 'admin',
+  'setting-changed': 'admin',
   confirmation: 'confirm',
 }
 
@@ -550,6 +551,7 @@ const EVENT_FIELDS = {
   'update-installed': ['type', 'from', 'to'],
   'remote-state': ['type', 'state', 'revokedTokens'],
   'remote-tool': ['type', 'adapterId', 'tool', 'enabled', 'sideEffect'],
+  'setting-changed': ['type', 'adapterId', 'setting', 'cleared'],
   confirmation: ['type', 'adapterId', 'tool', 'client', 'callId', 'answer'],
 } as const satisfies {
   readonly [K in AuditEvent['type']]: readonly (keyof Extract<AuditEvent, { readonly type: K }>)[]

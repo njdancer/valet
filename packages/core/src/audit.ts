@@ -132,6 +132,16 @@ export type AuditEvent =
       readonly sideEffect: 'read' | 'write' | 'irreversible'
     }
   | {
+      /**
+       * The person chose (or cleared) one of an adapter's settings in the app (D69). Which setting,
+       * never what was chosen: a choice's value and label come from the site.
+       */
+      readonly type: 'setting-changed'
+      readonly adapterId: string
+      readonly setting: string
+      readonly cleared: boolean
+    }
+  | {
       readonly type: 'confirmation'
       readonly adapterId: string
       readonly tool: string

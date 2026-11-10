@@ -8,12 +8,10 @@ import {
   messagesSourcesIn,
   parseManifest,
   secretRefsIn,
-  settingChoicesSchema,
-  settingQuerySchema,
   settingToolNames,
-  settingValueSchema,
   toolHints,
 } from '../src/manifest'
+import { settingChoicesSchema, settingQuerySchema, settingValueSchema } from '../src/settings'
 
 // A complete, valid manifest. Each test copies it with structuredClone and changes one thing.
 const VALID: ManifestInput = {

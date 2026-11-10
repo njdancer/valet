@@ -78,7 +78,45 @@ export interface AdapterSummary {
   readonly messagesSources: readonly { readonly sender: string; readonly granted: boolean }[]
   readonly session: SessionStatus
   readonly calls7d: number
+  /**
+   * Titles of the settings the adapter requires that have no choice yet (D69). While there are any,
+   * every tool call ends needsUser `setting-required`.
+   */
+  readonly settingsNeeded: readonly string[]
 }
+
+/**
+ * A choice for a setting, as the adapter offered it. `id` is the adapter's own identifier for it;
+ * `label` and `detail` may be site text.
+ */
+export interface SettingChoiceInfo {
+  readonly id: string
+  readonly label: string
+  readonly detail: string | null
+}
+
+/** One of an adapter's settings (D69) and what the person has chosen for it. */
+export interface AdapterSettingInfo {
+  readonly name: string
+  readonly title: string
+  readonly description: string
+  readonly required: boolean
+  /** What to type to find choices, e.g. "Postcode". */
+  readonly queryLabel: string
+  /** The choice as the person saw it when they made it. Null: nothing chosen. */
+  readonly chosen: (SettingChoiceInfo & { readonly chosenAt: IsoTime }) | null
+}
+
+/**
+ * What a search for choices came back with. A failure says only what the person can do about it:
+ * wait (`blocked`: the site refused or slowed Valet), approve the adapter, or try again.
+ */
+export type SettingChoicesReply =
+  | { readonly status: 'ok'; readonly choices: readonly SettingChoiceInfo[] }
+  | { readonly status: 'blocked'; readonly retryAt: IsoTime }
+  | { readonly status: 'not-approved' }
+  | { readonly status: 'site-changed' }
+  | { readonly status: 'failed' }
 
 export interface ToolInfo {
   readonly name: string
@@ -86,6 +124,11 @@ export interface ToolInfo {
   readonly description: string
   readonly sideEffect: Purpose
   readonly calls7d: number
+  /**
+   * The tool serves one of the adapter's settings: Valet runs it itself, and no client can list or
+   * call it.
+   */
+  readonly internal: boolean
 }
 
 /**
@@ -159,6 +202,7 @@ export interface AdapterDetail extends AdapterSummary {
     readonly maxCooldownSeconds: number
   }
   readonly tools: readonly ToolInfo[]
+  readonly settings: readonly AdapterSettingInfo[]
   readonly secretRequests: readonly SecretRequestInfo[]
   readonly messages: readonly MessagesSourceInfo[]
   /**
@@ -699,6 +743,17 @@ export interface ValetApi {
     list(): Promise<readonly AdapterSummary[]>
     /** Null when no adapter has that id. */
     get(adapterId: string): Promise<AdapterDetail | null>
+    /**
+     * Searches for choices for one of the adapter's settings: one paced, audited run of the
+     * adapter's own lookup against the site. Never rejects for a site or adapter failure.
+     */
+    settingChoices(adapterId: string, setting: string, query: string): Promise<SettingChoicesReply>
+    /**
+     * Chooses the choice with this id. The main process accepts only one the last search for this
+     * setting returned, so a renderer can't store one the adapter never offered.
+     */
+    setSetting(adapterId: string, setting: string, choiceId: string): Promise<void>
+    clearSetting(adapterId: string, setting: string): Promise<void>
   }
   readonly approvals: {
     pending(): Promise<readonly PendingReview[]>

@@ -18,6 +18,7 @@ import {
   type ProviderKind,
   type SecretField,
   type SessionDriver,
+  type SettingChoice,
   ValetError,
 } from '@valet/core'
 import { FileGrantStore } from '@valet/credentials'
@@ -49,9 +50,11 @@ import type {
   ClientSnippet,
   EndpointStatus,
   HashRoute,
+  SettingChoicesReply,
   Settings,
   UpdateStatus,
 } from '../../shared/api'
+import { AdapterSettingsStore } from './adapter-settings'
 import {
   type AdapterLookup,
   AuditReader,
@@ -193,6 +196,7 @@ const EVENTS_FOR: Readonly<Partial<Record<AuditEvent['type'], readonly AppEvent[
   'breaker-opened': ['health-changed'],
   'breaker-closed': ['health-changed'],
   confirmation: ['runs-changed'],
+  'setting-changed': ['adapters-changed'],
 }
 
 /**
@@ -218,6 +222,13 @@ export class AppService {
   private readonly grants: FileGrantStore
   private readonly markers: LoginAttemptMarker
   private readonly settings: SettingsStore
+  private readonly adapterSettings: AdapterSettingsStore
+  /**
+   * The choices the last search returned for each `adapter/setting`: the only values setSetting
+   * takes, so what is stored is always something the adapter offered and the person was shown.
+   */
+  private readonly offered = new Map<string, readonly SettingChoice[]>()
+  private readonly newId: () => string
   /** The settings as last read or written: the updater reads them synchronously at every check. */
   private settingsNow: Settings = DEFAULT_SETTINGS
   private readonly versions: VersionStore
@@ -259,6 +270,7 @@ export class AppService {
     this.grants = new FileGrantStore({ path: paths.grants })
     this.markers = new LoginAttemptMarker(paths.loginMarkers, clock)
     this.settings = new SettingsStore(paths.settings)
+    this.adapterSettings = new AdapterSettingsStore(paths.adapterSettings)
     this.versions = new VersionStore(paths.versions)
     this.setup = new SetupStore(paths.setup, deps.now)
     this.snapshots = new SnapshotStore(paths.manifests)
@@ -283,6 +295,7 @@ export class AppService {
     })
     this.sessions = new SessionTracker(date, () => this.emit('adapters-changed'))
     const newId = deps.newId ?? (() => randomBytes(12).toString('hex'))
+    this.newId = newId
     this.broker = new ConfirmationBroker({
       adapter: (adapterId) => {
         const adapter = this.adapter(adapterId)
@@ -384,6 +397,7 @@ export class AppService {
       }),
       markers: this.markers,
       breakerStore: new JsonFileStore(paths.breakers),
+      settings: this.adapterSettings,
       clock: { now: this.deps.now },
       ...(this.deps.pacingSleep === undefined ? {} : { pacingSleep: this.deps.pacingSleep }),
       confirmationTimeoutMs: CONFIRMATION_TIMEOUT_MS,
@@ -605,6 +619,7 @@ export class AppService {
       calls: callCounts(records, new Date(this.deps.now())),
       lastUsed: (grant) => lastUsed(records, grant),
       handedOver: null,
+      chosen: await this.adapterSettings.chosen(manifest.id),
     }
   }
 
@@ -687,6 +702,60 @@ export class AppService {
     } catch {
       return { filled: [], origin: null }
     }
+  }
+
+  /** Refuses a setting the installed adapter doesn't declare, as ValetError('manifest', 'not-found'). */
+  private requireSetting(adapterId: string, setting: string): void {
+    const { settings } = this.requireAdapter(adapterId).definition.manifest
+    if (!Object.hasOwn(settings, setting)) throw new ValetError('manifest', 'not-found')
+  }
+
+  /**
+   * One search for a setting's choices: the runtime runs the adapter's lookup as it runs any tool
+   * (approved adapters only, paced, audited), and what comes back is remembered as what the person
+   * was offered. A failure reaches the renderer as one of a few fixed answers, never as text.
+   */
+  private async settingChoices(adapterId: string, setting: string, query: string): Promise<SettingChoicesReply> {
+    this.requireSetting(adapterId, setting)
+    const result = await this.runtime().settingChoices({
+      adapterId,
+      setting,
+      query,
+      callId: `st_${this.newId()}`,
+    })
+    switch (result.status) {
+      case 'ok':
+        this.offered.set(`${adapterId}/${setting}`, result.choices)
+        return {
+          status: 'ok',
+          choices: result.choices.map((c) => ({ id: c.value, label: c.label, detail: c.detail ?? null })),
+        }
+      case 'blocked':
+        return { status: 'blocked', retryAt: new Date(this.deps.now() + result.retryAfterMs).toISOString() }
+      case 'failed':
+        if (result.errorClass === 'not-granted') return { status: 'not-approved' }
+        if (result.errorClass === 'site-changed') return { status: 'site-changed' }
+        return { status: 'failed' }
+      default:
+        return { status: 'failed' }
+    }
+  }
+
+  private async setSetting(adapterId: string, setting: string, value: string): Promise<void> {
+    this.requireSetting(adapterId, setting)
+    const choice = this.offered.get(`${adapterId}/${setting}`)?.find((c) => c.value === value)
+    if (choice === undefined) throw new ValetError('config', 'invalid')
+    // Audited first: a choice that can't be recorded isn't made.
+    await this.audit.append({ type: 'setting-changed', adapterId, setting, cleared: false })
+    await this.adapterSettings.set(adapterId, setting, choice, new Date(this.deps.now()).toISOString())
+    this.emit('adapters-changed')
+  }
+
+  private async clearSetting(adapterId: string, setting: string): Promise<void> {
+    this.requireSetting(adapterId, setting)
+    await this.audit.append({ type: 'setting-changed', adapterId, setting, cleared: true })
+    await this.adapterSettings.clear(adapterId, setting)
+    this.emit('adapters-changed')
   }
 
   private async refreshTools(): Promise<void> {
@@ -776,6 +845,9 @@ export class AppService {
           const state = (await this.states()).find((s) => s.adapter.definition.manifest.id === adapterId)
           return state === undefined ? null : adapterDetail(state)
         },
+        settingChoices: (adapterId, setting, query) => this.settingChoices(adapterId, setting, query),
+        setSetting: (adapterId, setting, value) => this.setSetting(adapterId, setting, value),
+        clearSetting: (adapterId, setting) => this.clearSetting(adapterId, setting),
       },
       approvals: {
         pending: async () =>

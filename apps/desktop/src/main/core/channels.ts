@@ -6,6 +6,9 @@
 export const INVOKE_METHODS = [
   'adapters.list',
   'adapters.get',
+  'adapters.settingChoices',
+  'adapters.setSetting',
+  'adapters.clearSetting',
   'approvals.pending',
   'approvals.approve',
   'approvals.reject',

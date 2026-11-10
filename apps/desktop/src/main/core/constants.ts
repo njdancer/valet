@@ -56,6 +56,8 @@ export interface DataPaths {
   readonly audit: string
   readonly breakers: string
   readonly settings: string
+  /** What the person chose for each adapter's settings (D69). */
+  readonly adapterSettings: string
   readonly clients: string
   /** One bridge config file per client (clients.ts), each mode 0600. */
   readonly clientConfigs: string
@@ -85,6 +87,7 @@ export function dataPaths(dir: string): DataPaths {
     audit: join(dir, 'audit.jsonl'),
     breakers: join(dir, 'breakers.json'),
     settings: join(dir, 'settings.json'),
+    adapterSettings: join(dir, 'adapter-settings.json'),
     clients: join(dir, 'clients.json'),
     clientConfigs: join(dir, 'client-configs'),
     legacyBridgeConfig: join(dir, 'bridge.json'),
