@@ -1579,6 +1579,10 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D25. Adapter legal posture
 
+- Nick's answer (2026-11-10): the Woolworths adapter stays in the public repo, with a notice in its
+  README that the site's terms prohibit automated access and that using it is each person's call
+  (added the same day). No legal opinion for now; the final home is looked at again before the
+  M8 launch.
 - Questions: can the project publish adapters for sites whose terms prohibit automated access?
   Should adapters live in a separate repository, maintained by their authors, rather than in the
   framework's repository?
@@ -1594,6 +1598,8 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D26. Where the Woolworths adapter lives at release
 
+- Nick's answer (2026-11-10): in the main repo for now, with the terms notice
+  ([D25](#d25-adapter-legal-posture)). Looked at again before M8.
 - Options: in the main repo as the reference adapter; in a separate adapters repo; private.
 - Recommendation: decide with D25. Default to a separate repo, with a fake-site-only reference
   adapter in the main repo for the docs.
