@@ -40,6 +40,24 @@ const CONTROL_UA = 'Mozilla/5.0 (e2e control window)'
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
+/**
+ * The page's keydown count once it reaches `expected`, or whatever it is after 2 s. Input events
+ * reach the renderer asynchronously, so the last keyDown can still be queued when type() resolves
+ * (seen on CI: 14 of 15, and 16 of 17).
+ */
+async function settledKeydowns(
+  target: { executeJavaScript(code: string): Promise<unknown> } | undefined,
+  expected: number,
+): Promise<unknown> {
+  let count: unknown
+  for (let i = 0; i < 40; i++) {
+    count = await target?.executeJavaScript('window.__keydowns')
+    if (count === expected) break
+    await sleep(50)
+  }
+  return count
+}
+
 async function until<T>(read: () => T | undefined, ms = 5000): Promise<T | undefined> {
   const deadline = Date.now() + ms
   for (;;) {
@@ -264,7 +282,7 @@ async function setup() {
       const page = await openLogin()
       await page.focus('#user')
       await page.type('nick@example.test')
-      const keydowns = await windowAt(login)?.webContents.executeJavaScript('window.__keydowns')
+      const keydowns = await settledKeydowns(windowAt(login)?.webContents, 'nick@example.test'.length)
       await page.click('#login-submit')
       const post = await until(() => site.posts.find((p) => p.host === 'site.test' && p.path === '/session'))
       await page.close()
@@ -385,7 +403,7 @@ async function setup() {
       await page.type(secret, { allowedOrigins: [site.url('site.test')] })
       secret.dispose()
       const frame = subframeWithOrigin(login, site.url('site.test'))
-      const keydowns = await frame?.executeJavaScript('window.__keydowns')
+      const keydowns = await settledKeydowns(frame, CANARY.length)
       await page.click('#code-submit')
       const post = await until(() => site.posts.slice(from).find((p) => p.path === '/session-code'))
       await page.close()

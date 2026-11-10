@@ -375,6 +375,26 @@ describe.skipIf(skipE2e)('the adapter against the fake site', () => {
     })
   })
 
+  describe('a site whose API changed shape', () => {
+    it('fails every tool with site-changed, after logging in once, and writes nothing', async () => {
+      const w = await world(SMS)
+      await w.runtime.call('add_to_cart', { stockcode: 88436, quantity: 1 })
+      w.site.setShapeDrift('changed-type')
+      for (const [name, input] of [
+        ['search_products', { query: 'milk' }],
+        ['get_product', { stockcode: 88436 }],
+        ['get_cart', {}],
+        ['add_to_cart', { stockcode: 900601, quantity: 1 }],
+      ] as const) {
+        expect(await failure(w.runtime.call(name, input))).toEqual(new ValetError('tool-run', 'site-changed'))
+      }
+      expect(w.site.trolleyFor(SMS.username)).toEqual([{ stockcode: 88436, quantity: 1 }])
+      expect(w.runtime.logins).toEqual(['ok'])
+      w.site.setShapeDrift(null)
+      expect(await w.runtime.call('get_cart', {})).toMatchObject({ itemCount: 1 })
+    })
+  })
+
   describe('a later login', () => {
     it('is silent while Auth0’s session lives: no page, no secret, no code', async () => {
       const w = await world(SMS)

@@ -52,6 +52,23 @@ export function toProductSummary(tile: ProductTileWire): ProductSummary {
 
 export const MAX_PAGE_SIZE = 36
 
+/** The search endpoint's request body. Shared with drift detection's live smoke test. */
+export function searchRequest(input: {
+  readonly query: string
+  readonly page: number
+  readonly pageSize: number
+  readonly specialsOnly: boolean
+}): Record<string, unknown> {
+  return {
+    SearchTerm: input.query,
+    PageSize: input.pageSize,
+    PageNumber: input.page,
+    SortType: 'TraderRelevance',
+    // Assumed, not seen live: the filter the site's own "specials" toggle sends.
+    IsSpecial: input.specialsOnly,
+  }
+}
+
 export const searchProducts = tool({
   input: z.object({
     query: z.string().trim().min(1).max(100),
@@ -67,19 +84,7 @@ export const searchProducts = tool({
     products: z.array(productSummarySchema),
   }),
   async run(ctx, input) {
-    const body = await postJson(
-      ctx,
-      PATHS.search,
-      {
-        SearchTerm: input.query,
-        PageSize: input.pageSize,
-        PageNumber: input.page,
-        SortType: 'TraderRelevance',
-        // Assumed, not seen live: the filter the site's own "specials" toggle sends.
-        IsSpecial: input.specialsOnly,
-      },
-      searchWire,
-    )
+    const body = await postJson(ctx, PATHS.search, searchRequest(input), searchWire)
     const tiles = (body.Products ?? []).flatMap((group) => group.Products ?? [])
     let products = tiles.map(toProductSummary)
     // Filtered here as well, so the answer is right even if the site ignores IsSpecial.

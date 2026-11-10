@@ -19,6 +19,7 @@ export {
   spawnProcess,
   type TestCertificate,
 } from './certificate'
+export { applyShapeDrift, SHAPE_DRIFTS, type ShapeDrift } from './drift'
 export { type ExfilSink, type ExfilSinkOptions, startExfilSink } from './exfil-sink'
 export {
   FIXTURE_NAMES,
@@ -31,6 +32,13 @@ export type { Product } from './fixtures'
 export type { RecordedRequest, TlsOptions } from './http'
 export type { RateLimit } from './rate-limit'
 export {
+  productDetailResponse,
+  productNotFoundResponse,
+  type SearchQuery,
+  searchQueryFromJson,
+  searchResponse,
+} from './search'
+export {
   BOT_MANAGER_COOKIE,
   CAPTCHA_FRAME_HOSTNAME,
   type FakeWoolworths,
@@ -41,4 +49,4 @@ export {
   startFakeWoolworths,
   type UnknownSensor,
 } from './server'
-export type { TrolleyLine } from './trolley'
+export { type Trolley, type TrolleyLine, trolleyResponse } from './trolley'

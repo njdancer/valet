@@ -12,6 +12,8 @@ const ALLOWED = [
   'packages/browser-electron/src/electron/',
   // The e2e harness is an Electron main process by definition.
   'packages/browser-electron/e2e/',
+  // So is the Woolworths drift smoke test's harness; the adapter's own src/ never imports it.
+  'adapters/woolworths/smoke/',
   'apps/desktop/',
   // Spikes are throwaway Electron experiments run by hand; nothing in the workspace imports them.
   'spikes/',
