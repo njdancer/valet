@@ -1263,6 +1263,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D7. 1Password fallback
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Options: `op read` through the CLI; the SDK's `DesktopAuth` (in the 0.5.0 SDK already
   installed); none.
 - Recommendation: `DesktopAuth`. No CLI install or stdout parsing, the same SDK as the service
@@ -1418,6 +1419,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D15. Telemetry
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Options: none; opt-in crash reports; opt-in anonymous adapter health ("adapter X failed with
   class Y"), which would tell maintainers a site changed before users report it.
 - Recommendation: none in v1. A privacy-first security product shouldn't phone home by default.
@@ -1435,6 +1437,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D17. UI stack
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Options: React with plain CSS against `tokens.css` (React is already a devDependency); a
   component library; no framework.
 - Recommendation: React and plain CSS, built with electron-vite (already a devDependency). The
@@ -1461,6 +1464,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D20. Platforms
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Recommendation: macOS only for v1. Keep the runtime free of macOS assumptions (already enforced
   by the "only two modules import Electron" rule), so Windows is a credential-provider and
   packaging job later, not a rewrite.
@@ -1468,6 +1472,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D21. MCP client support
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Recommendation: v1 officially supports Claude Code and Claude Desktop, and tests against the
   MCP SDK's own client. Others (Cursor, ChatGPT's MCP support, VS Code) are "should work", with
   setup docs written as people report them.
@@ -1592,6 +1597,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D27. Retention
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Options: keep the audit log forever; rotate traces after N days; let the person choose.
 - Recommendation: audit log kept (it's small and the chain needs continuity; rotation starts a
   new chain whose first record commits to the previous file's last hash). Traces and screenshots
@@ -1656,6 +1662,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D30. Split add-to-cart
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Options: keep one `set_cart_quantity` (destructive, idempotent); add an additive
   `add_to_cart` alongside it (`destructiveHint: false`), so clients can auto-approve adds while
   still prompting for removals.
@@ -1676,6 +1683,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D31. `retry` count semantics
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: `retry: { times: n }` runs its steps up to `n + 1` times, and the auth-flow tests pin
   that. Core documents only the range, 1 to 5.
 - Options: keep "`n` retries after the first run" and document it in core; change it to `n` runs
@@ -1709,6 +1717,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D33. Breaker defaults and persistence
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: one rate budget and breaker per host, in memory, covering `page.fetch`, `goto` and the
   probe only ([D55](#d55-driver-level-budget-and-block-detection)); a 2 s minimum gap; a 10 minute
   cool-down doubling to 2 hours; the doubling resets on the next normal response. Core v2's
@@ -1742,6 +1751,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D34. Form-action origin: granted or navigation
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: a password's owning form must post to an origin in the secret's granted origins. A
   round-1 reviewer asked whether the navigation list would do, since the navigation guard already
   checks where the page goes.
@@ -1774,6 +1784,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D36. Redaction: whole string or substring
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: a string that contains a sensitive value is replaced whole with `[redacted]`, object keys
   included, and the call fails if the serialised result still contains one.
 - Options: whole string (today); replace only the matching substring; fail the call whenever
@@ -1789,6 +1800,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D37. Cross-origin iframe logins
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: the driver refuses to focus or click an element in an out-of-process (cross-site)
   frame, and the flow ends in `needsUser`. Core v2's `inputReachable` makes that a check before
   the fill.
@@ -1831,6 +1843,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D40. Storage handoff document
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: storage keys are read and written in a page on their origin. An open page is reused;
   otherwise a hidden page loads `/robots.txt` on that origin, in each partition. That's an extra
   request to the site outside the rate budget, and an unusual one for a browser to make.
@@ -1893,6 +1906,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D43. Keychain and vault names
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Keychain items and grants outlive renames, so these are fixed before the first signed build.
 - Options: derive every name from the bundle ID ([D1](#d1-product-name)); fixed names now.
 - Recommendation:
@@ -1907,6 +1921,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D44. `op` install path
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: `op` is found on `PATH`. An app started from Finder has a minimal `PATH`, and a `PATH`
   lookup runs whichever `op` comes first. A substitute `op` can't get secrets out of 1Password
   (the desktop app checks the caller), but it can hand back a wrong password and spend a login
@@ -1922,6 +1937,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D45. Grant file location
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: the runtime, credentials and mcp-server packages take file paths from the caller. Only
   the bridge config's path is documented.
 - Options: everything under `~/Library/Application Support/<app>/`, a 0700 directory with 0600
@@ -1937,6 +1953,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D46. Touch ID on irreversible confirmations
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Options: a click in the app's window; Touch ID (`systemPreferences.promptTouchID`) as well; the
   macOS account password.
 - Considerations: a click can come from anyone at the unlocked Mac, or from a UI-automation tool
@@ -1950,6 +1967,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D47. Grant re-bind on update
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: an update has a new hash, inherits no grant, and the person grants again. The mockup
   offers a re-bind, off by default.
 - Options: always grant from scratch; offer a one-click re-bind of the same item when the secret's
@@ -1962,6 +1980,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D48. Tool titles with the adapter name
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: the MCP title is the manifest's `title` ("Get cart"), and the name is namespaced
   (`woolworths_get_cart`).
 - Options: the bare title; "Woolworths: Get cart", built by the server from the adapter's `name`;
@@ -1974,6 +1993,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D49. Cancellation
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: the endpoint passes the client's abort signal to the runtime, which aborts the tool's
   signal, and the tool's capabilities refuse from then on. The bridge never answers a cancelled
   request.
@@ -2002,6 +2022,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D51. Approval acknowledgement friction
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Question: how much the approval screen asks of the person.
 - Options: one Approve button; a tick per permission-expanding change; typing the adapter's name
   for anything `irreversible`.
@@ -2014,6 +2035,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D52. Confirmation panel placement
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Options: the tray popover; a standalone window from the main process, on top and centred; a
   system notification with action buttons.
 - Considerations: a notification's buttons can be pressed without reading the request, and Focus
@@ -2025,6 +2047,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D53. Fake trolley merge at login
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Question: when a visitor with items in an anonymous trolley logs in, does Woolworths merge them
   into the account's trolley, replace it, or drop them? The fake shows the account's trolley after
   login and drops the anonymous one; that was a guess.
@@ -2038,6 +2061,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D54. Cart line ceiling
 
+- Nick's answer (2026-11-10): Accepted as recommended. The cap becomes 20 per line.
 - Today: the adapter refuses more than 50 of one product: `set_cart_quantity` takes 0 to 50, and
   `add_to_cart` won't go over 50. The site clamps to its own supply limits (often 36) and the tools
   report that.
@@ -2078,6 +2102,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D56. URL regex deadline
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: `urlRegex` conditions run synchronously in the main process. On `main` the auth flow
   compiles and runs them with a 2,048-character bound on the path and query, no screen and no
   deadline. Core v2 adds the parse-time screen, which stops exponential shapes but not polynomial
@@ -2099,6 +2124,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D57. Blocked-request target
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: the round-1 driver reports a blocked request's target as the origin plus a 16-hex digest
   of the path, on purpose: tool code chooses the whole URL of a request it wants blocked, so a
   path can carry a session token into the audit log. Core v2's `BlockedRequest.target` is origin
@@ -2144,6 +2170,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D59. Several Messages senders
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: a grant is one record per adapter, content hash and secret, and Messages codes are
   granted under the reserved secret `messages` with the sender handle as `itemRef`. So an adapter
   has one `messages` grant and one sender. `messagesSourcesIn()` can return several senders, and
@@ -2202,6 +2229,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D62. Electron 44's unnamed ninth fuse
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: `@electron/fuses` 1.8.0 names eight fuses. Electron 44's fuse wire has nine, and the
   ninth is left as shipped (on). The packaged smoke reads the wire and checks the eight it knows.
 - Options: leave it as shipped until `@electron/fuses` names it; read Electron's source for what
@@ -2212,6 +2240,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D63. What the auth probe can't hide
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today (round 3): the login probe (`AuthPage.fetch`) is a main-process `net.request` in the auth
   partition, built to send what the auth page's own `fetch(url, {credentials: 'include'})` sends:
   the same headers in Chrome's order and casing, client hints, `Origin` and `Referer` by the
@@ -2231,6 +2260,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D64. Group-writable `op` installs
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today (round 3, decided in code, needs Nick's yes): D44's rule "nothing writable by anyone but
   root or the person" refused Homebrew's own layout, where `/opt/homebrew` and its links are
   `0775` with group `admin`. The app now accepts a group-writable file or directory only when its
@@ -2244,6 +2274,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D65. Demo-build test hooks
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today (round 3): a demo build launched for e2e maps `evil.test` to `127.0.0.1` and exposes a
   main-process global `__valetE2e` (switch the fake to block everything; read the fake's
   trolley). A production `electron-vite build` contains no demo code, no fixtures and no test
@@ -2281,6 +2312,7 @@ the first signed build. D66 to D68 came out of round 4; none blocks anything yet
 
 ### D68. What the tray counts
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today (round 4): the tray says "N clients connected", but N is the number of open MCP
   sessions. One client can hold several, and the bridge/HTTP split isn't shown anywhere.
 - Options: say "N sessions"; count distinct clients by the name they give at `initialize`;
