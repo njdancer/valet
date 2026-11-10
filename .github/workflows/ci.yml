@@ -36,6 +36,10 @@ jobs:
           pnpm --filter @valet/browser-electron test:e2e --trace off
       - name: desktop end to end
         run: pnpm --filter @valet/desktop test:e2e --trace off
+      - name: drift smoke test, dry run against the fake (the live run skips without VALET_LIVE_SMOKE)
+        run: |
+          pnpm --filter @valet/adapter-woolworths typecheck:smoke
+          pnpm --filter @valet/adapter-woolworths test:smoke --trace off
 
   swift-bridge:
     # The native binaries the packaged app ships: the stdio bridge (D60), run against the same suite
@@ -61,3 +65,28 @@ jobs:
         env:
           VALET_SWIFT_KEYCHAIN: ${{ github.workspace }}/swift-bridge/.build/debug/valet-keychain
           VALET_SWIFT_MESSAGES_HELPER: ${{ github.workspace }}/swift-bridge/.build/debug/valet-messages-helper
+
+  release-dry-run:
+    # AC18's one release command end to end, with nothing real in reach: an ad hoc signature, a
+    # throwaway Ed25519 feed key made in the job, and notarisation, upload and tag as printed stubs
+    # (apps/desktop/scripts/release.mjs). pnpm check runs in the check job, so it is skipped here.
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+      - run: pnpm install --frozen-lockfile
+      - name: release dry run
+        run: pnpm release "$(node -p "require('./apps/desktop/package.json').version")" --dry-run --skip-check
+      # The summary and the signed feed metadata only (the key it was signed with is gone); the
+      # dry-run DMG and zips are not kept.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-dry-run
+          path: |
+            apps/desktop/dist/release-*/release-summary.json
+            apps/desktop/dist/release-*/publish/*-mac.yml
+            apps/desktop/dist/release-*/publish/*-mac.envelope.json*
+          if-no-files-found: ignore
+          retention-days: 7

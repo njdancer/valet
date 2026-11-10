@@ -1,9 +1,16 @@
-import { mkdtemp, open, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, open, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AuditEvent } from '@valet/core'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { AuditLog, GENESIS_HASH, recordHash, verifyAuditLog } from '../src/audit-log'
+import {
+  AuditLog,
+  archivePaths,
+  GENESIS_HASH,
+  recordHash,
+  verifyAuditChain,
+  verifyAuditLog,
+} from '../src/audit-log'
 
 let dir: string
 let path: string
@@ -68,7 +75,7 @@ describe('AuditLog', () => {
     expect(second.seq).toBe(2)
     expect(second.prev).toBe(first.hash)
     expect(second.at).toBe('2026-11-07T09:00:01.000Z')
-    expect(await verifyAuditLog(path)).toEqual({ ok: true, records: 2, head: second.hash })
+    expect(await verifyAuditLog(path)).toEqual({ ok: true, records: 2, head: second.hash, lastSeq: 2 })
   })
 
   it('writes one JSON record per line', async () => {
@@ -98,7 +105,7 @@ describe('AuditLog', () => {
 
     expect(second.seq).toBe(2)
     expect(second.prev).toBe(first.hash)
-    expect(await verifyAuditLog(path)).toEqual({ ok: true, records: 2, head: second.hash })
+    expect(await verifyAuditLog(path)).toEqual({ ok: true, records: 2, head: second.hash, lastSeq: 2 })
   })
 
   it('refuses to append to a log whose chain is already broken', async () => {
@@ -132,7 +139,7 @@ describe('verifyAuditLog', () => {
   }
 
   it('accepts a missing file as an empty log', async () => {
-    expect(await verifyAuditLog(path)).toEqual({ ok: true, records: 0, head: GENESIS_HASH })
+    expect(await verifyAuditLog(path)).toEqual({ ok: true, records: 0, head: GENESIS_HASH, lastSeq: 0 })
   })
 
   it('detects an edited event', async () => {
@@ -302,7 +309,7 @@ describe('AuditLog when a write fails', () => {
     const next = await log.append(blocked)
 
     expect(next.seq).toBe(2)
-    expect(await verifyAuditLog(path)).toEqual({ ok: true, records: 2, head: next.hash })
+    expect(await verifyAuditLog(path)).toEqual({ ok: true, records: 2, head: next.hash, lastSeq: 2 })
   })
 
   it('removes a whole line whose fsync failed, so the next append does not reuse its sequence', async () => {
@@ -344,5 +351,107 @@ describe('AuditLog when a write fails', () => {
     const log = new AuditLog(path, clock, openFile)
     await expect(log.append(called)).rejects.toThrow()
     await expect(log.append(finished)).rejects.toMatchObject({ stage: 'tool-run', errorClass: 'internal' })
+  })
+})
+
+describe('rotation (D27)', () => {
+  const archive = (n: number) => join(dir, `audit.${String(n).padStart(4, '0')}.jsonl`)
+
+  async function rotatedLog(): Promise<{ log: AuditLog; hashes: string[] }> {
+    const log = new AuditLog(path, clock)
+    const hashes: string[] = []
+    hashes.push((await log.append(called)).hash)
+    hashes.push((await log.append(finished)).hash)
+    expect(await log.rotate()).toBe(archive(1))
+    hashes.push((await log.append(called)).hash)
+    expect(await log.rotate()).toBe(archive(2))
+    hashes.push((await log.append(blocked)).hash)
+    return { log, hashes }
+  }
+
+  it('moves the live file to the next archive and carries the chain on into the new one', async () => {
+    const { hashes } = await rotatedLog()
+    expect(await archivePaths(path)).toEqual([archive(1), archive(2)])
+    const first = JSON.parse(await lines().then((l) => l[0] as string))
+    expect(first.seq).toBe(4)
+    expect(first.prev).toBe(hashes[2])
+    expect(await verifyAuditChain(path)).toEqual({
+      ok: true,
+      records: 4,
+      files: 3,
+      head: hashes[3],
+      lastSeq: 4,
+    })
+    // On its own, the live file doesn't start at the genesis.
+    expect(await verifyAuditLog(path)).toMatchObject({ ok: false, line: 1, problem: 'sequence' })
+  })
+
+  it('never deletes a record: every archive and the live file hold them all, in order', async () => {
+    await rotatedLog()
+    const all: number[] = []
+    for (const file of [archive(1), archive(2), path]) {
+      for (const line of (await readFile(file, 'utf8')).trimEnd().split('\n')) all.push(JSON.parse(line).seq)
+    }
+    expect(all).toEqual([1, 2, 3, 4])
+  })
+
+  it('rotates by itself once the live file reaches maxBytes', async () => {
+    const log = new AuditLog(path, clock, undefined, { maxBytes: 1 })
+    await log.append(called)
+    await log.append(finished)
+    await log.append(blocked)
+    expect(await archivePaths(path)).toEqual([archive(1), archive(2)])
+    expect(await verifyAuditChain(path)).toMatchObject({ ok: true, records: 3, files: 3 })
+  })
+
+  it('continues after a restart, from the newest archive, and after a rotation with no live file yet', async () => {
+    const { hashes } = await rotatedLog()
+    await new AuditLog(path, clock).rotate()
+    expect(await readdir(dir)).not.toContain('audit.jsonl')
+    expect(await verifyAuditChain(path)).toMatchObject({ ok: true, records: 4, files: 4, head: hashes[3] })
+    const next = await new AuditLog(path, clock).append(finished)
+    expect(next.seq).toBe(5)
+    expect(next.prev).toBe(hashes[3])
+    expect(await verifyAuditChain(path)).toMatchObject({ ok: true, records: 5, head: next.hash })
+  })
+
+  it('has nothing to rotate in an empty log, and numbers archives past the highest one', async () => {
+    const log = new AuditLog(path, clock)
+    expect(await log.rotate()).toBeNull()
+    await log.append(called)
+    await writeFile(archive(7), '')
+    // An empty archive is itself a break, but numbering only looks at names.
+    expect(await log.rotate()).toBe(archive(8))
+  })
+
+  it('breaks the chain when an archive is deleted, emptied or edited, or the live file is cut at its start', async () => {
+    const cases: [string, () => Promise<void>, string, string][] = [
+      ['oldest archive deleted', () => rm(archive(1)), 'audit.0002.jsonl', 'sequence'],
+      ['middle archive deleted', () => rm(archive(2)), 'audit.jsonl', 'sequence'],
+      ['archive emptied', () => writeFile(archive(2), ''), 'audit.0002.jsonl', 'empty-archive'],
+      [
+        'archive edited',
+        async () =>
+          writeFile(archive(1), (await readFile(archive(1), 'utf8')).replace('get_trolley', 'get_trollex')),
+        'audit.0001.jsonl',
+        'hash',
+      ],
+      ['live file replaced', () => writeFile(path, ''), 'audit.jsonl', 'head-mismatch'],
+    ]
+    for (const [name, damage, file, problem] of cases) {
+      await rm(dir, { recursive: true, force: true })
+      dir = await mkdtemp(join(tmpdir(), 'valet-audit-'))
+      path = join(dir, 'audit.jsonl')
+      const { hashes } = await rotatedLog()
+      await damage()
+      const result = await verifyAuditChain(path, { expectedHead: hashes[3] })
+      expect(result, name).toMatchObject({ ok: false, file: join(dir, file), problem })
+    }
+  })
+
+  it('refuses to append after the newest archive is damaged, rather than chain onto it', async () => {
+    await rotatedLog()
+    await writeFile(archive(2), 'not a record\n')
+    await expect(new AuditLog(path, clock).append(called)).rejects.toThrow()
   })
 })

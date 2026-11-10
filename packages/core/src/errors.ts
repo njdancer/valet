@@ -50,8 +50,16 @@ export const ERROR_CLASSES = [
   'host-not-allowed',
   'request-ceiling',
   'ambiguous-path',
-  /** A site response did not have the shape the adapter expects: the site probably changed. */
+  /**
+   * A response was not the kind the caller expects at all: HTML where JSON was asked for, or a body
+   * over a size cap. An error page or a redirect, as often as a changed site.
+   */
   'unexpected-shape',
+  /**
+   * A site response was JSON but failed the adapter's schema: the site changed what it sends, and
+   * the adapter needs an update. Retrying won't help.
+   */
+  'site-changed',
   /** The element exists but trusted input cannot reach it, e.g. inside an out-of-process frame. */
   'input-unreachable',
   /** A local file has loose permissions or an unexpected owner. */

@@ -39,9 +39,18 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
+      '@playwright/test':
+        specifier: ^1.65.0
+        version: 1.65.0
+      '@valet/browser-electron':
+        specifier: workspace:*
+        version: link:../../packages/browser-electron
       '@valet/fake-woolworths-site':
         specifier: workspace:*
         version: link:../../fakes/woolworths-site
+      electron:
+        specifier: ^44.10.2
+        version: 44.10.2
 
   apps/desktop:
     dependencies:

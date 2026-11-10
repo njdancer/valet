@@ -68,6 +68,8 @@ export interface DataPaths {
   readonly setup: string
   /** Remote access: on or paused, its names and port, and the remote-enabled tools (remote.ts). */
   readonly remote: string
+  /** Run traces and screenshots, one entry per run, pruned after Settings' retention days (D27). */
+  readonly traces: string
 }
 
 /** Every file the app keeps, under one owner-only directory (D45). */
@@ -88,5 +90,6 @@ export function dataPaths(dir: string): DataPaths {
     versions: join(dir, 'versions.json'),
     setup: join(dir, 'setup.json'),
     remote: join(dir, 'remote.json'),
+    traces: join(dir, 'traces'),
   }
 }

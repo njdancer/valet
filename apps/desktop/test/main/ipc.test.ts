@@ -185,6 +185,16 @@ describe('arguments', () => {
     expect(calls).toEqual([])
   })
 
+  it('refuses trace retention outside 1 to 365 whole days', async () => {
+    const { d, calls } = dispatcher()
+    for (const traceRetentionDays of [0, 366, 2.5, '14']) {
+      await expect(
+        d.dispatch(invokeChannel('settings.set'), [{ traceRetentionDays }], control),
+      ).rejects.toBeInstanceOf(IpcRefused)
+    }
+    expect(calls).toEqual([])
+  })
+
   it('drops undefined optional keys rather than passing them on', async () => {
     const { d, calls } = dispatcher()
     await d.dispatch(invokeChannel('audit.page'), [{ limit: 5, search: undefined }], control)

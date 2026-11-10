@@ -97,7 +97,9 @@ describe('valet-verify-audit', () => {
     expect((await run([path])).stdout).toMatch(/^ok: 1 record, head [0-9a-f]{64}\n$/)
   })
 
-  it('fails when any byte of any line is changed', async () => {
+  // Thousands of write-and-verify rounds, one per tampered byte: about 2 s alone, and it ran past
+  // vitest's 5 s default once on a busy macOS runner. The work is fixed, so give it room.
+  it('fails when any byte of any line is changed', { timeout: 30_000 }, async () => {
     const { bytes } = await writeLog()
     for (let i = 0; i < bytes.length; i++) {
       for (const replacement of [bytes[i]! ^ 0x01, bytes[i]! ^ 0x20, 0x20]) {
@@ -214,5 +216,42 @@ describe('valet-verify-audit', () => {
     expect(ok.stdout).toBe(`ok: 3 records, head ${head}\n`)
     await writeFile(path, (await readFile(path, 'utf8')).replace('get_trolley', 'get_trollex'))
     await expect(exec(process.execPath, ['--import', 'tsx', cli, path])).rejects.toMatchObject({ code: 1 })
+  })
+})
+
+describe('valet-verify-audit across rotated files (D27)', () => {
+  async function writeRotated(): Promise<string> {
+    const log = new AuditLog(path, clock)
+    await log.append(events[0] as AuditEvent)
+    await log.rotate()
+    await log.append(events[1] as AuditEvent)
+    await log.rotate()
+    return (await log.append(events[2] as AuditEvent)).hash
+  }
+
+  it('follows the chain through every archive into the live file', async () => {
+    const head = await writeRotated()
+    expect(await run([path, '--head', head])).toEqual({
+      code: 0,
+      stdout: `ok: 3 records in 3 files, head ${head}\n`,
+      stderr: '',
+    })
+  })
+
+  it('names the file the chain breaks in when an archive is deleted', async () => {
+    await writeRotated()
+    await rm(join(dir, 'audit.0001.jsonl'))
+    const result = await run([path])
+    expect(result.code).toBe(1)
+    expect(result.stderr).toContain(`FAILED: ${join(dir, 'audit.0002.jsonl')}: line 1: out of sequence`)
+  })
+
+  it('verifies a log that has just rotated and has no live file yet', async () => {
+    const head = await writeRotated()
+    await new AuditLog(path, clock).rotate()
+    expect(await run([path, '--head', head])).toMatchObject({
+      code: 0,
+      stdout: `ok: 3 records in 4 files, head ${head}\n`,
+    })
   })
 })

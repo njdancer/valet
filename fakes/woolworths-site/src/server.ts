@@ -8,6 +8,7 @@ import { AccountStore, type FakeAccount, SESSION_COOKIE, type Visitor } from './
 import { accessDeniedHtml, newSensorValue, SENSOR_COOKIE } from './akamai'
 import { type AuthHostile, FakeAuth0, type SentMessage } from './auth-server'
 import { beaconScript, type PageBeacon, validBeacon } from './beacon'
+import { applyShapeDrift, SHAPE_DRIFTS, type ShapeDrift } from './drift'
 import {
   closeServer,
   createServer,
@@ -129,6 +130,8 @@ export interface FakeWoolworths {
   setPageBeacon(beacon: PageBeacon | null): void
   /** Switches what Akamai does with an `_abck` it never issued; see the option. */
   setUnknownSensor(mode: UnknownSensor): void
+  /** Changes the shape of product-bearing API responses from now on (drift.ts); null restores it. */
+  setShapeDrift(drift: ShapeDrift | null): void
 }
 
 /** The path and query of the live site's login link: www's /auth/login, back to `path` after. */
@@ -186,6 +189,7 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
   let unknownSensor: UnknownSensor = sensorMode(options.unknownSensor ?? 'reissue')
   let pageScript = options.hostile?.pageBeacon === undefined ? '' : beaconScript(options.hostile.pageBeacon)
   let blockingAll = false
+  let shapeDrift: ShapeDrift | null = null
   let deniedCount = 0
   let nextOrderId = 100_000_001
 
@@ -293,6 +297,10 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
     }
   }
 
+  /** A product-bearing API response, drifted while setShapeDrift() is on. */
+  const productJson = (exchange: Exchange, status: number, body: unknown): Sent =>
+    json(exchange, status, shapeDrift === null ? body : applyShapeDrift(body, shapeDrift))
+
   const api = (exchange: Exchange): Sent => {
     const { method, path } = exchange
     const trolley = store.trolleyOf(exchange.visitor)
@@ -306,19 +314,20 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
           ? searchQueryFromParams(exchange.params)
           : searchQueryFromJson(parseJson(exchange.body))
       if (query === null) return json(exchange, 400, INVALID_REQUEST)
-      return json(exchange, 200, searchResponse(query, trolley))
+      return productJson(exchange, 200, searchResponse(query, trolley))
     }
     const detail = /^\/apis\/ui\/product\/detail\/([^/]+)$/.exec(path)
     if (method === 'GET' && detail !== null) {
       const code = detail[1] ?? ''
       const body = /^\d{1,9}$/.test(code) ? productDetailResponse(Number(code), trolley) : null
-      return body === null ? json(exchange, 404, productNotFoundResponse()) : json(exchange, 200, body)
+      return body === null ? json(exchange, 404, productNotFoundResponse()) : productJson(exchange, 200, body)
     }
-    if (method === 'GET' && path === '/apis/ui/trolley') return json(exchange, 200, trolleyResponse(trolley))
+    if (method === 'GET' && path === '/apis/ui/trolley')
+      return productJson(exchange, 200, trolleyResponse(trolley))
     if (method === 'POST' && path === '/api/v3/ui/trolley/update') {
       const outcome = applyTrolleyUpdate(trolley, parseJson(exchange.body))
       if (!outcome.ok) return json(exchange, 400, INVALID_REQUEST)
-      return json(exchange, 200, trolleyResponse(trolley))
+      return productJson(exchange, 200, trolleyResponse(trolley))
     }
     if (method === 'POST' && path === '/api/v3/ui/checkout/order') {
       // Exists only so tests can prove the runtime never lets a request reach it.
@@ -519,6 +528,10 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
     },
     setUnknownSensor(mode) {
       unknownSensor = sensorMode(mode)
+    },
+    setShapeDrift(drift) {
+      if (drift !== null && !SHAPE_DRIFTS.includes(drift)) throw new Error('unknown shape drift')
+      shapeDrift = drift
     },
   }
 }

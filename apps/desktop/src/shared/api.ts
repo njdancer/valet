@@ -606,6 +606,8 @@ export interface Settings {
    * it at the top of the sidebar, or its UUID. Null until the person sets it.
    */
   readonly onePasswordAccount: string | null
+  /** Days a run's traces and screenshots are kept before they are removed (D27): 1 to 365, 14 by default. */
+  readonly traceRetentionDays: number
 }
 
 /** What the renderer may change directly. The 1Password CLI path isn't among them. */
