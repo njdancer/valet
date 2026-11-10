@@ -1,5 +1,9 @@
 # Contributing
 
+Valet doesn't take pull requests from outside the project for now. The code is public to be read,
+and issues are welcome; CI runs nothing from a fork, and a fork's pull request can't pass it. This
+page is for the people and agents who work in this repository.
+
 ## Tooling
 
 - **mise** pins Node and pnpm (`mise.toml`). Run commands through it: `mise exec -- pnpm …`, or

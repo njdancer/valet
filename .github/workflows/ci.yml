@@ -12,12 +12,16 @@ permissions:
 # after it was reviewed; a commit can't. These jobs build what the release command signs, so bump a
 # pin by hand, after reading what changed.
 
+# Pull requests from forks aren't accepted (CONTRIBUTING.md), and none of their code runs here: every
+# job below is skipped for one, and `ci` then fails, because a skipped job isn't a passed one.
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   check:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     # macOS, because the updater tests use ditto and the app only ships for macOS.
     runs-on: macos-latest
     timeout-minutes: 30
@@ -28,6 +32,7 @@ jobs:
       - run: pnpm check
 
   e2e:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
@@ -46,6 +51,7 @@ jobs:
           pnpm --filter @valet/adapter-woolworths test:smoke --trace off
 
   swift-bridge:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     # The native binaries the packaged app ships: the stdio bridge (D60), run against the same suite
     # as the TypeScript bridge (packages/mcp-server/test/bridge-contract.ts), and the Keychain and
     # Messages helpers (D6, D8), run against the TypeScript contract suites in packages/credentials.
@@ -71,6 +77,7 @@ jobs:
           VALET_SWIFT_MESSAGES_HELPER: ${{ github.workspace }}/swift-bridge/.build/debug/valet-messages-helper
 
   release-dry-run:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     # AC18's one release command end to end, with nothing real in reach: an ad hoc signature, a
     # throwaway Ed25519 feed key made in the job, and notarisation, upload and tag as printed stubs
     # (apps/desktop/scripts/release.mjs). pnpm check runs in the check job, so it is skipped here.
