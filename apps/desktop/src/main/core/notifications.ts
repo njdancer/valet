@@ -141,6 +141,24 @@ export class Notifier {
     })
   }
 
+  /**
+   * Remote connectors waiting for consent on the Mac: one notification for all of them, taken down
+   * once none is waiting. It says nothing a client chose: not its name, not even its host.
+   */
+  remoteConsent(pending: number): void {
+    if (pending === 0) {
+      this.takeDown('remote-consent')
+      return
+    }
+    this.put({
+      key: 'remote-consent',
+      title:
+        pending === 1 ? 'A connector wants access to Valet' : `${pending} connectors want access to Valet`,
+      body: 'Type the code your browser shows. If you didn’t just add a connector, decline it.',
+      target: { kind: 'panel', route: '#/remote' },
+    })
+  }
+
   /** Takes everything down, when the app stops. */
   clear(): void {
     this.attention_.clear()

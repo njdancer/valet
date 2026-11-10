@@ -68,6 +68,9 @@ const ITEM_REF = z
   .regex(/^[^\p{Cc}\p{Cf}]+$/u)
 const ORIGIN = z.string().min(1).max(300)
 const ISO_TIME = z.iso.datetime({ offset: true })
+/** `<adapterId>.<tool>`, as the consent window grants tools. */
+const REMOTE_TOOL = z.string().regex(/^[a-z][a-z0-9-]{1,63}\.[a-z][a-z0-9_]{0,63}$/)
+const REMOTE_CLIENT_ID = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/)
 
 const grantRequest = z
   .object({
@@ -187,6 +190,16 @@ const HANDLERS: Readonly<
   'health.sites': entry(none, (api) => api.health.sites()),
   'setup.status': entry(none, (api) => api.setup.status()),
   'setup.finish': entry(none, (api) => api.setup.finish()),
+  'remote.consents': entry(none, (api) => api.remote.consents()),
+  'remote.approveConsent': entry(
+    z.tuple([z.string().min(1).max(32), z.array(REMOTE_TOOL).max(200)]),
+    (api, [code, tools]) => api.remote.approveConsent(code, tools),
+  ),
+  'remote.declineConsent': entry(z.tuple([OPAQUE_ID]), (api, [id]) => api.remote.declineConsent(id)),
+  'remote.declineAllConsents': entry(none, (api) => api.remote.declineAllConsents()),
+  'remote.clients': entry(none, (api) => api.remote.clients()),
+  'remote.revokeClient': entry(z.tuple([REMOTE_CLIENT_ID]), (api, [id]) => api.remote.revokeClient(id)),
+  'remote.revokeAllClients': entry(none, (api) => api.remote.revokeAllClients()),
   'app.status': entry(none, (api) => api.app.status()),
   'app.setPaused': entry(z.tuple([z.boolean()]), (api, [paused]) => api.app.setPaused(paused)),
   'app.openControlPanel': entry(z.union([none, z.tuple([hashRoute])]), (api, args) =>

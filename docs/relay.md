@@ -190,9 +190,42 @@ The first slice (2026-11-08), the parts every option needs, sharing the local en
   closes every remote session and stops the listener, with no network needed. A pause survives a
   restart.
 
-Not built: the authorisation server (so nothing mints access tokens yet, and the listener refuses
-every request), consent, client registrations and refresh tokens, "Revoke all remote clients…",
-the control-panel screens for turning tools on and setting the public name, and any tunnel.
+The second slice (2026-11-10) adds the authorisation server and consent, on the same listener:
+
+- **The authorisation server.** `RemoteAuthorization` (`packages/mcp-server/src/oauth-server.ts`)
+  answers ahead of the MCP path through the HTTP handler's `before` hook, after the same `Host`
+  and `Origin` guards. It serves protected resource metadata (at
+  `/.well-known/oauth-protected-resource/mcp`, which every 401's `WWW-Authenticate` points at) and
+  authorisation server metadata; Dynamic Client Registration at `/register`; `/authorize` and its
+  waiting page `/authorize/wait`; and `/token`. PKCE S256 only. Every access token is minted for one
+  resource, `https://<public name>/mcp`, and refused on any other name. Codes live a minute and are
+  good once; a second use revokes the grant. Refresh tokens rotate on every use, live 30 days from
+  their last use, and a rotated-away one coming back revokes the grant (`remote-token-reuse`).
+- **Registrations and grants** (`oauth-clients.ts`): our own `rc…` id is both the OAuth
+  `client_id` and the `remote:<id>` in the audit log. Public clients (`none`) and confidential ones
+  (`client_secret_basic`, `client_secret_post`) are accepted; secrets and refresh tokens are kept
+  only as SHA-256. The app keeps them in `remote-clients.json`, so pausing and restarting keep every
+  connector. The limits are this page's: 5 registrations an hour per source and 20 a day, 50 kept,
+  unconsented ones gone after an hour; `/authorize` 10 an hour per source and 30 globally.
+- **Consent** (`oauth-consent.ts`): `/authorize` opens a request (at most five, five minutes each)
+  and shows its browser an 8-character code from Crockford's alphabet. The page is a fixed template
+  with a strict CSP and no script; it refreshes itself every 3 seconds until the Mac answers, then
+  sends the browser on with the code (or `access_denied`). The app shows one notification and its
+  **Remote sign-in** screen, listing each request by its redirect URI's host, never with its code.
+  The typed code selects the request; three wrong codes cancel them all. `read` tools start ticked
+  and `write` and `irreversible` ones unticked, and a client may then list and call only the tools
+  it was granted, and only while they are remote-enabled. Pausing declines whatever is waiting.
+- **Revocation.** Each remote client on the Remote sign-in screen has its own Revoke; "Revoke all
+  remote clients…" is there and in the tray menu, and asks first. New audit events:
+  `remote-consent`, `remote-revoked`, `remote-token-reuse`.
+- **Source address.** `cloudflaredSource` reads `Cf-Connecting-Ip` (D14: Cloudflare Tunnel). The
+  listener binds `127.0.0.1`, so only a process on the Mac can set it, and one that lies only
+  escapes the per-source limits; the global ones still hold.
+
+Not built: Client ID Metadata Documents (the metadata says `client_id_metadata_document_supported:
+false`; they need the fetcher [below](#before-consent-fetching-and-limits)), the control-panel
+screens for turning tools on and setting the public name, the typed `transport` field in
+`tool-called` ([Core changes](#core-changes)), and the tunnel itself.
 
 ### A separate listener with its own guards
 
@@ -285,9 +318,9 @@ registered, but bounded:
   notification per request, so a flood can't bury the screen or train the person to click
   through.
 
-The source address comes from the transport: from tailscaled's forwarding headers for Funnel
-(_verify_ which it sets, and trust them only on the loopback connection from tailscaled), and from
-the relay's frame for D. Where it's unknown, the global limits alone apply. The numbers are a
+The source address comes from the transport: from cloudflared's `Cf-Connecting-Ip` for Cloudflare
+Tunnel (D14; trusted only because the listener is on loopback), from tailscaled's forwarding headers
+for Funnel (_verify_ which it sets; not built), and from the relay's frame for D. Where it's unknown, the global limits alone apply. The numbers are a
 starting point for one person; they're settings, not constants.
 
 ### Consent happens on the Mac
@@ -559,8 +592,8 @@ Not needed until remote mode is built:
 - `AuditEvent['tool-called']` gains `transport: 'local' | 'remote'` and a `clientRegistration`
   id, instead of encoding both in the `client` string.
 - New audit events: `remote-consent` (client host, source address, time, tool set, and approved,
-  declined, expired or cancelled by wrong codes), `remote-revoked`, `remote-token-reuse`.
-  `remote-state` (on or paused) and `remote-tool` exist since the first slice.
+  declined, expired or cancelled by wrong codes), `remote-revoked`, `remote-token-reuse`. Built in
+  the second slice; `remote-state` (on or paused) and `remote-tool` exist since the first.
 - An error class for "not available remotely", or a documented decision to reuse `not-granted`.
 
 ## Open questions

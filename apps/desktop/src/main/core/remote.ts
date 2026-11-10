@@ -11,18 +11,31 @@
 //
 // Pausing (the tray's kill switch) is remembered: a paused Mac stays paused after a restart.
 //
-// Not here yet: the in-app OAuth authorisation server that mints access tokens into `tokens`, and
-// the tunnel. Until they exist no remote client can get a token, so the listener refuses everything.
+// The in-app OAuth authorisation server (mcp-server's RemoteAuthorization) answers on the same
+// listener and mints into `tokens`. Its client registrations and grants, secrets hashed, are kept in
+// remote-clients.json, so pausing and restarting keep every connector; access tokens are memory
+// only. Consent is answered here, by the person typing the code their browser shows (relay.md,
+// "Consent happens on the Mac"); a client may then call only the remote-enabled tools they ticked.
+// Not here yet: the tunnel (D14: Cloudflare Tunnel, which the person runs themselves).
 
 import type { ToolDeclaration } from '@valet/core'
 import { ValetError } from '@valet/core'
 import {
+  type ConsentPrompt,
+  type ConsentRequest,
+  ConsentRequests,
+  EMPTY_REMOTE_CLIENTS,
   type LiveSessions,
   normaliseRemoteHost,
   RemoteAccessTokens,
+  RemoteAuthorization,
+  type RemoteClientInfo,
+  RemoteClients,
+  type RemoteClientsState,
   type RemoteListenerOptions,
   type RemoteRefusal,
   type RunningRemoteListener,
+  remoteClientsStateSchema,
   type ServerInfo,
   startRemoteListener,
   type ToolCall,
@@ -69,7 +82,50 @@ export interface RemoteStatus {
   readonly sessions: number
   /** Remote-enabled tools, as `<adapterId>.<tool>`. */
   readonly tools: readonly string[]
+  /** Client registrations kept, consented or not. */
+  readonly clients: number
+  /** Consent requests waiting for the person. */
+  readonly pendingConsents: number
 }
+
+/** A tool the consent window offers to tick: remote-enabled now. */
+export interface ConsentTool {
+  /** `<adapterId>.<tool>`. */
+  readonly ref: string
+  readonly adapterId: string
+  readonly tool: string
+  readonly sideEffect: SideEffect
+}
+
+export interface ConsentView {
+  /** Pending requests, oldest first. Never their codes. */
+  readonly requests: readonly ConsentPrompt[]
+  /** What can be granted. `write` and `irreversible` tools start unticked; `read` ones ticked. */
+  readonly tools: readonly ConsentTool[]
+}
+
+/** How typing a code went. */
+export type ConsentAnswer = 'approved' | 'wrong-code' | 'cancelled'
+
+type RemoteAuditEvent =
+  | { readonly type: 'remote-state'; readonly state: 'on' | 'paused'; readonly revokedTokens: number }
+  | {
+      readonly type: 'remote-tool'
+      readonly adapterId: string
+      readonly tool: string
+      readonly enabled: boolean
+      readonly sideEffect: SideEffect
+    }
+  | {
+      readonly type: 'remote-consent'
+      readonly clientId: string
+      readonly clientHost: string
+      readonly source: string | null
+      readonly tools: readonly string[]
+      readonly answer: 'approved' | 'declined' | 'expired' | 'cancelled'
+    }
+  | { readonly type: 'remote-revoked'; readonly clientId: string | null; readonly clients: number }
+  | { readonly type: 'remote-token-reuse'; readonly clientId: string; readonly token: 'refresh' | 'code' }
 
 export interface RemoteAccessDeps {
   readonly path: string
@@ -77,27 +133,28 @@ export interface RemoteAccessDeps {
   readonly now: () => number
   /** Something about remote access changed: its state, its sessions or its tools. */
   readonly changed: () => void
-  /** Writes an audit event for a change the person made. */
-  readonly audit: (
-    event:
-      | { readonly type: 'remote-state'; readonly state: 'on' | 'paused'; readonly revokedTokens: number }
-      | {
-          readonly type: 'remote-tool'
-          readonly adapterId: string
-          readonly tool: string
-          readonly enabled: boolean
-          readonly sideEffect: SideEffect
-        },
-  ) => Promise<void>
+  /** Where client registrations and grants are kept. */
+  readonly clientsPath: string
+  /** Writes an audit event for a change the person made, or one the authorisation server saw. */
+  readonly audit: (event: RemoteAuditEvent) => Promise<void>
+  /** A consent request opened: show the person the consent window. Must not throw. */
+  readonly consentRequested?: () => void
   /** The policy refused a remote call: audit it like the app's own refusals. */
   readonly refused: (call: ToolCall, reason: RemoteRefusal) => Promise<void>
   readonly start?: (options: RemoteListenerOptions) => Promise<RunningRemoteListener>
 }
 
 export class RemoteAccess {
-  /** The access tokens the listener accepts. The authorisation server will mint into this. */
+  /** The access tokens the listener accepts. The authorisation server mints into this. */
   readonly tokens: RemoteAccessTokens
+  /** Client registrations, their grants and refresh tokens. Read from its file at start(). */
+  readonly clients: RemoteClients
+  readonly consents: ConsentRequests
+  readonly authorization: RemoteAuthorization
   private readonly document: JsonDocument<RemoteDocument>
+  private readonly clientsDocument: JsonDocument<RemoteClientsState>
+  /** Saves run one after another; each writes the latest state. */
+  private saving: Promise<unknown> = Promise.resolve()
   private current: RemoteDocument = DEFAULT_REMOTE
   private listener: RunningRemoteListener | null = null
   private caller: ToolCaller | null = null
@@ -107,6 +164,32 @@ export class RemoteAccess {
   constructor(private readonly deps: RemoteAccessDeps) {
     this.tokens = new RemoteAccessTokens({ now: deps.now })
     this.document = new JsonDocument(deps.path, remoteSchema, () => DEFAULT_REMOTE, true)
+    // A file that doesn't validate reads as no clients: each connector is added again, with consent.
+    this.clientsDocument = new JsonDocument(
+      deps.clientsPath,
+      remoteClientsStateSchema,
+      () => EMPTY_REMOTE_CLIENTS,
+      true,
+    )
+    this.clients = new RemoteClients({ now: deps.now, changed: (state) => this.saveClients(state) })
+    this.consents = new ConsentRequests({
+      now: deps.now,
+      changed: () => deps.changed(),
+      ended: (request) => this.auditConsent(request),
+    })
+    this.authorization = new RemoteAuthorization({
+      tokens: this.tokens,
+      clients: this.clients,
+      consents: this.consents,
+      now: deps.now,
+      consentRequested: () => deps.consentRequested?.(),
+      audit: (event) => {
+        void deps.audit({ ...event, clientId: `remote:${event.clientId}` }).catch(() => undefined)
+        // Its sessions go with its tokens.
+        void this.listener?.endClient(event.clientId).catch(() => undefined)
+        deps.changed()
+      },
+    })
   }
 
   /** Reads remote.json, and starts listening if the person left remote access on. */
@@ -114,14 +197,86 @@ export class RemoteAccess {
     this.caller = caller
     return this.serially(async () => {
       this.current = await this.document.read()
+      this.clients.restore(await this.clientsDocument.read())
       if (this.current.enabled) await this.listen().catch(() => undefined)
     })
   }
 
-  /** The remote policy: on for this tool, at a side effect no higher than when it was turned on. */
-  allows(adapter: string, declaration: ToolDeclaration): boolean {
+  /**
+   * The remote policy: on for this tool, at a side effect no higher than when it was turned on, and
+   * (for one client) ticked when the person approved that client.
+   */
+  allows(adapter: string, declaration: ToolDeclaration, clientId: string | null = null): boolean {
     const entry = this.current.tools[adapter]?.[declaration.name]
-    return entry !== undefined && RANK[declaration.sideEffect] <= RANK[entry.sideEffect]
+    if (entry === undefined || RANK[declaration.sideEffect] > RANK[entry.sideEffect]) return false
+    if (clientId === null) return true
+    return this.clients.get(clientId)?.grant?.tools.includes(`${adapter}.${declaration.name}`) ?? false
+  }
+
+  /** What the consent window shows. */
+  consentView(): ConsentView {
+    return { requests: this.consents.prompts(), tools: this.enabledTools() }
+  }
+
+  /**
+   * The person typed a code and ticked tools. Tools that aren't remote-enabled now are refused
+   * whole (ValetError config invalid). Approves only the request the code belongs to.
+   */
+  async approveConsent(code: string, tools: readonly string[]): Promise<ConsentAnswer> {
+    const enabled = new Set(this.enabledTools().map((t) => t.ref))
+    if (tools.some((t) => !enabled.has(t))) throw new ValetError('config', 'invalid')
+    const result = this.consents.approve(code, tools)
+    if (!result.ok) return result.reason
+    await this.auditConsent(result.request)
+    return 'approved'
+  }
+
+  declineConsent(id: string): boolean {
+    return this.consents.decline(id)
+  }
+
+  declineAllConsents(): number {
+    return this.consents.declineAll()
+  }
+
+  /** The kept client registrations, for the remote-clients list. */
+  remoteClients(): RemoteClientInfo[] {
+    return this.clients.list()
+  }
+
+  /** Revokes one client: its registration, grant and tokens go, and its sessions close. */
+  revokeClient(clientId: string): Promise<boolean> {
+    return this.serially(async () => {
+      if (this.clients.get(clientId) === null) return false
+      this.authorization.revokeClient(clientId)
+      await this.listener?.endClient(clientId)
+      await this.deps
+        .audit({ type: 'remote-revoked', clientId: `remote:${clientId}`, clients: 1 })
+        .catch(() => undefined)
+      this.deps.changed()
+      return true
+    })
+  }
+
+  /**
+   * "Revoke all remote clients…": every registration with its grant and tokens, and every remote
+   * session. Each connector has to be added again, with consent on the Mac. Returns how many.
+   */
+  revokeAllClients(): Promise<number> {
+    return this.serially(async () => {
+      const ids = this.clients.list().map((c) => c.id)
+      this.consents.declineAll()
+      const count = this.authorization.revokeAll()
+      for (const id of ids) await this.listener?.endClient(id)
+      await this.deps.audit({ type: 'remote-revoked', clientId: null, clients: count }).catch(() => undefined)
+      this.deps.changed()
+      return count
+    })
+  }
+
+  /** Written once all saves so far are done. For tests and quitting. */
+  async flushed(): Promise<void> {
+    await this.saving
   }
 
   status(): RemoteStatus {
@@ -135,6 +290,8 @@ export class RemoteAccess {
       hosts: this.current.hosts,
       sessions: this.listener?.sessions().total ?? 0,
       tools: tools.sort(),
+      clients: this.clients.list().length,
+      pendingConsents: this.consents.prompts().length,
     }
   }
 
@@ -149,6 +306,8 @@ export class RemoteAccess {
       try {
         if (!enabled) {
           const revokedTokens = this.tokens.size
+          // Browsers waiting on the listener can't be answered once it's gone.
+          this.consents.declineAll()
           await this.save({ ...this.current, enabled: false })
           await this.unlisten()
           await this.deps
@@ -220,7 +379,11 @@ export class RemoteAccess {
 
   /** The app is quitting: stop listening, leaving the saved state as it is. */
   close(): Promise<void> {
-    return this.serially(() => this.unlisten())
+    return this.serially(async () => {
+      this.consents.declineAll()
+      await this.unlisten()
+      await this.saving
+    })
   }
 
   /** Remote sessions, for the tray's count. */
@@ -235,6 +398,7 @@ export class RemoteAccess {
       caller: this.caller,
       policy: this,
       tokens: this.tokens,
+      authorization: this.authorization,
       hosts: () => new Set(this.current.hosts),
       info: this.deps.info,
       // A kept port, so the tunnel's configuration stays right. If something else holds it, this
@@ -254,6 +418,32 @@ export class RemoteAccess {
     // Even with no listener, tokens minted while it was down are refused from now on.
     this.tokens.revokeAll()
     await listener?.close()
+  }
+
+  private enabledTools(): ConsentTool[] {
+    const tools: ConsentTool[] = []
+    for (const [adapterId, byTool] of Object.entries(this.current.tools))
+      for (const [tool, entry] of Object.entries(byTool))
+        tools.push({ ref: `${adapterId}.${tool}`, adapterId, tool, sideEffect: entry.sideEffect })
+    return tools.sort((a, b) => a.ref.localeCompare(b.ref))
+  }
+
+  private auditConsent(request: ConsentRequest): Promise<void> {
+    const answer = request.status === 'pending' ? 'expired' : request.status
+    return this.deps
+      .audit({
+        type: 'remote-consent',
+        clientId: `remote:${request.clientId}`,
+        clientHost: request.clientHost,
+        source: request.source,
+        tools: answer === 'approved' ? [...request.tools] : [],
+        answer,
+      })
+      .catch(() => undefined)
+  }
+
+  private saveClients(state: RemoteClientsState): void {
+    this.saving = this.saving.then(() => this.clientsDocument.update(() => state)).catch(() => undefined)
   }
 
   private async save(next: RemoteDocument): Promise<void> {

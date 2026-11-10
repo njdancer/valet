@@ -193,11 +193,12 @@ describe('startHttpServer', () => {
     expect(tools.map((t) => t.name).sort()).toEqual(['woolworths_search_products', 'woolworths_view_cart'])
   })
 
-  it('lists the tools once for every session it refreshes', async () => {
+  it('lists the tools once for every client it refreshes, however many sessions it has', async () => {
     const caller = new FakeCaller([searchProducts])
     const running = await start(caller)
     await connectClient(running.url, 'a')
     await connectClient(running.url, 'b')
+    await connectClient(running.url, 'c')
     let listings = 0
     caller.listTools = () => {
       listings++

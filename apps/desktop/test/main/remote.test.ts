@@ -45,6 +45,7 @@ function make(file?: unknown) {
   }
   const remote = new RemoteAccess({
     path,
+    clientsPath: join(dir, 'remote-clients.json'),
     info: { name: 'valet', version: '0.1.0' },
     now: () => Date.parse('2026-11-08T00:00:00.000Z'),
     changed: () => {},
@@ -109,13 +110,20 @@ describe('the tray', () => {
     listening: false,
     url: null,
     hosts: [],
+    clients: 0,
+    pendingConsents: 0,
     sessions: 0,
     tools: [],
     ...over,
   })
 
   it('says nothing and offers nothing when remote access was never set up', () => {
-    expect(remoteTrayState(status(), false)).toEqual({ title: '', tooltip: 'Valet', menuItem: null })
+    expect(remoteTrayState(status(), false)).toEqual({
+      title: '',
+      tooltip: 'Valet',
+      menuItem: null,
+      revokeAll: false,
+    })
   })
 
   it('shows REMOTE beside the icon and offers the kill switch while on', () => {
@@ -123,6 +131,7 @@ describe('the tray', () => {
       title: 'REMOTE',
       tooltip: 'Valet: remote access on, 1 remote session',
       menuItem: { label: 'Pause remote access', enable: false },
+      revokeAll: false,
     })
     expect(remoteTrayState(status({ enabled: true }), true)).toMatchObject({
       title: 'DEMO · REMOTE',
@@ -135,6 +144,12 @@ describe('the tray', () => {
       title: 'DEMO',
       tooltip: 'Valet (demo)',
       menuItem: { label: 'Resume remote access', enable: true },
+      revokeAll: false,
     })
+  })
+
+  it('offers revoking every remote client while any is kept, paused or not', () => {
+    expect(remoteTrayState(status({ clients: 2 }), false).revokeAll).toBe(true)
+    expect(remoteTrayState(status({ enabled: true, clients: 1 }), false).revokeAll).toBe(true)
   })
 })

@@ -4,7 +4,7 @@ import { formatCount, formatTime, hostOf } from '../lib/format'
 import { href, type Route } from '../lib/router'
 import { OUTCOME_TONE } from '../lib/wording'
 
-type Section = 'adapters' | 'activity' | 'audit' | 'clients' | 'credentials' | 'settings'
+type Section = 'adapters' | 'activity' | 'audit' | 'clients' | 'remote' | 'credentials' | 'settings'
 
 function sectionOf(route: Route): Section | null {
   switch (route.page) {
@@ -19,6 +19,8 @@ function sectionOf(route: Route): Section | null {
       return 'audit'
     case 'clients':
       return 'clients'
+    case 'remote':
+      return 'remote'
     case 'credentials':
       return 'credentials'
     case 'settings':
@@ -60,6 +62,7 @@ export function Sidebar({ route }: { readonly route: Route }) {
   const attention = useLoad((api) => api.attention.list(), [], ['attention-changed'])
   const stats = useLoad((api) => api.runs.statsToday(), [], ['runs-changed'])
   const clients = useLoad((api) => api.clients.list(), [], ['clients-changed'])
+  const consents = useLoad((api) => api.remote.consents(), [], ['remote-changed'])
   const endpoint = useLoad((api) => api.endpoint.status(), [], ['endpoint-changed'])
   const chain = useLoad((api) => api.audit.chainStatus(), [], ['audit-appended', 'audit-verified'])
   const runs = useLoad((api) => api.runs.list({ limit: 12 }), [], ['runs-changed'])
@@ -104,6 +107,14 @@ export function Sidebar({ route }: { readonly route: Route }) {
         count={
           clients.status === 'ready' ? clients.data.filter((c) => c.revokedAt === null).length : undefined
         }
+      />
+      <NavItem
+        to={href.remote()}
+        icon="shield"
+        label="Remote sign-in"
+        active={section === 'remote'}
+        count={consents.status === 'ready' ? consents.data.requests.length : undefined}
+        alert
       />
       <NavItem to={href.credentials()} icon="key" label="Credentials" active={section === 'credentials'} />
       <NavItem to={href.settings()} icon="gear" label="Settings" active={section === 'settings'} />

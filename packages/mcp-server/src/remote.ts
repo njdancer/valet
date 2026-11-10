@@ -4,9 +4,11 @@
 // itself. It binds 127.0.0.1 only: a tunnel daemon (Funnel, cloudflared) or the relay client in the
 // app connects to it there, and it never listens on another interface.
 //
-// The OAuth authorisation server that mints the access tokens, and the tunnel, are not built yet.
+// The OAuth authorisation server that mints the access tokens (oauth-server.ts) answers on this
+// listener too, ahead of the MCP path. The tunnel is not built yet.
 
 import { type HttpServerOptions, type LiveSessions, startHttpServer } from './http'
+import type { RemoteAuthorization } from './oauth-server'
 import { type RemoteAccessTokens, remoteAuthenticator } from './remote-auth'
 import { type RemotePolicy, RemotePolicyCaller, type RemotePolicyOptions } from './remote-policy'
 import type { ToolCaller } from './tool-caller'
@@ -21,6 +23,8 @@ export interface RemoteListenerOptions
   readonly tokens: RemoteAccessTokens
   /** The public names the tunnel forwards. Read on every request. */
   readonly hosts: () => ReadonlySet<string>
+  /** The authorisation server minting into `tokens`. Without it, no OAuth path answers. */
+  readonly authorization?: RemoteAuthorization
 }
 
 export interface RunningRemoteListener {
@@ -41,7 +45,7 @@ export interface RunningRemoteListener {
 }
 
 export async function startRemoteListener(options: RemoteListenerOptions): Promise<RunningRemoteListener> {
-  const { caller, policy, tokens, hosts, callsPerHour, now, refused, ...http } = options
+  const { caller, policy, tokens, hosts, authorization, callsPerHour, now, refused, ...http } = options
   const remote = new RemotePolicyCaller(caller, policy, {
     ...(callsPerHour === undefined ? {} : { callsPerHour }),
     ...(now === undefined ? {} : { now }),
@@ -51,6 +55,7 @@ export async function startRemoteListener(options: RemoteListenerOptions): Promi
     ...http,
     caller: remote,
     authenticate: remoteAuthenticator({ tokens, hosts }),
+    ...(authorization === undefined ? {} : { before: authorization.handler(hosts) }),
     host: '127.0.0.1',
   })
   let closed = false

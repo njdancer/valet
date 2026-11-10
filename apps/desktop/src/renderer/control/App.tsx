@@ -13,6 +13,7 @@ import { ConfirmationPanel } from '../screens/Confirmation'
 import { CredentialsPage } from '../screens/Credentials'
 import { GrantSheet } from '../screens/GrantSheet'
 import { NeedsUserBanner } from '../screens/NeedsUserBanner'
+import { RemoteConsentPage } from '../screens/RemoteConsent'
 import { ReviewUpdate } from '../screens/ReviewUpdate'
 import { SETUP_ADAPTER, SetupPage } from '../screens/Setup'
 import { Sidebar } from './Sidebar'
@@ -79,6 +80,8 @@ function mainFor(route: Route): ReactNode {
     case 'clients':
     case 'settings':
       return <ClientsSettingsPage />
+    case 'remote':
+      return <RemoteConsentPage />
     default:
       return (
         <>

@@ -8,9 +8,10 @@
 //   attacker's name is refused before any token is read.
 // - Any Origin is refused. The remote clients this is for (claude.ai's connectors, cloud agents)
 //   call from servers, not pages; a browser page on any origin is not a client of this listener.
-// - The bearer token must be an access token from RemoteAccessTokens. Those are minted by the
-//   in-app authorisation server (not built yet) and never by the local listener's ClientTokens, so a
-//   local client's token is refused here, and a remote token there.
+// - The bearer token must be an access token from RemoteAccessTokens, minted for this very resource
+//   (RFC 8707): `https://<the Host it arrived on>/mcp`. Those are minted by the in-app authorisation
+//   server (oauth-server.ts) and never by the local listener's ClientTokens, so a local client's
+//   token is refused here, and a remote token there.
 
 import { createHash } from 'node:crypto'
 import { ValetError } from '@valet/core'
@@ -23,6 +24,8 @@ export const ACCESS_TOKEN_TTL_MS = 60 * 60_000
 
 interface AccessToken {
   readonly clientId: string
+  /** The MCP URL the token was minted for. Presented anywhere else, it is refused. */
+  readonly resource: string
   readonly expiresAt: number
 }
 
@@ -50,20 +53,26 @@ export class RemoteAccessTokens {
     this.ttlMs = options.ttlMs ?? ACCESS_TOKEN_TTL_MS
   }
 
-  /** Mints an access token for a client registration. The token is returned once and never kept. */
-  issue(clientId: string): string {
+  /**
+   * Mints an access token for a client registration and one resource (this server's MCP URL on one
+   * public name). The token is returned once and never kept.
+   */
+  issue(clientId: string, resource: string): string {
     if (!isClientId(clientId)) throw new ValetError('config', 'invalid')
     const token = this.newToken()
     if (!isWellFormedToken(token)) throw new ValetError('config', 'invalid')
     const hash = digest(token)
     if (this.byHash.has(hash)) throw new ValetError('config', 'invalid')
     this.sweep()
-    this.byHash.set(hash, { clientId, expiresAt: this.now() + this.ttlMs })
+    this.byHash.set(hash, { clientId, resource, expiresAt: this.now() + this.ttlMs })
     return token
   }
 
-  /** The client a presented token was issued to, while it is unexpired and unrevoked; else null. */
-  identify(presented: string): string | null {
+  /**
+   * The client a presented token was issued to, while it is unexpired, unrevoked and presented to
+   * the resource it was minted for; else null.
+   */
+  identify(presented: string, resource: string): string | null {
     const hash = digest(presented)
     const entry = this.byHash.get(hash)
     if (entry === undefined) return null
@@ -71,7 +80,7 @@ export class RemoteAccessTokens {
       this.byHash.delete(hash)
       return null
     }
-    return entry.clientId
+    return entry.resource === resource ? entry.clientId : null
   }
 
   /** Revokes every token one client holds. Returns how many there were. */
@@ -126,11 +135,35 @@ export function normaliseRemoteHost(input: string): string | null {
  * Tunnels forward the public name; anything else, 127.0.0.1 above all, is refused.
  */
 export function remoteHostAllowed(header: string | undefined, hosts: ReadonlySet<string>): boolean {
-  if (header === undefined) return false
+  return remoteHostOf(header, hosts) !== null
+}
+
+/** The public name a request arrived on, when it is one of `hosts`; else null. */
+export function remoteHostOf(header: string | undefined, hosts: ReadonlySet<string>): string | null {
+  if (header === undefined) return null
   const match = /^([^:]+)(?::443)?$/.exec(header.toLowerCase())
-  const name = match?.[1]
-  if (name === undefined) return false
-  return hosts.has(name.replace(/\.$/, ''))
+  const name = match?.[1]?.replace(/\.$/, '')
+  if (name === undefined || !hosts.has(name)) return null
+  return name
+}
+
+/** The guards every remote request passes first, MCP or OAuth: a public name, and no Origin. */
+export function remoteRequestHost(
+  headers: { readonly host?: string | undefined; readonly origin?: string | undefined },
+  hosts: ReadonlySet<string>,
+): string | null {
+  if (headers.origin !== undefined) return null
+  return remoteHostOf(headers.host, hosts)
+}
+
+/** The resource (RFC 8707) a token is minted for: the MCP URL on one public name. */
+export function remoteResource(host: string): string {
+  return `https://${host}/mcp`
+}
+
+/** Protected resource metadata (RFC 9728) for the MCP path, which 401s point at. */
+export function resourceMetadataUrl(host: string): string {
+  return `https://${host}/.well-known/oauth-protected-resource/mcp`
 }
 
 export interface RemoteAuthOptions {
@@ -140,20 +173,30 @@ export interface RemoteAuthOptions {
 }
 
 /**
- * The remote listener's hook. Host and Origin come first (403); then the access token (401, with
- * the Bearer challenge the authorisation server will extend with resource metadata, RFC 9728).
+ * The remote listener's hook. Host and Origin come first (403); then the access token, for this
+ * name's resource (401, with the Bearer challenge pointing at the resource metadata, RFC 9728).
  */
 export function remoteAuthenticator(options: RemoteAuthOptions): Authenticate {
   return (request) => {
-    if (!remoteHostAllowed(request.headers.host, options.hosts()) || request.headers.origin !== undefined) {
-      return { ok: false, status: 403 }
-    }
+    const host = remoteRequestHost(request.headers, options.hosts())
+    if (host === null) return { ok: false, status: 403 }
     const presented = bearerToken(request.headers.authorization)
-    const clientId = presented === null ? null : options.tokens.identify(presented)
-    if (clientId === null) return { ok: false, status: 401, headers: { 'www-authenticate': 'Bearer' } }
+    const clientId = presented === null ? null : options.tokens.identify(presented, remoteResource(host))
+    if (clientId === null) {
+      return {
+        ok: false,
+        status: 401,
+        headers: {
+          'www-authenticate': `Bearer resource_metadata="${resourceMetadataUrl(host)}", scope="${REMOTE_SCOPE}"`,
+        },
+      }
+    }
     return { ok: true, identity: { origin: 'remote', clientId } }
   }
 }
+
+/** The one scope (relay.md): the grant's ticked tools, not the scope, decide what may be called. */
+export const REMOTE_SCOPE = 'tools'
 
 function digest(token: string): string {
   return createHash('sha256').update(token, 'utf8').digest('hex')

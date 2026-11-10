@@ -133,6 +133,9 @@ export const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent[
     'update-installed',
     'remote-state',
     'remote-tool',
+    'remote-consent',
+    'remote-revoked',
+    'remote-token-reuse',
   ],
 }
 

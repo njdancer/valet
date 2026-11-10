@@ -2,10 +2,11 @@
 // rebuilt on each click with popUpContextMenu (setContextMenu shows a stale menu on macOS).
 //
 // While remote access is on, the icon says so in its title, so it can't stay on unnoticed, and the
-// menu carries the kill switch (relay.md, "Audit and the kill switch"). Pausing needs no network:
+// menu carries the kill switch (relay.md, "Audit and the kill switch"), and, while any remote
+// client is kept, "Revoke all remote clients…", which asks first. Pausing needs no network:
 // it revokes every remote access token, fails remote calls in flight and closes the listener.
 
-import { Menu, nativeImage, Tray } from 'electron'
+import { dialog, Menu, nativeImage, Tray } from 'electron'
 import type { MainApi } from '../core/ipc'
 import { remoteTrayState, type TrayRemote } from '../core/tray-remote'
 import type { AppWindows } from './windows'
@@ -47,6 +48,9 @@ export function createTray(windows: AppWindows, api: MainApi, demo: boolean, rem
                 click: () => void remote.setEnabled(state.menuItem?.enable ?? false).catch(() => undefined),
               },
             ]),
+        ...(state.revokeAll
+          ? [{ label: 'Revoke all remote clients…', click: () => void confirmRevokeAll(remote) }]
+          : []),
         { type: 'separator' },
         { label: 'Quit Valet', click: () => void api.app.quit() },
       ])
@@ -54,4 +58,18 @@ export function createTray(windows: AppWindows, api: MainApi, demo: boolean, rem
     })
   })
   return { refresh }
+}
+
+/** Asks first: every connector then has to be added again, with consent on the Mac. */
+async function confirmRevokeAll(remote: TrayRemote): Promise<void> {
+  const { response } = await dialog.showMessageBox({
+    type: 'warning',
+    message: 'Revoke all remote clients?',
+    detail:
+      'Every connector loses access now and has to be added again, with your approval on this Mac. To stop remote access for a while instead, pause it.',
+    buttons: ['Cancel', 'Revoke all'],
+    defaultId: 0,
+    cancelId: 0,
+  })
+  if (response === 1) await remote.revokeAllClients().catch(() => undefined)
 }

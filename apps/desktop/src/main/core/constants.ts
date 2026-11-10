@@ -78,6 +78,8 @@ export interface DataPaths {
   readonly setup: string
   /** Remote access: on or paused, its names and port, and the remote-enabled tools (remote.ts). */
   readonly remote: string
+  /** Remote client registrations and their grants, secrets hashed (mcp-server's RemoteClients). */
+  readonly remoteClients: string
   /** Run traces and screenshots, one entry per run, pruned after Settings' retention days (D27). */
   readonly traces: string
   /** The app's own diagnostics (diagnostics-log.ts): crashes and failures, never page text. */
@@ -103,6 +105,7 @@ export function dataPaths(dir: string): DataPaths {
     versions: join(dir, 'versions.json'),
     setup: join(dir, 'setup.json'),
     remote: join(dir, 'remote.json'),
+    remoteClients: join(dir, 'remote-clients.json'),
     traces: join(dir, 'traces'),
     diagnosticsLog: join(dir, 'logs', 'valet.log'),
   }
