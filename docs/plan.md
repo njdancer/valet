@@ -2341,6 +2341,8 @@ review of 2026-11-10; Nick has answered all three.
     out or an undeclared request sent, against the fake site only. Every success becomes a failing
     test first, then a fix. Findings are kept in `docs/findings/`.
   - **An independent pass before M8**, as R13 already says.
+- The brief the agents work from, the attacker roles and the record of each pass are in
+  [red-team.md](red-team.md). The first pass (a hostile MCP client) ran on 2026-11-10.
 - Open: how often the scheduled pass runs, and whether a path-based CI check should refuse to merge
   a critical-path change without the adversarial review's sign-off.
 
