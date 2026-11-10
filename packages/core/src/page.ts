@@ -70,6 +70,11 @@ export interface FetchInit {
   readonly headers?: Readonly<Record<string, string>>
   /** A JSON-serialisable body. Sent with content-type application/json. */
   readonly json?: unknown
+  /**
+   * 'reload' asks the site even when the session's read cache holds an answer (D28), and replaces
+   * that answer. Only a tool page handed to tool code reads it.
+   */
+  readonly cache?: 'reload'
 }
 
 export interface FetchResult {
@@ -77,6 +82,8 @@ export interface FetchResult {
   readonly contentType: string | null
   /** Parsed JSON when the content type is JSON and it parses; otherwise the text, or null if empty. */
   readonly body: unknown
+  /** Present when the runtime answered from the session's read cache and sent nothing. */
+  readonly fromCache?: true
 }
 
 /** The tool partition's page, as tool code sees it through the capability API. */

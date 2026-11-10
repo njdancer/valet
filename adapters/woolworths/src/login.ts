@@ -6,7 +6,9 @@
 // unlocking).
 //
 // The anonymous trolley answers 200 like a logged-in one, so a cart call can't tell on its own that
-// the session is anonymous: ensure() runs first, every time. A 401 can still come back if the
+// the session is anonymous: ensure() runs first, every time. (For a write tool the runtime may
+// answer it from a probe made in the last minute; see session.probe.trustSeconds in manifest.ts.)
+// A 401 can still come back if the
 // session expires between the probe and the call; the tool then runs ensure() once more and
 // retries, because a refused request changed nothing on the site.
 

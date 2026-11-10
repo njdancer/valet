@@ -27,6 +27,8 @@ export interface RecordedFetch {
   readonly url: string
   readonly path: string
   readonly json: unknown
+  /** Set when the tool asked the runtime to skip its read cache. */
+  readonly reload?: true
 }
 
 export type Responder = (request: RecordedFetch) => FetchResult
@@ -76,7 +78,13 @@ export class FakeToolContext implements ToolContext {
         throw new ValetError('request-surface', 'undeclared-request')
       }
       const path = new URL(url).pathname
-      const request = { method, url, path, json: init?.json }
+      const request: RecordedFetch = {
+        method,
+        url,
+        path,
+        json: init?.json,
+        ...(init?.cache === 'reload' ? { reload: true } : {}),
+      }
       this.fetches.push(request)
       this.events.push(`${method} ${path}`)
       const responder = this.routes.get(`${method} ${path}`)

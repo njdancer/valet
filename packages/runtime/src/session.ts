@@ -15,6 +15,10 @@
 // Only an explicit logged-out answer from the probe starts a login (see probe.ts), and never while
 // the site's breaker is open.
 //
+// Where the manifest's probe sets trustSeconds, a write tool's first ensure() in a call may rest
+// on the last "logged in" answer for that long instead of probing again (see trusted()). Nothing
+// else is ever skipped: a logged-out answer is never remembered.
+//
 // The AuthRunner owns the login-started and login-finished audit events (auth-flow's runAuthFlow
 // writes them); the gate writes neither, so one login is one pair in the log. What happens after
 // the runner returns (the handoff, the re-probe) reaches the log through the call's tool-finished.
@@ -39,7 +43,7 @@ import {
 } from '@valet/core'
 import type { Clock } from './clock'
 import type { LoginMarkerState, LoginMarkerStore } from './login-marker'
-import { probeLoggedIn } from './probe'
+import { onProbeOrigin, probeLoggedIn } from './probe'
 import { SecretRedactionSet } from './redaction'
 import {
   type BlockCause,
@@ -74,6 +78,8 @@ export interface SessionGateOptions {
 export interface CallLogin {
   /** The outcome of this call's login, once it has attempted one. */
   outcome: EnsureResult | null
+  /** Set once this call has asked ensure() anything, so only its first ask may rest on trust. */
+  asked?: boolean
 }
 
 export interface EnsureCall {
@@ -82,6 +88,11 @@ export interface EnsureCall {
   /** The raw tool page; the probe is the runtime's own request, not tool code's. */
   readonly page: ToolPage
   readonly login: CallLogin
+  /**
+   * Whether this call may rest on a recent "logged in" answer instead of a probe, where the
+   * manifest's probe sets trustSeconds. The tool host says yes for write tools only.
+   */
+  readonly mayTrust?: boolean
 }
 
 const OK: EnsureResult = { status: 'ok' }
@@ -106,12 +117,32 @@ const NEEDS_PERSON: ReadonlySet<NeedsUserReason> = new Set<NeedsUserReason>([
 export class SessionGate {
   private inFlight: { readonly owner: CallLogin; readonly running: Promise<EnsureResult> } | null = null
   private session = new SecretRedactionSet()
+  /** When the probe last answered "logged in", until anything suggests the session changed. */
+  private confirmedAt: number | null = null
 
   constructor(private readonly options: SessionGateOptions) {}
 
   /** Clones of the secrets the latest successful login registered; replaced by the next one. */
   get secrets(): SecretRedactionSet {
     return this.session
+  }
+
+  /** Forgets the last "logged in" answer, so the next ensure() probes. */
+  distrust(): void {
+    this.confirmedAt = null
+  }
+
+  /**
+   * Whether a call's first ensure() may be answered without a probe: the manifest allows it, the
+   * probe said "logged in" within its trustSeconds and nothing since has cast doubt on that, and
+   * the page is still where its requests carry the session.
+   */
+  private trusted(call: EnsureCall): boolean {
+    const probe = this.options.manifest.session.probe
+    if (call.mayTrust !== true || probe.kind !== 'fetch' || this.confirmedAt === null) return false
+    const age = this.options.clock.now() - this.confirmedAt
+    if (!(age >= 0 && age < (probe.trustSeconds ?? 0) * 1000)) return false
+    return onProbeOrigin(this.options.manifest, call.page)
   }
 
   /**
@@ -136,6 +167,10 @@ export class SessionGate {
     const { adapterId, markers, site } = this.options
     const earlier = call.login.outcome
     if (earlier !== null && earlier.status !== 'ok') return earlier
+    // A second ensure() in one call means the tool met a logged-out answer: that one always probes.
+    const first = call.login.asked !== true
+    call.login.asked = true
+    if (first && earlier === null && this.trusted(call)) return OK
     const before = await this.probe(call)
     if (before !== false) return before === true ? OK : before
     // This call already logged in and the session is gone again: a second login won't fix that.
@@ -312,20 +347,28 @@ export class SessionGate {
 
   /** true or false from the probe, or a failure to report. Rethrows site refusals and aborted. */
   private async probe(call: EnsureCall): Promise<boolean | EnsureResult> {
+    // Only a probe that answers "logged in" is remembered; any other ending forgets the last one.
+    this.confirmedAt = null
     try {
-      return await probeLoggedIn({
-        manifest: this.options.manifest,
-        page: call.page,
-        driver: this.options.driver,
-        site: this.options.site,
-        signal: call.signal,
-        callId: call.callId,
-      })
+      const loggedIn = await this.ask(call)
+      if (loggedIn) this.confirmedAt = this.options.clock.now()
+      return loggedIn
     } catch (error) {
       if (isPassThrough(error)) throw error
       const reportable = toReportable(error, 'probe')
       return failed(reportable.stage, reportable.errorClass)
     }
+  }
+
+  private ask(call: EnsureCall): Promise<boolean> {
+    return probeLoggedIn({
+      manifest: this.options.manifest,
+      page: call.page,
+      driver: this.options.driver,
+      site: this.options.site,
+      signal: call.signal,
+      callId: call.callId,
+    })
   }
 }
 

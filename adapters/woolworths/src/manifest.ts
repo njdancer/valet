@@ -150,6 +150,13 @@ export interface ManifestOptions {
   readonly captchaFrameOrigins?: readonly string[]
 }
 
+/** How long a write tool may rest on the last "logged in" probe before probing again. */
+export const PROBE_TRUST_SECONDS = 60
+/** How long a search or product answer is reused. Prices and specials change daily, not by the minute. */
+export const CATALOGUE_CACHE_SECONDS = 900
+/** How long the trolley an add starts from is reused. Short: the person's own browser can change it. */
+export const TROLLEY_CACHE_SECONDS = 120
+
 export function createManifest({
   origin = REAL_ORIGIN,
   authOrigin = defaultAuthOrigin(origin),
@@ -198,17 +205,34 @@ export function createManifest({
         loggedOutStatuses: [401],
         jsonPath: 'ShopperDetails.IsLoggedIn',
         equals: true,
+        // A third of a shop's requests were this probe, one before every cart call. A write may
+        // now rest on a "logged in" answer for a minute; get_cart, a read, always probes. An
+        // assumption, not a decision of Nick's (docs/findings/2026-11-10-shop-benchmark.md).
+        trustSeconds: PROBE_TRUST_SECONDS,
       },
     },
     auth: { steps: authSteps(origin, totp), frameOrigins: [...captchaFrameOrigins] },
     // Exactly the calls the tools make, so a later version can't read anything new (bootstrap's
     // ShopperDetails, say) without a new permission. The login probe isn't listed, so tool code
     // can't make it; see session.probe for what that costs under core v2.
+    // D28's session read cache: search and product answers are kept a while; the trolley only
+    // briefly, since the person can change it from their own browser, and a cart write's own reply
+    // replaces it.
     requests: [
-      { method: 'POST', path: '/apis/ui/Search/products', purpose: 'read' },
-      { method: 'GET', path: '/apis/ui/product/detail/:stockcode', purpose: 'read' },
-      { method: 'GET', path: '/apis/ui/Trolley', purpose: 'read' },
-      { method: 'POST', path: '/api/v3/ui/trolley/update', purpose: 'write' },
+      {
+        method: 'POST',
+        path: '/apis/ui/Search/products',
+        purpose: 'read',
+        cacheSeconds: CATALOGUE_CACHE_SECONDS,
+      },
+      {
+        method: 'GET',
+        path: '/apis/ui/product/detail/:stockcode',
+        purpose: 'read',
+        cacheSeconds: CATALOGUE_CACHE_SECONDS,
+      },
+      { method: 'GET', path: '/apis/ui/Trolley', purpose: 'read', cacheSeconds: TROLLEY_CACHE_SECONDS },
+      { method: 'POST', path: '/api/v3/ui/trolley/update', purpose: 'write', refreshes: '/apis/ui/Trolley' },
     ],
     tools: [
       {

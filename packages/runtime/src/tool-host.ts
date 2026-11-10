@@ -12,7 +12,9 @@
 //   6. the driver holds the whole tool partition to this run's network policy (egress, request
 //      surface, the tool's side effect, the ceiling), and only after that confirmation unlocks the
 //      run's irreversible declarations;
-//   7. the tool runs with a guarded capability object, a timeout and an abort signal;
+//   7. the tool runs with a guarded capability object, a timeout and an abort signal. Reads the
+//      manifest says may be kept can be answered from the adapter's session cache (read-cache.ts),
+//      which sits outside the guard: whatever is sent still passes it;
 //   8. the output matches the tool's schema, is converted to plain JSON, and is redacted on the
 //      way out.
 //
@@ -63,6 +65,7 @@ import { runIsolated, type ToolProcessFactory } from './isolation/host'
 import type { LoginMarkerStore } from './login-marker'
 import { KeyedMutex } from './mutex'
 import { probeDeclaration } from './probe'
+import { CachedToolPage, ReadCache } from './read-cache'
 import { redactOutput } from './redaction'
 import { knownReason, type LoginBackoff, SessionGate } from './session'
 import { breakerRefusal, isSiteRefusal, type SiteGuards, SiteProtection } from './site-protection'
@@ -162,6 +165,8 @@ interface Entry extends RegisteredAdapter {
   readonly site: SiteGuards
   /** The site host its guards are keyed by. */
   readonly host: string
+  /** This adapter's session read cache (D28). */
+  readonly cache: ReadCache
 }
 
 /** A wait for the adapter's lock that ended without it. `ahead`: the calls still in front. */
@@ -248,6 +253,7 @@ export class ToolHost {
       gate,
       site,
       host,
+      cache: new ReadCache(this.clock),
       ...(adapter.isolation === undefined ? {} : { isolation: adapter.isolation }),
     })
   }
@@ -314,6 +320,8 @@ export class ToolHost {
     let unsettled: Promise<unknown> | null = null
     try {
       if (!(await this.isApproved(entry))) throw new ValetError('manifest', 'not-granted')
+      // The person is logging in or out: nothing remembered about the old session holds.
+      forget(entry)
       const pace = async (): Promise<void> => {
         if (controller.signal.aborted) throw new ValetError('login', 'aborted')
         if (entry.site.breaker.isOpen()) throw new ValetError('login', 'rate-limited')
@@ -499,16 +507,26 @@ export class ToolHost {
         // Without the driver's policy in force, nothing tool code does would be held to it.
         return fromReportable(toReportable(error, 'egress'))
       }
-      return await this.run(
-        entry,
-        declaration,
-        implementation,
-        client,
-        transport,
-        input.output,
-        state,
-        controller,
-      )
+      let result: ToolCallResult
+      try {
+        result = await this.run(
+          entry,
+          declaration,
+          implementation,
+          client,
+          transport,
+          input.output,
+          state,
+          controller,
+        )
+      } catch (error) {
+        forget(entry)
+        throw error
+      }
+      // Any ending but ok may mean the session isn't what it was (logged out, blocked, cut off
+      // halfway through a write), so the next call starts from the site, not from memory.
+      if (result.status !== 'ok') forget(entry)
+      return result
     } finally {
       external?.removeEventListener('abort', stop)
       // Capabilities die with the call, so promises tool code left running can't act afterwards.
@@ -546,18 +564,22 @@ export class ToolHost {
       return fromReportable(toReportable(error, 'navigate'))
     }
 
+    const guarded = new GuardedToolPage({
+      adapterId: manifest.id,
+      manifest,
+      sideEffect: declaration.sideEffect,
+      unlocks: unlockedBy(manifest.requests, declaration.unlocks),
+      inner,
+      site: entry.site,
+      state,
+      audit: (event) => this.record(event),
+    })
     const ctx: ToolContext = {
-      page: new GuardedToolPage({
-        adapterId: manifest.id,
-        manifest,
-        sideEffect: declaration.sideEffect,
-        unlocks: unlockedBy(manifest.requests, declaration.unlocks),
-        inner,
-        site: entry.site,
-        state,
-        audit: (event) => this.record(event),
-      }),
-      session: { ensure: () => this.ensure(entry, state, inner) },
+      // Declared reads may be answered from the session's cache; everything sent goes through the guard.
+      page: new CachedToolPage({ manifest, inner: guarded, cache: entry.cache, state, clock: this.clock }),
+      // Only a write may rest on a recent login check: a read's whole worth is its answer, and an
+      // irreversible tool must know whose session it acts in.
+      session: { ensure: () => this.ensure(entry, state, inner, declaration.sideEffect === 'write') },
       confirm: async (action) => {
         state.assertLive()
         const question = confirmQuestion(manifest, declaration, action)
@@ -622,7 +644,12 @@ export class ToolHost {
     return { status: 'ok', output: parsed.value.data }
   }
 
-  private async ensure(entry: Entry, state: CallState, page: ToolPage): Promise<EnsureResult> {
+  private async ensure(
+    entry: Entry,
+    state: CallState,
+    page: ToolPage,
+    mayTrust: boolean,
+  ): Promise<EnsureResult> {
     state.assertLive()
     try {
       const result = await state.track(
@@ -631,12 +658,16 @@ export class ToolHost {
           signal: state.signal,
           page,
           login: state.login,
+          mayTrust,
         }),
       )
+      // A login, or anything but ok, is a different session from the one the cache was read in.
+      if (result.status !== 'ok' || state.login.outcome !== null) entry.cache.clear()
       state.ensureOutcome = result.status === 'ok' ? null : result
       await this.collectSessionSecrets(entry, state)
       return result
     } catch (error) {
+      entry.cache.clear()
       if (isSiteRefusal(error)) state.blocked = true
       throw error
     }
@@ -881,6 +912,12 @@ function runPolicy(manifest: AdapterManifest, declaration: ToolDeclaration): Too
     maxPurpose: declaration.sideEffect,
     ceiling: manifest.limits.requestsPerRun,
   }
+}
+
+/** Drops what is remembered about an adapter's session: its cached reads and its last login check. */
+function forget(entry: Entry): void {
+  entry.cache.clear()
+  entry.gate.distrust()
 }
 
 function implementationOf(entry: RegisteredAdapter, name: string): ToolImplementation | undefined {
