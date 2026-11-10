@@ -7,3 +7,6 @@ packages:
 onlyBuiltDependencies:
   - electron
   - esbuild
+# A version must have been public for three days before a lockfile change may pick it up. Most
+# malicious releases are found and pulled within hours, and this app types a password.
+minimumReleaseAge: 4320
