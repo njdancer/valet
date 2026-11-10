@@ -81,3 +81,30 @@ names, the remote policy), read in full.
   parsed output); a tool name that shadows another adapter's (both are withheld).
 - **Not tried yet:** the Swift bridge's own parsing; the app's client-token files and "Reset
   access" ordering under a race; slow or half-open connections from a process with no token.
+
+### 2026-11-10: hostile page and hostile adapter against the secret filler
+
+Scope: `packages/auth-flow/src` read in full (the filler, its guards, the interpreter, the shared
+checks), with the driver's in-page inspection script. Narrowed to this because it is the code that
+will type Nick's real password in the first live login.
+
+- **Found nothing that breaks a guarantee.** No code changed.
+- **Tried, held:** a second password fill in one login, directly or through a `retry` around the
+  fill (refused before the value is fetched); a guard failure retried so the page gets another go
+  (only `auth-step` waits and missing elements retry, never a `secret-fill` failure); the page
+  moving to another host while the provider resolves (every check runs again with the value in
+  hand, and again after focus); a secret named like the reserved Messages one, or like a property
+  of `Object.prototype`; a Messages grant for one sender read for another; a provider that returns
+  a plain string; a granted origin that isn't a bare https origin; a field that isn't an `input`,
+  or a password into anything but `type=password`; a form whose control named `action` hides the
+  real action; typing into a frame trusted input can't reach.
+- **Suspicion, waiting on evidence:** the form check for a password looks at where the form posts,
+  not how. A form with no `method` submits as a GET, which would put the password in a URL. A
+  hostile adapter can't create such a form and Auth0's login form is expected to post, so this is
+  not a hole today. Session 1's `results/chrome.json` records each auth form's method: if the real
+  password form posts, add "refuse a password into a form that doesn't post" to check 8.
+- **Known and accepted for now:** a username or a one-time code gets no form check, so a hostile
+  adapter could have either typed into another text field on an origin the person granted. Neither
+  is the password, and a code is single-use.
+- **Not tried yet:** the driver's own typing loop (`packages/browser-electron/src/auth-page.ts`)
+  against focus theft between keystrokes, beyond what its e2e suite covers.

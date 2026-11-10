@@ -1264,6 +1264,22 @@ describe('the login window', () => {
     expect(after - Math.max(before, Date.parse('2026-11-07T00:00:00.000Z'))).toBe(1000)
   })
 
+  it('has the site’s pacing state on disk by the time it has stopped', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sa-service-'))
+    dirs.push(dir)
+    const s = await setup({ dir })
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    await s.api.openLoginWindow('shop')
+    const page = s.driver.pages[0]
+    if (page !== undefined) page.cookies = ['sid']
+    // The hand-off's probe takes a slot; its time is written without the call waiting for the disk.
+    await s.api.finishLogin('shop')
+    await s.service.stop()
+    // No waiting here: stop() itself waited for the write.
+    const stored = readFileSync(dataPaths(join(dir, 'data')).budgets, 'utf8')
+    expect(stored).toContain('www.shop.test')
+  })
+
   it('hands off only once no call or run is going on, and holds new calls until it has', async () => {
     const s = await approved()
     await s.api.openLoginWindow('shop')
