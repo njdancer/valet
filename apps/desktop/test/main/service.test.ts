@@ -1289,6 +1289,7 @@ describe('fillSelector', () => {
 
 describe('remote access', () => {
   const HOST = 'mac.example-tailnet.ts.net'
+  const REMOTE_RESOURCE = `https://${HOST}/mcp`
 
   async function remoteClient(port: number, token: string): Promise<Client> {
     const transport = new StreamableHTTPClientTransport(new URL(`http://${HOST}/mcp`), {
@@ -1328,7 +1329,7 @@ describe('remote access', () => {
     const { url } = s.service.remote.status()
     expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/)
     const port = Number(new URL(url as string).port)
-    const client = await remoteClient(port, s.service.remote.tokens.issue('phone'))
+    const client = await remoteClient(port, s.service.remote.tokens.issue('phone', REMOTE_RESOURCE))
 
     expect((await client.listTools()).tools).toEqual([])
     await s.service.setRemoteTool('shop', 'echo', true)
@@ -1369,7 +1370,7 @@ describe('remote access', () => {
     await s.service.remote.setEnabled(true)
     await s.service.setRemoteTool('shop', 'add', true)
     const port = Number(new URL(s.service.remote.status().url as string).port)
-    const client = await remoteClient(port, s.service.remote.tokens.issue('phone'))
+    const client = await remoteClient(port, s.service.remote.tokens.issue('phone', REMOTE_RESOURCE))
     await client.listTools()
     // Off in the store, but the client still holds the old listing.
     ;(s.service.remote as unknown as { current: { tools: object } }).current.tools = {}
@@ -1398,7 +1399,7 @@ describe('remote access', () => {
     await s.service.remote.setEnabled(true)
     await s.service.setRemoteTool('shop', 'echo', true)
     const port = Number(new URL(s.service.remote.status().url as string).port)
-    const client = await remoteClient(port, s.service.remote.tokens.issue('phone'))
+    const client = await remoteClient(port, s.service.remote.tokens.issue('phone', REMOTE_RESOURCE))
     await s.api.app.setPaused(true)
     const result = await client.callTool({ name: 'shop_echo', arguments: { text: 'x' } })
     expect(JSON.stringify(result.content)).toContain('config: unavailable')
@@ -1410,12 +1411,12 @@ describe('remote access', () => {
     await s.service.remote.setHosts([HOST])
     await s.service.remote.setEnabled(true)
     const port = Number(new URL(s.service.remote.status().url as string).port)
-    const token = s.service.remote.tokens.issue('phone')
+    const token = s.service.remote.tokens.issue('phone', REMOTE_RESOURCE)
     await remoteClient(port, token)
 
     await s.service.remote.setEnabled(false)
 
-    expect(s.service.remote.tokens.identify(token)).toBeNull()
+    expect(s.service.remote.tokens.identify(token, REMOTE_RESOURCE)).toBeNull()
     expect(s.service.remote.status()).toMatchObject({ enabled: false, listening: false, url: null })
     expect(audited(s.paths)).toContainEqual({ type: 'remote-state', state: 'paused', revokedTokens: 1 })
     expect(s.events).toContainEqual({ type: 'app-changed' })

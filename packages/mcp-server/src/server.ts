@@ -181,7 +181,7 @@ export function createMcpServer(
   }
   const refresh = (): readonly SkippedTool[] => {
     // Listing first: if the runtime throws, the session keeps the tools it had.
-    const plan = planTools(caller.listTools())
+    const plan = planTools(caller.listTools(options.identity))
     apply(plan)
     return plan.skipped
   }

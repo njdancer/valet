@@ -64,7 +64,10 @@ export type CallOutcome =
   | { readonly status: 'declined' }
 
 export interface ToolCaller {
-  /** Every tool that may be called right now: approved adapters only. */
-  listTools(): readonly ListedTool[]
+  /**
+   * Every tool that may be called right now: approved adapters only. With an identity, the tools
+   * that client may call (a remote client's grant narrows it); callers that don't care ignore it.
+   */
+  listTools(identity?: ClientIdentity): readonly ListedTool[]
   call(call: ToolCall): Promise<CallOutcome>
 }
