@@ -33,6 +33,8 @@ export interface HttpServerOptions {
   readonly info?: ServerInfo
   readonly newCallId?: () => string
   readonly newSessionId?: () => string
+  /** How often a running call reports progress to a client that asked. See ServerOptions. */
+  readonly progressIntervalMs?: number
   /** Sessions kept at once. Beyond it, the least recently used session is closed. */
   readonly maxSessions?: number
   /**
@@ -128,6 +130,7 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
     const via = transportFrom(req.headers[TRANSPORT_HEADER])
     const endpoint = createMcpServer(options.caller, info, {
       ...(options.newCallId === undefined ? {} : { newCallId: options.newCallId }),
+      ...(options.progressIntervalMs === undefined ? {} : { progressIntervalMs: options.progressIntervalMs }),
       transport: via,
       identity,
     })

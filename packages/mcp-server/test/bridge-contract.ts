@@ -15,6 +15,7 @@ import { z } from 'zod'
 import { readBridgeConfig, writeBridgeConfig } from '../src/bridge-config'
 import { type SessionReportingEndpoint, startEndpoint } from '../src/endpoint'
 import { writePrivateFile } from '../src/private-file'
+import { PROGRESS_NOTE, SERVER_INSTRUCTIONS } from '../src/server'
 import type { ListedTool } from '../src/tool-caller'
 import { FakeCaller } from './fake-caller'
 
@@ -48,7 +49,12 @@ export function bridgeContract(name: string, launch: BridgeLauncher): void {
     })
 
     async function endpoint(caller: FakeCaller, stablePort = true): Promise<SessionReportingEndpoint> {
-      const running = await startEndpoint({ caller, clients: [{ id: CLIENT, configPath }], stablePort })
+      const running = await startEndpoint({
+        caller,
+        clients: [{ id: CLIENT, configPath }],
+        stablePort,
+        progressIntervalMs: 50,
+      })
       cleanup.push(() => running.close())
       return running
     }
@@ -106,6 +112,29 @@ export function bridgeContract(name: string, launch: BridgeLauncher): void {
       expect(running.sessions().sessions).toEqual([
         { identity: { origin: 'local', clientId: CLIENT }, transport: 'stdio-bridge', client: 'Claude Code' },
       ])
+    })
+
+    it('passes on the endpoint’s instructions, and progress while a call is still running', async () => {
+      const caller = new FakeCaller([viewCart])
+      let finish: () => void = () => {}
+      caller.answer = () =>
+        new Promise((resolve) => {
+          finish = () => resolve({ status: 'ok', output: { items: 4 } })
+        })
+      await endpoint(caller)
+      const client = await connect()
+      expect(client.getInstructions()).toBe(SERVER_INSTRUCTIONS)
+
+      const seen: Array<string | undefined> = []
+      const call = client.callTool({ name: 'woolworths_view_cart', arguments: {} }, undefined, {
+        onprogress: (progress) => seen.push(progress.message),
+      })
+      // Before the result, not with it: the bridge must not hold a call's stream until it ends.
+      await vi.waitFor(() => expect(seen.length).toBeGreaterThanOrEqual(2), { timeout: 5000 })
+      finish()
+
+      expect((await call).structuredContent).toEqual({ items: 4 })
+      expect(new Set(seen)).toEqual(new Set([PROGRESS_NOTE]))
     })
 
     it('passes on the endpoint’s tools/list_changed', async () => {
