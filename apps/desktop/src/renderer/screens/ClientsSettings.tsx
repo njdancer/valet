@@ -211,6 +211,7 @@ export function ClientsSettingsPage() {
           <div className="stack gap-4">
             <SettingsCard />
             <UpdatesCard now={now} />
+            <EraseCard />
           </div>
         </div>
       </div>
@@ -374,6 +375,21 @@ function SettingsCard() {
                   label="Launch at login"
                   checked={s.launchAtLogin}
                   onChange={(on) => set({ launchAtLogin: on })}
+                />
+              </div>
+              <div className="setting">
+                <span>Notifications</span>
+                <span>
+                  Tell me when Valet needs me
+                  <span className="xs muted" style={{ display: 'block' }}>
+                    An approval, a sign-in, a site Valet stopped calling, or a downloaded update. A
+                    notification only opens Valet; nothing is approved from it.
+                  </span>
+                </span>
+                <Switch
+                  label="Notify me when Valet needs me"
+                  checked={s.notifications}
+                  onChange={(on) => set({ notifications: on })}
                 />
               </div>
               <div className="setting">
@@ -629,6 +645,60 @@ function UpdatesCard({ now }: { readonly now: number }) {
           </div>
         ) : null}
         <ActionFailed failed={action.failed} what="update the setting" />
+      </div>
+    </div>
+  )
+}
+
+/**
+ * Reset and uninstall. The buttons only ask the main process for its own dialog, which says what
+ * goes and is the one place the person agrees; nothing is erased from this page.
+ */
+function EraseCard() {
+  const api = useApi()
+  const action = useAction()
+  return (
+    <div className="card" id="erase">
+      <div className="card-head">
+        <span className="h3">Reset or uninstall</span>
+      </div>
+      <div className="card-body" style={{ paddingTop: 2, paddingBottom: 2 }}>
+        <div className="setting">
+          <span>Reset</span>
+          <span>
+            Erase everything Valet keeps and start again
+            <span className="xs muted" style={{ display: 'block' }}>
+              Keychain items, grants, approvals, clients, site sessions, the audit log and settings. Valet
+              asks once more before anything is removed.
+            </span>
+          </span>
+          <button
+            type="button"
+            className="btn"
+            disabled={action.busy}
+            onClick={() => action.run(() => api.app.erase('reset'))}
+          >
+            Reset Valet…
+          </button>
+        </div>
+        <div className="setting">
+          <span>Uninstall</span>
+          <span>
+            Erase the same things, then move Valet to the Trash
+            <span className="xs muted" style={{ display: 'block' }}>
+              Valet lists what you have to remove yourself, such as its entry in Claude’s config.
+            </span>
+          </span>
+          <button
+            type="button"
+            className="btn"
+            disabled={action.busy}
+            onClick={() => action.run(() => api.app.erase('uninstall'))}
+          >
+            Uninstall Valet…
+          </button>
+        </div>
+        <ActionFailed failed={action.failed} what="start that" />
       </div>
     </div>
   )

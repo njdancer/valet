@@ -45,6 +45,11 @@ export const ERROR_CLASSES = [
   'blocked-by-site',
   /** The site answered 429, or our own rate budget or circuit breaker refused the request. */
   'rate-limited',
+  /**
+   * The call could not get its turn behind earlier calls for the same adapter in the time the
+   * runtime allows, and was not started. Nothing was sent; it may be made again.
+   */
+  'busy',
   'undeclared-request',
   'denied-path',
   'host-not-allowed',

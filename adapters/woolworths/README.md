@@ -3,6 +3,13 @@
 Searches woolworths.com.au and manages the online cart. It never checks out: no declared request
 touches a checkout or payment path, and no tool is `irreversible`.
 
+> **Woolworths' terms prohibit automated access.** Clause 1.4(b)(viii) of the site's terms of use
+> bars "any robot, spider, site search and retrieval application or other mechanism to retrieve or
+> index any portion of the Site", with no exception for personal use
+> ([what we read](../../docs/findings/2026-11-07-woolworths-terms.md)). Whether to use this adapter
+> with your own account is your call and your responsibility. It is not affiliated with or endorsed
+> by Woolworths.
+
 ```ts
 import adapter, { createAdapter } from '@valet/adapter-woolworths'
 

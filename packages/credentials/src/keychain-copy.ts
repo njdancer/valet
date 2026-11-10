@@ -148,4 +148,9 @@ export class KeychainCopyProvider implements CredentialProvider {
       if (account !== null) await this.keychain.delete(this.service, account)
     }
   }
+
+  /** Removes every copy this build ever made, whatever grants remain: an uninstall or a reset. */
+  async forgetAll(): Promise<void> {
+    await this.keychain.purge(this.service)
+  }
 }

@@ -21,10 +21,21 @@ function setup(ids: readonly string[] = ['cf_1']) {
   let changes = 0
   const manifest = parseManifest({
     ...SHOP,
-    requests: [...(SHOP.requests ?? []), { method: 'POST', path: '/api/order', purpose: 'irreversible' }],
+    requests: [
+      ...(SHOP.requests ?? []),
+      { method: 'POST', path: '/api/order', purpose: 'irreversible' },
+      // Another tool's, which confirming `order` must not be shown to unlock.
+      { method: 'POST', path: '/api/payees/add', purpose: 'irreversible' },
+    ],
     tools: [
       ...SHOP.tools,
-      { name: 'order', title: 'Order', description: 'Places it.', sideEffect: 'irreversible' },
+      {
+        name: 'order',
+        title: 'Order',
+        description: 'Places it.',
+        sideEffect: 'irreversible',
+        unlocks: [{ method: 'POST', path: '/api/order' }],
+      },
     ],
   })
   const broker = new ConfirmationBroker({
@@ -95,7 +106,7 @@ describe('ConfirmationBroker', () => {
     ])
   })
 
-  it('lists what an irreversible tool unlocks, with no adapter note', async () => {
+  it('lists only what the irreversible tool itself unlocks, with no adapter note', async () => {
     const { broker } = setup()
     void broker.ask(
       {

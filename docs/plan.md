@@ -7,6 +7,46 @@ it says so.
 
 The product is called Valet ([D1](#d1-product-name), decided 2026-11-07).
 
+## North Star
+
+Nick, 2026-11-10: "We should consider the top level goal that forms our North Star as completing an
+order against Woolworths via the MCP." He also said he had been more ambitious in places than an MVP
+needs, and that the strictness stays. Everything below is read against that.
+
+He then settled two things the same day. The MVP ships with the trolley tools only: Claude fills
+the trolley and Nick presses "Place order" himself, so [D18](#d18-irreversible-tools-in-shipped-adapters)
+stands for the MVP. A checkout tool that needs his Touch ID for every order
+([D46](#d46-touch-id-on-irreversible-confirmations)) is the first thing built after it. And agents
+are cheap to scale, so other work may carry on in the background; what is scarce is his time and
+attention, so nothing off this path may ask for either.
+
+**On the path, in order. Only these may ask for Nick's time.**
+
+1. The three live sessions with Nick in [the M2 runbook](m2-runbook.md): a manual login, the
+   checkout-path recording, and the first automated login. Nothing has touched the live site while
+   logged in, and only Nick can change that.
+2. The M2 exit: a real item in his real trolley, from Claude, with the login automated.
+3. A first whole shop: Claude fills the trolley and Nick checks out in his browser.
+4. After the MVP: the checkout tool, confirmed with Touch ID. Its groundwork needs nothing from
+   Nick and is built ahead: a confirmed irreversible tool unlocks only the requests it names (C15,
+   done 2026-11-10), and the real checkout paths come from Session 2.
+
+An unsigned dev build on Nick's Mac is enough for the first three.
+
+**Kept, because strictness stays.** The two security guarantees and their tests; the rate budget
+and breaker, including keeping the budget across a restart; the one-password-submit limit; the
+audit log; adversarial review of a change to a critical path ([D71](#d71-who-reviews-agent-built-code)),
+with red-team passes narrowed to the secret filler and the order confirmation.
+
+**In the background, asking Nick nothing.** Remote mode; system notifications; uninstall and reset;
+the adapter setting for the store ([D69](#d69-which-store-the-woolworths-tools-quote)); queueing and
+pacing; the scheduled red-team rotation. Where one of these meets a decision, it takes the plan's
+recommendation, records it as an assumption, and moves on.
+
+**Waiting.** Signing, notarisation and the update feed, which need Nick present; a sleeping Mac
+([D70](#d70-a-sleeping-mac)); moving CI; the sandbox; everything from M5 on. The two weeks of real
+use that define [the MVP](#the-mvp) follow the first shop, and the acceptance criteria still stand.
+
 ## Contents
 
 1. [Where we are](#where-we-are)
@@ -260,10 +300,9 @@ against the real site with Nick present.
     `page.fetch`, `page.evaluate`, a click or a form submission. The test runs against the fake
     site's copy of the **real** checkout and payment paths recorded in M2, not only against
     paths the implementers chose. While an `irreversible` tool runs, only the `irreversible`
-    declarations that tool lists are unlocked, and only for that call. Core v2 can't meet this
-    yet: its unlock covers every `irreversible` declaration in the manifest, for page-initiated
-    requests too. C15 adds the per-tool list, and must land before any irreversible tool ships
-    ([D18](#d18-irreversible-tools-in-shipped-adapters) means none in v1). (Automated; see
+    declarations that tool lists are unlocked, and only for that call. C15 (done 2026-11-10) is that per-tool
+    list: a tool's `unlocks`, enforced at the capability API and the network layer
+    ([D18](#d18-irreversible-tools-in-shipped-adapters) still means no irreversible tool in the MVP). (Automated; see
     [gap G1](#g1-the-request-surface-only-covers-pagefetch).)
 14. The audit log verifies end to end with a CLI command, and tampering with any line makes
     verification fail. (Automated.)
@@ -504,7 +543,7 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
   in memory ([D33](#d33-breaker-defaults-and-persistence)); 3 is built except the one-submit limit
   inside a login; 4 needs the Auth0 adapter, and the runtime still writes the attempt marker on the
   silent path; 5 is built; 6 has the stores but not the diff; 7 asks before `run()` and renders
-  `ctx.confirm()` from a structured action (C4, core v5) but has no scoped unlock (C15); 8 is not started.
+  `ctx.confirm()` from a structured action (C4, core v5), with the unlock scoped to the tool (C15); 8 is not started.
 - Next:
   1. Tool-call orchestration: adapter lock, rate budget, `session.ensure()`, auth-on-demand,
      retry-once after re-login, output validation against the tool's zod output schema, output
@@ -1030,7 +1069,9 @@ Status in core v2:
 - **C8, not needed as written** (see the status above G1). Its host-scoped telemetry list
   returns in reduced form as C17, if [D58](#d58-page-initiated-traffic) agrees.
 - **C9, done** (after core v5): `destructive` and `idempotent` on `write` tool declarations, `toolHints()`, and the MCP annotations derived from them.
-- **C15 to C20, new** from the review of the round-2 docs; all open.
+- **C15, done** (2026-11-10): `unlocks` on irreversible tool declarations, carried in the run's
+  policy; see the security model's "Irreversible actions".
+- **C16 to C20, new** from the review of the round-2 docs; all open.
 
 ### Changes to the other docs
 
@@ -1264,6 +1305,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D7. 1Password fallback
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Options: `op read` through the CLI; the SDK's `DesktopAuth` (in the 0.5.0 SDK already
   installed); none.
 - Recommendation: `DesktopAuth`. No CLI install or stdout parsing, the same SDK as the service
@@ -1357,6 +1399,9 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D11. Adapter package format
 
+- Nick (2026-11-10): **not asked until after the MVP.** It isn't on the path to a completed
+  Woolworths order, and his attention is what's scarce. Background work may go on, building on the
+  recommendation below as an assumption he hasn't confirmed.
 - Options: a directory or zip with `manifest.json`, one compiled ESM `tools.mjs`, fixtures and a
   README, hashed with `bundleHash`; npm packages; git repositories.
 - Considerations: npm brings install scripts and dependency trees nobody reviews. A single
@@ -1371,6 +1416,9 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D12. Sandbox technology
 
+- Nick (2026-11-10): **not asked until after the MVP.** It isn't on the path to a completed
+  Woolworths order, and his attention is what's scarce. Background work may go on, building on the
+  recommendation below as an assumption he hasn't confirmed.
 - Options:
   - **QuickJS compiled to wasm** (e.g. quickjs-emscripten): a strong boundary with nothing
     reachable but what's injected; slower, and tool code can't use Node or modern-JS features
@@ -1390,6 +1438,9 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D13. Authoring agent model access
 
+- Nick (2026-11-10): **not asked until after the MVP.** It isn't on the path to a completed
+  Woolworths order, and his attention is what's scarce. Background work may go on, building on the
+  recommendation below as an assumption he hasn't confirmed.
 - Options:
   - **MCP-inverted:** the IDE exposes its authoring tools over MCP; the person's own Claude Code
     or Claude Desktop drives them. No model access in the product.
@@ -1406,6 +1457,10 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D14. Relay
 
+- Nick's answer (2026-11-10): **Cloudflare Tunnel on his own domain (`dncr.me`)** is the transport
+  for remote mode, not Tailscale Funnel. He chose it knowing Cloudflare ends TLS and so can see
+  tool results. Remote mode is built and tested against `cloudflared` first; Funnel is not
+  documented or tested unless he asks. The hosted relay stays after M8.
 - Options: build a relay (Worker plus Durable Object, outbound WebSocket from the app, OAuth for
   MCP clients); document cloudflared or Tailscale Funnel; both.
 - Considerations: the relay is the only piece that's a service with uptime, abuse and cost. It's
@@ -1419,6 +1474,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D15. Telemetry
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Options: none; opt-in crash reports; opt-in anonymous adapter health ("adapter X failed with
   class Y"), which would tell maintainers a site changed before users report it.
 - Recommendation: none in v1. A privacy-first security product shouldn't phone home by default.
@@ -1427,6 +1483,9 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D16. Pricing
 
+- Nick (2026-11-10): **not asked until after the MVP.** It isn't on the path to a completed
+  Woolworths order, and his attention is what's scarce. Background work may go on, building on the
+  recommendation below as an assumption he hasn't confirmed.
 - Options: free and open source with a paid relay; paid app; donations or sponsorship;
   marketplace revenue share.
 - Recommendation: free, open-source app. If the relay is built, a small monthly fee, tested
@@ -1436,6 +1495,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D17. UI stack
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Options: React with plain CSS against `tokens.css` (React is already a devDependency); a
   component library; no framework.
 - Recommendation: React and plain CSS, built with electron-vite (already a devDependency). The
@@ -1445,6 +1505,11 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D18. Irreversible tools in shipped adapters
 
+- Nick's answer (2026-11-10), which adds to the one below: the project's top-level goal is an order
+  completed at Woolworths through the MCP, with scope kept strict. The MVP (M3) still ships cart
+  tools only, and he places the order himself. A checkout tool, `irreversible` and confirmed on the
+  Mac with Touch ID ([D46](#d46-touch-id-on-irreversible-confirmations)) for every order, is the
+  first thing built after the MVP, ahead of the rest of M4. "None in v1" no longer holds.
 - Nick's answer (2026-11-07): Accepted: no irreversible tools in v1. Later he wants approvals sent
   to his phone, not only shown on the Mac; not needed yet.
 - Options: no checkout in v1; a checkout tool behind in-app confirmation.
@@ -1462,6 +1527,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D20. Platforms
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Recommendation: macOS only for v1. Keep the runtime free of macOS assumptions (already enforced
   by the "only two modules import Electron" rule), so Windows is a credential-provider and
   packaging job later, not a rewrite.
@@ -1469,6 +1535,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D21. MCP client support
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Recommendation: v1 officially supports Claude Code and Claude Desktop, and tests against the
   MCP SDK's own client. Others (Cursor, ChatGPT's MCP support, VS Code) are "should work", with
   setup docs written as people report them.
@@ -1476,6 +1543,9 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D22. Second adapter
 
+- Nick (2026-11-10): **not asked until after the MVP.** It isn't on the path to a completed
+  Woolworths order, and his attention is what's scarce. Background work may go on, building on the
+  recommendation below as an assumption he hasn't confirmed.
 - Options: port the earlier app's bank connector (read-only transactions); another grocer
   (Coles); a utility or a government site Nick uses.
 - Considerations: a bank is the strongest test of the security model and the most valuable to
@@ -1487,6 +1557,9 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D23. Update feed host
 
+- Nick (2026-11-10): **not asked until after the MVP.** It isn't on the path to a completed
+  Woolworths order, and his attention is what's scarce. Background work may go on, building on the
+  recommendation below as an assumption he hasn't confirmed.
 - Options: GitHub Releases (needs a public repo, or a token in the app for a private one, which
   is unacceptable); Cloudflare R2 or S3 with electron-updater's generic provider; no auto-update
   before M8.
@@ -1571,6 +1644,10 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D25. Adapter legal posture
 
+- Nick's answer (2026-11-10): the Woolworths adapter stays in the public repo, with a notice in its
+  README that the site's terms prohibit automated access and that using it is each person's call
+  (added the same day). No legal opinion for now; the final home is looked at again before the
+  M8 launch.
 - Questions: can the project publish adapters for sites whose terms prohibit automated access?
   Should adapters live in a separate repository, maintained by their authors, rather than in the
   framework's repository?
@@ -1586,6 +1663,8 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D26. Where the Woolworths adapter lives at release
 
+- Nick's answer (2026-11-10): in the main repo for now, with the terms notice
+  ([D25](#d25-adapter-legal-posture)). Looked at again before M8.
 - Options: in the main repo as the reference adapter; in a separate adapters repo; private.
 - Recommendation: decide with D25. Default to a separate repo, with a fake-site-only reference
   adapter in the main repo for the docs.
@@ -1593,6 +1672,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D27. Retention
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Options: keep the audit log forever; rotate traces after N days; let the person choose.
 - Recommendation: audit log kept (it's small and the chain needs continuity; rotation starts a
   new chain whose first record commits to the previous file's last hash). Traces and screenshots
@@ -1649,6 +1729,9 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D29. Pause, overnight and scheduled use
 
+- Nick (2026-11-10): **not asked until after the MVP.** It isn't on the path to a completed
+  Woolworths order, and his attention is what's scarce. Background work may go on, building on the
+  recommendation below as an assumption he hasn't confirmed.
 - Question: should agents be able to call tools at any hour? A login at 3 am with no human
   activity looks odd to a bot detector, and a `needsUser` at 3 am helps nobody.
 - Recommendation: an optional "quiet hours" setting that returns `needsUser` with a clear reason
@@ -1657,6 +1740,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D30. Split add-to-cart
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Options: keep one `set_cart_quantity` (destructive, idempotent); add an additive
   `add_to_cart` alongside it (`destructiveHint: false`), so clients can auto-approve adds while
   still prompting for removals.
@@ -1677,6 +1761,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D31. `retry` count semantics
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: `retry: { times: n }` runs its steps up to `n + 1` times, and the auth-flow tests pin
   that. Core documents only the range, 1 to 5.
 - Options: keep "`n` retries after the first run" and document it in core; change it to `n` runs
@@ -1710,6 +1795,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D33. Breaker defaults and persistence
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: one rate budget and breaker per host, in memory, covering `page.fetch`, `goto` and the
   probe only ([D55](#d55-driver-level-budget-and-block-detection)); a 2 s minimum gap; a 10 minute
   cool-down doubling to 2 hours; the doubling resets on the next normal response. Core v2's
@@ -1743,6 +1829,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D34. Form-action origin: granted or navigation
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: a password's owning form must post to an origin in the secret's granted origins. A
   round-1 reviewer asked whether the navigation list would do, since the navigation guard already
   checks where the page goes.
@@ -1775,6 +1862,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D36. Redaction: whole string or substring
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: a string that contains a sensitive value is replaced whole with `[redacted]`, object keys
   included, and the call fails if the serialised result still contains one.
 - Options: whole string (today); replace only the matching substring; fail the call whenever
@@ -1790,6 +1878,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D37. Cross-origin iframe logins
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: the driver refuses to focus or click an element in an out-of-process (cross-site)
   frame, and the flow ends in `needsUser`. Core v2's `inputReachable` makes that a check before
   the fill.
@@ -1832,6 +1921,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D40. Storage handoff document
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: storage keys are read and written in a page on their origin. An open page is reused;
   otherwise a hidden page loads `/robots.txt` on that origin, in each partition. That's an extra
   request to the site outside the rate budget, and an unusual one for a browser to make.
@@ -1894,6 +1984,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D43. Keychain and vault names
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Keychain items and grants outlive renames, so these are fixed before the first signed build.
 - Options: derive every name from the bundle ID ([D1](#d1-product-name)); fixed names now.
 - Recommendation:
@@ -1908,6 +1999,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D44. `op` install path
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: `op` is found on `PATH`. An app started from Finder has a minimal `PATH`, and a `PATH`
   lookup runs whichever `op` comes first. A substitute `op` can't get secrets out of 1Password
   (the desktop app checks the caller), but it can hand back a wrong password and spend a login
@@ -1923,6 +2015,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D45. Grant file location
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: the runtime, credentials and mcp-server packages take file paths from the caller. Only
   the bridge config's path is documented.
 - Options: everything under `~/Library/Application Support/<app>/`, a 0700 directory with 0600
@@ -1938,6 +2031,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D46. Touch ID on irreversible confirmations
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Options: a click in the app's window; Touch ID (`systemPreferences.promptTouchID`) as well; the
   macOS account password.
 - Considerations: a click can come from anyone at the unlocked Mac, or from a UI-automation tool
@@ -1951,6 +2045,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D47. Grant re-bind on update
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: an update has a new hash, inherits no grant, and the person grants again. The mockup
   offers a re-bind, off by default.
 - Options: always grant from scratch; offer a one-click re-bind of the same item when the secret's
@@ -1963,6 +2058,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D48. Tool titles with the adapter name
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: the MCP title is the manifest's `title` ("Get cart"), and the name is namespaced
   (`woolworths_get_cart`).
 - Options: the bare title; "Woolworths: Get cart", built by the server from the adapter's `name`;
@@ -1975,6 +2071,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D49. Cancellation
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: the endpoint passes the client's abort signal to the runtime, which aborts the tool's
   signal, and the tool's capabilities refuse from then on. The bridge never answers a cancelled
   request.
@@ -2003,6 +2100,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D51. Approval acknowledgement friction
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Question: how much the approval screen asks of the person.
 - Options: one Approve button; a tick per permission-expanding change; typing the adapter's name
   for anything `irreversible`.
@@ -2015,6 +2113,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D52. Confirmation panel placement
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Options: the tray popover; a standalone window from the main process, on top and centred; a
   system notification with action buttons.
 - Considerations: a notification's buttons can be pressed without reading the request, and Focus
@@ -2023,9 +2122,15 @@ review of 2026-11-10; Nick has answered all three.
 - Recommendation: a standalone window on top, with a notification that only opens it. It has no
   default button, so a keystroke meant for another app can't approve.
 - Blocks: M3, with C4.
+- Built as recommended (2026-11-10), not yet answered. The window was already there; the
+  notification is new (`apps/desktop/src/main/core/notifications.ts`). It has no action buttons, so
+  nothing is approved from it, and a click only brings the confirmation panel forward, which
+  re-arms the approve delay. The same goes for a sign-in a call handed to the person, a site whose
+  breaker opened and a downloaded update. Settings has one switch for all of them, on by default.
 
 ### D53. Fake trolley merge at login
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Question: when a visitor with items in an anonymous trolley logs in, does Woolworths merge them
   into the account's trolley, replace it, or drop them? The fake shows the account's trolley after
   login and drops the anonymous one; that was a guess.
@@ -2039,6 +2144,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D54. Cart line ceiling
 
+- Nick's answer (2026-11-10): Accepted as recommended. The cap becomes 20 per line.
 - Today: the adapter refuses more than 50 of one product: `set_cart_quantity` takes 0 to 50, and
   `add_to_cart` won't go over 50. The site clamps to its own supply limits (often 36) and the tools
   report that.
@@ -2079,6 +2185,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D56. URL regex deadline
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: `urlRegex` conditions run synchronously in the main process. On `main` the auth flow
   compiles and runs them with a 2,048-character bound on the path and query, no screen and no
   deadline. Core v2 adds the parse-time screen, which stops exponential shapes but not polynomial
@@ -2100,6 +2207,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D57. Blocked-request target
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: the round-1 driver reports a blocked request's target as the origin plus a 16-hex digest
   of the path, on purpose: tool code chooses the whole URL of a request it wants blocked, so a
   path can carry a session token into the audit log. Core v2's `BlockedRequest.target` is origin
@@ -2145,6 +2253,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D59. Several Messages senders
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: a grant is one record per adapter, content hash and secret, and Messages codes are
   granted under the reserved secret `messages` with the sender handle as `itemRef`. So an adapter
   has one `messages` grant and one sender. `messagesSourcesIn()` can return several senders, and
@@ -2203,6 +2312,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D62. Electron 44's unnamed ninth fuse
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today: `@electron/fuses` 1.8.0 names eight fuses. Electron 44's fuse wire has nine, and the
   ninth is left as shipped (on). The packaged smoke reads the wire and checks the eight it knows.
 - Options: leave it as shipped until `@electron/fuses` names it; read Electron's source for what
@@ -2213,6 +2323,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D63. What the auth probe can't hide
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today (round 3): the login probe (`AuthPage.fetch`) is a main-process `net.request` in the auth
   partition, built to send what the auth page's own `fetch(url, {credentials: 'include'})` sends:
   the same headers in Chrome's order and casing, client hints, `Origin` and `Referer` by the
@@ -2232,6 +2343,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D64. Group-writable `op` installs
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today (round 3, decided in code, needs Nick's yes): D44's rule "nothing writable by anyone but
   root or the person" refused Homebrew's own layout, where `/opt/homebrew` and its links are
   `0775` with group `admin`. The app now accepts a group-writable file or directory only when its
@@ -2245,6 +2357,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D65. Demo-build test hooks
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today (round 3): a demo build launched for e2e maps `evil.test` to `127.0.0.1` and exposes a
   main-process global `__valetE2e` (switch the fake to block everything; read the fake's
   trolley). A production `electron-vite build` contains no demo code, no fixtures and no test
@@ -2282,6 +2395,7 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D68. What the tray counts
 
+- Nick's answer (2026-11-10): Accepted as recommended.
 - Today (round 4): the tray says "N clients connected", but N is the number of open MCP
   sessions. One client can hold several, and the bridge/HTTP split isn't shown anywhere.
 - Options: say "N sessions"; count distinct clients by the name they give at `initialize`;

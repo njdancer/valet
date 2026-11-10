@@ -10,6 +10,7 @@ import {
   messagesSourcesIn,
   type OtpSource,
   toolHints,
+  unlockedBy,
 } from '@valet/core'
 import type {
   AuthStepEntry,
@@ -77,12 +78,17 @@ export function limitsInfo(manifest: AdapterManifest): LimitsInfo {
 }
 
 function tools(manifest: AdapterManifest): ToolDiffEntry[] {
-  return manifest.tools.map((tool) => ({
-    name: tool.name,
-    title: tool.title,
-    sideEffect: tool.sideEffect,
-    ...toolHints(tool),
-  }))
+  return manifest.tools.map((tool) => {
+    // In the entry, so a tool that names one more request to unlock reads as a changed tool.
+    const unlocks = unlockedBy(manifest.requests, tool.unlocks).map((r) => `${r.method} ${r.path}`)
+    return {
+      name: tool.name,
+      title: tool.title,
+      sideEffect: tool.sideEffect,
+      ...toolHints(tool),
+      ...(unlocks.length === 0 ? {} : { unlocks }),
+    }
+  })
 }
 
 function secrets(manifest: AdapterManifest): SecretDiffEntry[] {

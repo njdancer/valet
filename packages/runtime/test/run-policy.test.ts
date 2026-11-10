@@ -30,9 +30,49 @@ describe('beginRun and endRun', () => {
         egress: ['www.example.com', 'cdn.example.com'],
         requests: [...manifest.requests, { method: 'GET', path: '/api/session', purpose: 'read' }],
         maxPurpose: 'write',
+        unlocks: [],
         ceiling: 5,
       },
     ])
+  })
+
+  it('lets the run unlock only the irreversible declarations its tool names (C15)', async () => {
+    const withPayee = {
+      ...manifest,
+      requests: [
+        ...manifest.requests,
+        { method: 'POST' as const, path: '/api/payees/add', purpose: 'irreversible' as const },
+      ],
+    }
+    const placing = defineAdapter({
+      manifest: {
+        ...withPayee,
+        tools: [
+          {
+            ...manifest.tools[0]!,
+            sideEffect: 'irreversible' as const,
+            unlocks: [{ method: 'POST' as const, path: '/api/checkout/place' }],
+          },
+        ],
+      },
+      tools: { run_test: tool({ input: z.object({}), output: z.unknown(), run: async () => 'ok' }) },
+    })
+    const { host, driver } = fixture(placing)
+    await host.call(call)
+
+    expect(driver.policies[0]?.unlocks).toEqual([{ method: 'POST', path: '/api/checkout/place' }])
+    // The other declaration stays in the surface, so nothing wider can match in its place.
+    expect(driver.policies[0]?.requests).toContainEqual({
+      method: 'POST',
+      path: '/api/payees/add',
+      purpose: 'irreversible',
+    })
+  })
+
+  it('unlocks nothing for an irreversible tool that names nothing', async () => {
+    const { host, driver } = fixture(adapterRunning(async () => 'ok', 'irreversible'))
+    await host.call(call)
+    expect(driver.policies[0]?.unlocks).toEqual([])
   })
 
   it('begins before the tool page opens and ends after the call', async () => {

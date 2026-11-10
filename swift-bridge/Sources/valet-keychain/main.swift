@@ -4,6 +4,7 @@
 //   valet-keychain info   <service> <account>            the item's comment, never its secret
 //   valet-keychain write  <service> <account> <comment>  the secret on stdin (never argv)
 //   valet-keychain delete <service> <account>
+//   valet-keychain purge  <service>                      every item of the service (uninstall, reset)
 //
 // Exit codes, which packages/credentials/src/keychain-helper.ts maps: 0 done, 44 no such item (as
 // /usr/bin/security), 51 the Keychain wants the person, 64 usage, 77 caller refused, 1 anything
@@ -71,13 +72,18 @@ if let team = Caller.ownTeamID(), !Caller.parentIsSigned(by: team) {
   fail(Code.refused, "caller refused")
 }
 
+let usage = "usage: valet-keychain read|info|write|delete <service> <account> | purge <service>"
 let args = Array(CommandLine.arguments.dropFirst())
-guard let command = args.first else { fail(Code.usage, "usage: valet-keychain read|info|write|delete <service> <account>") }
-let expected = command == "write" ? 4 : 3
-guard ["read", "info", "write", "delete"].contains(command), args.count == expected else {
-  fail(Code.usage, "usage: valet-keychain read|info|write|delete <service> <account>")
+guard let command = args.first else { fail(Code.usage, usage) }
+let expected = ["write": 4, "purge": 2][command] ?? 3
+guard ["read", "info", "write", "delete", "purge"].contains(command), args.count == expected else {
+  fail(Code.usage, usage)
 }
-guard let item = KeychainItem(service: args[1], account: args[2]) else { fail(Code.usage, "invalid item") }
+// purge names a service alone; every other command names one item.
+let purging = command == "purge"
+guard isAllowedService(args[1]) else { fail(Code.usage, "invalid item") }
+let named = purging ? nil : KeychainItem(service: args[1], account: args[2])
+guard purging || named != nil else { fail(Code.usage, "invalid item") }
 
 // A throwaway keychain file for the contract suite; a release build always uses the default.
 #if DEBUG
@@ -88,6 +94,11 @@ guard let item = KeychainItem(service: args[1], account: args[2]) else { fail(Co
 
 do {
   let store = try KeychainStore(keychainPath: keychainPath)
+  if purging {
+    try store.purge(service: args[1])
+    exit(Code.ok)
+  }
+  guard let item = named else { fail(Code.usage, "invalid item") }
   switch command {
   case "read":
     var secret = try store.read(item)
