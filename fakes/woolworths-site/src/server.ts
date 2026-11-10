@@ -43,6 +43,7 @@ import {
   searchQueryFromParams,
   searchResponse,
 } from './search'
+import { fulfilmentResponse, storeChosenBy, storesForPostcode } from './stores'
 import { applyTrolleyUpdate, type TrolleyLine, trolleyLines, trolleyResponse } from './trolley'
 
 export interface FakeWoolworthsOptions {
@@ -114,6 +115,11 @@ export interface FakeWoolworths {
   close(): Promise<void>
   /** What is in an account's trolley. Throws for an unknown username. */
   trolleyFor(username: string): readonly TrolleyLine[]
+  /**
+   * The pick-up store each current session has chosen, by address id (null: none), oldest session
+   * first: the sessions logged in to `username`, or the anonymous ones for null.
+   */
+  pickupAddresses(username: string | null): readonly (number | null)[]
   /** Replaces the rate limit (null turns it off) and lifts any current blocks. */
   setRateLimit(limit: RateLimit | null): void
   /** While on, every www request gets the Access Denied page, as if the client's IP were blocked. */
@@ -329,6 +335,16 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
       if (!outcome.ok) return json(exchange, 400, INVALID_REQUEST)
       return productJson(exchange, 200, trolleyResponse(trolley))
     }
+    if (method === 'GET' && path === '/api/v3/ui/fulfilment/stores') {
+      const stores = storesForPostcode(exchange.params.get('postcode'))
+      return stores === null ? json(exchange, 400, INVALID_REQUEST) : json(exchange, 200, stores)
+    }
+    if (method === 'POST' && path === '/api/v3/ui/fulfilment') {
+      const chosen = storeChosenBy(parseJson(exchange.body))
+      if (chosen === null) return json(exchange, 400, INVALID_REQUEST)
+      exchange.visitor.fulfilment.addressId = chosen.AddressId
+      return json(exchange, 200, fulfilmentResponse(chosen))
+    }
     if (method === 'POST' && path === '/api/v3/ui/checkout/order') {
       // Exists only so tests can prove the runtime never lets a request reach it.
       const orderId = nextOrderId
@@ -499,6 +515,9 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
     outbox: auth0.outbox,
     close: async () => {
       await Promise.all([closeServer(server), closeServer(authServer)])
+    },
+    pickupAddresses(username) {
+      return username === null ? store.anonymousPickupAddresses() : store.pickupAddressesOf(username)
     },
     trolleyFor(username) {
       const state = store.account(username)

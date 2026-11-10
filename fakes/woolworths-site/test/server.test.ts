@@ -587,3 +587,76 @@ describe('request recording', () => {
     expect(site.requests[0]?.body).toHaveLength(1_000_000)
   })
 })
+
+describe('pick-up stores and fulfilment (assumed shapes)', () => {
+  const stores = async (client: Client, query: string) => client.get(`/api/v3/ui/fulfilment/stores${query}`)
+
+  it('lists the pick-up stores in a postcode, and none where there are none', async () => {
+    const site = await start()
+    const client = await browsing(site)
+    const sydney = await stores(client, '?postcode=2000')
+    expect(sydney.status).toBe(200)
+    expect(JSON.parse(sydney.text).map((s: { Description: string }) => s.Description)).toEqual([
+      'Woolworths Town Hall',
+      'Woolworths Metro Wynyard',
+    ])
+    expect(JSON.parse(sydney.text)[0]).toEqual({
+      FulfilmentStoreId: 1201,
+      AddressId: 9001201,
+      Description: 'Woolworths Town Hall',
+      Street1: 'Cnr Park & George Streets',
+      Suburb: 'Sydney',
+      State: 'NSW',
+      Postcode: '2000',
+    })
+    expect(JSON.parse((await stores(client, '?postcode=0800')).text)).toEqual([])
+  })
+
+  it('refuses a postcode that is not four digits', async () => {
+    const site = await start()
+    const client = await browsing(site)
+    for (const query of ['', '?postcode=', '?postcode=200', '?postcode=sydney', '?postcode=20000']) {
+      expect((await stores(client, query)).status).toBe(400)
+    }
+  })
+
+  it('remembers the store a session chooses, and only for that session', async () => {
+    const site = await start()
+    const client = await browsing(site)
+    await browsing(site)
+    expect(site.pickupAddresses(null)).toEqual([null, null])
+    const reply = await client.postJson('/api/v3/ui/fulfilment', {
+      addressId: 9001310,
+      fulfilmentMethod: 'Pickup',
+    })
+    expect(reply.status).toBe(200)
+    expect(JSON.parse(reply.text)).toEqual({
+      IsSuccessful: true,
+      FulfilmentMethod: 'Pickup',
+      AddressId: 9001310,
+      FulfilmentStoreId: 1310,
+    })
+    expect(site.pickupAddresses(null)).toEqual([9001310, null])
+  })
+
+  it('refuses a choice that is not a pick-up store, and keeps the old one', async () => {
+    const site = await start()
+    const client = await browsing(site)
+    await client.postJson('/api/v3/ui/fulfilment', { addressId: 9003105, fulfilmentMethod: 'Pickup' })
+    for (const body of [
+      { addressId: 1, fulfilmentMethod: 'Pickup' },
+      { addressId: '9001201', fulfilmentMethod: 'Pickup' },
+      { addressId: 9001201, fulfilmentMethod: 'Delivery' },
+      { fulfilmentMethod: 'Pickup' },
+      'Pickup',
+    ]) {
+      expect((await client.postJson('/api/v3/ui/fulfilment', body)).status).toBe(400)
+    }
+    expect(site.pickupAddresses(null)).toEqual([9003105])
+  })
+
+  it('is behind Akamai like every API path', async () => {
+    const site = await start()
+    expect((await new Client(site.origin).get('/api/v3/ui/fulfilment/stores?postcode=2000')).status).toBe(403)
+  })
+})

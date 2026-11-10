@@ -168,7 +168,7 @@ export function createManifest({
     schemaVersion: 1,
     id: 'woolworths',
     name: 'Woolworths',
-    version: '0.2.0',
+    version: '0.3.0',
     description: 'Search Woolworths (Australia) products and manage the online shopping cart.',
     home: `${origin}/`,
     // The tool partition never needs the auth origin: Auth0's session stays in the auth partition.
@@ -209,6 +209,9 @@ export function createManifest({
       { method: 'GET', path: '/apis/ui/product/detail/:stockcode', purpose: 'read' },
       { method: 'GET', path: '/apis/ui/Trolley', purpose: 'read' },
       { method: 'POST', path: '/api/v3/ui/trolley/update', purpose: 'write' },
+      // The store setting's two calls (stores.ts). Assumed paths, never seen live.
+      { method: 'GET', path: '/api/v3/ui/fulfilment/stores', purpose: 'read' },
+      { method: 'POST', path: '/api/v3/ui/fulfilment', purpose: 'write' },
     ],
     tools: [
       {
@@ -260,7 +263,34 @@ export function createManifest({
         destructive: true,
         idempotent: true,
       },
+      // The store setting's tools. The runtime runs them; no MCP client can list or call them.
+      {
+        name: 'find_stores',
+        title: 'Find stores',
+        description: 'Lists the Woolworths pick-up stores in a postcode, for you to choose one in Valet.',
+        sideEffect: 'read',
+      },
+      {
+        name: 'apply_store',
+        title: 'Shop at your store',
+        description: 'Tells Woolworths which pick-up store this session shops at: the one you chose in Valet.',
+        sideEffect: 'write',
+        // Replaces the session's store with the chosen one; the same store twice is the same session.
+        destructive: true,
+        idempotent: true,
+      },
     ],
+    // D69: prices, specials and stock follow the store, so the tools don't run until one is chosen.
+    settings: {
+      store: {
+        title: 'Store',
+        description:
+          'The Woolworths pick-up store your agents shop at. Prices, specials and what is in stock are that store’s.',
+        required: true,
+        choices: { tool: 'find_stores', queryLabel: 'Postcode' },
+        apply: { tool: 'apply_store' },
+      },
+    },
     // Every tool needs at most two site calls. The live site flagged scripted calls 2.5 s apart
     // within minutes (docs/findings/2026-11-07-woolworths-live-probe.md), so the gap is D28's 10 s.
     limits: { requestsPerRun: 6, minGapMs: 10_000 },

@@ -1,14 +1,4 @@
-import {
-  decideRequest,
-  hostAllowed,
-  isScreenedPattern,
-  manifestSchema,
-  messagesSourcesIn,
-  parseManifest,
-  secretRefsIn,
-  toolHints,
-  touchesDeniedSegment,
-} from '@valet/core'
+import { decideRequest, hostAllowed, isScreenedPattern, manifestSchema, messagesSourcesIn, parseManifest, secretRefsIn, settingToolNames, toolHints, touchesDeniedSegment } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { createAdapter } from '../src/adapter'
 import realManifest, {
@@ -54,7 +44,7 @@ function stepsIn(steps: readonly unknown[]): any[] {
 describe('the real manifest', () => {
   it('is the default export and points at the live site', () => {
     expect(realManifest.home).toBe('https://www.woolworths.com.au/')
-    expect(realManifest.version).toBe('0.2.0')
+    expect(realManifest.version).toBe('0.3.0')
     expect(manifestSchema.parse(realManifest)).toEqual(realManifest)
   })
 
@@ -328,9 +318,10 @@ describe('the request surface', () => {
     }
   })
 
-  it('only lets the trolley update write', () => {
+  it('only lets the trolley update and the choice of store write', () => {
     expect(requests.filter((request) => request.purpose === 'write')).toEqual([
       { method: 'POST', path: '/api/v3/ui/trolley/update', purpose: 'write' },
+      { method: 'POST', path: '/api/v3/ui/fulfilment', purpose: 'write' },
     ])
   })
 
@@ -415,6 +406,8 @@ describe('the tool declarations', () => {
       add_to_cart: 'write',
       set_cart_quantity: 'write',
       remove_from_cart: 'write',
+      find_stores: 'read',
+      apply_store: 'write',
     })
   })
 
@@ -426,7 +419,26 @@ describe('the tool declarations', () => {
       add_to_cart: { destructive: true, idempotent: false },
       set_cart_quantity: { destructive: true, idempotent: true },
       remove_from_cart: { destructive: true, idempotent: true },
+      apply_store: { destructive: true, idempotent: true },
     })
+  })
+})
+
+describe('the store setting (D69)', () => {
+  it('is required, found by postcode, and applied by the adapter', () => {
+    expect(realManifest.settings).toEqual({
+      store: {
+        title: 'Store',
+        description: expect.stringContaining('pick-up store'),
+        required: true,
+        choices: { tool: 'find_stores', queryLabel: 'Postcode' },
+        apply: { tool: 'apply_store' },
+      },
+    })
+  })
+
+  it('keeps its two tools away from MCP clients', () => {
+    expect([...settingToolNames(realManifest)]).toEqual(['find_stores', 'apply_store'])
   })
 })
 

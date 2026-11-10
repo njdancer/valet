@@ -28,6 +28,14 @@ export function toolResult(outcome: CallOutcome, structured: boolean): CallToolR
     case 'ok':
       return okResult(outcome.output, structured)
     case 'needsUser':
+      // Nothing in the app is waiting on this one: the person has to open the adapter and choose.
+      if (outcome.reason === 'setting-required') {
+        return textResult(
+          'Not done yet: the person needs to choose a setting for this adapter in the Valet app, such as ' +
+            'which store to shop at (reason: setting-required). Tell them, and call this tool again once they have.',
+          structured,
+        )
+      }
       return textResult(
         `Not done yet: the person has been asked to act in the Valet app (reason: ${needsUserCode(outcome.reason)}). ` +
           'Call this tool again once they have.',

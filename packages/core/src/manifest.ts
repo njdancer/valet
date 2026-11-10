@@ -210,6 +210,67 @@ export const toolDeclarationSchema = z
     }
   })
 
+/** The longest value a setting may hold, and the most choices one lookup may offer. */
+export const MAX_SETTING_VALUE = 100
+export const MAX_SETTING_CHOICES = 50
+
+/**
+ * A setting the person chooses in the app for this adapter (D69): which store a shop's prices come
+ * from, say. The adapter never asks free text of the person: it offers choices, and the app saves
+ * the one they pick. Both of a setting's tools are the adapter's own declared tools, run by the
+ * runtime under every guard a tool call gets. They are never listed to, or callable by, MCP clients.
+ */
+export const settingSchema = z
+  .object({
+    title: z.string().min(1).max(60),
+    description: z.string().min(1).max(300),
+    /** While a required setting has no value, every other tool ends needsUser `setting-required`. */
+    required: z.boolean().default(false),
+    choices: z
+      .object({
+        /**
+         * A `read` tool. Input: settingQuerySchema (what the person typed). Output:
+         * settingChoicesSchema.
+         */
+        tool: name,
+        /** What the person is asked to type to find choices, e.g. "Postcode". */
+        queryLabel: z.string().min(1).max(60),
+      })
+      .strict(),
+    /**
+     * A `read` or `write` tool that makes the site use the chosen value. Input: settingValueSchema.
+     * The runtime runs it before the next tool call whenever the value changed, the session may have
+     * changed (a login), or the last run of it is old. Without one, the value is only stored.
+     */
+    apply: z.object({ tool: name }).strict().optional(),
+  })
+  .strict()
+export type SettingDeclaration = z.infer<typeof settingSchema>
+
+/** What the app passes a setting's choices tool. */
+export const settingQuerySchema = z.object({ query: z.string().max(100) }).strict()
+
+/**
+ * One choice. `value` is the adapter's own identifier, opaque to everything else. `label` and
+ * `detail` may be site text: they are shown to the person in the app and never sent to an MCP client.
+ */
+export const settingChoiceSchema = z
+  .object({
+    value: z.string().min(1).max(MAX_SETTING_VALUE),
+    label: z.string().min(1).max(100),
+    detail: z.string().max(200).optional(),
+  })
+  .strict()
+export type SettingChoice = z.infer<typeof settingChoiceSchema>
+
+/** What a setting's choices tool must return. */
+export const settingChoicesSchema = z
+  .object({ choices: z.array(settingChoiceSchema).max(MAX_SETTING_CHOICES) })
+  .strict()
+
+/** What the runtime passes a setting's apply tool. */
+export const settingValueSchema = z.object({ value: z.string().min(1).max(MAX_SETTING_VALUE) }).strict()
+
 /** What a tool declaration means for MCP's hints, with C9's safe defaults filled in. */
 export function toolHints(tool: {
   readonly sideEffect: z.infer<typeof purposeSchema>
@@ -268,6 +329,11 @@ export const manifestSchema = z
       )
       .default([]),
     tools: z.array(toolDeclarationSchema).min(1),
+    /** Settings the person chooses in the app, by name (D69). */
+    settings: z
+      .record(name, settingSchema)
+      .refine((settings) => Object.keys(settings).length <= 8, 'at most 8 settings')
+      .default({}),
     limits: z
       .object({
         requestsPerRun: z.number().int().min(1).max(500).default(50),
@@ -286,6 +352,34 @@ export const manifestSchema = z
     for (const tool of manifest.tools) {
       if (toolNames.has(tool.name)) ctx.addIssue({ code: 'custom', message: `duplicate tool ${tool.name}` })
       toolNames.add(tool.name)
+    }
+    const settingTools = new Set<string>()
+    for (const [settingName, setting] of Object.entries(manifest.settings)) {
+      const roles = [
+        { role: 'choices', tool: setting.choices.tool, allowed: ['read'] },
+        ...(setting.apply === undefined
+          ? []
+          : [{ role: 'apply', tool: setting.apply.tool, allowed: ['read', 'write'] }]),
+      ]
+      for (const { role, tool, allowed } of roles) {
+        const declared = manifest.tools.find((t) => t.name === tool)
+        if (declared === undefined) {
+          ctx.addIssue({ code: 'custom', message: `setting ${settingName} names undeclared tool ${tool}` })
+        } else if (!allowed.includes(declared.sideEffect)) {
+          ctx.addIssue({
+            code: 'custom',
+            message: `setting ${settingName}'s ${role} tool ${tool} may not be ${declared.sideEffect}`,
+          })
+        }
+        // One tool, one job: a tool shared between settings or roles would be run with the wrong input.
+        if (settingTools.has(tool)) {
+          ctx.addIssue({ code: 'custom', message: `tool ${tool} serves more than one setting` })
+        }
+        settingTools.add(tool)
+      }
+    }
+    if (settingTools.size === manifest.tools.length) {
+      ctx.addIssue({ code: 'custom', message: 'every tool serves a setting: none is left for clients' })
     }
     if (Object.hasOwn(manifest.secrets, MESSAGES_SECRET)) {
       ctx.addIssue({ code: 'custom', message: `secret name ${MESSAGES_SECRET} is reserved` })
@@ -316,6 +410,19 @@ export const manifestSchema = z
 export type AdapterManifest = z.infer<typeof manifestSchema>
 export type ManifestInput = z.input<typeof manifestSchema>
 export type ToolDeclaration = z.infer<typeof toolDeclarationSchema>
+
+/**
+ * The names of the tools that serve the manifest's settings. The runtime runs them itself: they are
+ * never listed to an MCP client, and a client's call to one is refused as not found.
+ */
+export function settingToolNames(manifest: Pick<AdapterManifest, 'settings'>): Set<string> {
+  const names = new Set<string>()
+  for (const setting of Object.values(manifest.settings)) {
+    names.add(setting.choices.tool)
+    if (setting.apply !== undefined) names.add(setting.apply.tool)
+  }
+  return names
+}
 
 /** Every secret reference an auth flow makes, including OTP sources and nested steps. */
 export function secretRefsIn(steps: readonly AuthStep[]): SecretRef[] {
