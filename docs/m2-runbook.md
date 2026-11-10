@@ -207,6 +207,8 @@ login. Everything in the window is typed by Nick.
    hold while logged in, does `_abck` survive the copy, does an isolated-world `fetch` carry
    same-origin credentials. It also lists cookie names and domains: no Auth0 or session cookie may
    be on `.woolworths.com.au` (M2's cookie check).
+   And it records each auth form's method: if the password form posts, the filler gains a rule
+   refusing a password into a form that doesn't ([red-team record](red-team.md#record)).
 
 Stop if: a block page at any step, or anything asking for a CAPTCHA that Nick doesn't want to do.
 D24a comes up here only if the block appears after login (see below).
