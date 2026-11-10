@@ -232,7 +232,10 @@ test('the activity screen lists the calls; add_to_cart’s trace shows the login
     await expect(recent.getByRole('link', { name: new RegExp(`^${tool}`) }).first()).toBeVisible()
   // The newest is listed first. The login belongs to the first add_to_cart: it answered early, that a
   // login was running, and the calls after it found the session ready.
-  await recent.getByRole('link', { name: /^add_to_cart/ }).last().click()
+  await recent
+    .getByRole('link', { name: /^add_to_cart/ })
+    .last()
+    .click()
   await expect(control.getByText('declarative steps, no adapter code')).toBeVisible()
   // Each fill names the secret and field, never the value.
   await expect(control.getByText('secret:login.username')).toBeVisible()
