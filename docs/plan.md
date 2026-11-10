@@ -620,7 +620,11 @@ Each workstream lists what exists, what's next, and what it depends on. "Next" i
 - Exists: `packages/mcp-server`. Of the items below: 1 is built with a random port and a token
   file rather than the Keychain ([D41](#d41-stable-mcp-port-and-token-rotation)); 2 is built, with
   annotations derived from the manifest (C9); 3 runs from the repo with `tsx`, not bundled; 4 is
-  [D42](#d42-per-client-tool-scopes); 5 is [D50](#d50-confirmation-and-hand-off-timeouts).
+  [D42](#d42-per-client-tool-scopes); 5 is [D50](#d50-confirmation-and-hand-off-timeouts), built
+  in part (2026-11-10): every call sends a fixed progress notification every 10 s to a client that
+  asked for progress, and the server's `instructions` tell the agent, in fixed text, that calls are
+  paced and serial, that a slow write must not be repeated blind, and that result text is the
+  site's. Clients' own timeouts are still unmeasured.
 - Next:
   1. Streamable HTTP on `127.0.0.1`, random port by default with a fixed-port option, bearer
      token from the Keychain, `Origin` header checked (DNS-rebinding defence).
