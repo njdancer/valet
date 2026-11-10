@@ -1,7 +1,7 @@
 // How long a weekly shop takes through Valet. The real tool host runs the real Woolworths adapter,
 // one call after another as the server's instructions ask, against canned site answers, on a
-// virtual clock that the rate budget moves forward. So the times below are what the site's 10 s
-// gap (D28) alone costs: no network, no login, no thinking time for the agent. The session read
+// virtual clock that the rate budget moves forward. So the times below are what D28's pacing (a
+// gap of 10 to 15 s, at most four requests a minute) alone costs: no network, no login, no thinking time for the agent. The session read
 // cache and the minute a write may rest on the last login check are both in force, as shipped.
 //
 // The numbers are asserted exactly, so a change to the pacing, to the login probe, or to how many
@@ -30,7 +30,8 @@ const fixture = (name: string): any =>
     readFileSync(new URL(`../../../adapters/woolworths/test/fixtures/${name}`, import.meta.url), 'utf8'),
   )
 
-function shop() {
+/** `random` draws the jitter on each gap. The default, 0.5, is the average: gaps of 12.5 s. */
+function shop(random: () => number = () => 0.5) {
   const definition = createAdapter()
   const home = definition.manifest.home
   const clock = new FakeClock()
@@ -60,6 +61,7 @@ function shop() {
     clock,
     sleep: clock.sleep,
     pacingSleep: clock.pacingSleep,
+    random,
   })
   host.register({ definition, bundleHash: HASH, driver })
   let calls = 0
@@ -92,7 +94,7 @@ function shop() {
 const stockcode = (i: number): number => 100_000 + i
 
 describe('a thirty-item shop at Woolworths’ pacing', () => {
-  it('search then add for each item, then read the cart: 61 calls, 73 requests, 12 minutes', async () => {
+  it('search then add for each item, then read the cart: 61 calls, 78 requests, 19 minutes', async () => {
     const s = shop()
     for (let i = 0; i < ITEMS; i++) {
       await s.run('search_products', { query: `item ${i}` })
@@ -104,41 +106,51 @@ describe('a thirty-item shop at Woolworths’ pacing', () => {
     expect(s.calls()).toBe(61)
     // A search is one request. An add is one too, the write: the trolley it starts from is read
     // from the site once and from the cache (the last write's reply) after that, and the login
-    // probe is made once a minute, which here is every third add. get_cart probes and reads.
+    // probe is made once a minute, which at four requests a minute is every other add. get_cart
+    // probes and reads.
     expect(s.count('POST /apis/ui/Search/products')).toBe(ITEMS)
     expect(s.count('POST /api/v3/ui/trolley/update')).toBe(ITEMS)
     expect(s.count('GET /apis/ui/Trolley')).toBe(2)
-    expect(s.probes()).toBe(ITEMS / 3 + 1)
-    expect(s.requests).toHaveLength(73)
-    // Every request but the first waits the full gap. It was 122 requests and 20 minutes.
-    expect(s.seconds()).toBe((s.requests.length - 1) * 10)
-    expect(s.seconds() / 60).toBe(12)
+    expect(s.probes()).toBe(ITEMS / 2 + 1)
+    expect(s.requests).toHaveLength(78)
+    // Four requests a minute is what sets the time: 78 requests take a little over 19 minutes
+    // whatever the jitter draws. Before the per-minute cap it was 73 requests and 12 minutes;
+    // before the cache, 122 and 20.
+    expect(s.seconds()).toBe(1152.5)
+    for (const draw of [0, 0.999999]) {
+      const other = shop(() => draw)
+      for (let i = 0; i < ITEMS; i++) {
+        await other.run('search_products', { query: `item ${i}` })
+        await other.run('add_to_cart', { stockcode: stockcode(i), quantity: 1 })
+      }
+      await other.run('get_cart', {})
+      expect(other.requests).toHaveLength(78)
+      expect(Math.abs(other.seconds() - 1152.5)).toBeLessThanOrEqual(2.5)
+    }
   })
 
-  it('adds only, from stockcodes already known (a saved list): 31 calls, 39 requests, 6 minutes', async () => {
+  it('adds only, from stockcodes already known (a saved list): 31 calls, 41 requests, 10 minutes', async () => {
     const s = shop()
     for (let i = 0; i < ITEMS; i++) await s.run('add_to_cart', { stockcode: stockcode(i), quantity: 1 })
     await s.run('get_cart', {})
 
-    // Thirty writes, one trolley read, a probe once a minute (six among the adds), then
+    // Thirty writes, one trolley read, a probe once a minute (eight among the adds), then
     // get_cart's probe and read.
     expect(s.count('POST /api/v3/ui/trolley/update')).toBe(ITEMS)
-    expect(s.probes()).toBe(7)
-    expect(s.requests).toHaveLength(39)
-    // It was 92 requests and 15 minutes.
-    expect(s.seconds()).toBe((s.requests.length - 1) * 10)
-    expect(s.seconds() / 60).toBeCloseTo(6.33, 2)
+    expect(s.probes()).toBe(9)
+    expect(s.requests).toHaveLength(41)
+    // Ten minutes at four a minute. It was 92 requests and 15 minutes before the cache.
+    expect(s.seconds()).toBe(600)
   })
 
-  it('sets each quantity outright instead of adding: 31 calls, 37 requests, 6 minutes', async () => {
+  it('sets each quantity outright instead of adding: 31 calls, 40 requests, 10 minutes', async () => {
     const s = shop()
     for (let i = 0; i < ITEMS; i++) await s.run('set_cart_quantity', { stockcode: stockcode(i), quantity: 1 })
     await s.run('get_cart', {})
 
     // No trolley read before the write. It was 62 requests and 10 minutes.
-    expect(s.requests).toHaveLength(37)
-    expect(s.seconds()).toBe((s.requests.length - 1) * 10)
-    expect(s.seconds() / 60).toBe(6)
+    expect(s.requests).toHaveLength(40)
+    expect(s.seconds()).toBe(577.5)
   })
 
   it('the hourly cap of 100 holds one whole shop, and refuses the calls of a second in the same hour', async () => {
@@ -148,9 +160,9 @@ describe('a thirty-item shop at Woolworths’ pacing', () => {
       await s.run('add_to_cart', { stockcode: stockcode(i), quantity: 1 })
     }
     await s.run('get_cart', {})
-    expect(s.requests).toHaveLength(73)
+    expect(s.requests).toHaveLength(78)
 
-    // Twelve minutes in, the second shop gets as far as the cap and no further.
+    // Nineteen minutes in, the second shop gets as far as the cap and no further.
     let refused: ToolCallResult | undefined
     for (let i = 0; i < ITEMS && refused === undefined; i++) {
       const result = await s.call('search_products', { query: `more ${i}` })
@@ -158,7 +170,11 @@ describe('a thirty-item shop at Woolworths’ pacing', () => {
     }
     expect(s.requests).toHaveLength(100)
     // Room again when the first request of the hour is an hour old.
-    expect(refused).toEqual({ status: 'blocked', cause: 'hourly-cap', retryAfterMs: 3_600_000 - 990_000 })
+    expect(refused).toEqual({
+      status: 'blocked',
+      cause: 'hourly-cap',
+      retryAfterMs: 3_600_000 - s.seconds() * 1000,
+    })
   })
 
   it('searching for the same thing again inside a quarter of an hour asks the site nothing', async () => {
@@ -167,7 +183,7 @@ describe('a thirty-item shop at Woolworths’ pacing', () => {
     await s.run('search_products', { query: 'milk' })
     await s.run('search_products', { query: 'bread' })
     expect(s.count('POST /apis/ui/Search/products')).toBe(2)
-    expect(s.seconds()).toBe(10)
+    expect(s.seconds()).toBe(12.5)
   })
 
   it('get_cart always asks the site, and always checks the login first', async () => {

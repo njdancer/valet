@@ -333,6 +333,13 @@ replaced atomically), so a restart straight after a block doesn't hit the site a
 blocks carries over too, so the next block doubles. The file is read once, before the first call
 sends anything. A persisted retry time further out than `maxCooldownSeconds` is cut back to it.
 
+**Jitter and a per-minute cap,** when a manifest sets them (D28; the widest jitter and the lowest
+cap any adapter on the host declares). `limits.gapJitterPercent` stretches each gap by a random
+share of `minGapMs`, up to that percentage, and never shortens one; the draw is `random` in the
+host's options (default `Math.random`). `limits.requestsPerMinute` makes a request wait until the
+oldest of the minute's requests is a minute old. Both are waits inside `acquire()`, so they apply
+to everything the budget paces: tool requests, the probe, and each step of a login.
+
 **An hourly cap,** when a manifest sets `limits.requestsPerHour` (D28; the lowest any adapter on
 the host declares). Every request the budget lets through counts. The cap is asked about in one
 place, when a tool call starts, after the breaker and before any confirmation: at the cap the call

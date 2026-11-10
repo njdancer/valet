@@ -132,6 +132,92 @@ describe('RateBudget’s hourly cap', () => {
   })
 })
 
+describe('RateBudget’s jitter and per-minute cap', () => {
+  function paced(draws: number[] = []) {
+    let now = START
+    const went: number[] = []
+    const budget = new RateBudget(
+      10_000,
+      { now: () => now },
+      async (ms) => {
+        now += ms
+      },
+      () => {},
+      () => draws.shift() ?? 0,
+    )
+    const send = async (count: number) => {
+      for (let i = 0; i < count; i++) {
+        await budget.acquire()
+        went.push(now - START)
+      }
+    }
+    return { budget, went, send, pass: (ms: number) => (now += ms) }
+  }
+
+  it('stretches each gap by the drawn share of the jitter, and never shortens one', async () => {
+    const { budget, went, send } = paced([0, 0.5, 0.999999, -3, 7, Number.NaN])
+    budget.stretch(50)
+    await send(7)
+    // Draws outside [0, 1) are held to it; one that isn't a number stretches the most.
+    expect(went).toEqual([0, 10_000, 22_500, 37_500, 47_500, 62_500, 77_500])
+  })
+
+  it('has no jitter unless asked, and takes the widest any adapter on the host asks for', async () => {
+    const plain = paced([0.9, 0.9])
+    await plain.send(3)
+    expect(plain.went).toEqual([0, 10_000, 20_000])
+
+    const wide = paced([1, 1])
+    wide.budget.stretch(50)
+    wide.budget.stretch(20)
+    wide.budget.stretch(undefined)
+    await wide.send(3)
+    expect(wide.went).toEqual([0, 15_000, 30_000])
+  })
+
+  it('lets no more than the cap through in any minute', async () => {
+    const { budget, went, send } = paced()
+    budget.capMinute(4)
+    await send(10)
+    // Four at the gap, then each waits for the request four before it to be a minute old.
+    expect(went).toEqual([0, 10_000, 20_000, 30_000, 60_000, 70_000, 80_000, 90_000, 120_000, 130_000])
+    for (let i = 4; i < went.length; i++)
+      expect((went[i] ?? 0) - (went[i - 4] ?? 0)).toBeGreaterThanOrEqual(60_000)
+  })
+
+  it('says how long a request asking now would wait under the cap', async () => {
+    const { budget, send, pass } = paced()
+    budget.capMinute(2)
+    await send(2)
+    // Requests at 0 and 10 s; it is 10 s. The next may go when the first is a minute old.
+    expect(budget.waitMs()).toBe(50_000)
+    pass(55_000)
+    expect(budget.waitMs()).toBe(0)
+  })
+
+  it('takes the lowest per-minute cap, and gives back the slot of a wait that was aborted', async () => {
+    let now = START
+    const budget = new RateBudget(10_000, { now: () => now }, (ms, signal) =>
+      signal?.aborted
+        ? Promise.reject(new Error('aborted'))
+        : Promise.resolve().then(() => {
+            now += ms
+          }),
+    )
+    budget.capMinute(5)
+    budget.capMinute(2)
+    budget.capMinute(9)
+    await budget.acquire()
+    await budget.acquire()
+    const gone = new AbortController()
+    gone.abort()
+    await expect(budget.acquire(gone.signal)).rejects.toThrow('aborted')
+    // The aborted wait took no place in the minute: the next still goes when the first is a minute old.
+    await budget.acquire()
+    expect(now - START).toBe(60_000)
+  })
+})
+
 describe('SiteCircuitBreaker', () => {
   const options = { cooldownMs: 60_000, maxCooldownMs: 200_000 }
 

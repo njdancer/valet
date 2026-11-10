@@ -13,8 +13,9 @@ export default defineConfig({
   testDir: '.',
   testMatch: '*.spec.ts',
   // A login on the fake takes about 15 s (the adapter's settle pauses), and the breaker test waits
-  // for the site's own block.
-  timeout: 180_000,
+  // for the site's own block. The site's pacing is real here: at most four requests a minute
+  // (D28), so a login and the call after it can take three to four minutes between them.
+  timeout: 300_000,
   expect: { timeout: 20_000 },
   workers: 1,
   fullyParallel: false,
