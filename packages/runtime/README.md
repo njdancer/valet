@@ -333,6 +333,16 @@ replaced atomically), so a restart straight after a block doesn't hit the site a
 blocks carries over too, so the next block doubles. The file is read once, before the first call
 sends anything. A persisted retry time further out than `maxCooldownSeconds` is cut back to it.
 
+**An hourly cap,** when a manifest sets `limits.requestsPerHour` (D28; the lowest any adapter on
+the host declares). Every request the budget lets through counts. The cap is asked about in one
+place, when a tool call starts, after the breaker and before any confirmation: at the cap the call
+ends `blocked` with `cause: 'hourly-cap'` and the time until the oldest of the hour's requests is an
+hour old, having sent nothing. It is audited as `failed tool-run/rate-limited`, since `blocked` in
+the log means the site refused us, and it leaves the breaker alone. Nothing waits on the cap in
+the middle of a call, so a write is never stranded after its read nor a login halfway; the hour can
+run over by what one call sends. A login step the person drives is never refused by it. The count
+is kept in memory, so a restart forgets it.
+
 **The pace persists too,** when a `budgetStore` is given. Each request let through writes the time
 it went, per host, to that store (not waited for, so the disk never holds a request up), and after
 a restart the first request to a host waits out the rest of its `minGapMs` since the last one

@@ -4,6 +4,10 @@
 // paced by a per-site rate budget, and a block trips a per-site circuit breaker that stops all calls
 // for a cooldown instead of hammering the site and deepening the block.
 //
+// A site may also have an hourly cap (D28). It is checked when a tool call starts, never in the
+// middle of one, and it lasts for this run of the app only: a restart forgets the count, which
+// only the person can cause.
+//
 // The numbers come from each adapter's manifest.limits. Adapters that share a host share its budget
 // and breaker, which take the most cautious numbers any of them declares. Breaker state is persisted
 // (see breaker-state.ts) so a restart doesn't forget a block, and so is the time of each site's last
@@ -24,9 +28,20 @@ import type { RuntimeDiagnostic } from './types'
 /** Why the site refused us: its bot protection, or a 429. */
 export type BlockCause = 'blocked-by-site' | 'rate-limited'
 
-/** Spaces requests to one site at least `minGapMs` apart, in the order they ask. */
+const HOUR_MS = 60 * 60_000
+/** More request times than any cap the manifest schema allows. */
+const MAX_REMEMBERED = 4000
+
+/**
+ * Spaces requests to one site at least `minGapMs` apart, in the order they ask, and counts them
+ * against an hourly cap when one is set.
+ */
 export class RateBudget {
   private nextSlot = Number.NEGATIVE_INFINITY
+  /** The most requests let through in any hour, or null for no cap. */
+  private perHour: number | null = null
+  /** When each request of the last hour was let through, oldest first. Kept only under a cap. */
+  private recent: number[] = []
   /** When the last request was let through, in this run or an earlier one; null before any. */
   private lastUsed: number | null = null
 
@@ -46,6 +61,31 @@ export class RateBudget {
   widen(minGapMs: number): void {
     this.minGapMs = Math.max(this.minGapMs, minGapMs)
     if (this.lastUsed !== null) this.nextSlot = Math.max(this.nextSlot, this.lastUsed + this.minGapMs)
+  }
+
+  /** Sets the hourly cap, or lowers it; never raises it. */
+  cap(perHour: number | undefined): void {
+    if (perHour !== undefined) this.perHour = Math.min(this.perHour ?? perHour, perHour)
+  }
+
+  /**
+   * How long until the hourly cap has room again: 0 when it has, or when there is no cap. The cap
+   * is for whoever starts work (a tool call) to ask about. acquire() never waits on it, so work
+   * already under way (a write after its read, a login halfway through) is never stranded by it,
+   * and the hour can run over by what one call sends.
+   */
+  spentForMs(): number {
+    if (this.perHour === null) return 0
+    const recent = this.lastHour()
+    const freeing = recent[recent.length - this.perHour]
+    return freeing === undefined ? 0 : Math.max(1, freeing + HOUR_MS - this.clock.now())
+  }
+
+  private lastHour(): number[] {
+    const since = this.clock.now() - HOUR_MS
+    if ((this.recent[0] ?? Number.POSITIVE_INFINITY) <= since)
+      this.recent = this.recent.filter((at) => at > since)
+    return this.recent
   }
 
   /** How long a request asking now would wait for its slot. Reads only; takes no slot. */
@@ -76,6 +116,11 @@ export class RateBudget {
       }
     }
     this.lastUsed = Math.max(this.lastUsed ?? Number.NEGATIVE_INFINITY, slot)
+    if (this.perHour !== null) {
+      this.lastHour().push(slot)
+      // Bounded whatever happens: past the cap by more than an hour's worth at the gap is a bug.
+      if (this.recent.length > MAX_REMEMBERED) this.recent.splice(0, this.recent.length - MAX_REMEMBERED)
+    }
     this.used()
   }
 
@@ -239,7 +284,7 @@ export interface SiteProtectionOptions {
 /** The parts of manifest.limits that pace and guard a site. */
 export type SiteLimits = Pick<
   AdapterManifest['limits'],
-  'minGapMs' | 'cooldownSeconds' | 'maxCooldownSeconds'
+  'minGapMs' | 'cooldownSeconds' | 'maxCooldownSeconds' | 'requestsPerHour'
 >
 
 /** One budget and breaker per site host, shared by every adapter and call for that site. */
@@ -280,6 +325,7 @@ export class SiteProtection {
         budget: new RateBudget(limits.minGapMs, this.clock, this.sleep, () => this.persistBudgets()),
         breaker: new SiteCircuitBreaker(this.clock, breakerOptions, this.eventsFor(key)),
       }
+      guards.budget.cap(limits.requestsPerHour)
       this.sites.set(key, guards)
       if (this.loaded) {
         this.applyStored(key, guards)
@@ -288,6 +334,7 @@ export class SiteProtection {
       }
     } else {
       guards.budget.widen(limits.minGapMs)
+      guards.budget.cap(limits.requestsPerHour)
       guards.breaker.widen(breakerOptions)
     }
     return guards

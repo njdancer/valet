@@ -79,6 +79,59 @@ describe('RateBudget', () => {
   })
 })
 
+describe('RateBudget’s hourly cap', () => {
+  const HOUR = 3_600_000
+  function capped(perHour?: number) {
+    let now = START
+    const budget = new RateBudget(10_000, { now: () => now }, async (ms) => {
+      now += ms
+    })
+    budget.cap(perHour)
+    return { budget, now: () => now, pass: (ms: number) => (now += ms) }
+  }
+
+  it('has room, always, without a cap', async () => {
+    const { budget } = capped()
+    for (let i = 0; i < 500; i++) await budget.acquire()
+    expect(budget.spentForMs()).toBe(0)
+  })
+
+  it('is spent after its number of requests, until the oldest of them is an hour old', async () => {
+    const { budget, pass } = capped(3)
+    await budget.acquire()
+    await budget.acquire()
+    expect(budget.spentForMs()).toBe(0)
+    // Requests went at 0, 10 and 20 s; it is now 20 s.
+    await budget.acquire()
+    expect(budget.spentForMs()).toBe(HOUR - 20_000)
+    pass(HOUR - 20_001)
+    expect(budget.spentForMs()).toBe(1)
+    pass(1)
+    expect(budget.spentForMs()).toBe(0)
+    // One slot came free, and the next frees 10 s later.
+    await budget.acquire()
+    expect(budget.spentForMs()).toBe(10_000)
+  })
+
+  it('never holds a request up itself: work under way runs over rather than stopping halfway', async () => {
+    const { budget, now } = capped(2)
+    for (let i = 0; i < 5; i++) await budget.acquire()
+    expect(now() - START).toBe(40_000)
+    // Five went in the hour against a cap of two: room again once the fourth is an hour old.
+    expect(budget.spentForMs()).toBe(HOUR - 10_000)
+  })
+
+  it('takes the lowest cap any adapter on the host declares, and never raises it', async () => {
+    const { budget } = capped(5)
+    budget.cap(2)
+    budget.cap(50)
+    budget.cap(undefined)
+    await budget.acquire()
+    await budget.acquire()
+    expect(budget.spentForMs()).toBeGreaterThan(0)
+  })
+})
+
 describe('SiteCircuitBreaker', () => {
   const options = { cooldownMs: 60_000, maxCooldownMs: 200_000 }
 

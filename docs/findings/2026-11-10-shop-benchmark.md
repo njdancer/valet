@@ -53,9 +53,12 @@ reads the trolley and writes, so the timeout problem below is unchanged.
 
 1. **A shop is now well inside the plan's estimate.** D28 expected "roughly 15–30 minutes". A
    search and an add for each of thirty items is 12 minutes of pacing.
-2. **D28's hourly cap of 60 still can't hold a search-and-add shop**, at 73 requests. The cap is
-   not built yet (it needs new manifest limits, change request C10). A cap of about 90 an hour
-   would hold a shop with room for a retry or two; that choice is made with the cap.
+2. **D28's hourly cap of 60 still can't hold a search-and-add shop**, at 73 requests, and a
+   login adds about eight more. The cap is now built (`limits.requestsPerHour`) and set to 100
+   for Woolworths: one whole shop with room to check and correct it, and less than a third of the
+   360 an hour the 10 s gap alone allows. It is asked about when a call starts, so a call is
+   refused whole, with a time to try again, and never cut off halfway. A second shop in the same
+   hour stops at the cap.
 3. **D28's cap of 4 a minute can't land for the same reason as the jitter** (next section): it
    stretches a cold call, which already runs close to the tool timeout.
 4. **Fewer calls beats a shorter gap.** A saved list or past orders (`list_past_orders` is a
@@ -98,6 +101,9 @@ can reverse:
   site, so ending a shop with it shows what is really in the cart, and nothing irreversible ever
   rests on an old probe. To take it back, set `PROBE_TRUST_SECONDS` to 0 in the adapter's
   `manifest.ts`; the thirty-item shop then takes 15 minutes instead of 12.
+- **The hourly cap is 100, not D28's 60.** D28 says to loosen only with evidence; the evidence is
+  that the shop the plan describes doesn't fit in 60. The cap lasts for one run of the app: a
+  restart, which only the person can cause, forgets the count.
 - **Search and product answers are reused for 15 minutes, the trolley for 2**, both shorter than
   D28's "until the session ends" and "until any write".
 - **An add may start from a trolley up to 2 minutes old.** If the person changed that same line in

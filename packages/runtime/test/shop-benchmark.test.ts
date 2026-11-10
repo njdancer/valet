@@ -63,20 +63,23 @@ function shop() {
   })
   host.register({ definition, bundleHash: HASH, driver })
   let calls = 0
-  const run = async (tool: string, input: unknown): Promise<ToolCallResult> => {
-    const result = await host.call({
+  const call = (tool: string, input: unknown): Promise<ToolCallResult> =>
+    host.call({
       adapterId: definition.manifest.id,
       tool,
       input,
       client: 'benchmark',
       callId: `call-${++calls}`,
     })
+  const run = async (tool: string, input: unknown): Promise<ToolCallResult> => {
+    const result = await call(tool, input)
     expect(result.status, `${tool}: ${JSON.stringify(result)}`).toBe('ok')
     return result
   }
   const started = clock.now()
   return {
     run,
+    call,
     requests,
     gapMs: definition.manifest.limits.minGapMs,
     calls: () => calls,
@@ -136,6 +139,26 @@ describe('a thirty-item shop at Woolworths’ pacing', () => {
     expect(s.requests).toHaveLength(37)
     expect(s.seconds()).toBe((s.requests.length - 1) * 10)
     expect(s.seconds() / 60).toBe(6)
+  })
+
+  it('the hourly cap of 100 holds one whole shop, and refuses the calls of a second in the same hour', async () => {
+    const s = shop()
+    for (let i = 0; i < ITEMS; i++) {
+      await s.run('search_products', { query: `item ${i}` })
+      await s.run('add_to_cart', { stockcode: stockcode(i), quantity: 1 })
+    }
+    await s.run('get_cart', {})
+    expect(s.requests).toHaveLength(73)
+
+    // Twelve minutes in, the second shop gets as far as the cap and no further.
+    let refused: ToolCallResult | undefined
+    for (let i = 0; i < ITEMS && refused === undefined; i++) {
+      const result = await s.call('search_products', { query: `more ${i}` })
+      if (result.status !== 'ok') refused = result
+    }
+    expect(s.requests).toHaveLength(100)
+    // Room again when the first request of the hour is an hour old.
+    expect(refused).toEqual({ status: 'blocked', cause: 'hourly-cap', retryAfterMs: 3_600_000 - 990_000 })
   })
 
   it('searching for the same thing again inside a quarter of an hour asks the site nothing', async () => {

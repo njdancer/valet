@@ -1733,9 +1733,11 @@ review of 2026-11-10; Nick has answered all three.
   because the person can change the same account from their own browser. Not in this decision, and
   an assumption Nick hasn't confirmed: a write tool rests on the last "logged in" probe for 60
   seconds (`session.probe.trustSeconds`). The thirty-item shop went from 122 requests and 20
-  minutes to 73 and 12 ([benchmark](findings/2026-11-10-shop-benchmark.md)). Still unbuilt: the
-  jitter and the per-minute cap, which both wait on [D50](#d50-confirmation-and-hand-off-timeouts),
-  and the hourly and per-page-view caps.
+  minutes to 73 and 12 ([benchmark](findings/2026-11-10-shop-benchmark.md)). The hourly cap is built
+  too (`limits.requestsPerHour`), asked about when a call starts; Woolworths sets 100 rather than
+  the 60 above, which the shop doesn't fit in, also an assumption. Still unbuilt: the jitter and
+  the per-minute cap, which both wait on [D50](#d50-confirmation-and-hand-off-timeouts), and the
+  per-page-view cap.
 - **What it covers.** The budget and breaker sit in the runtime's guarded page and probe, so they
   see `page.fetch`, `goto` and the probe only. Navigations the page makes, clicks that submit,
   `evaluate()` fetches, the site's own requests and the whole login go unpaced and unwatched for

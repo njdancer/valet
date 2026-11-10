@@ -103,6 +103,15 @@ export function outcomeOf(result: ToolCallResult): CallOutcome {
     case 'failed':
       return { status: 'failed', stage: result.stage, errorClass: result.errorClass }
     case 'blocked':
+      // Valet's own hourly cap for the site: a wait like a block, with our budget as the cause.
+      if (result.cause === 'hourly-cap') {
+        return {
+          status: 'blocked',
+          stage: 'tool-run',
+          errorClass: 'rate-limited',
+          retryAfterMs: result.retryAfterMs,
+        }
+      }
       // The runtime reports a block by its retry time alone; the site refused or slowed us.
       return {
         status: 'blocked',
