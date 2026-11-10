@@ -57,6 +57,37 @@ describe('RateBudget: restoring and handing back', () => {
     expect(budget.waitMs()).toBe(9_000)
   })
 
+  it('adds up to half the gap to each wait, drawn afresh, and never takes any off', async () => {
+    let now = START
+    const slept: number[] = []
+    const draws = [0, 0.5, 0.999, 2, -1, Number.NaN]
+    const budget = new RateBudget(
+      10_000,
+      { now: () => now },
+      async (ms) => {
+        slept.push(ms)
+        now += ms
+      },
+      () => {},
+      () => draws.shift() ?? 0,
+    )
+    for (let i = 0; i < 7; i++) await budget.acquire()
+    // Draws outside [0, 1) are held to it; one that is not a number takes the longest wait.
+    expect(slept).toEqual([10_000, 12_500, 14_995, 15_000, 10_000, 15_000])
+  })
+
+  it('jitters the wait after a restored request too', () => {
+    const budget = new RateBudget(
+      10_000,
+      { now: () => START },
+      async () => {},
+      () => {},
+      () => 0.5,
+    )
+    budget.restore(START - 4_000)
+    expect(budget.waitMs()).toBe(8_500)
+  })
+
   it('reports each request let through, with the time it went', async () => {
     let now = START
     const used: (number | null)[] = []
@@ -117,6 +148,7 @@ describe('SiteProtection: last request times', () => {
     const site = new SiteProtection({ now }, async () => {}, {
       store,
       ...(budgetStore === undefined ? {} : { budgetStore }),
+      random: () => 0,
       audit: async () => {},
       diagnostics: (diagnostic) => diagnostics.push(diagnostic),
     })

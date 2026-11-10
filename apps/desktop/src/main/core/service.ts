@@ -153,6 +153,8 @@ export interface ServiceDeps {
   readonly newId?: () => string
   /** How the runtime waits for a site's rate budget; real time by default. Tests pass their clock's. */
   readonly pacingSleep?: Sleep
+  /** The draw for the jitter on a site's gap; Math.random by default. Tests pass `() => 0`. */
+  readonly pacingRandom?: () => number
 }
 
 /** Where a driver reports refusals outside the runtime's runs (browser-electron's DriverOptions). */
@@ -387,6 +389,7 @@ export class AppService {
       budgetStore: new JsonFileStore(paths.budgets),
       clock: { now: this.deps.now },
       ...(this.deps.pacingSleep === undefined ? {} : { pacingSleep: this.deps.pacingSleep }),
+      ...(this.deps.pacingRandom === undefined ? {} : { random: this.deps.pacingRandom }),
       confirmationTimeoutMs: CONFIRMATION_TIMEOUT_MS,
       diagnostics: (d) => this.deps.diagnostics?.(d),
     })
