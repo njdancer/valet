@@ -1,0 +1,122 @@
+<title>Valet wireframes</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: a reading column for the IA and notes, frames full width beneath, each scaled to fit. */
+:root{
+  --f-ui:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-head:"Inter",system-ui,sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  --page:#eef0f2; --ink:#1d2228; --ink-2:#55606b; --ink-3:#8a949e; --rule:#d7dce1; --accent:#2a55c9;
+  --wf-paper:#ffffff; --wf-paper-2:#f5f6f8; --wf-ink:#1d2228; --wf-ink-2:#5b6570; --wf-ink-3:#687380;
+  --wf-line:#e3e6ea; --wf-line-2:#c9ced4; --wf-sel:#e6e9ee; --wf-act:#2a55c9; --wf-on-act:#ffffff;
+  --wf-link:#2a55c9; --wf-alert:#d23a2f; --wf-ok:#1f7a45; --wf-warn:#9a5a00; --wf-bad:#b3261e; --wf-info:#2a55c9; --wf-secret:#6b3fb3;
+  --wf-tint-idle:#eceef1; --wf-tint-ok:#e3f2e8; --wf-tint-warn:#fbefd9; --wf-tint-bad:#fbe4e2; --wf-tint-info:#e5ecfb; --wf-tint-secret:#efe7fa;
+  --wf-note:#e0457b; --wf-scrim:rgba(20,24,30,.28); --wf-shadow:rgba(20,24,30,.18);
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --page:#14171b; --ink:#e7eaee; --ink-2:#a6aeb7; --ink-3:#77818b; --rule:#2c3238; --accent:#86a5ff;
+  --wf-paper:#1c2025; --wf-paper-2:#23282e; --wf-ink:#e7eaee; --wf-ink-2:#a8b0b9; --wf-ink-3:#8e98a2;
+  --wf-line:#2f353c; --wf-line-2:#434b54; --wf-sel:#2f363e; --wf-act:#3a62d9; --wf-on-act:#ffffff;
+  --wf-link:#8eaaff; --wf-alert:#e5534b; --wf-ok:#6fcf97; --wf-warn:#f0b35a; --wf-bad:#ff8a80; --wf-info:#8eaaff; --wf-secret:#c3a3ff;
+  --wf-tint-idle:#2a3037; --wf-tint-ok:#1d3326; --wf-tint-warn:#3a2d17; --wf-tint-bad:#3d1f1d; --wf-tint-info:#1f2a44; --wf-tint-secret:#2e2442;
+  --wf-note:#ff6b9e; --wf-scrim:rgba(0,0,0,.45); --wf-shadow:rgba(0,0,0,.5); color-scheme:dark}}
+:root[data-theme="dark"]{
+  --page:#14171b; --ink:#e7eaee; --ink-2:#a6aeb7; --ink-3:#77818b; --rule:#2c3238; --accent:#86a5ff;
+  --wf-paper:#1c2025; --wf-paper-2:#23282e; --wf-ink:#e7eaee; --wf-ink-2:#a8b0b9; --wf-ink-3:#8e98a2;
+  --wf-line:#2f353c; --wf-line-2:#434b54; --wf-sel:#2f363e; --wf-act:#3a62d9; --wf-on-act:#ffffff;
+  --wf-link:#8eaaff; --wf-alert:#e5534b; --wf-ok:#6fcf97; --wf-warn:#f0b35a; --wf-bad:#ff8a80; --wf-info:#8eaaff; --wf-secret:#c3a3ff;
+  --wf-tint-idle:#2a3037; --wf-tint-ok:#1d3326; --wf-tint-warn:#3a2d17; --wf-tint-bad:#3d1f1d; --wf-tint-info:#1f2a44; --wf-tint-secret:#2e2442;
+  --wf-note:#ff6b9e; --wf-scrim:rgba(0,0,0,.45); --wf-shadow:rgba(0,0,0,.5); color-scheme:dark}
+body{background:var(--page);color:var(--ink);font:14px/1.55 var(--f-ui);padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 64px}
+.wrap{max-width:1240px;margin:0 auto}
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--page);border-bottom:1px solid var(--rule);padding-block:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:21;background:var(--page)}
+.top b{margin-right:8px;font-size:15px}
+.top a{color:var(--ink-2);text-decoration:none;font-size:12.5px;padding:3px 8px;border-radius:12px;border:1px solid var(--rule)}
+.top a:hover,.top a:focus-visible{color:var(--ink);border-color:var(--ink-3)}
+h1{font:700 30px/1.15 var(--f-head);margin:36px 0 8px;text-wrap:balance}
+h2.sec{font:700 21px/1.2 var(--f-head);margin:56px 0 6px;padding-top:12px;border-top:2px solid var(--ink);text-wrap:balance}
+.lede{max-width:72ch;color:var(--ink-2);margin:0 0 12px}
+.prose{max-width:72ch}
+.prose li{margin:3px 0}
+.legend{display:flex;flex-wrap:wrap;gap:10px 18px;font-size:12.5px;color:var(--ink-2);margin:14px 0}
+.legend span{display:inline-flex;gap:6px;align-items:center}
+.pchips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.pchip{font-size:11.5px;padding:2px 8px;border-radius:10px;background:var(--wf-tint-idle);color:var(--ink-2)}
+figure.fr{margin:28px 0 0;display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:20px;align-items:start}
+@media (max-width:980px){figure.fr{grid-template-columns:1fr}}
+.fr .stage{overflow:hidden;border-radius:12px;background:repeating-linear-gradient(45deg,transparent 0 10px,color-mix(in srgb,var(--rule) 30%,transparent) 10px 11px);padding:14px}
+.fr .scaler{transform-origin:0 0}
+.fr figcaption h3{font:650 15px/1.3 var(--f-head);margin:0 0 4px}
+.fr figcaption .id{font:11px var(--f-mono);color:var(--ink-3)}
+.fr figcaption p{margin:6px 0;color:var(--ink-2);font-size:13px}
+.fr ol{margin:8px 0 0;padding-left:0;list-style:none;counter-reset:n;font-size:12.5px}
+.fr ol li{counter-increment:n;display:grid;grid-template-columns:20px 1fr;gap:6px;margin:6px 0}
+.fr ol li::before{content:counter(n);width:18px;height:18px;border-radius:50%;background:var(--wf-note);color:#fff;font:700 10.5px/18px var(--f-ui);text-align:center}
+.tablewrap{overflow-x:auto}
+table.t{border-collapse:collapse;font-size:12.5px;min-width:640px}
+table.t th,table.t td{border-bottom:1px solid var(--rule);padding:6px 10px;text-align:left;vertical-align:top}
+table.t th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--ink-3)}
+pre.tree{font:12px/1.5 var(--f-mono);background:var(--wf-paper);border:1px solid var(--rule);border-radius:10px;padding:14px;overflow-x:auto}
+.mermaidbox{background:var(--wf-paper);border:1px solid var(--rule);border-radius:10px;padding:14px;overflow-x:auto}
+a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
+/*KITCSS*/
+</style>
+<div class="wrap">
+  <nav class="top" aria-label="Sections"><b>Valet wireframes</b><!--NAV--></nav>
+  <h1>Valet: information architecture and wireframes</h1>
+  <p class="lede">Every page and state of the redesigned Valet app, drawn at its real window size. Built from seven persona interviews, two audits of the current app and a tree test of three navigation options. Pink numbers match the notes beside each frame. The design-system thread maps its components onto these.</p>
+  <div class="legend">
+    <span><span class="wf-btn primary" style="height:20px">Action</span> a real button</span>
+    <span><span class="wf-badge warn">Status</span> a badge, never clickable</span>
+    <span><span class="wf-link">Object link</span> opens that thing</span>
+    <span><span class="wf-value">a1b2…c3<span class="wf-copy">⧉</span></span> selectable value with copy</span>
+    <span><span class="wf-count">1:42<small> until 9:50 pm</small></span> deadline</span>
+  </div>
+  <!--INTRO-->
+  <div id="frames"></div>
+</div>
+<script>
+/*KITJS*/
+</script>
+<!--FRAMESJS-->
+<script>
+(()=> {
+  const { FRAMES } = window.WF
+  const SIZES = { window:[1180,780], min:[880,560], pop:[400,640], conf:[460,620], banner:[1180,780] }
+  const host = document.getElementById('frames')
+  const groups = []
+  for (const f of FRAMES) { if (!groups.includes(f.group)) groups.push(f.group) }
+  const nav = document.querySelector('.top')
+  for (const g of groups) {
+    const slug = `g-${g.toLowerCase().replace(/[^a-z0-9]+/g,'-')}`
+    const a = document.createElement('a'); a.href = `#${slug}`; a.textContent = g; nav.appendChild(a)
+    const h = document.createElement('h2'); h.className = 'sec'; h.id = slug; h.textContent = g; host.appendChild(h)
+    const intro = window.WF.GROUP_INTRO?.[g]
+    if (intro) { const p = document.createElement('p'); p.className = 'lede'; p.innerHTML = intro; host.appendChild(p) }
+    for (const f of FRAMES.filter((x) => x.group === g)) {
+      const [w, hgt] = SIZES[f.size || 'window']
+      const fig = document.createElement('figure'); fig.className = 'fr'; fig.id = f.id
+      const notes = (f.notes || []).map(([x, y, t]) => ({ x, y, t }))
+      const markers = notes.map((m, i) => `<span class="wf-n" style="left:${m.x}px;top:${m.y}px">${i + 1}</span>`).join('')
+      fig.innerHTML = `<div class="stage"><div class="scaler" style="width:${w}px;height:${hgt}px"><div class="wf-frame" style="width:${w}px;height:${hgt}px">${f.html}${markers}</div></div></div>
+        <figcaption><span class="id">${f.id} · ${w}×${hgt}</span><h3>${f.title}</h3>${f.desc ? `<p>${f.desc}</p>` : ''}
+        ${f.personas ? `<div class="pchips">${f.personas.map((p) => `<span class="pchip">${p}</span>`).join('')}</div>` : ''}
+        <ol>${notes.map((m) => `<li><span>${m.t}</span></li>`).join('')}</ol></figcaption>`
+      host.appendChild(fig)
+    }
+  }
+  function fit(){
+    for (const st of document.querySelectorAll('.fr .stage')) {
+      const sc = st.querySelector('.scaler'); const w = parseFloat(sc.style.width); const h = parseFloat(sc.style.height)
+      const avail = st.clientWidth - 28; const s = Math.min(1, avail / w)
+      sc.style.transform = `scale(${s})`; st.style.height = `${h * s + 28}px`
+    }
+  }
+  fit(); addEventListener('resize', fit)
+  if (location.hash) { const t = document.getElementById(location.hash.slice(1)); if (t) t.scrollIntoView() }
+})()
+</script>
