@@ -31,7 +31,10 @@ const SOURCE: Readonly<Record<PendingReview['source'], string>> = {
 export function SiteVersions({ data }: { readonly data: SiteData }) {
   const { adapter, review } = data
   // A first install's pending bundle is the installed one: one row, not two.
-  const pending = adapter.pendingUpdate?.hash === adapter.hash ? null : adapter.pendingUpdate
+  const pending =
+    adapter.approval !== 'approved' || adapter.pendingUpdate?.hash === adapter.hash
+      ? null
+      : adapter.pendingUpdate
   const approved = adapter.approval === 'approved'
   const loginGiven = adapter.secretRequests.some((s) => s.grant !== null)
   return (

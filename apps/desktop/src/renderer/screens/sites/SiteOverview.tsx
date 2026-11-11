@@ -37,7 +37,7 @@ import {
   SESSION_WORDING,
 } from '../../lib/wording'
 import type { SiteData } from './SitePage'
-import { ActionError, callers, callsToday, isPaused, SiteFixButton, SiteText, usePauseSite } from './site-ui'
+import { ActionError, callers, callsToday, SiteFixButton, SiteText } from './site-ui'
 
 export function SiteOverview({ data }: { readonly data: SiteData }) {
   const { adapter, status, review } = data
@@ -149,8 +149,6 @@ function UpdateBanner({
 function Health({ data, primary }: { readonly data: SiteData; readonly primary: boolean }) {
   const { adapter, health, status } = data
   const now = useNow(30_000)
-  const pause = usePauseSite(adapter)
-  const canPause = pause.run !== null && adapter.approval === 'approved' && !isPaused(adapter)
   const setting = adapter.settings.find((s) => s.required && s.chosen === null) ?? null
   const needsUser = adapter.session.state === 'needs-user' ? adapter.session.needsUser : null
   const open = health !== null && health.breaker === 'open'
@@ -166,11 +164,6 @@ function Health({ data, primary }: { readonly data: SiteData; readonly primary: 
               setting={setting}
               variant={primary ? 'primary' : 'secondary'}
             />
-            {canPause ? (
-              <Button size="sm" variant="ghost" loading={pause.busy} onClick={() => pause.run?.(true)}>
-                Pause site
-              </Button>
-            ) : null}
           </>
         }
       >
@@ -187,7 +180,6 @@ function Health({ data, primary }: { readonly data: SiteData; readonly primary: 
           ' · nothing to do: calls start again by themselves.'
         ) : null}
       </HealthLine>
-      <ActionError failed={pause.failed} what={`pause ${adapter.name}`} />
       {open && health !== null ? (
         <div className="pl-4">
           <Disclosure summary="Details">

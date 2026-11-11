@@ -81,12 +81,10 @@ let stockcode = 0
 test('first run: the adapter waits for review', async () => {
   userData = tempDir('screens')
   await start()
-  await expect(control.getByText('Woolworths 0.4.0 is ready for review.')).toBeVisible()
+  await route('#/sites')
+  await expect(control.getByText(/Not approved yet/).first()).toBeVisible()
   await shot(control, 'adapters')
-  await control
-    .locator('.callout', { hasText: 'Woolworths' })
-    .getByRole('link', { name: 'Review changes' })
-    .click()
+  await control.getByRole('link', { name: 'Review Woolworths' }).first().click()
   await expect(control.getByRole('button', { name: 'Approve 0.4.0' })).toBeVisible()
   await shot(control, 'approve-adapter')
   const ack = control.getByRole('checkbox', { name: 'I’ve read the highlighted additions' })
@@ -105,13 +103,13 @@ test('first run: the adapter waits for review', async () => {
 
 test('the grant sheet, then the approved adapter', async () => {
   const sheet = control.getByRole('dialog', { name: 'Grant a secret' })
-  if (!(await sheet.isVisible())) await route('#/adapters/woolworths/grant/login')
+  if (!(await sheet.isVisible())) await route('#/sites/woolworths/login/login')
   await expect(sheet).toBeVisible()
   await sheet.getByText(COPY_ITEM_TITLE).click()
   await shot(control, 'grant-secret')
   await sheet.getByRole('button', { name: 'Grant', exact: true }).click()
   await expect(sheet).toBeHidden()
-  await route('#/adapters/woolworths/grant/messages')
+  await route('#/sites/woolworths/login/messages')
   await sheet.getByRole('button', { name: 'Grant', exact: true }).click()
   await expect(sheet).toBeHidden()
 
@@ -121,7 +119,7 @@ test('the grant sheet, then the approved adapter', async () => {
   const added = await callTool(mcp(), 'woolworths_add_to_cart', { stockcode, quantity: 2 })
   expect(added.isError, added.text).toBe(false)
   await callTool(mcp(), 'woolworths_get_cart', {})
-  await route('#/adapters/woolworths')
+  await route('#/sites/woolworths')
   await shot(control, 'adapter-detail')
 })
 
@@ -154,10 +152,8 @@ test('the login window the person opens, with the banner above it', async () => 
 
 test('a changed bundle under review, and its irreversible tool’s confirmation', async () => {
   await start(changedAdapterBuild())
-  await control
-    .locator('.callout', { hasText: 'Woolworths' })
-    .getByRole('link', { name: 'Review changes' })
-    .click()
+  await route('#/sites/woolworths')
+  await control.getByRole('link', { name: 'Review Woolworths update' }).first().click()
   await expect(control.getByText('This update asks for more')).toBeVisible()
   await shot(control, 'approve-update')
   await control.getByRole('checkbox', { name: 'I’ve read the highlighted additions' }).check()
@@ -199,7 +195,7 @@ test('the site blocks: the breaker is open, with its retry time', async () => {
   if (launched === null) throw new Error('not launched')
   await blockSite(launched, true)
   await callTool(mcp(), 'woolworths_search_products', { query: 'bread' })
-  await route('#/adapters')
-  await expect(control.getByText('Blocked by site').first()).toBeVisible()
+  await route('#/sites')
+  await expect(control.getByText(/limiting (its )?requests/).first()).toBeVisible()
   await shot(control, 'adapters-breaker-open')
 })

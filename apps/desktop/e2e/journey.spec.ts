@@ -88,8 +88,10 @@ test('the demo account the scan looks for is the one the app uses', () => {
 
 test('first launch: Woolworths waits for review, and no MCP client sees or can call its tools', async () => {
   await expect(control).toHaveTitle('Valet (demo) [control]')
-  await expect(control.getByText('Woolworths 0.4.0 is ready for review.')).toBeVisible()
-  await expect(control.getByText('Not approved').first()).toBeVisible()
+  await control.evaluate(() => {
+    window.location.hash = '#/sites'
+  })
+  await expect(control.getByText(/Not approved yet/).first()).toBeVisible()
 
   client = await connectMcp(control, userData)
   const tools = await client.listTools()
@@ -101,10 +103,8 @@ test('first launch: Woolworths waits for review, and no MCP client sees or can c
 })
 
 test('approve in the review screen; the tools appear to MCP clients', async () => {
-  await control
-    .locator('.callout', { hasText: 'Woolworths' })
-    .getByRole('link', { name: 'Review changes' })
-    .click()
+  // The Sites list's row for a site never approved carries its Review button.
+  await control.getByRole('link', { name: 'Review Woolworths' }).first().click()
   await expect(control.getByRole('button', { name: 'Approve 0.4.0' })).toBeVisible()
   const ack = control.getByRole('checkbox', { name: 'I’ve read the highlighted additions' })
   if (await ack.isVisible()) {
@@ -131,7 +131,7 @@ test('grant login from the person’s 1Password item, offered only the manifest�
   const sheet = control.getByRole('dialog', { name: 'Grant a secret' })
   if (!(await sheet.isVisible().catch(() => false))) {
     await control.getByRole('link', { name: 'Woolworths' }).first().click()
-    await control.getByRole('link', { name: 'Grant…' }).first().click()
+    await control.getByRole('link', { name: 'Choose login…' }).first().click()
   }
   await expect(sheet).toBeVisible()
   await expect(sheet.getByText('Let Woolworths log in with your 1Password item')).toBeVisible()
@@ -180,7 +180,7 @@ test('grant login from the person’s 1Password item, offered only the manifest�
 })
 
 test('grant SMS codes from Messages for the declared sender', async () => {
-  await control.getByRole('link', { name: 'Grant…' }).first().click()
+  await control.getByRole('link', { name: 'Choose…' }).first().click()
   const sheet = control.getByRole('dialog', { name: 'Grant a secret' })
   await expect(sheet.getByText('Let Woolworths read one-time codes from Messages')).toBeVisible()
   await expect(sheet.getByRole('radio', { name: /Woolworths/ })).toBeChecked()
@@ -205,18 +205,21 @@ test('the tools wait for a store: an agent is told to ask, and the person picks 
   expect(direct.isError).toBe(true)
 
   await control.evaluate(() => {
-    window.location.hash = '#/adapters/woolworths'
+    window.location.hash = '#/sites/woolworths'
   })
   const card = control.getByTestId('setting-store')
-  await expect(card.getByText('Needed')).toBeVisible()
-  await card.getByRole('textbox', { name: 'Postcode to find a store' }).fill('2000')
-  await card.getByRole('button', { name: 'Search' }).click()
-  const choices = card.getByRole('list', { name: 'Choices' })
+  await expect(card.getByText(/No store chosen/)).toBeVisible()
+  await card.getByRole('link', { name: 'Choose store…' }).click()
+  const sheet = control.getByRole('dialog', { name: 'Choose your Woolworths store' })
+  await sheet.getByRole('textbox', { name: 'Postcode to find a store' }).fill('2000')
+  await sheet.getByRole('button', { name: 'Search' }).click()
+  const choices = sheet.getByRole('radiogroup')
   await expect(choices.getByText('Woolworths Town Hall')).toBeVisible()
   await expect(choices.getByText('Woolworths Metro Wynyard')).toBeVisible()
-  await choices.getByRole('listitem').filter({ hasText: 'Metro Wynyard' }).getByRole('button').click()
+  await choices.getByText('Woolworths Metro Wynyard').click()
+  await sheet.getByRole('button', { name: 'Use Woolworths Metro Wynyard' }).click()
+  await expect(sheet).toBeHidden()
   await expect(card.getByTestId('setting-chosen')).toContainText('Woolworths Metro Wynyard')
-  await expect(card.getByText('Chosen', { exact: true }).first()).toBeVisible()
 
   const detail = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
   expect(detail?.settingsNeeded).toEqual([])
@@ -331,9 +334,11 @@ test('a wrong password is typed once, the login is held for the person, and the 
   expect(again.text).toMatch(/login-required/)
   expect((await passwordPosts(launched)) - before).toBe(1)
 
-  await go('Adapters')
-  await expect(control.getByText('Login window open')).toBeVisible()
-  await expect(control.getByText('Needs you').first()).toBeVisible()
+  await control.evaluate(() => {
+    window.location.hash = '#/sites/woolworths'
+  })
+  await expect(control.getByText(/Waiting for you to log in/).first()).toBeVisible()
+  await expect(control.getByRole('button', { name: 'Show login window' }).first()).toBeVisible()
   await wrongPassword(launched, false)
   // The person closes the login window without logging in.
   await launched.app.evaluate(({ BrowserWindow }) => {
@@ -350,10 +355,11 @@ test('the site blocking every request opens the breaker: tools return blocked, t
   expect(blocked.text).toMatch(/blocked/i)
   expect(blocked.text).toMatch(/\d+ ?s|second/i)
 
-  await go('Adapters')
-  await expect(control.getByText('Blocked by site').first()).toBeVisible()
-  await expect(control.getByText(/Retry in /).first()).toBeVisible()
-  await expect(control.getByText(/Open · /).first()).toBeVisible()
+  await control.evaluate(() => {
+    window.location.hash = '#/sites'
+  })
+  await expect(control.getByText(/limiting (its )?requests/).first()).toBeVisible()
+  await expect(control.getByText(/calls resume at /).first()).toBeVisible()
 
   // While open, the next call is refused without touching the site.
   const again = await callTool(client, 'woolworths_search_products', { query: 'bread' })

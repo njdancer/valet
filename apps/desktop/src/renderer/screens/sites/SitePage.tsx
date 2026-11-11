@@ -111,7 +111,12 @@ export function SitePage({ adapterId, tab }: { readonly adapterId: string; reado
     )
   }
 
-  const adapter = detail.data
+  // The settings still to choose, worked out from the settings themselves, so the header, the health
+  // line and the store card never disagree.
+  const adapter: AdapterDetail = {
+    ...detail.data,
+    settingsNeeded: detail.data.settings.filter((s) => s.required && s.chosen === null).map((s) => s.title),
+  }
   const health = sites.status === 'ready' ? healthFor(adapter, sites.data) : null
   const data: SiteData = {
     adapter,
@@ -150,7 +155,9 @@ export function SitePage({ adapterId, tab }: { readonly adapterId: string; reado
             label: TAB_LABEL[t],
             active: t === tab,
             ...(t === 'tools' ? { count: exposed } : {}),
-            ...(t === 'versions' && adapter.pendingUpdate !== null ? { count: 1, attention: true } : {}),
+            ...(t === 'versions' && adapter.pendingUpdate !== null && adapter.approval === 'approved'
+              ? { count: 1, attention: true }
+              : {}),
           }))}
         />
       </PageHeader>
@@ -184,7 +191,7 @@ function HeaderLine({ adapter }: { readonly adapter: AdapterDetail }) {
       {adapter.approvedAt !== null && adapter.approval === 'approved' ? (
         <span className="whitespace-nowrap">approved {formatDay(adapter.approvedAt)}</span>
       ) : null}
-      {adapter.pendingUpdate !== null && adapter.pendingUpdate.hash !== adapter.hash ? (
+      {adapter.pendingUpdate !== null && adapter.approval === 'approved' ? (
         <span className="whitespace-nowrap">{adapter.pendingUpdate.version} waiting for review</span>
       ) : null}
     </span>

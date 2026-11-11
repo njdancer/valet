@@ -67,7 +67,7 @@ export function SitesPage() {
           </EmptyState>
         ) : (
           <>
-            <List label="Sites">
+            <List label="All sites">
               {list.map((a) => (
                 <SiteRow
                   key={a.id}
