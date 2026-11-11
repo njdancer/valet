@@ -499,7 +499,7 @@ function RecordsTable({
               <TD className="w-0 whitespace-nowrap text-fg-muted tabular">
                 {narrow ? formatTime(record.at, now) : formatSeconds(record.at, now)}
               </TD>
-              <TD className={narrow ? 'w-0 min-w-28' : 'w-0 whitespace-nowrap'}>
+              <TD className={narrow ? 'w-0 min-w-40' : 'w-0 whitespace-nowrap'}>
                 <span className="inline-flex items-center gap-1.5">
                   <StatusDot tone={words.tone} />
                   {words.label}
