@@ -281,19 +281,21 @@ test('get_cart shows the line; set_cart_quantity and remove_from_cart change it'
 
 test('the activity screen lists the calls; add_to_cart’s trace shows the login and the fills', async () => {
   await go('Activity')
-  const recent = control.getByRole('complementary', { name: 'Sections' })
+  const calls = control.getByRole('table', { name: 'Tool calls' })
   for (const tool of ['get_cart', 'remove_from_cart', 'set_cart_quantity', 'add_to_cart', 'search_products'])
-    await expect(recent.getByRole('link', { name: new RegExp(`^${tool}`) }).first()).toBeVisible()
+    await expect(calls.getByRole('link', { name: tool, exact: true }).first()).toBeVisible()
   // The newest is listed first. The login belongs to the first add_to_cart: it answered early, that a
   // login was running, and the calls after it found the session ready.
-  await recent
-    .getByRole('link', { name: /^add_to_cart/ })
+  await calls
+    .getByRole('row')
+    .filter({ has: control.getByRole('link', { name: 'add_to_cart', exact: true }) })
     .last()
+    .getByRole('link', { name: /^Call / })
     .click()
-  await expect(control.getByText('declarative steps, no adapter code')).toBeVisible()
+  await expect(control.getByText('Declarative steps, no adapter code')).toBeVisible()
   // Each fill names the secret and field, never the value.
-  await expect(control.getByText('secret:login.username')).toBeVisible()
-  await expect(control.getByText('secret:login.password')).toBeVisible()
+  await expect(control.getByText(/secret:login\.username/)).toBeVisible()
+  await expect(control.getByText(/secret:login\.password/)).toBeVisible()
 })
 
 test('no secret reaches an MCP result, the audit log, the renderer or the app’s logs', async () => {
@@ -362,9 +364,13 @@ test('the site blocking every request opens the breaker: tools return blocked, t
 })
 
 test('the audit log verifies; an edit to the file on disk breaks the chain', async () => {
-  await go('Audit log')
-  await control.getByRole('button', { name: 'Verify chain' }).click()
-  await expect(control.getByText(/Chain intact up to record \d+\./)).toBeVisible()
+  await go('Activity')
+  await control
+    .getByRole('navigation', { name: 'Activity' })
+    .getByRole('link', { name: /^Audit log/ })
+    .click()
+  await control.getByRole('button', { name: 'Check now' }).click()
+  await expect(control.getByText(/The audit log checks out up to record \d+\./)).toBeVisible()
 
   // Change one recorded value in the middle of the file, as someone covering their tracks would.
   const path = join(userData, 'audit.jsonl')
@@ -375,7 +381,7 @@ test('the audit log verifies; an edit to the file on disk breaks the chain', asy
   lines[victim] = (lines[victim] ?? '').replace('"search_products"', '"get_cart"')
   writeFileSync(path, `${lines.join('\n')}\n`)
 
-  await control.getByRole('button', { name: 'Verify chain' }).click()
-  await expect(control.getByText(/Chain broken at record \d+\./)).toBeVisible()
-  await expect(control.getByText('Audit chain broken')).toBeVisible()
+  await control.getByRole('button', { name: 'Check now' }).click()
+  await expect(control.getByText(/The audit log doesn’t check out from record \d+\./)).toBeVisible()
+  await expect(control.getByRole('link', { name: 'See where' })).toBeVisible()
 })

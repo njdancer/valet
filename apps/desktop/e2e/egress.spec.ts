@@ -196,10 +196,15 @@ test('a hostile page script beaconing to evil.test is blocked, and audited as th
 
 test('the audit log shows the blocked beacons under Blocked', async () => {
   await control
-    .getByRole('complementary', { name: 'Sections' })
+    .getByRole('link', { name: /^Activity/ })
+    .first()
+    .click()
+  await control
+    .getByRole('navigation', { name: 'Activity' })
     .getByRole('link', { name: /^Audit log/ })
     .click()
-  await control.getByRole('button', { name: 'Blocked' }).click()
+  await control.getByRole('button', { name: /^Category:/ }).click()
+  await control.getByRole('menuitemradio', { name: 'Blocked' }).click()
   await expect(control.getByText(`evil.test:${doorPort}`).first()).toBeVisible()
-  await expect(control.getByText('request-blocked').first()).toBeVisible()
+  await expect(control.getByText('Request blocked').first()).toBeVisible()
 })
