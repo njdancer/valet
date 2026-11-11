@@ -21,7 +21,7 @@ import { useAction, useApi, useLoad, useNow } from '../../lib/api-context'
 import { hostOf, plural } from '../../lib/format'
 import { href, navigate, SETUP_STEPS, type SetupStep } from '../../lib/router'
 import { FIELD_WORDING, PROVIDER_WORDING } from '../../lib/wording'
-import { SettingBlock } from './AdapterDetail'
+import { SettingBlock } from '../sites/SettingChooser'
 import { OnePasswordAccountSetting } from './ClientsSettings'
 import { MESSAGES_SECRET } from './GrantSheet'
 
