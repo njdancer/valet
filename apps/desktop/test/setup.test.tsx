@@ -291,7 +291,7 @@ describe('first-run setup', () => {
     await api.clients.add('Claude Code')
     renderAt('#/setup/clients', api)
     await heading('Connect Claude')
-    await user.click(screen.getByRole('button', { name: 'Finish', exact: true }))
+    await user.click(screen.getByRole('button', { name: /^Finish$/ }))
     await heading('Almost set up')
     expect(screen.getByText(/waiting for Claude Code to connect/)).toBeTruthy()
     expect(screen.getByRole('link', { name: 'See the setup' }).getAttribute('href')).toBe('#/setup/clients')
