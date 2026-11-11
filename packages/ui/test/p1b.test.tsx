@@ -3,14 +3,19 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   AddFilter,
+  Badge,
   Button,
+  CanReach,
   ChangeList,
+  ChoiceCard,
   CodeDiff,
   FilterBar,
   FilterSelect,
   InboxItem,
   InboxList,
   ObjectLink,
+  PageHeader,
+  RadioGroup,
   RowLink,
   Table,
   TBody,
@@ -240,5 +245,74 @@ describe('Object links and changes', () => {
     expect(screen.getByRole('region', { name: 'adapters/woolworths.ts' }).tabIndex).toBe(0)
     await user.click(screen.getByRole('button', { name: 'stores.ts' }))
     expect(screen.getByRole('region', { name: 'adapters/stores.ts' })).toBeTruthy()
+  })
+})
+
+describe('Header overflow, choice cards and Can reach', () => {
+  it('overflow actions fold into a named menu; the primary stays', async () => {
+    const user = userEvent.setup()
+    const onExport = vi.fn()
+    wrap(
+      <PageHeader
+        title="Woolworths"
+        actions={<Button variant="primary">Run test</Button>}
+        overflowActions={[{ label: 'Export', onSelect: onExport }]}
+      />,
+    )
+    expect(screen.getByRole('button', { name: 'Run test' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'More actions for Woolworths' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Export' }))
+    expect(onExport).toHaveBeenCalled()
+  })
+
+  it('a choice card shows its body only when selected, outside the label', () => {
+    const { rerender } = wrap(
+      <RadioGroup value="desktop" aria-label="How to connect">
+        <ChoiceCard value="desktop" title="Claude Desktop" selected>
+          <Button>Copy config</Button>
+        </ChoiceCard>
+        <ChoiceCard value="code" title="Claude Code">
+          <Button>Copy command</Button>
+        </ChoiceCard>
+      </RadioGroup>,
+    )
+    expect(screen.getByRole('radio', { name: 'Claude Desktop' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Copy config' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Copy command' })).toBeNull()
+    rerender(
+      <TooltipProvider>
+        <RadioGroup value="code" aria-label="How to connect">
+          <ChoiceCard value="desktop" title="Claude Desktop" />
+          <ChoiceCard value="code" title="Claude Code" selected>
+            <Button>Copy command</Button>
+          </ChoiceCard>
+        </RadioGroup>
+      </TooltipProvider>,
+    )
+    expect(screen.getByRole('button', { name: 'Copy command' })).toBeTruthy()
+  })
+
+  it('Can reach keeps its old props, adds callers and badges, and folds to a summary', () => {
+    const { rerender } = wrap(
+      <CanReach
+        callers={['Claude Desktop']}
+        tools={[{ content: 'get_cart', badge: <Badge>New</Badge> }, 'search']}
+        hosts={['woolworths.com.au']}
+        logins={[]}
+        basis="From the adapter's manifest."
+      />,
+    )
+    const region = screen.getByRole('region', { name: 'Can reach' })
+    expect(region.textContent).toContain('Apps that can call')
+    expect(region.textContent).toContain('New')
+    expect(region.textContent).toContain('No logins')
+    rerender(
+      <TooltipProvider>
+        <CanReach direction="reachedBy" collapsed tools={['a', 'b']} hosts={['x']} logins={['l']} />
+      </TooltipProvider>,
+    )
+    expect(screen.getByRole('region', { name: 'Reached by' }).textContent).toContain(
+      '2 tools · 1 site · 1 login',
+    )
   })
 })

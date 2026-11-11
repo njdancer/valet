@@ -1,6 +1,20 @@
+import { Ellipsis } from 'lucide-react'
 import { Slot } from 'radix-ui'
 import type { ComponentProps, ReactNode } from 'react'
 import { cn } from '../lib/cn'
+import { Button } from './button'
+import { IconButton } from './icon-button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from './menu'
+
+/** A secondary page action that folds into the "More actions" menu when the header is narrow. */
+export type OverflowAction = {
+  label: string
+  onSelect: () => void
+  icon?: ReactNode
+  shortcut?: string
+  destructive?: boolean
+  disabled?: boolean
+}
 
 /**
  * Layout primitives. The rhythm (docs/design-system.md, Layout): 4 px grid; 6 between sections,
@@ -121,6 +135,7 @@ export function PageHeader({
   actions,
   breadcrumb,
   status,
+  overflowActions,
   children,
   className,
 }: {
@@ -136,6 +151,11 @@ export function PageHeader({
    * with words, a Badge ("Paused", "Update waiting").
    */
   status?: ReactNode
+  /**
+   * Secondary actions. Ghost buttons beside `actions` when there is room; in a header under 760 px
+   * they fold into a "More actions for {title}" menu. The primary in `actions` never folds.
+   */
+  overflowActions?: readonly OverflowAction[]
   /** Below the title row: tabs, a filter bar. */
   children?: ReactNode
   className?: string
@@ -144,7 +164,7 @@ export function PageHeader({
     <header
       data-slot="page-header"
       className={cn(
-        'flex shrink-0 flex-col gap-3 border-b border-line-subtle bg-canvas px-6 pt-5 pb-0',
+        '@container/header flex shrink-0 flex-col gap-3 border-b border-line-subtle bg-canvas px-6 pt-5 pb-0',
         !children && 'pb-4',
         className,
       )}
@@ -160,7 +180,50 @@ export function PageHeader({
           {description ? <p className="m-0 text-md text-fg-muted text-pretty">{description}</p> : null}
         </div>
         {/* At 880 px the actions wrap under the title rather than squeezing it. */}
-        {actions ? <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
+        {actions || overflowActions?.length ? (
+          <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">
+            {overflowActions?.map((a) => (
+              <Button
+                key={a.label}
+                variant="ghost"
+                leading={a.icon}
+                onClick={a.onSelect}
+                disabled={a.disabled}
+                className="hidden @[760px]/header:inline-flex"
+              >
+                {a.label}
+              </Button>
+            ))}
+            {overflowActions?.length ? (
+              <span className="@[760px]/header:hidden">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <IconButton
+                      noTooltip
+                      label={`More actions for ${typeof title === 'string' ? title : 'this page'}`}
+                      icon={<Ellipsis aria-hidden="true" />}
+                    />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {overflowActions.map((a) => (
+                      <DropdownMenuItem
+                        key={a.label}
+                        icon={a.icon}
+                        shortcut={a.shortcut}
+                        destructive={a.destructive}
+                        disabled={a.disabled}
+                        onSelect={a.onSelect}
+                      >
+                        {a.label}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </span>
+            ) : null}
+            {actions}
+          </div>
+        ) : null}
       </div>
       {children}
     </header>

@@ -206,3 +206,67 @@ export function CheckboxOption({
     </div>
   )
 }
+
+/**
+ * A radio choice as a card, for choices whose body holds more than a sentence (Add an app: each way
+ * to connect has its own steps and code). Use inside a RadioGroup. The card's `children` show only
+ * while it is `selected`, outside the radio's label, so buttons and code in them stay their own
+ * controls.
+ */
+export function ChoiceCard({
+  value,
+  title,
+  description,
+  meta,
+  selected = false,
+  disabled,
+  children,
+  className,
+}: {
+  value: string
+  title: ReactNode
+  description?: ReactNode
+  meta?: ReactNode
+  /** Whether the group's value is this card's. Shows `children`. */
+  selected?: boolean
+  disabled?: boolean
+  children?: ReactNode
+  className?: string
+}) {
+  const id = `${useId()}-choice`
+  return (
+    <div
+      data-selected={selected || undefined}
+      className={cn(
+        'flex flex-col gap-3 rounded-lg bg-surface p-3.5 shadow-1 ring-[0.5px] ring-line ring-inset transition-interactive',
+        selected && 'bg-selected ring-1 ring-accent-solid',
+        disabled && 'opacity-50',
+        className,
+      )}
+    >
+      <div className="flex items-start gap-2.5">
+        <RadioItem
+          value={value}
+          id={id}
+          disabled={disabled}
+          className="mt-0.5"
+          aria-describedby={description ? `${id}-d` : undefined}
+        />
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <label htmlFor={id} className="cursor-pointer text-md font-medium text-fg">
+              {title}
+            </label>
+            {meta}
+          </span>
+          {description ? (
+            <span id={`${id}-d`} className="text-sm text-fg-muted text-pretty">
+              {description}
+            </span>
+          ) : null}
+        </div>
+      </div>
+      {selected && children ? <div className="flex flex-col gap-2 pl-6.5">{children}</div> : null}
+    </div>
+  )
+}
