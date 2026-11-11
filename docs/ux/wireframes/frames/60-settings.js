@@ -1,6 +1,17 @@
 // Settings: its own place, ⌘, (P7). How the app behaves; nothing security-relevant lives only here.
 ;(() => {
-  const { K, shell, dialog, FRAMES } = window.WF
+  const { K, dialog, FRAMES } = window.WF
+  // Story moment (story.md): 4 waiting; Woolworths needs a login, Yahoo Finance is limiting requests.
+  const shell = (a, p, o = {}) =>
+    window.WF.shell(a, p, {
+      badges: { needs: 4 },
+      sites: [
+        ['W', 'Woolworths', 'warn'],
+        ['Y', 'Yahoo Finance', 'warn'],
+        ['W', 'Wikipedia', 'ok'],
+      ],
+      ...o,
+    })
   window.WF.GROUP_INTRO = window.WF.GROUP_INTRO || {}
   window.WF.GROUP_INTRO.Settings =
     'How the app behaves, reached by ⌘, like every Mac app (P7). One URL per section (#/settings/general …) and a sub-navigation inside the page. Anything about who can reach what lives in Connections or Secrets, and Settings links there rather than repeating it (P3).'
@@ -16,7 +27,7 @@
     `<nav style="width:188px;flex:none;border-right:1px solid var(--wf-line);padding:16px 10px;display:flex;flex-direction:column;gap:2px">
       ${SECTIONS.map(
         ([id, label]) =>
-          `<div style="padding:6px 10px;border-radius:6px;${id === active ? 'background:var(--wf-sel);font-weight:600' : 'color:var(--wf-ink-2)'}">${label}</div>`,
+          `<a aria-current="${id === active ? 'page' : 'false'}" style="display:block;text-decoration:none;padding:6px 10px;border-radius:6px;${id === active ? 'background:var(--wf-sel);font-weight:600;color:var(--wf-ink);box-shadow:inset 3px 0 0 var(--wf-act)' : 'color:var(--wf-link)'}">${label}</a>`,
       ).join('')}
       <div style="font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--wf-ink-3);padding:16px 10px 4px">Elsewhere</div>
       <div style="padding:4px 10px">${K.link('Passwords and codes')}<div class="faint">in Secrets</div></div>
@@ -83,12 +94,12 @@
     html: shell('settings', general),
     notes: [
       [
-        330,
+        342,
         90,
         'Sub-navigation is a list of links with aria-current; each section has its own URL and h1, and ⌘, opens the last one used (P5, P7).',
       ],
       [
-        420,
+        432,
         290,
         'Settings links to Secrets and Connections instead of repeating them: nothing security-relevant lives only here (P3).',
       ],
@@ -102,7 +113,7 @@
         391,
         'Text size on top of the macOS setting; every page has a defined form at 200% (principle 12, P5).',
       ],
-      [830, 232, "P4's refinement of P8a: reopen where you were if the window closed in the last 5 minutes."],
+      [842, 232, "P4's refinement of P8a: reopen where you were if the window closed in the last 5 minutes."],
       [1010, 512, 'All shortcuts in one place, including ⇧⌘3 for the Audit log (P1, P5).'],
     ],
   })
@@ -134,8 +145,17 @@
         ),
       ]) +
       group('How', [
-        row('Play a sound for confirmations', 'They have a 2 minute deadline.', K.toggle(true)),
-        row('Nothing is approved from a notification', 'Clicking one only opens Valet at that item.', ''),
+        row(
+          'Time to answer a confirmation',
+          'Longer gives you time to walk back to your Mac; Claude waits that long, and the item stays open longer for anyone at your Mac.',
+          K.seg(['2 minutes', '5 minutes'], 0),
+        ),
+        row('Play a sound for confirmations', '', K.toggle(true)),
+        row(
+          'What a notification can do',
+          'Open, which shows the item in Valet. Confirmations and connections also offer Decline. Nothing is ever approved from a notification.',
+          '',
+        ),
       ]),
   )
   FRAMES.push({
@@ -146,22 +166,23 @@
     desc: '#/settings/notifications. Grouped by what happened, not by internal event; the macOS permission says its state and when it was checked.',
     html: shell('settings', notifications),
     notes: [
-      [470, 158, 'The macOS permission with its state, when checked, and a way to fix it (principle 8).'],
+      [482, 158, 'The macOS permission with its state, when checked, and a way to fix it (principle 8).'],
       [
         1100,
         240,
         'Grouped by what happened. A notification uses the Needs you title and opens that item (principle 1).',
       ],
+      [1100, 316, 'Missed replaces the first notification (P7).'],
+      [1100, 435, 'Opt-in for authors: blocked requests on a call that worked (P4).'],
       [
-        1100,
-        316,
-        'Missed replaces the first notification, so coming back from the phone tells the truth (P7).',
+        457,
+        535,
+        "P7's walk: 2 or 5 minutes to answer, with the trade-off stated. Also an open question for Nick (round 2 decision).",
       ],
-      [1100, 435, 'Opt-in for authors: blocked requests on a call that worked (P4 drift).'],
       [
-        445,
-        594,
-        'Nothing is answered from a notification: confirmations are only accepted from their own window.',
+        457,
+        652,
+        'The one rule: Open, plus Decline for confirmations and connections; never approve (round 2 decision, P7 major 1).',
       ],
     ],
   })
@@ -217,9 +238,9 @@
       ],
       [1028, 236, 'Deleting traces confirms with the count and says the audit log is kept.'],
       [1067, 336, 'Export writes JSON Lines with the newest hash so P3 can check it elsewhere.'],
-      [748, 410, 'Status with when it was checked, and links to the Audit log tab (principle 8).'],
+      [760, 410, 'Status with when it was checked, and links to the Audit log tab (principle 8).'],
       [1000, 496, 'Log out of every site: clears site sessions, keeps logins.'],
-      [445, 577, 'What stays on this Mac and what leaves it, in one sentence (P2).'],
+      [457, 577, 'What stays on this Mac and what leaves it, in one sentence (P2).'],
     ],
   })
 
@@ -240,7 +261,7 @@
         row(
           'Adapter updates are reviewed per site',
           `They never install by themselves. Woolworths 0.4.0 is waiting for your review.`,
-          K.btn('Review the Woolworths update'),
+          K.btn('Review update'),
         ),
       ]),
   )
@@ -252,12 +273,12 @@
     desc: "#/settings/updates. The app's own updates, kept apart from site adapter updates, which are reviewed on each site.",
     html: shell('settings', updates),
     notes: [
-      [712, 158, 'Up to date, when checked, Check now beside it (principle 8, E1).'],
-      [1100, 240, 'Says what Valet checks before installing, and that it waits for running calls.'],
+      [652, 158, 'Up to date, when checked, Check now beside it (principle 8, E1).'],
+      [1115, 242, 'Says what Valet checks before installing, and that it waits for running calls.'],
       [
-        937,
+        1040,
         457,
-        'App updates and site adapter updates are kept apart: adapter updates are reviewed on each site and link there (P4).',
+        'App updates and adapter updates are kept apart; the button uses the one label, Review update (story words, P4).',
       ],
     ],
   })

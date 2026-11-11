@@ -118,8 +118,9 @@ function shell(active, page, opts = {}) {
   const paused = opts.paused
   return `<div class="wf-window ${opts.cls || ''}">
     <div class="wf-titlebar"><span class="lights"><i></i><i></i><i></i></span><span class="wf-hist">‹ ›</span>
-      <span class="grow"></span>${K.search('Search sites, calls, clients  ⌘K')}
+      <span class="grow"></span>${K.search('Search sites, calls, apps  ⌘K')}
       ${paused ? K.primary('Resume Valet') : K.btn('Pause Valet')}</div>
+    ${paused ? `<div class="wf-shellstatus">${K.dot('warn')} <b>Valet is paused.</b> Calls are refused and nothing reaches any site. <span class="grow"></span>${K.btn('Resume')}</div>` : ''}
     <div class="wf-body">
       <aside class="wf-side">${nav}<div class="grp">Sites</div>${siteRows}
         <div class="grow"></div>

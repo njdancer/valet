@@ -159,21 +159,23 @@ window can, under "From the site". Tool-result strings are drafted in
 `research/tests/round1-P6-agent.md` and must come from one shared table with
 `renderer/lib/wording.ts`, tested to match.
 
-| Situation                      | Needs you title / words on screen                           | Tool result says                                                                                           |
-| ------------------------------ | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Login hand-off                 | Log in to Woolworths (verification check)                   | Open Valet, Needs you, "Log in to Woolworths (verification check)", open until 10:03 pm                    |
-| One-time code Valet can't read | Log in to Woolworths (one-time code)                        | same pattern                                                                                               |
-| Irreversible step              | Confirm: Remove from cart (Woolworths)                      | Valet shows it as "Confirm: Remove from cart (Woolworths)" and waits until 9:50 pm                         |
-| Declined / timed out           | Declined / Missed: …                                        | told apart (confirm: declined / confirm: timed-out)                                                        |
-| Remote connection              | Approve a connection                                        | (browser page) Type the code your browser shows into Valet on your Mac                                     |
-| Update waiting                 | Review the Woolworths update (0.4.0)                        | calls keep using the approved 0.3.0; tools it adds wait; Needs you, "Review the Woolworths update (0.4.0)" |
-| Paused                         | Paused · Resume                                             | Valet is paused, nothing was sent; resume from the menu bar or the Valet window                            |
-| Locked down                    | Locked down · Unlock                                        | Valet is locked down by the person                                                                         |
-| Site limiting                  | Woolworths is limiting requests · calls resume at 9:52 pm   | same, with "Try again in N seconds"                                                                        |
-| Valet's own cap                | Valet is limiting its requests to Woolworths until 10:00 pm | same                                                                                                       |
-| Missing setting                | Choose your Woolworths store                                | same title                                                                                                 |
-| Missing login                  | Give Valet your Woolworths login                            | same title                                                                                                 |
-| Failure                        | Failed · see call 7F2A                                      | The person can see it in Valet, Activity, call 7F2A                                                        |
+| Situation                      | Needs you title / words on screen                           | Tool result says                                                                                                                                                                  |
+| ------------------------------ | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Login hand-off                 | Log in to Woolworths (verification check)                   | Open Valet, Needs you, "Log in to Woolworths (verification check)", open until 10:03 pm                                                                                           |
+| One-time code Valet can't read | Log in to Woolworths (one-time code)                        | same pattern                                                                                                                                                                      |
+| Irreversible step              | Confirm: Remove from cart (Woolworths)                      | Valet shows it as "Confirm: Remove from cart (Woolworths)" and waits until 9:50 pm                                                                                                |
+| Declined / timed out           | Declined / Missed: …                                        | told apart (confirm: declined / confirm: timed-out)                                                                                                                               |
+| Remote connection              | Approve a connection                                        | (browser page) Type the code your browser shows into Valet on your Mac                                                                                                            |
+| Update waiting                 | Review the Woolworths update (0.4.0)                        | calls keep using the approved 0.3.0; tools it adds wait; Needs you, "Review the Woolworths update (0.4.0)"                                                                        |
+| Paused                         | Paused · Resume                                             | Valet is paused, nothing was sent; resume from the menu bar or the Valet window                                                                                                   |
+| Locked down                    | Locked down · Unlock                                        | Valet is locked down by the person, so this call was refused and nothing was sent (config: locked-down). The endpoint stays up so agents get this text; cloud agents were removed |
+| One site paused                | Woolworths paused · Resume                                  | Woolworths is paused in Valet, so this call was not started and nothing was sent (config: site-paused); ask the person to resume Woolworths in Valet                              |
+| Login given up / window closed | (Needs you item ends)                                       | The person closed the login without finishing (needs-user: gave-up); nothing was sent                                                                                             |
+| Site limiting                  | Woolworths is limiting requests · calls resume at 9:52 pm   | same, with "Try again in N seconds"                                                                                                                                               |
+| Valet's own cap                | Valet is limiting its requests to Woolworths until 10:00 pm | same                                                                                                                                                                              |
+| Missing setting                | Choose your Woolworths store                                | same title                                                                                                                                                                        |
+| Missing login                  | Give Valet your Woolworths login                            | same title                                                                                                                                                                        |
+| Failure                        | Failed · see call 7F2A                                      | The person can see it in Valet, Activity, call 7F2A                                                                                                                               |
 
 Never in the UI: manifest, egress, partition, probe, grant (as a verb shown to P2; "login Valet may
 use" instead), client (use "app" or "cloud agent"; "Connections" is the place), MCP outside
@@ -245,8 +247,7 @@ login, store, connect Claude, test it, done) · Window at 880 x 560 and 200% tex
   gone, and the Lock down dialog says so up front.
 - A confirmation that runs out while its window is on screen stays open in its Missed state; if the
   Mac was locked, it closes and the Missed item and notification remain.
-- Notifications may offer Decline (safe) but never Allow; Allow happens only in the confirmation
-  window.
+- Notifications offer Open, plus Decline for confirmations and connections; they never approve.
 - Confirmation buttons use the tool's approved title, which is reviewed with the adapter ("Remove from
   cart" / "Don't remove"); product names and other site text appear only in the body under "From the
   site".
@@ -258,8 +259,8 @@ login, store, connect Claude, test it, done) · Window at 880 x 560 and 200% tex
 - Calls take a `login=<site>/<secret>` filter, so a login page can link to the calls that used it.
 - One login page per site and secret covers every version; versions the login isn't given to yet show
   as "Not given yet" rows.
-- Reset access is one click with Undo (and ⌘Z) for 10 seconds while the old token stays valid;
-  engineering must confirm the grace period. Revoke always asks first.
+- Reset access asks first and has no Undo: a token is often reset because it leaked, so the old
+  one stops at once (round 2, P3 over P1). Revoke asks first too.
 - Apps on this Mac can call every tool (the Can reach panel says so); per-app tool limits for local
   apps are a later feature. Cloud agents choose tools when approved.
 - The cloud agent page reuses the app page template.
@@ -272,7 +273,12 @@ login, store, connect Claude, test it, done) · Window at 880 x 560 and 200% tex
    top-level. Two personas, including the Nick persona, leaned to seven.
 2. **"Sites" in the sidebar** with "adapter" kept for versions and review (assumed), or "Adapters".
 3. **Lock down** as a second kill switch beside Pause (assumed, from the security reviewer): pauses
-   every site, turns the endpoint off, revokes cloud agents, and lists what can't be undone.
+   every site, refuses every call with a "locked down" answer (the endpoint stays up so agents can say why), removes cloud agents, and lists what can't be undone.
 4. **A quick review for code-only dev builds** (assumed): when an update adds no host, path, secret or
    irreversible tool, the review is one screen and Return approves; anything that widens access gets
    the full review.
+5. **Longer confirmation time** (assumed 2 minutes, with a 5-minute option in Settings, Notifications):
+   the away persona wanted time to walk to the Mac; a longer window also means a held tool call waits
+   longer.
+6. **Calls/Audit log as tabs, Reset access without Undo, Lock down visible in the menu bar** are the
+   three choices where personas disagreed; the reasons are in `research/tests/round2-mustfix.md`.

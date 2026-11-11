@@ -1,10 +1,18 @@
-// Secrets: passwords and one-time codes (P6). One page for where they come from and which logins
-// Valet may use, and one page per login with its calls and what it can reach.
+// Secrets: passwords and one-time codes (P6). v2: story.md world (Sat 7 Nov, 9:48 pm), round 2
+// fixes (login revoke dialog).
 ;(() => {
-  const { K, shell, sheet, FRAMES } = window.WF
-  window.WF.GROUP_INTRO = window.WF.GROUP_INTRO || {}
-  window.WF.GROUP_INTRO.Secrets =
+  const WF = window.WF
+  const { K, sheet, dialog, FRAMES } = WF
+  WF.GROUP_INTRO = WF.GROUP_INTRO || {}
+  WF.GROUP_INTRO.Secrets =
     'Passwords and one-time codes. Where Valet gets them (1Password, a Keychain copy, Messages), and every login Valet may use, each with its own page: which site and version, where it may be typed, the calls that used it and what can cause it to be typed. Search finds this page for "passwords" too (IA labels).'
+
+  const SITES = [
+    ['W', 'Woolworths', 'warn'],
+    ['Y', 'Yahoo Finance', 'warn'],
+    ['W', 'Wikipedia', 'ok'],
+  ]
+  const shell = (a, p, o = {}) => WF.shell(a, p, { badges: { needs: 4 }, sites: SITES, ...o })
 
   // ---- local helpers ----
   const mono = (t) => `<span class="mono">${t}</span>`
@@ -13,7 +21,6 @@
   const ver = (v) => `<span class="wf-link mono">${v}</span>`
   const kvn = (rows, w = 120) =>
     K.kv(rows).replace('class="wf-kv"', `class="wf-kv" style="grid-template-columns:${w}px minmax(0,1fr)"`)
-  // Table built from divs: the kit's .wf-table styles every nested span as a cell.
   const grid = (head, rows, o = {}) => {
     const pad = o.compact ? '5px 12px' : '8px 12px'
     const cell = (x, bg) =>
@@ -33,7 +40,6 @@
       .join('')
     return `<div role="table" style="display:grid;grid-template-columns:${o.cols}">${th}${tr}</div>`
   }
-  // A source row: state dot, name and sentence, its status with when it was checked, its action.
   const source = (tone, name, sentence, status, actions) =>
     `<div class="row" style="align-items:flex-start;gap:10px;padding:10px 14px;border-bottom:1px solid var(--wf-line)">
       <span style="padding-top:4px">${K.dot(tone)}</span>
@@ -45,10 +51,10 @@
     'Where passwords come from',
     source(
       'ok',
-      '1Password service account',
-      'Reads the “Valet” vault. Works while your Mac is locked or 1Password is closed.',
-      'Connected · 0 logins · checked 9:46 pm',
-      K.ghost('Check now') + K.btn('Change…'),
+      'Copy in your Keychain',
+      "Copied from your 1Password item, with your approval in 1Password. Works while you're away.",
+      'Account my.1password.com · Personal vault · 1 login · re-synced Fri 6 Nov',
+      K.btn('Re-sync all'),
     ) +
       source(
         'ok',
@@ -58,11 +64,11 @@
         K.btn('Choose…'),
       ) +
       source(
-        'ok',
-        'Copy in your Keychain',
-        "Copied once from your 1Password item, with your approval in 1Password. Works while you're away.",
-        'Account my.1password.com · 1 login · copied 3 Nov',
-        K.btn('Re-sync all'),
+        'idle',
+        '1Password service account',
+        'For a vault shared with Valet. Works while your Mac is locked. For people who manage 1Password for a team.',
+        'Not set up',
+        K.btn('Set up…'),
       ),
     '',
     'flush',
@@ -80,7 +86,7 @@
         'warn',
         'From Messages',
         'Reads codes that arrive by SMS, only from the sender you approve for each site.',
-        `Off · needs Full Disk Access for Valet Messages Helper · checked 9:46 pm`,
+        'Off · needs Full Disk Access for Valet Messages Helper · checked 9:46 pm',
         K.primary('Turn on…'),
       ),
     '',
@@ -89,7 +95,7 @@
   const loginRows = [
     [
       `${K.avatar('W')}<b>Woolworths</b>`,
-      `${K.link('Woolworths login')}`,
+      K.link('Woolworths login'),
       'Keychain copy of “Woolworths”',
       mono('auth.woolworths.com.au'),
       ver('0.3.0'),
@@ -106,7 +112,7 @@
       K.btn('Review update'),
     ],
   ]
-  const overview = (over = '') => `
+  const overview = () => `
     ${K.header({
       title: 'Secrets',
       sub: 'Passwords and one-time codes Valet may type for you. Valet never shows them, stores them in traces or sends them to Claude.',
@@ -120,85 +126,48 @@
           faded: [1],
           hover: 0,
         }) +
-          `<div class="faint" style="padding:8px 12px">A login is given per site version. Logins are given from the site's page; Yahoo Finance and Wikipedia need none.</div>`,
+          `<div class="faint" style="padding:8px 12px">A login is given per site version, from the site's page. Yahoo Finance and Wikipedia need none.</div>`,
         '',
         'flush',
       )}
-    </div>${over}`
+    </div>`
 
   FRAMES.push({
     id: 'secrets',
     group: 'Secrets',
     title: 'Secrets overview',
     personas: ['P1', 'P2', 'P3', 'P6'],
-    desc: '#/secrets (⌘5). Where passwords come from, where one-time codes come from, and every login Valet may use. Each source says its state and when it was checked.',
+    desc: '#/secrets (⌘5). Where passwords come from (the Keychain copy in use first), where one-time codes come from, and every login Valet may use.',
     html: shell('secrets', overview()),
     notes: [
       [
-        250,
+        262,
         156,
-        'Sources first, each with its state and when it was checked (principle 8, P2: "where my passwords come from").',
+        'Sources first: the Keychain copy in use, from the Personal vault, as in setup and the grant sheet (story, P2 M3). Each says its state and when checked.',
       ],
+      [730, 193, 'Re-sync sits beside the copy that can go stale.'],
       [
-        718,
-        392,
-        'A Keychain copy can go stale when the password changes in 1Password, so Re-sync sits right here and on each login page.',
-      ],
-      [
-        758,
+        770,
         291,
-        'One-time codes from Messages live here, not in Settings (P1 T8, P3). Full Disk Access says its state and check time; "Turn on…" opens the steps.',
+        'One-time codes from Messages live here, not in Settings (P1 T8, P3). "Turn on…" opens the steps.',
       ],
-      [
-        805,
-        526,
-        'Each login shows where it can be typed (origin) and which site version it belongs to (P3, P4).',
-      ],
-      [1018, 560, '"Last used" is a door: it opens Calls filtered to this login (E7, P3).'],
+      [817, 540, 'Each login shows where it can be typed and which site version it belongs to (P3, P4).'],
+      [1018, 577, '"Last used" is a door to Calls filtered to this login (E7).'],
       [
         1153,
-        607,
-        'Logins are tied to a version: the waiting 0.4.0 shows "Not given yet" with its next step beside it (E1).',
+        622,
+        'Logins are tied to a version: 0.4.0 shows "Not given yet" with Review update beside it (E1, story words).',
       ],
     ],
   })
 
   // ---------------------------------------------------------------- Login page
   const usedRows = [
-    [
-      ref('9A71'),
-      '9:47 pm',
-      tool('get_cart'),
-      K.link('Claude Code'),
-      'username, password',
-      K.badge('Waiting for you', 'warn'),
-    ],
-    [
-      ref('8F2E'),
-      '9:31 pm',
-      tool('update_cart_line'),
-      K.link('Claude Code'),
-      'username, password',
-      K.badge('ok, 2 blocked', 'info'),
-    ],
-    [
-      ref('3D19'),
-      'Mon 6:20 pm',
-      tool('remove_from_cart'),
-      K.link('Claude Code'),
-      'username, password',
-      K.badge('Declined by you', 'idle'),
-    ],
-    [
-      ref('0E4B'),
-      'Sun 7:12 pm',
-      tool('get_cart'),
-      K.link('Claude Desktop'),
-      'username, password',
-      K.badge('ok', 'ok'),
-    ],
+    [ref('9A71'), 'Sat 9:47 pm', tool('get_cart'), K.badge('Needs you · login', 'warn')],
+    [ref('8F2E'), 'Sat 9:31 pm', tool('update_cart_line'), K.badge('ok, 2 blocked', 'info')],
+    [ref('2D07'), 'Fri 8:20 pm', tool('get_cart'), K.badge('ok', 'ok')],
   ]
-  const loginPage = (over = '', opts = {}) => `
+  const loginPage = () => `
     ${K.header({
       crumbs: ['Secrets', 'Logins Valet may use'],
       title: 'Woolworths login',
@@ -212,15 +181,15 @@
             'What it is',
             kvn(
               [
-                ['Site', `${K.link('Woolworths')} · version ${ver('0.3.0')} ${K.value('9f3c1a7e…e0f1')}`],
+                ['Site', `${K.link('Woolworths')} · version ${ver('0.3.0')} ${K.value('9f3c…e0f1')}`],
                 ['Fields', 'username, password'],
-                ['From', 'Copy in your Keychain of 1Password item “Woolworths”'],
-                ['Copied', `3 Nov, 8:02 pm · ${opts.synced || 'from my.1password.com'}`],
-                ['Given', `6 Nov, 8:02 pm · ${K.link('audit record 4433')}`],
+                ['From', 'Keychain copy of 1Password item “Woolworths” (Personal vault)'],
+                ['Re-synced', 'Fri 6 Nov, 8:14 pm · from my.1password.com'],
+                ['Given', `Fri 6 Nov, 8:14 pm · ${K.link('audit record 4433')}`],
               ],
               76,
             ) +
-              `<div class="faint">If you change the password in 1Password, re-sync it here. The update to ${ver('0.4.0')} asks you to keep this login or choose again.</div>`,
+              `<div class="faint">If you change the password in 1Password, re-sync it here. The update to ${ver('0.4.0')} adds a host, so it asks you to choose the login again.</div>`,
           )}
           ${K.card(
             'Where it can be typed',
@@ -231,30 +200,26 @@
         <div class="col" style="gap:16px">
           ${K.card(
             'Can reach',
-            `<div class="muted">What can cause Valet to type this login:</div>
+            `<div class="muted">What can cause Valet to type this login (9:48 pm):</div>
              ${kvn(
                [
                  ['Tools', `All 6 ${K.link('Woolworths')} tools, when the site is logged out`],
                  ['Apps', `${K.link('Claude Code')}, ${K.link('Claude Desktop')}`],
-                 ['Cloud agents', 'None (remote access is off)'],
+                 ['Cloud agents', 'None approved yet (1 asking to connect)'],
                ],
                92,
              )}`,
           )}
           ${K.card(
             'Calls that used it',
-            grid(
-              [],
-              usedRows.map(([r, t, tl, , , o]) => [r, t, tl, o]),
-              { cols: '50px 84px minmax(0,1fr) auto', compact: true },
-            ) +
-              `<div class="row" style="padding:8px 12px">${K.link('All 5 calls in 7 days')}<span class="grow"></span>${K.link('Login use in the audit log')}</div>`,
+            grid([], usedRows, { cols: '50px 90px minmax(0,1fr) auto', compact: true }) +
+              `<div class="row" style="padding:8px 12px">${K.link('All 3 calls since Fri 6 Nov')}<span class="grow"></span>${K.link('Login use in the audit log')}</div>`,
             '',
             'flush',
           )}
         </div>
       </div>
-    </div>${over}`
+    </div>`
 
   FRAMES.push({
     id: 'secrets-login',
@@ -264,28 +229,54 @@
     desc: '#/secrets/woolworths/login. Which site and version it belongs to, where it can be typed, what can cause it to be typed, and the calls that used it.',
     html: shell('secrets', loginPage()),
     notes: [
+      [624, 198, 'Site, version and adapter hash per story (9f3c…e0f1); the hash copies in full (P4, E3).'],
+      [888, 91, 'Re-sync and Revoke… in the header; Revoke asks first (secrets-revoke-login).'],
+      [514, 438, 'Where it can be typed, and the checks before every field (P3).'],
       [
-        640,
-        198,
-        'Site, version and the exact adapter hash the login is tied to; the hash copies in full (P4, E3).',
-      ],
-      [
-        888,
-        91,
-        'Re-sync and Revoke in the header. Revoke confirms with what stops working: Woolworths calls that need a login will ask you instead (E4).',
-      ],
-      [520, 422, 'Where it can be typed, and the checks before every field (P3).'],
-      [
-        710,
+        722,
         196,
-        'What can cause it to be typed: tools, apps and cloud agents (P3 Can reach, P6 "can be triggered by").',
+        'What can cause it to be typed: tools, connected apps, cloud agents (P3, P6). Cursor is not counted.',
+      ],
+      [872, 452, 'Calls that used it per story, and all 3 in Activity (P1 T6).'],
+      [588, 303, 'When it was given links to its audit record.'],
+    ],
+  })
+
+  // ---------------------------------------------------------------- Revoke login dialog
+  const revokeLogin = dialog(
+    'Revoke the Woolworths login?',
+    `<div>Valet stops typing your Woolworths login and deletes its Keychain copy. Your 1Password item isn't touched.</div>
+     <div style="background:var(--wf-paper-2);border:1px solid var(--wf-line);border-radius:8px;padding:8px 10px" class="col">
+       <span><b style="color:var(--wf-ink)">Used by</b> ${K.link('3 calls since Fri 6 Nov')}, last at 9:47 pm (${ref('9A71')})</span>
+       <span>Can be typed by all 6 Woolworths tools, for Claude Code and Claude Desktop</span>
+     </div>
+     <div>Next time Woolworths logs Valet out, calls stop with “Give Valet your Woolworths login” in Needs you until you choose one again.</div>
+     ${K.check('Also log Valet out of Woolworths now', true)}
+     <div>The waiting call 9A71 is declined. This can't be undone.</div>`,
+    `<span class="grow"></span>${K.btn('Cancel')}<span class="wf-btn" style="background:var(--wf-bad);color:#fff;border-color:var(--wf-bad)">Revoke login</span>`,
+  )
+
+  FRAMES.push({
+    id: 'secrets-revoke-login',
+    group: 'Secrets',
+    title: 'Revoke a login (dialog)',
+    personas: ['P3', 'P2', 'P5'],
+    desc: 'Opens over the login page from Revoke…. Says what stops, what it was used for, and offers to end the site session too, since revoking the login alone leaves Valet logged in.',
+    html: shell('secrets', loginPage(), { over: revokeLogin }),
+    notes: [
+      [380, 278, 'Says what stops and what is not touched (the 1Password item) (E4, P2).'],
+      [462, 326, 'Evidence: what used it and what could use it (P3).'],
+      [
+        380,
+        401,
+        'What Claude and Needs you will say next time, in the shared words ("Give Valet your Woolworths login").',
       ],
       [
-        840,
-        482,
-        "Calls that used it, and all of them in Activity, filtered (P1 T6). The audit log's login use is the second route.",
+        380,
+        441,
+        'Revoking a login leaves Valet logged in, so ending the site session is offered and ticked (P3).',
       ],
-      [562, 288, 'When it was given links to its audit record (link matrix).'],
+      [600, 509, 'Initial focus on Cancel; the red button names the verb (P5).'],
     ],
   })
 
@@ -295,10 +286,10 @@
   const messagesSheet = sheet(
     'Read one-time codes from Messages',
     `<p class="muted" style="margin:0">When a site texts you a code, Valet can read it from Messages and type it, so a login can finish while you're away. It reads only codes from the sender you approve for each site.</p>
-     ${step(1, false, 'Give Valet Messages Helper Full Disk Access', `<span class="muted">macOS keeps Messages private. In System Settings › Privacy & Security › Full Disk Access, turn on “Valet Messages Helper”.</span><div class="row">${K.primary('Open System Settings')}<span class="faint">Not given yet · checked 9:46 pm</span>${K.ghost('Check again')}</div>`)}
+     ${step(1, false, 'Give Valet Messages Helper Full Disk Access', `<span class="muted">macOS keeps Messages private. In System Settings › Privacy &amp; Security › Full Disk Access, turn on “Valet Messages Helper”.</span><div class="row">${K.primary('Open System Settings')}<span class="faint">Not given yet · checked 9:46 pm</span>${K.ghost('Check again')}</div>`)}
      ${step(2, false, 'Choose the sender for each site', `<div class="row">${K.avatar('W')}<b>Woolworths</b>${K.input('Sender, e.g. Woolworths or a short number', '260px')}</div>`)}
      <div class="faint">Turn it off any time here. Valet never reads other messages and never keeps the codes.</div>`,
-    `<span class="grow"></span>${K.btn('Cancel')}${K.primary('Turn on')}`,
+    `<span class="grow"></span>${K.btn('Cancel')}<span class="wf-btn" style="color:var(--wf-ink-3)" aria-disabled="true">Turn on</span>`,
   )
 
   FRAMES.push({
@@ -312,7 +303,7 @@
       [
         750,
         224,
-        'Full Disk Access is a step with its state and when it was checked; Check again re-checks (principle 8). Today it fails silently later.',
+        'Full Disk Access is a step with its state and when checked; Check again re-checks (principle 8).',
       ],
       [728, 282, 'Codes are read only from the sender approved for each site.'],
       [790, 348, 'Turn on stays focusable but says why it is unavailable until access is given (P5).'],

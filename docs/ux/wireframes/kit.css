@@ -77,7 +77,7 @@
   min-height: 0;
 }
 .wf-side {
-  width: 212px;
+  width: 224px;
   flex: none;
   border-right: 1px solid var(--wf-line);
   background: var(--wf-paper-2);
@@ -128,7 +128,7 @@
 }
 .wf-alert {
   margin-left: auto;
-  background: var(--wf-alert);
+  background: var(--wf-act);
   color: #fff;
   border-radius: 9px;
   font-size: 10.5px;
@@ -211,7 +211,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  height: 26px;
+  height: 28px;
   padding: 0 10px;
   border: 1px solid var(--wf-line-2);
   border-radius: 6px;
@@ -241,7 +241,7 @@
   color: var(--wf-ink-3);
 }
 .wf-btn.lg {
-  height: 34px;
+  height: 36px;
   padding: 0 16px;
   font-size: 13px;
 }
@@ -847,4 +847,13 @@
 }
 .pad {
   padding: 12px 14px;
+}
+.wf-shellstatus {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: var(--wf-tint-warn);
+  border-bottom: 1px solid var(--wf-line);
 }
