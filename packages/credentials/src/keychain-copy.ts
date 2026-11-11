@@ -13,7 +13,7 @@
 
 import { CredentialError, type CredentialProvider, type SecretField, type SecretValue } from '@valet/core'
 import { parseItemRef } from './item-ref'
-import type { KeychainHelper } from './keychain-helper'
+import type { KeychainStore } from './keychain-helper'
 
 /** The Keychain service the copies live under. The desktop app's dev build uses its own. */
 export const COPY_SERVICE = 'valet.copy'
@@ -101,14 +101,14 @@ function isInstant(value: unknown): value is string {
 }
 
 export interface KeychainCopyOptions {
-  readonly keychain: KeychainHelper
+  readonly keychain: KeychainStore
   readonly service?: string
 }
 
 /** Resolves keychain-copy grants from the copy. Never reaches 1Password. */
 export class KeychainCopyProvider implements CredentialProvider {
   readonly kind = 'keychain-copy' as const
-  readonly keychain: KeychainHelper
+  readonly keychain: KeychainStore
   readonly service: string
 
   constructor(options: KeychainCopyOptions) {

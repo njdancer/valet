@@ -1,5 +1,6 @@
 // The person's and the agent's first session with the demo, in order, on one userData: review and
-// approve Woolworths, grant its login from the demo vault item and its SMS codes from Messages,
+// approve Woolworths, grant its login from the person's (fake) 1Password item, which its prompt asks
+// them to allow and Valet copies into the demo's Keychain, and its SMS codes from Messages,
 // then search, add (which logs in on the fake's Auth0, password and SMS code), read, update and
 // remove over MCP. Then the secret scan, a wrong password typed only once (AC10), the site's block
 // opening the breaker, and the audit chain (verified, then broken by an edit on disk).
@@ -8,9 +9,12 @@ import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { expect, type Page, test } from '@playwright/test'
 import {
+  approveInKeyhold,
   appWindows,
   blockSite,
   CONTROL,
+  COPY_ITEM_ID,
+  COPY_ITEM_TITLE,
   callTool,
   clientTokens,
   connectMcp,
@@ -19,6 +23,8 @@ import {
   type Launched,
   launch,
   type McpClient,
+  ONEPASSWORD_ACCOUNT,
+  onePasswordPrompts,
   passwordPosts,
   renderedText,
   secretsIn,
@@ -43,6 +49,11 @@ test.beforeAll(async () => {
   userData = tempDir('journey')
   launched = await launch(userData)
   control = await windowWithTitle(launched.app, CONTROL)
+  // The person's 1Password account, as setup or Settings names it (setup.spec types it).
+  await control.evaluate(
+    (account) => window.valet?.settings.set({ onePasswordAccount: account }),
+    ONEPASSWORD_ACCOUNT,
+  )
 })
 
 test.afterAll(async () => {
@@ -115,7 +126,7 @@ test('approve in the review screen; the tools appear to MCP clients', async () =
     ])
 })
 
-test('grant login from the demo vault item, offered only the manifest’s origin', async () => {
+test('grant login from the person’s 1Password item, offered only the manifest’s origin', async () => {
   // Approving with “grant next” ticked opens the sheet; otherwise it is on the adapter page.
   const sheet = control.getByRole('dialog', { name: 'Grant a secret' })
   if (!(await sheet.isVisible().catch(() => false))) {
@@ -129,8 +140,10 @@ test('grant login from the demo vault item, offered only the manifest’s origin
   const authOrigin = status?.secretRequests.find((s) => s.name === 'login')?.origins
   expect(authOrigin).toEqual([expect.stringMatching(/^https:\/\/auth\.woolworths\.test:\d+$/)])
 
-  // The test provider, its one item, and exactly the origins the manifest asked for.
-  await sheet.getByText('Woolworths (demo account)').click()
+  // Listing the person's vaults asks the fake 1Password; they unlock it and allow Valet. Then the
+  // item, and exactly the origins the manifest asked for.
+  await approveInKeyhold(launched)
+  await sheet.getByText(COPY_ITEM_TITLE).click()
   await expect(sheet.getByRole('radio', { name: /Woolworths \(demo account\)/ })).toBeChecked()
   const originBoxes = sheet.getByRole('checkbox')
   await expect(originBoxes).toHaveCount(1)
@@ -139,25 +152,29 @@ test('grant login from the demo vault item, offered only the manifest’s origin
   await expect(sheet.getByText(/www\.woolworths\.test/)).toHaveCount(0)
   await sheet.getByRole('button', { name: 'Grant', exact: true }).click()
   await expect(sheet).toBeHidden()
+  // The copy was made under the approval the listing got: one prompt in all.
+  expect(await onePasswordPrompts(launched)).toEqual([
+    { kind: 'sdk', integration: 'valet', state: 'allowed' },
+  ])
 
   // The main process refuses an origin the manifest didn't ask for, whatever the renderer sends.
   const hash = status?.hash ?? ''
   const widened = await control.evaluate(
-    ({ hash, authOrigin }) =>
+    ({ hash, authOrigin, itemRef }) =>
       window.valet?.grants
         .make({
           adapterId: 'woolworths',
           adapterHash: hash,
           secret: 'login',
-          provider: 'fake',
-          itemRef: 'demo-woolworths',
+          provider: 'keychain-copy',
+          itemRef,
           origins: [authOrigin, 'https://evil.test'],
         })
         .then(
           () => 'made',
           () => 'refused',
         ),
-    { hash, authOrigin: authOrigin?.[0] ?? '' },
+    { hash, authOrigin: authOrigin?.[0] ?? '', itemRef: COPY_ITEM_ID },
   )
   expect(widened).toBe('refused')
 })
@@ -170,7 +187,7 @@ test('grant SMS codes from Messages for the declared sender', async () => {
   await sheet.getByRole('button', { name: 'Grant', exact: true }).click()
   await expect(sheet).toBeHidden()
   const detail = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
-  expect(detail?.secretRequests.map((s) => s.grant?.itemTitle)).toEqual(['Woolworths (demo account)'])
+  expect(detail?.secretRequests.map((s) => s.grant?.itemTitle)).toEqual([COPY_ITEM_TITLE])
   expect(detail?.messages.map((m) => [m.sender, m.grant?.itemId])).toEqual([['Woolworths', 'Woolworths']])
   // Codes are typed where Auth0 asks for them, the login's origin, and nowhere else by default.
   const loginOrigins = detail?.secretRequests.find((s) => s.name === 'login')?.origins

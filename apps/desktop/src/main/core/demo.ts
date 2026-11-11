@@ -1,7 +1,10 @@
-// Demo mode's credentials: the fake site's own test account behind the fake provider, and one-time
-// codes read from the fake site's outbox in place of Messages. Nothing here can reach a real
-// account: the fake provider holds fixed test values, and real 1Password and Messages are off.
-// Imported only by electron/demo.ts, which only a demo build bundles (see electron.vite.config.ts).
+// Demo mode's credentials: the real 1Password wiring (realCredentials) over the fake 1Password
+// (fakes/onepassword) and a MemoryKeychain, with one-time codes read from the fake site's outbox in
+// place of Messages. The person's 1Password is the fake's "Tess Tester" account; the Keychain copy
+// (D6) is made through the fake desktop app's prompt, exactly as a real one is. Nothing here can
+// reach a real account: no process is started, no file outside userData is read, and the SDK is
+// the fake's. Imported only by electron/demo.ts, which only a demo build bundles (see
+// electron.vite.config.ts).
 
 import {
   CredentialError,
@@ -10,9 +13,26 @@ import {
   type OtpReader,
   SecretValue,
 } from '@valet/core'
-import { FakeCredentialProvider } from '@valet/credentials'
+import {
+  desktopAuthClientFactory,
+  type KeychainStore,
+  MemoryKeychain,
+  nodeTimers,
+  type OnePasswordSdk,
+  type Spawner,
+  serviceAccountClientFactory,
+} from '@valet/credentials'
+import {
+  DEMO_ONEPASSWORD_ACCOUNT,
+  DEMO_SHOP_ITEM_ID,
+  DEMO_SHOP_ITEM_TITLE,
+  DEMO_VAULTS,
+  demoOnePassword,
+  FakeOnePassword,
+  fakeSdk,
+} from '@valet/fake-onepassword'
 import type { VaultItem } from '../../shared/api'
-import type { Credentials } from './credentials'
+import { type Credentials, type FileFacts, realCredentials } from './credentials'
 
 /** The fake site's account with SMS MFA (its CLI's second dev account). Test values only. */
 export const DEMO_ACCOUNT = {
@@ -23,7 +43,28 @@ export const DEMO_ACCOUNT = {
   firstName: 'Tess',
 } as const
 
-export const DEMO_ITEM: VaultItem = { id: 'demo-woolworths', title: 'Woolworths (demo account)' }
+/** The fake 1Password account demo mode's setup names (Settings' onePasswordAccount). */
+export const DEMO_ONEPASSWORD = DEMO_ONEPASSWORD_ACCOUNT
+
+/** The shop's login in the fake 1Password, as the grant sheet lists it for a Keychain copy. */
+export const DEMO_ITEM: VaultItem = {
+  id: `${DEMO_VAULTS.personal.id}-${DEMO_SHOP_ITEM_ID}`,
+  title: `${DEMO_SHOP_ITEM_TITLE} (${DEMO_VAULTS.personal.title})`,
+}
+
+/** The demo's Keychain copies' service, apart from both real builds'. */
+export const DEMO_COPY_SERVICE = 'valet.demo.copy'
+
+/** The fake 1Password holding the fake site's account, its login typed only at `signInOrigin`. */
+export function demoOnePasswordFake(signInOrigin?: string): FakeOnePassword {
+  return new FakeOnePassword(
+    demoOnePassword({
+      username: DEMO_ACCOUNT.username,
+      password: DEMO_ACCOUNT.password,
+      ...(signInOrigin === undefined ? {} : { website: signInOrigin }),
+    }),
+  )
+}
 
 /** Who the fake's SMS codes come from: the sender the adapter's manifest declares. */
 export interface OutboxMessage {
@@ -88,30 +129,50 @@ export function savedDemoPorts(text: string | null): DemoPorts | null {
   return ok(port) && ok(authPort) && port !== authPort ? { port, authPort } : null
 }
 
-export function demoCredentials(otp: OtpReader): Credentials {
-  const fake = new FakeCredentialProvider({
-    items: { [DEMO_ITEM.id]: { username: DEMO_ACCOUNT.username, password: DEMO_ACCOUNT.password } },
+// Demo mode starts no process and reads no file for its credentials: op is never found, and the
+// Keychain helper is never run.
+const noProcesses: Spawner = () => {
+  throw Object.assign(new Error('demo mode starts no processes'), { code: 'ENOENT' })
+}
+const noFiles: FileFacts = {
+  lstat: () => Promise.reject(new Error('demo mode reads no files')),
+  realpath: () => Promise.reject(new Error('demo mode reads no files')),
+}
+
+export interface DemoCredentialsOptions {
+  /** The fake 1Password; one with the fake site's account by default. */
+  readonly onePassword?: FakeOnePassword
+  /** Where the copies live; an empty MemoryKeychain by default. */
+  readonly keychain?: KeychainStore
+}
+
+export function demoCredentials(otp: OtpReader, options: DemoCredentialsOptions = {}): Credentials {
+  const fake = options.onePassword ?? demoOnePasswordFake()
+  const sdk = async () => fakeSdk(fake) as unknown as OnePasswordSdk
+  const base = realCredentials({
+    files: noFiles,
+    spawner: noProcesses,
+    timers: nodeTimers,
+    uid: -1,
+    groups: [],
+    keychain: options.keychain ?? new MemoryKeychain(),
+    copyService: DEMO_COPY_SERVICE,
+    serviceAccountReady: async () => true,
+    serviceAccountClient: serviceAccountClientFactory(sdk),
+    desktopClient: desktopAuthClientFactory(sdk),
+    messagesHelper: null,
+    messagesReader: () => otp,
+    ownsToken: false,
   })
   return {
-    providers: () => ({ fake }),
+    ...base,
+    // Codes come from the fake's outbox whatever the Messages setting says: there is no Messages
+    // database to grant access to.
     otpReader: () => otp,
     async status() {
-      return [
-        { kind: 'fake', available: true, unavailableReason: null },
-        { kind: 'onepassword-service-account', available: false, unavailableReason: 'disabled' },
-        { kind: 'onepassword-cli', available: false, unavailableReason: 'disabled' },
-        { kind: 'messages', available: true, unavailableReason: null },
-      ]
+      return (await base.status()).map((s) =>
+        s.kind === 'messages' ? { ...s, available: true, unavailableReason: null } : s,
+      )
     },
-    async vaultItems(provider) {
-      return provider === 'fake' ? [DEMO_ITEM] : []
-    },
-    async configure() {},
-    // Demo grants are fake-provider grants: there is no copy to make or keep.
-    copyItem: () => Promise.reject(new CredentialError('unavailable')),
-    async refreshCopies() {},
-    async forgetCopy() {},
-    // Nothing of the demo's is in the Keychain or launchd.
-    erase: async () => [],
   }
 }

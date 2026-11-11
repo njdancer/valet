@@ -4,7 +4,8 @@
 //
 // Nothing here reaches a real site, 1Password, Messages or the Keychain: demo mode runs the fake
 // Woolworths in the app's own process, behind a host resolver rule that maps its names (and, in e2e
-// mode, the canary host) to 127.0.0.1.
+// mode, the canary host) to 127.0.0.1; its 1Password is the fake one (fakes/onepassword, "Keyhold"),
+// whose prompts open in windows titled [keyhold], and its Keychain is a file in userData.
 
 import { execFileSync } from 'node:child_process'
 import {
@@ -22,7 +23,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { _electron, type ElectronApplication, type Locator, type Page } from '@playwright/test'
+import { _electron, type ElectronApplication, expect, type Locator, type Page } from '@playwright/test'
+import {
+  DEMO_ONEPASSWORD_ACCOUNT,
+  DEMO_SHOP_ITEM_ID,
+  DEMO_SHOP_ITEM_TITLE,
+  DEMO_VAULTS,
+} from '@valet/fake-onepassword'
 
 const require = createRequire(import.meta.url)
 export const electronPath = require('electron') as unknown as string
@@ -51,6 +58,99 @@ export function demoAccountMatches(): boolean {
 
 /** Window title markers e2e mode sets (README, "For the end-to-end suite"). */
 export const CONTROL = '[control]'
+/** The fake 1Password's prompt pages (src/main/electron/demo.ts, showKeyholdPrompts), on loopback. */
+const KEYHOLD_PROMPT = /^http:\/\/127\.0\.0\.1:\d+\/prompt\/prompt-\d+$/
+
+/**
+ * The window showing the fake 1Password's prompt that is waiting on the person. A prompt already
+ * answered may still be on screen for a moment, so it is found by the pending prompt's id.
+ */
+export async function keyholdPrompt(app: ElectronApplication, timeoutMs = 30_000): Promise<Page> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const pending = await app.evaluate(() => {
+      const hook = (globalThis as { __valetE2e?: DemoHook }).__valetE2e
+      if (hook === undefined) throw new Error('no e2e hook: not a demo build in e2e mode')
+      // Prompt ids count from 1 in the order they were raised.
+      return hook.onePasswordPrompts().findLastIndex((p) => p.state === 'pending') + 1
+    })
+    if (pending > 0) {
+      const page = app
+        .windows()
+        .find((p) => !p.isClosed() && KEYHOLD_PROMPT.test(p.url()) && p.url().endsWith(`/prompt-${pending}`))
+      if (page !== undefined) return page
+    }
+    await sleep(100)
+  }
+  throw new Error('no fake 1Password prompt opened')
+}
+
+/** The fake 1Password's account: the name setup asks for, and its unlock password. Test values. */
+export const ONEPASSWORD_ACCOUNT = DEMO_ONEPASSWORD_ACCOUNT.name
+export const ONEPASSWORD_UNLOCK = DEMO_ONEPASSWORD_ACCOUNT.unlockPassword
+/** The shop's login in the fake 1Password, as the grant sheet lists it: `<vault id>-<item id>`. */
+export const COPY_ITEM_ID = `${DEMO_VAULTS.personal.id}-${DEMO_SHOP_ITEM_ID}`
+export const COPY_ITEM_TITLE = `${DEMO_SHOP_ITEM_TITLE} (${DEMO_VAULTS.personal.title})`
+
+/**
+ * Names the fake 1Password's account in Settings and has it allow every prompt at once, for specs
+ * that grant the login without driving the fake's window. Its approvals last a launch, so call it
+ * after each one.
+ */
+export async function connectFakeOnePassword(launched: Launched, control: Page): Promise<void> {
+  await control.evaluate(
+    (account) => window.valet?.settings.set({ onePasswordAccount: account }),
+    ONEPASSWORD_ACCOUNT,
+  )
+  await launched.app.evaluate(() => {
+    const hook = (globalThis as { __valetE2e?: DemoHook }).__valetE2e
+    if (hook === undefined) throw new Error('no e2e hook: not a demo build in e2e mode')
+    hook.onePasswordAutoApprove(true)
+  })
+}
+
+/**
+ * Answers the fake 1Password's prompt as the person would, in its own window: unlocks it with the
+ * account password if it is locked, then allows Valet. Returns the window, which closes itself.
+ */
+export async function approveInKeyhold(launched: Launched, timeoutMs = 30_000): Promise<Page> {
+  const prompt = await keyholdPrompt(launched.app, timeoutMs)
+  const allow = prompt.getByRole('button', { name: 'Allow' })
+  const password = prompt.getByLabel('Account password')
+  await expect(allow.or(password)).toBeVisible()
+  if (await password.isVisible()) {
+    await expect(prompt.getByRole('heading', { name: 'Unlock Keyhold' })).toBeVisible()
+    await password.fill(ONEPASSWORD_UNLOCK)
+    await prompt.getByRole('button', { name: 'Unlock' }).click()
+  }
+  await expect(prompt.getByRole('heading', { name: 'Allow Valet to use your account?' })).toBeVisible()
+  await expect(prompt.getByText(ONEPASSWORD_ACCOUNT)).toBeVisible()
+  await allow.click()
+  await expect(prompt.getByRole('status')).toHaveText('Access allowed. You can close this window.')
+  return prompt
+}
+
+/** Every prompt the fake 1Password has raised this launch. */
+export async function onePasswordPrompts(
+  launched: Launched,
+): Promise<readonly { readonly kind: string; readonly integration: string; readonly state: string }[]> {
+  return launched.app.evaluate(() => {
+    const hook = (globalThis as { __valetE2e?: DemoHook }).__valetE2e
+    if (hook === undefined) throw new Error('no e2e hook: not a demo build in e2e mode')
+    return [...hook.onePasswordPrompts()]
+  })
+}
+
+/** The demo Keychain's items (service and account; the values never leave the main process). */
+export async function keychainItems(
+  launched: Launched,
+): Promise<readonly { readonly service: string; readonly account: string }[]> {
+  return launched.app.evaluate(() => {
+    const hook = (globalThis as { __valetE2e?: DemoHook }).__valetE2e
+    if (hook === undefined) throw new Error('no e2e hook: not a demo build in e2e mode')
+    return [...hook.keychainItems()]
+  })
+}
 
 export interface Launched {
   readonly app: ElectronApplication
@@ -338,6 +438,35 @@ interface DemoHook {
   wrongPassword(on: boolean): void
   passwordPosts(): number
   pickupStores(): readonly (number | null)[]
+  onePasswordAutoApprove(on: boolean): void
+  onePasswordLock(): void
+  onePasswordPrompts(): readonly {
+    readonly kind: string
+    readonly integration: string
+    readonly state: string
+  }[]
+  keychainItems(): readonly { readonly service: string; readonly account: string }[]
+  onePasswordChangePassword(password: string): void
+  copyIsCurrent(): boolean
+}
+
+/** Runs one of the fake 1Password's e2e hooks in the main process. */
+export async function onePasswordHook(
+  launched: Launched,
+  hook: 'lock' | 'changePassword' | 'copyIsCurrent',
+  arg = '',
+): Promise<boolean> {
+  return launched.app.evaluate(
+    (_electron, [hook, arg]) => {
+      const e2e = (globalThis as { __valetE2e?: DemoHook }).__valetE2e
+      if (e2e === undefined) throw new Error('no e2e hook: not a demo build in e2e mode')
+      if (hook === 'lock') e2e.onePasswordLock()
+      else if (hook === 'changePassword') e2e.onePasswordChangePassword(arg)
+      else return e2e.copyIsCurrent()
+      return true
+    },
+    [hook, arg] as const,
+  )
 }
 
 /** Logs the demo account out everywhere and makes the fake refuse its password, or stop. */

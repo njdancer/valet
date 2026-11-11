@@ -11,10 +11,13 @@ import {
   appDir,
   blockSite,
   CONTROL,
+  COPY_ITEM_ID,
+  COPY_ITEM_TITLE,
   callTool,
   changedAdapterBuild,
   chooseStore,
   clickClosing,
+  connectFakeOnePassword,
   connectMcp,
   type Launched,
   launch,
@@ -48,6 +51,7 @@ async function start(appPath?: string): Promise<void> {
     nativeTheme.themeSource = 'light'
   })
   control = await windowWithTitle(launched.app, CONTROL)
+  await connectFakeOnePassword(launched, control)
   client = await connectMcp(control, userData, 'Claude Code')
 }
 
@@ -103,7 +107,7 @@ test('the grant sheet, then the approved adapter', async () => {
   const sheet = control.getByRole('dialog', { name: 'Grant a secret' })
   if (!(await sheet.isVisible())) await route('#/adapters/woolworths/grant/login')
   await expect(sheet).toBeVisible()
-  await sheet.getByText('Woolworths (demo account)').click()
+  await sheet.getByText(COPY_ITEM_TITLE).click()
   await shot(control, 'grant-secret')
   await sheet.getByRole('button', { name: 'Grant', exact: true }).click()
   await expect(sheet).toBeHidden()
@@ -161,14 +165,14 @@ test('a changed bundle under review, and its irreversible tool’s confirmation'
   const detail = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
   const origins = detail?.secretRequests[0]?.origins ?? []
   await control.evaluate(
-    ({ hash, origins }) =>
+    ({ hash, origins, itemRef }) =>
       Promise.all([
         window.valet?.grants.make({
           adapterId: 'woolworths',
           adapterHash: hash,
           secret: 'login',
-          provider: 'fake',
-          itemRef: 'demo-woolworths',
+          provider: 'keychain-copy',
+          itemRef,
           origins,
         }),
         window.valet?.grants.make({
@@ -180,7 +184,7 @@ test('a changed bundle under review, and its irreversible tool’s confirmation'
           origins,
         }),
       ]),
-    { hash: detail?.hash ?? '', origins },
+    { hash: detail?.hash ?? '', origins, itemRef: COPY_ITEM_ID },
   )
   const call: Promise<ToolResult> = callTool(mcp(), 'woolworths_remove_from_cart', { stockcode })
   if (launched === null) throw new Error('not launched')

@@ -24,7 +24,7 @@ import { LoginAttemptMarker } from '@valet/runtime'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { dataPaths } from '../../src/main/core/constants'
 import { type Credentials, disabledOtpReader } from '../../src/main/core/credentials'
-import { DEMO_ACCOUNT, demoCredentials } from '../../src/main/core/demo'
+import { DEMO_ACCOUNT } from '../../src/main/core/demo'
 import type { EraseKind, EraseReport } from '../../src/main/core/erase'
 import type { AppNotification } from '../../src/main/core/notifications'
 import { builtinAdapter } from '../../src/main/core/registry'
@@ -43,6 +43,7 @@ import {
   shopDefinition,
   storeShopDefinition,
 } from './fixtures'
+import { testCredentials } from './test-credentials'
 import { tunnelFetch } from './tunnel-fetch'
 
 const TOKEN = 't'.repeat(43)
@@ -128,7 +129,7 @@ async function setup(
       driver.reporters = reporters
       return driver
     },
-    credentials: options.credentials ?? demoCredentials(disabledOtpReader),
+    credentials: options.credentials ?? testCredentials(disabledOtpReader),
     startEndpoint: async (caller, clients, onSessionsChanged): Promise<SessionReportingEndpoint> => {
       endpoint.caller = caller
       endpoint.sessionsChanged = onSessionsChanged
@@ -367,9 +368,9 @@ describe('an update', () => {
 })
 
 describe('grants', () => {
-  /** The demo credentials plus a Keychain copy that records what it is asked to do. */
+  /** The test credentials plus a Keychain copy that records what it is asked to do. */
   function copyingCredentials(fail = false) {
-    const demo = demoCredentials(disabledOtpReader)
+    const demo = testCredentials(disabledOtpReader)
     const copied: { itemRef: string; fields: readonly string[] }[] = []
     const forgotten: string[] = []
     const credentials: Credentials = {
@@ -896,11 +897,11 @@ describe('notifications', () => {
 })
 
 describe('reset and uninstall', () => {
-  /** Credentials that record an erase, over the demo's. */
+  /** Credentials that record an erase, over the test ones. */
   function erasable(failed: readonly ('keychain-copies' | 'keychain-token' | 'messages-helper')[] = []) {
     const erases: number[] = []
     const credentials: Credentials = {
-      ...demoCredentials(disabledOtpReader),
+      ...testCredentials(disabledOtpReader),
       erase: async () => {
         erases.push(Date.now())
         return failed

@@ -41,15 +41,44 @@ export const ACTIVE_ONLY: ItemStateFilter = { type: 'ByState', content: { active
 export type SecretsClientFactory = (token: SecretValue) => Promise<SecretsClient>
 
 /**
- * The real factory. The SDK takes its token as a string, so this is one of the few places outside
- * the privileged filler that reveals a secret; the plaintext goes straight to the SDK.
+ * The part of @1password/sdk's module the factories use. The real one is imported on first use; the
+ * fake 1Password (fakes/onepassword) hands over its own, so demo mode and tests run these same
+ * factories against it.
  */
-export const sdkClientFactory: SecretsClientFactory = async (token) => {
-  const sdk = await import('@1password/sdk')
-  return token.reveal((plaintext) =>
-    sdk.createClient({ auth: plaintext, integrationName: 'valet', integrationVersion: '0.0.0' }),
-  )
+export interface OnePasswordSdk {
+  createClient(config: {
+    readonly auth: string | object
+    readonly integrationName: string
+    readonly integrationVersion: string
+  }): Promise<unknown>
+  readonly DesktopAuth: new (accountName: string) => object
 }
+
+export type OnePasswordSdkLoader = () => Promise<OnePasswordSdk>
+
+/** The real SDK. */
+export const loadOnePasswordSdk: OnePasswordSdkLoader = async () =>
+  (await import('@1password/sdk')) as unknown as OnePasswordSdk
+
+/** How Valet names itself to 1Password, which shows it when the person approves. */
+export const INTEGRATION = { integrationName: 'valet', integrationVersion: '0.0.0' } as const
+
+/**
+ * A service-account factory over `load`'s SDK. The SDK takes its token as a string, so this is one
+ * of the few places outside the privileged filler that reveals a secret; the plaintext goes
+ * straight to the SDK.
+ */
+export function serviceAccountClientFactory(load: OnePasswordSdkLoader): SecretsClientFactory {
+  return async (token) => {
+    const sdk = await load()
+    return token.reveal(
+      (plaintext) => sdk.createClient({ auth: plaintext, ...INTEGRATION }) as Promise<SecretsClient>,
+    )
+  }
+}
+
+/** The real factory. */
+export const sdkClientFactory: SecretsClientFactory = serviceAccountClientFactory(loadOnePasswordSdk)
 
 export interface OnePasswordServiceAccountOptions {
   readonly tokenSource: TokenSource

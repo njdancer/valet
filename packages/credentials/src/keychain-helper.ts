@@ -40,14 +40,27 @@ export function isKeychainService(service: string): boolean {
   return SERVICE.test(service)
 }
 
-function checkItem(service: string, account: string): void {
+/** Refuses (not-found) a service or account the helper would refuse. */
+export function checkKeychainItem(service: string, account: string): void {
   const bytes = Buffer.byteLength(account, 'utf8')
   if (!isKeychainService(service) || bytes === 0 || bytes > 512 || CONTROL.test(account)) {
     throw new CredentialError('not-found')
   }
 }
 
-export class KeychainHelper {
+/**
+ * What Valet keeps in its own Keychain items: the helper on a Mac, MemoryKeychain in demo mode and
+ * tests. Each method's contract is KeychainHelper's.
+ */
+export interface KeychainStore {
+  read(service: string, account: string): Promise<SecretValue>
+  info(service: string, account: string): Promise<string | null>
+  write(service: string, account: string, secret: Buffer, comment: string): Promise<void>
+  delete(service: string, account: string): Promise<void>
+  purge(service: string): Promise<void>
+}
+
+export class KeychainHelper implements KeychainStore {
   readonly #options: Required<KeychainHelperOptions>
 
   constructor(options: KeychainHelperOptions) {
@@ -61,7 +74,7 @@ export class KeychainHelper {
 
   /** The item's secret, exactly as stored. The caller disposes it. */
   async read(service: string, account: string): Promise<SecretValue> {
-    checkItem(service, account)
+    checkKeychainItem(service, account)
     const outcome = await this.#run(['read', service, account], MAX_SECRET_BYTES)
     const stdout = succeeded(outcome)
     if (stdout.length === 0) throw new CredentialError('not-found')
@@ -70,7 +83,7 @@ export class KeychainHelper {
 
   /** The item's comment, or null when there is no such item. Never reads the secret. */
   async info(service: string, account: string): Promise<string | null> {
-    checkItem(service, account)
+    checkKeychainItem(service, account)
     const outcome = await this.#run(['info', service, account], MAX_COMMENT_BYTES)
     if (outcome.kind === 'exited' && outcome.code === KEYCHAIN_EXIT.notFound) return null
     const stdout = succeeded(outcome)
@@ -85,7 +98,7 @@ export class KeychainHelper {
    */
   async write(service: string, account: string, secret: Buffer, comment: string): Promise<void> {
     try {
-      checkItem(service, account)
+      checkKeychainItem(service, account)
       if (
         secret.length === 0 ||
         secret.length > MAX_SECRET_BYTES ||
@@ -103,7 +116,7 @@ export class KeychainHelper {
 
   /** Removes the item. One that isn't there is not an error. */
   async delete(service: string, account: string): Promise<void> {
-    checkItem(service, account)
+    checkKeychainItem(service, account)
     const outcome = await this.#run(['delete', service, account], 1024)
     if (outcome.kind === 'exited' && outcome.code === KEYCHAIN_EXIT.notFound) return
     succeeded(outcome).fill(0)
@@ -150,11 +163,11 @@ function succeeded(outcome: ProcessOutcome): Buffer {
 
 /** The service-account token, read through the helper instead of /usr/bin/security. */
 export class HelperKeychainTokenSource implements TokenSource {
-  readonly #helper: KeychainHelper
+  readonly #helper: KeychainStore
   readonly #service: string
   readonly #account: string
 
-  constructor(helper: KeychainHelper, service: string, account: string) {
+  constructor(helper: KeychainStore, service: string, account: string) {
     this.#helper = helper
     this.#service = service
     this.#account = account

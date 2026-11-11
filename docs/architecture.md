@@ -48,6 +48,10 @@ from Electron. Where we copy it or deliberately depart from it, this doc says so
 - **`fakes/woolworths-site`**: a local stand-in for woolworths.com.au on real `node:http(s)`. It
   records every request, has an Akamai-like rate limiter and a hostile variant for each guard,
   and comes with an exfil sink and a test certificate generator.
+- **`fakes/onepassword`**: a fake 1Password ("Keyhold", its own look): the SDK module (service
+  account and DesktopAuth clients), the `op` CLI behind a spawner, and the desktop app's windows
+  (unlock, allow or deny an integration, the "Integrate with other apps" switch) on loopback. Demo
+  mode and the e2e suite run Valet's real 1Password wiring against it.
 - **`apps/desktop`**: the menu-bar app, its wiring, windows and packaging. Not written yet.
 - **`spikes/*`**: throwaway experiments run by hand: spike 1 (manual login and handoff, not yet
   run) and the live probe (`02-woolworths-shapes`).
@@ -339,6 +343,10 @@ As built in round 1 (about 1,800 unit tests, about 99% line coverage):
 - `fakes/woolworths-site`: real HTTP(S) servers on port 0 that record every request, with an
   Akamai-like limiter and hostile variants (a form posting elsewhere, an open redirect, a login in
   a cross-origin frame, wrong input types), plus an exfil sink that answers everything with 200.
+- `fakes/onepassword`: one in-memory 1Password behind three faces (the SDK, `op`, and the app's
+  prompt windows), with 1Password's error wording, approvals that lapse after ten idle minutes or a
+  lock, TOTP codes, and a log of every call that never holds a value. `credentials` runs its real
+  providers against it.
 - **Canary tests** in `auth-flow` and `credentials`: unique secrets seeded and searched for in
   every outcome, audit event, error, log and stdio stream, with an assertion that they were
   actually typed.

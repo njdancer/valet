@@ -1,7 +1,9 @@
 // First-run setup, end to end (AC2, AC3): a first launch opens setup in the control panel, and the
-// person walks it in order. 1Password is demo mode's test provider; the approval is the bundled
-// Woolworths adapter's review; the grant is the demo vault item with origins exactly the fake's
-// auth origin; then Claude Code and Claude Desktop are added and their setup copied. A real MCP
+// person walks it in order. 1Password is the fake one (Keyhold): the person names its account, and
+// granting the login opens its prompt, which they unlock and allow, and Valet copies the item into
+// the demo's Keychain (D6). The approval is the bundled Woolworths adapter's review; the grant has
+// origins exactly the fake's auth origin; then Claude Code and Claude Desktop are added and their
+// setup copied. A real MCP
 // client with Claude Code's own token then lists the adapter's six namespaced tools with their
 // annotations. Finishing closes setup for good: a relaunch opens the adapters page.
 
@@ -10,12 +12,18 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { expect, type Page, test } from '@playwright/test'
 import {
+  approveInKeyhold,
   appWindows,
   CONTROL,
+  COPY_ITEM_ID,
+  COPY_ITEM_TITLE,
   clientConfig,
+  keychainItems,
   type Launched,
   launch,
   type McpClient,
+  ONEPASSWORD_ACCOUNT,
+  onePasswordPrompts,
   renderedText,
   secretsIn,
   tempDir,
@@ -64,9 +72,15 @@ test('a first launch opens setup at the welcome', async () => {
   await control.getByRole('link', { name: 'Continue' }).click()
 })
 
-test('1Password: the demo’s test provider is ready', async () => {
+test('1Password: naming the account makes the Keychain copy ready, and nothing asks yet', async () => {
   await expect(h1('Where logins come from')).toBeVisible()
-  await expect(control.getByText('Test provider is ready.', { exact: false })).toBeVisible()
+  await expect(control.getByText('Valet can’t reach 1Password yet.', { exact: false })).toBeVisible()
+  await control.getByRole('textbox', { name: '1Password account' }).fill(ONEPASSWORD_ACCOUNT)
+  await control.getByRole('button', { name: 'Save' }).click()
+  await expect(control.getByText('Copy in your Keychain is ready.', { exact: false })).toBeVisible()
+  // The test provider is gone from demo mode: the copy is the only way in.
+  await expect(control.getByText('Test provider')).toHaveCount(0)
+  expect(await onePasswordPrompts(launched)).toEqual([])
   await control.getByRole('link', { name: 'Continue' }).click()
 })
 
@@ -87,20 +101,36 @@ test('approve the bundled Woolworths adapter in its review, back into setup', as
   expect(woolworths?.approval).toBe('approved')
 })
 
-test('grant login from the demo item, with origins exactly the auth origin', async () => {
+test('grant login from the person’s 1Password item, approved in its prompt, with origins exactly the auth origin', async () => {
   await control.getByRole('link', { name: 'Choose an item…' }).click()
   const sheet = control.getByRole('dialog', { name: 'Grant a secret' })
   await expect(sheet).toBeVisible()
-  await sheet.getByText('Woolworths (demo account)').click()
+  // Listing the person's vaults asks 1Password: its prompt opens, locked, and the person unlocks it
+  // and allows Valet.
+  await expect(sheet.getByRole('radio', { name: /Copy in your Keychain/ })).toBeChecked()
+  await approveInKeyhold(launched)
+  await sheet.getByText(COPY_ITEM_TITLE).click()
   await expect(sheet.getByRole('checkbox')).toHaveCount(1)
   await expect(sheet.getByRole('checkbox')).toBeChecked()
   await expect(sheet.getByText(/www\.woolworths\.test/)).toHaveCount(0)
   await sheet.getByRole('button', { name: 'Grant', exact: true }).click()
   await expect(sheet).toBeHidden()
-  await expect(control.getByText(/Uses “Woolworths \(demo account\)”/)).toBeVisible()
+  await expect(
+    control.getByText(/Uses “Woolworths \(demo account\) \(Personal\)” from Copy in your Keychain/),
+  ).toBeVisible()
 
   const grants = await control.evaluate(() => window.valet?.grants.list())
   const login = grants?.find((g) => g.adapterId === 'woolworths' && g.secret === 'login')
+  expect(login?.provider).toBe('keychain-copy')
+  expect(login?.itemId).toBe(COPY_ITEM_ID)
+  // One prompt covered the listing and the copy, and the copy is in the demo's Keychain, a field each.
+  expect(await onePasswordPrompts(launched)).toEqual([
+    { kind: 'sdk', integration: 'valet', state: 'allowed' },
+  ])
+  expect((await keychainItems(launched)).map((i) => i.account).sort()).toEqual([
+    `op://${COPY_ITEM_ID.replace('-', '/')}#password`,
+    `op://${COPY_ITEM_ID.replace('-', '/')}#username`,
+  ])
   expect(login?.origins).toEqual([expect.stringMatching(/^https:\/\/auth\.woolworths\.test:\d+$/)])
   expect(login?.origins.some((o) => o.includes('www.'))).toBe(false)
   const detail = await control.evaluate(() => window.valet?.adapters.get('woolworths'))

@@ -229,11 +229,13 @@ async function main(): Promise<void> {
   let demo: DemoSite | null = null
   // The constant first, so a production build drops the import, and with it the demo chunk.
   if (__VALET_DEMO_BUILD__ && mode.demo) {
-    const { exposeToE2e, startDemoSite, trustDemoCertificate } = await import('./demo')
+    const { exposeToE2e, showKeyholdPrompts, startDemoSite, trustDemoCertificate } = await import('./demo')
     demo = await startDemoSite(app.getPath('userData'), { showcase: __VALET_SHOWCASE_BUILD__ })
     trustDemoCertificate('woolworths', demo.fingerprint)
+    showKeyholdPrompts(demo, { e2e: mode.e2e })
     if (mode.e2e) exposeToE2e(demo)
     log(`demo: fake Woolworths at ${demo.site.origin}, signing in at ${demo.site.authOrigin}`)
+    log(`demo: fake 1Password (Keyhold) at ${demo.keyhold.url}`)
     if (__VALET_SHOWCASE_BUILD__) log(`showcase build (${SHOWCASE_BUILD_MARKER})`)
   }
   const demoSite = demo
@@ -406,7 +408,7 @@ async function main(): Promise<void> {
     const bound = setTimeout(done, QUIT_BOUND_MS)
     void running
       .stop()
-      .then(() => demoSite?.site.close())
+      .then(() => Promise.all([demoSite?.site.close(), demoSite?.keyhold.close()]))
       .catch(() => undefined)
       .finally(() => {
         clearTimeout(bound)

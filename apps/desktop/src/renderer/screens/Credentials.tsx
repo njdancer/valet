@@ -112,6 +112,7 @@ function GrantRow({ grant, adapterName }: { readonly grant: GrantInfo; readonly 
   const api = useApi()
   const now = useNow(60_000)
   const action = useAction()
+  const resync = useAction()
   return (
     <tr>
       <td>
@@ -133,9 +134,9 @@ function GrantRow({ grant, adapterName }: { readonly grant: GrantInfo; readonly 
           <button
             type="button"
             className="btn ghost"
-            disabled={action.busy}
+            disabled={action.busy || resync.busy}
             title="Copy the item again from 1Password, after you change its password there. 1Password asks you to approve."
-            onClick={() => action.run(() => api.grants.resync(grant.adapterId, grant.secret))}
+            onClick={() => resync.run(() => api.grants.resync(grant.adapterId, grant.secret))}
           >
             Re-sync from 1Password
           </button>
@@ -148,6 +149,7 @@ function GrantRow({ grant, adapterName }: { readonly grant: GrantInfo; readonly 
         >
           Revoke
         </button>
+        <ActionFailed failed={resync.failed} what="re-sync from 1Password" />
         <ActionFailed failed={action.failed} what="revoke" />
       </td>
     </tr>
