@@ -272,6 +272,8 @@ function AgentPage({ agent }: { readonly agent: RemoteClientItem }) {
           .filter((s) => s.tools.length > 0)
       : []
   const items = reach.status === 'ready' ? reachItems(scoped) : null
+  const matched = new Set(scoped.flatMap((s) => s.tools.map((t) => `${s.id}.${t.name}`)))
+  const unmatched = reach.status === 'ready' ? [...granted].filter((ref) => !matched.has(ref)) : []
   const label = agent.clientName === null ? null : clientLabel(agent.clientName)
   const revoke = async () => {
     if (await action.run(() => api.remote.revokeClient(agent.id))) {
@@ -359,7 +361,7 @@ function AgentPage({ agent }: { readonly agent: RemoteClientItem }) {
             <CardTitle>Tools it may use</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
-            {scoped.length === 0 ? (
+            {granted.size === 0 ? (
               <Text tone="muted">None. It can connect, but it can’t call any tool.</Text>
             ) : (
               <ul className="m-0 flex list-none flex-col gap-2 p-0">
@@ -375,6 +377,15 @@ function AgentPage({ agent }: { readonly agent: RemoteClientItem }) {
                     </li>
                   )),
                 )}
+                {/* A tool granted on a site that is no longer approved: shown, so nothing is hidden. */}
+                {unmatched.map((ref) => (
+                  <li key={ref} className="flex flex-wrap items-center gap-2">
+                    <Code>{ref}</Code>
+                    <Text size="sm" tone="muted">
+                      its site isn’t approved now, so it can’t be called
+                    </Text>
+                  </li>
+                ))}
               </ul>
             )}
             <Text size="sm" tone="muted">

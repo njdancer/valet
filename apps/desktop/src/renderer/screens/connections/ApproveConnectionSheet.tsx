@@ -50,23 +50,26 @@ export function ApproveConnectionSheet({ armDelayMs = CONFIRM_ARM_MS }: { readon
   const close = () => navigate(href.needsYou())
   return (
     <Dialog open onOpenChange={(open) => (open ? undefined : close())}>
-      {consents.status === 'ready' ? (
-        <Consent state={consents.data} armDelayMs={armDelayMs} onClose={close} />
-      ) : (
-        <SheetContent title="Approve a connection" footer={<Button onClick={close}>Close</Button>}>
-          {consents.status === 'error' ? <Failed failed what="load the requests" /> : null}
-        </SheetContent>
-      )}
+      <Consent
+        state={consents.status === 'ready' ? consents.data : NO_REQUESTS}
+        loaded={consents.status}
+        armDelayMs={armDelayMs}
+        onClose={close}
+      />
     </Dialog>
   )
 }
 
+const NO_REQUESTS: RemoteConsentState = { requests: [], tools: [] }
+
 function Consent({
   state,
+  loaded,
   armDelayMs,
   onClose,
 }: {
   readonly state: RemoteConsentState
+  readonly loaded: 'loading' | 'error' | 'ready'
   readonly armDelayMs: number
   readonly onClose: () => void
 }) {
@@ -90,7 +93,9 @@ function Consent({
           </Button>
         }
       >
-        {answer === 'approved' ? (
+        {loaded === 'error' ? (
+          <Failed failed what="load the requests" />
+        ) : loaded === 'loading' ? null : answer === 'approved' ? (
           <Stack gap={3} align="center" className="py-4 text-center">
             <ApprovalSeal />
             <Text weight="semibold">Approved. Your browser carries on to the connector by itself.</Text>
