@@ -75,10 +75,10 @@ test.afterEach(async ({}, testInfo) => {
 })
 
 async function go(section: string): Promise<void> {
-  // The sidebar's links carry a count after the name ("Activity 7").
+  // The sidebar's links carry a count after the name ("Needs you, 3 waiting for you").
   await control
-    .getByRole('complementary', { name: 'Sections' })
-    .getByRole('link', { name: new RegExp(`^${section}(\\s+\\d+)?$`) })
+    .getByRole('navigation', { name: 'Places' })
+    .getByRole('link', { name: new RegExp(`^${section}\\b`) })
     .click()
 }
 
