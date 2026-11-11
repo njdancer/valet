@@ -6,7 +6,7 @@ on:
     paths: [.github/workflows/demo-probe.yml]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   probe:
@@ -25,10 +25,11 @@ jobs:
         run: ffmpeg -hide_banner -f avfoundation -list_devices true -i "" 2>&1 | tail -20 || true
       - name: record with ffmpeg
         run: |
+          system_profiler SPDisplaysDataType | grep -i resolution || true
           mkdir -p out
           ffmpeg -hide_banner -y -f avfoundation -framerate 15 -capture_cursor 1 -i "Capture screen 0:none" -t 12 -pix_fmt yuv420p out/ffmpeg.mp4 > out/ffmpeg.log 2>&1 &
           sleep 2
-          open -a TextEdit; sleep 3; osascript -e 'tell application "TextEdit" to make new document with properties {text:"hello from the probe"}' || true
+          open -a TextEdit; sleep 3
           open -a Safari https://example.com || true
           sleep 9; wait || true
           tail -20 out/ffmpeg.log; ls -la out
@@ -38,6 +39,11 @@ jobs:
           ls -la out
       - name: still screenshot
         run: screencapture -x out/still.png; ls -la out
+      - name: push the recordings to a branch the thread can fetch
+        run: |
+          cd out && git init -q -b demo-recordings && git add -A
+          git -c user.name=ci -c user.email=ci@example.invalid commit -qm "probe ${{ github.run_id }}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" HEAD:refs/heads/demo-recordings/probe
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
