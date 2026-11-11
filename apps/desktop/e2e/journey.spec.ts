@@ -290,12 +290,12 @@ test('the activity screen lists the calls; add_to_cart’s trace shows the login
   for (const tool of ['get_cart', 'remove_from_cart', 'set_cart_quantity', 'add_to_cart', 'search_products'])
     await expect(calls.getByRole('link', { name: tool, exact: true }).first()).toBeVisible()
   // The newest is listed first. The login belongs to the first add_to_cart: it answered early, that a
-  // login was running, and the calls after it found the session ready.
+  // login was running, so the list folds it into the call that followed, which links back to it.
   await calls
     .getByRole('row')
     .filter({ has: control.getByRole('link', { name: 'add_to_cart', exact: true }) })
     .last()
-    .getByRole('link', { name: /^Call / })
+    .getByRole('link', { name: 'a retry' })
     .click()
   await expect(control.getByText('Declarative steps, no adapter code')).toBeVisible()
   // Each fill names the secret and field, never the value.
@@ -311,8 +311,19 @@ test('no secret reaches an MCP result, the audit log, the renderer or the app’
   expect(audit).toContain('"login-')
   expect(secretsIn(audit, tokens)).toEqual([])
   // Every screen that shows run data, rendered.
-  for (const section of ['Adapters', 'Activity', 'Audit log', 'Clients', 'Credentials', 'Settings']) {
-    await go(section)
+  for (const section of [
+    '#/sites',
+    '#/sites/woolworths',
+    '#/sites/woolworths/permissions',
+    '#/activity/calls',
+    '#/activity/audit',
+    '#/connections',
+    '#/secrets',
+    '#/settings',
+  ]) {
+    await control.evaluate((hash) => {
+      window.location.hash = hash
+    }, section)
     await control.waitForTimeout(300)
     expect(secretsIn(await renderedText(launched.app), tokens), section).toEqual([])
   }

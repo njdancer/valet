@@ -3,7 +3,8 @@
 // an AttentionItem into what every surface shows: title, a line of context, its deadline, and the
 // one action that answers it (IA section 5).
 
-import { type NeedsUserReason, needsYouTitle } from '@valet/core'
+import type { NeedsUserReason } from '@valet/core'
+import { needsYouTitle } from '@valet/core/vocabulary'
 import type { AttentionItem, ValetApi } from '../../shared/api'
 import { href } from './routes'
 import { needsUserWording } from './wording'

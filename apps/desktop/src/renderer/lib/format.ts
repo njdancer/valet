@@ -133,4 +133,4 @@ export function formatClock(iso: string | number): string {
 }
 
 /** A call's short ref, "7F2A": the same one tool results and notifications name. */
-export { callRef } from '@valet/core'
+export { callRef } from '@valet/core/vocabulary'

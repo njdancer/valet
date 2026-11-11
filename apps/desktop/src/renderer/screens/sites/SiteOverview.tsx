@@ -42,15 +42,16 @@ import { ActionError, callers, callsToday, SiteFixButton, SiteText } from './sit
 export function SiteOverview({ data }: { readonly data: SiteData }) {
   const { adapter, status, review } = data
   const approved = adapter.approval === 'approved'
+  const update = review !== null && adapter.pendingUpdate !== null
   // A review, when one waits, has the page's one primary button; the health line's fix steps back.
-  const reviewBanner = !approved || (review !== null && adapter.pendingUpdate !== null)
+  const reviewBanner = !approved || update
   const healthSaysReview = status.fix === 'review' || status.fix === 'review-update'
   return (
     <Stack gap={4}>
-      {!approved ? (
-        <FirstReviewBanner adapter={adapter} />
-      ) : review !== null && adapter.pendingUpdate !== null ? (
+      {update ? (
         <UpdateBanner adapter={adapter} review={review} />
+      ) : !approved ? (
+        <FirstReviewBanner adapter={adapter} />
       ) : null}
       {healthSaysReview && reviewBanner ? null : <Health data={data} primary={!reviewBanner} />}
       <div className="grid grid-cols-1 items-start gap-4 @min-[720px]:grid-cols-2">
@@ -140,7 +141,10 @@ function UpdateBanner({
         </Button>
       }
     >
-      {updateSummary(review)} Calls keep using {adapter.version} until you approve.{' '}
+      {updateSummary(review)}{' '}
+      {adapter.approval === 'approved'
+        ? `Calls keep using ${adapter.version} until you approve.`
+        : 'Its tools are off until you approve it.'}{' '}
       {SOURCE_WORDING[review.source]} at {formatClock(review.submittedAt)}.
     </Banner>
   )

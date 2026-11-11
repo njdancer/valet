@@ -43,7 +43,7 @@ import { formatClock, plural } from '../lib/format'
 import { type NeedsYouView, needsYouOrder, needsYouView } from '../lib/needs-you'
 import { linksOpenInValet, needsYouHref } from '../lib/open-in-valet'
 import { href } from '../lib/routes'
-import { healthFor, siteStatus } from '../lib/site-status'
+import { healthFor, isFirstReview, siteStatus } from '../lib/site-status'
 import { clientClaim } from '../lib/wording'
 import { stepsDone as doneOf, stepsLeft, useSetupFacts } from '../screens/setup/setup-logic'
 
@@ -72,7 +72,10 @@ export function TrayPopover() {
   const canLockDown = typeof (api.app as { setLockedDown?: unknown }).setLockedDown === 'function'
   const sites = adapters.status === 'ready' ? adapters.data : []
   const anyApproved = sites.some((a) => a.approval === 'approved')
-  const firstInstall = (id: string) => sites.find((a) => a.id === id)?.approval !== 'approved'
+  const firstInstall = (id: string) => {
+    const site = sites.find((a) => a.id === id)
+    return site !== undefined && isFirstReview(site)
+  }
   const items = attention.status === 'ready' ? attention.data : []
   const views = needsYouOrder(items.map((i) => needsYouView(i, firstInstall)))
   const waiting = views.filter((v) => !v.missed)

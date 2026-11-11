@@ -62,6 +62,8 @@ export interface ListedRun {
   readonly run: RunSummary
   /** Earlier calls from the same client to the same tool that were asked to retry, folded in. */
   readonly retries: number
+  /** The first of those folded calls, so the list can still open it (it may hold the login). */
+  readonly firstRetry: string | null
 }
 
 /**
@@ -70,7 +72,7 @@ export interface ListedRun {
  * shows one line for what the agent did. A retry with no such follow-up stays as its own line.
  */
 export function foldRetries(newestFirst: readonly RunSummary[]): ListedRun[] {
-  const folded = new Map<string, number>()
+  const folded = new Map<string, { readonly count: number; readonly first: string }>()
   const hidden = new Set<string>()
   // Oldest first, so a chain of retry answers carries its count forward to the call that ended it.
   for (let index = newestFirst.length - 1; index >= 0; index--) {
@@ -82,7 +84,11 @@ export function foldRetries(newestFirst: readonly RunSummary[]): ListedRun[] {
       if (Date.parse(later.startedAt) - started > RETRY_WINDOW_MS) break
       if (later.adapterId !== run.adapterId || later.tool !== run.tool || later.client !== run.client)
         continue
-      folded.set(later.callId, (folded.get(later.callId) ?? 0) + 1 + (folded.get(run.callId) ?? 0))
+      const earlier = folded.get(run.callId)
+      folded.set(later.callId, {
+        count: (folded.get(later.callId)?.count ?? 0) + 1 + (earlier?.count ?? 0),
+        first: earlier?.first ?? run.callId,
+      })
       folded.delete(run.callId)
       hidden.add(run.callId)
       break
@@ -90,7 +96,10 @@ export function foldRetries(newestFirst: readonly RunSummary[]): ListedRun[] {
   }
   return newestFirst
     .filter((run) => !hidden.has(run.callId))
-    .map((run) => ({ run, retries: folded.get(run.callId) ?? 0 }))
+    .map((run) => {
+      const f = folded.get(run.callId)
+      return { run, retries: f?.count ?? 0, firstRetry: f?.first ?? null }
+    })
 }
 
 /** The filters said as a phrase, for an empty result: "failed Woolworths calls". */

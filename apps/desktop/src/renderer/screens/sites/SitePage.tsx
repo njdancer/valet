@@ -30,7 +30,7 @@ import type { AdapterDetail, ClientInfo, PendingReview, RunSummary, SiteHealth }
 import { useAction, useApi, useLoad } from '../../lib/api-context'
 import { formatClock, formatDay } from '../../lib/format'
 import { href, navigate, type SiteTab } from '../../lib/router'
-import { healthFor, type SiteStatus, siteStatus } from '../../lib/site-status'
+import { healthFor, isFirstReview, type SiteStatus, siteStatus } from '../../lib/site-status'
 import { SiteOverview } from './SiteOverview'
 import { SitePermissions } from './SitePermissions'
 import { SiteTools } from './SiteTools'
@@ -202,7 +202,8 @@ function HeaderLine({ adapter }: { readonly adapter: AdapterDetail }) {
 function SiteBadge({ data }: { readonly data: SiteData }) {
   const { adapter, health, status } = data
   if (adapter.approval === 'rejected') return <Badge tone="danger">Turned down</Badge>
-  if (adapter.approval === 'unapproved') return <Badge tone="info">Not approved yet</Badge>
+  if (adapter.approval === 'unapproved')
+    return <Badge tone="info">{isFirstReview(adapter) ? 'Not approved yet' : 'Update waiting'}</Badge>
   if (isPaused(adapter)) return <Badge>Paused</Badge>
   if (status.fix === 'show-login') return <Badge tone="warning">Waiting for your login</Badge>
   if (status.fix === 'choose-setting')

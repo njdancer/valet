@@ -27,7 +27,7 @@ import { useAction, useApi, useLoad, useNow } from '../../lib/api-context'
 import { callRef, formatClock, formatTime } from '../../lib/format'
 import { type NeedsYouView, needsYouOrder, needsYouView, runNeedsYouAction } from '../../lib/needs-you'
 import { href, navigate } from '../../lib/router'
-import { healthFor, siteStatus } from '../../lib/site-status'
+import { healthFor, isFirstReview, siteStatus } from '../../lib/site-status'
 
 export function NeedsYouPage({ item }: { readonly item: string | null }) {
   const api = useApi()
@@ -35,9 +35,7 @@ export function NeedsYouPage({ item }: { readonly item: string | null }) {
   const adapters = useLoad((a) => a.adapters.list(), [], ['adapters-changed', 'approvals-changed'])
   const now = useNow(1000)
   const unapproved = new Set(
-    adapters.status === 'ready'
-      ? adapters.data.filter((a) => a.approval !== 'approved').map((a) => a.id)
-      : [],
+    adapters.status === 'ready' ? adapters.data.filter(isFirstReview).map((a) => a.id) : [],
   )
   const views =
     attention.status === 'ready'

@@ -188,10 +188,6 @@ function Confirm({
   const title = `${expired ? 'Missed: ' : ''}${confirmTitle(item.toolTitle, item.adapterName)}`
   const done = state === 'answered' || state === 'expired'
 
-  useEffect(() => {
-    document.title = `Valet: ${title}`
-  }, [title])
-
   return (
     <ConfirmationPanel
       className="min-h-0 flex-1"

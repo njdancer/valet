@@ -55,7 +55,6 @@ describe('the control panel shell', () => {
         .getByRole('link', { name: /Woolworths/ })
         .getAttribute('href'),
     ).toBe('#/sites/woolworths')
-    expect(document.title).toBe('Needs you · Valet')
     expect(await within(nav).findByText(/^Ready · \d+ apps? connected$|^Ready$/)).toBeTruthy()
   })
 

@@ -8,6 +8,7 @@ import { useApi, useLoad } from '../lib/api-context'
 import { callRef } from '../lib/format'
 import { needsYouView } from '../lib/needs-you'
 import { href, navigate, SETTINGS_SECTIONS, type SettingsSection } from '../lib/router'
+import { isFirstReview } from '../lib/site-status'
 import { PLACES } from './Sidebar'
 
 const SECTION_LABEL: Record<SettingsSection, string> = {
@@ -37,9 +38,7 @@ export function CommandMenu({
     navigate(to)
   }
   const unapproved = new Set(
-    adapters.status === 'ready'
-      ? adapters.data.filter((a) => a.approval !== 'approved').map((a) => a.id)
-      : [],
+    adapters.status === 'ready' ? adapters.data.filter(isFirstReview).map((a) => a.id) : [],
   )
 
   return (
@@ -86,7 +85,7 @@ export function CommandMenu({
             .filter((a) => a.pendingUpdate !== null || a.approval === 'unapproved')
             .map((a) => (
               <CommandItem key={`review-${a.id}`} onSelect={() => go(href.review(a.id))}>
-                {a.approval === 'unapproved' ? `Review ${a.name}` : `Review ${a.name} update`}
+                {isFirstReview(a) ? `Review ${a.name}` : `Review ${a.name} update`}
               </CommandItem>
             ))}
         </CommandGroup>

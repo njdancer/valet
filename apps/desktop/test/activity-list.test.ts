@@ -37,9 +37,9 @@ const retry = { outcome: 'failed', errorClass: 'login-in-progress' } as const
 describe('folding retries into the call that followed (F12)', () => {
   it('folds a chain of retry answers into the call that ended it', () => {
     const list = [run('ok', 3), run('r2', 2, retry), run('r1', 1, retry), run('before', 0)]
-    expect(foldRetries(list).map((l) => [l.run.callId, l.retries])).toEqual([
-      ['ok', 2],
-      ['before', 0],
+    expect(foldRetries(list).map((l) => [l.run.callId, l.retries, l.firstRetry])).toEqual([
+      ['ok', 2, 'r1'],
+      ['before', 0, null],
     ])
   })
 

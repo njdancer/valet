@@ -15,6 +15,15 @@ export interface SiteStatus {
   readonly fix: 'review' | 'review-update' | 'login' | 'show-login' | 'choose-setting' | 'resume' | null
 }
 
+/**
+ * Whether the site waits for its first review, as opposed to an update. In the main process a
+ * changed bundle is unapproved with pendingUpdate set (its tools are off until the person approves);
+ * a first install is unapproved with no update.
+ */
+export function isFirstReview(adapter: Pick<AdapterSummary, 'approval' | 'pendingUpdate'>): boolean {
+  return adapter.approval !== 'approved' && adapter.pendingUpdate === null
+}
+
 export function healthFor(adapter: AdapterSummary, sites: readonly SiteHealth[]): SiteHealth | null {
   return sites.find((s) => s.adapterIds.includes(adapter.id)) ?? null
 }
@@ -22,6 +31,12 @@ export function healthFor(adapter: AdapterSummary, sites: readonly SiteHealth[])
 export function siteStatus(adapter: AdapterSummary, health: SiteHealth | null): SiteStatus {
   if (adapter.approval === 'rejected')
     return { tone: 'danger', text: 'You turned this version down · its tools are off', fix: 'review' }
+  if (adapter.approval === 'unapproved' && adapter.pendingUpdate !== null)
+    return {
+      tone: 'accent',
+      text: `Update ${adapter.pendingUpdate.version} waiting for review · its tools are off until you approve it`,
+      fix: 'review-update',
+    }
   if (adapter.approval === 'unapproved')
     return { tone: 'accent', text: 'Not approved yet · its tools are off until you review it', fix: 'review' }
   if (adapter.paused)

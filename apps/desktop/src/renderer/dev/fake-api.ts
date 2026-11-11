@@ -887,7 +887,8 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       messages,
       secrets: secretRequests.map((s) => ({ name: s.name, granted: s.grant !== null })),
       messagesSources: messages.map((m) => ({ sender: m.sender, granted: m.grant !== null })),
-      pendingUpdate: reviews.find((r) => r.adapterId === base.id)?.to ?? null,
+      // As in the main process: only a review of a change to an earlier bundle is an update.
+      pendingUpdate: reviews.find((r) => r.adapterId === base.id && r.from !== null)?.to ?? null,
     }
   }
 

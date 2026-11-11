@@ -82,6 +82,8 @@ export default defineConfig(({ command, mode }) => {
       build: {
         outDir: resolve(here, 'out/renderer'),
         emptyOutDir: true,
+        // Fonts stay files: the CSP's font-src is 'self', which refuses data: URLs.
+        assetsInlineLimit: 0,
         rollupOptions: {
           input: {
             index: resolve(here, 'src/renderer/index.html'),

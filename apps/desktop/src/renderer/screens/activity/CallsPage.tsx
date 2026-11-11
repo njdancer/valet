@@ -258,11 +258,12 @@ function CallsTable({
         </tr>
       </THead>
       <TBody>
-        {rows.map(({ run, retries }) => (
+        {rows.map(({ run, retries, firstRetry }) => (
           <CallRow
             key={run.callId}
             run={run}
             retries={retries}
+            firstRetry={firstRetry}
             filters={filters}
             waiting={waiting.get(run.callId) ?? null}
             now={now}
@@ -280,12 +281,14 @@ const ABOVE = 'relative'
 function CallRow({
   run,
   retries,
+  firstRetry,
   filters,
   waiting,
   now,
 }: {
   readonly run: RunSummary
   readonly retries: number
+  readonly firstRetry: string | null
   readonly filters: CallFilters
   readonly waiting: NeedsYouView | null
   readonly now: number
@@ -317,10 +320,19 @@ function CallRow({
               {run.tool}
             </ObjectLink>
           </Inline>
-          <span className="truncate text-sm text-fg-muted">
-            {toolPhrase(run.tool)}
-            {run.detail === null ? null : <>: {run.detail}</>}
-            {retries === 0 ? null : <> · after {retries === 1 ? 'a retry' : `${retries} retries`}</>}
+          <span className="flex min-w-0 gap-1 text-sm text-fg-muted">
+            <span className="truncate">
+              {toolPhrase(run.tool)}
+              {run.detail === null ? null : <>: {run.detail}</>}
+            </span>
+            {retries === 0 || firstRetry === null ? null : (
+              <span className="shrink-0 whitespace-nowrap">
+                {'· after '}
+                <ObjectLink href={href.call(firstRetry, filters)} className={ABOVE}>
+                  {retries === 1 ? 'a retry' : `${retries} retries`}
+                </ObjectLink>
+              </span>
+            )}
           </span>
         </div>
       </TD>
