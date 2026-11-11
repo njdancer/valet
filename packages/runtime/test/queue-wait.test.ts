@@ -221,3 +221,64 @@ describe('ToolHost.call: the wait for the adapter’s lock', () => {
     ).toThrow('config: invalid')
   })
 })
+
+describe('ToolHost.call: what the wait leaves in the trace (D-pacing)', () => {
+  it('records a turn that took a second or more, with how many were in front, and counts live calls', async () => {
+    const { definition, release } = gated()
+    const { host, clock, audit } = fixture(definition)
+    const first = host.call(input('a'))
+    await flush()
+    const second = host.call(input('quick'))
+    await flush()
+    expect((await host.siteHealth()).map((s) => s.calls)).toEqual([2])
+    await clock.advance(5_000)
+    release()
+    expect(await first).toEqual({ status: 'ok', output: 'a' })
+    expect(await second).toEqual({ status: 'ok', output: 'quick' })
+    expect(audit.events.filter((e) => e.type === 'call-waited')).toEqual([
+      {
+        type: 'call-waited',
+        adapterId: manifest.id,
+        callId: 'quick',
+        reason: 'queue',
+        waitedMs: 5_000,
+        ahead: 1,
+      },
+    ])
+    expect((await host.siteHealth()).map((s) => s.calls)).toEqual([0])
+  })
+
+  it('records nothing for a call that got its turn at once', async () => {
+    const { definition } = gated()
+    const { host, audit } = fixture(definition)
+    expect(await host.call(input('quick'))).toEqual({ status: 'ok', output: 'quick' })
+    expect(audit.events.some((e) => e.type === 'call-waited')).toBe(false)
+  })
+})
+
+describe('the site’s request slots in the trace (D-pacing)', () => {
+  it('records a wait of a second or more for the next slot, against the call that waited', async () => {
+    const definition = defineAdapter({
+      manifest: { ...manifest, limits: { ...manifest.limits, minGapMs: 10_000 } },
+      tools: {
+        run_test: tool({
+          input: z.object({ id: z.string() }),
+          output: z.string(),
+          run: async (ctx, input) => {
+            await ctx.page.fetch('/api/trolley')
+            await ctx.page.fetch('/api/trolley')
+            return input.id
+          },
+        }),
+      },
+    })
+    const { host, audit } = fixture(definition)
+    expect(await host.call(input('paced'))).toEqual({ status: 'ok', output: 'paced' })
+    const waits = audit.events.filter((e) => e.type === 'call-waited')
+    expect(waits.length).toBeGreaterThan(0)
+    for (const wait of waits) {
+      expect(wait).toMatchObject({ callId: 'paced', reason: 'pace' })
+      expect(wait.type === 'call-waited' && wait.waitedMs).toBeGreaterThanOrEqual(1000)
+    }
+  })
+})

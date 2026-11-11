@@ -12,6 +12,7 @@ import type {
   Stage,
 } from '@valet/core'
 import type { FillCheck, SessionState } from '../../shared/api'
+import { formatDuration } from './format'
 
 export interface ReasonWording {
   /** Short, for lists: "Verification check". */
@@ -312,3 +313,12 @@ export const TRANSPORT_WORDING: Readonly<Record<'stdio' | 'http', string>> = {
 }
 
 export const FIELD_WORDING = { username: 'username', password: 'password', otp: 'one-time code' } as const
+
+/** A trace line for time a call spent waiting (D-pacing). */
+export function waitWording(reason: 'queue' | 'pace', waitedMs: number, ahead: number | null): string {
+  const time = formatDuration(waitedMs)
+  if (reason === 'pace') return `Waited ${time} for the shop’s next request slot`
+  return ahead === null || ahead === 0
+    ? `Waited ${time} for its turn`
+    : `Waited ${time} for its turn, ${ahead === 1 ? '1 call' : `${ahead} calls`} ahead`
+}

@@ -114,10 +114,9 @@ export function TrayPopover() {
               <AdapterRow
                 key={adapter.id}
                 adapter={adapter}
-                open={
+                site={
                   sites.status === 'ready'
-                    ? (sites.data.find((s) => s.adapterIds.includes(adapter.id) && s.breaker === 'open') ??
-                      null)
+                    ? (sites.data.find((s) => s.adapterIds.includes(adapter.id)) ?? null)
                     : null
                 }
               />
@@ -257,18 +256,24 @@ function AttentionRow({ item }: { readonly item: AttentionItem }) {
 
 function AdapterRow({
   adapter,
-  open,
+  site,
 }: {
   readonly adapter: AdapterSummary
-  readonly open: SiteHealth | null
+  readonly site: SiteHealth | null
 }) {
   const now = useNow(30_000)
   const { session } = adapter
   let state: { tone: string; text: string }
-  if (open !== null && open.retryAt !== null) {
-    state = { tone: 'bad', text: `Blocked by site · retry ${formatIn(open.retryAt, now)}` }
+  if (site !== null && site.breaker === 'open' && site.retryAt !== null) {
+    state = { tone: 'bad', text: `Blocked by site · retry ${formatIn(site.retryAt, now)}` }
   } else if (session.state === 'needs-user') {
     state = { tone: 'warn pulse', text: 'Login window open' }
+  } else if (site !== null && site.calls > 0) {
+    // D-pacing: calls take their turn one at a time, spaced out for the site.
+    state = {
+      tone: 'info pulse',
+      text: site.calls === 1 ? 'Working on a call' : `Working · ${site.calls - 1} waiting their turn`,
+    }
   } else if (adapter.approval !== 'approved') {
     state = { tone: '', text: 'Not approved' }
   } else if (session.state === 'logged-in') {

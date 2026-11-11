@@ -178,29 +178,52 @@ interface WriteOutcome {
   readonly notices: string[]
 }
 
+interface LineOutcome {
+  readonly quantity: number | null
+  readonly confirmed: boolean
+  readonly notices: string[]
+}
+
 /**
- * Sets one line's absolute quantity, and reports what the site stored. The response is assumed to
- * be the updated trolley; when it isn't, the write is reported as unconfirmed rather than spending
- * another request to fetch the cart.
+ * Sets each line's absolute quantity in one update request, and reports what the site stored for
+ * each. The response is assumed to be the updated trolley; when it isn't, every line is reported as
+ * unconfirmed rather than spending another request to fetch the cart.
  */
-async function setQuantity(ctx: ToolContext, stockcode: number, requested: number): Promise<WriteOutcome> {
+async function setQuantities(
+  ctx: ToolContext,
+  lines: readonly { readonly stockcode: number; readonly quantity: number }[],
+): Promise<{ readonly lines: LineOutcome[]; readonly cart: Cart | null; readonly notices: string[] }> {
   const body = await postJson(
     ctx,
     PATHS.trolleyUpdate,
-    { items: [{ stockcode, quantity: requested }] },
+    { items: lines.map(({ stockcode, quantity }) => ({ stockcode, quantity })) },
     z.unknown(),
   )
   const trolley = trolleyWire.safeParse(body)
   if (reportsRejection(body, trolley.success)) throw new ValetError('tool-run', 'invalid')
-  if (!trolley.success)
-    return { quantity: null, confirmed: false, cart: null, notices: [NOTICES.unconfirmed] }
+  if (!trolley.success) {
+    const unconfirmed = { quantity: null, confirmed: false, notices: [NOTICES.unconfirmed] }
+    return { lines: lines.map(() => unconfirmed), cart: null, notices: [NOTICES.unconfirmed] }
+  }
   const read = readTrolley(trolley.data)
-  // A line the reply doesn't show was removed, unless the reply has lines the adapter can't read.
-  const stored = read.quantities.get(stockcode) ?? (read.complete ? 0 : null)
-  if (stored === null)
-    return { quantity: null, confirmed: false, cart: read.cart, notices: [NOTICES.lineUnreadable] }
-  const notices = stored === requested ? [] : [NOTICES.differs(stored, requested)]
-  return { quantity: stored, confirmed: true, cart: read.cart, notices }
+  const outcomes = lines.map(({ stockcode, quantity: requested }): LineOutcome => {
+    // A line the reply doesn't show was removed, unless the reply has lines the adapter can't read.
+    const stored = read.quantities.get(stockcode) ?? (read.complete ? 0 : null)
+    if (stored === null) return { quantity: null, confirmed: false, notices: [NOTICES.lineUnreadable] }
+    return {
+      quantity: stored,
+      confirmed: true,
+      notices: stored === requested ? [] : [NOTICES.differs(stored, requested)],
+    }
+  })
+  return { lines: outcomes, cart: read.cart, notices: [] }
+}
+
+/** Sets one line's absolute quantity, and reports what the site stored. */
+async function setQuantity(ctx: ToolContext, stockcode: number, requested: number): Promise<WriteOutcome> {
+  const { lines, cart } = await setQuantities(ctx, [{ stockcode, quantity: requested }])
+  const [line] = lines as [LineOutcome]
+  return { quantity: line.quantity, confirmed: line.confirmed, cart, notices: line.notices }
 }
 
 /**
@@ -308,5 +331,81 @@ export const removeFromCart = tool({
     const outcome = await withLogin(ctx, () => setQuantity(ctx, input.stockcode, 0))
     const removed = outcome.quantity === null ? null : outcome.quantity === 0
     return { stockcode: input.stockcode, removed, ...outcome }
+  },
+})
+
+/** The most lines one update_cart call may change. */
+export const MAX_BATCH_LINES = 30
+
+const batchLineSchema = z
+  .object({
+    stockcode: stockcodeSchema,
+    /** With mode "add", how many to add (at least 1); with "set", the line's new quantity (0 removes it). */
+    quantity: z.number().int().min(0).max(MAX_LINE_QUANTITY).default(1),
+    mode: z.enum(['add', 'set']).default('add'),
+  })
+  .refine((line) => line.mode === 'set' || line.quantity >= 1, 'an add needs a quantity of at least 1')
+
+/**
+ * Many lines in one call (D-pacing): the agent sends a whole shopping list at once instead of one
+ * paced call per product. The site gets one trolley read (only when a line adds) and one update
+ * carrying every line, so a 30-item shop costs two requests, not thirty.
+ */
+export const updateCart = tool({
+  input: z.object({
+    items: z
+      .array(batchLineSchema)
+      .min(1)
+      .max(MAX_BATCH_LINES)
+      .refine(
+        (items) => new Set(items.map((i) => i.stockcode)).size === items.length,
+        'each product may appear once',
+      ),
+  }),
+  output: z.object({
+    items: z.array(
+      z.object({
+        stockcode: z.number().int(),
+        mode: z.enum(['add', 'set']),
+        /** The quantity before the call, as read from the site. Null for a set, which reads nothing. */
+        previousQuantity: z.number().nullable(),
+        /** What the write asked the site to store for this line. */
+        requestedQuantity: z.number(),
+        quantity: writeOutput.quantity,
+        confirmed: writeOutput.confirmed,
+        notices: writeOutput.notices,
+      }),
+    ),
+    cart: writeOutput.cart,
+    notices: writeOutput.notices,
+  }),
+  async run(ctx, input) {
+    return withLogin(ctx, async () => {
+      let quantities: ReadonlyMap<number, number> = new Map()
+      if (input.items.some((line) => line.mode === 'add')) {
+        const read = await trolleyBeforeWrite(ctx)
+        // As in add_to_cart: an add over a line the adapter can't read would shrink it.
+        if (!read.complete) throw new ValetError('tool-run', 'site-changed')
+        quantities = read.quantities
+      }
+      const planned = input.items.map((line) => {
+        const previousQuantity = line.mode === 'add' ? (quantities.get(line.stockcode) ?? 0) : null
+        const requestedQuantity =
+          line.mode === 'add' ? (previousQuantity ?? 0) + line.quantity : line.quantity
+        return { stockcode: line.stockcode, mode: line.mode, previousQuantity, requestedQuantity }
+      })
+      if (planned.some((line) => line.requestedQuantity > MAX_LINE_QUANTITY)) {
+        throw new ValetError('tool-input', 'invalid')
+      }
+      const outcome = await setQuantities(
+        ctx,
+        planned.map((line) => ({ stockcode: line.stockcode, quantity: line.requestedQuantity })),
+      )
+      return {
+        items: planned.map((line, index) => ({ ...line, ...(outcome.lines[index] as LineOutcome) })),
+        cart: outcome.cart,
+        notices: outcome.notices,
+      }
+    })
   },
 })

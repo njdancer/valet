@@ -19,6 +19,7 @@ import {
   runTone,
   runWording,
   stageWording,
+  waitWording,
 } from '../lib/wording'
 
 export function ActivityPage({ callId }: { readonly callId: string | null }) {
@@ -371,6 +372,22 @@ export function Step({ step }: { readonly step: TraceStep }) {
                 {step.status !== null ? ` · ${step.status}` : ''}
               </span>
             )}
+          </div>
+          <Dur ms={step.durationMs} />
+        </li>
+      )
+    case 'waited':
+      return (
+        <li className="step sub">
+          <At ms={step.atMs} />
+          <Node tone="info" />
+          <div className="label">
+            {waitWording(step.reason, step.waitedMs, step.ahead)}
+            <div className="xs muted">
+              {step.reason === 'queue'
+                ? 'Valet runs one call at a time for each shop, in the order they arrive.'
+                : 'Valet spaces requests to the shop out, as a person browsing would.'}
+            </div>
           </div>
           <Dur ms={step.durationMs} />
         </li>

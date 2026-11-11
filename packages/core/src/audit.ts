@@ -174,6 +174,19 @@ export type AuditEvent =
       readonly token: 'refresh' | 'code'
     }
   | {
+      /**
+       * A call waited a second or more (D-pacing): for its turn behind the adapter's other calls
+       * (`queue`, with how many were in front when it arrived), or for the site's next request slot
+       * under its rate budget (`pace`). Recorded so the trace can say where the time went.
+       */
+      readonly type: 'call-waited'
+      readonly adapterId: string
+      readonly callId: string
+      readonly reason: 'queue' | 'pace'
+      readonly waitedMs: number
+      readonly ahead?: number
+    }
+  | {
       readonly type: 'confirmation'
       readonly adapterId: string
       readonly tool: string

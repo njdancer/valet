@@ -3,7 +3,7 @@
 // paths relative to the page, so they need none of the manifest's options.
 
 import type { ToolImplementation } from '@valet/core'
-import { addToCart, getCart, removeFromCart, setCartQuantity } from './cart'
+import { addToCart, getCart, removeFromCart, setCartQuantity, updateCart } from './cart'
 import { getProduct, searchProducts } from './products'
 import { applyStore, findStores } from './stores'
 
@@ -14,6 +14,7 @@ export const tools: Readonly<Record<string, ToolImplementation>> = {
   add_to_cart: addToCart,
   set_cart_quantity: setCartQuantity,
   remove_from_cart: removeFromCart,
+  update_cart: updateCart,
   // The store setting's own tools, which only the runtime runs (stores.ts).
   find_stores: findStores,
   apply_store: applyStore,

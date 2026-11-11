@@ -179,6 +179,7 @@ test('Claude Code’s token lists the six namespaced tools with manifest-derived
     'woolworths_remove_from_cart',
     'woolworths_search_products',
     'woolworths_set_cart_quantity',
+    'woolworths_update_cart',
   ])
   for (const read of ['woolworths_get_cart', 'woolworths_get_product', 'woolworths_search_products']) {
     expect(byName[read]).toMatchObject({ readOnlyHint: true, openWorldHint: true })
@@ -189,6 +190,7 @@ test('Claude Code’s token lists the six namespaced tools with manifest-derived
     ['woolworths_add_to_cart', false],
     ['woolworths_remove_from_cart', true],
     ['woolworths_set_cart_quantity', true],
+    ['woolworths_update_cart', false],
   ] as const) {
     expect(byName[write]).toEqual({
       readOnlyHint: false,

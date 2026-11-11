@@ -71,7 +71,13 @@ import type { ApprovalLookup } from './approvals'
 import type { JsonStore } from './breaker-state'
 import { CallState } from './call-state'
 import { type Clock, type Sleep, systemClock, systemSleep } from './clock'
-import { GuardedToolPage, MAX_TARGET_LENGTH, PURPOSE_RANK, plainMethod } from './guarded-page'
+import {
+  GuardedToolPage,
+  MAX_TARGET_LENGTH,
+  NOTEWORTHY_WAIT_MS,
+  PURPOSE_RANK,
+  plainMethod,
+} from './guarded-page'
 import { runIsolated, type ToolProcessFactory } from './isolation/host'
 import type { LoginMarkerStore } from './login-marker'
 import { KeyedMutex } from './mutex'
@@ -463,6 +469,7 @@ export class ToolHost {
         cooldownMs: status.cooldownMs,
         nextCooldownMs: status.nextCooldownMs,
         budget: { minGapMs: site.budget.gapMs, waitMs: site.budget.waitMs() },
+        calls: adapterIds.reduce((sum, id) => sum + (this.queues.get(id)?.length ?? 0), 0),
       }
     })
   }
@@ -562,9 +569,22 @@ export class ToolHost {
     // client for the whole wait before the same answer.
     const inFront = this.queues.get(manifest.id)?.length ?? 0
     if (inFront * entry.site.budget.gapMs >= this.queueWaitMs) return busy(entry.site, inFront)
+    const queuedAt = this.clock.now()
     const lock = await this.acquireLock(manifest.id, this.queueWaitMs, external)
     if (typeof lock !== 'function') {
       return lock.kind === 'aborted' ? failed('tool-run', 'aborted') : busy(entry.site, lock.ahead)
+    }
+    // D-pacing: a turn that took a while goes in the trace, so a slow call says why it was slow.
+    const waitedMs = this.clock.now() - queuedAt
+    if (waitedMs >= NOTEWORTHY_WAIT_MS) {
+      await this.record({
+        type: 'call-waited',
+        adapterId: manifest.id,
+        callId: request.callId,
+        reason: 'queue',
+        waitedMs,
+        ahead: inFront,
+      })
     }
     const release = lock
     // Once the tool's own run starts, the run releases the lock, after its leftover work settles.
@@ -841,6 +861,7 @@ export class ToolHost {
       site: entry.site,
       state,
       audit: (event) => this.record(event),
+      clock: this.clock,
     })
     const ctx: ToolContext = {
       // Declared reads may be answered from the session's cache; everything sent goes through the guard.

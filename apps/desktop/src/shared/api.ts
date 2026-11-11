@@ -415,6 +415,14 @@ export type TraceStep = {
       readonly cookieDomains: readonly string[]
     }
   | { readonly type: 'tool-code' }
+  /** D-pacing: the call waited for its turn behind other calls, or for the site's next request slot. */
+  | {
+      readonly type: 'waited'
+      readonly reason: 'queue' | 'pace'
+      readonly waitedMs: number
+      /** Calls in front when it arrived; queue waits only. */
+      readonly ahead: number | null
+    }
   | {
       readonly type: 'request'
       readonly method: string
@@ -734,6 +742,8 @@ export interface SiteHealth {
   readonly lastOpenedAt: IsoTime | null
   /** The cool-down the next block would start, after doubling. */
   readonly nextCooldownSeconds: number
+  /** Calls running or waiting their turn on this site right now (D-pacing). */
+  readonly calls: number
 }
 
 /**

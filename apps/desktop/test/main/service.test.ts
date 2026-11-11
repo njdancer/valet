@@ -1254,6 +1254,7 @@ describe('the login window', () => {
         lastOpenedAt: null,
         // The persisted minute, doubled.
         nextCooldownSeconds: 120,
+        calls: 0,
       },
     ])
     await expect(s.api.openLoginWindow('shop')).rejects.toEqual(new ValetError('login', 'rate-limited'))

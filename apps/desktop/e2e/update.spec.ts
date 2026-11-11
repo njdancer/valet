@@ -34,6 +34,7 @@ const TOOLS = [
   'woolworths_remove_from_cart',
   'woolworths_search_products',
   'woolworths_set_cart_quantity',
+  'woolworths_update_cart',
 ]
 
 let userData: string
@@ -213,12 +214,12 @@ test('the changed bundle waits for review: tools off MCP, no grants, a diff agai
 })
 
 test('the review screen shows the change, and Approve waits for the acknowledgement', async () => {
-  await expect(control.getByText('Woolworths 0.3.0 is ready for review.')).toBeVisible()
+  await expect(control.getByText('Woolworths 0.4.0 is ready for review.')).toBeVisible()
   await control.getByRole('link', { name: 'Review changes' }).click()
   await expect(control.getByText('This update asks for more')).toBeVisible()
   await expect(control.getByText('remove_from_cart').first()).toBeVisible()
   await expect(control.getByText('src/manifest.ts')).toBeVisible()
-  const approve = control.getByRole('button', { name: 'Approve 0.3.0' })
+  const approve = control.getByRole('button', { name: 'Approve 0.4.0' })
   await expect(approve).toBeDisabled()
   await control.getByRole('checkbox', { name: 'I’ve read the highlighted additions' }).check()
   await approve.click()
