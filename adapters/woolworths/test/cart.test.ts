@@ -1,6 +1,6 @@
 import { NeedsUserError, ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
-import { addToCart, getCart, NOTICES, removeFromCart, setCartQuantity } from '../src/cart'
+import { addToCart, getCart, NOTICES, removeFromCart, setCartQuantity, updateCart } from '../src/cart'
 import { FAKE_ORIGIN, FakeToolContext, json, loadFixture } from './fake-context'
 
 const TROLLEY = '/apis/ui/Trolley'
@@ -696,4 +696,110 @@ describe('cart tools without a login', () => {
       expect(ctx.fetches).toEqual([])
     })
   }
+})
+
+describe('update_cart', () => {
+  it('adds and sets many lines with one trolley read and one update, reporting each line', async () => {
+    const reply = loadFixture('trolley-two-items.json')
+    reply.AvailableItems[0].QuantityInTrolley = 5
+    reply.AvailableItems.pop()
+    reply.TrolleyItemCount = 1
+    const ctx = new FakeToolContext()
+      .on('GET', TROLLEY, json(loadFixture('trolley-two-items.json')))
+      .on('POST', UPDATE, json(reply))
+    const input = updateCart.input.parse({
+      items: [
+        { stockcode: 88436, quantity: 3 },
+        { stockcode: 888137, quantity: 0, mode: 'set' },
+      ],
+    })
+    const result = await updateCart.run(ctx, input)
+    expect(ctx.events).toEqual(['ensure', 'GET /apis/ui/Trolley', 'POST /api/v3/ui/trolley/update'])
+    expect(ctx.fetches.at(-1)?.json).toEqual({
+      items: [
+        { stockcode: 88436, quantity: 5 },
+        { stockcode: 888137, quantity: 0 },
+      ],
+    })
+    expect(result.items).toEqual([
+      {
+        stockcode: 88436,
+        mode: 'add',
+        previousQuantity: 2,
+        requestedQuantity: 5,
+        quantity: 5,
+        confirmed: true,
+        notices: [],
+      },
+      {
+        stockcode: 888137,
+        mode: 'set',
+        previousQuantity: null,
+        requestedQuantity: 0,
+        quantity: 0,
+        confirmed: true,
+        notices: [],
+      },
+    ])
+    expect(result.cart?.items.map((i) => i.stockcode)).toEqual([88436])
+    expect(updateCart.output.parse(result)).toEqual(result)
+  })
+
+  it('reads nothing when every line sets, and says which line the site stored differently', async () => {
+    const reply = loadFixture('trolley-two-items.json')
+    reply.AvailableItems[0].QuantityInTrolley = 12
+    const ctx = new FakeToolContext().on('POST', UPDATE, json(reply))
+    const result = await updateCart.run(
+      ctx,
+      updateCart.input.parse({ items: [{ stockcode: 88436, quantity: 20, mode: 'set' }] }),
+    )
+    expect(ctx.events).toEqual(['ensure', 'POST /api/v3/ui/trolley/update'])
+    expect(result.items[0]).toMatchObject({
+      quantity: 12,
+      confirmed: true,
+      notices: [NOTICES.differs(12, 20)],
+    })
+  })
+
+  it('reports every line unconfirmed when the reply is not the trolley', async () => {
+    const ctx = new FakeToolContext()
+      .on('GET', TROLLEY, json(loadFixture('trolley-empty.json')))
+      .on('POST', UPDATE, json({}))
+    const result = await updateCart.run(
+      ctx,
+      updateCart.input.parse({ items: [{ stockcode: 64746 }, { stockcode: 88436, quantity: 2 }] }),
+    )
+    expect(result.items.map((i) => [i.requestedQuantity, i.confirmed])).toEqual([
+      [1, false],
+      [2, false],
+    ])
+    expect(result).toMatchObject({ cart: null, notices: [NOTICES.unconfirmed] })
+  })
+
+  it('refuses a product twice, an empty or over-long list, and an add of nothing', () => {
+    const line = (stockcode: number) => ({ stockcode })
+    expect(() => updateCart.input.parse({ items: [line(1), line(1)] })).toThrow()
+    expect(() => updateCart.input.parse({ items: [] })).toThrow()
+    expect(() =>
+      updateCart.input.parse({ items: Array.from({ length: 31 }, (_, i) => line(i + 1)) }),
+    ).toThrow()
+    expect(() => updateCart.input.parse({ items: [{ stockcode: 1, quantity: 0 }] })).toThrow()
+    expect(updateCart.input.parse({ items: [{ stockcode: 1, quantity: 0, mode: 'set' }] })).toBeTruthy()
+  })
+
+  it('writes nothing past the per-line cap, or over a trolley line it cannot read', async () => {
+    const full = loadFixture('trolley-two-items.json')
+    full.AvailableItems[0].QuantityInTrolley = 19
+    const ctx = new FakeToolContext().on('GET', TROLLEY, json(full))
+    await expect(
+      updateCart.run(ctx, updateCart.input.parse({ items: [{ stockcode: 88436, quantity: 2 }] })),
+    ).rejects.toMatchObject({ stage: 'tool-input', errorClass: 'invalid' })
+    const unreadable = loadFixture('trolley-two-items.json')
+    unreadable.BundleItems = [{ Stockcode: 1 }]
+    const other = new FakeToolContext().on('GET', TROLLEY, json(unreadable))
+    await expect(
+      updateCart.run(other, updateCart.input.parse({ items: [{ stockcode: 88436 }] })),
+    ).rejects.toMatchObject({ errorClass: 'site-changed' })
+    expect(ctx.events.concat(other.events).filter((e) => e.startsWith('POST'))).toEqual([])
+  })
 })

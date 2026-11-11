@@ -188,7 +188,7 @@ export function createManifest({
     schemaVersion: 1,
     id: 'woolworths',
     name: 'Woolworths',
-    version: '0.3.0',
+    version: '0.4.0',
     description: 'Search Woolworths (Australia) products and manage the online shopping cart.',
     home: `${origin}/`,
     // Opened in the person's own browser to check out: Valet never places orders.
@@ -302,6 +302,16 @@ export function createManifest({
         // A second removal finds nothing left to remove.
         destructive: true,
         idempotent: true,
+      },
+      {
+        name: 'update_cart',
+        title: 'Update cart',
+        description:
+          'Adds or sets many products in one call, for a whole shopping list: each item adds a quantity (mode "add", the default) or sets it exactly (mode "set", 0 removes). Up to 30 products, each once. Far faster than one call per product. Does not check out.',
+        sideEffect: 'write',
+        // Lowers quantities and removes lines; adds again when called twice.
+        destructive: true,
+        idempotent: false,
       },
       // The store setting's tools. The runtime runs them; no MCP client can list or call them.
       {

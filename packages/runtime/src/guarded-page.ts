@@ -43,6 +43,7 @@ import {
   ValetError,
 } from '@valet/core'
 import type { CallState } from './call-state'
+import type { Clock } from './clock'
 import {
   type BlockCause,
   blockCause,
@@ -75,7 +76,12 @@ export interface GuardedPageOptions {
   readonly state: CallState
   /** Appends an audit event. Must not throw. */
   readonly audit: (event: AuditEvent) => Promise<void>
+  /** Times the wait for the site's next request slot, so a long one can be recorded. */
+  readonly clock?: Clock
 }
+
+/** Waits shorter than this aren't worth a line in the trace. */
+export const NOTEWORTHY_WAIT_MS = 1000
 
 export class GuardedToolPage implements ToolPage {
   constructor(private readonly options: GuardedPageOptions) {}
@@ -197,7 +203,13 @@ export class GuardedToolPage implements ToolPage {
       state.blocked = true
       throw breakerRefusal()
     }
+    const { clock, adapterId, audit } = this.options
+    const before = clock?.now() ?? 0
     await site.budget.acquire(state.signal)
+    const waitedMs = (clock?.now() ?? 0) - before
+    if (waitedMs >= NOTEWORTHY_WAIT_MS) {
+      await audit({ type: 'call-waited', adapterId, callId: state.callId, reason: 'pace', waitedMs })
+    }
     state.assertLive()
     // The breaker can open while we wait our turn.
     if (site.breaker.isOpen()) {

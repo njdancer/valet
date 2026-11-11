@@ -136,7 +136,7 @@ test('approved and searched, the app itself sends nothing to evil.test', async (
   const pending = await control.evaluate(() => window.valet?.approvals.pending())
   const hash = pending?.[0]?.to.hash ?? ''
   await control.evaluate((hash) => window.valet?.approvals.approve('woolworths', hash), hash)
-  await expect.poll(async () => (await client.listTools()).tools.length).toBe(6)
+  await expect.poll(async () => (await client.listTools()).tools.length).toBe(7)
   await chooseStore(control)
   const found = await callTool(client, 'woolworths_search_products', { query: 'bread' })
   expect(found.isError, found.text).toBe(false)

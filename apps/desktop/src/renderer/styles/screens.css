@@ -1100,3 +1100,53 @@ button.menu-row:focus-visible .kbd {
 .setup-foot .dots i.on {
   background: var(--accent);
 }
+
+/* A folded card (D-review): the head is the toggle, with a chevron that turns when open. */
+details.card.fold > summary {
+  cursor: pointer;
+  list-style: none;
+}
+details.card.fold > summary::-webkit-details-marker {
+  display: none;
+}
+details.card.fold > summary::after {
+  content: "›";
+  margin-left: auto;
+  color: var(--text-tertiary, var(--text-secondary));
+  transition: transform 120ms ease;
+}
+details.card.fold[open] > summary::after {
+  transform: rotate(90deg);
+}
+
+/* Technical detail behind a quiet "Details" toggle (D-words). */
+details.tech > summary {
+  cursor: pointer;
+  width: fit-content;
+  margin-top: 4px;
+}
+details.tech[open] > summary {
+  margin-bottom: 4px;
+}
+
+/* F27: the Activity list, one call per row. */
+.activity-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.activity-list li + li {
+  border-top: 1px solid var(--border);
+}
+.activity-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  color: inherit;
+  text-decoration: none;
+  min-width: 0;
+}
+.activity-row:hover {
+  background: var(--bg-hover);
+}

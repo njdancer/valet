@@ -14,7 +14,7 @@ import {
   SideEffect,
 } from '../components/ui'
 import { useAction, useApi, useLoad, useNow } from '../lib/api-context'
-import { formatTime, plural, shortHash } from '../lib/format'
+import { formatTime, hostOf, plural, shortHash } from '../lib/format'
 import {
   additionBadges,
   addsPermissions,
@@ -112,8 +112,13 @@ function Review({
   const action = useAction()
   const [acknowledged, setAcknowledged] = useState(false)
   const [grantNext, setGrantNext] = useState(false)
-  const needsAck = addsPermissions(review.diff)
-  const badges = additionBadges(review.diff)
+  // D-review: a first install is a diff against nothing, so it opens on a plain summary and no
+  // tick box: nobody can honestly say they read every line of a whole manifest. Updates keep both.
+  const firstInstall = review.from === null
+  const needsAck = !firstInstall && addsPermissions(review.diff)
+  const badges = additionBadges(review.diff).map((b) =>
+    firstInstall ? { ...b, label: b.label.replace(/^\+/, '') } : b,
+  )
   const secretsToGrant = [...review.diff.secrets.unchanged, ...review.diff.secrets.added].map((s) => s.name)
   const canApprove = !action.busy && (!needsAck || acknowledged)
 
@@ -174,13 +179,19 @@ function Review({
               {shortHash(review.to.hash)}
             </span>
             <span className="muted">
-              · {plural(review.files.length, 'file')} changed · new hash, so grants don’t carry over
+              {firstInstall
+                ? ` · ${plural(review.files.length, 'file')} · grants are tied to this exact version`
+                : ` · ${plural(review.files.length, 'file')} changed · new hash, so grants don’t carry over`}
             </span>
           </div>
         </div>
         <div className="stack" style={{ gap: 4, justifyItems: 'end' }}>
           <div className="eyebrow">
-            {badges.length > 0 ? 'This update asks for more' : 'Nothing new is asked for'}
+            {firstInstall
+              ? 'What it asks for'
+              : badges.length > 0
+                ? 'This update asks for more'
+                : 'Nothing new is asked for'}
           </div>
           <div
             className="row"
@@ -197,7 +208,20 @@ function Review({
 
       <div className="review">
         <div className="stack gap-3" style={{ alignContent: 'start' }}>
-          <PermissionChanges review={review} />
+          {firstInstall ? (
+            <>
+              <FirstInstallSummary review={review} />
+              <details className="card fold">
+                <summary className="card-head">
+                  <span className="h3">Every permission, in detail</span>
+                  <span className="muted">login steps, requests, limits</span>
+                </summary>
+                <PermissionChanges review={review} />
+              </details>
+            </>
+          ) : (
+            <PermissionChanges review={review} />
+          )}
         </div>
 
         <div className="stack gap-3" style={{ alignContent: 'start' }}>
@@ -223,14 +247,21 @@ function Review({
           </div>
 
           {review.manifestDiff.length > 0 ? (
-            <div className="card" style={{ overflow: 'hidden' }}>
-              <div className="card-head">
-                <span className="h3">manifest</span>
-                <span className="muted">
-                  +{review.manifestDiff.filter((l) => l.kind === 'add').length} −
-                  {review.manifestDiff.filter((l) => l.kind === 'del').length}
-                </span>
-              </div>
+            <Fold
+              folded={firstInstall}
+              head={
+                <>
+                  <span className="h3">{firstInstall ? 'Raw manifest' : 'manifest'}</span>
+                  <span className="muted">
+                    {firstInstall
+                      ? plural(review.manifestDiff.filter((l) => l.kind === 'add').length, 'line')
+                      : `+${review.manifestDiff.filter((l) => l.kind === 'add').length} −${
+                          review.manifestDiff.filter((l) => l.kind === 'del').length
+                        }`}
+                  </span>
+                </>
+              }
+            >
               <div className="diff" style={{ border: 0, borderRadius: 0 }}>
                 {review.manifestDiff.map((line, i) => (
                   // biome-ignore lint/suspicious/noArrayIndexKey: diff lines are positional
@@ -242,15 +273,19 @@ function Review({
                   </div>
                 ))}
               </div>
-            </div>
+            </Fold>
           ) : null}
 
           {review.files.length > 0 ? (
-            <div className="card" style={{ overflow: 'hidden' }}>
-              <div className="card-head">
-                <span className="h3">Code</span>
-                <span className="muted">runs in the tool partition only</span>
-              </div>
+            <Fold
+              folded={firstInstall}
+              head={
+                <>
+                  <span className="h3">Code</span>
+                  <span className="muted">runs in the tool partition only</span>
+                </>
+              }
+            >
               <table className="table files">
                 <tbody>
                   {review.files.map((f) => (
@@ -271,7 +306,7 @@ function Review({
                   ))}
                 </tbody>
               </table>
-            </div>
+            </Fold>
           ) : null}
         </div>
       </div>
@@ -287,6 +322,8 @@ function Review({
             />
             I’ve read the highlighted additions
           </label>
+        ) : firstInstall ? (
+          <span className="small muted">Approving lets its tools run with the permissions above.</span>
         ) : (
           <span className="small muted">This update adds no permissions.</span>
         )}
@@ -312,6 +349,117 @@ function Review({
     </div>
   )
 }
+
+/** A card that is open, or folded behind its head until clicked (D-review's raw manifest and code). */
+function Fold({
+  folded,
+  head,
+  children,
+}: {
+  readonly folded: boolean
+  readonly head: ReactNode
+  readonly children: ReactNode
+}) {
+  if (!folded) {
+    return (
+      <div className="card" style={{ overflow: 'hidden' }}>
+        <div className="card-head">{head}</div>
+        {children}
+      </div>
+    )
+  }
+  return (
+    <details className="card fold" style={{ overflow: 'hidden' }}>
+      <summary className="card-head">{head}</summary>
+      {children}
+    </details>
+  )
+}
+
+/** A first install in plain words: where it goes, what its tools do, what it asks of you. */
+function FirstInstallSummary({ review }: { readonly review: PendingReview }) {
+  const { diff } = review
+  const tools = diff.tools.added
+  const count = (purpose: 'read' | 'write' | 'irreversible') => tools.filter((t) => t.sideEffect === purpose)
+  return (
+    <div className="card" data-testid="first-install-summary">
+      <div className="card-head">
+        <span className="h3">What {review.name} may do</span>
+      </div>
+      <dl className="setup-perms">
+        <dt>Opens pages on</dt>
+        <dd>
+          {diff.navigation.added.map((o) => (
+            <span key={o} className="mono">
+              {hostOf(o)}
+            </span>
+          ))}
+        </dd>
+        <dt>Sends requests to</dt>
+        <dd>
+          {diff.egress.added.map((h) => (
+            <span key={h} className="mono">
+              {h}
+            </span>
+          ))}{' '}
+          <span className="xs muted">({plural(diff.requests.added.length, 'declared API call')})</span>
+        </dd>
+        <dt>Tools</dt>
+        <dd className="stack" style={{ gap: 4 }}>
+          {(['read', 'write', 'irreversible'] as const).map((purpose) =>
+            count(purpose).length === 0 ? null : (
+              <span key={purpose} className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                <SideEffect purpose={purpose}>{PURPOSE_WORDING[purpose]}</SideEffect>
+                {count(purpose)
+                  .map((t) => t.title)
+                  .join(', ')}
+              </span>
+            ),
+          )}
+        </dd>
+        <dt>Asks for</dt>
+        <dd className="stack" style={{ gap: 4 }}>
+          {diff.secrets.added.length === 0 && diff.messagesSources.added.length === 0 ? 'No secrets' : null}
+          {diff.secrets.added.map((secret) => (
+            <span key={secret.name} className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+              <SecretBadge name={secret.name} />
+              {secret.fields.map((f) => FIELD_WORDING[f]).join(', ')}, typed only on{' '}
+              {secret.origins.map((o) => (
+                <span key={o} className="mono">
+                  {hostOf(o)}
+                </span>
+              ))}
+            </span>
+          ))}
+          {diff.messagesSources.added.map((m) => (
+            <span key={m.sender} className="row" style={{ gap: 6 }}>
+              <span className="badge secret">SMS code</span> one-time codes sent by{' '}
+              <span className="mono">{m.sender}</span>, read from Messages
+            </span>
+          ))}
+        </dd>
+        {diff.settings.added.length === 0 ? null : (
+          <>
+            <dt>You choose</dt>
+            <dd>
+              {diff.settings.added
+                .map(
+                  (setting) => `${setting.title}${setting.required ? ' (needed before its tools run)' : ''}`,
+                )
+                .join(', ')}
+            </dd>
+          </>
+        )}
+      </dl>
+      <div className="card-body xs muted">
+        Nothing is granted yet: after approving, you choose which login it may use. Its login steps, every API
+        call and the raw manifest are below.
+      </div>
+    </div>
+  )
+}
+
+const PURPOSE_WORDING = { read: 'Reads', write: 'Changes', irreversible: 'Can’t be undone' } as const
 
 function Section({ title, children }: { readonly title: string; readonly children: ReactNode }) {
   return (

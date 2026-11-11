@@ -197,6 +197,7 @@ describe('site health', () => {
     cooldownMs: 0,
     nextCooldownMs: 600_000,
     budget: { minGapMs: 1000, waitMs: 0 },
+    calls: 2,
   }
 
   it('shows the runtime’s breaker, with the cause and time of its last opening from the log', () => {
@@ -217,6 +218,7 @@ describe('site health', () => {
         cause: 'rate-limited',
         lastOpenedAt: '2026-11-07T09:55:00.000Z',
         nextCooldownSeconds: 1200,
+        calls: 2,
       },
     ])
     // Open with nothing in the log (a block the audit couldn't record): the site's own block.
@@ -233,6 +235,7 @@ describe('site health', () => {
         cause: null,
         lastOpenedAt: '2026-11-07T09:55:00.000Z',
         nextCooldownSeconds: 600,
+        calls: 2,
       },
     ])
     expect(siteHealth([], [opened])).toEqual([])

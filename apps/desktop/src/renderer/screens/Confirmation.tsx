@@ -238,8 +238,7 @@ function Confirm({
         <div className="callout" style={{ padding: '8px 12px' }}>
           <Icon name="clients" size="sm" className="muted" />
           <div className="xs muted">
-            MCP clients can’t answer this prompt. If nobody does, it times out and the client is told
-            “timed-out”.
+            The AI app can’t answer this for you. If nobody does, it times out and the app is told so.
           </div>
         </div>
       </div>

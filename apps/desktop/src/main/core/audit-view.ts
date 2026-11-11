@@ -118,7 +118,7 @@ function parseRecord(line: string): AuditRecord | null {
 }
 
 export const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent['type'][]>> = {
-  'tool-calls': ['tool-called', 'tool-finished'],
+  'tool-calls': ['tool-called', 'call-waited', 'tool-finished'],
   logins: ['login-started', 'login-finished'],
   'secret-use': ['secret-used'],
   blocked: ['request-blocked', 'breaker-opened', 'breaker-closed'],
@@ -313,6 +313,18 @@ export function runTrace(
     }
     if (event.type === 'confirmation') {
       steps.push({ atMs, durationMs: null, stage: 'confirm', type: 'confirmation', answer: event.answer })
+    }
+    if (event.type === 'call-waited') {
+      // Recorded when the wait ended, so the step starts when it began.
+      steps.push({
+        atMs: Math.max(0, atMs - event.waitedMs),
+        durationMs: event.waitedMs,
+        stage: event.reason === 'queue' ? 'tool-input' : 'request-surface',
+        type: 'waited',
+        reason: event.reason,
+        waitedMs: event.waitedMs,
+        ahead: event.ahead ?? null,
+      })
     }
   }
   const finished = call.finished

@@ -77,12 +77,24 @@ describe('the tray popover', () => {
     expect(screen.queryByRole('button', { name: /Check out on coles/ })).toBeNull()
   })
 
+  it('says when an adapter is working through calls, and how many wait their turn', async () => {
+    const fake = createFakeApi({ now: NOW })
+    const sites = await fake.health.sites()
+    renderTray({
+      ...fake,
+      attention: { list: async () => [] },
+      health: { sites: async () => sites.map((s) => ({ ...s, breaker: 'closed', retryAt: null, calls: 3 })) },
+    })
+    expect(await screen.findAllByText('Working · 2 waiting their turn')).toHaveLength(1)
+  })
+
   it('switches the endpoint off', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })
     renderTray(api)
-    await user.click(await screen.findByRole('switch', { name: 'MCP endpoint on' }))
+    await user.click(await screen.findByRole('button', { name: /Turn off MCP for all clients/ }))
     expect(await screen.findByText('MCP endpoint off')).toBeTruthy()
+    expect(await screen.findByRole('button', { name: /Turn MCP back on/ })).toBeTruthy()
     expect(screen.queryByText('http://127.0.0.1:47821/mcp')).toBeNull()
   })
 

@@ -75,7 +75,7 @@ test('approve the bundled Woolworths adapter in its review, back into setup', as
   const perms = control.locator('.setup-perms')
   await expect(perms).toContainText(/www\.woolworths\.test/)
   await expect(perms).toContainText(/auth\.woolworths\.test/)
-  await expect(perms).toContainText(/3 read.*3 write.*0 irreversible/)
+  await expect(perms).toContainText(/3 read.*4 write.*0 irreversible/)
   await control.getByRole('link', { name: /^Review Woolworths .*…$/ }).click()
   const approve = control.getByRole('button', { name: /^Approve \d/ })
   await expect(approve).toBeVisible()
@@ -116,8 +116,10 @@ test('grant login from the demo item, with origins exactly the auth origin', asy
   const codes = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
   expect(codes?.messages.map((m) => m.grant?.itemId)).toEqual(['Woolworths'])
 
-  // The store is required on the fake (D69), so setup asks for it too: without it every tool ends
-  // needsUser.
+  // The store is required on the fake (D69), so setup asks for it in a step of its own: without it
+  // every tool ends needsUser.
+  await control.getByRole('link', { name: 'Continue' }).click()
+  await expect(h1('Pick your Woolworths store')).toBeVisible()
   const settings = control.getByTestId('setup-settings')
   await settings.getByRole('textbox').fill('2000')
   await settings.getByRole('button', { name: 'Search' }).click()
@@ -179,6 +181,7 @@ test('Claude Code’s token lists the six namespaced tools with manifest-derived
     'woolworths_remove_from_cart',
     'woolworths_search_products',
     'woolworths_set_cart_quantity',
+    'woolworths_update_cart',
   ])
   for (const read of ['woolworths_get_cart', 'woolworths_get_product', 'woolworths_search_products']) {
     expect(byName[read]).toMatchObject({ readOnlyHint: true, openWorldHint: true })
@@ -189,6 +192,7 @@ test('Claude Code’s token lists the six namespaced tools with manifest-derived
     ['woolworths_add_to_cart', false],
     ['woolworths_remove_from_cart', true],
     ['woolworths_set_cart_quantity', true],
+    ['woolworths_update_cart', false],
   ] as const) {
     expect(byName[write]).toEqual({
       readOnlyHint: false,

@@ -2,16 +2,17 @@
 // fills → hand-off → probe again → tool code and every request decision → redacted output.
 
 import { useState } from 'react'
-import type { RunTrace, TraceStep } from '../../shared/api'
+import type { RunSummary, RunTrace, TraceStep } from '../../shared/api'
 import { Preview } from '../components/Preview'
 import { Avatar, ClientName, Hash, Icon, LoadState, Segmented, SideEffect } from '../components/ui'
-import { useLoad } from '../lib/api-context'
-import { formatBytes, formatDuration, hostOf, plural } from '../lib/format'
+import { useLoad, useNow } from '../lib/api-context'
+import { formatBytes, formatDuration, formatTime, hostOf, plural } from '../lib/format'
 import { href } from '../lib/router'
 import {
   blockedExplanation,
   blockedWording,
   clientClaim,
+  clientLabel,
   errorWording,
   FILL_CHECK_WORDING,
   needsUserWording,
@@ -19,29 +20,114 @@ import {
   runTone,
   runWording,
   stageWording,
+  toolPhrase,
+  waitWording,
 } from '../lib/wording'
 
 export function ActivityPage({ callId }: { readonly callId: string | null }) {
-  const runs = useLoad((api) => api.runs.list({ limit: 1 }), [], ['runs-changed'])
-  // With no call id, show the newest run.
-  const selected = callId ?? (runs.status === 'ready' ? (runs.data[0]?.callId ?? null) : null)
-  if (selected === null) {
-    return (
-      <>
-        <div className="titlebar">
-          <div className="title">Activity</div>
-        </div>
-        {runs.status === 'ready' ? (
-          <div className="empty">No tool calls yet.</div>
-        ) : (
-          <LoadState loaded={runs} what="activity">
-            {() => null}
-          </LoadState>
-        )}
-      </>
-    )
+  if (callId === null) return <ActivityList />
+  return <TraceView key={callId} callId={callId} />
+}
+
+type OutcomeFilter = 'all' | 'ok' | 'needs-you' | 'problems'
+
+const OUTCOME_FILTERS: readonly { readonly value: OutcomeFilter; readonly label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'ok', label: 'Done' },
+  { value: 'needs-you', label: 'Needed you' },
+  { value: 'problems', label: 'Failed or blocked' },
+]
+
+function matchesOutcome(run: RunSummary, filter: OutcomeFilter): boolean {
+  switch (filter) {
+    case 'all':
+      return true
+    case 'ok':
+      return run.outcome === 'ok'
+    case 'needs-you':
+      return run.outcome === 'needsUser'
+    case 'problems':
+      return run.outcome === 'failed' || run.outcome === 'blocked' || run.outcome === 'declined'
   }
-  return <TraceView key={selected} callId={selected} />
+}
+
+/** The number of calls the list loads; older ones are in the Audit log. */
+const LIST_LIMIT = 200
+
+// F27: every recent call as one plain line, filtered by outcome and client; a row opens its trace.
+function ActivityList() {
+  const runs = useLoad((api) => api.runs.list({ limit: LIST_LIMIT }), [], ['runs-changed'])
+  const now = useNow(60_000)
+  const [outcome, setOutcome] = useState<OutcomeFilter>('all')
+  const [client, setClient] = useState<string>('')
+  return (
+    <>
+      <div className="titlebar">
+        <div>
+          <div className="title">Activity</div>
+          <div className="subtitle">Every tool call, newest first</div>
+        </div>
+      </div>
+      <LoadState loaded={runs} what="activity">
+        {(list) => {
+          if (list.length === 0) return <div className="empty">No tool calls yet.</div>
+          const clients = [...new Set(list.map((run) => run.client))]
+          const shown = list.filter(
+            (run) => matchesOutcome(run, outcome) && (client === '' || run.client === client),
+          )
+          return (
+            <div className="content scroll stack gap-3" style={{ alignContent: 'start' }}>
+              <div className="row gap-2">
+                <Segmented label="Outcome" value={outcome} onChange={setOutcome} options={OUTCOME_FILTERS} />
+                <select
+                  className="select"
+                  aria-label="Client"
+                  value={client}
+                  onChange={(e) => setClient(e.target.value)}
+                >
+                  <option value="">All clients</option>
+                  {clients.map((c) => (
+                    <option key={c} value={c}>
+                      {clientLabel(c)}
+                    </option>
+                  ))}
+                </select>
+                <span className="grow" />
+                <span className="xs muted">{plural(shown.length, 'call')}</span>
+              </div>
+              <div className="card">
+                {shown.length === 0 ? (
+                  <div className="empty">No calls match these filters.</div>
+                ) : (
+                  <ul className="activity-list" aria-label="Tool calls">
+                    {shown.map((run) => (
+                      <li key={run.callId}>
+                        <a className="activity-row" href={href.activity(run.callId)}>
+                          <span className={`dot ${runTone(run) || 'tertiary'}`} />
+                          <span className="grow truncate">
+                            {toolPhrase(run.tool)} on {run.adapterName}
+                            <span className="muted"> for “{clientLabel(run.client)}”</span>
+                          </span>
+                          <span className={`pill ${runTone(run)}`}>{runWording(run)}</span>
+                          <span className="xs muted num">{formatTime(run.startedAt, now)}</span>
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              {list.length === LIST_LIMIT ? (
+                <div className="xs muted">
+                  Showing the newest {LIST_LIMIT}. Older calls are in the <a href={href.audit()}>Audit log</a>
+                  .
+                </div>
+              ) : null}
+            </div>
+          )
+        }}
+      </LoadState>
+    </>
+  )
 }
 
 function TraceView({ callId }: { readonly callId: string }) {
@@ -194,7 +280,10 @@ function Trace({ trace, view }: { readonly trace: RunTrace; readonly view: 'time
             </div>
             {trace.output === null ? (
               <div className="xs muted" style={{ marginTop: 4 }}>
-                No output: the call ended {OUTCOME_WORDING[summary.outcome]}
+                No output:{' '}
+                {summary.outcome === 'needsUser'
+                  ? 'the call stopped to wait for you'
+                  : `the call ended ${OUTCOME_WORDING[summary.outcome]}`}
                 {summary.stage !== null && summary.errorClass !== null
                   ? ` (${stageWording(summary.stage)}: ${errorWording(summary.errorClass)})`
                   : ''}
@@ -258,13 +347,16 @@ export function Step({ step }: { readonly step: TraceStep }) {
           <At ms={step.atMs} />
           <Node tone={step.loggedIn ? 'ok' : 'info'} />
           <div className="label">
-            {step.afterHandoff ? <code>assertLoggedIn</code> : 'session.ensure()'}{' '}
-            <span className={`partition ${step.partition}`}>{step.partition}</span>
-            <div className="xs muted">
-              {step.afterHandoff ? 'Probe again after hand-off: ' : 'Probe '}
-              <code>GET {step.path}</code> → {step.status ?? 'no answer'},{' '}
-              {step.loggedIn ? 'logged in' : 'not logged in'}
-            </div>
+            {step.afterHandoff ? 'Checked the login worked' : 'Checked whether you’re signed in'}:{' '}
+            {step.loggedIn ? 'signed in' : 'not signed in'}
+            <details className="tech">
+              <summary className="xs muted">Details</summary>
+              <div className="xs muted">
+                {step.afterHandoff ? <code>assertLoggedIn</code> : <code>session.ensure()</code>}{' '}
+                <span className={`partition ${step.partition}`}>{step.partition}</span>{' '}
+                <code>GET {step.path}</code> → {step.status ?? 'no answer'}
+              </div>
+            </details>
           </div>
           <Dur ms={step.durationMs} />
         </li>
@@ -371,6 +463,22 @@ export function Step({ step }: { readonly step: TraceStep }) {
                 {step.status !== null ? ` · ${step.status}` : ''}
               </span>
             )}
+          </div>
+          <Dur ms={step.durationMs} />
+        </li>
+      )
+    case 'waited':
+      return (
+        <li className="step sub">
+          <At ms={step.atMs} />
+          <Node tone="info" />
+          <div className="label">
+            {waitWording(step.reason, step.waitedMs, step.ahead)}
+            <div className="xs muted">
+              {step.reason === 'queue'
+                ? 'Valet runs one call at a time for each shop, in the order they arrive.'
+                : 'Valet spaces requests to the shop out, as a person browsing would.'}
+            </div>
           </div>
           <Dur ms={step.durationMs} />
         </li>

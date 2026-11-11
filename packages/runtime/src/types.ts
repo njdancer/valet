@@ -250,6 +250,8 @@ export interface SiteHealthSnapshot {
   readonly cooldownMs: number
   /** The cooldown the next block would start, after doubling, within the maximum. */
   readonly nextCooldownMs: number
+  /** Calls on this host's adapters running or waiting for their turn now (D-pacing). */
+  readonly calls: number
   readonly budget: {
     /** The gap between requests: the most cautious any adapter on the host declares. */
     readonly minGapMs: number

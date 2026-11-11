@@ -501,6 +501,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       cause: 'blocked-by-site',
       lastOpenedAt: ago(4),
       nextCooldownSeconds: 1200,
+      calls: 0,
     },
     {
       host: 'www.woolworths.com.au',
@@ -510,6 +511,8 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       cause: null,
       lastOpenedAt: ago(350),
       nextCooldownSeconds: 1800,
+      // Two calls: one running, one waiting its turn.
+      calls: 2,
     },
   ]
 
@@ -1463,7 +1466,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
 }
 
 const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent['type'][]>> = {
-  'tool-calls': ['tool-called', 'tool-finished'],
+  'tool-calls': ['tool-called', 'call-waited', 'tool-finished'],
   logins: ['login-started', 'login-finished'],
   'secret-use': ['secret-used'],
   blocked: ['request-blocked', 'breaker-opened', 'breaker-closed'],

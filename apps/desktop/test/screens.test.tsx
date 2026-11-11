@@ -81,7 +81,8 @@ describe('the adapter page', () => {
       },
     })
     expect(await screen.findByRole('heading', { name: 'Woolworths' })).toBeTruthy()
-    expect(screen.getByText('Probe')).toBeTruthy()
+    // The sign-in check is technical detail, kept under Details (D-words).
+    expect(screen.getByText('Sign-in check').closest('details')).toBeTruthy()
     expect(screen.queryByText('Handed over')).toBeNull()
     expect(screen.queryByText('Nothing yet')).toBeNull()
   })
@@ -126,7 +127,7 @@ describe('the adapter page', () => {
     expect(screen.getByRole('link', { name: 'Grant…' }).getAttribute('href')).toBe(
       '#/adapters/coles/grant/messages',
     )
-    expect(screen.getByText(/Open · retry in 4 min/)).toBeTruthy()
+    expect(screen.getByText(/Paused after the site pushed back · retry in 4 min/)).toBeTruthy()
     expect(screen.getByText('cookie coles-session present')).toBeTruthy()
   })
 
@@ -238,11 +239,33 @@ describe('the adapter page', () => {
 })
 
 describe('activity and run traces', () => {
-  it('shows the newest run when none is chosen', async () => {
+  it('lists every call in words, and filters by outcome and client (F27)', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    const runs = await api.runs.list()
+    renderAt('#/activity', api)
+    const list = await screen.findByRole('list', { name: 'Tool calls' })
+    expect(list.querySelectorAll('li')).toHaveLength(runs.length)
+    expect(screen.getAllByText(/Read the trolley on Woolworths/).length).toBeGreaterThan(0)
+    await user.click(screen.getByRole('button', { name: 'Needed you' }))
+    const needing = runs.filter((r) => r.outcome === 'needsUser').length
+    expect(list.querySelectorAll('li')).toHaveLength(needing)
+    await user.click(screen.getByRole('button', { name: 'All' }))
+    const firstClient = runs[0]?.client as string
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Client' }), firstClient)
+    expect(list.querySelectorAll('li')).toHaveLength(runs.filter((r) => r.client === firstClient).length)
+  })
+
+  it('opens a run from the list', async () => {
+    const user = userEvent.setup()
     renderAt('#/activity', createFakeApi({ now: NOW }))
+    const first = (await screen.findAllByRole('link', { name: /Read the trolley on Woolworths/ }))[0]
+    await user.click(first as HTMLElement)
     expect(await screen.findByText('woolworths.get_cart')).toBeTruthy()
     expect(screen.getByText('Needs you: Verification check')).toBeTruthy()
-    expect(screen.getByText(/No output: the call ended needsUser \(Verification check\)/)).toBeTruthy()
+    expect(
+      screen.getByText(/No output: the call stopped to wait for you \(Verification check\)/),
+    ).toBeTruthy()
   })
 
   it('traces the login, the hand-off and every request decision, with secrets as markers only', async () => {
@@ -580,6 +603,35 @@ describe('credentials', () => {
     await waitFor(() => expect(screen.queryByText('1Password app “Coles”')).toBeNull())
   })
 
+  it('names adapters, shows SMS grants, and links each unready source to Settings (F20)', async () => {
+    const fake = createFakeApi({ now: NOW })
+    const list = await fake.grants.list()
+    const api = {
+      ...fake,
+      grants: {
+        ...fake.grants,
+        list: async () => [
+          ...list,
+          {
+            ...(list[1] as (typeof list)[number]),
+            secret: 'messages',
+            provider: 'messages' as const,
+            itemId: '+61 400 000 111',
+            itemTitle: '+61 400 000 111',
+          },
+        ],
+      },
+    }
+    renderAt('#/credentials', api)
+    expect(await screen.findByText('Texts from +61 400 000 111')).toBeTruthy()
+    expect(screen.getByText('SMS codes')).toBeTruthy()
+    expect((await screen.findAllByRole('link', { name: 'Woolworths' })).length).toBeGreaterThan(0)
+    expect(screen.queryByRole('link', { name: 'woolworths' })).toBeNull()
+    const turnOn = await screen.findByRole('link', { name: 'Turn on in Settings' })
+    expect(turnOn.getAttribute('href')).toBe('#/settings')
+    expect(screen.getAllByRole('link', { name: 'Set up in Settings' }).length).toBeGreaterThan(0)
+  })
+
   it('offers a re-sync from 1Password for a Keychain copy, and only for one', async () => {
     const user = userEvent.setup()
     const fake = createFakeApi({ now: NOW })
@@ -615,9 +667,11 @@ describe('the login hand-off banner', () => {
     expect(screen.getByTestId('manifest-note').textContent).toBe(
       '“Auth0 showed a challenge after the password page.”',
     )
-    expect(screen.getByText(/get_cart/).parentElement?.textContent).toContain(
-      'from a client calling itself “Claude Code”',
-    )
+    // Plain words (D-words): who asked, for what, and that Valet carries on; no needsUser.
+    const line = screen.getByText(/get_cart/).parentElement?.textContent ?? ''
+    expect(line).toContain('A client calling itself “Claude Code” asked for get_cart')
+    expect(line).toContain('Valet carries on')
+    expect(line).not.toContain('needsUser')
     await user.click(screen.getByRole('button', { name: 'Give up' }))
     expect(called(api, 'closeLoginWindow')).toEqual([['woolworths']])
     await user.click(await screen.findByRole('button', { name: 'Show login' }))
