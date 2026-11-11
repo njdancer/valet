@@ -322,21 +322,21 @@ describe('add_to_cart', () => {
 
   it('reports the quantity the site stored when it clamps the line, with a notice', async () => {
     const before = loadFixture('trolley-two-items.json')
-    before.AvailableItems[0].QuantityInTrolley = 30
+    before.AvailableItems[0].QuantityInTrolley = 10
     const reply = loadFixture('trolley-two-items.json')
-    reply.AvailableItems[0].QuantityInTrolley = 36
+    reply.AvailableItems[0].QuantityInTrolley = 12
     const ctx = new FakeToolContext().on('GET', TROLLEY, json(before)).on('POST', UPDATE, json(reply))
     const result = await addToCart.run(ctx, addToCart.input.parse({ stockcode: 88436, quantity: 10 }))
-    expect(ctx.fetches.at(-1)?.json).toEqual({ items: [{ stockcode: 88436, quantity: 40 }] })
+    expect(ctx.fetches.at(-1)?.json).toEqual({ items: [{ stockcode: 88436, quantity: 20 }] })
     expect(result).toMatchObject({
-      previousQuantity: 30,
-      requestedQuantity: 40,
-      quantity: 36,
+      previousQuantity: 10,
+      requestedQuantity: 20,
+      quantity: 12,
       confirmed: true,
-      notices: [NOTICES.differs(36, 40)],
+      notices: [NOTICES.differs(12, 20)],
     })
     expect(result.notices[0]).toBe(
-      'The site stored 36, not the 40 asked for. It may limit how many of this product an order can have, or the cart changed at the same time.',
+      'The site stored 12, not the 20 asked for. It may limit how many of this product an order can have, or the cart changed at the same time.',
     )
   })
 
@@ -450,9 +450,9 @@ describe('add_to_cart', () => {
     expect(addToCart.output.parse(result)).toEqual(result)
   })
 
-  it('refuses to push a line over 50 and makes no write', async () => {
+  it('refuses to push a line over 20 and makes no write (D54)', async () => {
     const body = loadFixture('trolley-two-items.json')
-    body.AvailableItems[0].QuantityInTrolley = 45
+    body.AvailableItems[0].QuantityInTrolley = 15
     const ctx = new FakeToolContext().on('GET', TROLLEY, json(body)).on('POST', UPDATE, json({}))
     const error = await addToCart
       .run(ctx, addToCart.input.parse({ stockcode: 88436, quantity: 6 }))
@@ -502,10 +502,10 @@ describe('add_to_cart', () => {
     expect(ctx.fetches.map((f) => f.method)).toEqual(['GET'])
   })
 
-  it('bounds the quantity to 1..50 whole units', () => {
+  it('bounds the quantity to 1..20 whole units', () => {
     const parse = (input: unknown) => addToCart.input.safeParse(input)
-    expect(parse({ stockcode: 1, quantity: 50 }).success).toBe(true)
-    expect(parse({ stockcode: 1, quantity: 51 }).success).toBe(false)
+    expect(parse({ stockcode: 1, quantity: 20 }).success).toBe(true)
+    expect(parse({ stockcode: 1, quantity: 21 }).success).toBe(false)
     expect(parse({ stockcode: 1, quantity: 0 }).success).toBe(false)
     expect(parse({ stockcode: 1, quantity: -3 }).success).toBe(false)
     expect(parse({ stockcode: 1, quantity: 1.5 }).success).toBe(false)
@@ -570,13 +570,13 @@ describe('set_cart_quantity', () => {
 
   it('reports the clamped quantity the site stored, not the one asked for', async () => {
     const reply = loadFixture('trolley-two-items.json')
-    reply.AvailableItems[0].QuantityInTrolley = 36
+    reply.AvailableItems[0].QuantityInTrolley = 12
     const ctx = new FakeToolContext().on('POST', UPDATE, json(reply))
-    expect(await set(ctx, 88436, 50)).toMatchObject({
-      requestedQuantity: 50,
-      quantity: 36,
+    expect(await set(ctx, 88436, 20)).toMatchObject({
+      requestedQuantity: 20,
+      quantity: 12,
       confirmed: true,
-      notices: [NOTICES.differs(36, 50)],
+      notices: [NOTICES.differs(12, 20)],
     })
   })
 
@@ -608,11 +608,11 @@ describe('set_cart_quantity', () => {
     expect(error).toEqual(new ValetError('tool-run', 'blocked-by-site'))
   })
 
-  it('bounds the quantity to 0..50 whole units', () => {
+  it('bounds the quantity to 0..20 whole units', () => {
     const parse = (input: unknown) => setCartQuantity.input.safeParse(input)
     expect(parse({ stockcode: 1, quantity: 0 }).success).toBe(true)
-    expect(parse({ stockcode: 1, quantity: 50 }).success).toBe(true)
-    expect(parse({ stockcode: 1, quantity: 51 }).success).toBe(false)
+    expect(parse({ stockcode: 1, quantity: 20 }).success).toBe(true)
+    expect(parse({ stockcode: 1, quantity: 21 }).success).toBe(false)
     expect(parse({ stockcode: 1, quantity: -1 }).success).toBe(false)
     expect(parse({ stockcode: 1, quantity: 2.5 }).success).toBe(false)
     expect(parse({ stockcode: 1 }).success).toBe(false)

@@ -827,6 +827,17 @@ describe('after the login', () => {
     expect(site.trolleyFor(PLAIN.username)).toEqual([])
   })
 
+  it('starts a login without the store the anonymous session chose', async () => {
+    const site = await start()
+    const b = await browser(site)
+    await b.www.postJson('/api/v3/ui/fulfilment', { addressId: 9001201, fulfilmentMethod: 'Pickup' })
+    expect(site.pickupAddresses(null)).toEqual([9001201])
+    await b.www.get(location(await signIn(site, b, PLAIN)))
+    expect(site.pickupAddresses(PLAIN.username)).toEqual([null])
+    await b.www.postJson('/api/v3/ui/fulfilment', { addressId: 9001245, fulfilmentMethod: 'Pickup' })
+    expect(site.pickupAddresses(PLAIN.username)).toEqual([9001245])
+  })
+
   it('logs out to a fresh anonymous session; the old token is dead', async () => {
     const site = await start()
     const b = await browser(site)

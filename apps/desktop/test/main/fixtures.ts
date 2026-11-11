@@ -81,6 +81,70 @@ export function shopDefinition(input: ManifestInput = SHOP): AdapterDefinition {
   })
 }
 
+/** The shop with a required store setting (D69): two more tools, which only the runtime runs. */
+export const SHOP_WITH_STORE: ManifestInput = {
+  ...SHOP,
+  requests: [...(SHOP.requests ?? []), { method: 'POST', path: '/api/store', purpose: 'write' }],
+  tools: [
+    ...SHOP.tools,
+    { name: 'find_stores', title: 'Find stores', description: 'Stores to choose from.', sideEffect: 'read' },
+    {
+      name: 'apply_store',
+      title: 'Use store',
+      description: 'Shops at the chosen store.',
+      sideEffect: 'write',
+    },
+  ],
+  settings: {
+    store: {
+      title: 'Store',
+      description: 'The store the shop quotes prices for.',
+      required: true,
+      choices: { tool: 'find_stores', queryLabel: 'Postcode' },
+      apply: { tool: 'apply_store' },
+    },
+  },
+}
+
+export const SHOP_STORES = [
+  { value: '11', label: 'Shop Central', detail: '1 Main St' },
+  { value: '12', label: 'Shop <b>North</b>' },
+]
+
+/** What the store shop's setting tools did, and what find_stores answers next. */
+export interface StoreShopLog {
+  readonly queries: string[]
+  readonly applied: string[]
+  /** Returned (or, when an Error, thrown) by find_stores. */
+  answer: unknown
+}
+
+export function storeShopDefinition(log: StoreShopLog): AdapterDefinition {
+  const shop = shopDefinition()
+  return defineAdapter({
+    manifest: parseManifest(SHOP_WITH_STORE),
+    tools: {
+      ...shop.tools,
+      find_stores: {
+        input: z.object({ query: z.string() }),
+        output: z.unknown(),
+        run: async (_ctx, args: { query: string }) => {
+          log.queries.push(args.query)
+          if (log.answer instanceof Error) throw log.answer
+          return log.answer
+        },
+      },
+      apply_store: {
+        input: z.object({ value: z.string() }),
+        output: z.unknown(),
+        run: async (_ctx, args: { value: string }) => {
+          log.applied.push(args.value)
+        },
+      },
+    },
+  })
+}
+
 export const SHOP_FILES = { 'src/index.ts': 'export default {}\n', 'package.json': '{}\n' }
 
 /** An auth page whose cookie jar says whether the person is logged in. Records what happened. */

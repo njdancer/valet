@@ -18,6 +18,12 @@
 //   8. the output matches the tool's schema, is converted to plain JSON, and is redacted on the
 //      way out.
 //
+// Settings (D69) add two things between 4 and 5. A call is refused, needsUser `setting-required`,
+// while a setting the manifest requires has no value. And a setting with an apply tool has it run
+// first, as a run of its own under the same lock, with its own policy and its own audit records,
+// whenever the value isn't known to be in force on the site. The tools that serve settings are the
+// adapter's own code and get no more than any tool; MCP clients can neither list nor call them.
+//
 // Schemas are adapter code too: a zod refine or transform runs whatever the adapter wrote. So input
 // parsing runs before the confirmation (the person is shown the parsed input) with nothing but the
 // raw input to work on, and both parses run under their own deadline, as does the confirmation
@@ -31,6 +37,7 @@
 // leaves here carries page text or exception messages: failures are a stage and an error class, and
 // needsUser is a reason code.
 
+import { randomUUID } from 'node:crypto'
 import {
   type AdapterDefinition,
   type AdapterManifest,
@@ -45,7 +52,11 @@ import {
   NeedsUserError,
   type RequestDeclaration,
   type SessionDriver,
+  type SettingDeclaration,
   type Stage,
+  settingChoicesSchema,
+  settingToolNames,
+  settingValueSchema,
   type ToolContext,
   type ToolDeclaration,
   type ToolImplementation,
@@ -70,6 +81,7 @@ import { redactOutput } from './redaction'
 import { knownReason, type LoginBackoff, SessionGate } from './session'
 import { breakerRefusal, isSiteRefusal, type SiteGuards, SiteProtection } from './site-protection'
 import {
+  type AdapterSettingsLookup,
   type AuthRunner,
   CLIENT_TRANSPORTS,
   type ClientTransport,
@@ -80,6 +92,8 @@ import {
   type LoginStepContext,
   type LoginStepOptions,
   type RuntimeDiagnostic,
+  type SettingChoicesRequest,
+  type SettingChoicesResult,
   type SiteHealthSnapshot,
   type ToolCallRequest,
   type ToolCallResult,
@@ -122,6 +136,14 @@ const CALL_ID = /^[A-Za-z0-9_-]{1,64}$/
 /** The endpoint's identity label: mcp-server's identityLabel(). */
 const CLIENT_ID = /^(local|remote):[a-z0-9][a-z0-9_-]{0,63}$/
 const HASH = /^[0-9a-f]{64}$/
+/**
+ * How long an applied setting is trusted to still be in force on the site. A site session can end
+ * without the runtime seeing it (an anonymous session's cookies expiring), and the site then goes
+ * back to its own default.
+ */
+export const SETTING_REAPPLY_MS = 6 * 60 * 60_000
+/** The client named in the audit records of the runtime's own runs of a setting's tools. */
+export const SETTINGS_CLIENT = 'Valet (settings)'
 
 export interface RegisteredAdapter {
   readonly definition: AdapterDefinition
@@ -149,6 +171,10 @@ export interface ToolHostOptions {
   readonly markers: LoginMarkerStore
   /** Where site circuit breakers keep their state across restarts, e.g. a JsonFileStore. */
   readonly breakerStore: JsonStore
+  /** The person's chosen setting values. Without it no setting has a value. */
+  readonly settings?: AdapterSettingsLookup
+  /** Call ids for the runtime's own runs of apply tools. Random by default. */
+  readonly newCallId?: () => string
   /**
    * Where each site's last request time is kept across restarts, so a restart can't send a request
    * sooner than the site's gap after the last one. Without it the pace is kept in memory only.
@@ -180,8 +206,21 @@ interface Entry extends RegisteredAdapter {
   readonly site: SiteGuards
   /** The site host its guards are keyed by. */
   readonly host: string
+  /**
+   * Settings whose apply tool has run in this process, with the value it applied and when. Memory
+   * only: a restart applies again. Emptied whenever the session may have changed under it.
+   */
+  readonly applied: Map<string, { readonly value: string; readonly at: number }>
   /** This adapter's session read cache (D28). */
   readonly cache: ReadCache
+}
+
+/** A setting whose apply tool must run before the call that found it. */
+interface DueSetting {
+  readonly name: string
+  readonly value: string
+  readonly declaration: ToolDeclaration
+  readonly implementation: ToolImplementation
 }
 
 /** A wait for the adapter's lock that ended without it. `ahead`: the calls still in front. */
@@ -273,6 +312,7 @@ export class ToolHost {
       gate,
       site,
       host,
+      applied: new Map(),
       cache: new ReadCache(this.clock),
       ...(adapter.isolation === undefined ? {} : { isolation: adapter.isolation }),
     })
@@ -284,7 +324,9 @@ export class ToolHost {
     for (const entry of this.adapters.values()) {
       const manifest = entry.definition.manifest
       if (!(await this.isApproved(entry))) continue
+      const internal = settingToolNames(manifest)
       for (const declaration of manifest.tools) {
+        if (internal.has(declaration.name)) continue
         const implementation = implementationOf(entry, declaration.name)
         if (implementation === undefined) continue
         listed.push({
@@ -376,6 +418,9 @@ export class ToolHost {
       }
       throw new ValetError('login', outcome.kind === 'timed-out' ? 'timed-out' : 'aborted')
     } finally {
+      // The person's login work can replace the tool partition's session, and with it whatever the
+      // site held for the old one: every setting is applied again before the next call.
+      entry.applied.clear()
       external?.removeEventListener('abort', stop)
       controller.abort()
       const left = unsettled
@@ -422,7 +467,40 @@ export class ToolHost {
     })
   }
 
-  async call(request: ToolCallRequest): Promise<ToolCallResult> {
+  call(request: ToolCallRequest): Promise<ToolCallResult> {
+    return this.dispatch(request, false)
+  }
+
+  /**
+   * The choices for one of an adapter's settings, for the app to show the person (D69): one run of
+   * the setting's choices tool, with everything a tool call gets (approval, the lock, the breaker,
+   * the rate budget, the run policy, the audit records, redaction). Its output must also be the
+   * shape core fixes for choices, whatever the tool's own schema allows.
+   */
+  async settingChoices(request: SettingChoicesRequest): Promise<SettingChoicesResult> {
+    const entry = this.adapters.get(request.adapterId)
+    if (entry === undefined) return failed('manifest', 'not-granted')
+    const setting = settingOf(entry.definition.manifest, request.setting)
+    if (setting === undefined) return failed('manifest', 'not-found')
+    const result = await this.dispatch(
+      {
+        adapterId: request.adapterId,
+        tool: setting.choices.tool,
+        input: { query: request.query },
+        client: SETTINGS_CLIENT,
+        callId: request.callId,
+        ...(request.signal === undefined ? {} : { signal: request.signal }),
+      },
+      true,
+    )
+    if (result.status !== 'ok') return result
+    const parsed = settingChoicesSchema.safeParse(result.output)
+    if (!parsed.success) return failed('tool-output', 'invalid')
+    return { status: 'ok', choices: parsed.data.choices }
+  }
+
+  /** `internal`: the runtime's own run of a tool that serves a setting, which no client may call. */
+  private async dispatch(request: ToolCallRequest, internal: boolean): Promise<ToolCallResult> {
     // The id goes into audit events and the login marker, so it must be short and plain.
     if (typeof request.callId !== 'string' || !CALL_ID.test(request.callId))
       return failed('tool-input', 'invalid')
@@ -450,7 +528,7 @@ export class ToolHost {
     await this.protection.ready()
     let result: ToolCallResult
     try {
-      result = await this.execute(entry, request, client, transportOf(request.transport))
+      result = await this.execute(entry, request, client, transportOf(request.transport), internal)
     } catch (error) {
       result = fromError(error, entry.site)
     }
@@ -463,6 +541,7 @@ export class ToolHost {
     request: ToolCallRequest,
     client: string,
     transport: ClientTransport | undefined,
+    internal: boolean,
   ): Promise<ToolCallResult> {
     const external = signalOf(request.signal)
     if (external?.aborted) return failed('tool-run', 'aborted')
@@ -471,6 +550,8 @@ export class ToolHost {
     const declaration = manifest.tools.find((t) => t.name === request.tool)
     const implementation = implementationOf(entry, request.tool)
     if (declaration === undefined || implementation === undefined) return failed('manifest', 'not-found')
+    // A setting's tool answers a client exactly as a tool that doesn't exist.
+    if (settingToolNames(manifest).has(declaration.name) !== internal) return failed('manifest', 'not-found')
     const input = await this.validate(implementation.input, request.input, 'tool-input')
     if (input.status !== 'ok') return input
 
@@ -486,21 +567,8 @@ export class ToolHost {
       return lock.kind === 'aborted' ? failed('tool-run', 'aborted') : busy(entry.site, lock.ahead)
     }
     const release = lock
-    const controller = new AbortController()
-    // The caller giving up stops the tool the way a timeout does.
-    const stop = (): void => controller.abort()
-    external?.addEventListener('abort', stop, { once: true })
-    const state = new CallState(request.callId, controller.signal, () => entry.gate.secrets)
-    // Whatever stops the call stops its login too, unless the caller was answered early and the
-    // login left to finish (D50).
-    controller.signal.addEventListener(
-      'abort',
-      () => {
-        if (!state.detached) state.login.abort()
-      },
-      { once: true },
-    )
-    let running = false
+    // Once the tool's own run starts, the run releases the lock, after its leftover work settles.
+    let handedOn = false
     try {
       if (external?.aborted) return failed('tool-run', 'aborted')
       // Again, because a revocation can land while this call waits for the lock.
@@ -510,6 +578,10 @@ export class ToolHost {
       // asked anything and before anything is sent, so no call is cut off halfway by it.
       const spentForMs = entry.site.budget.spentForMs()
       if (spentForMs > 0) return { status: 'blocked', retryAfterMs: spentForMs, cause: 'hourly-cap' }
+      // A setting's own tools run without the settings: the choices are how one gets its value.
+      const due = internal ? [] : await this.dueSettings(entry)
+      if (due === 'missing') return { status: 'needsUser', reason: 'setting-required' }
+      if (due === 'unreadable') return failed('tool-run', 'internal')
       const irreversible = declaration.sideEffect === 'irreversible'
       if (irreversible) {
         const answer = await this.ask(
@@ -525,6 +597,62 @@ export class ToolHost {
         if (external?.aborted) return failed('tool-run', 'aborted')
         if (answer !== 'approved') return { status: 'declined' }
       }
+      for (const setting of due) {
+        const applied = await this.applySetting(entry, setting, external)
+        if (applied.status !== 'ok') return applied
+        if (external?.aborted) return failed('tool-run', 'aborted')
+        if (entry.site.breaker.isOpen()) return blocked(entry.site)
+      }
+      handedOn = true
+      return await this.guardedRun(
+        entry,
+        declaration,
+        implementation,
+        input.output,
+        request.callId,
+        client,
+        transport,
+        external,
+        release,
+      )
+    } finally {
+      if (!handedOn) release()
+    }
+  }
+
+  /**
+   * One run of one tool under the driver's policy for it: steps 6 to 8. `done` is called once the
+   * run is over and the runtime work it started has settled (or the settle bound has passed): at
+   * once when nothing is left, otherwise later, after this has returned.
+   */
+  private async guardedRun(
+    entry: Entry,
+    declaration: ToolDeclaration,
+    implementation: ToolImplementation,
+    input: unknown,
+    callId: string,
+    client: string,
+    transport: ClientTransport | undefined,
+    external: AbortSignal | undefined,
+    done: () => void,
+  ): Promise<ToolCallResult> {
+    const controller = new AbortController()
+    // The caller giving up stops the tool the way a timeout does.
+    const stop = (): void => controller.abort()
+    external?.addEventListener('abort', stop, { once: true })
+    const state = new CallState(callId, controller.signal, () => entry.gate.secrets)
+    // Whatever stops the call stops its login too, unless the caller was answered early and the
+    // login left to finish (D50).
+    controller.signal.addEventListener(
+      'abort',
+      () => {
+        if (!state.detached) state.login.abort()
+      },
+      { once: true },
+    )
+    let running = false
+    try {
+      if (external?.aborted) return failed('tool-run', 'aborted')
       try {
         // Before the run begins: opening the tool page loads home under the run policy, and what
         // the driver refuses then is redacted against these.
@@ -533,10 +661,12 @@ export class ToolHost {
         return failed('tool-run', 'internal')
       }
       try {
-        entry.driver.beginRun(runPolicy(manifest, declaration), (b) => this.onBlocked(entry, state, b))
+        entry.driver.beginRun(runPolicy(entry.definition.manifest, declaration), (b) =>
+          this.onBlocked(entry, state, b),
+        )
         running = true
-        // Only the runtime's own confirmation above unlocks; ctx.confirm() never does.
-        if (irreversible) entry.driver.unlockIrreversible()
+        // Only the runtime's own confirmation unlocks; ctx.confirm() never does.
+        if (declaration.sideEffect === 'irreversible') entry.driver.unlockIrreversible()
       } catch (error) {
         // Without the driver's policy in force, nothing tool code does would be held to it.
         return fromReportable(toReportable(error, 'egress'))
@@ -549,7 +679,7 @@ export class ToolHost {
           implementation,
           client,
           transport,
-          input.output,
+          input,
           state,
           controller,
         )
@@ -573,11 +703,115 @@ export class ToolHost {
             // Nothing more to stop; the next beginRun replaces the policy.
           }
         }
-        release()
+        done()
       }
       if (state.idle) finish()
       else void this.afterSettling(state).finally(finish)
     }
+  }
+
+  /**
+   * The settings whose apply tool must run before this call: `missing` when a required setting has
+   * no value, `unreadable` when the values can't be read (nothing runs on a guess).
+   */
+  private async dueSettings(entry: Entry): Promise<DueSetting[] | 'missing' | 'unreadable'> {
+    const manifest = entry.definition.manifest
+    const declared = Object.entries(manifest.settings)
+    if (declared.length === 0) return []
+    let values: Readonly<Record<string, string>>
+    try {
+      values = (await this.options.settings?.values(manifest.id)) ?? {}
+    } catch {
+      return 'unreadable'
+    }
+    const due: DueSetting[] = []
+    for (const [name, setting] of declared) {
+      const stored = Object.hasOwn(values, name) ? values[name] : undefined
+      const parsed = settingValueSchema.safeParse({ value: stored })
+      if (!parsed.success) {
+        if (setting.required) return 'missing'
+        continue
+      }
+      const { value } = parsed.data
+      if (setting.apply === undefined) continue
+      const last = entry.applied.get(name)
+      const age = last === undefined ? Number.POSITIVE_INFINITY : this.clock.now() - last.at
+      if (last?.value === value && age >= 0 && age < SETTING_REAPPLY_MS) continue
+      const declaration = manifest.tools.find((t) => t.name === setting.apply?.tool)
+      const implementation = implementationOf(entry, setting.apply.tool)
+      // parseManifest and defineAdapter both rule this out; a hand-built definition could still do it.
+      if (declaration === undefined || implementation === undefined) return 'unreadable'
+      due.push({ name, value, declaration, implementation })
+    }
+    return due
+  }
+
+  /**
+   * Runs a setting's apply tool as a run of its own, with the calling tool's lock held: its own
+   * call id, its own tool-called and tool-finished records, and its own run policy (the apply tool's
+   * side effect, not the caller's). The caller's run starts only after this one has settled.
+   */
+  private async applySetting(
+    entry: Entry,
+    setting: DueSetting,
+    external: AbortSignal | undefined,
+  ): Promise<ToolCallResult> {
+    const adapterId = entry.definition.manifest.id
+    const callId = (this.options.newCallId ?? defaultCallId)()
+    if (!CALL_ID.test(callId)) return failed('tool-run', 'internal')
+    const started = this.clock.now()
+    try {
+      await this.options.audit.append({
+        type: 'tool-called',
+        adapterId,
+        adapterHash: entry.bundleHash,
+        tool: setting.declaration.name,
+        client: SETTINGS_CLIENT,
+        callId,
+      })
+    } catch {
+      // A run we can't record doesn't run, and neither does the call that needed it.
+      return failed('tool-run', 'internal')
+    }
+    let result: ToolCallResult
+    let settled: Promise<void> = Promise.resolve()
+    try {
+      const input = await this.validate(setting.implementation.input, { value: setting.value }, 'tool-input')
+      if (input.status !== 'ok') {
+        // The adapter no longer accepts the stored value (an update changed what a value is): the
+        // person chooses again.
+        result = { status: 'needsUser', reason: 'setting-required' }
+      } else {
+        result = await new Promise<ToolCallResult>((resolve, reject) => {
+          settled = new Promise<void>((over) => {
+            this.guardedRun(
+              entry,
+              setting.declaration,
+              setting.implementation,
+              input.output,
+              callId,
+              SETTINGS_CLIENT,
+              undefined,
+              external,
+              over,
+            ).then(resolve, reject)
+          })
+        })
+      }
+    } catch (error) {
+      result = fromError(error, entry.site)
+    }
+    // The next run's policy replaces this one's, so this one's leftover work must be over first.
+    await settled
+    if (result.status === 'ok') {
+      entry.applied.set(setting.name, { value: setting.value, at: this.clock.now() })
+      // Answers read before it (prices at another store, say) are no longer this session's.
+      entry.cache.clear()
+      // What an apply tool returns is nobody's to read.
+      result = { status: 'ok', output: null }
+    }
+    await this.record(finishedEvent(adapterId, callId, result, this.clock.now() - started))
+    return result
   }
 
   private async run(
@@ -727,6 +961,9 @@ export class ToolHost {
       )
       // A login, or anything but ok, is a different session from the one the cache was read in.
       if (result.status !== 'ok' || state.attempt.outcome !== null) entry.cache.clear()
+      // This call logged in, and the hand-off replaced the tool partition's session: what the site
+      // held for the old one may be gone, so every setting is applied again before the next call.
+      if (state.attempt.outcome !== null) entry.applied.clear()
       // The caller was answered while the login ran: tool code gets nothing back and does no more.
       // How the login ended is kept for the next call, which would otherwise never learn it.
       if (state.detached) {
@@ -990,6 +1227,14 @@ function runPolicy(manifest: AdapterManifest, declaration: ToolDeclaration): Too
   }
 }
 
+function settingOf(manifest: AdapterManifest, name: string): SettingDeclaration | undefined {
+  return Object.hasOwn(manifest.settings, name) ? manifest.settings[name] : undefined
+}
+
+function defaultCallId(): string {
+  return `st_${randomUUID()}`
+}
+
 /** Drops what is remembered about an adapter's session: its cached reads and its last login check. */
 function forget(entry: Entry): void {
   entry.cache.clear()
@@ -1030,7 +1275,10 @@ function normaliseClient(client: unknown): string {
   return printable.length === 0 ? '(unknown)' : printable.slice(0, MAX_CLIENT)
 }
 
-function failed(stage: Stage, errorClass: ErrorClass): ToolCallResult {
+function failed(
+  stage: Stage,
+  errorClass: ErrorClass,
+): Extract<ToolCallResult, { readonly status: 'failed' }> {
   return { status: 'failed', stage, errorClass }
 }
 

@@ -22,6 +22,7 @@ import {
   passwordPosts,
   renderedText,
   secretsIn,
+  sitePickupStores,
   siteTrolley,
   tempDir,
   windowWithTitle,
@@ -76,7 +77,7 @@ test('the demo account the scan looks for is the one the app uses', () => {
 
 test('first launch: Woolworths waits for review, and no MCP client sees or can call its tools', async () => {
   await expect(control).toHaveTitle('Valet (demo) [control]')
-  await expect(control.getByText('Woolworths 0.2.0 is ready for review.')).toBeVisible()
+  await expect(control.getByText('Woolworths 0.3.0 is ready for review.')).toBeVisible()
   await expect(control.getByText('Not approved').first()).toBeVisible()
 
   client = await connectMcp(control, userData)
@@ -90,13 +91,13 @@ test('first launch: Woolworths waits for review, and no MCP client sees or can c
 
 test('approve in the review screen; the tools appear to MCP clients', async () => {
   await control.getByRole('link', { name: 'Review changes' }).click()
-  await expect(control.getByRole('button', { name: 'Approve 0.2.0' })).toBeVisible()
+  await expect(control.getByRole('button', { name: 'Approve 0.3.0' })).toBeVisible()
   const ack = control.getByRole('checkbox', { name: 'I’ve read the highlighted additions' })
   if (await ack.isVisible()) {
-    await expect(control.getByRole('button', { name: 'Approve 0.2.0' })).toBeDisabled()
+    await expect(control.getByRole('button', { name: 'Approve 0.3.0' })).toBeDisabled()
     await ack.check()
   }
-  await control.getByRole('button', { name: 'Approve 0.2.0' }).click()
+  await control.getByRole('button', { name: 'Approve 0.3.0' }).click()
 
   await expect
     .poll(async () => (await client.listTools()).tools.map((t) => t.name).sort())
@@ -172,6 +173,35 @@ test('grant SMS codes from Messages for the declared sender', async () => {
   expect(detail?.messages[0]?.grant?.origins).toEqual(loginOrigins)
 })
 
+test('the tools wait for a store: an agent is told to ask, and the person picks one by postcode (D69)', async () => {
+  const waiting = await callTool(client, 'woolworths_search_products', { query: 'milk' })
+  results.push(waiting.raw)
+  expect(waiting.text).toContain('setting-required')
+  expect(waiting.text).not.toMatch(/Full Cream|stockcode/i)
+  // The setting's own tools are Valet's: no client can call one, listed or not.
+  const direct = await callTool(client, 'woolworths_apply_store', { value: '9001310' })
+  results.push(direct.raw)
+  expect(direct.isError).toBe(true)
+
+  await control.evaluate(() => {
+    window.location.hash = '#/adapters/woolworths'
+  })
+  const card = control.getByTestId('setting-store')
+  await expect(card.getByText('Needed')).toBeVisible()
+  await card.getByRole('textbox', { name: 'Postcode to find a store' }).fill('2000')
+  await card.getByRole('button', { name: 'Search' }).click()
+  const choices = card.getByRole('list', { name: 'Choices' })
+  await expect(choices.getByText('Woolworths Town Hall')).toBeVisible()
+  await expect(choices.getByText('Woolworths Metro Wynyard')).toBeVisible()
+  await choices.getByRole('listitem').filter({ hasText: 'Metro Wynyard' }).getByRole('button').click()
+  await expect(card.getByTestId('setting-chosen')).toContainText('Woolworths Metro Wynyard')
+  await expect(card.getByText('Chosen', { exact: true }).first()).toBeVisible()
+
+  const detail = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
+  expect(detail?.settingsNeeded).toEqual([])
+  expect(detail?.settings[0]?.chosen).toMatchObject({ id: '9001245', label: 'Woolworths Metro Wynyard' })
+})
+
 test('search_products returns catalogue items, with no login', async () => {
   const found = await callTool(client, 'woolworths_search_products', { query: 'milk' })
   results.push(found.raw)
@@ -208,6 +238,9 @@ test('get_cart shows the line; set_cart_quantity and remove_from_cart change it'
   results.push(cart.raw)
   expect(cart.isError, cart.text).toBe(false)
   expect(JSON.stringify(cart.structured)).toContain(`"stockcode":${stockcode}`)
+  // The login started a new session on the site, without the store. Valet set it again before
+  // this call, so the logged-in session shops at the store the person chose (D69).
+  expect(await sitePickupStores(launched)).toEqual([9001245])
 
   const set = await callTool(client, 'woolworths_set_cart_quantity', { stockcode, quantity: 5 })
   results.push(set.raw)

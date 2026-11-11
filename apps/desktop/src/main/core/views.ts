@@ -9,10 +9,12 @@ import {
   MESSAGES_SECRET,
   messagesSourcesIn,
   type Purpose,
+  settingToolNames,
 } from '@valet/core'
 import type { SiteHealthSnapshot } from '@valet/runtime'
 import type {
   AdapterDetail,
+  AdapterSettingInfo,
   AdapterSummary,
   ApprovalState,
   GrantInfo,
@@ -23,6 +25,7 @@ import type {
   SessionStatus,
   SiteHealth,
 } from '../../shared/api'
+import type { ChosenSetting } from './adapter-settings'
 import { grantInfo } from './grants'
 import {
   addsPermissions,
@@ -50,6 +53,26 @@ export interface AdapterState {
   readonly calls: ReadonlyMap<string, number>
   readonly lastUsed: (grant: Grant) => string | null
   readonly handedOver: { readonly cookies: number; readonly storageKeys: number } | null
+  /** What the person chose for the adapter's settings, by setting name. */
+  readonly chosen: Readonly<Record<string, ChosenSetting>>
+}
+
+/** The manifest's settings with the person's choices. A choice for a setting it no longer declares is not shown. */
+export function settingInfos(state: AdapterState): AdapterSettingInfo[] {
+  return Object.entries(state.adapter.definition.manifest.settings).map(([name, setting]) => {
+    const chosen = Object.hasOwn(state.chosen, name) ? state.chosen[name] : undefined
+    return {
+      name,
+      title: setting.title,
+      description: setting.description,
+      required: setting.required,
+      queryLabel: setting.choices.queryLabel,
+      chosen:
+        chosen === undefined
+          ? null
+          : { id: chosen.value, label: chosen.label, detail: chosen.detail, chosenAt: chosen.chosenAt },
+    }
+  })
 }
 
 /** The site a person recognises: the home page's host without a leading www. */
@@ -114,7 +137,9 @@ function secretRequests(state: AdapterState): SecretRequestInfo[] {
 
 function toolCounts(manifest: AdapterManifest): Record<Purpose, number> {
   const counts: Record<Purpose, number> = { read: 0, write: 0, irreversible: 0 }
-  for (const tool of manifest.tools) counts[tool.sideEffect]++
+  // Only the tools a client can call: a setting's own tools are Valet's to run.
+  const internal = settingToolNames(manifest)
+  for (const tool of manifest.tools) if (!internal.has(tool.name)) counts[tool.sideEffect]++
   return counts
 }
 
@@ -139,11 +164,15 @@ export function adapterSummary(state: AdapterState): AdapterSummary {
     messagesSources: messagesInfo(state).map((m) => ({ sender: m.sender, granted: m.grant !== null })),
     session: state.session,
     calls7d: state.calls.get(manifest.id) ?? 0,
+    settingsNeeded: settingInfos(state)
+      .filter((s) => s.required && s.chosen === null)
+      .map((s) => s.title),
   }
 }
 
 export function adapterDetail(state: AdapterState): AdapterDetail {
   const manifest = state.adapter.definition.manifest
+  const internal = settingToolNames(manifest)
   return {
     ...adapterSummary(state),
     description: manifest.description,
@@ -164,7 +193,9 @@ export function adapterDetail(state: AdapterState): AdapterDetail {
       description: t.description,
       sideEffect: t.sideEffect,
       calls7d: state.calls.get(`${manifest.id}/${t.name}`) ?? 0,
+      internal: internal.has(t.name),
     })),
+    settings: settingInfos(state),
     secretRequests: secretRequests(state),
     messages: messagesInfo(state),
     handedOver: state.handedOver,

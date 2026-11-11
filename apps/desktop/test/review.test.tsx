@@ -74,6 +74,7 @@ const REMOVALS_ONLY: PendingReview = {
       ],
     },
     messagesSources: { added: [], removed: [], unchanged: [] },
+    settings: { added: [], removed: [], unchanged: [] },
     limits: { before: LIMITS, after: { ...LIMITS, requestsPerRun: 4 } },
     probe: { before: PROBE, after: PROBE },
   },
@@ -293,6 +294,21 @@ describe('reviewing an update', () => {
           removed: [{ sender: 'OldSender' }],
           unchanged: [],
         },
+        settings: {
+          added: [
+            { name: 'store', title: 'Store', required: false, choicesTool: 'find_stores', applyTool: null },
+          ],
+          removed: [
+            {
+              name: 'region',
+              title: 'Region',
+              required: false,
+              choicesTool: 'find_regions',
+              applyTool: null,
+            },
+          ],
+          unchanged: [],
+        },
         limits: null,
         probe: null,
       },
@@ -314,10 +330,11 @@ describe('reviewing an update', () => {
       'note',
       'POST /pay',
       'goto https://new.example/login',
+      'Valet runs find_stores to list the choices',
     ]) {
       expect(added.some((row) => row?.includes(text))).toBe(true)
     }
-    expect(screen.getAllByTestId('perm-removed')).toHaveLength(10)
+    expect(screen.getAllByTestId('perm-removed')).toHaveLength(11)
     expect(screen.getByText('+1 irreversible tool')).toBeTruthy()
     expect(screen.getByText('removed')).toBeTruthy()
   })
@@ -349,6 +366,42 @@ describe('reviewing an update', () => {
     expect((approve as HTMLButtonElement).disabled).toBe(true)
     await user.click(approve)
     expect(api.fake.calls.some((c) => c.method === 'approvals.approve')).toBe(false)
+  })
+
+  it('shows a setting the update adds, with the tools Valet runs for it, as an addition that needs the tick (D69)', async () => {
+    const api = createFakeApi({ now: NOW })
+    api.fake.setPendingReview({
+      ...REMOVALS_ONLY,
+      diff: {
+        ...REMOVALS_ONLY.diff,
+        egress: { added: [], removed: [], unchanged: ['www.woolworths.com.au'] },
+        tools: { added: [], removed: [], unchanged: [] },
+        limits: { before: LIMITS, after: LIMITS },
+        settings: {
+          added: [
+            {
+              name: 'store',
+              title: 'Store',
+              required: true,
+              choicesTool: 'find_stores',
+              applyTool: 'apply_store',
+            },
+          ],
+          removed: [],
+          unchanged: [],
+        },
+      },
+    })
+    renderAt('#/adapters/woolworths/review', api)
+    const approve = await screen.findByRole('button', { name: 'Approve 0.3.1' })
+    const added = screen.getAllByTestId('perm-added')
+    expect(added).toHaveLength(1)
+    expect(added[0]?.textContent).toContain('store')
+    expect(added[0]?.textContent).toContain('required setting')
+    expect(added[0]?.textContent).toContain('find_stores')
+    expect(added[0]?.textContent).toContain('apply_store before a tool call')
+    expect(screen.getByText('+1 setting')).toBeTruthy()
+    expect((approve as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('shows a changed login check, before and after, as an addition that needs the tick', async () => {

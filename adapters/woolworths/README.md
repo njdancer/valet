@@ -36,6 +36,11 @@ Woolworths JSON never reaches the client.
 | `add_to_cart`       | write       | ensure | `GET /apis/ui/Trolley`, then `POST …/update`  |
 | `set_cart_quantity` | write       | ensure | `POST /api/v3/ui/trolley/update`              |
 | `remove_from_cart`  | write       | ensure | `POST /api/v3/ui/trolley/update` (quantity 0) |
+| `find_stores`       | read        | no     | `GET /api/v3/ui/fulfilment/stores`            |
+| `apply_store`       | write       | no     | `POST /api/v3/ui/fulfilment`                  |
+
+The last two serve the [store setting](#store) and are run only by Valet. An MCP client is never
+told about them and can't call them.
 
 - **`search_products { query, page = 1, pageSize = 12 (≤ 36), specialsOnly = false }`** returns
   `{ total, suggestedQuery, products: [{ stockcode, name, brand, size, price, cupPrice, wasPrice,
@@ -53,10 +58,10 @@ notices }`. Each item is `{ stockcode, name, quantity, price, lineTotal, availab
   `notices` are the site's own cart messages, such as a minimum spend, then the adapter's.
 - **`add_to_cart { stockcode, quantity = 1 }`** reads the current quantity and sets
   current + quantity, because the update endpoint sets absolute quantities. It refuses to go over
-  50 on one line, makes no write if the call is cancelled after the read, and makes no write if
+  20 on one line (D54), makes no write if the call is cancelled after the read, and makes no write if
   the trolley it read isn't complete (below), since the write could shrink a line it can't see
   (`tool-run` / `site-changed`).
-- **`set_cart_quantity { stockcode, quantity 0..50 }`** and **`remove_from_cart { stockcode }`**
+- **`set_cart_quantity { stockcode, quantity 0..20 }`** and **`remove_from_cart { stockcode }`**
   make one write each.
 
 ### What the write tools report
@@ -65,8 +70,8 @@ Every write returns `{ stockcode, quantity, confirmed, cart, notices }`, plus `r
 (and `previousQuantity` for `add_to_cart`), or `removed` for `remove_from_cart`:
 
 - When the reply is a trolley, `quantity` is the line's quantity **in that trolley**, not the one
-  asked for, and `confirmed` is true. The site clamps to its own supply limits (often 36), so
-  `set_cart_quantity { quantity: 50 }` can return `quantity: 36`; a notice then says the two
+  asked for, and `confirmed` is true. The site clamps to its own supply limits, so
+  `set_cart_quantity { quantity: 20 }` can return `quantity: 12`; a notice then says the two
   differ. A line missing from a complete reply counts as 0. `removed` is `quantity === 0`.
 - When the reply isn't a trolley, `quantity`, `cart` and `removed` are null, `confirmed` is false,
   and a notice says to call `get_cart`. The write may or may not have happened. The tools don't
@@ -106,7 +111,7 @@ Tools throw, never a raw error or a result that describes the failure:
 | Other non-2xx, or `fetch` threw             | `tool-run` / `unavailable`                                                                                        |
 | JSON not in the expected shape              | `tool-run` / `site-changed` (see [Drift detection](#drift-detection))                                             |
 | Signal aborted before a call                | `tool-run` / `aborted`                                                                                            |
-| `add_to_cart` would exceed 50               | `tool-input` / `invalid`                                                                                          |
+| `add_to_cart` would exceed 20               | `tool-input` / `invalid`                                                                                          |
 | `add_to_cart` read an incomplete trolley    | `tool-run` / `site-changed`                                                                                       |
 | Update reply says the site refused          | `tool-run` / `invalid`                                                                                            |
 
@@ -149,6 +154,48 @@ detection does, so the runtime backs off; its next `ensure()` probe then finds a
 
 A `ValetError` thrown by the runtime's own guards (for example the request ceiling) passes
 through unchanged.
+
+## Store
+
+Woolworths prices, specials and stock follow the pick-up store or delivery address of the session,
+and Valet's browser is a new device to the site. So the manifest declares one setting,
+`store` ([D69](../../docs/plan.md#d69-which-store-the-woolworths-tools-quote)): the person picks a
+pick-up store on the adapter's page in the app. Where the setting is required
+(`createManifest({ storeRequired })`), every tool ends as `needsUser` with the reason
+`setting-required`, before any site call, until they do. It is required against a fake origin and
+**optional on the real site for now**, because the requests below are unconfirmed: optional, the
+tools run on whatever store the site gives the session until one is picked.
+
+- **`find_stores { query }`** lists the stores for a four-digit postcode as
+  `{ choices: [{ value, label, detail }] }`: `value` is the store's address id, `label` its name
+  and `detail` its street address, each stripped of markup and cut to length. Anything that isn't
+  a postcode returns no choices without a site call. A store the adapter can't read is left out;
+  at most 50 are returned.
+- **`apply_store { value }`** sets that store on the session as pick-up. It throws
+  `tool-run` / `unavailable` when the site refuses, and `site-changed` when the reply names a
+  different store.
+
+The runtime runs `apply_store` as its own audited run before a tool call, whenever it doesn't know
+the store to be in force: the first call after launch, after the person changes the store, after
+any login (a fresh login starts with the account's own store or none), and at least every six
+hours. If it fails, the tool call fails with it and no tool code runs. A call that itself logs in
+part-way (`session.ensure()` inside `get_cart`, say) can still quote the account's own store that
+once; the store is applied again before the next call.
+
+The setting chooses a pick-up store only. Delivery to an address is not built: it isn't needed to
+fill a cart, and choosing between the two belongs to checkout, which Valet never does.
+
+**None of this has been seen live.** The cloud environment these were written in can't reach
+woolworths.com.au, so both paths, the request body and the response fields are assumptions (see
+the table below), exercised only against `@valet/fake-woolworths-site`. A wrong path or shape
+fails closed: `find_stores` shows "the site's reply wasn't what the adapter expects" in the app,
+and a failed `apply_store` stops every tool call until the store is cleared on the adapter's page.
+A live session has to confirm, in this order:
+whether a logged-in session already carries the account's own store (session 3 of the
+[M2 runbook](../../docs/m2-runbook.md)); the request that lists stores for a postcode; and the
+request that sets one. Once the two requests are confirmed, `storeRequired` becomes the default
+for the real site, unless the account's own store turns out to be right, in which case the setting
+stays optional.
 
 ## Login
 
@@ -229,8 +276,10 @@ The worst case is 40 s of pauses (four settles of 10 s: after the goto, the emai
 and the code), plus the wait for the SMS, which the auth flow polls for until its own deadline.
 So the stall exits stay typed `needsUser`s only if:
 
-- the auth flow's `flowTimeoutMs` is at least 40 s plus the time an SMS takes to arrive: **90 s**
-  is the setting this adapter expects, and
+- the auth flow's `flowTimeoutMs` is at least 40 s plus the time an SMS takes to arrive: 90 s
+  was the setting this adapter expected. Under D28's pacing (four requests a minute) the login
+  itself measures about 87 s against the fake, and more when other requests went out just before
+  it, so the app now allows **180 s**, and
 - the runtime's tool timeout is longer than `flowTimeoutMs` plus everything else in the run. The
   worst run is `add_to_cart`'s 401 retry: eight tool-partition requests (the tool page's first
   navigation, four probes, two reads and the write), paced 2.5 s apart (`limits.minGapMs`), so
@@ -260,34 +309,37 @@ is known; a frame origin is never a secret origin, so nothing is typed into it.
 
 From the probe of 2026-11-07 ([findings](../../docs/findings/2026-11-07-woolworths-live-probe.md)):
 
-| Item                                                                                                                     | Status                                                                                                                                                    |
-| ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Search POST body keys `SearchTerm`, `PageSize`, `PageNumber`, `SortType`, and the response shape                         | Verified                                                                                                                                                  |
-| Product detail path and response shape                                                                                   | Verified                                                                                                                                                  |
-| Empty trolley response shape (`AvailableItems`, `Totals`, `Errors`, …)                                                   | Verified                                                                                                                                                  |
-| Egress hosts: www, `cdn0.woolworths.media`, `acs.woolworths.com.au`                                                      | Verified as needed; whether the site works with analytics hosts blocked is untested                                                                       |
-| Login link `/auth/login?redirect_uri=…&path=/` redirecting to Auth0 on `auth.woolworths.com.au`                          | Verified (run 3, nothing typed)                                                                                                                           |
-| Identifier page: `input[name=username]`, `type=email`, a submit labelled Continue, separate passkey and Everyday options | Verified                                                                                                                                                  |
-| The Continue button's `name="action" value="default"`                                                                    | **Assumed** (Auth0's standard markup); the probe recorded only `type=submit`. If wrong, the click fails as `element-missing` before the password is typed |
-| Password page `/u/login/password`, `input#password[name=password]`                                                       | **Assumed** (Auth0 standard; not viewed, as that meant entering Nick's email)                                                                             |
-| Errors as `.ulp-input-error-message`, blocked account as `[data-error-code="user-blocked"]`                              | **Assumed** (Auth0 standard)                                                                                                                              |
-| CAPTCHA as `.ulp-captcha-container`                                                                                      | **Assumed** (Auth0 bot detection)                                                                                                                         |
-| The CAPTCHA provider and the origin its iframe loads from                                                                | **To be confirmed** live (Turnstile would be `https://challenges.cloudflare.com`). Until then `auth.frameOrigins` is empty and the challenge can't show   |
-| Every Universal Login page, error pages included, renders in `main._widget`                                              | **Assumed** (Auth0 standard). If wrong, an Auth0 page off the login paths reaches `assertLoggedIn` and ends as `probe` / `not-logged-in`                  |
-| New terms and consent prompts at `/u/terms` and `/u/consent`                                                             | **Assumed** (Auth0 standard). Elsewhere they end as `site-changed`                                                                                        |
-| A cart call on an expired login answers 401, not an anonymous trolley                                                    | **Assumed.** If the site serves an anonymous trolley instead, the 401 retry never fires and the next call's probe finds the expired session               |
-| MFA pages `/u/mfa-{sms,email,otp}-challenge`, `input#code`, `input[name=rememberBrowser]`                                | **Assumed** (Auth0 standard). Whether Nick's account has MFA, and which factor, is decision D4                                                            |
-| Messages sender `Woolworths` and a six-digit code                                                                        | **To be confirmed** when Nick next gets a code. The person approves the real sender when granting Messages access                                         |
-| The remember-device checkbox is visible to a click                                                                       | **Assumed.** If Auth0 styles the real input invisible, the tick is skipped and MFA is asked every login                                                   |
-| Silent re-login while Auth0's session lives                                                                              | **Assumed** (standard Auth0)                                                                                                                              |
-| After the callback, www's session cookies are on www or the bare domain, not the auth host                               | **Assumed.** The hand-off copies only `woolworths.com.au` and `www.woolworths.com.au`                                                                     |
-| Login probe `GET /api/ui/v2/bootstrap` → `ShopperDetails.IsLoggedIn === true`, 401 when logged out                       | **Assumed.** The endpoint exists and returned 200 anonymously; the field path is unconfirmed                                                              |
-| Search `IsSpecial` flag                                                                                                  | **Assumed.** The tool also filters to specials locally, so results are right either way, but `total` is then the site's count                             |
-| Trolley item shape: product tiles with `QuantityInTrolley`                                                               | **Assumed.** The anonymous trolley was empty, so `trolley-two-items.json` is synthesised from real search tiles                                           |
-| Update body `{ items: [{ stockcode, quantity }] }`, absolute quantities, quantity 0 removes                              | **Assumed** from community code. Real clients may send more fields (`source`, `diagnostics`, …)                                                           |
-| Update response is the updated trolley                                                                                   | **Assumed.** Otherwise the write is reported unconfirmed                                                                                                  |
-| Other trolley buckets hold product tiles; `ExceededSupplyLimitGroups` holds `{ Items }` groups                           | **Assumed.** Captured empty. An item that doesn't parse makes the trolley incomplete, so `add_to_cart` refuses it                                         |
-| A refused update replies 2xx with `Success: false` or a non-empty `Errors`                                               | **Assumed** from other Woolworths endpoints. A refusal in some other shape is reported unconfirmed, not as success                                        |
+| Item                                                                                                                                                | Status                                                                                                                                                    |
+| --------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Search POST body keys `SearchTerm`, `PageSize`, `PageNumber`, `SortType`, and the response shape                                                    | Verified                                                                                                                                                  |
+| Product detail path and response shape                                                                                                              | Verified                                                                                                                                                  |
+| Empty trolley response shape (`AvailableItems`, `Totals`, `Errors`, …)                                                                              | Verified                                                                                                                                                  |
+| Egress hosts: www, `cdn0.woolworths.media`, `acs.woolworths.com.au`                                                                                 | Verified as needed; whether the site works with analytics hosts blocked is untested                                                                       |
+| Login link `/auth/login?redirect_uri=…&path=/` redirecting to Auth0 on `auth.woolworths.com.au`                                                     | Verified (run 3, nothing typed)                                                                                                                           |
+| Identifier page: `input[name=username]`, `type=email`, a submit labelled Continue, separate passkey and Everyday options                            | Verified                                                                                                                                                  |
+| The Continue button's `name="action" value="default"`                                                                                               | **Assumed** (Auth0's standard markup); the probe recorded only `type=submit`. If wrong, the click fails as `element-missing` before the password is typed |
+| Password page `/u/login/password`, `input#password[name=password]`                                                                                  | **Assumed** (Auth0 standard; not viewed, as that meant entering Nick's email)                                                                             |
+| Errors as `.ulp-input-error-message`, blocked account as `[data-error-code="user-blocked"]`                                                         | **Assumed** (Auth0 standard)                                                                                                                              |
+| CAPTCHA as `.ulp-captcha-container`                                                                                                                 | **Assumed** (Auth0 bot detection)                                                                                                                         |
+| The CAPTCHA provider and the origin its iframe loads from                                                                                           | **To be confirmed** live (Turnstile would be `https://challenges.cloudflare.com`). Until then `auth.frameOrigins` is empty and the challenge can't show   |
+| Every Universal Login page, error pages included, renders in `main._widget`                                                                         | **Assumed** (Auth0 standard). If wrong, an Auth0 page off the login paths reaches `assertLoggedIn` and ends as `probe` / `not-logged-in`                  |
+| New terms and consent prompts at `/u/terms` and `/u/consent`                                                                                        | **Assumed** (Auth0 standard). Elsewhere they end as `site-changed`                                                                                        |
+| A cart call on an expired login answers 401, not an anonymous trolley                                                                               | **Assumed.** If the site serves an anonymous trolley instead, the 401 retry never fires and the next call's probe finds the expired session               |
+| MFA pages `/u/mfa-{sms,email,otp}-challenge`, `input#code`, `input[name=rememberBrowser]`                                                           | **Assumed** (Auth0 standard). Whether Nick's account has MFA, and which factor, is decision D4                                                            |
+| Messages sender `Woolworths` and a six-digit code                                                                                                   | **To be confirmed** when Nick next gets a code. The person approves the real sender when granting Messages access                                         |
+| The remember-device checkbox is visible to a click                                                                                                  | **Assumed.** If Auth0 styles the real input invisible, the tick is skipped and MFA is asked every login                                                   |
+| Silent re-login while Auth0's session lives                                                                                                         | **Assumed** (standard Auth0)                                                                                                                              |
+| After the callback, www's session cookies are on www or the bare domain, not the auth host                                                          | **Assumed.** The hand-off copies only `woolworths.com.au` and `www.woolworths.com.au`                                                                     |
+| Login probe `GET /api/ui/v2/bootstrap` → `ShopperDetails.IsLoggedIn === true`, 401 when logged out                                                  | **Assumed.** The endpoint exists and returned 200 anonymously; the field path is unconfirmed                                                              |
+| Search `IsSpecial` flag                                                                                                                             | **Assumed.** The tool also filters to specials locally, so results are right either way, but `total` is then the site's count                             |
+| Trolley item shape: product tiles with `QuantityInTrolley`                                                                                          | **Assumed.** The anonymous trolley was empty, so `trolley-two-items.json` is synthesised from real search tiles                                           |
+| Update body `{ items: [{ stockcode, quantity }] }`, absolute quantities, quantity 0 removes                                                         | **Assumed** from community code. Real clients may send more fields (`source`, `diagnostics`, …)                                                           |
+| Update response is the updated trolley                                                                                                              | **Assumed.** Otherwise the write is reported unconfirmed                                                                                                  |
+| Other trolley buckets hold product tiles; `ExceededSupplyLimitGroups` holds `{ Items }` groups                                                      | **Assumed.** Captured empty. An item that doesn't parse makes the trolley incomplete, so `add_to_cart` refuses it                                         |
+| A refused update replies 2xx with `Success: false` or a non-empty `Errors`                                                                          | **Assumed** from other Woolworths endpoints. A refusal in some other shape is reported unconfirmed, not as success                                        |
+| Stores for a postcode: `GET /api/v3/ui/fulfilment/stores?postcode=NNNN`, an array of `{ AddressId, Description, Street1, Suburb, State, Postcode }` | **Assumed**, never seen live. A different path or shape ends `find_stores` as `site-changed`                                                              |
+| Choosing a store: `POST /api/v3/ui/fulfilment` with `{ addressId, fulfilmentMethod: 'Pickup' }`, replying `{ IsSuccessful, AddressId }`             | **Assumed**, never seen live. A different path or shape fails `apply_store`, and every tool call with it                                                  |
+| The chosen store lasts for the session and is reset by a login                                                                                      | **Assumed.** The runtime re-applies after any login and every six hours either way                                                                        |
 
 The live site flagged four scripted calls in ten seconds (run 2 of the probe). Each tool makes at
 most two calls, the manifest caps a run at six requests and asks for at least 2.5 s between
@@ -331,6 +383,9 @@ every tool against both the real and the fake manifest and checks each call's pu
 tool's side effect. `auth-steps.test.ts` walks the auth steps against scripted Auth0 pages, every
 combination included, and checks that the flow never runs off the end and types each secret at
 most once.
+
+`stores.test.ts` covers the two store tools against fixtures: markup in a store's name, a store it
+can't read, a refused or mismatched reply, and that a query that isn't a postcode makes no call.
 
 `e2e.test.ts` runs the adapter against `@valet/fake-woolworths-site` over real HTTPS, with
 a test certificate from `openssl`. Without openssl the suite fails; `VALET_SKIP_E2E=1`

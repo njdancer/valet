@@ -22,6 +22,7 @@ export function needsYou(adapter: AdapterSummary, sites: readonly SiteHealth[]):
     adapter.pendingUpdate !== null ||
     adapter.approval !== 'approved' ||
     adapter.secrets.some((s) => !s.granted) ||
+    adapter.settingsNeeded.length > 0 ||
     healthOf(adapter, sites) !== null
   )
 }
@@ -258,6 +259,15 @@ function AdapterRow({
           <span className="pill warn">Needs you</span>
         ) : adapter.approval !== 'approved' ? (
           <span className="xs tertiary">—</span>
+        ) : adapter.settingsNeeded.length > 0 ? (
+          <>
+            <a className="pill warn" href={href.adapter(adapter.id)}>
+              Choose {adapter.settingsNeeded[0]?.toLowerCase()}
+            </a>
+            <div className="xs muted" style={{ marginTop: 2 }}>
+              Its tools wait until you do
+            </div>
+          </>
         ) : (
           <span className="pill ok">Healthy</span>
         )}

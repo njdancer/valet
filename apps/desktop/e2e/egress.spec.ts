@@ -22,6 +22,7 @@ import {
   appWindows,
   CONTROL,
   callTool,
+  chooseStore,
   connectMcp,
   type Launched,
   launch,
@@ -136,6 +137,7 @@ test('approved and searched, the app itself sends nothing to evil.test', async (
   const hash = pending?.[0]?.to.hash ?? ''
   await control.evaluate((hash) => window.valet?.approvals.approve('woolworths', hash), hash)
   await expect.poll(async () => (await client.listTools()).tools.length).toBe(6)
+  await chooseStore(control)
   const found = await callTool(client, 'woolworths_search_products', { query: 'bread' })
   expect(found.isError, found.text).toBe(false)
   expect(leaks()).toEqual({ connections: 0, requests: [] })

@@ -2454,6 +2454,27 @@ review of 2026-11-10; Nick has answered all three.
 - Not known until a live session: which request sets the store for a session, which lists stores,
   and whether a logged-in session already carries the account's own address. Session 3 of the
   [M2 runbook](m2-runbook.md) checks the last one. Build the framework part against the fake first.
+- **Built against the fake site (2026-11-10):** `manifest.settings`, with a choices tool and an
+  optional apply tool per setting; the runtime hides those tools from MCP clients, holds every
+  tool as `needsUser` (`setting-required`) until a required setting has a value, and runs the apply
+  tool as its own audited run before a call (after a change, after any login, and every six
+  hours). The Woolworths adapter (0.3.0) declares `store` with `find_stores` (by postcode) and
+  `apply_store`. The app keeps the choice in `adapter-settings.json`, shows a Store card on the
+  adapter's page, and lists a new or changed setting in the approval diff. Design notes:
+  [security model](security-model.md#adapter-settings); adapter notes:
+  [README](../adapters/woolworths/README.md#store).
+- Assumptions taken without asking (change any of them by saying so):
+  - The setting is a pick-up store, not a delivery address. Delivery isn't needed to fill a cart.
+  - The choice is keyed to the adapter id, so it survives an adapter update; the update's review
+    shows the setting only when its definition changed.
+  - It is chosen on the adapter's page. The setup flow has no store step yet; where the store is
+    required, the Adapters list shows "Choose store" until one is picked.
+  - The two Woolworths requests are from memory and unverified: the cloud environment can't reach
+    the site. So **on the real site the store is optional for now**: a required setting whose
+    requests are wrong would hold every Woolworths tool and block the MVP's order. Until a live
+    session confirms them (session 3 of the [M2 runbook](m2-runbook.md)), the tools run on the
+    site's own store unless one is picked, and a store that fails to apply can be cleared on the
+    adapter's page. It is required against the fake site, where the suites exercise it.
 - Blocks: trusting prices and availability in M3's two weeks of use.
 
 ### D70. A sleeping Mac

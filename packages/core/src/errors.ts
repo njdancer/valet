@@ -104,6 +104,8 @@ export const NEEDS_USER_REASONS = [
   'terms-update',
   'site-changed',
   'login-attempt-pending',
+  /** A setting the adapter requires has no value yet: the person picks one in the app (D69). */
+  'setting-required',
   'other',
 ] as const
 export type NeedsUserReason = (typeof NEEDS_USER_REASONS)[number]

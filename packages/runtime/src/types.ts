@@ -9,6 +9,7 @@ import type {
   RequestDeclaration,
   SecretValue,
   SessionDriver,
+  SettingChoice,
   Stage,
   ToolDeclaration,
 } from '@valet/core'
@@ -180,6 +181,28 @@ export interface ToolCallRequest {
   /** How the client reached the endpoint, passed on to the confirmation prompt. A label only. */
   readonly transport?: ClientTransport
 }
+
+/**
+ * The values the person has chosen for an adapter's settings (D69), by setting name. The app keeps
+ * them; the runtime only reads. A setting with no value is absent.
+ */
+export interface AdapterSettingsLookup {
+  values(adapterId: string): Promise<Readonly<Record<string, string>>>
+}
+
+export interface SettingChoicesRequest {
+  readonly adapterId: string
+  /** The setting's name in the manifest. */
+  readonly setting: string
+  /** What the person typed to find choices. */
+  readonly query: string
+  readonly callId: string
+  readonly signal?: AbortSignal
+}
+
+export type SettingChoicesResult =
+  | { readonly status: 'ok'; readonly choices: readonly SettingChoice[] }
+  | Exclude<ToolCallResult, { readonly status: 'ok' }>
 
 export interface ListedTool {
   readonly adapterId: string

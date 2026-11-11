@@ -96,3 +96,24 @@ export const updateStatusWire = z.object({
   Success: z.boolean().nullish(),
   Errors: z.array(z.unknown()).nullish(),
 })
+
+/**
+ * GET /api/v3/ui/fulfilment/stores?postcode=. Assumed, never seen live: the path, that it answers
+ * with an array, and every field name. Only AddressId is needed; a store without it is unusable.
+ */
+export const pickupStoreWire = z.object({
+  AddressId: z.number().int().positive(),
+  Description: z.string().nullish(),
+  Street1: z.string().nullish(),
+  Suburb: z.string().nullish(),
+  State: z.string().nullish(),
+  Postcode: z.string().nullish(),
+})
+export type PickupStoreWire = z.infer<typeof pickupStoreWire>
+export const pickupStoresWire = z.array(z.unknown())
+
+/** POST /api/v3/ui/fulfilment. Assumed: a reply that says whether the choice was taken. */
+export const fulfilmentWire = z.object({
+  IsSuccessful: z.boolean().nullish(),
+  AddressId: z.number().nullish(),
+})

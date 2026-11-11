@@ -15,6 +15,8 @@ const INPUTS: Readonly<Record<string, unknown>> = {
   add_to_cart: { stockcode: 88436, quantity: 2 },
   set_cart_quantity: { stockcode: 88436, quantity: 4 },
   remove_from_cart: { stockcode: 88436 },
+  find_stores: { query: '2000' },
+  apply_store: { value: '9001201' },
 }
 
 function serveEverything(ctx: FakeToolContext): FakeToolContext {
@@ -23,6 +25,8 @@ function serveEverything(ctx: FakeToolContext): FakeToolContext {
     .on('GET', '/apis/ui/product/detail/88436', json(loadFixture('product-detail-88436.json')))
     .on('GET', '/apis/ui/Trolley', json(loadFixture('trolley-two-items.json')))
     .on('POST', '/api/v3/ui/trolley/update', json(loadFixture('trolley-two-items.json')))
+    .on('GET', '/api/v3/ui/fulfilment/stores', json([{ AddressId: 9001201, Description: 'Town Hall' }]))
+    .on('POST', '/api/v3/ui/fulfilment', json({ IsSuccessful: true, AddressId: 9001201 }))
 }
 
 for (const origin of [REAL_ORIGIN, FAKE_ORIGIN]) {

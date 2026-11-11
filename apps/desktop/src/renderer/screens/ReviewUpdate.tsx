@@ -664,6 +664,37 @@ function PermissionChanges({ review }: { readonly review: PendingReview }) {
           ))}
       </Section>
 
+      {isEmpty(diff.settings) ? null : (
+        <Section title="Settings · what you choose, and the tools Valet runs for it">
+          {diff.settings.unchanged.length > 0 ? (
+            <Unchanged>
+              <span className="xs muted">{plural(diff.settings.unchanged.length, 'setting')}</span>
+            </Unchanged>
+          ) : null}
+          {diff.settings.added.map((s) => (
+            <Added
+              key={s.name}
+              tone={s.applyTool === null ? 'read' : 'write'}
+              tag={s.required ? 'required setting' : 'setting'}
+              why={`“${s.title}”. Valet runs ${s.choicesTool} to list the choices when you search${
+                s.applyTool === null
+                  ? ''
+                  : `, and ${s.applyTool} before a tool call to apply the one you chose`
+              }. Neither is offered to AI clients.${
+                s.required ? ' The adapter’s tools wait until you choose.' : ''
+              }`}
+            >
+              {mono(s.name)}
+            </Added>
+          ))}
+          {diff.settings.removed
+            .filter((s) => !diff.settings.added.some((a) => a.name === s.name))
+            .map((s) => (
+              <Removed key={s.name}>{mono(s.name)}</Removed>
+            ))}
+        </Section>
+      )}
+
       <Section title="Request surface">
         {diff.requests.unchanged.length > 0 ? (
           <Unchanged>

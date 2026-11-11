@@ -284,6 +284,11 @@ Steps:
    store, or none. Woolworths prices and stock follow the chosen store, and Valet's browser is a
    new device to the site: if they differ, the tools are quoting another store's shelf
    ([finding](findings/2026-11-10-whole-project-review.md#not-fixed-needs-nick)).
+   Then try the Store card on the Woolworths adapter's page (D69): search a postcode and pick a
+   store. Its two requests are unverified guesses
+   ([adapter README](../adapters/woolworths/README.md#store)). If the search or the next tool call
+   fails, clear the store on the same card so the tools run again, and record what Chrome's
+   network panel shows when a store is picked on the site, so the adapter can be corrected.
 7. Afterwards: verify the audit log (`pnpm valet:verify-audit`, or the control panel); check it shows one secret use per field
    for the login; grep the app's logs, traces and audit log for the password (a first pass at
    AC16).
