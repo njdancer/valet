@@ -22,7 +22,7 @@ describe('parseRoute', () => {
     expect(parseRoute('#/needs-user/woolworths')).toEqual({ page: 'needs-user', adapterId: 'woolworths' })
     const setup = { page: 'setup', review: false, secret: null }
     expect(parseRoute('#/setup')).toEqual({ ...setup, step: null })
-    for (const step of ['welcome', 'onepassword', 'approve', 'grant', 'clients']) {
+    for (const step of ['welcome', 'onepassword', 'approve', 'grant', 'store', 'clients']) {
       expect(parseRoute(`#/setup/${step}`)).toEqual({ ...setup, step })
     }
     expect(parseRoute('#/setup/approve/review')).toEqual({ ...setup, step: 'approve', review: true })

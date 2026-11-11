@@ -16,6 +16,7 @@ import {
   needsUserWording,
   PROVIDER_WORDING,
   stageWording,
+  waitWording,
 } from '../lib/wording'
 
 const CATEGORIES: readonly { readonly value: AuditCategory | 'all'; readonly label: string }[] = [
@@ -39,6 +40,7 @@ const EVENT_CLASS: Readonly<Record<AuditEvent['type'], string>> = {
   'grant-copied': 'admin',
   'tool-called': 'tool',
   'tool-finished': 'tool',
+  'call-waited': 'tool',
   'login-started': 'login',
   'login-finished': 'login',
   'secret-used': 'secret',
@@ -444,6 +446,10 @@ export function details(event: AuditEvent, now: number): ReactNode {
           </span>
         </>
       )
+    case 'call-waited':
+      return (
+        <span className="xs muted">{waitWording(event.reason, event.waitedMs, event.ahead ?? null)}</span>
+      )
     case 'login-started':
       return (
         <span className="muted">
@@ -544,6 +550,7 @@ const EVENT_FIELDS = {
     'errorClass',
     'durationMs',
   ],
+  'call-waited': ['type', 'adapterId', 'callId', 'reason', 'waitedMs', 'ahead'],
   'login-started': ['type', 'adapterId', 'callId'],
   'login-finished': ['type', 'adapterId', 'outcome', 'needsUser', 'stage', 'errorClass'],
   'secret-used': ['type', 'adapterId', 'adapterHash', 'secret', 'field', 'origin', 'callId'],

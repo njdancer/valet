@@ -5,6 +5,7 @@
 import { REDACTED } from '@valet/runtime'
 import type { PreviewPart } from '../../shared/api'
 import { RUN_MEMORY } from './constants'
+import { type CallSubject, detailOf, subjectOf } from './run-detail'
 
 /** Longest preview kept, in characters. A preview is for reading, not for a copy of the data. */
 export const MAX_PREVIEW = 20_000
@@ -16,6 +17,9 @@ export interface RememberedRun {
   readonly output: readonly PreviewPart[] | null
   readonly outputBytes: number | null
   readonly redactions: number
+  /** What the call was about, for the Activity list: a search, or the products it touched. */
+  readonly detail: string | null
+  readonly subject: CallSubject
 }
 
 /** JSON text split into text and redaction markers. Unserialisable values preview as a fixed note. */
@@ -42,7 +46,10 @@ export class RunMemory {
   private readonly runs = new Map<string, RememberedRun>()
 
   started(callId: string, tool: string, client: string, input: unknown): void {
+    const subject = subjectOf(input)
     this.runs.set(callId, {
+      subject,
+      detail: detailOf(subject, undefined),
       tool,
       client,
       input: previewParts(input).parts,
@@ -66,6 +73,7 @@ export class RunMemory {
       output: preview.parts,
       outputBytes: preview.bytes,
       redactions: preview.redactions,
+      detail: detailOf(run.subject, output),
     })
   }
 

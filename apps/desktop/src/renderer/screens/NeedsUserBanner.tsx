@@ -60,17 +60,16 @@ function Banner({ item }: { readonly item: NeedsUserItem }) {
           <div className="xs muted">
             {item.tool !== null ? (
               <>
-                <span className="mono">{item.tool}</span>
-                {item.client !== null ? ` from ${clientClaim(item.client, 'inline')}` : ''} ended at{' '}
-                {formatTime(item.at, now)} with <span className="mono">needsUser</span>.{' '}
+                {item.client !== null ? `${clientClaim(item.client)} asked` : 'A call asked'} for{' '}
+                <span className="mono">{item.tool}</span> at {formatTime(item.at, now)}.{' '}
               </>
             ) : null}
-            Once you’re signed in, the session is handed to tools and the next call goes through.
+            Once you’re signed in, Valet carries on and the next call goes through.
           </div>
           {item.filled.length > 0 ? (
             <div className="filled-list">
               <Icon name="key" size="sm" className="secret-text" />
-              Filled by valet:
+              Valet filled in:
               {item.filled.map((f) => (
                 <span key={`${f.secret}.${f.field}`} className="badge secret">
                   {f.secret}.{f.field}

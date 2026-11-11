@@ -2,7 +2,7 @@
 // needs the person, each adapter's health, and the app menu.
 
 import type { AdapterSummary, AttentionItem, SiteHealth } from '../../shared/api'
-import { ActionFailed, Avatar, Icon, Spark, Switch } from '../components/ui'
+import { ActionFailed, Avatar, Icon, Spark } from '../components/ui'
 import { useAction, useApi, useLoad, useNow } from '../lib/api-context'
 import { formatIn, formatTime } from '../lib/format'
 import { href } from '../lib/router'
@@ -50,13 +50,6 @@ export function TrayPopover() {
                   : 'MCP endpoint off'}
             </div>
           </div>
-          <span className="xs muted">MCP</span>
-          <Switch
-            label="MCP endpoint on"
-            checked={listening}
-            disabled={endpoint.status !== 'ready' || action.busy}
-            onChange={(on) => action.run(() => api.endpoint.setListening(on))}
-          />
         </div>
 
         {endpoint.status === 'ready' && endpoint.data.url !== null ? (
@@ -114,10 +107,9 @@ export function TrayPopover() {
               <AdapterRow
                 key={adapter.id}
                 adapter={adapter}
-                open={
+                site={
                   sites.status === 'ready'
-                    ? (sites.data.find((s) => s.adapterIds.includes(adapter.id) && s.breaker === 'open') ??
-                      null)
+                    ? (sites.data.find((s) => s.adapterIds.includes(adapter.id)) ?? null)
                     : null
                 }
               />
@@ -163,6 +155,16 @@ export function TrayPopover() {
           >
             <Icon name="pause" size="sm" className="muted" />{' '}
             {paused ? 'Resume adapters' : 'Pause all adapters'}
+          </button>
+          {/* F19: switching MCP off cuts every client, so it lives here rather than one tap from the header. */}
+          <button
+            type="button"
+            className="menu-row"
+            disabled={endpoint.status !== 'ready'}
+            onClick={() => action.run(() => api.endpoint.setListening(!listening))}
+          >
+            <Icon name="link" size="sm" className="muted" />{' '}
+            {listening ? 'Turn off MCP for all clients' : 'Turn MCP back on'}
           </button>
           <button type="button" className="menu-row" onClick={() => action.run(() => api.app.quit())}>
             Quit Valet <span className="kbd">⌘Q</span>
@@ -257,18 +259,24 @@ function AttentionRow({ item }: { readonly item: AttentionItem }) {
 
 function AdapterRow({
   adapter,
-  open,
+  site,
 }: {
   readonly adapter: AdapterSummary
-  readonly open: SiteHealth | null
+  readonly site: SiteHealth | null
 }) {
   const now = useNow(30_000)
   const { session } = adapter
   let state: { tone: string; text: string }
-  if (open !== null && open.retryAt !== null) {
-    state = { tone: 'bad', text: `Blocked by site · retry ${formatIn(open.retryAt, now)}` }
+  if (site !== null && site.breaker === 'open' && site.retryAt !== null) {
+    state = { tone: 'bad', text: `Blocked by site · retry ${formatIn(site.retryAt, now)}` }
   } else if (session.state === 'needs-user') {
     state = { tone: 'warn pulse', text: 'Login window open' }
+  } else if (site !== null && site.calls > 0) {
+    // D-pacing: calls take their turn one at a time, spaced out for the site.
+    state = {
+      tone: 'info pulse',
+      text: site.calls === 1 ? 'Working on a call' : `Working · ${site.calls - 1} waiting their turn`,
+    }
   } else if (adapter.approval !== 'approved') {
     state = { tone: '', text: 'Not approved' }
   } else if (session.state === 'logged-in') {

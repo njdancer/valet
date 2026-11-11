@@ -209,8 +209,10 @@ const EVENTS_FOR: Readonly<Partial<Record<AuditEvent['type'], readonly AppEvent[
   'grant-made': ['grants-changed', 'adapters-changed'],
   'grant-revoked': ['grants-changed', 'adapters-changed'],
   'grant-copied': ['grants-changed'],
-  'tool-called': ['runs-changed', 'clients-changed'],
-  'tool-finished': ['runs-changed', 'adapters-changed'],
+  // The adapter's queue count changes with every call that arrives, waits or finishes.
+  'tool-called': ['runs-changed', 'clients-changed', 'health-changed'],
+  'call-waited': ['runs-changed', 'health-changed'],
+  'tool-finished': ['runs-changed', 'adapters-changed', 'health-changed'],
   'login-started': ['runs-changed', 'adapters-changed'],
   'login-finished': ['runs-changed', 'adapters-changed'],
   'secret-used': ['runs-changed', 'grants-changed'],
@@ -1029,7 +1031,8 @@ export class AppService {
         },
       },
       runs: {
-        list: async (query) => runSummaries(await this.reader.records(), this.lookup(), query ?? {}),
+        list: async (query) =>
+          runSummaries(await this.reader.records(), this.lookup(), query ?? {}, this.memory),
         trace: async (callId) =>
           runTrace(await this.reader.records(), callId, this.lookup(), this.memory, (id) => {
             const adapter = this.adapter(id)

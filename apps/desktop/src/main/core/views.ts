@@ -257,6 +257,7 @@ export function siteHealth(
       cause: retryAt !== null ? (opened?.cause ?? 'blocked-by-site') : null,
       lastOpenedAt: lastOpened?.at ?? null,
       nextCooldownSeconds: Math.round(site.nextCooldownMs / 1000),
+      calls: site.calls,
     }
   })
 }

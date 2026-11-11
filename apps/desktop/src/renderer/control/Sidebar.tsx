@@ -122,9 +122,8 @@ export function Sidebar({ route }: { readonly route: Route }) {
       {section === 'activity' && runs.status === 'ready' ? (
         <div className="run-list">
           <div className="group-label">Recent</div>
-          {runs.data.map((run, index) => {
-            const selected =
-              route.page === 'activity' && (route.callId ?? (index === 0 ? run.callId : null)) === run.callId
+          {runs.data.map((run) => {
+            const selected = route.page === 'activity' && route.callId === run.callId
             return (
               <a
                 key={run.callId}

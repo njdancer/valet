@@ -33,6 +33,7 @@ describe('ToolHost.siteHealth', () => {
         cooldownMs: 0,
         nextCooldownMs: 60_000,
         budget: { minGapMs: 1_000, waitMs: 0 },
+        calls: 0,
       },
     ])
   })

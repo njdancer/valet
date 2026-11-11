@@ -357,6 +357,30 @@ describe.skipIf(skipE2e)('the adapter against the fake site', () => {
       expect(w.runtime.logins).toEqual(['ok'])
     })
 
+    it('fills a shopping list in one update_cart call, and links the trolley page', async () => {
+      const w = await world(SMS)
+      await w.runtime.call('add_to_cart', { stockcode: 88436, quantity: 1 })
+      const result = (await w.runtime.call('update_cart', {
+        items: [
+          { stockcode: 88436, quantity: 2 },
+          { stockcode: 900601, quantity: 3 },
+          { stockcode: 900604, quantity: 1, mode: 'set' },
+        ],
+      })) as { items: { quantity: number; confirmed: boolean }[] }
+      expect(result.items.map((i) => [i.quantity, i.confirmed])).toEqual([
+        [3, true],
+        [3, true],
+        [1, true],
+      ])
+      expect(w.site.trolleyFor(SMS.username)).toEqual([
+        { stockcode: 88436, quantity: 3 },
+        { stockcode: 900601, quantity: 3 },
+        { stockcode: 900604, quantity: 1 },
+      ])
+      const cart = (await w.runtime.call('get_cart', {})) as { cartUrl: string | null }
+      expect(cart.cartUrl).toMatch(/^https:\/\/www\.woolworths\.test(:\d+)?\/shop\/cart$/)
+    })
+
     it('stays within the request ceiling and declares every call it makes, probes apart', async () => {
       const w = await world(SMS)
       await w.runtime.call('add_to_cart', { stockcode: 88436, quantity: 1 })

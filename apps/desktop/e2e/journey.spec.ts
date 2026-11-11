@@ -77,7 +77,7 @@ test('the demo account the scan looks for is the one the app uses', () => {
 
 test('first launch: Woolworths waits for review, and no MCP client sees or can call its tools', async () => {
   await expect(control).toHaveTitle('Valet (demo) [control]')
-  await expect(control.getByText('Woolworths 0.3.0 is ready for review.')).toBeVisible()
+  await expect(control.getByText('Woolworths 0.4.0 is ready for review.')).toBeVisible()
   await expect(control.getByText('Not approved').first()).toBeVisible()
 
   client = await connectMcp(control, userData)
@@ -94,13 +94,13 @@ test('approve in the review screen; the tools appear to MCP clients', async () =
     .locator('.callout', { hasText: 'Woolworths' })
     .getByRole('link', { name: 'Review changes' })
     .click()
-  await expect(control.getByRole('button', { name: 'Approve 0.3.0' })).toBeVisible()
+  await expect(control.getByRole('button', { name: 'Approve 0.4.0' })).toBeVisible()
   const ack = control.getByRole('checkbox', { name: 'I’ve read the highlighted additions' })
   if (await ack.isVisible()) {
-    await expect(control.getByRole('button', { name: 'Approve 0.3.0' })).toBeDisabled()
+    await expect(control.getByRole('button', { name: 'Approve 0.4.0' })).toBeDisabled()
     await ack.check()
   }
-  await control.getByRole('button', { name: 'Approve 0.3.0' }).click()
+  await control.getByRole('button', { name: 'Approve 0.4.0' }).click()
 
   await expect
     .poll(async () => (await client.listTools()).tools.map((t) => t.name).sort())
@@ -111,6 +111,7 @@ test('approve in the review screen; the tools appear to MCP clients', async () =
       'woolworths_remove_from_cart',
       'woolworths_search_products',
       'woolworths_set_cart_quantity',
+      'woolworths_update_cart',
     ])
 })
 

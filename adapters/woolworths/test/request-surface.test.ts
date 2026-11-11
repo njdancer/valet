@@ -15,6 +15,7 @@ const INPUTS: Readonly<Record<string, unknown>> = {
   add_to_cart: { stockcode: 88436, quantity: 2 },
   set_cart_quantity: { stockcode: 88436, quantity: 4 },
   remove_from_cart: { stockcode: 88436 },
+  update_cart: { items: [{ stockcode: 88436 }, { stockcode: 888137, quantity: 0, mode: 'set' }] },
   find_stores: { query: '2000' },
   apply_store: { value: '9001201' },
 }

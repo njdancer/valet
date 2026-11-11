@@ -12,6 +12,7 @@ import type {
   Stage,
 } from '@valet/core'
 import type { FillCheck, SessionState } from '../../shared/api'
+import { formatDuration } from './format'
 
 export interface ReasonWording {
   /** Short, for lists: "Verification check". */
@@ -182,7 +183,7 @@ export function blockedExplanation(reason: BlockedRequest['reason']): string {
 
 export const OUTCOME_WORDING: Readonly<Record<RunOutcome | 'running', string>> = {
   ok: 'ok',
-  needsUser: 'needsUser',
+  needsUser: 'needs you',
   failed: 'failed',
   blocked: 'blocked',
   declined: 'declined',
@@ -248,7 +249,7 @@ export const PROVIDER_WORDING: Readonly<
   'onepassword-cli': {
     title: '1Password app',
     detail:
-      'Asks for Touch ID when 1Password is locked or its CLI session has expired. If you’re away, the call returns needsUser.',
+      'Asks for Touch ID when 1Password is locked or its CLI session has expired. If you’re away, the call waits for you.',
   },
   messages: {
     title: 'Messages',
@@ -312,3 +313,32 @@ export const TRANSPORT_WORDING: Readonly<Record<'stdio' | 'http', string>> = {
 }
 
 export const FIELD_WORDING = { username: 'username', password: 'password', otp: 'one-time code' } as const
+
+/** A trace line for time a call spent waiting (D-pacing). */
+export function waitWording(reason: 'queue' | 'pace', waitedMs: number, ahead: number | null): string {
+  const time = formatDuration(waitedMs)
+  if (reason === 'pace') return `Waited ${time} for the shop’s next request slot`
+  return ahead === null || ahead === 0
+    ? `Waited ${time} for its turn`
+    : `Waited ${time} for its turn, ${ahead === 1 ? '1 call' : `${ahead} calls`} ahead`
+}
+
+// F27: a call worded as what it did. Known tool names get a phrase; others read as their name.
+const TOOL_PHRASES: Readonly<Record<string, string>> = {
+  search_products: 'Searched products',
+  get_product: 'Looked up a product',
+  get_cart: 'Read the trolley',
+  add_to_cart: 'Added to the trolley',
+  set_cart_quantity: 'Changed a quantity in the trolley',
+  update_cart_line: 'Changed a trolley line',
+  remove_from_cart: 'Removed from the trolley',
+  update_cart: 'Updated the trolley',
+  find_stores: 'Looked up stores',
+  apply_store: 'Picked a store',
+}
+
+export function toolPhrase(tool: string): string {
+  if (Object.hasOwn(TOOL_PHRASES, tool)) return TOOL_PHRASES[tool] as string
+  const words = tool.replace(/_/g, ' ').trim()
+  return words === '' ? 'Called a tool' : `Ran ${words}`
+}

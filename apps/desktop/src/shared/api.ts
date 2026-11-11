@@ -380,6 +380,11 @@ export interface RunSummary {
   readonly stage: Stage | null
   readonly errorClass: ErrorClass | null
   readonly blockedRequests: number
+  /**
+   * What the call was about, e.g. "Dairy Farmers Milk 2L × 2" or a search's “milk”. Held in memory
+   * only, for recent calls since the app started; null otherwise.
+   */
+  readonly detail: string | null
 }
 
 export type FillCheck = 'frame-origin' | 'input-type' | 'form-action' | 'paced-keystrokes' | 'input-reachable'
@@ -417,6 +422,14 @@ export type TraceStep = {
       readonly cookieDomains: readonly string[]
     }
   | { readonly type: 'tool-code' }
+  /** D-pacing: the call waited for its turn behind other calls, or for the site's next request slot. */
+  | {
+      readonly type: 'waited'
+      readonly reason: 'queue' | 'pace'
+      readonly waitedMs: number
+      /** Calls in front when it arrived; queue waits only. */
+      readonly ahead: number | null
+    }
   | {
       readonly type: 'request'
       readonly method: string
@@ -736,6 +749,8 @@ export interface SiteHealth {
   readonly lastOpenedAt: IsoTime | null
   /** The cool-down the next block would start, after doubling. */
   readonly nextCooldownSeconds: number
+  /** Calls running or waiting their turn on this site right now (D-pacing). */
+  readonly calls: number
 }
 
 /**

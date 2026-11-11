@@ -55,7 +55,7 @@ function stepsIn(steps: readonly unknown[]): any[] {
 describe('the real manifest', () => {
   it('is the default export and points at the live site', () => {
     expect(realManifest.home).toBe('https://www.woolworths.com.au/')
-    expect(realManifest.version).toBe('0.3.0')
+    expect(realManifest.version).toBe('0.4.0')
     expect(manifestSchema.parse(realManifest)).toEqual(realManifest)
   })
 
@@ -432,6 +432,7 @@ describe('the tool declarations', () => {
       add_to_cart: 'write',
       set_cart_quantity: 'write',
       remove_from_cart: 'write',
+      update_cart: 'write',
       find_stores: 'read',
       apply_store: 'write',
     })
@@ -445,6 +446,7 @@ describe('the tool declarations', () => {
       add_to_cart: { destructive: true, idempotent: false },
       set_cart_quantity: { destructive: true, idempotent: true },
       remove_from_cart: { destructive: true, idempotent: true },
+      update_cart: { destructive: true, idempotent: false },
       apply_store: { destructive: true, idempotent: true },
     })
   })
