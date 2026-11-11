@@ -109,6 +109,12 @@
     font-feature-settings: "calt" 0;
   }
 
+  /* A cell's own controls sit above the RowLink overlay that makes the whole row clickable. */
+  [data-slot="table"] td :is(a:not([data-row-link]), button, input, [role="switch"]) {
+    position: relative;
+    z-index: 1;
+  }
+
   /* Numbers that change or line up (counts, prices, times) don't jitter. */
   .tabular {
     font-variant-numeric: tabular-nums;

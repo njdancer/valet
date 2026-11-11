@@ -1,6 +1,7 @@
 import { Clock } from 'lucide-react'
 import { type ReactNode, useEffect, useState } from 'react'
 import { cn } from '../lib/cn'
+import { useRowNavigation } from '../lib/use-row-navigation'
 import { type DotTone, StatusDot } from './badge'
 
 function remaining(ms: number): string {
@@ -188,8 +189,11 @@ export function InboxItem({
   tone = 'accent',
   missed = false,
   appear = false,
+  copyValue,
   className,
 }: {
+  /** What mod+C copies while the item has focus in an InboxList (the call's ref). */
+  copyValue?: string
   /** It just arrived while the page was open: it rises in. Items present on load don't animate. */
   appear?: boolean
   /** The item ran out of time: it stays for 24 h, muted, with a follow-up action. */
@@ -207,7 +211,10 @@ export function InboxItem({
 }) {
   return (
     <li
+      data-row=""
+      data-copy-value={copyValue}
       className={cn(
+        'outline-offset-2',
         // Wraps to two rows in a narrow column (the tray, 880 px) so the action never squeezes the title.
         '@container relative m-0 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 rounded-lg bg-surface py-3 pr-3 pl-4 shadow-1 ring-[0.5px] ring-line ring-inset',
         'before:absolute before:top-3 before:bottom-3 before:left-0 before:w-[3px] before:rounded-r-full',
@@ -246,8 +253,46 @@ export function InboxItem({
         {description ? <span className="line-clamp-2 text-sm text-fg-muted">{description}</span> : null}
       </div>
       {meta ? <span className="flex shrink-0 items-center gap-1.5">{meta}</span> : null}
-      <span className="ml-auto flex shrink-0 items-center gap-2">{action}</span>
+      <span data-row-action="" className="ml-auto flex shrink-0 items-center gap-2">
+        {action}
+      </span>
     </li>
+  )
+}
+
+/**
+ * The list of Needs you items, with roving row focus: Up and Down between items, Return runs the
+ * item's main action (its first button), Tab into its buttons, mod+C copies its `copyValue`, Delete
+ * calls `onDismiss` (for missed items). `autoFocus` puts focus on the first item on open.
+ */
+export function InboxList({
+  label,
+  children,
+  onDismiss,
+  onCopy,
+  autoFocus,
+  className,
+}: {
+  label: string
+  children: ReactNode
+  onDismiss?: (index: number, row: HTMLElement) => void
+  onCopy?: (value: string, index: number) => void
+  autoFocus?: boolean
+  className?: string
+}) {
+  const nav = useRowNavigation<HTMLUListElement>({ onDismiss, onCopy, autoFocus })
+  return (
+    // biome-ignore lint/a11y/noNoninteractiveElementInteractions: arrow keys move between the items
+    <ul
+      ref={nav.ref}
+      aria-label={label}
+      aria-keyshortcuts={nav['aria-keyshortcuts']}
+      onKeyDown={nav.onKeyDown}
+      onFocus={nav.onFocus}
+      className={cn('m-0 flex list-none flex-col gap-3 p-0', className)}
+    >
+      {children}
+    </ul>
   )
 }
 
