@@ -289,7 +289,22 @@ Steps:
    ([adapter README](../adapters/woolworths/README.md#store)). If the search or the next tool call
    fails, clear the store on the same card so the tools run again, and record what Chrome's
    network panel shows when a store is picked on the site, so the adapter can be corrected.
-7. Afterwards: verify the audit log (`pnpm valet:verify-audit`, or the control panel); check it shows one secret use per field
+7. Three checks from the UI review, each assumed on the fake shop and not yet seen live:
+   1. **One-call shopping list.** With two cheap items Nick picks, Claude calls
+      `woolworths_update_cart` once with both lines (one `add`, and one `set` to a quantity). It
+      should make one trolley read and one trolley update, and Chrome's trolley should show both
+      lines at the right quantities. If the site refuses a multi-line update, note the status and
+      response shape, then remove the items with `woolworths_set_cart_quantity` to 0.
+   2. **The trolley page address.** In the menu bar, click "Check out on woolworths.com.au…", and
+      open the `cartUrl` that `woolworths_get_cart` returns. Both should open the trolley page
+      (assumed to be `/shop/cart`) in the default browser. If it lands elsewhere, record the real
+      trolley URL so the adapter's `CART_PAGE` can be corrected.
+   3. **The store on the trolley.** After picking a store on the Store card, check that Chrome's
+      trolley page (and the one Valet's link opens) shows that store as the delivery or pick-up
+      store, and that the prices match it.
+   Do these after step 6, so the session is already logged in, and leave the trolley as Nick
+   wants it.
+8. Afterwards: verify the audit log (`pnpm valet:verify-audit`, or the control panel); check it shows one secret use per field
    for the login; grep the app's logs, traces and audit log for the password (a first pass at
    AC16).
 
@@ -297,8 +312,8 @@ Stop if: a block page; `auth-failed` (the marker holds, Nick checks he can log i
 then clears it in the app; no second automated attempt that day); any login that types the
 password twice, which is a bug that stops M2 until fixed.
 
-Live contact: one automated login, two or three page views, about four direct API calls, all at
-the D28 pacing.
+Live contact: one automated login, three or four page views, about seven direct API calls, all
+at the D28 pacing.
 
 ## Decisions for Nick
 
