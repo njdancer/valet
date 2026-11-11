@@ -182,7 +182,7 @@ export function toolSummary(tools: SiteReach['tools']): string {
   const asks = tools.filter((t) => t.sideEffect === 'irreversible').length
   const parts = [tools.length === 1 ? '1 tool' : `${tools.length} tools`]
   if (writes === 0) parts.push('read only')
-  else parts.push(`${writes} change${writes === 1 ? 's' : ''} things`)
+  else parts.push(`${writes} can change things`)
   if (asks > 0) parts.push(`${asks} ask${asks === 1 ? 's' : ''} you first`)
   return parts.join(' · ')
 }

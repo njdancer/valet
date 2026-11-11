@@ -276,6 +276,6 @@ describe('connection helpers', () => {
         { name: 'b', title: 'B', sideEffect: 'write' },
         { name: 'c', title: 'C', sideEffect: 'irreversible' },
       ]),
-    ).toBe('3 tools · 2 change things · 1 asks you first')
+    ).toBe('3 tools · 2 can change things · 1 asks you first')
   })
 })
