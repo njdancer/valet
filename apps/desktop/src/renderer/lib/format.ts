@@ -137,6 +137,6 @@ export function formatClock(iso: string | number): string {
  * four hex digits of the call id, upper case.
  */
 export function callRef(callId: string): string {
-  const hex = callId.replace(/[^0-9a-fA-F]/g, '')
+  const hex = callId.replace(/^[a-z]+_/, '').replace(/[^0-9a-fA-F]/g, '')
   return (hex.length >= 4 ? hex.slice(0, 4) : callId.slice(0, 4)).toUpperCase()
 }

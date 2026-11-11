@@ -279,7 +279,7 @@ describe('site status', () => {
 describe('call refs and lock-down state', () => {
   it('shortens a call id to four hex digits', () => {
     expect(callRef('7f2a91c0-0000-4000-8000-000000000000')).toBe('7F2A')
-    expect(callRef('c_8f2e1b')).toBe('C8F2')
+    expect(callRef('c_8f2e1b')).toBe('8F2E')
     expect(callRef('zz')).toBe('ZZ')
   })
   it('reads lock down only when the main process reports it', () => {
