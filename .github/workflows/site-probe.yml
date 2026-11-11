@@ -1,0 +1,20 @@
+name: Site probe
+
+# A one-off, paced look at candidate practice sites (spikes/03-practice-sites/probe.mjs). Runs on
+# pushes to this thread's branch only, and is removed before the branch is merged.
+
+on:
+  push:
+    branches: [claude/project-thread-txmiu2]
+    paths: [spikes/03-practice-sites/**, .github/workflows/site-probe.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - run: node --version && node spikes/03-practice-sites/probe.mjs
