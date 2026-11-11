@@ -31,6 +31,9 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: the stdio bridge, which the app ships
         run: swift build -c release --arch arm64 --arch x86_64 --package-path swift-bridge
+      - name: Electron's binary, which packaging copies (pnpm may leave it to the first launch)
+        working-directory: apps/desktop
+        run: test -d node_modules/electron/dist || (cd node_modules/electron && node install.js)
       - name: package Valet Demo as a DMG
         run: pnpm --filter @valet/desktop package:showcase
       - name: ffmpeg, to record the screen
@@ -43,7 +46,7 @@ jobs:
       - name: captions into the video
         if: always()
         working-directory: apps/desktop
-        run: node showcase/finish.mjs --out "$RUNNER_TEMP/showcase"
+        run: test -f "$RUNNER_TEMP/showcase/captions.json" && node showcase/finish.mjs --out "$RUNNER_TEMP/showcase"
       - name: collect the app's diagnostics log
         if: always()
         run: |
@@ -52,8 +55,9 @@ jobs:
           find "$HOME/Library/Application Support/valet-demo" -maxdepth 2 -name '*log*' | head -20
       - name: push the recording to a branch
         if: always()
-        working-directory: ${{ runner.temp }}/showcase
         run: |
+          mkdir -p "$RUNNER_TEMP/showcase" && cd "$RUNNER_TEMP/showcase"
+          test -n "$(ls -A)" || exit 0
           rm -f raw.mkv
           rm -rf captions
           git init -q -b recording && git add -A
