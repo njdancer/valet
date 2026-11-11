@@ -90,7 +90,10 @@ test('first launch: Woolworths waits for review, and no MCP client sees or can c
 })
 
 test('approve in the review screen; the tools appear to MCP clients', async () => {
-  await control.getByRole('link', { name: 'Review changes' }).click()
+  await control
+    .locator('.callout', { hasText: 'Woolworths' })
+    .getByRole('link', { name: 'Review changes' })
+    .click()
   await expect(control.getByRole('button', { name: 'Approve 0.3.0' })).toBeVisible()
   const ack = control.getByRole('checkbox', { name: 'I’ve read the highlighted additions' })
   if (await ack.isVisible()) {

@@ -79,14 +79,22 @@ test('first run: the adapter waits for review', async () => {
   await start()
   await expect(control.getByText('Woolworths 0.3.0 is ready for review.')).toBeVisible()
   await shot(control, 'adapters')
-  await control.getByRole('link', { name: 'Review changes' }).click()
+  await control
+    .locator('.callout', { hasText: 'Woolworths' })
+    .getByRole('link', { name: 'Review changes' })
+    .click()
   await expect(control.getByRole('button', { name: 'Approve 0.3.0' })).toBeVisible()
   await shot(control, 'approve-adapter')
   const ack = control.getByRole('checkbox', { name: 'I’ve read the highlighted additions' })
   if (await ack.isVisible()) await ack.check()
   await control.getByRole('button', { name: 'Approve 0.3.0' }).click()
   await expect
-    .poll(async () => (await control.evaluate(() => window.valet?.approvals.pending()))?.length)
+    .poll(
+      async () =>
+        (await control.evaluate(() => window.valet?.approvals.pending()))?.filter(
+          (p) => p.adapterId === 'woolworths',
+        ).length,
+    )
     .toBe(0)
   await control.waitForTimeout(500)
 })
@@ -142,7 +150,10 @@ test('the login window the person opens, with the banner above it', async () => 
 
 test('a changed bundle under review, and its irreversible tool’s confirmation', async () => {
   await start(changedAdapterBuild())
-  await control.getByRole('link', { name: 'Review changes' }).click()
+  await control
+    .locator('.callout', { hasText: 'Woolworths' })
+    .getByRole('link', { name: 'Review changes' })
+    .click()
   await expect(control.getByText('This update asks for more')).toBeVisible()
   await shot(control, 'approve-update')
   await control.getByRole('checkbox', { name: 'I’ve read the highlighted additions' }).check()
