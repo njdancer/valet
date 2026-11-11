@@ -296,8 +296,7 @@ function CallRow({
     <TR interactive>
       <TD className="w-0">
         <RowLink href={href.call(run.callId, filters)} className="selectable font-mono">
-          <span className="sr-only">Call </span>
-          {callRef(run.callId)}
+          <span className="sr-only">Call</span> {callRef(run.callId)}
         </RowLink>
       </TD>
       <TD className="w-0 whitespace-nowrap text-fg-muted tabular">{formatTime(run.startedAt, now)}</TD>

@@ -493,8 +493,7 @@ function RecordsTable({
             <TR key={record.seq} interactive selected={isSelected} ref={isSelected ? selectedRow : undefined}>
               <TD align="right" className="w-0">
                 <RowLink href={href.audit(filters, record.seq)} className="selectable font-mono">
-                  <span className="sr-only">Record </span>
-                  {record.seq}
+                  <span className="sr-only">Record</span> {record.seq}
                 </RowLink>
               </TD>
               <TD className="w-0 whitespace-nowrap text-fg-muted tabular">
@@ -532,8 +531,7 @@ function RecordsTable({
               <TD className="w-0 whitespace-nowrap">
                 {call !== null ? (
                   <ObjectLink mono href={href.call(call)} className={ABOVE}>
-                    <span className="sr-only">Call </span>
-                    {callRef(call)}
+                    <span className="sr-only">Call</span> {callRef(call)}
                   </ObjectLink>
                 ) : null}
               </TD>

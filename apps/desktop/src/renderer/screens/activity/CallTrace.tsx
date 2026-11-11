@@ -249,6 +249,7 @@ function Trace({
             </Stack>
             {blocked.length > 0 ? (
               <Section
+                id="blocked-requests"
                 title={blocked.length === 1 ? 'Blocked request' : 'Blocked requests'}
                 description="Valet refused these before they left your Mac. Nothing was sent."
               >
