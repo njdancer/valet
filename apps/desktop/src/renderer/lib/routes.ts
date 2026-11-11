@@ -5,7 +5,7 @@
 import type { HashRoute } from '../../shared/api'
 
 /** First-run setup's steps, in order (AC2, AC3). */
-export const SETUP_STEPS = ['welcome', 'onepassword', 'approve', 'grant', 'clients'] as const
+export const SETUP_STEPS = ['welcome', 'onepassword', 'approve', 'grant', 'store', 'clients'] as const
 export type SetupStep = (typeof SETUP_STEPS)[number]
 
 function isSetupStep(value: string): value is SetupStep {

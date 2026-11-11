@@ -39,6 +39,7 @@ const STEP_TITLES: Readonly<Record<SetupStep, { readonly title: string; readonly
   onepassword: { title: '1Password', sub: 'Where logins come from' },
   approve: { title: 'Approve the adapter', sub: 'What it may do' },
   grant: { title: 'Grant its login', sub: 'Which item it may use' },
+  store: { title: 'Pick your store', sub: 'Where prices and stock come from' },
   clients: { title: 'Connect Claude', sub: 'Claude Code, Claude Desktop' },
 }
 
@@ -72,18 +73,19 @@ export function stepsDone(facts: SetupFacts): Readonly<Record<SetupStep, boolean
   const onepassword = vaultProviders(facts.providers).some((p) => p.available)
   const approve = adapter !== null && adapter.approval === 'approved'
   // Every secret, and the one-time codes when the adapter reads any: a login that needs a code it
-  // may not read stops at the code page, so setup isn't done without that grant either. Nor without
-  // a required setting (the store, D69): until it is chosen every tool ends needsUser.
+  // may not read stops at the code page, so setup isn't done without that grant either.
   const grant =
     approve &&
     adapter.secretRequests.every((s) => s.grant !== null) &&
-    (adapter.messages.length === 0 || adapter.messages.some((m) => m.grant !== null)) &&
-    adapter.settings.every((s) => !s.required || s.chosen !== null)
+    (adapter.messages.length === 0 || adapter.messages.some((m) => m.grant !== null))
+  // Every required setting (the store, D69): until it is chosen every tool ends needsUser. Its own
+  // step (D-setup), so the login step isn't also the place a store hides.
+  const store = approve && adapter.settings.every((s) => !s.required || s.chosen !== null)
   // Connected, not just added: copying a config isn't the client using it.
   const clients = facts.clients.some((c) => c.revokedAt === null && c.lastSeen !== null)
   // A provider can be ready before the person has done anything (set up outside the app, or demo
   // mode's test provider), so it alone doesn't skip the welcome.
-  return { welcome: approve || grant || clients, onepassword, approve, grant, clients }
+  return { welcome: approve || grant || clients, onepassword, approve, grant, store, clients }
 }
 
 /** Where `#/setup` with no step lands: the first step not done, or welcome if nothing is. */
@@ -154,6 +156,8 @@ function StepView({ step, facts }: { readonly step: SetupStep; readonly facts: S
       return <Approve adapter={facts.adapter} review={facts.review} />
     case 'grant':
       return <Grant adapter={facts.adapter} />
+    case 'store':
+      return <Store adapter={facts.adapter} />
     case 'clients':
       return <Clients clients={facts.clients} endpoint={facts.endpoint} />
   }
@@ -544,19 +548,14 @@ function AdapterCard({
 }
 
 function Grant({ adapter }: { readonly adapter: AdapterDetail | null }) {
-  const now = useNow(30_000)
   if (adapter === null) return <NoAdapter />
   const approved = adapter.approval === 'approved'
-  const required = adapter.settings.filter((s) => s.required)
   return (
     <section aria-labelledby="setup-title">
       <h1 id="setup-title">Let {adapter.name} use your login</h1>
       <p className="lede">
         Pick the 1Password item {adapter.name} may use. Valet types it only on the sign-in origins listed
         here, and only for this exact version: an update needs a new grant.
-        {required.length === 0
-          ? null
-          : ` Then choose the ${required.map((r) => r.title.toLowerCase()).join(' and ')} its tools use.`}
       </p>
       {!approved ? (
         <div className="callout info">
@@ -638,7 +637,34 @@ function Grant({ adapter }: { readonly adapter: AdapterDetail | null }) {
           ) : null}
         </div>
       )}
-      {!approved || required.length === 0 ? null : (
+    </section>
+  )
+}
+
+/** The adapter's required settings: for Woolworths, the store its prices and stock come from (D69). */
+function Store({ adapter }: { readonly adapter: AdapterDetail | null }) {
+  const now = useNow(30_000)
+  if (adapter === null) return <NoAdapter />
+  const approved = adapter.approval === 'approved'
+  const required = adapter.settings.filter((s) => s.required)
+  return (
+    <section aria-labelledby="setup-title">
+      <h1 id="setup-title">Pick your {adapter.name} store</h1>
+      <p className="lede">
+        Prices, specials and what’s in stock follow the store, and {adapter.name}’s tools wait until one is
+        chosen. You can change it later on the adapter’s page.
+      </p>
+      {!approved ? (
+        <div className="callout info">
+          <Icon name="adapter" />
+          <div>
+            Approve {adapter.name} first: the store is found through its tools.{' '}
+            <a href={href.setup('approve')}>Go to approval</a>
+          </div>
+        </div>
+      ) : required.length === 0 ? (
+        <div className="empty">{adapter.name} doesn’t need a store or any other setting.</div>
+      ) : (
         <div className="card" data-testid="setup-settings">
           <div className="card-body stack gap-3">
             {required.map((s) => (

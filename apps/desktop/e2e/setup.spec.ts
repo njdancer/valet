@@ -116,8 +116,10 @@ test('grant login from the demo item, with origins exactly the auth origin', asy
   const codes = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
   expect(codes?.messages.map((m) => m.grant?.itemId)).toEqual(['Woolworths'])
 
-  // The store is required on the fake (D69), so setup asks for it too: without it every tool ends
-  // needsUser.
+  // The store is required on the fake (D69), so setup asks for it in a step of its own: without it
+  // every tool ends needsUser.
+  await control.getByRole('link', { name: 'Continue' }).click()
+  await expect(h1('Pick your Woolworths store')).toBeVisible()
   const settings = control.getByTestId('setup-settings')
   await settings.getByRole('textbox').fill('2000')
   await settings.getByRole('button', { name: 'Search' }).click()

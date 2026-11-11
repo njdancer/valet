@@ -48,7 +48,8 @@ describe('first-run setup', () => {
       '21PasswordWhere logins come from',
       '3Approve the adapterWhat it may do',
       '4Grant its loginWhich item it may use',
-      '5Connect ClaudeClaude Code, Claude Desktop',
+      '5Pick your storeWhere prices and stock come from',
+      '6Connect ClaudeClaude Code, Claude Desktop',
     ])
     await user.click(screen.getByRole('link', { name: 'Continue' }))
 
@@ -107,6 +108,11 @@ describe('first-run setup', () => {
     expect(screen.getByRole('link', { name: 'Change…' })).toBeTruthy()
     await user.click(screen.getByRole('link', { name: 'Continue' }))
 
+    // The store has its own step (D-setup); this account already has one chosen.
+    await heading('Pick your Woolworths store')
+    expect(screen.getByTestId('setup-settings')).toBeTruthy()
+    await user.click(screen.getByRole('link', { name: 'Continue' }))
+
     // Clients: each is added with its own token, and its setup copied by the main process.
     await heading('Connect Claude')
     expect(screen.getByText(/http:\/\/127\.0\.0\.1:47821\/mcp/)).toBeTruthy()
@@ -133,13 +139,13 @@ describe('first-run setup', () => {
     expect(screen.getByText('claude_desktop_config.json.valet-backup-20261107T214800Z')).toBeTruthy()
     expect(screen.getAllByText('Not connected yet')).toHaveLength(2)
     // Added and copied isn't connected: the step isn't done until a client calls in.
-    expect(within(rail()).getAllByText('Done')).toHaveLength(3)
+    expect(within(rail()).getAllByText('Done')).toHaveLength(4)
     expect(screen.getByRole('button', { name: 'Finish' })).toBeTruthy()
     api.fake.clientSeen(added[0]?.id ?? '')
     await screen.findByText('Connected')
 
     // Every step reads as done, and finishing records it and opens the adapters page.
-    expect(within(rail()).getAllByText('Done')).toHaveLength(4)
+    expect(within(rail()).getAllByText('Done')).toHaveLength(5)
     await user.click(screen.getByRole('button', { name: 'Finish' }))
     await waitFor(() => expect(window.location.hash).toBe('#/adapters'))
     expect(called(api, 'setup.finish')).toEqual([[]])
@@ -261,7 +267,7 @@ describe('first-run setup', () => {
     await screen.findByText(/^claude mcp add valet/)
     expect(screen.queryByRole('button', { name: /^Add Claude/ })).toBeNull()
     expect(screen.getAllByText('Connected')).toHaveLength(2)
-    expect(within(rail()).getAllByText('Done')).toHaveLength(4)
+    expect(within(rail()).getAllByText('Done')).toHaveLength(5)
   })
 
   it('shows the approved adapter and an update waiting for review', async () => {
@@ -321,7 +327,14 @@ describe('setup’s step logic', () => {
 
   it('a first launch has nothing done and starts at the welcome', async () => {
     const done = stepsDone(await facts(createFakeApi({ now: NOW, firstRun: true })))
-    expect(done).toEqual({ welcome: false, onepassword: false, approve: false, grant: false, clients: false })
+    expect(done).toEqual({
+      welcome: false,
+      onepassword: false,
+      approve: false,
+      grant: false,
+      store: false,
+      clients: false,
+    })
     expect(resumeStep(done)).toBe('welcome')
   })
 
@@ -361,7 +374,7 @@ describe('setup’s step logic', () => {
     expect(stepsDone({ ...f, adapter: { ...adapter, messages: [] } }).grant).toBe(true)
   })
 
-  it('an adapter with a required store is not granted until one is chosen', async () => {
+  it('an adapter with a required store has its store step undone until one is chosen', async () => {
     const f = await facts(createFakeApi({ now: NOW }))
     if (f.adapter === null) throw new Error('no adapter')
     const login = f.adapter.secretRequests.map((r) => ({
@@ -377,20 +390,44 @@ describe('setup’s step logic', () => {
       chosen: null,
     }
     const adapter = { ...f.adapter, approval: 'approved' as const, secretRequests: login, messages: [] }
-    expect(stepsDone({ ...f, adapter: { ...adapter, settings: [store] } }).grant).toBe(false)
+    // The login is granted either way: the store is a step of its own (D-setup).
+    expect(stepsDone({ ...f, adapter: { ...adapter, settings: [store] } })).toMatchObject({
+      grant: true,
+      store: false,
+    })
     expect(
-      stepsDone({ ...f, adapter: { ...adapter, settings: [{ ...store, required: false }] } }).grant,
+      stepsDone({ ...f, adapter: { ...adapter, settings: [{ ...store, required: false }] } }).store,
     ).toBe(true)
     const chosen = {
       ...store,
       chosen: { id: '1', label: 'x', detail: null, chosenAt: new Date(NOW).toISOString() },
     }
-    expect(stepsDone({ ...f, adapter: { ...adapter, settings: [chosen] } }).grant).toBe(true)
+    expect(stepsDone({ ...f, adapter: { ...adapter, settings: [chosen] } }).store).toBe(true)
+    expect(
+      stepsDone({ ...f, adapter: { ...adapter, approval: 'unapproved', settings: [chosen] } }).store,
+    ).toBe(false)
   })
 
   it('resumes at the last step when everything is done', () => {
-    expect(resumeStep({ welcome: true, onepassword: true, approve: true, grant: true, clients: true })).toBe(
-      'clients',
-    )
+    expect(
+      resumeStep({
+        welcome: true,
+        onepassword: true,
+        approve: true,
+        grant: true,
+        store: true,
+        clients: true,
+      }),
+    ).toBe('clients')
+    expect(
+      resumeStep({
+        welcome: true,
+        onepassword: true,
+        approve: true,
+        grant: true,
+        store: false,
+        clients: true,
+      }),
+    ).toBe('store')
   })
 })
