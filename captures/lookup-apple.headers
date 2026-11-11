@@ -1,0 +1,22 @@
+HTTP/2 200 
+content-type: text/html; charset=UTF-8
+content-length: 45
+date: Wed, 11 Nov 2026 11:58:27 GMT
+server: ATS
+x-amz-meta-y-redirect-location: https://finance.yahoo.com/lookup/?failsafe=1&ynet=0&_device=desktop&device=desktop
+x-amz-meta-y-redirect-status: 308
+cache-control: max-age=0, private
+content-encoding: gzip
+x-amz-server-side-encryption: AES256
+vary: X-Failsafe-Cache
+x-cache: Miss from cloudfront
+x-amz-cf-pop: SEA73-P2
+x-amz-cf-id: EpnIb9tXaQQdbx37o0HxRWf_xiNFmYESqfIAeuOJaVxh7BSwMZ1JUQ==
+age: 0
+strict-transport-security: max-age=31536000
+expires: -1
+content-security-policy: frame-ancestors 'self' https://*.builtbygirls.com https://*.rivals.com https://*.intheknow.com https://*.autoblog.com https://*.techcrunch.com https://*.yahoo.com https://*.aol.com https://*.huffingtonpost.com https://*.oath.com https://*.search.yahoo.com https://*.pnr.ouryahoo.com https://pnr.ouryahoo.com https://*.search.aol.com https://*.search.huffpost.com https://*.onesearch.com https://*.verizonmedia.com https://*.publishing.oath.com https://*.autoblog.com; sandbox allow-forms allow-same-origin allow-scripts allow-popups allow-popups-to-escape-sandbox allow-presentation; report-uri https://csp.yahoo.com/beacon/csp?src=ats&site=finance&region=US&lang=en-US&device=desktop&yrid=51eg1allf8m33&partner=;
+referrer-policy: no-referrer-when-downgrade
+x-content-type-options: nosniff
+x-xss-protection: 1; mode=block
+
