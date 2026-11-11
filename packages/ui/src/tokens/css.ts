@@ -21,7 +21,7 @@ import { type ColorRef, color, material, shadow, type Themed } from './semantic'
 
 /** The CSS for one colour reference: a primitive's variable, mixed with transparent for alpha. */
 export function refToCss(ref: ColorRef): string {
-  if (ref.startsWith('oklch(') || ref.startsWith('linear-gradient') || ref === 'none') return ref
+  if (/^(oklch\(|linear-gradient|blur\()/.test(ref) || ref === 'none') return ref
   const [name, alpha] = ref.split('/') as [string, string | undefined]
   const base =
     name === 'white' || name === 'black' ? `var(--v-${name})` : `var(--v-${name.replace('.', '-')})`

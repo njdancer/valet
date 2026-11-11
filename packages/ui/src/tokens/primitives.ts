@@ -116,7 +116,7 @@ export const space = {
 export const radius = { xs: 4, sm: 6, md: 8, lg: 12, xl: 16, '2xl': 22, full: 9999 } as const
 
 // Motion primitives. Durations in ms; easings as CSS timing functions.
-export const duration = { instant: 80, fast: 140, base: 200, slow: 320, slower: 480, glacial: 900 } as const
+export const duration = { instant: 80, fast: 140, base: 200, moderate: 240, slow: 320, slower: 480, glacial: 900 } as const
 export const easing = {
   linear: 'linear',
   standard: 'cubic-bezier(0.2, 0, 0, 1)',

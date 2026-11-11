@@ -30,12 +30,17 @@ export const color = {
   'fg-on-accent': { light: 'white', dark: 'white' },
   'fg-on-selected': { light: 'white', dark: 'white' },
   'fg-link': { light: 'blue.600', dark: 'blue.300' },
+  // Secondary text on glass, which can sit over anything: one step stronger than fg-muted.
+  'fg-muted-on-glass': { light: 'gray.700', dark: 'gray.200' },
+  'fg-subtle-on-glass': { light: 'gray.600', dark: 'gray.300' },
 
   // Lines.
   'border-subtle': { light: 'gray.950/7', dark: 'white/7' },
   'border-default': { light: 'gray.950/12', dark: 'white/12' },
   'border-strong': { light: 'gray.950/22', dark: 'white/22' },
-  'border-control': { light: 'gray.950/18', dark: 'white/16' },
+  'border-control': { light: 'gray.500', dark: 'gray.500' },
+  // The off track of a switch, the edge of an unchecked box: 3:1 against the surface (WCAG 1.4.11).
+  'control-off': { light: 'gray.400', dark: 'gray.600' },
   'border-focus': { light: 'blue.500', dark: 'blue.400' },
 
   // The accent.
@@ -131,6 +136,9 @@ export const contrastPairs: readonly {
   { fg: 'border-focus', bg: 'bg-surface', min: 3 },
   { fg: 'border-focus', bg: 'bg-canvas', min: 3 },
   { fg: 'accent-solid', bg: 'bg-surface', min: 3 },
+  { fg: 'border-control', bg: 'bg-surface', min: 3 },
+  { fg: 'border-control', bg: 'bg-raised', min: 3 },
+  { fg: 'border-control', bg: 'bg-canvas', min: 3 },
   { fg: 'success-solid', bg: 'bg-surface', min: 3 },
   { fg: 'danger-solid', bg: 'bg-surface', min: 3 },
 ]
@@ -144,7 +152,7 @@ export const shadow = {
     dark: '0 1px 2px oklch(0 0 0 / 0.4), inset 0 0.5px 0 oklch(1 0 0 / 0.06)',
   },
   '2': {
-    light: '0 2px 6px -1px oklch(0.2 0.01 265 / 0.08), 0 1px 2px oklch(0.2 0.01 265 / 0.06)',
+    light: '0 4px 12px -2px oklch(0.2 0.01 265 / 0.12), 0 1px 3px oklch(0.2 0.01 265 / 0.08)',
     dark: '0 4px 10px -2px oklch(0 0 0 / 0.5), inset 0 0.5px 0 oklch(1 0 0 / 0.07)',
   },
   '3': {
@@ -165,7 +173,9 @@ export const shadow = {
  * The platform is chosen with data-platform on <html> (see platform.ts).
  */
 export const material = {
-  'glass-bg': { light: 'oklch(0.99 0.003 265 / 0.62)', dark: 'oklch(0.26 0.01 265 / 0.55)' },
+  'glass-bg': { light: 'oklch(0.99 0.003 265 / 0.82)', dark: 'oklch(0.235 0.01 265 / 0.78)' },
+  // Dark glass pulls bright content behind it down, so light text on it stays legible.
+  'glass-filter': { light: 'blur(22px) saturate(185%) brightness(1.04)', dark: 'blur(22px) saturate(160%) brightness(0.72)' },
   'glass-rim': { light: 'oklch(1 0 0 / 0.75)', dark: 'oklch(1 0 0 / 0.16)' },
   'glass-edge': { light: 'oklch(0.2 0.01 265 / 0.12)', dark: 'oklch(0 0 0 / 0.5)' },
   'glass-sheen': {

@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { converter, wcagContrast } from 'culori'
 import { describe, expect, it } from 'vitest'
-import { color, contrastPairs, type Themed } from '../src/tokens'
+import { color, contrastPairs, material, type Themed } from '../src/tokens'
 import { refToCss, resolveRef, tailwindName, themeCss, tokensCss } from '../src/tokens/css'
 
 const rgb = converter('rgb')
@@ -80,4 +80,31 @@ describe('token CSS', () => {
   it('reduced motion stops entrances travelling', () => {
     expect(tokensCss()).toMatch(/prefers-reduced-motion: reduce[\s\S]*--v-motion-distance: 0/)
   })
+})
+
+describe('text on glass', () => {
+  // The worst cases behind a floating layer: pure white and pure black, ignoring the blur. Dark glass
+  // runs its backdrop through brightness(0.72) first (glass-filter), so white arrives dimmed.
+  for (const theme of ['light', 'dark'] as const) {
+    const glass = rgb(material['glass-bg'][theme])
+    if (glass === undefined) throw new Error('glass-bg')
+    const alpha = glass.alpha ?? 1
+    const dim = theme === 'dark' ? 0.72 : 1
+    for (const [name, backdrop] of [
+      ['white', { r: dim, g: dim, b: dim }],
+      ['black', { r: 0, g: 0, b: 0 }],
+    ] as const) {
+      const surface = over({ c: { r: glass.r, g: glass.g, b: glass.b }, a: alpha }, backdrop)
+      for (const [fgName, min] of [
+        ['fg-default', 7],
+        ['fg-muted-on-glass', 4.5],
+        ['fg-subtle-on-glass', 3],
+      ] as const) {
+        it(`${theme}: ${fgName} on glass over ${name} is at least ${min}:1`, () => {
+          const fg = over(solid((color[fgName] as Themed)[theme]), surface)
+          expect(wcagContrast({ mode: 'rgb', ...fg }, { mode: 'rgb', ...surface })).toBeGreaterThanOrEqual(min)
+        })
+      }
+    }
+  }
 })

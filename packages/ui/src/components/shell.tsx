@@ -17,28 +17,38 @@ export function AppShell({
 }) {
   const Content = embedded ? 'div' : 'main'
   return (
-    <div className={cn('flex h-full min-h-0 w-full overflow-hidden bg-canvas text-fg', className)}>
+    <div data-slot="app-shell" className={cn('flex h-full min-h-0 w-full overflow-hidden bg-canvas text-fg', className)}>
       {sidebar}
-      <Content className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</Content>
+      <Content className="flex min-h-0 min-w-0 flex-1 flex-col bg-canvas">{children}</Content>
     </div>
   )
 }
 
+/**
+ * The sidebar. Its top strip is the window's drag region and, in a frameless macOS window, leaves
+ * room for the traffic lights. With `collapsible`, below 1000 px of window it narrows to icons (labels
+ * stay for screen readers and show as tooltips).
+ */
 export function Sidebar({
   className,
   children,
   label = 'Sections',
+  collapsible = false,
   ...props
-}: ComponentProps<'nav'> & { label?: string }) {
+}: ComponentProps<'nav'> & { label?: string; collapsible?: boolean }) {
   return (
     <nav
       aria-label={label}
+      data-collapsible={collapsible || undefined}
       className={cn(
-        'material-sidebar flex w-56 shrink-0 flex-col gap-4 overflow-y-auto border-r border-line-subtle px-2.5 py-3',
+        'group/sidebar material-sidebar flex w-56 shrink-0 flex-col gap-4 overflow-y-auto border-r border-line-subtle px-2.5 pb-3',
+        'pt-[calc(12px+var(--window-inset-top))]',
+        collapsible && 'max-[1000px]:w-14 max-[1000px]:px-2',
         className,
       )}
       {...props}
     >
+      <div aria-hidden="true" className="pointer-events-auto absolute top-0 left-0 h-[calc(12px+var(--window-inset-top))] w-56 [-webkit-app-region:drag]" />
       {children}
     </nav>
   )
@@ -96,8 +106,10 @@ export function NavItem({
     <li className="m-0">
       <a
         aria-current={active ? 'page' : undefined}
+        title={typeof children === 'string' ? children : undefined}
         className={cn(
-          'group flex h-7 w-full cursor-pointer items-center gap-2 rounded-sm px-2 text-md text-fg no-underline transition-interactive',
+          'group relative flex h-7 w-full items-center gap-2 rounded-sm px-2 text-md text-fg no-underline transition-interactive',
+          'group-data-[collapsible]/sidebar:max-[1000px]:justify-center',
           'hover:bg-hover active:bg-pressed',
           active && 'bg-selected font-medium hover:bg-selected',
           '[&_svg]:size-4 [&_svg]:shrink-0',
@@ -106,8 +118,8 @@ export function NavItem({
         {...props}
       >
         {icon ? <span className={cn('flex text-fg-muted', active && 'text-accent-fg')}>{icon}</span> : null}
-        <span className="min-w-0 flex-1 truncate">{children}</span>
-        {trailing}
+        <span className="min-w-0 flex-1 truncate group-data-[collapsible]/sidebar:max-[1000px]:sr-only">{children}</span>
+        <span className="contents group-data-[collapsible]/sidebar:max-[1000px]:hidden">{trailing}</span>
         {count !== undefined ? (
           <Count
             value={count}

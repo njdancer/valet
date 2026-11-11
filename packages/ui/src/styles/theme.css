@@ -24,10 +24,13 @@
   --color-fg-on-accent: var(--fg-on-accent);
   --color-fg-on-selected: var(--fg-on-selected);
   --color-fg-link: var(--fg-link);
+  --color-fg-muted-on-glass: var(--fg-muted-on-glass);
+  --color-fg-subtle-on-glass: var(--fg-subtle-on-glass);
   --color-line-subtle: var(--border-subtle);
   --color-line: var(--border-default);
   --color-line-strong: var(--border-strong);
   --color-line-control: var(--border-control);
+  --color-control-off: var(--control-off);
   --color-line-focus: var(--border-focus);
   --color-accent-solid: var(--accent-solid);
   --color-accent-solid-hover: var(--accent-solid-hover);

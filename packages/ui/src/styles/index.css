@@ -7,6 +7,9 @@
 @import "tailwindcss";
 @import "@fontsource-variable/inter";
 @import "@fontsource-variable/jetbrains-mono";
+/* Sonner injects this with a <style> tag at runtime, which the renderer's CSP (style-src 'self')
+   blocks; importing it here puts it in the built stylesheet instead. */
+@import "sonner/dist/styles.css";
 @import "./tokens.css";
 @import "./theme.css";
 @import "./motion.css";
@@ -71,6 +74,25 @@
   /* Native controls follow the theme too. */
   :root {
     accent-color: var(--accent-solid);
+    /* Window frame. A frameless macOS window (titleBarStyle 'hiddenInset') sets data-frame="inset"
+       on <html>, and the sidebar leaves room for the traffic lights. A TitleBar in the page makes
+       sheets drop from under it. */
+    --window-inset-top: 0px;
+    --titlebar-height: 0px;
+  }
+  :root[data-frame="inset"] {
+    --window-inset-top: 28px;
+  }
+  :root:has([data-slot="titlebar"]) {
+    --titlebar-height: 44px;
+  }
+
+  /* Radix Select injects a <style> to hide its viewport's scrollbar; CSP blocks it, so it's here. */
+  [data-radix-select-viewport] {
+    scrollbar-width: none;
+  }
+  [data-radix-select-viewport]::-webkit-scrollbar {
+    display: none;
   }
 
   /* Thin, quiet scrollbars that look at home on every OS (Chromium's own are Windows-heavy). */
