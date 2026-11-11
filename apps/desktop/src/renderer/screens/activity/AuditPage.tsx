@@ -181,7 +181,7 @@ export function AuditPage({ seq, filters }: { readonly seq: number | null; reado
             ? `${page.data.total.toLocaleString('en-AU')} records, append-only and hash-chained.`
             : 'Append-only and hash-chained.'
         }
-        status={<ChainBadge status={status} />}
+        status={<ChainBadge status={status} newestSeq={newestSeq} />}
         actions={
           <Button
             leading={<Download aria-hidden="true" />}
@@ -329,10 +329,19 @@ function Failed({ what }: { readonly what: string }) {
   )
 }
 
-function ChainBadge({ status }: { readonly status: ChainStatus | null }) {
+function ChainBadge({
+  status,
+  newestSeq,
+}: {
+  readonly status: ChainStatus | null
+  readonly newestSeq: number
+}) {
   if (status === null) return null
   if (status.state === 'broken') return <Badge tone="danger">Doesn’t check out</Badge>
   if (status.state === 'unverified') return <Badge>Not checked yet</Badge>
+  // Records written since the last check aren't vouched for: a green "Checks out" over records
+  // the check never covered says more than Valet knows (P3).
+  if (newestSeq > status.headSeq) return <Badge>Newer records not checked yet</Badge>
   return <Badge tone="success">Checks out</Badge>
 }
 
