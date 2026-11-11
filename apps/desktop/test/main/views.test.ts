@@ -141,6 +141,7 @@ describe('reviews', () => {
       adapterName: 'Shop',
       version: '1.0.0',
       addsPermissions: true,
+      firstInstall: true,
     })
   })
 

@@ -7,6 +7,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./vocab": "./src/vocab.ts",
+    "./vocabulary": "./src/vocabulary.ts",
     "./tool-code": "./src/tool-code.ts"
   },
   "dependencies": {

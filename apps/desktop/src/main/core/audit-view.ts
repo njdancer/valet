@@ -137,6 +137,8 @@ export const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent[
     'remote-consent',
     'remote-revoked',
     'remote-token-reuse',
+    'lock-down',
+    'site-paused',
   ],
 }
 

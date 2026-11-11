@@ -88,6 +88,12 @@ export interface AdapterSummary {
    * places orders). Null when the adapter names none, or isn't approved.
    */
   readonly cartUrl: string | null
+  /**
+   * The person paused this one site (adapters.setPaused): its calls are refused, nothing is sent to
+   * it, and the tool result says so (config: site-paused). Kept across restarts. A paused site is
+   * not a Needs you item.
+   */
+  readonly paused: boolean
 }
 
 /**
@@ -669,9 +675,101 @@ export interface ReviewItem {
   readonly adapterName: string
   readonly version: string
   readonly addsPermissions: boolean
+  /** No version of the site was approved before: "Review Woolworths before first use". */
+  readonly firstInstall?: boolean
 }
 
-export type AttentionItem = NeedsUserItem | ConfirmationItem | ReviewItem
+/**
+ * A cloud agent asking to connect, waiting for the person to type the code their browser shows
+ * (one per RemoteConsentRequest). Its title is "Approve a connection"; it opens
+ * href.approveConnection(). The name is the client's own claim.
+ */
+export interface RemoteConsentItem {
+  readonly kind: 'remote-consent'
+  /** The RemoteConsentRequest's id. */
+  readonly id: string
+  readonly clientHost: string
+  readonly clientName: string | null
+  /** The address the tunnel reported, or null. */
+  readonly source: string | null
+  readonly requestedAt: IsoTime
+  readonly expiresAt: IsoTime
+}
+
+/** An approved site with a required setting not chosen yet: "Choose your Woolworths store". */
+export interface SettingMissingItem {
+  readonly kind: 'setting-missing'
+  readonly id: string
+  readonly adapterId: string
+  readonly adapterName: string
+  /** The setting's name in the manifest, for href.setting(). */
+  readonly setting: string
+  /** Its title, as the manifest gives it ("Store"). */
+  readonly settingTitle: string
+}
+
+/** An approved site whose declared login has no grant: "Give Valet your Woolworths login". */
+export interface LoginMissingItem {
+  readonly kind: 'login-missing'
+  readonly id: string
+  readonly adapterId: string
+  readonly adapterName: string
+  /** The secret's name in the manifest, for href.grant(). */
+  readonly secret: string
+}
+
+/**
+ * The site's most recent call failed in a way only an adapter update fixes (error class
+ * site-changed): "Woolworths changed: the adapter needs an update". It goes once a later call ends
+ * any other way.
+ */
+export interface RepairItem {
+  readonly kind: 'repair'
+  readonly id: string
+  readonly adapterId: string
+  readonly adapterName: string
+  /** The failing call, for href.call(). */
+  readonly callId: string
+  readonly errorClass: ErrorClass
+  readonly at: IsoTime
+}
+
+/** What a missed item was before nobody answered it. */
+export type MissedKind = 'confirmation' | 'needs-user' | 'remote-consent'
+
+/**
+ * Something that waited for the person and ran out unanswered: a confirmation that timed out, a
+ * login hand-off whose window closed without finishing, a connection request that expired. Kept
+ * for 24 hours from `missedAt`, unless dismissed (attention.dismiss).
+ */
+export interface MissedItem {
+  readonly kind: 'missed'
+  readonly id: string
+  readonly of: MissedKind
+  /** The original item's id (a confirmation's, a hand-off's, a connection request's). */
+  readonly originalId: string
+  /** "Missed: <the original item's title>", from @valet/core/vocabulary. */
+  readonly title: string
+  readonly adapterId: string | null
+  readonly adapterName: string | null
+  readonly callId: string | null
+  /** When the original item was raised. */
+  readonly at: IsoTime
+  readonly missedAt: IsoTime
+}
+
+export type AttentionItem =
+  | NeedsUserItem
+  | ConfirmationItem
+  | ReviewItem
+  | RemoteConsentItem
+  | SettingMissingItem
+  | LoginMissingItem
+  | RepairItem
+  | MissedItem
+
+/** How long a missed item stays in Needs you. */
+export const MISSED_KEEP_MS = 24 * 60 * 60_000
 
 /**
  * How long Approve stays disabled after the confirmation window mounts, and again after it regains
@@ -765,6 +863,11 @@ export interface SetupStatus {
 
 export interface AppStatus {
   readonly paused: boolean
+  /**
+   * The person locked Valet down (app.setLockedDown): every call is refused with the locked-down
+   * text, every site counts as paused, and cloud agents were revoked. Kept across restarts.
+   */
+  readonly lockedDown: boolean
   readonly version: string
   /** Demo mode: a local fake site and a test credential, never a real account. Shown as a badge. */
   readonly demo: boolean
@@ -863,6 +966,11 @@ export type AppEvent =
   | { readonly type: 'app-changed' }
   /** Remote consent requests or remote clients changed. */
   | { readonly type: 'remote-changed' }
+  /**
+   * Sent to a login hand-off banner window only: the person pressed ⇧⌘B (Ctrl+Shift+B) in the
+   * site's login window, which brought the banner forward; the banner moves focus to its region.
+   */
+  | { readonly type: 'focus-banner' }
 
 export type AppEventType = AppEvent['type']
 
@@ -886,6 +994,11 @@ export interface ValetApi {
     clearSetting(adapterId: string, setting: string): Promise<void>
     /** Opens the adapter's cart page in the person's default browser. */
     openCart(adapterId: string): Promise<void>
+    /**
+     * Pauses or resumes one site: while paused its calls are refused without reaching it
+     * (config: site-paused). Audited, and kept across restarts.
+     */
+    setPaused(adapterId: string, paused: boolean): Promise<void>
   }
   readonly approvals: {
     pending(): Promise<readonly PendingReview[]>
@@ -942,7 +1055,14 @@ export interface ValetApi {
     addToClaudeDesktop(clientId: string): Promise<DesktopConfigWritten>
   }
   readonly attention: {
+    /**
+     * Everything waiting on the person, soonest deadline first (a confirmation's, a connection
+     * request's, a login window's, a missed item's 24 hours), then items with no deadline, oldest
+     * first.
+     */
     list(): Promise<readonly AttentionItem[]>
+    /** Removes a missed item. Rejects for any other kind, or an id that isn't there. */
+    dismiss(id: string): Promise<void>
   }
   /**
    * The main process refuses an approval that arrives within CONFIRM_ARM_MS of the confirmation
@@ -1016,6 +1136,13 @@ export interface ValetApi {
     /** Pauses or resumes every adapter: paused calls return blocked without reaching a site. */
     setPaused(paused: boolean): Promise<void>
     /**
+     * Locks Valet down, or unlocks it. Locking refuses every call with the locked-down text (the
+     * endpoint stays up so agents can say why), revokes every cloud agent, and leaves remote access
+     * as it was set. Unlocking lets calls through again; revoked cloud agents stay gone. Audited,
+     * and kept across restarts.
+     */
+    setLockedDown(locked: boolean): Promise<void>
+    /**
      * Opens or focuses the control panel at a renderer route (a hash such as "#/activity"). The main
      * process accepts only a hash that parseRoute reads as a page (not-found is refused), sets it as
      * the window's hash on its own index.html, and never passes it to loadURL as a URL.
@@ -1040,9 +1167,8 @@ export interface ValetApi {
 export type { AuditEvent, AuditRecord }
 
 /**
- * How the main process made the window, for the stylesheet: the platform picks the floating
- * material, an inset frame leaves room for macOS's traffic lights, vibrancy means the window itself
- * is translucent. Set by the preload; absent in a plain browser.
+ * How the window the page is in is drawn, for the renderer to set data-platform, data-frame and
+ * data-vibrancy on <html>. The preload exposes it as window.valetChrome, synchronously.
  */
 export interface WindowChrome {
   readonly platform: 'mac' | 'windows' | 'linux' | 'other'
@@ -1054,6 +1180,7 @@ declare global {
   interface Window {
     /** Set by the preload. Absent in a plain browser, where the dev entry uses the fake. */
     readonly valet?: ValetApi
+    /** Set by the preload. Absent in a plain browser. */
     readonly valetChrome?: WindowChrome
   }
 }

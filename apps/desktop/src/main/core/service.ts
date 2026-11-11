@@ -15,6 +15,7 @@ import {
   type Grant,
   MESSAGES_SECRET,
   type NeedsUserReason,
+  needsYouTitle,
   type ProviderKind,
   type SecretField,
   type SessionDriver,
@@ -23,9 +24,11 @@ import {
 } from '@valet/core'
 import { FileGrantStore } from '@valet/credentials'
 import {
+  type CallOutcome,
   type EndpointClient,
   identityLabel,
   type LiveSessions,
+  type NeedsYouHint,
   type SessionReportingEndpoint,
   type ToolCall,
   type ToolCaller,
@@ -51,13 +54,17 @@ import type {
   ClientSnippet,
   EndpointStatus,
   HashRoute,
+  RemoteConsentItem,
   RemoteSetup,
   RemoteSetupTool,
+  RepairItem,
   SettingChoicesReply,
   Settings,
   UpdateStatus,
 } from '../../shared/api'
 import { AdapterSettingsStore } from './adapter-settings'
+import { AppStateStore } from './app-state'
+import { MissedItems, sortAttention } from './attention'
 import {
   type AdapterLookup,
   AuditReader,
@@ -87,7 +94,7 @@ import { ensurePrivateDir, JsonDocument } from './files'
 import { checkGrantRequest, grantInfo } from './grants'
 import type { AppWindow, MainApi } from './ipc'
 import { createAuthRunner, Handoffs, isBlockedPage, SessionTracker } from './login'
-import { type AppNotification, Notifier } from './notifications'
+import { type AppNotification, attentionTitle, Notifier } from './notifications'
 import { type ApprovedSnapshot, type BuiltinAdapter, SnapshotStore } from './registry'
 import { RemoteAccess } from './remote'
 import { RunMemory } from './run-memory'
@@ -99,6 +106,7 @@ import {
   type AdapterState,
   adapterDetail,
   adapterSummary,
+  missingItems,
   pendingReview,
   reviewItem,
   siteHealth,
@@ -182,6 +190,8 @@ export interface ServiceDeps {
   readonly leftovers?: readonly string[]
   /** How the runtime waits for a site's rate budget; real time by default. Tests pass their clock's. */
   readonly pacingSleep?: Sleep
+  /** For clock times in notifications; the machine's own zone by default. Tests pass one. */
+  readonly timeZone?: string
 }
 
 /** Where a driver reports refusals outside the runtime's runs (browser-electron's DriverOptions). */
@@ -210,8 +220,9 @@ class ObservedAudit implements AuditSink {
 const EVENTS_FOR: Readonly<Partial<Record<AuditEvent['type'], readonly AppEvent['type'][]>>> = {
   'adapter-approved': ['approvals-changed', 'adapters-changed', 'attention-changed'],
   'adapter-rejected': ['approvals-changed', 'adapters-changed', 'attention-changed'],
-  'grant-made': ['grants-changed', 'adapters-changed'],
-  'grant-revoked': ['grants-changed', 'adapters-changed'],
+  // A grant or a setting can make a "Give Valet your login" or "Choose your store" item come or go.
+  'grant-made': ['grants-changed', 'adapters-changed', 'attention-changed'],
+  'grant-revoked': ['grants-changed', 'adapters-changed', 'attention-changed'],
   'grant-copied': ['grants-changed'],
   // The adapter's queue count changes with every call that arrives, waits or finishes.
   'tool-called': ['runs-changed', 'clients-changed', 'health-changed'],
@@ -224,8 +235,13 @@ const EVENTS_FOR: Readonly<Partial<Record<AuditEvent['type'], readonly AppEvent[
   'breaker-opened': ['health-changed'],
   'breaker-closed': ['health-changed'],
   confirmation: ['runs-changed'],
-  'setting-changed': ['adapters-changed'],
+  'setting-changed': ['adapters-changed', 'attention-changed'],
+  'lock-down': ['app-changed', 'adapters-changed', 'health-changed', 'attention-changed'],
+  'site-paused': ['adapters-changed', 'health-changed'],
 }
+
+/** Error classes only an adapter update fixes: the site's last call raises a repair item. */
+const NEEDS_REPAIR: ReadonlySet<string> = new Set(['site-changed'])
 
 /**
  * The runtime's needs-person reasons (packages/runtime session.ts): a hold for one of these waits for
@@ -290,6 +306,19 @@ export class AppService {
   private readonly notifier: Notifier
   private chain: ChainStatus = { state: 'unverified' }
   private readonly startedAt: string
+  /** Lock down and the sites the person paused, kept across restarts. */
+  private readonly appState: AppStateStore
+  /** Needs you items nobody answered in time, kept 24 hours. */
+  private readonly missed: MissedItems
+  private missedTimer: unknown = null
+  private consentTimer: unknown = null
+  /** Per adapter: its most recent call, when that failed in a way only an adapter update fixes. */
+  private readonly repairs = new Map<
+    string,
+    { readonly callId: string; readonly errorClass: string; readonly at: string }
+  >()
+  /** Adapters whose last call-started login the person closed without finishing, not yet told to a call. */
+  private readonly gaveUp = new Set<string>()
 
   constructor(private readonly deps: ServiceDeps) {
     const { paths } = deps
@@ -301,6 +330,16 @@ export class AppService {
       show: (notification) => deps.ui.notify(notification),
       close: (key) => deps.ui.closeNotification(key),
       now: deps.now,
+      ...(deps.timeZone === undefined ? {} : { timeZone: deps.timeZone }),
+    })
+    this.appState = new AppStateStore(paths.appState)
+    this.missed = new MissedItems({
+      path: paths.missed,
+      now: deps.now,
+      changed: () => {
+        this.scheduleMissedExpiry()
+        this.emit('attention-changed')
+      },
     })
     this.audit = new ObservedAudit(new AuditLog(paths.audit, clock), (record) => this.observe(record))
     this.approvals = new ApprovalStore(paths.approvals, this.audit)
@@ -350,6 +389,16 @@ export class AppService {
       },
       show: (id) => deps.ui.showConfirmation(id),
       close: (id) => deps.ui.closeConfirmation(id),
+      onMissed: (item) =>
+        this.missed.add({
+          of: 'confirmation',
+          id: item.id,
+          title: attentionTitle(item),
+          adapterId: item.adapterId,
+          adapterName: item.adapterName,
+          callId: item.callId,
+          at: item.requestedAt,
+        }),
       onChange: () => this.emit('attention-changed'),
       now: deps.now,
       timeoutMs: CONFIRMATION_TIMEOUT_MS,
@@ -368,6 +417,23 @@ export class AppService {
         this.emit('attention-changed')
         this.emit('adapters-changed')
       },
+      onEnded: (item, how) => {
+        // A window the person opened themselves was never waiting on them.
+        if (item.startedBy !== 'call') return
+        if (how === 'gave-up') {
+          this.gaveUp.add(item.adapterId)
+          return
+        }
+        this.missed.add({
+          of: 'needs-user',
+          id: item.id,
+          title: attentionTitle(item),
+          adapterId: item.adapterId,
+          adapterName: item.adapterName,
+          callId: item.callId,
+          at: item.at,
+        })
+      },
     })
     this.remote = new RemoteAccess({
       path: paths.remote,
@@ -378,12 +444,31 @@ export class AppService {
         if (this.remote.status().pendingConsents === 0) this.notifier.remoteConsent(0)
         this.emit('app-changed')
         this.emit('remote-changed')
+        this.emit('attention-changed')
       },
-      // One notification and the one screen that lists every waiting request, never a window per
+      // One notification and the one sheet that lists every waiting request, never a window per
       // request (relay.md), so a flood can't bury the screen.
       consentRequested: () => {
-        this.notifier.remoteConsent(this.remote.status().pendingConsents)
-        deps.ui.openControlPanel(href.remote())
+        const requests = this.remote.consentView().requests
+        const soonest = Math.min(...requests.map((r) => r.expiresAt))
+        this.notifier.remoteConsent(
+          requests.length,
+          Number.isFinite(soonest) ? new Date(soonest).toISOString() : undefined,
+        )
+        this.scheduleConsentSweep()
+        deps.ui.openControlPanel(href.approveConnection())
+      },
+      consentEnded: (request, answer) => {
+        if (answer !== 'expired') return
+        this.missed.add({
+          of: 'remote-consent',
+          id: request.id,
+          title: needsYouTitle({ kind: 'remote-consent' }),
+          adapterId: null,
+          adapterName: null,
+          callId: null,
+          at: new Date(request.requestedAt).toISOString(),
+        })
       },
       audit: async (event) => {
         await this.audit.append(event)
@@ -406,6 +491,11 @@ export class AppService {
     await mkdir(paths.loginMarkers, { recursive: true, mode: 0o700 })
     await mkdir(paths.clientConfigs, { recursive: true, mode: 0o700 })
     await mkdir(paths.traces, { recursive: true, mode: 0o700 })
+    // Before the endpoint starts: a lock down set before a restart refuses the first call too.
+    await this.appState.load()
+    await this.missed.load()
+    this.scheduleMissedExpiry()
+    await this.loadRepairs()
     // Before per-client tokens, every client shared one token in this file. Nothing reads it now,
     // and a token left lying there would be one more copy to leak.
     await rm(paths.legacyBridgeConfig, { force: true }).catch(() => undefined)
@@ -481,6 +571,9 @@ export class AppService {
     }
     this.caller = new RuntimeToolCaller(host, {
       paused: () => this.paused,
+      lockedDown: () => this.appState.lockedDown,
+      sitePaused: (adapterId) => this.appState.sitePaused(adapterId),
+      explain: (call, outcome) => this.explain(call, outcome),
       started: (call) => {
         this.memory.started(call.callId, call.tool, call.client, call.input)
         // The token named the client; the transport is the endpoint's label for the session.
@@ -553,6 +646,11 @@ export class AppService {
     this.broker.declineAll()
     this.handoffs.closeAll()
     this.notifier.clear()
+    if (this.missedTimer !== null) this.deps.timers.clearTimeout(this.missedTimer)
+    if (this.consentTimer !== null) this.deps.timers.clearTimeout(this.consentTimer)
+    this.missedTimer = null
+    this.consentTimer = null
+    await this.missed.flushed()
     await this.remote.close().catch(() => undefined)
     await this.endpoint?.close().catch(() => undefined)
     this.endpoint = null
@@ -646,20 +744,227 @@ export class AppService {
     return this.host
   }
 
-  private emit(type: Exclude<AppEvent['type'], 'audit-appended'>): void {
-    // What waits on the person changed: tell them, in case no window of Valet's is in view.
+  private emit(type: Exclude<AppEvent['type'], 'audit-appended' | 'focus-banner'>): void {
+    // What waits on the person changed: tell them, in case no window of Valet's is in view. Only
+    // what the app holds in memory notifies; the rest (reviews, missing settings and logins) never
+    // does, so this needs no file read.
     if (type === 'attention-changed')
-      this.notifier.attention([...this.handoffs.list(), ...this.broker.list()])
+      this.notifier.attention([
+        ...this.handoffs.list(),
+        ...this.broker.list(),
+        ...this.repairItems(),
+        ...this.missed.list(),
+      ])
     this.deps.emit({ type })
   }
 
   private observe(record: AuditRecord): void {
     this.deps.emit({ type: 'audit-appended', seq: record.seq })
     const { event } = record
-    if (event.type === 'breaker-opened') this.notifier.breakerOpened(event.host, event.cause, event.retryAt)
+    if (event.type === 'breaker-opened')
+      this.notifier.breakerOpened(event.host, event.cause, event.retryAt, this.siteName(event.host))
     else if (event.type === 'breaker-closed') this.notifier.breakerClosed(event.host)
+    else if (event.type === 'tool-finished' && this.noteFinished(event, record.at))
+      this.emit('attention-changed')
     for (const type of EVENTS_FOR[record.event.type] ?? [])
-      this.emit(type as Exclude<AppEvent['type'], 'audit-appended'>)
+      this.emit(type as Exclude<AppEvent['type'], 'audit-appended' | 'focus-banner'>)
+  }
+
+  /** The name of the one adapter on a host, for a notification; null when none or several. */
+  private siteName(host: string): string | undefined {
+    const on = this.deps.adapters.filter((a) => {
+      const { manifest } = a.definition
+      return manifest.navigation.some((origin) => {
+        try {
+          return new URL(origin).host === host
+        } catch {
+          return false
+        }
+      })
+    })
+    return on.length === 1 ? on[0]?.definition.manifest.name : undefined
+  }
+
+  /**
+   * Keeps the repair items up to date with a call that finished: a failure only an adapter update
+   * fixes raises one, anything else the site answered clears it. The app's own refusals (stage
+   * config) say nothing about the site. True when the items changed.
+   */
+  private noteFinished(event: Extract<AuditEvent, { type: 'tool-finished' }>, at: string): boolean {
+    if (event.outcome === 'failed' && event.stage === 'config') return false
+    const before = this.repairs.get(event.adapterId)
+    if (event.outcome === 'failed' && event.errorClass !== undefined && NEEDS_REPAIR.has(event.errorClass)) {
+      this.repairs.set(event.adapterId, { callId: event.callId, errorClass: event.errorClass, at })
+      return before?.callId !== event.callId
+    }
+    if (before === undefined) return false
+    this.repairs.delete(event.adapterId)
+    return true
+  }
+
+  /** The repair items as the audit log stood at launch. */
+  private async loadRepairs(): Promise<void> {
+    try {
+      for (const record of await this.reader.records())
+        if (record.event.type === 'tool-finished') this.noteFinished(record.event, record.at)
+    } catch {
+      // An unreadable log raises none.
+    }
+  }
+
+  private repairItems(): RepairItem[] {
+    return [...this.repairs].flatMap(([adapterId, repair]) => {
+      const adapter = this.adapter(adapterId)
+      if (adapter === null) return []
+      return [
+        {
+          kind: 'repair',
+          id: `rp_${adapterId}`,
+          adapterId,
+          adapterName: adapter.definition.manifest.name,
+          callId: repair.callId,
+          errorClass: repair.errorClass as RepairItem['errorClass'],
+          at: repair.at,
+        },
+      ]
+    })
+  }
+
+  private consentItems(): RemoteConsentItem[] {
+    return this.remote.consentView().requests.map((r) => ({
+      kind: 'remote-consent',
+      id: r.id,
+      clientHost: r.clientHost,
+      clientName: r.clientName,
+      source: r.source,
+      requestedAt: new Date(r.requestedAt).toISOString(),
+      expiresAt: new Date(r.expiresAt).toISOString(),
+    }))
+  }
+
+  /** Missed items drop off after 24 hours even with no window open to read them. */
+  private scheduleMissedExpiry(): void {
+    if (this.missedTimer !== null) this.deps.timers.clearTimeout(this.missedTimer)
+    this.missedTimer = null
+    const next = this.missed.nextExpiry()
+    if (next === null) return
+    this.missedTimer = this.deps.timers.setTimeout(
+      () => {
+        this.missedTimer = null
+        if (this.missed.prune()) {
+          this.missed.list()
+          this.emit('attention-changed')
+        }
+        this.scheduleMissedExpiry()
+      },
+      Math.max(0, next - this.deps.now()) + 50,
+    )
+  }
+
+  /**
+   * A connection request expires only when something reads the list; this reads it as the soonest
+   * one runs out, so it becomes a missed item on time.
+   */
+  private scheduleConsentSweep(): void {
+    if (this.consentTimer !== null) this.deps.timers.clearTimeout(this.consentTimer)
+    this.consentTimer = null
+    const requests = this.remote.consentView().requests
+    if (requests.length === 0) return
+    const soonest = Math.min(...requests.map((r) => r.expiresAt))
+    this.consentTimer = this.deps.timers.setTimeout(
+      () => {
+        this.consentTimer = null
+        this.remote.consentView()
+        this.scheduleConsentSweep()
+      },
+      Math.max(0, soonest - this.deps.now()) + 50,
+    )
+  }
+
+  /** What the app knows about an outcome that names a Needs you item, for the tool result. */
+  private async explain(call: ToolCall, outcome: CallOutcome): Promise<CallOutcome> {
+    if (outcome.status === 'needsUser') {
+      const hint = await this.needsYouHint(call.adapterId, outcome.reason)
+      return hint === null ? outcome : { ...outcome, needsYou: hint }
+    }
+    if (
+      outcome.status === 'failed' &&
+      outcome.errorClass === 'not-granted' &&
+      outcome.stage === 'secret-fill'
+    ) {
+      if (await this.loginMissing(call.adapterId)) return { ...outcome, needsYou: { kind: 'login-missing' } }
+    }
+    return outcome
+  }
+
+  private async needsYouHint(adapterId: string, reason: NeedsUserReason): Promise<NeedsYouHint | null> {
+    if (reason === 'setting-required') {
+      const title = await this.missingSettingTitle(adapterId)
+      return title === null ? null : { kind: 'setting-missing', settingTitle: title }
+    }
+    const handoff = this.handoffs.get(adapterId)
+    if (handoff !== null) return { kind: 'login', until: handoff.closesAt }
+    // Told once: the call after this one finds the login held as any other.
+    if (this.gaveUp.delete(adapterId)) return { kind: 'gave-up' }
+    if (reason === 'login-required' && (await this.loginMissing(adapterId))) return { kind: 'login-missing' }
+    return null
+  }
+
+  /** True when the installed bundle declares a login with no grant for its hash. */
+  private async loginMissing(adapterId: string): Promise<boolean> {
+    const adapter = this.adapter(adapterId)
+    if (adapter === null) return false
+    const declared = Object.keys(adapter.definition.manifest.secrets)
+    if (declared.length === 0) return false
+    const grants = await this.grants.list().catch(() => null)
+    if (grants === null) return false
+    return declared.some(
+      (secret) =>
+        !grants.some(
+          (g) => g.adapterId === adapterId && g.adapterHash === adapter.hash && g.secret === secret,
+        ),
+    )
+  }
+
+  /** The title of the first required setting with no choice, or null. */
+  private async missingSettingTitle(adapterId: string): Promise<string | null> {
+    const adapter = this.adapter(adapterId)
+    if (adapter === null) return null
+    const chosen = await this.adapterSettings.chosen(adapterId).catch(() => null)
+    if (chosen === null) return null
+    for (const [name, setting] of Object.entries(adapter.definition.manifest.settings))
+      if (setting.required && !Object.hasOwn(chosen, name)) return setting.title
+    return null
+  }
+
+  /**
+   * Lock down (IA 2.10): every call is refused from now on, a confirmation still waiting is
+   * declined, and every cloud agent is revoked; remote access stays as the person set it, so its
+   * agents get the locked-down answer too, and are asked to connect again. Unlocking lets calls
+   * through; nothing revoked comes back.
+   */
+  private async setLockedDown(locked: boolean): Promise<void> {
+    if (!locked) {
+      // Audited first, like a grant: an unlock that can't be recorded isn't made.
+      await this.audit.append({ type: 'lock-down', locked, revokedClients: 0 })
+      await this.appState.setLockedDown(false)
+      return
+    }
+    // In memory at once: no call gets through while the rest happens, even if a write fails.
+    const saved = this.appState.setLockedDown(true)
+    let revoked = 0
+    if (locked) {
+      this.broker.declineAll()
+      revoked = await this.remote.revokeAllClients().catch(() => 0)
+    }
+    await saved
+    await this.audit.append({ type: 'lock-down', locked: true, revokedClients: revoked })
+  }
+
+  private async setSitePaused(adapterId: string, paused: boolean): Promise<void> {
+    this.requireAdapter(adapterId)
+    await this.appState.setSitePaused(adapterId, paused)
+    await this.audit.append({ type: 'site-paused', adapterId, paused })
   }
 
   private adapter(adapterId: string): BuiltinAdapter | null {
@@ -721,6 +1026,7 @@ export class AppService {
       lastUsed: (grant) => lastUsed(records, grant),
       handedOver: null,
       chosen: await this.adapterSettings.chosen(manifest.id),
+      paused: this.appState.sitePaused(manifest.id),
     }
   }
 
@@ -963,6 +1269,7 @@ export class AppService {
           // The manifest's own https page on one of its navigation origins (core checks both).
           deps.ui.openExternal(url)
         },
+        setPaused: (adapterId, paused) => this.setSitePaused(adapterId, paused),
       },
       approvals: {
         pending: async () =>
@@ -1164,11 +1471,23 @@ export class AppService {
       },
       attention: {
         list: async (): Promise<AttentionItem[]> => {
-          const reviews = (await this.states()).flatMap((s) => {
+          const states = await this.states()
+          const reviews = states.flatMap((s) => {
             const review = pendingReview(s, this.startedAt)
             return review === null ? [] : [reviewItem(review)]
           })
-          return [...this.handoffs.list(), ...this.broker.list(), ...reviews]
+          return sortAttention([
+            ...this.handoffs.list(),
+            ...this.broker.list(),
+            ...this.consentItems(),
+            ...reviews,
+            ...states.flatMap(missingItems),
+            ...this.repairItems(),
+            ...this.missed.list(),
+          ])
+        },
+        dismiss: async (id) => {
+          if (!this.missed.dismiss(id)) throw new ValetError('config', 'not-found')
         },
       },
       answerConfirmation: async (confirmationId: string, approved: boolean, from: AppWindow) => {
@@ -1325,11 +1644,17 @@ export class AppService {
         },
       },
       app: {
-        status: async () => ({ paused: this.paused, version: deps.version, demo: deps.demo }),
+        status: async () => ({
+          paused: this.paused,
+          lockedDown: this.appState.lockedDown,
+          version: deps.version,
+          demo: deps.demo,
+        }),
         setPaused: async (paused) => {
           this.paused = paused
           this.emit('app-changed')
         },
+        setLockedDown: (locked) => this.setLockedDown(locked),
         openControlPanel: async (route) => deps.ui.openControlPanel(route ?? null),
         copyText: async (text) => deps.ui.writeClipboard(text),
         quit: async () => deps.ui.quit(),

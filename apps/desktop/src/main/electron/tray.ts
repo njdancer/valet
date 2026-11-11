@@ -37,9 +37,15 @@ export function createTray(windows: AppWindows, api: MainApi, demo: boolean, rem
       const menu = Menu.buildFromTemplate([
         { label: 'Open control panel', click: () => windows.openControlPanel(null) },
         {
-          label: status.paused ? 'Resume adapters' : 'Pause all adapters',
+          label: status.paused ? 'Resume Valet' : 'Pause Valet',
+          enabled: !status.lockedDown,
           click: () => void api.app.setPaused(!status.paused),
         },
+        // The second kill switch (IA 2.10): unlocking asks first, as locking can't be undone for
+        // the cloud agents it removed.
+        status.lockedDown
+          ? { label: 'Unlock Valet…', click: () => void confirmUnlock(api) }
+          : { label: 'Lock down…', click: () => void confirmLockDown(api) },
         ...(state.menuItem === null
           ? []
           : [
@@ -58,6 +64,32 @@ export function createTray(windows: AppWindows, api: MainApi, demo: boolean, rem
     })
   })
   return { refresh }
+}
+
+/** Asks first, and says up front what can't be undone. */
+async function confirmLockDown(api: MainApi): Promise<void> {
+  const { response } = await dialog.showMessageBox({
+    type: 'warning',
+    message: 'Lock down Valet?',
+    detail:
+      'Every call is refused until you unlock, and agents are told why. Cloud agents are removed now and have to be approved again; unlocking doesn’t bring them back.',
+    buttons: ['Cancel', 'Lock down'],
+    defaultId: 0,
+    cancelId: 0,
+  })
+  if (response === 1) await api.app.setLockedDown(true).catch(() => undefined)
+}
+
+async function confirmUnlock(api: MainApi): Promise<void> {
+  const { response } = await dialog.showMessageBox({
+    type: 'question',
+    message: 'Unlock Valet?',
+    detail: 'Calls go through again. Cloud agents that were removed stay removed.',
+    buttons: ['Cancel', 'Unlock'],
+    defaultId: 0,
+    cancelId: 0,
+  })
+  if (response === 1) await api.app.setLockedDown(false).catch(() => undefined)
 }
 
 /** Asks first: every connector then has to be added again, with consent on the Mac. */

@@ -140,6 +140,11 @@ export interface RemoteAccessDeps {
   readonly audit: (event: RemoteAuditEvent) => Promise<void>
   /** A consent request opened: show the person the consent window. Must not throw. */
   readonly consentRequested?: () => void
+  /**
+   * A consent request ended without approval: declined, cancelled by wrong codes, or expired with
+   * nobody answering (the one that becomes a missed item). Must not throw.
+   */
+  readonly consentEnded?: (request: ConsentPrompt, answer: 'declined' | 'expired' | 'cancelled') => void
   /** The policy refused a remote call: audit it like the app's own refusals. */
   readonly refused: (call: ToolCall, reason: RemoteRefusal) => Promise<void>
   readonly start?: (options: RemoteListenerOptions) => Promise<RunningRemoteListener>
@@ -431,6 +436,24 @@ export class RemoteAccess {
 
   private auditConsent(request: ConsentRequest): Promise<void> {
     const answer = request.status === 'pending' ? 'expired' : request.status
+    if (answer !== 'approved') {
+      try {
+        this.deps.consentEnded?.(
+          {
+            id: request.id,
+            clientId: request.clientId,
+            clientHost: request.clientHost,
+            clientName: request.clientName,
+            source: request.source,
+            requestedAt: request.requestedAt,
+            expiresAt: request.expiresAt,
+          },
+          answer,
+        )
+      } catch {
+        // The audit goes ahead whatever the app does with it.
+      }
+    }
     return this.deps
       .audit({
         type: 'remote-consent',

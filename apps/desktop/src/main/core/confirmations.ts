@@ -33,6 +33,11 @@ export interface ConfirmationBrokerOptions {
   readonly show: (id: string) => void
   readonly close: (id: string) => void
   readonly onChange: () => void
+  /**
+   * A request ran out with nobody answering (its time passed, or the runtime's deadline did): it
+   * becomes a missed item. Not called for a decline, a cancelled call or the app quitting.
+   */
+  readonly onMissed?: (item: ConfirmationItem) => void
   readonly now: () => number
   readonly timeoutMs: number
   readonly timers: Timers
@@ -45,6 +50,9 @@ interface Pending {
   armedAt: number | null
   readonly timer: unknown
 }
+
+/** How close to its expiry an abort counts as the request running out. */
+const MISSED_SLACK_MS = 1_000
 
 export class ConfirmationRefused extends Error {
   constructor() {
@@ -103,6 +111,15 @@ export class ConfirmationBroker implements ConfirmationPrompt {
         this.options.timers.clearTimeout(entry.timer)
         signal.removeEventListener('abort', onAbort)
         this.options.close(id)
+        // The runtime's own deadline aborts the prompt at the same moment ours fires; a cancelled
+        // call aborts it earlier, and nobody missed that.
+        if (answer === 'timed-out' && this.options.now() >= Date.parse(item.expiresAt) - MISSED_SLACK_MS) {
+          try {
+            this.options.onMissed?.(item)
+          } catch {
+            // The answer stands whatever the record does.
+          }
+        }
         this.options.onChange()
         resolve(answer)
       }

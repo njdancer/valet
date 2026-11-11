@@ -175,6 +175,22 @@ export type AuditEvent =
     }
   | {
       /**
+       * The person locked Valet down, or unlocked it. Locking refuses every call (the endpoint stays
+       * up to say so) and revokes every cloud agent; `revokedClients` is how many went. Unlocking
+       * brings none of them back.
+       */
+      readonly type: 'lock-down'
+      readonly locked: boolean
+      readonly revokedClients: number
+    }
+  | {
+      /** The person paused one site, or resumed it: its calls are refused without reaching it. */
+      readonly type: 'site-paused'
+      readonly adapterId: string
+      readonly paused: boolean
+    }
+  | {
+      /**
        * A call waited a second or more (D-pacing): for its turn behind the adapter's other calls
        * (`queue`, with how many were in front when it arrived), or for the site's next request slot
        * under its rate budget (`pace`). Recorded so the trace can say where the time went.

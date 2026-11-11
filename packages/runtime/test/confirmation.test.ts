@@ -138,7 +138,7 @@ describe('irreversible tools', () => {
     const { host, prompt, audit } = fixture(irreversible)
     prompt.answer = 'timed-out'
 
-    expect(await host.call(order)).toEqual({ status: 'declined' })
+    expect(await host.call(order)).toEqual({ status: 'declined', timedOut: true })
     expect(placeOrder).not.toHaveBeenCalled()
     expect(audit.events).toContainEqual(
       expect.objectContaining({ type: 'confirmation', answer: 'timed-out' }),
@@ -173,7 +173,7 @@ describe('irreversible tools', () => {
     await flush()
     await clock.advance(60_000)
 
-    expect(await asking).toEqual({ status: 'declined' })
+    expect(await asking).toEqual({ status: 'declined', timedOut: true })
     expect(prompt.signals[0]?.aborted).toBe(true)
     expect(placeOrder).not.toHaveBeenCalled()
     expect(audit.events).toContainEqual(
@@ -193,7 +193,7 @@ describe('irreversible tools', () => {
     await clock.advance(2 * 60_000 - 1)
     expect(prompt.signals[0]?.aborted).toBe(false)
     await clock.advance(1)
-    expect(await asking).toEqual({ status: 'declined' })
+    expect(await asking).toEqual({ status: 'declined', timedOut: true })
   })
 
   it('does not run when the approval cannot be audited', async () => {
