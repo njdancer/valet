@@ -84,7 +84,7 @@ export function AdaptersPage() {
                 {list.length === 0 ? 'No adapters installed yet.' : 'Nothing needs you right now.'}
               </div>
             ) : (
-              <div className="card">
+              <div className="card table-scroll">
                 <table className="table">
                   <thead>
                     <tr>
@@ -170,7 +170,7 @@ function AdapterRow({
         <Hash hash={adapter.hash} />
       </td>
       <td>
-        <div className="stack" style={{ gap: 3 }}>
+        <div className="stack pills" style={{ gap: 3 }}>
           {adapter.approval === 'approved' ? (
             <span className="pill ok">
               <Icon name="check" size="sm" />
