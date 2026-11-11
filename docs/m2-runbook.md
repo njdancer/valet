@@ -302,8 +302,8 @@ Steps:
    3. **The store on the trolley.** After picking a store on the Store card, check that Chrome's
       trolley page (and the one Valet's link opens) shows that store as the delivery or pick-up
       store, and that the prices match it.
-   Do these after step 6, so the session is already logged in, and leave the trolley as Nick
-   wants it.
+      Do these after step 6, so the session is already logged in, and leave the trolley as Nick
+      wants it.
 8. Afterwards: verify the audit log (`pnpm valet:verify-audit`, or the control panel); check it shows one secret use per field
    for the login; grep the app's logs, traces and audit log for the password (a first pass at
    AC16).
