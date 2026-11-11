@@ -23,7 +23,7 @@ import { href, navigate, SETUP_STEPS, type SetupStep } from '../../lib/router'
 import { FIELD_WORDING, PROVIDER_WORDING } from '../../lib/wording'
 import { SettingBlock } from './AdapterDetail'
 import { OnePasswordAccountSetting } from './ClientsSettings'
-import { MESSAGES_SECRET } from './GrantSheet'
+import { MESSAGES_SECRET } from '../sites/grant/target'
 
 /** The adapter setup approves and grants: the bundled one. */
 export const SETUP_ADAPTER = 'woolworths'
