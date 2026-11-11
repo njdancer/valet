@@ -24,7 +24,7 @@ export function followedRoute(event: MouseEvent): HashRoute | null {
   const target = event.target as Element | null
   const link = target?.closest?.('a[href]')
   const to = link?.getAttribute('href') ?? null
-  return to !== null && to.startsWith('#/') ? (to as HashRoute) : null
+  return to?.startsWith('#/') ? (to as HashRoute) : null
 }
 
 /**
