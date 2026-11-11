@@ -276,8 +276,10 @@ The worst case is 40 s of pauses (four settles of 10 s: after the goto, the emai
 and the code), plus the wait for the SMS, which the auth flow polls for until its own deadline.
 So the stall exits stay typed `needsUser`s only if:
 
-- the auth flow's `flowTimeoutMs` is at least 40 s plus the time an SMS takes to arrive: **90 s**
-  is the setting this adapter expects, and
+- the auth flow's `flowTimeoutMs` is at least 40 s plus the time an SMS takes to arrive: 90 s
+  was the setting this adapter expected. Under D28's pacing (four requests a minute) the login
+  itself measures about 87 s against the fake, and more when other requests went out just before
+  it, so the app now allows **180 s**, and
 - the runtime's tool timeout is longer than `flowTimeoutMs` plus everything else in the run. The
   worst run is `add_to_cart`'s 401 retry: eight tool-partition requests (the tool page's first
   navigation, four probes, two reads and the write), paced 2.5 s apart (`limits.minGapMs`), so
