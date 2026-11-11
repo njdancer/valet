@@ -349,10 +349,7 @@ async function main() {
       await sheet.waitFor({ state: 'hidden' })
       await sleep(2500)
       await still(control, 'grants-done')
-      caption(
-        'Prices and stock follow a store, so pick the pick-up store the tools shop at',
-        '2 · Set up',
-      )
+      caption('Prices and stock follow a store, so pick the pick-up store the tools shop at', '2 · Set up')
       const settings = control.getByTestId('setup-settings')
       await type(settings.getByRole('textbox'), '2000')
       await click(settings.getByRole('button', { name: 'Search' }))
