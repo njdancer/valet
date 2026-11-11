@@ -12,7 +12,7 @@ name: QA screens
 on:
   workflow_dispatch:
   push:
-    branches: ['qa/**']
+    branches: ["qa/**"]
 
 permissions:
   contents: write
@@ -36,7 +36,7 @@ jobs:
         working-directory: apps/desktop
         run: pnpm exec playwright test -c e2e/playwright.config.ts qa-screens --trace off
         env:
-          VALET_E2E_QA: '1'
+          VALET_E2E_QA: "1"
           VALET_QA_OUT: ${{ runner.temp }}/qa
       - name: push the screens to a branch
         if: always()
