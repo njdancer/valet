@@ -60,7 +60,6 @@ export function TrayPopover() {
   const health = useLoad((a) => a.health.sites(), [], ['health-changed'])
   const stats = useLoad((a) => a.runs.statsToday(), [], ['runs-changed'])
   const runs = useLoad((a) => a.runs.list({ limit: 200 }), [], ['runs-changed'])
-  const setup = useLoad((a) => a.setup.status(), [], ['settings-changed'])
   const facts = useSetupFacts()
   const action = useAction()
   const [opened, setOpened] = useState<boolean | null>(null)
@@ -78,9 +77,10 @@ export function TrayPopover() {
   const views = needsYouOrder(items.map((i) => needsYouView(i, firstInstall)))
   const waiting = views.filter((v) => !v.missed)
   const missed = views.filter((v) => v.missed)
-  const setupOpen = setup.status === 'ready' && setup.data.completedAt === null
+
   const left = facts.status === 'ready' ? stepsLeft(doneOf(facts.data)) : null
-  const finishSetup = setupOpen && left !== null && left > 0
+  // Skipped steps wait here as one item until done (IA: "Finish setup (N steps left)").
+  const finishSetup = left !== null && left > 0
   const shown = waiting.slice(0, finishSetup ? TRAY_NEEDS_YOU_ROWS - 1 : TRAY_NEEDS_YOU_ROWS)
   const more = waiting.slice(shown.length)
   const total = waiting.length + (finishSetup ? 1 : 0)
@@ -408,6 +408,7 @@ export function subLine(view: NeedsYouView, items: readonly AttentionItem[]): st
       return item.client === null ? where : `${where} · for ${clientClaim(item.client, 'inline')}`
     }
     case 'review':
+      if (view.actionLabel === 'Review') return 'Its tools are off until you review it'
       return item.addsPermissions ? 'Asks for more · calls use the approved version' : 'Asks for nothing new'
     default:
       return view.description
