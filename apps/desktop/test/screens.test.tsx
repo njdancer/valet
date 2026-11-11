@@ -583,6 +583,35 @@ describe('credentials', () => {
     await waitFor(() => expect(screen.queryByText('1Password app “Coles”')).toBeNull())
   })
 
+  it('names adapters, shows SMS grants, and links each unready source to Settings (F20)', async () => {
+    const fake = createFakeApi({ now: NOW })
+    const list = await fake.grants.list()
+    const api = {
+      ...fake,
+      grants: {
+        ...fake.grants,
+        list: async () => [
+          ...list,
+          {
+            ...(list[1] as (typeof list)[number]),
+            secret: 'messages',
+            provider: 'messages' as const,
+            itemId: '+61 400 000 111',
+            itemTitle: '+61 400 000 111',
+          },
+        ],
+      },
+    }
+    renderAt('#/credentials', api)
+    expect(await screen.findByText('Texts from +61 400 000 111')).toBeTruthy()
+    expect(screen.getByText('SMS codes')).toBeTruthy()
+    expect((await screen.findAllByRole('link', { name: 'Woolworths' })).length).toBeGreaterThan(0)
+    expect(screen.queryByRole('link', { name: 'woolworths' })).toBeNull()
+    const turnOn = await screen.findByRole('link', { name: 'Turn on in Settings' })
+    expect(turnOn.getAttribute('href')).toBe('#/settings')
+    expect(screen.getAllByRole('link', { name: 'Set up in Settings' }).length).toBeGreaterThan(0)
+  })
+
   it('offers a re-sync from 1Password for a Keychain copy, and only for one', async () => {
     const user = userEvent.setup()
     const fake = createFakeApi({ now: NOW })
