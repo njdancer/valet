@@ -11,6 +11,7 @@ const ID = 'virtual:valet-tool-scripts'
 const RESOLVED = `\0${ID}`
 const ENTRIES: Readonly<Record<string, string>> = {
   woolworths: resolve(import.meta.dirname, '../../adapters/woolworths/src/tools.ts'),
+  wikipedia: resolve(import.meta.dirname, '../../adapters/wikipedia/src/tools.ts'),
   'yahoo-finance': resolve(import.meta.dirname, '../../adapters/yahoo-finance/src/tools.ts'),
 }
 

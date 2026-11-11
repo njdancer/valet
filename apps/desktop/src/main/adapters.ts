@@ -5,6 +5,7 @@
 // dev` (which rebuilds on change) alike. Transitive imports (core, zod) are not covered (D11).
 
 import toolScripts from 'virtual:valet-tool-scripts'
+import { createAdapter as createWikipedia } from '@valet/adapter-wikipedia'
 import { createAdapter, type ManifestOptions } from '@valet/adapter-woolworths'
 import { createAdapter as createYahooFinance } from '@valet/adapter-yahoo-finance'
 import { type BuiltinAdapter, builtinAdapter } from './core/registry'
@@ -16,6 +17,12 @@ const WOOLWORTHS_SOURCES = import.meta.glob<string>('../../../../adapters/woolwo
 })
 
 const YAHOO_FINANCE_SOURCES = import.meta.glob<string>('../../../../adapters/yahoo-finance/src/**/*.ts', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+})
+
+const WIKIPEDIA_SOURCES = import.meta.glob<string>('../../../../adapters/wikipedia/src/**/*.ts', {
   query: '?raw',
   import: 'default',
   eager: true,
@@ -46,11 +53,16 @@ export function builtinAdapters(woolworths: ManifestOptions = {}): BuiltinAdapte
       relativeSources(WOOLWORTHS_SOURCES),
       toolScripts['woolworths'] ?? null,
     ),
-    // No login: quotes are public. Live in every build, demo mode included.
+    // No login: public data, from the real sites in every build, demo mode included.
     builtinAdapter(
       createYahooFinance(),
       relativeSources(YAHOO_FINANCE_SOURCES, 'yahoo-finance'),
       toolScripts['yahoo-finance'] ?? null,
+    ),
+    builtinAdapter(
+      createWikipedia(),
+      relativeSources(WIKIPEDIA_SOURCES, 'wikipedia'),
+      toolScripts['wikipedia'] ?? null,
     ),
   ]
 }

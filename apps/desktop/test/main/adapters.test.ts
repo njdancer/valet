@@ -37,6 +37,27 @@ describe('builtinAdapters', () => {
     expect(demo?.hash).not.toBe(real?.hash)
   })
 
+  it('builds in the no-login adapters beside Woolworths, each hashed over its own sources', () => {
+    const adapters = builtinAdapters()
+    expect(adapters.map((a) => a.definition.manifest.id)).toEqual([
+      'woolworths',
+      'yahoo-finance',
+      'wikipedia',
+    ])
+    for (const adapter of adapters.slice(1)) {
+      const folder = adapter.definition.manifest.id
+      const dir = join(import.meta.dirname, `../../../../adapters/${folder}/src`)
+      const onDisk = Object.fromEntries(
+        readdirSync(dir)
+          .filter((f) => f.endsWith('.ts'))
+          .map((f) => [`src/${f}`, readFileSync(join(dir, f), 'utf8')]),
+      )
+      expect(adapter.files).toEqual(onDisk)
+      expect(adapter.definition.manifest.session.probe).toEqual({ kind: 'none' })
+      expect(adapter.toolScript).toEqual(expect.any(String))
+    }
+  })
+
   it('keys sources by their path inside the adapter package only', () => {
     expect(
       relativeSources({
