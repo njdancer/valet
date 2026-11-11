@@ -58,13 +58,11 @@ function leaky(api: ValetApi): ValetApi {
   }
 }
 
+// The review page and the grant sheet have their own copy of this check: review-grant-no-secrets.
 const ROUTES: [string, string][] = [
   ['#/adapters', 'Woolworths 0.4.0 is ready for review.'],
   ['#/adapters/woolworths', 'Content hash'],
   ['#/adapters/coles', '+61 400 000 111'],
-  ['#/adapters/woolworths/review', 'Permission changes'],
-  ['#/adapters/woolworths/grant/login', 'Fill it only on'],
-  ['#/adapters/coles/grant/messages', 'Sender the manifest declared'],
   ['#/activity/c_8f2e1b', '[session cookie]'],
   ['#/audit', 'Chain intact up to record 4813.'],
   ['#/clients', 'Add a client…'],

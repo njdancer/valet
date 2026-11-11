@@ -105,13 +105,13 @@ test('first launch: Woolworths waits for review, and no MCP client sees or can c
 test('approve in the review screen; the tools appear to MCP clients', async () => {
   // The Sites list's row for a site never approved carries its Review button.
   await control.getByRole('link', { name: 'Review Woolworths' }).first().click()
-  await expect(control.getByRole('button', { name: 'Approve 0.4.0' })).toBeVisible()
+  await expect(control.getByRole('button', { name: /^Approve (Woolworths|0\.4\.0)$/ })).toBeVisible()
   const ack = control.getByRole('checkbox', { name: 'I’ve read the highlighted additions' })
   if (await ack.isVisible()) {
-    await expect(control.getByRole('button', { name: 'Approve 0.4.0' })).toBeDisabled()
+    await expect(control.getByRole('button', { name: /^Approve (Woolworths|0\.4\.0)$/ })).toBeDisabled()
     await ack.check()
   }
-  await control.getByRole('button', { name: 'Approve 0.4.0' }).click()
+  await control.getByRole('button', { name: /^Approve (Woolworths|0\.4\.0)$/ }).click()
 
   await expect
     .poll(async () => (await client.listTools()).tools.map((t) => t.name).sort())
@@ -127,14 +127,16 @@ test('approve in the review screen; the tools appear to MCP clients', async () =
 })
 
 test('grant login from the person’s 1Password item, offered only the manifest’s origin', async () => {
-  // Approving with “grant next” ticked opens the sheet; otherwise it is on the adapter page.
-  const sheet = control.getByRole('dialog', { name: 'Grant a secret' })
+  // Approving with “choose the login next” ticked opens the sheet; otherwise it is on the site page.
+  const sheet = control.getByRole('dialog')
+  // A first install goes to the login next, after the approval seal has shown for a moment.
+  await sheet.waitFor({ state: 'visible', timeout: 3000 }).catch(() => undefined)
   if (!(await sheet.isVisible().catch(() => false))) {
     await control.getByRole('link', { name: 'Woolworths' }).first().click()
     await control.getByRole('link', { name: 'Choose login…' }).first().click()
   }
   await expect(sheet).toBeVisible()
-  await expect(sheet.getByText('Let Woolworths log in with your 1Password item')).toBeVisible()
+  await expect(sheet.getByRole('heading', { name: 'Give Valet your Woolworths login' })).toBeVisible()
 
   const status = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
   const authOrigin = status?.secretRequests.find((s) => s.name === 'login')?.origins
@@ -148,9 +150,9 @@ test('grant login from the person’s 1Password item, offered only the manifest�
   const originBoxes = sheet.getByRole('checkbox')
   await expect(originBoxes).toHaveCount(1)
   await expect(originBoxes).toBeChecked()
-  await expect(sheet.locator('.origin-row')).toHaveText([new RegExp(`^${authOrigin?.[0]}`)])
+  await expect(originBoxes).toHaveAccessibleName(authOrigin?.[0] ?? '')
   await expect(sheet.getByText(/www\.woolworths\.test/)).toHaveCount(0)
-  await sheet.getByRole('button', { name: 'Grant', exact: true }).click()
+  await sheet.getByRole('button', { name: 'Use this login' }).click()
   await expect(sheet).toBeHidden()
   // The copy was made under the approval the listing got: one prompt in all.
   expect(await onePasswordPrompts(launched)).toEqual([
@@ -181,10 +183,10 @@ test('grant login from the person’s 1Password item, offered only the manifest�
 
 test('grant SMS codes from Messages for the declared sender', async () => {
   await control.getByRole('link', { name: 'Choose…' }).first().click()
-  const sheet = control.getByRole('dialog', { name: 'Grant a secret' })
+  const sheet = control.getByRole('dialog')
   await expect(sheet.getByText('Let Woolworths read one-time codes from Messages')).toBeVisible()
   await expect(sheet.getByRole('radio', { name: /Woolworths/ })).toBeChecked()
-  await sheet.getByRole('button', { name: 'Grant', exact: true }).click()
+  await sheet.getByRole('button', { name: 'Allow these codes' }).click()
   await expect(sheet).toBeHidden()
   const detail = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
   expect(detail?.secretRequests.map((s) => s.grant?.itemTitle)).toEqual([COPY_ITEM_TITLE])

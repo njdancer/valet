@@ -102,15 +102,15 @@ test('first run: the adapter waits for review', async () => {
 })
 
 test('the grant sheet, then the approved adapter', async () => {
-  const sheet = control.getByRole('dialog', { name: 'Grant a secret' })
+  const sheet = control.getByRole('dialog')
   if (!(await sheet.isVisible())) await route('#/sites/woolworths/login/login')
   await expect(sheet).toBeVisible()
   await sheet.getByText(COPY_ITEM_TITLE).click()
   await shot(control, 'grant-secret')
-  await sheet.getByRole('button', { name: 'Grant', exact: true }).click()
+  await sheet.getByRole('button', { name: 'Use this login' }).click()
   await expect(sheet).toBeHidden()
   await route('#/sites/woolworths/login/messages')
-  await sheet.getByRole('button', { name: 'Grant', exact: true }).click()
+  await sheet.getByRole('button', { name: 'Allow these codes' }).click()
   await expect(sheet).toBeHidden()
 
   await chooseStore(control)

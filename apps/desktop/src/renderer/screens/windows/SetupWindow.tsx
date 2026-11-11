@@ -1,16 +1,18 @@
 // TEMPORARY: wraps the old screen until it is rebuilt on @valet/ui.
 import { href, type Route } from '../../lib/router'
-import { GrantSheet } from '../legacy/GrantSheet'
-import { ReviewUpdate } from '../legacy/ReviewUpdate'
 import { SETUP_ADAPTER, SetupPage } from '../legacy/Setup'
+import { GrantSheet } from '../sites/GrantSheet'
+import { ReviewPage } from '../sites/ReviewPage'
 
 export function SetupWindow({ route }: { readonly route: Extract<Route, { page: 'setup' }> }) {
   if (route.review)
     return (
-      <ReviewUpdate
-        adapterId={SETUP_ADAPTER}
-        exits={{ approved: href.setup('grant'), closed: href.setup('approve') }}
-      />
+      <div className="flex h-full flex-col">
+        <ReviewPage
+          adapterId={SETUP_ADAPTER}
+          exits={{ approved: href.setup('grant'), closed: href.setup('approve') }}
+        />
+      </div>
     )
   return (
     <div className="flex h-full flex-col">

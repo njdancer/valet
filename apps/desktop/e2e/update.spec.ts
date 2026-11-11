@@ -254,13 +254,13 @@ test('without new grants the login can’t fill; granted again, the next call lo
   // The person grants the new hash in the sheet, as the adapter page offers.
   await control.getByRole('link', { name: 'Woolworths' }).first().click()
   await control.getByRole('link', { name: 'Choose login…' }).first().click()
-  const sheet = control.getByRole('dialog', { name: 'Grant a secret' })
+  const sheet = control.getByRole('dialog')
   await sheet.getByText(COPY_ITEM_TITLE).click()
-  await sheet.getByRole('button', { name: 'Grant', exact: true }).click()
+  await sheet.getByRole('button', { name: 'Use this login' }).click()
   await expect(sheet).toBeHidden()
   await control.getByRole('link', { name: 'Choose…' }).first().click()
   await expect(sheet.getByText('Let Woolworths read one-time codes from Messages')).toBeVisible()
-  await sheet.getByRole('button', { name: 'Grant', exact: true }).click()
+  await sheet.getByRole('button', { name: 'Allow these codes' }).click()
   await expect(sheet).toBeHidden()
 
   // The failed login's hold on automatic logins is released by the grant: the agent's retry logs in.
