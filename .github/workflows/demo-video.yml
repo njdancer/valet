@@ -11,8 +11,6 @@ name: Demo video
 
 on:
   workflow_dispatch:
-  push:
-    branches: [claude/project-thread-av8z4y]
 
 permissions:
   contents: write
