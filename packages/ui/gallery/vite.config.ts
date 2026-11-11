@@ -35,7 +35,8 @@ function csp(): Plugin {
 export default defineConfig({
   root: import.meta.dirname,
   base: './',
-  plugins: [react(), tailwind(), csp()],
+  // GALLERY_ARTIFACT=1 builds the published copy, where the host sets its own CSP.
+  plugins: [react(), tailwind(), ...(process.env['GALLERY_ARTIFACT'] ? [] : [csp()])],
   server: { host: '127.0.0.1', port: 5199 },
   build: { outDir: resolve(import.meta.dirname, '../dist/gallery'), emptyOutDir: true, assetsInlineLimit: 0 },
 })

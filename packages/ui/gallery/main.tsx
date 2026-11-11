@@ -33,9 +33,9 @@ const sections = [
 ] as const
 
 function useHash(): string {
-  const [hash, setHash] = useState(() => location.hash.slice(2) || 'foundations')
+  const [hash, setHash] = useState(() => location.hash.replace(/^#\/?/, '') || 'foundations')
   useEffect(() => {
-    const on = () => setHash(location.hash.slice(2) || 'foundations')
+    const on = () => setHash(location.hash.replace(/^#\/?/, '') || 'foundations')
     addEventListener('hashchange', on)
     return () => removeEventListener('hashchange', on)
   }, [])
@@ -74,11 +74,11 @@ function App() {
         </Inline>
         <SidebarGroup label="Sections">
           {sections.map((s) => (
-            <NavItem key={s.id} href={`#/${s.id}`} icon={s.icon} active={s.id === current.id}>
+            <NavItem key={s.id} href={`#${s.id}`} icon={s.icon} active={s.id === current.id}>
               {s.label}
             </NavItem>
           ))}
-          <NavItem href="#/showcase" icon={<Blocks />}>
+          <NavItem href="#showcase" icon={<Blocks />}>
             Motion showcase
           </NavItem>
         </SidebarGroup>

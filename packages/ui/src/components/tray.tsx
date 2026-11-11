@@ -11,7 +11,7 @@ export function TrayPanel({ className, children, ...props }: ComponentProps<'div
     <div
       data-glass="refract"
       className={cn(
-        'material-floating flex w-[360px] flex-col overflow-hidden rounded-xl text-fg',
+        'material-floating flex w-[400px] max-w-full flex-col overflow-hidden rounded-xl text-fg',
         className,
       )}
       onKeyDown={(e) => {

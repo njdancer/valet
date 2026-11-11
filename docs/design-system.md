@@ -80,7 +80,9 @@ more`) strengthens every line.
 - **The fix sits with the problem.** A `Banner` about something actionable carries the action. An
   update waiting is shown on the site's page with its Review button, not only in the tray.
 - **One primary per view.** Secondary to its left. Danger only for what can't be undone;
-  `HoldToConfirm` for the few things that deserve a deliberate hold (erase all data, place an order).
+  `ConfirmDialog` (focus on Cancel, the consequences named) for Reset, Uninstall and erase.
+  `HoldToConfirm` is optional emphasis for an in-flow commit such as placing an order; a screen
+  reader click on it opens the same confirm dialog, so it never gates anyone on a gesture.
 - **Disabled explains itself.** `Button disabledReason="…"` stays focusable, shows the reason as a
   tooltip and reads it as its description.
 - **Keyboard first.** `⌘K`/`Ctrl+K` (`CommandPalette`) reaches every page, site, call and action.

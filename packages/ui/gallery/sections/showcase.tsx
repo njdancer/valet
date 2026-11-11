@@ -33,13 +33,17 @@ type Scene = { id: string; title: string; caption: string; ms: number; view: (t:
 
 /** Calls back with elapsed ms while mounted, so scenes can script their beats. */
 function useElapsed(playing: boolean, resetKey: unknown): number {
-  const [t, setT] = useState(0)
+  // The time is stored with the scene it was measured in, so a new scene never sees the last one's.
+  const [state, setState] = useState<{ t: number; key: unknown }>({ t: 0, key: resetKey })
   const start = useRef(0)
   const offset = useRef(0)
+  const key = useRef(resetKey)
   // biome-ignore lint/correctness/useExhaustiveDependencies: resetKey restarts the clock
   useEffect(() => {
-    setT(0)
+    key.current = resetKey
     offset.current = 0
+    start.current = performance.now()
+    setState({ t: 0, key: resetKey })
   }, [resetKey])
   useEffect(() => {
     if (!playing) return
@@ -47,13 +51,13 @@ function useElapsed(playing: boolean, resetKey: unknown): number {
     let frame = 0
     const tick = (now: number) => {
       offset.current = now - start.current
-      setT(offset.current)
+      setState({ t: offset.current, key: key.current })
       frame = requestAnimationFrame(tick)
     }
     frame = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frame)
   }, [playing])
-  return t
+  return state.key === resetKey ? state.t : 0
 }
 
 const at = (t: number, ms: number) => t >= ms
