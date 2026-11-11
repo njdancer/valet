@@ -162,6 +162,9 @@ const HANDLERS: Readonly<
     api.adapters.clearSetting(id, s),
   ),
   'adapters.openCart': entry(z.tuple([ADAPTER_ID]), (api, [id]) => api.adapters.openCart(id)),
+  'adapters.setPaused': entry(z.tuple([ADAPTER_ID, z.boolean()]), (api, [id, paused]) =>
+    api.adapters.setPaused(id, paused),
+  ),
   'approvals.pending': entry(none, (api) => api.approvals.pending()),
   'approvals.approve': entry(z.tuple([ADAPTER_ID, HASH]), (api, [id, hash]) =>
     api.approvals.approve(id, hash),
@@ -198,6 +201,7 @@ const HANDLERS: Readonly<
     api.clients.addToClaudeDesktop(id),
   ),
   'attention.list': entry(none, (api) => api.attention.list()),
+  'attention.dismiss': entry(z.tuple([OPAQUE_ID]), (api, [id]) => api.attention.dismiss(id)),
   answerConfirmation: entry(z.tuple([OPAQUE_ID, z.boolean()]), (api, [id, approved], sender) =>
     // The sender's role is non-null here: untrusted senders never reach a handler.
     api.answerConfirmation(id, approved, { role: sender.role as WindowRole, shows: sender.shows }),
@@ -235,6 +239,13 @@ const HANDLERS: Readonly<
   ),
   'app.status': entry(none, (api) => api.app.status()),
   'app.setPaused': entry(z.tuple([z.boolean()]), (api, [paused]) => api.app.setPaused(paused)),
+  // Locking down is a kill switch any of the app's windows may pull; unlocking is for the control
+  // panel and the menu bar only, never a confirmation panel or a hand-off banner, which show
+  // adapter text.
+  'app.setLockedDown': entry(z.tuple([z.boolean()]), (api, [locked], sender) => {
+    if (!locked && sender.role !== 'control' && sender.role !== 'tray') throw new IpcRefused()
+    return api.app.setLockedDown(locked)
+  }),
   'app.openControlPanel': entry(z.union([none, z.tuple([controlPanelRoute])]), (api, args) =>
     args.length === 0 ? api.app.openControlPanel() : api.app.openControlPanel(args[0] as HashRoute),
   ),

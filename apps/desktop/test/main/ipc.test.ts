@@ -281,6 +281,27 @@ describe('reset and uninstall', () => {
   })
 })
 
+describe('lock down', () => {
+  it('can be pulled from any window, but only the control panel and the menu bar unlock', async () => {
+    const { d, calls } = dispatcher()
+    for (const role of ['control', 'tray', 'confirmation', 'needs-user'] as const)
+      await d.dispatch(invokeChannel('app.setLockedDown'), [true], { ...control, role })
+    for (const role of ['confirmation', 'needs-user'] as const) {
+      await expect(
+        d.dispatch(invokeChannel('app.setLockedDown'), [false], { ...control, role }),
+      ).rejects.toBeInstanceOf(IpcRefused)
+    }
+    await d.dispatch(invokeChannel('app.setLockedDown'), [false], { ...control, role: 'tray' })
+    expect(calls.map((c) => c.args)).toEqual([[true], [true], [true], [true], [false]])
+    await expect(d.dispatch(invokeChannel('app.setLockedDown'), ['yes'], control)).rejects.toBeInstanceOf(
+      IpcRefused,
+    )
+    await expect(d.dispatch(invokeChannel('attention.dismiss'), ['../x'], control)).rejects.toBeInstanceOf(
+      IpcRefused,
+    )
+  })
+})
+
 describe('every channel', () => {
   const HASH64 = 'a'.repeat(64)
   const valid: Record<(typeof INVOKE_METHODS)[number], unknown[]> = {
@@ -290,6 +311,7 @@ describe('every channel', () => {
     'adapters.setSetting': ['woolworths', 'store', '9001201'],
     'adapters.clearSetting': ['woolworths', 'store'],
     'adapters.openCart': ['woolworths'],
+    'adapters.setPaused': ['woolworths', true],
     'clients.addToClaudeDesktop': ['c_0123456789abcdef'],
     'approvals.pending': [],
     'approvals.approve': ['woolworths', HASH64],
@@ -326,6 +348,7 @@ describe('every channel', () => {
     'clients.snippets': ['c_0123456789abcdef'],
     'clients.copyConfig': ['c_0123456789abcdef', 'claude-desktop'],
     'attention.list': [],
+    'attention.dismiss': ['ms_cf_abc_1'],
     answerConfirmation: ['cf_1', false],
     openConfirmation: ['cf_1'],
     openLoginWindow: ['woolworths'],
@@ -353,6 +376,7 @@ describe('every channel', () => {
     'remote.setTool': ['wikipedia', 'get_summary', true],
     'app.status': [],
     'app.setPaused': [true],
+    'app.setLockedDown': [false],
     'app.openControlPanel': ['#/activity'],
     'app.copyText': ['hello'],
     'app.quit': [],

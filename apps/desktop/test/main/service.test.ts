@@ -18,10 +18,18 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { type AdapterDefinition, CredentialError, ValetError } from '@valet/core'
+import {
+  type AdapterDefinition,
+  CredentialError,
+  defineAdapter,
+  NeedsUserError,
+  parseManifest,
+  ValetError,
+} from '@valet/core'
 import type { LiveSessions, SessionReportingEndpoint, ToolCall, ToolCaller } from '@valet/mcp-server'
 import { LoginAttemptMarker } from '@valet/runtime'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { z } from 'zod'
 import { dataPaths } from '../../src/main/core/constants'
 import { type Credentials, disabledOtpReader } from '../../src/main/core/credentials'
 import { DEMO_ACCOUNT } from '../../src/main/core/demo'
@@ -36,6 +44,7 @@ import { CONFIRM_ARM_MS } from '../../src/shared/api'
 import {
   FakeAuthPage,
   FakeDriver,
+  ManualTimers,
   SHOP,
   SHOP_FILES,
   SHOP_STORES,
@@ -68,6 +77,8 @@ async function setup(
     /** The adapter the build ships, in place of the plain shop. */
     definition?: AdapterDefinition
     leftovers?: readonly string[]
+    /** Timers the test fires by hand; real ones by default. */
+    timers?: ManualTimers
   } = {},
 ) {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'sa-service-'))
@@ -120,10 +131,11 @@ async function setup(
     version: options.version ?? '0.1.0',
     demo: true,
     now: () => now,
-    timers: {
+    timers: options.timers ?? {
       setTimeout: (run, ms) => setTimeout(run, ms),
       clearTimeout: (h) => clearTimeout(h as NodeJS.Timeout),
     },
+    timeZone: 'UTC',
     sleep: async () => {},
     adapters: [adapter],
     createDriver: async (_manifest, reporters) => {
@@ -701,7 +713,12 @@ describe('tool calls', () => {
     const s = await approved()
     const code = await s.api.clients.add('Claude Code')
     await s.api.app.setPaused(true)
-    expect(await s.api.app.status()).toEqual({ paused: true, version: '0.1.0', demo: true })
+    expect(await s.api.app.status()).toEqual({
+      paused: true,
+      lockedDown: false,
+      version: '0.1.0',
+      demo: true,
+    })
     // The app's refusal, not the site's: no rate limit, and the stage says it was the app's config.
     expect(
       await s.call('echo', { text: 'x' }, 'Claude Code', 'call_paused', {
@@ -844,14 +861,14 @@ describe('notifications', () => {
     expect(s.ui.notifications).toEqual([
       {
         key: `confirmation:${id}`,
-        title: 'Valet needs your approval',
-        body: 'Shop: an agent asked for something that needs your yes. Unanswered, it is declined in 2 minutes.',
+        // The Needs you item's own title, and the site with the deadline as a clock time.
+        title: 'Confirm: Add (Shop)',
+        body: expect.stringMatching(/^Shop · answer by \d{1,2}:\d{2} (am|pm)$/),
         target: { kind: 'confirmation', id },
       },
     ])
     const text = JSON.stringify(s.ui.notifications)
-    for (const untrusted of ['milk', 'Add ', 'Claude Code', 'call_note'])
-      expect(text).not.toContain(untrusted)
+    for (const untrusted of ['milk', 'Claude Code', 'call_note']) expect(text).not.toContain(untrusted)
     await s.api.answerConfirmation(id as string, false, { role: 'tray', shows: null })
     await pending
     expect(s.ui.closedNotifications).toEqual([`confirmation:${id}`])
@@ -871,7 +888,8 @@ describe('notifications', () => {
   it('says nothing about a login window the person opened themselves', async () => {
     const s = await approved()
     await s.api.openLoginWindow('shop')
-    expect((await s.api.attention.list()).map((i) => i.kind)).toEqual(['needs-user'])
+    // The login window first (it has a deadline), then the login Valet was never given.
+    expect((await s.api.attention.list()).map((i) => i.kind)).toEqual(['needs-user', 'login-missing'])
     expect(s.ui.notifications).toEqual([])
   })
 
@@ -885,10 +903,10 @@ describe('notifications', () => {
     await expect(s.api.openLoginWindow('shop')).rejects.toEqual(new ValetError('login', 'blocked-by-site'))
     await expect.poll(() => s.ui.notifications.map((n) => n.key)).toEqual(['breaker:www.shop.test'])
     expect(s.ui.notifications[0]).toMatchObject({
-      title: 'Valet stopped calling www.shop.test',
-      target: { kind: 'panel', route: '#/adapters' },
+      title: expect.stringMatching(/^Shop is limiting requests · calls resume at \d{1,2}:\d{2} (am|pm)$/),
+      body: 'The site refused Valet.',
+      target: { kind: 'panel', route: '#/sites' },
     })
-    expect(s.ui.notifications[0]?.body).toMatch(/^The site refused Valet\. Calls to it wait \d+ minutes?\.$/)
   })
 
   it('tells the person a verified update is downloaded, and how it installs', async () => {
@@ -1243,7 +1261,8 @@ describe('the login window', () => {
     const page = s.driver.pages[0]
     expect(page?.gone).toEqual(['https://login.shop.test/login'])
     expect(page?.handedTo).toEqual(['login-required'])
-    expect((await s.api.attention.list()).map((i) => i.kind)).toEqual(['needs-user'])
+    // The login window first (it has a deadline), then the login Valet was never given.
+    expect((await s.api.attention.list()).map((i) => i.kind)).toEqual(['needs-user', 'login-missing'])
     expect(s.service.hasHandoff('shop')).toBe(true)
     // Opening again shows the same window rather than another.
     await s.api.openLoginWindow('shop')
@@ -1582,7 +1601,11 @@ describe('an adapter setting (D69)', () => {
 
   it('stops every tool until the person chooses, and says so on the adapter', async () => {
     const s = await storeShop()
-    expect(await s.call('echo', { text: 'hi' })).toEqual({ status: 'needsUser', reason: 'setting-required' })
+    expect(await s.call('echo', { text: 'hi' })).toEqual({
+      status: 'needsUser',
+      reason: 'setting-required',
+      needsYou: { kind: 'setting-missing', settingTitle: 'Store' },
+    })
     expect((await s.api.adapters.list())[0]?.settingsNeeded).toEqual(['Store'])
     const detail = await s.api.adapters.get('shop')
     expect(detail?.settings).toEqual([
@@ -1712,7 +1735,11 @@ describe('an adapter setting (D69)', () => {
     await s.api.adapters.setSetting('shop', 'store', '11')
     await s.api.adapters.clearSetting('shop', 'store')
     expect((await s.api.adapters.get('shop'))?.settingsNeeded).toEqual(['Store'])
-    expect(await s.call('echo', { text: 'hi' })).toEqual({ status: 'needsUser', reason: 'setting-required' })
+    expect(await s.call('echo', { text: 'hi' })).toEqual({
+      status: 'needsUser',
+      reason: 'setting-required',
+      needsYou: { kind: 'setting-missing', settingTitle: 'Store' },
+    })
     expect(types(s).filter((e) => e.type === 'setting-changed')).toHaveLength(2)
   })
 
@@ -1722,7 +1749,11 @@ describe('an adapter setting (D69)', () => {
     await s.api.adapters.setSetting('shop', 'store', '11')
     writeFileSync(s.paths.adapterSettings, '{"version":1,"adapters":{"shop":{"store":{"value":""}}}}')
     expect((await s.api.adapters.get('shop'))?.settings[0]?.chosen).toBeNull()
-    expect(await s.call('echo', { text: 'hi' })).toEqual({ status: 'needsUser', reason: 'setting-required' })
+    expect(await s.call('echo', { text: 'hi' })).toEqual({
+      status: 'needsUser',
+      reason: 'setting-required',
+      needsYou: { kind: 'setting-missing', settingTitle: 'Store' },
+    })
   })
 })
 
@@ -1985,7 +2016,7 @@ describe('remote access', () => {
     const shown = /class="code">([0-9A-Z]{4}-[0-9A-Z]{4})</.exec(page)?.[1] as string
     const waitUrl = /url=([^"]+)"/.exec(page)?.[1] as string
     const wait = waitUrl.replace(/&amp;/g, '&')
-    expect(s.ui.panels).toContain('#/remote')
+    expect(s.ui.panels).toContain('#/connections/approve')
     expect(s.ui.notifications).toContainEqual(expect.objectContaining({ key: 'remote-consent' }))
 
     // The Mac lists the request by its claimed host, never with the code.
@@ -2153,5 +2184,340 @@ describe('trace retention (D27)', () => {
     expect(readdirSync(paths.traces).sort()).toEqual(['run-today', 'run-week'])
     expect((await s.api.settings.set({ traceRetentionDays: 1 })).traceRetentionDays).toBe(1)
     expect(readdirSync(paths.traces)).toEqual(['run-today'])
+  })
+})
+
+describe('lock down (IA 2.10)', () => {
+  it('refuses every call with the locked-down answer, revokes cloud agents, and survives a restart', async () => {
+    const s = await approved()
+    // A confirmation waiting when the person locks down is declined.
+    const pending = s.call('add', { item: 'milk' })
+    await expect.poll(() => s.ui.shownConfirmations.length).toBe(1)
+    await s.api.app.setLockedDown(true)
+    expect(await pending).toEqual({ status: 'ok', output: { added: false } })
+    expect(await s.api.app.status()).toMatchObject({ lockedDown: true, paused: false })
+    expect(await s.call('echo', { text: 'x' })).toEqual({
+      status: 'failed',
+      stage: 'config',
+      errorClass: 'locked-down',
+    })
+    expect(s.driver.runs).toBe(1)
+    // The endpoint stays up, so agents get the answer.
+    expect((await s.api.endpoint.status()).listening).toBe(true)
+    const events = (await s.api.audit.page({})).records.map((r) => r.event)
+    expect(events).toContainEqual({ type: 'lock-down', locked: true, revokedClients: 0 })
+    expect(s.events).toContainEqual({ type: 'app-changed' })
+    await s.service.stop()
+
+    const again = await setup({ dir: s.dir })
+    expect((await again.api.app.status()).lockedDown).toBe(true)
+    expect((await again.call('echo', { text: 'x' })).status).toBe('failed')
+    await again.api.app.setLockedDown(false)
+    expect(await again.call('echo', { text: 'x' })).toEqual({ status: 'ok', output: { text: 'x' } })
+    expect((await again.api.audit.page({})).records.map((r) => r.event)).toContainEqual({
+      type: 'lock-down',
+      locked: false,
+      revokedClients: 0,
+    })
+  })
+
+  it('reads a damaged state file as locked down', async () => {
+    const s = await approved()
+    await s.service.stop()
+    writeFileSync(s.paths.appState, '{ "lockedDown": "no" }')
+    const again = await setup({ dir: s.dir })
+    expect((await again.api.app.status()).lockedDown).toBe(true)
+  })
+})
+
+describe('pausing one site', () => {
+  it('refuses its calls without reaching it, says so on the site, and keeps it across a restart', async () => {
+    const s = await approved()
+    await s.api.adapters.setPaused('shop', true)
+    expect((await s.api.adapters.list())[0]?.paused).toBe(true)
+    expect((await s.api.adapters.get('shop'))?.paused).toBe(true)
+    expect(await s.call('echo', { text: 'x' })).toEqual({
+      status: 'failed',
+      stage: 'config',
+      errorClass: 'site-paused',
+    })
+    expect(s.driver.runs).toBe(0)
+    expect((await s.api.audit.page({})).records.map((r) => r.event)).toContainEqual({
+      type: 'site-paused',
+      adapterId: 'shop',
+      paused: true,
+    })
+    // The refusal is the app's, not the site's: it raises no repair item.
+    expect((await s.api.attention.list()).map((i) => i.kind)).not.toContain('repair')
+    await expect(s.api.adapters.setPaused('nope', true)).rejects.toThrow()
+    await s.service.stop()
+
+    const again = await setup({ dir: s.dir })
+    expect((await again.api.adapters.list())[0]?.paused).toBe(true)
+    await again.api.adapters.setPaused('shop', false)
+    expect((await again.api.adapters.list())[0]?.paused).toBe(false)
+    expect((await again.call('echo', { text: 'x' })).status).toBe('ok')
+  })
+})
+
+describe('Needs you items', () => {
+  it('lists a login Valet was never given, for approved sites only', async () => {
+    const s = await setup()
+    expect(await s.api.attention.list()).toMatchObject([{ kind: 'review', firstInstall: true }])
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    expect(await s.api.attention.list()).toEqual([
+      { kind: 'login-missing', id: 'lm_shop_login', adapterId: 'shop', adapterName: 'Shop', secret: 'login' },
+    ])
+    await s.api.grants.make({
+      adapterId: 'shop',
+      adapterHash: s.adapter.hash,
+      secret: 'login',
+      provider: 'fake',
+      itemRef: 'demo-woolworths',
+      origins: ['https://login.shop.test'],
+    })
+    expect(await s.api.attention.list()).toEqual([])
+    expect(s.events).toContainEqual({ type: 'attention-changed' })
+  })
+
+  it('names the missing setting', async () => {
+    const log: StoreShopLog = { queries: [], applied: [], answer: SHOP_STORES }
+    const s = await setup({ definition: storeShopDefinition(log) })
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    expect((await s.api.attention.list()).filter((i) => i.kind === 'setting-missing')).toEqual([
+      {
+        kind: 'setting-missing',
+        id: 'sm_shop_store',
+        adapterId: 'shop',
+        adapterName: 'Shop',
+        setting: 'store',
+        settingTitle: 'Store',
+      },
+    ])
+  })
+
+  it('raises a repair item when the site’s last call found the site changed, until a call works', async () => {
+    const definition = defineAdapter({
+      manifest: parseManifest(SHOP),
+      tools: {
+        ...shopDefinition().tools,
+        echo: {
+          input: z.object({ text: z.string() }),
+          output: z.object({ text: z.string() }),
+          run: async (_ctx, args: { text: string }) => {
+            if (args.text === 'broken') throw new ValetError('tool-output', 'site-changed')
+            return { text: args.text }
+          },
+        },
+      },
+    })
+    const s = await setup({ definition })
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    const failed = await s.call('echo', { text: 'broken' }, 'Claude Code', '6b3e0001')
+    expect(failed).toMatchObject({ status: 'failed', errorClass: 'site-changed' })
+    await expect
+      .poll(async () => (await s.api.attention.list()).find((i) => i.kind === 'repair'))
+      .toMatchObject({
+        kind: 'repair',
+        id: 'rp_shop',
+        adapterId: 'shop',
+        adapterName: 'Shop',
+        callId: '6b3e0001',
+        errorClass: 'site-changed',
+      })
+    expect(s.ui.notifications.map((n) => n.title)).toContain('Shop changed: the adapter needs an update')
+    await s.service.stop()
+    // Read back from the audit log at the next launch.
+    const again = await setup({ dir: s.dir, definition })
+    expect((await again.api.attention.list()).map((i) => i.kind)).toContain('repair')
+    await again.call('echo', { text: 'fine' })
+    await expect
+      .poll(async () => (await again.api.attention.list()).map((i) => i.kind))
+      .not.toContain('repair')
+  })
+
+  it('keeps a confirmation nobody answered as missed for 24 hours, replacing its notification', async () => {
+    const timers = new ManualTimers()
+    const s = await setup({ timers })
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    const pending = s.call('add', { item: 'milk' }, 'Claude Code', '5c10aaaa')
+    await expect.poll(() => s.ui.shownConfirmations.length).toBe(1)
+    const id = s.ui.shownConfirmations[0] as string
+    s.advance(2 * 60_000)
+    timers.fire()
+    await pending
+    const missed = (await s.api.attention.list()).find((i) => i.kind === 'missed')
+    expect(missed).toMatchObject({
+      kind: 'missed',
+      of: 'confirmation',
+      originalId: id,
+      title: 'Missed: Confirm: Add (Shop)',
+      adapterId: 'shop',
+      adapterName: 'Shop',
+      callId: '5c10aaaa',
+      at: '2026-11-07T00:00:00.000Z',
+      missedAt: '2026-11-07T00:02:00.000Z',
+    })
+    expect(s.ui.notifications.at(-1)).toMatchObject({
+      key: `confirmation:${id}`,
+      title: 'Missed: Confirm: Add (Shop)',
+      body: 'Shop · nobody answered by 12:02 am',
+    })
+    // Kept across a restart, then gone after 24 hours.
+    await s.service.stop()
+    const again = await setup({ dir: s.dir, timers: new ManualTimers() })
+    expect((await again.api.attention.list()).map((i) => i.kind)).toContain('missed')
+    again.advance(25 * 60 * 60_000)
+    expect((await again.api.attention.list()).map((i) => i.kind)).not.toContain('missed')
+  })
+
+  it('dismisses missed items only', async () => {
+    const timers = new ManualTimers()
+    const s = await setup({ timers })
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    const pending = s.call('add', { item: 'milk' })
+    await expect.poll(() => s.ui.shownConfirmations.length).toBe(1)
+    s.advance(2 * 60_000)
+    timers.fire()
+    await pending
+    const missed = (await s.api.attention.list()).find((i) => i.kind === 'missed')
+    await expect(s.api.attention.dismiss('lm_shop_login')).rejects.toThrow()
+    await s.api.attention.dismiss(missed?.id as string)
+    expect((await s.api.attention.list()).map((i) => i.kind)).not.toContain('missed')
+    await expect(s.api.attention.dismiss(missed?.id as string)).rejects.toThrow()
+  })
+
+  it('drops a missed item on its timer after 24 hours, with nothing open to read the list', async () => {
+    const timers = new ManualTimers()
+    const s = await setup({ timers })
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    const pending = s.call('add', { item: 'milk' })
+    await expect.poll(() => s.ui.shownConfirmations.length).toBe(1)
+    s.advance(2 * 60_000)
+    timers.fire()
+    await pending
+    const before = s.events.filter((e) => e.type === 'attention-changed').length
+    s.advance(24 * 60 * 60_000)
+    timers.fire()
+    expect(s.events.filter((e) => e.type === 'attention-changed').length).toBeGreaterThan(before)
+    expect((await s.api.attention.list()).map((i) => i.kind)).not.toContain('missed')
+  })
+
+  it('doesn’t count a declined confirmation as missed', async () => {
+    const s = await approved()
+    const pending = s.call('add', { item: 'milk' })
+    await expect.poll(() => s.ui.shownConfirmations.length).toBe(1)
+    await s.api.answerConfirmation(s.ui.shownConfirmations[0] as string, false, { role: 'tray', shows: null })
+    await pending
+    expect((await s.api.attention.list()).map((i) => i.kind)).not.toContain('missed')
+  })
+
+  it('lists a cloud agent asking to connect, and keeps one that expired as missed', async () => {
+    const timers = new ManualTimers()
+    const s = await setup({ timers })
+    s.service.remote.consents.open(
+      {
+        clientId: 'c1',
+        redirectUri: 'https://claude.ai/cb',
+        state: null,
+        codeChallenge: 'x'.repeat(43),
+        resource: 'https://valet.example.com/mcp',
+      },
+      { clientHost: 'claude.ai', clientName: 'Claude (claude.ai)', source: '203.0.113.24' },
+    )
+    const item = (await s.api.attention.list()).find((i) => i.kind === 'remote-consent')
+    expect(item).toMatchObject({
+      kind: 'remote-consent',
+      clientHost: 'claude.ai',
+      clientName: 'Claude (claude.ai)',
+      source: '203.0.113.24',
+      requestedAt: '2026-11-07T00:00:00.000Z',
+      expiresAt: '2026-11-07T00:05:00.000Z',
+    })
+    s.advance(5 * 60_000)
+    const after = await s.api.attention.list()
+    expect(after.map((i) => i.kind)).not.toContain('remote-consent')
+    expect(after.find((i) => i.kind === 'missed')).toMatchObject({
+      of: 'remote-consent',
+      originalId: item?.id,
+      title: 'Missed: Approve a connection',
+      adapterId: null,
+    })
+  })
+})
+
+describe('what a tool result is told about Needs you', () => {
+  /** The shop with a tool that logs in first, as a cart tool does; `steps` replace its login. */
+  const loggingIn = (steps?: NonNullable<typeof SHOP.auth>['steps']) =>
+    defineAdapter({
+      manifest: parseManifest({
+        ...SHOP,
+        ...(steps === undefined ? {} : { auth: { steps } }),
+        tools: [...SHOP.tools, { name: 'cart', title: 'Cart', description: 'Logs in.', sideEffect: 'read' }],
+      }),
+      tools: {
+        ...shopDefinition().tools,
+        cart: {
+          input: z.object({}),
+          output: z.object({}),
+          run: async (ctx) => {
+            const result = await ctx.session.ensure()
+            if (result.status === 'needsUser') throw new NeedsUserError(result.reason)
+            if (result.status === 'failed') throw new ValetError(result.stage, result.errorClass)
+            return {}
+          },
+        },
+      },
+    })
+  const handingOver = () =>
+    loggingIn([
+      { op: 'goto', url: 'https://login.shop.test/login' },
+      { op: 'needsUser', reason: 'captcha' },
+    ])
+
+  it('names a login Valet was never given', async () => {
+    const s = await setup({ definition: loggingIn() })
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    s.driver.toolCookies = []
+    expect(await s.call('cart', {})).toMatchObject({ needsYou: { kind: 'login-missing' } })
+  })
+
+  it('names the login window and when it closes, then says once that the person gave up', async () => {
+    const s = await setup({ definition: handingOver() })
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    s.driver.toolCookies = []
+    expect(await s.call('cart', {})).toEqual({
+      status: 'needsUser',
+      reason: 'captcha',
+      needsYou: { kind: 'login', until: '2026-11-07T00:15:00.000Z' },
+    })
+    expect(await s.call('cart', {})).toMatchObject({ needsYou: { kind: 'login' } })
+    await s.api.closeLoginWindow('shop')
+    expect(await s.call('cart', {})).toEqual({
+      status: 'needsUser',
+      reason: 'captcha',
+      needsYou: { kind: 'gave-up' },
+    })
+    expect(await s.call('cart', {})).toEqual({ status: 'needsUser', reason: 'captcha' })
+    // Giving up isn't missing it.
+    expect((await s.api.attention.list()).map((i) => i.kind)).not.toContain('missed')
+  })
+
+  it('keeps a login window that ran out as missed', async () => {
+    const timers = new ManualTimers()
+    const s = await setup({ definition: handingOver(), timers })
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    s.driver.toolCookies = []
+    await s.call('cart', {}, 'Claude Code', '9a71bbbb')
+    s.advance(15 * 60_000)
+    timers.fire()
+    await expect
+      .poll(async () => (await s.api.attention.list()).find((i) => i.kind === 'missed'))
+      .toMatchObject({
+        of: 'needs-user',
+        title: 'Missed: Log in to Shop (verification check)',
+        callId: '9a71bbbb',
+      })
+    expect(s.ui.notifications.at(-1)).toMatchObject({ title: 'Missed: Log in to Shop (verification check)' })
   })
 })
