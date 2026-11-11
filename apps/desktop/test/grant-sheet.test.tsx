@@ -1,26 +1,46 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MESSAGES_SECRET as CORE_MESSAGES_SECRET } from '@valet/core'
+import { TooltipProvider } from '@valet/ui'
 import { describe, expect, it } from 'vitest'
 import { ControlPanel } from '../src/renderer/control/App'
 import { COLES_HASH, createFakeApi, type FakeApi, WOOLWORTHS_HASH } from '../src/renderer/dev/fake-api'
 import { ApiProvider } from '../src/renderer/lib/api-context'
-import { MESSAGES_SECRET } from '../src/renderer/screens/GrantSheet'
+import { MESSAGES_SECRET } from '../src/renderer/screens/sites/GrantSheet'
 import type { AdapterDetail, GrantRequest, ValetApi } from '../src/shared/api'
 
 const NOW = Date.parse('2026-11-07T21:48:00+11:00')
+const LOGIN = '#/sites/woolworths/login/login'
+const SHEET = 'Give Valet your Woolworths login'
 
 function renderAt(hash: string, api: ValetApi) {
   window.location.hash = hash
   render(
     <ApiProvider api={api} clock={{ now: () => NOW }}>
-      <ControlPanel />
+      <TooltipProvider>
+        <ControlPanel />
+      </TooltipProvider>
     </ApiProvider>,
   )
 }
 
 function makes(api: FakeApi): GrantRequest[] {
   return api.fake.calls.filter((c) => c.method === 'grants.make').map((c) => c.args[0] as GrantRequest)
+}
+
+function checked(el: HTMLElement): boolean {
+  return el.getAttribute('aria-checked') === 'true'
+}
+
+function disabled(button: HTMLElement): boolean {
+  return button.getAttribute('aria-disabled') === 'true' || (button as HTMLButtonElement).disabled
+}
+
+/** The origin checkboxes, by row: the origin, its hint, ticked or not. */
+function origins(dialog: HTMLElement): [string | null | undefined, boolean][] {
+  return within(dialog)
+    .getAllByRole('checkbox')
+    .map((b) => [b.closest('[data-origin]')?.textContent, checked(b)])
 }
 
 /** The fake, but adapters.get answers with `change` applied to Woolworths: one thing differs. */
@@ -46,20 +66,17 @@ describe('the grant sheet', () => {
   it('offers exactly the origins the manifest requested, and grants for the installed hash', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })
-    renderAt('#/adapters/woolworths/grant/login', api)
-    const dialog = await screen.findByRole('dialog', { name: 'Grant a secret' })
-    const origins = await screen.findAllByRole('checkbox')
-    expect(origins.map((o) => o.closest('label')?.textContent)).toEqual([
-      expect.stringContaining('https://auth.woolworths.com.au'),
-    ])
+    renderAt(LOGIN, api)
+    const dialog = await screen.findByRole('dialog', { name: SHEET })
+    await within(dialog).findByRole('checkbox')
+    expect(origins(dialog)).toEqual([[expect.stringContaining('https://auth.woolworths.com.au'), true]])
+    expect(within(dialog).getByRole('checkbox', { name: 'https://auth.woolworths.com.au' })).toBeTruthy()
     expect(dialog.textContent).not.toContain('https://www.woolworths.com.au')
 
     // The existing grant's item is pre-selected; the person picks another.
-    await waitFor(() =>
-      expect((screen.getByRole('radio', { name: 'Woolworths' }) as HTMLInputElement).checked).toBe(true),
-    )
-    await user.click(screen.getByRole('radio', { name: /Woolworths Rewards/ }))
-    await user.click(screen.getByRole('button', { name: 'Grant' }))
+    await waitFor(() => expect(checked(within(dialog).getByRole('radio', { name: 'Woolworths' }))).toBe(true))
+    await user.click(within(dialog).getByRole('radio', { name: /Woolworths Rewards/ }))
+    await user.click(within(dialog).getByRole('button', { name: 'Use this login' }))
 
     await waitFor(() =>
       expect(makes(api)).toEqual([
@@ -73,7 +90,7 @@ describe('the grant sheet', () => {
         },
       ]),
     )
-    await waitFor(() => expect(window.location.hash).toBe('#/adapters/woolworths'))
+    await waitFor(() => expect(window.location.hash).toBe('#/sites/woolworths'))
   })
 
   it('never offers or submits an origin an earlier grant had but the manifest no longer requests', async () => {
@@ -96,52 +113,82 @@ describe('the grant sheet', () => {
         },
       })),
     }))
-    renderAt('#/adapters/woolworths/grant/login', api)
-    const boxes = (await screen.findAllByRole('checkbox')) as HTMLInputElement[]
-    expect(boxes.map((b) => [b.closest('label')?.querySelector('.mono')?.textContent, b.checked])).toEqual([
-      ['https://auth.woolworths.com.au', false],
-      ['https://www.woolworths.com.au', true],
-    ])
-    expect(screen.getByRole('dialog', { name: 'Grant a secret' }).textContent).not.toContain('evil.example')
+    renderAt(LOGIN, api)
+    const dialog = await screen.findByRole('dialog', { name: SHEET })
+    await within(dialog).findAllByRole('checkbox')
+    const boxes = within(dialog).getAllByRole('checkbox')
+    expect(boxes.map(checked)).toEqual([false, true])
+    expect(
+      within(dialog)
+        .getAllByRole('checkbox')
+        .map((b) => b.closest('[data-origin]')?.getAttribute('data-origin')),
+    ).toEqual(['https://auth.woolworths.com.au', 'https://www.woolworths.com.au'])
+    expect(dialog.textContent).not.toContain('evil.example')
 
     // The earlier grant's item is re-selected by id once the vault list loads.
-    await waitFor(() =>
-      expect((screen.getByRole('radio', { name: 'Woolworths' }) as HTMLInputElement).checked).toBe(true),
-    )
-    await user.click(screen.getByRole('button', { name: 'Grant' }))
+    await waitFor(() => expect(checked(within(dialog).getByRole('radio', { name: 'Woolworths' }))).toBe(true))
+    await user.click(within(dialog).getByRole('button', { name: 'Use this login' }))
     await waitFor(() => expect(api.fake.calls.some((c) => c.method === 'grants.make')).toBe(true))
-    const request = api.fake.calls.find((c) => c.method === 'grants.make')?.args[0] as GrantRequest
-    expect(request.origins).toEqual(['https://www.woolworths.com.au'])
+    expect(makes(api)[0]?.origins).toEqual(['https://www.woolworths.com.au'])
   })
 
-  it('won’t grant with every origin unticked', async () => {
+  it('won’t grant with every origin unticked, and says why', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })
-    renderAt('#/adapters/woolworths/grant/login', api)
-    await user.click(await screen.findByRole('radio', { name: /Woolworths Rewards/ }))
-    await user.click(screen.getByRole('checkbox'))
-    const grant = screen.getByRole('button', { name: 'Grant' }) as HTMLButtonElement
-    expect(grant.disabled).toBe(true)
+    renderAt(LOGIN, api)
+    const dialog = await screen.findByRole('dialog', { name: SHEET })
+    await user.click(await within(dialog).findByRole('radio', { name: /Woolworths Rewards/ }))
+    await user.click(within(dialog).getByRole('checkbox'))
+    const grant = within(dialog).getByRole('button', { name: 'Use this login' })
+    expect(disabled(grant)).toBe(true)
+    expect(grant.getAttribute('aria-description')).toBe('Tick at least one web address')
     await user.click(grant)
     expect(makes(api)).toEqual([])
+  })
+
+  it('won’t grant before an item is chosen, and says why', async () => {
+    const api = createFakeApi({ now: NOW })
+    // No earlier grant to pre-select.
+    renderAt(
+      LOGIN,
+      withWoolworths(api, (d) => ({
+        ...d,
+        secretRequests: d.secretRequests.map((s) => ({ ...s, grant: null })),
+      })),
+    )
+    const dialog = await screen.findByRole('dialog', { name: SHEET })
+    await within(dialog).findByRole('radio', { name: 'Woolworths' })
+    const grant = within(dialog).getByRole('button', { name: 'Use this login' })
+    expect(disabled(grant)).toBe(true)
+    expect(grant.getAttribute('aria-description')).toBe('Choose a 1Password item first')
   })
 
   it('refuses secret names the manifest doesn’t request, including inherited property names', async () => {
     for (const name of ['__proto__', 'constructor', 'toString', 'password']) {
       const api = createFakeApi({ now: NOW })
-      renderAt(`#/adapters/woolworths/grant/${name}`, api)
+      renderAt(`#/sites/woolworths/login/${name}`, api)
       expect(
         await screen.findByText('This adapter’s manifest doesn’t ask for a secret with that name.'),
       ).toBeTruthy()
-      expect(screen.queryByRole('button', { name: 'Grant' })).toBeNull()
-      document.body.innerHTML = ''
+      expect(screen.queryByRole('button', { name: 'Use this login' })).toBeNull()
+      cleanup()
     }
   })
 
-  it('says so for an adapter that isn’t installed', async () => {
-    renderAt('#/adapters/nobody/grant/login', createFakeApi({ now: NOW }))
-    const dialog = await screen.findByRole('dialog', { name: 'Grant a secret' })
+  it('says so for an adapter that isn’t installed, and closes', async () => {
+    const user = userEvent.setup()
+    renderAt('#/sites/nobody/login/login', createFakeApi({ now: NOW }))
+    const dialog = await screen.findByRole('dialog', { name: 'Can’t choose a login here' })
     await waitFor(() => expect(dialog.textContent).toContain('No adapter with that id is installed.'))
+    await user.click(within(dialog).getByRole('button', { name: 'Go back' }))
+    await waitFor(() => expect(window.location.hash).toBe('#/sites/nobody'))
+  })
+
+  it('says so when the site’s logins can’t be loaded', async () => {
+    const api = createFakeApi({ now: NOW })
+    api.fake.failNext('grants.providers')
+    renderAt(LOGIN, api)
+    expect(await screen.findByText(/Couldn’t load this site’s logins/)).toBeTruthy()
   })
 
   it('lists vault items by title only, even if the main process sends more', async () => {
@@ -161,7 +208,7 @@ describe('the grant sheet', () => {
           ] as never,
       },
     }
-    renderAt('#/adapters/woolworths/grant/login', api)
+    renderAt(LOGIN, api)
     expect(await screen.findByRole('radio', { name: /Woolworths/ })).toBeTruthy()
     expect(document.body.innerHTML).not.toContain('canary')
   })
@@ -169,23 +216,22 @@ describe('the grant sheet', () => {
   it('switches provider, lists that provider’s items and clears the chosen item', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })
-    renderAt('#/adapters/woolworths/grant/login', api)
-    await waitFor(() =>
-      expect((screen.getByRole('radio', { name: 'Woolworths' }) as HTMLInputElement).checked).toBe(true),
-    )
-    await user.click(screen.getByRole('radio', { name: /1Password app/ }))
+    renderAt(LOGIN, api)
+    const dialog = await screen.findByRole('dialog', { name: SHEET })
+    await waitFor(() => expect(checked(within(dialog).getByRole('radio', { name: 'Woolworths' }))).toBe(true))
+    await user.click(within(dialog).getByRole('radio', { name: /1Password app/ }))
     await waitFor(() =>
       expect(api.fake.calls.filter((c) => c.method === 'grants.vaultItems').map((c) => c.args[0])).toContain(
         'onepassword-cli',
       ),
     )
-    expect((screen.getByRole('button', { name: 'Grant' }) as HTMLButtonElement).disabled).toBe(true)
-    await user.click(await screen.findByRole('radio', { name: 'Woolworths' }))
-    await user.click(screen.getByRole('button', { name: 'Grant' }))
+    expect(disabled(within(dialog).getByRole('button', { name: 'Use this login' }))).toBe(true)
+    await user.click(await within(dialog).findByRole('radio', { name: 'Woolworths' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Use this login' }))
     await waitFor(() => expect(makes(api)[0]?.provider).toBe('onepassword-cli'))
   })
 
-  it('can’t pick a provider that isn’t set up', async () => {
+  it('can’t pick a provider that isn’t set up, and links to where it is set up', async () => {
     const fake = createFakeApi({ now: NOW })
     const api: FakeApi = {
       ...fake,
@@ -197,28 +243,33 @@ describe('the grant sheet', () => {
         ],
       },
     }
-    renderAt('#/adapters/woolworths/grant/login', api)
-    const cli = (await screen.findByRole('radio', { name: /1Password app/ })) as HTMLInputElement
+    renderAt(LOGIN, api)
+    const cli = (await screen.findByRole('radio', { name: /1Password app/ })) as HTMLButtonElement
     expect(cli.disabled).toBe(true)
     // The CLI here, and the Keychain copy, which this list doesn't report at all.
     expect(screen.getAllByText('Not set up')).toHaveLength(2)
+    expect(screen.getByRole('link', { name: 'Secrets' }).getAttribute('href')).toBe('#/secrets')
   })
 
-  it('says the vault couldn’t be listed when 1Password fails', async () => {
+  it('says the vault couldn’t be listed when 1Password fails, with the way to fix it', async () => {
     const fake = createFakeApi({ now: NOW })
     fake.fake.failNext('grants.vaultItems')
-    renderAt('#/adapters/woolworths/grant/login', fake)
+    renderAt(LOGIN, fake)
     expect(await screen.findByText('Couldn’t list the vault. Is 1Password set up?')).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Open Secrets' }).getAttribute('href')).toBe('#/secrets')
   })
 
   it('grants a Messages code source for the declared sender only', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })
-    renderAt('#/adapters/coles/grant/messages', api)
-    expect(await screen.findByText('Let Coles read one-time codes from Messages')).toBeTruthy()
-    expect(screen.getByRole('radio', { name: /\+61 400 000 111/ })).toBeTruthy()
-    expect(screen.getByText(/Messages codes are off in Settings/)).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: 'Grant' }))
+    renderAt('#/sites/coles/login/messages', api)
+    const dialog = await screen.findByRole('dialog', { name: 'Let Coles read one-time codes from Messages' })
+    expect(within(dialog).getByRole('radio', { name: /\+61 400 000 111/ })).toBeTruthy()
+    expect(within(dialog).getByText(/Messages codes are off in Secrets/)).toBeTruthy()
+    expect(within(dialog).getByRole('link', { name: 'Turn on in Secrets' }).getAttribute('href')).toBe(
+      '#/secrets',
+    )
+    await user.click(within(dialog).getByRole('button', { name: 'Allow these codes' }))
     await waitFor(() =>
       expect(makes(api)).toEqual([
         {
@@ -249,17 +300,19 @@ describe('the grant sheet', () => {
         },
       ],
     }))
-    renderAt('#/adapters/woolworths/grant/messages', api)
-    expect(await screen.findByText('Let Woolworths read one-time codes from Messages')).toBeTruthy()
-    const boxes = (await screen.findAllByRole('checkbox')) as HTMLInputElement[]
-    expect(boxes.map((b) => [b.closest('label')?.textContent, b.checked])).toEqual([
+    renderAt('#/sites/woolworths/login/messages', api)
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Let Woolworths read one-time codes from Messages',
+    })
+    await within(dialog).findAllByRole('checkbox')
+    expect(origins(dialog)).toEqual([
       [
         expect.stringMatching(/^https:\/\/www\.woolworths\.com\.au.*Leave off unless codes are typed here/),
         false,
       ],
       [expect.stringMatching(/^https:\/\/auth\.woolworths\.com\.au.*Where the sign-in form is/), true],
     ])
-    await user.click(screen.getByRole('button', { name: 'Grant' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Allow these codes' }))
     await waitFor(() =>
       expect(makes(api).map((r) => r.origins)).toEqual([['https://auth.woolworths.com.au']]),
     )
@@ -278,13 +331,16 @@ describe('the grant sheet', () => {
         },
       ],
     }))
-    renderAt('#/adapters/woolworths/grant/messages', api)
-    const boxes = (await screen.findAllByRole('checkbox')) as HTMLInputElement[]
-    expect(boxes.map((b) => b.checked)).toEqual([true, true])
+    renderAt('#/sites/woolworths/login/messages', api)
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Let Woolworths read one-time codes from Messages',
+    })
+    await within(dialog).findAllByRole('checkbox')
+    expect(origins(dialog).map(([, on]) => on)).toEqual([true, true])
   })
 
   it('has no Messages grant to make for an adapter that declares no SMS source', async () => {
-    renderAt('#/adapters/woolworths/grant/messages', createFakeApi({ now: NOW }))
+    renderAt('#/sites/woolworths/login/messages', createFakeApi({ now: NOW }))
     expect(
       await screen.findByText('This adapter’s manifest doesn’t ask for a secret with that name.'),
     ).toBeTruthy()
@@ -293,20 +349,20 @@ describe('the grant sheet', () => {
   it('shows a failed grant without its error text, and closes on Cancel or Escape', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })
-    renderAt('#/adapters/woolworths/grant/login', api)
+    renderAt(LOGIN, api)
     await user.click(await screen.findByRole('radio', { name: /Woolworths \(old\)/ }))
     api.fake.failNext('grants.make')
-    await user.click(screen.getByRole('button', { name: 'Grant' }))
+    await user.click(screen.getByRole('button', { name: 'Use this login' }))
     expect((await screen.findByRole('alert')).textContent).toBe('Couldn’t save the grant. Try again.')
     expect(document.body.textContent).not.toContain('fake grants.make failed')
 
     await user.click(screen.getByRole('button', { name: 'Cancel' }))
-    await waitFor(() => expect(window.location.hash).toBe('#/adapters/woolworths'))
+    await waitFor(() => expect(window.location.hash).toBe('#/sites/woolworths'))
 
-    window.location.hash = '#/adapters/woolworths/grant/login'
-    await screen.findByRole('dialog', { name: 'Grant a secret' })
+    window.location.hash = LOGIN
+    await screen.findByRole('dialog', { name: SHEET })
     await user.keyboard('{Escape}')
-    await waitFor(() => expect(window.location.hash).toBe('#/adapters/woolworths'))
+    await waitFor(() => expect(window.location.hash).toBe('#/sites/woolworths'))
   })
 
   it('re-selects the earlier grant’s item by id, not by a title two items share', async () => {
@@ -321,58 +377,69 @@ describe('the grant sheet', () => {
         ],
       },
     }
-    renderAt('#/adapters/woolworths/grant/login', api)
+    renderAt(LOGIN, api)
     await waitFor(() => {
-      const [first, second] = screen.getAllByRole('radio', { name: 'Woolworths' }) as HTMLInputElement[]
-      expect([first?.checked, second?.checked]).toEqual([false, true])
+      const [first, second] = screen.getAllByRole('radio', { name: 'Woolworths' })
+      expect([checked(first as HTMLElement), checked(second as HTMLElement)]).toEqual([false, true])
     })
   })
 
-  it('moves focus into the sheet, keeps the window behind inert, and gives focus back on close', async () => {
+  it('moves focus into the sheet, hides the window behind, and gives focus back on close', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })
-    renderAt('#/adapters/coles', api)
-    const opener = (await screen.findAllByRole('link', { name: 'Grant…' }))[0] as HTMLAnchorElement
+    renderAt('#/sites/woolworths', api)
+    const opener = (await screen.findAllByRole('link', { name: /Woolworths/ }))[0] as HTMLAnchorElement
     opener.focus()
-    // What a click on the link does: the route changes and the sheet opens over the page.
-    window.location.hash = opener.getAttribute('href') as string
+    // What the "Choose login…" button does: the route changes and the sheet opens over the page.
+    window.location.hash = LOGIN
     window.dispatchEvent(new HashChangeEvent('hashchange'))
 
-    const dialog = await screen.findByRole('dialog', { name: 'Grant a secret' })
-    await waitFor(() => expect(document.activeElement).toBe(dialog))
-    const behind = document.querySelector('.window > .body') as HTMLElement
-    expect(behind.hasAttribute('inert')).toBe(true)
-    expect(behind.contains(opener)).toBe(true)
+    const dialog = await screen.findByRole('dialog', { name: SHEET })
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true))
+    // The page behind is hidden from assistive tech while the sheet is open.
+    expect(screen.queryByRole('link', { name: opener.textContent ?? '' })).toBeNull()
 
     await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
-    expect(behind.hasAttribute('inert')).toBe(false)
     await waitFor(() => expect(document.activeElement).toBe(opener))
   })
 
   it('moves the item choice with the arrow keys, as a radio group', async () => {
     const user = userEvent.setup()
-    renderAt('#/adapters/woolworths/grant/login', createFakeApi({ now: NOW }))
-    const first = (await screen.findByRole('radio', { name: 'Woolworths' })) as HTMLInputElement
-    await waitFor(() => expect(first.checked).toBe(true))
+    renderAt(LOGIN, createFakeApi({ now: NOW }))
+    const first = await screen.findByRole('radio', { name: 'Woolworths' })
+    await waitFor(() => expect(checked(first)).toBe(true))
     first.focus()
-    await user.keyboard('{ArrowDown}')
-    const next = screen.getByRole('radio', { name: 'Woolworths Rewards' }) as HTMLInputElement
-    expect(next.checked).toBe(true)
+    // Held, as a person presses it: Radix moves focus on the next tick and selects while the key is down.
+    await user.keyboard('{ArrowDown>}')
+    const next = screen.getByRole('radio', { name: 'Woolworths Rewards' })
+    await waitFor(() => expect(checked(next)).toBe(true))
+    await user.keyboard('{/ArrowDown}')
     expect(document.activeElement).toBe(next)
-    expect(first.checked).toBe(false)
+    expect(checked(first)).toBe(false)
   })
 
   it('filters items by the search box', async () => {
     const user = userEvent.setup()
-    renderAt('#/adapters/woolworths/grant/login', createFakeApi({ now: NOW }))
+    renderAt(LOGIN, createFakeApi({ now: NOW }))
     await screen.findByRole('radio', { name: /Coles/ })
-    await user.type(screen.getByRole('textbox', { name: 'Search items' }), 'rewards')
+    expect(screen.getByText('4 items match')).toBeTruthy()
+    await user.type(screen.getByRole('searchbox', { name: 'Search items' }), 'rewards')
     const items = within(screen.getByRole('radiogroup', { name: '1Password items' }))
-    expect(items.getAllByRole('radio').map((o) => o.closest('label')?.textContent)).toEqual([
-      'WWoolworths Rewards',
-    ])
-    await user.type(screen.getByRole('textbox', { name: 'Search items' }), 'zzz')
+    expect(items.getAllByRole('radio')).toHaveLength(1)
+    expect(items.getByRole('radio', { name: 'Woolworths Rewards' })).toBeTruthy()
+    expect(screen.getByText('1 item matches')).toBeTruthy()
+    await user.type(screen.getByRole('searchbox', { name: 'Search items' }), 'zzz')
     expect(screen.getByText('No items match.')).toBeTruthy()
+  })
+
+  it('names the version it grants for, and links every use to the audit log', async () => {
+    renderAt(LOGIN, createFakeApi({ now: NOW }))
+    const dialog = await screen.findByRole('dialog', { name: SHEET })
+    expect(within(dialog).getByText(/For Woolworths 0\.3\.0/)).toBeTruthy()
+    expect(within(dialog).getByTitle(WOOLWORTHS_HASH)).toBeTruthy()
+    expect(within(dialog).getByRole('link', { name: 'audit log' }).getAttribute('href')).toBe(
+      '#/activity/audit?category=secret-use&site=woolworths',
+    )
   })
 })

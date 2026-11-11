@@ -4,6 +4,7 @@
 
 import { render, screen, within } from '@testing-library/react'
 import { type AuthStep, type ManifestInput, parseManifest } from '@valet/core'
+import { TooltipProvider } from '@valet/ui'
 import { describe, expect, it } from 'vitest'
 import { permissionDiff } from '../src/main/core/permission-diff'
 import { ControlPanel } from '../src/renderer/control/App'
@@ -33,10 +34,12 @@ function reviewOf(change: (m: ManifestInput) => ManifestInput): PendingReview {
 async function show(review: PendingReview) {
   const api = createFakeApi({ now: NOW })
   api.fake.setPendingReview(review)
-  window.location.hash = '#/adapters/woolworths/review'
+  window.location.hash = '#/sites/woolworths/versions/review'
   render(
     <ApiProvider api={api} clock={{ now: () => NOW }}>
-      <ControlPanel />
+      <TooltipProvider>
+        <ControlPanel />
+      </TooltipProvider>
     </ApiProvider>,
   )
   await screen.findByText('Permission changes')

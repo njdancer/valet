@@ -66,13 +66,16 @@ export function GrantSheet({
   const close = () => navigate(back)
 
   // Focus goes back to whatever opened the sheet (the "Choose login…" button) when it closes. The
-  // sheet closes by a route change, which unmounts it, so this runs on unmount.
+  // sheet closes by a route change, which unmounts it, so this runs on unmount.  // Two frames on, so it lands after the shell's own move to the page heading on navigation
+  // (control/App.tsx useHeadingFocus), which would otherwise take focus from the opener.
   useLayoutEffect(() => {
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
     return () => {
-      queueMicrotask(() => {
-        if (opener?.isConnected === true && opener !== document.body) opener.focus()
-      })
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => {
+          if (opener?.isConnected === true && opener !== document.body) opener.focus()
+        }),
+      )
     }
   }, [])
 
@@ -127,7 +130,7 @@ function Message({ children, onClose }: { readonly children: ReactNode; readonly
       title="Can’t choose a login here"
       footer={
         <Button variant="primary" onClick={onClose}>
-          Close
+          Go back
         </Button>
       }
     >

@@ -91,7 +91,7 @@ test('approve the bundled Woolworths adapter in its review, back into setup', as
   await expect(perms).toContainText(/auth\.woolworths\.test/)
   await expect(perms).toContainText(/3 read.*4 write.*0 irreversible/)
   await control.getByRole('link', { name: /^Review Woolworths .*…$/ }).click()
-  const approve = control.getByRole('button', { name: /^Approve \d/ })
+  const approve = control.getByRole('button', { name: /^Approve (Woolworths|\d)/ })
   await expect(approve).toBeVisible()
   const ack = control.getByRole('checkbox', { name: 'I’ve read the highlighted additions' })
   if (await ack.isVisible()) await ack.check()
@@ -103,7 +103,7 @@ test('approve the bundled Woolworths adapter in its review, back into setup', as
 
 test('grant login from the person’s 1Password item, approved in its prompt, with origins exactly the auth origin', async () => {
   await control.getByRole('link', { name: 'Choose an item…' }).click()
-  const sheet = control.getByRole('dialog', { name: 'Grant a secret' })
+  const sheet = control.getByRole('dialog')
   await expect(sheet).toBeVisible()
   // Listing the person's vaults asks 1Password: its prompt opens, locked, and the person unlocks it
   // and allows Valet.
@@ -113,7 +113,7 @@ test('grant login from the person’s 1Password item, approved in its prompt, wi
   await expect(sheet.getByRole('checkbox')).toHaveCount(1)
   await expect(sheet.getByRole('checkbox')).toBeChecked()
   await expect(sheet.getByText(/www\.woolworths\.test/)).toHaveCount(0)
-  await sheet.getByRole('button', { name: 'Grant', exact: true }).click()
+  await sheet.getByRole('button', { name: 'Use this login' }).click()
   await expect(sheet).toBeHidden()
   await expect(
     control.getByText(/Uses “Woolworths \(demo account\) \(Personal\)” from Copy in your Keychain/),
@@ -140,7 +140,7 @@ test('grant login from the person’s 1Password item, approved in its prompt, wi
   // stops at the code page (the recorded demo found setup leaving it out).
   await control.getByRole('link', { name: 'Allow codes…' }).click()
   await expect(sheet.getByText('Let Woolworths read one-time codes from Messages')).toBeVisible()
-  await sheet.getByRole('button', { name: 'Grant', exact: true }).click()
+  await sheet.getByRole('button', { name: 'Allow these codes' }).click()
   await expect(sheet).toBeHidden()
   await expect(control.getByText(/Reads one-time codes from Woolworths in Messages/)).toBeVisible()
   const codes = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
