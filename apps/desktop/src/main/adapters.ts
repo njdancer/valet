@@ -5,7 +5,9 @@
 // dev` (which rebuilds on change) alike. Transitive imports (core, zod) are not covered (D11).
 
 import toolScripts from 'virtual:valet-tool-scripts'
+import { createAdapter as createWikipedia } from '@valet/adapter-wikipedia'
 import { createAdapter, type ManifestOptions } from '@valet/adapter-woolworths'
+import { createAdapter as createYahooFinance } from '@valet/adapter-yahoo-finance'
 import { type BuiltinAdapter, builtinAdapter } from './core/registry'
 
 const WOOLWORTHS_SOURCES = import.meta.glob<string>('../../../../adapters/woolworths/src/**/*.ts', {
@@ -14,13 +16,32 @@ const WOOLWORTHS_SOURCES = import.meta.glob<string>('../../../../adapters/woolwo
   eager: true,
 })
 
-/** Paths relative to the adapter's package, so the hash doesn't depend on where the repo is. */
-export function relativeSources(sources: Readonly<Record<string, string>>): Record<string, string> {
+const YAHOO_FINANCE_SOURCES = import.meta.glob<string>('../../../../adapters/yahoo-finance/src/**/*.ts', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+})
+
+const WIKIPEDIA_SOURCES = import.meta.glob<string>('../../../../adapters/wikipedia/src/**/*.ts', {
+  query: '?raw',
+  import: 'default',
+  eager: true,
+})
+
+/**
+ * Paths relative to the adapter's package, so the hash doesn't depend on where the repo is.
+ * `folder` is the package's folder under adapters/.
+ */
+export function relativeSources(
+  sources: Readonly<Record<string, string>>,
+  folder = 'woolworths',
+): Record<string, string> {
   const files: Record<string, string> = {}
+  const marker = `/adapters/${folder}/`
   for (const [path, text] of Object.entries(sources)) {
-    const at = path.indexOf('/adapters/woolworths/')
+    const at = path.indexOf(marker)
     if (at === -1) continue
-    files[path.slice(at + '/adapters/woolworths/'.length)] = text
+    files[path.slice(at + marker.length)] = text
   }
   return files
 }
@@ -31,6 +52,17 @@ export function builtinAdapters(woolworths: ManifestOptions = {}): BuiltinAdapte
       createAdapter(woolworths),
       relativeSources(WOOLWORTHS_SOURCES),
       toolScripts['woolworths'] ?? null,
+    ),
+    // No login: public data, from the real sites in every build, demo mode included.
+    builtinAdapter(
+      createYahooFinance(),
+      relativeSources(YAHOO_FINANCE_SOURCES, 'yahoo-finance'),
+      toolScripts['yahoo-finance'] ?? null,
+    ),
+    builtinAdapter(
+      createWikipedia(),
+      relativeSources(WIKIPEDIA_SOURCES, 'wikipedia'),
+      toolScripts['wikipedia'] ?? null,
     ),
   ]
 }

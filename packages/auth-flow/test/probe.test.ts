@@ -28,7 +28,7 @@ describe('a cookie probe', () => {
     w.page.cookies.add('session')
     w.input.manifest = ASSERT_ONLY
     expect(await runAuthFlow(w.input)).toEqual({ status: 'ok' })
-    expect(w.probe.cookieQueries).toEqual([MANIFEST.session.cookieDomains])
+    expect(w.probe.cookieQueries).toEqual([MANIFEST.session?.cookieDomains])
     expect(w.probe.fetched).toEqual([])
   })
 

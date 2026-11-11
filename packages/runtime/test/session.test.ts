@@ -37,6 +37,19 @@ const ensureOrThrow = defineAdapter({
 })
 
 describe('session.ensure', () => {
+  it('answers unsupported at once for an adapter with no login, opening and fetching nothing', async () => {
+    const { secrets: _s, session: _session, auth: _a, ...rest } = manifest
+    const noLogin = parseManifest({ ...rest, navigation: [new URL(HOME).origin] })
+    const { host, authRunner, page } = fixture(defineAdapter({ ...ensureOnce, manifest: noLogin }))
+
+    expect(await host.call(call)).toEqual({
+      status: 'ok',
+      output: { status: 'failed', stage: 'login', errorClass: 'unsupported' },
+    })
+    expect(authRunner).not.toHaveBeenCalled()
+    expect(page.fetches).toEqual([])
+  })
+
   it('returns ok without logging in when the probe says logged in', async () => {
     const { host, authRunner, page } = fixture(ensureOnce)
 

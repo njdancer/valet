@@ -186,6 +186,8 @@ export type ProbeInfo =
       /** What the value at jsonPath must equal; null means present and truthy. */
       readonly equals: string | number | boolean | null
     }
+  /** The adapter never logs in. */
+  | { readonly kind: 'none' }
   | { readonly kind: 'cookie'; readonly name: string }
 
 export interface AdapterDetail extends AdapterSummary {

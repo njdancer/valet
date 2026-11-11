@@ -8,7 +8,7 @@
 // (README, core change requests). What the adapter can do is report the quantity the site stored,
 // not the one it asked for, and say when they differ.
 
-import { type ToolContext, tool, ValetError } from '@valet/core'
+import { httpsOriginOf, type ToolContext, tool, urlOn, ValetError } from '@valet/core'
 import { z } from 'zod'
 import { withLogin } from './login'
 import { productName, stockcodeSchema } from './products'
@@ -257,12 +257,9 @@ const writeOutput = {
  * from the page, not the manifest, because tool code never sees the manifest's options.
  */
 function cartUrlOf(ctx: ToolContext): string | null {
-  try {
-    const here = new URL(ctx.page.currentUrl())
-    return here.protocol === 'https:' ? new URL(CART_PAGE, here.origin).href : null
-  } catch {
-    return null
-  }
+  // Not `new URL`: the tool process has none (packages/core/src/tool-urls.ts).
+  const origin = httpsOriginOf(ctx.page.currentUrl())
+  return origin === null ? null : urlOn(origin, CART_PAGE)
 }
 
 export const getCart = tool({

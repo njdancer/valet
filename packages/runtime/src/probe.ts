@@ -46,6 +46,7 @@ export interface ProbeOptions {
 export async function probeLoggedIn(options: ProbeOptions): Promise<boolean> {
   const { manifest, page, driver, site, signal, callId } = options
   const probe = manifest.session.probe
+  if (probe.kind === 'none') return false
   if (probe.kind === 'cookie') {
     const names = await driver.cookieNames(manifest.session.cookieDomains)
     return names.includes(probe.name)

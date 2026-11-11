@@ -279,12 +279,12 @@ async function main(): Promise<void> {
     sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
     adapters,
     toolProcess: utilityToolProcess(join(import.meta.dirname, 'tool-process.js')),
+    // Demo mode keeps only the shop on this machine: the other built-ins (no login, public data)
+    // reach their real sites.
     createDriver: (manifest, reporters) =>
-      createElectronSessionDriver(
-        manifest,
-        { ...driverOptions, ...reporters },
-        demoSite === null ? {} : { dial: demoSite.dial },
-      ),
+      demoSite !== null && manifest.id === 'woolworths'
+        ? createElectronSessionDriver(manifest, { ...driverOptions, ...reporters }, { dial: demoSite.dial })
+        : createElectronSessionDriver(manifest, { ...reporters }),
     credentials: demoSite === null ? realCredentials(credentialDeps) : demoSite.credentials,
     startEndpoint: (caller, clients, onSessionsChanged) =>
       startEndpoint({

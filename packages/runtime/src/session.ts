@@ -168,6 +168,9 @@ export class SessionGate {
    * refusal (blocked-by-site, rate-limited) or aborted.
    */
   ensure(call: EnsureCall): Promise<EnsureResult> {
+    // An adapter with no login has no session to check and nothing to log in to.
+    if (this.options.manifest.session.probe.kind === 'none')
+      return Promise.resolve(failed('login', 'unsupported'))
     if (this.inFlight !== null) {
       if (this.inFlight.owner === call.login) return this.inFlight.running
       // Another call's ensure() outlived it (it timed out and its work ignored the abort). Joining

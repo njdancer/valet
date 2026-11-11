@@ -15,6 +15,8 @@ import { type FlowContext, guarded } from './context'
 export async function probeLoggedIn(ctx: FlowContext): Promise<boolean> {
   const { manifest, probe: hook } = ctx.input
   const probe = manifest.session.probe
+  // With no login there is no session to find; the runtime never runs a flow for one.
+  if (probe.kind === 'none') return false
   if (probe.kind === 'cookie') {
     const names = await guarded('probe', () => hook.cookieNames(manifest.session.cookieDomains))
     if (!Array.isArray(names)) throw new ValetError('probe', 'internal')

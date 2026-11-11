@@ -30,6 +30,19 @@ importers:
         specifier: ^5.1.0
         version: 5.1.0(@types/node@24.19.2)(@vitest/coverage-v8@5.1.0)(jsdom@31.0.0(@noble/hashes@1.8.0))(vite@8.3.6(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15))
 
+  adapters/wikipedia:
+    dependencies:
+      '@valet/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@valet/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
+
   adapters/woolworths:
     dependencies:
       '@valet/core':
@@ -48,18 +61,40 @@ importers:
       '@valet/fake-woolworths-site':
         specifier: workspace:*
         version: link:../../fakes/woolworths-site
+      '@valet/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
       electron:
         specifier: ^44.10.2
         version: 44.10.2
+
+  adapters/yahoo-finance:
+    dependencies:
+      '@valet/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@valet/runtime':
+        specifier: workspace:*
+        version: link:../../packages/runtime
 
   apps/desktop:
     dependencies:
       '@1password/sdk':
         specifier: ^0.5.0
         version: 0.5.0
+      '@valet/adapter-wikipedia':
+        specifier: workspace:*
+        version: link:../../adapters/wikipedia
       '@valet/adapter-woolworths':
         specifier: workspace:*
         version: link:../../adapters/woolworths
+      '@valet/adapter-yahoo-finance':
+        specifier: workspace:*
+        version: link:../../adapters/yahoo-finance
       '@valet/auth-flow':
         specifier: workspace:*
         version: link:../../packages/auth-flow

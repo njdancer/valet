@@ -26,6 +26,7 @@ export function limitsLoosened(before: LimitsInfo, after: LimitsInfo): boolean {
 /** Whether two probes check the same thing. Any change to the login check needs a look. */
 export function sameProbe(a: ProbeInfo, b: ProbeInfo): boolean {
   if (a.kind === 'cookie') return b.kind === 'cookie' && a.name === b.name
+  if (a.kind === 'none' || b.kind === 'none') return a.kind === b.kind
   if (b.kind === 'cookie') return false
   return (
     a.path === b.path &&
@@ -47,6 +48,7 @@ export function removedSafeguards(diff: PermissionDiff): number {
 /** The login check in words, from its fields. */
 export function probeText(probe: ProbeInfo): string {
   if (probe.kind === 'cookie') return `cookie ${probe.name} present`
+  if (probe.kind === 'none') return 'no login'
   const check =
     probe.jsonPath === null
       ? ''

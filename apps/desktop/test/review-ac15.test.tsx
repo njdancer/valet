@@ -64,7 +64,7 @@ const KINDS: [string, (m: ManifestInput) => ManifestInput, Expect][] = [
   ],
   [
     'a new auth frame origin',
-    (m) => ({ ...m, auth: { ...m.auth, frameOrigins: ['https://captcha.test'] } }),
+    (m) => ({ ...m, auth: { ...m.auth!, frameOrigins: ['https://captcha.test'] } }),
     { row: 'https://captcha.test', tag: 'new frame origin', badge: '+1 frame origin' },
   ],
   [
@@ -116,7 +116,7 @@ const KINDS: [string, (m: ManifestInput) => ManifestInput, Expect][] = [
     (m) => ({
       ...m,
       auth: {
-        steps: (m.auth.steps as AuthStep[]).map((s) =>
+        steps: (m.auth!.steps as AuthStep[]).map((s) =>
           s.op === 'otp'
             ? { ...s, source: { messages: { sender: 'Other', pattern: '(\\d{6})', maxAgeSeconds: 300 } } }
             : s,
@@ -162,14 +162,14 @@ const KINDS: [string, (m: ManifestInput) => ManifestInput, Expect][] = [
   ],
   [
     'a new cookie domain',
-    (m) => ({ ...m, session: { ...m.session, cookieDomains: ['www.shop.test', 'shop.test'] } }),
+    (m) => ({ ...m, session: { ...m.session!, cookieDomains: ['www.shop.test', 'shop.test'] } }),
     { row: 'cookies on shop.test', tag: 'new domain', badge: '+1 hand-over domain' },
   ],
   [
     'a new storage key',
     (m) => ({
       ...m,
-      session: { ...m.session, storage: [{ origin: 'https://www.shop.test', keys: ['token'] }] },
+      session: { ...m.session!, storage: [{ origin: 'https://www.shop.test', keys: ['token'] }] },
     }),
     { row: 'https://www.shop.test · token', tag: 'new storage key', badge: '+1 storage key' },
   ],

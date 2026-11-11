@@ -133,7 +133,7 @@ async function grantBoth(hash: string): Promise<void> {
 test('the built app, approved and granted, logs in and adds a line', async () => {
   await relaunch()
   const pending = await control.evaluate(() => window.valet?.approvals.pending())
-  firstHash = pending?.[0]?.to.hash ?? ''
+  firstHash = pending?.find((p) => p.adapterId === 'woolworths')?.to.hash ?? ''
   expect(firstHash).toMatch(/^[0-9a-f]{64}$/)
   await control.evaluate((hash) => window.valet?.approvals.approve('woolworths', hash), firstHash)
   await grantBoth(firstHash)
@@ -152,7 +152,12 @@ test('the built app, approved and granted, logs in and adds a line', async () =>
 test('a restart of the same build keeps the approval and the grants', async () => {
   // The demo site comes back on the same ports, so the adapter's origins, and its hash, are the same.
   await relaunch()
-  expect(await control.evaluate(() => window.valet?.approvals.pending())).toEqual([])
+  // The other built-ins (no login, public data) stay unreviewed here; only Woolworths matters.
+  expect(
+    (await control.evaluate(() => window.valet?.approvals.pending()))?.filter(
+      (p) => p.adapterId === 'woolworths',
+    ),
+  ).toEqual([])
   const detail = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
   expect(detail?.hash).toBe(firstHash)
   expect(detail?.approval).toBe('approved')
@@ -167,7 +172,9 @@ test('a restart of the same build keeps the approval and the grants', async () =
 test('the changed bundle waits for review: tools off MCP, no grants, a diff against the approved one', async () => {
   // A new launch is a new fake site: its trolley starts empty, and Auth0's session is gone.
   await relaunch(changedAdapterBuild())
-  const pending = await control.evaluate(() => window.valet?.approvals.pending())
+  const pending = (await control.evaluate(() => window.valet?.approvals.pending()))?.filter(
+    (p) => p.adapterId === 'woolworths',
+  )
   expect(pending).toHaveLength(1)
   const review = pending?.[0]
   expect(review?.from?.hash).toBe(firstHash)
@@ -215,7 +222,10 @@ test('the changed bundle waits for review: tools off MCP, no grants, a diff agai
 
 test('the review screen shows the change, and Approve waits for the acknowledgement', async () => {
   await expect(control.getByText('Woolworths 0.4.0 is ready for review.')).toBeVisible()
-  await control.getByRole('link', { name: 'Review changes' }).click()
+  await control
+    .locator('.callout', { hasText: 'Woolworths' })
+    .getByRole('link', { name: 'Review changes' })
+    .click()
   await expect(control.getByText('This update asks for more')).toBeVisible()
   await expect(control.getByText('remove_from_cart').first()).toBeVisible()
   await expect(control.getByText('src/manifest.ts')).toBeVisible()
