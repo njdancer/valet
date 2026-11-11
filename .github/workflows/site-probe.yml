@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - run: node spikes/03-practice-sites/probe.mjs | tee "$RUNNER_TEMP/probe.txt"
+      - run: sh spikes/03-practice-sites/probe.sh "$RUNNER_TEMP/out/captures" | tee "$RUNNER_TEMP/probe.txt"
       - name: push the output to a branch (a cloud session can't read Actions logs)
         if: always()
         run: |
