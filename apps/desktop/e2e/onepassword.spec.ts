@@ -100,7 +100,7 @@ test('after the password changes and Keyhold locks, a denied re-sync keeps the o
   await expect(prompt.getByRole('heading', { name: 'Unlock Keyhold' })).toBeVisible()
   // Denying is open to the person even while it is locked: closing the prompt is a no.
   await prompt.close()
-  await expect(control.getByRole('alert')).toBeVisible()
+  await expect(control.getByRole('alert')).toHaveText('Couldn’t re-sync from 1Password. Try again.')
   expect(await onePasswordHook(launched, 'copyIsCurrent')).toBe(false)
   expect(copied()).toBe(1)
   expect((await onePasswordPrompts(launched)).map((p) => p.state)).toEqual(['allowed', 'denied'])
@@ -116,7 +116,7 @@ test('Deny in the prompt is a no too; Allow copies the new password', async () =
   await prompt.getByLabel('Account password').fill('keyhold-demo-unlock')
   await prompt.getByRole('button', { name: 'Unlock' }).click()
   await clickClosing(prompt.getByRole('button', { name: 'Deny' }))
-  await expect(control.getByRole('alert')).toBeVisible()
+  await expect(control.getByRole('alert')).toHaveText('Couldn’t re-sync from 1Password. Try again.')
   expect(await onePasswordHook(launched, 'copyIsCurrent')).toBe(false)
 
   await resync.click()

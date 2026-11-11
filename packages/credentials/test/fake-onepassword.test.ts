@@ -125,6 +125,28 @@ describe('the desktop app and the Keychain copy (D6), against the fake', () => {
     advance(1)
   })
 
+  it('copying after the approval lapsed asks the person again at once, but a denial is final', async () => {
+    const { fake, desktop } = setup(false)
+    let answer: 'allow' | 'deny' = 'allow'
+    fake.on('prompt', (prompt) => {
+      fake.unlock(DEMO_ONEPASSWORD_ACCOUNT.unlockPassword)
+      if (answer === 'allow') fake.allow(prompt.id)
+      else fake.deny(prompt.id)
+    })
+    const copies = new KeychainCopyProvider({ keychain: new MemoryKeychain() })
+    const sync = new KeychainCopySync({ desktop, copies })
+    await sync.copy(SHOP, ['password'])
+    fake.lock()
+    fake.updateItem(DEMO_SHOP_ITEM_ID, { password: 'changed-test-password' })
+    await sync.copy(SHOP, ['password'])
+    expect(await reveal(copies.resolve(SHOP, 'password'))).toBe('changed-test-password')
+    expect(fake.prompts.map((p) => p.state)).toEqual(['allowed', 'allowed'])
+    fake.lock()
+    answer = 'deny'
+    expect(await failure(sync.copy(SHOP, ['password']))).toBe('locked')
+    expect(fake.prompts.map((p) => p.state)).toEqual(['allowed', 'allowed', 'denied'])
+  })
+
   it('a lapsed approval asks again on the next attended call', async () => {
     const { fake, desktop, advance } = setup()
     await desktop.listVaults()

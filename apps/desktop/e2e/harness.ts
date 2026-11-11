@@ -61,13 +61,25 @@ export const CONTROL = '[control]'
 /** The fake 1Password's prompt pages (src/main/electron/demo.ts, showKeyholdPrompts), on loopback. */
 const KEYHOLD_PROMPT = /^http:\/\/127\.0\.0\.1:\d+\/prompt\/prompt-\d+$/
 
-/** The newest open window showing a fake 1Password prompt. */
+/**
+ * The window showing the fake 1Password's prompt that is waiting on the person. A prompt already
+ * answered may still be on screen for a moment, so it is found by the pending prompt's id.
+ */
 export async function keyholdPrompt(app: ElectronApplication, timeoutMs = 30_000): Promise<Page> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
-    const open = app.windows().filter((page) => !page.isClosed() && KEYHOLD_PROMPT.test(page.url()))
-    const newest = open.at(-1)
-    if (newest !== undefined) return newest
+    const pending = await app.evaluate(() => {
+      const hook = (globalThis as { __valetE2e?: DemoHook }).__valetE2e
+      if (hook === undefined) throw new Error('no e2e hook: not a demo build in e2e mode')
+      // Prompt ids count from 1 in the order they were raised.
+      return hook.onePasswordPrompts().findLastIndex((p) => p.state === 'pending') + 1
+    })
+    if (pending > 0) {
+      const page = app
+        .windows()
+        .find((p) => !p.isClosed() && KEYHOLD_PROMPT.test(p.url()) && p.url().endsWith(`/prompt-${pending}`))
+      if (page !== undefined) return page
+    }
     await sleep(100)
   }
   throw new Error('no fake 1Password prompt opened')

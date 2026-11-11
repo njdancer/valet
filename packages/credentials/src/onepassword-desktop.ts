@@ -182,7 +182,17 @@ export class KeychainCopySync {
   async copy(itemRef: string, fields: readonly SecretField[]): Promise<void> {
     const ref = refOrThrow(itemRef)
     const wanted = copyable(fields)
-    const sourceUpdatedAt = await this.#desktop.updatedAt(itemRef)
+    // An approval that was up but has lapsed (1Password locked, or ten idle minutes) fails its next
+    // call, and only then is the client dropped. The person is here, so ask them now, once, rather
+    // than fail and make them try again. A prompt they deny is never asked twice: that call started
+    // with no approval up.
+    const wasLive = this.#desktop.live
+    const sourceUpdatedAt = await this.#desktop.updatedAt(itemRef).catch((error: unknown) => {
+      const lapsed =
+        wasLive && !this.#desktop.live && error instanceof CredentialError && error.failure === 'locked'
+      if (!lapsed) throw error
+      return this.#desktop.updatedAt(itemRef)
+    })
     for (const field of wanted) {
       const value = await this.#desktop.readField(itemRef, field)
       await this.#copies.store(itemRef, value, this.#source(ref, field, sourceUpdatedAt))
