@@ -38,6 +38,7 @@ export const INVOKE_METHODS = [
   'clients.addToClaudeDesktop',
   'attention.list',
   'answerConfirmation',
+  'openConfirmation',
   'openLoginWindow',
   'finishLogin',
   'closeLoginWindow',

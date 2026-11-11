@@ -85,6 +85,7 @@ async function setup(
     clipboard: [] as string[],
     opened: [] as string[],
     shownConfirmations: [] as string[],
+    focusedConfirmations: [] as string[],
     closedConfirmations: [] as string[],
     banners: [] as string[],
     panels: [] as (HashRoute | null)[],
@@ -172,6 +173,7 @@ async function setup(
       chooseOpFile: async () => ui.opChoice,
       openControlPanel: (route) => ui.panels.push(route),
       showConfirmation: (id) => ui.shownConfirmations.push(id),
+      focusConfirmation: (id) => ui.focusedConfirmations.push(id),
       closeConfirmation: (id) => ui.closedConfirmations.push(id),
       showNeedsUser: (id) => ui.banners.push(`show ${id}`),
       closeNeedsUser: (id) => ui.banners.push(`close ${id}`),
@@ -809,6 +811,27 @@ describe('tool calls', () => {
       await new Promise((r) => setTimeout(r, 10))
     await s.api.answerConfirmation(s.ui.shownConfirmations[0] as string, false, { role: 'tray', shows: null })
     expect(await pending).toEqual({ status: 'ok', output: { added: false } })
+  })
+
+  it('brings the confirmation’s own panel forward for the tray’s Answer, never the control panel', async () => {
+    const s = await approved()
+    const pending = s.call('add', { item: 'milk' })
+    for (let i = 0; i < 50 && s.ui.shownConfirmations.length === 0; i++)
+      await new Promise((r) => setTimeout(r, 10))
+    const id = s.ui.shownConfirmations[0] as string
+    const panels = s.ui.panels.length
+    await s.api.openConfirmation(id)
+    expect(s.ui.focusedConfirmations).toEqual([id])
+    expect(s.ui.panels.length).toBe(panels)
+    // Approved from that panel once armed, as the tray leads the person there.
+    s.service.confirmationArmed(id)
+    s.advance(CONFIRM_ARM_MS)
+    await s.api.answerConfirmation(id, true, { role: 'confirmation', shows: id })
+    expect(await pending).toEqual({ status: 'ok', output: { added: true } })
+    // Answered, it has no panel to bring back.
+    await expect(s.api.openConfirmation(id)).rejects.toThrow()
+    await expect(s.api.openConfirmation('cf_nothing')).rejects.toThrow()
+    expect(s.ui.focusedConfirmations).toEqual([id])
   })
 })
 

@@ -113,7 +113,10 @@ describe('arguments', () => {
     ['a URL for a route', 'app.openControlPanel', ['https://evil.test/#/adapters']],
     ['a file URL for a route', 'app.openControlPanel', ['file:///etc/passwd#/adapters']],
     ['a route parseRoute reads as not found', 'app.openControlPanel', ['#/nowhere']],
+    ['a confirmation routed into the control panel', 'app.openControlPanel', ['#/confirm/cf_1']],
+    ['a hand-off banner routed into the control panel', 'app.openControlPanel', ['#/needs-user/woolworths']],
     ['a non-boolean answer', 'answerConfirmation', ['cf_1', 'yes']],
+    ['a confirmation id with a slash', 'openConfirmation', ['cf_1/../x']],
     ['an unknown client kind', 'clients.copyConfig', ['c_0123456789abcdef', 'cursor']],
     ['an undefined optional argument', 'runs.list', [undefined]],
   ]
@@ -324,6 +327,7 @@ describe('every channel', () => {
     'clients.copyConfig': ['c_0123456789abcdef', 'claude-desktop'],
     'attention.list': [],
     answerConfirmation: ['cf_1', false],
+    openConfirmation: ['cf_1'],
     openLoginWindow: ['woolworths'],
     finishLogin: ['woolworths'],
     closeLoginWindow: ['woolworths'],

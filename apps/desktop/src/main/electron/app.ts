@@ -263,8 +263,9 @@ async function main(): Promise<void> {
   const signature = await bundleSignature()
   const notifications = systemNotifications((target) => {
     // A click only ever opens the window the notification was about, if it is still waiting.
-    if (target.kind === 'confirmation') windows.focusConfirmation(target.id)
-    else if (target.kind === 'needs-user') {
+    if (target.kind === 'confirmation') {
+      if (service?.confirmationPending(target.id)) windows.focusConfirmation(target.id)
+    } else if (target.kind === 'needs-user') {
       if (service?.hasHandoff(target.adapterId)) void service.api.openLoginWindow(target.adapterId)
     } else windows.openControlPanel(target.route)
   }, mode.e2e)
@@ -321,6 +322,7 @@ async function main(): Promise<void> {
       },
       openControlPanel: (route) => windows.openControlPanel(route),
       showConfirmation: (id) => windows.showConfirmation(id),
+      focusConfirmation: (id) => windows.focusConfirmation(id),
       closeConfirmation: (id) => windows.closeConfirmation(id),
       showNeedsUser: (adapterId) => windows.showNeedsUser(adapterId),
       closeNeedsUser: (adapterId) => windows.closeNeedsUser(adapterId),

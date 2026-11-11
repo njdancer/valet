@@ -1196,6 +1196,11 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         return clone(attention)
       },
     },
+    async openConfirmation(confirmationId) {
+      enter('openConfirmation', confirmationId)
+      if (!attention.some((a) => a.kind === 'confirmation' && a.id === confirmationId))
+        throw new Error('no such confirmation')
+    },
     async answerConfirmation(confirmationId, approved) {
       enter('answerConfirmation', confirmationId, approved)
       const item = attention.find(
