@@ -1,0 +1,47 @@
+[
+  {
+    "at": 194.104,
+    "severity": "major",
+    "what": "woolworths_add_to_cart returned an error: The tool failed at stage secret-fill: not-granted."
+  },
+  {
+    "at": 211.713,
+    "severity": "major",
+    "what": "woolworths_add_to_cart returned an error: Not done yet: the person has been asked to act in the Valet app (reason: login-required). Call this tool again once they have."
+  },
+  {
+    "at": 224.906,
+    "severity": "major",
+    "what": "woolworths_add_to_cart returned an error: Not done yet: the person has been asked to act in the Valet app (reason: login-required). Call this tool again once they have."
+  },
+  {
+    "at": 238.894,
+    "severity": "major",
+    "what": "woolworths_add_to_cart returned an error: Not done yet: the person has been asked to act in the Valet app (reason: login-required). Call this tool again once they have."
+  },
+  {
+    "at": 253.245,
+    "severity": "major",
+    "what": "woolworths_get_cart returned an error: Not done yet: the person has been asked to act in the Valet app (reason: login-required). Call this tool again once they have."
+  },
+  {
+    "at": 295.438,
+    "severity": "major",
+    "what": "the shop's trolley has 0 lines, not the 4 the agent added"
+  },
+  {
+    "at": 315.513,
+    "severity": "major",
+    "what": "the trolley: locator.waitFor: Timeout 20000ms exceeded."
+  },
+  {
+    "at": 345.626,
+    "severity": "major",
+    "what": "placing the order: locator.waitFor: Timeout 30000ms exceeded."
+  },
+  {
+    "at": 349.689,
+    "severity": "major",
+    "what": "woolworths_get_cart returned an error: Not done yet: the person has been asked to act in the Valet app (reason: login-required). Call this tool again once they have."
+  }
+]

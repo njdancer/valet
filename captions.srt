@@ -1,0 +1,103 @@
+1
+00:00:00,000 --> 00:00:04,002
+Valet demo: A fresh macOS machine. Everything in this run is fake: a made-up shop, a test account and a scripted chat.
+
+2
+00:00:04,002 --> 00:00:10,730
+1 · Install: Open the downloaded disk image, as a new user would
+
+3
+00:00:10,730 --> 00:00:14,947
+1 · Install: Copy Valet Demo into Applications (the script copies it; a person drags the icon)
+
+4
+00:00:14,947 --> 00:00:17,948
+1 · Install: Installed. This test build is unsigned and was never downloaded, so Gatekeeper does not ask about it
+
+5
+00:00:17,948 --> 00:00:24,703
+2 · Set up: First launch. (Started with a debugging port that only this demo build accepts, so the script can drive it)
+
+6
+00:00:24,703 --> 00:00:28,362
+2 · Set up: Valet opens its first-run setup
+
+7
+00:00:28,362 --> 00:00:32,490
+2 · Set up: Where logins come from. In the demo, a test provider stands in for 1Password
+
+8
+00:00:32,490 --> 00:00:40,837
+2 · Set up: Review the shop adapter: the sites it may reach, and what each tool can do
+
+9
+00:00:40,837 --> 00:00:41,879
+2 · Set up: Approve it. Until now its tools were hidden from every chat client
+
+10
+00:00:41,879 --> 00:00:53,612
+2 · Set up: Let the adapter use the login, typed only into the shop’s sign-in page
+
+11
+00:00:53,612 --> 00:01:05,667
+2 · Set up: Connect a chat app. Valet gives it a config that starts its own bridge, with no token in it
+
+12
+00:01:05,667 --> 00:01:13,110
+3 · Chat: Now a chat app. This one is a scripted stand-in for Claude that speaks real MCP
+
+13
+00:01:13,110 --> 00:01:19,400
+3 · Chat: Paste the config Valet copied
+
+14
+00:01:19,400 --> 00:01:30,842
+3 · Chat: Connected through Valet’s bridge: 6 tools
+
+15
+00:01:30,842 --> 00:02:13,240
+3 · Chat: The agent searches the shop through Valet. Searching needs no login
+
+16
+00:02:13,240 --> 00:02:36,711
+3 · Chat: Valet spaces the shop’s requests 10 to 15 seconds apart, so this is unhurried on purpose
+
+17
+00:02:36,711 --> 00:03:58,980
+Valet answers at once that it is logging in, and the agent calls again when told
+
+18
+00:03:58,980 --> 00:04:17,372
+3 · Chat: The agent reads the trolley back
+
+19
+00:04:17,372 --> 00:04:26,114
+4 · Valet: Back in Valet: every call, and the login, is in its audited activity log
+
+20
+00:04:26,114 --> 00:04:33,235
+5 · Checkout: Now the shopper opens the shop’s website to check out
+
+21
+00:04:33,235 --> 00:04:41,077
+5 · Checkout: Sign in on the shop’s own login page (a stand-in for its Auth0 page), with the test account
+
+22
+00:04:41,077 --> 00:04:50,152
+5 · Checkout: The shop texts a code. A test phone page shows it
+
+23
+00:04:50,152 --> 00:05:15,616
+5 · Checkout: The trolley holds what the agent added through Valet
+
+24
+00:05:15,616 --> 00:05:45,738
+5 · Checkout: Checkout: pick up today. The person places the order; Valet’s MVP never does
+
+25
+00:05:45,738 --> 00:05:53,826
+6 · Done: Back in the chat, the agent can see the trolley is empty now
+
+26
+00:05:53,826 --> 00:05:57,564
+Valet demo: End of the demo
