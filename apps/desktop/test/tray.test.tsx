@@ -44,9 +44,20 @@ describe('the tray popover', () => {
     await user.click(screen.getByRole('button', { name: 'Answer' }))
     await user.click(screen.getByRole('button', { name: 'Review' }))
     expect(called(api, 'openLoginWindow')).toEqual([['woolworths']])
-    expect(called(api, 'app.openControlPanel')).toEqual([
-      ['#/confirm/cf_a40f3c'],
-      ['#/adapters/woolworths/review'],
+    // Answer brings the confirmation's own panel forward: only it can approve.
+    expect(called(api, 'openConfirmation')).toEqual([['cf_a40f3c']])
+    expect(called(api, 'app.openControlPanel')).toEqual([['#/adapters/woolworths/review']])
+  })
+
+  it('lists confirmations first, since they run out, then logins, then reviews', async () => {
+    renderTray(createFakeApi({ now: NOW }))
+    const list = await screen.findByRole('region', { name: 'Needs you' })
+    await waitFor(() => expect(list.querySelectorAll('.attention').length).toBe(3))
+    const titles = [...list.querySelectorAll('.attention .h3')].map((e) => e.textContent)
+    expect(titles).toEqual([
+      'Confirm Remove from cart · Woolworths',
+      'Log in to Woolworths',
+      'Review Woolworths 0.4.0',
     ])
   })
 

@@ -5,7 +5,7 @@
 // refused with a fixed error whose message says nothing about why.
 
 import { z } from 'zod'
-import { parseRoute } from '../../renderer/lib/routes'
+import { panelOnlyRoute, parseRoute } from '../../renderer/lib/routes'
 import type { HashRoute, ValetApi } from '../../shared/api'
 import { CHANNEL_PREFIX, INVOKE_METHODS, type InvokeMethod } from './channels'
 import { onePasswordAccountSchema, traceRetentionDaysSchema } from './settings'
@@ -127,6 +127,13 @@ const hashRoute = z
   .max(500)
   .refine((value): value is HashRoute => value.startsWith('#/') && parseRoute(value).page !== 'not-found')
 
+/**
+ * A route the control panel may show. The confirmation panel and the hand-off banner are windows
+ * of their own: routed into the control panel, they leave it chromeless with no way back, and a
+ * confirmation there can't be approved (only its own panel may approve).
+ */
+const controlPanelRoute = hashRoute.refine((value) => !panelOnlyRoute(value))
+
 type Handler = (api: MainApi, args: readonly unknown[], sender: Sender) => Promise<unknown>
 
 function entry<A extends readonly unknown[]>(
@@ -195,6 +202,7 @@ const HANDLERS: Readonly<
     // The sender's role is non-null here: untrusted senders never reach a handler.
     api.answerConfirmation(id, approved, { role: sender.role as WindowRole, shows: sender.shows }),
   ),
+  openConfirmation: entry(z.tuple([OPAQUE_ID]), (api, [id]) => api.openConfirmation(id)),
   openLoginWindow: entry(z.tuple([ADAPTER_ID]), (api, [id]) => api.openLoginWindow(id)),
   finishLogin: entry(z.tuple([ADAPTER_ID]), (api, [id]) => api.finishLogin(id)),
   closeLoginWindow: entry(z.tuple([ADAPTER_ID]), (api, [id]) => api.closeLoginWindow(id)),
@@ -227,7 +235,7 @@ const HANDLERS: Readonly<
   ),
   'app.status': entry(none, (api) => api.app.status()),
   'app.setPaused': entry(z.tuple([z.boolean()]), (api, [paused]) => api.app.setPaused(paused)),
-  'app.openControlPanel': entry(z.union([none, z.tuple([hashRoute])]), (api, args) =>
+  'app.openControlPanel': entry(z.union([none, z.tuple([controlPanelRoute])]), (api, args) =>
     args.length === 0 ? api.app.openControlPanel() : api.app.openControlPanel(args[0] as HashRoute),
   ),
   'app.copyText': entry(z.tuple([z.string().max(MAX_TEXT)]), (api, [text]) => api.app.copyText(text)),

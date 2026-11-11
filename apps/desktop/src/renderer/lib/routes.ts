@@ -101,6 +101,16 @@ function setupRoute(step: string | undefined, sub: string | undefined, length: n
 
 const enc = encodeURIComponent
 
+/**
+ * Routes shown only in a window of their own (the confirmation panel, the hand-off banner), never
+ * in the control panel: there they would have no sidebar and no way back, and a confirmation
+ * couldn't be approved, since only the panel opened for it may approve.
+ */
+export function panelOnlyRoute(hash: string): boolean {
+  const page = parseRoute(hash).page
+  return page === 'confirm' || page === 'needs-user'
+}
+
 /** Builders for every route. Each returns a HashRoute, the only kind app.openControlPanel takes. */
 export const href = {
   adapters: (): HashRoute => '#/adapters',
