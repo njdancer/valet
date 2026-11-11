@@ -8,7 +8,7 @@
 
 import { AppShell } from '@valet/ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { canonicalHref, parseRoute, type Route, useRoute } from '../lib/router'
+import { canonicalHref, parseRoute, placeOf, type Route, useRoute } from '../lib/router'
 import { ConfirmationWindow } from '../screens/windows/ConfirmationWindow'
 import { LoginBannerWindow } from '../screens/windows/LoginBannerWindow'
 import { SetupWindow } from '../screens/windows/SetupWindow'
@@ -55,6 +55,7 @@ function Shell({ route }: { readonly route: Route }) {
   useShortcuts(openPalette)
   const main = useRef<HTMLDivElement>(null)
   useHeadingFocus(route, main)
+  useWindowTitle(route)
   return (
     <>
       <AppShell sidebar={<Sidebar route={route} />}>
@@ -91,4 +92,21 @@ function useHeadingFocus(route: Route, main: React.RefObject<HTMLDivElement | nu
     })
     return () => cancelAnimationFrame(id)
   }, [key, main])
+}
+
+const PLACE_TITLE = {
+  'needs-you': 'Needs you',
+  sites: 'Sites',
+  activity: 'Activity',
+  connections: 'Connections',
+  secrets: 'Secrets',
+  settings: 'Settings',
+} as const
+
+/** The window's title names the place, for the Window menu and screen readers. */
+function useWindowTitle(route: Route): void {
+  const place = placeOf(route)
+  useEffect(() => {
+    document.title = place === null ? 'Valet' : `${PLACE_TITLE[place]} · Valet`
+  }, [place])
 }
