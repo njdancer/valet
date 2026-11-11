@@ -5,8 +5,11 @@
 import { type ErrorClass, originAllowed, type Stage, ValetError } from '@valet/core'
 import type { BrowserSurface, FrameHandle, KeyEvents, Timers } from './platform'
 import { sleep } from './platform'
-import { focusedScript, focusScript, frameOffsetScript, pointScript } from './scripts'
+import { focusedScript, focusScript, frameOffsetScript, nextFrameScript, pointScript } from './scripts'
 import { withTimeout } from './timeout'
+
+/** Longest a click waits for the page to render a frame before it is sent anyway. */
+const FRAME_WAIT_CAP_MS = 1_000
 
 export interface PageTiming {
   readonly timers: Timers
@@ -161,6 +164,12 @@ export class PageCore {
       y += offset.y
       childIndex = offset.indexInParent
       frame = parent
+    }
+    // Chromium drops input sent to a page that hasn't drawn yet: right after a load, a click could
+    // vanish without reaching the page at all. So wait for the main frame to render first.
+    if (frame !== undefined) {
+      assertLive(stage, signal)
+      await runQuietly(frame, nextFrameScript(FRAME_WAIT_CAP_MS))
     }
     assertLive(stage, signal)
     this.surface.click(Math.round(x), Math.round(y))
