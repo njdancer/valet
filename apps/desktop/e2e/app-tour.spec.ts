@@ -107,6 +107,12 @@ test.afterAll(async () => {
 async function injectPointer(page: Page): Promise<void> {
   await page.evaluate(() => {
     if (document.getElementById('__tour_pointer') !== null) return
+    // A screencast has no window behind the page, so where the page is clear for the window's
+    // vibrancy it would come out black: paint the sidebar's own colour there, as the material
+    // looks over a plain desktop.
+    const style = document.createElement('style')
+    style.textContent = ':root[data-vibrancy] { background: var(--bg-sidebar) !important }'
+    document.head.append(style)
     const p = document.createElement('div')
     p.id = '__tour_pointer'
     p.innerHTML =
