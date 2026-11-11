@@ -1,0 +1,13 @@
+HTTP/2 429 
+date: Wed, 11 Nov 2026 11:56:35 GMT
+strict-transport-security: max-age=31536000
+server: ATS
+cache-control: no-store
+content-type: text/html
+content-language: en
+referrer-policy: no-referrer-when-downgrade
+x-content-type-options: nosniff
+x-xss-protection: 1; mode=block
+content-length: 19
+age: 0
+

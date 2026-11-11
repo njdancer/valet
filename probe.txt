@@ -1,0 +1,39 @@
+yahoo-quote-page HTTP/2 200   1034579 bytes
+   content-type: text/html; charset=utf-8
+yahoo-search-apple HTTP/2 429        19 bytes
+   content-type: text/html
+yahoo-search-bhp HTTP/2 429        19 bytes
+   content-type: text/html
+yahoo-chart-aapl-1d HTTP/2 429        19 bytes
+   content-type: text/html
+yahoo-chart-aapl-1mo HTTP/2 429        19 bytes
+   content-type: text/html
+yahoo-chart-bhpax-5d HTTP/2 429        19 bytes
+   content-type: text/html
+yahoo-chart-gspc-1y HTTP/2 429        19 bytes
+   content-type: text/html
+yahoo-chart-audusd HTTP/2 429        19 bytes
+   content-type: text/html
+yahoo-chart-bad HTTP/2 429        19 bytes
+   content-type: text/html
+yahoo-quote-v7 HTTP/2 429        19 bytes
+   content-type: text/html
+yahoo-quotesummary HTTP/2 429        19 bytes
+   content-type: text/html
+wiki-search HTTP/2 200      3244 bytes
+   access-control-allow-origin: *
+   content-type: application/json
+wiki-summary HTTP/2 200      2765 bytes
+   content-type: application/json; charset=utf-8; profile="https://www.mediawiki.org/wiki/Specs/Summary/1.5.0"
+   access-control-allow-origin: *
+   access-control-allow-methods: GET,HEAD
+   access-control-allow-headers: accept, content-type, content-length, cache-control, accept-language, api-user-agent, if-match, if-modified-since, if-none-match, dnt, accept-encoding
+   access-control-expose-headers: etag
+wiki-extract HTTP/2 200     32929 bytes
+   content-type: application/json; charset=utf-8
+wiki-missing HTTP/2 404        38 bytes
+   content-type: application/json; charset=utf-8
+   access-control-allow-origin: *
+   access-control-allow-methods: GET,HEAD
+   access-control-allow-headers: accept, content-type, content-length, cache-control, accept-language, api-user-agent, if-match, if-modified-since, if-none-match, dnt, accept-encoding
+   access-control-expose-headers: etag
