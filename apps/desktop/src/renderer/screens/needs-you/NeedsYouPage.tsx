@@ -23,7 +23,7 @@ import {
 } from '@valet/ui'
 import { CheckCircle2, RotateCw } from 'lucide-react'
 import { useEffect, useRef } from 'react'
-import { useAction, useApi, useLoad, useNow } from '../../lib/api-context'
+import { useAction, useApi, useAppStop, useLoad, useNow } from '../../lib/api-context'
 import { callRef, formatClock, formatTime, plural } from '../../lib/format'
 import { type NeedsYouView, needsYouOrder, needsYouView, runNeedsYouAction } from '../../lib/needs-you'
 import { href, navigate } from '../../lib/router'
@@ -197,7 +197,16 @@ function MissedRow({ view }: { readonly view: NeedsYouView }) {
     <InboxItem
       missed
       title={view.title}
-      description={view.callId !== null ? `Call ${callRef(view.callId)}` : null}
+      description={
+        view.callId !== null ? (
+          <>
+            Call{' '}
+            <TextLink href={href.call(view.callId)} className="font-mono">
+              {callRef(view.callId)}
+            </TextLink>
+          </>
+        ) : null
+      }
       action={
         <>
           <Button
@@ -231,6 +240,7 @@ function NothingWaiting() {
 /** The system status (IA principle 8): every line says when it was checked and can be re-checked. */
 function StatusCard() {
   const api = useApi()
+  const appStop = useAppStop()
   const now = useNow(60_000)
   const adapters = useLoad((a) => a.adapters.list(), [], ['adapters-changed', 'approvals-changed'])
   const sites = useLoad((a) => a.health.sites(), [], ['health-changed'])
@@ -254,7 +264,7 @@ function StatusCard() {
       <CardContent className="flex flex-col gap-2.5">
         {adapters.status === 'ready'
           ? adapters.data.map((a) => {
-              const s = siteStatus(a, sites.status === 'ready' ? healthFor(a, sites.data) : null)
+              const s = siteStatus(a, sites.status === 'ready' ? healthFor(a, sites.data) : null, appStop)
               return (
                 <HealthLine
                   key={a.id}

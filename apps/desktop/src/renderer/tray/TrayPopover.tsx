@@ -273,8 +273,13 @@ export function TrayPopover() {
                 </>
               )}
               {missed.length > 0 ? (
-                <TrayRow href={href.needsYou()} className="text-sm text-fg-muted">
-                  Missed ({missed.length}) · {missed[0]?.title}
+                <TrayRow
+                  href={href.needsYou()}
+                  className="text-sm text-fg-muted"
+                  trailing={<ChevronRight aria-hidden="true" className="size-3.5" />}
+                >
+                  {/* The title already starts "Missed: ", so the count doesn't say it twice. */}
+                  Missed ({missed.length}) · {missed[0]?.title.replace(/^Missed: /, '')}
                 </TrayRow>
               ) : null}
             </TraySection>

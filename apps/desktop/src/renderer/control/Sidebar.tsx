@@ -93,6 +93,7 @@ export function Sidebar({ route }: { readonly route: Route }) {
             const status = siteStatus(
               adapter,
               sites.status === 'ready' ? healthFor(adapter, sites.data) : null,
+              shell,
             )
             return (
               <NavItem

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { NO_CALL_FILTERS } from '../src/renderer/lib/routes'
+import { eventWords } from '../src/renderer/screens/activity/audit-events'
 import {
   describeFilters,
   foldRetries,
@@ -131,5 +132,16 @@ describe('a call’s outcome in words', () => {
     )
     expect(redactionLabel({ kind: 'redacted', label: 'session-cookie', ref: null })).toBe('[session cookie]')
     expect(redactionLabel({ kind: 'redacted', label: 'other' as 'secret', ref: null })).toBe('[redacted]')
+  })
+})
+
+describe('audit event words', () => {
+  it('names a resume as a resume, though one event type records both', () => {
+    expect(eventWords({ type: 'site-paused', adapterId: 'woolworths', paused: true }).label).toBe(
+      'Site paused',
+    )
+    expect(eventWords({ type: 'site-paused', adapterId: 'woolworths', paused: false }).label).toBe(
+      'Site resumed',
+    )
   })
 })

@@ -23,7 +23,7 @@ import {
 } from '@valet/ui'
 import { Globe } from 'lucide-react'
 import type { AdapterSummary, RunSummary, SiteHealth } from '../../../shared/api'
-import { useLoad, useNow } from '../../lib/api-context'
+import { useAppStop, useLoad, useNow } from '../../lib/api-context'
 import { plural } from '../../lib/format'
 import { href } from '../../lib/router'
 import { healthFor, siteStatus } from '../../lib/site-status'
@@ -101,7 +101,7 @@ function SiteRow({
   readonly runs: readonly RunSummary[] | null
   readonly now: number
 }) {
-  const status = siteStatus(adapter, health)
+  const status = siteStatus(adapter, health, useAppStop())
   // The store sheet's address needs the setting's name, which only the detail has.
   const needsSetting = status.fix === 'choose-setting'
   const detail = useLoad(

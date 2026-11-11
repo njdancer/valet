@@ -62,6 +62,8 @@ export function eventWords(event: AuditEvent): { readonly label: string; readonl
       return { label: event.type === 'tool-finished' ? 'Call needs you' : 'Login stopped', tone: 'warning' }
     if (event.outcome === 'declined') return { label: 'Call declined', tone: 'neutral' }
   }
+  // One event type records both directions.
+  if (event.type === 'site-paused' && !event.paused) return { label: 'Site resumed', tone: 'success' }
   return words
 }
 

@@ -1,0 +1,54 @@
+name: QA screens
+
+# The persona QA rounds' screenshots of the real app on macOS: a demo build (fake shop, fake
+# 1Password, file Keychain; nothing real is reached), driven by apps/desktop/e2e/qa-screens.spec.ts
+# through first run, a cart session, a login hand-off, an update, a confirmation (answered and
+# missed) and a site limiting requests, every surface in light and dark at the real window sizes.
+#
+# The PNGs and report.jsonl go to the run's artifact and to the branch qa-screens/<run id>, so a
+# cloud session (which can't download artifacts) can fetch them. A push to a qa/** branch runs it
+# too, for trying changes to the spec before they reach main.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["qa/**"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: qa-screens-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  screens:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2.4.4
+      - run: pnpm install --frozen-lockfile
+      - name: demo build
+        working-directory: apps/desktop
+        run: pnpm exec electron-vite build --mode demo
+      - name: screens
+        working-directory: apps/desktop
+        run: pnpm exec playwright test -c e2e/playwright.config.ts qa-screens --trace off
+        env:
+          VALET_E2E_QA: "1"
+          VALET_QA_OUT: ${{ runner.temp }}/qa
+      - name: push the screens to a branch
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/qa" && cd "$RUNNER_TEMP/qa"
+          test -n "$(ls -A)" || exit 0
+          git init -q -b screens && git add -A
+          git -c user.name=qa-screens -c user.email=qa-screens@users.noreply.github.com commit -qm "QA screens, run ${{ github.run_id }}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" HEAD:refs/heads/qa-screens/${{ github.run_id }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: qa-screens
+          path: ${{ runner.temp }}/qa/
+          retention-days: 14

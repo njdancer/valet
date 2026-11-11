@@ -27,7 +27,7 @@ import {
 } from '@valet/ui'
 import { Activity, Copy, Ellipsis, Pause, Play, ScrollText, ShieldCheck, ShoppingCart } from 'lucide-react'
 import type { AdapterDetail, ClientInfo, PendingReview, RunSummary, SiteHealth } from '../../../shared/api'
-import { useAction, useApi, useLoad } from '../../lib/api-context'
+import { useAction, useApi, useAppStop, useLoad } from '../../lib/api-context'
 import { formatClock, formatDay } from '../../lib/format'
 import { href, navigate, type SiteTab } from '../../lib/router'
 import { healthFor, isFirstReview, type SiteStatus, siteStatus } from '../../lib/site-status'
@@ -62,6 +62,7 @@ export function SitePage({ adapterId, tab }: { readonly adapterId: string; reado
     ['adapters-changed', 'grants-changed', 'approvals-changed', 'settings-changed'],
   )
   const sites = useLoad((api) => api.health.sites(), [], ['health-changed'])
+  const appStop = useAppStop()
   const reviews = useLoad((api) => api.approvals.pending(), [], ['approvals-changed'])
   const runs = useLoad((api) => api.runs.list({ adapterId, limit: 200 }), [adapterId], ['runs-changed'])
   const clients = useLoad((api) => api.clients.list(), [], ['clients-changed'])
@@ -121,7 +122,7 @@ export function SitePage({ adapterId, tab }: { readonly adapterId: string; reado
   const data: SiteData = {
     adapter,
     health,
-    status: siteStatus(adapter, health),
+    status: siteStatus(adapter, health, appStop),
     review:
       reviews.status === 'ready' ? (reviews.data.find((r) => r.adapterId === adapter.id) ?? null) : null,
     runs: runs.status === 'ready' ? runs.data : null,

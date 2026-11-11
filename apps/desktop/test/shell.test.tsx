@@ -259,6 +259,14 @@ describe('site status', () => {
     nextCooldownSeconds: 60,
     calls: 0,
   }
+  it('says the site is stopped while Valet is paused or locked down, not "Ready"', () => {
+    expect(siteStatus(adapter, health, { paused: true, lockedDown: false }).text).toBe(
+      'Paused with Valet · calls are refused',
+    )
+    expect(siteStatus(adapter, health, { paused: false, lockedDown: true }).tone).toBe('danger')
+    expect(siteStatus(adapter, health, { paused: false, lockedDown: false }).text).toBe('Ready')
+  })
+
   it('says one thing, with what fixes it', () => {
     expect(siteStatus(adapter, health)).toEqual({ tone: 'success', text: 'Ready', fix: null })
     expect(siteStatus({ ...adapter, approval: 'unapproved' }, health).fix).toBe('review')

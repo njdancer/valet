@@ -20,6 +20,7 @@ import {
   type SecretField,
   type SessionDriver,
   type SettingChoice,
+  settingToolNames,
   ValetError,
 } from '@valet/core'
 import { FileGrantStore } from '@valet/credentials'
@@ -601,6 +602,9 @@ export class AppService {
     const adapter = this.adapter(adapterId)
     const declaration = adapter?.definition.manifest.tools.find((t) => t.name === tool)
     if (adapter === null || declaration === undefined) throw new ValetError('config', 'not-found')
+    // A setting's tool isn't a client's to call, remote or not (remoteSetup leaves it out too).
+    if (enabled && settingToolNames(adapter.definition.manifest).has(tool))
+      throw new ValetError('config', 'not-found')
     // Turning on is for approved adapters only; turning off always works.
     if (enabled && !(await this.approvals.isApproved(adapterId, adapter.hash).catch(() => false)))
       throw new ValetError('config', 'not-found')
@@ -615,7 +619,11 @@ export class AppService {
     for (const adapter of this.deps.adapters) {
       const { manifest } = adapter.definition
       if (!(await this.approvals.isApproved(manifest.id, adapter.hash).catch(() => false))) continue
+      // A setting's tools (the store's) run only for Valet itself; no client lists or calls them,
+      // so a cloud agent can't be given them either.
+      const internal = settingToolNames(manifest)
       for (const declaration of manifest.tools) {
+        if (internal.has(declaration.name)) continue
         const ref = `${manifest.id}.${declaration.name}`
         tools.push({
           ref,

@@ -1,6 +1,6 @@
 import { X } from 'lucide-react'
 import { AlertDialog as AlertPrimitive, Dialog as DialogPrimitive } from 'radix-ui'
-import type { ComponentProps, ReactNode } from 'react'
+import { type ComponentProps, type ReactNode, useState } from 'react'
 import { cn } from '../lib/cn'
 import { Button } from './button'
 import { IconButton } from './icon-button'
@@ -22,6 +22,25 @@ function focusFirstField(e: Event, own?: (e: Event) => void) {
   )
   e.preventDefault()
   ;(field ?? content).focus({ preventScroll: true })
+}
+
+/**
+ * Where focus goes on close: back to what had it when the overlay opened. Radix only does this for
+ * its own Trigger, and most overlays here are opened from state (a button's onClick), so without
+ * this focus fell to <body> and the next Tab started from the top of the window.
+ */
+function useReturnFocus(own?: (e: Event) => void) {
+  const [opener] = useState(() =>
+    typeof document === 'undefined' ? null : (document.activeElement as HTMLElement | null),
+  )
+  return (e: Event) => {
+    own?.(e)
+    if (e.defaultPrevented) return
+    if (opener && opener !== document.body && opener.isConnected) {
+      e.preventDefault()
+      opener.focus({ preventScroll: true })
+    }
+  }
 }
 
 const overlay =
@@ -54,7 +73,7 @@ export function DialogContent({
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay className={overlay} />
-      <DialogPrimitive.Content
+      <ReturningContent
         className={cn(
           'fixed top-1/2 left-1/2 z-[var(--v-z-modal)] flex max-h-[calc(100vh-48px)] w-[calc(100vw-48px)] -translate-x-1/2 -translate-y-1/2 flex-col',
           'rounded-xl bg-raised text-fg shadow-4 ring-[0.5px] ring-line ring-inset outline-hidden',
@@ -73,7 +92,7 @@ export function DialogContent({
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">{children}</div>
         {footer ? <OverlayFooter>{footer}</OverlayFooter> : null}
         {hideClose ? null : <OverlayClose />}
-      </DialogPrimitive.Content>
+      </ReturningContent>
     </DialogPrimitive.Portal>
   )
 }
@@ -138,7 +157,7 @@ export function SheetContent({
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay className={overlay} />
-      <DialogPrimitive.Content
+      <ReturningContent
         className={cn(
           'fixed top-(--titlebar-height) left-1/2 z-[var(--v-z-modal)] flex max-h-[calc(100vh-24px-var(--titlebar-height))] -translate-x-1/2 flex-col',
           wide ? 'w-[min(720px,calc(100vw-32px))]' : 'w-[min(560px,calc(100vw-32px))]',
@@ -155,7 +174,7 @@ export function SheetContent({
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">{children}</div>
         {footer ? <OverlayFooter>{footer}</OverlayFooter> : null}
         <OverlayClose />
-      </DialogPrimitive.Content>
+      </ReturningContent>
     </DialogPrimitive.Portal>
   )
 }
@@ -183,7 +202,7 @@ export function DrawerContent({
   return (
     <DialogPrimitive.Portal>
       {dim ? <DialogPrimitive.Overlay className={cn(overlay, 'bg-backdrop/50')} /> : null}
-      <DialogPrimitive.Content
+      <ReturningContent
         style={{ width: `min(${width}px, calc(100vw - 48px))` }}
         className={cn(
           'fixed top-(--titlebar-height) right-0 bottom-0 z-[var(--v-z-modal)] flex flex-col',
@@ -200,7 +219,7 @@ export function DrawerContent({
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">{children}</div>
         {footer ? <OverlayFooter>{footer}</OverlayFooter> : null}
         <OverlayClose />
-      </DialogPrimitive.Content>
+      </ReturningContent>
     </DialogPrimitive.Portal>
   )
 }
@@ -237,7 +256,7 @@ export function ConfirmDialog({
       {trigger ? <AlertPrimitive.Trigger asChild>{trigger}</AlertPrimitive.Trigger> : null}
       <AlertPrimitive.Portal>
         <AlertPrimitive.Overlay className={overlay} />
-        <AlertPrimitive.Content
+        <ConfirmContent
           className={cn(
             'fixed top-1/2 left-1/2 z-[var(--v-z-modal)] flex w-[min(420px,calc(100vw-48px))] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 p-5',
             'rounded-xl bg-raised text-fg shadow-4 ring-[0.5px] ring-line ring-inset outline-hidden',
@@ -263,8 +282,20 @@ export function ConfirmDialog({
               </Button>
             </AlertPrimitive.Action>
           </div>
-        </AlertPrimitive.Content>
+        </ConfirmContent>
       </AlertPrimitive.Portal>
     </AlertPrimitive.Root>
   )
+}
+
+/** Content mounts only while open (inside the Portal), so it notes what had focus just before. */
+function ReturningContent(props: ComponentProps<typeof DialogPrimitive.Content>) {
+  const returnFocus = useReturnFocus(props.onCloseAutoFocus)
+  return <DialogPrimitive.Content {...props} onCloseAutoFocus={returnFocus} />
+}
+
+/** Mounted only while open, so it can note what had focus just before (see useReturnFocus). */
+function ConfirmContent(props: ComponentProps<typeof AlertPrimitive.Content>) {
+  const returnFocus = useReturnFocus(props.onCloseAutoFocus)
+  return <AlertPrimitive.Content {...props} onCloseAutoFocus={returnFocus} />
 }

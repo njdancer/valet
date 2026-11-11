@@ -134,3 +134,9 @@ export function useAction(): {
   }, [])
   return { busy, failed, run }
 }
+
+/** Whether Valet as a whole is paused or locked down, for site health lines (null while loading). */
+export function useAppStop(): { readonly paused: boolean; readonly lockedDown: boolean } | null {
+  const app = useLoad((api) => api.app.status(), [], ['app-changed'])
+  return app.status === 'ready' ? { paused: app.data.paused, lockedDown: app.data.lockedDown } : null
+}

@@ -28,7 +28,17 @@ export function healthFor(adapter: AdapterSummary, sites: readonly SiteHealth[])
   return sites.find((s) => s.adapterIds.includes(adapter.id)) ?? null
 }
 
-export function siteStatus(adapter: AdapterSummary, health: SiteHealth | null): SiteStatus {
+/** Valet as a whole: paused or locked down stops every site, whatever its own state. */
+export interface AppStop {
+  readonly paused: boolean
+  readonly lockedDown: boolean
+}
+
+export function siteStatus(
+  adapter: AdapterSummary,
+  health: SiteHealth | null,
+  app: AppStop | null = null,
+): SiteStatus {
   if (adapter.approval === 'rejected')
     return { tone: 'danger', text: 'You turned this version down · its tools are off', fix: 'review' }
   if (adapter.approval === 'unapproved' && adapter.pendingUpdate !== null)
@@ -39,6 +49,12 @@ export function siteStatus(adapter: AdapterSummary, health: SiteHealth | null): 
     }
   if (adapter.approval === 'unapproved')
     return { tone: 'accent', text: 'Not approved yet · its tools are off until you review it', fix: 'review' }
+  // Valet's own stop outranks everything below it: a green "Ready" under a "Paused" banner reads as
+  // a contradiction (the menu bar already says "Paused with Valet").
+  if (app?.lockedDown === true)
+    return { tone: 'danger', text: 'Stopped by Lock down · calls are refused', fix: null }
+  if (app?.paused === true)
+    return { tone: 'warning', text: 'Paused with Valet · calls are refused', fix: null }
   if (adapter.paused)
     return { tone: 'neutral', text: `${adapter.name} paused · calls are refused`, fix: 'resume' }
   // An open breaker leads: nothing reaches the site until it closes, whatever else is waiting. A
