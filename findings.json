@@ -1,0 +1,32 @@
+[
+  {
+    "at": 72.932,
+    "severity": "major",
+    "what": "yahoo_finance_search_symbols returned an error: The tool failed at stage tool-run: internal."
+  },
+  {
+    "at": 73.67,
+    "severity": "major",
+    "what": "yahoo_finance_get_quote returned an error: The tool failed at stage tool-run: internal."
+  },
+  {
+    "at": 73.908,
+    "severity": "major",
+    "what": "yahoo_finance_get_quote returned an error: The tool failed at stage tool-run: internal."
+  },
+  {
+    "at": 74.134,
+    "severity": "major",
+    "what": "yahoo_finance_get_quote returned an error: The tool failed at stage tool-run: internal."
+  },
+  {
+    "at": 74.303,
+    "severity": "major",
+    "what": "yahoo_finance_get_quote returned an error: The tool failed at stage tool-run: internal."
+  },
+  {
+    "at": 74.49,
+    "severity": "major",
+    "what": "yahoo_finance_get_price_history returned an error: The tool failed at stage tool-run: internal."
+  }
+]

@@ -1,0 +1,577 @@
+[
+  {
+    "name": "yahoo_finance_get_quote",
+    "title": "Get quote",
+    "description": "The latest quote for one symbol (e.g. AAPL, BHP.AX, ^GSPC, AUDUSD=X, BTC-USD): price, change, day and 52-week range, volume, market cap, valuation and dividend figures, analyst targets, and pre- or post-market prices where there are any. Prices are delayed as the exchange requires (delayedMinutes).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "symbol": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24,
+          "pattern": "^[A-Za-z0-9.^=-]+$"
+        }
+      },
+      "required": [
+        "symbol"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "symbol": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exchange": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "currency": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "marketState": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "price": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "change": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "changePercent": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "previousClose": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "open": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "dayLow": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "dayHigh": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "fiftyTwoWeekLow": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "fiftyTwoWeekHigh": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "volume": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "averageVolume": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "marketCap": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "trailingPE": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "forwardPE": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "dividendYield": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "eps": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "beta": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "analystTargetPrice": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "analystRecommendation": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "analystCount": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "sector": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "industry": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "time": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "delayedMinutes": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "preMarket": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "price": {
+                  "type": "number"
+                },
+                "change": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "changePercent": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "time": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "price",
+                "change",
+                "changePercent",
+                "time"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "postMarket": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "price": {
+                  "type": "number"
+                },
+                "change": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "changePercent": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "time": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              },
+              "required": [
+                "price",
+                "change",
+                "changePercent",
+                "time"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "symbol",
+        "name",
+        "type",
+        "exchange",
+        "currency",
+        "marketState",
+        "price",
+        "change",
+        "changePercent",
+        "previousClose",
+        "open",
+        "dayLow",
+        "dayHigh",
+        "fiftyTwoWeekLow",
+        "fiftyTwoWeekHigh",
+        "volume",
+        "averageVolume",
+        "marketCap",
+        "trailingPE",
+        "forwardPE",
+        "dividendYield",
+        "eps",
+        "beta",
+        "analystTargetPrice",
+        "analystRecommendation",
+        "analystCount",
+        "sector",
+        "industry",
+        "time",
+        "delayedMinutes",
+        "preMarket",
+        "postMarket",
+        "url"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": true
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "yahoo_finance_search_symbols",
+    "title": "Search symbols",
+    "description": "Finds ticker symbols by company, fund or index name (e.g. \"commonwealth bank\", \"nasdaq\"). Use it to get the symbol get_quote needs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "limit": {
+          "default": 8,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "matches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "symbol": {
+                "type": "string"
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "exchange": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "sector": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "industry": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "symbol",
+              "name",
+              "type",
+              "exchange",
+              "sector",
+              "industry"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "matches"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": true
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  },
+  {
+    "name": "yahoo_finance_get_price_history",
+    "title": "Get price history",
+    "description": "Open, high, low, close and volume for one symbol over a range (1d to max) at an interval (5m to 1mo).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "symbol": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24,
+          "pattern": "^[A-Za-z0-9.^=-]+$"
+        },
+        "range": {
+          "default": "1mo",
+          "type": "string",
+          "enum": [
+            "1d",
+            "5d",
+            "1mo",
+            "3mo",
+            "6mo",
+            "1y",
+            "2y",
+            "5y",
+            "10y",
+            "ytd",
+            "max"
+          ]
+        },
+        "interval": {
+          "default": "1d",
+          "type": "string",
+          "enum": [
+            "5m",
+            "15m",
+            "30m",
+            "60m",
+            "1d",
+            "1wk",
+            "1mo"
+          ]
+        }
+      },
+      "required": [
+        "symbol"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "symbol": {
+          "type": "string"
+        },
+        "currency": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "exchange": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "range": {
+          "type": "string"
+        },
+        "interval": {
+          "type": "string"
+        },
+        "truncated": {
+          "type": "boolean"
+        },
+        "points": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "time": {
+                "type": "string"
+              },
+              "open": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "high": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "low": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "close": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "adjustedClose": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "volume": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "time",
+              "open",
+              "high",
+              "low",
+              "close",
+              "adjustedClose",
+              "volume"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "symbol",
+        "currency",
+        "exchange",
+        "range",
+        "interval",
+        "truncated",
+        "points"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": true
+    },
+    "execution": {
+      "taskSupport": "forbidden"
+    }
+  }
+]

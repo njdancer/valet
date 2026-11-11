@@ -1,0 +1,86 @@
+[
+  {
+    "start": 0,
+    "step": "Valet, live",
+    "text": "A fresh macOS machine, and a real website: Yahoo Finance. No account, no login.",
+    "end": 3.507
+  },
+  {
+    "start": 3.507,
+    "step": "1 · Install",
+    "text": "Install Valet from its disk image",
+    "end": 12.893
+  },
+  {
+    "start": 12.893,
+    "step": "2 · Set up",
+    "text": "First launch (with a debugging port only this test build accepts, so the script can drive it)",
+    "end": 16.956
+  },
+  {
+    "start": 16.956,
+    "step": "2 · Set up",
+    "text": "Setup walks through the shop adapter first. This run skips it: it is about a real site",
+    "end": 26.542
+  },
+  {
+    "start": 26.542,
+    "step": "2 · Set up",
+    "text": "Connect a chat app. Valet gives it a config that starts its own bridge, with no token in it",
+    "end": 35.544
+  },
+  {
+    "start": 35.544,
+    "step": "3 · Approve",
+    "text": "Now the Yahoo Finance adapter. Its tools stay hidden from every client until it is approved",
+    "end": 42.624
+  },
+  {
+    "start": 42.624,
+    "step": "3 · Approve",
+    "text": "The review: it reaches finance.yahoo.com and its API host only, reads only, and asks for no login",
+    "end": 49.883
+  },
+  {
+    "start": 49.883,
+    "step": "4 · Chat",
+    "text": "A chat app: a scripted stand-in for Claude that speaks real MCP",
+    "end": 61.617
+  },
+  {
+    "start": 61.617,
+    "step": "4 · Chat",
+    "text": "Connected through Valet’s bridge: 3 tools",
+    "end": 71.102
+  },
+  {
+    "start": 71.102,
+    "step": "4 · Chat",
+    "text": "The agent searches for a symbol. Valet fetches it live from Yahoo Finance",
+    "end": 73.534
+  },
+  {
+    "start": 73.534,
+    "step": "4 · Chat",
+    "text": "Then quotes: each is the stock’s page on finance.yahoo.com, read by Valet’s own browser",
+    "end": 74.341
+  },
+  {
+    "start": 74.341,
+    "step": "4 · Chat",
+    "text": "Valet spaces its requests to the site a few seconds apart, so this is unhurried on purpose",
+    "end": 79.581
+  },
+  {
+    "start": 79.581,
+    "step": "5 · Valet",
+    "text": "Back in Valet: every call is in its audited activity log",
+    "end": 88.326
+  },
+  {
+    "start": 88.326,
+    "step": "Valet, live",
+    "text": "End of the run",
+    "end": 91.971
+  }
+]

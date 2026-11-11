@@ -1,0 +1,53 @@
+[
+  {
+    "name": "yahoo_finance_search_symbols",
+    "args": {
+      "query": "commonwealth bank",
+      "limit": 5
+    },
+    "ok": false,
+    "text": "The tool failed at stage tool-run: internal."
+  },
+  {
+    "name": "yahoo_finance_get_quote",
+    "args": {
+      "symbol": "BHP.AX"
+    },
+    "ok": false,
+    "text": "The tool failed at stage tool-run: internal."
+  },
+  {
+    "name": "yahoo_finance_get_quote",
+    "args": {
+      "symbol": "CBA.AX"
+    },
+    "ok": false,
+    "text": "The tool failed at stage tool-run: internal."
+  },
+  {
+    "name": "yahoo_finance_get_quote",
+    "args": {
+      "symbol": "^GSPC"
+    },
+    "ok": false,
+    "text": "The tool failed at stage tool-run: internal."
+  },
+  {
+    "name": "yahoo_finance_get_quote",
+    "args": {
+      "symbol": "AUDUSD=X"
+    },
+    "ok": false,
+    "text": "The tool failed at stage tool-run: internal."
+  },
+  {
+    "name": "yahoo_finance_get_price_history",
+    "args": {
+      "symbol": "^GSPC",
+      "range": "1mo",
+      "interval": "1d"
+    },
+    "ok": false,
+    "text": "The tool failed at stage tool-run: internal."
+  }
+]
