@@ -32,21 +32,21 @@
         <span style="width:20px;height:20px;border-radius:50%;border:1.5px solid var(--wf-line-2);display:grid;place-items:center;font-size:10.5px;font-weight:700;flex:none;${markStyle}">${mark}</span>
         <div class="col" style="gap:0"><span style="${st === 'c' ? 'font-weight:600' : ''}">${title}</span><small class="${st === 'b' || st === 's' ? '' : 'faint'}" style="font-size:10.5px;${st === 'b' ? 'color:var(--wf-warn)' : st === 's' ? 'color:var(--wf-ink-2)' : ''}">${subs[i] || (st === 'd' ? 'Done' : st === 's' ? 'Skipped · waits in Needs you' : sub)}</small></div></div>`
     }).join('')
-  const setup = ({ states, subs, body, foot }) =>
+  const setup = ({ states, subs, body, foot, over = '' }) =>
     `<div class="wf-window">
       <div class="wf-titlebar"><span class="lights"><i></i><i></i><i></i></span><span class="grow" style="text-align:center;color:var(--wf-ink-2)">Set up Valet</span><span style="width:60px"></span></div>
       <div class="wf-body">
-        <aside class="wf-side" style="width:240px;padding:16px 10px;gap:2px">
+        <aside class="wf-side" style="width:224px;padding:16px 10px;gap:2px">
           <div class="grp" style="padding-top:0">Set up Valet · about 5 minutes</div>
           ${rail(states, subs)}
           <div class="grow"></div>
           <div class="foot" style="flex-direction:column;align-items:flex-start;gap:2px">Valet never pays.<span class="faint">Checkout is always you, on woolworths.com.au.</span></div>
         </aside>
         <main class="wf-main">
-          <div class="wf-scroll" style="padding:48px 44px 24px;gap:16px"><div class="col" style="gap:16px;max-width:820px;width:100%;margin:0 auto">${body}</div></div>
+          <div class="wf-scroll" style="padding:48px 44px 24px;gap:16px"><div class="col" style="gap:16px;max-width:760px;width:100%;margin:0 auto">${body}</div></div>
           <div class="sticky-foot" style="padding:12px 44px">${foot}</div>
         </main>
-      </div></div>`
+      </div>${over}</div>`
   const h = (title, lede) =>
     `<div class="col" style="gap:6px"><h2 style="font:600 24px/1.2 var(--f-head);margin:0">${title}</h2>${lede ? `<p class="muted" style="margin:0;font-size:13px;max-width:620px">${lede}</p>` : ''}</div>`
   const nav = (left, right) => `${left}<span class="grow"></span>${right}`
@@ -54,7 +54,7 @@
   const off = (label) =>
     `<span class="wf-btn lg" aria-disabled="true" style="color:var(--wf-ink-3);border-style:dashed">${label}</span>`
   const checkRow = (ok, text, extra = '') =>
-    `<div class="row" style="gap:10px"><span style="width:18px;text-align:center;font-weight:700;color:var(--wf-${ok === true ? 'ok' : ok === false ? 'bad' : 'ink-3'})">${ok === true ? '✓' : ok === false ? '✕' : '○'}</span><span class="grow">${text}</span>${extra}</div>`
+    `<div class="row" style="gap:10px"><span style="width:18px;text-align:center;font-weight:700;color:var(--wf-${ok === true ? 'ok' : ok === false ? 'bad' : 'ink-3'})">${ok === true ? '✓' : ok === false ? '✕' : ok === 'no' ? '–' : '○'}</span><span class="grow">${text}</span>${extra}</div>`
   const SUBS = {
     1: 'Connected',
     2: 'Approved 0.3.0',
@@ -240,10 +240,10 @@
           ${K.card(
             "It can't",
             `<div class="col" style="gap:6px">
-            ${checkRow(false, 'Pay, check out or use your card')}
-            ${checkRow(false, "Open sites other than Woolworths' own")}
-            ${checkRow(false, 'Type your password anywhere but auth.woolworths.com.au')}
-            ${checkRow(false, 'See your other 1Password items')}</div>`,
+            ${checkRow('no', 'Pay, check out or use your card')}
+            ${checkRow('no', "Open sites other than Woolworths' own")}
+            ${checkRow('no', 'Type your password anywhere but auth.woolworths.com.au')}
+            ${checkRow('no', 'See your other 1Password items')}</div>`,
           )}
         </div>` +
         `<div class="row muted" style="gap:10px;font-size:11.5px">Woolworths 0.3.0 · comes with Valet<span class="grow"></span>${K.link('See every request it may make')}</div>`,
@@ -305,8 +305,8 @@
             `<div class="col" style="gap:6px">
             ${checkRow(true, "Copies it once into this Mac's Keychain, with your OK in 1Password")}
             ${checkRow(true, 'Types it only on auth.woolworths.com.au')}
-            ${checkRow(false, 'Never shows it to Claude')}
-            ${checkRow(false, 'Never uses it on another site')}</div>`,
+            ${checkRow('no', 'Never shows it to Claude')}
+            ${checkRow('no', 'Never uses it on another site')}</div>`,
           )}
         </div>` +
         K.card('When Woolworths asks for a one-time code', codeChoices),
@@ -625,5 +625,401 @@
         'The exact item that appears in Needs you and the menu bar, same title and button (P9, P5).',
       ],
     ],
+  })
+
+  // ===================== v3: states on the order path (design G5) and dead ends (design G8) =====================
+  const pop = (x, y, w, inner) =>
+    `<div style="position:absolute;z-index:4;left:${x}px;top:${y}px;width:${w}px;background:var(--wf-paper);border:1px solid var(--wf-line-2);border-radius:10px;box-shadow:0 14px 34px var(--wf-shadow);padding:14px 16px;display:flex;flex-direction:column;gap:10px">${inner}</div>`
+  const scrimSheet = (title, body, footer) =>
+    `<div class="wf-scrim"></div><div class="wf-sheet"><header><h3>${title}</h3><span class="grow"></span>${K.icon('✕')}</header><div class="body">${body}</div><footer>${footer}</footer></div>`
+  const busy = (label) =>
+    `<span class="wf-btn lg primary" aria-disabled="true" style="opacity:.85">◌ ${label}</span>`
+  const opHead = h(
+    'Where your Woolworths password comes from',
+    "Valet copies your Woolworths login from 1Password once, with your approval there, and keeps it in this Mac's Keychain so it works while 1Password is locked.",
+  )
+  const loginHead = h(
+    'Which Woolworths login should Valet use?',
+    'These are the logins for woolworths.com.au in your 1Password Personal vault.',
+  )
+
+  // 1Password: waiting for the approval in 1Password
+  FRAMES.push({
+    id: 'setup-1password-waiting',
+    group: 'Setup',
+    title: '1Password, waiting for your OK in 1Password',
+    personas: ['P2', 'P5'],
+    desc: 'After "Connect 1Password": 1Password shows its own approval (Touch ID or password). Valet says where to look and what happens if it is declined, and waits without a time limit.',
+    html: setup({
+      states: ['d', 'c'],
+      subs: { 1: 'Waiting for 1Password' },
+      body:
+        opHead +
+        K.card(
+          '1Password',
+          `${K.health('info', '<b>Approve Valet in 1Password.</b> 1Password is asking you, with Touch ID or your password, whether Valet may connect.', K.btn('Show 1Password'))}
+           <div class="col" style="gap:6px;padding:4px 2px">
+             ${checkRow(true, '1Password 8 is installed')}
+             ${checkRow(null, '◌ Waiting for your OK in 1Password')}
+             ${checkRow(null, 'Find your Woolworths login (after the step above)')}
+           </div>
+           <div class="faint" style="font-size:11px;padding-left:30px">If you decline in 1Password, nothing is copied and this step offers the other ways.</div>`,
+          K.badge('Waiting for you', 'info'),
+        ),
+      foot: nav(K.btn('Back'), `${K.ghost('Cancel')}${busy('Connecting…')}`),
+    }),
+    notes: [
+      [
+        1100,
+        230,
+        'Names the other app and the exact thing it will ask, so Sam looks there (P2). Show 1Password brings it forward if it is hidden.',
+      ],
+      [
+        460,
+        300,
+        'The waiting line is a polite live region, announced once (P5). No timer: 1Password decides.',
+      ],
+      [880, 741, 'The primary shows progress and is not a second Connect; Cancel stops waiting.'],
+    ],
+  })
+
+  // "Which one?" popover (G8)
+  FRAMES.push({
+    id: 'setup-which-one',
+    group: 'Setup',
+    title: '1Password: "Which one?" shows the item it found',
+    personas: ['P2', 'P3'],
+    desc: 'The "Which one?" link on the 1Password check opens a popover naming the exact item, so Sam can tell it apart before the login step. Esc or clicking outside closes it, back on the link.',
+    html: setup({
+      states: ['d', 'c'],
+      subs: { 1: 'Where passwords come from' },
+      body:
+        opHead +
+        K.card(
+          '1Password',
+          `${K.health('ok', '<b>Connected to 1Password.</b> Checked at 8:06 pm.', K.ghost('Check again'))}
+           <div class="col" style="gap:6px;padding:4px 2px">
+             ${checkRow(true, '1Password 8 is installed and unlocked')}
+             ${checkRow(true, '"Integrate with other apps" is on')}
+             ${checkRow(true, 'Valet can see 1 login for woolworths.com.au, in your Personal vault', `<span class="wf-link" style="outline:2px solid var(--wf-act);outline-offset:2px">Which one?</span>`)}
+           </div>`,
+          K.badge('Connected', 'ok'),
+        ),
+      foot: nav(K.btn('Back'), lg('Continue', 'primary')),
+      over: pop(
+        700,
+        330,
+        360,
+        `<b>The login Valet found</b>
+         ${K.kv([
+           ['Item', '“Woolworths”'],
+           ['Vault', 'Personal'],
+           ['Username', K.value('sam@example.com')],
+           ['Website', K.value('woolworths.com.au')],
+           ['Last used', '3 days ago'],
+         ])}
+         <span class="faint" style="font-size:11px">Valet has not copied anything yet. You choose the login in the next step, and can pick another item there.</span>
+         <div class="row"><span class="grow"></span>${K.btn('Open in 1Password')}</div>`,
+      ),
+    }),
+    notes: [
+      [
+        1080,
+        340,
+        'Names the item the way 1Password does, with the username as a value, never the password (P3).',
+      ],
+      [1080, 520, 'Says nothing was copied yet: choosing is the next step (P2 M3).'],
+    ],
+  })
+
+  // Login: 1Password locked
+  FRAMES.push({
+    id: 'setup-login-locked',
+    group: 'Setup',
+    title: 'Your login: 1Password is locked',
+    personas: ['P2', 'P7'],
+    desc: 'Valet needs 1Password unlocked to list items and make the copy. It says so, opens 1Password, and checks again when Valet regains focus. Earlier steps are untouched.',
+    html: setup({
+      states: ['d', 'd', 'd', 'c'],
+      subs: sub(1, 2),
+      body:
+        loginHead +
+        K.card(
+          '',
+          `${K.health('warn', '<b>1Password is locked.</b> Unlock it to see your Woolworths logins. Valet checks again when you come back.', K.primary('Unlock 1Password'))}
+           <div class="col" style="gap:10px;padding-top:4px">${K.lines(2)}</div>`,
+        ) +
+        `<div class="faint" style="font-size:11.5px">Once Valet has its Keychain copy, calls work while 1Password is locked. Only choosing and re-syncing need it unlocked.</div>`,
+      foot: nav(
+        K.btn('Back'),
+        `${K.ghost('Skip for now')}${off('Use this login')}<span class="faint" style="font-size:11px">Unlock 1Password first</span>`,
+      ),
+    }),
+    notes: [
+      [1100, 220, 'The only primary on the page is the fix. Valet re-checks on focus, so no Retry (P2).'],
+      [
+        700,
+        330,
+        'Says why locked matters only now, so Sam is not afraid of locking 1Password later (story: Keychain copy).',
+      ],
+      [880, 741, 'Use this login stays focusable while disabled and says why beside it (P5).'],
+    ],
+  })
+
+  // Login: loading, then waiting for the OK in 1Password
+  FRAMES.push({
+    id: 'setup-login-waiting',
+    group: 'Setup',
+    title: 'Your login: loading items, then waiting for the copy',
+    personas: ['P2', 'P5'],
+    desc: 'Two moments in one frame. While Valet lists items, the list shows placeholder rows. After "Use this login", 1Password asks Sam to approve the one-time copy; the step waits for it and says what it is copying.',
+    html: setup({
+      states: ['d', 'd', 'd', 'c'],
+      subs: { ...sub(1, 2), 3: 'Waiting for 1Password' },
+      body:
+        loginHead +
+        `<div class="grid2">
+          ${K.card('Loading (the first second)', `<div class="col" style="gap:12px">${K.lines(3)}<span class="faint" style="font-size:11px">Looking in your Personal vault…</span></div>`)}
+          ${K.card('After Use this login', `<div class="col" style="gap:8px">${K.health('info', "<b>Approve the copy in 1Password.</b> Valet copies “Woolworths” (sam@example.com) into this Mac's Keychain once.", K.btn('Show 1Password'))}<span class="faint" style="font-size:11px">If you decline, nothing is copied and you stay on this step.</span></div>`)}
+        </div>`,
+      foot: nav(K.btn('Back'), busy('Waiting for 1Password…')),
+    }),
+    notes: [
+      [
+        380,
+        230,
+        'Placeholder rows, not a spinner on an empty card; the layout does not jump when items arrive (layout audit).',
+      ],
+      [960, 230, 'Names the item and username being copied, never the password (P3).'],
+      [880, 741, 'Progress stays on the same button; Back still works (P5).'],
+    ],
+  })
+
+  // Login: no matching item
+  FRAMES.push({
+    id: 'setup-login-none',
+    group: 'Setup',
+    title: 'Your login: no Woolworths login in 1Password',
+    personas: ['P2'],
+    desc: 'No item in the Personal vault has woolworths.com.au. Three ways on: look in all vaults, type the password once, or skip (waits in Needs you as "Give Valet your Woolworths login").',
+    html: setup({
+      states: ['d', 'd', 'd', 'c'],
+      subs: sub(1, 2),
+      body:
+        loginHead +
+        K.card(
+          '',
+          `${K.health('warn', '<b>No login for woolworths.com.au in your Personal vault.</b> Checked at 8:13 pm.', K.ghost('Check again'))}
+           <div class="col" style="gap:10px;padding-top:6px">
+             ${K.radio('<b>Choose another item…</b> <span class="muted">· search every vault Valet can see</span>', true)}
+             ${K.radio('<b>Type your Woolworths password once</b> <span class="muted">· kept in this Mac\'s Keychain</span>')}
+             ${K.radio('<b>Skip for now</b> <span class="muted">· Claude can\'t use Woolworths until you choose; it waits in Needs you</span>')}
+           </div>`,
+        ),
+      foot: nav(K.btn('Back'), lg('Choose another item…', 'primary')),
+    }),
+    notes: [
+      [
+        1100,
+        220,
+        'Says where Valet looked and when, so Sam knows to save the login in 1Password or pick another vault.',
+      ],
+      [1100, 330, 'The skip wording is the Needs you title word for word (story words).'],
+    ],
+  })
+
+  // "Choose another item…" sheet (G8)
+  FRAMES.push({
+    id: 'setup-choose-item',
+    group: 'Setup',
+    title: 'Your login: "Choose another item…"',
+    personas: ['P2', 'P3', 'P5'],
+    desc: 'Opens a sheet over the login step: search every vault Valet can see. An item saved for another site says so. Cancel or Esc returns to the step with focus on the link.',
+    html: setup({
+      states: ['d', 'd', 'd', 'c'],
+      subs: sub(1, 2),
+      body: loginHead + K.card('', K.lines(4)),
+      foot: nav(K.btn('Back'), lg('Use this login', 'primary')),
+      over: scrimSheet(
+        'Choose a 1Password item',
+        `${K.search('Search 1Password')}
+         <div class="col" style="gap:10px">
+           ${K.radio('<b>Woolworths</b> <span class="muted">· sam@example.com · Personal</span>', true)} 
+           ${K.radio('<b>Woolworths (old)</b> <span class="muted">· sam.old@example.com · Personal</span>')}
+           <div class="row" style="gap:8px">${K.radio('<b>Everyday Rewards</b> <span class="muted">· sam@example.com · Shared</span>')}<span class="grow"></span>${K.badge('Another site', 'warn')}</div>
+         </div>
+         <span class="faint" style="font-size:11px">“Everyday Rewards” is saved for woolworthsrewards.com.au. Valet types a login only on auth.woolworths.com.au, so check it's the same account.</span>`,
+        `<span class="grow"></span>${K.btn('Cancel')}${K.primary('Use “Woolworths”')}`,
+      ),
+    }),
+    notes: [
+      [790, 160, 'Same search and the same "Another site" warning as the grant sheet (one component, P3).'],
+      [700, 305, 'The primary names the chosen item; Return chooses it, Esc cancels (P5).'],
+    ],
+  })
+
+  // Store: searching, none, site error
+  FRAMES.push({
+    id: 'setup-store-states',
+    group: 'Setup',
+    title: 'Your store: searching, no stores, site error',
+    personas: ['P2', 'P6'],
+    desc: 'Three states of the same results card. Searching keeps the field and shows placeholder rows. No stores says what was searched and suggests a suburb. A Woolworths error says it is Woolworths, not Sam, and Skip stays safe.',
+    html: setup({
+      states: ['d', 'd', 'd', 'd', 'c'],
+      subs: sub(1, 2, 3),
+      body:
+        h('Which Woolworths do you shop at?', "Prices and what's in stock depend on the store.") +
+        `<div class="row">${K.input('2000', '260px')}<span class="wf-btn" aria-disabled="true">◌ Finding stores…</span></div>` +
+        K.card('Searching', K.lines(3)) +
+        K.card(
+          'No stores',
+          `${K.health('idle', '<b>Woolworths found no stores for “2999”.</b> Try a suburb name or a nearby postcode.', '')}`,
+        ) +
+        K.card(
+          'Woolworths error',
+          `${K.health('warn', "<b>Woolworths didn't answer the store search.</b> It may be busy. Valet tried at 8:13 pm.", K.btn('Try again'))}<span class="faint" style="font-size:11px">Skipping is fine: Woolworths uses its default store until you choose one on the Woolworths page.</span>`,
+        ),
+      foot: nav(K.btn('Back'), `${K.ghost('Skip for now')}${off('Shop at a store')}`),
+    }),
+    notes: [
+      [700, 200, 'The button shows progress and the field keeps its text (P2).'],
+      [
+        700,
+        360,
+        'No stores and the error are told apart: one is the search, the other is Woolworths (P6 vocabulary: site-changed vs limiting).',
+      ],
+    ],
+  })
+
+  // Connect: config write failed, restart failed
+  FRAMES.push({
+    id: 'setup-connect-failed',
+    group: 'Setup',
+    title: 'Connect Claude: Valet could not add itself, or restart failed',
+    personas: ['P2', 'P1'],
+    desc: 'Two failures on the Claude Desktop card. If writing its settings fails, Valet says which file and offers to copy the settings to paste by hand. If the restart fails, it asks Sam to quit and reopen Claude Desktop and checks again.',
+    html: setup({
+      states: ['d', 'd', 'd', 'd', 'd', 'c'],
+      subs: sub(1, 2, 3, 4),
+      body:
+        h('Which Claude do you use?', 'Valet found Claude Desktop on this Mac.') +
+        K.card(
+          'Claude Desktop · settings',
+          `${K.health('bad', "<b>Valet couldn't add itself to Claude Desktop.</b> Its settings file can't be changed.", K.primary('Try again'))}
+           <div class="row" style="gap:8px">${K.value('~/Library/Application Support/Claude/claude_desktop_config.json')}</div>
+           <span class="faint" style="font-size:11.5px">Or add Valet by hand: ${K.link('Copy the settings to paste')} · ${K.link('Show the file in Finder')}</span>`,
+          K.badge('Not added', 'bad'),
+        ) +
+        K.card(
+          'Claude Desktop · restart',
+          `${K.health('warn', "<b>Claude Desktop didn't restart.</b> Quit it (Claude › Quit) and open it again. Valet checks when it's back.", K.btn('Open Claude Desktop'))}`,
+          K.badge('Added', 'ok'),
+        ),
+      foot: nav(K.btn('Back'), `${K.ghost('Skip for now')}${off('Continue')}`),
+    }),
+    notes: [
+      [
+        1100,
+        220,
+        'Names the file as a selectable value and offers the manual way, so P1 can fix it and Sam can ask for help.',
+      ],
+      [1100, 400, 'Restart failure gives the exact menu words and re-checks by itself (P2).'],
+    ],
+  })
+
+  // "See every request it may make" (G8): a page inside setup with a way back
+  FRAMES.push({
+    id: 'setup-approve-requests',
+    group: 'Setup',
+    title: 'Approve Woolworths: every request it may make',
+    personas: ['P3', 'P2', 'P4'],
+    desc: 'The link on the Approve step opens the full first-install review as a page inside the setup window, not the main window. The breadcrumb and "Back to setup" return to the Approve step with focus on the link.',
+    html: setup({
+      states: ['d', 'd', 'c'],
+      subs: sub(1),
+      body:
+        `<div class="wf-crumbs"><span>Set up Valet</span><i>›</i><span>Approve Woolworths</span><i>›</i><span>Every request</span></div>` +
+        h(
+          'Every request Woolworths 0.3.0 may make',
+          'Valet blocks anything not on this list and shows it in Calls.',
+        ) +
+        K.table(
+          ['Request', 'Web address', 'Used by', 'Does'],
+          [
+            [K.value('GET /api/v3/ui/trolley'), 'woolworths.com.au', 'Get cart', K.badge('Reads', 'read')],
+            [
+              K.value('POST /api/v3/ui/trolley/update'),
+              'woolworths.com.au',
+              'Add, change, remove',
+              K.badge('Changes cart', 'write'),
+            ],
+            [
+              K.value('GET /apis/ui/Search/products'),
+              'woolworths.com.au',
+              'Search products',
+              K.badge('Reads', 'read'),
+            ],
+            [
+              K.value('GET /apis/ui/StoreLocator/Stores'),
+              'woolworths.com.au',
+              'Shop at your store',
+              K.badge('Reads', 'read'),
+            ],
+            [K.value('POST /login'), 'auth.woolworths.com.au', 'Logging in', K.badge('Login', 'secret')],
+          ],
+          { cols: '1.6fr 1.2fr 1fr .8fr' },
+        ) +
+        `<div class="faint" style="font-size:11.5px">The same list is on the Woolworths page under Permissions after setup.</div>`,
+      foot: nav(K.btn('‹ Back to setup'), `${lg('Approve Woolworths', 'primary')}`),
+    }),
+    notes: [
+      [
+        386,
+        99,
+        'A breadcrumb back to the step; Esc and ⌘[ do the same (G8). The rail stays, so Sam is never lost.',
+      ],
+      [700, 330, 'Requests are values; the "Does" column is the same risk badges as Permissions (P3, P4).'],
+      [940, 741, 'Approve is offered here too, so reading the list is not a detour (P3).'],
+    ],
+  })
+
+  // "How to check" (G8)
+  FRAMES.push({
+    id: 'setup-test-how',
+    group: 'Setup',
+    title: 'Test it: "How to check"',
+    personas: ['P2'],
+    desc: 'The "How to check" link on the failed test opens a popover with the three clicks in Claude Desktop, in its own menu words, and what Sam should see.',
+    html: setup({
+      states: ['d', 'd', 'd', 'd', 'd', 'd', 'c'],
+      subs: sub(1, 2, 3, 4, 5),
+      body:
+        h('Try it: ask Claude one question', 'Open Claude Desktop and ask:') +
+        K.card(
+          'No call from Claude yet',
+          `${K.health('warn', "<b>Valet hasn't heard from Claude Desktop</b> since you added it at 8:15 pm. Waited 60 s.", K.ghost('Keep waiting'))}
+           <div class="col" style="gap:8px">
+            ${checkRow(true, 'Valet is ready: Woolworths approved, login and store chosen')}
+            ${checkRow(null, 'Claude Desktop shows "valet" under Settings › Connectors', `<span class="wf-link" style="outline:2px solid var(--wf-act);outline-offset:2px">How to check</span>`)}
+           </div>`,
+          K.badge('Waiting', 'warn'),
+        ),
+      foot: nav(K.btn('Back'), `${K.ghost('Skip the test')}${off('Continue')}`),
+      over: pop(
+        690,
+        300,
+        380,
+        `<b>Check Claude Desktop has Valet</b>
+         <div class="col" style="gap:4px">
+           <span>1. In Claude Desktop, open <b>Settings</b> (⌘,).</span>
+           <span>2. Choose <b>Connectors</b>.</span>
+           <span>3. Look for <b>valet</b> with a green dot.</span>
+         </div>
+         <span class="faint" style="font-size:11px">Not there? Restart Claude Desktop. Red dot? ${K.link('Copy the details for help')}</span>
+         <div class="row"><span class="grow"></span>${K.btn('Open Claude Desktop')}</div>`,
+      ),
+    }),
+    notes: [[1080, 320, "Steps in Claude Desktop's own words, and the one thing to look for (P2)."]],
   })
 })()

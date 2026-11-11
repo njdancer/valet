@@ -105,7 +105,7 @@
     [
       `${K.avatar('W')}<b>Woolworths</b>`,
       `<span>login for ${ver('0.4.0')}</span>`,
-      '<span class="faint">Not given yet</span>',
+      K.badge('Not given yet', 'idle'),
       mono('auth.woolworths.com.au'),
       ver('0.4.0'),
       '—',
@@ -172,7 +172,7 @@
       crumbs: ['Secrets', 'Logins Valet may use'],
       title: 'Woolworths login',
       status: K.badge('Ready', 'ok'),
-      actions: K.btn('Re-sync from 1Password') + K.danger('Revoke…'),
+      actions: K.btn('Re-sync from 1Password') + K.dangerSoft('Revoke…'),
     })}
     <div class="wf-scroll">
       <div class="grid2" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr)">
@@ -253,7 +253,7 @@
      <div>Next time Woolworths logs Valet out, calls stop with “Give Valet your Woolworths login” in Needs you until you choose one again.</div>
      ${K.check('Also log Valet out of Woolworths now', true)}
      <div>The waiting call 9A71 is declined. This can't be undone.</div>`,
-    `<span class="grow"></span>${K.btn('Cancel')}<span class="wf-btn" style="background:var(--wf-bad);color:#fff;border-color:var(--wf-bad)">Revoke login</span>`,
+    `<span class="grow"></span>${K.btn('Cancel')}${K.danger('Revoke login')}`,
   )
 
   FRAMES.push({

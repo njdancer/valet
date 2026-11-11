@@ -12,7 +12,7 @@ yet, and every choice Nick hasn't answered is marked as an assumption.
 2. [`information-architecture.md`](information-architecture.md): the decided IA: six places, routes,
    principles, Needs you item types, shared vocabulary with tool results, link matrix, navigation
    map, assumptions and open questions for Nick.
-3. [`wireframes/`](wireframes/): every page and state (87 frames), as one page. Open
+3. [`wireframes/`](wireframes/): every page and state (100 frames), as one page. Open
    `wireframes/index.html`, or the published copy. `wireframes/story.md` is the one consistent world
    all frames share.
 4. [`component-inventory.md`](component-inventory.md): every wireframe element mapped to the
@@ -37,3 +37,29 @@ node docs/ux/wireframes/build.mjs     # template.html + kit + intro + frames/*.j
 ```
 
 Each frame file pushes frames with notes; `kit.js` and `kit.css` are the shared vocabulary.
+
+## v3 (aligned with the design system)
+
+After the design thread mapped v2 onto `@valet/ui` (`docs/design-system-mapping.md`), the
+wireframes take the library's answer wherever the two disagreed:
+
+- Reassurance lists ("It can't…", "Never shows it to Claude") and "can't" rows in Permissions use a
+  neutral mark, not red (M24).
+- Sizes: setup rail 224 and column 760 (M34); Settings 760 (M26); sheets 560 and 720; palette 600 (M2).
+- The code diff is a page inside the review (`#/sites/<id>/versions/<hash>/review/diff`), not a
+  window-wide sheet (M2).
+- Danger: `K.danger` is solid and only confirms what can't be undone (Reset access, Revoke, Reset
+  Valet); the buttons that open those dialogs are `K.dangerSoft` (M17, M31).
+- "Limited by site" is a warning, not a failure (M32).
+- Totals and counts are text, not badges; the Needs you deadline is a deadline chip (M21, M22); the
+  0.4.0 login row is full contrast with "Not given yet" (M20); "Traces kept 14 days" is text with a
+  Change link (M29).
+- Deadlines use the library's words: "2 min · until 9:50 pm", then seconds when urgent (M19).
+- One toast rule: 10 s, held while hovered or focused, Alt+T reaches it, ⌘Z while an Undo toast
+  shows (M15).
+
+New frames for the order path (G5): `setup-1password-waiting`, `setup-login-locked`,
+`setup-login-waiting`, `setup-login-none`, `setup-store-states`, `setup-connect-failed`,
+`confirm-allow-failed`, `confirm-answered-elsewhere`, `login-handoff-checking`. The setup dead ends
+(G8) now go somewhere: `setup-approve-requests`, `setup-which-one`, `setup-choose-item`,
+`setup-test-how`.

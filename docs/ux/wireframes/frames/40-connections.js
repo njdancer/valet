@@ -258,7 +258,7 @@
       crumbs: ['Connections', 'Apps on this Mac'],
       title: 'Claude Code',
       status: K.badge('Connected · 1 session', 'ok'),
-      actions: K.btn('Reset access…') + K.danger('Revoke…'),
+      actions: K.btn('Reset access…') + K.dangerSoft('Revoke…'),
     })}
     <div class="wf-scroll">
       <div class="grid2" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr)">
@@ -399,7 +399,7 @@
     `<div>Claude Code gets a new token and <b>the old one stops working at once</b>. Use this if you think the token leaked.</div>
      <div>Its open session ends and its 2 waiting calls (7F2A, 9A71) are declined. The Valet bridge reads the new token from Claude Code's config file and reconnects by itself; nothing to set up again.</div>
      <div>This can't be undone. To cut Claude Code off completely, use Revoke.</div>`,
-    `<span class="grow"></span>${K.btn('Cancel')}${K.primary('Reset access')}`,
+    `<span class="grow"></span>${K.btn('Cancel')}${K.danger('Reset access')}`,
   )
 
   FRAMES.push({
@@ -434,7 +434,7 @@
       title: 'Claude (claude.ai)',
       status: K.badge('Connected', 'ok'),
       sub: `Calls itself “Claude (claude.ai)” <i>(not verified)</i> · approved 9:50 pm from ${mono('203.0.113.24')} · a later moment than the story`,
-      actions: K.btn('Reset access…') + K.danger('Revoke…'),
+      actions: K.btn('Reset access…') + K.dangerSoft('Revoke…'),
     })}
     <div class="wf-scroll">
       <div class="grid2" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr)">

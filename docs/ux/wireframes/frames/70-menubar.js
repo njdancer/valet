@@ -99,9 +99,9 @@
     html: pop(`
       ${head('4 things need you · next ends 9:50 pm', 'warn', pauseBtn)}
       ${sec('Needs you', '<span class="wf-alert" style="margin:0">4</span>')}
-      ${row('?', 'Confirm: Remove from cart (Woolworths)', 'Asked by Claude Code at 9:48 pm', due('1:42', '9:50 pm', 'Answer'), { focus: true, urgent: true })}
-      ${row('⇄', 'Approve a connection', 'Asked 9:47 pm from 203.0.113.24 · calls itself "Claude (claude.ai)", not verified', due('4:10', '9:52 pm', 'Open'))}
-      ${row('→', 'Log in to Woolworths (verification check)', 'Login window is open · for Claude Code', due('14:10', '10:02 pm', 'Show login window'))}
+      ${row('?', 'Confirm: Remove from cart (Woolworths)', 'Asked by Claude Code at 9:48 pm', due('2 min', '9:50 pm', 'Answer'), { focus: true, urgent: true })}
+      ${row('⇄', 'Approve a connection', 'Asked 9:47 pm from 203.0.113.24 · calls itself "Claude (claude.ai)", not verified', due('4 min', '9:52 pm', 'Open'))}
+      ${row('→', 'Log in to Woolworths (verification check)', 'Login window is open · for Claude Code', due('14 min', '10:02 pm', 'Show login window'))}
       <div class="row" style="padding:4px 16px;flex:none;gap:6px"><span class="faint">+1 more:</span>${K.link('Review the Woolworths update (0.4.0)')}</div>
       <div class="muted" style="padding:2px 16px 4px;flex:none;font-size:11px">${K.link('Missed (1)')} Missed: Confirm: Remove from cart (Woolworths) · 6:12 pm</div>
       ${sites([
@@ -239,7 +239,7 @@
       <div class="row muted" style="padding:4px 8px;font-size:10px;flex:none;flex-wrap:wrap">${K.dot('warn')} 4 things need you</div>
       <div style="margin:2px 6px;padding:5px 6px;border-radius:6px;outline:2px solid var(--wf-act);outline-offset:-2px;background:var(--wf-sel);flex:none">
         <b style="font-size:11px;line-height:1.25;display:block">Confirm: Remove from cart (Woolworths)</b>
-        <span class="wf-count" style="font-size:11px">1:42</span><small class="faint" style="font-size:9px"> until 9:50 pm</small>
+        <span class="wf-count" style="font-size:11px">2 min</span><small class="faint" style="font-size:9px"> · until 9:50 pm</small>
         <div style="font-size:10px;color:var(--wf-link);font-weight:600">Answer ›</div></div>
       <div style="padding:4px 8px;flex:none;font-size:10.5px">${K.link('+3 more in Valet')}</div>
       <div style="padding:2px 8px;flex:none;font-size:10px">${K.link('Missed (1)')}</div>

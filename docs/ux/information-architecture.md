@@ -64,6 +64,7 @@ Valet window
 │       ├─ Permissions                #/sites/<id>/permissions  hosts, login pages, request surface, limits
 │       ├─ Versions                   #/sites/<id>/versions     pending update, history, compare, restore
 │       │   └─ Review update          #/sites/<id>/versions/<hash>/review   full page in the shell
+│       │       └─ Code changes       #/sites/<id>/versions/<hash>/review/diff   page with Back to the review
 │       └─ Calls                      #/activity/calls?site=<id>   (link, not a copy)
 │       sheets: Give Valet your login (grant) · Choose store · Remove site (dialog)
 ├─ Activity

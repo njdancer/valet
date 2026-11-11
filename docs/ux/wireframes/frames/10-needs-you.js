@@ -8,14 +8,14 @@
   const waiting = `
     ${K.header({
       title: 'Needs you',
-      status: K.badge('4 waiting · next ends in 1:42', 'warn'),
+      status: `<span class="muted">4 waiting · next ends</span> ${K.countdown('2 min', '9:50 pm')}`,
       actions: K.ghost('Notification settings'),
     })}
     <div class="wf-scroll">
       <div class="col">
-        ${K.inbox('?', 'Confirm: Remove from cart (Woolworths)', `Claude Code asked at 9:48 pm · call ${K.link('7F2A')}`, K.countdown('1:42', '9:50 pm'), K.primary('Answer…'), 'urgent')}
-        ${K.inbox('⇄', 'Approve a connection', 'Asked 9:47 pm from 203.0.113.24 · calls itself "Claude (claude.ai)" (not verified)', K.countdown('4:10', '9:52 pm'), K.btn('Decline') + K.btn('Approve…'))}
-        ${K.inbox('→', 'Log in to Woolworths (verification check)', `A check only you can do · call ${K.link('9A71')} get_cart for ${K.link('Claude Code')}`, K.countdown('14:10', '10:02 pm'), K.btn('Show login window'))}
+        ${K.inbox('?', 'Confirm: Remove from cart (Woolworths)', `Claude Code asked at 9:48 pm · call ${K.link('7F2A')}`, K.countdown('2 min', '9:50 pm'), K.primary('Answer…'), 'urgent')}
+        ${K.inbox('⇄', 'Approve a connection', 'Asked 9:47 pm from 203.0.113.24 · calls itself "Claude (claude.ai)" (not verified)', K.countdown('4 min', '9:52 pm'), K.btn('Decline') + K.btn('Approve…'))}
+        ${K.inbox('→', 'Log in to Woolworths (verification check)', `A check only you can do · call ${K.link('9A71')} get_cart for ${K.link('Claude Code')}`, K.countdown('14 min', '10:02 pm'), K.btn('Show login window'))}
         ${K.inbox('↑', 'Review the Woolworths update (0.4.0)', 'Adds 1 host, 1 read tool · calls use 0.3.0 until you approve', '', K.btn('Review update'))}
       </div>
       <div class="row faint" style="margin-top:8px"><span class="h3" style="color:var(--wf-ink-2)">Missed in the last 24 hours</span></div>
@@ -123,7 +123,7 @@
     'Approve a connection',
     `<div class="wf-banner warn"><div class="grow"><b>If you didn't start this, decline it.</b> Approving lets this agent call the tools you tick, from anywhere, until you remove it.</div></div>
      ${K.kv([
-       ['Asked', '9:47 pm · ends 9:52 pm ' + K.countdown('4:10', '9:52 pm')],
+       ['Asked', '9:47 pm · ends 9:52 pm ' + K.countdown('4 min', '9:52 pm')],
        ['From', K.value('203.0.113.24')],
        ['Calls itself', '"Claude (claude.ai)" <span class="faint">· not verified</span>'],
      ])}
@@ -169,7 +169,7 @@
     ],
   })
   const more = `
-    ${K.header({ title: 'Needs you', status: K.badge('5 waiting · none time-limited', 'idle') })}
+    ${K.header({ title: 'Needs you', status: '<span class="muted">5 waiting · none time-limited</span>' })}
     <div class="wf-scroll"><div class="col">
       ${K.inbox('!', 'Woolworths changed: the adapter needs an update', `Call ${K.link('6B3E')} search_products failed at 8:05 pm · the authoring agent has a repair ticket`, '', K.btn('See what broke'))}
       ${K.inbox('⚿', 'Give Valet your Woolworths login', 'Woolworths can search without it; cart tools wait for a login', '', K.btn('Choose login…'))}
