@@ -247,6 +247,7 @@ describe('activity and run traces', () => {
     const list = await screen.findByRole('list', { name: 'Tool calls' })
     expect(list.querySelectorAll('li')).toHaveLength(runs.length)
     expect(screen.getAllByText(/Read the trolley on Woolworths/).length).toBeGreaterThan(0)
+    expect(screen.getByText(/Searched products: “milk” on Woolworths/)).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Needed you' }))
     const needing = runs.filter((r) => r.outcome === 'needsUser').length
     expect(list.querySelectorAll('li')).toHaveLength(needing)

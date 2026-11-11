@@ -9,6 +9,7 @@ import { useLoad, useNow } from '../lib/api-context'
 import { formatBytes, formatDuration, formatTime, hostOf, plural } from '../lib/format'
 import { href } from '../lib/router'
 import {
+  askedToRetry,
   blockedExplanation,
   blockedWording,
   clientClaim,
@@ -51,6 +52,44 @@ function matchesOutcome(run: RunSummary, filter: OutcomeFilter): boolean {
   }
 }
 
+/** How soon after a retry answer a call counts as its retry. */
+const RETRY_WINDOW_MS = 5 * 60_000
+
+interface ListedRun {
+  readonly run: RunSummary
+  /** Earlier calls from the same client to the same tool that were asked to retry, folded in. */
+  readonly retries: number
+}
+
+/**
+ * F12: a call answered "call again" (a login was already running, or the adapter was busy) is
+ * folded into the next call from the same client to the same tool within a few minutes, so the list
+ * shows one line for what the agent did. A retry with no such follow-up stays as its own line.
+ */
+export function foldRetries(newestFirst: readonly RunSummary[]): ListedRun[] {
+  const folded = new Map<string, number>()
+  const hidden = new Set<string>()
+  // Oldest first, so a chain of retry answers carries its count forward to the call that ended it.
+  for (let index = newestFirst.length - 1; index >= 0; index--) {
+    const run = newestFirst[index] as RunSummary
+    if (!askedToRetry(run)) continue
+    const started = Date.parse(run.startedAt)
+    for (let i = index - 1; i >= 0; i--) {
+      const later = newestFirst[i] as RunSummary
+      if (Date.parse(later.startedAt) - started > RETRY_WINDOW_MS) break
+      if (later.adapterId !== run.adapterId || later.tool !== run.tool || later.client !== run.client)
+        continue
+      folded.set(later.callId, (folded.get(later.callId) ?? 0) + 1 + (folded.get(run.callId) ?? 0))
+      folded.delete(run.callId)
+      hidden.add(run.callId)
+      break
+    }
+  }
+  return newestFirst
+    .filter((run) => !hidden.has(run.callId))
+    .map((run) => ({ run, retries: folded.get(run.callId) ?? 0 }))
+}
+
 /** The number of calls the list loads; older ones are in the Audit log. */
 const LIST_LIMIT = 200
 
@@ -72,8 +111,8 @@ function ActivityList() {
         {(list) => {
           if (list.length === 0) return <div className="empty">No tool calls yet.</div>
           const clients = [...new Set(list.map((run) => run.client))]
-          const shown = list.filter(
-            (run) => matchesOutcome(run, outcome) && (client === '' || run.client === client),
+          const shown = foldRetries(list).filter(
+            ({ run }) => matchesOutcome(run, outcome) && (client === '' || run.client === client),
           )
           return (
             <div className="content scroll stack gap-3" style={{ alignContent: 'start' }}>
@@ -100,13 +139,20 @@ function ActivityList() {
                   <div className="empty">No calls match these filters.</div>
                 ) : (
                   <ul className="activity-list" aria-label="Tool calls">
-                    {shown.map((run) => (
+                    {shown.map(({ run, retries }) => (
                       <li key={run.callId}>
                         <a className="activity-row" href={href.activity(run.callId)}>
                           <span className={`dot ${runTone(run) || 'tertiary'}`} />
                           <span className="grow truncate">
-                            {toolPhrase(run.tool)} on {run.adapterName}
+                            {toolPhrase(run.tool)}
+                            {run.detail === null ? null : <>: {run.detail}</>} on {run.adapterName}
                             <span className="muted"> for “{clientLabel(run.client)}”</span>
+                            {retries === 0 ? null : (
+                              <span className="muted">
+                                {' '}
+                                · after {retries === 1 ? 'a retry' : `${retries} retries`}
+                              </span>
+                            )}
                           </span>
                           <span className={`pill ${runTone(run)}`}>{runWording(run)}</span>
                           <span className="xs muted num">{formatTime(run.startedAt, now)}</span>
