@@ -228,7 +228,7 @@ describe('Layout', () => {
         <SplitView list={<p>list2</p>} detail={<p>detail2</p>} showDetail={false} />
       </>,
     )
-    expect(screen.getByRole('complementary', { name: 'Inspector' }).textContent).toBe('inspector')
+    expect(screen.getByRole('complementary', { name: 'Details' }).textContent).toBe('inspector')
     expect(screen.getByText('detail2')).toBeTruthy()
   })
 

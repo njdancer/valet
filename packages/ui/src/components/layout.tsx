@@ -259,40 +259,59 @@ export function SplitView({
   detail,
   inspector,
   listWidth = 320,
-  inspectorWidth = 300,
+  inspectorWidth = 340,
+  inspectorLabel = 'Details',
+  onInspectorEscape,
   showDetail = true,
   className,
 }: {
-  list: ReactNode
+  /** Optional: a call trace is detail and inspector only. */
+  list?: ReactNode
   detail: ReactNode
   inspector?: ReactNode
   listWidth?: number
   inspectorWidth?: number
+  /** The inspector's name for screen readers ("Step details"). */
+  inspectorLabel?: string
+  /** Escape inside the inspector: put focus back on the selected item. */
+  onInspectorEscape?: () => void
   showDetail?: boolean
   className?: string
 }) {
   return (
     <div className={cn('@container flex min-h-0 flex-1', className)}>
       <div className="flex min-h-0 min-w-0 flex-1">
-        <div
-          className={cn(
-            'min-h-0 shrink-0 overflow-y-auto border-r border-line-subtle',
-            showDetail && '@max-[880px]:hidden',
-          )}
-          style={{ width: listWidth }}
-        >
-          {list}
-        </div>
+        {list !== undefined ? (
+          <div
+            className={cn(
+              'min-h-0 shrink-0 overflow-y-auto border-r border-line-subtle',
+              showDetail && '@max-[880px]:hidden',
+            )}
+            style={{ width: listWidth }}
+          >
+            {list}
+          </div>
+        ) : null}
         <div
           className={cn(
             'flex min-h-0 min-w-0 flex-1 @max-[760px]:flex-col',
-            !showDetail && '@max-[880px]:hidden',
+            list !== undefined && !showDetail && '@max-[880px]:hidden',
           )}
         >
           <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">{detail}</div>
           {inspector ? (
             <aside
-              aria-label="Inspector"
+              aria-label={inspectorLabel}
+              onKeyDown={
+                onInspectorEscape
+                  ? (e) => {
+                      if (e.key === 'Escape') {
+                        e.preventDefault()
+                        onInspectorEscape()
+                      }
+                    }
+                  : undefined
+              }
               className="min-h-0 shrink-0 overflow-y-auto border-l border-line-subtle bg-sunken/40 @max-[760px]:max-h-[45%] @max-[760px]:w-full! @max-[760px]:border-t @max-[760px]:border-l-0"
               style={{ width: inspectorWidth }}
             >
