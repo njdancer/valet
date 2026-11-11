@@ -161,3 +161,53 @@ export function Count({
     </>
   )
 }
+
+export type OutcomeKind =
+  | 'ok'
+  | 'ok-blocked'
+  | 'waiting'
+  | 'failed'
+  | 'missed'
+  | 'declined'
+  | 'refused'
+  | 'limited'
+  | 'running'
+
+const outcome: Record<OutcomeKind, { tone: NonNullable<BadgeProps['tone']>; words: string }> = {
+  ok: { tone: 'success', words: 'Done' },
+  'ok-blocked': { tone: 'success', words: 'Done' },
+  waiting: { tone: 'accent', words: 'Waiting for you' },
+  running: { tone: 'info', words: 'Running' },
+  failed: { tone: 'danger', words: 'Failed' },
+  missed: { tone: 'neutral', words: 'Missed' },
+  declined: { tone: 'neutral', words: 'Declined' },
+  refused: { tone: 'warning', words: 'Refused' },
+  limited: { tone: 'warning', words: 'Limited by site' },
+}
+
+/**
+ * How a call ended, in the shared words (Done, Failed, Missed, Declined, Refused, Limited by
+ * site). One table, so a call reads the same in Calls, the trace, Needs you and the tray. A done
+ * call where Valet blocked some requests says how many ("Done · 2 blocked").
+ */
+export function OutcomeBadge({
+  kind,
+  count,
+  reason,
+  className,
+}: {
+  kind: OutcomeKind
+  /** For ok-blocked: how many requests Valet blocked. */
+  count?: number
+  /** Overrides the words for a specific reason ("Signed out"). */
+  reason?: string
+  className?: string
+}) {
+  const o = outcome[kind]
+  return (
+    <Badge tone={o.tone} data-outcome={kind} className={className}>
+      {reason ?? o.words}
+      {kind === 'ok-blocked' && count !== undefined ? ` · ${count} blocked` : null}
+    </Badge>
+  )
+}

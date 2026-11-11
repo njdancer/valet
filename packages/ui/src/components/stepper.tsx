@@ -2,7 +2,7 @@ import { Check } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { cn } from '../lib/cn'
 
-export type StepState = 'done' | 'current' | 'upcoming' | 'skipped'
+export type StepState = 'done' | 'current' | 'upcoming' | 'skipped' | 'blocked'
 
 /**
  * Progress through a multi-step flow (first-run setup). Done steps are links back, so a person can
@@ -35,9 +35,13 @@ export function Stepper({
                 step.state === 'current' && 'bg-surface text-accent-fg ring-2 ring-accent-solid ring-inset',
                 step.state === 'upcoming' && 'bg-inset text-fg-muted',
                 step.state === 'skipped' && 'bg-inset text-fg-subtle',
+                step.state === 'blocked' &&
+                  'bg-warning-soft text-warning-fg ring-1 ring-warning-solid ring-inset',
               )}
             >
-              {step.state === 'done' ? (
+              {step.state === 'blocked' ? (
+                '!'
+              ) : step.state === 'done' ? (
                 <Check className="size-3 animate-pop-in" strokeWidth={3} aria-hidden="true" />
               ) : (
                 i + 1
@@ -46,16 +50,24 @@ export function Stepper({
             <span className="flex min-w-0 flex-col">
               <span
                 className={cn(
-                  'truncate text-md',
+                  'text-md break-words',
                   step.state === 'current' ? 'font-semibold text-fg' : 'text-fg-muted',
                 )}
               >
                 {step.label}
                 {step.state === 'done' ? <span className="sr-only"> (done)</span> : null}
                 {step.state === 'skipped' ? <span className="sr-only"> (skipped)</span> : null}
+                {step.state === 'blocked' ? <span className="sr-only"> (waiting on you)</span> : null}
               </span>
               {step.hint && orientation === 'vertical' ? (
-                <span className="truncate text-sm text-fg-subtle">{step.hint}</span>
+                <span
+                  className={cn(
+                    'text-sm break-words',
+                    step.state === 'blocked' ? 'text-warning-fg' : 'text-fg-subtle',
+                  )}
+                >
+                  {step.hint}
+                </span>
               ) : null}
             </span>
           </>

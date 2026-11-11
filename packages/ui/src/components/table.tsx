@@ -1,6 +1,12 @@
 import { ArrowDown, ArrowUp, ChevronsUpDown } from 'lucide-react'
 import type { ComponentProps, ReactNode } from 'react'
 import { cn } from '../lib/cn'
+import { type RowNavigation, useRowNavigation } from '../lib/use-row-navigation'
+
+/** Columns that drop out as the table narrows: 3 goes first (under 720 px), then 2 (under 560). */
+export type ColumnPriority = 1 | 2 | 3
+const priorityClass = (p?: ColumnPriority) =>
+  p === 3 ? 'hidden @[720px]/table:table-cell' : p === 2 ? 'hidden @[560px]/table:table-cell' : undefined
 
 /**
  * A data table for lists that compare across columns (audit log, calls). It sits in its own scroll
@@ -11,8 +17,14 @@ import { cn } from '../lib/cn'
 export function Table({
   className,
   scroll = 'page',
+  density = 'regular',
+  bare = false,
   ...props
 }: ComponentProps<'table'> & {
+  /** `compact` for dense logs (Audit): 28 px rows, small text. */
+  density?: 'regular' | 'compact'
+  /** No surface, ring or radius, for a table inside a `Card flush`. */
+  bare?: boolean
   /**
    * `page`: the table grows and the page scrolls, the header sticking to the top of the page's
    * scroll area. `self`: the table fills its container and scrolls on its own (a split view pane).
@@ -22,13 +34,22 @@ export function Table({
   return (
     <div
       data-slot="table"
+      data-density={density}
       className={cn(
-        'min-w-0 rounded-lg bg-surface shadow-1 ring-[0.5px] ring-line ring-inset',
+        '@container/table min-w-0',
+        !bare && 'rounded-lg bg-surface shadow-1 ring-[0.5px] ring-line ring-inset',
         // overflow-x: clip makes no scroll container, so the sticky header follows the page.
         scroll === 'page' ? 'overflow-x-clip' : 'h-full min-h-0 overflow-auto',
       )}
     >
-      <table className={cn('w-full border-separate border-spacing-0 text-md', className)} {...props} />
+      <table
+        className={cn(
+          'w-full border-separate border-spacing-0',
+          density === 'compact' ? 'text-sm' : 'text-md',
+          className,
+        )}
+        {...props}
+      />
     </div>
   )
 }
@@ -39,27 +60,45 @@ export function THead({ className, ...props }: ComponentProps<'thead'>) {
 
 /**
  * Up and Down move between rows (from one RowLink to the next), Home and End to the ends, so a long
- * table isn't a long Tab walk.
+ * table isn't a long Tab walk. Return follows the row's link; mod+C copies a row's `copyValue`;
+ * `onDismissRow` handles Delete. With `onActiveRowChange` the selection follows focus (a split
+ * view's inspector shows the focused row).
  */
-export function TBody({ onKeyDown, ...props }: ComponentProps<'tbody'>) {
+export function TBody({
+  onKeyDown,
+  onFocus,
+  onActiveRowChange,
+  onOpenRow,
+  onCopyRow,
+  onDismissRow,
+  autoFocus,
+  ...props
+}: Omit<ComponentProps<'tbody'>, 'ref'> & {
+  onActiveRowChange?: RowNavigation['onActiveChange']
+  onOpenRow?: RowNavigation['onOpen']
+  onCopyRow?: RowNavigation['onCopy']
+  onDismissRow?: RowNavigation['onDismiss']
+  autoFocus?: boolean
+}) {
+  const nav = useRowNavigation<HTMLTableSectionElement>({
+    rowSelector: 'tr[data-row]',
+    linkedOnly: true,
+    onActiveChange: onActiveRowChange,
+    onOpen: onOpenRow,
+    onCopy: onCopyRow,
+    onDismiss: onDismissRow,
+    autoFocus,
+  })
   return (
     <tbody
+      ref={nav.ref}
       onKeyDown={(e) => {
         onKeyDown?.(e)
-        if (e.defaultPrevented || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return
-        const links = [...e.currentTarget.querySelectorAll<HTMLElement>('[data-row-link]')]
-        const at = links.indexOf(document.activeElement as HTMLElement)
-        if (at === -1) return
-        const next =
-          e.key === 'Home'
-            ? 0
-            : e.key === 'End'
-              ? links.length - 1
-              : e.key === 'ArrowDown'
-                ? Math.min(links.length - 1, at + 1)
-                : Math.max(0, at - 1)
-        e.preventDefault()
-        links[next]?.focus()
+        nav.onKeyDown(e)
+      }}
+      onFocus={(e) => {
+        onFocus?.(e)
+        nav.onFocus(e)
       }}
       {...props}
     />
@@ -70,13 +109,26 @@ export function TR({
   className,
   interactive = false,
   selected = false,
+  copyValue,
+  focusable = false,
   ...props
-}: ComponentProps<'tr'> & { interactive?: boolean; selected?: boolean }) {
+}: ComponentProps<'tr'> & {
+  interactive?: boolean
+  selected?: boolean
+  /** What mod+C copies while the row has focus (the call's ref). */
+  copyValue?: string
+  /** A row with no RowLink that still takes focus and Return (calls `onOpenRow`). */
+  focusable?: boolean
+}) {
   return (
     <tr
+      data-row=""
+      data-copy-value={copyValue}
+      data-focusable={focusable || undefined}
       aria-current={selected || undefined}
       className={cn(
         'group [&+&>td]:border-t [&+&>td]:border-line-subtle',
+        focusable && 'outline-offset-[-2px] focus-visible:bg-hover',
         interactive && 'relative cursor-pointer hover:bg-hover',
         selected &&
           'bg-selected hover:bg-selected [&>td:first-child]:shadow-[inset_2px_0_0_var(--accent-solid)]',
@@ -92,9 +144,16 @@ export function TH({
   sort,
   onSort,
   align = 'left',
+  priority,
   children,
   ...props
-}: ComponentProps<'th'> & { sort?: 'asc' | 'desc' | 'none'; onSort?: () => void; align?: 'left' | 'right' }) {
+}: ComponentProps<'th'> & {
+  sort?: 'asc' | 'desc' | 'none'
+  onSort?: () => void
+  align?: 'left' | 'right'
+  /** Hide this column in a narrow table. Give the column's TDs the same priority. */
+  priority?: ColumnPriority
+}) {
   const label = (
     <span className={cn('inline-flex items-center gap-1', align === 'right' && 'flex-row-reverse')}>
       {children}
@@ -110,8 +169,9 @@ export function TH({
       scope="col"
       aria-sort={sort === 'asc' ? 'ascending' : sort === 'desc' ? 'descending' : undefined}
       className={cn(
-        'group/th h-8 border-b border-line px-3 text-xs font-semibold whitespace-nowrap text-fg-muted',
+        'group/th h-8 border-b border-line px-3 text-xs font-semibold whitespace-nowrap text-fg-muted in-data-[density=compact]:h-7 in-data-[density=compact]:px-2.5',
         align === 'right' ? 'text-right' : 'text-left',
+        priorityClass(priority),
         className,
       )}
       {...props}
@@ -134,13 +194,16 @@ export function TH({
 export function TD({
   className,
   align = 'left',
+  priority,
   ...props
-}: ComponentProps<'td'> & { align?: 'left' | 'right' }) {
+}: ComponentProps<'td'> & { align?: 'left' | 'right'; priority?: ColumnPriority }) {
   return (
     <td
       className={cn(
-        'h-9 px-3 align-middle text-fg',
+        // Links, buttons and switches in a cell sit above the row's RowLink overlay (index.css).
+        'h-9 px-3 align-middle text-fg in-data-[density=compact]:h-7 in-data-[density=compact]:px-2.5',
         align === 'right' ? 'text-right tabular' : 'text-left',
+        priorityClass(priority),
         className,
       )}
       {...props}

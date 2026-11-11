@@ -70,6 +70,8 @@ export function Value({
   mono = false,
   copy,
   truncate = false,
+  wrap = false,
+  size = 'md',
   className,
   title,
 }: {
@@ -83,6 +85,10 @@ export function Value({
    * selecting and copying get all of it.
    */
   truncate?: boolean | 'end' | 'middle'
+  /** Break anywhere (long URLs, tokens) instead of overflowing. Copy still takes all of it. */
+  wrap?: boolean
+  /** `lg` for a value that is the point of the screen (the sentence to paste in setup). */
+  size?: 'md' | 'lg'
   className?: string
   title?: string
 }) {
@@ -96,6 +102,8 @@ export function Value({
         className={cn(
           'selectable min-w-0',
           mono && 'font-mono text-[0.92em]',
+          wrap && 'break-all whitespace-normal',
+          size === 'lg' && 'text-lg font-medium',
           truncate && !middle && 'truncate',
           middle && 'flex whitespace-nowrap',
         )}
