@@ -103,11 +103,14 @@ export function RadioOption({
   value,
   label,
   description,
+  meta,
   disabled,
 }: {
   value: string
   label: ReactNode
   description?: ReactNode
+  /** A badge after the label ("Can't be undone", "Matches"). */
+  meta?: ReactNode
   disabled?: boolean
 }) {
   const id = `${useId()}-radio`
@@ -121,12 +124,82 @@ export function RadioOption({
         aria-describedby={description ? `${id}-d` : undefined}
       />
       <div className="flex flex-col gap-0.5 peer-disabled:opacity-50">
-        <label htmlFor={id} className="text-md text-fg peer-disabled:cursor-not-allowed">
-          {label}
-        </label>
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <label htmlFor={id} className="text-md text-fg peer-disabled:cursor-not-allowed">
+            {label}
+          </label>
+          {meta}
+        </span>
         {description ? (
           <span id={`${id}-d`} className="text-sm text-fg-muted">
             {description}
+          </span>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * A checkbox with its label, an optional hint and badge: a tool to allow, an acknowledgement, a
+ * Lock down extra. The label is the click target; the hint describes it. Disabled explains why.
+ */
+export function CheckboxOption({
+  label,
+  description,
+  meta,
+  checked,
+  defaultChecked,
+  onCheckedChange,
+  disabled,
+  disabledReason,
+  name,
+  value,
+}: {
+  label: ReactNode
+  description?: ReactNode
+  meta?: ReactNode
+  checked?: boolean
+  defaultChecked?: boolean
+  onCheckedChange?: (checked: boolean) => void
+  disabled?: boolean
+  /** Why it can't be changed ("Needed for every order"). Shown under the label. */
+  disabledReason?: string
+  name?: string
+  value?: string
+}) {
+  const id = `${useId()}-check`
+  const hint = [description ? `${id}-d` : '', disabled && disabledReason ? `${id}-r` : '']
+    .filter(Boolean)
+    .join(' ')
+  return (
+    <div className="flex items-start gap-2">
+      <Checkbox
+        id={id}
+        className="mt-0.5"
+        checked={checked}
+        defaultChecked={defaultChecked}
+        onCheckedChange={(c) => onCheckedChange?.(c === true)}
+        disabled={disabled}
+        name={name}
+        value={value}
+        aria-describedby={hint || undefined}
+      />
+      <div className="flex min-w-0 flex-col gap-0.5 peer-disabled:opacity-60">
+        <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <label htmlFor={id} className="text-md text-fg peer-disabled:cursor-not-allowed">
+            {label}
+          </label>
+          {meta}
+        </span>
+        {description ? (
+          <span id={`${id}-d`} className="text-sm text-fg-muted">
+            {description}
+          </span>
+        ) : null}
+        {disabled && disabledReason ? (
+          <span id={`${id}-r`} className="text-sm text-fg-muted">
+            {disabledReason}
           </span>
         ) : null}
       </div>

@@ -176,18 +176,18 @@ The control window can opt in to sidebar vibrancy (`vibrancy: 'sidebar'`) and se
 
 ## Component catalogue
 
-| Area        | Components                                                                                                                                                                       |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Actions     | `Button` (primary, secondary, ghost, quiet, danger, danger-soft, link; sm 24, md 28, lg 36; loading; disabledReason), `IconButton`, `SplitButton`, `HoldToConfirm`, `CopyButton` |
-| Inputs      | `Field`, `Label`, `Input`, `SearchInput`, `Textarea`, `Checkbox`, `Switch` (pending), `RadioGroup`/`RadioOption`, `Select`, `Segmented`                                          |
-| Status      | `Badge`, `RiskBadge`/`RiskGlyph`, `SecretBadge`, `StatusDot`, `Count`, `HealthLine`, `DeadlineChip`, `Banner`, `ShellStatus`, `Progress`, `Skeleton`, `Spinner`                  |
-| Objects     | `ObjectLink`, `HashChip`, `SiteAvatar`, `Value`, `Code`, `CodeBlock`, `Kbd`, `TextLink`                                                                                          |
-| Collections | `List`/`ListRow`, `Table`/`THead`/`TBody`/`TR`/`TH`/`TD`/`RowLink`, `DescriptionList`, `Diff`, `Timeline`, `Sparkline`, `CanReach`, `InboxItem`/`NeedsYouItem`, `EmptyState`     |
-| Navigation  | `AppShell`, `Sidebar`/`SidebarGroup`/`SidebarFooter`/`NavItem`, `TitleBar`, `Toolbar`, `Tabs`, `NavTabs`, `Breadcrumb`, `Stepper`, `CommandPalette`, `FilterBar`/`FilterChip`    |
-| Layout      | `Page`, `PageHeader`, `PageBody`, `ActionBar`, `Section`, `SplitView`, `Stack`, `Inline`, `Spacer`, `Card`, `Separator`                                                          |
-| Overlays    | `DialogContent`, `SheetContent`, `DrawerContent`, `ConfirmDialog`, `Popover`, `Tooltip`, `DropdownMenu`, `ContextMenu`, `Toaster`/`toast`                                        |
-| Windows     | `ConfirmationPanel` (arming, ready, expired), `TrayPanel`/`TrayHeader`/`TraySection`/`TrayRow`/`TrayFooter`                                                                      |
-| Delight     | `ValetMark`, `ApprovalSeal`, `SuccessCheck`, `Sparkle`, `AnimatedNumber`, `GlassFilter`                                                                                          |
+| Area        | Components                                                                                                                                                                                                                                                            |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Actions     | `Button` (primary, secondary, ghost, quiet, danger, danger-soft, link; sm 24, md 28, lg 36; loading; disabledReason), `IconButton`, `SplitButton`, `HoldToConfirm`, `CopyButton` (icon or labelled), `RetryPopover`                                                   |
+| Inputs      | `Field`, `Label`, `Input`, `SearchInput`, `Textarea`, `Checkbox`, `Switch` (pending), `RadioGroup`/`RadioOption`, `CheckboxOption`, `Select`, `Segmented`                                                                                                             |
+| Status      | `Badge`, `RiskBadge`/`RiskGlyph`, `SecretBadge`, `StatusDot`, `Count`, `HealthLine`, `DeadlineChip` (countdown or clock, md or lg), `CheckedAt`, `OutcomeBadge`, `CheckList`/`CheckItem`, `HandoffBanner`, `Banner`, `ShellStatus`, `Progress`, `Skeleton`, `Spinner` |
+| Objects     | `ObjectLink`, `HashChip`, `SiteAvatar`, `Value`, `Code`, `CodeBlock`, `Kbd`, `Shortcut`, `TextLink`, `BrowserBar`                                                                                                                                                     |
+| Collections | `List`/`ListRow`, `Table`/`THead`/`TBody`/`TR`/`TH`/`TD`/`RowLink`, `DescriptionList`, `Diff`, `Timeline`, `Sparkline`, `CanReach`, `InboxItem`/`NeedsYouItem`, `EmptyState`                                                                                          |
+| Navigation  | `AppShell`, `Sidebar`/`SidebarGroup`/`SidebarFooter`/`NavItem`, `TitleBar`, `Toolbar`, `Tabs`, `NavTabs`, `Breadcrumb`, `Stepper` (with blocked), `CommandPalette`, `FilterBar`/`FilterChip`                                                                          |
+| Layout      | `Page`, `PageHeader`, `PageBody`, `ActionBar`, `Section`, `SplitView`, `Stack`, `Inline`, `Spacer`, `Card`, `Separator`                                                                                                                                               |
+| Overlays    | `DialogContent`, `SheetContent`, `DrawerContent`, `ConfirmDialog`, `Popover`, `Tooltip`, `DropdownMenu`, `ContextMenu`, `Toaster`/`toast`/`toast.undo` (mod+Z runs the newest Undo)                                                                                   |
+| Windows     | `ConfirmationPanel` (arming, ready, expired, answered; write or irreversible), `TrayPanel`/`TrayHeader`/`TraySection`/`TrayRow`/`TrayFooter`                                                                                                                          |
+| Delight     | `ValetMark`, `ApprovalSeal`, `SuccessCheck`, `Sparkle`, `AnimatedNumber`, `GlassFilter`                                                                                                                                                                               |
 
 ## Assumptions recorded (Nick was asleep)
 

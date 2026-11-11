@@ -36,10 +36,22 @@ export function DeadlineChip({
   now: nowProp,
   locale,
   subject,
+  urgentAt = 30_000,
+  size = 'md',
+  format = 'countdown',
 }: {
   until: number
   /** What the deadline is for ("Woolworths code"), so an announcement makes sense on its own. */
   subject?: string
+  /** When it turns red, in ms left. 30 s by default; the login window uses 60 s. */
+  urgentAt?: number
+  /** `lg` in the confirmation and login windows. */
+  size?: 'md' | 'lg'
+  /**
+   * `countdown`: the countdown and clock time. `clock`: just "until 9:52 pm" (for things that resume
+   * or end at a time, where a ticking countdown would only distract).
+   */
+  format?: 'countdown' | 'clock'
   expired?: string
   className?: string
   /** Freeze the clock (tests, stories). */
@@ -56,12 +68,23 @@ export function DeadlineChip({
   const left = until - t
   const ended = left <= 0
   const soon = left < 120_000
-  const urgent = left < 30_000
+  const urgent = left < urgentAt
   const clock = clockTime(until, locale)
+  const shown =
+    format === 'clock'
+      ? ended
+        ? `${expired} · ${clock}`
+        : `until ${clock}`
+      : ended
+        ? `${expired} · ${clock}`
+        : soon
+          ? `${remaining(left)} · until ${clock}`
+          : `until ${clock} · ${remaining(left)}`
   return (
     <span
       className={cn(
-        'tabular inline-flex h-5 items-center gap-1 rounded-full px-2 text-xs font-semibold whitespace-nowrap [&_svg]:size-3',
+        'tabular inline-flex items-center gap-1 rounded-full font-semibold whitespace-nowrap',
+        size === 'lg' ? 'h-7 px-3 text-md [&_svg]:size-4' : 'h-5 px-2 text-xs [&_svg]:size-3',
         ended
           ? 'bg-inset text-fg-muted'
           : urgent
@@ -73,17 +96,52 @@ export function DeadlineChip({
       )}
     >
       <Clock aria-hidden="true" />
-      <span aria-hidden="true">
-        {ended
-          ? `${expired} · ${clock}`
-          : soon
-            ? `${remaining(left)} · until ${clock}`
-            : `until ${clock} · ${remaining(left)}`}
-      </span>
+      <span aria-hidden="true">{shown}</span>
       <span className="sr-only">{ended ? `${expired} at ${clock}` : `Open until ${clock}`}</span>
       <span className="sr-only" aria-live="polite">
-        {announcementFor(left) && subject ? `${subject}: ${announcementFor(left)}` : announcementFor(left)}
+        {format === 'clock'
+          ? null
+          : announcementFor(left) && subject
+            ? `${subject}: ${announcementFor(left)}`
+            : announcementFor(left)}
       </span>
+    </span>
+  )
+}
+
+/**
+ * When something was last checked, with a way to check now: "checked 9:46 pm · Check Woolworths
+ * now". While `pending` it says "checking…"; the result is announced by the caller's own status.
+ */
+export function CheckedAt({
+  at,
+  subject,
+  onCheck,
+  pending = false,
+  locale,
+  className,
+}: {
+  at: number
+  /** What gets checked, for the button's name ("Woolworths"). */
+  subject: string
+  onCheck: () => void
+  pending?: boolean
+  locale?: string
+  className?: string
+}) {
+  return (
+    <span className={cn('inline-flex flex-wrap items-center gap-x-1.5 text-sm text-fg-muted', className)}>
+      <span aria-live="polite">{pending ? 'checking…' : `checked ${clockTime(at, locale)}`}</span>
+      <span aria-hidden="true">·</span>
+      <button
+        type="button"
+        onClick={onCheck}
+        disabled={pending}
+        aria-label={`Check ${subject} now`}
+        className="rounded-xs font-medium text-fg-link underline decoration-current/30 underline-offset-2 hover:decoration-current disabled:opacity-50"
+      >
+        Check now
+      </button>
     </span>
   )
 }

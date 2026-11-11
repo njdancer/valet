@@ -1,5 +1,6 @@
-import type { ComponentProps } from 'react'
+import { type ComponentProps, useEffect } from 'react'
 import { type ExternalToast, Toaster as Sonner, toast as sonnerToast } from 'sonner'
+import { currentPlatform } from '../lib/shortcut'
 
 /**
  * Toasts: a short confirmation of something that just happened ("Copied", "Woolworths paused"), with
@@ -7,6 +8,21 @@ import { type ExternalToast, Toaster as Sonner, toast as sonnerToast } from 'son
  * person appears; those get a Banner on the page or a notification. Put <Toaster /> once in the app.
  */
 export function Toaster(props: ComponentProps<typeof Sonner>) {
+  // ⌘Z (Ctrl+Z elsewhere) runs the newest Undo while its toast shows, unless typing in a field.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = currentPlatform() === 'mac' ? e.metaKey : e.ctrlKey
+      if (!mod || e.shiftKey || e.altKey || e.key.toLowerCase() !== 'z') return
+      const target = e.target as HTMLElement | null
+      if (target?.closest('input, textarea, select, [contenteditable="true"]')) return
+      const last = undoStack.at(-1)
+      if (!last) return
+      e.preventDefault()
+      runUndo(last.id)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [])
   return (
     <Sonner
       position="bottom-right"
@@ -52,5 +68,43 @@ export const toast = Object.assign(
     warning: (message: Message, options?: ExternalToast) => sonnerToast.warning(message, timed(options)),
     info: (message: Message, options?: ExternalToast) => sonnerToast.info(message, timed(options)),
     message: (message: Message, options?: ExternalToast) => sonnerToast.message(message, timed(options)),
+    undo: (message: Message, options: ExternalToast & { onUndo: () => void }) => undoToast(message, options),
   },
 )
+
+type UndoEntry = { id: string | number; onUndo: () => void }
+const undoStack: UndoEntry[] = []
+const forget = (id: string | number) => {
+  const i = undoStack.findIndex((u) => u.id === id)
+  if (i >= 0) undoStack.splice(i, 1)
+}
+function runUndo(id: string | number) {
+  const entry = undoStack.find((u) => u.id === id)
+  if (!entry) return
+  forget(id)
+  sonnerToast.dismiss(id)
+  entry.onUndo()
+}
+
+/**
+ * A toast for something that can be put back: "Woolworths paused", with Undo. It stays 10 s (held
+ * while hovered or focused), and ⌘Z / Ctrl+Z runs the Undo while it shows. Every Undo must also
+ * exist on the page (Resume), so a missed toast never loses the way back.
+ */
+export function undoToast(message: Message, { onUndo, ...options }: ExternalToast & { onUndo: () => void }) {
+  const id: string | number = sonnerToast.success(message, {
+    duration: 10_000,
+    ...options,
+    action: { label: 'Undo', onClick: () => runUndo(id) },
+    onDismiss: (t) => {
+      forget(t.id)
+      options.onDismiss?.(t)
+    },
+    onAutoClose: (t) => {
+      forget(t.id)
+      options.onAutoClose?.(t)
+    },
+  })
+  undoStack.push({ id, onUndo })
+  return id
+}
