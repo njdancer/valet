@@ -186,6 +186,12 @@ export const probeSchema = z.discriminatedUnion('kind', [
     })
     .strict(),
   z.object({ kind: z.literal('cookie'), name: z.string().min(1).max(200) }).strict(),
+  /**
+   * The adapter never logs in: its site needs no account. With it, the manifest has no auth steps,
+   * no cookie domains, no storage keys and no secrets, and session.ensure() answers at once that
+   * there is no login to make, without opening anything.
+   */
+  z.object({ kind: z.literal('none') }).strict(),
 ])
 export type Probe = z.infer<typeof probeSchema>
 
@@ -301,28 +307,31 @@ export const manifestSchema = z
     navigation: z.array(origin).min(1),
     /** Hosts the tool partition may send any request to. Everything else is blocked. */
     egress: z.array(hostPattern).min(1),
-    secrets: z.record(name, secretRequestSchema),
+    /** Left out, with session and auth, for a site that needs no login. */
+    secrets: z.record(name, secretRequestSchema).default({}),
     session: z
       .object({
         /** Cookie domains copied from the auth partition to the tool partition after login. */
-        cookieDomains: z.array(hostPattern).min(1),
+        cookieDomains: z.array(hostPattern),
         /** Web-storage keys copied the same way, for sites that keep tokens outside cookies. */
         storage: z
           .array(z.object({ origin, keys: z.array(z.string().min(1).max(200)).min(1) }).strict())
           .default([]),
         probe: probeSchema,
       })
-      .strict(),
+      .strict()
+      .default(() => ({ cookieDomains: [], storage: [], probe: { kind: 'none' as const } })),
     auth: z
       .object({
-        steps: z.array(authStepSchema).min(1).max(200),
+        steps: z.array(authStepSchema).max(200),
         /**
          * Origins, beyond navigation, that subframes of the auth page may load (a CAPTCHA, say).
          * Secrets are never typed into them unless they are also a granted secret origin.
          */
         frameOrigins: z.array(origin).max(10).default([]),
       })
-      .strict(),
+      .strict()
+      .default(() => ({ steps: [], frameOrigins: [] })),
     requests: z
       .array(
         z
@@ -382,6 +391,25 @@ export const manifestSchema = z
   })
   .strict()
   .superRefine((manifest, ctx) => {
+    // No login is all or nothing: a login needs steps, a probe and somewhere to hand the session.
+    const noLogin = manifest.session.probe.kind === 'none'
+    const loginParts = [
+      manifest.auth.steps.length > 0,
+      manifest.session.cookieDomains.length > 0,
+      manifest.session.storage.length > 0,
+      Object.keys(manifest.secrets).length > 0,
+      manifest.auth.frameOrigins.length > 0,
+    ]
+    if (noLogin && loginParts.some(Boolean)) {
+      ctx.addIssue({
+        code: 'custom',
+        message:
+          'an adapter with no login has no auth steps, cookie domains, storage keys, secrets or frame origins',
+      })
+    }
+    if (!noLogin && (manifest.auth.steps.length === 0 || manifest.session.cookieDomains.length === 0)) {
+      ctx.addIssue({ code: 'custom', message: 'a login needs auth steps and at least one cookie domain' })
+    }
     const toolNames = new Set<string>()
     for (const tool of manifest.tools) {
       if (toolNames.has(tool.name)) ctx.addIssue({ code: 'custom', message: `duplicate tool ${tool.name}` })
@@ -557,4 +585,9 @@ export function messagesSourcesIn(
 
 export function parseManifest(input: unknown): AdapterManifest {
   return manifestSchema.parse(input)
+}
+
+/** Whether the adapter logs in at all. One with no login runs every tool on the site anonymously. */
+export function hasLogin(manifest: AdapterManifest): boolean {
+  return manifest.session.probe.kind !== 'none'
 }

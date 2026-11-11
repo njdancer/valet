@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { defineAdapter, tool } from '../src/adapter'
 import {
   type AuthStep,
+  hasLogin,
   type ManifestInput,
   manifestSchema,
   messagesSourcesIn,
@@ -653,5 +654,44 @@ describe('settings (D69)', () => {
       settingChoicesSchema.safeParse({ choices: [{ value: '1', label: 'A', detail: 'B' }] }).success,
     ).toBe(true)
     expect(settingChoicesSchema.safeParse({ choices: [{ value: '1', label: '' }] }).success).toBe(false)
+  })
+})
+
+describe('an adapter with no login', () => {
+  const noLogin = (): ManifestInput => {
+    const { secrets: _s, session: _session, auth: _a, ...rest } = structuredClone(VALID)
+    return { ...rest, navigation: ['https://www.example.com'] }
+  }
+
+  it('leaves out secrets, session and auth, and parses to an explicit no-login session', () => {
+    const manifest = parseManifest(noLogin())
+    expect(manifest.secrets).toEqual({})
+    expect(manifest.session).toEqual({ cookieDomains: [], storage: [], probe: { kind: 'none' } })
+    expect(manifest.auth).toEqual({ steps: [], frameOrigins: [] })
+    expect(hasLogin(manifest)).toBe(false)
+    expect(hasLogin(parseManifest(VALID))).toBe(true)
+  })
+
+  it('refuses any login part beside a none probe', () => {
+    const parts: Partial<ManifestInput>[] = [
+      { secrets: structuredClone(VALID.secrets) },
+      { auth: { steps: [{ op: 'assertLoggedIn' }] } },
+      { session: { cookieDomains: ['www.example.com'], probe: { kind: 'none' } } },
+      {
+        session: {
+          cookieDomains: [],
+          storage: [{ origin: 'https://www.example.com', keys: ['t'] }],
+          probe: { kind: 'none' },
+        },
+      },
+      { auth: { steps: [], frameOrigins: ['https://captcha.example.com'] } },
+    ]
+    for (const part of parts) expect(manifestSchema.safeParse({ ...noLogin(), ...part }).success).toBe(false)
+  })
+
+  it('refuses a login with no steps or no cookie domain', () => {
+    expect(manifestSchema.safeParse({ ...structuredClone(VALID), auth: { steps: [] } }).success).toBe(false)
+    const session = { ...structuredClone(VALID.session), cookieDomains: [] }
+    expect(manifestSchema.safeParse({ ...structuredClone(VALID), session }).success).toBe(false)
   })
 })

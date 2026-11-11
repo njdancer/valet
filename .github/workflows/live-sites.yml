@@ -1,0 +1,72 @@
+name: Live sites
+
+# A recorded run of Valet against real sites that need no login (Yahoo Finance): Valet Demo (a
+# showcase build) installed from its DMG, a chat client added in setup, the Yahoo Finance adapter
+# approved, and a scripted chat client asking about stocks over MCP, live. Nothing signs in.
+# See apps/desktop/showcase/record-live.mjs.
+#
+# The video, its captions, stills, tool results and findings go to the run's artifact and to the
+# branch live-recordings/<run id>, so a cloud session (which can't download artifacts) can fetch them.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/project-thread-txmiu2]
+    paths:
+      [adapters/yahoo-finance/**, apps/desktop/showcase/record-live.mjs, .github/workflows/live-sites.yml]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: live-sites-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2.4.4
+      - run: pnpm install --frozen-lockfile
+      - name: the stdio bridge, which the app ships
+        run: swift build -c release --arch arm64 --arch x86_64 --package-path swift-bridge
+      - name: Electron's binary, which packaging copies (pnpm may leave it to the first launch)
+        working-directory: apps/desktop
+        run: test -d node_modules/electron/dist || (cd node_modules/electron && node install.js)
+      - name: package Valet Demo as a DMG
+        run: pnpm --filter @valet/desktop package:showcase
+      - name: ffmpeg, to record the screen
+        run: brew install ffmpeg
+      - name: record
+        working-directory: apps/desktop
+        run: |
+          dmg="$(ls dist/showcase/*.dmg | head -1)"
+          node showcase/record-live.mjs --dmg "$dmg" --out "$RUNNER_TEMP/showcase"
+      - name: captions into the video
+        if: always()
+        working-directory: apps/desktop
+        run: test -f "$RUNNER_TEMP/showcase/captions.json" && node showcase/finish.mjs --out "$RUNNER_TEMP/showcase"
+      - name: collect the app's diagnostics log
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/showcase/app-logs"
+          cp -R "$HOME/Library/Application Support/valet-demo/"*.log "$RUNNER_TEMP/showcase/app-logs/" 2>/dev/null || true
+          find "$HOME/Library/Application Support/valet-demo" -maxdepth 2 -name '*log*' | head -20
+      - name: push the recording to a branch
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/showcase" && cd "$RUNNER_TEMP/showcase"
+          test -n "$(ls -A)" || exit 0
+          rm -f raw.mkv
+          rm -rf captions
+          git init -q -b recording && git add -A
+          git -c user.name=live-sites -c user.email=live-sites@users.noreply.github.com commit -qm "Live sites, run ${{ github.run_id }}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" HEAD:refs/heads/live-recordings/${{ github.run_id }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: live-sites
+          path: ${{ runner.temp }}/showcase/
+          retention-days: 30

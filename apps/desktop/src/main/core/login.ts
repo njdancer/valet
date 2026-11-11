@@ -119,6 +119,7 @@ export function steppedProbe(manifest: AdapterManifest, page: AuthPage, step: Lo
 /** The manifest's probe, read the way auth-flow reads it, for a login the person finished by hand. */
 export async function probeLoggedIn(manifest: AdapterManifest, probe: AuthProbe): Promise<boolean> {
   const spec = manifest.session.probe
+  if (spec.kind === 'none') return false
   if (spec.kind === 'cookie')
     return (await probe.cookieNames(manifest.session.cookieDomains)).includes(spec.name)
   const url = new URL(spec.path, manifest.home).toString()

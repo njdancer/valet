@@ -63,6 +63,7 @@ export function listDiff<T>(before: readonly T[], after: readonly T[]): ListDiff
 export function probeInfo(manifest: AdapterManifest): ProbeInfo {
   const probe = manifest.session.probe
   if (probe.kind === 'cookie') return { kind: 'cookie', name: probe.name }
+  if (probe.kind === 'none') return { kind: 'none' }
   return {
     kind: 'fetch',
     path: probe.path,

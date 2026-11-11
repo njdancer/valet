@@ -52,6 +52,15 @@ importers:
         specifier: ^44.10.2
         version: 44.10.2
 
+  adapters/yahoo-finance:
+    dependencies:
+      '@valet/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
   apps/desktop:
     dependencies:
       '@1password/sdk':
@@ -60,6 +69,9 @@ importers:
       '@valet/adapter-woolworths':
         specifier: workspace:*
         version: link:../../adapters/woolworths
+      '@valet/adapter-yahoo-finance':
+        specifier: workspace:*
+        version: link:../../adapters/yahoo-finance
       '@valet/auth-flow':
         specifier: workspace:*
         version: link:../../packages/auth-flow

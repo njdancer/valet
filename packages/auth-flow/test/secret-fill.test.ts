@@ -946,7 +946,7 @@ describe('auth frame origins', () => {
     const captcha = 'https://captcha.example.com'
     const manifest = parseManifest({
       ...structuredClone(MANIFEST),
-      auth: { steps: structuredClone(MANIFEST.auth.steps), frameOrigins: [captcha] },
+      auth: { steps: structuredClone(MANIFEST.auth?.steps ?? []), frameOrigins: [captcha] },
     })
     w.input.manifest = { ...manifest, auth: { ...manifest.auth, steps: FILL_PASSWORD.auth.steps } }
     w.grants.grants[0] = { ...GRANT, origins: [LOGIN, captcha] }

@@ -200,7 +200,7 @@ describe('probe hooks', () => {
 })
 
 describe('createAuthRunner', () => {
-  function runner(steps: ManifestInput['auth']['steps'], page = new FakeAuthPage()) {
+  function runner(steps: NonNullable<ManifestInput['auth']>['steps'], page = new FakeAuthPage()) {
     const s = setup()
     const log = audit()
     const driver = new FakeDriver()

@@ -72,19 +72,19 @@ describe('permissionDiff', () => {
     ['an egress host', (m) => ({ ...m, egress: ['www.shop.test', 'api.shop.test'] }), (d) => d.egress.added],
     [
       'an auth frame origin',
-      (m) => ({ ...m, auth: { ...m.auth, frameOrigins: ['https://captcha.test'] } }),
+      (m) => ({ ...m, auth: { ...m.auth!, frameOrigins: ['https://captcha.test'] } }),
       (d) => d.frameOrigins.added,
     ],
     [
       'a cookie domain',
-      (m) => ({ ...m, session: { ...m.session, cookieDomains: ['www.shop.test', 'shop.test'] } }),
+      (m) => ({ ...m, session: { ...m.session!, cookieDomains: ['www.shop.test', 'shop.test'] } }),
       (d) => d.cookieDomains.added,
     ],
     [
       'a storage key',
       (m) => ({
         ...m,
-        session: { ...m.session, storage: [{ origin: 'https://www.shop.test', keys: ['token'] }] },
+        session: { ...m.session!, storage: [{ origin: 'https://www.shop.test', keys: ['token'] }] },
       }),
       (d) => d.storage.added,
     ],
@@ -161,7 +161,7 @@ describe('permissionDiff', () => {
       (m) => ({
         ...m,
         auth: {
-          steps: (m.auth.steps as AuthStep[]).map((s) =>
+          steps: (m.auth!.steps as AuthStep[]).map((s) =>
             s.op === 'fill' && s.selector === '#pass' ? { ...s, selector: '#search' } : s,
           ),
         },
@@ -173,7 +173,7 @@ describe('permissionDiff', () => {
       (m) => ({
         ...m,
         auth: {
-          steps: (m.auth.steps as AuthStep[]).map((s) =>
+          steps: (m.auth!.steps as AuthStep[]).map((s) =>
             s.op === 'otp'
               ? { ...s, source: { messages: { sender: 'Other', pattern: '(\\d{6})', maxAgeSeconds: 300 } } }
               : s,
@@ -188,7 +188,7 @@ describe('permissionDiff', () => {
         ...m,
         auth: {
           steps: [
-            ...m.auth.steps.slice(0, -1),
+            ...m.auth!.steps.slice(0, -1),
             { op: 'click', selector: '#trust' },
             { op: 'assertLoggedIn' },
           ],
@@ -269,7 +269,7 @@ describe('permissionDiff', () => {
   it('flags a removed assertLoggedIn: a stop taken out of the login', () => {
     const diff = permissionDiff(
       before,
-      after((m) => ({ ...m, auth: { steps: m.auth.steps.slice(0, -1) } })),
+      after((m) => ({ ...m, auth: { steps: m.auth!.steps.slice(0, -1) } })),
     )
     expect(diff.authSteps.removed.map((s) => s.op)).toEqual(['assertLoggedIn'])
     expect(addsPermissions(diff)).toBe(true)
@@ -330,7 +330,7 @@ describe('permissionDiff', () => {
   it('flags any probe change', () => {
     const diff = permissionDiff(
       before,
-      after((m) => ({ ...m, session: { ...m.session, probe: { kind: 'cookie', name: 'auth' } } })),
+      after((m) => ({ ...m, session: { ...m.session!, probe: { kind: 'cookie', name: 'auth' } } })),
     )
     expect(diff.probe).toEqual({
       before: { kind: 'cookie', name: 'sid' },
