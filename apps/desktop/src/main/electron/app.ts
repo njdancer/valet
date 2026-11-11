@@ -374,6 +374,7 @@ async function main(): Promise<void> {
       if (event.type === 'app-changed') tray?.refresh()
     },
     bridge: bridgeCommand(),
+    claudeDesktopConfig: join(app.getPath('appData'), 'Claude', 'claude_desktop_config.json'),
     updates: electronUpdates({
       feed: { url: FEED_BASE_URL, publicKey: FEED_PUBLIC_KEY },
       demo: mode.demo,

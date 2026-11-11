@@ -15,6 +15,7 @@ import type {
   ProviderStatus,
   Settings,
 } from '../../shared/api'
+import { AddToClaudeDesktop } from '../components/AddToClaudeDesktop'
 import { ActionFailed, Avatar, Hash, Icon, SecretBadge, SideEffect } from '../components/ui'
 import { useAction, useApi, useLoad, useNow } from '../lib/api-context'
 import { hostOf, plural } from '../lib/format'
@@ -698,7 +699,7 @@ function Clients({
 const CLIENT_HELP: Readonly<Record<ClientKind, string>> = {
   'claude-code': 'Run this in a terminal. It adds Valet to Claude Code for your user.',
   'claude-desktop':
-    'Add this to claude_desktop_config.json (Settings › Developer › Edit Config), then restart it.',
+    'Or add this to claude_desktop_config.json yourself (Settings › Developer › Edit Config), then restart it.',
 }
 
 function ClientCard({
@@ -761,6 +762,7 @@ function ClientSnippet({ client, kind }: { readonly client: ClientInfo; readonly
     return <div className="xs muted">This build has no bridge to set {client.name} up with.</div>
   return (
     <>
+      {kind === 'claude-desktop' ? <AddToClaudeDesktop clientId={client.id} /> : null}
       <div className="xs muted">{CLIENT_HELP[kind]}</div>
       <pre className="code">{text}</pre>
       <div className="row">

@@ -67,6 +67,7 @@ import {
 } from './audit-view'
 import { BlockedAudit, LoginSecrets } from './blocked'
 import { type AppRefusal, RuntimeToolCaller } from './caller'
+import { addToDesktopConfig } from './claude-desktop'
 import { ClientRegistry, shownTransport } from './clients'
 import { ConfirmationBroker, type Timers } from './confirmations'
 import {
@@ -160,6 +161,8 @@ export interface ServiceDeps {
   readonly emit: (event: AppEvent) => void
   /** The stdio bridge's command line for a client's config file, for snippets; null when it can't be launched. */
   readonly bridge: ((configPath: string) => BridgeCommand) | null
+  /** Claude Desktop's claude_desktop_config.json, which "Add to Claude Desktop" writes. Null: none. */
+  readonly claudeDesktopConfig: string | null
   /** Checks a chosen op binary (checkOpBinary); the resolved path, or null to refuse it. */
   readonly checkOp: (path: string) => Promise<string | null>
   /**
@@ -840,10 +843,13 @@ export class AppService {
   }
 
   /** Snippets that launch the bridge with this client's own config file. */
+  private serverName(): string {
+    return this.deps.demo ? `${MCP_SERVER_NAME}-demo` : MCP_SERVER_NAME
+  }
+
   private snippets(clientId: string): ClientSnippet[] {
     if (this.deps.bridge === null || !this.clients.isActive(clientId)) return []
-    const name = this.deps.demo ? `${MCP_SERVER_NAME}-demo` : MCP_SERVER_NAME
-    return clientSnippets(name, this.deps.bridge(this.clients.configPath(clientId)))
+    return clientSnippets(this.serverName(), this.deps.bridge(this.clients.configPath(clientId)))
   }
 
   /** The client as the screens show it, with its calls over the last seven days. */
@@ -1105,6 +1111,14 @@ export class AppService {
           const text = snippetFor(this.snippets(clientId), kind)
           if (text === null) throw new ValetError('config', 'unavailable')
           deps.ui.writeClipboard(text)
+        },
+        addToClaudeDesktop: async (clientId) => {
+          const path = deps.claudeDesktopConfig
+          if (path === null || deps.bridge === null) throw new ValetError('config', 'unavailable')
+          if (!this.clients.isActive(clientId)) throw new ValetError('config', 'not-found')
+          const bridge = deps.bridge(this.clients.configPath(clientId))
+          const result = await addToDesktopConfig(path, this.serverName(), bridge, deps.now())
+          return { path, ...result }
         },
       },
       attention: {

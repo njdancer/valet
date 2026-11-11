@@ -190,6 +190,7 @@ async function setup(
     ...(options.leftovers === undefined ? {} : { leftovers: options.leftovers }),
     emit: (event) => events.push(event),
     bridge: (configPath) => ({ command: '/repo/tsx', args: ['/repo/bridge-cli.ts', configPath] }),
+    claudeDesktopConfig: join(dir, 'Claude', 'claude_desktop_config.json'),
     checkOp: options.checkOp ?? (async (path) => (path === '/good/op' ? path : null)),
     updates: options.updates ?? (async () => disabledUpdates('0.1.0', 'development', false)),
     // The site's rate budget waits on the test's clock.
@@ -300,6 +301,27 @@ describe('the cart page', () => {
     expect((await s.api.adapters.list())[0]?.cartUrl).toBeNull()
     await expect(s.api.adapters.openCart('shop')).rejects.toThrow()
     expect(s.ui.opened).toEqual([])
+  })
+})
+
+describe('Add to Claude Desktop', () => {
+  it('writes the client’s bridge entry into Claude Desktop’s config, and only for an active client', async () => {
+    const s = await approved()
+    const client = await s.api.clients.add('Claude Desktop')
+    await expect(s.api.clients.addToClaudeDesktop('c_nope')).rejects.toThrow()
+    const written = await s.api.clients.addToClaudeDesktop(client.id)
+    expect(written).toMatchObject({ backup: null, replaced: false })
+    const servers = JSON.parse(readFileSync(written.path, 'utf8')).mcpServers
+    const [entry] = Object.values(servers) as { command: string; args: string[] }[]
+    expect(Object.keys(servers)).toHaveLength(1)
+    expect(entry?.command).toBe('/repo/tsx')
+    expect(entry?.args.at(-1)).toContain(client.id)
+    // A second time replaces its own entry, and keeps a copy of the file it replaced.
+    const again = await s.api.clients.addToClaudeDesktop(client.id)
+    expect(again.replaced).toBe(true)
+    expect(again.backup).not.toBeNull()
+    await s.api.clients.revoke(client.id)
+    await expect(s.api.clients.addToClaudeDesktop(client.id)).rejects.toThrow()
   })
 })
 

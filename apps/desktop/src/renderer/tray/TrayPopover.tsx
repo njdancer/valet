@@ -137,7 +137,7 @@ export function TrayPopover() {
                     className="menu-row"
                     onClick={() => action.run(() => api.adapters.openCart(adapter.id))}
                   >
-                    <Icon name="link" size="sm" className="muted" /> Check out on {adapter.site}…
+                    <Icon name="external" size="sm" className="muted" /> Check out on {adapter.site}…
                   </button>
                 ))
             : null}

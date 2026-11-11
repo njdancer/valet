@@ -1140,6 +1140,16 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       async copyConfig(clientId, kind) {
         enter('clients.copyConfig', clientId, kind)
       },
+      async addToClaudeDesktop(clientId) {
+        enter('clients.addToClaudeDesktop', clientId)
+        if (!clients.some((c) => c.id === clientId && c.revokedAt === null)) throw new Error('refused')
+        return {
+          path: '~/Library/Application Support/Claude/claude_desktop_config.json',
+          backup:
+            '~/Library/Application Support/Claude/claude_desktop_config.json.valet-backup-20261107T214800Z',
+          replaced: false,
+        }
+      },
       async revoke(clientId) {
         enter('clients.revoke', clientId)
         clients = clients.map((c) =>

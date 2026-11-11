@@ -287,6 +287,7 @@ describe('every channel', () => {
     'adapters.setSetting': ['woolworths', 'store', '9001201'],
     'adapters.clearSetting': ['woolworths', 'store'],
     'adapters.openCart': ['woolworths'],
+    'clients.addToClaudeDesktop': ['c_0123456789abcdef'],
     'approvals.pending': [],
     'approvals.approve': ['woolworths', HASH64],
     'approvals.reject': ['woolworths', HASH64],

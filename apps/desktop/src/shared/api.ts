@@ -543,6 +543,15 @@ export interface EndpointStatus {
  * A setup snippet for one client. Never contains the token: the bridge reads that client's token
  * from its own 0600 config file.
  */
+/** What "Add to Claude Desktop" did. Claude Desktop reads the file when it starts. */
+export interface DesktopConfigWritten {
+  readonly path: string
+  /** The copy of the old file, or null when there was none. */
+  readonly backup: string | null
+  /** True when an entry for Valet was already there and has been replaced. */
+  readonly replaced: boolean
+}
+
 export interface ClientSnippet {
   readonly client: ClientKind
   readonly text: string
@@ -883,6 +892,11 @@ export interface ValetApi {
     /** Setup snippets that launch the bridge with this client's config file. */
     snippets(clientId: string): Promise<readonly ClientSnippet[]>
     copyConfig(clientId: string, kind: ClientKind): Promise<void>
+    /**
+     * Writes this client's bridge entry into Claude Desktop's config file (D-connect), copying the old
+     * file beside it first. Refuses a file that isn't a JSON object, rather than lose what is in it.
+     */
+    addToClaudeDesktop(clientId: string): Promise<DesktopConfigWritten>
   }
   readonly attention: {
     list(): Promise<readonly AttentionItem[]>

@@ -186,6 +186,9 @@ const HANDLERS: Readonly<
     z.tuple([OPAQUE_ID, z.enum(['claude-code', 'claude-desktop'])]),
     (api, [id, kind]) => api.clients.copyConfig(id, kind),
   ),
+  'clients.addToClaudeDesktop': entry(z.tuple([OPAQUE_ID]), (api, [id]) =>
+    api.clients.addToClaudeDesktop(id),
+  ),
   'attention.list': entry(none, (api) => api.attention.list()),
   answerConfirmation: entry(z.tuple([OPAQUE_ID, z.boolean()]), (api, [id, approved], sender) =>
     // The sender's role is non-null here: untrusted senders never reach a handler.
