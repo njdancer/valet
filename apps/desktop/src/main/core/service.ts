@@ -405,6 +405,14 @@ export class AppService {
       this.background = this.background.then(() => this.pruneTraces())
     }, PRUNE_EVERY_MS)
     this.pruneTimer.unref?.()
+    // Check the audit chain once at launch, in the background, so the sidebar says intact or broken
+    // rather than "not verified yet" until someone opens the Audit log and clicks Verify.
+    this.background = this.background
+      .then(async () => {
+        this.chain = await this.reader.verify(new Date(this.deps.now()))
+        this.emit('audit-verified')
+      })
+      .catch(() => undefined)
     // Updates first, before any adapter, credential or endpoint: a release that fails further on can
     // still be replaced by the next one.
     await this.startUpdates()

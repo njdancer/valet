@@ -15,7 +15,11 @@ const SNIPPET_TITLES: Readonly<Record<ClientKind, { readonly title: string; read
   'claude-desktop': { title: 'Add to Claude Desktop', detail: 'claude_desktop_config.json' },
 }
 
-export function ClientsSettingsPage() {
+/**
+ * Clients and Settings share one page. Opened from Settings, the settings column comes first, so
+ * the two sidebar items don't land on the same view.
+ */
+export function ClientsSettingsPage({ focus = 'clients' }: { readonly focus?: 'clients' | 'settings' }) {
   const api = useApi()
   const now = useNow(60_000)
   const endpoint = useLoad((a) => a.endpoint.status(), [], ['endpoint-changed'])
@@ -57,7 +61,7 @@ export function ClientsSettingsPage() {
       </div>
 
       <div className="content scroll clients-page" style={{ paddingTop: 'var(--space-4)' }}>
-        <div className="cols">
+        <div className={`cols${focus === 'settings' ? ' settings-first' : ''}`}>
           <div className="stack gap-4">
             <div className="card" id="endpoint">
               <LoadState loaded={endpoint} what="the endpoint">
@@ -164,27 +168,29 @@ export function ClientsSettingsPage() {
                   list.length === 0 ? (
                     <div className="empty">No clients yet. Add one to get its setup command.</div>
                   ) : (
-                    <table className="table tight">
-                      <thead>
-                        <tr>
-                          <th>Client</th>
-                          <th>Last call</th>
-                          <th className="num">Calls · 7d</th>
-                          <th />
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {list.map((client) => (
-                          <ClientRow
-                            key={client.id}
-                            client={client}
-                            now={now}
-                            open={open === client.id}
-                            onToggle={() => setOpen(open === client.id ? null : client.id)}
-                          />
-                        ))}
-                      </tbody>
-                    </table>
+                    <div className="table-scroll">
+                      <table className="table tight clients-table">
+                        <thead>
+                          <tr>
+                            <th>Client</th>
+                            <th>Last call</th>
+                            <th className="num">Calls · 7d</th>
+                            <th />
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {list.map((client) => (
+                            <ClientRow
+                              key={client.id}
+                              client={client}
+                              now={now}
+                              open={open === client.id}
+                              onToggle={() => setOpen(open === client.id ? null : client.id)}
+                            />
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   )
                 }
               </LoadState>
@@ -326,7 +332,7 @@ function ClientRow({
         {revoked ? (
           <span className="pill">Revoked</span>
         ) : (
-          <span className="row" style={{ justifyContent: 'flex-end' }}>
+          <span className="row client-actions">
             <button type="button" className="btn ghost" aria-expanded={open} onClick={onToggle}>
               Set up
             </button>

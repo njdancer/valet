@@ -170,7 +170,7 @@ function Detail({
                     <td>
                       <SideEffect purpose={t.sideEffect} />
                     </td>
-                    <td className="xs">
+                    <td className="xs wrap">
                       <AdapterText text={t.description} />
                     </td>
                     <td className="num">{t.calls7d}</td>
@@ -213,7 +213,7 @@ function Detail({
                         <ClientName reported={r.client} />
                       </td>
                       <td>
-                        <OutcomePill outcome={r.outcome} />
+                        <OutcomePill outcome={r.outcome} errorClass={r.errorClass} />
                         {r.blockedRequests > 0 ? (
                           <span className="xs muted"> {r.blockedRequests} blocked</span>
                         ) : null}
@@ -408,10 +408,10 @@ export function SettingBlock({
           <dl className="kv">
             <dt>Chosen</dt>
             <dd data-testid="setting-chosen">
-              <AdapterText text={setting.chosen.label} />
+              <AdapterText text={setting.chosen.label} from="From the site" />
               {setting.chosen.detail === null || setting.chosen.detail === '' ? null : (
                 <div className="xs muted">
-                  <AdapterText text={setting.chosen.detail} />
+                  <AdapterText text={setting.chosen.detail} from={null} />
                 </div>
               )}
             </dd>
@@ -420,7 +420,7 @@ export function SettingBlock({
           </dl>
           {searching ? null : (
             <div className="row">
-              <button type="button" className="btn ghost" onClick={() => setOpen(true)}>
+              <button type="button" className="btn" onClick={() => setOpen(true)}>
                 Change…
               </button>
             </div>
@@ -473,7 +473,7 @@ export function SettingBlock({
           </div>
           <ActionFailed failed={search.failed} what={`search for a ${title}`} />
           {reply === null ? null : (
-            <SettingChoices reply={reply} busy={choose.busy} now={now} onPick={pick} />
+            <SettingChoices reply={reply} site={adapter.site} busy={choose.busy} now={now} onPick={pick} />
           )}
           <ActionFailed failed={choose.failed} what={`save the ${title}`} />
         </>
@@ -484,11 +484,13 @@ export function SettingBlock({
 
 function SettingChoices({
   reply: { query, reply },
+  site,
   busy,
   now,
   onPick,
 }: {
   readonly reply: { readonly query: string; readonly reply: SettingChoicesReply }
+  readonly site: string
   readonly busy: boolean
   readonly now: number
   readonly onPick: (choiceId: string) => void
@@ -528,24 +530,29 @@ function SettingChoices({
       </div>
     )
   }
+  // The choices are what the site sent back through the adapter, not the manifest: one heading says
+  // so, and each line keeps the adapter's quotes.
   return (
-    <ul className="stack" style={{ listStyle: 'none', margin: 0, padding: 0 }} aria-label="Choices">
-      {reply.choices.map((choice) => (
-        <li className="row" key={choice.id}>
-          <span className="grow">
-            <AdapterText text={choice.label} />
-            {choice.detail === null || choice.detail === '' ? null : (
-              <div className="xs muted">
-                <AdapterText text={choice.detail} />
-              </div>
-            )}
-          </span>
-          <button type="button" className="btn" disabled={busy} onClick={() => onPick(choice.id)}>
-            Choose
-          </button>
-        </li>
-      ))}
-    </ul>
+    <div className="stack" style={{ gap: 'var(--space-1)' }}>
+      <div className="adapter-text-from">From {site}, through the adapter</div>
+      <ul className="stack" style={{ listStyle: 'none', margin: 0, padding: 0 }} aria-label="Choices">
+        {reply.choices.map((choice) => (
+          <li className="row" key={choice.id}>
+            <span className="grow">
+              <AdapterText text={choice.label} from={null} />
+              {choice.detail === null || choice.detail === '' ? null : (
+                <div className="xs muted">
+                  <AdapterText text={choice.detail} from={null} />
+                </div>
+              )}
+            </span>
+            <button type="button" className="btn" disabled={busy} onClick={() => onPick(choice.id)}>
+              Choose
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
   )
 }
 

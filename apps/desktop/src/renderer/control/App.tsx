@@ -78,8 +78,9 @@ function mainFor(route: Route): ReactNode {
     case 'credentials':
       return <CredentialsPage />
     case 'clients':
-    case 'settings':
       return <ClientsSettingsPage />
+    case 'settings':
+      return <ClientsSettingsPage focus="settings" />
     case 'remote':
       return <RemoteConsentPage />
     default:

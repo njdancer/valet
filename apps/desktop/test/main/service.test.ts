@@ -21,7 +21,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { type AdapterDefinition, CredentialError, ValetError } from '@valet/core'
 import type { LiveSessions, SessionReportingEndpoint, ToolCall, ToolCaller } from '@valet/mcp-server'
 import { LoginAttemptMarker } from '@valet/runtime'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { dataPaths } from '../../src/main/core/constants'
 import { type Credentials, disabledOtpReader } from '../../src/main/core/credentials'
 import { DEMO_ACCOUNT, demoCredentials } from '../../src/main/core/demo'
@@ -1419,7 +1419,8 @@ describe('endpoint, settings, audit and the app', () => {
 
   it('verifies and exports the audit log', async () => {
     const s = await approved()
-    expect(await s.api.audit.chainStatus()).toEqual({ state: 'unverified' })
+    // Launch checks the chain in the background, so the sidebar never sits at "not verified yet".
+    await vi.waitFor(async () => expect((await s.api.audit.chainStatus()).state).toBe('intact'))
     const verified = await s.api.audit.verify()
     expect(verified).toMatchObject({ state: 'intact', records: 1 })
     expect(await s.api.audit.chainStatus()).toEqual(verified)

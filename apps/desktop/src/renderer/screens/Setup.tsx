@@ -397,8 +397,9 @@ function OnePassword({
           {ready[0]?.kind === 'keychain-copy' ? ', and approve the copy in 1Password' : ''}.
         </div>
       ) : (
-        <div className="callout warn" style={{ marginTop: 'var(--space-4)' }}>
-          <Icon name="warn" />
+        // A note, not a warning: on arrival nothing has failed, the person just hasn't set it up yet.
+        <div className="callout info" style={{ marginTop: 'var(--space-4)' }}>
+          <Icon name="key" />
           <div>
             Valet can’t reach 1Password yet. Until it can, a login stops and shows you the site’s sign-in
             window instead. You can carry on with setup and come back to this.

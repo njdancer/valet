@@ -2,7 +2,7 @@ import { Avatar, Icon, type IconName } from '../components/ui'
 import { useLoad, useNow } from '../lib/api-context'
 import { formatCount, formatTime, hostOf } from '../lib/format'
 import { href, type Route } from '../lib/router'
-import { OUTCOME_TONE } from '../lib/wording'
+import { runTone } from '../lib/wording'
 
 type Section = 'adapters' | 'activity' | 'audit' | 'clients' | 'remote' | 'credentials' | 'settings'
 
@@ -132,7 +132,7 @@ export function Sidebar({ route }: { readonly route: Route }) {
                 href={href.activity(run.callId)}
                 aria-current={selected ? 'page' : undefined}
               >
-                <span className={`dot ${OUTCOME_TONE[run.outcome] || 'tertiary'}`} />
+                <span className={`dot ${runTone(run) || 'tertiary'}`} />
                 <span className="grow truncate">{run.tool}</span>
                 <span className="count">{formatTime(run.startedAt, now)}</span>
               </a>
