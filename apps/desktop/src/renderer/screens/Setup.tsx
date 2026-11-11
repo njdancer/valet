@@ -234,10 +234,21 @@ function SetupFrame({
               Back
             </a>
           ) : null}
-          {next !== undefined ? (
+          {next !== undefined && (stepDone || step === welcomeStep) ? (
             <a className="btn lg primary" href={href.setup(next)}>
-              {stepDone || step === welcomeStep ? 'Continue' : 'Skip for now'}
+              Continue
             </a>
+          ) : next !== undefined ? (
+            // Until the step is done, the main button waits and skipping is the quiet choice: a blue
+            // "Skip for now" invited people past the approval, grant and store every tool needs.
+            <>
+              <a className="btn lg ghost" href={href.setup(next)}>
+                Skip for now
+              </a>
+              <button type="button" className="btn lg primary" disabled title="Finish this step first">
+                Continue
+              </button>
+            </>
           ) : (
             <button type="button" className="btn lg primary" disabled={finish.busy} onClick={end}>
               {stepDone ? 'Finish' : 'Finish without a client'}

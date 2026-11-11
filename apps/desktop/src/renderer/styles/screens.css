@@ -42,6 +42,35 @@
   cursor: default;
 }
 
+/* A stack of pills is as wide as its widest pill, so the table sizes the column to fit it rather
+   than letting the pills run over the next column. */
+.adapters-page .stack.pills {
+  grid-template-columns: max-content;
+}
+
+/* Eight columns in the default 1180 px window: closer cells, and the longer secondary lines wrap
+   instead of widening their columns. */
+.adapters-page .table th,
+.adapters-page .table td {
+  padding-inline: var(--space-2);
+}
+
+.adapters-page .table td .xs.muted,
+.adapters-page .table td .badge.neutral {
+  white-space: normal;
+}
+
+.adapters-page .table td .badge.neutral {
+  height: auto;
+  line-height: 1.3;
+  padding-block: 2px;
+}
+
+/* On a narrow window the table scrolls inside its card instead of being cut off at the edge. */
+.table-scroll {
+  overflow-x: auto;
+}
+
 /* ---------- Adapter detail (adapter-detail.html) ---------- */
 
 .detail {

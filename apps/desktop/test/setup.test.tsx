@@ -55,7 +55,8 @@ describe('first-run setup', () => {
     // 1Password: nothing reachable yet. Setting it up shows it ready, and the step done.
     await heading('Where logins come from')
     expect(screen.getByText(/Valet can’t reach 1Password yet/)).toBeTruthy()
-    expect(screen.getByRole('link', { name: 'Skip for now' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Skip for now' }).className).not.toContain('primary')
+    expect((screen.getByRole('button', { name: 'Continue' }) as HTMLButtonElement).disabled).toBe(true)
     api.fake.setProviderAvailable('onepassword-cli', true)
     await screen.findByText(/1Password app is ready/)
     expect(screen.getByRole('link', { name: 'Continue' })).toBeTruthy()
