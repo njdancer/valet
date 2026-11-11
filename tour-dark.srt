@@ -1,0 +1,123 @@
+1
+00:00:00,547 --> 00:00:05,014
+First launch: A first launch opens setup in the Valet window.
+
+2
+00:00:05,014 --> 00:00:13,604
+First launch: Step 1: where the Woolworths password comes from. Valet keeps a Keychain copy of a 1Password item.
+
+3
+00:00:13,604 --> 00:00:17,539
+First launch: Step 2: approve the Woolworths adapter: the sites it reaches and what each tool can do.
+
+4
+00:00:17,539 --> 00:00:24,879
+First launch: The review shows the adapter’s code and permissions before anything runs.
+
+5
+00:00:24,879 --> 00:00:27,776
+First launch: Step 3: which login to use. Choosing an item asks 1Password.
+
+6
+00:00:28,315 --> 00:00:35,314
+First launch: 1Password asks first: unlock it, then allow Valet.
+
+7
+00:00:35,356 --> 00:00:39,095
+First launch: Pick the login. It may only be typed into the shop’s sign-in page.
+
+8
+00:00:39,095 --> 00:00:44,634
+First launch: The shop texts a code at sign-in, so Valet may read that code from Messages.
+
+9
+00:00:44,634 --> 00:00:52,809
+First launch: Step 4: the store whose prices and pickup times you shop with.
+
+10
+00:00:52,809 --> 00:00:59,574
+First launch: Step 5: connect Claude. Each app gets its own access, and the setup to copy.
+
+11
+00:00:59,574 --> 00:01:04,150
+First launch: Valet is set up. It lives in the menu bar from here.
+
+12
+00:01:04,231 --> 00:01:07,962
+Finding your way: Six places in the sidebar. Needs you comes first: anything waiting on you.
+
+13
+00:01:07,962 --> 00:01:11,808
+Finding your way: Sites: every site Valet can work on, and how each is doing.
+
+14
+00:01:11,875 --> 00:01:15,057
+A site’s own page: Each site has its own page: what it is doing, and whether it’s healthy.
+
+15
+00:01:15,057 --> 00:01:17,856
+A site’s own page: Tools: what agents can ask of this site, with what each one is allowed to change.
+
+16
+00:01:17,856 --> 00:01:20,592
+A site’s own page: Permissions: its login, its codes, and its store, each with its own grant.
+
+17
+00:01:20,592 --> 00:01:24,173
+A site’s own page: Versions: which adapter version is approved, and any update waiting for review.
+
+18
+00:01:24,224 --> 00:01:27,232
+Activity: Activity: every call an agent made, newest first.
+
+19
+00:01:27,232 --> 00:01:32,153
+Activity: Open a call to see each step Valet took on the site, and what it sent back.
+
+20
+00:01:32,153 --> 00:01:38,454
+Activity: The audit log: a hash-chained record of everything, logins and approvals included.
+
+21
+00:01:38,518 --> 00:01:44,162
+Search: Search finds any place, site, call or setting: ⌘K.
+
+22
+00:01:44,162 --> 00:01:46,289
+Search: …and takes you straight there.
+
+23
+00:01:46,391 --> 00:01:52,896
+Connections, secrets, settings: Connections: the apps and agents that can call Valet, each with its own access.
+
+24
+00:01:52,896 --> 00:01:56,096
+Connections, secrets, settings: Secrets: where each login comes from. Valet shows which, never the password.
+
+25
+00:01:56,096 --> 00:02:01,921
+Connections, secrets, settings: Settings: notifications, data kept, updates, and reset.
+
+26
+00:02:01,967 --> 00:02:06,610
+The menu bar: The menu bar panel: today’s calls, each site, and the stop buttons, without opening the window.
+
+27
+00:02:06,677 --> 00:02:11,058
+Signing in: When a site needs you to sign in yourself, Valet opens its page under a banner that says why.
+
+28
+00:02:11,109 --> 00:02:15,704
+Signing in: Needs you shows it too, until it’s done.
+
+29
+00:02:15,779 --> 00:02:25,716
+Stopping Valet: Pause Valet stops every call at once. Lock down goes further.
+
+30
+00:02:25,716 --> 00:02:28,265
+Stopping Valet: Locked down: every call is refused, with an answer that says why, until you unlock.
+
+31
+00:02:28,265 --> 00:02:31,682
+Stopping Valet: Unlock puts it back. Cloud agents removed by Lock down have to be approved again.
