@@ -1,0 +1,147 @@
+1
+00:00:00,374 --> 00:00:03,978
+First launch: A first launch opens setup in the Valet window.
+
+2
+00:00:03,978 --> 00:00:10,603
+First launch: Step 1: where the Woolworths password comes from. Valet keeps a Keychain copy of a 1Password item.
+
+3
+00:00:10,603 --> 00:00:14,446
+First launch: Step 2: approve the Woolworths adapter: the sites it reaches and what each tool can do.
+
+4
+00:00:14,446 --> 00:00:21,459
+First launch: The review shows the adapter’s code and permissions before anything runs.
+
+5
+00:00:21,459 --> 00:00:24,305
+First launch: Step 3: which login to use. Choosing an item asks 1Password.
+
+6
+00:00:24,722 --> 00:00:31,633
+First launch: 1Password asks first: unlock it, then allow Valet.
+
+7
+00:00:31,673 --> 00:00:35,287
+First launch: Pick the login. It may only be typed into the shop’s sign-in page.
+
+8
+00:00:35,287 --> 00:00:40,598
+First launch: The shop texts a code at sign-in, so Valet may read that code from Messages.
+
+9
+00:00:40,598 --> 00:00:48,530
+First launch: Step 4: the store whose prices and pickup times you shop with.
+
+10
+00:00:48,530 --> 00:00:55,206
+First launch: Step 5: connect Claude. Each app gets its own access, and the setup to copy.
+
+11
+00:00:55,206 --> 00:00:58,990
+First launch: Valet is set up. It lives in the menu bar from here.
+
+12
+00:00:59,027 --> 00:01:02,629
+Finding your way: Six places in the sidebar. Needs you comes first: anything waiting on you.
+
+13
+00:01:02,629 --> 00:01:06,369
+Finding your way: Sites: every site Valet can work on, and how each is doing.
+
+14
+00:01:06,407 --> 00:01:09,599
+A site’s own page: Each site has its own page: what it is doing, and whether it’s healthy.
+
+15
+00:01:09,599 --> 00:01:12,277
+A site’s own page: Tools: what agents can ask of this site, with what each one is allowed to change.
+
+16
+00:01:12,277 --> 00:01:14,975
+A site’s own page: Permissions: its login, its codes, and its store, each with its own grant.
+
+17
+00:01:14,975 --> 00:01:18,544
+A site’s own page: Versions: which adapter version is approved, and any update waiting for review.
+
+18
+00:01:18,593 --> 00:01:21,596
+Activity: Activity: every call an agent made, newest first.
+
+19
+00:01:21,596 --> 00:01:26,871
+Activity: Open a call to see each step Valet took on the site, and what it sent back.
+
+20
+00:01:26,871 --> 00:01:32,997
+Activity: The audit log: a hash-chained record of everything, logins and approvals included.
+
+21
+00:01:33,045 --> 00:01:37,980
+Search: Search finds any place, site, call or setting: ⌘K.
+
+22
+00:01:37,980 --> 00:01:40,106
+Search: …and takes you straight there.
+
+23
+00:01:40,154 --> 00:01:46,185
+Connections, secrets, settings: Connections: the apps and agents that can call Valet, each with its own access.
+
+24
+00:01:46,185 --> 00:01:49,281
+Connections, secrets, settings: Secrets: where each login comes from. Valet shows which, never the password.
+
+25
+00:01:49,281 --> 00:01:54,934
+Connections, secrets, settings: Settings: notifications, data kept, updates, and reset.
+
+26
+00:01:54,974 --> 00:01:59,518
+The menu bar: The menu bar panel: today’s calls, each site, and the stop buttons, without opening the window.
+
+27
+00:01:59,551 --> 00:02:03,870
+Signing in: When a site needs you to sign in yourself, Valet opens its page under a banner that says why.
+
+28
+00:02:03,918 --> 00:02:08,470
+Signing in: Needs you shows it too, until it’s done.
+
+29
+00:02:08,502 --> 00:02:18,106
+Stopping Valet: Pause Valet stops every call at once. Lock down goes further.
+
+30
+00:02:18,106 --> 00:02:20,665
+Stopping Valet: Locked down: every call is refused, with an answer that says why, until you unlock.
+
+31
+00:02:20,665 --> 00:02:23,998
+Stopping Valet: Unlock puts it back. Cloud agents removed by Lock down have to be approved again.
+
+32
+00:02:24,117 --> 00:02:30,291
+Reviewing an update: An adapter update waits for you. Until then, that site’s tools are off.
+
+33
+00:02:30,291 --> 00:02:39,577
+Reviewing an update: The review compares it with the version you approved, and highlights what changed.
+
+34
+00:02:39,577 --> 00:02:46,363
+Reviewing an update: Approved. Logins don’t carry over to a new version, so choose it again.
+
+35
+00:02:46,363 --> 00:02:49,148
+Reviewing an update: The site is back on, at the new version.
+
+36
+00:02:49,207 --> 00:02:52,921
+Asking first: A tool that can’t be undone asks you first, in a window of its own. (A test build here: no MVP Woolworths tool asks.)
+
+37
+00:02:52,975 --> 00:02:58,471
+Asking first: The agent is told you declined, and Activity records it.
