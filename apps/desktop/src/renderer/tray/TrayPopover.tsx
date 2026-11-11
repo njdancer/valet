@@ -96,7 +96,7 @@ export function TrayPopover() {
         ) : null}
 
         {items.length > 0 ? (
-          <section aria-label="Needs you">
+          <section aria-label="Needs you" className="needs-list">
             <div className="section-label row between">
               <span>Needs you</span>
               <span className="pill warn">{items.length}</span>
@@ -170,7 +170,7 @@ function AttentionRow({ item }: { readonly item: AttentionItem }) {
         </span>
         <div className="grow">
           <div className="h3">Log in to {item.adapterName}</div>
-          <div className="xs muted truncate">
+          <div className="xs muted clamp-2">
             {[
               needsUserWording(item.reason).short,
               item.tool,
@@ -201,7 +201,7 @@ function AttentionRow({ item }: { readonly item: AttentionItem }) {
           <div className="h3">
             Confirm {item.toolTitle} · {item.adapterName}
           </div>
-          <div className="xs muted truncate">{clientClaim(item.client)} is waiting for your answer</div>
+          <div className="xs muted clamp-2">{clientClaim(item.client)} is waiting for your answer</div>
         </div>
         <button
           type="button"
@@ -223,7 +223,7 @@ function AttentionRow({ item }: { readonly item: AttentionItem }) {
         <div className="h3">
           Review {item.adapterName} {item.version}
         </div>
-        <div className="xs muted truncate">
+        <div className="xs muted clamp-2">
           {item.addsPermissions ? 'Asks for more permissions' : 'Asks for nothing new'} · calls use the
           approved version
         </div>

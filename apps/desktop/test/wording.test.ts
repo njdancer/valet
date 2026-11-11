@@ -8,6 +8,7 @@ import {
 } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import {
+  askedToRetry,
   BLOCKED_EXPLANATION,
   BLOCKED_WORDING,
   blockedExplanation,
@@ -18,6 +19,8 @@ import {
   errorWording,
   NEEDS_USER_WORDING,
   needsUserWording,
+  runTone,
+  runWording,
   STAGE_WORDING,
   stageWording,
 } from '../src/renderer/lib/wording'
@@ -80,5 +83,24 @@ describe('wording', () => {
   it('words a reported name as a claim', () => {
     expect(clientClaim('claude-code')).toBe('A client calling itself “Claude Code”')
     expect(clientClaim('cursor', 'inline')).toBe('a client calling itself “cursor”')
+  })
+})
+
+describe('a call answered "call again"', () => {
+  it('reads as a retry, not a red failure, while Valet logs in or the call waits its turn', () => {
+    for (const errorClass of ['login-in-progress', 'busy']) {
+      const run = { outcome: 'failed' as const, errorClass }
+      expect(askedToRetry(run)).toBe(true)
+      expect(runTone(run)).toBe('info')
+      expect(runWording(run)).toBe('call again')
+    }
+  })
+
+  it('leaves every other failure red', () => {
+    const run = { outcome: 'failed' as const, errorClass: 'blocked-by-site' }
+    expect(askedToRetry(run)).toBe(false)
+    expect(runTone(run)).toBe('bad')
+    expect(runWording(run)).toBe('failed')
+    expect(runTone({ outcome: 'ok', errorClass: null })).toBe('ok')
   })
 })

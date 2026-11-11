@@ -5,7 +5,7 @@ import type { Purpose, RunOutcome } from '@valet/core'
 import type { ReactNode } from 'react'
 import type { Loaded } from '../lib/api-context'
 import { shortHash } from '../lib/format'
-import { clientLabel, OUTCOME_TONE, OUTCOME_WORDING } from '../lib/wording'
+import { clientLabel, runTone, runWording } from '../lib/wording'
 
 export type IconName =
   | 'adapter'
@@ -127,16 +127,36 @@ export function capText(text: string, max = MAX_ADAPTER_TEXT): string {
  * Text the adapter's manifest wrote (a description), visibly marked as the adapter's and quoted, so
  * it never reads as the app's own statement.
  */
-export function AdapterText({ text, className }: { readonly text: string; readonly className?: string }) {
+export function AdapterText({
+  text,
+  className,
+  from = 'From the manifest',
+}: {
+  readonly text: string
+  readonly className?: string
+  /**
+   * Where the text came from. Null leaves the tag off, for a line under a heading that already says
+   * where it came from; the quotes and italics still mark it as the adapter's.
+   */
+  readonly from?: string | null
+}) {
   return (
     <span className={`adapter-text${className === undefined ? '' : ` ${className}`}`}>
-      <span className="adapter-text-from">From the manifest</span>“{capText(text)}”
+      {from === null ? null : <span className="adapter-text-from">{from}</span>}“{capText(text)}”
     </span>
   )
 }
 
-export function OutcomePill({ outcome }: { readonly outcome: RunOutcome | 'running' }) {
-  return <span className={`pill ${OUTCOME_TONE[outcome]}`.trim()}>{OUTCOME_WORDING[outcome]}</span>
+export function OutcomePill({
+  outcome,
+  errorClass = null,
+}: {
+  readonly outcome: RunOutcome | 'running'
+  /** When given, a call answered "call again" reads as that rather than a red failure. */
+  readonly errorClass?: string | null
+}) {
+  const run = { outcome, errorClass }
+  return <span className={`pill ${runTone(run)}`.trim()}>{runWording(run)}</span>
 }
 
 export function Segmented<T extends string>({

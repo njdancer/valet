@@ -457,6 +457,15 @@ a {
   text-overflow: ellipsis;
 }
 
+/* Up to two lines, then an ellipsis: for a line whose end says who asked, which one line cut off. */
+.clamp-2 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+
 /* ---------- Surfaces ---------- */
 
 .card {
@@ -843,6 +852,11 @@ a {
 .table td.xs,
 .table td > .xs {
   white-space: nowrap;
+}
+
+/* A cell of running text (a tool's description) wraps, so none of it is cut off at the card. */
+.table td.wrap {
+  white-space: normal;
 }
 
 .table td.num,

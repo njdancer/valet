@@ -198,6 +198,35 @@ export const OUTCOME_TONE: Readonly<Record<RunOutcome | 'running', 'ok' | 'warn'
   running: 'info',
 }
 
+/**
+ * A failed call whose answer told its client to call again: Valet was still logging in (D50) or the
+ * call waited its turn behind earlier ones. Nothing went wrong, so it reads as a retry, not a failure.
+ */
+const RETRY_CLASSES: ReadonlySet<string> = new Set(['login-in-progress', 'busy'])
+
+export function askedToRetry(run: {
+  readonly outcome: RunOutcome | 'running'
+  readonly errorClass?: string | null
+}): boolean {
+  return run.outcome === 'failed' && run.errorClass != null && RETRY_CLASSES.has(run.errorClass)
+}
+
+/** A run's tone, with a retry answer in the neutral info tone rather than red. */
+export function runTone(run: {
+  readonly outcome: RunOutcome | 'running'
+  readonly errorClass?: string | null
+}): (typeof OUTCOME_TONE)[RunOutcome] {
+  return askedToRetry(run) ? 'info' : OUTCOME_TONE[run.outcome]
+}
+
+/** A run's outcome in words, with a retry answer as "call again". */
+export function runWording(run: {
+  readonly outcome: RunOutcome | 'running'
+  readonly errorClass?: string | null
+}): string {
+  return askedToRetry(run) ? 'call again' : OUTCOME_WORDING[run.outcome]
+}
+
 export const PROVIDER_WORDING: Readonly<
   Record<ProviderKind, { readonly title: string; readonly detail: string }>
 > = {

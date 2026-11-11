@@ -15,8 +15,9 @@ import {
   errorWording,
   FILL_CHECK_WORDING,
   needsUserWording,
-  OUTCOME_TONE,
   OUTCOME_WORDING,
+  runTone,
+  runWording,
   stageWording,
 } from '../lib/wording'
 
@@ -100,8 +101,8 @@ function Trace({ trace, view }: { readonly trace: RunTrace; readonly view: 'time
         <div className="kpi">
           <span>Outcome</span>
           <strong className="row">
-            <span className={`dot ${OUTCOME_TONE[summary.outcome]}`} />
-            {OUTCOME_WORDING[summary.outcome]}
+            <span className={`dot ${runTone(summary)}`} />
+            {runWording(summary)}
           </strong>
         </div>
         <div className="kpi">

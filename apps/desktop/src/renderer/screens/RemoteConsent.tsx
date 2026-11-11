@@ -158,7 +158,7 @@ function Consent({ state, armDelayMs }: { readonly state: RemoteConsentState; re
         <label className="stack" style={{ gap: 4 }}>
           <span className="small">Type the code your browser shows</span>
           <input
-            className="mono"
+            className="input mono"
             value={code}
             maxLength={12}
             autoComplete="off"
