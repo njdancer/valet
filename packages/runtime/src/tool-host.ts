@@ -615,6 +615,7 @@ export class ToolHost {
         )
         // Even a yes doesn't run a tool whose caller has gone.
         if (external?.aborted) return failed('tool-run', 'aborted')
+        if (answer === 'timed-out') return { status: 'declined', timedOut: true }
         if (answer !== 'approved') return { status: 'declined' }
       }
       for (const setting of due) {

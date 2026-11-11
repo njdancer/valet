@@ -18,11 +18,13 @@ import type {
   AdapterSummary,
   ApprovalState,
   GrantInfo,
+  LoginMissingItem,
   MessagesSourceInfo,
   PendingReview,
   ReviewItem,
   SecretRequestInfo,
   SessionStatus,
+  SettingMissingItem,
   SiteHealth,
 } from '../../shared/api'
 import type { ChosenSetting } from './adapter-settings'
@@ -55,6 +57,8 @@ export interface AdapterState {
   readonly handedOver: { readonly cookies: number; readonly storageKeys: number } | null
   /** What the person chose for the adapter's settings, by setting name. */
   readonly chosen: Readonly<Record<string, ChosenSetting>>
+  /** The person paused this site (app-state.ts). Absent: not paused. */
+  readonly paused?: boolean
 }
 
 /** The manifest's settings with the person's choices. A choice for a setting it no longer declares is not shown. */
@@ -168,6 +172,7 @@ export function adapterSummary(state: AdapterState): AdapterSummary {
       .filter((s) => s.required && s.chosen === null)
       .map((s) => s.title),
     cartUrl: approvalState(state) === 'approved' ? (manifest.cartUrl ?? null) : null,
+    paused: state.paused ?? false,
   }
 }
 
@@ -231,7 +236,38 @@ export function reviewItem(review: PendingReview): ReviewItem {
     adapterName: review.name,
     version: review.to.version,
     addsPermissions: addsPermissions(review.diff),
+    firstInstall: review.from === null,
   }
+}
+
+/**
+ * What an approved site still needs before its calls can work: each required setting with no
+ * choice ("Choose your Woolworths store") and each declared login with no grant for the installed
+ * hash ("Give Valet your Woolworths login"). An unapproved site has its review instead.
+ */
+export function missingItems(state: AdapterState): (SettingMissingItem | LoginMissingItem)[] {
+  if (approvalState(state) !== 'approved') return []
+  const manifest = state.adapter.definition.manifest
+  const settings: SettingMissingItem[] = settingInfos(state)
+    .filter((s) => s.required && s.chosen === null)
+    .map((s) => ({
+      kind: 'setting-missing',
+      id: `sm_${manifest.id}_${s.name}`.slice(0, 64),
+      adapterId: manifest.id,
+      adapterName: manifest.name,
+      setting: s.name,
+      settingTitle: s.title,
+    }))
+  const logins: LoginMissingItem[] = secretRequests(state)
+    .filter((s) => s.grant === null)
+    .map((s) => ({
+      kind: 'login-missing',
+      id: `lm_${manifest.id}_${s.name}`.slice(0, 64),
+      adapterId: manifest.id,
+      adapterName: manifest.name,
+      secret: s.name,
+    }))
+  return [...settings, ...logins]
 }
 
 /**

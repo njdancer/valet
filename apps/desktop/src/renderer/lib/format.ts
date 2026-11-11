@@ -125,3 +125,12 @@ export function hostOf(origin: string): string {
 export function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`
 }
+
+/** The clock time alone, "9:52 pm", for deadlines and "calls resume at". */
+export function formatClock(iso: string | number): string {
+  const date = new Date(iso)
+  return Number.isNaN(date.getTime()) ? '—' : timeFormat.format(date)
+}
+
+/** A call's short ref, "7F2A": the same one tool results and notifications name. */
+export { callRef } from '@valet/core/vocabulary'

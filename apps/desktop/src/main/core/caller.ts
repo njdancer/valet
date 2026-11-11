@@ -8,8 +8,10 @@
 // The app's own refusals come first and never reach the runtime, but are audited like any call
 // (hooks.refused writes tool-called and tool-finished for them). Both fail at stage `config`, which
 // the runtime never reports for a call, so the log and the client can tell them from the runtime's:
+// - while locked down: config: locked-down, whatever else is set.
 // - while paused: config: unavailable (not a rate limit: the site isn't involved, and a retry
 //   succeeds only once the person resumes).
+// - while the call's site is paused: config: site-paused.
 // A client the person revoked never gets this far: its token is gone, so the endpoint refuses it.
 //
 // The runtime's lock keeps calls and the app's own login work (ToolHost.runLoginStep) on an adapter
@@ -28,9 +30,28 @@ import type { ToolCallResult, ToolHost } from '@valet/runtime'
 export type AppRefusal = Extract<ToolCallResult, { readonly status: 'failed' }>
 
 export const PAUSED_REFUSAL: AppRefusal = { status: 'failed', stage: 'config', errorClass: 'unavailable' }
+export const LOCKED_DOWN_REFUSAL: AppRefusal = {
+  status: 'failed',
+  stage: 'config',
+  errorClass: 'locked-down',
+}
+export const SITE_PAUSED_REFUSAL: AppRefusal = {
+  status: 'failed',
+  stage: 'config',
+  errorClass: 'site-paused',
+}
 
 export interface CallerHooks {
   readonly paused: () => boolean
+  /** Lock down: every call is refused. Absent: never. */
+  readonly lockedDown?: () => boolean
+  /** The person paused this one site. Absent: never. */
+  readonly sitePaused?: (adapterId: string) => boolean
+  /**
+   * Adds what the app knows about an outcome for the tool result: which Needs you item it is under
+   * (a login window and when it closes, a login given up, a missing setting or login).
+   */
+  readonly explain?: (call: ToolCall, outcome: CallOutcome) => CallOutcome | Promise<CallOutcome>
   /** A call is about to run. */
   readonly started: (call: ToolCall) => void
   readonly finished: (call: ToolCall, result: ToolCallResult) => void
@@ -70,10 +91,19 @@ export class RuntimeToolCaller implements ToolCaller {
     this.stopping.abort()
   }
 
+  /** The app's own refusal of this call, or null to let it through to the runtime. */
+  private refusal(call: ToolCall): AppRefusal | null {
+    if (this.hooks.lockedDown?.() === true) return LOCKED_DOWN_REFUSAL
+    if (this.hooks.paused()) return PAUSED_REFUSAL
+    if (this.hooks.sitePaused?.(call.adapterId) === true) return SITE_PAUSED_REFUSAL
+    return null
+  }
+
   async call(call: ToolCall): Promise<CallOutcome> {
-    if (this.hooks.paused()) {
-      await this.hooks.refused(call, PAUSED_REFUSAL).catch(() => undefined)
-      return outcomeOf(PAUSED_REFUSAL)
+    const refusal = this.refusal(call)
+    if (refusal !== null) {
+      await this.hooks.refused(call, refusal).catch(() => undefined)
+      return outcomeOf(refusal)
     }
     this.hooks.started(call)
     const result = await this.host.call({
@@ -90,7 +120,13 @@ export class RuntimeToolCaller implements ToolCaller {
       ...(call.transport === undefined ? {} : { transport: call.transport }),
     })
     this.hooks.finished(call, result)
-    return outcomeOf(result)
+    const outcome = outcomeOf(result)
+    if (this.hooks.explain === undefined) return outcome
+    try {
+      return await this.hooks.explain(call, outcome)
+    } catch {
+      return outcome
+    }
   }
 }
 
@@ -137,6 +173,6 @@ export function outcomeOf(result: ToolCallResult): CallOutcome {
         retryAfterMs: result.retryAfterMs,
       }
     case 'declined':
-      return { status: 'declined' }
+      return result.timedOut === true ? { status: 'declined', timedOut: true } : { status: 'declined' }
   }
 }

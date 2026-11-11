@@ -424,7 +424,9 @@ async function main(): Promise<void> {
   const setup = await running.api.setup.status()
   const attention = await running.api.attention.list()
   if (mode.setup && setup.completedAt === null) windows.openControlPanel(href.setup())
-  else if (mode.demo || mode.e2e || attention.length > 0) windows.openControlPanel(null)
+  // P8a: on Needs you when something waits, otherwise on Sites.
+  else if (attention.length > 0) windows.openControlPanel(href.needsYou())
+  else if (mode.demo || mode.e2e) windows.openControlPanel(null)
 
   // A smoke build only: the packaged main process loads what it loads lazily, and says so.
   if (__VALET_SMOKE_BUILD__) {

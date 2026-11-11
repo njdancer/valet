@@ -139,6 +139,8 @@ export const ERROR_WORDING: Readonly<Record<ErrorClass, string>> = {
   unsupported: 'Unsupported',
   'signature-invalid': 'Signature didn’t verify',
   expired: 'Expired',
+  'site-paused': 'Site paused',
+  'locked-down': 'Valet locked down',
   declined: 'Declined',
   'timed-out': 'Timed out',
   aborted: 'Aborted',

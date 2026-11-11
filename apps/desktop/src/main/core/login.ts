@@ -159,6 +159,11 @@ export interface HandoffOptions {
   readonly markers: LoginMarkerStore
   readonly sessions: SessionTracker
   readonly onChange: () => void
+  /**
+   * A hand-off ended without a hand-over: the person gave up (closed it), or its window's time ran
+   * out. Not called for one that finished, was replaced by a newer one, or closed as the app quit.
+   */
+  readonly onEnded?: (item: NeedsUserItem, how: 'gave-up' | 'expired') => void
 }
 
 export interface HandoffStart {
@@ -195,7 +200,10 @@ export class Handoffs {
     const earlier = this.open_.get(adapterId)
     if (earlier !== undefined) this.dispose(adapterId, earlier)
     const now = this.options.now()
-    const timer = this.options.timers.setTimeout(() => void this.close(adapterId), this.options.windowMs)
+    const timer = this.options.timers.setTimeout(
+      () => void this.close(adapterId, 'expired'),
+      this.options.windowMs,
+    )
     const item: NeedsUserItem = {
       kind: 'needs-user',
       id: `nu_${adapterId}`,
@@ -258,12 +266,22 @@ export class Handoffs {
    * The person gives up, or the window's time ran out: close it without a hand-off. A call's
    * hand-off leaves the session expired; one the person opened leaves it as it was.
    */
-  async close(adapterId: string): Promise<void> {
+  async close(adapterId: string, how: 'gave-up' | 'expired' = 'gave-up'): Promise<void> {
     const handoff = this.open_.get(adapterId)
     if (handoff === undefined) return
     this.dispose(adapterId, handoff)
     if (handoff.item.startedBy === 'call') this.options.sessions.set(adapterId, 'expired')
+    try {
+      this.options.onEnded?.(handoff.item, how)
+    } catch {
+      // The window is closed whatever the record does.
+    }
     this.options.onChange()
+  }
+
+  /** The waiting hand-off for an adapter, or null. */
+  get(adapterId: string): NeedsUserItem | null {
+    return this.open_.get(adapterId)?.item ?? null
   }
 
   closeAll(): void {

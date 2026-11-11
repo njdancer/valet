@@ -67,13 +67,18 @@ afterEach(async () => {
   for (const item of open.splice(0)) await item.close()
 })
 
+/** Saturday 7 November 2026, 9:48 pm in Sydney: the wireframes' moment. */
+const NOW = Date.parse('2026-11-07T10:48:00Z')
+
 async function connect(caller: FakeCaller, clientName = 'test-client', progressIntervalMs?: number) {
   let next = 0
   const endpoint = createMcpServer(
     caller,
     { name: 'valet', version: '0.1.0' },
     {
-      newCallId: () => `call-${++next}`,
+      newCallId: () => `7f2a${++next}c`,
+      timeZone: 'Australia/Sydney',
+      now: () => NOW,
       ...(progressIntervalMs === undefined ? {} : { progressIntervalMs }),
     },
   )
@@ -451,14 +456,14 @@ describe('calling a tool', () => {
         tool: 'search_products',
         input: { query: 'milk' },
         client: 'Claude Code',
-        callId: 'call-1',
+        callId: '7f2a1c',
       },
       {
         adapterId: 'woolworths',
         tool: 'search_products',
         input: { query: 'eggs' },
         client: 'Claude Code',
-        callId: 'call-2',
+        callId: '7f2a2c',
       },
     ])
   })
@@ -628,7 +633,9 @@ describe('call results', () => {
     const result = await client.callTool({ name: 'woolworths_search_products', arguments: { query: 'milk' } })
 
     expect(result.isError).toBe(true)
-    expect(textOf(result)).toBe('The tool failed at stage egress: host-not-allowed.')
+    expect(textOf(result)).toBe(
+      'The tool failed at stage egress: host-not-allowed. The person can see it in Valet, Activity, call 7F2A.',
+    )
   })
 
   it('replaces a failed stage or class outside the vocabulary rather than passing it through', async () => {
@@ -639,7 +646,9 @@ describe('call results', () => {
 
     const result = await client.callTool({ name: 'woolworths_search_products', arguments: { query: 'milk' } })
 
-    expect(textOf(result)).toBe('The tool failed at stage tool-run: internal.')
+    expect(textOf(result)).toBe(
+      'The tool failed at stage tool-run: internal. The person can see it in Valet, Activity, call 7F2A.',
+    )
   })
 
   it('never sends the message of an exception the runtime throws', async () => {
@@ -653,7 +662,9 @@ describe('call results', () => {
 
     expect(result.isError).toBe(true)
     expect(JSON.stringify(result)).not.toContain('hunter2')
-    expect(textOf(result)).toBe('The tool failed at stage tool-run: internal.')
+    expect(textOf(result)).toBe(
+      'The tool failed at stage tool-run: internal. The person can see it in Valet, Activity, call 7F2A.',
+    )
   })
 
   it('reports a ValetError the runtime throws by its stage and class', async () => {
@@ -663,7 +674,9 @@ describe('call results', () => {
     }
     const { client } = await connect(caller)
     const result = await client.callTool({ name: 'woolworths_search_products', arguments: { query: 'milk' } })
-    expect(textOf(result)).toBe('The tool failed at stage timeout: timed-out.')
+    expect(textOf(result)).toBe(
+      'The tool failed at stage timeout: timed-out. The person can see it in Valet, Activity, call 7F2A.',
+    )
   })
 
   it('withholds ok output that does not match the declared output schema', async () => {
@@ -675,7 +688,9 @@ describe('call results', () => {
 
     expect(result.isError).toBe(true)
     expect(JSON.stringify(result)).not.toContain('abc123')
-    expect(textOf(result)).toBe('The tool failed at stage tool-output: invalid.')
+    expect(textOf(result)).toBe(
+      'The tool failed at stage tool-output: invalid. The person can see it in Valet, Activity, call 7F2A.',
+    )
   })
 
   it('drops keys the output schema does not declare, at every level', async () => {
@@ -712,7 +727,9 @@ describe('call results', () => {
     const { client } = await connect(caller)
     const result = await client.callTool({ name: 'woolworths_search_products', arguments: { query: 'milk' } })
     expect(JSON.stringify(result)).not.toContain('abc123')
-    expect(textOf(result)).toBe('The tool failed at stage tool-output: invalid.')
+    expect(textOf(result)).toBe(
+      'The tool failed at stage tool-output: invalid. The person can see it in Valet, Activity, call 7F2A.',
+    )
   })
 
   it('withholds ok output that cannot be serialised as JSON', async () => {
@@ -720,7 +737,9 @@ describe('call results', () => {
     caller.answer = async () => ({ status: 'ok', output: 10n })
     const { client } = await connect(caller)
     const result = await client.callTool({ name: 'woolworths_search_products', arguments: { query: 'milk' } })
-    expect(textOf(result)).toBe('The tool failed at stage tool-output: invalid.')
+    expect(textOf(result)).toBe(
+      'The tool failed at stage tool-output: invalid. The person can see it in Valet, Activity, call 7F2A.',
+    )
   })
 
   it('withholds ok output when the output schema itself throws', async () => {
@@ -731,7 +750,9 @@ describe('call results', () => {
     caller.answer = async () => ({ status: 'ok', output: {} })
     const { client } = await connect(caller)
     const result = await client.callTool({ name: 'woolworths_search_products', arguments: { query: 'milk' } })
-    expect(textOf(result)).toBe('The tool failed at stage tool-output: invalid.')
+    expect(textOf(result)).toBe(
+      'The tool failed at stage tool-output: invalid. The person can see it in Valet, Activity, call 7F2A.',
+    )
   })
 
   it('gives blocked with its stage and class, and whole seconds to wait, rounded up', async () => {
@@ -748,7 +769,7 @@ describe('call results', () => {
 
     expect(result.isError).toBe(true)
     expect(textOf(result)).toBe(
-      'The site is refusing or limiting requests (stage tool-run: blocked-by-site). Try again in 3 seconds.',
+      'The site is refusing or limiting requests (stage tool-run: blocked-by-site). Woolworths is limiting requests; calls resume at 9:48 pm. Try again in 3 seconds.',
     )
   })
 
@@ -765,7 +786,7 @@ describe('call results', () => {
     const result = await client.callTool({ name: 'woolworths_search_products', arguments: { query: 'milk' } })
 
     expect(textOf(result)).toBe(
-      'The site is refusing or limiting requests (stage request-surface: rate-limited). Try again in 600 seconds.',
+      'The site is refusing or limiting requests (stage request-surface: rate-limited). Woolworths is limiting requests; calls resume at 9:58 pm. Try again in 600 seconds.',
     )
   })
 
@@ -824,7 +845,7 @@ describe('call results', () => {
     expect(result.isError).toBe(true)
     expect(textOf(result)).toBe(
       'Valet has sent this site as many requests as it allows itself in an hour, so this call was ' +
-        'not started and nothing was sent (stage tool-run: rate-limited). Try again in 1500 seconds.',
+        'not started and nothing was sent (stage tool-run: rate-limited). Valet is limiting its requests to Woolworths until 10:13 pm. Try again in 1500 seconds.',
     )
   })
 
@@ -864,7 +885,7 @@ describe('call results', () => {
     const result = await client.callTool({ name: 'woolworths_search_products', arguments: { query: 'milk' } })
 
     expect(textOf(result)).toBe(
-      'The site is refusing or limiting requests (stage tool-run: blocked-by-site). Try again in 1 seconds.',
+      'The site is refusing or limiting requests (stage tool-run: blocked-by-site). Woolworths is limiting requests; calls resume at 9:48 pm. Try again in 1 seconds.',
     )
   })
 
@@ -881,7 +902,9 @@ describe('call results', () => {
     const result = await client.callTool({ name: 'woolworths_search_products', arguments: { query: 'milk' } })
 
     expect(result.isError).toBe(true)
-    expect(textOf(result)).toBe('The tool failed at stage tool-run: internal.')
+    expect(textOf(result)).toBe(
+      'The tool failed at stage tool-run: internal. The person can see it in Valet, Activity, call 7F2A.',
+    )
   })
 
   it("never tells the agent to retry a guard's refusal, even sent as blocked", async () => {
@@ -903,10 +926,10 @@ describe('call results', () => {
       texts.push(textOf(result))
     }
     expect(texts).toEqual([
-      'The tool failed at stage request-surface: denied-path.',
-      'The tool failed at stage request-surface: request-ceiling.',
-      'The tool failed at stage request-surface: host-not-allowed.',
-      'The tool failed at stage request-surface: not-granted.',
+      'The tool failed at stage request-surface: denied-path. The person can see it in Valet, Activity, call 7F2A.',
+      'The tool failed at stage request-surface: request-ceiling. The person can see it in Valet, Activity, call 7F2A.',
+      'The tool failed at stage request-surface: host-not-allowed. The person can see it in Valet, Activity, call 7F2A.',
+      'The tool failed at stage request-surface: not-granted. The person can see it in Valet, Activity, call 7F2A.',
     ])
   })
 
@@ -940,7 +963,7 @@ describe('call results', () => {
 
     expect(result.isError).toBe(true)
     expect(textOf(result)).toBe(
-      'The person did not approve this action in the Valet app (stage confirm: declined).',
+      'The person did not approve this action in the Valet app (stage confirm: declined). The person can see it in Valet, Activity, call 7F2A.',
     )
   })
 

@@ -4,10 +4,12 @@
 // session loads nothing but the renderer's files.
 
 import { partitionName } from '@valet/browser-electron'
-import { BrowserWindow, type Rectangle, screen, session, type WebContents } from 'electron'
-import { panelOnlyRoute, parseRoute } from '../../renderer/lib/routes'
+import { BrowserWindow, nativeTheme, type Rectangle, screen, session, type WebContents } from 'electron'
+import { href, panelOnlyRoute, parseRoute } from '../../renderer/lib/routes'
 import type { HashRoute } from '../../shared/api'
 import { onAppOrigin } from '../core/app-scheme'
+import { EVENT_CHANNEL } from '../core/channels'
+import { CANVAS, chromeArgument, chromeOptions, isBannerShortcut, windowChrome } from '../core/chrome'
 import { bannerBeside, handoffLayout, topRight, underTrayIcon } from '../core/geometry'
 import type { AppWindow, WindowRole } from '../core/ipc'
 import { isAppPage, type Page, pageUrl, type RendererBase, windowTitle } from '../core/launch'
@@ -35,6 +37,8 @@ export class AppWindows {
   private readonly banners = new Map<string, BrowserWindow>()
   /** Per banner: stops it following its auth window. */
   private readonly unfollow = new Map<string, () => void>()
+  /** Login windows already listening for the banner shortcut. */
+  private readonly shortcutFor = new WeakSet<WebContents>()
 
   constructor(private readonly options: WindowsOptions) {}
 
@@ -60,8 +64,14 @@ export class AppWindows {
     session.defaultSession.webRequest.onBeforeRequest((details, callback) =>
       callback({ cancel: !allowed(details.url) }),
     )
-    session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
-    session.defaultSession.setPermissionCheckHandler(() => false)
+    // The app's own pages may write to the clipboard (the design system's Copy buttons) and nothing
+    // else: no reading it, no camera, no notifications from the page. Site sessions are other
+    // partitions with their own handlers.
+    const writeOnly = (permission: string) => permission === 'clipboard-sanitized-write'
+    session.defaultSession.setPermissionRequestHandler((_contents, permission, callback) =>
+      callback(writeOnly(permission)),
+    )
+    session.defaultSession.setPermissionCheckHandler((_contents, permission) => writeOnly(permission))
   }
 
   openControlPanel(route: HashRoute | null): void {
@@ -74,15 +84,30 @@ export class AppWindows {
       this.control.focus()
       return
     }
-    const window = this.create('control', 'index.html', hash ?? '#/adapters', {
-      width: 1180,
-      height: 780,
-      minWidth: 880,
-      minHeight: 560,
-      titleBarStyle: 'hiddenInset',
-    })
+    const chrome = windowChrome(process.platform, 'control')
+    const window = this.create(
+      'control',
+      'index.html',
+      hash ?? href.sites(),
+      {
+        width: 1180,
+        height: 780,
+        minWidth: 880,
+        minHeight: 560,
+        ...chromeOptions(chrome, nativeTheme.shouldUseDarkColors),
+      },
+      '',
+      chromeArgument(chrome),
+    )
     window.once('ready-to-show', () => window.show())
+    // Without vibrancy the window's own background is the canvas: it follows the theme.
+    const retheme = () => {
+      if (window.isDestroyed() || chrome.vibrancy !== null) return
+      window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? CANVAS.dark : CANVAS.light)
+    }
+    nativeTheme.on('updated', retheme)
     window.on('closed', () => {
+      nativeTheme.off('updated', retheme)
       this.control = null
     })
     this.control = window
@@ -96,18 +121,27 @@ export class AppWindows {
     const display = screen.getDisplayNearestPoint({ x: iconBounds.x, y: iconBounds.y })
     const bounds = underTrayIcon(iconBounds, TRAY_SIZE, display.workArea)
     if (this.tray === null || this.tray.isDestroyed()) {
-      const window = this.create('tray', 'tray.html', '', {
-        ...bounds,
-        frame: false,
-        resizable: false,
-        movable: false,
-        minimizable: false,
-        maximizable: false,
-        fullscreenable: false,
-        skipTaskbar: true,
-        transparent: true,
-        alwaysOnTop: true,
-      })
+      const chrome = windowChrome(process.platform, 'tray')
+      const window = this.create(
+        'tray',
+        'tray.html',
+        '',
+        {
+          ...bounds,
+          frame: false,
+          resizable: false,
+          movable: false,
+          minimizable: false,
+          maximizable: false,
+          fullscreenable: false,
+          skipTaskbar: true,
+          transparent: true,
+          alwaysOnTop: true,
+          ...chromeOptions(chrome, nativeTheme.shouldUseDarkColors),
+        },
+        '',
+        chromeArgument(chrome),
+      )
       window.on('blur', () => window.hide())
       window.on('closed', () => {
         this.tray = null
@@ -201,6 +235,7 @@ export class AppWindows {
       (w) =>
         !w.isDestroyed() && w.webContents.session === session.fromPartition(partitionName('auth', adapterId)),
     )
+    if (authWindow !== undefined) this.listenForBannerShortcut(adapterId, authWindow)
     const target = authWindow?.getBounds() ?? null
     const display = target === null ? screen.getPrimaryDisplay() : screen.getDisplayMatching(target)
     const layout = handoffLayout(target, BANNER_HEIGHT, display.workArea)
@@ -238,6 +273,31 @@ export class AppWindows {
     })
     this.banners.set(adapterId, window)
     if (authWindow !== undefined) this.follow(adapterId, window, authWindow)
+  }
+
+  /**
+   * ⇧⌘B (Ctrl+Shift+B) in the site's login window, and only there: brings the hand-off banner
+   * forward, focuses it, and tells its page to move focus to the banner region (the focus-banner
+   * event). The site's page never sees the key: the main process takes it first.
+   */
+  private listenForBannerShortcut(adapterId: string, authWindow: BrowserWindow): void {
+    const contents = authWindow.webContents
+    if (this.shortcutFor.has(contents)) return
+    this.shortcutFor.add(contents)
+    contents.on('before-input-event', (event, input) => {
+      if (!isBannerShortcut(input, process.platform)) return
+      event.preventDefault()
+      this.focusBanner(adapterId)
+    })
+  }
+
+  /** Brings the adapter's hand-off banner forward with focus, for the keyboard shortcut. */
+  focusBanner(adapterId: string): void {
+    const banner = this.banners.get(adapterId)
+    if (banner === undefined || banner.isDestroyed()) return
+    banner.show()
+    banner.focus()
+    banner.webContents.send(EVENT_CHANNEL, { type: 'focus-banner' })
   }
 
   closeNeedsUser(adapterId: string): void {
@@ -279,13 +339,21 @@ export class AppWindows {
     hash: string,
     options: Electron.BrowserWindowConstructorOptions,
     detail = '',
+    chrome = chromeArgument(windowChrome(process.platform, role)),
   ): BrowserWindow {
     const window = new BrowserWindow({
-      ...options,
       show: false,
       title: windowTitle(role, this.options.demo, this.options.e2e, detail),
-      backgroundColor: options.transparent === true ? '#00000000' : '#f5f5f7',
+      backgroundColor:
+        options.transparent === true
+          ? '#00000000'
+          : nativeTheme.shouldUseDarkColors
+            ? CANVAS.dark
+            : CANVAS.light,
+      ...options,
       webPreferences: {
+        // Read back by the preload as window.valetChrome (core/chrome.ts).
+        additionalArguments: [chrome],
         preload: this.options.preload,
         contextIsolation: true,
         sandbox: true,

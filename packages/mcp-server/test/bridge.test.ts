@@ -203,7 +203,9 @@ describe('runBridge', () => {
     expect(result.content).toEqual([
       {
         type: 'text',
-        text: 'The person did not approve this action in the Valet app (stage confirm: declined).',
+        text: expect.stringMatching(
+          /^The person did not approve this action in the Valet app \(stage confirm: declined\)\. The person can see it in Valet, Activity, call [0-9A-F]{4}\.$/,
+        ),
       },
     ])
   })

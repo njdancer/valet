@@ -1,6 +1,7 @@
 // How components reach the API and the clock. Both are injected at the root, so tests render any
 // screen against the fake API at a fixed time.
 
+import { TooltipProvider } from '@valet/ui'
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import type { AppEventType, ValetApi } from '../../shared/api'
 
@@ -24,7 +25,10 @@ export function ApiProvider({
 }) {
   return (
     <ApiContext.Provider value={api}>
-      <ClockContext.Provider value={clock}>{children}</ClockContext.Provider>
+      <ClockContext.Provider value={clock}>
+        {/* Every page's tooltips (and disabled buttons' reasons) need this; tests render pages here too. */}
+        <TooltipProvider>{children}</TooltipProvider>
+      </ClockContext.Provider>
     </ApiContext.Provider>
   )
 }

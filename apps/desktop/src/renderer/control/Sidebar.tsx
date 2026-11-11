@@ -1,192 +1,116 @@
-import { Avatar, Icon, type IconName } from '../components/ui'
-import { useLoad, useNow } from '../lib/api-context'
-import { formatCount, formatTime, hostOf } from '../lib/format'
-import { href, type Route } from '../lib/router'
-import { runTone } from '../lib/wording'
+// One sidebar that never changes shape (IA principle 6): the six places, then the sites, then one
+// status line. Only Needs you carries a number, and it is the same count as the menu bar's badge.
 
-type Section = 'adapters' | 'activity' | 'audit' | 'clients' | 'remote' | 'credentials' | 'settings'
+import {
+  Badge,
+  NavItem,
+  SidebarFooter,
+  Sidebar as SidebarFrame,
+  SidebarGroup,
+  SiteAvatar,
+  StatusDot,
+  Tooltip,
+  ValetMark,
+} from '@valet/ui'
+import { Activity, Inbox, KeyRound, Plug, Settings, Store } from 'lucide-react'
+import { useLoad } from '../lib/api-context'
+import { href, type Place, placeOf, type Route } from '../lib/router'
+import { healthFor, siteStatus } from '../lib/site-status'
+import { useShellState } from './shell-state'
 
-function sectionOf(route: Route): Section | null {
-  switch (route.page) {
-    case 'adapters':
-    case 'adapter':
-    case 'grant':
-    case 'review':
-      return 'adapters'
-    case 'activity':
-      return 'activity'
-    case 'audit':
-      return 'audit'
-    case 'clients':
-      return 'clients'
-    case 'remote':
-      return 'remote'
-    case 'credentials':
-      return 'credentials'
-    case 'settings':
-      return 'settings'
-    default:
-      return null
-  }
-}
-
-function NavItem({
-  to,
-  icon,
-  label,
-  active,
-  count,
-  alert = false,
-}: {
-  readonly to: string
-  readonly icon: IconName
+export const PLACES: readonly {
+  readonly place: Place
   readonly label: string
-  readonly active: boolean
-  readonly count?: number
-  readonly alert?: boolean
-}) {
-  return (
-    <a className={`nav-item${active ? ' active' : ''}`} href={to} aria-current={active ? 'page' : undefined}>
-      <Icon name={icon} />
-      {label}
-      {count !== undefined && count > 0 ? (
-        <span className={`count${alert ? ' alert' : ''}`}>{formatCount(count)}</span>
-      ) : null}
-    </a>
-  )
+  readonly to: `#/${string}`
+  readonly shortcut: string
+}[] = [
+  { place: 'needs-you', label: 'Needs you', to: href.needsYou(), shortcut: 'mod+1' },
+  { place: 'sites', label: 'Sites', to: href.sites(), shortcut: 'mod+2' },
+  { place: 'activity', label: 'Activity', to: href.calls(), shortcut: 'mod+3' },
+  { place: 'connections', label: 'Connections', to: href.connections(), shortcut: 'mod+4' },
+  { place: 'secrets', label: 'Secrets', to: href.secrets(), shortcut: 'mod+5' },
+  { place: 'settings', label: 'Settings', to: href.settings(), shortcut: 'mod+6' },
+]
+
+const ICONS: Record<Place, React.ReactNode> = {
+  'needs-you': <Inbox />,
+  sites: <Store />,
+  activity: <Activity />,
+  connections: <Plug />,
+  secrets: <KeyRound />,
+  settings: <Settings />,
 }
 
 export function Sidebar({ route }: { readonly route: Route }) {
-  const section = sectionOf(route)
-  const adapters = useLoad((api) => api.adapters.list(), [], ['adapters-changed'])
-  const attention = useLoad((api) => api.attention.list(), [], ['attention-changed'])
-  const stats = useLoad((api) => api.runs.statsToday(), [], ['runs-changed'])
-  const clients = useLoad((api) => api.clients.list(), [], ['clients-changed'])
-  const consents = useLoad((api) => api.remote.consents(), [], ['remote-changed'])
-  const endpoint = useLoad((api) => api.endpoint.status(), [], ['endpoint-changed'])
-  const chain = useLoad((api) => api.audit.chainStatus(), [], ['audit-appended', 'audit-verified'])
-  const runs = useLoad((api) => api.runs.list({ limit: 12 }), [], ['runs-changed'])
-  const app = useLoad((api) => api.app.status(), [], ['app-changed'])
-  const now = useNow(60_000)
-  const demo = app.status === 'ready' && app.data.demo
-
-  const attentionCount = attention.status === 'ready' ? attention.data.length : 0
-  const selectedAdapter = route.page === 'adapter' || route.page === 'grant' ? route.adapterId : null
+  const place = placeOf(route)
+  const adapters = useLoad((api) => api.adapters.list(), [], ['adapters-changed', 'approvals-changed'])
+  const sites = useLoad((api) => api.health.sites(), [], ['health-changed'])
+  const shell = useShellState()
+  const selectedSite =
+    route.page === 'site' || route.page === 'review' || route.page === 'grant' || route.page === 'setting'
+      ? route.adapterId
+      : null
 
   return (
-    <aside className="sidebar" aria-label="Sections">
-      <div className="group-label">
-        Valet{' '}
-        {demo ? (
-          <span className="pill warn" title="A local fake Woolworths and a test account, never a real one">
-            DEMO
-          </span>
+    <SidebarFrame label="Places" collapsible>
+      <div className="flex h-7 items-center gap-2 px-2">
+        <ValetMark size={20} />
+        <span className="text-md font-semibold">Valet</span>
+        {shell.demo ? (
+          <Tooltip content="A local fake shop and a test account, never a real one">
+            <Badge tone="warning" size="sm" tabIndex={0}>
+              Demo
+            </Badge>
+          </Tooltip>
         ) : null}
       </div>
-      <NavItem
-        to={href.adapters()}
-        icon="adapter"
-        label="Adapters"
-        active={section === 'adapters' && selectedAdapter === null}
-        count={attentionCount}
-        alert
-      />
-      <NavItem
-        to={href.activity()}
-        icon="activity"
-        label="Activity"
-        active={section === 'activity'}
-        count={stats.status === 'ready' ? stats.data.toolCalls : undefined}
-      />
-      <NavItem to={href.audit()} icon="audit" label="Audit log" active={section === 'audit'} />
-      <NavItem
-        to={href.clients()}
-        icon="clients"
-        label="Clients"
-        active={section === 'clients'}
-        count={
-          clients.status === 'ready' ? clients.data.filter((c) => c.revokedAt === null).length : undefined
-        }
-      />
-      <NavItem
-        to={href.remote()}
-        icon="shield"
-        label="Remote sign-in"
-        active={section === 'remote'}
-        count={consents.status === 'ready' ? consents.data.requests.length : undefined}
-        alert
-      />
-      <NavItem to={href.credentials()} icon="key" label="Credentials" active={section === 'credentials'} />
-      <NavItem to={href.settings()} icon="gear" label="Settings" active={section === 'settings'} />
-
-      {section === 'activity' && runs.status === 'ready' ? (
-        <div className="run-list">
-          <div className="group-label">Recent</div>
-          {runs.data.map((run) => {
-            const selected = route.page === 'activity' && route.callId === run.callId
+      <SidebarGroup>
+        {PLACES.map((p) => (
+          <NavItem
+            key={p.place}
+            href={p.to}
+            icon={ICONS[p.place]}
+            active={place === p.place && (p.place !== 'sites' || selectedSite === null)}
+            {...(p.place === 'needs-you' && shell.needsYou > 0
+              ? { count: shell.needsYou, attention: true }
+              : {})}
+          >
+            {p.label}
+          </NavItem>
+        ))}
+      </SidebarGroup>
+      {adapters.status === 'ready' && adapters.data.length > 0 ? (
+        <SidebarGroup label="Sites">
+          {adapters.data.map((adapter) => {
+            const status = siteStatus(
+              adapter,
+              sites.status === 'ready' ? healthFor(adapter, sites.data) : null,
+            )
             return (
-              <a
-                key={run.callId}
-                className={`nav-item${selected ? ' active' : ''}`}
-                href={href.activity(run.callId)}
-                aria-current={selected ? 'page' : undefined}
+              <NavItem
+                key={adapter.id}
+                href={href.site(adapter.id)}
+                icon={<SiteAvatar id={adapter.id} name={adapter.name} size="xs" />}
+                active={selectedSite === adapter.id}
+                trailing={<StatusDot tone={status.tone} label={status.text} />}
               >
-                <span className={`dot ${runTone(run) || 'tertiary'}`} />
-                <span className="grow truncate">{run.tool}</span>
-                <span className="count">{formatTime(run.startedAt, now)}</span>
-              </a>
+                {adapter.name}
+              </NavItem>
             )
           })}
-        </div>
-      ) : adapters.status === 'ready' && adapters.data.length > 0 ? (
-        <>
-          <div className="group-label">Sites</div>
-          {adapters.data.map((adapter) => (
-            <a
-              key={adapter.id}
-              className={`nav-item${selectedAdapter === adapter.id ? ' active' : ''}`}
-              href={href.adapter(adapter.id)}
-              aria-current={selectedAdapter === adapter.id ? 'page' : undefined}
-            >
-              <Avatar adapterId={adapter.id} name={adapter.name} size="sm" />
-              {adapter.name}
-            </a>
-          ))}
-        </>
+        </SidebarGroup>
       ) : null}
-
-      <div className="foot">
-        <a className="row" href={href.setup('welcome')}>
-          <Icon name="gear" size="sm" />
-          Run setup again
-        </a>
-        {endpoint.status === 'ready' ? (
-          <span className="row">
-            <span className={`dot ${endpoint.data.listening ? 'ok' : ''}`} />
-            {endpoint.data.listening && endpoint.data.url !== null
-              ? `MCP on · ${hostOf(endpoint.data.url)}`
-              : 'MCP off'}
+      <SidebarFooter>
+        <a
+          href={href.needsYou()}
+          className="flex min-h-7 cursor-pointer items-center gap-2 rounded-sm px-2 text-sm text-fg-muted no-underline hover:bg-hover group-data-[collapsible]/sidebar:max-[1000px]:justify-center"
+        >
+          <StatusDot tone={shell.tone} label={shell.line} />
+          <span className="min-w-0 flex-1 truncate group-data-[collapsible]/sidebar:max-[1000px]:sr-only">
+            {shell.line}
           </span>
-        ) : null}
-        {chain.status === 'ready' ? (
-          chain.data.state === 'broken' ? (
-            <span className="row danger-text">
-              <Icon name="warn" size="sm" />
-              Audit chain broken
-            </span>
-          ) : chain.data.state === 'intact' ? (
-            <span className="row">
-              <Icon name="shield" size="sm" className="ok-text" />
-              Audit chain intact
-            </span>
-          ) : (
-            <span className="row">
-              <Icon name="shield" size="sm" className="tertiary" />
-              Audit chain not verified yet
-            </span>
-          )
-        ) : null}
-      </div>
-    </aside>
+        </a>
+      </SidebarFooter>
+    </SidebarFrame>
   )
 }

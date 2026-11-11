@@ -67,13 +67,13 @@ async function clipboard(): Promise<string> {
 
 test('a first launch opens setup at the welcome', async () => {
   await expect(control).toHaveTitle('Valet (demo) [control]')
-  await expect(h1('Let your AI tools use websites, not your passwords')).toBeVisible()
+  await expect(h1('Let Claude shop at Woolworths for you')).toBeVisible()
   expect(new URL(control.url()).hash).toBe('#/setup')
-  await control.getByRole('link', { name: 'Continue' }).click()
+  await control.getByRole('link', { name: 'Get started' }).click()
 })
 
 test('1Password: naming the account makes the Keychain copy ready, and nothing asks yet', async () => {
-  await expect(h1('Where logins come from')).toBeVisible()
+  await expect(h1('Where your Woolworths password comes from')).toBeVisible()
   await expect(control.getByText('Valet can’t reach 1Password yet.', { exact: false })).toBeVisible()
   await control.getByRole('textbox', { name: '1Password account' }).fill(ONEPASSWORD_ACCOUNT)
   await control.getByRole('button', { name: 'Save' }).click()
@@ -85,25 +85,25 @@ test('1Password: naming the account makes the Keychain copy ready, and nothing a
 })
 
 test('approve the bundled Woolworths adapter in its review, back into setup', async () => {
-  await expect(h1('Approve the Woolworths adapter')).toBeVisible()
-  const perms = control.locator('.setup-perms')
+  await expect(h1('Approve Woolworths')).toBeVisible()
+  const perms = control.getByTestId('setup-perms')
   await expect(perms).toContainText(/www\.woolworths\.test/)
   await expect(perms).toContainText(/auth\.woolworths\.test/)
   await expect(perms).toContainText(/3 read.*4 write.*0 irreversible/)
   await control.getByRole('link', { name: /^Review Woolworths .*…$/ }).click()
-  const approve = control.getByRole('button', { name: /^Approve \d/ })
+  const approve = control.getByRole('button', { name: /^Approve (Woolworths|\d)/ })
   await expect(approve).toBeVisible()
   const ack = control.getByRole('checkbox', { name: 'I’ve read the highlighted additions' })
   if (await ack.isVisible()) await ack.check()
   await approve.click()
-  await expect(h1('Let Woolworths use your login')).toBeVisible()
+  await expect(h1('Your Woolworths login')).toBeVisible()
   const woolworths = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
   expect(woolworths?.approval).toBe('approved')
 })
 
 test('grant login from the person’s 1Password item, approved in its prompt, with origins exactly the auth origin', async () => {
   await control.getByRole('link', { name: 'Choose an item…' }).click()
-  const sheet = control.getByRole('dialog', { name: 'Grant a secret' })
+  const sheet = control.getByRole('dialog')
   await expect(sheet).toBeVisible()
   // Listing the person's vaults asks 1Password: its prompt opens, locked, and the person unlocks it
   // and allows Valet.
@@ -113,7 +113,7 @@ test('grant login from the person’s 1Password item, approved in its prompt, wi
   await expect(sheet.getByRole('checkbox')).toHaveCount(1)
   await expect(sheet.getByRole('checkbox')).toBeChecked()
   await expect(sheet.getByText(/www\.woolworths\.test/)).toHaveCount(0)
-  await sheet.getByRole('button', { name: 'Grant', exact: true }).click()
+  await sheet.getByRole('button', { name: 'Use this login' }).click()
   await expect(sheet).toBeHidden()
   await expect(
     control.getByText(/Uses “Woolworths \(demo account\) \(Personal\)” from Copy in your Keychain/),
@@ -140,7 +140,7 @@ test('grant login from the person’s 1Password item, approved in its prompt, wi
   // stops at the code page (the recorded demo found setup leaving it out).
   await control.getByRole('link', { name: 'Allow codes…' }).click()
   await expect(sheet.getByText('Let Woolworths read one-time codes from Messages')).toBeVisible()
-  await sheet.getByRole('button', { name: 'Grant', exact: true }).click()
+  await sheet.getByRole('button', { name: 'Allow these codes' }).click()
   await expect(sheet).toBeHidden()
   await expect(control.getByText(/Reads one-time codes from Woolworths in Messages/)).toBeVisible()
   const codes = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
@@ -149,7 +149,7 @@ test('grant login from the person’s 1Password item, approved in its prompt, wi
   // The store is required on the fake (D69), so setup asks for it in a step of its own: without it
   // every tool ends needsUser.
   await control.getByRole('link', { name: 'Continue' }).click()
-  await expect(h1('Pick your Woolworths store')).toBeVisible()
+  await expect(h1('Your Woolworths store')).toBeVisible()
   const settings = control.getByTestId('setup-settings')
   await settings.getByRole('textbox').fill('2000')
   await settings.getByRole('button', { name: 'Search' }).click()
@@ -161,13 +161,13 @@ test('grant login from the person’s 1Password item, approved in its prompt, wi
 test('connect Claude Code and Claude Desktop, each with its own config to copy', async () => {
   await expect(h1('Connect Claude')).toBeVisible()
   await control.getByRole('button', { name: 'Add Claude Code' }).click()
-  const codeSnippet = control.locator('pre.code', { hasText: 'claude mcp add valet' })
+  const codeSnippet = control.locator('pre', { hasText: 'claude mcp add valet' })
   await expect(codeSnippet).toBeVisible()
   await control.getByRole('button', { name: 'Copy' }).first().click()
   await expect.poll(clipboard).toBe(await codeSnippet.textContent())
 
   await control.getByRole('button', { name: 'Add Claude Desktop' }).click()
-  const desktopSnippet = control.locator('pre.code', { hasText: 'mcpServers' })
+  const desktopSnippet = control.locator('pre', { hasText: 'mcpServers' })
   await expect(desktopSnippet).toBeVisible()
   // Claude Code's button now says Copied, so the one left is Claude Desktop's.
   await control.getByRole('button', { name: 'Copy', exact: true }).click()
@@ -234,9 +234,11 @@ test('Claude Code’s token lists the six namespaced tools with manifest-derived
 })
 
 test('finishing closes setup for good, and nothing on screen holds a secret', async () => {
-  await control.getByRole('button', { name: 'Finish' }).click()
-  await expect(control.getByRole('complementary', { name: 'Sections' })).toBeVisible()
-  expect(new URL(control.url()).hash).toBe('#/adapters')
+  await control.getByRole('button', { name: 'Finish', exact: true }).click()
+  await expect(h1(/set up$/)).toBeVisible()
+  await control.getByRole('link', { name: 'Open Valet' }).click()
+  await expect(control.getByRole('navigation', { name: 'Places' })).toBeVisible()
+  expect(new URL(control.url()).hash).toBe('#/sites')
   const status = await control.evaluate(() => window.valet?.setup.status())
   expect(status?.completedAt).toEqual(expect.any(String))
 
@@ -251,6 +253,6 @@ test('finishing closes setup for good, and nothing on screen holds a secret', as
   await launched.close()
   launched = await launch(userData, undefined, { setup: true })
   control = await windowWithTitle(launched.app, CONTROL)
-  await expect(control.getByRole('complementary', { name: 'Sections' })).toBeVisible()
+  await expect(control.getByRole('navigation', { name: 'Places' })).toBeVisible()
   expect(new URL(control.url()).hash).not.toContain('setup')
 })

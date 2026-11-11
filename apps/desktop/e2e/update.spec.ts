@@ -225,11 +225,12 @@ test('the changed bundle waits for review: tools off MCP, no grants, a diff agai
 })
 
 test('the review screen shows the change, and Approve waits for the acknowledgement', async () => {
-  await expect(control.getByText('Woolworths 0.4.0 is ready for review.')).toBeVisible()
-  await control
-    .locator('.callout', { hasText: 'Woolworths' })
-    .getByRole('link', { name: 'Review changes' })
-    .click()
+  // The update's Review button is on the site's own page, not only in the menu bar.
+  await control.evaluate(() => {
+    window.location.hash = '#/sites/woolworths'
+  })
+  await expect(control.getByText('Woolworths 0.4.0 is waiting for your review.')).toBeVisible()
+  await control.getByRole('link', { name: 'Review Woolworths update' }).first().click()
   await expect(control.getByText('This update asks for more')).toBeVisible()
   await expect(control.getByText('remove_from_cart').first()).toBeVisible()
   await expect(control.getByText('src/manifest.ts')).toBeVisible()
@@ -252,14 +253,14 @@ test('without new grants the login can’t fill; granted again, the next call lo
 
   // The person grants the new hash in the sheet, as the adapter page offers.
   await control.getByRole('link', { name: 'Woolworths' }).first().click()
-  await control.getByRole('link', { name: 'Grant…' }).first().click()
-  const sheet = control.getByRole('dialog', { name: 'Grant a secret' })
+  await control.getByRole('link', { name: 'Choose login…' }).first().click()
+  const sheet = control.getByRole('dialog')
   await sheet.getByText(COPY_ITEM_TITLE).click()
-  await sheet.getByRole('button', { name: 'Grant', exact: true }).click()
+  await sheet.getByRole('button', { name: 'Use this login' }).click()
   await expect(sheet).toBeHidden()
-  await control.getByRole('link', { name: 'Grant…' }).first().click()
+  await control.getByRole('link', { name: 'Choose…' }).first().click()
   await expect(sheet.getByText('Let Woolworths read one-time codes from Messages')).toBeVisible()
-  await sheet.getByRole('button', { name: 'Grant', exact: true }).click()
+  await sheet.getByRole('button', { name: 'Allow these codes' }).click()
   await expect(sheet).toBeHidden()
 
   // The failed login's hold on automatic logins is released by the grant: the agent's retry logs in.

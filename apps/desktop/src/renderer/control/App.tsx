@@ -1,96 +1,102 @@
-// The control panel: a sidebar window with hash routes, plus three chromeless routes the main
-// process opens in their own windows (review, confirmation, login hand-off banner), and first-run
-// setup, which takes the whole control panel window.
+// The control panel: one window with a sidebar of six places (docs/ux/information-architecture.md),
+// plus the chromeless routes the main process opens in windows of their own (the confirmation and
+// the login hand-off banner), and first-run setup, which takes the whole window.
+//
+// The shell owns what every page shares: the sidebar, the title bar (back, forward, search, Pause and
+// Lock down), the paused / locked-down strip, the command palette, the keyboard shortcuts, focus on
+// the page heading after navigation, and redirecting old addresses to their new place.
 
-import type { ReactNode } from 'react'
-import { href, type Route, useRoute } from '../lib/router'
-import { ActivityPage } from '../screens/Activity'
-import { AdapterDetailPage } from '../screens/AdapterDetail'
-import { AdaptersPage } from '../screens/Adapters'
-import { AuditLogPage } from '../screens/AuditLog'
-import { ClientsSettingsPage } from '../screens/ClientsSettings'
-import { ConfirmationPanel } from '../screens/Confirmation'
-import { CredentialsPage } from '../screens/Credentials'
-import { GrantSheet } from '../screens/GrantSheet'
-import { NeedsUserBanner } from '../screens/NeedsUserBanner'
-import { RemoteConsentPage } from '../screens/RemoteConsent'
-import { ReviewUpdate } from '../screens/ReviewUpdate'
-import { SETUP_ADAPTER, SetupPage } from '../screens/Setup'
+import { AppShell } from '@valet/ui'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { canonicalHref, parseRoute, type Route, useRoute } from '../lib/router'
+import { ConfirmationWindow } from '../screens/windows/ConfirmationWindow'
+import { LoginBannerWindow } from '../screens/windows/LoginBannerWindow'
+import { SetupWindow } from '../screens/windows/SetupWindow'
+import { MainView } from './MainView'
+import { CommandMenu } from './Palette'
 import { Sidebar } from './Sidebar'
+import { TitleArea } from './TitleArea'
+import { useShortcuts } from './useShortcuts'
 
 export function ControlPanel() {
   const route = useRoute()
+  useCanonicalAddress(route)
   return <RouteView route={route} />
+}
+
+/** An old address (#/adapters/…, #/audit, #/clients, #/remote, #/credentials) becomes the new one. */
+function useCanonicalAddress(route: Route): void {
+  useEffect(() => {
+    // Read the address now, not the route this render saw: a page may have moved on already.
+    void route
+    const canonical = canonicalHref(parseRoute(window.location.hash))
+    if (canonical !== null && canonical !== window.location.hash && window.location.hash !== '') {
+      window.history.replaceState(null, '', canonical)
+    }
+  }, [route])
 }
 
 export function RouteView({ route }: { readonly route: Route }) {
   switch (route.page) {
-    case 'review':
-      return <ReviewUpdate adapterId={route.adapterId} />
     case 'confirm':
-      return <ConfirmationPanel confirmationId={route.confirmationId} />
+      return <ConfirmationWindow confirmationId={route.confirmationId} />
     case 'needs-user':
-      return <NeedsUserBanner adapterId={route.adapterId} />
+      return <LoginBannerWindow adapterId={route.adapterId} />
     case 'setup':
-      // The review and the grant sheet are the app's own, opened over setup and returning to it.
-      if (route.review)
-        return (
-          <ReviewUpdate
-            adapterId={SETUP_ADAPTER}
-            exits={{ approved: href.setup('grant'), closed: href.setup('approve') }}
-          />
-        )
-      return (
-        <div className="window">
-          <div className="body" inert={route.secret !== null}>
-            <SetupPage step={route.step} />
-          </div>
-          {route.secret !== null ? (
-            <GrantSheet adapterId={SETUP_ADAPTER} secret={route.secret} closeTo={href.setup('grant')} />
-          ) : null}
-        </div>
-      )
+      return <SetupWindow route={route} />
     default:
-      return (
-        <div className="window">
-          {/* Under the grant sheet the window is inert: no focus, no clicks, nothing for a reader. */}
-          <div className="body" inert={route.page === 'grant'}>
-            <Sidebar route={route} />
-            <main className="main">{mainFor(route)}</main>
-          </div>
-          {route.page === 'grant' ? <GrantSheet adapterId={route.adapterId} secret={route.secret} /> : null}
-        </div>
-      )
+      return <Shell route={route} />
   }
 }
 
-function mainFor(route: Route): ReactNode {
-  switch (route.page) {
-    case 'adapters':
-      return <AdaptersPage />
-    case 'adapter':
-    case 'grant':
-      return <AdapterDetailPage adapterId={route.adapterId} />
-    case 'activity':
-      return <ActivityPage callId={route.callId} />
-    case 'audit':
-      return <AuditLogPage />
-    case 'credentials':
-      return <CredentialsPage />
-    case 'clients':
-      return <ClientsSettingsPage />
-    case 'settings':
-      return <ClientsSettingsPage focus="settings" />
-    case 'remote':
-      return <RemoteConsentPage />
-    default:
-      return (
-        <>
-          <div className="titlebar">
-            <div className="title">Not found</div>
-          </div>
-          <div className="empty">There’s nothing at this address.</div>
-        </>
-      )
-  }
+function Shell({ route }: { readonly route: Route }) {
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const openPalette = useCallback(() => setPaletteOpen(true), [])
+  useShortcuts(openPalette)
+  const main = useRef<HTMLDivElement>(null)
+  useHeadingFocus(route, main)
+  return (
+    <>
+      <AppShell sidebar={<Sidebar route={route} />}>
+        <TitleArea onSearch={openPalette} />
+        <div ref={main} className="flex min-h-0 flex-1 flex-col">
+          <MainView route={route} />
+        </div>
+      </AppShell>
+      <CommandMenu open={paletteOpen} onOpenChange={setPaletteOpen} />
+    </>
+  )
+}
+
+/**
+ * Every page takes focus on its heading after a navigation (IA principle 11), so a screen reader
+ * hears where it landed and Tab starts from the top of the page. Not on first load: the window
+ * opening shouldn't announce twice.
+ */
+function useHeadingFocus(route: Route, main: React.RefObject<HTMLDivElement | null>): void {
+  // A sheet opens over its page and returns to it: opening or closing one isn't a navigation, and
+  // the sheet puts focus back on what opened it.
+  const base: Route =
+    route.page === 'grant' || route.page === 'setting'
+      ? { page: 'site', adapterId: route.adapterId, tab: 'overview' }
+      : route.page === 'approve-connection'
+        ? { page: 'needs-you', item: null }
+        : route
+  const key = canonicalHref(base)?.split('?')[0] ?? route.page
+  const first = useRef(true)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs on each new address
+  useEffect(() => {
+    if (first.current) {
+      first.current = false
+      return
+    }
+    // After the page has rendered its header.
+    const id = requestAnimationFrame(() => {
+      const heading = main.current?.querySelector<HTMLElement>('h1')
+      if (heading === null || heading === undefined) return
+      if (!heading.hasAttribute('tabindex')) heading.setAttribute('tabindex', '-1')
+      heading.focus({ preventScroll: true })
+    })
+    return () => cancelAnimationFrame(id)
+  }, [key, main])
 }

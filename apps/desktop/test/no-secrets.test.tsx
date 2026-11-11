@@ -6,9 +6,10 @@
 // What they can't hold: a secret the main process put inside a field a screen does render (an item
 // title, a request target, preview text) would be shown. That half is the main process's guarantee.
 
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { AuditRecord } from '@valet/core'
+import { TooltipProvider } from '@valet/ui'
 import { describe, expect, it } from 'vitest'
 import { ControlPanel } from '../src/renderer/control/App'
 import { createFakeApi } from '../src/renderer/dev/fake-api'
@@ -58,19 +59,18 @@ function leaky(api: ValetApi): ValetApi {
   }
 }
 
+// The review page and the grant sheet have their own copy of this check: review-grant-no-secrets.
 const ROUTES: [string, string][] = [
-  ['#/adapters', 'Woolworths 0.4.0 is ready for review.'],
-  ['#/adapters/woolworths', 'Content hash'],
-  ['#/adapters/coles', '+61 400 000 111'],
-  ['#/adapters/woolworths/review', 'Permission changes'],
-  ['#/adapters/woolworths/grant/login', 'Fill it only on'],
-  ['#/adapters/coles/grant/messages', 'Sender the manifest declared'],
-  ['#/activity/c_8f2e1b', '[session cookie]'],
-  ['#/audit', 'Chain intact up to record 4813.'],
-  ['#/clients', 'Add a client…'],
-  ['#/credentials', '1Password app “Coles”'],
-  ['#/confirm/cf_a40f3c', 'Shown by the Woolworths adapter'],
-  ['#/needs-user/woolworths', 'Woolworths needs you to finish logging in.'],
+  ['#/sites', 'Review Woolworths update'],
+  ['#/sites/woolworths', 'Called by'],
+  ['#/sites/woolworths/permissions', 'woolworths.com.au'],
+  ['#/sites/coles', '+61 400 000 111'],
+  ['#/activity/calls/c_8f2e1b', '[session cookie]'],
+  ['#/activity/audit', 'The audit log checks out up to record 4813.'],
+  ['#/connections', 'Add an app…'],
+  ['#/secrets', '1Password app “Coles”'],
+  ['#/confirm/cf_a40f3c', 'From the site'],
+  ['#/needs-user/woolworths', 'Log in to Woolworths (verification check)'],
 ]
 
 describe('no secret reaches the screen', () => {
@@ -119,7 +119,9 @@ describe('no secret reaches the screen', () => {
       window.location.hash = hash
       render(
         <ApiProvider api={leaky(createFakeApi({ now: NOW }))} clock={{ now: () => NOW }}>
-          <ControlPanel />
+          <TooltipProvider>
+            <ControlPanel />
+          </TooltipProvider>
         </ApiProvider>,
       )
       expect((await screen.findAllByText(landmark)).length).toBeGreaterThan(0)
@@ -135,18 +137,23 @@ describe('no secret reaches the screen', () => {
     const api = leaky(fake)
     const page = await api.audit.page({})
     expect(JSON.stringify(page.records)).toContain(CANARY)
-    window.location.hash = '#/audit'
+    window.location.hash = '#/activity/audit'
     render(
       <ApiProvider api={api} clock={{ now: () => NOW }}>
         <ControlPanel />
       </ApiProvider>,
     )
-    // Every record, through the inspector and Copy record.
+    // Every record, through the inspector, its JSON and Copy record.
     for (const record of page.records) {
-      await user.click(await screen.findByRole('button', { name: `Show record ${record.seq}` }))
-      const inspector = screen.getByRole('complementary', { name: 'Record' })
-      expect(inspector.textContent).toContain(`"type": "${record.event.type}"`)
+      act(() => {
+        window.location.hash = `#/activity/audit/${record.seq}`
+      })
+      const inspector = await screen.findByRole('region', { name: 'Record' })
+      await waitFor(() => expect(within(inspector).getByText('Record as JSON')).toBeTruthy())
+      await user.click(within(inspector).getByText('Record as JSON'))
+      await waitFor(() => expect(inspector.textContent).toContain(`"type": "${record.event.type}"`))
       await user.click(within(inspector).getByRole('button', { name: 'Copy record' }))
+      await user.click(within(inspector).getByText('Record as JSON'))
     }
     expect(document.documentElement.innerHTML).not.toContain(CANARY)
     const copies = fake.fake.calls.filter((c) => c.method === 'app.copyText').map((c) => c.args[0])
@@ -175,13 +182,14 @@ describe('no secret reaches the screen', () => {
       ...fake,
       audit: { ...fake.audit, page: async () => ({ records: [odd], total: 1, nextBeforeSeq: null }) },
     }
-    window.location.hash = '#/audit'
+    window.location.hash = '#/activity/audit/7001'
     render(
       <ApiProvider api={api} clock={{ now: () => NOW }}>
         <ControlPanel />
       </ApiProvider>,
     )
-    const inspector = await screen.findByRole('complementary', { name: 'Record' })
+    const inspector = await screen.findByRole('region', { name: 'Record' })
+    await user.click(await within(inspector).findByText('Record as JSON'))
     expect(inspector.textContent).toContain('"origins": "[not shown]"')
     expect(inspector.textContent).toContain('"prev": "[not shown]"')
     await user.click(within(inspector).getByRole('button', { name: 'Copy record' }))
@@ -191,11 +199,13 @@ describe('no secret reaches the screen', () => {
   it('renders the tray popover without fields it doesn’t name', async () => {
     render(
       <ApiProvider api={leaky(createFakeApi({ now: NOW }))} clock={{ now: () => NOW }}>
-        <TrayPopover />
+        <TooltipProvider>
+          <TrayPopover />
+        </TooltipProvider>
       </ApiProvider>,
     )
-    expect(await screen.findByText('Log in to Woolworths')).toBeTruthy()
-    await waitFor(() => expect(screen.getByText('37')).toBeTruthy())
+    expect(await screen.findByText('Log in to Woolworths (verification check)')).toBeTruthy()
+    await waitFor(() => expect(screen.getByRole('link', { name: '37 calls' })).toBeTruthy())
     expect(document.documentElement.innerHTML).not.toContain(CANARY)
   })
 })

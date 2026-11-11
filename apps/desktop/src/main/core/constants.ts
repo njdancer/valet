@@ -91,6 +91,10 @@ export interface DataPaths {
   readonly traces: string
   /** The app's own diagnostics (diagnostics-log.ts): crashes and failures, never page text. */
   readonly diagnosticsLog: string
+  /** Lock down and the sites the person paused (app-state.ts). */
+  readonly appState: string
+  /** Needs you items nobody answered, kept 24 hours (attention.ts). */
+  readonly missed: string
 }
 
 /** Every file the app keeps, under one owner-only directory (D45). */
@@ -116,5 +120,7 @@ export function dataPaths(dir: string): DataPaths {
     remoteClients: join(dir, 'remote-clients.json'),
     traces: join(dir, 'traces'),
     diagnosticsLog: join(dir, 'logs', 'valet.log'),
+    appState: join(dir, 'app-state.json'),
+    missed: join(dir, 'missed.json'),
   }
 }

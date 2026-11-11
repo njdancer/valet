@@ -158,7 +158,8 @@ export type ToolCallResult =
    * after about `retryAfterMs`. If the login then needs the person, that call says so.
    */
   | { readonly status: 'logging-in'; readonly retryAfterMs: number }
-  | { readonly status: 'declined' }
+  /** The person said no to the confirmation, or (`timedOut`) nobody answered it in time. */
+  | { readonly status: 'declined'; readonly timedOut?: true }
 
 export interface ToolCallRequest {
   readonly adapterId: string

@@ -43,7 +43,7 @@ describe('boot', () => {
     await act(async () => {
       await import('../src/renderer/control')
     })
-    expect(await screen.findByText('Clients and settings')).toBeTruthy()
+    expect(await screen.findByRole('heading', { name: 'Connections', level: 1 })).toBeTruthy()
 
     document.body.innerHTML = '<div id="root"></div>'
     await act(async () => {

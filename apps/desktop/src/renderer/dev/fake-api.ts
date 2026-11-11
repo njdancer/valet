@@ -7,6 +7,7 @@
 // example is Sat 7 Nov 2026, 9:48 pm in Sydney, as in docs/mockups.
 
 import type { AuditEvent, AuditRecord, ProviderKind, RequestDeclaration } from '@valet/core'
+import { missedTitle, needsYouTitle } from '@valet/core/vocabulary'
 import type {
   AdapterDetail,
   AdapterSummary,
@@ -23,18 +24,23 @@ import type {
   EndpointStatus,
   GrantInfo,
   GrantRequest,
+  LoginMissingItem,
+  MissedItem,
   PendingReview,
   PreviewPart,
   ProbeInfo,
   ProviderStatus,
   RemoteClientItem,
+  RemoteConsentItem,
   RemoteConsentRequest,
   RemoteConsentTool,
   RemoteSetup,
+  RepairItem,
   RunStats,
   RunSummary,
   RunTrace,
   SettingChoiceInfo,
+  SettingMissingItem,
   Settings,
   SetupStatus,
   SiteHealth,
@@ -263,6 +269,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     handedOver: { cookies: 14, storageKeys: 0 },
     settingsNeeded: [],
     cartUrl: `${WOW_WWW}/shop/cart`,
+    paused: false,
     settings: [
       {
         name: 'store',
@@ -365,6 +372,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     handedOver: { cookies: 9, storageKeys: 0 },
     settingsNeeded: [],
     cartUrl: null,
+    paused: false,
     settings: [],
   }
 
@@ -673,7 +681,39 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     disabledReason: null,
   }
 
-  let app: AppStatus = { paused: false, version: '0.1.0', demo: false }
+  let app: AppStatus = { paused: false, lockedDown: false, version: '0.1.0', demo: false }
+  /**
+   * The story's (docs/ux/wireframes/story.md) items nobody answered, kept 24 hours: the 6:10 pm
+   * Remove from cart (call 5C10), missed at 6:12 pm.
+   */
+  let missed: MissedItem[] = [
+    {
+      kind: 'missed',
+      id: 'ms_cf_5c10e2_story',
+      of: 'confirmation',
+      originalId: 'cf_5c10e2',
+      title: missedTitle(
+        needsYouTitle({ kind: 'confirmation', adapterName: 'Woolworths', toolTitle: 'Remove from cart' }),
+      ),
+      adapterId: 'woolworths',
+      adapterName: 'Woolworths',
+      callId: 'c_5c10e2',
+      at: ago(218),
+      missedAt: ago(216),
+    },
+  ]
+  /** The story's 8:05 pm search that found the site changed (call 6B3E). */
+  const repairs: RepairItem[] = [
+    {
+      kind: 'repair',
+      id: 'rp_woolworths',
+      adapterId: 'woolworths',
+      adapterName: 'Woolworths',
+      callId: 'c_6b3e44',
+      errorClass: 'site-changed',
+      at: ago(103),
+    },
+  ]
   /** The code the fake browser shows for the one waiting remote sign-in. */
   const remoteCode = 'ABCD2345'
   let remoteRequests: RemoteConsentRequest[] = [
@@ -847,7 +887,8 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       messages,
       secrets: secretRequests.map((s) => ({ name: s.name, granted: s.grant !== null })),
       messagesSources: messages.map((m) => ({ sender: m.sender, granted: m.grant !== null })),
-      pendingUpdate: reviews.find((r) => r.adapterId === base.id)?.to ?? null,
+      // As in the main process: only a review of a change to an earlier bundle is an update.
+      pendingUpdate: reviews.find((r) => r.adapterId === base.id && r.from !== null)?.to ?? null,
     }
   }
 
@@ -866,7 +907,59 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     calls7d: detail.calls7d,
     settingsNeeded: detail.settings.filter((s) => s.required && s.chosen === null).map((s) => s.title),
     cartUrl: detail.cartUrl,
+    paused: detail.paused,
   })
+
+  /** What an approved site still needs, as the main process works it out (views.ts, missingItems). */
+  const missingOf = (detail: AdapterDetail): (SettingMissingItem | LoginMissingItem)[] => {
+    if (detail.approval !== 'approved') return []
+    return [
+      ...detail.settings
+        .filter((s) => s.required && s.chosen === null)
+        .map(
+          (s): SettingMissingItem => ({
+            kind: 'setting-missing',
+            id: `sm_${detail.id}_${s.name}`,
+            adapterId: detail.id,
+            adapterName: detail.name,
+            setting: s.name,
+            settingTitle: s.title,
+          }),
+        ),
+      ...detail.secrets
+        .filter((s) => !s.granted)
+        .map(
+          (s): LoginMissingItem => ({
+            kind: 'login-missing',
+            id: `lm_${detail.id}_${s.name}`,
+            adapterId: detail.id,
+            adapterName: detail.name,
+            secret: s.name,
+          }),
+        ),
+    ]
+  }
+
+  /** Soonest deadline first, then the rest oldest first (IA section 5), as attention.ts sorts. */
+  const deadlineOf = (item: AttentionItem): number | null => {
+    if (item.kind === 'confirmation' || item.kind === 'remote-consent') return Date.parse(item.expiresAt)
+    if (item.kind === 'needs-user') return item.closesAt === null ? null : Date.parse(item.closesAt)
+    if (item.kind === 'missed') return Date.parse(item.missedAt) + 24 * 60 * 60_000
+    return null
+  }
+  const ageOf = (item: AttentionItem): number =>
+    'at' in item ? Date.parse(item.at) : 'requestedAt' in item ? Date.parse(item.requestedAt) : Infinity
+  const sorted = (items: AttentionItem[]): AttentionItem[] =>
+    [...items].sort((a, b) => {
+      const da = deadlineOf(a)
+      const db = deadlineOf(b)
+      if (da !== null || db !== null) {
+        if (da === null) return 1
+        if (db === null) return -1
+        return da - db
+      }
+      return ageOf(a) - ageOf(b)
+    })
 
   // ---------- The API ----------
 
@@ -907,6 +1000,13 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       async openCart(adapterId) {
         enter('adapters.openCart', adapterId)
         if (adapters.get(adapterId)?.cartUrl == null) throw new Error('refused')
+      },
+      async setPaused(adapterId, paused) {
+        enter('adapters.setPaused', adapterId, paused)
+        const base = adapters.get(adapterId)
+        if (base === undefined) throw new Error('refused')
+        adapters.set(adapterId, { ...base, paused })
+        emit({ type: 'adapters-changed' })
       },
       async clearSetting(adapterId, setting) {
         enter('adapters.clearSetting', adapterId, setting)
@@ -1193,7 +1293,23 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     attention: {
       async list() {
         enter('attention.list')
-        return clone(attention)
+        const consents: RemoteConsentItem[] = remoteRequests.map((r) => ({
+          kind: 'remote-consent',
+          id: r.id,
+          clientHost: r.clientHost,
+          clientName: r.clientName,
+          source: r.source,
+          requestedAt: r.requestedAt,
+          expiresAt: r.expiresAt,
+        }))
+        const missing = [...adapters.values()].flatMap((a) => missingOf(detailOf(a)))
+        return clone(sorted([...attention, ...consents, ...missing, ...repairs, ...missed]))
+      },
+      async dismiss(id) {
+        enter('attention.dismiss', id)
+        if (!missed.some((m) => m.id === id)) throw new Error('refused')
+        missed = missed.filter((m) => m.id !== id)
+        emit({ type: 'attention-changed' })
       },
     },
     async openConfirmation(confirmationId) {
@@ -1423,6 +1539,19 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         enter('app.setPaused', paused)
         app = { ...app, paused }
         emit({ type: 'app-changed' })
+      },
+      async setLockedDown(locked) {
+        enter('app.setLockedDown', locked)
+        app = { ...app, lockedDown: locked }
+        // Locking removes every cloud agent; unlocking brings none back.
+        if (locked) {
+          remoteClients = []
+          remoteRequests = []
+          emit({ type: 'remote-changed' })
+        }
+        emit({ type: 'app-changed' })
+        emit({ type: 'adapters-changed' })
+        emit({ type: 'attention-changed' })
       },
       async openControlPanel(route) {
         enter('app.openControlPanel', route)
