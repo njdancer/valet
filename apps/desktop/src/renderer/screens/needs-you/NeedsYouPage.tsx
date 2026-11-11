@@ -22,7 +22,7 @@ import {
   TextLink,
 } from '@valet/ui'
 import { CheckCircle2 } from 'lucide-react'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useAction, useApi, useLoad, useNow } from '../../lib/api-context'
 import { callRef, formatClock, formatTime } from '../../lib/format'
 import { type NeedsYouView, needsYouOrder, needsYouView, runNeedsYouAction } from '../../lib/needs-you'
@@ -47,12 +47,18 @@ export function NeedsYouPage({ item }: { readonly item: string | null }) {
   const missed = views.filter((v) => v.missed)
   const soonest = waiting.find((v) => v.deadline !== null)
 
-  // A notification's deep link (#/needs-you/<id>) runs that item's action once it has loaded.
+  // A notification's deep link (#/needs-you/<id>) runs that item's action once, when it has loaded.
   const target = item === null ? null : (views.find((v) => v.id === item) ?? null)
+  const handled = useRef<string | null>(null)
   useEffect(() => {
-    if (target === null || target.missed) return
+    if (target === null || target.missed || handled.current === target.id) return
+    handled.current = target.id
     void runNeedsYouAction(api, target.action, navigate).catch(() => undefined)
-    if (target.action.kind !== 'route') window.history.replaceState(null, '', href.needsYou())
+    // The item's own window took over; this window stays on the list.
+    if (target.action.kind !== 'route') {
+      window.history.replaceState(null, '', href.needsYou())
+      window.dispatchEvent(new HashChangeEvent('hashchange'))
+    }
   }, [api, target])
 
   return (

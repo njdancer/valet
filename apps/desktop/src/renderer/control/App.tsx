@@ -8,7 +8,7 @@
 
 import { AppShell } from '@valet/ui'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { canonicalHref, type Route, useRoute } from '../lib/router'
+import { canonicalHref, parseRoute, type Route, useRoute } from '../lib/router'
 import { ConfirmationWindow } from '../screens/windows/ConfirmationWindow'
 import { LoginBannerWindow } from '../screens/windows/LoginBannerWindow'
 import { SetupWindow } from '../screens/windows/SetupWindow'
@@ -27,7 +27,9 @@ export function ControlPanel() {
 /** An old address (#/adapters/…, #/audit, #/clients, #/remote, #/credentials) becomes the new one. */
 function useCanonicalAddress(route: Route): void {
   useEffect(() => {
-    const canonical = canonicalHref(route)
+    // Read the address now, not the route this render saw: a page may have moved on already.
+    void route
+    const canonical = canonicalHref(parseRoute(window.location.hash))
     if (canonical !== null && canonical !== window.location.hash && window.location.hash !== '') {
       window.history.replaceState(null, '', canonical)
     }

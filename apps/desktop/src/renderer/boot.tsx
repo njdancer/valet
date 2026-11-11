@@ -7,7 +7,7 @@
 // floating material (Liquid Glass on macOS, frost elsewhere), data-frame="inset" leaves room for
 // macOS's traffic lights, data-vibrancy says the window itself is translucent.
 
-import { applyPlatform, detectPlatform, GlassFilter, Toaster, TooltipProvider } from '@valet/ui'
+import { applyPlatform, detectPlatform, GlassFilter, Toaster } from '@valet/ui'
 import { type ReactNode, StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { ValetApi, WindowChrome } from '../shared/api'
@@ -55,17 +55,15 @@ export async function boot(
   const api = await resolveApi(win, fake)
   createRoot(root).render(
     <StrictMode>
-      <TooltipProvider>
-        {api === null ? (
-          <div role="alert" className="flex h-full items-center justify-center p-6 text-md text-fg-muted">
-            Valet couldn’t reach its main process. Quit and open it again.
-          </div>
-        ) : (
-          <ApiProvider api={api}>{page}</ApiProvider>
-        )}
-        <Toaster />
-        <GlassFilter />
-      </TooltipProvider>
+      {api === null ? (
+        <div role="alert" className="flex h-full items-center justify-center p-6 text-md text-fg-muted">
+          Valet couldn’t reach its main process. Quit and open it again.
+        </div>
+      ) : (
+        <ApiProvider api={api}>{page}</ApiProvider>
+      )}
+      <Toaster />
+      <GlassFilter />
     </StrictMode>,
   )
 }
