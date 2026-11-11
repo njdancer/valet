@@ -1,0 +1,17 @@
+[
+  {
+    "at": 199.201,
+    "severity": "major",
+    "what": "granting the login: locator.click: Timeout 30000ms exceeded."
+  },
+  {
+    "at": 229.329,
+    "severity": "major",
+    "what": "connecting a chat client: locator.waitFor: Timeout 30000ms exceeded."
+  },
+  {
+    "at": 229.41,
+    "severity": "major",
+    "what": "the run stopped: Error: no client config to connect with\n    at main (file:///Users/runner/work/valet/valet/apps/desktop/showcase/record.mjs:428:31)\n    at async file:///Users/runner/work/valet/valet/apps/desktop/showcase/record.mjs:725:3"
+  }
+]

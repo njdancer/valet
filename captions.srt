@@ -1,0 +1,71 @@
+1
+00:00:00,000 --> 00:00:04,003
+Valet demo: A fresh macOS machine. Everything in this run is fake: a made-up shop, a test account and a scripted chat.
+
+2
+00:00:04,003 --> 00:00:10,556
+1 · Install: Open the downloaded disk image, as a new user would
+
+3
+00:00:10,556 --> 00:00:16,035
+1 · Install: Copy Valet Demo into Applications (the script copies it; a person drags the icon)
+
+4
+00:00:16,035 --> 00:00:19,039
+1 · Install: Installed. This test build is unsigned and was never downloaded, so Gatekeeper does not ask about it
+
+5
+00:00:19,039 --> 00:00:25,901
+2 · Set up: First launch. (Started with a debugging port that only this demo build accepts, so the script can drive it)
+
+6
+00:00:25,901 --> 00:00:29,829
+2 · Set up: Valet opens its first-run setup
+
+7
+00:00:29,829 --> 00:00:35,497
+2 · Set up: Where logins come from: your own 1Password. Name the account, as its sidebar shows it
+
+8
+00:00:35,497 --> 00:00:39,655
+2 · Set up: Nothing is read yet: Valet asks 1Password only when you pick an item
+
+9
+00:00:39,655 --> 00:00:46,806
+2 · Set up: Review the shop adapter: the sites it may reach, and what each tool can do
+
+10
+00:00:46,806 --> 00:00:47,854
+2 · Set up: Approve it. Until now its tools were hidden from every chat client
+
+11
+00:00:47,854 --> 00:00:51,787
+2 · Set up: Let the adapter use the login, typed only into the shop’s sign-in page
+
+12
+00:00:51,787 --> 00:00:55,030
+2 · Set up: To list your items, Valet asks 1Password, which asks you. (A made-up stand-in, Keyhold, plays 1Password here)
+
+13
+00:00:55,030 --> 00:00:57,676
+2 · Set up: It is locked, so unlock it first (Touch ID or the account password)
+
+14
+00:00:57,676 --> 00:01:03,224
+2 · Set up: Then allow Valet. The approval lasts until it locks, or ten idle minutes
+
+15
+00:01:03,224 --> 00:01:11,176
+2 · Set up: Pick the item. Valet copies it into your Keychain once, so later logins need no prompt
+
+16
+00:01:11,176 --> 00:01:18,658
+2 · Set up: The shop texts a code at sign-in, so let Valet read that one sender’s codes (here from the fake’s outbox, not Messages)
+
+17
+00:01:18,658 --> 00:03:19,323
+2 · Set up: Prices and stock follow a store, so pick the pick-up store the tools shop at
+
+18
+00:03:19,323 --> 00:03:49,735
+2 · Set up: Connect a chat app. Valet gives it a config that starts its own bridge, with no token in it

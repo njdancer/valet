@@ -1,0 +1,110 @@
+[
+  {
+    "start": 0,
+    "step": "Valet demo",
+    "text": "A fresh macOS machine. Everything in this run is fake: a made-up shop, a test account and a scripted chat.",
+    "end": 4.003
+  },
+  {
+    "start": 4.003,
+    "step": "1 · Install",
+    "text": "Open the downloaded disk image, as a new user would",
+    "end": 10.556
+  },
+  {
+    "start": 10.556,
+    "step": "1 · Install",
+    "text": "Copy Valet Demo into Applications (the script copies it; a person drags the icon)",
+    "end": 16.035
+  },
+  {
+    "start": 16.035,
+    "step": "1 · Install",
+    "text": "Installed. This test build is unsigned and was never downloaded, so Gatekeeper does not ask about it",
+    "end": 19.039
+  },
+  {
+    "start": 19.039,
+    "step": "2 · Set up",
+    "text": "First launch. (Started with a debugging port that only this demo build accepts, so the script can drive it)",
+    "end": 25.901
+  },
+  {
+    "start": 25.901,
+    "step": "2 · Set up",
+    "text": "Valet opens its first-run setup",
+    "end": 29.829
+  },
+  {
+    "start": 29.829,
+    "step": "2 · Set up",
+    "text": "Where logins come from: your own 1Password. Name the account, as its sidebar shows it",
+    "end": 35.497
+  },
+  {
+    "start": 35.497,
+    "step": "2 · Set up",
+    "text": "Nothing is read yet: Valet asks 1Password only when you pick an item",
+    "end": 39.655
+  },
+  {
+    "start": 39.655,
+    "step": "2 · Set up",
+    "text": "Review the shop adapter: the sites it may reach, and what each tool can do",
+    "end": 46.806
+  },
+  {
+    "start": 46.806,
+    "step": "2 · Set up",
+    "text": "Approve it. Until now its tools were hidden from every chat client",
+    "end": 47.854
+  },
+  {
+    "start": 47.854,
+    "step": "2 · Set up",
+    "text": "Let the adapter use the login, typed only into the shop’s sign-in page",
+    "end": 51.787
+  },
+  {
+    "start": 51.787,
+    "step": "2 · Set up",
+    "text": "To list your items, Valet asks 1Password, which asks you. (A made-up stand-in, Keyhold, plays 1Password here)",
+    "end": 55.03
+  },
+  {
+    "start": 55.03,
+    "step": "2 · Set up",
+    "text": "It is locked, so unlock it first (Touch ID or the account password)",
+    "end": 57.676
+  },
+  {
+    "start": 57.676,
+    "step": "2 · Set up",
+    "text": "Then allow Valet. The approval lasts until it locks, or ten idle minutes",
+    "end": 63.224
+  },
+  {
+    "start": 63.224,
+    "step": "2 · Set up",
+    "text": "Pick the item. Valet copies it into your Keychain once, so later logins need no prompt",
+    "end": 71.176
+  },
+  {
+    "start": 71.176,
+    "step": "2 · Set up",
+    "text": "The shop texts a code at sign-in, so let Valet read that one sender’s codes (here from the fake’s outbox, not Messages)",
+    "end": 78.658
+  },
+  {
+    "start": 78.658,
+    "step": "2 · Set up",
+    "text": "Prices and stock follow a store, so pick the pick-up store the tools shop at",
+    "end": 199.323
+  },
+  {
+    "start": 199.323,
+    "step": "2 · Set up",
+    "text": "Connect a chat app. Valet gives it a config that starts its own bridge, with no token in it",
+    "end": 229.735
+  }
+]
