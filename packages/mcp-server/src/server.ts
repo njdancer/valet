@@ -8,7 +8,7 @@ import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/
 import { NeedsUserError, type ToolDeclaration, toolHints, toReportable } from '@valet/core'
 import { z } from 'zod'
 import type { ClientIdentity } from './auth'
-import { failedResult, toolResult } from './results'
+import { failedResult, type ResultContext, toolResult } from './results'
 import type { CallOutcome, ClientTransport, ListedTool, ToolCaller } from './tool-caller'
 import { type ExposedTool, planTools, type SkippedTool, type ToolPlan } from './tool-names'
 
@@ -29,6 +29,10 @@ export interface ServerOptions {
    * progressToken on the request). Default PROGRESS_INTERVAL_MS.
    */
   readonly progressIntervalMs?: number
+  /** The time zone clock times in results are given in; the machine's own by default. For tests. */
+  readonly timeZone?: string
+  /** The clock results compute "calls resume at" from; Date.now by default. */
+  readonly now?: () => number
 }
 
 /**
@@ -128,6 +132,15 @@ export function createMcpServer(
 
   const handle = async (listed: ListedTool, args: unknown, signal: AbortSignal): Promise<CallToolResult> => {
     const structured = listed.output instanceof z.ZodObject
+    const callId = newCallId()
+    // The app's own words for the call: its ref and the names the person approved with the adapter.
+    const context: ResultContext = {
+      callId,
+      adapterName: listed.adapterName,
+      toolTitle: listed.declaration.title,
+      ...(options.timeZone === undefined ? {} : { timeZone: options.timeZone }),
+      ...(options.now === undefined ? {} : { now: options.now }),
+    }
     let outcome: CallOutcome
     try {
       outcome = await caller.call({
@@ -135,7 +148,7 @@ export function createMcpServer(
         tool: listed.declaration.name,
         input: args,
         client: clientLabel(server.server.getClientVersion()?.name),
-        callId: newCallId(),
+        callId,
         signal,
         ...(options.transport === undefined ? {} : { transport: options.transport }),
         ...(options.identity === undefined ? {} : { identity: options.identity }),
@@ -143,13 +156,13 @@ export function createMcpServer(
     } catch (error) {
       // A runtime that throws rather than returns needsUser still gets the person asked, not a failure.
       if (error instanceof NeedsUserError)
-        return toolResult({ status: 'needsUser', reason: error.reason }, structured)
+        return toolResult({ status: 'needsUser', reason: error.reason }, structured, context)
       const { stage, errorClass } = toReportable(error, 'tool-run')
-      return failedResult(stage, errorClass)
+      return failedResult(stage, errorClass, context)
     }
-    if (outcome.status !== 'ok') return toolResult(outcome, structured)
+    if (outcome.status !== 'ok') return toolResult(outcome, structured, context)
     const checked = await checkedOutput(listed.output, outcome.output)
-    if (!checked.valid) return failedResult('tool-output', 'invalid')
+    if (!checked.valid) return failedResult('tool-output', 'invalid', context)
     return toolResult({ status: 'ok', output: checked.output }, structured)
   }
 

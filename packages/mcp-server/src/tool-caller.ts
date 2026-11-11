@@ -41,15 +41,39 @@ export interface ToolCall {
   readonly transport?: ClientTransport
 }
 
-/** How a call ended: one variant per core RunOutcome. Nothing in it is free text. */
+/**
+ * What the person is being asked to do in the app, when the app knows, so a result can name the
+ * Needs you item it is under. Only codes, a time, and a setting title the person approved with the
+ * adapter; never page text.
+ */
+export type NeedsYouHint =
+  /** A login hand-off is open for the person until `until` (ISO time; null when it has no end). */
+  | { readonly kind: 'login'; readonly until: string | null }
+  /** The person closed the login hand-off this call would need without finishing it. */
+  | { readonly kind: 'gave-up' }
+  /** A setting the adapter needs has no choice yet; `settingTitle` is the manifest's title for it. */
+  | { readonly kind: 'setting-missing'; readonly settingTitle: string }
+  /** The site needs a login and the person hasn't given Valet one. */
+  | { readonly kind: 'login-missing' }
+
+/**
+ * How a call ended: one variant per core RunOutcome. Nothing in it is free text but a NeedsYouHint's
+ * setting title.
+ */
 export type CallOutcome =
   | { readonly status: 'ok'; readonly output: unknown }
   /**
    * The run stopped and the person has been asked to act in the app. Only the reason code crosses
    * this seam; a manifest's note for the person is shown in the app and never sent to the client.
    */
-  | { readonly status: 'needsUser'; readonly reason: NeedsUserReason }
-  | { readonly status: 'failed'; readonly stage: Stage; readonly errorClass: ErrorClass }
+  | { readonly status: 'needsUser'; readonly reason: NeedsUserReason; readonly needsYou?: NeedsYouHint }
+  | {
+      readonly status: 'failed'
+      readonly stage: Stage
+      readonly errorClass: ErrorClass
+      /** A failure the person can fix in the app, such as a login Valet was never given. */
+      readonly needsYou?: NeedsYouHint
+    }
   /**
    * The site refused or rate-limited us, or our own rate budget or circuit breaker held the call
    * back (errorClass blocked-by-site or rate-limited). retryAfterMs is when to try again. Stage
@@ -68,8 +92,8 @@ export type CallOutcome =
       /** With errorClass busy: how many calls were still in front of this one. */
       readonly ahead?: number
     }
-  /** The person declined the confirmation in the app, or didn't answer it in time. */
-  | { readonly status: 'declined' }
+  /** The person declined the confirmation in the app, or (`timedOut`) didn't answer it in time. */
+  | { readonly status: 'declined'; readonly timedOut?: true }
 
 export interface ToolCaller {
   /**

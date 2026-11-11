@@ -75,6 +75,10 @@ export const ERROR_CLASSES = [
   'signature-invalid',
   /** Signed metadata past its validity window, e.g. an update feed that stopped being re-signed. */
   'expired',
+  /** The person paused this one site in the app: the call was not started (stage config). */
+  'site-paused',
+  /** The person locked Valet down: every call is refused (stage config). */
+  'locked-down',
   'declined',
   'timed-out',
   'aborted',
