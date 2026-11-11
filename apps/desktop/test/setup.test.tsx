@@ -1,10 +1,16 @@
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { TooltipProvider } from '@valet/ui'
 import { describe, expect, it } from 'vitest'
 import { ControlPanel } from '../src/renderer/control/App'
 import { createFakeApi, type FakeApi, WOOLWORTHS_NEXT_HASH } from '../src/renderer/dev/fake-api'
 import { ApiProvider } from '../src/renderer/lib/api-context'
-import { resumeStep, type SetupFacts, setupClient, stepsDone } from '../src/renderer/screens/Setup'
+import {
+  resumeStep,
+  type SetupFacts,
+  setupClient,
+  stepsDone,
+} from '../src/renderer/screens/setup/setup-logic'
 import type { ClientInfo, GrantRequest, ValetApi } from '../src/shared/api'
 
 const NOW = Date.parse('2026-11-07T21:48:00+11:00')
@@ -14,7 +20,9 @@ function renderAt(hash: string, api: ValetApi) {
   window.location.hash = hash
   render(
     <ApiProvider api={api} clock={{ now: () => NOW }}>
-      <ControlPanel />
+      <TooltipProvider>
+        <ControlPanel />
+      </TooltipProvider>
     </ApiProvider>,
   )
 }
@@ -31,6 +39,16 @@ function rail(): HTMLElement {
   return screen.getByRole('navigation', { name: 'Setup steps' })
 }
 
+/** How many steps the step list marks done. */
+function doneSteps(): number {
+  return (rail().textContent ?? '').split('(done)').length - 1
+}
+
+/** Off with a reason: aria-disabled rather than disabled. */
+function isOff(button: HTMLElement): boolean {
+  return button.getAttribute('aria-disabled') === 'true' || (button as HTMLButtonElement).disabled
+}
+
 describe('first-run setup', () => {
   it('walks a first launch through 1Password, approval, the login grant and both clients', async () => {
     const user = userEvent.setup()
@@ -38,34 +56,35 @@ describe('first-run setup', () => {
     renderAt('#/setup', api)
 
     // Nothing is done, so setup opens at the welcome.
-    await heading('Let your AI tools use websites, not your passwords')
-    expect(
-      within(rail())
-        .getAllByRole('link')
-        .map((l) => l.textContent),
-    ).toEqual([
-      '1WelcomeWhat Valet does',
-      '21PasswordWhere logins come from',
-      '3Approve the adapterWhat it may do',
-      '4Grant its loginWhich item it may use',
-      '5Pick your storeWhere prices and stock come from',
-      '6Connect ClaudeClaude Code, Claude Desktop',
+    await heading('Let Claude shop at Woolworths for you')
+    const railText = rail().textContent ?? ''
+    for (const step of [
+      'Welcome',
+      '1Password',
+      'Approve Woolworths',
+      'Your login',
+      'Your store',
+      'Connect Claude',
+      'Done',
     ])
-    await user.click(screen.getByRole('link', { name: 'Continue' }))
+      expect(railText).toContain(step)
+    expect(doneSteps()).toBe(0)
+    expect(screen.getByText('Step 1 of 6')).toBeTruthy()
+    await user.click(screen.getByRole('link', { name: 'Get started' }))
 
     // 1Password: nothing reachable yet. Setting it up shows it ready, and the step done.
-    await heading('Where logins come from')
+    await heading('Where your Woolworths password comes from')
     expect(screen.getByText(/Valet can’t reach 1Password yet/)).toBeTruthy()
-    expect(screen.getByRole('link', { name: 'Skip for now' }).className).not.toContain('primary')
-    expect((screen.getByRole('button', { name: 'Continue' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByRole('link', { name: 'Skip for now' }).className).not.toContain('bg-accent')
+    expect(isOff(screen.getByRole('button', { name: 'Continue' }))).toBe(true)
     api.fake.setProviderAvailable('onepassword-cli', true)
     await screen.findByText(/1Password app is ready/)
     expect(screen.getByRole('link', { name: 'Continue' })).toBeTruthy()
     await user.click(screen.getByRole('link', { name: 'Continue' }))
 
     // Approve: the manifest's permissions, then the app's own review screen.
-    await heading('Approve the Woolworths adapter')
-    const summary = document.querySelector('.setup-perms')?.textContent ?? ''
+    await heading('Approve Woolworths')
+    const summary = screen.getByTestId('setup-perms').textContent ?? ''
     expect(summary).toContain('www.woolworths.com.au')
     expect(summary).toContain('auth.woolworths.com.au')
     expect(summary).toMatch(/3 read.*3 write.*0 irreversible/)
@@ -83,8 +102,8 @@ describe('first-run setup', () => {
     expect(called(api, 'approvals.approve')).toEqual([['woolworths', WOOLWORTHS_NEXT_HASH]])
 
     // Grant: the app's grant sheet, offering only the sign-in origin, and back to setup.
-    await heading('Let Woolworths use your login')
-    expect(screen.getByText(/Not granted\. Typed only on/)).toBeTruthy()
+    await heading('Your Woolworths login')
+    expect(screen.getByText(/Not given yet\. Typed only on/)).toBeTruthy()
     await user.click(screen.getByRole('link', { name: 'Choose an item…' }))
     const sheet = await screen.findByRole('dialog', { name: 'Grant a secret' })
     expect(window.location.hash).toBe('#/setup/grant/login')
@@ -110,14 +129,14 @@ describe('first-run setup', () => {
     await user.click(screen.getByRole('link', { name: 'Continue' }))
 
     // The store has its own step (D-setup); this account already has one chosen.
-    await heading('Pick your Woolworths store')
+    await heading('Your Woolworths store')
     expect(screen.getByTestId('setup-settings')).toBeTruthy()
     await user.click(screen.getByRole('link', { name: 'Continue' }))
 
     // Clients: each is added with its own token, and its setup copied by the main process.
     await heading('Connect Claude')
     expect(screen.getByText(/http:\/\/127\.0\.0\.1:47821\/mcp/)).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Finish without a client' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Finish without an app' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Add Claude Code' }))
     const code = await screen.findByText(/^claude mcp add valet/)
     expect(code.tagName).toBe('PRE')
@@ -140,16 +159,19 @@ describe('first-run setup', () => {
     expect(screen.getByText('claude_desktop_config.json.valet-backup-20261107T214800Z')).toBeTruthy()
     expect(screen.getAllByText('Not connected yet')).toHaveLength(2)
     // Added and copied isn't connected: the step isn't done until a client calls in.
-    expect(within(rail()).getAllByText('Done')).toHaveLength(4)
+    expect(doneSteps()).toBe(4)
     expect(screen.getByRole('button', { name: 'Finish' })).toBeTruthy()
     api.fake.clientSeen(added[0]?.id ?? '')
     await screen.findByText('Connected')
 
-    // Every step reads as done, and finishing records it and opens the adapters page.
-    expect(within(rail()).getAllByText('Done')).toHaveLength(5)
+    // Every step is done (the current one is marked current), and finishing shows the done page.
+    expect(doneSteps()).toBe(4)
+    expect(rail().textContent).toContain('Claude Code')
     await user.click(screen.getByRole('button', { name: 'Finish' }))
-    await waitFor(() => expect(window.location.hash).toBe('#/adapters'))
+    await heading('You’re set up')
     expect(called(api, 'setup.finish')).toEqual([[]])
+    expect(screen.queryByRole('link', { name: 'Do it now' })).toBeNull()
+    expect(screen.getByRole('link', { name: 'Open Valet' }).getAttribute('href')).toBe('#/sites')
     expect((await api.setup.status()).completedAt).toBe(new Date(NOW).toISOString())
   })
 
@@ -157,7 +179,7 @@ describe('first-run setup', () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW, firstRun: true })
     renderAt('#/setup/onepassword', api)
-    await heading('Where logins come from')
+    await heading('Where your Woolworths password comes from')
     // Only the Keychain copy is offered: providers this launch can't use aren't listed as steps.
     expect(screen.getByText('Copy in your Keychain')).toBeTruthy()
     expect(screen.queryByText('1Password service account')).toBeNull()
@@ -165,7 +187,8 @@ describe('first-run setup', () => {
     expect(screen.getByText(/Valet can’t reach 1Password yet/)).toBeTruthy()
     await user.type(screen.getByRole('textbox', { name: '1Password account' }), '  my.1password.com ')
     await user.click(screen.getByRole('button', { name: 'Save' }))
-    await screen.findByText(/Copy in your Keychain is ready\. .*approve the copy in 1Password\./)
+    await screen.findByText('Copy in your Keychain is ready.')
+    expect(screen.getByText(/approve the copy in 1Password\./)).toBeTruthy()
     expect(called(api, 'settings.set')).toEqual([[{ onePasswordAccount: 'my.1password.com' }]])
     expect(screen.getByText('Ready')).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Continue' })).toBeTruthy()
@@ -175,7 +198,7 @@ describe('first-run setup', () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW, firstRun: true })
     renderAt('#/setup/onepassword', api)
-    await heading('Where logins come from')
+    await heading('Where your Woolworths password comes from')
     api.fake.failNext('settings.set')
     await user.type(screen.getByRole('textbox', { name: '1Password account' }), 'my.1password.com')
     await user.click(screen.getByRole('button', { name: 'Save' }))
@@ -188,29 +211,29 @@ describe('first-run setup', () => {
     // A provider that was ready before setup started doesn't skip the welcome.
     api.fake.setProviderAvailable('onepassword-cli', true)
     renderAt('#/setup', api)
-    await heading(/^Let your AI tools/)
+    await heading(/^Let Claude shop at/)
     expect(screen.queryByRole('link', { name: 'Back' })).toBeNull()
     cleanup()
 
     await api.approvals.approve('woolworths', WOOLWORTHS_NEXT_HASH)
     renderAt('#/setup', api)
-    await heading('Let Woolworths use your login')
+    await heading('Your Woolworths login')
     await user.click(screen.getByRole('link', { name: 'Back' }))
-    await heading('Approve the Woolworths adapter')
+    await heading('Approve Woolworths')
     await screen.findByText(/is approved\. Its tools are on MCP\./)
     await user.click(screen.getByRole('link', { name: 'Back' }))
-    await heading('Where logins come from')
+    await heading('Where your Woolworths password comes from')
   })
 
   it('asks for the approval before the grant, and the review’s Close goes back to setup', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW, firstRun: true })
     renderAt('#/setup/grant', api)
-    await heading('Let Woolworths use your login')
+    await heading('Your Woolworths login')
     expect(screen.getByText(/Approve Woolworths first/)).toBeTruthy()
     expect(screen.queryByRole('link', { name: 'Choose an item…' })).toBeNull()
     await user.click(screen.getByRole('link', { name: 'Go to approval' }))
-    await heading('Approve the Woolworths adapter')
+    await heading('Approve Woolworths')
     await user.click(screen.getByRole('link', { name: /^Review Woolworths/ }))
     await screen.findByRole('button', { name: 'Approve 0.3.0' })
     await user.click(screen.getByRole('link', { name: 'Close' }))
@@ -236,13 +259,26 @@ describe('first-run setup', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('skipping records setup as finished, so later launches don’t open it', async () => {
+  it('finishing later records setup as finished, so later launches don’t open it', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW, firstRun: true })
     renderAt('#/setup/onepassword', api)
-    await heading('Where logins come from')
-    await user.click(screen.getByRole('button', { name: 'Skip setup' }))
-    await waitFor(() => expect(window.location.hash).toBe('#/adapters'))
+    await heading('Where your Woolworths password comes from')
+    await user.click(screen.getByRole('button', { name: 'Finish later' }))
+    await waitFor(() => expect(window.location.hash).toBe('#/sites'))
+    expect(called(api, 'setup.finish')).toEqual([[]])
+  })
+
+  it('finishing with steps left shows what was skipped, each with a way back to it', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW, firstRun: true })
+    renderAt('#/setup/clients', api)
+    await heading('Connect Claude')
+    await user.click(screen.getByRole('button', { name: 'Finish without an app' }))
+    await heading('Almost set up')
+    const links = screen.getAllByRole('link', { name: 'Do it now' }).map((l) => l.getAttribute('href'))
+    expect(links).toContain('#/setup/approve')
+    expect(links).toContain('#/setup/clients')
     expect(called(api, 'setup.finish')).toEqual([[]])
   })
 
@@ -252,7 +288,7 @@ describe('first-run setup', () => {
     renderAt('#/setup/clients', api)
     await heading('Connect Claude')
     api.fake.failNext('setup.finish')
-    await user.click(screen.getByRole('button', { name: 'Finish without a client' }))
+    await user.click(screen.getByRole('button', { name: 'Finish without an app' }))
     await screen.findByText('Couldn’t finish setup. Try again.')
     expect(window.location.hash).toBe('#/setup/clients')
     api.fake.failNext('clients.add')
@@ -268,13 +304,15 @@ describe('first-run setup', () => {
     await screen.findByText(/^claude mcp add valet/)
     expect(screen.queryByRole('button', { name: /^Add Claude/ })).toBeNull()
     expect(screen.getAllByText('Connected')).toHaveLength(2)
-    expect(within(rail()).getAllByText('Done')).toHaveLength(5)
+    // Every other step is done; this one is the current one.
+    expect(doneSteps()).toBe(4)
+    expect(rail().querySelector('[aria-current="step"]')?.textContent).toContain('Connect Claude')
   })
 
   it('shows the approved adapter and an update waiting for review', async () => {
     const api = createFakeApi({ now: NOW })
     renderAt('#/setup/approve', api)
-    await heading('Approve the Woolworths adapter')
+    await heading('Approve Woolworths')
     expect(screen.getByRole('link', { name: 'Review Woolworths 0.4.0…' })).toBeTruthy()
     expect(screen.getByText('0.3.0 stays approved until you decide on 0.4.0.')).toBeTruthy()
   })
@@ -294,9 +332,9 @@ describe('first-run setup', () => {
     const fake = createFakeApi({ now: NOW, firstRun: true })
     const api: ValetApi = { ...fake, adapters: { ...fake.adapters, get: async () => null } }
     renderAt('#/setup/approve', api)
-    await heading('No adapter to set up')
+    await heading('No site to set up')
     window.location.hash = '#/setup/grant'
-    await heading('No adapter to set up')
+    await heading('No site to set up')
   })
 
   it('without a bridge, a client’s card says it can’t be set up from here', async () => {
@@ -313,6 +351,89 @@ describe('first-run setup', () => {
     await api.endpoint.setListening(false)
     renderAt('#/setup/clients', api)
     await screen.findByText(/The MCP endpoint is off/)
+  })
+})
+
+describe('setup’s store step', () => {
+  it('changes the chosen store: searches only on submit, lists what the site found, and saves the pick', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    renderAt('#/setup/store', api)
+    await heading('Your Woolworths store')
+    const settings = screen.getByTestId('setup-settings')
+    expect(within(settings).getByTestId('setting-chosen')).toBeTruthy()
+    expect(within(settings).getByText('Chosen')).toBeTruthy()
+    await user.click(within(settings).getByRole('button', { name: /^Change store/ }))
+    const search = within(settings).getByRole('button', { name: 'Search' })
+    expect(search.getAttribute('aria-disabled')).toBe('true')
+    await user.type(within(settings).getByRole('textbox'), '2000')
+    expect(called(api, 'adapters.settingChoices')).toEqual([])
+    await user.click(within(settings).getByRole('button', { name: 'Search' }))
+    expect(await within(settings).findByText(/^Found by .+, through its adapter$/)).toBeTruthy()
+    expect(called(api, 'adapters.settingChoices')).toEqual([['woolworths', 'store', '2000']])
+    await user.click(within(settings).getByRole('button', { name: 'Choose Woolworths Metro Wynyard' }))
+    await waitFor(() =>
+      expect(called(api, 'adapters.setSetting')).toEqual([['woolworths', 'store', '9001245']]),
+    )
+    expect(await within(settings).findByText('Woolworths Metro Wynyard')).toBeTruthy()
+    expect(within(settings).queryByRole('button', { name: 'Search' })).toBeNull()
+  })
+
+  it('Cancel leaves the store as it was', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    renderAt('#/setup/store', api)
+    await heading('Your Woolworths store')
+    await user.click(screen.getByRole('button', { name: /^Change store/ }))
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('button', { name: 'Search' })).toBeNull()
+    expect(called(api, 'adapters.setSetting')).toEqual([])
+  })
+
+  it.each([
+    [
+      { status: 'blocked', retryAt: new Date(NOW + 240_000).toISOString() },
+      /The site is refusing or slowing Valet/,
+    ],
+    [{ status: 'not-approved' }, /isn’t approved, so it can’t search/],
+    [{ status: 'site-changed' }, /The adapter may need an update/],
+    [{ status: 'failed' }, /The search didn’t work/],
+    [{ status: 'ok', choices: [] }, /Nothing found for “9999”/],
+  ])('words a search that came back %j in the app’s own words', async (reply, wording) => {
+    const user = userEvent.setup()
+    const fake = createFakeApi({ now: NOW })
+    const api = {
+      ...fake,
+      adapters: { ...fake.adapters, settingChoices: async () => reply as never },
+    } as FakeApi
+    renderAt('#/setup/store', api)
+    await heading('Your Woolworths store')
+    await user.click(screen.getByRole('button', { name: /^Change store/ }))
+    await user.type(screen.getByRole('textbox'), '9999{Enter}')
+    expect(await screen.findByText(wording)).toBeTruthy()
+  })
+
+  it('says so when a search or a save fails, without the error’s text', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    renderAt('#/setup/store', api)
+    await heading('Your Woolworths store')
+    await user.click(screen.getByRole('button', { name: /^Change store/ }))
+    api.fake.failNext('adapters.settingChoices')
+    await user.type(screen.getByRole('textbox'), '2000{Enter}')
+    expect(await screen.findByText('Couldn’t search for a store. Try again.')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Search' }))
+    const wynyard = await screen.findByRole('button', { name: 'Choose Woolworths Metro Wynyard' })
+    api.fake.failNext('adapters.setSetting')
+    await user.click(wynyard)
+    expect(await screen.findByText('Couldn’t save the store. Try again.')).toBeTruthy()
+  })
+
+  it('asks for the approval first when the adapter isn’t approved', async () => {
+    renderAt('#/setup/store', createFakeApi({ now: NOW, firstRun: true }))
+    await heading('Your Woolworths store')
+    expect(await screen.findByText(/Approve Woolworths first/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Search' })).toBeNull()
   })
 })
 

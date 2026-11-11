@@ -9,6 +9,7 @@
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { AuditRecord } from '@valet/core'
+import { TooltipProvider } from '@valet/ui'
 import { describe, expect, it } from 'vitest'
 import { ControlPanel } from '../src/renderer/control/App'
 import { createFakeApi } from '../src/renderer/dev/fake-api'
@@ -69,8 +70,8 @@ const ROUTES: [string, string][] = [
   ['#/audit', 'Chain intact up to record 4813.'],
   ['#/clients', 'Add a client…'],
   ['#/credentials', '1Password app “Coles”'],
-  ['#/confirm/cf_a40f3c', 'Shown by the Woolworths adapter'],
-  ['#/needs-user/woolworths', 'Woolworths needs you to finish logging in.'],
+  ['#/confirm/cf_a40f3c', 'From the site'],
+  ['#/needs-user/woolworths', 'Log in to Woolworths (verification check)'],
 ]
 
 describe('no secret reaches the screen', () => {
@@ -119,7 +120,9 @@ describe('no secret reaches the screen', () => {
       window.location.hash = hash
       render(
         <ApiProvider api={leaky(createFakeApi({ now: NOW }))} clock={{ now: () => NOW }}>
-          <ControlPanel />
+          <TooltipProvider>
+            <ControlPanel />
+          </TooltipProvider>
         </ApiProvider>,
       )
       expect((await screen.findAllByText(landmark)).length).toBeGreaterThan(0)
@@ -191,11 +194,13 @@ describe('no secret reaches the screen', () => {
   it('renders the tray popover without fields it doesn’t name', async () => {
     render(
       <ApiProvider api={leaky(createFakeApi({ now: NOW }))} clock={{ now: () => NOW }}>
-        <TrayPopover />
+        <TooltipProvider>
+          <TrayPopover />
+        </TooltipProvider>
       </ApiProvider>,
     )
-    expect(await screen.findByText('Log in to Woolworths')).toBeTruthy()
-    await waitFor(() => expect(screen.getByText('37')).toBeTruthy())
+    expect(await screen.findByText('Log in to Woolworths (verification check)')).toBeTruthy()
+    await waitFor(() => expect(screen.getByRole('link', { name: '37 calls' })).toBeTruthy())
     expect(document.documentElement.innerHTML).not.toContain(CANARY)
   })
 })
