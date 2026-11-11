@@ -325,7 +325,7 @@ function CallRow({
           </Inline>
           <span className="flex min-w-0 gap-1 text-sm text-fg-muted">
             <span className="truncate">
-              {toolPhrase(run.tool)}
+              {toolPhrase(run.tool, run.outcome === 'ok')}
               {run.detail === null ? null : <>: {run.detail}</>}
             </span>
             {retries === 0 || firstRetry === null ? null : (

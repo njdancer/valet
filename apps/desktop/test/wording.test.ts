@@ -23,6 +23,7 @@ import {
   runWording,
   STAGE_WORDING,
   stageWording,
+  toolPhrase,
 } from '../src/renderer/lib/wording'
 
 describe('wording', () => {
@@ -102,5 +103,13 @@ describe('a call answered "call again"', () => {
     expect(runTone(run)).toBe('bad')
     expect(runWording(run)).toBe('failed')
     expect(runTone({ outcome: 'ok', errorClass: null })).toBe('ok')
+  })
+})
+
+describe('toolPhrase', () => {
+  it('says what a call did only when it did it', () => {
+    expect(toolPhrase('add_to_cart')).toBe('Added to the trolley')
+    expect(toolPhrase('add_to_cart', false)).toBe('Add to the trolley')
+    expect(toolPhrase('do_thing', false)).toBe('Run do thing')
   })
 })

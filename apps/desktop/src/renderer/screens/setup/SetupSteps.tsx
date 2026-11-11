@@ -87,7 +87,7 @@ export function WelcomeStep({ siteName }: { readonly siteName: string }) {
           Logged in as you, with your 1Password login. Only on the hosts you approve.
         </WelcomeCard>
         <WelcomeCard title="3. You check and pay">
-          Removing things asks you first. Paying is always you.
+          Open your trolley on the site to check what Claude added, then pay there yourself.
         </WelcomeCard>
       </div>
       <Banner tone="success" title="Valet never pays.">

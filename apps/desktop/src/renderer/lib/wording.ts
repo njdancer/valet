@@ -339,8 +339,26 @@ const TOOL_PHRASES: Readonly<Record<string, string>> = {
   apply_store: 'Picked a store',
 }
 
-export function toolPhrase(tool: string): string {
-  if (Object.hasOwn(TOOL_PHRASES, tool)) return TOOL_PHRASES[tool] as string
+// The same calls as an attempt, for a call that didn't succeed: a refused or failed add_to_cart
+// added nothing, so its row must not say "Added to the trolley".
+const TOOL_ATTEMPTS: Readonly<Record<string, string>> = {
+  search_products: 'Search products',
+  get_product: 'Look up a product',
+  get_cart: 'Read the trolley',
+  add_to_cart: 'Add to the trolley',
+  set_cart_quantity: 'Change a quantity in the trolley',
+  update_cart_line: 'Change a trolley line',
+  remove_from_cart: 'Remove from the trolley',
+  update_cart: 'Update the trolley',
+  find_stores: 'Look up stores',
+  apply_store: 'Pick a store',
+}
+
+/** What a call did, or, when `done` is false, what it set out to do. */
+export function toolPhrase(tool: string, done = true): string {
+  const phrases = done ? TOOL_PHRASES : TOOL_ATTEMPTS
+  if (Object.hasOwn(phrases, tool)) return phrases[tool] as string
   const words = tool.replace(/_/g, ' ').trim()
-  return words === '' ? 'Called a tool' : `Ran ${words}`
+  if (words === '') return done ? 'Called a tool' : 'Call a tool'
+  return done ? `Ran ${words}` : `Run ${words}`
 }
