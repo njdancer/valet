@@ -1,5 +1,5 @@
 // Needs you: the one inbox (P1, principles 1 and 2).
-;(function () {
+;(() => {
   const { K, shell, sheet, FRAMES } = window.WF
   window.WF.GROUP_INTRO = window.WF.GROUP_INTRO || {}
   window.WF.GROUP_INTRO['Needs you'] =
@@ -13,13 +13,13 @@
     })}
     <div class="wf-scroll">
       <div class="col">
-        ${K.inbox('✓', 'Confirm: Remove from cart (Woolworths)', 'Claude Code asked at 9:48 pm · call ' + K.link('7F2A'), K.countdown('1:42', '9:50 pm'), K.primary('Answer…'), 'urgent')}
+        ${K.inbox('✓', 'Confirm: Remove from cart (Woolworths)', `Claude Code asked at 9:48 pm · call ${K.link('7F2A')}`, K.countdown('1:42', '9:50 pm'), K.primary('Answer…'), 'urgent')}
         ${K.inbox('⇄', 'Approve a connection', 'A cloud agent is asking to connect · type the code your browser shows', K.countdown('4:10', '9:52 pm'), K.primary('Approve…') + K.ghost('Decline'))}
-        ${K.inbox('→', 'Log in to Woolworths (verification check)', 'Valet stopped at a check only you can do · get_cart for ' + K.link('Claude Code'), K.countdown('12:30', '10:03 pm'), K.primary('Show login window'))}
+        ${K.inbox('→', 'Log in to Woolworths (verification check)', `Valet stopped at a check only you can do · get_cart for ${K.link('Claude Code')}`, K.countdown('12:30', '10:03 pm'), K.primary('Show login window'))}
         ${K.inbox('↑', 'Review the Woolworths update (0.4.0)', 'Adds 1 host, 1 read tool · calls use 0.3.0 until you approve', '', K.primary('Review update'))}
       </div>
       <div class="row faint" style="margin-top:8px"><span class="h3" style="color:var(--wf-ink-2)">Missed in the last 24 hours</span></div>
-      ${K.inbox('✓', 'Missed: Confirm: Remove from cart (Woolworths)', 'Nobody answered by 6:12 pm, so nothing was removed · call ' + K.link('5C10'), '', K.btn('Copy a retry note for Claude') + K.ghost('Dismiss'), 'missed')}
+      ${K.inbox('✓', 'Missed: Confirm: Remove from cart (Woolworths)', `Nobody answered by 6:12 pm, so nothing was removed · call ${K.link('5C10')}`, '', K.btn('Copy a retry note for Claude') + K.ghost('Dismiss'), 'missed')}
     </div>`
 
   FRAMES.push({

@@ -1,13 +1,13 @@
 // Everywhere: the command palette, kill switches, the app menu and the window's limits
 // (principles 7, 10, 11, 12; E4, E9, E10; P1, P3, P5).
-;(function () {
+;(() => {
   const { K, shell, dialog, FRAMES } = window.WF
   window.WF.GROUP_INTRO = window.WF.GROUP_INTRO || {}
-  window.WF.GROUP_INTRO['Everywhere'] =
+  window.WF.GROUP_INTRO.Everywhere =
     'Things that work the same on every page: ⌘K, Pause and Lock down, the app menu and its shortcuts, and the two limits every layout must survive (the 880 x 560 minimum window and 200% text).'
 
   // ---- shared pages ----
-  const canReach = `
+  const _canReach = `
     ${K.kv([
       ['Sites it may open', `${K.value('woolworths.com.au')} ${K.value('auth.woolworths.com.au')}`],
       ['Logins it may fill', K.link('Woolworths (1Password)')],
@@ -72,7 +72,7 @@
     title: '⌘K command palette',
     personas: ['P1', 'P4', 'P5'],
     desc: 'One search for places, sites, calls by ref, apps, secrets, settings and actions. Results are grouped, and waiting items come first.',
-    html: shell('sites', siteHeader(siteActions) + `<div class="wf-scroll">${siteMain}</div>`, {
+    html: shell('sites', `${siteHeader(siteActions)}<div class="wf-scroll">${siteMain}</div>`, {
       badges: { needs: 1 },
       site: 0,
       over: palette,
@@ -130,7 +130,7 @@
     title: 'Lock down dialog',
     personas: ['P3', 'P1', 'P2'],
     desc: "The second kill switch, from the Pause button's menu, the menu bar, the app menu and ⌥⇧⌘L. It says what it does now and, separately, what can't be undone.",
-    html: shell('sites', siteHeader(siteActions) + `<div class="wf-scroll">${siteMain}</div>`, {
+    html: shell('sites', `${siteHeader(siteActions)}<div class="wf-scroll">${siteMain}</div>`, {
       badges: { needs: 1 },
       site: 0,
       over: lockdown,
@@ -223,7 +223,7 @@
   })
 
   // 4. App menu
-  const menuCol = (left, title, items) =>
+  const menuCol = (left, _title, items) =>
     `<div style="position:absolute;top:24px;left:${left}px;z-index:6;min-width:250px;background:var(--wf-paper);border:1px solid var(--wf-line-2);border-radius:8px;box-shadow:0 10px 30px var(--wf-shadow);padding:4px">
       ${items
         .map((it) =>
@@ -240,7 +240,7 @@
     personas: ['P1', 'P5', 'P2'],
     desc: "Both menus drawn open at once for review. Every place has a shortcut, and the kill switches are in the Valet menu like any Mac app's Quit.",
     html: `<div class="wf-window" style="background:linear-gradient(160deg,var(--wf-paper-2),var(--wf-sel))">${appMenuBar}
-      <div style="zoom:.82;margin:20px 0 0 100px;width:1180px;height:780px">${shell('needs', K.header({ title: 'Needs you', status: K.badge('1 waiting', 'warn') }) + `<div class="wf-scroll">${K.inbox('↑', 'Review the Woolworths update (0.4.0)', 'Adds 1 host, 1 read tool · calls use 0.3.0 until you approve', '', K.primary('Review update'))}</div>`, { badges: { needs: 1 } })}</div>
+      <div style="zoom:.82;margin:20px 0 0 100px;width:1180px;height:780px">${shell('needs', `${K.header({ title: 'Needs you', status: K.badge('1 waiting', 'warn') })}<div class="wf-scroll">${K.inbox('↑', 'Review the Woolworths update (0.4.0)', 'Adds 1 host, 1 read tool · calls use 0.3.0 until you approve', '', K.primary('Review update'))}</div>`, { badges: { needs: 1 } })}</div>
       ${menuCol(22, 'Valet', [['About Valet'], '-', ['Settings…', '⌘,'], ['Check for Updates…'], ['Continue Setup…'], '-', ['Pause Valet', '⇧⌘P', true], ['Lock Down…', '⌥⇧⌘L'], '-', ['Hide Valet', '⌘H'], ['Quit Valet', '⌘Q']])}
       ${menuCol(300, 'Go', [['Needs You', '⌘1'], ['Sites', '⌘2'], ['Activity: Calls', '⌘3'], ['Activity: Audit Log', '⇧⌘3'], ['Connections', '⌘4'], ['Secrets', '⌘5'], ['Settings', '⌘6'], '-', ['Back', '⌘['], ['Forward', '⌘]'], '-', ['Search…', '⌘K'], '-', ['Open My Trolley on woolworths.com.au…']])}
     </div>`,

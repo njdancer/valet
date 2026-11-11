@@ -1,5 +1,5 @@
 // Menu bar: the icon, its popover and the notifications (P11, E5, E10; P7's walk back to the Mac).
-;(function () {
+;(() => {
   const { K, FRAMES } = window.WF
   window.WF.GROUP_INTRO = window.WF.GROUP_INTRO || {}
   window.WF.GROUP_INTRO['Menu bar'] =

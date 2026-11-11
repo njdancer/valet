@@ -1,5 +1,5 @@
 // Own windows: the confirmation and the login hand-off (principle 5, P10, E5; P7 and P2 walkthroughs).
-;(function () {
+;(() => {
   const { K, FRAMES } = window.WF
   window.WF.GROUP_INTRO = window.WF.GROUP_INTRO || {}
   window.WF.GROUP_INTRO['Own windows'] =
@@ -96,7 +96,7 @@
           ${tick("Can't pay, check out or change your account")}
           <span style="font-size:11px">▾ Details</span>
           ${K.kv([
-            ['Tool', 'Remove from cart ' + K.value('remove_from_cart')],
+            ['Tool', `Remove from cart ${K.value('remove_from_cart')}`],
             ['Request', K.value('POST /api/v3/ui/trolley/update')],
             ['Input', K.value('{ "stockcode": 133211 }')],
           ])}

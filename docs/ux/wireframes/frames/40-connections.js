@@ -1,8 +1,8 @@
 // Connections: the endpoint, apps on this Mac, cloud agents and remote access on one page (P5).
-;(function () {
+;(() => {
   const { K, shell, sheet, dialog, FRAMES } = window.WF
   window.WF.GROUP_INTRO = window.WF.GROUP_INTRO || {}
-  window.WF.GROUP_INTRO['Connections'] =
+  window.WF.GROUP_INTRO.Connections =
     'Who can call your tools. One page for this Mac\'s endpoint, the apps on this Mac, cloud agents and remote access, because "remote is just another kind of client" (P1, P3, P4, P5, P7). Each app and cloud agent has its own page with a computed <b>Can reach</b> panel (P3\'s blast radius), its calls, Reset access and Revoke.'
 
   // ---- local helpers ----
@@ -24,7 +24,7 @@
       .map((r, i) => {
         const bg =
           i === o.sel ? 'background:var(--wf-sel);' : i === o.hover ? 'background:var(--wf-paper-2);' : ''
-        const fade = o.faded && o.faded.includes(i) ? 'opacity:.6;' : ''
+        const fade = o.faded?.includes(i) ? 'opacity:.6;' : ''
         return r.map((x) => cell(x, bg + fade)).join('')
       })
       .join('')

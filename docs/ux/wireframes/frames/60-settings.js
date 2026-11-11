@@ -1,8 +1,8 @@
 // Settings: its own place, ⌘, (P7). How the app behaves; nothing security-relevant lives only here.
-;(function () {
+;(() => {
   const { K, shell, dialog, FRAMES } = window.WF
   window.WF.GROUP_INTRO = window.WF.GROUP_INTRO || {}
-  window.WF.GROUP_INTRO['Settings'] =
+  window.WF.GROUP_INTRO.Settings =
     'How the app behaves, reached by ⌘, like every Mac app (P7). One URL per section (#/settings/general …) and a sub-navigation inside the page. Anything about who can reach what lives in Connections or Secrets, and Settings links there rather than repeating it (P3).'
 
   const SECTIONS = [

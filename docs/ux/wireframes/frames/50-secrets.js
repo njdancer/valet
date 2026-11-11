@@ -1,9 +1,9 @@
 // Secrets: passwords and one-time codes (P6). One page for where they come from and which logins
 // Valet may use, and one page per login with its calls and what it can reach.
-;(function () {
+;(() => {
   const { K, shell, sheet, FRAMES } = window.WF
   window.WF.GROUP_INTRO = window.WF.GROUP_INTRO || {}
-  window.WF.GROUP_INTRO['Secrets'] =
+  window.WF.GROUP_INTRO.Secrets =
     'Passwords and one-time codes. Where Valet gets them (1Password, a Keychain copy, Messages), and every login Valet may use, each with its own page: which site and version, where it may be typed, the calls that used it and what can cause it to be typed. Search finds this page for "passwords" too (IA labels).'
 
   // ---- local helpers ----
@@ -27,7 +27,7 @@
     const tr = rows
       .map((r, i) => {
         const bg = i === o.hover ? 'background:var(--wf-paper-2);' : ''
-        const fade = o.faded && o.faded.includes(i) ? 'color:var(--wf-ink-2);' : ''
+        const fade = o.faded?.includes(i) ? 'color:var(--wf-ink-2);' : ''
         return r.map((x) => cell(x, bg + fade)).join('')
       })
       .join('')

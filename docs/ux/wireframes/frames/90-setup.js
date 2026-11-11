@@ -1,8 +1,8 @@
 // Setup: first run, re-entrant (P9, P2's walkthrough S8, P5's acceptance criteria).
-;(function () {
+;(() => {
   const { K, FRAMES } = window.WF
   window.WF.GROUP_INTRO = window.WF.GROUP_INTRO || {}
-  window.WF.GROUP_INTRO['Setup'] =
+  window.WF.GROUP_INTRO.Setup =
     'Setup takes the whole window: a step list on the left, one step on the right in a column of fixed width whose heading never moves between steps, Back and Continue in the same place on every step. It ends with a real test call. A skipped step is never a dead end: it says why it waits and offers the fix, and whatever is left becomes one "Finish setup" item in Needs you.'
 
   const STEPS = [

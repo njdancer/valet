@@ -1,8 +1,8 @@
 // Activity: Calls and Audit log, two real tabs (IA section 1, P4, P5).
-;(function () {
+;(() => {
   const { K, shell, FRAMES } = window.WF
   window.WF.GROUP_INTRO = window.WF.GROUP_INTRO || {}
-  window.WF.GROUP_INTRO['Activity'] =
+  window.WF.GROUP_INTRO.Activity =
     'What happened. Two real tabs with their own URL, shortcut and heading: <b>Calls</b> (⌘3), every tool call with its short reference, and <b>Audit log</b> (⇧⌘3), the tamper-evident record. A call links to its records and every record links back to its call (principle 3).'
 
   // ---- local helpers ----
@@ -408,7 +408,7 @@
     })
   const traceFacts = facts([
     fact('Site', K.link('Woolworths')),
-    fact('Version', ver('0.3.0') + ' <span class="faint">live</span>'),
+    fact('Version', `${ver('0.3.0')} <span class="faint">live</span>`),
     fact('Tool', tool('update_cart_line')),
     fact('App', K.link('Claude Code')),
     fact('When', '9:31 pm · 5.2 s'),
@@ -497,7 +497,7 @@
     ${traceHead('Get cart', OUT.fail('site changed'), '6B3E', K.value('6B3E') + K.btn('Copy as JSON') + K.btn('Audit records (2)'))}
     ${facts([
       fact('Site', K.link('Woolworths')),
-      fact('Version', ver('0.3.0') + ' <span class="faint">live</span>'),
+      fact('Version', `${ver('0.3.0')} <span class="faint">live</span>`),
       fact('Tool', tool('get_cart')),
       fact('App', K.link('Claude Code')),
       fact('When', '9:40 pm · 2.0 s'),

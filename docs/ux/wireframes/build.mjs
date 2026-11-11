@@ -1,6 +1,6 @@
 // Assembles the single-file wireframe page: template.html + kit.css + kit.js + intro.html +
 // frames/*.js (in name order) -> index.html. Run: node docs/ux/wireframes/build.mjs
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 

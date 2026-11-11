@@ -62,7 +62,7 @@ table.t th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:va
 pre.tree{font:12px/1.5 var(--f-mono);background:var(--wf-paper);border:1px solid var(--rule);border-radius:10px;padding:14px;overflow-x:auto}
 .mermaidbox{background:var(--wf-paper);border:1px solid var(--rule);border-radius:10px;padding:14px;overflow-x:auto}
 a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
 /*KITCSS*/
 </style>
 <div class="wrap">
@@ -84,7 +84,7 @@ a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 </script>
 <!--FRAMESJS-->
 <script>
-(function(){
+(()=> {
   const { FRAMES } = window.WF
   const SIZES = { window:[1180,780], min:[880,560], pop:[400,640], conf:[460,620], banner:[1180,780] }
   const host = document.getElementById('frames')
@@ -92,10 +92,10 @@ a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   for (const f of FRAMES) { if (!groups.includes(f.group)) groups.push(f.group) }
   const nav = document.querySelector('.top')
   for (const g of groups) {
-    const slug = 'g-' + g.toLowerCase().replace(/[^a-z0-9]+/g,'-')
-    const a = document.createElement('a'); a.href = '#' + slug; a.textContent = g; nav.appendChild(a)
+    const slug = `g-${g.toLowerCase().replace(/[^a-z0-9]+/g,'-')}`
+    const a = document.createElement('a'); a.href = `#${slug}`; a.textContent = g; nav.appendChild(a)
     const h = document.createElement('h2'); h.className = 'sec'; h.id = slug; h.textContent = g; host.appendChild(h)
-    const intro = (window.WF.GROUP_INTRO || {})[g]
+    const intro = window.WF.GROUP_INTRO?.[g]
     if (intro) { const p = document.createElement('p'); p.className = 'lede'; p.innerHTML = intro; host.appendChild(p) }
     for (const f of FRAMES.filter((x) => x.group === g)) {
       const [w, hgt] = SIZES[f.size || 'window']
@@ -113,10 +113,10 @@ a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
     for (const st of document.querySelectorAll('.fr .stage')) {
       const sc = st.querySelector('.scaler'); const w = parseFloat(sc.style.width); const h = parseFloat(sc.style.height)
       const avail = st.clientWidth - 28; const s = Math.min(1, avail / w)
-      sc.style.transform = `scale(${s})`; st.style.height = (h * s + 28) + 'px'
+      sc.style.transform = `scale(${s})`; st.style.height = `${h * s + 28}px`
     }
   }
-  fit(); addEventListener('resize', fit)
+  it(); addEventListener('resize', fit)
   if (location.hash) { const t = document.getElementById(location.hash.slice(1)); if (t) t.scrollIntoView() }
 })()
 </script>

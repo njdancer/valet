@@ -1,9 +1,9 @@
 // Sites: the list, one page per site with its tabs, the review page, and the sheets and dialog that
 // open over a site (P2, P3, E1, E6, principles 2, 4 and 5).
-;(function () {
+;(() => {
   const { K, shell, sheet, dialog, FRAMES } = window.WF
   window.WF.GROUP_INTRO = window.WF.GROUP_INTRO || {}
-  window.WF.GROUP_INTRO['Sites'] =
+  window.WF.GROUP_INTRO.Sites =
     "One page per site (P2), reached from the sidebar's Sites place, the site rows under it, the menu bar and every link to the site. Overview is the page most people use (P2 Sam), so everything with a next step shows that step there as a named button beside its status (E1). Tools, Permissions and Versions hold the detail; Calls is a link to Activity filtered to this site, not a copy. Review update is a full page inside the site, with the sidebar kept and a breadcrumb back (P3)."
 
   // ---------- shared pieces ----------
@@ -38,7 +38,7 @@
       title: `<span class="row" style="gap:10px">${K.avatar('W')}Woolworths</span>`,
       status,
       actions: actions + K.btn('Open my trolley') + K.icon('⋯'),
-      sub: `<span class="row" style="gap:6px">${mono('woolworths ' + version)} ${K.value(hash)} <span class="faint">· ${approved}</span></span>`,
+      sub: `<span class="row" style="gap:6px">${mono(`woolworths ${version}`)} ${K.value(hash)} <span class="faint">· ${approved}</span></span>`,
       tabs: K.tabs(TABS, tab),
     })
 
