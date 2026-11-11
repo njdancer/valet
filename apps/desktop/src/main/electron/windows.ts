@@ -64,8 +64,14 @@ export class AppWindows {
     session.defaultSession.webRequest.onBeforeRequest((details, callback) =>
       callback({ cancel: !allowed(details.url) }),
     )
-    session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
-    session.defaultSession.setPermissionCheckHandler(() => false)
+    // The app's own pages may write to the clipboard (the design system's Copy buttons) and nothing
+    // else: no reading it, no camera, no notifications from the page. Site sessions are other
+    // partitions with their own handlers.
+    const writeOnly = (permission: string) => permission === 'clipboard-sanitized-write'
+    session.defaultSession.setPermissionRequestHandler((_contents, permission, callback) =>
+      callback(writeOnly(permission)),
+    )
+    session.defaultSession.setPermissionCheckHandler((_contents, permission) => writeOnly(permission))
   }
 
   openControlPanel(route: HashRoute | null): void {
