@@ -168,7 +168,7 @@ async function theme(t: 'light' | 'dark'): Promise<void> {
 async function shot(page: Page, name: string, width = 1180, height = 780, full = false): Promise<void> {
   for (const t of THEMES) {
     await theme(t)
-    await shotOne(page, t === 'light' ? name : `${name}.dark`, width, height, full)
+    await shotOne(page, t === 'light' ? name : `${name}.dark`, width, height, full, t)
   }
   await theme('light')
 }
@@ -179,14 +179,20 @@ async function shotOne(
   width: number,
   height: number,
   full: boolean,
+  t: 'light' | 'dark' = 'light',
 ): Promise<void> {
   const cdp = await page.context().newCDPSession(page)
   await cdp.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false })
+  // Playwright pins the pages' colour scheme to light, so nativeTheme alone doesn't reach the CSS.
+  await cdp.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: t }] })
   await page.waitForTimeout(450)
   await page.screenshot({ path: join(OUT, `${name}.png`), animations: 'disabled', fullPage: full })
   const facts = await probe(page)
   appendFileSync(REPORT, `${JSON.stringify({ name, width, height, ...(facts as object) })}\n`)
   await cdp.send('Emulation.clearDeviceMetricsOverride')
+  await cdp.send('Emulation.setEmulatedMedia', {
+    features: [{ name: 'prefers-color-scheme', value: 'light' }],
+  })
   await cdp.detach()
 }
 

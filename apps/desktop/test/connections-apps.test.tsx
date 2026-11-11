@@ -12,6 +12,18 @@ const CLAUDE_DESKTOP = 'c_41e9a1b2c3d4e5f6'
 const CURSOR = 'c_0b5aa1b2c3d4e5f6'
 
 describe('connections', () => {
+  it('puts focus back on Add an app… when the sheet closes with Escape', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    renderPage(api, <ConnectionsPage />)
+    const opener = await screen.findByRole('button', { name: 'Add an app…' })
+    await user.click(opener)
+    await screen.findByRole('dialog', { name: 'Add an app' })
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(opener))
+  })
+
   it('turns the endpoint off at once, with Undo, and copies its address through the main process', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })

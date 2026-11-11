@@ -1729,6 +1729,17 @@ describe('an adapter setting (D69)', () => {
     })
   })
 
+  it('keeps a setting’s tools out of remote access: not listed, and not turned on', async () => {
+    const s = await storeShop()
+    const tools = (await s.api.remote.setup()).tools.map((t) => t.tool)
+    expect(tools).toContain('echo')
+    expect(tools).not.toContain('find_stores')
+    expect(tools).not.toContain('apply_store')
+    await expect(s.api.remote.setTool('shop', 'apply_store', true)).rejects.toMatchObject({
+      errorClass: 'not-found',
+    })
+  })
+
   it('clears a choice, with a record, and the tools stop again', async () => {
     const s = await storeShop()
     await s.api.adapters.settingChoices('shop', 'store', '2000')
