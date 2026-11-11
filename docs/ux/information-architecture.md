@@ -119,19 +119,20 @@ routes redirect, because notifications and tool results already printed may name
 Sorted by deadline (soonest first), then items without a deadline by age. The same title is used by
 the app, the menu bar, the notification and the tool result (vocabulary, section 7).
 
-| Kind               | Title                                           | Deadline | Main action                                                                                                                     | Opens                     |
-| ------------------ | ----------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
-| Confirmation       | Confirm: Remove from cart (Woolworths)          | 2 min    | **Answer** brings the confirmation window forward (never answered inline: the main process accepts Allow only from that window) | Confirmation window       |
-| Remote connection  | Approve a connection                            | ~5 min   | **Approve…** opens the code sheet                                                                                               | Code sheet over Needs you |
-| Login hand-off     | Log in to Woolworths (verification check)       | 15 min   | **Show login window**                                                                                                           | Login window + banner     |
-| Update review      | Review the Woolworths update (0.4.0)            | none     | **Review update**                                                                                                               | Review page               |
-| Setting missing    | Choose a setting for Woolworths (Store)         | none     | **Choose store…**                                                                                                               | Store sheet               |
-| Login missing      | Give Valet your Woolworths login                | none     | **Choose login…**                                                                                                               | Grant sheet               |
-| 1Password locked   | Unlock 1Password                                | none     | **Open 1Password**                                                                                                              | external                  |
-| Setup unfinished   | Finish setup (2 steps left)                     | none     | **Continue setup**                                                                                                              | Setup                     |
-| Repair ticket      | Woolworths changed: the adapter needs an update | none     | **See what broke**                                                                                                              | the failing call          |
-| Audit chain broken | The audit log doesn't check out                 | none     | **See where**                                                                                                                   | Audit log at the break    |
-| Missed (any kind)  | Missed: Confirm: Remove from cart (Woolworths)  | 24 h     | **Ask Claude to try again** (copies a sentence) · Dismiss                                                                       | the call                  |
+| Kind               | Title                                           | Deadline | Main action                                                                                                                     | Opens                       |
+| ------------------ | ----------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| Confirmation       | Confirm: Remove from cart (Woolworths)          | 2 min    | **Answer** brings the confirmation window forward (never answered inline: the main process accepts Allow only from that window) | Confirmation window         |
+| Remote connection  | Approve a connection                            | ~5 min   | **Approve…** opens the code sheet                                                                                               | Code sheet over Needs you   |
+| Login hand-off     | Log in to Woolworths (verification check)       | 15 min   | **Show login window**                                                                                                           | Login window + banner       |
+| Update review      | Review the Woolworths update (0.4.0)            | none     | **Review update**                                                                                                               | Review page                 |
+| First install      | Review Woolworths before first use              | none     | **Review**                                                                                                                      | Review page (summary first) |
+| Setting missing    | Choose your Woolworths store                    | none     | **Choose store…**                                                                                                               | Store sheet                 |
+| Login missing      | Give Valet your Woolworths login                | none     | **Choose login…**                                                                                                               | Grant sheet                 |
+| 1Password locked   | Unlock 1Password                                | none     | **Open 1Password**                                                                                                              | external                    |
+| Setup unfinished   | Finish setup (2 steps left)                     | none     | **Continue setup**                                                                                                              | Setup                       |
+| Repair ticket      | Woolworths changed: the adapter needs an update | none     | **See what broke**                                                                                                              | the failing call            |
+| Audit chain broken | The audit log doesn't check out                 | none     | **See where**                                                                                                                   | Audit log at the break      |
+| Missed (any kind)  | Missed: Confirm: Remove from cart (Woolworths)  | 24 h     | **Ask Claude to try again** (copies a sentence) · Dismiss                                                                       | the call                    |
 
 ## 6. Object model and link matrix
 
@@ -158,21 +159,21 @@ window can, under "From the site". Tool-result strings are drafted in
 `research/tests/round1-P6-agent.md` and must come from one shared table with
 `renderer/lib/wording.ts`, tested to match.
 
-| Situation                      | Needs you title / words on screen                           | Tool result says                                                                        |
-| ------------------------------ | ----------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| Login hand-off                 | Log in to Woolworths (verification check)                   | Open Valet, Needs you, "Log in to Woolworths (verification check)", open until 10:03 pm |
-| One-time code Valet can't read | Log in to Woolworths (one-time code)                        | same pattern                                                                            |
-| Irreversible step              | Confirm: Remove from cart (Woolworths)                      | Valet shows it as "Confirm: Remove from cart (Woolworths)" and waits until 9:50 pm      |
-| Declined / timed out           | Declined / Missed: …                                        | told apart (confirm: declined / confirm: timed-out)                                     |
-| Remote connection              | Approve a connection                                        | (browser page) Type the code your browser shows into Valet on your Mac                  |
-| Update waiting                 | Review the Woolworths update (0.4.0)                        | its tools are off until then; Needs you, "Review the Woolworths update (0.4.0)"         |
-| Paused                         | Paused · Resume                                             | Valet is paused, nothing was sent; resume from the menu bar or the Valet window         |
-| Locked down                    | Locked down · Unlock                                        | Valet is locked down by the person                                                      |
-| Site limiting                  | Woolworths is limiting requests · calls resume at 9:52 pm   | same, with "Try again in N seconds"                                                     |
-| Valet's own cap                | Valet is limiting its requests to Woolworths until 10:00 pm | same                                                                                    |
-| Missing setting                | Choose a setting for Woolworths (Store)                     | same title                                                                              |
-| Missing login                  | Give Valet your Woolworths login                            | same title                                                                              |
-| Failure                        | Failed · see call 7F2A                                      | The person can see it in Valet, Activity, call 7F2A                                     |
+| Situation                      | Needs you title / words on screen                           | Tool result says                                                                                           |
+| ------------------------------ | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Login hand-off                 | Log in to Woolworths (verification check)                   | Open Valet, Needs you, "Log in to Woolworths (verification check)", open until 10:03 pm                    |
+| One-time code Valet can't read | Log in to Woolworths (one-time code)                        | same pattern                                                                                               |
+| Irreversible step              | Confirm: Remove from cart (Woolworths)                      | Valet shows it as "Confirm: Remove from cart (Woolworths)" and waits until 9:50 pm                         |
+| Declined / timed out           | Declined / Missed: …                                        | told apart (confirm: declined / confirm: timed-out)                                                        |
+| Remote connection              | Approve a connection                                        | (browser page) Type the code your browser shows into Valet on your Mac                                     |
+| Update waiting                 | Review the Woolworths update (0.4.0)                        | calls keep using the approved 0.3.0; tools it adds wait; Needs you, "Review the Woolworths update (0.4.0)" |
+| Paused                         | Paused · Resume                                             | Valet is paused, nothing was sent; resume from the menu bar or the Valet window                            |
+| Locked down                    | Locked down · Unlock                                        | Valet is locked down by the person                                                                         |
+| Site limiting                  | Woolworths is limiting requests · calls resume at 9:52 pm   | same, with "Try again in N seconds"                                                                        |
+| Valet's own cap                | Valet is limiting its requests to Woolworths until 10:00 pm | same                                                                                                       |
+| Missing setting                | Choose your Woolworths store                                | same title                                                                                                 |
+| Missing login                  | Give Valet your Woolworths login                            | same title                                                                                                 |
+| Failure                        | Failed · see call 7F2A                                      | The person can see it in Valet, Activity, call 7F2A                                                        |
 
 Never in the UI: manifest, egress, partition, probe, grant (as a verb shown to P2; "login Valet may
 use" instead), client (use "app" or "cloud agent"; "Connections" is the place), MCP outside
@@ -225,7 +226,47 @@ Command palette · Confirmation window (arming, ready, expired) · Login hand-of
 popover (normal, several waiting, paused, first run) · Setup (welcome, 1Password, approve site,
 login, store, connect Claude, test it, done) · Window at 880 x 560 and 200% text.
 
-## 10. Open questions for Nick (assumed for now)
+## 10. Assumptions made while drawing
+
+- While an update waits, calls keep using the approved version; tools the update adds wait for it.
+- Restore an older version is a review in restore mode (grants are per hash, so it is approved like
+  any other version), not a one-click switch.
+- Quick review applies to builds whose version ends in `-dev` and widen nothing; several waiting dev
+  builds of one site collapse into the newest.
+- The Tools tab's cloud-agent switch is the default for new agents; each agent's own choice lives on
+  its Connections page and in the Approve a connection sheet.
+- A site the person paused is not a Needs you item (it shows in the sidebar dot and the status line).
+- Adding a site is out of scope for this redesign (adapters arrive from the authoring agent or a
+  file); the Sites list says so.
+
+- Shortcuts: Pause/Resume ⇧⌘P and Lock down ⌥⇧⌘L work while Valet is focused; system-wide
+  shortcuts are an opt-in setting, not a default. ⌘O opens Valet from the menu bar popover.
+- Unlock (after Lock down) restores sites and the endpoint; removed cloud agents and reset tokens stay
+  gone, and the Lock down dialog says so up front.
+- A confirmation that runs out while its window is on screen stays open in its Missed state; if the
+  Mac was locked, it closes and the Missed item and notification remain.
+- Notifications may offer Decline (safe) but never Allow; Allow happens only in the confirmation
+  window.
+- Confirmation buttons use the tool's approved title, which is reviewed with the adapter ("Remove from
+  cart" / "Don't remove"); product names and other site text appear only in the body under "From the
+  site".
+- At 200% text the sidebar folds behind a sidebar button (View > Show Sidebar); it is the one
+  exception to the sidebar never changing shape.
+- Skipping a setup step leaves one "Finish setup (N steps left)" item rather than an item per step.
+- Popovers and the confirmation window size to their content (up to 640 and 620 px), so no empty band.
+
+- Calls take a `login=<site>/<secret>` filter, so a login page can link to the calls that used it.
+- One login page per site and secret covers every version; versions the login isn't given to yet show
+  as "Not given yet" rows.
+- Reset access is one click with Undo (and ⌘Z) for 10 seconds while the old token stays valid;
+  engineering must confirm the grace period. Revoke always asks first.
+- Apps on this Mac can call every tool (the Can reach panel says so); per-app tool limits for local
+  apps are a later feature. Cloud agents choose tools when approved.
+- The cloud agent page reuses the app page template.
+- 1Password account, CLI path and Messages codes live in Secrets, not Settings; Settings links there.
+- Audit categories read "Login use" (secret-use) and "Approvals" (approvals-grants).
+
+## 11. Open questions for Nick (assumed for now)
 
 1. **Six places with Calls and Audit log as tabs** (assumed) or seven with Calls and Audit log both
    top-level. Two personas, including the Nick persona, leaned to seven.

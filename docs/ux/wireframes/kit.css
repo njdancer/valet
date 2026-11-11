@@ -572,7 +572,7 @@
   padding: 6px 10px;
   border-bottom: 1px solid var(--wf-line);
 }
-.wf-table .tr span {
+.wf-table .tr > span {
   padding: 8px 10px;
   border-bottom: 1px solid var(--wf-line);
   display: flex;
@@ -580,13 +580,13 @@
   gap: 6px;
   min-width: 0;
 }
-.wf-table .tr.sel span {
+.wf-table .tr.sel > span {
   background: var(--wf-sel);
 }
-.wf-table .tr.hover span {
+.wf-table .tr.hover > span {
   background: var(--wf-paper-2);
 }
-.wf-table.compact .tr span {
+.wf-table.compact .tr > span {
   padding: 5px 10px;
 }
 .wf-inbox {
