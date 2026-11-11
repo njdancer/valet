@@ -1,6 +1,6 @@
 name: Live sites
 
-# A recorded run of Valet against real sites that need no login (Yahoo Finance): Valet Demo (a
+# A recorded run of Valet against real sites that need no login (Yahoo Finance and Wikipedia): Valet Demo (a
 # showcase build) installed from its DMG, a chat client added in setup, the Yahoo Finance adapter
 # approved, and a scripted chat client asking about stocks over MCP, live. Nothing signs in.
 # See apps/desktop/showcase/record-live.mjs.
@@ -10,10 +10,6 @@ name: Live sites
 
 on:
   workflow_dispatch:
-  push:
-    branches: [claude/project-thread-txmiu2]
-    paths:
-      [adapters/yahoo-finance/**, apps/desktop/showcase/record-live.mjs, .github/workflows/live-sites.yml]
 
 permissions:
   contents: write
