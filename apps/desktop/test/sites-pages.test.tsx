@@ -2,7 +2,7 @@
 // state with a next step shows that step as a named button beside it, every object is a link, and
 // an update waiting can be reviewed from the site's own page, not only from the menu bar.
 
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { TooltipProvider } from '@valet/ui'
 import { describe, expect, it } from 'vitest'

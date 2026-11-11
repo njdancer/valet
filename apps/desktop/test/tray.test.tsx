@@ -41,7 +41,9 @@ function classicFake() {
     attention: {
       ...fake.attention,
       list: async () =>
-        (await fake.attention.list()).filter((i) => ['confirmation', 'needs-user', 'review'].includes(i.kind)),
+        (await fake.attention.list()).filter((i) =>
+          ['confirmation', 'needs-user', 'review'].includes(i.kind),
+        ),
     },
   }
 }
