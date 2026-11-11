@@ -1,0 +1,115 @@
+
+=== https://automationexercise.com/
+status 200 type text/html; charset=utf-8 server cloudflare cf-ray true location null
+cookies csrftoken  length 52343  title Automation Exercise
+  form <form class="searchform" method="POST">
+    <input type="hidden" name="csrfmiddlewaretoken" value="…">
+    <input type="email" id="susbscribe_email" required placeholder="Your email address" />
+    <button type="submit" id="subscribe" class="btn btn-default">
+
+=== https://automationexercise.com/login
+status 200 type text/html; charset=utf-8 server cloudflare cf-ray true location null
+cookies csrftoken  length 6696  title Automation Exercise - Signup / Login
+  form <form action="/login" method="POST">
+    <input type="hidden" name="csrfmiddlewaretoken" value="…">
+    <input type="email" data-qa="login-email" placeholder="Email Address" name="email" value="" required />
+    <input type="password" data-qa="login-password" placeholder="Password" name="password" value="" required/>
+    <button type="submit" data-qa="login-button" class="btn btn-default">
+  form <form action="/signup" method="POST">
+    <input type="hidden" name="csrfmiddlewaretoken" value="…">
+    <input type="text" data-qa="signup-name" placeholder="Name" name="name" value="" required/>
+    <input type="email" data-qa="signup-email" placeholder="Email Address" name="email" value="" required/>
+    <input type="hidden" name="form_type" value="signup">
+    <button type="submit" data-qa="signup-button" class="btn btn-default">
+  form <form class="searchform" method="POST">
+    <input type="hidden" name="csrfmiddlewaretoken" value="…">
+    <input type="email" id="susbscribe_email" required placeholder="Your email address" />
+    <button type="submit" id="subscribe" class="btn btn-default">
+
+=== https://automationexercise.com/api/productsList
+status 200 type text/html; charset=utf-8 server cloudflare cf-ray true location null
+cookies   length 5549  title undefined
+
+=== https://automationexercise.com/view_cart
+status 200 type text/html; charset=utf-8 server cloudflare cf-ray true location null
+cookies csrftoken  length 7249  title Automation Exercise - Checkout
+  form <form class="searchform" method="POST">
+    <input type="hidden" name="csrfmiddlewaretoken" value="…">
+    <input type="email" id="susbscribe_email" required placeholder="Your email address" />
+    <button type="submit" id="subscribe" class="btn btn-default">
+
+=== https://authenticationtest.com/
+status 200 type text/html; charset=UTF-8 server cloudflare cf-ray true location null
+cookies PHPSESSID  length 10335  title Authentication Test
+  NOTE: challenge/captcha words present
+
+=== https://authenticationtest.com/simpleFormAuth/
+status 200 type text/html; charset=UTF-8 server cloudflare cf-ray true location null
+cookies PHPSESSID  length 5413  title Authentication Test
+  form <form action="https://authenticationtest.com//login/?mode=simpleFormAuth" method="post" autocomplete="off" class="clearfix">
+    <input type="email" class="form-control" name="email" placeholder="E-Mail Address" id="email">
+    <input type="password" class="form-control" name="password" placeholder="Password" id="password">
+    <input type="submit" class="btn btn-lg btn-primary float-right" value="Log In">
+
+=== https://authenticationtest.com/totpChallenge/
+status 200 type text/html; charset=UTF-8 server cloudflare cf-ray true location null
+cookies PHPSESSID  length 5848  title Authentication Test
+  form <form action="https://authenticationtest.com/login/?mode=totpChallenge" method="post" autocomplete="off" class="clearfix">
+    <input type="email" class="form-control" name="email" placeholder="E-Mail Address" id="email">
+    <input type="password" class="form-control" name="password" placeholder="Password" id="password">
+    <input type="text" class="form-control" name="totpmfa" placeholder="123456" id="totpmfa">
+    <input type="submit" class="btn btn-lg btn-primary float-right" value="Log In">
+  NOTE: challenge/captcha words present
+
+=== https://practice.expandtesting.com/login
+status 200 type text/html; charset=utf-8 server null cf-ray false location null
+cookies express:sess,express:sess.sig  length 15638  title Test Login Page for Automation Testing Practice
+  form <form name="login" id="login" action="/authenticate" method="post">
+    <input type="text" class="form-control" name="username" id="username" autocomplete="OFF" value="" />
+    <input type="password" class="form-control" name="password" id="password" autocomplete="new-password" value="" />
+    <button id="submit-login" name="submit-login" type="submit" class="btn btn-bg btn-primary d-block w-100">
+
+=== https://practice.expandtesting.com/otp-login
+status 200 type text/html; charset=utf-8 server null cf-ray false location null
+cookies express:sess,express:sess.sig  length 11715  title OTP Login page for Automation Testing Practice
+  form <form class="needs-validation" novalidate="" method="POST" action="/otp-login">
+    <input type="email" class="form-control" id="email" name="email" required />
+    <button id="btn-send-otp" type="submit" class="btn btn-primary mb-3 d-block w-100">
+
+=== https://practicesoftwaretesting.com/
+status 403 type text/html; charset=UTF-8 server cloudflare cf-ray true location null
+cookies   length 5663  title Just a moment...
+  NOTE: challenge/captcha words present
+
+=== https://api.practicesoftwaretesting.com/products?page=1
+status 200 type application/json server Apache/2.4.52 (Ubuntu) cf-ray false location null
+cookies   length 12757  title undefined
+  json {"current_page":1,"data":[{"id":"01M7548FF000V853A0EQMPQ2HC","name":"Combination Pliers","description":"Versatile combination pliers designed for gripping, bending, and cutting wire with ease. Featuring chrome vanadium steel construction with induction-hardened cutting edges, these pliers deliver excellent grip and leverage for a wide range of tasks. The precision-machined jaws combine flat grippi
+
+=== https://www.demoblaze.com/
+status 200 type text/html server Google Frontend cf-ray false location null
+cookies   length 17232  title STORE
+  form <form>
+    <input type="text" class="form-control" id="recipient-email">
+    <input type="text" class="form-control" id="recipient-name">
+    <textarea class="form-control" id="message-text">
+  form <form>
+    <input type="text" class="form-control" id="sign-username">
+    <input type="password" class="form-control" id="sign-password">
+  form <form>
+    <input type="text" class="form-control" id="loginusername">
+    <input type="password" class="form-control" id="loginpassword">
+  form <form>
+  form <form name="frm" id="frm" style="float: right;" onsubmit="return false">
+    <button type="button" id="next2" class="btn btn-success">
+    <button class="page-link" id="prev2">
+    <button class="page-link" id="next2">
+
+=== https://demo.nopcommerce.com/login
+status 403 type text/html; charset=UTF-8 server cloudflare cf-ray true location null
+cookies   length 5734  title Just a moment...
+  NOTE: challenge/captcha words present
+
+=== https://bot.sannysoft.com/
+status 200 type text/html; charset=UTF-8 server cloudflare cf-ray true location null
+cookies   length 25511  title Antibot
