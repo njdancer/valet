@@ -60,6 +60,7 @@ pnpm package:smoke  # an unsigned .app, checked and launched under a temporary H
 | `packages/mcp-server`       | The MCP endpoint and stdio bridge                                 |
 | `adapters/woolworths`       | The first adapter                                                 |
 | `fakes/woolworths-site`     | A local fake of the site, with hostile variants for the tests     |
+| `fakes/onepassword`         | A fake 1Password (SDK, CLI and app prompts) for demos and tests   |
 | `apps/desktop`              | The menu-bar app and control panel                                |
 
 ## Licence

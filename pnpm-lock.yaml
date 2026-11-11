@@ -109,6 +109,9 @@ importers:
       '@types/react-dom':
         specifier: ^19.3.0
         version: 19.3.0(@types/react@19.3.0)
+      '@valet/fake-onepassword':
+        specifier: workspace:*
+        version: link:../../fakes/onepassword
       '@valet/fake-woolworths-site':
         specifier: workspace:*
         version: link:../../fakes/woolworths-site
@@ -139,6 +142,8 @@ importers:
       vite:
         specifier: ^8.3.6
         version: 8.3.6(@types/node@24.19.2)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.15)
+
+  fakes/onepassword: {}
 
   fakes/woolworths-site: {}
 
@@ -178,6 +183,10 @@ importers:
       '@valet/core':
         specifier: workspace:*
         version: link:../core
+    devDependencies:
+      '@valet/fake-onepassword':
+        specifier: workspace:*
+        version: link:../../fakes/onepassword
 
   packages/mcp-server:
     dependencies:

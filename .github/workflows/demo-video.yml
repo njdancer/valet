@@ -3,7 +3,8 @@ name: Demo video
 # Records the install-to-order demo on a fresh macOS runner: Valet Demo (a showcase build, demo mode
 # always: apps/desktop/src/main/core/showcase.ts) installed from its DMG, first-run setup, a scripted
 # chat client over MCP through the app's own bridge, and the order placed on the fake shop. Nothing
-# real is reached: the shop is fakes/woolworths-site in the app's own process, with a test account.
+# real is reached: the shop is fakes/woolworths-site in the app's own process, with a test account,
+# and 1Password is fakes/onepassword, whose prompt the demo build opens in a window of its own.
 # See apps/desktop/showcase/record.mjs.
 #
 # The video, its captions, stills and findings go to the run's artifact and to the branch

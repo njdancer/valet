@@ -35,6 +35,7 @@ import {
   KeychainCopyProvider,
   KeychainCopySync,
   KeychainHelper,
+  type KeychainStore,
   KeychainTokenSource,
   MessagesHelperOtpReader,
   MessagesOtpReader,
@@ -196,6 +197,8 @@ export interface RealCredentialsDeps extends OpCheckDeps {
   readonly serviceAccountClient?: SecretsClientFactory
   /** valet-keychain's absolute path, or null when this build has none. */
   readonly keychainHelper?: string | null
+  /** Where Valet's Keychain items live instead of the helper: demo mode's MemoryKeychain. */
+  readonly keychain?: KeychainStore
   /** The Keychain service copies live under; the dev build keeps its own. */
   readonly copyService?: string
   /**
@@ -237,10 +240,11 @@ export async function serviceAccountReady(
 /** The providers of a normal launch. The fake provider is never among them. */
 export function realCredentials(deps: RealCredentialsDeps): Credentials {
   const helperPath = deps.keychainHelper ?? null
-  const keychain =
-    helperPath === null
+  const keychain: KeychainStore | null =
+    deps.keychain ??
+    (helperPath === null
       ? null
-      : new KeychainHelper({ helperPath, spawner: deps.spawner, timers: deps.timers })
+      : new KeychainHelper({ helperPath, spawner: deps.spawner, timers: deps.timers }))
   const copies =
     keychain === null
       ? null

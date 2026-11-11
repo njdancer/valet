@@ -89,9 +89,13 @@ packaged app ignores both switches whatever the build. In demo mode:
   partitions; everything else keeps Chromium's own verification;
 - the adapter built with `createManifest({ origin, authOrigin })` for the fake's origins, which gives
   it a hash of its own, so a demo approval never stands for the real site;
-- the test credential provider holding the fake's two-factor account (`twofactor@example.test`) as
-  the item “Woolworths (demo account)”, and SMS codes read from the fake's outbox in place of
-  Messages. Real 1Password and Messages are off;
+- Valet's real 1Password wiring over the fake 1Password (`fakes/onepassword`, shown as “Keyhold”):
+  the person names its account (“Tess Tester”) in setup, and granting the login opens the fake's
+  prompt in a window of its own (unlock with `keyhold-demo-unlock`, then Allow), after which Valet
+  copies the item “Woolworths (demo account)”, the fake's two-factor account
+  (`twofactor@example.test`), into a Keychain that is a file in userData (`demo-keychain.json`, test
+  values only). SMS codes are read from the fake's outbox in place of Messages. No process is
+  started for credentials, and real 1Password, the Keychain and Messages are never reached;
 - a DEMO badge: the tray's menu-bar title, the popover and the control panel's sidebar;
 - no updates: a demo build compiles in no feed, so Settings says updates are off (`disabled`,
   `not-configured`), and a demo launch of any build is `development`;
@@ -296,7 +300,7 @@ writes a self-check to `userData/smoke-report.json`. A plain build has neither.
 - **Credentials**, by `grant.provider`: the service account (`KeychainTokenSource`; service
   `valet`, account `onepassword-service-account`, vault `valet`, in `core/constants.ts`,
   pending D6/D43); `op`, only at a path that passed the checks; Messages, only while its setting is
-  on; the test provider in demo mode only. The op checks: absolute; the file (after symlinks) and
+  on; in demo mode, the same providers over the fake 1Password and a file-backed Keychain. The op checks: absolute; the file (after symlinks) and
   every directory above it, and above the link, owned by root or the person, never writable by
   others, and writable by the group only when the group is admin (gid 80) and the person is in it;
   and `codesign --verify` against 1Password's Team ID. A chosen path that fails is refused and the

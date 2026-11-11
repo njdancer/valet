@@ -9,7 +9,15 @@
 import { CredentialError, type CredentialProvider, type SecretField, SecretValue } from '@valet/core'
 import { type ItemRef, parseItemRef, secretReference } from './item-ref'
 import { COPYABLE_FIELDS, type CopySource, type KeychainCopyProvider } from './keychain-copy'
-import { ACTIVE_ONLY, classifySdkError, type ItemStateFilter, listVaultItems } from './onepassword-sdk'
+import {
+  ACTIVE_ONLY,
+  classifySdkError,
+  INTEGRATION,
+  type ItemStateFilter,
+  listVaultItems,
+  loadOnePasswordSdk,
+  type OnePasswordSdkLoader,
+} from './onepassword-sdk'
 import { nodeTimers, type Timers } from './process'
 import { SdkSession } from './sdk-session'
 import { summariseItems, type VaultItemLister, type VaultItemSummary } from './vault-items'
@@ -29,14 +37,15 @@ export interface DesktopClient {
 /** Creates a client for one 1Password account (its name as the app shows it, or its UUID). */
 export type DesktopClientFactory = (account: string) => Promise<DesktopClient>
 
-export const desktopClientFactory: DesktopClientFactory = async (account) => {
-  const sdk = await import('@1password/sdk')
-  return sdk.createClient({
-    auth: new sdk.DesktopAuth(account),
-    integrationName: 'valet',
-    integrationVersion: '0.0.0',
-  })
+/** A desktop-app factory over `load`'s SDK (the real one, or the fake 1Password's). */
+export function desktopAuthClientFactory(load: OnePasswordSdkLoader): DesktopClientFactory {
+  return async (account) => {
+    const sdk = await load()
+    return (await sdk.createClient({ auth: new sdk.DesktopAuth(account), ...INTEGRATION })) as DesktopClient
+  }
 }
+
+export const desktopClientFactory: DesktopClientFactory = desktopAuthClientFactory(loadOnePasswordSdk)
 
 export interface OnePasswordDesktopOptions {
   readonly account: string

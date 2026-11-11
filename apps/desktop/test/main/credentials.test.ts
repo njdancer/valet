@@ -6,6 +6,7 @@ import { CredentialError, SecretValue } from '@valet/core'
 import {
   type ChildLike,
   type DesktopClientFactory,
+  MemoryKeychain,
   MessagesHelperOtpReader,
   type Spawner,
 } from '@valet/credentials'
@@ -22,7 +23,16 @@ import {
   SERVICE_ACCOUNT_LISTS_ITEMS,
   serviceAccountReady,
 } from '../../src/main/core/credentials'
-import { DEMO_ITEM, demoCredentials, outboxOtpReader, savedDemoPorts } from '../../src/main/core/demo'
+import {
+  DEMO_ACCOUNT,
+  DEMO_COPY_SERVICE,
+  DEMO_ITEM,
+  DEMO_ONEPASSWORD,
+  demoCredentials,
+  demoOnePasswordFake,
+  outboxOtpReader,
+  savedDemoPorts,
+} from '../../src/main/core/demo'
 import { DEFAULT_SETTINGS } from '../../src/main/core/settings'
 
 const UID = 501
@@ -753,19 +763,35 @@ describe('the demo site’s saved ports', () => {
 })
 
 describe('demo credentials', () => {
-  it('offer the test item and the outbox, and switch real 1Password off', async () => {
-    const credentials = demoCredentials(disabledOtpReader)
+  it('are Valet’s 1Password wiring over the fake 1Password, with the outbox for codes', async () => {
+    const onePassword = demoOnePasswordFake('https://auth.woolworths.test:50124')
+    onePassword.autoApprove = true
+    const keychain = new MemoryKeychain()
+    const credentials = demoCredentials(disabledOtpReader, { onePassword, keychain })
+    // Before the account is named, only codes are ready: 1Password is set up in the app, as for real.
+    await credentials.configure(DEFAULT_SETTINGS)
+    expect((await credentials.status()).filter((s) => s.available).map((s) => s.kind)).toEqual(['messages'])
+    await credentials.configure({ ...DEFAULT_SETTINGS, onePasswordAccount: DEMO_ONEPASSWORD.name })
     expect((await credentials.status()).filter((s) => s.available).map((s) => s.kind)).toEqual([
-      'fake',
       'messages',
+      'keychain-copy',
     ])
-    expect(await credentials.vaultItems('fake')).toEqual([DEMO_ITEM])
+    expect(await credentials.vaultItems('keychain-copy')).toContainEqual(DEMO_ITEM)
     expect(await credentials.vaultItems('onepassword-cli')).toEqual([])
-    const secret = await credentials.providers().fake?.resolve(DEMO_ITEM.id, 'password')
+    const itemRef = `op://${DEMO_ITEM.id.replace('-', '/')}`
+    await credentials.copyItem(itemRef, ['username', 'password'])
+    expect(keychain.items().map((i) => i.service)).toEqual([DEMO_COPY_SERVICE, DEMO_COPY_SERVICE])
+    const secret = await credentials.providers()['keychain-copy']?.resolve(itemRef, 'password')
     expect(secret).toBeInstanceOf(SecretValue)
     expect(String(secret)).toBe('[secret]')
+    expect(secret?.reveal((s) => s)).toBe(DEMO_ACCOUNT.password)
     secret?.dispose()
-    await credentials.configure(DEFAULT_SETTINGS)
+    expect(credentials.otpReader()).toBe(disabledOtpReader)
+    expect(onePassword.prompts.map((p) => p.integration)).toEqual(['valet'])
+    // Nothing reached a real process or file: op was never found.
+    expect((await credentials.status()).find((s) => s.kind === 'onepassword-cli')?.available).toBe(false)
+    expect(await credentials.erase()).toEqual([])
+    expect(keychain.items()).toEqual([])
   })
 
   it('read the newest matching SMS from the declared sender, newer than the login', async () => {

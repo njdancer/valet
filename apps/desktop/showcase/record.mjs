@@ -3,8 +3,10 @@
 // .github/workflows/demo-video.yml. It records the whole screen with ffmpeg while it:
 //
 // 1. opens Valet Demo's DMG and installs the app into /Applications, as a person would;
-// 2. launches it and walks first-run setup in the app's own windows (approve the shop's adapter,
-//    grant its login from the test provider, add a chat client and copy its config);
+// 2. launches it and walks first-run setup in the app's own windows: name the 1Password account,
+//    approve the shop's adapter, grant its login from the person's 1Password item (the fake
+//    1Password's prompt opens; unlock it and allow Valet, and Valet copies the item into the
+//    Keychain), add a chat client and copy its config;
 // 3. pastes that config into a scripted chat client (chat.html), which starts the app's own stdio
 //    bridge from it and speaks real MCP: search, add to trolley (Valet logs in on its own), get
 //    the trolley;
@@ -13,8 +15,9 @@
 // 5. asks the agent to check the trolley once more.
 //
 // Everything is fake: the shop is the repo's fake (made-up brand), its account is a test account,
-// and the build is a showcase build, which is demo mode always (src/main/core/showcase.ts). No real
-// 1Password, Keychain item or Messages is read.
+// 1Password is the repo's fake (fakes/onepassword, a made-up look called Keyhold), and the build is a
+// showcase build, which is demo mode always (src/main/core/showcase.ts). No real 1Password,
+// Keychain item or Messages is read.
 //
 // The app is driven over the DevTools protocol on a fixed loopback port that only a showcase build
 // accepts; the chat and the shop are Chrome pages Playwright drives. Clicks are highlighted on
@@ -49,6 +52,9 @@ const CDP_PORT = 9333
 const DEMO_DATA = join(homedir(), 'Library/Application Support/valet-demo')
 const SHOP_EMAIL = 'twofactor@example.test'
 const SHOP_PASSWORD = 'fake-password-2' // the fake's test account (src/main/core/demo.ts)
+// The fake 1Password's account and unlock password (fakes/onepassword/src/demo-data.ts). Test values.
+const ONEPASSWORD_ACCOUNT = 'Tess Tester'
+const ONEPASSWORD_UNLOCK = 'keyhold-demo-unlock'
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms))
 const captions = []
@@ -292,12 +298,21 @@ async function main() {
     { page: control },
   )
 
-  caption('Where logins come from. In the demo, a test provider stands in for 1Password', '2 · Set up')
+  caption(
+    'Where logins come from: your own 1Password. Name the account, as its sidebar shows it',
+    '2 · Set up',
+  )
   await attempt(
     'the 1Password step',
     async () => {
       await h1('Where logins come from').waitFor()
+      await sleep(2500)
+      await type(control.getByRole('textbox', { name: '1Password account' }), ONEPASSWORD_ACCOUNT)
+      await click(control.getByRole('button', { name: 'Save' }))
+      await control.getByText('Copy in your Keychain is ready.', { exact: false }).waitFor()
+      caption('Nothing is read yet: Valet asks 1Password only when you pick an item', '2 · Set up')
       await sleep(3000)
+      await still(control, 'onepassword-account')
       await click(control.getByRole('link', { name: 'Continue' }))
     },
     { page: control },
@@ -330,13 +345,25 @@ async function main() {
       await click(control.getByRole('link', { name: 'Choose an item…' }))
       const sheet = control.getByRole('dialog', { name: 'Grant a secret' })
       await sheet.waitFor()
+      caption(
+        'To list your items, Valet asks 1Password, which asks you. (A made-up stand-in, Keyhold, plays 1Password here)',
+        '2 · Set up',
+      )
+      await approveInOnePassword(app)
+      caption(
+        'Pick the item. Valet copies it into your Keychain once, so later logins need no prompt',
+        '2 · Set up',
+      )
+      const item = sheet.getByText('Woolworths (demo account)')
+      await item.waitFor({ timeout: 30_000 })
       await sleep(1500)
-      await click(sheet.getByText('Woolworths (demo account)'))
+      await click(item)
       await sleep(1500)
       await still(control, 'grant-sheet')
       await click(sheet.getByRole('button', { name: 'Grant', exact: true }))
       await sheet.waitFor({ state: 'hidden' })
       await sleep(2000)
+      await still(control, 'login-granted')
       caption(
         'The shop texts a code at sign-in, so let Valet read that one sender’s codes (here from the fake’s outbox, not Messages)',
         '2 · Set up',
@@ -647,6 +674,37 @@ async function connectToApp() {
     await sleep(500)
   }
   return chromium.connectOverCDP(`http://127.0.0.1:${CDP_PORT}`)
+}
+
+/** The fake 1Password's prompt window: a loopback page the demo build opens for each prompt. */
+async function onePasswordPrompt(app, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    for (const context of app.contexts()) {
+      for (const page of context.pages()) {
+        if (/^http:\/\/127\.0\.0\.1:\d+\/prompt\//.test(page.url())) return page
+      }
+    }
+    if (Date.now() > deadline) throw new Error('the 1Password prompt did not open')
+    await sleep(300)
+  }
+}
+
+/** Unlocks the fake 1Password in its prompt and allows Valet, as the person would. */
+async function approveInOnePassword(app) {
+  const prompt = await onePasswordPrompt(app)
+  await prompt.getByRole('heading', { name: 'Unlock Keyhold' }).waitFor({ timeout: 15_000 })
+  await sleep(2500)
+  await still(prompt, 'onepassword-unlock')
+  caption('It is locked, so unlock it first (Touch ID or the account password)', '2 · Set up')
+  await type(prompt.getByLabel('Account password'), ONEPASSWORD_UNLOCK)
+  await click(prompt.getByRole('button', { name: 'Unlock' }))
+  await prompt.getByRole('heading', { name: 'Allow Valet to use your account?' }).waitFor()
+  caption('Then allow Valet. The approval lasts until it locks, or ten idle minutes', '2 · Set up')
+  await sleep(3000)
+  await still(prompt, 'onepassword-allow')
+  await click(prompt.getByRole('button', { name: 'Allow' }))
+  await sleep(1500)
 }
 
 async function appPage(app, match, timeoutMs = 30_000) {

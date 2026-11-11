@@ -13,7 +13,6 @@ import type { AuthRunRequest, LoginMarkerStore } from '@valet/runtime'
 import { describe, expect, it } from 'vitest'
 import { BlockedAudit, LoginSecrets } from '../../src/main/core/blocked'
 import { disabledOtpReader } from '../../src/main/core/credentials'
-import { demoCredentials } from '../../src/main/core/demo'
 import {
   authProbe,
   createAuthRunner,
@@ -25,6 +24,7 @@ import {
   steppedProbe,
 } from '../../src/main/core/login'
 import { FakeAuthPage, FakeDriver, ManualTimers, SHOP } from './fixtures'
+import { testCredentials } from './test-credentials'
 
 const HASH = 'e'.repeat(64)
 const NOW = Date.parse('2026-11-07T00:00:00.000Z')
@@ -218,7 +218,7 @@ describe('createAuthRunner', () => {
     })
     const run = createAuthRunner({
       grants: { find: async () => null, list: async () => [], put: async () => {}, revoke: async () => {} },
-      credentials: demoCredentials(disabledOtpReader),
+      credentials: testCredentials(disabledOtpReader),
       audit: log.sink,
       clock: () => new Date(NOW),
       sleep: async () => {},
@@ -584,7 +584,7 @@ describe('a login that fills a secret', () => {
         put: async () => {},
         revoke: async () => {},
       },
-      credentials: demoCredentials(disabledOtpReader),
+      credentials: testCredentials(disabledOtpReader),
       audit: log.sink,
       clock: () => new Date(NOW),
       sleep: async () => {},

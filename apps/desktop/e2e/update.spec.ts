@@ -11,10 +11,13 @@ import { expect, type Page, test } from '@playwright/test'
 import {
   appWindows,
   CONTROL,
+  COPY_ITEM_ID,
+  COPY_ITEM_TITLE,
   callTool,
   changedAdapterBuild,
   chooseStore,
   clickClosing,
+  connectFakeOnePassword,
   connectMcp,
   type Launched,
   launch,
@@ -68,6 +71,7 @@ async function relaunch(appPath?: string): Promise<void> {
   await launched?.close()
   launched = await launch(userData, appPath)
   control = await windowWithTitle(launched.app, CONTROL)
+  await connectFakeOnePassword(launched, control)
   client = await connectMcp(control, userData)
 }
 
@@ -107,14 +111,14 @@ async function grantBoth(hash: string): Promise<void> {
   const detail = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
   const login = detail?.secretRequests.find((s) => s.name === 'login')?.origins ?? []
   await control.evaluate(
-    ({ hash, login }) =>
+    ({ hash, login, itemRef }) =>
       Promise.all([
         window.valet?.grants.make({
           adapterId: 'woolworths',
           adapterHash: hash,
           secret: 'login',
-          provider: 'fake',
-          itemRef: 'demo-woolworths',
+          provider: 'keychain-copy',
+          itemRef,
           origins: login,
         }),
         window.valet?.grants.make({
@@ -126,7 +130,7 @@ async function grantBoth(hash: string): Promise<void> {
           origins: login,
         }),
       ]),
-    { hash, login },
+    { hash, login, itemRef: COPY_ITEM_ID },
   )
 }
 
@@ -156,7 +160,7 @@ test('a restart of the same build keeps the approval and the grants', async () =
   const detail = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
   expect(detail?.hash).toBe(firstHash)
   expect(detail?.approval).toBe('approved')
-  expect(detail?.secretRequests.map((s) => s.grant?.itemTitle)).toEqual(['Woolworths (demo account)'])
+  expect(detail?.secretRequests.map((s) => s.grant?.itemTitle)).toEqual([COPY_ITEM_TITLE])
   await expect.poll(async () => (await mcp().listTools()).tools.map((t) => t.name).sort()).toEqual(TOOLS)
   // And the restarted demo works: the fake is new, so the cart is empty and the login runs again.
   const cart = await callTool(mcp(), 'woolworths_get_cart', {})
@@ -240,7 +244,7 @@ test('without new grants the login can’t fill; granted again, the next call lo
   await control.getByRole('link', { name: 'Woolworths' }).first().click()
   await control.getByRole('link', { name: 'Grant…' }).first().click()
   const sheet = control.getByRole('dialog', { name: 'Grant a secret' })
-  await sheet.getByText('Woolworths (demo account)').click()
+  await sheet.getByText(COPY_ITEM_TITLE).click()
   await sheet.getByRole('button', { name: 'Grant', exact: true }).click()
   await expect(sheet).toBeHidden()
   await control.getByRole('link', { name: 'Grant…' }).first().click()
