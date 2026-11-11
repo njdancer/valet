@@ -106,8 +106,8 @@ export function updateSummary(review: PendingReview): string {
   const parts = [
     d.egress.added.length > 0 ? plural(d.egress.added.length, 'web address', 'web addresses') : null,
     d.navigation.added.length > 0 ? plural(d.navigation.added.length, 'login page') : null,
-    d.tools.added.filter((t) => !removedTools.has(t.name)).length > 0
-      ? plural(d.tools.added.filter((t) => !removedTools.has(t.name)).length, 'tool')
+    d.tools.added.filter((t) => !removedTools.has(t.name) && t.internal !== true).length > 0
+      ? plural(d.tools.added.filter((t) => !removedTools.has(t.name) && t.internal !== true).length, 'tool')
       : null,
     d.secrets.added.length > 0 ? plural(d.secrets.added.length, 'login') : null,
     d.requests.added.length > 0

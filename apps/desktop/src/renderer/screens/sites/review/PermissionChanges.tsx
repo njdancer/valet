@@ -394,9 +394,9 @@ export function PermissionChanges({ review }: { readonly review: PendingReview }
       </Section>
 
       <Section title="Tools">
-        {diff.tools.unchanged.length > 0 ? (
+        {diff.tools.unchanged.some((t) => t.internal !== true) ? (
           <Unchanged>
-            <Muted>{plural(diff.tools.unchanged.length, 'tool')}</Muted>
+            <Muted>{plural(diff.tools.unchanged.filter((t) => t.internal !== true).length, 'tool')}</Muted>
           </Unchanged>
         ) : null}
         {toolChanges(diff).map(({ tool: t, was, raised, becameDestructive, hintsRelaxed }) => (

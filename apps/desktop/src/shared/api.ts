@@ -243,6 +243,8 @@ export interface ToolDiffEntry {
   readonly idempotent: boolean
   /** The irreversible requests a confirmed call to it unlocks, as "METHOD /path" (C15). Absent for none. */
   readonly unlocks?: readonly string[]
+  /** A setting's own tool, which Valet runs and no client can call. Absent for a client's tool. */
+  readonly internal?: true
 }
 
 export interface SecretDiffEntry {
