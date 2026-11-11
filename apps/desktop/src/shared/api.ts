@@ -1039,9 +1039,21 @@ export interface ValetApi {
 
 export type { AuditEvent, AuditRecord }
 
+/**
+ * How the main process made the window, for the stylesheet: the platform picks the floating
+ * material, an inset frame leaves room for macOS's traffic lights, vibrancy means the window itself
+ * is translucent. Set by the preload; absent in a plain browser.
+ */
+export interface WindowChrome {
+  readonly platform: 'mac' | 'windows' | 'linux' | 'other'
+  readonly frame: 'inset' | 'native'
+  readonly vibrancy: 'sidebar' | 'popover' | null
+}
+
 declare global {
   interface Window {
     /** Set by the preload. Absent in a plain browser, where the dev entry uses the fake. */
     readonly valet?: ValetApi
+    readonly valetChrome?: WindowChrome
   }
 }

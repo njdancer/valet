@@ -23,6 +23,7 @@
 //   mise exec -- pnpm --filter @valet/desktop demo    # a demo build, launched against the fake site
 
 import { resolve } from 'node:path'
+import tailwind from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'electron-vite'
 import { feedDefines } from './src/main/core/feed-defines'
@@ -77,7 +78,7 @@ export default defineConfig(({ command, mode }) => {
     renderer: {
       root: resolve(here, 'src/renderer'),
       base: './',
-      plugins: [react(), contentSecurityPolicy()],
+      plugins: [react(), tailwind(), contentSecurityPolicy()],
       build: {
         outDir: resolve(here, 'out/renderer'),
         emptyOutDir: true,

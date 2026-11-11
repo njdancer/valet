@@ -7,6 +7,7 @@
 
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import tailwind from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig, type Plugin } from 'vite'
 
@@ -45,7 +46,7 @@ export function contentSecurityPolicy(): Plugin {
 export default defineConfig({
   root,
   base: './',
-  plugins: [react(), contentSecurityPolicy()],
+  plugins: [react(), tailwind(), contentSecurityPolicy()],
   server: { host: '127.0.0.1', port: 5194, strictPort: false },
   build: {
     outDir: resolve(root, '../../out/renderer'),
