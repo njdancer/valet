@@ -243,7 +243,7 @@ export function Section({
 /**
  * A list beside its detail (Activity, Audit log), with an optional inspector on the right (the
  * selected step of a call). Each pane scrolls on its own. The layout answers to its own width, not
- * the window's (container queries): under 1000 px the inspector folds below the detail, and under
+ * the window's (container queries): under 760 px the inspector folds below the detail, and under
  * 880 px only the detail shows when something is selected (the list returns with Back).
  */
 export function SplitView({
@@ -277,7 +277,7 @@ export function SplitView({
         </div>
         <div
           className={cn(
-            'flex min-h-0 min-w-0 flex-1 @max-[1000px]:flex-col',
+            'flex min-h-0 min-w-0 flex-1 @max-[760px]:flex-col',
             !showDetail && '@max-[880px]:hidden',
           )}
         >
@@ -285,7 +285,7 @@ export function SplitView({
           {inspector ? (
             <aside
               aria-label="Inspector"
-              className="min-h-0 shrink-0 overflow-y-auto border-l border-line-subtle bg-sunken/40 @max-[1000px]:max-h-[45%] @max-[1000px]:w-full! @max-[1000px]:border-t @max-[1000px]:border-l-0"
+              className="min-h-0 shrink-0 overflow-y-auto border-l border-line-subtle bg-sunken/40 @max-[760px]:max-h-[45%] @max-[760px]:w-full! @max-[760px]:border-t @max-[760px]:border-l-0"
               style={{ width: inspectorWidth }}
             >
               {inspector}
