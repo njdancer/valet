@@ -1,0 +1,58 @@
+<h2 class="sec" id="ia">Information architecture</h2>
+<p class="lede">Six places in the sidebar. Activity holds two real tabs, Calls and Audit log, each with its own address and shortcut. The window opens on Needs you when anything waits, otherwise on Sites. Full rationale in <code>docs/ux/information-architecture.md</code>.</p>
+<pre class="tree">Menu bar item (badge = Needs you count)
+└─ Popover: Needs you (3 rows, + N more) · Sites · Today · Pause · Open trolley · Open Valet
+
+Valet window
+├─ Needs you          ⌘1   waiting (by deadline) · missed (24 h) · empty = "Nothing needs you" + status
+├─ Sites              ⌘2   list → Site: Overview · Tools · Permissions · Versions (→ Review update) · Calls
+├─ Activity           ⌘3   Calls (filters in the address) → Call trace  |  Audit log ⇧⌘3 → Record
+├─ Connections        ⌘4   endpoint · apps on this Mac · cloud agents · remote access → App / agent page
+├─ Secrets            ⌘5   where passwords come from · one-time codes · logins Valet may use → Login page
+└─ Settings           ⌘,   General · Notifications · Data and privacy · Updates · Reset
+
+Own windows: Confirmation · Login hand-off       Overlays: ⌘K palette · Lock down
+Setup: re-entrant; an unfinished setup is a "Finish setup" item in Needs you</pre>
+
+<h2 class="sec" id="decisions">What the persona tests decided</h2>
+<div class="tablewrap"><table class="t">
+<thead><tr><th>Question</th><th>Decision</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td>Navigation</td><td>Six places (IA-A)</td><td>Won for the keyboard user, the agent and the away owner; never worse than "unsure" for anyone. "Access" (IA-C) confused four personas; seven places (IA-B) was too many for two.</td></tr>
+<tr><td>Calls vs audit log</td><td>Two real tabs under Activity, own address and shortcut each</td><td>The power user and the adapter author wanted each one keystroke away.</td></tr>
+<tr><td>Home page</td><td>Needs you's empty state shows the system status</td><td>The installer and the security reviewer wanted a Home summary; everyone else wanted a Needs you place they can name.</td></tr>
+<tr><td>Status vs action</td><td>Badges never click; a labelled button sits beside them</td><td>All seven personas. A chevron pill (E1b) "still looks like every other pill".</td></tr>
+<tr><td>Labels</td><td>Needs you · Sites · Activity · Connections · Secrets · Settings</td><td>"Sites" won 6 to 1; "Secrets" 4 to 2, with "Passwords and one-time codes" as its subtitle and search synonym.</td></tr>
+</tbody></table></div>
+
+<h2 class="sec" id="navmap">Navigation map</h2>
+<p class="lede">Every object links to every object it mentions, both ways. Notifications and the menu bar open the item itself, never a list.</p>
+<div class="mermaidbox"><pre class="mermaid">
+flowchart LR
+  MB[Menu bar] -->|row| NY[Needs you]
+  MB -->|site row| SO[Site overview]
+  MB -->|today numbers| CL[Calls, filtered]
+  NOTE[Notification] --> ITEM{{The item itself}}
+  NY --> ITEM
+  ITEM -->|confirm| CW[Confirmation window]
+  ITEM -->|login| LW[Login window]
+  ITEM -->|update| RV[Review update]
+  ITEM -->|code| CS[Approve connection sheet]
+  ITEM -->|missing| SH[Store or login sheet]
+  SB[Sidebar] --> NY & SL[Sites] & CL & AU[Audit log] & CO[Connections] & SE[Secrets] & ST[Settings]
+  SL --> SO
+  SO -->|Review update| RV
+  SO --> TO[Tools] & PE[Permissions] & VE[Versions]
+  VE --> RV
+  RV -->|Approve / Close / Esc| SO
+  SO -->|Choose login| SH
+  CL --> CALL[Call trace]
+  CALL -->|site, version, tool| SO
+  CALL -->|app| CP[App page]
+  CALL -->|login used| GP[Login page]
+  CALL <-->|records| AU
+  CO --> CP
+  CP -->|its calls| CL
+  SE --> GP
+  GP -->|calls that used it| CL
+</pre></div>

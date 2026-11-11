@@ -115,6 +115,8 @@ export interface UiPort {
   chooseOpFile(): Promise<string | null>
   openControlPanel(route: HashRoute | null): void
   showConfirmation(id: string): void
+  /** Brings the confirmation's own panel forward and focuses it, reopening it if it was closed. */
+  focusConfirmation(id: string): void
   closeConfirmation(id: string): void
   showNeedsUser(adapterId: string): void
   closeNeedsUser(adapterId: string): void
@@ -1171,6 +1173,10 @@ export class AppService {
       },
       answerConfirmation: async (confirmationId: string, approved: boolean, from: AppWindow) => {
         this.broker.answer(confirmationId, approved, from)
+      },
+      openConfirmation: async (confirmationId: string) => {
+        if (!this.broker.has(confirmationId)) throw new ValetError('config', 'not-found')
+        deps.ui.focusConfirmation(confirmationId)
       },
       // The person's own login work runs as the runtime's login steps: under the adapter's lock (it
       // waits for calls and their runs, and new calls wait for it), never while the site's breaker is

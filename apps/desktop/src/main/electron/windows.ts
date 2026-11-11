@@ -5,7 +5,7 @@
 
 import { partitionName } from '@valet/browser-electron'
 import { BrowserWindow, type Rectangle, screen, session, type WebContents } from 'electron'
-import { parseRoute } from '../../renderer/lib/routes'
+import { panelOnlyRoute, parseRoute } from '../../renderer/lib/routes'
 import type { HashRoute } from '../../shared/api'
 import { onAppOrigin } from '../core/app-scheme'
 import { bannerBeside, handoffLayout, topRight, underTrayIcon } from '../core/geometry'
@@ -65,7 +65,9 @@ export class AppWindows {
   }
 
   openControlPanel(route: HashRoute | null): void {
-    const hash = route !== null && parseRoute(route).page !== 'not-found' ? route : null
+    // The confirmation panel and the hand-off banner are windows of their own, never this one.
+    const hash =
+      route !== null && parseRoute(route).page !== 'not-found' && !panelOnlyRoute(route) ? route : null
     if (this.control !== null && !this.control.isDestroyed()) {
       if (hash !== null) this.setHash(this.control, hash)
       this.control.show()
@@ -164,14 +166,23 @@ export class AppWindows {
   }
 
   /**
-   * Brings a waiting confirmation panel forward, for a click on its notification. Showing and
+   * Brings a waiting confirmation panel forward, for a click on its notification or the tray's
+   * Answer, reopening it if the person closed it. The caller checks it is still waiting. Showing and
    * focusing re-arm the approve delay, like any other way of reaching it.
    */
   focusConfirmation(id: string): void {
+    const existing = this.confirmations.get(id)
+    if (existing !== undefined && !existing.isDestroyed()) {
+      existing.show()
+      existing.focus()
+      return
+    }
+    this.showConfirmation(id)
     const window = this.confirmations.get(id)
-    if (window === undefined || window.isDestroyed()) return
-    window.show()
-    window.focus()
+    window?.once('ready-to-show', () => {
+      window.show()
+      window.focus()
+    })
   }
 
   closeConfirmation(id: string): void {

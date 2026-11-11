@@ -949,6 +949,12 @@ export interface ValetApi {
    * window showing or regaining focus, as the renderer's own delay does.
    */
   answerConfirmation(confirmationId: string, approved: boolean): Promise<void>
+  /**
+   * Brings a waiting confirmation's own panel forward and focuses it, reopening it if it was
+   * closed. Only that panel can approve, so nothing else ever shows a confirmation. Rejects for one
+   * that isn't waiting.
+   */
+  openConfirmation(confirmationId: string): Promise<void>
   /** Shows the adapter's auth window to the person. */
   openLoginWindow(adapterId: string): Promise<void>
   /** The person says they finished: run the probe and hand the session over. */

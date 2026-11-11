@@ -20,7 +20,7 @@ export function TrayPopover() {
 
   const listening = endpoint.status === 'ready' && endpoint.data.listening
   const paused = app.status === 'ready' && app.data.paused
-  const items = attention.status === 'ready' ? attention.data : []
+  const items = attention.status === 'ready' ? needsYouOrder(attention.data) : []
 
   return (
     <div className="tray-body">
@@ -101,7 +101,7 @@ export function TrayPopover() {
         ) : null}
 
         {adapters.status === 'ready' && adapters.data.length > 0 ? (
-          <section aria-label="Adapters">
+          <section aria-label="Adapters" className="adapter-list">
             <div className="section-label">Adapters</div>
             {adapters.data.map((adapter) => (
               <AdapterRow
@@ -176,6 +176,18 @@ export function TrayPopover() {
   )
 }
 
+const NEEDS_YOU_RANK: Record<AttentionItem['kind'], number> = {
+  // A confirmation declines itself when its clock runs out, so it comes first.
+  confirmation: 0,
+  'needs-user': 1,
+  review: 2,
+}
+
+/** What needs the person, most urgent first: confirmations, then logins, then reviews. */
+export function needsYouOrder(items: readonly AttentionItem[]): AttentionItem[] {
+  return [...items].sort((a, b) => NEEDS_YOU_RANK[a.kind] - NEEDS_YOU_RANK[b.kind])
+}
+
 function AttentionRow({ item }: { readonly item: AttentionItem }) {
   const api = useApi()
   const action = useAction()
@@ -224,7 +236,8 @@ function AttentionRow({ item }: { readonly item: AttentionItem }) {
           type="button"
           className="btn primary"
           disabled={action.busy}
-          onClick={() => action.run(() => api.app.openControlPanel(href.confirm(item.id)))}
+          // Only the confirmation's own panel can approve, so Answer brings that panel forward.
+          onClick={() => action.run(() => api.openConfirmation(item.id))}
         >
           Answer
         </button>
