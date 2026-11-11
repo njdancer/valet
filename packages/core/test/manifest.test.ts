@@ -299,6 +299,96 @@ describe('manifestSchema', () => {
     expect(issues(empty)).not.toEqual([])
   })
 
+  it('lets only a read be cached, and only a write fill the cache, never an irreversible request (D28)', () => {
+    const read = { method: 'GET', path: '/api/basket', purpose: 'read', cacheSeconds: 120 }
+    const write = { method: 'POST', path: '/api/basket/set', purpose: 'write', refreshes: '/api/basket' }
+    const withRequests = (...requests: unknown[]) => {
+      const input = copy()
+      input.requests = requests
+      return input
+    }
+    const ok = parseManifest(withRequests(read, write))
+    expect(ok.requests).toEqual([read, write])
+    // Neither field appears unless a manifest sets it.
+    expect(Object.keys(parseManifest(VALID).requests[0] ?? {})).toEqual(['method', 'path', 'purpose'])
+
+    for (const purpose of ['write', 'irreversible']) {
+      expect(issues(withRequests({ ...read, purpose }))).toEqual([
+        'GET /api/basket: only a read request may set cacheSeconds',
+      ])
+    }
+    for (const purpose of ['read', 'irreversible']) {
+      expect(issues(withRequests(read, { ...write, purpose }))).toEqual([
+        'POST /api/basket/set: only a write request may set refreshes',
+      ])
+    }
+    const badTarget =
+      'POST /api/basket/set: refreshes must name a declared GET read with cacheSeconds and no ":param" or "*"'
+    // Not declared; declared without cacheSeconds; a POST; a pattern; an irreversible GET.
+    expect(issues(withRequests(write))).toEqual([badTarget])
+    expect(issues(withRequests({ method: 'GET', path: '/api/basket', purpose: 'read' }, write))).toEqual([
+      badTarget,
+    ])
+    expect(issues(withRequests({ ...read, method: 'POST' }, write))).toEqual([badTarget])
+    expect(issues(withRequests({ ...read, path: '/api/:id' }, { ...write, refreshes: '/api/:id' }))).toEqual([
+      badTarget,
+    ])
+    expect(issues(withRequests({ ...read, purpose: 'irreversible' }, write))).toEqual([
+      'GET /api/basket: only a read request may set cacheSeconds',
+      badTarget,
+    ])
+    for (const cacheSeconds of [0, 3601, 1.5]) {
+      expect(issues(withRequests({ ...read, cacheSeconds }))).not.toEqual([])
+    }
+  })
+
+  it('bounds how long a fetch probe may be trusted, and gives a cookie probe no such field', () => {
+    const trusting = copy()
+    trusting.session.probe = { ...trusting.session.probe, trustSeconds: 60 }
+    expect(parseManifest(trusting).session.probe).toMatchObject({ trustSeconds: 60 })
+    expect(parseManifest(VALID).session.probe).not.toHaveProperty('trustSeconds')
+    for (const trustSeconds of [-1, 301, 0.5]) {
+      const input = copy()
+      input.session.probe = { ...input.session.probe, trustSeconds }
+      expect(issues(input)).not.toEqual([])
+    }
+    const cookie = copy()
+    cookie.session.probe = { kind: 'cookie', name: 'sid', trustSeconds: 60 }
+    expect(issues(cookie)).not.toEqual([])
+  })
+
+  it('takes an hourly request cap from 10 to 3600, and has none unless one is set', () => {
+    expect(parseManifest(VALID).limits).not.toHaveProperty('requestsPerHour')
+    const capped = copy()
+    capped.limits = { requestsPerHour: 100 }
+    expect(parseManifest(capped).limits.requestsPerHour).toBe(100)
+    for (const requestsPerHour of [9, 3601, 60.5]) {
+      const input = copy()
+      input.limits = { requestsPerHour }
+      expect(issues(input)).not.toEqual([])
+    }
+  })
+
+  it('takes a per-minute cap from 1 to 240 and a jitter from 0 to 100 percent, both unset by default', () => {
+    const limits = parseManifest(VALID).limits
+    expect(limits).not.toHaveProperty('requestsPerMinute')
+    expect(limits).not.toHaveProperty('gapJitterPercent')
+    const set = copy()
+    set.limits = { requestsPerMinute: 4, gapJitterPercent: 50 }
+    expect(parseManifest(set).limits).toMatchObject({ requestsPerMinute: 4, gapJitterPercent: 50 })
+    for (const bad of [
+      { requestsPerMinute: 0 },
+      { requestsPerMinute: 241 },
+      { gapJitterPercent: -1 },
+      { gapJitterPercent: 101 },
+      { gapJitterPercent: 12.5 },
+    ]) {
+      const input = copy()
+      input.limits = bad
+      expect(issues(input)).not.toEqual([])
+    }
+  })
+
   it('bounds retry counts and pause lengths', () => {
     const tooManyRetries = copy()
     tooManyRetries.auth.steps.push({ op: 'retry', times: 50, steps: [{ op: 'pause', ms: 1 }] })

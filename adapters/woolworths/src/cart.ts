@@ -12,7 +12,7 @@ import { type ToolContext, tool, ValetError } from '@valet/core'
 import { z } from 'zod'
 import { withLogin } from './login'
 import { productName, stockcodeSchema } from './products'
-import { getJson, PATHS, postJson } from './site'
+import { getHeldJson, getJson, PATHS, postJson } from './site'
 import { cents, text } from './text'
 import {
   type ProductTileWire,
@@ -203,6 +203,20 @@ async function setQuantity(ctx: ToolContext, stockcode: number, requested: numbe
   return { quantity: stored, confirmed: true, cart: read.cart, notices }
 }
 
+/**
+ * The trolley an add starts from. The runtime may answer it from its session cache, which after a
+ * cart write holds that write's own reply (D28), so a run of adds reads the trolley from the site
+ * once. A cached answer this adapter can't fully read is not trusted: the site is asked instead.
+ */
+async function trolleyBeforeWrite(ctx: ToolContext): Promise<TrolleyRead> {
+  const held = await getHeldJson(ctx, PATHS.trolley, trolleyWire)
+  if (held !== null) {
+    const read = readTrolley(held.data)
+    if (read.complete || !held.fromCache) return read
+  }
+  return readTrolley(await getJson(ctx, PATHS.trolley, trolleyWire, { fresh: true }))
+}
+
 const writeOutput = {
   stockcode: z.number().int(),
   /** The line's quantity in the cart the site sent back. Null when the reply didn't show it. */
@@ -219,7 +233,11 @@ export const getCart = tool({
   input: z.object({}),
   output: cartSchema,
   async run(ctx) {
-    return withLogin(ctx, async () => readTrolley(await getJson(ctx, PATHS.trolley, trolleyWire)).cart)
+    // Always the site's own answer: this is the tool an agent checks the cart with.
+    return withLogin(
+      ctx,
+      async () => readTrolley(await getJson(ctx, PATHS.trolley, trolleyWire, { fresh: true })).cart,
+    )
   },
 })
 
@@ -236,7 +254,7 @@ export const addToCart = tool({
   }),
   async run(ctx, input) {
     return withLogin(ctx, async () => {
-      const read = readTrolley(await getJson(ctx, PATHS.trolley, trolleyWire))
+      const read = await trolleyBeforeWrite(ctx)
       // The write replaces the line's quantity, so a line hidden in a bucket the adapter can't read
       // would be overwritten with just the added amount. Refuse rather than shrink it. A line the
       // adapter can't read means the trolley's item shape isn't the one it expects.

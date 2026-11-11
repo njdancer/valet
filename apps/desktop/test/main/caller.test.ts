@@ -207,6 +207,20 @@ describe('RuntimeToolCaller', () => {
       retryAfterMs: 20_000,
       ahead: 2,
     })
+    // Our own hourly cap for the site: a wait, but not the site's refusal.
+    expect(outcomeOf({ status: 'blocked', retryAfterMs: 1_800_000, cause: 'hourly-cap' })).toEqual({
+      status: 'blocked',
+      stage: 'tool-run',
+      errorClass: 'rate-limited',
+      retryAfterMs: 1_800_000,
+    })
+    // A login the call started and was answered without.
+    expect(outcomeOf({ status: 'logging-in', retryAfterMs: 30_000 })).toEqual({
+      status: 'blocked',
+      stage: 'login',
+      errorClass: 'login-in-progress',
+      retryAfterMs: 30_000,
+    })
     expect(outcomeOf({ status: 'declined' })).toEqual({ status: 'declined' })
   })
 })

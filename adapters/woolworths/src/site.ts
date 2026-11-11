@@ -15,12 +15,31 @@ export const PATHS = {
   fulfilment: '/api/v3/ui/fulfilment',
 } as const
 
+/**
+ * A GET the runtime may answer from its session read cache, where the manifest lets it keep that
+ * request (`cacheSeconds`). `fresh` always asks the site.
+ */
 export async function getJson<Schema extends z.ZodType>(
   ctx: ToolContext,
   path: string,
   schema: Schema,
+  options: { readonly fresh?: boolean } = {},
 ): Promise<z.infer<Schema>> {
-  return call(ctx, path, { method: 'GET' }, schema)
+  const init: FetchInit = options.fresh === true ? { method: 'GET', cache: 'reload' } : { method: 'GET' }
+  return (await call(ctx, path, init, schema)).data
+}
+
+/**
+ * Like getJson, and says whether the answer came from the runtime's cache. Null when a cached
+ * answer can't be read with `schema`: the cache then holds something else (a write's reply that
+ * wasn't what the manifest said it would be), and the caller asks the site with `fresh`.
+ */
+export async function getHeldJson<Schema extends z.ZodType>(
+  ctx: ToolContext,
+  path: string,
+  schema: Schema,
+): Promise<{ readonly data: z.infer<Schema>; readonly fromCache: boolean } | null> {
+  return call(ctx, path, { method: 'GET' }, schema, true)
 }
 
 export async function postJson<Schema extends z.ZodType>(
@@ -29,7 +48,12 @@ export async function postJson<Schema extends z.ZodType>(
   json: unknown,
   schema: Schema,
 ): Promise<z.infer<Schema>> {
-  return call(ctx, path, { method: 'POST', json }, schema)
+  return (await call(ctx, path, { method: 'POST', json }, schema)).data
+}
+
+interface Answer<T> {
+  readonly data: T
+  readonly fromCache: boolean
 }
 
 async function call<Schema extends z.ZodType>(
@@ -37,7 +61,21 @@ async function call<Schema extends z.ZodType>(
   path: string,
   init: FetchInit,
   schema: Schema,
-): Promise<z.infer<Schema>> {
+): Promise<Answer<z.infer<Schema>>>
+async function call<Schema extends z.ZodType>(
+  ctx: ToolContext,
+  path: string,
+  init: FetchInit,
+  schema: Schema,
+  unreadableCacheIsNull: true,
+): Promise<Answer<z.infer<Schema>> | null>
+async function call<Schema extends z.ZodType>(
+  ctx: ToolContext,
+  path: string,
+  init: FetchInit,
+  schema: Schema,
+  unreadableCacheIsNull = false,
+): Promise<Answer<z.infer<Schema>> | null> {
   // Checked before every call so that a cancelled add_to_cart never reaches its write.
   if (ctx.signal.aborted) throw new ValetError('tool-run', 'aborted')
   let response: FetchResult
@@ -53,8 +91,12 @@ async function call<Schema extends z.ZodType>(
   const parsed = schema.safeParse(response.body)
   // JSON the adapter can't read means the site changed, not that the input was bad. Which field
   // changed is left to drift detection (drift.ts), which can say so without copying a value.
-  if (!parsed.success) throw new ValetError('tool-run', 'site-changed')
-  return parsed.data
+  const fromCache = response.fromCache === true
+  if (!parsed.success) {
+    if (fromCache && unreadableCacheIsNull) return null
+    throw new ValetError('tool-run', 'site-changed')
+  }
+  return { data: parsed.data, fromCache }
 }
 
 /**

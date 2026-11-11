@@ -7,12 +7,14 @@
 //      still approved once we hold it. A call waits its turn for a bounded time only: after that,
 //      or at once when the calls in front are too many to get through in that time, it ends busy,
 //      having sent nothing, with how many calls were ahead of it;
-//   4. the site's circuit breaker is closed;
+//   4. the site's circuit breaker is closed, and its hourly cap, if it has one, has room;
 //   5. an irreversible tool has the person's confirmation, before its run() starts;
 //   6. the driver holds the whole tool partition to this run's network policy (egress, request
 //      surface, the tool's side effect, the ceiling), and only after that confirmation unlocks the
 //      run's irreversible declarations;
-//   7. the tool runs with a guarded capability object, a timeout and an abort signal;
+//   7. the tool runs with a guarded capability object, a timeout and an abort signal. Reads the
+//      manifest says may be kept can be answered from the adapter's session cache (read-cache.ts),
+//      which sits outside the guard: whatever is sent still passes it;
 //   8. the output matches the tool's schema, is converted to plain JSON, and is redacted on the
 //      way out.
 //
@@ -74,6 +76,7 @@ import { runIsolated, type ToolProcessFactory } from './isolation/host'
 import type { LoginMarkerStore } from './login-marker'
 import { KeyedMutex } from './mutex'
 import { probeDeclaration } from './probe'
+import { CachedToolPage, ReadCache } from './read-cache'
 import { redactOutput } from './redaction'
 import { knownReason, type LoginBackoff, SessionGate } from './session'
 import { breakerRefusal, isSiteRefusal, type SiteGuards, SiteProtection } from './site-protection'
@@ -99,8 +102,8 @@ import {
 export const DEFAULT_TOOL_TIMEOUT_MS = 120_000
 /** For each schema parse. Parsing is local work; anything this slow is a refinement misbehaving. */
 export const DEFAULT_VALIDATION_TIMEOUT_MS = 10_000
-/** For the person to answer a confirmation. */
-export const DEFAULT_CONFIRMATION_TIMEOUT_MS = 5 * 60_000
+/** For the person to answer a confirmation (D19, D50): unanswered for this long, it is declined. */
+export const DEFAULT_CONFIRMATION_TIMEOUT_MS = 2 * 60_000
 /** How long a finished call's leftover runtime work may hold the adapter's lock. */
 export const DEFAULT_SETTLE_TIMEOUT_MS = 30_000
 /** How long a login step waits for running calls on its adapter before giving up. */
@@ -116,6 +119,15 @@ export const DEFAULT_QUEUE_WAIT_MS = 30_000
 /** The bounds of the "try again" time a busy call is given. */
 export const MIN_BUSY_RETRY_MS = 5_000
 export const MAX_BUSY_RETRY_MS = 60_000
+/**
+ * How long a call waits on a login it started before answering its caller without it (D50). A
+ * login that is quick (a remembered session, a test double) still finishes inside the call.
+ */
+export const DEFAULT_LOGIN_ANSWER_MS = 5_000
+/** How long a login may run on in the background after its call was answered. */
+export const DEFAULT_LOGIN_TIMEOUT_MS = 5 * 60_000
+/** When a caller answered early is told to call again. A guess: logins are paced, and vary. */
+export const LOGIN_RETRY_MS = 30_000
 /** Distinct request-blocked events recorded per call. A page whose analytics are all blocked is chatty. */
 export const MAX_BLOCKED_EVENTS_PER_CALL = 50
 const MAX_CLIENT = 100
@@ -173,12 +185,18 @@ export interface ToolHostOptions {
   readonly sleep?: Sleep
   /** For waiting on a site's rate budget. Defaults to `sleep`. */
   readonly pacingSleep?: Sleep
+  /** Draws from [0, 1) for the rate budgets' jitter (limits.gapJitterPercent). Default Math.random. */
+  readonly random?: () => number
   readonly timeoutMs?: number
   readonly validationTimeoutMs?: number
   readonly confirmationTimeoutMs?: number
   readonly settleTimeoutMs?: number
   /** How long a call waits for its adapter's lock. Default 30 s; finite and above zero. */
   readonly queueWaitMs?: number
+  /** How long a call waits on its own login before answering early. Default 5 s. */
+  readonly loginAnswerMs?: number
+  /** How long that login may then run on in the background. Default 5 min. */
+  readonly loginTimeoutMs?: number
   readonly loginBackoff?: LoginBackoff
   readonly diagnostics?: (diagnostic: RuntimeDiagnostic) => void
 }
@@ -193,6 +211,8 @@ interface Entry extends RegisteredAdapter {
    * only: a restart applies again. Emptied whenever the session may have changed under it.
    */
   readonly applied: Map<string, { readonly value: string; readonly at: number }>
+  /** This adapter's session read cache (D28). */
+  readonly cache: ReadCache
 }
 
 /** A setting whose apply tool must run before the call that found it. */
@@ -228,6 +248,8 @@ export class ToolHost {
   private readonly confirmationTimeoutMs: number
   private readonly settleTimeoutMs: number
   private readonly queueWaitMs: number
+  private readonly loginAnswerMs: number
+  private readonly loginTimeoutMs: number
   private readonly diagnostics: (diagnostic: RuntimeDiagnostic) => void
 
   constructor(private readonly options: ToolHostOptions) {
@@ -239,10 +261,13 @@ export class ToolHost {
     this.settleTimeoutMs = options.settleTimeoutMs ?? DEFAULT_SETTLE_TIMEOUT_MS
     // An unbounded wait is the fault this bound exists to remove, so a bad value is refused.
     this.queueWaitMs = boundOf(options.queueWaitMs, DEFAULT_QUEUE_WAIT_MS)
+    this.loginAnswerMs = boundOf(options.loginAnswerMs, DEFAULT_LOGIN_ANSWER_MS)
+    this.loginTimeoutMs = boundOf(options.loginTimeoutMs, DEFAULT_LOGIN_TIMEOUT_MS)
     this.diagnostics = options.diagnostics ?? (() => {})
     this.protection = new SiteProtection(this.clock, options.pacingSleep ?? this.sleep, {
       store: options.breakerStore,
       ...(options.budgetStore === undefined ? {} : { budgetStore: options.budgetStore }),
+      ...(options.random === undefined ? {} : { random: options.random }),
       audit: (event) => this.record(event),
       diagnostics: this.diagnostics,
     })
@@ -288,6 +313,7 @@ export class ToolHost {
       site,
       host,
       applied: new Map(),
+      cache: new ReadCache(this.clock),
       ...(adapter.isolation === undefined ? {} : { isolation: adapter.isolation }),
     })
   }
@@ -356,6 +382,9 @@ export class ToolHost {
     let unsettled: Promise<unknown> | null = null
     try {
       if (!(await this.isApproved(entry))) throw new ValetError('manifest', 'not-granted')
+      // The person is logging in or out: nothing remembered about the old session holds.
+      forget(entry)
+      entry.gate.leave(null)
       const pace = async (): Promise<void> => {
         if (controller.signal.aborted) throw new ValetError('login', 'aborted')
         if (entry.site.breaker.isOpen()) throw new ValetError('login', 'rate-limited')
@@ -545,6 +574,10 @@ export class ToolHost {
       // Again, because a revocation can land while this call waits for the lock.
       if (!(await this.isApproved(entry))) return failed('manifest', 'not-granted')
       if (entry.site.breaker.isOpen()) return blocked(entry.site)
+      // The site's hourly cap (D28) is asked about here and nowhere else: before the person is
+      // asked anything and before anything is sent, so no call is cut off halfway by it.
+      const spentForMs = entry.site.budget.spentForMs()
+      if (spentForMs > 0) return { status: 'blocked', retryAfterMs: spentForMs, cause: 'hourly-cap' }
       // A setting's own tools run without the settings: the choices are how one gets its value.
       const due = internal ? [] : await this.dueSettings(entry)
       if (due === 'missing') return { status: 'needsUser', reason: 'setting-required' }
@@ -608,6 +641,15 @@ export class ToolHost {
     const stop = (): void => controller.abort()
     external?.addEventListener('abort', stop, { once: true })
     const state = new CallState(callId, controller.signal, () => entry.gate.secrets)
+    // Whatever stops the call stops its login too, unless the caller was answered early and the
+    // login left to finish (D50).
+    controller.signal.addEventListener(
+      'abort',
+      () => {
+        if (!state.detached) state.login.abort()
+      },
+      { once: true },
+    )
     let running = false
     try {
       if (external?.aborted) return failed('tool-run', 'aborted')
@@ -629,7 +671,26 @@ export class ToolHost {
         // Without the driver's policy in force, nothing tool code does would be held to it.
         return fromReportable(toReportable(error, 'egress'))
       }
-      return await this.run(entry, declaration, implementation, client, transport, input, state, controller)
+      let result: ToolCallResult
+      try {
+        result = await this.run(
+          entry,
+          declaration,
+          implementation,
+          client,
+          transport,
+          input,
+          state,
+          controller,
+        )
+      } catch (error) {
+        forget(entry)
+        throw error
+      }
+      // Any ending but ok may mean the session isn't what it was (logged out, blocked, cut off
+      // halfway through a write), so the next call starts from the site, not from memory.
+      if (result.status !== 'ok') forget(entry)
+      return result
     } finally {
       external?.removeEventListener('abort', stop)
       // Capabilities die with the call, so promises tool code left running can't act afterwards.
@@ -744,6 +805,8 @@ export class ToolHost {
     await settled
     if (result.status === 'ok') {
       entry.applied.set(setting.name, { value: setting.value, at: this.clock.now() })
+      // Answers read before it (prices at another store, say) are no longer this session's.
+      entry.cache.clear()
       // What an apply tool returns is nobody's to read.
       result = { status: 'ok', output: null }
     }
@@ -769,18 +832,22 @@ export class ToolHost {
       return fromReportable(toReportable(error, 'navigate'))
     }
 
+    const guarded = new GuardedToolPage({
+      adapterId: manifest.id,
+      manifest,
+      sideEffect: declaration.sideEffect,
+      unlocks: unlockedBy(manifest.requests, declaration.unlocks),
+      inner,
+      site: entry.site,
+      state,
+      audit: (event) => this.record(event),
+    })
     const ctx: ToolContext = {
-      page: new GuardedToolPage({
-        adapterId: manifest.id,
-        manifest,
-        sideEffect: declaration.sideEffect,
-        unlocks: unlockedBy(manifest.requests, declaration.unlocks),
-        inner,
-        site: entry.site,
-        state,
-        audit: (event) => this.record(event),
-      }),
-      session: { ensure: () => this.ensure(entry, state, inner) },
+      // Declared reads may be answered from the session's cache; everything sent goes through the guard.
+      page: new CachedToolPage({ manifest, inner: guarded, cache: entry.cache, state, clock: this.clock }),
+      // Only a write may rest on a recent login check: a read's whole worth is its answer, and an
+      // irreversible tool must know whose session it acts in.
+      session: { ensure: () => this.ensure(entry, state, inner, declaration.sideEffect === 'write') },
       confirm: async (action) => {
         state.assertLive()
         const question = confirmQuestion(manifest, declaration, action)
@@ -808,7 +875,29 @@ export class ToolHost {
       isolation === undefined
         ? () => implementation.run(ctx, input)
         : () => runIsolated(isolation.start, isolation.script, ctx, declaration.name, input)
-    const outcome = await this.race(execute, this.timeoutMs, controller.signal)
+    // D50: a login this call starts doesn't keep the caller. If it is still running after a few
+    // seconds, the caller is answered, tool code is stopped for good, and the login alone runs on
+    // under the adapter's lock (see afterSettling).
+    const loginOutlasted = new Promise<'logging-in'>((resolve) => {
+      state.onLoginStarting = () => {
+        this.sleep(this.loginAnswerMs, controller.signal).then(
+          () => {
+            if (state.loggingIn && !controller.signal.aborted) resolve('logging-in')
+          },
+          () => {},
+        )
+      }
+    })
+    const outcome = await Promise.race([
+      this.race(execute, this.timeoutMs, controller.signal),
+      loginOutlasted,
+    ])
+    if (outcome === 'logging-in') {
+      // Before the abort, which would otherwise stop the login with the call.
+      state.detached = true
+      controller.abort()
+      return { status: 'logging-in', retryAfterMs: LOGIN_RETRY_MS }
+    }
     // Capabilities die with the call, so promises tool code left running can't act afterwards.
     controller.abort()
 
@@ -845,24 +934,47 @@ export class ToolHost {
     return { status: 'ok', output: parsed.value.data }
   }
 
-  private async ensure(entry: Entry, state: CallState, page: ToolPage): Promise<EnsureResult> {
+  private async ensure(
+    entry: Entry,
+    state: CallState,
+    page: ToolPage,
+    mayTrust: boolean,
+  ): Promise<EnsureResult> {
     state.assertLive()
     try {
       const result = await state.track(
-        entry.gate.ensure({
-          callId: state.callId,
-          signal: state.signal,
-          page,
-          login: state.login,
-        }),
+        entry.gate
+          .ensure({
+            callId: state.callId,
+            signal: state.login.signal,
+            page,
+            login: state.attempt,
+            mayTrust,
+            loginStarting: () => {
+              state.loggingIn = true
+              state.onLoginStarting?.()
+            },
+          })
+          .finally(() => {
+            state.loggingIn = false
+          }),
       )
-      state.ensureOutcome = result.status === 'ok' ? null : result
+      // A login, or anything but ok, is a different session from the one the cache was read in.
+      if (result.status !== 'ok' || state.attempt.outcome !== null) entry.cache.clear()
       // This call logged in, and the hand-off replaced the tool partition's session: what the site
       // held for the old one may be gone, so every setting is applied again before the next call.
-      if (state.login.outcome !== null) entry.applied.clear()
+      if (state.attempt.outcome !== null) entry.applied.clear()
+      // The caller was answered while the login ran: tool code gets nothing back and does no more.
+      // How the login ended is kept for the next call, which would otherwise never learn it.
+      if (state.detached) {
+        entry.gate.leave(result)
+        throw new ValetError('tool-run', 'aborted')
+      }
+      state.ensureOutcome = result.status === 'ok' ? null : result
       await this.collectSessionSecrets(entry, state)
       return result
     } catch (error) {
+      entry.cache.clear()
       if (isSiteRefusal(error)) state.blocked = true
       throw error
     }
@@ -918,6 +1030,12 @@ export class ToolHost {
 
   /** Waits, up to the settle bound, for the runtime work a finished call started. */
   private async afterSettling(state: CallState): Promise<void> {
+    if (state.detached) {
+      // The login the call left running: it gets its own, longer, time, then is stopped like any
+      // other leftover work.
+      await this.race(() => state.settled(), this.loginTimeoutMs)
+      state.login.abort()
+    }
     await this.race(() => state.settled(), this.settleTimeoutMs)
   }
 
@@ -1117,6 +1235,12 @@ function defaultCallId(): string {
   return `st_${randomUUID()}`
 }
 
+/** Drops what is remembered about an adapter's session: its cached reads and its last login check. */
+function forget(entry: Entry): void {
+  entry.cache.clear()
+  entry.gate.distrust()
+}
+
 function implementationOf(entry: RegisteredAdapter, name: string): ToolImplementation | undefined {
   // hasOwn, so a tool named "constructor" or "__proto__" can't reach Object.prototype.
   return Object.hasOwn(entry.definition.tools, name) ? entry.definition.tools[name] : undefined
@@ -1212,10 +1336,15 @@ function finishedEvent(
     case 'failed':
       return { ...base, outcome: 'failed', stage: result.stage, errorClass: result.errorClass }
     case 'blocked':
+      // In the log `blocked` means the site refused us. Our own hourly cap is not that.
+      if (result.cause === 'hourly-cap')
+        return { ...base, outcome: 'failed', stage: 'tool-run', errorClass: 'rate-limited' }
       return { ...base, outcome: 'blocked' }
     case 'busy':
       // Not the site refusing us, which is what `blocked` means in the log: our own queue was full.
       return { ...base, outcome: 'failed', stage: 'tool-run', errorClass: 'busy' }
+    case 'logging-in':
+      return { ...base, outcome: 'failed', stage: 'login', errorClass: 'login-in-progress' }
     case 'declined':
       return { ...base, outcome: 'declined' }
   }

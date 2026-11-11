@@ -139,7 +139,12 @@ export type ToolCallResult =
   /** Only the code: the app renders its own wording, and nothing adapter-authored reaches the client. */
   | { readonly status: 'needsUser'; readonly reason: NeedsUserReason }
   | { readonly status: 'failed'; readonly stage: Stage; readonly errorClass: ErrorClass }
-  | { readonly status: 'blocked'; readonly retryAfterMs: number }
+  /**
+   * Nothing may be sent to the site until `retryAfterMs` has passed. Without `cause`, the site
+   * refused us and its breaker is open. With `cause: 'hourly-cap'`, the runtime has sent the site
+   * as many requests as the manifest allows in an hour; the call was not started.
+   */
+  | { readonly status: 'blocked'; readonly retryAfterMs: number; readonly cause?: 'hourly-cap' }
   /**
    * The call was never started, and nothing was sent: it waited its turn behind earlier calls for
    * the adapter for as long as the runtime allows, or too many were in front for it to get a turn
@@ -147,6 +152,12 @@ export type ToolCallResult =
    * `retryAfterMs` an estimate of when a new call would get its turn.
    */
   | { readonly status: 'busy'; readonly retryAfterMs: number; readonly ahead: number }
+  /**
+   * The call found the session logged out and started a login, which is still running in the
+   * background (D50). The tool did nothing else, and will do nothing more: make the call again
+   * after about `retryAfterMs`. If the login then needs the person, that call says so.
+   */
+  | { readonly status: 'logging-in'; readonly retryAfterMs: number }
   | { readonly status: 'declined' }
 
 export interface ToolCallRequest {

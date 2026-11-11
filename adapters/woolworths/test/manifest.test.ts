@@ -87,6 +87,7 @@ describe('the real manifest', () => {
       loggedOutStatuses: [401],
       jsonPath: 'ShopperDetails.IsLoggedIn',
       equals: true,
+      trustSeconds: 60,
     })
   })
 
@@ -124,6 +125,11 @@ describe('the real manifest', () => {
       minGapMs: 10_000,
       cooldownSeconds: 600,
       maxCooldownSeconds: 7200,
+      // D28: each gap stretched by up to half, and at most four requests in any minute.
+      gapJitterPercent: 50,
+      requestsPerMinute: 4,
+      // Enough for one thirty-item shop (73 requests, more with a login), not for two.
+      requestsPerHour: 100,
     })
   })
 })
@@ -331,8 +337,17 @@ describe('the request surface', () => {
 
   it('only lets the trolley update and the choice of store write', () => {
     expect(requests.filter((request) => request.purpose === 'write')).toEqual([
-      { method: 'POST', path: '/api/v3/ui/trolley/update', purpose: 'write' },
+      { method: 'POST', path: '/api/v3/ui/trolley/update', purpose: 'write', refreshes: '/apis/ui/Trolley' },
       { method: 'POST', path: '/api/v3/ui/fulfilment', purpose: 'write' },
+    ])
+  })
+
+  it('lets the runtime reuse catalogue answers for a quarter of an hour and the trolley for two minutes', () => {
+    expect(requests.filter((request) => request.purpose === 'read')).toEqual([
+      { method: 'POST', path: '/apis/ui/Search/products', purpose: 'read', cacheSeconds: 900 },
+      { method: 'GET', path: '/apis/ui/product/detail/:stockcode', purpose: 'read', cacheSeconds: 900 },
+      { method: 'GET', path: '/apis/ui/Trolley', purpose: 'read', cacheSeconds: 120 },
+      { method: 'GET', path: '/api/v3/ui/fulfilment/stores', purpose: 'read' },
     ])
   })
 

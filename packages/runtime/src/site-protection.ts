@@ -4,6 +4,10 @@
 // paced by a per-site rate budget, and a block trips a per-site circuit breaker that stops all calls
 // for a cooldown instead of hammering the site and deepening the block.
 //
+// A site may also have an hourly cap (D28). It is checked when a tool call starts, never in the
+// middle of one, and it lasts for this run of the app only: a restart forgets the count, which
+// only the person can cause.
+//
 // The numbers come from each adapter's manifest.limits. Adapters that share a host share its budget
 // and breaker, which take the most cautious numbers any of them declares. Breaker state is persisted
 // (see breaker-state.ts) so a restart doesn't forget a block, and so is the time of each site's last
@@ -24,18 +28,42 @@ import type { RuntimeDiagnostic } from './types'
 /** Why the site refused us: its bot protection, or a 429. */
 export type BlockCause = 'blocked-by-site' | 'rate-limited'
 
-/** Spaces requests to one site at least `minGapMs` apart, in the order they ask. */
+const MINUTE_MS = 60_000
+const HOUR_MS = 60 * MINUTE_MS
+/** More request times than any cap the manifest schema allows. */
+const MAX_REMEMBERED = 4000
+
+/**
+ * Spaces requests to one site at least `minGapMs` apart, in the order they ask. Optionally (D28):
+ * each gap is stretched by a random share of itself, never shortened; no more than a set number go
+ * in any minute; and an hourly cap is counted, for whoever starts work to ask about.
+ */
 export class RateBudget {
   private nextSlot = Number.NEGATIVE_INFINITY
+  /** The most requests let through in any hour, or null for no cap. */
+  private perHour: number | null = null
+  /** The most requests let through in any minute, or null for no cap. */
+  private perMinute: number | null = null
+  /** The most a gap is stretched, as a share of minGapMs: 0.5 makes gaps of 1 to 1.5 times it. */
+  private jitter = 0
+  /**
+   * The time of each request's slot, oldest first, as far back as the caps look. A slot is listed
+   * when it is given, which may be before its time. Kept only under a cap.
+   */
+  private slots: number[] = []
   /** When the last request was let through, in this run or an earlier one; null before any. */
   private lastUsed: number | null = null
 
-  /** `used` is called each time a request is let through, so its owner can save lastUsedAt(). Must not throw. */
+  /**
+   * `used` is called each time a request is let through, so its owner can save lastUsedAt(). Must
+   * not throw. `random` draws from [0, 1) for the jitter.
+   */
   constructor(
     private minGapMs: number,
     private readonly clock: Clock,
     private readonly sleep: Sleep,
     private readonly used: () => void = () => {},
+    private readonly random: () => number = Math.random,
   ) {}
 
   get gapMs(): number {
@@ -48,9 +76,65 @@ export class RateBudget {
     if (this.lastUsed !== null) this.nextSlot = Math.max(this.nextSlot, this.lastUsed + this.minGapMs)
   }
 
+  /** Sets the hourly cap, or lowers it; never raises it. */
+  cap(perHour: number | undefined): void {
+    if (perHour !== undefined) this.perHour = Math.min(this.perHour ?? perHour, perHour)
+  }
+
+  /** Sets the per-minute cap, or lowers it; never raises it. */
+  capMinute(perMinute: number | undefined): void {
+    if (perMinute !== undefined) this.perMinute = Math.min(this.perMinute ?? perMinute, perMinute)
+  }
+
+  /** Sets how far gaps are stretched, as a percentage of the gap, or raises it; never lowers it. */
+  stretch(percent: number | undefined): void {
+    if (percent !== undefined) this.jitter = Math.max(this.jitter, percent / 100)
+  }
+
+  /**
+   * How long until the hourly cap has room again: 0 when it has, or when there is no cap. The cap
+   * is for whoever starts work (a tool call) to ask about. acquire() never waits on it, so work
+   * already under way (a write after its read, a login halfway through) is never stranded by it,
+   * and the hour can run over by what one call sends.
+   */
+  spentForMs(): number {
+    if (this.perHour === null) return 0
+    const recent = this.remembered()
+    const freeing = recent[recent.length - this.perHour]
+    return freeing === undefined ? 0 : Math.max(1, freeing + HOUR_MS - this.clock.now())
+  }
+
+  /** The slots the caps still look at: an hour's under an hourly cap, else a minute's. */
+  private remembered(): number[] {
+    const since = this.clock.now() - (this.perHour === null ? MINUTE_MS : HOUR_MS)
+    if ((this.slots[0] ?? Number.POSITIVE_INFINITY) <= since)
+      this.slots = this.slots.filter((at) => at > since)
+    return this.slots
+  }
+
+  /** The gap after one request: minGapMs, stretched by up to the jitter. Never less than minGapMs. */
+  private nextGap(): number {
+    if (this.jitter === 0) return this.minGapMs
+    const draw = this.random()
+    const share = Number.isFinite(draw) ? Math.min(1, Math.max(0, draw)) : 1
+    return this.minGapMs + Math.round(this.minGapMs * this.jitter * share)
+  }
+
   /** How long a request asking now would wait for its slot. Reads only; takes no slot. */
   waitMs(): number {
-    return Math.max(0, this.nextSlot - this.clock.now())
+    return Math.max(0, this.earliest(this.clock.now()) - this.clock.now())
+  }
+
+  /** The first time a new request may go: after the gap, and with room under the per-minute cap. */
+  private earliest(now: number): number {
+    let slot = Math.max(now, this.nextSlot)
+    if (this.perMinute !== null) {
+      const slots = this.remembered()
+      // With this many slots in the minute before it, the next waits for the oldest to be a minute old.
+      const oldest = slots[slots.length - this.perMinute]
+      if (oldest !== undefined) slot = Math.max(slot, oldest + MINUTE_MS)
+    }
+    return slot
   }
 
   /** When the last request was let through (epoch ms), or null when none has been. */
@@ -64,14 +148,25 @@ export class RateBudget {
    */
   async acquire(signal?: AbortSignal): Promise<void> {
     const now = this.clock.now()
-    const slot = Math.max(now, this.nextSlot)
-    const after = slot + this.minGapMs
+    const slot = this.earliest(now)
+    const after = slot + this.nextGap()
     this.nextSlot = after
+    const counted = this.perHour !== null || this.perMinute !== null
+    if (counted) {
+      this.slots.push(slot)
+      // Bounded whatever happens: more than the widest cap's worth is a bug.
+      if (this.slots.length > MAX_REMEMBERED) this.slots.splice(0, this.slots.length - MAX_REMEMBERED)
+    }
     if (slot > now) {
       try {
         await this.sleep(slot - now, signal)
       } catch (error) {
-        if (this.nextSlot === after) this.nextSlot = slot
+        if (this.nextSlot === after) {
+          this.nextSlot = slot
+          // Nothing was sent and nobody is behind it, so it doesn't count against a cap either.
+          const index = this.slots.lastIndexOf(slot)
+          if (counted && index !== -1) this.slots.splice(index, 1)
+        }
         throw error
       }
     }
@@ -234,12 +329,19 @@ export interface SiteProtectionOptions {
   /** Appends an audit event. Must not throw. */
   readonly audit: (event: AuditEvent) => Promise<void>
   readonly diagnostics: (diagnostic: RuntimeDiagnostic) => void
+  /** Draws from [0, 1) for the budgets' jitter. Default Math.random. */
+  readonly random?: () => number
 }
 
 /** The parts of manifest.limits that pace and guard a site. */
 export type SiteLimits = Pick<
   AdapterManifest['limits'],
-  'minGapMs' | 'cooldownSeconds' | 'maxCooldownSeconds'
+  | 'minGapMs'
+  | 'cooldownSeconds'
+  | 'maxCooldownSeconds'
+  | 'requestsPerHour'
+  | 'requestsPerMinute'
+  | 'gapJitterPercent'
 >
 
 /** One budget and breaker per site host, shared by every adapter and call for that site. */
@@ -277,9 +379,18 @@ export class SiteProtection {
     let guards = this.sites.get(key)
     if (guards === undefined) {
       guards = {
-        budget: new RateBudget(limits.minGapMs, this.clock, this.sleep, () => this.persistBudgets()),
+        budget: new RateBudget(
+          limits.minGapMs,
+          this.clock,
+          this.sleep,
+          () => this.persistBudgets(),
+          this.options.random,
+        ),
         breaker: new SiteCircuitBreaker(this.clock, breakerOptions, this.eventsFor(key)),
       }
+      guards.budget.cap(limits.requestsPerHour)
+      guards.budget.capMinute(limits.requestsPerMinute)
+      guards.budget.stretch(limits.gapJitterPercent)
       this.sites.set(key, guards)
       if (this.loaded) {
         this.applyStored(key, guards)
@@ -288,6 +399,9 @@ export class SiteProtection {
       }
     } else {
       guards.budget.widen(limits.minGapMs)
+      guards.budget.cap(limits.requestsPerHour)
+      guards.budget.capMinute(limits.requestsPerMinute)
+      guards.budget.stretch(limits.gapJitterPercent)
       guards.breaker.widen(breakerOptions)
     }
     return guards

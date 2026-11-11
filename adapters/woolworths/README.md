@@ -128,6 +128,26 @@ session expires between the probe and the call, the site answers 401; the tool t
 `ensure()` once more and starts again from the top. Retrying is safe because the refused request
 changed nothing, and `add_to_cart` re-reads the trolley before writing, so it never adds twice.
 
+Three numbers shape a run of cart calls, all declared in the manifest and all assumptions
+Nick hasn't been asked about ([benchmark](../../docs/findings/2026-11-10-shop-benchmark.md)):
+
+- **The probe is trusted for 60 s, by write tools only** (`session.probe.trustSeconds`). An
+  `add_to_cart`, `set_cart_quantity` or `remove_from_cart` within a minute of a "logged in" probe
+  skips its own. `get_cart` always probes and always reads the site's own trolley, so it is the
+  check to end a shop with. The risk taken: a session that ends inside that minute sends the
+  writes of that minute to an anonymous trolley, reported as successes, until the next probe logs
+  in again. Set `PROBE_TRUST_SECONDS` to 0 in `manifest.ts` to take it back.
+- **Gaps of 10 to 15 s and at most 4 requests a minute** (`limits.gapJitterPercent`,
+  `limits.requestsPerMinute`), as D28 says. These two are Nick's accepted numbers, not assumptions.
+- **At most 100 requests an hour** (`limits.requestsPerHour`). D28 said 60, which a thirty-item
+  shop can't fit. A call that would start past the cap is refused with a time to try again.
+- **The runtime's read cache** (D28). Search and product answers are reused for 15 minutes. The
+  trolley is reused for 2 minutes and only as the starting point of an `add_to_cart`; a cart
+  write's reply replaces it. So a run of adds reads the trolley once. An add that starts from a
+  cached trolley the person has since changed in their own browser overwrites that one line's
+  quantity, as it would have within the 10 s between its read and its write before. A cached
+  trolley the adapter can't fully read is never used: the site is asked.
+
 An HTML 2xx can be Akamai's challenge or the login page served to an expired session; nothing in
 the response tells them apart. It is reported as `blocked-by-site`, as the runtime's own block
 detection does, so the runtime backs off; its next `ensure()` probe then finds an expired session.

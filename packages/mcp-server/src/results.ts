@@ -46,6 +46,15 @@ export function toolResult(outcome: CallOutcome, structured: boolean): CallToolR
     case 'blocked': {
       // Only a site's refusal or a rate limit passes with time; a guard's refusal (denied-path,
       // request-ceiling, ...) never will, and "try again" would invite a retry loop against it.
+      if (outcome.stage === 'login' && outcome.errorClass === 'login-in-progress') {
+        // D50: the call started a login and was answered without waiting for it.
+        return textResult(
+          'Valet is logging in to the site first, so this call was not carried out and nothing was ' +
+            'changed (stage login: login-in-progress). Call it again in ' +
+            `${retryAfterSeconds(outcome.retryAfterMs)} seconds; if the login needs the person, that call will say so.`,
+          true,
+        )
+      }
       if (!RETRYABLE.includes(outcome.errorClass)) return failedResult(outcome.stage, outcome.errorClass)
       const { stage, errorClass } = safeCodes(outcome.stage, outcome.errorClass)
       if (errorClass === 'busy') {
@@ -54,6 +63,15 @@ export function toolResult(outcome: CallOutcome, structured: boolean): CallToolR
           `Valet is still working through earlier calls (${aheadCount(outcome.ahead)} ahead of this ` +
             `one), so this call was not started and nothing was sent (stage ${stage}: busy). ` +
             `Try again in ${retryAfterSeconds(outcome.retryAfterMs)} seconds, one call at a time.`,
+          true,
+        )
+      }
+      if (stage === 'tool-run' && errorClass === 'rate-limited') {
+        // Our own hourly cap for the site, not the site refusing: the call never started.
+        return textResult(
+          'Valet has sent this site as many requests as it allows itself in an hour, so this call ' +
+            `was not started and nothing was sent (stage ${stage}: ${errorClass}). ` +
+            `Try again in ${retryAfterSeconds(outcome.retryAfterMs)} seconds.`,
           true,
         )
       }

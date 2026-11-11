@@ -789,6 +789,45 @@ describe('call results', () => {
     )
   })
 
+  it('tells a call that started a login that nothing was changed, and to call again', async () => {
+    const caller = new FakeCaller([searchProducts])
+    caller.answer = async () => ({
+      status: 'blocked',
+      stage: 'login',
+      errorClass: 'login-in-progress',
+      retryAfterMs: 30_000,
+    })
+    const { client } = await connect(caller)
+
+    const result = await client.callTool({ name: 'woolworths_search_products', arguments: { query: 'milk' } })
+
+    expect(result.isError).toBe(true)
+    expect(textOf(result)).toBe(
+      'Valet is logging in to the site first, so this call was not carried out and nothing was ' +
+        'changed (stage login: login-in-progress). Call it again in 30 seconds; if the login needs ' +
+        'the person, that call will say so.',
+    )
+  })
+
+  it('tells a call refused at Valet’s own hourly cap that nothing was sent, and when to retry', async () => {
+    const caller = new FakeCaller([searchProducts])
+    caller.answer = async () => ({
+      status: 'blocked',
+      stage: 'tool-run',
+      errorClass: 'rate-limited',
+      retryAfterMs: 1_500_000,
+    })
+    const { client } = await connect(caller)
+
+    const result = await client.callTool({ name: 'woolworths_search_products', arguments: { query: 'milk' } })
+
+    expect(result.isError).toBe(true)
+    expect(textOf(result)).toBe(
+      'Valet has sent this site as many requests as it allows itself in an hour, so this call was ' +
+        'not started and nothing was sent (stage tool-run: rate-limited). Try again in 1500 seconds.',
+    )
+  })
+
   it.each([
     [undefined, 1],
     [0, 1],

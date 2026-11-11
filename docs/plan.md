@@ -1528,6 +1528,9 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D19. Confirmation when Nick is away
 
+- Nick's answer (2026-11-10): Accepted: decline after a timeout
+  ([D50](#d50-confirmation-and-hand-off-timeouts) has the numbers). Phone confirmation stays with
+  the relay.
 - Options: decline after a timeout; push to his phone (needs the relay or a notification
   service); queue for later.
 - Recommendation: decline after a timeout in v1. Phone confirmation comes with the relay.
@@ -1727,6 +1730,18 @@ review of 2026-11-10; Nick has answered all three.
   defaults (2 s; 10 minutes doubling to 2 hours, which are also core v2's `limits` defaults), in
   memory, with no jitter, no per-page-view or per-minute cap, and no read cache. Reconciling the
   two is [D33](#d33-breaker-defaults-and-persistence).
+- **Built since (2026-11-10).** The session read cache, declared per request in the manifest
+  (`cacheSeconds`, and `refreshes` for a write whose reply is the new answer to a read). Woolworths
+  keeps search and product answers 15 minutes and the trolley 2, tighter than the line above,
+  because the person can change the same account from their own browser. Not in this decision, and
+  an assumption Nick hasn't confirmed: a write tool rests on the last "logged in" probe for 60
+  seconds (`session.probe.trustSeconds`). The thirty-item shop went from 122 requests and 20
+  minutes to 73 and 12 ([benchmark](findings/2026-11-10-shop-benchmark.md)). The hourly cap is built
+  too (`limits.requestsPerHour`), asked about when a call starts; Woolworths sets 100 rather than
+  the 60 above, which the shop doesn't fit in, also an assumption. The jitter and the per-minute
+  cap followed once [D50](#d50-confirmation-and-hand-off-timeouts) took the login out of a call's
+  two minutes (`limits.gapJitterPercent`, `limits.requestsPerMinute`); with them the shop is 78
+  requests and 19 minutes. Still unbuilt: the per-page-view cap.
 - **What it covers.** The budget and breaker sit in the runtime's guarded page and probe, so they
   see `page.fetch`, `goto` and the probe only. Navigations the page makes, clicks that submit,
   `evaluate()` fetches, the site's own requests and the whole login go unpaced and unwatched for
@@ -2094,6 +2109,14 @@ review of 2026-11-10; Nick has answered all three.
 
 ### D50. Confirmation and hand-off timeouts
 
+- Nick's answer (2026-11-10), on one part only: **a call that has to log in first answers early.**
+  It returns within seconds, saying a login is running and when to call again, and the login
+  finishes in the background. The login's time no longer counts against the tool's 2 minutes. Why:
+  the [shop benchmark](findings/2026-11-10-shop-benchmark.md) shows a cart call with a login takes
+  1.7 to 1.9 minutes of the 2 allowed, and client and tunnel time limits aren't measured.
+- Nick's answer (2026-11-10), on the rest: Accepted as recommended. A confirmation nobody answers
+  is declined after 2 minutes, and the agent can ask again. A login that needs the person returns
+  `needsUser` at once and leaves its window up for 15 minutes.
 - Today: the confirmation waits 5 minutes, a tool run 2 minutes, and the auth flow has its own
   timeout (the Woolworths steps can pause for about 60 s). The hand-off isn't wired. Clients have
   their own tool-call timeouts, which haven't been measured.

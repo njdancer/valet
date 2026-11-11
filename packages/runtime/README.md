@@ -264,6 +264,31 @@ leave it out run tool code in process, with the same guards.
   refuses from then on. `request-blocked` events (initiator `tool`) carry origin and path only,
   redacted.
 
+## Session read cache
+
+D28: a tool's repeated read is answered from memory instead of from the site (`read-cache.ts`).
+What may be kept is declared in the manifest, never guessed:
+
+- A `read` request declaration with `cacheSeconds` (1 to 3600). Its 2xx JSON-object answer is kept
+  that long, keyed by method, URL and JSON body. A request that sets any header is always sent and
+  never kept.
+- A `write` declaration with `refreshes`, the path of a declared, cached GET read: the write's own
+  2xx JSON-object reply becomes that read's cached answer (a trolley update answers with the
+  trolley). The schema refuses either field on an `irreversible` request.
+
+An answer from the cache is marked `fromCache: true`, sends nothing, takes no slot of the rate
+budget and isn't counted against `requestsPerRun`. `fetch(path, { cache: 'reload' })` asks the site
+and replaces the kept answer. Each caller gets its own copy, and the call's output is redacted
+against the session values of the call that stored the answer as well as its own.
+
+The cache is one adapter's, in memory, at most 50 answers, and it is emptied whenever the session
+may have changed: at any login, at any `ensure()` that isn't ok, when a call ends any way but ok,
+at a login step the person drives, at every write (before it is sent, so a write cut off halfway
+leaves nothing stale), and at `click()` and `evaluate()`, which can change the site out of its
+sight. The wrapper sits outside the guarded page, so every request that is sent passes the guard
+unchanged, and only a request core's `decideRequest` allows and declares a read is ever answered
+from memory.
+
 ## What the driver refuses
 
 The driver reports each request it refuses to `onBlocked`. Each becomes a `request-blocked` audit
@@ -308,6 +333,23 @@ replaced atomically), so a restart straight after a block doesn't hit the site a
 blocks carries over too, so the next block doubles. The file is read once, before the first call
 sends anything. A persisted retry time further out than `maxCooldownSeconds` is cut back to it.
 
+**Jitter and a per-minute cap,** when a manifest sets them (D28; the widest jitter and the lowest
+cap any adapter on the host declares). `limits.gapJitterPercent` stretches each gap by a random
+share of `minGapMs`, up to that percentage, and never shortens one; the draw is `random` in the
+host's options (default `Math.random`). `limits.requestsPerMinute` makes a request wait until the
+oldest of the minute's requests is a minute old. Both are waits inside `acquire()`, so they apply
+to everything the budget paces: tool requests, the probe, and each step of a login.
+
+**An hourly cap,** when a manifest sets `limits.requestsPerHour` (D28; the lowest any adapter on
+the host declares). Every request the budget lets through counts. The cap is asked about in one
+place, when a tool call starts, after the breaker and before any confirmation: at the cap the call
+ends `blocked` with `cause: 'hourly-cap'` and the time until the oldest of the hour's requests is an
+hour old, having sent nothing. It is audited as `failed tool-run/rate-limited`, since `blocked` in
+the log means the site refused us, and it leaves the breaker alone. Nothing waits on the cap in
+the middle of a call, so a write is never stranded after its read nor a login halfway; the hour can
+run over by what one call sends. A login step the person drives is never refused by it. The count
+is kept in memory, so a restart forgets it.
+
 **The pace persists too,** when a `budgetStore` is given. Each request let through writes the time
 it went, per host, to that store (not waited for, so the disk never holds a request up), and after
 a restart the first request to a host waits out the rest of its `minGapMs` since the last one
@@ -341,6 +383,16 @@ raises `breaker-state-write-failed`.
 
 No login starts while the site's breaker is open.
 
+**Resting on the last probe.** A fetch probe may set `trustSeconds` (0 to 300; unset means never).
+For that long after the probe last answered "logged in", a `write` tool's first `ensure()` in a call
+returns ok without probing. A `read` tool and an `irreversible` tool always probe: a read's whole
+worth is its answer, and nothing that can't be undone rests on an old one. The second `ensure()` in
+one call always probes too, since it means the tool met a logged-out answer. The answer is
+forgotten when a probe ends any other way, when a call ends any way but ok, at a login step the
+person drives, and at a restart; it is not used while the page is off the probe's origin. What it
+costs: a session that ends inside the window isn't noticed until the window closes, and a write sent
+meanwhile goes wherever the site sends a logged-out visitor's.
+
 Logins are rationed:
 
 - At most one login per call. Later `ensure()`s in the call get that login's outcome; if the
@@ -360,6 +412,18 @@ Logins are rationed:
 - A marker store that can't be written fails as `login/login-in-progress`.
 
 Concurrent `ensure()`s from one call share one login.
+
+**A login doesn't keep the caller (D50, answered 2026-11-10).** When a call's `ensure()` starts a
+login that is still running after `loginAnswerMs` (5 s), the call ends `logging-in` with a time to
+call again (30 s), audited as `failed login/login-in-progress`. From then on tool code gets nothing
+back and every capability refuses: the tool did nothing but find the session logged out, so making
+the call again repeats nothing. The login alone runs on, under the adapter's lock and the driver's
+run, for up to `loginTimeoutMs` (5 min) before it is stopped; a caller that goes away after its
+answer doesn't stop it. Calls that arrive meanwhile wait their turn as usual and may end `busy`.
+How the login ended, when it wasn't ok, is kept for ten minutes and given to the next call's first
+`ensure()` once, so the reason (a missing grant, a CAPTCHA) reaches a caller; after that the hold
+the login left answers. A login that finishes inside the 5 s completes within its call as before.
+An irreversible tool answered this way is asked about again on the next call.
 
 ## Redaction
 
