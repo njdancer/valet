@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { href, parseRoute } from '../src/renderer/lib/router'
+import { panelOnlyRoute } from '../src/renderer/lib/routes'
 
 describe('parseRoute', () => {
   it('parses every route the main process may open', () => {
@@ -88,5 +89,14 @@ describe('parseRoute', () => {
       review: false,
       secret: odd,
     })
+  })
+})
+
+describe('panelOnlyRoute', () => {
+  it('keeps the confirmation panel and the hand-off banner out of the control panel', () => {
+    expect(panelOnlyRoute(href.confirm('cf_1'))).toBe(true)
+    expect(panelOnlyRoute(href.needsUser('woolworths'))).toBe(true)
+    expect(panelOnlyRoute(href.review('woolworths'))).toBe(false)
+    expect(panelOnlyRoute(href.activity())).toBe(false)
   })
 })

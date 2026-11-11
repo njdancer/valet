@@ -743,8 +743,8 @@
   padding: 0;
 }
 
-/* The popover's window has a fixed height: when what needs you outgrows it, that list scrolls and
-   the menu at the bottom stays in view. */
+/* The popover's window has a fixed height. When everything doesn't fit, the adapters list gives up
+   its room first, then what needs you scrolls; the menu at the bottom always stays in view. */
 .tray-body .popover {
   display: flex;
   flex-direction: column;
@@ -758,6 +758,14 @@
 .tray-body .popover > .needs-list {
   flex: 0 1 auto;
   min-height: 0;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+
+/* The adapters list shrinks first, but keeps its label and one adapter in view. */
+.tray-body .popover > .adapter-list {
+  flex: 0 10000 auto;
+  min-height: 76px;
   overflow-y: auto;
 }
 
