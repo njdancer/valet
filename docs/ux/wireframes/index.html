@@ -293,6 +293,11 @@ a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   color: var(--wf-bad);
   border-color: currentColor;
 }
+.wf-btn.danger.solid {
+  background: var(--wf-bad);
+  border-color: var(--wf-bad);
+  color: #fff;
+}
 .wf-btn.ghost {
   border-color: transparent;
   background: transparent;
@@ -755,7 +760,7 @@ a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   top: 44px;
   left: 50%;
   transform: translateX(-50%);
-  width: 600px;
+  width: 560px;
   max-height: calc(100% - 64px);
   background: var(--wf-paper);
   border: 1px solid var(--wf-line-2);
@@ -766,7 +771,7 @@ a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
   box-shadow: 0 20px 40px var(--wf-shadow);
 }
 .wf-sheet.wide {
-  width: 820px;
+  width: 720px;
 }
 .wf-sheet header {
   display: flex;
@@ -1011,7 +1016,10 @@ const K = {
   // ---- atoms ----
   btn: (label, kind = '') => `<span class="wf-btn ${kind}">${label}</span>`,
   primary: (label) => K.btn(label, 'primary'),
-  danger: (label) => K.btn(label, 'danger'),
+  // danger: solid, only on the confirm of something that can't be undone. dangerSoft: the trigger that
+  // opens that confirm (headers, cards). (Design system M17.)
+  danger: (label) => K.btn(label, 'danger solid'),
+  dangerSoft: (label) => K.btn(label, 'danger'),
   ghost: (label) => K.btn(label, 'ghost'),
   icon: (label) => `<span class="wf-btn icon" title="${label}">${label}</span>`,
   // Status badge: never interactive (E1). Tones: ok, warn, bad, info, idle, write, read, secret.
@@ -1020,7 +1028,8 @@ const K = {
   link: (label) => `<span class="wf-link">${label}</span>`,
   // Selectable value with copy (E3): hashes, URLs, ids, codes.
   value: (v) => `<span class="wf-value">${v}<span class="wf-copy">⧉</span></span>`,
-  countdown: (left, until) => `<span class="wf-count">${left}<small> until ${until}</small></span>`,
+  // Deadline in the library's words (design M19): "2 min · until 9:50 pm", then "30 s" when urgent.
+  countdown: (left, until) => `<span class="wf-count">${left}<small> · until ${until}</small></span>`,
   input: (ph, w = '') => `<span class="wf-input" style="${w ? `width:${w}` : ''}">${ph}</span>`,
   search: (ph) => `<span class="wf-input search">⌕ ${ph}</span>`,
   toggle: (on) => `<span class="wf-toggle ${on ? 'on' : ''}"></span>`,
@@ -1151,14 +1160,14 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
   const waiting = `
     ${K.header({
       title: 'Needs you',
-      status: K.badge('4 waiting · next ends in 1:42', 'warn'),
+      status: `<span class="muted">4 waiting · next ends</span> ${K.countdown('2 min', '9:50 pm')}`,
       actions: K.ghost('Notification settings'),
     })}
     <div class="wf-scroll">
       <div class="col">
-        ${K.inbox('?', 'Confirm: Remove from cart (Woolworths)', `Claude Code asked at 9:48 pm · call ${K.link('7F2A')}`, K.countdown('1:42', '9:50 pm'), K.primary('Answer…'), 'urgent')}
-        ${K.inbox('⇄', 'Approve a connection', 'Asked 9:47 pm from 203.0.113.24 · calls itself "Claude (claude.ai)" (not verified)', K.countdown('4:10', '9:52 pm'), K.btn('Decline') + K.btn('Approve…'))}
-        ${K.inbox('→', 'Log in to Woolworths (verification check)', `A check only you can do · call ${K.link('9A71')} get_cart for ${K.link('Claude Code')}`, K.countdown('14:10', '10:02 pm'), K.btn('Show login window'))}
+        ${K.inbox('?', 'Confirm: Remove from cart (Woolworths)', `Claude Code asked at 9:48 pm · call ${K.link('7F2A')}`, K.countdown('2 min', '9:50 pm'), K.primary('Answer…'), 'urgent')}
+        ${K.inbox('⇄', 'Approve a connection', 'Asked 9:47 pm from 203.0.113.24 · calls itself "Claude (claude.ai)" (not verified)', K.countdown('4 min', '9:52 pm'), K.btn('Decline') + K.btn('Approve…'))}
+        ${K.inbox('→', 'Log in to Woolworths (verification check)', `A check only you can do · call ${K.link('9A71')} get_cart for ${K.link('Claude Code')}`, K.countdown('14 min', '10:02 pm'), K.btn('Show login window'))}
         ${K.inbox('↑', 'Review the Woolworths update (0.4.0)', 'Adds 1 host, 1 read tool · calls use 0.3.0 until you approve', '', K.btn('Review update'))}
       </div>
       <div class="row faint" style="margin-top:8px"><span class="h3" style="color:var(--wf-ink-2)">Missed in the last 24 hours</span></div>
@@ -1266,7 +1275,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
     'Approve a connection',
     `<div class="wf-banner warn"><div class="grow"><b>If you didn't start this, decline it.</b> Approving lets this agent call the tools you tick, from anywhere, until you remove it.</div></div>
      ${K.kv([
-       ['Asked', '9:47 pm · ends 9:52 pm ' + K.countdown('4:10', '9:52 pm')],
+       ['Asked', '9:47 pm · ends 9:52 pm ' + K.countdown('4 min', '9:52 pm')],
        ['From', K.value('203.0.113.24')],
        ['Calls itself', '"Claude (claude.ai)" <span class="faint">· not verified</span>'],
      ])}
@@ -1312,7 +1321,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
     ],
   })
   const more = `
-    ${K.header({ title: 'Needs you', status: K.badge('5 waiting · none time-limited', 'idle') })}
+    ${K.header({ title: 'Needs you', status: '<span class="muted">5 waiting · none time-limited</span>' })}
     <div class="wf-scroll"><div class="col">
       ${K.inbox('!', 'Woolworths changed: the adapter needs an update', `Call ${K.link('6B3E')} search_products failed at 8:05 pm · the authoring agent has a repair ticket`, '', K.btn('See what broke'))}
       ${K.inbox('⚿', 'Give Valet your Woolworths login', 'Woolworths can search without it; cart tools wait for a login', '', K.btn('Choose login…'))}
@@ -1481,7 +1490,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
     `<div class="wf-inbox" style="align-items:flex-start">${K.avatar(av)}<div class="grow" style="gap:8px">
        <div class="row"><b style="font-size:13px">${K.link(name)}</b>${mono(ver)}<span class="grow"></span>${extra}</div>${health}</div></div>`
   const list = `
-    ${K.header({ title: 'Sites', status: K.badge('3 sites', 'idle'), actions: K.ghost('Check all now') })}
+    ${K.header({ title: 'Sites', status: '<span class="muted">3 sites</span>', actions: K.ghost('Check all now') })}
     <div class="wf-scroll" style="gap:10px">
       ${siteRow(
         'W',
@@ -1814,7 +1823,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
       [
         818,
         725,
-        'The toast offers Undo and ⌘Z (P1). It stays until focus leaves it, so Jordan can reach it (P5).',
+        'The toast offers Undo and ⌘Z (P1). It lasts 10 s, stops counting while hovered or focused, and Alt+T reaches it, so Jordan can get to it (P5).',
       ],
       [
         235,
@@ -1908,7 +1917,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
       [
         475,
         717,
-        'Toast: "Woolworths 0.4.0 approved; the next call uses it." No Undo: going back is a Restore, which is a review (decision). It stays until focus leaves it.',
+        'Toast: "Woolworths 0.4.0 approved; the next call uses it." No Undo: going back is a Restore, which is a review (decision). It follows the one toast rule (10 s, held while hovered or focused, Alt+T).',
       ],
       [
         813,
@@ -2036,10 +2045,10 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
         ${K.card(
           "What it can't do",
           `<div class="col" style="gap:6px">
-            <div class="row">${K.dot('bad')}<span>Pay or check out: no tool or request for it is declared</span></div>
-            <div class="row">${K.dot('bad')}<span>Contact any other web address. Valet blocks it and shows it in Calls (${K.link('2 blocked today')})</span></div>
-            <div class="row">${K.dot('bad')}<span>Use any login but the one you gave it</span></div>
-            <div class="row">${K.dot('bad')}<span>See other sites' sessions or cookies</span></div>
+            <div class="row">${K.dot('idle')}<span>Pay or check out: no tool or request for it is declared</span></div>
+            <div class="row">${K.dot('idle')}<span>Contact any other web address. Valet blocks it and shows it in Calls (${K.link('2 blocked today')})</span></div>
+            <div class="row">${K.dot('idle')}<span>Use any login but the one you gave it</span></div>
+            <div class="row">${K.dot('idle')}<span>See other sites' sessions or cookies</span></div>
           </div>`,
           '<span class="faint">worked out by Valet from the declaration</span>',
         )}
@@ -2390,9 +2399,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
   // ---------- Code diff viewer (over the review page) ----------
   const fileRow = (path, badge, counts, on) =>
     `<div class="row" style="padding:7px 10px;border-radius:6px;${on ? 'background:var(--wf-sel);font-weight:600' : ''}">${mono(path)}<span class="grow"></span><span class="faint">${counts}</span></div><div style="padding:0 10px 4px">${badge}</div>`
-  const diffSheet = sheet(
-    `Code changes · Woolworths 0.3.0 → 0.4.0`,
-    `<div style="display:grid;grid-template-columns:230px minmax(0,1fr);gap:14px;min-height:0">
+  const diffBody = `<div style="display:grid;grid-template-columns:230px minmax(0,1fr);gap:14px;min-height:0">
        <div class="col" style="gap:2px;border-right:1px solid var(--wf-line);padding-right:10px">
          <span class="faint" style="padding:0 10px 4px">3 files · +164 −1</span>
          ${fileRow('src/tools/rewards.ts', K.badge('added', 'ok'), '+64', true)}
@@ -2426,41 +2433,46 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
            <div class="faint" style="padding:4px 44px">44 more lines · scrolls</div>
          </div>
        </div>
-     </div>`,
-    `<span class="faint">${K.kbd('↑')} ${K.kbd('↓')} files · ${K.kbd('Esc')} back to the review</span><span class="grow"></span>${K.btn('Previous file')}${K.btn('Next file')}${K.primary('Back to review')}`,
-    'wide',
-  ).replace('class="wf-sheet wide"', 'class="wf-sheet wide" style="width:1120px"')
+     </div>`
+  const diffPage = `
+    ${K.header({
+      crumbs: ['Sites', 'Woolworths', 'Versions', 'Review 0.4.0', 'Code changes'],
+      title: 'Code changes · Woolworths 0.3.0 → 0.4.0',
+      actions: K.btn('Previous file') + K.btn('Next file') + K.primary('Back to review'),
+      sub: `<span class="faint">${K.kbd('↑')} ${K.kbd('↓')} files (while the file list has focus) · ${K.kbd('Esc')} or ${K.kbd('⌘[')} back to the review</span>`,
+    })}
+    <div class="wf-scroll" style="padding-top:14px">${diffBody}</div>`
   FRAMES.push({
     id: 'site-review-diff',
     group: 'Sites',
-    title: 'Code diff viewer, over the review',
+    title: 'Code diff viewer (a page inside the review)',
     personas: ['P4', 'P3', 'P5'],
-    desc: 'Opened by "Open diff" on a code file row of the review. A sheet as wide as the window over the review page: files on the left, the unified diff on the right. Esc returns to the review with focus on the row that opened it.',
-    html: shell('sites', review, { site: 0, sites: sites(), badges: NEEDS, over: diffSheet }),
+    desc: 'Opened by "Open diff" on a code file row of the review. A page inside the review (#/sites/woolworths/versions/0.4.0/review/diff), not a sheet: sheets stop at 720, too narrow for code (design M2). Files on the left, the unified diff on the right. Back, Esc or ⌘[ return to the review with focus on the row that opened it.',
+    html: shell('sites', diffPage, { site: 0, sites: sites(), badges: NEEDS }),
     notes: [
       [
-        29,
-        63,
-        'Sheet, not a new window: it opens over the review page (principle 5), so the decision footer is one Esc away. Nearly window-wide so code is not cramped (P4).',
+        420,
+        92,
+        'A page inside the review, with a breadcrumb back to it: the decision footer is one Esc or ⌘[ away, and code gets the whole content width (P4, design M2).',
       ],
       [
-        39,
-        148,
-        'Every changed file, with its counts; ↑ ↓ move between files without leaving the keyboard (P4). The file the person clicked opens first.',
+        330,
+        215,
+        'Every changed file, with its counts; ↑ ↓ move between files while the list has focus (P4). The file the person clicked opens first.',
       ],
       [
-        969,
-        121,
+        1050,
+        170,
         'Unified by default; Split is remembered per viewer. Copy takes the whole file at this version.',
       ],
       [
-        328,
-        160,
+        755,
+        335,
         'The diff is a value: selectable and copyable (E3). Line numbers and +/− are in text too, not only colour (P5).',
       ],
       [
-        1007,
-        585,
+        1000,
+        60,
         'Esc or "Back to review" returns to the review with focus on the "Open diff" row that opened it (P5).',
       ],
     ],
@@ -2542,7 +2554,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
         <div class="big" style="font-size:17px">Woolworths lets Claude search products and read and change your Woolworths cart. It can't pay or check out.</div>
         <div class="grid3" style="gap:12px">
           <div class="col" style="gap:6px"><span class="h3">It can</span>${fact('ok', 'Search products and read product details')}${fact('ok', 'Read your cart')}${fact('ok', 'Add, change and remove cart items (asks you before removing)')}</div>
-          <div class="col" style="gap:6px"><span class="h3">It can't</span>${fact('bad', 'Pay or check out')}${fact('bad', 'Contact anything but 3 Woolworths web addresses')}${fact('bad', 'Use any login but the one you choose')}</div>
+          <div class="col" style="gap:6px"><span class="h3">It can't</span>${fact('idle', 'Pay or check out')}${fact('idle', 'Contact anything but 3 Woolworths web addresses')}${fact('idle', 'Use any login but the one you choose')}</div>
           <div class="col" style="gap:6px"><span class="h3">It will need</span>${fact('info', 'Your Woolworths login, filled only on auth.woolworths.com.au')}${fact('info', 'A store, for prices and stock')}</div>
         </div>
       </div></div>
@@ -2905,7 +2917,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
     ok: K.badge('ok', 'ok'),
     okb: (n) => K.badge(`ok, ${n} blocked`, 'info'),
     changed: K.badge('Failed · site changed', 'bad'),
-    limited: K.badge('Limited by site', 'bad'),
+    limited: K.badge('Limited by site', 'warn'),
     wait: K.badge('Waiting for you', 'warn'),
     login: K.badge('Needs you · login', 'warn'),
     missed: K.badge('Missed · nobody answered', 'idle'),
@@ -2975,7 +2987,9 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
       crumbs: ['Activity'],
       title: 'Calls',
       actions:
-        `<span class="muted">${count}</span>` + K.ghost('Traces kept 14 days · Change') + K.btn('Export…'),
+        `<span class="muted">${count}</span>` +
+        `<span class="faint">Traces kept 14 days</span> ${K.link('Change')}` +
+        K.btn('Export…'),
       tabs: tabs(0),
     })
   const anyChips = [
@@ -4102,7 +4116,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
       crumbs: ['Connections', 'Apps on this Mac'],
       title: 'Claude Code',
       status: K.badge('Connected · 1 session', 'ok'),
-      actions: K.btn('Reset access…') + K.danger('Revoke…'),
+      actions: K.btn('Reset access…') + K.dangerSoft('Revoke…'),
     })}
     <div class="wf-scroll">
       <div class="grid2" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr)">
@@ -4243,7 +4257,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
     `<div>Claude Code gets a new token and <b>the old one stops working at once</b>. Use this if you think the token leaked.</div>
      <div>Its open session ends and its 2 waiting calls (7F2A, 9A71) are declined. The Valet bridge reads the new token from Claude Code's config file and reconnects by itself; nothing to set up again.</div>
      <div>This can't be undone. To cut Claude Code off completely, use Revoke.</div>`,
-    `<span class="grow"></span>${K.btn('Cancel')}${K.primary('Reset access')}`,
+    `<span class="grow"></span>${K.btn('Cancel')}${K.danger('Reset access')}`,
   )
 
   FRAMES.push({
@@ -4278,7 +4292,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
       title: 'Claude (claude.ai)',
       status: K.badge('Connected', 'ok'),
       sub: `Calls itself “Claude (claude.ai)” <i>(not verified)</i> · approved 9:50 pm from ${mono('203.0.113.24')} · a later moment than the story`,
-      actions: K.btn('Reset access…') + K.danger('Revoke…'),
+      actions: K.btn('Reset access…') + K.dangerSoft('Revoke…'),
     })}
     <div class="wf-scroll">
       <div class="grid2" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr)">
@@ -4456,7 +4470,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
     [
       `${K.avatar('W')}<b>Woolworths</b>`,
       `<span>login for ${ver('0.4.0')}</span>`,
-      '<span class="faint">Not given yet</span>',
+      K.badge('Not given yet', 'idle'),
       mono('auth.woolworths.com.au'),
       ver('0.4.0'),
       '—',
@@ -4523,7 +4537,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
       crumbs: ['Secrets', 'Logins Valet may use'],
       title: 'Woolworths login',
       status: K.badge('Ready', 'ok'),
-      actions: K.btn('Re-sync from 1Password') + K.danger('Revoke…'),
+      actions: K.btn('Re-sync from 1Password') + K.dangerSoft('Revoke…'),
     })}
     <div class="wf-scroll">
       <div class="grid2" style="grid-template-columns:minmax(0,1fr) minmax(0,1fr)">
@@ -4604,7 +4618,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
      <div>Next time Woolworths logs Valet out, calls stop with “Give Valet your Woolworths login” in Needs you until you choose one again.</div>
      ${K.check('Also log Valet out of Woolworths now', true)}
      <div>The waiting call 9A71 is declined. This can't be undone.</div>`,
-    `<span class="grow"></span>${K.btn('Cancel')}<span class="wf-btn" style="background:var(--wf-bad);color:#fff;border-color:var(--wf-bad)">Revoke login</span>`,
+    `<span class="grow"></span>${K.btn('Cancel')}${K.danger('Revoke login')}`,
   )
 
   FRAMES.push({
@@ -4713,7 +4727,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
     ${K.header({ crumbs: ['Settings'], title: label })}
     <div style="display:flex;flex:1;min-height:0">
       ${subnav(active)}
-      <div class="wf-scroll" style="max-width:700px;gap:22px">${body}</div>
+      <div class="wf-scroll" style="max-width:760px;gap:22px">${body}</div>
     </div>${over}`
   }
 
@@ -4964,12 +4978,12 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
         row(
           'Reset Valet',
           'Removes sites, logins Valet may use, Keychain copies, apps and their tokens, traces and settings. Keeps the audit log.',
-          K.danger('Reset Valet…'),
+          K.dangerSoft('Reset Valet…'),
         ),
         row(
           'Uninstall Valet',
           'Does a reset, removes the audit log and Valet Messages Helper, then moves Valet to the Bin.',
-          K.danger('Uninstall…'),
+          K.dangerSoft('Uninstall…'),
         ),
       ]),
   )
@@ -4984,7 +4998,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
      </ul>
      <div>The audit log is kept. ${K.link('Export it first')}</div>
      <div>This can't be undone. Your 1Password items aren't touched.</div>`,
-    `<span class="grow"></span>${K.btn('Cancel')}<span class="wf-btn" style="background:var(--wf-bad);color:#fff;border-color:var(--wf-bad)">Reset Valet</span>`,
+    `<span class="grow"></span>${K.btn('Cancel')}${K.danger('Reset Valet')}`,
   )
   FRAMES.push({
     id: 'settings-reset',
@@ -5105,9 +5119,9 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
     html: pop(`
       ${head('4 things need you · next ends 9:50 pm', 'warn', pauseBtn)}
       ${sec('Needs you', '<span class="wf-alert" style="margin:0">4</span>')}
-      ${row('?', 'Confirm: Remove from cart (Woolworths)', 'Asked by Claude Code at 9:48 pm', due('1:42', '9:50 pm', 'Answer'), { focus: true, urgent: true })}
-      ${row('⇄', 'Approve a connection', 'Asked 9:47 pm from 203.0.113.24 · calls itself "Claude (claude.ai)", not verified', due('4:10', '9:52 pm', 'Open'))}
-      ${row('→', 'Log in to Woolworths (verification check)', 'Login window is open · for Claude Code', due('14:10', '10:02 pm', 'Show login window'))}
+      ${row('?', 'Confirm: Remove from cart (Woolworths)', 'Asked by Claude Code at 9:48 pm', due('2 min', '9:50 pm', 'Answer'), { focus: true, urgent: true })}
+      ${row('⇄', 'Approve a connection', 'Asked 9:47 pm from 203.0.113.24 · calls itself "Claude (claude.ai)", not verified', due('4 min', '9:52 pm', 'Open'))}
+      ${row('→', 'Log in to Woolworths (verification check)', 'Login window is open · for Claude Code', due('14 min', '10:02 pm', 'Show login window'))}
       <div class="row" style="padding:4px 16px;flex:none;gap:6px"><span class="faint">+1 more:</span>${K.link('Review the Woolworths update (0.4.0)')}</div>
       <div class="muted" style="padding:2px 16px 4px;flex:none;font-size:11px">${K.link('Missed (1)')} Missed: Confirm: Remove from cart (Woolworths) · 6:12 pm</div>
       ${sites([
@@ -5245,7 +5259,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
       <div class="row muted" style="padding:4px 8px;font-size:10px;flex:none;flex-wrap:wrap">${K.dot('warn')} 4 things need you</div>
       <div style="margin:2px 6px;padding:5px 6px;border-radius:6px;outline:2px solid var(--wf-act);outline-offset:-2px;background:var(--wf-sel);flex:none">
         <b style="font-size:11px;line-height:1.25;display:block">Confirm: Remove from cart (Woolworths)</b>
-        <span class="wf-count" style="font-size:11px">1:42</span><small class="faint" style="font-size:9px"> until 9:50 pm</small>
+        <span class="wf-count" style="font-size:11px">2 min</span><small class="faint" style="font-size:9px"> · until 9:50 pm</small>
         <div style="font-size:10px;color:var(--wf-link);font-weight:600">Answer ›</div></div>
       <div style="padding:4px 8px;flex:none;font-size:10.5px">${K.link('+3 more in Valet')}</div>
       <div style="padding:2px 8px;flex:none;font-size:10px">${K.link('Missed (1)')}</div>
@@ -5468,7 +5482,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
         checked() +
         `<div class="muted" style="font-size:11.5px">If nobody answers by 9:50 pm, nothing is removed and Claude is told it timed out.</div>`,
       foot:
-        buttons(K.countdown('1:42', '9:50 pm'), true) +
+        buttons(K.countdown('2 min', '9:50 pm'), true) +
         `<div class="faint" style="font-size:11px;text-align:right">Ready in a moment, so a key press meant for another app can't answer this.</div>`,
     }),
     notes: [
@@ -5512,7 +5526,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
       strip: of4,
       body: title + fromSite() + checked(true),
       foot:
-        buttons(K.countdown('1:42', '9:50 pm')) +
+        buttons(K.countdown('2 min', '9:50 pm')) +
         `<div class="faint" style="font-size:11px">Valet never pays. Checkout is always you, on woolworths.com.au.</div>`,
     }),
     notes: [
@@ -5539,12 +5553,12 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
     desc: 'The countdown grows and turns to the alert colour; one announcement at 30 s. The count stays, and nothing else moves, so the buttons stay where the hand already is.',
     html: conf({
       strip:
-        '<b style="font-size:11px;color:var(--wf-bad)">Ends in 0:24</b><span class="faint" style="font-size:11px">· 1 of 4 waiting</span>',
+        '<b style="font-size:11px;color:var(--wf-bad)">Ends in 24 s</b><span class="faint" style="font-size:11px">· 1 of 4 waiting</span>',
       stripTone: 'bad',
       body: title + fromSite() + checked(),
       foot:
         buttons(
-          `<span class="wf-count" style="font-size:22px;color:var(--wf-bad);display:flex;align-items:baseline;gap:8px">0:24<small>until 9:50 pm</small></span>`,
+          `<span class="wf-count" style="font-size:22px;color:var(--wf-bad);display:flex;align-items:baseline;gap:8px">24 s<small>· until 9:50 pm</small></span>`,
         ) +
         `<div style="font-size:11px;color:var(--wf-bad)">At 9:50 pm nothing is removed and Claude is told it timed out.</div>`,
     }),
@@ -5577,7 +5591,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
       body: `<div style="font:600 17px/1.3 var(--f-head)">Confirm: Remove from cart (Woolworths)</div>
         <div class="wf-banner ok"><div class="grow"><b>You chose Remove from cart at 9:48 pm.</b> Valet is doing it now; Claude Code gets the result of call ${K.link('7F2A')}.</div></div>
         <div class="h3">Next, by deadline</div>
-        ${K.inbox('⇄', 'Approve a connection', 'Asked 9:47 pm · calls itself "Claude (claude.ai)", not verified', K.countdown('3:58', '9:52 pm'), `<span class="wf-btn" style="${focusRing}">Open</span>`)}
+        ${K.inbox('⇄', 'Approve a connection', 'Asked 9:47 pm · calls itself "Claude (claude.ai)", not verified', K.countdown('4 min', '9:52 pm'), `<span class="wf-btn" style="${focusRing}">Open</span>`)}
         <span class="faint" style="font-size:11px">If you chose "Don't remove", this says "You chose Don't remove at 9:48 pm. Nothing was removed; Claude Code was told you declined."</span>`,
       foot: `<div class="row"><span class="faint" style="font-size:11px">Closes in 5 s</span><span class="grow"></span>${K.btn('Close')}</div>`,
     }),
@@ -5692,7 +5706,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
         'If Woolworths asks again, log in. Valet already typed your email and password.',
         "Press <b>I'm done</b>. Valet checks you're logged in, and Claude's next call goes through.",
       ]),
-      deadline: `<div style="text-align:right">${K.countdown('14:10', '10:02 pm')}<div class="faint" style="font-size:11px">then this window closes</div></div>`,
+      deadline: `<div style="text-align:right">${K.countdown('14 min', '10:02 pm')}<div class="faint" style="font-size:11px">then this window closes</div></div>`,
       buttons: doneBtns(),
       foot: `${asked} · Claude finds out on its next call, whichever button you press.`,
       page: siteBox(
@@ -5744,7 +5758,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
           "Press <b>I'm done</b>.",
         ]) +
         `<div class="row" style="gap:8px;margin-top:2px"><span class="muted">Valet can read these codes from Messages for you next time.</span>${K.btn('Set up one-time codes…')}</div>`,
-      deadline: `<div style="text-align:right">${K.countdown('14:10', '10:02 pm')}<div class="faint" style="font-size:11px">the code itself may expire sooner</div></div>`,
+      deadline: `<div style="text-align:right">${K.countdown('14 min', '10:02 pm')}<div class="faint" style="font-size:11px">the code itself may expire sooner</div></div>`,
       buttons: doneBtns(),
       foot: `${asked} · Claude finds out on its next call.`,
       page: siteBox(
@@ -5781,7 +5795,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
       title: 'Log in to Woolworths (verification check)',
       tone: 'bad',
       what: `<div><b>Woolworths still shows its login page.</b> Valet checked at 10:01 pm and you're not logged in yet. Finish on the page below, then press I'm done again.</div>`,
-      deadline: `<div style="text-align:right"><span class="wf-count" style="color:var(--wf-bad)">0:48<small> until 10:02 pm</small></span><div style="font-size:11px;color:var(--wf-bad)">then this window closes</div></div>`,
+      deadline: `<div style="text-align:right"><span class="wf-count" style="color:var(--wf-bad)">48 s<small> · until 10:02 pm</small></span><div style="font-size:11px;color:var(--wf-bad)">then this window closes</div></div>`,
       buttons: doneBtns(),
       foot: `Still stuck? ${K.link('Open woolworths.com.au in Safari')} to check your password works there, then ${K.link('Choose login…')} on the Woolworths page.`,
       page: siteBox(
@@ -5849,10 +5863,10 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
   })
 
   const expiredPage = `
-    ${K.header({ title: 'Needs you', status: K.badge('3 waiting', 'warn') })}
+    ${K.header({ title: 'Needs you', status: '<span class="muted">3 waiting</span>' })}
     <div class="wf-scroll">
       <div class="col">
-        ${K.inbox('⇄', 'Approve a connection', 'Asked 10:00 pm · calls itself "Claude (claude.ai)" (not verified)', K.countdown('3:10', '10:05 pm'), K.btn('Decline') + K.btn('Approve…'))}
+        ${K.inbox('⇄', 'Approve a connection', 'Asked 10:00 pm · calls itself "Claude (claude.ai)" (not verified)', K.countdown('3 min', '10:05 pm'), K.btn('Decline') + K.btn('Approve…'))}
         ${K.inbox('↑', 'Review the Woolworths update (0.4.0)', 'Adds 1 host, 1 read tool · calls use 0.3.0 until you approve', '', K.primary('Review update'))}
       </div>
       <div class="row faint" style="margin-top:8px"><span class="h3" style="color:var(--wf-ink-2)">Missed in the last 24 hours</span></div>
@@ -5884,6 +5898,94 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
       ],
       [791, 296, 'The same retry action as a missed confirmation (round 2 decision).'],
       [1144, 452, 'The exact result string Claude Code gets on its next Woolworths call (P6 M1).'],
+    ],
+  })
+
+  // ===================== v3: states on the order path (design G5) =====================
+  FRAMES.push({
+    id: 'confirm-allow-failed',
+    group: 'Own windows',
+    size: 'conf',
+    title: 'Confirmation: you allowed it, then Woolworths failed',
+    personas: ['P7', 'P6', 'P2'],
+    desc: 'After "Remove from cart" the request ran and Woolworths answered with an error. The window says nothing was removed, what Claude Code was told, and stays open until closed (no 5 s auto-close on a failure).',
+    html: conf({
+      strip: '<span class="faint" style="font-size:11px">3 still waiting</span>',
+      stripTone: 'bad',
+      body: `<div style="font:600 17px/1.3 var(--f-head)">Confirm: Remove from cart (Woolworths)</div>
+        <div class="wf-banner bad"><div class="grow"><b>You chose Remove from cart at 9:48 pm, but it didn't work.</b> Woolworths answered with an error, so nothing was removed from your cart.</div></div>
+        <div class="col" style="gap:4px;padding:10px 12px;border:1px solid var(--wf-line);border-radius:8px">
+          <span class="faint" style="font-size:11px">Claude Code was told</span>
+          <span style="user-select:text">Failed · see call 7F2A. The person can see it in Valet, Activity, call 7F2A.</span>
+        </div>
+        <span class="muted">Your cart is as it was. If you still want the bananas gone, ask Claude to try again, or remove them on woolworths.com.au.</span>`,
+      foot: `<div class="row" style="gap:8px">${K.btn('Open call 7F2A')}${K.ghost('Ask Claude to try again…')}<span class="grow"></span><span class="wf-btn lg" style="${focusRing}">Close</span></div>`,
+    }),
+    notes: [
+      [
+        420,
+        110,
+        'What you chose, then what actually happened, in that order; never "Removed" before Woolworths confirms it (P7, P6).',
+      ],
+      [420, 220, 'The exact result string from IA section 7, as a value (P6).'],
+      [360, 350, 'A failure stays until closed; focus is on Close and the banner is announced once (P5).'],
+    ],
+  })
+
+  FRAMES.push({
+    id: 'confirm-answered-elsewhere',
+    group: 'Own windows',
+    size: 'conf',
+    title: 'Confirmation: answered somewhere else while open',
+    personas: ['P7', 'P5', 'P3'],
+    desc: 'Declined from the notification, or ended by Lock down, while this window was open. The buttons go away in place (no layout jump), the window says where and when it was answered, and Close has focus.',
+    html: conf({
+      strip: '<span class="faint" style="font-size:11px">3 still waiting</span>',
+      body: `${title}
+        <div class="wf-banner idle"><div class="grow"><b>Declined from the notification at 9:49 pm.</b> Nothing was removed; Claude Code was told you declined.</div></div>
+        ${fromSite(true)}
+        <span class="faint" style="font-size:11px">After Lock down this says "Ended by Lock down at 9:49 pm. Nothing was removed; Claude Code was told Valet is locked down."</span>`,
+      foot: `<div class="row" style="gap:8px">${K.link('Open call 7F2A')}<span class="grow"></span><span class="wf-btn lg" style="${focusRing}">Close</span></div>`,
+    }),
+    notes: [
+      [
+        420,
+        130,
+        'Names where it was answered and when, in the declined wording, never "missed" (P6: declined vs timed-out).',
+      ],
+      [
+        420,
+        230,
+        "The site's sentence is struck through, the same as Missed, so a glance says it is over (P7).",
+      ],
+      [
+        300,
+        355,
+        "Allow and Don't remove are replaced by Close in the same spot, so a late click lands on Close, not on Allow (P5, P3).",
+      ],
+    ],
+  })
+
+  FRAMES.push({
+    id: 'login-handoff-checking',
+    group: 'Own windows',
+    title: 'Login hand-off: checking after "I\'m done"',
+    personas: ['P2', 'P5', 'P7'],
+    desc: 'The second or two after "I\'m done": Valet loads a Woolworths page to see whether it is logged in. The button says Checking…, the others wait, and the result is either the success frame or "not yet".',
+    html: loginWin({
+      title: 'Log in to Woolworths (verification check)',
+      what: `<div><b>Checking you're logged in…</b> Valet is opening your Woolworths account page. This takes a few seconds.</div>`,
+      deadline: `<div style="text-align:right">${K.countdown('13 min', '10:02 pm')}<div class="faint" style="font-size:11px">then this window closes</div></div>`,
+      buttons: `<span class="wf-btn primary lg" aria-disabled="true" style="${focusRing}opacity:.85">◌ Checking…</span><span class="wf-btn" aria-disabled="true" style="color:var(--wf-ink-3)">5 more minutes</span>${K.ghost('Give up')}`,
+      foot: `${asked} · Claude finds out on its next call, whichever button you press.`,
+      page: siteBox(
+        `${K.lines(3)}<span class="faint" style="text-align:center;font-size:11px">loading woolworths.com.au/shop/myaccount…</span>`,
+      ),
+    }),
+    notes: [
+      [960, 70, 'Focus stays on the busy button; "Checking" is announced once (P5). Give up still works.'],
+      [600, 300, "The check is Valet loading the site's own page, shown as it happens, not a hidden test."],
+      [700, 120, 'Ends in login-handoff-success or login-handoff-not-yet, never a silent close.'],
     ],
   })
 })()
@@ -5924,21 +6026,21 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
         <span style="width:20px;height:20px;border-radius:50%;border:1.5px solid var(--wf-line-2);display:grid;place-items:center;font-size:10.5px;font-weight:700;flex:none;${markStyle}">${mark}</span>
         <div class="col" style="gap:0"><span style="${st === 'c' ? 'font-weight:600' : ''}">${title}</span><small class="${st === 'b' || st === 's' ? '' : 'faint'}" style="font-size:10.5px;${st === 'b' ? 'color:var(--wf-warn)' : st === 's' ? 'color:var(--wf-ink-2)' : ''}">${subs[i] || (st === 'd' ? 'Done' : st === 's' ? 'Skipped · waits in Needs you' : sub)}</small></div></div>`
     }).join('')
-  const setup = ({ states, subs, body, foot }) =>
+  const setup = ({ states, subs, body, foot, over = '' }) =>
     `<div class="wf-window">
       <div class="wf-titlebar"><span class="lights"><i></i><i></i><i></i></span><span class="grow" style="text-align:center;color:var(--wf-ink-2)">Set up Valet</span><span style="width:60px"></span></div>
       <div class="wf-body">
-        <aside class="wf-side" style="width:240px;padding:16px 10px;gap:2px">
+        <aside class="wf-side" style="width:224px;padding:16px 10px;gap:2px">
           <div class="grp" style="padding-top:0">Set up Valet · about 5 minutes</div>
           ${rail(states, subs)}
           <div class="grow"></div>
           <div class="foot" style="flex-direction:column;align-items:flex-start;gap:2px">Valet never pays.<span class="faint">Checkout is always you, on woolworths.com.au.</span></div>
         </aside>
         <main class="wf-main">
-          <div class="wf-scroll" style="padding:48px 44px 24px;gap:16px"><div class="col" style="gap:16px;max-width:820px;width:100%;margin:0 auto">${body}</div></div>
+          <div class="wf-scroll" style="padding:48px 44px 24px;gap:16px"><div class="col" style="gap:16px;max-width:760px;width:100%;margin:0 auto">${body}</div></div>
           <div class="sticky-foot" style="padding:12px 44px">${foot}</div>
         </main>
-      </div></div>`
+      </div>${over}</div>`
   const h = (title, lede) =>
     `<div class="col" style="gap:6px"><h2 style="font:600 24px/1.2 var(--f-head);margin:0">${title}</h2>${lede ? `<p class="muted" style="margin:0;font-size:13px;max-width:620px">${lede}</p>` : ''}</div>`
   const nav = (left, right) => `${left}<span class="grow"></span>${right}`
@@ -5946,7 +6048,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
   const off = (label) =>
     `<span class="wf-btn lg" aria-disabled="true" style="color:var(--wf-ink-3);border-style:dashed">${label}</span>`
   const checkRow = (ok, text, extra = '') =>
-    `<div class="row" style="gap:10px"><span style="width:18px;text-align:center;font-weight:700;color:var(--wf-${ok === true ? 'ok' : ok === false ? 'bad' : 'ink-3'})">${ok === true ? '✓' : ok === false ? '✕' : '○'}</span><span class="grow">${text}</span>${extra}</div>`
+    `<div class="row" style="gap:10px"><span style="width:18px;text-align:center;font-weight:700;color:var(--wf-${ok === true ? 'ok' : ok === false ? 'bad' : 'ink-3'})">${ok === true ? '✓' : ok === false ? '✕' : ok === 'no' ? '–' : '○'}</span><span class="grow">${text}</span>${extra}</div>`
   const SUBS = {
     1: 'Connected',
     2: 'Approved 0.3.0',
@@ -6132,10 +6234,10 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
           ${K.card(
             "It can't",
             `<div class="col" style="gap:6px">
-            ${checkRow(false, 'Pay, check out or use your card')}
-            ${checkRow(false, "Open sites other than Woolworths' own")}
-            ${checkRow(false, 'Type your password anywhere but auth.woolworths.com.au')}
-            ${checkRow(false, 'See your other 1Password items')}</div>`,
+            ${checkRow('no', 'Pay, check out or use your card')}
+            ${checkRow('no', "Open sites other than Woolworths' own")}
+            ${checkRow('no', 'Type your password anywhere but auth.woolworths.com.au')}
+            ${checkRow('no', 'See your other 1Password items')}</div>`,
           )}
         </div>` +
         `<div class="row muted" style="gap:10px;font-size:11.5px">Woolworths 0.3.0 · comes with Valet<span class="grow"></span>${K.link('See every request it may make')}</div>`,
@@ -6197,8 +6299,8 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
             `<div class="col" style="gap:6px">
             ${checkRow(true, "Copies it once into this Mac's Keychain, with your OK in 1Password")}
             ${checkRow(true, 'Types it only on auth.woolworths.com.au')}
-            ${checkRow(false, 'Never shows it to Claude')}
-            ${checkRow(false, 'Never uses it on another site')}</div>`,
+            ${checkRow('no', 'Never shows it to Claude')}
+            ${checkRow('no', 'Never uses it on another site')}</div>`,
           )}
         </div>` +
         K.card('When Woolworths asks for a one-time code', codeChoices),
@@ -6518,6 +6620,402 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
       ],
     ],
   })
+
+  // ===================== v3: states on the order path (design G5) and dead ends (design G8) =====================
+  const pop = (x, y, w, inner) =>
+    `<div style="position:absolute;z-index:4;left:${x}px;top:${y}px;width:${w}px;background:var(--wf-paper);border:1px solid var(--wf-line-2);border-radius:10px;box-shadow:0 14px 34px var(--wf-shadow);padding:14px 16px;display:flex;flex-direction:column;gap:10px">${inner}</div>`
+  const scrimSheet = (title, body, footer) =>
+    `<div class="wf-scrim"></div><div class="wf-sheet"><header><h3>${title}</h3><span class="grow"></span>${K.icon('✕')}</header><div class="body">${body}</div><footer>${footer}</footer></div>`
+  const busy = (label) =>
+    `<span class="wf-btn lg primary" aria-disabled="true" style="opacity:.85">◌ ${label}</span>`
+  const opHead = h(
+    'Where your Woolworths password comes from',
+    "Valet copies your Woolworths login from 1Password once, with your approval there, and keeps it in this Mac's Keychain so it works while 1Password is locked.",
+  )
+  const loginHead = h(
+    'Which Woolworths login should Valet use?',
+    'These are the logins for woolworths.com.au in your 1Password Personal vault.',
+  )
+
+  // 1Password: waiting for the approval in 1Password
+  FRAMES.push({
+    id: 'setup-1password-waiting',
+    group: 'Setup',
+    title: '1Password, waiting for your OK in 1Password',
+    personas: ['P2', 'P5'],
+    desc: 'After "Connect 1Password": 1Password shows its own approval (Touch ID or password). Valet says where to look and what happens if it is declined, and waits without a time limit.',
+    html: setup({
+      states: ['d', 'c'],
+      subs: { 1: 'Waiting for 1Password' },
+      body:
+        opHead +
+        K.card(
+          '1Password',
+          `${K.health('info', '<b>Approve Valet in 1Password.</b> 1Password is asking you, with Touch ID or your password, whether Valet may connect.', K.btn('Show 1Password'))}
+           <div class="col" style="gap:6px;padding:4px 2px">
+             ${checkRow(true, '1Password 8 is installed')}
+             ${checkRow(null, '◌ Waiting for your OK in 1Password')}
+             ${checkRow(null, 'Find your Woolworths login (after the step above)')}
+           </div>
+           <div class="faint" style="font-size:11px;padding-left:30px">If you decline in 1Password, nothing is copied and this step offers the other ways.</div>`,
+          K.badge('Waiting for you', 'info'),
+        ),
+      foot: nav(K.btn('Back'), `${K.ghost('Cancel')}${busy('Connecting…')}`),
+    }),
+    notes: [
+      [
+        1100,
+        230,
+        'Names the other app and the exact thing it will ask, so Sam looks there (P2). Show 1Password brings it forward if it is hidden.',
+      ],
+      [
+        460,
+        300,
+        'The waiting line is a polite live region, announced once (P5). No timer: 1Password decides.',
+      ],
+      [880, 741, 'The primary shows progress and is not a second Connect; Cancel stops waiting.'],
+    ],
+  })
+
+  // "Which one?" popover (G8)
+  FRAMES.push({
+    id: 'setup-which-one',
+    group: 'Setup',
+    title: '1Password: "Which one?" shows the item it found',
+    personas: ['P2', 'P3'],
+    desc: 'The "Which one?" link on the 1Password check opens a popover naming the exact item, so Sam can tell it apart before the login step. Esc or clicking outside closes it, back on the link.',
+    html: setup({
+      states: ['d', 'c'],
+      subs: { 1: 'Where passwords come from' },
+      body:
+        opHead +
+        K.card(
+          '1Password',
+          `${K.health('ok', '<b>Connected to 1Password.</b> Checked at 8:06 pm.', K.ghost('Check again'))}
+           <div class="col" style="gap:6px;padding:4px 2px">
+             ${checkRow(true, '1Password 8 is installed and unlocked')}
+             ${checkRow(true, '"Integrate with other apps" is on')}
+             ${checkRow(true, 'Valet can see 1 login for woolworths.com.au, in your Personal vault', `<span class="wf-link" style="outline:2px solid var(--wf-act);outline-offset:2px">Which one?</span>`)}
+           </div>`,
+          K.badge('Connected', 'ok'),
+        ),
+      foot: nav(K.btn('Back'), lg('Continue', 'primary')),
+      over: pop(
+        700,
+        330,
+        360,
+        `<b>The login Valet found</b>
+         ${K.kv([
+           ['Item', '“Woolworths”'],
+           ['Vault', 'Personal'],
+           ['Username', K.value('sam@example.com')],
+           ['Website', K.value('woolworths.com.au')],
+           ['Last used', '3 days ago'],
+         ])}
+         <span class="faint" style="font-size:11px">Valet has not copied anything yet. You choose the login in the next step, and can pick another item there.</span>
+         <div class="row"><span class="grow"></span>${K.btn('Open in 1Password')}</div>`,
+      ),
+    }),
+    notes: [
+      [
+        1080,
+        340,
+        'Names the item the way 1Password does, with the username as a value, never the password (P3).',
+      ],
+      [1080, 520, 'Says nothing was copied yet: choosing is the next step (P2 M3).'],
+    ],
+  })
+
+  // Login: 1Password locked
+  FRAMES.push({
+    id: 'setup-login-locked',
+    group: 'Setup',
+    title: 'Your login: 1Password is locked',
+    personas: ['P2', 'P7'],
+    desc: 'Valet needs 1Password unlocked to list items and make the copy. It says so, opens 1Password, and checks again when Valet regains focus. Earlier steps are untouched.',
+    html: setup({
+      states: ['d', 'd', 'd', 'c'],
+      subs: sub(1, 2),
+      body:
+        loginHead +
+        K.card(
+          '',
+          `${K.health('warn', '<b>1Password is locked.</b> Unlock it to see your Woolworths logins. Valet checks again when you come back.', K.primary('Unlock 1Password'))}
+           <div class="col" style="gap:10px;padding-top:4px">${K.lines(2)}</div>`,
+        ) +
+        `<div class="faint" style="font-size:11.5px">Once Valet has its Keychain copy, calls work while 1Password is locked. Only choosing and re-syncing need it unlocked.</div>`,
+      foot: nav(
+        K.btn('Back'),
+        `${K.ghost('Skip for now')}${off('Use this login')}<span class="faint" style="font-size:11px">Unlock 1Password first</span>`,
+      ),
+    }),
+    notes: [
+      [1100, 220, 'The only primary on the page is the fix. Valet re-checks on focus, so no Retry (P2).'],
+      [
+        700,
+        330,
+        'Says why locked matters only now, so Sam is not afraid of locking 1Password later (story: Keychain copy).',
+      ],
+      [880, 741, 'Use this login stays focusable while disabled and says why beside it (P5).'],
+    ],
+  })
+
+  // Login: loading, then waiting for the OK in 1Password
+  FRAMES.push({
+    id: 'setup-login-waiting',
+    group: 'Setup',
+    title: 'Your login: loading items, then waiting for the copy',
+    personas: ['P2', 'P5'],
+    desc: 'Two moments in one frame. While Valet lists items, the list shows placeholder rows. After "Use this login", 1Password asks Sam to approve the one-time copy; the step waits for it and says what it is copying.',
+    html: setup({
+      states: ['d', 'd', 'd', 'c'],
+      subs: { ...sub(1, 2), 3: 'Waiting for 1Password' },
+      body:
+        loginHead +
+        `<div class="grid2">
+          ${K.card('Loading (the first second)', `<div class="col" style="gap:12px">${K.lines(3)}<span class="faint" style="font-size:11px">Looking in your Personal vault…</span></div>`)}
+          ${K.card('After Use this login', `<div class="col" style="gap:8px">${K.health('info', "<b>Approve the copy in 1Password.</b> Valet copies “Woolworths” (sam@example.com) into this Mac's Keychain once.", K.btn('Show 1Password'))}<span class="faint" style="font-size:11px">If you decline, nothing is copied and you stay on this step.</span></div>`)}
+        </div>`,
+      foot: nav(K.btn('Back'), busy('Waiting for 1Password…')),
+    }),
+    notes: [
+      [
+        380,
+        230,
+        'Placeholder rows, not a spinner on an empty card; the layout does not jump when items arrive (layout audit).',
+      ],
+      [960, 230, 'Names the item and username being copied, never the password (P3).'],
+      [880, 741, 'Progress stays on the same button; Back still works (P5).'],
+    ],
+  })
+
+  // Login: no matching item
+  FRAMES.push({
+    id: 'setup-login-none',
+    group: 'Setup',
+    title: 'Your login: no Woolworths login in 1Password',
+    personas: ['P2'],
+    desc: 'No item in the Personal vault has woolworths.com.au. Three ways on: look in all vaults, type the password once, or skip (waits in Needs you as "Give Valet your Woolworths login").',
+    html: setup({
+      states: ['d', 'd', 'd', 'c'],
+      subs: sub(1, 2),
+      body:
+        loginHead +
+        K.card(
+          '',
+          `${K.health('warn', '<b>No login for woolworths.com.au in your Personal vault.</b> Checked at 8:13 pm.', K.ghost('Check again'))}
+           <div class="col" style="gap:10px;padding-top:6px">
+             ${K.radio('<b>Choose another item…</b> <span class="muted">· search every vault Valet can see</span>', true)}
+             ${K.radio('<b>Type your Woolworths password once</b> <span class="muted">· kept in this Mac\'s Keychain</span>')}
+             ${K.radio('<b>Skip for now</b> <span class="muted">· Claude can\'t use Woolworths until you choose; it waits in Needs you</span>')}
+           </div>`,
+        ),
+      foot: nav(K.btn('Back'), lg('Choose another item…', 'primary')),
+    }),
+    notes: [
+      [
+        1100,
+        220,
+        'Says where Valet looked and when, so Sam knows to save the login in 1Password or pick another vault.',
+      ],
+      [1100, 330, 'The skip wording is the Needs you title word for word (story words).'],
+    ],
+  })
+
+  // "Choose another item…" sheet (G8)
+  FRAMES.push({
+    id: 'setup-choose-item',
+    group: 'Setup',
+    title: 'Your login: "Choose another item…"',
+    personas: ['P2', 'P3', 'P5'],
+    desc: 'Opens a sheet over the login step: search every vault Valet can see. An item saved for another site says so. Cancel or Esc returns to the step with focus on the link.',
+    html: setup({
+      states: ['d', 'd', 'd', 'c'],
+      subs: sub(1, 2),
+      body: loginHead + K.card('', K.lines(4)),
+      foot: nav(K.btn('Back'), lg('Use this login', 'primary')),
+      over: scrimSheet(
+        'Choose a 1Password item',
+        `${K.search('Search 1Password')}
+         <div class="col" style="gap:10px">
+           ${K.radio('<b>Woolworths</b> <span class="muted">· sam@example.com · Personal</span>', true)} 
+           ${K.radio('<b>Woolworths (old)</b> <span class="muted">· sam.old@example.com · Personal</span>')}
+           <div class="row" style="gap:8px">${K.radio('<b>Everyday Rewards</b> <span class="muted">· sam@example.com · Shared</span>')}<span class="grow"></span>${K.badge('Another site', 'warn')}</div>
+         </div>
+         <span class="faint" style="font-size:11px">“Everyday Rewards” is saved for woolworthsrewards.com.au. Valet types a login only on auth.woolworths.com.au, so check it's the same account.</span>`,
+        `<span class="grow"></span>${K.btn('Cancel')}${K.primary('Use “Woolworths”')}`,
+      ),
+    }),
+    notes: [
+      [790, 160, 'Same search and the same "Another site" warning as the grant sheet (one component, P3).'],
+      [700, 305, 'The primary names the chosen item; Return chooses it, Esc cancels (P5).'],
+    ],
+  })
+
+  // Store: searching, none, site error
+  FRAMES.push({
+    id: 'setup-store-states',
+    group: 'Setup',
+    title: 'Your store: searching, no stores, site error',
+    personas: ['P2', 'P6'],
+    desc: 'Three states of the same results card. Searching keeps the field and shows placeholder rows. No stores says what was searched and suggests a suburb. A Woolworths error says it is Woolworths, not Sam, and Skip stays safe.',
+    html: setup({
+      states: ['d', 'd', 'd', 'd', 'c'],
+      subs: sub(1, 2, 3),
+      body:
+        h('Which Woolworths do you shop at?', "Prices and what's in stock depend on the store.") +
+        `<div class="row">${K.input('2000', '260px')}<span class="wf-btn" aria-disabled="true">◌ Finding stores…</span></div>` +
+        K.card('Searching', K.lines(3)) +
+        K.card(
+          'No stores',
+          `${K.health('idle', '<b>Woolworths found no stores for “2999”.</b> Try a suburb name or a nearby postcode.', '')}`,
+        ) +
+        K.card(
+          'Woolworths error',
+          `${K.health('warn', "<b>Woolworths didn't answer the store search.</b> It may be busy. Valet tried at 8:13 pm.", K.btn('Try again'))}<span class="faint" style="font-size:11px">Skipping is fine: Woolworths uses its default store until you choose one on the Woolworths page.</span>`,
+        ),
+      foot: nav(K.btn('Back'), `${K.ghost('Skip for now')}${off('Shop at a store')}`),
+    }),
+    notes: [
+      [700, 200, 'The button shows progress and the field keeps its text (P2).'],
+      [
+        700,
+        360,
+        'No stores and the error are told apart: one is the search, the other is Woolworths (P6 vocabulary: site-changed vs limiting).',
+      ],
+    ],
+  })
+
+  // Connect: config write failed, restart failed
+  FRAMES.push({
+    id: 'setup-connect-failed',
+    group: 'Setup',
+    title: 'Connect Claude: Valet could not add itself, or restart failed',
+    personas: ['P2', 'P1'],
+    desc: 'Two failures on the Claude Desktop card. If writing its settings fails, Valet says which file and offers to copy the settings to paste by hand. If the restart fails, it asks Sam to quit and reopen Claude Desktop and checks again.',
+    html: setup({
+      states: ['d', 'd', 'd', 'd', 'd', 'c'],
+      subs: sub(1, 2, 3, 4),
+      body:
+        h('Which Claude do you use?', 'Valet found Claude Desktop on this Mac.') +
+        K.card(
+          'Claude Desktop · settings',
+          `${K.health('bad', "<b>Valet couldn't add itself to Claude Desktop.</b> Its settings file can't be changed.", K.primary('Try again'))}
+           <div class="row" style="gap:8px">${K.value('~/Library/Application Support/Claude/claude_desktop_config.json')}</div>
+           <span class="faint" style="font-size:11.5px">Or add Valet by hand: ${K.link('Copy the settings to paste')} · ${K.link('Show the file in Finder')}</span>`,
+          K.badge('Not added', 'bad'),
+        ) +
+        K.card(
+          'Claude Desktop · restart',
+          `${K.health('warn', "<b>Claude Desktop didn't restart.</b> Quit it (Claude › Quit) and open it again. Valet checks when it's back.", K.btn('Open Claude Desktop'))}`,
+          K.badge('Added', 'ok'),
+        ),
+      foot: nav(K.btn('Back'), `${K.ghost('Skip for now')}${off('Continue')}`),
+    }),
+    notes: [
+      [
+        1100,
+        220,
+        'Names the file as a selectable value and offers the manual way, so P1 can fix it and Sam can ask for help.',
+      ],
+      [1100, 400, 'Restart failure gives the exact menu words and re-checks by itself (P2).'],
+    ],
+  })
+
+  // "See every request it may make" (G8): a page inside setup with a way back
+  FRAMES.push({
+    id: 'setup-approve-requests',
+    group: 'Setup',
+    title: 'Approve Woolworths: every request it may make',
+    personas: ['P3', 'P2', 'P4'],
+    desc: 'The link on the Approve step opens the full first-install review as a page inside the setup window, not the main window. The breadcrumb and "Back to setup" return to the Approve step with focus on the link.',
+    html: setup({
+      states: ['d', 'd', 'c'],
+      subs: sub(1),
+      body:
+        `<div class="wf-crumbs"><span>Set up Valet</span><i>›</i><span>Approve Woolworths</span><i>›</i><span>Every request</span></div>` +
+        h(
+          'Every request Woolworths 0.3.0 may make',
+          'Valet blocks anything not on this list and shows it in Calls.',
+        ) +
+        K.table(
+          ['Request', 'Web address', 'Used by', 'Does'],
+          [
+            [K.value('GET /api/v3/ui/trolley'), 'woolworths.com.au', 'Get cart', K.badge('Reads', 'read')],
+            [
+              K.value('POST /api/v3/ui/trolley/update'),
+              'woolworths.com.au',
+              'Add, change, remove',
+              K.badge('Changes cart', 'write'),
+            ],
+            [
+              K.value('GET /apis/ui/Search/products'),
+              'woolworths.com.au',
+              'Search products',
+              K.badge('Reads', 'read'),
+            ],
+            [
+              K.value('GET /apis/ui/StoreLocator/Stores'),
+              'woolworths.com.au',
+              'Shop at your store',
+              K.badge('Reads', 'read'),
+            ],
+            [K.value('POST /login'), 'auth.woolworths.com.au', 'Logging in', K.badge('Login', 'secret')],
+          ],
+          { cols: '1.6fr 1.2fr 1fr .8fr' },
+        ) +
+        `<div class="faint" style="font-size:11.5px">The same list is on the Woolworths page under Permissions after setup.</div>`,
+      foot: nav(K.btn('‹ Back to setup'), `${lg('Approve Woolworths', 'primary')}`),
+    }),
+    notes: [
+      [
+        386,
+        99,
+        'A breadcrumb back to the step; Esc and ⌘[ do the same (G8). The rail stays, so Sam is never lost.',
+      ],
+      [700, 330, 'Requests are values; the "Does" column is the same risk badges as Permissions (P3, P4).'],
+      [940, 741, 'Approve is offered here too, so reading the list is not a detour (P3).'],
+    ],
+  })
+
+  // "How to check" (G8)
+  FRAMES.push({
+    id: 'setup-test-how',
+    group: 'Setup',
+    title: 'Test it: "How to check"',
+    personas: ['P2'],
+    desc: 'The "How to check" link on the failed test opens a popover with the three clicks in Claude Desktop, in its own menu words, and what Sam should see.',
+    html: setup({
+      states: ['d', 'd', 'd', 'd', 'd', 'd', 'c'],
+      subs: sub(1, 2, 3, 4, 5),
+      body:
+        h('Try it: ask Claude one question', 'Open Claude Desktop and ask:') +
+        K.card(
+          'No call from Claude yet',
+          `${K.health('warn', "<b>Valet hasn't heard from Claude Desktop</b> since you added it at 8:15 pm. Waited 60 s.", K.ghost('Keep waiting'))}
+           <div class="col" style="gap:8px">
+            ${checkRow(true, 'Valet is ready: Woolworths approved, login and store chosen')}
+            ${checkRow(null, 'Claude Desktop shows "valet" under Settings › Connectors', `<span class="wf-link" style="outline:2px solid var(--wf-act);outline-offset:2px">How to check</span>`)}
+           </div>`,
+          K.badge('Waiting', 'warn'),
+        ),
+      foot: nav(K.btn('Back'), `${K.ghost('Skip the test')}${off('Continue')}`),
+      over: pop(
+        690,
+        300,
+        380,
+        `<b>Check Claude Desktop has Valet</b>
+         <div class="col" style="gap:4px">
+           <span>1. In Claude Desktop, open <b>Settings</b> (⌘,).</span>
+           <span>2. Choose <b>Connectors</b>.</span>
+           <span>3. Look for <b>valet</b> with a green dot.</span>
+         </div>
+         <span class="faint" style="font-size:11px">Not there? Restart Claude Desktop. Red dot? ${K.link('Copy the details for help')}</span>
+         <div class="row"><span class="grow"></span>${K.btn('Open Claude Desktop')}</div>`,
+      ),
+    }),
+    notes: [[1080, 320, "Steps in Claude Desktop's own words, and the one thing to look for (P2)."]],
+  })
 })()
 
 </script>
@@ -6552,7 +7050,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
 
   // 1. Command palette
   const palette = `<div class="wf-scrim"></div>
-    <div style="position:absolute;z-index:4;top:90px;left:50%;transform:translateX(-50%);width:620px;background:var(--wf-paper);border:1px solid var(--wf-line-2);border-radius:12px;box-shadow:0 20px 40px var(--wf-shadow);display:flex;flex-direction:column">
+    <div style="position:absolute;z-index:4;top:90px;left:50%;transform:translateX(-50%);width:600px;background:var(--wf-paper);border:1px solid var(--wf-line-2);border-radius:12px;box-shadow:0 20px 40px var(--wf-shadow);display:flex;flex-direction:column">
       <div class="row" style="padding:12px 14px;border-bottom:1px solid var(--wf-line);font-size:15px">⌕ <span>wool</span><span style="width:1px;height:18px;background:var(--wf-ink)"></span><span class="grow"></span><span class="faint" style="font-size:11px">9 results</span>${K.kbd('esc')}</div>
       <div style="padding:6px">
         ${[
@@ -6807,7 +7305,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
       [
         898,
         733,
-        'One toast rule: an Undo toast stays until dismissed or 10 s after the last input, is reachable with F6, and Undo is also ⌘Z (P5 M5).',
+        "One toast rule (the library's): a toast lasts 10 s, the timer stops while it is hovered or focused, Alt+T moves focus to it, and while an Undo toast shows ⌘Z undoes (P5 M5, design M15).",
       ],
     ],
   })
@@ -6830,7 +7328,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
     personas: ['P1', 'P5', 'P2', 'P3'],
     desc: "Both menus drawn open at once for review only (one opens at a time). Every place has a shortcut, and the kill switches sit in the Valet menu like any Mac app's Quit.",
     html: `<div class="wf-window" style="background:linear-gradient(160deg,var(--wf-paper-2),var(--wf-sel))">${appMenuBar}
-      <div style="zoom:.82;margin:20px 0 0 100px;width:1180px;height:780px">${shell('needs', K.header({ title: 'Needs you', status: K.badge('4 waiting', 'warn') }) + `<div class="wf-scroll">${K.inbox('?', 'Confirm: Remove from cart (Woolworths)', 'Asked by Claude Code at 9:48 pm', K.countdown('1:42', '9:50 pm'), K.primary('Answer…'), 'urgent')}</div>`, { badges: { needs: 4 } })}</div>
+      <div style="zoom:.82;margin:20px 0 0 100px;width:1180px;height:780px">${shell('needs', K.header({ title: 'Needs you', status: '<span class="muted">4 waiting</span>' }) + `<div class="wf-scroll">${K.inbox('?', 'Confirm: Remove from cart (Woolworths)', 'Asked by Claude Code at 9:48 pm', K.countdown('2 min', '9:50 pm'), K.primary('Answer…'), 'urgent')}</div>`, { badges: { needs: 4 } })}</div>
       ${menuCol(22, [['About Valet'], '-', ['Settings…', '⌘,'], ['Check for Updates…'], ['Run Setup Again…'], '-', ['Pause Valet', '⇧⌘P', true], ['Lock Down…', '⌥⇧⌘L'], '-', ['Hide Valet', '⌘H'], ['Quit Valet', '⌘Q']])}
       ${menuCol(310, [['Needs you', '⌘1'], ['Sites', '⌘2'], ['Activity: Calls', '⌘3'], ['Activity: Audit log', '⇧⌘3'], ['Connections', '⌘4'], ['Secrets', '⌘5'], ['Settings', '⌘6'], '-', ['Back', '⌘['], ['Forward', '⌘]'], '-', ['Search…', '⌘K'], '-', ['Open my trolley on woolworths.com.au…']])}
     </div>`,

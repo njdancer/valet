@@ -12,7 +12,10 @@ const K = {
   // ---- atoms ----
   btn: (label, kind = '') => `<span class="wf-btn ${kind}">${label}</span>`,
   primary: (label) => K.btn(label, 'primary'),
-  danger: (label) => K.btn(label, 'danger'),
+  // danger: solid, only on the confirm of something that can't be undone. dangerSoft: the trigger that
+  // opens that confirm (headers, cards). (Design system M17.)
+  danger: (label) => K.btn(label, 'danger solid'),
+  dangerSoft: (label) => K.btn(label, 'danger'),
   ghost: (label) => K.btn(label, 'ghost'),
   icon: (label) => `<span class="wf-btn icon" title="${label}">${label}</span>`,
   // Status badge: never interactive (E1). Tones: ok, warn, bad, info, idle, write, read, secret.
@@ -21,7 +24,8 @@ const K = {
   link: (label) => `<span class="wf-link">${label}</span>`,
   // Selectable value with copy (E3): hashes, URLs, ids, codes.
   value: (v) => `<span class="wf-value">${v}<span class="wf-copy">⧉</span></span>`,
-  countdown: (left, until) => `<span class="wf-count">${left}<small> until ${until}</small></span>`,
+  // Deadline in the library's words (design M19): "2 min · until 9:50 pm", then "30 s" when urgent.
+  countdown: (left, until) => `<span class="wf-count">${left}<small> · until ${until}</small></span>`,
   input: (ph, w = '') => `<span class="wf-input" style="${w ? `width:${w}` : ''}">${ph}</span>`,
   search: (ph) => `<span class="wf-input search">⌕ ${ph}</span>`,
   toggle: (on) => `<span class="wf-toggle ${on ? 'on' : ''}"></span>`,

@@ -228,6 +228,11 @@
   color: var(--wf-bad);
   border-color: currentColor;
 }
+.wf-btn.danger.solid {
+  background: var(--wf-bad);
+  border-color: var(--wf-bad);
+  color: #fff;
+}
 .wf-btn.ghost {
   border-color: transparent;
   background: transparent;
@@ -690,7 +695,7 @@
   top: 44px;
   left: 50%;
   transform: translateX(-50%);
-  width: 600px;
+  width: 560px;
   max-height: calc(100% - 64px);
   background: var(--wf-paper);
   border: 1px solid var(--wf-line-2);
@@ -701,7 +706,7 @@
   box-shadow: 0 20px 40px var(--wf-shadow);
 }
 .wf-sheet.wide {
-  width: 820px;
+  width: 720px;
 }
 .wf-sheet header {
   display: flex;

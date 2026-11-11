@@ -28,7 +28,7 @@
 
   // 1. Command palette
   const palette = `<div class="wf-scrim"></div>
-    <div style="position:absolute;z-index:4;top:90px;left:50%;transform:translateX(-50%);width:620px;background:var(--wf-paper);border:1px solid var(--wf-line-2);border-radius:12px;box-shadow:0 20px 40px var(--wf-shadow);display:flex;flex-direction:column">
+    <div style="position:absolute;z-index:4;top:90px;left:50%;transform:translateX(-50%);width:600px;background:var(--wf-paper);border:1px solid var(--wf-line-2);border-radius:12px;box-shadow:0 20px 40px var(--wf-shadow);display:flex;flex-direction:column">
       <div class="row" style="padding:12px 14px;border-bottom:1px solid var(--wf-line);font-size:15px">⌕ <span>wool</span><span style="width:1px;height:18px;background:var(--wf-ink)"></span><span class="grow"></span><span class="faint" style="font-size:11px">9 results</span>${K.kbd('esc')}</div>
       <div style="padding:6px">
         ${[
@@ -283,7 +283,7 @@
       [
         898,
         733,
-        'One toast rule: an Undo toast stays until dismissed or 10 s after the last input, is reachable with F6, and Undo is also ⌘Z (P5 M5).',
+        "One toast rule (the library's): a toast lasts 10 s, the timer stops while it is hovered or focused, Alt+T moves focus to it, and while an Undo toast shows ⌘Z undoes (P5 M5, design M15).",
       ],
     ],
   })
@@ -306,7 +306,7 @@
     personas: ['P1', 'P5', 'P2', 'P3'],
     desc: "Both menus drawn open at once for review only (one opens at a time). Every place has a shortcut, and the kill switches sit in the Valet menu like any Mac app's Quit.",
     html: `<div class="wf-window" style="background:linear-gradient(160deg,var(--wf-paper-2),var(--wf-sel))">${appMenuBar}
-      <div style="zoom:.82;margin:20px 0 0 100px;width:1180px;height:780px">${shell('needs', K.header({ title: 'Needs you', status: K.badge('4 waiting', 'warn') }) + `<div class="wf-scroll">${K.inbox('?', 'Confirm: Remove from cart (Woolworths)', 'Asked by Claude Code at 9:48 pm', K.countdown('1:42', '9:50 pm'), K.primary('Answer…'), 'urgent')}</div>`, { badges: { needs: 4 } })}</div>
+      <div style="zoom:.82;margin:20px 0 0 100px;width:1180px;height:780px">${shell('needs', K.header({ title: 'Needs you', status: '<span class="muted">4 waiting</span>' }) + `<div class="wf-scroll">${K.inbox('?', 'Confirm: Remove from cart (Woolworths)', 'Asked by Claude Code at 9:48 pm', K.countdown('2 min', '9:50 pm'), K.primary('Answer…'), 'urgent')}</div>`, { badges: { needs: 4 } })}</div>
       ${menuCol(22, [['About Valet'], '-', ['Settings…', '⌘,'], ['Check for Updates…'], ['Run Setup Again…'], '-', ['Pause Valet', '⇧⌘P', true], ['Lock Down…', '⌥⇧⌘L'], '-', ['Hide Valet', '⌘H'], ['Quit Valet', '⌘Q']])}
       ${menuCol(310, [['Needs you', '⌘1'], ['Sites', '⌘2'], ['Activity: Calls', '⌘3'], ['Activity: Audit log', '⇧⌘3'], ['Connections', '⌘4'], ['Secrets', '⌘5'], ['Settings', '⌘6'], '-', ['Back', '⌘['], ['Forward', '⌘]'], '-', ['Search…', '⌘K'], '-', ['Open my trolley on woolworths.com.au…']])}
     </div>`,

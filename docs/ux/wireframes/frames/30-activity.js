@@ -74,7 +74,7 @@
     ok: K.badge('ok', 'ok'),
     okb: (n) => K.badge(`ok, ${n} blocked`, 'info'),
     changed: K.badge('Failed · site changed', 'bad'),
-    limited: K.badge('Limited by site', 'bad'),
+    limited: K.badge('Limited by site', 'warn'),
     wait: K.badge('Waiting for you', 'warn'),
     login: K.badge('Needs you · login', 'warn'),
     missed: K.badge('Missed · nobody answered', 'idle'),
@@ -144,7 +144,9 @@
       crumbs: ['Activity'],
       title: 'Calls',
       actions:
-        `<span class="muted">${count}</span>` + K.ghost('Traces kept 14 days · Change') + K.btn('Export…'),
+        `<span class="muted">${count}</span>` +
+        `<span class="faint">Traces kept 14 days</span> ${K.link('Change')}` +
+        K.btn('Export…'),
       tabs: tabs(0),
     })
   const anyChips = [

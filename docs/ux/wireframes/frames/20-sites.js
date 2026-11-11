@@ -136,7 +136,7 @@
     `<div class="wf-inbox" style="align-items:flex-start">${K.avatar(av)}<div class="grow" style="gap:8px">
        <div class="row"><b style="font-size:13px">${K.link(name)}</b>${mono(ver)}<span class="grow"></span>${extra}</div>${health}</div></div>`
   const list = `
-    ${K.header({ title: 'Sites', status: K.badge('3 sites', 'idle'), actions: K.ghost('Check all now') })}
+    ${K.header({ title: 'Sites', status: '<span class="muted">3 sites</span>', actions: K.ghost('Check all now') })}
     <div class="wf-scroll" style="gap:10px">
       ${siteRow(
         'W',
@@ -469,7 +469,7 @@
       [
         818,
         725,
-        'The toast offers Undo and ⌘Z (P1). It stays until focus leaves it, so Jordan can reach it (P5).',
+        'The toast offers Undo and ⌘Z (P1). It lasts 10 s, stops counting while hovered or focused, and Alt+T reaches it, so Jordan can get to it (P5).',
       ],
       [
         235,
@@ -563,7 +563,7 @@
       [
         475,
         717,
-        'Toast: "Woolworths 0.4.0 approved; the next call uses it." No Undo: going back is a Restore, which is a review (decision). It stays until focus leaves it.',
+        'Toast: "Woolworths 0.4.0 approved; the next call uses it." No Undo: going back is a Restore, which is a review (decision). It follows the one toast rule (10 s, held while hovered or focused, Alt+T).',
       ],
       [
         813,
@@ -691,10 +691,10 @@
         ${K.card(
           "What it can't do",
           `<div class="col" style="gap:6px">
-            <div class="row">${K.dot('bad')}<span>Pay or check out: no tool or request for it is declared</span></div>
-            <div class="row">${K.dot('bad')}<span>Contact any other web address. Valet blocks it and shows it in Calls (${K.link('2 blocked today')})</span></div>
-            <div class="row">${K.dot('bad')}<span>Use any login but the one you gave it</span></div>
-            <div class="row">${K.dot('bad')}<span>See other sites' sessions or cookies</span></div>
+            <div class="row">${K.dot('idle')}<span>Pay or check out: no tool or request for it is declared</span></div>
+            <div class="row">${K.dot('idle')}<span>Contact any other web address. Valet blocks it and shows it in Calls (${K.link('2 blocked today')})</span></div>
+            <div class="row">${K.dot('idle')}<span>Use any login but the one you gave it</span></div>
+            <div class="row">${K.dot('idle')}<span>See other sites' sessions or cookies</span></div>
           </div>`,
           '<span class="faint">worked out by Valet from the declaration</span>',
         )}
@@ -1045,9 +1045,7 @@
   // ---------- Code diff viewer (over the review page) ----------
   const fileRow = (path, badge, counts, on) =>
     `<div class="row" style="padding:7px 10px;border-radius:6px;${on ? 'background:var(--wf-sel);font-weight:600' : ''}">${mono(path)}<span class="grow"></span><span class="faint">${counts}</span></div><div style="padding:0 10px 4px">${badge}</div>`
-  const diffSheet = sheet(
-    `Code changes · Woolworths 0.3.0 → 0.4.0`,
-    `<div style="display:grid;grid-template-columns:230px minmax(0,1fr);gap:14px;min-height:0">
+  const diffBody = `<div style="display:grid;grid-template-columns:230px minmax(0,1fr);gap:14px;min-height:0">
        <div class="col" style="gap:2px;border-right:1px solid var(--wf-line);padding-right:10px">
          <span class="faint" style="padding:0 10px 4px">3 files · +164 −1</span>
          ${fileRow('src/tools/rewards.ts', K.badge('added', 'ok'), '+64', true)}
@@ -1081,41 +1079,46 @@
            <div class="faint" style="padding:4px 44px">44 more lines · scrolls</div>
          </div>
        </div>
-     </div>`,
-    `<span class="faint">${K.kbd('↑')} ${K.kbd('↓')} files · ${K.kbd('Esc')} back to the review</span><span class="grow"></span>${K.btn('Previous file')}${K.btn('Next file')}${K.primary('Back to review')}`,
-    'wide',
-  ).replace('class="wf-sheet wide"', 'class="wf-sheet wide" style="width:1120px"')
+     </div>`
+  const diffPage = `
+    ${K.header({
+      crumbs: ['Sites', 'Woolworths', 'Versions', 'Review 0.4.0', 'Code changes'],
+      title: 'Code changes · Woolworths 0.3.0 → 0.4.0',
+      actions: K.btn('Previous file') + K.btn('Next file') + K.primary('Back to review'),
+      sub: `<span class="faint">${K.kbd('↑')} ${K.kbd('↓')} files (while the file list has focus) · ${K.kbd('Esc')} or ${K.kbd('⌘[')} back to the review</span>`,
+    })}
+    <div class="wf-scroll" style="padding-top:14px">${diffBody}</div>`
   FRAMES.push({
     id: 'site-review-diff',
     group: 'Sites',
-    title: 'Code diff viewer, over the review',
+    title: 'Code diff viewer (a page inside the review)',
     personas: ['P4', 'P3', 'P5'],
-    desc: 'Opened by "Open diff" on a code file row of the review. A sheet as wide as the window over the review page: files on the left, the unified diff on the right. Esc returns to the review with focus on the row that opened it.',
-    html: shell('sites', review, { site: 0, sites: sites(), badges: NEEDS, over: diffSheet }),
+    desc: 'Opened by "Open diff" on a code file row of the review. A page inside the review (#/sites/woolworths/versions/0.4.0/review/diff), not a sheet: sheets stop at 720, too narrow for code (design M2). Files on the left, the unified diff on the right. Back, Esc or ⌘[ return to the review with focus on the row that opened it.',
+    html: shell('sites', diffPage, { site: 0, sites: sites(), badges: NEEDS }),
     notes: [
       [
-        29,
-        63,
-        'Sheet, not a new window: it opens over the review page (principle 5), so the decision footer is one Esc away. Nearly window-wide so code is not cramped (P4).',
+        420,
+        92,
+        'A page inside the review, with a breadcrumb back to it: the decision footer is one Esc or ⌘[ away, and code gets the whole content width (P4, design M2).',
       ],
       [
-        39,
-        148,
-        'Every changed file, with its counts; ↑ ↓ move between files without leaving the keyboard (P4). The file the person clicked opens first.',
+        330,
+        215,
+        'Every changed file, with its counts; ↑ ↓ move between files while the list has focus (P4). The file the person clicked opens first.',
       ],
       [
-        969,
-        121,
+        1050,
+        170,
         'Unified by default; Split is remembered per viewer. Copy takes the whole file at this version.',
       ],
       [
-        328,
-        160,
+        755,
+        335,
         'The diff is a value: selectable and copyable (E3). Line numbers and +/− are in text too, not only colour (P5).',
       ],
       [
-        1007,
-        585,
+        1000,
+        60,
         'Esc or "Back to review" returns to the review with focus on the "Open diff" row that opened it (P5).',
       ],
     ],
@@ -1197,7 +1200,7 @@
         <div class="big" style="font-size:17px">Woolworths lets Claude search products and read and change your Woolworths cart. It can't pay or check out.</div>
         <div class="grid3" style="gap:12px">
           <div class="col" style="gap:6px"><span class="h3">It can</span>${fact('ok', 'Search products and read product details')}${fact('ok', 'Read your cart')}${fact('ok', 'Add, change and remove cart items (asks you before removing)')}</div>
-          <div class="col" style="gap:6px"><span class="h3">It can't</span>${fact('bad', 'Pay or check out')}${fact('bad', 'Contact anything but 3 Woolworths web addresses')}${fact('bad', 'Use any login but the one you choose')}</div>
+          <div class="col" style="gap:6px"><span class="h3">It can't</span>${fact('idle', 'Pay or check out')}${fact('idle', 'Contact anything but 3 Woolworths web addresses')}${fact('idle', 'Use any login but the one you choose')}</div>
           <div class="col" style="gap:6px"><span class="h3">It will need</span>${fact('info', 'Your Woolworths login, filled only on auth.woolworths.com.au')}${fact('info', 'A store, for prices and stock')}</div>
         </div>
       </div></div>

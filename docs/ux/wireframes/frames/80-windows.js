@@ -62,7 +62,7 @@
         checked() +
         `<div class="muted" style="font-size:11.5px">If nobody answers by 9:50 pm, nothing is removed and Claude is told it timed out.</div>`,
       foot:
-        buttons(K.countdown('1:42', '9:50 pm'), true) +
+        buttons(K.countdown('2 min', '9:50 pm'), true) +
         `<div class="faint" style="font-size:11px;text-align:right">Ready in a moment, so a key press meant for another app can't answer this.</div>`,
     }),
     notes: [
@@ -106,7 +106,7 @@
       strip: of4,
       body: title + fromSite() + checked(true),
       foot:
-        buttons(K.countdown('1:42', '9:50 pm')) +
+        buttons(K.countdown('2 min', '9:50 pm')) +
         `<div class="faint" style="font-size:11px">Valet never pays. Checkout is always you, on woolworths.com.au.</div>`,
     }),
     notes: [
@@ -133,12 +133,12 @@
     desc: 'The countdown grows and turns to the alert colour; one announcement at 30 s. The count stays, and nothing else moves, so the buttons stay where the hand already is.',
     html: conf({
       strip:
-        '<b style="font-size:11px;color:var(--wf-bad)">Ends in 0:24</b><span class="faint" style="font-size:11px">· 1 of 4 waiting</span>',
+        '<b style="font-size:11px;color:var(--wf-bad)">Ends in 24 s</b><span class="faint" style="font-size:11px">· 1 of 4 waiting</span>',
       stripTone: 'bad',
       body: title + fromSite() + checked(),
       foot:
         buttons(
-          `<span class="wf-count" style="font-size:22px;color:var(--wf-bad);display:flex;align-items:baseline;gap:8px">0:24<small>until 9:50 pm</small></span>`,
+          `<span class="wf-count" style="font-size:22px;color:var(--wf-bad);display:flex;align-items:baseline;gap:8px">24 s<small>· until 9:50 pm</small></span>`,
         ) +
         `<div style="font-size:11px;color:var(--wf-bad)">At 9:50 pm nothing is removed and Claude is told it timed out.</div>`,
     }),
@@ -171,7 +171,7 @@
       body: `<div style="font:600 17px/1.3 var(--f-head)">Confirm: Remove from cart (Woolworths)</div>
         <div class="wf-banner ok"><div class="grow"><b>You chose Remove from cart at 9:48 pm.</b> Valet is doing it now; Claude Code gets the result of call ${K.link('7F2A')}.</div></div>
         <div class="h3">Next, by deadline</div>
-        ${K.inbox('⇄', 'Approve a connection', 'Asked 9:47 pm · calls itself "Claude (claude.ai)", not verified', K.countdown('3:58', '9:52 pm'), `<span class="wf-btn" style="${focusRing}">Open</span>`)}
+        ${K.inbox('⇄', 'Approve a connection', 'Asked 9:47 pm · calls itself "Claude (claude.ai)", not verified', K.countdown('4 min', '9:52 pm'), `<span class="wf-btn" style="${focusRing}">Open</span>`)}
         <span class="faint" style="font-size:11px">If you chose "Don't remove", this says "You chose Don't remove at 9:48 pm. Nothing was removed; Claude Code was told you declined."</span>`,
       foot: `<div class="row"><span class="faint" style="font-size:11px">Closes in 5 s</span><span class="grow"></span>${K.btn('Close')}</div>`,
     }),
@@ -286,7 +286,7 @@
         'If Woolworths asks again, log in. Valet already typed your email and password.',
         "Press <b>I'm done</b>. Valet checks you're logged in, and Claude's next call goes through.",
       ]),
-      deadline: `<div style="text-align:right">${K.countdown('14:10', '10:02 pm')}<div class="faint" style="font-size:11px">then this window closes</div></div>`,
+      deadline: `<div style="text-align:right">${K.countdown('14 min', '10:02 pm')}<div class="faint" style="font-size:11px">then this window closes</div></div>`,
       buttons: doneBtns(),
       foot: `${asked} · Claude finds out on its next call, whichever button you press.`,
       page: siteBox(
@@ -338,7 +338,7 @@
           "Press <b>I'm done</b>.",
         ]) +
         `<div class="row" style="gap:8px;margin-top:2px"><span class="muted">Valet can read these codes from Messages for you next time.</span>${K.btn('Set up one-time codes…')}</div>`,
-      deadline: `<div style="text-align:right">${K.countdown('14:10', '10:02 pm')}<div class="faint" style="font-size:11px">the code itself may expire sooner</div></div>`,
+      deadline: `<div style="text-align:right">${K.countdown('14 min', '10:02 pm')}<div class="faint" style="font-size:11px">the code itself may expire sooner</div></div>`,
       buttons: doneBtns(),
       foot: `${asked} · Claude finds out on its next call.`,
       page: siteBox(
@@ -375,7 +375,7 @@
       title: 'Log in to Woolworths (verification check)',
       tone: 'bad',
       what: `<div><b>Woolworths still shows its login page.</b> Valet checked at 10:01 pm and you're not logged in yet. Finish on the page below, then press I'm done again.</div>`,
-      deadline: `<div style="text-align:right"><span class="wf-count" style="color:var(--wf-bad)">0:48<small> until 10:02 pm</small></span><div style="font-size:11px;color:var(--wf-bad)">then this window closes</div></div>`,
+      deadline: `<div style="text-align:right"><span class="wf-count" style="color:var(--wf-bad)">48 s<small> · until 10:02 pm</small></span><div style="font-size:11px;color:var(--wf-bad)">then this window closes</div></div>`,
       buttons: doneBtns(),
       foot: `Still stuck? ${K.link('Open woolworths.com.au in Safari')} to check your password works there, then ${K.link('Choose login…')} on the Woolworths page.`,
       page: siteBox(
@@ -443,10 +443,10 @@
   })
 
   const expiredPage = `
-    ${K.header({ title: 'Needs you', status: K.badge('3 waiting', 'warn') })}
+    ${K.header({ title: 'Needs you', status: '<span class="muted">3 waiting</span>' })}
     <div class="wf-scroll">
       <div class="col">
-        ${K.inbox('⇄', 'Approve a connection', 'Asked 10:00 pm · calls itself "Claude (claude.ai)" (not verified)', K.countdown('3:10', '10:05 pm'), K.btn('Decline') + K.btn('Approve…'))}
+        ${K.inbox('⇄', 'Approve a connection', 'Asked 10:00 pm · calls itself "Claude (claude.ai)" (not verified)', K.countdown('3 min', '10:05 pm'), K.btn('Decline') + K.btn('Approve…'))}
         ${K.inbox('↑', 'Review the Woolworths update (0.4.0)', 'Adds 1 host, 1 read tool · calls use 0.3.0 until you approve', '', K.primary('Review update'))}
       </div>
       <div class="row faint" style="margin-top:8px"><span class="h3" style="color:var(--wf-ink-2)">Missed in the last 24 hours</span></div>
@@ -478,6 +478,94 @@
       ],
       [791, 296, 'The same retry action as a missed confirmation (round 2 decision).'],
       [1144, 452, 'The exact result string Claude Code gets on its next Woolworths call (P6 M1).'],
+    ],
+  })
+
+  // ===================== v3: states on the order path (design G5) =====================
+  FRAMES.push({
+    id: 'confirm-allow-failed',
+    group: 'Own windows',
+    size: 'conf',
+    title: 'Confirmation: you allowed it, then Woolworths failed',
+    personas: ['P7', 'P6', 'P2'],
+    desc: 'After "Remove from cart" the request ran and Woolworths answered with an error. The window says nothing was removed, what Claude Code was told, and stays open until closed (no 5 s auto-close on a failure).',
+    html: conf({
+      strip: '<span class="faint" style="font-size:11px">3 still waiting</span>',
+      stripTone: 'bad',
+      body: `<div style="font:600 17px/1.3 var(--f-head)">Confirm: Remove from cart (Woolworths)</div>
+        <div class="wf-banner bad"><div class="grow"><b>You chose Remove from cart at 9:48 pm, but it didn't work.</b> Woolworths answered with an error, so nothing was removed from your cart.</div></div>
+        <div class="col" style="gap:4px;padding:10px 12px;border:1px solid var(--wf-line);border-radius:8px">
+          <span class="faint" style="font-size:11px">Claude Code was told</span>
+          <span style="user-select:text">Failed · see call 7F2A. The person can see it in Valet, Activity, call 7F2A.</span>
+        </div>
+        <span class="muted">Your cart is as it was. If you still want the bananas gone, ask Claude to try again, or remove them on woolworths.com.au.</span>`,
+      foot: `<div class="row" style="gap:8px">${K.btn('Open call 7F2A')}${K.ghost('Ask Claude to try again…')}<span class="grow"></span><span class="wf-btn lg" style="${focusRing}">Close</span></div>`,
+    }),
+    notes: [
+      [
+        420,
+        110,
+        'What you chose, then what actually happened, in that order; never "Removed" before Woolworths confirms it (P7, P6).',
+      ],
+      [420, 220, 'The exact result string from IA section 7, as a value (P6).'],
+      [360, 350, 'A failure stays until closed; focus is on Close and the banner is announced once (P5).'],
+    ],
+  })
+
+  FRAMES.push({
+    id: 'confirm-answered-elsewhere',
+    group: 'Own windows',
+    size: 'conf',
+    title: 'Confirmation: answered somewhere else while open',
+    personas: ['P7', 'P5', 'P3'],
+    desc: 'Declined from the notification, or ended by Lock down, while this window was open. The buttons go away in place (no layout jump), the window says where and when it was answered, and Close has focus.',
+    html: conf({
+      strip: '<span class="faint" style="font-size:11px">3 still waiting</span>',
+      body: `${title}
+        <div class="wf-banner idle"><div class="grow"><b>Declined from the notification at 9:49 pm.</b> Nothing was removed; Claude Code was told you declined.</div></div>
+        ${fromSite(true)}
+        <span class="faint" style="font-size:11px">After Lock down this says "Ended by Lock down at 9:49 pm. Nothing was removed; Claude Code was told Valet is locked down."</span>`,
+      foot: `<div class="row" style="gap:8px">${K.link('Open call 7F2A')}<span class="grow"></span><span class="wf-btn lg" style="${focusRing}">Close</span></div>`,
+    }),
+    notes: [
+      [
+        420,
+        130,
+        'Names where it was answered and when, in the declined wording, never "missed" (P6: declined vs timed-out).',
+      ],
+      [
+        420,
+        230,
+        "The site's sentence is struck through, the same as Missed, so a glance says it is over (P7).",
+      ],
+      [
+        300,
+        355,
+        "Allow and Don't remove are replaced by Close in the same spot, so a late click lands on Close, not on Allow (P5, P3).",
+      ],
+    ],
+  })
+
+  FRAMES.push({
+    id: 'login-handoff-checking',
+    group: 'Own windows',
+    title: 'Login hand-off: checking after "I\'m done"',
+    personas: ['P2', 'P5', 'P7'],
+    desc: 'The second or two after "I\'m done": Valet loads a Woolworths page to see whether it is logged in. The button says Checking…, the others wait, and the result is either the success frame or "not yet".',
+    html: loginWin({
+      title: 'Log in to Woolworths (verification check)',
+      what: `<div><b>Checking you're logged in…</b> Valet is opening your Woolworths account page. This takes a few seconds.</div>`,
+      deadline: `<div style="text-align:right">${K.countdown('13 min', '10:02 pm')}<div class="faint" style="font-size:11px">then this window closes</div></div>`,
+      buttons: `<span class="wf-btn primary lg" aria-disabled="true" style="${focusRing}opacity:.85">◌ Checking…</span><span class="wf-btn" aria-disabled="true" style="color:var(--wf-ink-3)">5 more minutes</span>${K.ghost('Give up')}`,
+      foot: `${asked} · Claude finds out on its next call, whichever button you press.`,
+      page: siteBox(
+        `${K.lines(3)}<span class="faint" style="text-align:center;font-size:11px">loading woolworths.com.au/shop/myaccount…</span>`,
+      ),
+    }),
+    notes: [
+      [960, 70, 'Focus stays on the busy button; "Checking" is announced once (P5). Give up still works.'],
+      [600, 300, "The check is Valet loading the site's own page, shown as it happens, not a hidden test."],
+      [700, 120, 'Ends in login-handoff-success or login-handoff-not-yet, never a silent close.'],
     ],
   })
 })()

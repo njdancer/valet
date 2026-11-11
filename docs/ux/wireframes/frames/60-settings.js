@@ -46,7 +46,7 @@
     ${K.header({ crumbs: ['Settings'], title: label })}
     <div style="display:flex;flex:1;min-height:0">
       ${subnav(active)}
-      <div class="wf-scroll" style="max-width:700px;gap:22px">${body}</div>
+      <div class="wf-scroll" style="max-width:760px;gap:22px">${body}</div>
     </div>${over}`
   }
 
@@ -297,12 +297,12 @@
         row(
           'Reset Valet',
           'Removes sites, logins Valet may use, Keychain copies, apps and their tokens, traces and settings. Keeps the audit log.',
-          K.danger('Reset Valet…'),
+          K.dangerSoft('Reset Valet…'),
         ),
         row(
           'Uninstall Valet',
           'Does a reset, removes the audit log and Valet Messages Helper, then moves Valet to the Bin.',
-          K.danger('Uninstall…'),
+          K.dangerSoft('Uninstall…'),
         ),
       ]),
   )
@@ -317,7 +317,7 @@
      </ul>
      <div>The audit log is kept. ${K.link('Export it first')}</div>
      <div>This can't be undone. Your 1Password items aren't touched.</div>`,
-    `<span class="grow"></span>${K.btn('Cancel')}<span class="wf-btn" style="background:var(--wf-bad);color:#fff;border-color:var(--wf-bad)">Reset Valet</span>`,
+    `<span class="grow"></span>${K.btn('Cancel')}${K.danger('Reset Valet')}`,
   )
   FRAMES.push({
     id: 'settings-reset',
