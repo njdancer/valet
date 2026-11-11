@@ -16,3 +16,10 @@ declare const __VALET_FEED_PUBLIC_KEY__: string
  * (core/smoke.ts) and a self-check report. electron-builder.config.ts refuses a release from it.
  */
 declare const __VALET_SMOKE_BUILD__: boolean
+/**
+ * `electron-vite build --mode showcase`, for scripts/package-showcase.mjs only: a demo build that is
+ * packaged as Valet Demo and runs demo mode always, packaged or not, against the fake shop
+ * (core/showcase.ts). Implies __VALET_DEMO_BUILD__. electron-builder.config.ts refuses a release
+ * from it.
+ */
+declare const __VALET_SHOWCASE_BUILD__: boolean

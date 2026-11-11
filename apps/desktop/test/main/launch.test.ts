@@ -46,6 +46,15 @@ describe('launchMode', () => {
     expect(launchMode(['--demo'], asked, { packaged: true, demoBuild: false }).demo).toBe(false)
   })
 
+  it('is always demo in a showcase build, packaged or not, and never takes a userData override packaged', () => {
+    const packaged = { packaged: true, demoBuild: true, showcaseBuild: true }
+    expect(launchMode([], {}, packaged).demo).toBe(true)
+    expect(launchMode([], { VALET_DEMO: '0' }, { ...packaged, packaged: false }).demo).toBe(true)
+    expect(launchMode([], { VALET_USER_DATA: '/tmp/sa' }, packaged).userData).toBeNull()
+    // The flag means nothing without demo mode compiled in.
+    expect(launchMode([], {}, { packaged: true, demoBuild: false, showcaseBuild: true }).demo).toBe(false)
+  })
+
   it('takes an absolute userData override only, and none in a packaged app', () => {
     expect(launchMode([], { VALET_USER_DATA: '/tmp/sa' }, DEV).userData).toBe('/tmp/sa')
     expect(launchMode([], { VALET_USER_DATA: '/tmp/a/../sa' }, DEV).userData).toBe('/tmp/sa')

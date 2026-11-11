@@ -35,6 +35,7 @@ import {
 } from '../core/erase'
 import { DEV_DATA_NAME, demoResolverRules, launchMode, rendererBase, userDataDir } from '../core/launch'
 import { AppService } from '../core/service'
+import { SHOWCASE_BUILD_MARKER } from '../core/showcase'
 import type { BridgeCommand } from '../core/snippets'
 import type { DemoSite } from './demo'
 import { launchRefused } from './guard'
@@ -48,6 +49,7 @@ import { AppWindows } from './windows'
 const mode = launchMode(process.argv, process.env, {
   packaged: app.isPackaged,
   demoBuild: __VALET_DEMO_BUILD__,
+  showcaseBuild: __VALET_SHOWCASE_BUILD__,
 })
 
 /**
@@ -228,10 +230,11 @@ async function main(): Promise<void> {
   // The constant first, so a production build drops the import, and with it the demo chunk.
   if (__VALET_DEMO_BUILD__ && mode.demo) {
     const { exposeToE2e, startDemoSite, trustDemoCertificate } = await import('./demo')
-    demo = await startDemoSite(app.getPath('userData'))
+    demo = await startDemoSite(app.getPath('userData'), { showcase: __VALET_SHOWCASE_BUILD__ })
     trustDemoCertificate('woolworths', demo.fingerprint)
     if (mode.e2e) exposeToE2e(demo)
     log(`demo: fake Woolworths at ${demo.site.origin}, signing in at ${demo.site.authOrigin}`)
+    if (__VALET_SHOWCASE_BUILD__) log(`showcase build (${SHOWCASE_BUILD_MARKER})`)
   }
   const demoSite = demo
   const adapters = builtinAdapters(

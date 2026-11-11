@@ -17,6 +17,7 @@ import {
   mfaPage,
   passwordPage,
 } from './auth-pages'
+import { STORE_NAME } from './brand'
 import {
   parseCookies,
   parseTarget,
@@ -217,7 +218,7 @@ export class FakeAuth0 {
     error: FieldError | null = null,
   ): Sent {
     if (this.shouldFrame(exchange))
-      return this.framed(exchange, 'Log in | Woolworths', '/u/login/identifier', transaction)
+      return this.framed(exchange, `Log in | ${STORE_NAME}`, '/u/login/identifier', transaction)
     const page = identifierPage({
       state: transaction.id,
       error,
@@ -245,7 +246,7 @@ export class FakeAuth0 {
     if (transaction.username === null)
       return this.redirect(exchange, this.pagePath('/u/login/identifier', transaction))
     if (this.shouldFrame(exchange)) {
-      return this.framed(exchange, 'Enter your password | Woolworths', '/u/login/password', transaction)
+      return this.framed(exchange, `Enter your password | ${STORE_NAME}`, '/u/login/password', transaction)
     }
     const { hostile } = this.options
     const page = passwordPage({

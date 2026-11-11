@@ -10,10 +10,15 @@
 
 import { app } from 'electron'
 import { classifyArgv, refusedEnv } from '../core/argv'
+import { SHOWCASE_ARGV } from '../core/showcase'
 import { SMOKE_ARGV } from '../core/smoke'
 
-/** A smoke build's own argv; a plain build drops it, and accepts only the normal shapes. */
-const SMOKE_EXTRA: readonly string[] | null = __VALET_SMOKE_BUILD__ ? SMOKE_ARGV : null
+/** A smoke or showcase build's own argv; a plain build drops both, and accepts only the normal shapes. */
+const SMOKE_EXTRA: readonly string[] | null = __VALET_SMOKE_BUILD__
+  ? SMOKE_ARGV
+  : __VALET_SHOWCASE_BUILD__
+    ? SHOWCASE_ARGV
+    : null
 
 function check(): boolean {
   if (!app.isPackaged) return false

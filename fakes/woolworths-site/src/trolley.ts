@@ -13,7 +13,8 @@ export interface TrolleyLine {
   readonly quantity: number
 }
 
-const MINIMUM_SPEND = 50
+/** Pick up's minimum spend, in dollars. */
+export const MINIMUM_SPEND = 50
 
 export type UpdateOutcome = { readonly ok: true } | { readonly ok: false; readonly reason: string }
 

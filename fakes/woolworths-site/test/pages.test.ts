@@ -85,15 +85,15 @@ describe('searchPage', () => {
 
   it('flags specials and unavailable products', () => {
     const html = searchPage(anonymous, 'milk', products)
-    expect(html.match(/product-special/g)).toHaveLength(1)
+    expect(html.match(/class="product-special"/g)).toHaveLength(1)
     expect(html).toContain('<span class="product-special">Save $0.50</span>')
-    expect(html.match(/product-unavailable/g)).toHaveLength(1)
+    expect(html.match(/class="product-unavailable"/g)).toHaveLength(1)
   })
 
   it('escapes the search term in the heading and title', () => {
     const html = searchPage(anonymous, '<img src=x>', [])
     expect(html).not.toContain('<img src=x>')
     expect(html).toContain('Results for “&lt;img src=x&gt;”')
-    expect(html).toContain('<title>&lt;img src=x&gt; | Woolworths</title>')
+    expect(html).toContain('<title>&lt;img src=x&gt; | Gumleaf Grocer</title>')
   })
 })
