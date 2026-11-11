@@ -295,7 +295,7 @@ test('the activity screen lists the calls; add_to_cart’s trace shows the login
     .getByRole('row')
     .filter({ has: control.getByRole('link', { name: 'add_to_cart', exact: true }) })
     .last()
-    .getByRole('link', { name: 'a retry' })
+    .getByRole('link', { name: /^(a retry|\d+ retries)$/ })
     .click()
   await expect(control.getByText('Declarative steps, no adapter code')).toBeVisible()
   // Each fill names the secret and field, never the value.

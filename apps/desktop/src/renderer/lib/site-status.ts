@@ -41,6 +41,20 @@ export function siteStatus(adapter: AdapterSummary, health: SiteHealth | null): 
     return { tone: 'accent', text: 'Not approved yet · its tools are off until you review it', fix: 'review' }
   if (adapter.paused)
     return { tone: 'neutral', text: `${adapter.name} paused · calls are refused`, fix: 'resume' }
+  // An open breaker leads: nothing reaches the site until it closes, whatever else is waiting. A
+  // login the person can still give keeps its button.
+  if (health !== null && health.breaker === 'open') {
+    const when = health.retryAt === null ? null : formatClock(health.retryAt)
+    const who =
+      health.cause === 'rate-limited'
+        ? `Valet is limiting its requests to ${adapter.name}`
+        : `${adapter.name} is limiting requests`
+    return {
+      tone: 'warning',
+      text: when === null ? who : `${who} · calls resume at ${when}`,
+      fix: adapter.session.state === 'needs-user' ? 'show-login' : null,
+    }
+  }
   if (adapter.session.state === 'needs-user') {
     const reason = adapter.session.needsUser
     return {
@@ -58,14 +72,6 @@ export function siteStatus(adapter: AdapterSummary, health: SiteHealth | null): 
   const missingLogin = adapter.secrets.find((s) => !s.granted)
   if (missingLogin !== undefined)
     return { tone: 'warning', text: `Give Valet your ${adapter.name} login`, fix: 'login' }
-  if (health !== null && health.breaker === 'open') {
-    const when = health.retryAt === null ? null : formatClock(health.retryAt)
-    const who =
-      health.cause === 'rate-limited'
-        ? `Valet is limiting its requests to ${adapter.name}`
-        : `${adapter.name} is limiting requests`
-    return { tone: 'warning', text: when === null ? who : `${who} · calls resume at ${when}`, fix: null }
-  }
   if (adapter.pendingUpdate !== null)
     return {
       tone: 'success',
