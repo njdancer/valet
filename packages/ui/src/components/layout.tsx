@@ -120,6 +120,7 @@ export function PageHeader({
   leading,
   actions,
   breadcrumb,
+  status,
   children,
   className,
 }: {
@@ -130,6 +131,11 @@ export function PageHeader({
   /** The page's own actions, right-aligned. One primary at most. */
   actions?: ReactNode
   breadcrumb?: ReactNode
+  /**
+   * The object's state beside the title, outside the h1 so the heading stays the name: a StatusDot
+   * with words, a Badge ("Paused", "Update waiting").
+   */
+  status?: ReactNode
   /** Below the title row: tabs, a filter bar. */
   children?: ReactNode
   className?: string
@@ -144,15 +150,17 @@ export function PageHeader({
       )}
     >
       {breadcrumb}
-      <div className="flex min-w-0 items-start gap-3">
+      <div className="flex min-w-0 flex-wrap items-start gap-x-3 gap-y-2">
         {leading ? <div className="shrink-0 pt-0.5">{leading}</div> : null}
-        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <h1 className="m-0 line-clamp-2 text-2xl break-words font-semibold tracking-tight text-fg">
-            {title}
-          </h1>
+        <div className="flex min-w-[min(100%,16rem)] flex-1 flex-col gap-0.5">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1">
+            <h1 className="m-0 min-w-0 text-2xl break-words font-semibold tracking-tight text-fg">{title}</h1>
+            {status ? <div className="flex shrink-0 items-center gap-1.5">{status}</div> : null}
+          </div>
           {description ? <p className="m-0 text-md text-fg-muted text-pretty">{description}</p> : null}
         </div>
-        {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}
+        {/* At 880 px the actions wrap under the title rather than squeezing it. */}
+        {actions ? <div className="ml-auto flex shrink-0 flex-wrap items-center gap-2">{actions}</div> : null}
       </div>
       {children}
     </header>

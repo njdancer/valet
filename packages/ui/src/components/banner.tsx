@@ -3,9 +3,10 @@ import type { ReactNode } from 'react'
 import { cn } from '../lib/cn'
 import { IconButton } from './icon-button'
 
-export type BannerTone = 'info' | 'success' | 'warning' | 'danger' | 'attention'
+export type BannerTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'attention'
 
 const toneClass: Record<BannerTone, string> = {
+  neutral: 'bg-inset text-fg ring-line',
   info: 'bg-info-soft text-info-fg ring-info-border',
   success: 'bg-success-soft text-success-fg ring-success-border',
   warning: 'bg-warning-soft text-warning-fg ring-warning-border',
@@ -14,6 +15,7 @@ const toneClass: Record<BannerTone, string> = {
 }
 
 const toneIcon: Record<BannerTone, ReactNode> = {
+  neutral: <Info />,
   info: <Info />,
   success: <CircleCheck />,
   warning: <TriangleAlert />,
@@ -56,17 +58,17 @@ export function Banner({
       data-tone={tone}
       className={cn(
         live && 'animate-rise-in',
-        'flex items-start gap-2.5 rounded-md px-3.5 py-2.5 ring-[0.5px] ring-inset [&>svg]:mt-px [&>svg]:size-4 [&>svg]:shrink-0',
+        'flex flex-wrap items-start gap-x-2.5 gap-y-2 rounded-md px-3.5 py-2.5 ring-[0.5px] ring-inset [&>svg]:mt-px [&>svg]:size-4 [&>svg]:shrink-0',
         toneClass[tone],
         className,
       )}
     >
       {icon ?? toneIcon[tone]}
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+      <div className="flex min-w-[min(100%,16rem)] flex-1 flex-col gap-0.5">
         <p className="m-0 text-md font-semibold">{title}</p>
         {children ? <div className="text-sm text-fg text-pretty">{children}</div> : null}
       </div>
-      {action ? <div className="flex shrink-0 items-center gap-2 self-center">{action}</div> : null}
+      {action ? <div className="ml-auto flex shrink-0 items-center gap-2 self-center">{action}</div> : null}
       {onDismiss ? (
         <IconButton
           label="Dismiss"

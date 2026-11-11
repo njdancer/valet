@@ -101,15 +101,17 @@ export function HealthLine({
 }: {
   tone: DotTone
   children: ReactNode
+  /** The fix, inline. Several are fine ("Open 1Password", "Choose another item"). */
   action?: ReactNode
   live?: boolean
   className?: string
 }) {
   return (
-    <div className={cn('flex min-w-0 items-center gap-2 text-md', className)}>
+    // Wraps instead of truncating: a failure reason is the one line that must be read in full.
+    <div className={cn('flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5 text-md', className)}>
       <StatusDot tone={tone} pulse={live} />
-      <span className="min-w-0 flex-1 truncate text-fg-muted">{children}</span>
-      {action}
+      <span className="min-w-[min(100%,12rem)] flex-1 break-words text-fg-muted">{children}</span>
+      {action ? <span className="flex flex-wrap items-center gap-2">{action}</span> : null}
     </div>
   )
 }

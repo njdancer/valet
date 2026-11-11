@@ -60,7 +60,7 @@ more`) strengthens every line.
    fall below the window edge.
 2. **Design at 880 × 560 first** (the minimum window); 1180 × 780 is the default. Extra width goes
    to content. `SplitView` answers to its own width with container queries: the inspector folds under
-   the detail below 1000 px; below 880 px only the detail shows when something is selected.
+   the detail below 760 px; below 880 px only the detail shows when something is selected.
 3. **Gaps, not margins.** `Stack` and `Inline` own spacing: 24 between sections, 12 inside a section,
    8 inside a group, 6 from a label to its control. A missing item leaves no stray gap.
 4. **Reading width**: forms and settings 760 px (`PageBody width="form"`), prose 640, tables full.

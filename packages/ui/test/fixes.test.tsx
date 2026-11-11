@@ -4,18 +4,27 @@ import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   ariaShortcut,
+  Badge,
+  Banner,
+  BrowserBar,
   Button,
+  CheckItem,
+  CheckList,
   CommandItem,
   CommandPalette,
+  ConfirmationPanel,
   currentPlatform,
   DeadlineChip,
   Dialog,
   DialogContent,
   DrawerContent,
   formatShortcut,
+  HandoffBanner,
+  HealthLine,
   HoldToConfirm,
   IconButton,
   InboxItem,
+  PageHeader,
   Segmented,
   SheetContent,
   Shortcut,
@@ -238,5 +247,174 @@ describe('Text and status', () => {
     })
     expect(await screen.findByText('Paused')).toBeTruthy()
     expect(screen.getAllByRole('button', { name: /close/i }).length).toBeGreaterThan(0)
+  })
+})
+
+describe('Order-path components', () => {
+  it('a confirmation is named by its title and its Allow follows the purpose', async () => {
+    const onDecline = vi.fn()
+    const onAllow = vi.fn()
+    const now = 1_000_000
+    wrap(
+      <ConfirmationPanel
+        site={<span />}
+        title="Remove 2 items from your trolley?"
+        sentence="Valet will remove oat milk and bread."
+        purpose="write"
+        allowLabel="Remove"
+        state="ready"
+        queue={{ position: 1, total: 4 }}
+        until={now + 20_000}
+        now={now}
+        onAllow={onAllow}
+        onDecline={onDecline}
+      />,
+    )
+    const region = screen.getByRole('region', { name: 'Remove 2 items from your trolley?' })
+    expect(within(region).getByText('1 of 4 waiting')).toBeTruthy()
+    expect(within(region).getByText('Changes your account')).toBeTruthy()
+    expect(within(region).queryByText('Can’t be undone')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Remove' }).className).toContain('bg-accent-solid')
+    expect(region.querySelector('[data-slot="urgent-strip"]')).toBeTruthy()
+    await userEvent.keyboard('{Escape}')
+    expect(onDecline).toHaveBeenCalledOnce()
+  })
+
+  it('shows the arming reason in words, and answered and missed states close', async () => {
+    const onClose = vi.fn()
+    const base = {
+      site: <span />,
+      sentence: 'Place the order?',
+      allowLabel: 'Place order',
+      onAllow: () => {},
+      onDecline: () => {},
+      onClose,
+    }
+    const { rerender } = wrap(<ConfirmationPanel {...base} state="arming" armingReason="Available in 2 s" />)
+    expect(screen.getByText('Available in 2 s')).toBeTruthy()
+    rerender(
+      <TooltipProvider>
+        <ConfirmationPanel
+          {...base}
+          state="answered"
+          result="Order placed. Claude was told."
+          next={<Button>Next: 2 of 4</Button>}
+        />
+      </TooltipProvider>,
+    )
+    expect(screen.getByRole('status').textContent).toContain('Order placed')
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close' }))
+    await userEvent.keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalledOnce()
+    rerender(
+      <TooltipProvider>
+        <ConfirmationPanel
+          {...base}
+          state="expired"
+          missedActions={<Button>Ask Claude to try again</Button>}
+        />
+      </TooltipProvider>,
+    )
+    expect(screen.getByRole('button', { name: 'Ask Claude to try again' })).toBeTruthy()
+  })
+
+  it('a check list says each outcome in words', () => {
+    wrap(
+      <CheckList label="What Valet checked" live>
+        <CheckItem state="pass" title="The adapter is the approved version" />
+        <CheckItem
+          state="fail"
+          title="1Password"
+          detail="1Password is locked."
+          action={<Button>Open 1Password</Button>}
+        />
+        <CheckItem state="pending" title="Store" />
+        <CheckItem state="info" title="Prices can change" />
+        <CheckItem state="skipped" title="Delivery window" />
+      </CheckList>,
+    )
+    const list = screen.getByRole('list', { name: 'What Valet checked' })
+    expect(list.getAttribute('aria-live')).toBe('polite')
+    for (const w of ['Passed:', 'Failed:', 'Checking:', 'Note:', 'Skipped:'])
+      expect(within(list).getByText(w, { exact: false })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Open 1Password' })).toBeTruthy()
+  })
+
+  it('the hand-off strip starts on I’m done and moves through its states', async () => {
+    const onDone = vi.fn()
+    const onCancel = vi.fn()
+    const onClose = vi.fn()
+    document.documentElement.dataset['platform'] = 'mac'
+    const props = { site: 'Woolworths', onDone, onCancel, onClose }
+    const { rerender } = wrap(<HandoffBanner {...props} state="waiting" until={Date.now() + 120_000} />)
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'I’m done' }))
+    expect(
+      screen.getByRole('region', { name: 'Sign in to Woolworths' }).getAttribute('aria-keyshortcuts'),
+    ).toBe('Meta+Shift+B')
+    await userEvent.keyboard('{Enter}')
+    expect(onDone).toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel sign-in' }))
+    expect(onCancel).toHaveBeenCalled()
+    for (const state of ['checking', 'not-yet'] as const) {
+      rerender(
+        <TooltipProvider>
+          <HandoffBanner {...props} state={state} />
+        </TooltipProvider>,
+      )
+    }
+    expect(screen.getByRole('button', { name: 'Check again' })).toBeTruthy()
+    for (const state of ['success', 'expired'] as const) {
+      rerender(
+        <TooltipProvider>
+          <HandoffBanner {...props} state={state} />
+        </TooltipProvider>,
+      )
+      await userEvent.click(screen.getByRole('button', { name: 'Close' }))
+    }
+    expect(onClose).toHaveBeenCalledTimes(2)
+  })
+
+  it('the browser bar puts the host first and flags an insecure page', () => {
+    const { rerender } = wrap(
+      <BrowserBar
+        url="https://auth.woolworths.com.au/login?x=1"
+        typedInto="auth.woolworths.com.au"
+        canGoBack
+        onBack={() => {}}
+      />,
+    )
+    expect(screen.getByText('auth.woolworths.com.au').className).toContain('font-semibold')
+    expect(screen.getByRole('img', { name: 'Secure connection' })).toBeTruthy()
+    rerender(
+      <TooltipProvider>
+        <BrowserBar url="http://example.test/" loading />
+      </TooltipProvider>,
+    )
+    expect(screen.getByRole('img', { name: 'Not secure' })).toBeTruthy()
+    rerender(
+      <TooltipProvider>
+        <BrowserBar url="not a url" />
+      </TooltipProvider>,
+    )
+    expect(screen.getByText('not a url')).toBeTruthy()
+  })
+
+  it('a page header carries status beside the title, outside the heading', () => {
+    wrap(<PageHeader title="Woolworths" status={<Badge tone="warning">Paused</Badge>} />)
+    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Woolworths')
+    expect(screen.getByText('Paused')).toBeTruthy()
+  })
+
+  it('a neutral banner and a wrapping health line', () => {
+    wrap(
+      <>
+        <Banner tone="neutral" title="Showing 4 of 21 calls" />
+        <HealthLine tone="danger" action={<Button>Open 1Password</Button>}>
+          1Password is locked
+        </HealthLine>
+      </>,
+    )
+    expect(screen.getByText('Showing 4 of 21 calls')).toBeTruthy()
+    expect(screen.getByText('1Password is locked').className).toContain('break-words')
   })
 })
