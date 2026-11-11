@@ -65,7 +65,7 @@ const ROUTES: [string, string][] = [
   ['#/adapters/coles', '+61 400 000 111'],
   ['#/activity/c_8f2e1b', '[session cookie]'],
   ['#/audit', 'Chain intact up to record 4813.'],
-  ['#/clients', 'Add a client…'],
+  ['#/clients', 'Add an app…'],
   ['#/credentials', '1Password app “Coles”'],
   ['#/confirm/cf_a40f3c', 'Shown by the Woolworths adapter'],
   ['#/needs-user/woolworths', 'Woolworths needs you to finish logging in.'],

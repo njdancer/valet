@@ -21,9 +21,9 @@ import { useAction, useApi, useLoad, useNow } from '../../lib/api-context'
 import { hostOf, plural } from '../../lib/format'
 import { href, navigate, SETUP_STEPS, type SetupStep } from '../../lib/router'
 import { FIELD_WORDING, PROVIDER_WORDING } from '../../lib/wording'
+import { OnePasswordAccountSetting } from '../secrets/OnePasswordSettings'
 import { MESSAGES_SECRET } from '../sites/grant/target'
 import { SettingBlock } from '../sites/SettingChooser'
-import { OnePasswordAccountSetting } from './ClientsSettings'
 
 /** The adapter setup approves and grants: the bundled one. */
 export const SETUP_ADAPTER = 'woolworths'
