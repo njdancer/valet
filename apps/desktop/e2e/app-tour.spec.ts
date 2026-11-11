@@ -187,7 +187,9 @@ async function tap(page: Page, target: Locator, after = 700): Promise<void> {
     ([x, y]) => (window as unknown as { __tourPulse: (...a: number[]) => void }).__tourPulse(x, y),
     [x, y] as const,
   )
-  await target.click()
+  await target.click().catch((e) => {
+    if (!page.isClosed()) throw e
+  })
   // A window may close itself on the click (1Password's prompt, the confirmation).
   await page.waitForTimeout(after).catch(() => undefined)
 }
@@ -630,8 +632,19 @@ test('the menu bar, the login hand-off, lock down', async () => {
     async () => {
       const sc = scenes.at(-1)
       if (shopPage !== undefined && under !== undefined && sc !== undefined) {
-        await shopPage.screenshot({ path: join(OUT, 'scenes', sc.id, under.file) })
-        sc.under = under
+        // The page under the banner may not paint while covered, so the main process captures it.
+        const url = shopPage.url()
+        const png = await launched?.app
+          .evaluate(async ({ webContents }, url) => {
+            const wc = webContents.getAllWebContents().find((w) => w.getURL() === url)
+            return wc === undefined ? null : (await wc.capturePage()).toPNG().toString('base64')
+          }, url)
+          .catch(() => null)
+        if (png === null || png === undefined) note('missing: a capture of the shop sign-in page')
+        else {
+          writeFileSync(join(OUT, 'scenes', sc.id, under.file), Buffer.from(png, 'base64'))
+          sc.under = under
+        }
       }
       await still(banner, 'login-banner')
       await banner.waitForTimeout(3000)
