@@ -81,7 +81,8 @@ describe('the adapter page', () => {
       },
     })
     expect(await screen.findByRole('heading', { name: 'Woolworths' })).toBeTruthy()
-    expect(screen.getByText('Probe')).toBeTruthy()
+    // The sign-in check is technical detail, kept under Details (D-words).
+    expect(screen.getByText('Sign-in check').closest('details')).toBeTruthy()
     expect(screen.queryByText('Handed over')).toBeNull()
     expect(screen.queryByText('Nothing yet')).toBeNull()
   })
@@ -126,7 +127,7 @@ describe('the adapter page', () => {
     expect(screen.getByRole('link', { name: 'Grant…' }).getAttribute('href')).toBe(
       '#/adapters/coles/grant/messages',
     )
-    expect(screen.getByText(/Open · retry in 4 min/)).toBeTruthy()
+    expect(screen.getByText(/Paused after the site pushed back · retry in 4 min/)).toBeTruthy()
     expect(screen.getByText('cookie coles-session present')).toBeTruthy()
   })
 
@@ -242,7 +243,9 @@ describe('activity and run traces', () => {
     renderAt('#/activity', createFakeApi({ now: NOW }))
     expect(await screen.findByText('woolworths.get_cart')).toBeTruthy()
     expect(screen.getByText('Needs you: Verification check')).toBeTruthy()
-    expect(screen.getByText(/No output: the call ended needsUser \(Verification check\)/)).toBeTruthy()
+    expect(
+      screen.getByText(/No output: the call stopped to wait for you \(Verification check\)/),
+    ).toBeTruthy()
   })
 
   it('traces the login, the hand-off and every request decision, with secrets as markers only', async () => {
@@ -615,9 +618,11 @@ describe('the login hand-off banner', () => {
     expect(screen.getByTestId('manifest-note').textContent).toBe(
       '“Auth0 showed a challenge after the password page.”',
     )
-    expect(screen.getByText(/get_cart/).parentElement?.textContent).toContain(
-      'from a client calling itself “Claude Code”',
-    )
+    // Plain words (D-words): who asked, for what, and that Valet carries on; no needsUser.
+    const line = screen.getByText(/get_cart/).parentElement?.textContent ?? ''
+    expect(line).toContain('A client calling itself “Claude Code” asked for get_cart')
+    expect(line).toContain('Valet carries on')
+    expect(line).not.toContain('needsUser')
     await user.click(screen.getByRole('button', { name: 'Give up' }))
     expect(called(api, 'closeLoginWindow')).toEqual([['woolworths']])
     await user.click(await screen.findByRole('button', { name: 'Show login' }))

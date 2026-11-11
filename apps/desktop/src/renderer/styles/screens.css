@@ -1118,3 +1118,13 @@ details.card.fold > summary::after {
 details.card.fold[open] > summary::after {
   transform: rotate(90deg);
 }
+
+/* Technical detail behind a quiet "Details" toggle (D-words). */
+details.tech > summary {
+  cursor: pointer;
+  width: fit-content;
+  margin-top: 4px;
+}
+details.tech[open] > summary {
+  margin-bottom: 4px;
+}

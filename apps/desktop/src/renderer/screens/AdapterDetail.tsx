@@ -617,36 +617,47 @@ function SessionCard({
           </div>
         ) : null}
         <ActionFailed failed={action.failed} what="open the login window" />
+        {/* D-words: plain words first; the runtime's own names one click away. */}
         <dl className="kv">
-          <dt>Auth</dt>
-          <dd className="mono xs">{adapter.partitions.auth}</dd>
-          <dt>Tools</dt>
-          <dd className="mono xs">{adapter.partitions.tool}</dd>
-          <dt>Probe</dt>
-          <dd className="mono xs">{probeText(adapter.probe)}</dd>
-          {adapter.handedOver === null ? null : (
-            <>
-              <dt>Handed over</dt>
-              <dd>
-                {`${plural(adapter.handedOver.cookies, 'cookie')} · ${plural(adapter.handedOver.storageKeys, 'storage key')}`}
-              </dd>
-            </>
-          )}
-          <dt>Breaker</dt>
+          <dt>Site</dt>
           <dd className="row">
             {breaker !== null && breaker.breaker === 'open' && breaker.retryAt !== null ? (
               <>
                 <span className="dot bad" />
-                Open · retry {formatIn(breaker.retryAt, now)}
+                Paused after the site pushed back · retry {formatIn(breaker.retryAt, now)}
               </>
             ) : (
               <>
                 <span className="dot ok" />
-                Closed · {adapter.limits.minGapMs / 1000} s between calls
+                Calls allowed · one request every {adapter.limits.minGapMs / 1000} s or more
               </>
             )}
           </dd>
         </dl>
+        <details className="tech">
+          <summary className="xs muted">Details</summary>
+          <dl className="kv">
+            <dt>Login session</dt>
+            <dd className="mono xs">{adapter.partitions.auth}</dd>
+            <dt>Tools session</dt>
+            <dd className="mono xs">{adapter.partitions.tool}</dd>
+            <dt>Sign-in check</dt>
+            <dd className="mono xs">{probeText(adapter.probe)}</dd>
+            {adapter.handedOver === null ? null : (
+              <>
+                <dt>Handed over</dt>
+                <dd>
+                  {`${plural(adapter.handedOver.cookies, 'cookie')} · ${plural(adapter.handedOver.storageKeys, 'storage key')}`}
+                </dd>
+              </>
+            )}
+            <dt>Breaker</dt>
+            <dd>
+              {breaker !== null && breaker.breaker === 'open' ? 'Open' : 'Closed'} · min gap{' '}
+              {adapter.limits.minGapMs} ms
+            </dd>
+          </dl>
+        </details>
       </div>
     </div>
   )

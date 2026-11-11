@@ -183,7 +183,7 @@ export function blockedExplanation(reason: BlockedRequest['reason']): string {
 
 export const OUTCOME_WORDING: Readonly<Record<RunOutcome | 'running', string>> = {
   ok: 'ok',
-  needsUser: 'needsUser',
+  needsUser: 'needs you',
   failed: 'failed',
   blocked: 'blocked',
   declined: 'declined',
@@ -249,7 +249,7 @@ export const PROVIDER_WORDING: Readonly<
   'onepassword-cli': {
     title: '1Password app',
     detail:
-      'Asks for Touch ID when 1Password is locked or its CLI session has expired. If you’re away, the call returns needsUser.',
+      'Asks for Touch ID when 1Password is locked or its CLI session has expired. If you’re away, the call waits for you.',
   },
   messages: {
     title: 'Messages',

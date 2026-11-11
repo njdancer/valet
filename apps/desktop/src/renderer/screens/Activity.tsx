@@ -195,7 +195,10 @@ function Trace({ trace, view }: { readonly trace: RunTrace; readonly view: 'time
             </div>
             {trace.output === null ? (
               <div className="xs muted" style={{ marginTop: 4 }}>
-                No output: the call ended {OUTCOME_WORDING[summary.outcome]}
+                No output:{' '}
+                {summary.outcome === 'needsUser'
+                  ? 'the call stopped to wait for you'
+                  : `the call ended ${OUTCOME_WORDING[summary.outcome]}`}
                 {summary.stage !== null && summary.errorClass !== null
                   ? ` (${stageWording(summary.stage)}: ${errorWording(summary.errorClass)})`
                   : ''}
@@ -259,13 +262,16 @@ export function Step({ step }: { readonly step: TraceStep }) {
           <At ms={step.atMs} />
           <Node tone={step.loggedIn ? 'ok' : 'info'} />
           <div className="label">
-            {step.afterHandoff ? <code>assertLoggedIn</code> : 'session.ensure()'}{' '}
-            <span className={`partition ${step.partition}`}>{step.partition}</span>
-            <div className="xs muted">
-              {step.afterHandoff ? 'Probe again after hand-off: ' : 'Probe '}
-              <code>GET {step.path}</code> → {step.status ?? 'no answer'},{' '}
-              {step.loggedIn ? 'logged in' : 'not logged in'}
-            </div>
+            {step.afterHandoff ? 'Checked the login worked' : 'Checked whether you’re signed in'}:{' '}
+            {step.loggedIn ? 'signed in' : 'not signed in'}
+            <details className="tech">
+              <summary className="xs muted">Details</summary>
+              <div className="xs muted">
+                {step.afterHandoff ? <code>assertLoggedIn</code> : <code>session.ensure()</code>}{' '}
+                <span className={`partition ${step.partition}`}>{step.partition}</span>{' '}
+                <code>GET {step.path}</code> → {step.status ?? 'no answer'}
+              </div>
+            </details>
           </div>
           <Dur ms={step.durationMs} />
         </li>
