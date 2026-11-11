@@ -92,8 +92,9 @@ describe('the tray popover', () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })
     renderTray(api)
-    await user.click(await screen.findByRole('switch', { name: 'MCP endpoint on' }))
+    await user.click(await screen.findByRole('button', { name: /Turn off MCP for all clients/ }))
     expect(await screen.findByText('MCP endpoint off')).toBeTruthy()
+    expect(await screen.findByRole('button', { name: /Turn MCP back on/ })).toBeTruthy()
     expect(screen.queryByText('http://127.0.0.1:47821/mcp')).toBeNull()
   })
 

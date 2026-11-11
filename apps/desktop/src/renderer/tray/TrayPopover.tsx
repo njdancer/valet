@@ -2,7 +2,7 @@
 // needs the person, each adapter's health, and the app menu.
 
 import type { AdapterSummary, AttentionItem, SiteHealth } from '../../shared/api'
-import { ActionFailed, Avatar, Icon, Spark, Switch } from '../components/ui'
+import { ActionFailed, Avatar, Icon, Spark } from '../components/ui'
 import { useAction, useApi, useLoad, useNow } from '../lib/api-context'
 import { formatIn, formatTime } from '../lib/format'
 import { href } from '../lib/router'
@@ -50,13 +50,6 @@ export function TrayPopover() {
                   : 'MCP endpoint off'}
             </div>
           </div>
-          <span className="xs muted">MCP</span>
-          <Switch
-            label="MCP endpoint on"
-            checked={listening}
-            disabled={endpoint.status !== 'ready' || action.busy}
-            onChange={(on) => action.run(() => api.endpoint.setListening(on))}
-          />
         </div>
 
         {endpoint.status === 'ready' && endpoint.data.url !== null ? (
@@ -162,6 +155,16 @@ export function TrayPopover() {
           >
             <Icon name="pause" size="sm" className="muted" />{' '}
             {paused ? 'Resume adapters' : 'Pause all adapters'}
+          </button>
+          {/* F19: switching MCP off cuts every client, so it lives here rather than one tap from the header. */}
+          <button
+            type="button"
+            className="menu-row"
+            disabled={endpoint.status !== 'ready'}
+            onClick={() => action.run(() => api.endpoint.setListening(!listening))}
+          >
+            <Icon name="link" size="sm" className="muted" />{' '}
+            {listening ? 'Turn off MCP for all clients' : 'Turn MCP back on'}
           </button>
           <button type="button" className="menu-row" onClick={() => action.run(() => api.app.quit())}>
             Quit Valet <span className="kbd">⌘Q</span>
