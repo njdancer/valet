@@ -285,6 +285,18 @@ describe('first-run setup', () => {
     expect(called(api, 'setup.finish')).toEqual([[]])
   })
 
+  it('an app added but not yet connected reads as waiting, not skipped', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW, firstRun: true })
+    await api.clients.add('Claude Code')
+    renderAt('#/setup/clients', api)
+    await heading('Connect Claude')
+    await user.click(screen.getByRole('button', { name: /^Finish$/ }))
+    await heading('Almost set up')
+    expect(screen.getByText(/waiting for Claude Code to connect/)).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'See the setup' }).getAttribute('href')).toBe('#/setup/clients')
+  })
+
   it('says so when finishing fails, and stays on setup', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW, firstRun: true })

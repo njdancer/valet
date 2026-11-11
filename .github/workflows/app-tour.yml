@@ -1,0 +1,64 @@
+name: App tour
+
+# The app tour video: a demo build (fake shop, fake 1Password, file Keychain; nothing real is
+# reached) driven by apps/desktop/e2e/app-tour.spec.ts through setup, the six places, the menu bar,
+# a login hand-off, Lock down, an update review and a confirmation, recorded window by window, once
+# in light and once in dark. showcase/tour-video.mjs turns the scenes into the video.
+#
+# The video, captions, stills and tour.json go to the branch app-tour/<run id>-<theme>, so a cloud
+# session (which can't download artifacts) can fetch them. A push to a tour/** branch runs it too.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ["tour/**"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: app-tour-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tour:
+    runs-on: macos-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        theme: [light, dark]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2.4.4
+      - run: pnpm install --frozen-lockfile
+      - name: demo build
+        working-directory: apps/desktop
+        run: pnpm exec electron-vite build --mode demo
+      - name: ffmpeg, to join the scenes
+        run: brew install ffmpeg
+      - name: tour
+        working-directory: apps/desktop
+        run: pnpm exec playwright test -c e2e/playwright.config.ts app-tour --trace off
+        env:
+          VALET_E2E_TOUR: "1"
+          VALET_TOUR_THEME: ${{ matrix.theme }}
+          VALET_TOUR_OUT: ${{ runner.temp }}/tour
+      - name: video
+        if: always()
+        working-directory: apps/desktop
+        run: |
+          test -f "$RUNNER_TEMP/tour/tour.json" || exit 0
+          pnpm exec playwright install chromium
+          node showcase/tour-video.mjs --dir "$RUNNER_TEMP/tour"
+      - name: push the tour to a branch
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/tour" && cd "$RUNNER_TEMP/tour"
+          test -n "$(ls -A)" || exit 0
+          mkdir -p stills
+          find scenes -name 'still-*.png' -exec sh -c 'cp "$1" "stills/$(basename "$(dirname "$1")")-$(basename "$1")"' _ {} \;
+          rm -rf scenes video
+          git init -q -b tour && git add -A
+          git -c user.name=app-tour -c user.email=app-tour@users.noreply.github.com commit -qm "App tour (${{ matrix.theme }}), run ${{ github.run_id }}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" HEAD:refs/heads/app-tour/${{ github.run_id }}-${{ matrix.theme }}
