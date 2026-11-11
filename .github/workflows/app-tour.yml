@@ -11,7 +11,7 @@ name: App tour
 on:
   workflow_dispatch:
   push:
-    branches: ["tour/**", "claude/project-thread-10d4j0"]
+    branches: ["tour/**"]
 
 permissions:
   contents: write
