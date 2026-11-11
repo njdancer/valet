@@ -292,6 +292,11 @@ export const manifestSchema = z
     description: z.string().min(1).max(1000),
     /** The site's home page, opened in the tool partition before tool code runs. */
     home: z.url({ protocol: /^https$/ }),
+    /**
+     * The site's own cart page, which Valet opens in the person's own browser so they can check out
+     * there (Valet never places orders). Must be on a navigation origin. Optional.
+     */
+    cartUrl: z.url({ protocol: /^https$/ }).optional(),
     /** Origins the auth partition may navigate to. Anything else aborts the auth action. */
     navigation: z.array(origin).min(1),
     /** Hosts the tool partition may send any request to. Everything else is blocked. */
@@ -456,6 +461,9 @@ export const manifestSchema = z
     }
     if (manifest.limits.cooldownSeconds > manifest.limits.maxCooldownSeconds) {
       ctx.addIssue({ code: 'custom', message: 'cooldownSeconds exceeds maxCooldownSeconds' })
+    }
+    if (manifest.cartUrl !== undefined && !manifest.navigation.includes(new URL(manifest.cartUrl).origin)) {
+      ctx.addIssue({ code: 'custom', message: `cartUrl ${manifest.cartUrl} is not on a navigation origin` })
     }
     for (const [secretName, request] of Object.entries(manifest.secrets)) {
       for (const secretOrigin of request.origins) {

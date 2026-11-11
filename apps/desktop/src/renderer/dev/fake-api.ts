@@ -261,6 +261,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     messages: [],
     handedOver: { cookies: 14, storageKeys: 0 },
     settingsNeeded: [],
+    cartUrl: `${WOW_WWW}/shop/cart`,
     settings: [
       {
         name: 'store',
@@ -362,6 +363,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     ],
     handedOver: { cookies: 9, storageKeys: 0 },
     settingsNeeded: [],
+    cartUrl: null,
     settings: [],
   }
 
@@ -831,6 +833,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     session: detail.session,
     calls7d: detail.calls7d,
     settingsNeeded: detail.settings.filter((s) => s.required && s.chosen === null).map((s) => s.title),
+    cartUrl: detail.cartUrl,
   })
 
   // ---------- The API ----------
@@ -868,6 +871,10 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
           ),
         })
         emit({ type: 'adapters-changed' })
+      },
+      async openCart(adapterId) {
+        enter('adapters.openCart', adapterId)
+        if (adapters.get(adapterId)?.cartUrl == null) throw new Error('refused')
       },
       async clearSetting(adapterId, setting) {
         enter('adapters.clearSetting', adapterId, setting)

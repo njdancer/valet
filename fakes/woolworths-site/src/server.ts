@@ -454,7 +454,9 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
       const specials = catalogue.filter((product) => product.IsOnSpecial && product.IsAvailable).slice(0, 8)
       return html(exchange, 200, homePage(page(exchange), specials))
     }
-    if (method === 'GET' && path === '/shop/trolley') {
+    // The real site's trolley page is assumed to be /shop/cart (the adapter's CART_PAGE); the old
+    // path is kept for links from before.
+    if (method === 'GET' && (path === '/shop/cart' || path === '/shop/trolley')) {
       const lines = shopLines(store.trolleyOf(exchange.visitor))
       return html(exchange, 200, trolleyPage(page(exchange), lines, MINIMUM_SPEND))
     }

@@ -83,6 +83,11 @@ export interface AdapterSummary {
    * every tool call ends needsUser `setting-required`.
    */
   readonly settingsNeeded: readonly string[]
+  /**
+   * The site's own cart page, which the person opens in their own browser to check out (Valet never
+   * places orders). Null when the adapter names none, or isn't approved.
+   */
+  readonly cartUrl: string | null
 }
 
 /**
@@ -827,6 +832,8 @@ export interface ValetApi {
      */
     setSetting(adapterId: string, setting: string, choiceId: string): Promise<void>
     clearSetting(adapterId: string, setting: string): Promise<void>
+    /** Opens the adapter's cart page in the person's default browser. */
+    openCart(adapterId: string): Promise<void>
   }
   readonly approvals: {
     pending(): Promise<readonly PendingReview[]>

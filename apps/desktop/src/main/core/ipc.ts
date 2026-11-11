@@ -153,6 +153,7 @@ const HANDLERS: Readonly<
   'adapters.clearSetting': entry(z.tuple([ADAPTER_ID, SETTING]), (api, [id, s]) =>
     api.adapters.clearSetting(id, s),
   ),
+  'adapters.openCart': entry(z.tuple([ADAPTER_ID]), (api, [id]) => api.adapters.openCart(id)),
   'approvals.pending': entry(none, (api) => api.approvals.pending()),
   'approvals.approve': entry(z.tuple([ADAPTER_ID, HASH]), (api, [id, hash]) =>
     api.approvals.approve(id, hash),

@@ -302,6 +302,9 @@ async function main(): Promise<void> {
       }),
     ui: {
       writeClipboard: (text) => clipboard.writeText(text),
+      openExternal: (url) => {
+        if (new URL(url).protocol === 'https:') void shell.openExternal(url)
+      },
       chooseSaveFile: async (defaultName) => {
         const result = await dialog.showSaveDialog({ defaultPath: defaultName })
         return result.canceled || result.filePath === undefined ? null : result.filePath

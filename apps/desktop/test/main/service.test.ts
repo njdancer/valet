@@ -82,6 +82,7 @@ async function setup(
   const events: AppEvent[] = []
   const ui = {
     clipboard: [] as string[],
+    opened: [] as string[],
     shownConfirmations: [] as string[],
     closedConfirmations: [] as string[],
     banners: [] as string[],
@@ -165,6 +166,7 @@ async function setup(
     },
     ui: {
       writeClipboard: (text) => ui.clipboard.push(text),
+      openExternal: (url) => ui.opened.push(url),
       chooseSaveFile: async () => ui.saveTo,
       chooseOpFile: async () => ui.opChoice,
       openControlPanel: (route) => ui.panels.push(route),
@@ -279,6 +281,25 @@ describe('first run', () => {
     await s.api.approvals.reject('shop', s.adapter.hash)
     expect((await s.api.adapters.list())[0]?.approval).toBe('rejected')
     expect(await s.api.attention.list()).toEqual([])
+  })
+})
+
+describe('the cart page', () => {
+  it('offers the adapter’s cart page only once it is approved, and opens it in the browser', async () => {
+    const s = await setup({ definition: shopDefinition({ ...SHOP, cartUrl: 'https://www.shop.test/cart' }) })
+    expect((await s.api.adapters.list())[0]?.cartUrl).toBeNull()
+    await expect(s.api.adapters.openCart('shop')).rejects.toThrow()
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    expect((await s.api.adapters.list())[0]?.cartUrl).toBe('https://www.shop.test/cart')
+    await s.api.adapters.openCart('shop')
+    expect(s.ui.opened).toEqual(['https://www.shop.test/cart'])
+  })
+
+  it('offers nothing for an adapter that names no cart page', async () => {
+    const s = await approved()
+    expect((await s.api.adapters.list())[0]?.cartUrl).toBeNull()
+    await expect(s.api.adapters.openCart('shop')).rejects.toThrow()
+    expect(s.ui.opened).toEqual([])
   })
 })
 

@@ -92,7 +92,8 @@ export class FakeToolContext implements ToolContext {
       return responder(request)
     },
     goto: async () => unused('goto'),
-    currentUrl: () => unused('currentUrl'),
+    // The tool page sits on the site's home page.
+    currentUrl: () => this.manifest.home,
     click: async () => unused('click'),
     fill: async () => unused('fill'),
     extract: async () => unused('extract'),

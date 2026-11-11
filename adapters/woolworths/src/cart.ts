@@ -12,7 +12,7 @@ import { type ToolContext, tool, ValetError } from '@valet/core'
 import { z } from 'zod'
 import { withLogin } from './login'
 import { productName, stockcodeSchema } from './products'
-import { getHeldJson, getJson, PATHS, postJson } from './site'
+import { CART_PAGE, getHeldJson, getJson, PATHS, postJson } from './site'
 import { cents, text } from './text'
 import {
   type ProductTileWire,
@@ -229,15 +229,32 @@ const writeOutput = {
   notices: z.array(z.string()),
 }
 
+/**
+ * The trolley page on the site the tool page is on, or null when that isn't an https page. Built
+ * from the page, not the manifest, because tool code never sees the manifest's options.
+ */
+function cartUrlOf(ctx: ToolContext): string | null {
+  try {
+    const here = new URL(ctx.page.currentUrl())
+    return here.protocol === 'https:' ? new URL(CART_PAGE, here.origin).href : null
+  } catch {
+    return null
+  }
+}
+
 export const getCart = tool({
   input: z.object({}),
-  output: cartSchema,
+  output: cartSchema.extend({
+    /** The site's trolley page, for the person to check out in their own browser (D-checkout). */
+    cartUrl: z.string().nullable(),
+  }),
   async run(ctx) {
     // Always the site's own answer: this is the tool an agent checks the cart with.
-    return withLogin(
+    const cart = await withLogin(
       ctx,
       async () => readTrolley(await getJson(ctx, PATHS.trolley, trolleyWire, { fresh: true })).cart,
     )
+    return { ...cart, cartUrl: cartUrlOf(ctx) }
   },
 })
 

@@ -18,6 +18,7 @@ import {
   parseManifest,
   type SecretField,
 } from '@valet/core'
+import { CART_PAGE } from './site'
 
 export const REAL_ORIGIN = 'https://www.woolworths.com.au'
 export const REAL_AUTH_ORIGIN = 'https://auth.woolworths.com.au'
@@ -190,6 +191,8 @@ export function createManifest({
     version: '0.3.0',
     description: 'Search Woolworths (Australia) products and manage the online shopping cart.',
     home: `${origin}/`,
+    // Opened in the person's own browser to check out: Valet never places orders.
+    cartUrl: `${origin}${CART_PAGE}`,
     // The tool partition never needs the auth origin: Auth0's session stays in the auth partition.
     navigation: [origin, authOrigin],
     egress,
@@ -267,7 +270,8 @@ export function createManifest({
       {
         name: 'get_cart',
         title: 'Get cart',
-        description: 'The items in the Woolworths cart, with quantities, line totals, subtotal and savings.',
+        description:
+          'The items in the Woolworths cart, with quantities, line totals, subtotal and savings, and cartUrl: the trolley page where the person checks out in their own browser. This adapter never places orders.',
         sideEffect: 'read',
       },
       {

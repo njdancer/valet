@@ -9,6 +9,7 @@ export const INVOKE_METHODS = [
   'adapters.settingChoices',
   'adapters.setSetting',
   'adapters.clearSetting',
+  'adapters.openCart',
   'approvals.pending',
   'approvals.approve',
   'approvals.reject',

@@ -104,6 +104,8 @@ import {
 /** What the service asks of the app's windows and the OS. */
 export interface UiPort {
   writeClipboard(text: string): void
+  /** Opens an https page in the person's default browser. */
+  openExternal(url: string): void
   /** A native save dialog. Null when cancelled. */
   chooseSaveFile(defaultName: string): Promise<string | null>
   /** A native open dialog for the 1Password CLI. Null when cancelled. */
@@ -908,6 +910,13 @@ export class AppService {
         settingChoices: (adapterId, setting, query) => this.settingChoices(adapterId, setting, query),
         setSetting: (adapterId, setting, value) => this.setSetting(adapterId, setting, value),
         clearSetting: (adapterId, setting) => this.clearSetting(adapterId, setting),
+        openCart: async (adapterId) => {
+          const state = (await this.states()).find((s) => s.adapter.definition.manifest.id === adapterId)
+          const url = state === undefined ? null : adapterSummary(state).cartUrl
+          if (url === null) throw new ValetError('config', 'not-found')
+          // The manifest's own https page on one of its navigation origins (core checks both).
+          deps.ui.openExternal(url)
+        },
       },
       approvals: {
         pending: async () =>
