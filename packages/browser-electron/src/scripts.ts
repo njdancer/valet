@@ -142,6 +142,14 @@ const FETCH = `async (request) => {
   return { status: response.status, contentType: response.headers.get('content-type'), body }
 }`
 
+// Resolves once the page has rendered a frame (two animation frames: the next one starts only after
+// the one before it was drawn), or after the cap if frames don't come, so a click never waits on it
+// for good.
+const NEXT_FRAME = `(capMs) => new Promise((resolve) => {
+  const timer = setTimeout(() => resolve(false), capMs)
+  requestAnimationFrame(() => requestAnimationFrame(() => { clearTimeout(timer); resolve(true) }))
+})`
+
 const READ_STORAGE = `(keys) => {
   const values = {}
   for (const key of keys) values[key] = window.localStorage.getItem(key)
@@ -156,6 +164,7 @@ const WRITE_STORAGE = `(entries) => {
 export const inspectScript = (selector: string): string => invoke(INSPECT, selector)
 export const pointScript = (selector: string): string => invoke(POINT, selector)
 export const frameOffsetScript = (childIndex: number): string => invoke(FRAME_OFFSET, childIndex)
+export const nextFrameScript = (capMs: number): string => invoke(NEXT_FRAME, capMs)
 export const focusScript = (selector: string): string => invoke(FOCUS, selector)
 export const focusedScript = (selector: string): string => invoke(FOCUSED, selector)
 export const textPresentScript = (text: string): string => invoke(TEXT_PRESENT, text)
