@@ -393,6 +393,11 @@ async function main(): Promise<void> {
   registerIpc(running.api, windows, base, log)
   await running.start()
   tray = createTray(windows, running.api, mode.demo, running.remote)
+  // The e2e suite opens the popover as a click on the icon would; there is no icon to click headless.
+  if (mode.e2e)
+    Object.defineProperty(globalThis, '__valetE2eTray', {
+      value: Object.freeze({ toggle: () => windows.toggleTray({ x: 900, y: 0, width: 24, height: 22 }) }),
+    })
 
   app.on('second-instance', () => windows.openControlPanel(null))
   let stopping = false
