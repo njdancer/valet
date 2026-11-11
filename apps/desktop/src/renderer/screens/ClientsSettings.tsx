@@ -5,6 +5,7 @@
 
 import { useState } from 'react'
 import type { ClientInfo, ClientKind, SettingsPatch, UpdateStatus } from '../../shared/api'
+import { AddToClaudeDesktop } from '../components/AddToClaudeDesktop'
 import { ActionFailed, Icon, LoadState, Segmented, Switch } from '../components/ui'
 import { useAction, useApi, useLoad, useNow } from '../lib/api-context'
 import { formatAgo, formatDay, formatTime } from '../lib/format'
@@ -268,6 +269,7 @@ function ClientSetup({
                   </span>
                 </div>
                 <div className="card-body stack">
+                  {snippet.client === 'claude-desktop' ? <AddToClaudeDesktop clientId={client.id} /> : null}
                   <pre className="code">{snippet.text}</pre>
                 </div>
               </div>

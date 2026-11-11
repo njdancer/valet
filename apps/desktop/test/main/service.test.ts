@@ -82,6 +82,7 @@ async function setup(
   const events: AppEvent[] = []
   const ui = {
     clipboard: [] as string[],
+    opened: [] as string[],
     shownConfirmations: [] as string[],
     closedConfirmations: [] as string[],
     banners: [] as string[],
@@ -165,6 +166,7 @@ async function setup(
     },
     ui: {
       writeClipboard: (text) => ui.clipboard.push(text),
+      openExternal: (url) => ui.opened.push(url),
       chooseSaveFile: async () => ui.saveTo,
       chooseOpFile: async () => ui.opChoice,
       openControlPanel: (route) => ui.panels.push(route),
@@ -188,6 +190,7 @@ async function setup(
     ...(options.leftovers === undefined ? {} : { leftovers: options.leftovers }),
     emit: (event) => events.push(event),
     bridge: (configPath) => ({ command: '/repo/tsx', args: ['/repo/bridge-cli.ts', configPath] }),
+    claudeDesktopConfig: join(dir, 'Claude', 'claude_desktop_config.json'),
     checkOp: options.checkOp ?? (async (path) => (path === '/good/op' ? path : null)),
     updates: options.updates ?? (async () => disabledUpdates('0.1.0', 'development', false)),
     // The site's rate budget waits on the test's clock.
@@ -279,6 +282,46 @@ describe('first run', () => {
     await s.api.approvals.reject('shop', s.adapter.hash)
     expect((await s.api.adapters.list())[0]?.approval).toBe('rejected')
     expect(await s.api.attention.list()).toEqual([])
+  })
+})
+
+describe('the cart page', () => {
+  it('offers the adapter’s cart page only once it is approved, and opens it in the browser', async () => {
+    const s = await setup({ definition: shopDefinition({ ...SHOP, cartUrl: 'https://www.shop.test/cart' }) })
+    expect((await s.api.adapters.list())[0]?.cartUrl).toBeNull()
+    await expect(s.api.adapters.openCart('shop')).rejects.toThrow()
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    expect((await s.api.adapters.list())[0]?.cartUrl).toBe('https://www.shop.test/cart')
+    await s.api.adapters.openCart('shop')
+    expect(s.ui.opened).toEqual(['https://www.shop.test/cart'])
+  })
+
+  it('offers nothing for an adapter that names no cart page', async () => {
+    const s = await approved()
+    expect((await s.api.adapters.list())[0]?.cartUrl).toBeNull()
+    await expect(s.api.adapters.openCart('shop')).rejects.toThrow()
+    expect(s.ui.opened).toEqual([])
+  })
+})
+
+describe('Add to Claude Desktop', () => {
+  it('writes the client’s bridge entry into Claude Desktop’s config, and only for an active client', async () => {
+    const s = await approved()
+    const client = await s.api.clients.add('Claude Desktop')
+    await expect(s.api.clients.addToClaudeDesktop('c_nope')).rejects.toThrow()
+    const written = await s.api.clients.addToClaudeDesktop(client.id)
+    expect(written).toMatchObject({ backup: null, replaced: false })
+    const servers = JSON.parse(readFileSync(written.path, 'utf8')).mcpServers
+    const [entry] = Object.values(servers) as { command: string; args: string[] }[]
+    expect(Object.keys(servers)).toHaveLength(1)
+    expect(entry?.command).toBe('/repo/tsx')
+    expect(entry?.args.at(-1)).toContain(client.id)
+    // A second time replaces its own entry, and keeps a copy of the file it replaced.
+    const again = await s.api.clients.addToClaudeDesktop(client.id)
+    expect(again.replaced).toBe(true)
+    expect(again.backup).not.toBeNull()
+    await s.api.clients.revoke(client.id)
+    await expect(s.api.clients.addToClaudeDesktop(client.id)).rejects.toThrow()
   })
 })
 

@@ -153,6 +153,7 @@ const HANDLERS: Readonly<
   'adapters.clearSetting': entry(z.tuple([ADAPTER_ID, SETTING]), (api, [id, s]) =>
     api.adapters.clearSetting(id, s),
   ),
+  'adapters.openCart': entry(z.tuple([ADAPTER_ID]), (api, [id]) => api.adapters.openCart(id)),
   'approvals.pending': entry(none, (api) => api.approvals.pending()),
   'approvals.approve': entry(z.tuple([ADAPTER_ID, HASH]), (api, [id, hash]) =>
     api.approvals.approve(id, hash),
@@ -184,6 +185,9 @@ const HANDLERS: Readonly<
   'clients.copyConfig': entry(
     z.tuple([OPAQUE_ID, z.enum(['claude-code', 'claude-desktop'])]),
     (api, [id, kind]) => api.clients.copyConfig(id, kind),
+  ),
+  'clients.addToClaudeDesktop': entry(z.tuple([OPAQUE_ID]), (api, [id]) =>
+    api.clients.addToClaudeDesktop(id),
   ),
   'attention.list': entry(none, (api) => api.attention.list()),
   answerConfirmation: entry(z.tuple([OPAQUE_ID, z.boolean()]), (api, [id, approved], sender) =>

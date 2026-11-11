@@ -261,6 +261,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     messages: [],
     handedOver: { cookies: 14, storageKeys: 0 },
     settingsNeeded: [],
+    cartUrl: `${WOW_WWW}/shop/cart`,
     settings: [
       {
         name: 'store',
@@ -362,6 +363,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     ],
     handedOver: { cookies: 9, storageKeys: 0 },
     settingsNeeded: [],
+    cartUrl: null,
     settings: [],
   }
 
@@ -831,6 +833,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     session: detail.session,
     calls7d: detail.calls7d,
     settingsNeeded: detail.settings.filter((s) => s.required && s.chosen === null).map((s) => s.title),
+    cartUrl: detail.cartUrl,
   })
 
   // ---------- The API ----------
@@ -868,6 +871,10 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
           ),
         })
         emit({ type: 'adapters-changed' })
+      },
+      async openCart(adapterId) {
+        enter('adapters.openCart', adapterId)
+        if (adapters.get(adapterId)?.cartUrl == null) throw new Error('refused')
       },
       async clearSetting(adapterId, setting) {
         enter('adapters.clearSetting', adapterId, setting)
@@ -1132,6 +1139,16 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       },
       async copyConfig(clientId, kind) {
         enter('clients.copyConfig', clientId, kind)
+      },
+      async addToClaudeDesktop(clientId) {
+        enter('clients.addToClaudeDesktop', clientId)
+        if (!clients.some((c) => c.id === clientId && c.revokedAt === null)) throw new Error('refused')
+        return {
+          path: '~/Library/Application Support/Claude/claude_desktop_config.json',
+          backup:
+            '~/Library/Application Support/Claude/claude_desktop_config.json.valet-backup-20261107T214800Z',
+          replaced: false,
+        }
       },
       async revoke(clientId) {
         enter('clients.revoke', clientId)

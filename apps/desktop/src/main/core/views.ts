@@ -167,6 +167,7 @@ export function adapterSummary(state: AdapterState): AdapterSummary {
     settingsNeeded: settingInfos(state)
       .filter((s) => s.required && s.chosen === null)
       .map((s) => s.title),
+    cartUrl: approvalState(state) === 'approved' ? (manifest.cartUrl ?? null) : null,
   }
 }
 

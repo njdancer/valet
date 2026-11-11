@@ -126,6 +126,21 @@ export function TrayPopover() {
         ) : null}
 
         <section aria-label="Menu">
+          {/* D-checkout: Valet never places the order; the person checks out on the site. */}
+          {adapters.status === 'ready'
+            ? adapters.data
+                .filter((adapter) => adapter.cartUrl !== null)
+                .map((adapter) => (
+                  <button
+                    key={adapter.id}
+                    type="button"
+                    className="menu-row"
+                    onClick={() => action.run(() => api.adapters.openCart(adapter.id))}
+                  >
+                    <Icon name="external" size="sm" className="muted" /> Check out on {adapter.site}…
+                  </button>
+                ))
+            : null}
           <button
             type="button"
             className="menu-row"

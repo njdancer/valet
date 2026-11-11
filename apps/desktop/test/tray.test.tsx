@@ -67,6 +67,16 @@ describe('the tray popover', () => {
     expect(called(api, 'endpoint.copyUrl')).toEqual([[]])
   })
 
+  it('opens the site’s cart in the browser, for the person to check out there', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    renderTray(api)
+    await user.click(await screen.findByRole('button', { name: /Check out on woolworths\.com\.au/ }))
+    expect(called(api, 'adapters.openCart')).toEqual([['woolworths']])
+    // Coles names no cart page.
+    expect(screen.queryByRole('button', { name: /Check out on coles/ })).toBeNull()
+  })
+
   it('switches the endpoint off', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })

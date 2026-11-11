@@ -119,7 +119,7 @@ describe('the fake guard', () => {
     expect(ctx.fetches).toEqual([])
   })
 
-  it('refuses every page primitive but fetch, which the adapter never needs', async () => {
+  it('refuses every page primitive but fetch and currentUrl, which the adapter never needs', async () => {
     const ctx = new FakeToolContext()
     await expect(ctx.page.goto(FAKE_ORIGIN)).rejects.toThrow()
     await expect(ctx.page.click('#x')).rejects.toThrow()
@@ -127,6 +127,7 @@ describe('the fake guard', () => {
     await expect(ctx.page.extract('#x')).rejects.toThrow()
     await expect(ctx.page.evaluate('1')).rejects.toThrow()
     await expect(ctx.confirm()).rejects.toThrow()
-    expect(() => ctx.page.currentUrl()).toThrow()
+    // get_cart reads where the tool page is, to link the site's trolley page.
+    expect(ctx.page.currentUrl()).toBe(`${FAKE_ORIGIN}/`)
   })
 })

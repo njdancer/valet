@@ -126,6 +126,11 @@ describe('first-run setup', () => {
       [added[1]?.id, 'claude-desktop'],
     ])
     expect(screen.getAllByRole('button', { name: 'Copied' })).toHaveLength(2)
+    // Or Valet writes Claude Desktop's config itself, keeping a copy of the old one.
+    await user.click(screen.getByRole('button', { name: 'Add to Claude Desktop' }))
+    expect(called(api, 'clients.addToClaudeDesktop')).toEqual([[added[1]?.id]])
+    expect(await screen.findByText(/Quit and reopen Claude Desktop to load Valet/)).toBeTruthy()
+    expect(screen.getByText('claude_desktop_config.json.valet-backup-20261107T214800Z')).toBeTruthy()
     expect(screen.getAllByText('Not connected yet')).toHaveLength(2)
     // Added and copied isn't connected: the step isn't done until a client calls in.
     expect(within(rail()).getAllByText('Done')).toHaveLength(3)

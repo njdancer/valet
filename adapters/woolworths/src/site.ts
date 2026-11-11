@@ -5,6 +5,12 @@
 import { type FetchInit, type FetchResult, type ToolContext, ValetError } from '@valet/core'
 import type { z } from 'zod'
 
+/**
+ * The site's trolley page, where the person checks out in their own browser (Valet never places
+ * orders). Assumed from the site's links, not yet opened live.
+ */
+export const CART_PAGE = '/shop/cart'
+
 export const PATHS = {
   search: '/apis/ui/Search/products',
   productDetail: (stockcode: number) => `/apis/ui/product/detail/${stockcode}`,

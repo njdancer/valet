@@ -1,7 +1,7 @@
 import { NeedsUserError, ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { addToCart, getCart, NOTICES, removeFromCart, setCartQuantity } from '../src/cart'
-import { FakeToolContext, json, loadFixture } from './fake-context'
+import { FAKE_ORIGIN, FakeToolContext, json, loadFixture } from './fake-context'
 
 const TROLLEY = '/apis/ui/Trolley'
 const UPDATE = '/api/v3/ui/trolley/update'
@@ -47,6 +47,7 @@ describe('get_cart', () => {
       itemCount: 2,
       totalQuantity: 3,
       notices: [],
+      cartUrl: `${FAKE_ORIGIN}/shop/cart`,
     })
     expect(getCart.output.parse(cart)).toEqual(cart)
   })
@@ -62,7 +63,14 @@ describe('get_cart', () => {
       itemCount: 0,
       totalQuantity: 0,
       notices: ['Pick up has a $50 minimum spend. Add $50.00 of Woolworths items to continue.'],
+      cartUrl: `${FAKE_ORIGIN}/shop/cart`,
     })
+  })
+
+  it('gives no cart link when the tool page is not an https page', async () => {
+    const ctx = new FakeToolContext().on('GET', TROLLEY, json(loadFixture('trolley-empty.json')))
+    Object.assign(ctx.page, { currentUrl: () => 'about:blank' })
+    expect((await getCart.run(ctx, {})).cartUrl).toBeNull()
   })
 
   it('lists unavailable items separately', async () => {

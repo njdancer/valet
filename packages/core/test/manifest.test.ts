@@ -238,6 +238,19 @@ describe('manifestSchema', () => {
     expect(issues(input)).toContain('secret login origin https://elsewhere.example.com is not in navigation')
   })
 
+  it('takes an optional https cart page on a navigation origin', () => {
+    expect(parseManifest(copy()).cartUrl).toBeUndefined()
+    const input = copy()
+    input.cartUrl = 'https://www.example.com/cart'
+    expect(parseManifest(input).cartUrl).toBe('https://www.example.com/cart')
+    input.cartUrl = 'https://elsewhere.example.com/cart'
+    expect(issues(input)).toContain(
+      'cartUrl https://elsewhere.example.com/cart is not on a navigation origin',
+    )
+    input.cartUrl = 'http://www.example.com/cart'
+    expect(issues(input)).not.toEqual([])
+  })
+
   it('rejects duplicate tool names', () => {
     const input = copy()
     input.tools.push({ ...input.tools[0] })

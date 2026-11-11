@@ -152,7 +152,7 @@ function layout(title: string, context: PageContext, main: string, extraHead = '
     </form>
     <nav class="header-account">
       ${account}
-      <a class="header-trolley" id="header-Trolley" href="/shop/trolley">🛒 ${money(trolley.total)} <span class="count">${trolley.count}</span></a>
+      <a class="header-trolley" id="header-Trolley" href="/shop/cart">🛒 ${money(trolley.total)} <span class="count">${trolley.count}</span></a>
     </nav>
   </header>
   <nav class="subnav">${DEPARTMENTS.map(([label, term]) => `<a href="/shop/search/products?searchTerm=${term}">${label}</a>`).join('')}</nav>
@@ -232,7 +232,7 @@ export function myAccountPage(context: PageContext): string {
     context,
     `    <h1 id="myaccount-Greeting">Hi ${escapeHtml(context.shopper ?? '')}</h1>
     <p>Welcome to your account.</p>
-    <p><a class="button" href="/shop/trolley">View trolley</a></p>`,
+    <p><a class="button" href="/shop/cart">View trolley</a></p>`,
   )
 }
 

@@ -336,6 +336,27 @@ describe('clients and settings', () => {
     expect(await screen.findByRole('button', { name: 'Copied' })).toBeTruthy()
   })
 
+  it('writes Claude Desktop’s config for a client, and says so plainly when it can’t', async () => {
+    const user = userEvent.setup()
+    const fake = createFakeApi({ now: NOW })
+    const api = {
+      ...fake,
+      clients: {
+        ...fake.clients,
+        addToClaudeDesktop: async () => {
+          throw new Error('invalid')
+        },
+      },
+    }
+    renderAt('#/clients', api)
+    await user.click(await screen.findByRole('button', { name: 'Add a client…' }))
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+    await user.click(await screen.findByRole('button', { name: 'Add to Claude Desktop' }))
+    expect(
+      await screen.findByText(/couldn’t update Claude Desktop’s config, and left it as it was/),
+    ).toBeTruthy()
+  })
+
   it('shows each client by the person’s name with what it says it is, resets one’s access and revokes another', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })
