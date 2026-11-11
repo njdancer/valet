@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Valet</title>
+  <!-- Valet's app icon, a placeholder: the in-app glyph (two linked squares) on the setup logo's
+       blue, in macOS's icon grid (an 824 px body in a 1024 px canvas). icon.png is rendered from
+       this file; see scripts/render-icon.mjs. -->
+  <defs>
+    <linearGradient id="body" x1="0.3" y1="0" x2="0.7" y2="1">
+      <stop offset="0" stop-color="#4a97ff"/>
+      <stop offset="1" stop-color="#0a5fd6"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#body)" filter="url(#shadow)"/>
+  <g transform="translate(232 232) scale(23.33)" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round" stroke-linecap="round">
+    <rect x="3" y="3" width="8" height="8" rx="2"/>
+    <rect x="13" y="13" width="8" height="8" rx="2"/>
+    <path d="M11 7h4a2 2 0 0 1 2 2v4M13 17H9a2 2 0 0 1-2-2v-4"/>
+  </g>
+</svg>

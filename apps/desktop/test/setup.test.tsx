@@ -127,6 +127,9 @@ describe('first-run setup', () => {
     ])
     expect(screen.getAllByRole('button', { name: 'Copied' })).toHaveLength(2)
     expect(screen.getAllByText('Not connected yet')).toHaveLength(2)
+    // Added and copied isn't connected: the step isn't done until a client calls in.
+    expect(within(rail()).getAllByText('Done')).toHaveLength(3)
+    expect(screen.getByRole('button', { name: 'Finish' })).toBeTruthy()
     api.fake.clientSeen(added[0]?.id ?? '')
     await screen.findByText('Connected')
 
