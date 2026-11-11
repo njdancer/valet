@@ -453,11 +453,11 @@ async function main() {
     )
     const title = articles?.results?.[0]?.title ?? 'BHP'
     const summary = await callTool(chat, client, tool('get_summary'), { title }, (s) =>
-      s === null ? 'no summary' : `${s.title}: ${(s.extract ?? '').slice(0, 120)}…`,
+      s === null ? 'no summary' : `${s.title}: ${(s.summary ?? '').slice(0, 120)}…`,
     )
     await chat.evaluate(
       (t) => window.chat.assistant(t),
-      summary?.extract ? `From Wikipedia: ${summary.extract}` : 'I couldn’t reach Wikipedia just now.',
+      summary?.summary ? `From Wikipedia: ${summary.summary}` : 'I couldn’t reach Wikipedia just now.',
     )
     await sleep(5000)
     await still(chat, 'chat-wikipedia')

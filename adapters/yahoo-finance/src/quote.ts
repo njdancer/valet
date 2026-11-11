@@ -4,9 +4,10 @@
 // (v7/finance/quote, the page's main one asks for fiftyTwoWeekHigh first) and the quote summary
 // (v10/finance/quoteSummary: valuation, dividends, analyst figures, profile).
 
-import { httpsOriginOf, pathnameOf, type ToolContext, tool, urlOn, ValetError } from '@valet/core'
+import { pathnameOf, type ToolContext, tool, ValetError } from '@valet/core'
 import { z } from 'zod'
-import { REAL_ORIGIN } from './origins'
+import { getApi } from './api'
+import { siteUrl } from './origins'
 import { symbolSchema, symbolSegment } from './symbols'
 import { field, isoFromSeconds, num, path, round, str } from './values'
 
@@ -74,15 +75,6 @@ export const getQuote = tool({
     readQuotePage(ctx, input.symbol, siteUrl(ctx, `/quote/${symbolSegment(input.symbol)}/`)),
 })
 
-/**
- * `path` on the tool page's own origin, so the same code serves the real site and a fake. Before
- * the page has loaded anything, the real site.
- */
-export function siteUrl(ctx: ToolContext, path: string): string {
-  // about:blank, or nothing yet, means the real site.
-  return urlOn(httpsOriginOf(ctx.page.currentUrl()) ?? REAL_ORIGIN, path)
-}
-
 async function readQuotePage(ctx: ToolContext, symbol: string, url: string): Promise<Quote> {
   if (ctx.signal.aborted) throw new ValetError('tool-run', 'aborted')
   await ctx.page.goto(url)
@@ -90,16 +82,58 @@ async function readQuotePage(ctx: ToolContext, symbol: string, url: string): Pro
   if (!(pathnameOf(ctx.page.currentUrl()) ?? '').startsWith('/quote/'))
     throw new ValetError('tool-run', 'not-found')
   const quoteBody = embedded(await ctx.page.extract(QUOTE_SCRIPT))
-  if (quoteBody === undefined) throw new ValetError('tool-run', 'site-changed')
-  const results = path(quoteBody, 'quoteResponse', 'result')
-  const quote = Array.isArray(results)
-    ? results.find((r) => str(field(r, 'symbol'))?.toUpperCase() === symbol)
-    : undefined
-  if (quote === undefined) throw new ValetError('tool-run', 'not-found')
+  let quote: unknown
+  if (quoteBody === undefined) {
+    // The live run found a currency page without the embedded quote (the captured one had it):
+    // the chart API's summary of the symbol stands in, from the API the site's own pages call.
+    quote = await quoteFromChart(ctx, symbol)
+  } else {
+    const results = path(quoteBody, 'quoteResponse', 'result')
+    quote = Array.isArray(results)
+      ? results.find((r) => str(field(r, 'symbol'))?.toUpperCase() === symbol)
+      : undefined
+    if (quote === undefined) throw new ValetError('tool-run', 'not-found')
+  }
   // The summary is extra: an index or currency has a short one, and a missing one is no error.
   const summaryBody = embedded(await ctx.page.extract(SUMMARY_SCRIPT))
   const summary = path(summaryBody, 'quoteSummary', 'result')
   return toQuote(quote, Array.isArray(summary) ? summary[0] : undefined, url)
+}
+
+/**
+ * The quote fields the chart API's meta also carries, under the quote API's names. Fewer: no
+ * change (it is worked out from the previous close), no market state, no market cap.
+ */
+async function quoteFromChart(ctx: ToolContext, symbol: string): Promise<Record<string, unknown>> {
+  const body = await getApi(ctx, `/v8/finance/chart/${symbolSegment(symbol)}`, {
+    range: '1d',
+    interval: '1d',
+  })
+  const results = path(body, 'chart', 'result')
+  const meta = Array.isArray(results) ? field(results[0], 'meta') : undefined
+  const m = (key: string) => field(meta, key)
+  if (str(m('symbol'))?.toUpperCase() !== symbol) throw new ValetError('tool-run', 'site-changed')
+  const price = num(m('regularMarketPrice'))
+  const previous = num(m('previousClose')) ?? num(m('chartPreviousClose'))
+  const change = price !== null && previous !== null ? price - previous : null
+  return {
+    symbol: m('symbol'),
+    longName: m('longName'),
+    shortName: m('shortName'),
+    quoteType: m('instrumentType'),
+    fullExchangeName: m('fullExchangeName') ?? m('exchangeName'),
+    currency: m('currency'),
+    regularMarketPrice: price,
+    regularMarketChange: change,
+    regularMarketChangePercent: change !== null && previous ? (change / previous) * 100 : null,
+    regularMarketPreviousClose: previous,
+    regularMarketDayLow: m('regularMarketDayLow'),
+    regularMarketDayHigh: m('regularMarketDayHigh'),
+    fiftyTwoWeekLow: m('fiftyTwoWeekLow'),
+    fiftyTwoWeekHigh: m('fiftyTwoWeekHigh'),
+    regularMarketVolume: m('regularMarketVolume'),
+    regularMarketTime: m('regularMarketTime'),
+  }
 }
 
 /** The API JSON inside one embedded-response script's text, or undefined if it isn't one. */

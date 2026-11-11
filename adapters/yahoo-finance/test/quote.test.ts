@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { getQuote } from '../src/quote'
-import { FAKE_ORIGIN, yahoo } from './fake-context'
+import { FAKE_ORIGIN, fixture, json, yahoo } from './fake-context'
 
 const run = (ctx: ReturnType<typeof yahoo>, symbol: string) =>
   getQuote.run(ctx, getQuote.input.parse({ symbol }))
@@ -73,8 +73,9 @@ describe('get_quote', () => {
     })
   })
 
-  it('reports a page without its embedded quote as site-changed', async () => {
+  it('reports a page without its embedded quote, and a chart API it can’t read, as site-changed', async () => {
     const ctx = yahoo()
+    ctx.routes.set('/v8/finance/chart/AAPL', json({ redesigned: true }))
     ctx.pages.set('/quote/AAPL/', '<!doctype html><title>redesigned</title>')
     await expect(run(ctx, 'AAPL')).rejects.toMatchObject({ errorClass: 'site-changed' })
   })
@@ -83,5 +84,55 @@ describe('get_quote', () => {
     for (const symbol of ['AAPL/../x', 'A B', '', 'a?b', '%2F']) {
       expect(getQuote.input.safeParse({ symbol }).success, symbol).toBe(false)
     }
+  })
+})
+
+describe('get_quote without the embedded quote', () => {
+  it('falls back to the chart API, as the live run needed for AUDUSD=X', async () => {
+    const ctx = yahoo()
+    // The captured page with its quote script taken out, the summary left in.
+    ctx.pages.set(
+      '/quote/AUDUSD%3DX/',
+      fixture('quote-audusd.html').replace(
+        /<script type="application\/json" data-sveltekit-fetched data-url="[^"]*\/v7\/finance\/quote[^"]*"[^>]*>[\s\S]*?<\/script>/,
+        '',
+      ),
+    )
+    ctx.routes.set(
+      '/v8/finance/chart/AUDUSD%3DX',
+      json({
+        chart: {
+          result: [
+            {
+              meta: {
+                symbol: 'AUDUSD=X',
+                currency: 'USD',
+                instrumentType: 'CURRENCY',
+                fullExchangeName: 'CCY',
+                shortName: 'AUD/USD',
+                regularMarketPrice: 0.66,
+                previousClose: 0.65,
+                regularMarketTime: 1794268800,
+              },
+            },
+          ],
+        },
+      }),
+    )
+    const quote = await run(ctx, 'AUDUSD=X')
+    expect(ctx.fetches).toEqual([
+      'https://query1.finance.yahoo.test/v8/finance/chart/AUDUSD%3DX?range=1d&interval=1d',
+    ])
+    expect(quote).toMatchObject({
+      symbol: 'AUDUSD=X',
+      name: 'AUD/USD',
+      type: 'CURRENCY',
+      currency: 'USD',
+      price: 0.66,
+      previousClose: 0.65,
+      change: 0.01,
+      time: '2026-11-10T00:00:00.000Z',
+    })
+    expect(quote.changePercent).toBeCloseTo(1.5385, 3)
   })
 })

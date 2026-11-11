@@ -3,8 +3,7 @@
 // page text in it.
 
 import { type FetchResult, httpsOriginOf, type ToolContext, urlOn, ValetError } from '@valet/core'
-import { apiOriginFor, REAL_ORIGIN } from './origins'
-import { siteUrl } from './quote'
+import { apiOriginFor, REAL_ORIGIN, siteUrl } from './origins'
 
 export async function getApi(
   ctx: ToolContext,
