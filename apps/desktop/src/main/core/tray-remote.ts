@@ -22,15 +22,22 @@ export interface RemoteTrayState {
   readonly revokeAll: boolean
 }
 
-export function remoteTrayState(status: RemoteStatus, demo: boolean): RemoteTrayState {
+/**
+ * needsYou is how many Needs you items wait (missed ones left out): the icon carries the count, so
+ * a confirmation or a login waiting is seen without opening anything (IA section 3).
+ */
+export function remoteTrayState(status: RemoteStatus, demo: boolean, needsYou = 0): RemoteTrayState {
   const on = status.enabled
-  const words = [demo ? 'DEMO' : null, on ? 'REMOTE' : null].filter((w) => w !== null)
+  const words = [needsYou > 0 ? String(needsYou) : null, demo ? 'DEMO' : null, on ? 'REMOTE' : null].filter(
+    (w) => w !== null,
+  )
   const base = demo ? 'Valet (demo)' : 'Valet'
+  const waiting = needsYou === 0 ? '' : `, ${needsYou} waiting for you`
   const tooltip = !on
-    ? base
+    ? `${base}${waiting}`
     : status.listening
-      ? `${base}: remote access on, ${status.sessions} remote ${status.sessions === 1 ? 'session' : 'sessions'}`
-      : `${base}: remote access on, not listening`
+      ? `${base}${waiting}: remote access on, ${status.sessions} remote ${status.sessions === 1 ? 'session' : 'sessions'}`
+      : `${base}${waiting}: remote access on, not listening`
   let menuItem: RemoteTrayState['menuItem'] = null
   // Pausing is always offered while on. Resuming only once there is something to resume: a name
   // the tunnel forwards. Until then remote access is set up in the control panel, not here.

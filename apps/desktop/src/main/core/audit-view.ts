@@ -390,6 +390,25 @@ function blockReason(reason: string): Extract<TraceStep, { type: 'request' }>['b
   return Object.hasOwn(BLOCK_REASON_OF, reason) ? (BLOCK_REASON_OF[reason] ?? null) : null
 }
 
+/** Answers that only told the client to call again: not calls the person would count. */
+const RETRY_CLASSES: ReadonlySet<string> = new Set(['login-in-progress', 'busy'])
+
+/** The calls that were answered "call again" (a login was running, or the site was busy). */
+function retryAnswers(records: readonly AuditRecord[]): Set<string> {
+  const ids = new Set<string>()
+  for (const record of records) {
+    const event = record.event
+    if (
+      event.type === 'tool-finished' &&
+      event.outcome === 'failed' &&
+      event.errorClass !== undefined &&
+      RETRY_CLASSES.has(event.errorClass)
+    )
+      ids.add(event.callId)
+  }
+  return ids
+}
+
 /** Today's numbers, in the person's local day, with one bucket per hour so far. */
 export function statsToday(records: readonly AuditRecord[], now: Date): RunStats {
   const midnight = new Date(now)
@@ -404,12 +423,14 @@ export function statsToday(records: readonly AuditRecord[], now: Date): RunStats
   let logins = 0
   let loginsFailed = 0
   let blockedRequests = 0
+  const retries = retryAnswers(records)
   for (const record of records) {
     const at = new Date(record.at)
     if (Number.isNaN(at.getTime()) || at < midnight || at > now) continue
     const hour = at.getHours()
     const type = record.event.type
     if (type === 'tool-called') {
+      if (retries.has(record.event.callId)) continue
       toolCalls++
       hourly.toolCalls[hour] = (hourly.toolCalls[hour] ?? 0) + 1
     } else if (type === 'login-finished') {
@@ -424,12 +445,14 @@ export function statsToday(records: readonly AuditRecord[], now: Date): RunStats
   return { toolCalls, logins, loginsFailed, blockedRequests, hourly }
 }
 
-/** Calls in the last seven days, per adapter and per adapter tool. */
+/** Calls in the last seven days, per adapter and per adapter tool, leaving out "call again" answers. */
 export function callCounts(records: readonly AuditRecord[], now: Date): Map<string, number> {
   const since = now.getTime() - 7 * 24 * 60 * 60_000
   const counts = new Map<string, number>()
+  const retries = retryAnswers(records)
   for (const record of records) {
     if (record.event.type !== 'tool-called' || Date.parse(record.at) < since) continue
+    if (retries.has(record.event.callId)) continue
     const { adapterId, tool } = record.event
     counts.set(adapterId, (counts.get(adapterId) ?? 0) + 1)
     counts.set(`${adapterId}/${tool}`, (counts.get(`${adapterId}/${tool}`) ?? 0) + 1)

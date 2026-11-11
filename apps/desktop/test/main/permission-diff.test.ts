@@ -230,6 +230,12 @@ describe('permissionDiff', () => {
     expect(changed.settings.removed).toEqual([{ ...store, applyTool: null }])
     expect(addsPermissions(changed)).toBe(true)
     expect(permissionDiff(withStore, withStore).settings.unchanged).toEqual([store])
+    // The setting's own tools are marked, so a review can count only the tools a client may call.
+    const marked = added.tools.added.filter((t) => t.internal === true).map((t) => t.name)
+    expect(marked.sort()).toEqual(['apply_store', 'find_stores'])
+    expect(permissionDiff(null, withStore).tools.added.filter((t) => t.internal === undefined)).not.toEqual(
+      [],
+    )
   })
 
   it('flags an irreversible tool that names one more request to unlock (C15)', () => {

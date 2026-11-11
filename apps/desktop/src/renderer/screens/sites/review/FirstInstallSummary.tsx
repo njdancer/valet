@@ -21,7 +21,9 @@ const PURPOSES = ['read', 'write', 'irreversible'] as const
 
 export function FirstInstallSummary({ review }: { readonly review: PendingReview }) {
   const { diff } = review
-  const tools = diff.tools.added
+  // A setting's own tools (picking a store) are Valet's to run, not the agent's: counted apart, as the site's page does.
+  const tools = diff.tools.added.filter((t) => t.internal !== true)
+  const internal = diff.tools.added.length - tools.length
   const of = (purpose: (typeof PURPOSES)[number]) => tools.filter((t) => t.sideEffect === purpose)
   const counts = PURPOSES.filter((p) => of(p).length > 0).map(
     (p) => `${of(p).length} ${p === 'read' ? 'read' : p === 'write' ? 'change things' : 'can’t be undone'}`,
@@ -103,6 +105,9 @@ export function FirstInstallSummary({ review }: { readonly review: PendingReview
           {tools.length === 0
             ? `${review.name} has no tools.`
             : `${plural(tools.length, 'tool')}: ${counts.join(', ')}.`}{' '}
+          {internal === 0
+            ? null
+            : `Valet runs ${internal === 1 ? 'one more' : `${internal} more`} itself, for its settings.`}{' '}
           Nothing is given to it yet: after approving, you choose which login it may use.
         </p>
       </CardHeader>

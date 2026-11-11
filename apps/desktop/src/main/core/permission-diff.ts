@@ -9,6 +9,7 @@ import {
   canonicalJson,
   messagesSourcesIn,
   type OtpSource,
+  settingToolNames,
   toolHints,
   unlockedBy,
 } from '@valet/core'
@@ -80,6 +81,7 @@ export function limitsInfo(manifest: AdapterManifest): LimitsInfo {
 }
 
 function tools(manifest: AdapterManifest): ToolDiffEntry[] {
+  const internal = settingToolNames(manifest)
   return manifest.tools.map((tool) => {
     // In the entry, so a tool that names one more request to unlock reads as a changed tool.
     const unlocks = unlockedBy(manifest.requests, tool.unlocks).map((r) => `${r.method} ${r.path}`)
@@ -89,6 +91,7 @@ function tools(manifest: AdapterManifest): ToolDiffEntry[] {
       sideEffect: tool.sideEffect,
       ...toolHints(tool),
       ...(unlocks.length === 0 ? {} : { unlocks }),
+      ...(internal.has(tool.name) ? { internal: true as const } : {}),
     }
   })
 }

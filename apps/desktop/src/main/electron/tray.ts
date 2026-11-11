@@ -16,7 +16,7 @@ const ICON_PNG =
   'iVBORw0KGgoAAAANSUhEUgAAACQAAAAkCAYAAADhAJiYAAAAdUlEQVR42u2YUQoAIAhDu/+l6wqmU140wb8YD8qpreX4JHYwERAjcFuUKBgJVFVUCqUSk+h03H9as7NCUtp4oG4LkcJkH2z4/I1wxW/kQFUTNJCBDPRc2Y8ZI651uNs/OaAhR1jkkI9cg5CLInKVRn42OBBxAOibomxzt0qSAAAAAElFTkSuQmCC'
 
 export interface AppTray {
-  /** Re-reads remote access, for the icon's title and tooltip. */
+  /** Re-reads remote access and the Needs you count, for the icon's title and tooltip. */
   refresh(): void
 }
 
@@ -24,10 +24,21 @@ export function createTray(windows: AppWindows, api: MainApi, demo: boolean, rem
   const icon = nativeImage.createFromBuffer(Buffer.from(ICON_PNG, 'base64'), { scaleFactor: 2 })
   icon.setTemplateImage(true)
   const tray = new Tray(icon)
-  const refresh = (): void => {
-    const state = remoteTrayState(remote.status(), demo)
+  let needsYou = 0
+  const show = (): void => {
+    const state = remoteTrayState(remote.status(), demo, needsYou)
     tray.setToolTip(state.tooltip)
     tray.setTitle(state.title)
+  }
+  const refresh = (): void => {
+    show()
+    void api.attention
+      .list()
+      .then((items) => {
+        needsYou = items.filter((i) => i.kind !== 'missed').length
+        show()
+      })
+      .catch(() => undefined)
   }
   refresh()
   tray.on('click', () => windows.toggleTray(tray.getBounds()))

@@ -139,6 +139,18 @@ describe('the tray', () => {
     })
   })
 
+  it('carries the Needs you count beside the icon, before the other words', () => {
+    expect(remoteTrayState(status(), false, 2)).toMatchObject({
+      title: '2',
+      tooltip: 'Valet, 2 waiting for you',
+    })
+    expect(remoteTrayState(status({ enabled: true, listening: true }), true, 1)).toMatchObject({
+      title: '1 · DEMO · REMOTE',
+      tooltip: 'Valet (demo), 1 waiting for you: remote access on, 0 remote sessions',
+    })
+    expect(remoteTrayState(status(), false, 0).title).toBe('')
+  })
+
   it('offers resuming once paused with a name set up', () => {
     expect(remoteTrayState(status({ hosts: ['mac.ts.net'] }), true)).toEqual({
       title: 'DEMO',

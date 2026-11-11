@@ -375,7 +375,7 @@ async function main(): Promise<void> {
         : [],
     emit: (event) => {
       broadcast(windows, event)
-      if (event.type === 'app-changed') tray?.refresh()
+      if (event.type === 'app-changed' || event.type === 'attention-changed') tray?.refresh()
     },
     bridge: bridgeCommand(),
     claudeDesktopConfig: join(app.getPath('appData'), 'Claude', 'claude_desktop_config.json'),

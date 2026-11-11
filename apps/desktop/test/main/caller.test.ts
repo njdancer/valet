@@ -486,6 +486,53 @@ describe('audit views', () => {
     expect(callCounts(records, new Date('2026-11-20T10:30:00.000')).get('shop')).toBeUndefined()
   })
 
+  it('leaves "call again" answers out of the counts: one call to the agent, one in the numbers', async () => {
+    const called = (callId: string): AuditEvent => ({
+      type: 'tool-called',
+      adapterId: 'shop',
+      adapterHash: 'a'.repeat(64),
+      tool: 'add',
+      client: 'agent',
+      callId,
+    })
+    const { reader } = await log([
+      called('r1'),
+      {
+        type: 'tool-finished',
+        adapterId: 'shop',
+        callId: 'r1',
+        outcome: 'failed',
+        errorClass: 'login-in-progress',
+        durationMs: 5,
+      },
+      called('r2'),
+      {
+        type: 'tool-finished',
+        adapterId: 'shop',
+        callId: 'r2',
+        outcome: 'failed',
+        errorClass: 'busy',
+        durationMs: 5,
+      },
+      called('ok'),
+      { type: 'tool-finished', adapterId: 'shop', callId: 'ok', outcome: 'ok', durationMs: 900 },
+      called('bad'),
+      {
+        type: 'tool-finished',
+        adapterId: 'shop',
+        callId: 'bad',
+        outcome: 'failed',
+        errorClass: 'unavailable',
+        durationMs: 9,
+      },
+    ])
+    const records = await reader.records()
+    const now = new Date('2026-11-07T10:30:00.000')
+    expect(statsToday(records, now).toolCalls).toBe(2)
+    expect(callCounts(records, now).get('shop/add')).toBe(2)
+    expect(callCounts(records, now).get('shop')).toBe(2)
+  })
+
   it('reads only what was appended since the last read, and a torn last line once it is whole', async () => {
     const { reader, path } = await log(events.slice(0, 2))
     const first = await reader.records()
