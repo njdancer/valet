@@ -144,10 +144,10 @@ test('the login window the person opens, with the banner above it', async () => 
   await control.evaluate(() => window.valet?.openLoginWindow('woolworths'))
   if (launched === null) throw new Error('not launched')
   const banner = await windowWithTitle(launched.app, 'Valet: sign in')
-  await expect(banner.getByRole('button', { name: 'Give up' })).toBeVisible()
+  await expect(banner.getByRole('button', { name: 'Cancel sign-in' })).toBeVisible()
   const size = await banner.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight }))
   await shot(banner, 'needs-user', size.width, size.height)
-  await banner.getByRole('button', { name: 'Give up' }).click()
+  await banner.getByRole('button', { name: 'Cancel sign-in' }).click()
 })
 
 test('a changed bundle under review, and its irreversible tool’s confirmation', async () => {
