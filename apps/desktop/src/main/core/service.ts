@@ -51,6 +51,8 @@ import type {
   ClientSnippet,
   EndpointStatus,
   HashRoute,
+  RemoteSetup,
+  RemoteSetupTool,
   SettingChoicesReply,
   Settings,
   UpdateStatus,
@@ -501,9 +503,43 @@ export class AppService {
    * ValetError('config', 'not-found') for a tool the adapter doesn't declare.
    */
   async setRemoteTool(adapterId: string, tool: string, enabled: boolean): Promise<void> {
-    const declaration = this.adapter(adapterId)?.definition.manifest.tools.find((t) => t.name === tool)
-    if (declaration === undefined) throw new ValetError('config', 'not-found')
+    const adapter = this.adapter(adapterId)
+    const declaration = adapter?.definition.manifest.tools.find((t) => t.name === tool)
+    if (adapter === null || declaration === undefined) throw new ValetError('config', 'not-found')
+    // Turning on is for approved adapters only; turning off always works.
+    if (enabled && !(await this.approvals.isApproved(adapterId, adapter.hash).catch(() => false)))
+      throw new ValetError('config', 'not-found')
     await this.remote.setTool(adapterId, declaration, enabled)
+  }
+
+  /** Remote access as set up now: its state, names, and every tool of each approved adapter. */
+  async remoteSetup(): Promise<RemoteSetup> {
+    const status = this.remote.status()
+    const on = new Set(status.tools)
+    const tools: RemoteSetupTool[] = []
+    for (const adapter of this.deps.adapters) {
+      const { manifest } = adapter.definition
+      if (!(await this.approvals.isApproved(manifest.id, adapter.hash).catch(() => false))) continue
+      for (const declaration of manifest.tools) {
+        const ref = `${manifest.id}.${declaration.name}`
+        tools.push({
+          ref,
+          adapterId: manifest.id,
+          adapterName: manifest.name,
+          tool: declaration.name,
+          toolTitle: declaration.title,
+          sideEffect: declaration.sideEffect,
+          enabled: on.has(ref),
+        })
+      }
+    }
+    return {
+      enabled: status.enabled,
+      listening: status.listening,
+      url: status.url,
+      hosts: status.hosts,
+      tools,
+    }
   }
 
   async stop(): Promise<void> {
@@ -1268,6 +1304,19 @@ export class AppService {
           if (!(await this.remote.revokeClient(id))) throw new ValetError('config', 'not-found')
         },
         revokeAllClients: () => this.remote.revokeAllClients(),
+        setup: () => this.remoteSetup(),
+        setEnabled: async (enabled) => {
+          await this.remote.setEnabled(enabled)
+          return this.remoteSetup()
+        },
+        setHosts: async (hosts) => {
+          await this.remote.setHosts(hosts)
+          return this.remoteSetup()
+        },
+        setTool: async (adapterId, tool, enabled) => {
+          await this.setRemoteTool(adapterId, tool, enabled)
+          return this.remoteSetup()
+        },
       },
       app: {
         status: async () => ({ paused: this.paused, version: deps.version, demo: deps.demo }),

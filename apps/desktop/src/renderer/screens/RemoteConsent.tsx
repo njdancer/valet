@@ -6,6 +6,10 @@
 // the person's public URL) can't be approved by someone who never saw that browser. Every request
 // is listed by its claimed host, never by its self-chosen name. Three wrong codes cancel them all.
 //
+// Above them, remote access itself: on or paused, the public names the person's tunnel forwards
+// (Cloudflare Tunnel, D14, which they run), and which tools remote clients may use at all. Every
+// tool starts off; only approved adapters' tools are listed.
+//
 // Like the confirmation panel, Approve stays disabled for CONFIRM_ARM_MS after the page mounts and
 // whenever the window comes back, so a click already on its way can't land on it.
 
@@ -16,6 +20,8 @@ import {
   type RemoteConsentAnswer,
   type RemoteConsentState,
   type RemoteConsentTool,
+  type RemoteSetup,
+  type RemoteSetupTool,
 } from '../../shared/api'
 import { ActionFailed, Icon, LoadState, SideEffect } from '../components/ui'
 import { useAction, useApi, useLoad, useNow } from '../lib/api-context'
@@ -36,6 +42,7 @@ const ANSWER_TEXT: Readonly<Record<Exclude<RemoteConsentAnswer, 'approved'>, str
 export function RemoteConsentPage({ armDelayMs = CONFIRM_ARM_MS }: { readonly armDelayMs?: number }) {
   const consents = useLoad((api) => api.remote.consents(), [], ['remote-changed'])
   const clients = useLoad((api) => api.remote.clients(), [], ['remote-changed'])
+  const setup = useLoad((api) => api.remote.setup(), [], ['remote-changed', 'approvals-changed'])
   return (
     <>
       <div className="titlebar">
@@ -46,6 +53,9 @@ export function RemoteConsentPage({ armDelayMs = CONFIRM_ARM_MS }: { readonly ar
       </div>
       <div className="content scroll" style={{ paddingTop: 'var(--space-4)' }}>
         <div className="stack gap-4" style={{ maxWidth: 720 }}>
+          <LoadState loaded={setup} what="remote access">
+            {(state) => <RemoteAccessSetup setup={state} />}
+          </LoadState>
           <LoadState loaded={consents} what="sign-in requests">
             {(state) => <Consent state={state} armDelayMs={armDelayMs} />}
           </LoadState>
@@ -299,5 +309,166 @@ function RemoteClients({ clients }: { readonly clients: readonly RemoteClientIte
       </div>
       <ActionFailed failed={action.failed} what="revoke" />
     </div>
+  )
+}
+
+/** What the tunnel forwards to: the listener's origin, without its /mcp path. */
+export function tunnelTarget(url: string): string {
+  return url.replace(/\/mcp$/, '')
+}
+
+/** The connector URL a client is given for a public name. */
+export function connectorUrl(host: string): string {
+  return `https://${host}/mcp`
+}
+
+function RemoteAccessSetup({ setup }: { readonly setup: RemoteSetup }) {
+  const api = useApi()
+  const action = useAction()
+  const [host, setHost] = useState('')
+  const addHost = async () => {
+    const name = host.trim()
+    if (name.length === 0) return
+    if (await action.run(() => api.remote.setHosts([...setup.hosts, name]))) setHost('')
+  }
+  const byAdapter = new Map<string, RemoteSetupTool[]>()
+  for (const tool of setup.tools)
+    byAdapter.set(tool.adapterName, [...(byAdapter.get(tool.adapterName) ?? []), tool])
+  const canTurnOn = setup.hosts.length > 0
+  return (
+    <section className="card" aria-label="Remote access">
+      <div className="card-head">
+        <span className="h3">Remote access</span>
+        <span className="actions">
+          {setup.enabled ? (
+            <button
+              type="button"
+              className="btn"
+              disabled={action.busy}
+              onClick={() => void action.run(() => api.remote.setEnabled(false))}
+            >
+              Pause remote access
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn primary"
+              disabled={action.busy || !canTurnOn}
+              onClick={() => void action.run(() => api.remote.setEnabled(true))}
+            >
+              Turn on
+            </button>
+          )}
+        </span>
+      </div>
+      <div className="card-body stack gap-3">
+        <div className="small" data-testid="remote-state">
+          {!setup.enabled ? (
+            canTurnOn ? (
+              'Off. Connectors can’t reach this Mac.'
+            ) : (
+              'Off. Add the public name your tunnel forwards, then turn it on.'
+            )
+          ) : setup.listening && setup.url !== null ? (
+            <>
+              On. Point your tunnel at <span className="mono">{tunnelTarget(setup.url)}</span>
+            </>
+          ) : (
+            'On, but not listening: something else holds its port.'
+          )}
+        </div>
+
+        <div className="stack" style={{ gap: 4 }}>
+          <span className="small">Public names</span>
+          {setup.hosts.length === 0 ? <span className="xs muted">None yet.</span> : null}
+          {setup.hosts.map((name) => (
+            <div key={name} className="row between" data-testid="remote-host">
+              <span className="stack" style={{ gap: 2 }}>
+                <span className="mono">{name}</span>
+                <span className="xs muted">
+                  Connector URL: <span className="mono">{connectorUrl(name)}</span>
+                </span>
+              </span>
+              <span className="row gap-2">
+                <button
+                  type="button"
+                  className="btn ghost"
+                  onClick={() => void action.run(() => api.app.copyText(connectorUrl(name)))}
+                >
+                  Copy URL
+                </button>
+                <button
+                  type="button"
+                  className="btn ghost"
+                  disabled={action.busy}
+                  onClick={() =>
+                    void action.run(() => api.remote.setHosts(setup.hosts.filter((h) => h !== name)))
+                  }
+                >
+                  Remove
+                </button>
+              </span>
+            </div>
+          ))}
+          <div className="row gap-2">
+            <input
+              className="input mono"
+              value={host}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="valet.example.com"
+              aria-label="Public name"
+              onChange={(event) => setHost(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') void addHost()
+              }}
+            />
+            <button
+              type="button"
+              className="btn"
+              disabled={action.busy || host.trim().length === 0}
+              onClick={() => void addHost()}
+            >
+              Add
+            </button>
+          </div>
+        </div>
+
+        <div className="stack" style={{ gap: 4 }}>
+          <span className="small">Tools remote clients may use</span>
+          {setup.tools.length === 0 ? (
+            <span className="xs muted">
+              No approved adapters yet. Approve one on the Adapters page first.
+            </span>
+          ) : (
+            [...byAdapter.entries()].map(([adapterName, tools]) => (
+              <div key={adapterName} className="stack" style={{ gap: 2 }}>
+                <span className="xs muted">{adapterName}</span>
+                {tools.map((tool) => (
+                  <label key={tool.ref} className="row gap-2">
+                    <input
+                      type="checkbox"
+                      checked={tool.enabled}
+                      disabled={action.busy}
+                      aria-label={`${adapterName}: ${tool.toolTitle}`}
+                      onChange={() =>
+                        void action.run(() => api.remote.setTool(tool.adapterId, tool.tool, !tool.enabled))
+                      }
+                    />
+                    <span>
+                      {tool.toolTitle} <SideEffect purpose={tool.sideEffect} />
+                    </span>
+                  </label>
+                ))}
+              </div>
+            ))
+          )}
+          <span className="xs muted">
+            Every tool starts off. A connector also gets only the tools you tick when you approve it below.
+          </span>
+        </div>
+      </div>
+      <ActionFailed failed={action.failed} what="change remote access" />
+    </section>
   )
 }

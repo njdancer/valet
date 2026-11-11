@@ -20,6 +20,44 @@ function calls(api: FakeApi, method: string) {
   return api.fake.calls.filter((c) => c.method === method).map((c) => c.args)
 }
 
+describe('remote access setup', () => {
+  it('stays off until a public name is added, then shows the connector URL and the loopback URL', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    renderPage(api)
+    const card = within(await screen.findByRole('region', { name: 'Remote access' }))
+    const turnOn = card.getByRole('button', { name: 'Turn on' }) as HTMLButtonElement
+    expect(turnOn.disabled).toBe(true)
+    expect(card.getByTestId('remote-state').textContent).toContain('Add the public name')
+    await user.type(card.getByLabelText('Public name'), 'Valet.Example.com{Enter}')
+    await card.findByText('https://valet.example.com/mcp')
+    expect(calls(api, 'remote.setHosts')).toEqual([[['Valet.Example.com']]])
+    await waitFor(() => expect(turnOn.disabled).toBe(false))
+    await user.click(turnOn)
+    await card.findByText('http://127.0.0.1:47823')
+    expect(calls(api, 'remote.setEnabled')).toEqual([[true]])
+    await user.click(card.getByRole('button', { name: 'Copy URL' }))
+    expect(calls(api, 'app.copyText')).toEqual([['https://valet.example.com/mcp']])
+    await user.click(card.getByRole('button', { name: 'Pause remote access' }))
+    expect(calls(api, 'remote.setEnabled')).toEqual([[true], [false]])
+  })
+
+  it('lists every tool off, and a tick turns that one tool on', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    renderPage(api)
+    const card = within(await screen.findByRole('region', { name: 'Remote access' }))
+    const summary = card.getByRole('checkbox', { name: 'Wikipedia: Get summary' }) as HTMLInputElement
+    expect(card.getAllByRole('checkbox').every((c) => !(c as HTMLInputElement).checked)).toBe(true)
+    await user.click(summary)
+    await waitFor(() => expect(summary.checked).toBe(true))
+    expect(calls(api, 'remote.setTool')).toEqual([['wikipedia', 'get_summary', true]])
+    expect((card.getByRole('checkbox', { name: 'Woolworths: View cart' }) as HTMLInputElement).checked).toBe(
+      false,
+    )
+  })
+})
+
 describe('remote sign-in', () => {
   it('lists the request by its claimed host, never a code, and warns before anything else', async () => {
     const api = createFakeApi({ now: NOW })
@@ -38,8 +76,9 @@ describe('remote sign-in', () => {
     renderPage(api)
     const approve = (await screen.findByRole('button', { name: 'Approve' })) as HTMLButtonElement
     expect(approve.disabled).toBe(true)
-    const read = screen.getByRole('checkbox', { name: /View cart/ }) as HTMLInputElement
-    const write = screen.getByRole('checkbox', { name: /Set cart quantity/ }) as HTMLInputElement
+    const requests = within(screen.getByRole('region', { name: 'Sign-in requests' }))
+    const read = requests.getByRole('checkbox', { name: /View cart/ }) as HTMLInputElement
+    const write = requests.getByRole('checkbox', { name: /Set cart quantity/ }) as HTMLInputElement
     expect(read.checked).toBe(true)
     expect(write.checked).toBe(false)
     await user.type(screen.getByLabelText('Code from your browser'), 'abcd-234')

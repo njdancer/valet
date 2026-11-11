@@ -818,6 +818,32 @@ export interface RemoteClientItem {
   readonly grant: { readonly tools: readonly string[]; readonly grantedAt: IsoTime } | null
 }
 
+/** One tool of an approved adapter, as the remote access setup lists it. */
+export interface RemoteSetupTool {
+  /** `<adapterId>.<tool>`. */
+  readonly ref: string
+  readonly adapterId: string
+  readonly adapterName: string
+  readonly tool: string
+  readonly toolTitle: string
+  readonly sideEffect: 'read' | 'write' | 'irreversible'
+  /** On for remote clients now. Every tool starts off. */
+  readonly enabled: boolean
+}
+
+/** Remote access as the person set it up (relay.md): off, no names and no tools until they say. */
+export interface RemoteSetup {
+  readonly enabled: boolean
+  /** The listener is up. Can be false while enabled, when its port couldn't be had. */
+  readonly listening: boolean
+  /** The loopback URL the tunnel forwards to, while listening (`http://127.0.0.1:<port>`). */
+  readonly url: string | null
+  /** The public names the tunnel forwards. */
+  readonly hosts: readonly string[]
+  /** Tools of approved adapters, by adapter then tool. */
+  readonly tools: readonly RemoteSetupTool[]
+}
+
 // ---------- Events ----------
 
 /** Live-update notices. They carry no data: the renderer refetches what it shows. */
@@ -970,6 +996,14 @@ export interface ValetApi {
     revokeClient(clientId: string): Promise<void>
     /** Deletes every remote client. Each connector has to be added again. Returns how many. */
     revokeAllClients(): Promise<number>
+    /** Remote access as set up now. */
+    setup(): Promise<RemoteSetup>
+    /** Turns remote access on, or pauses it (the kill switch: every token revoked, sessions closed). */
+    setEnabled(enabled: boolean): Promise<RemoteSetup>
+    /** The public names the tunnel forwards. Each must be a DNS name; anything else rejects whole. */
+    setHosts(hosts: readonly string[]): Promise<RemoteSetup>
+    /** Turns one tool of an approved adapter on or off for remote clients. */
+    setTool(adapterId: string, tool: string, enabled: boolean): Promise<RemoteSetup>
   }
   readonly app: {
     status(): Promise<AppStatus>

@@ -30,6 +30,7 @@ import type {
   RemoteClientItem,
   RemoteConsentRequest,
   RemoteConsentTool,
+  RemoteSetup,
   RunStats,
   RunSummary,
   RunTrace,
@@ -706,6 +707,29 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
   ]
   let remoteClients: RemoteClientItem[] = []
   let remoteWrong = 0
+  let remoteSetup: RemoteSetup = {
+    enabled: false,
+    listening: false,
+    url: null,
+    hosts: [],
+    tools: [
+      ...remoteTools.map((t) => ({ ...t, enabled: false })),
+      {
+        ref: 'wikipedia.get_summary',
+        adapterId: 'wikipedia',
+        adapterName: 'Wikipedia',
+        tool: 'get_summary',
+        toolTitle: 'Get summary',
+        sideEffect: 'read' as const,
+        enabled: false,
+      },
+    ],
+  }
+  const remoteSetupChanged = (next: RemoteSetup): RemoteSetup => {
+    remoteSetup = next
+    emit({ type: 'remote-changed' })
+    return clone(remoteSetup)
+  }
   let chosenOpPath: string | null = '/opt/homebrew/bin/op'
   let setup: SetupStatus = { completedAt: ago(10 * 24 * 60) }
   const providerAvailable = new Map<ProviderKind, boolean>([
@@ -1354,6 +1378,35 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         remoteClients = []
         emit({ type: 'remote-changed' })
         return count
+      },
+      async setup() {
+        enter('remote.setup')
+        return clone(remoteSetup)
+      },
+      async setEnabled(enabled) {
+        enter('remote.setEnabled', enabled)
+        return remoteSetupChanged({
+          ...remoteSetup,
+          enabled,
+          listening: enabled,
+          url: enabled ? 'http://127.0.0.1:47823/mcp' : null,
+        })
+      },
+      async setHosts(hosts) {
+        enter('remote.setHosts', hosts)
+        return remoteSetupChanged({
+          ...remoteSetup,
+          hosts: [...new Set(hosts.map((h) => h.trim().toLowerCase()))],
+        })
+      },
+      async setTool(adapterId, tool, enabled) {
+        enter('remote.setTool', adapterId, tool, enabled)
+        return remoteSetupChanged({
+          ...remoteSetup,
+          tools: remoteSetup.tools.map((t) =>
+            t.adapterId === adapterId && t.tool === tool ? { ...t, enabled } : t,
+          ),
+        })
       },
     },
     app: {

@@ -1774,6 +1774,35 @@ describe('remote access', () => {
     expect(existsSync(s.paths.remote)).toBe(false)
   })
 
+  it('sets up remote access for approved adapters only, every tool starting off', async () => {
+    const s = await setup()
+    expect(await s.api.remote.setup()).toEqual({
+      enabled: false,
+      listening: false,
+      url: null,
+      hosts: [],
+      tools: [],
+    })
+    await expect(s.api.remote.setTool('shop', 'echo', true)).rejects.toMatchObject({
+      errorClass: 'not-found',
+    })
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    const listed = await s.api.remote.setup()
+    expect(listed.tools.length).toBeGreaterThan(0)
+    expect(listed.tools.every((t) => !t.enabled && t.adapterId === 'shop')).toBe(true)
+    await expect(s.api.remote.setHosts(['127.0.0.1'])).rejects.toMatchObject({ errorClass: 'invalid' })
+    await s.api.remote.setHosts([HOST])
+    const on = await s.api.remote.setEnabled(true)
+    expect(on).toMatchObject({ enabled: true, listening: true, hosts: [HOST] })
+    const after = await s.api.remote.setTool('shop', 'echo', true)
+    expect(after.tools.filter((t) => t.enabled).map((t) => t.ref)).toEqual(['shop.echo'])
+    expect(s.service.remote.status().tools).toEqual(['shop.echo'])
+    await expect(s.api.remote.setTool('shop', 'nope', true)).rejects.toMatchObject({
+      errorClass: 'not-found',
+    })
+    expect(await s.api.remote.setEnabled(false)).toMatchObject({ enabled: false, listening: false })
+  })
+
   it('serves only remote-enabled tools through the same runtime, audited as remote', async () => {
     const s = await approved()
     await s.service.remote.setHosts([HOST])
