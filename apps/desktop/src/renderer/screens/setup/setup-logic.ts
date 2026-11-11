@@ -71,6 +71,14 @@ export function stepsDone(facts: SetupFacts): StepsDone {
   return { welcome: approve || grant || clients, onepassword, approve, grant, store, clients }
 }
 
+/**
+ * Apps added in setup that haven't connected yet: the person did the step, and the app is still to
+ * use what they copied. Setup reads them as waiting, not skipped.
+ */
+export function waitingClients(facts: SetupFacts): string[] {
+  return facts.clients.filter((c) => c.revokedAt === null && c.lastSeen === null).map((c) => c.name)
+}
+
 /** Where `#/setup` with no step lands: the first step not done, or the last if all are. */
 export function resumeStep(done: StepsDone): SetupStep {
   return SETUP_STEPS.find((s) => !done[s]) ?? 'clients'

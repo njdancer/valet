@@ -47,6 +47,7 @@ import {
   stepsDone,
   stepsLeft,
   useSetupFacts,
+  waitingClients,
 } from './setup-logic'
 
 /** What the step list calls each step, and its line when not done. */
@@ -160,7 +161,13 @@ function SetupShell({
         state,
         href: href.setup(s),
         hint:
-          isDone && facts !== null ? doneHint(s, facts) : finished && s !== 'welcome' ? 'Skipped' : label.sub,
+          isDone && facts !== null
+            ? doneHint(s, facts)
+            : finished && s === 'clients' && facts !== null && waitingClients(facts).length > 0
+              ? 'Waiting for it to connect'
+              : finished && s !== 'welcome'
+                ? 'Skipped'
+                : label.sub,
       }
     })
   steps.push({
@@ -315,24 +322,30 @@ function DoneView({ facts, done }: { readonly facts: SetupFacts; readonly done: 
             </Text>
           </Stack>
           <CheckList label="Setup">
-            {SETUP_STEPS.filter((s) => s !== 'welcome').map((s) => (
-              <CheckItem
-                key={s}
-                state={done[s] ? 'pass' : 'skipped'}
-                title={
-                  done[s]
-                    ? `${stepLabel(s, siteName).title}: ${doneHint(s, facts)}`
-                    : stepLabel(s, siteName).title
-                }
-                action={
-                  done[s] ? undefined : (
-                    <Button size="sm" asChild>
-                      <a href={href.setup(s)}>Do it now</a>
-                    </Button>
-                  )
-                }
-              />
-            ))}
+            {SETUP_STEPS.filter((s) => s !== 'welcome').map((s) => {
+              // An app added here but not yet connected: the person did their part.
+              const waiting = !done[s] && s === 'clients' ? waitingClients(facts) : []
+              return (
+                <CheckItem
+                  key={s}
+                  state={done[s] ? 'pass' : waiting.length > 0 ? 'pending' : 'skipped'}
+                  title={
+                    done[s]
+                      ? `${stepLabel(s, siteName).title}: ${doneHint(s, facts)}`
+                      : waiting.length > 0
+                        ? `${stepLabel(s, siteName).title}: waiting for ${waiting.join(', ')} to connect`
+                        : stepLabel(s, siteName).title
+                  }
+                  action={
+                    done[s] ? undefined : (
+                      <Button size="sm" asChild>
+                        <a href={href.setup(s)}>{waiting.length > 0 ? 'See the setup' : 'Do it now'}</a>
+                      </Button>
+                    )
+                  }
+                />
+              )
+            })}
           </CheckList>
           <Banner tone="info" title="Valet lives in the menu bar.">
             Its icon shows a count when something needs you, and each one also arrives as a notification. See
