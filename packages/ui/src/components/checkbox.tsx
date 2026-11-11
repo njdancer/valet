@@ -1,0 +1,119 @@
+import { Check, Minus } from 'lucide-react'
+import {
+  Checkbox as CheckboxPrimitive,
+  RadioGroup as RadioPrimitive,
+  Switch as SwitchPrimitive,
+} from 'radix-ui'
+import { type ComponentProps, type ReactNode, useId } from 'react'
+import { cn } from '../lib/cn'
+import { useFieldControlProps } from './field'
+
+const box =
+  'peer inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-xs bg-raised text-fg-on-accent shadow-[inset_0_0_0_0.5px_var(--border-strong)] transition-interactive press disabled:cursor-not-allowed disabled:opacity-45 data-[state=checked]:bg-accent-solid data-[state=checked]:shadow-none data-[state=indeterminate]:bg-accent-solid data-[state=indeterminate]:shadow-none aria-[invalid=true]:shadow-[inset_0_0_0_1px_var(--danger-solid)]'
+
+export function Checkbox({ className, id, ...props }: ComponentProps<typeof CheckboxPrimitive.Root>) {
+  const field = useFieldControlProps(id)
+  return (
+    <CheckboxPrimitive.Root className={cn(box, className)} {...field} {...props}>
+      <CheckboxPrimitive.Indicator className="flex animate-pop-in items-center justify-center">
+        {props.checked === 'indeterminate' ? (
+          <Minus className="size-3" strokeWidth={3} />
+        ) : (
+          <Check className="size-3" strokeWidth={3} />
+        )}
+      </CheckboxPrimitive.Indicator>
+    </CheckboxPrimitive.Root>
+  )
+}
+
+/**
+ * An on/off switch for a setting that applies at once. (A choice that waits for a Save button is a
+ * checkbox.) The thumb travels on the spring curve.
+ */
+export function Switch({
+  className,
+  id,
+  size = 'md',
+  ...props
+}: ComponentProps<typeof SwitchPrimitive.Root> & { size?: 'sm' | 'md' }) {
+  const field = useFieldControlProps(id)
+  return (
+    <SwitchPrimitive.Root
+      className={cn(
+        'peer inline-flex shrink-0 cursor-pointer items-center rounded-full p-0.5 transition-interactive',
+        'bg-[color-mix(in_oklab,var(--fg-default)_18%,transparent)] data-[state=checked]:bg-accent-solid',
+        'disabled:cursor-not-allowed disabled:opacity-45',
+        size === 'md' ? 'h-5 w-8.5' : 'h-4 w-6.5',
+        className,
+      )}
+      {...field}
+      {...props}
+    >
+      <SwitchPrimitive.Thumb
+        className={cn(
+          'pointer-events-none block rounded-full bg-white shadow-[0_1px_2px_oklch(0_0_0/0.25),0_0_0_0.5px_oklch(0_0_0/0.06)]',
+          'transition-transform duration-(--v-duration-slow) ease-spring',
+          size === 'md'
+            ? 'size-4 data-[state=checked]:translate-x-3.5'
+            : 'size-3 data-[state=checked]:translate-x-2.5',
+        )}
+      />
+    </SwitchPrimitive.Root>
+  )
+}
+
+export function RadioGroup({ className, ...props }: ComponentProps<typeof RadioPrimitive.Root>) {
+  return <RadioPrimitive.Root className={cn('flex flex-col gap-2', className)} {...props} />
+}
+
+export function RadioItem({ className, ...props }: ComponentProps<typeof RadioPrimitive.Item>) {
+  return (
+    <RadioPrimitive.Item
+      className={cn(
+        'peer inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-full bg-raised shadow-[inset_0_0_0_0.5px_var(--border-strong)] transition-interactive press',
+        'data-[state=checked]:bg-accent-solid data-[state=checked]:shadow-none disabled:cursor-not-allowed disabled:opacity-45',
+        className,
+      )}
+      {...props}
+    >
+      <RadioPrimitive.Indicator className="block size-1.5 animate-pop-in rounded-full bg-white" />
+    </RadioPrimitive.Item>
+  )
+}
+
+/** A radio with its label and an optional hint, all one click target. */
+export function RadioOption({
+  value,
+  label,
+  description,
+  disabled,
+}: {
+  value: string
+  label: ReactNode
+  description?: ReactNode
+  disabled?: boolean
+}) {
+  const id = `${useId()}-radio`
+  return (
+    <div className="flex items-start gap-2">
+      <RadioItem
+        value={value}
+        id={id}
+        disabled={disabled}
+        className="mt-0.5"
+        aria-describedby={description ? `${id}-d` : undefined}
+      />
+      <label
+        htmlFor={id}
+        className="flex cursor-pointer flex-col gap-0.5 peer-disabled:cursor-not-allowed peer-disabled:opacity-50"
+      >
+        <span className="text-md text-fg">{label}</span>
+        {description ? (
+          <span id={`${id}-d`} className="text-sm text-fg-muted">
+            {description}
+          </span>
+        ) : null}
+      </label>
+    </div>
+  )
+}

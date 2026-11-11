@@ -1,5 +1,6 @@
 {
   "extends": "./tsconfig.base.json",
+  "exclude": ["packages/ui"],
   "include": [
     "packages/*/src",
     "packages/*/test",

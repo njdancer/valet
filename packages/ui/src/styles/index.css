@@ -1,0 +1,103 @@
+/* Valet design system: one stylesheet for the whole app.
+   Import it once, from the renderer entry: import '@valet/ui/styles.css'.
+   Layers: Tailwind's base reset, generated tokens (primitives, semantic, theme mapping), base element
+   rules, materials, motion. Components style themselves with Tailwind utilities that read only the
+   semantic tokens. */
+
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+@import "./tokens.css";
+@import "./theme.css";
+@import "./motion.css";
+@import "./materials.css";
+
+/* Tailwind scans the components for the classes they use. */
+@source "../";
+
+@custom-variant platform-mac (&:where([data-platform="mac"], [data-platform="mac"] *));
+
+@layer base {
+  html {
+    font-family: var(--v-font-sans);
+    font-size: var(--v-font-size-md);
+    line-height: var(--v-leading-normal);
+    font-weight: var(--v-weight-regular);
+    /* Inter: a tailed l (cv05) so l, 1 and I differ in IDs, and a single-storey a off (cv11 off is default). */
+    font-feature-settings: "cv05", "calt";
+    background: var(--bg-canvas);
+    color: var(--fg-default);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* An app, not a document: chrome text isn't selectable and the cursor stays an arrow. Values a
+     person may want to copy (IDs, hashes, URLs, logs, error text) opt back in with `selectable`,
+     which the Value, Code and Log components set. */
+  body {
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: default;
+  }
+  input,
+  textarea,
+  [contenteditable="true"],
+  .selectable,
+  .selectable * {
+    user-select: text;
+    -webkit-user-select: text;
+    cursor: text;
+  }
+  img,
+  svg,
+  a {
+    -webkit-user-drag: none;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--accent-solid) 26%, transparent);
+  }
+
+  /* One focus ring for everything: 2 px, accent, outside the element, keyboard only. */
+  :focus-visible {
+    outline: 2px solid var(--border-focus);
+    outline-offset: 2px;
+  }
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  /* Native controls follow the theme too. */
+  :root {
+    accent-color: var(--accent-solid);
+  }
+
+  /* Thin, quiet scrollbars that look at home on every OS (Chromium's own are Windows-heavy). */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--fg-default) 22%, transparent) transparent;
+  }
+
+  code,
+  kbd,
+  samp,
+  pre {
+    font-family: var(--v-font-mono);
+    font-feature-settings: "calt" 0;
+  }
+
+  /* Numbers that change or line up (counts, prices, times) don't jitter. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* High contrast: borders go solid and soft fills get an outline. */
+  @media (prefers-contrast: more) {
+    :root {
+      --border-subtle: var(--border-strong);
+      --border-default: var(--fg-muted);
+      --border-control: var(--fg-muted);
+    }
+  }
+}

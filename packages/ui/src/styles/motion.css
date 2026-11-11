@@ -1,0 +1,257 @@
+/* Motion. Principles (see docs/design-system.md):
+   1. Motion explains: things enter from where they come from and leave toward where they go.
+   2. Fast in, faster out: entrances use --v-duration-base and the enter curve, exits --fast and exit.
+   3. Distance is a token: every translate and scale is multiplied by --v-motion-distance, which
+      reduced motion sets to 0, so entrances still fade but nothing slides or zooms.
+   4. Delight is rare and earned: the spring and brass flourishes only mark a finished job
+      (setup complete, an approval sealed, a cart updated).
+   Radix sets data-state="open"/"closed" and waits for the exit animation, so exits always play. */
+
+@theme {
+  --animate-fade-in: v-fade-in var(--v-duration-fast) var(--v-ease-enter) both;
+  --animate-fade-out: v-fade-out var(--v-duration-fast) var(--v-ease-exit) both;
+  --animate-pop-in: v-pop-in var(--v-duration-base) var(--v-ease-enter) both;
+  --animate-pop-out: v-pop-out var(--v-duration-fast) var(--v-ease-exit) both;
+  --animate-dialog-in: v-dialog-in var(--v-duration-slow) var(--v-ease-emphasized) both;
+  --animate-dialog-out: v-dialog-out var(--v-duration-fast) var(--v-ease-exit) both;
+  --animate-sheet-in: v-sheet-in var(--v-duration-slow) var(--v-ease-emphasized) both;
+  --animate-sheet-out: v-sheet-out var(--v-duration-base) var(--v-ease-exit) both;
+  --animate-drawer-in: v-drawer-in var(--v-duration-slow) var(--v-ease-emphasized) both;
+  --animate-drawer-out: v-drawer-out var(--v-duration-base) var(--v-ease-exit) both;
+  --animate-rise-in: v-rise-in var(--v-duration-slow) var(--v-ease-enter) both;
+  --animate-collapse-open: v-collapse-open var(--v-duration-base) var(--v-ease-standard);
+  --animate-collapse-close: v-collapse-close var(--v-duration-fast) var(--v-ease-exit);
+  --animate-spin: v-spin 0.9s linear infinite;
+  --animate-shimmer: v-shimmer 1.6s var(--v-ease-standard) infinite;
+  --animate-pulse-ring: v-pulse-ring 2s var(--v-ease-enter) infinite;
+  --animate-seal: v-seal var(--v-duration-glacial) var(--v-ease-spring) both;
+  --animate-draw: v-draw var(--v-duration-slower) var(--v-ease-enter) both;
+  --animate-bump: v-bump var(--v-duration-slow) var(--v-ease-spring);
+  --animate-shake: v-shake 0.36s var(--v-ease-standard);
+
+  @keyframes v-fade-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes v-fade-out {
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes v-pop-in {
+    from {
+      opacity: 0;
+      transform: translateY(calc(-4px * var(--v-motion-distance)))
+        scale(calc(1 - 0.03 * var(--v-motion-distance)));
+    }
+  }
+  @keyframes v-pop-out {
+    to {
+      opacity: 0;
+      transform: scale(calc(1 - 0.02 * var(--v-motion-distance)));
+    }
+  }
+  @keyframes v-dialog-in {
+    from {
+      opacity: 0;
+      transform: translateY(calc(8px * var(--v-motion-distance)))
+        scale(calc(1 - 0.04 * var(--v-motion-distance)));
+    }
+  }
+  @keyframes v-dialog-out {
+    to {
+      opacity: 0;
+      transform: scale(calc(1 - 0.03 * var(--v-motion-distance)));
+    }
+  }
+  /* Sheets drop from the top edge of the window, the way a desktop sheet does. */
+  @keyframes v-sheet-in {
+    from {
+      opacity: 0;
+      transform: translateY(calc(-24px * var(--v-motion-distance)));
+    }
+  }
+  @keyframes v-sheet-out {
+    to {
+      opacity: 0;
+      transform: translateY(calc(-16px * var(--v-motion-distance)));
+    }
+  }
+  /* Drawers slide in from the right, for detail panes (a call, an audit entry). */
+  @keyframes v-drawer-in {
+    from {
+      opacity: 0;
+      transform: translateX(calc(32px * var(--v-motion-distance)));
+    }
+  }
+  @keyframes v-drawer-out {
+    to {
+      opacity: 0;
+      transform: translateX(calc(24px * var(--v-motion-distance)));
+    }
+  }
+  @keyframes v-rise-in {
+    from {
+      opacity: 0;
+      transform: translateY(calc(6px * var(--v-motion-distance)));
+    }
+  }
+  @keyframes v-collapse-open {
+    from {
+      height: 0;
+      opacity: 0;
+    }
+    to {
+      height: var(--radix-collapsible-content-height, var(--radix-accordion-content-height));
+      opacity: 1;
+    }
+  }
+  @keyframes v-collapse-close {
+    from {
+      height: var(--radix-collapsible-content-height, var(--radix-accordion-content-height));
+      opacity: 1;
+    }
+    to {
+      height: 0;
+      opacity: 0;
+    }
+  }
+  @keyframes v-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @keyframes v-shimmer {
+    from {
+      background-position: 150% 0;
+    }
+    to {
+      background-position: -50% 0;
+    }
+  }
+  @keyframes v-pulse-ring {
+    0% {
+      box-shadow: 0 0 0 0 color-mix(in oklab, currentColor 45%, transparent);
+    }
+    70%,
+    100% {
+      box-shadow: 0 0 0 calc(6px * var(--v-motion-distance) + 0.01px) transparent;
+    }
+  }
+  /* The approval seal: lands with a spring, a brass ring settling around it. */
+  @keyframes v-seal {
+    0% {
+      opacity: 0;
+      transform: scale(calc(1 + 0.6 * var(--v-motion-distance)))
+        rotate(calc(-12deg * var(--v-motion-distance)));
+    }
+    40% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1) rotate(0);
+    }
+  }
+  @keyframes v-draw {
+    from {
+      stroke-dashoffset: var(--v-draw-length, 48);
+    }
+    to {
+      stroke-dashoffset: 0;
+    }
+  }
+  @keyframes v-bump {
+    0%,
+    100% {
+      transform: scale(1);
+    }
+    35% {
+      transform: scale(calc(1 + 0.18 * var(--v-motion-distance)));
+    }
+  }
+  /* A refused input shakes once, sideways: "no" without words. Reduced motion: no movement. */
+  @keyframes v-shake {
+    0%,
+    100% {
+      transform: translateX(0);
+    }
+    20%,
+    60% {
+      transform: translateX(calc(-4px * var(--v-motion-distance)));
+    }
+    40%,
+    80% {
+      transform: translateX(calc(4px * var(--v-motion-distance)));
+    }
+  }
+}
+
+/* Infinite, purely decorative motion stops entirely for reduced motion. The spinner keeps turning,
+   slowly, because a frozen spinner reads as a hang. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-shimmer,
+  .animate-pulse-ring {
+    animation: none !important;
+  }
+  .animate-spin {
+    animation-duration: 2.4s !important;
+  }
+}
+
+/* Same as the media query, for a page that forces reduced motion (the gallery's toggle, tests). */
+[data-motion="reduce"] {
+  --v-motion-distance: 0;
+}
+[data-motion="reduce"] .animate-shimmer,
+[data-motion="reduce"] .animate-pulse-ring {
+  animation: none !important;
+}
+
+@utility transition-interactive {
+  transition-property:
+    color, background-color, border-color, box-shadow, opacity, transform, translate, scale;
+  transition-duration: var(--v-duration-fast);
+  transition-timing-function: var(--v-ease-standard);
+}
+
+/* Pressed controls dip slightly, which reads as physical on every OS. */
+@utility press {
+  &:active:not(:disabled, [aria-disabled="true"]) {
+    transform: scale(calc(1 - 0.025 * var(--v-motion-distance)));
+  }
+}
+
+/* View transitions between pages: a short crossfade with a small rise. */
+::view-transition-old(root) {
+  animation: v-fade-out var(--v-duration-fast) var(--v-ease-exit) both;
+}
+::view-transition-new(root) {
+  animation: v-rise-in var(--v-duration-base) var(--v-ease-enter) both;
+}
+
+/* Sparkle: brass sparks flying out from the centre along their angle, once. */
+.valet-spark {
+  transform: translate(-50%, -50%) rotate(var(--spark-angle)) translateY(0) scaleY(0);
+  animation: v-spark 700ms var(--v-ease-enter) forwards;
+}
+@keyframes v-spark {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) rotate(var(--spark-angle)) translateY(-10px) scaleY(0.2);
+  }
+  30% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) rotate(var(--spark-angle))
+      translateY(calc(-30px * var(--v-motion-distance) - 10px)) scaleY(1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .valet-spark {
+    display: none;
+  }
+}

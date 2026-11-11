@@ -1,0 +1,23 @@
+@import "../src/styles/index.css";
+@source "./";
+
+/* A colourful wallpaper behind the material demos, so glass has something to bend. */
+.wallpaper {
+  background:
+    radial-gradient(60% 80% at 15% 20%, oklch(0.75 0.15 258 / 0.9), transparent 60%),
+    radial-gradient(50% 70% at 85% 30%, oklch(0.8 0.14 80 / 0.85), transparent 60%),
+    radial-gradient(60% 80% at 60% 90%, oklch(0.7 0.16 330 / 0.8), transparent 60%), var(--bg-canvas);
+}
+.stripes {
+  background-image: repeating-linear-gradient(135deg, var(--fg-default) 0 1px, transparent 1px 12px);
+  opacity: 0.18;
+}
+
+@keyframes curve-move {
+  from {
+    left: 8px;
+  }
+  to {
+    left: calc(100% - 32px);
+  }
+}
