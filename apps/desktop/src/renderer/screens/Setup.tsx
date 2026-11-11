@@ -78,7 +78,8 @@ export function stepsDone(facts: SetupFacts): Readonly<Record<SetupStep, boolean
     adapter.secretRequests.every((s) => s.grant !== null) &&
     (adapter.messages.length === 0 || adapter.messages.some((m) => m.grant !== null)) &&
     adapter.settings.every((s) => !s.required || s.chosen !== null)
-  const clients = facts.clients.some((c) => c.revokedAt === null)
+  // Connected, not just added: copying a config isn't the client using it.
+  const clients = facts.clients.some((c) => c.revokedAt === null && c.lastSeen !== null)
   // A provider can be ready before the person has done anything (set up outside the app, or demo
   // mode's test provider), so it alone doesn't skip the welcome.
   return { welcome: approve || grant || clients, onepassword, approve, grant, clients }
@@ -136,7 +137,7 @@ export function SetupPage({ step }: { readonly step: SetupStep | null }) {
   const done = stepsDone(facts)
   const current = step ?? resumeStep(done)
   return (
-    <SetupFrame step={current} done={done}>
+    <SetupFrame step={current} done={done} clientAdded={facts.clients.some((c) => c.revokedAt === null)}>
       <StepView step={current} facts={facts} />
     </SetupFrame>
   )
@@ -160,11 +161,14 @@ function StepView({ step, facts }: { readonly step: SetupStep; readonly facts: S
 function SetupFrame({
   step,
   done,
+  clientAdded = false,
   children,
 }: {
   readonly step: SetupStep
   /** Null while loading: every step reads as not done. */
   readonly done: Readonly<Record<SetupStep, boolean>> | null
+  /** A client was added, connected or not: finishing then isn't "without a client". */
+  readonly clientAdded?: boolean
   readonly children: ReactNode
 }) {
   const api = useApi()
@@ -251,7 +255,7 @@ function SetupFrame({
             </>
           ) : (
             <button type="button" className="btn lg primary" disabled={finish.busy} onClick={end}>
-              {stepDone ? 'Finish' : 'Finish without a client'}
+              {stepDone || clientAdded ? 'Finish' : 'Finish without a client'}
             </button>
           )}
         </div>

@@ -338,7 +338,24 @@ document.addEventListener('click', async (event) => {
 })
 </script>`
 
-export function checkoutPage(context: PageContext, lines: readonly ShopLine[]): string {
+/** The pick-up store a checkout or order shows: the one the session or account chose, if any. */
+export interface PickupShown {
+  readonly name: string
+  readonly address: string
+}
+
+/** Where pick-up happens when no store was chosen: the shop's own default. */
+const DEFAULT_PICKUP: PickupShown = {
+  name: `${STORE_NAME} Surry Hills`,
+  address: '12 Example Street, Surry Hills NSW',
+}
+
+export function checkoutPage(
+  context: PageContext,
+  lines: readonly ShopLine[],
+  pickup: PickupShown | null = null,
+): string {
+  const at = pickup ?? DEFAULT_PICKUP
   const total = lines.reduce((sum, line) => sum + lineTotal(line), 0)
   return layout(
     `Checkout | ${STORE_NAME}`,
@@ -348,7 +365,7 @@ export function checkoutPage(context: PageContext, lines: readonly ShopLine[]): 
       <section>
         <div class="panel">
           <h2>Pick up</h2>
-          <div class="choice selected">🏪 <div><strong>${STORE_NAME} Surry Hills</strong><br><span class="qty">12 Example Street, Surry Hills NSW</span></div></div>
+          <div class="choice selected" id="checkout-Store">🏪 <div><strong>${escapeHtml(at.name)}</strong><br><span class="qty">${escapeHtml(at.address)}</span></div></div>
           <h2>Time</h2>
           <div class="choice selected">🕔 <div><strong>Today, 5:00 pm – 6:00 pm</strong><br><span class="qty">Free pick up</span></div></div>
           <h2>Payment</h2>
@@ -366,7 +383,13 @@ ${linesHtml(lines)}
   )
 }
 
-export function orderPage(context: PageContext, orderId: number, lines: readonly ShopLine[]): string {
+export function orderPage(
+  context: PageContext,
+  orderId: number,
+  lines: readonly ShopLine[],
+  pickup: PickupShown | null = null,
+): string {
+  const at = pickup ?? DEFAULT_PICKUP
   const total = lines.reduce((sum, line) => sum + lineTotal(line), 0)
   return layout(
     `Order ${orderId} | ${STORE_NAME}`,
@@ -376,7 +399,7 @@ export function orderPage(context: PageContext, orderId: number, lines: readonly
       <h1 id="order-Confirmed">Thanks${context.shopper === null ? '' : `, ${escapeHtml(context.shopper)}`}! Your order is placed.</h1>
       <p>Order number</p>
       <p class="order-number" id="order-Number">${orderId}</p>
-      <p>Pick up today, 5:00 pm – 6:00 pm at ${STORE_NAME} Surry Hills. Total ${money(total)}.</p>
+      <p id="order-Pickup">Pick up today, 5:00 pm – 6:00 pm at ${escapeHtml(at.name)}. Total ${money(total)}.</p>
     </section>
     <section class="panel" style="margin-top:18px">
 ${linesHtml(lines)}

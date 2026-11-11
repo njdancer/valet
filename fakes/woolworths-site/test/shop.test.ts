@@ -107,6 +107,34 @@ describe('the shop', () => {
     expect((await www.get('/shop/order/1')).status).toBe(404)
   })
 
+  it('checks out at the store another session of the account chose, branded with the shop', async () => {
+    const site = await start({ houseBrand: 'Gumleaf' })
+    // Valet's tool session chooses the store; the person checks out in their own browser.
+    const tools = await loggedIn(site)
+    const stores = await tools.get('/api/v3/ui/fulfilment/stores?postcode=2000')
+    expect(stores.text).toContain('Gumleaf Grocer Town Hall')
+    expect(stores.text).not.toMatch(/\bWoolworths\b/)
+    expect(
+      (await tools.postJson('/api/v3/ui/fulfilment', { addressId: 9001201, fulfilmentMethod: 'Pickup' }))
+        .status,
+    ).toBe(200)
+    const browser = await loggedIn(site)
+    await add(browser, 900604, 2)
+    const checkout = await browser.get('/shop/checkout')
+    expect(checkout.text).toContain('Gumleaf Grocer Town Hall')
+    expect(checkout.text).toContain('Cnr Park &amp; George Streets, Sydney NSW')
+    const placed = await browser.postJson('/api/v3/ui/checkout/order', {})
+    const { OrderId } = JSON.parse(placed.text) as { OrderId: number }
+    expect((await browser.get(`/shop/order/${OrderId}`)).text).toContain('at Gumleaf Grocer Town Hall.')
+  })
+
+  it('shows the shop’s default store when no session chose one', async () => {
+    const site = await start()
+    const www = await loggedIn(site)
+    await add(www, 900604, 2)
+    expect((await www.get('/shop/checkout')).text).toContain(`${STORE_NAME} Surry Hills`)
+  })
+
   it('serves the test phone only when asked for, with the codes the fake sent by SMS', async () => {
     const off = await start()
     expect((await new Client(off.origin).get('/_demo/phone')).status).toBe(404)

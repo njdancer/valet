@@ -8,7 +8,7 @@ import { AccountStore, type FakeAccount, SESSION_COOKIE, type Visitor } from './
 import { accessDeniedHtml, newSensorValue, SENSOR_COOKIE } from './akamai'
 import { type AuthHostile, FakeAuth0, type SentMessage } from './auth-server'
 import { beaconScript, type PageBeacon, validBeacon } from './beacon'
-import { rebrandJson } from './brand'
+import { rebrandJson, rebrandText, STORE_NAME } from './brand'
 import { catalogue, findProduct, roundMoney } from './catalogue'
 import { applyShapeDrift, SHAPE_DRIFTS, type ShapeDrift } from './drift'
 import {
@@ -34,6 +34,7 @@ import {
   notLoggedInPage,
   orderPage,
   type PageContext,
+  type PickupShown,
   phonePage,
   type ShopLine,
   searchPage,
@@ -50,7 +51,7 @@ import {
   searchQueryFromParams,
   searchResponse,
 } from './search'
-import { fulfilmentResponse, storeChosenBy, storesForPostcode } from './stores'
+import { fulfilmentResponse, pickupStores, storeChosenBy, storesForPostcode } from './stores'
 import {
   applyTrolleyUpdate,
   MINIMUM_SPEND,
@@ -224,7 +225,41 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
   let deniedCount = 0
   let nextOrderId = 100_000_001
   /** Placed orders by id: who placed them and what was in the trolley. */
-  const orders = new Map<number, { readonly username: string | null; readonly lines: readonly ShopLine[] }>()
+  const orders = new Map<
+    number,
+    {
+      readonly username: string | null
+      readonly lines: readonly ShopLine[]
+      readonly pickup: PickupShown | null
+    }
+  >()
+
+  /** A store's name as the shop shows it: rebranded along with the products when the brand is. */
+  const storeName = (description: string): string =>
+    options.houseBrand === undefined ? description : rebrandText(description, STORE_NAME)
+
+  /**
+   * The pick-up store a checkout shows: this session's choice, else the newest choice made by
+   * another session logged in to the same account (Valet's tool session chooses it, and the person
+   * checks out in their own browser), else none, and the page shows the shop's default.
+   */
+  const pickupFor = (visitor: Visitor): PickupShown | null => {
+    const own = visitor.fulfilment.addressId
+    const addressId =
+      own ??
+      (visitor.username === null
+        ? null
+        : (store
+            .pickupAddressesOf(visitor.username)
+            .filter((id) => id !== null)
+            .at(-1) ?? null))
+    const chosen = pickupStores.find((s) => s.AddressId === addressId)
+    if (chosen === undefined) return null
+    return {
+      name: storeName(chosen.Description),
+      address: `${chosen.Street1}, ${chosen.Suburb} ${chosen.State}`,
+    }
+  }
 
   const send = (exchange: Exchange, status: number, type: string, body: string): Sent => {
     const headers: Record<string, string | string[]> = { 'content-type': type, 'cache-control': 'no-store' }
@@ -383,19 +418,29 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
     }
     if (method === 'GET' && path === '/api/v3/ui/fulfilment/stores') {
       const stores = storesForPostcode(exchange.params.get('postcode'))
-      return stores === null ? json(exchange, 400, INVALID_REQUEST) : json(exchange, 200, stores)
+      if (stores === null) return json(exchange, 400, INVALID_REQUEST)
+      return json(exchange, 200, options.houseBrand === undefined ? stores : rebrandJson(stores, STORE_NAME))
     }
     if (method === 'POST' && path === '/api/v3/ui/fulfilment') {
       const chosen = storeChosenBy(parseJson(exchange.body))
       if (chosen === null) return json(exchange, 400, INVALID_REQUEST)
       exchange.visitor.fulfilment.addressId = chosen.AddressId
-      return json(exchange, 200, fulfilmentResponse(chosen))
+      const response = fulfilmentResponse(chosen)
+      return json(
+        exchange,
+        200,
+        options.houseBrand === undefined ? response : rebrandJson(response, STORE_NAME),
+      )
     }
     if (method === 'POST' && path === '/api/v3/ui/checkout/order') {
       // Exists only so tests can prove the runtime never lets a request reach it.
       const orderId = nextOrderId
       nextOrderId += 1
-      orders.set(orderId, { username: exchange.visitor.username, lines: shopLines(trolley) })
+      orders.set(orderId, {
+        username: exchange.visitor.username,
+        lines: shopLines(trolley),
+        pickup: pickupFor(exchange.visitor),
+      })
       trolley.clear()
       return json(exchange, 200, { OrderId: orderId })
     }
@@ -416,14 +461,22 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
     if (method === 'GET' && path === '/shop/checkout') {
       if (!loggedIn)
         return html(exchange, 200, notLoggedInPage(page(exchange), loginHref(origin, '/shop/checkout')))
-      return html(exchange, 200, checkoutPage(page(exchange), shopLines(store.trolleyOf(exchange.visitor))))
+      return html(
+        exchange,
+        200,
+        checkoutPage(
+          page(exchange),
+          shopLines(store.trolleyOf(exchange.visitor)),
+          pickupFor(exchange.visitor),
+        ),
+      )
     }
     const placed = /^\/shop\/order\/(\d{1,12})$/.exec(path)
     if (method === 'GET' && placed !== null) {
       const order = orders.get(Number(placed[1]))
       if (order === undefined || order.username !== exchange.visitor.username)
         return html(exchange, 404, notFoundPage(page(exchange)))
-      return html(exchange, 200, orderPage(page(exchange), Number(placed[1]), order.lines))
+      return html(exchange, 200, orderPage(page(exchange), Number(placed[1]), order.lines, order.pickup))
     }
     if (method === 'GET' && path === '/_demo/phone' && options.demoPhone === true)
       return html(exchange, 200, phonePage(auth0.outbox.filter((m) => m.channel === 'sms')))
