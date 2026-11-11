@@ -67,8 +67,11 @@ export interface FakeControls {
   breakChainAt(seq: number): void
   /** Replaces one pending review, e.g. to test a review that only removes things. */
   setPendingReview(review: PendingReview): void
-  /** Makes every call to `method` (e.g. "grants.make") reject. */
-  failNext(method: string): void
+  /**
+   * Makes the next call to `method` (e.g. "grants.make") reject, or the next `times` calls: pass
+   * Infinity when several parts of the window load the same thing and every one should fail.
+   */
+  failNext(method: string, times?: number): void
   /** Appends a record to the audit log, as the runtime would, and emits audit-appended. */
   appendAudit(event: AuditEvent): AuditRecord
   /** What the next settings.chooseOpPath() dialog picks; null is a cancelled dialog. */
@@ -134,7 +137,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
 
   const listeners = new Set<(event: AppEvent) => void>()
   const calls: { method: string; args: readonly unknown[] }[] = []
-  const failing = new Set<string>()
+  const failing = new Map<string, number>()
   let brokenAt: number | null = null
 
   const emit = (event: AppEvent): void => {
@@ -144,7 +147,12 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
   /** Records the call and throws if a test asked this method to fail. */
   const enter = (method: string, ...args: unknown[]): void => {
     calls.push({ method, args })
-    if (failing.delete(method)) throw new Error(`fake ${method} failed`)
+    const left = failing.get(method) ?? 0
+    if (left > 0) {
+      if (left === 1) failing.delete(method)
+      else failing.set(method, left - 1)
+      throw new Error(`fake ${method} failed`)
+    }
   }
 
   // ---------- State ----------
@@ -1583,8 +1591,8 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         reviews = [...reviews.filter((r) => r.adapterId !== review.adapterId), review]
         emit({ type: 'approvals-changed' })
       },
-      failNext(method) {
-        failing.add(method)
+      failNext(method, times = 1) {
+        failing.set(method, times)
       },
       appendAudit(event) {
         const head = audit.reduce((a, b) => (b.seq > a.seq ? b : a))

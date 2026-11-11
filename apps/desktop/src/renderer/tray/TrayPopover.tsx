@@ -35,7 +35,7 @@ import {
   ShieldCheck,
 } from 'lucide-react'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
-import type { AdapterSummary, AttentionItem, HashRoute } from '../../shared/api'
+import type { AdapterSummary, AttentionItem, HashRoute, RunSummary } from '../../shared/api'
 import { isLockedDown } from '../control/shell-state'
 import { LockDownDialog, setLockedDown } from '../control/TitleArea'
 import { useAction, useApi, useLoad, useNow } from '../lib/api-context'
@@ -44,7 +44,7 @@ import { type NeedsYouView, needsYouOrder, needsYouView } from '../lib/needs-you
 import { linksOpenInValet, needsYouHref } from '../lib/open-in-valet'
 import { href } from '../lib/routes'
 import { healthFor, isFirstReview, siteStatus } from '../lib/site-status'
-import { clientClaim } from '../lib/wording'
+import { askedToRetry, clientClaim } from '../lib/wording'
 import { stepsDone as doneOf, stepsLeft, useSetupFacts } from '../screens/setup/setup-logic'
 
 /** Needs you rows shown in full; the rest are one link to the window. */
@@ -412,7 +412,11 @@ export function subLine(view: NeedsYouView, items: readonly AttentionItem[]): st
     }
     case 'review':
       if (view.actionLabel === 'Review') return 'Its tools are off until you review it'
-      return item.addsPermissions ? 'Asks for more · calls use the approved version' : 'Asks for nothing new'
+      // A changed bundle's tools are off until it is approved (the tool host lists only approved
+      // hashes), so nothing here says calls carry on.
+      return item.addsPermissions
+        ? 'Asks for more · its tools are off until you decide'
+        : 'Asks for nothing new · its tools are off until you decide'
     default:
       return view.description
   }
@@ -512,12 +516,16 @@ function SiteRow({
 
 /** Calls that failed since midnight, from the recent calls the main process keeps. */
 export function failedToday(
-  runs: readonly { readonly outcome: string; readonly startedAt: string }[],
+  runs: readonly Pick<RunSummary, 'outcome' | 'startedAt' | 'errorClass'>[],
   now: number,
 ): number {
   const midnight = new Date(now)
   midnight.setHours(0, 0, 0, 0)
-  return runs.filter((r) => r.outcome === 'failed' && Date.parse(r.startedAt) >= midnight.getTime()).length
+  // A "call again" answer isn't a failure: the Calls list's failed filter leaves it out too, so this
+  // count matches the list it links to.
+  return runs.filter(
+    (r) => r.outcome === 'failed' && !askedToRetry(r) && Date.parse(r.startedAt) >= midnight.getTime(),
+  ).length
 }
 
 function Today({

@@ -266,13 +266,26 @@ describe('the popover’s wording', () => {
     expect(
       failedToday(
         [
-          { outcome: 'failed', startedAt: today },
-          { outcome: 'ok', startedAt: today },
-          { outcome: 'failed', startedAt: yesterday },
+          { outcome: 'failed', startedAt: today, errorClass: 'site-changed' },
+          { outcome: 'ok', startedAt: today, errorClass: null },
+          { outcome: 'failed', startedAt: yesterday, errorClass: 'site-changed' },
         ],
         NOW,
       ),
     ).toBe(1)
+  })
+
+  it('doesn’t count a "call again" answer as a failed call', () => {
+    const today = new Date(NOW).toISOString()
+    expect(
+      failedToday(
+        [
+          { outcome: 'failed', startedAt: today, errorClass: 'login-in-progress' },
+          { outcome: 'ok', startedAt: today, errorClass: null },
+        ],
+        NOW,
+      ),
+    ).toBe(0)
   })
 
   it('words a login item whose window is closed, and falls back to the description', () => {

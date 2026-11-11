@@ -152,6 +152,31 @@ export function ReviewPage({
   )
 }
 
+/**
+ * Whether calls carry on while an update waits. A changed bundle on disk is unapproved (its tools are
+ * off: the tool host lists only approved hashes), so only say calls use the old version when the site
+ * itself still reads as approved.
+ */
+function UpdateStatusBadge({
+  adapterId,
+  from,
+}: {
+  readonly adapterId: string
+  readonly from: string | null
+}) {
+  const adapter = useLoad(
+    (api) => api.adapters.get(adapterId),
+    [adapterId],
+    ['adapters-changed', 'approvals-changed'],
+  )
+  if (adapter.status !== 'ready') return null
+  return adapter.data?.approval === 'approved' && from !== null ? (
+    <Badge tone="info">Calls use {from} until you decide</Badge>
+  ) : (
+    <Badge tone="warning">Its tools are off until you decide</Badge>
+  )
+}
+
 function ReviewHeader({
   adapterId,
   name,
@@ -269,7 +294,7 @@ function Review({
           firstInstall ? (
             <Badge tone="info">Not approved yet</Badge>
           ) : (
-            <Badge tone="info">Calls use {review.from?.version} until you decide</Badge>
+            <UpdateStatusBadge adapterId={review.adapterId} from={review.from?.version ?? null} />
           )
         }
         description={

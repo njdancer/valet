@@ -85,7 +85,9 @@ function CallsList({ filters }: { readonly filters: CallFilters }) {
           ),
         )
   const list = runs.status === 'ready' ? runs.data : []
-  const shown = foldRetries(list).filter(({ run }) => matchesFilters(run, filters, loginCalls))
+  const folded = foldRetries(list)
+  const listed = folded.length
+  const shown = folded.filter(({ run }) => matchesFilters(run, filters, loginCalls))
   const siteName = (id: string) =>
     (adapters.status === 'ready' ? adapters.data.find((a) => a.id === id)?.name : undefined) ??
     list.find((r) => r.adapterId === id)?.adapterName ??
@@ -114,9 +116,10 @@ function CallsList({ filters }: { readonly filters: CallFilters }) {
           <>
             {runs.status === 'ready' ? (
               <Text tone="muted" size="sm" aria-live="polite">
+                {/* Counted as listed: a retry folded into the call after it isn't a call of its own. */}
                 {filtered
-                  ? `${shown.length} of ${list.length} ${list.length === 1 ? 'call' : 'calls'}`
-                  : `${list.length} ${list.length === 1 ? 'call' : 'calls'}`}
+                  ? `${shown.length} of ${listed} ${listed === 1 ? 'call' : 'calls'}`
+                  : `${listed} ${listed === 1 ? 'call' : 'calls'}`}
               </Text>
             ) : null}
             {retention !== null ? (

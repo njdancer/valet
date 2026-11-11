@@ -160,7 +160,12 @@ function Trace({
     <Page>
       <PageHeader
         breadcrumb={crumbs}
-        title={toolPhrase(summary.tool)}
+        // "Added to the trolley" only when it did; any other outcome names the call, not a result.
+        title={
+          summary.outcome === 'ok'
+            ? toolPhrase(summary.tool)
+            : `Call ${callRef(summary.callId)} · ${summary.tool}`
+        }
         status={<OutcomeBadge run={summary} />}
         actions={
           <>

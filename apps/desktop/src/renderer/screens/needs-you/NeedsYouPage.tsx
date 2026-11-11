@@ -21,13 +21,14 @@ import {
   Text,
   TextLink,
 } from '@valet/ui'
-import { CheckCircle2 } from 'lucide-react'
+import { CheckCircle2, RotateCw } from 'lucide-react'
 import { useEffect, useRef } from 'react'
 import { useAction, useApi, useLoad, useNow } from '../../lib/api-context'
-import { callRef, formatClock, formatTime } from '../../lib/format'
+import { callRef, formatClock, formatTime, plural } from '../../lib/format'
 import { type NeedsYouView, needsYouOrder, needsYouView, runNeedsYouAction } from '../../lib/needs-you'
 import { href, navigate } from '../../lib/router'
 import { healthFor, isFirstReview, siteStatus } from '../../lib/site-status'
+import { useSetupLeft } from '../setup/setup-logic'
 
 export function NeedsYouPage({ item }: { readonly item: string | null }) {
   const api = useApi()
@@ -44,6 +45,9 @@ export function NeedsYouPage({ item }: { readonly item: string | null }) {
   const waiting = views.filter((v) => !v.missed)
   const missed = views.filter((v) => v.missed)
   const soonest = waiting.find((v) => v.deadline !== null)
+  // Skipped setup steps wait as one item, as in the menu bar (IA section 5, "Setup unfinished").
+  const setupLeft = useSetupLeft()
+  const count = waiting.length + (setupLeft === null ? 0 : 1)
 
   // A notification's deep link (#/needs-you/<id>) runs that item's action once, when it has loaded.
   const target = item === null ? null : (views.find((v) => v.id === item) ?? null)
@@ -64,16 +68,16 @@ export function NeedsYouPage({ item }: { readonly item: string | null }) {
       <PageHeader
         title="Needs you"
         description={
-          waiting.length === 0
+          count === 0
             ? null
             : 'Things only you can answer. Each one waits here, in the menu bar and in its notification.'
         }
         status={
-          attention.status !== 'ready' ? null : waiting.length === 0 ? (
+          attention.status !== 'ready' ? null : count === 0 ? (
             <Text tone="muted">Nothing waiting</Text>
           ) : (
             <>
-              <Text tone="muted">{waiting.length} waiting</Text>
+              <Text tone="muted">{count} waiting</Text>
               {soonest?.deadline != null ? (
                 <DeadlineChip until={soonest.deadline} now={now} subject={soonest.title} />
               ) : (
@@ -91,10 +95,11 @@ export function NeedsYouPage({ item }: { readonly item: string | null }) {
       <PageBody width="form">
         {attention.status === 'error' ? (
           <Text tone="muted">Valet couldn’t load what’s waiting. It tries again when something changes.</Text>
-        ) : attention.status === 'loading' ? null : waiting.length === 0 ? (
+        ) : attention.status === 'loading' ? null : count === 0 ? (
           <NothingWaiting />
         ) : (
           <ul aria-label="Waiting for you" className="m-0 flex list-none flex-col gap-3 p-0">
+            {setupLeft !== null ? <FinishSetupRow left={setupLeft} /> : null}
             {waiting.map((v) => (
               <NeedsYouRow key={v.id} view={v} now={now} />
             ))}
@@ -112,7 +117,7 @@ export function NeedsYouPage({ item }: { readonly item: string | null }) {
             </ul>
           </Section>
         ) : null}
-        {waiting.length > 0 ? <StatusCard /> : null}
+        {count > 0 ? <StatusCard /> : null}
       </PageBody>
     </Page>
   )
@@ -162,6 +167,22 @@ function NeedsYouRow({ view, now }: { readonly view: NeedsYouView; readonly now:
           onClick={() => void action.run(() => runNeedsYouAction(api, view.action, navigate))}
         >
           {view.actionLabel}
+        </Button>
+      }
+    />
+  )
+}
+
+function FinishSetupRow({ left }: { readonly left: number }) {
+  return (
+    <InboxItem
+      tone="accent"
+      icon={<RotateCw aria-hidden="true" className="size-5 text-fg-muted" />}
+      title={`Finish setup (${plural(left, 'step')} left)`}
+      description="About 5 minutes. Claude can use Woolworths once it’s done."
+      action={
+        <Button variant="secondary" size="sm" asChild>
+          <a href={href.setup()}>Continue setup</a>
         </Button>
       }
     />
@@ -281,7 +302,8 @@ function StatusCard() {
             {chain.data.state === 'broken'
               ? `The audit log doesn’t check out from record ${chain.data.firstBadSeq}`
               : chain.data.state === 'intact'
-                ? `Audit log checks out · ${chain.data.records} records · checked ${formatTime(chain.data.verifiedAt, now)}`
+                ? // As of the last check: records written since aren't checked yet, so it names where it got to.
+                  `Audit log checked ${formatTime(chain.data.verifiedAt, now)} · checks out up to record ${chain.data.headSeq}`
                 : 'Audit log not checked yet'}
           </HealthLine>
         ) : null}

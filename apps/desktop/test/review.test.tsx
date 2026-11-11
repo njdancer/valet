@@ -566,7 +566,8 @@ describe('reviewing an update', () => {
 
   it('says so when the review can’t be loaded', async () => {
     const api = createFakeApi({ now: NOW })
-    api.fake.failNext('approvals.pending')
+    // The sidebar's Needs you count reads the pending reviews too (for unfinished setup).
+    api.fake.failNext('approvals.pending', Number.POSITIVE_INFINITY)
     renderAt(REVIEW, api)
     expect(await screen.findByText(/Valet couldn’t load the review/)).toBeTruthy()
   })

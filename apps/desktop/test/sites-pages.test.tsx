@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest'
 import { ControlPanel } from '../src/renderer/control/App'
 import { createFakeApi, type FakeApi } from '../src/renderer/dev/fake-api'
 import { ApiProvider } from '../src/renderer/lib/api-context'
+import { updateSummary } from '../src/renderer/screens/sites/SiteOverview'
 import type { AdapterDetail, AdapterSummary } from '../src/shared/api'
 
 const NOW = Date.parse('2026-11-07T21:48:00+11:00')
@@ -544,4 +545,46 @@ describe('no secret reaches a Sites page', () => {
       expect(document.documentElement.innerHTML).not.toContain(CANARY)
     })
   }
+})
+
+describe('the update banner’s summary', () => {
+  it('says a tool changed when only a tool’s side effect did, never "nothing new"', async () => {
+    const api = createFakeApi({ now: NOW })
+    const review = (await api.approvals.pending()).find((r) => r.from !== null)
+    if (review === undefined) throw new Error('no update in the fake')
+    const before = {
+      name: 'remove_from_cart',
+      title: 'Remove from cart',
+      destructive: true,
+      idempotent: true,
+    }
+    const empty = { added: [], removed: [], unchanged: [] }
+    const diff = {
+      ...review.diff,
+      ...Object.fromEntries(
+        (
+          [
+            'navigation',
+            'frameOrigins',
+            'egress',
+            'cookieDomains',
+            'storage',
+            'requests',
+            'secrets',
+            'secretFills',
+            'authSteps',
+            'messagesSources',
+            'settings',
+          ] as const
+        ).map((k) => [k, empty]),
+      ),
+      tools: {
+        added: [{ ...before, sideEffect: 'irreversible' as const }],
+        removed: [{ ...before, sideEffect: 'write' as const }],
+        unchanged: [],
+      },
+    }
+    expect(updateSummary({ ...review, diff })).toBe('It changes 1 tool.')
+    expect(updateSummary({ ...review, diff: { ...diff, tools: empty } })).toBe('It asks for nothing new.')
+  })
 })

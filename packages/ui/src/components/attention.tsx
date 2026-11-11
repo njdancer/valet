@@ -12,8 +12,9 @@ function remaining(ms: number): string {
   return `${s} s`
 }
 
-export function clockTime(at: number, locale?: string): string {
-  return new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' }).format(at)
+/** "9:52 pm", as every other time in the app reads (the system locale would say "9:52 PM"). */
+export function clockTime(at: number, locale = 'en-AU'): string {
+  return new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit', hour12: true }).format(at)
 }
 
 /** The announcement thresholds, in ms left: a screen reader hears these, not every second. */

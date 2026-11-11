@@ -69,11 +69,13 @@ describe('first-run setup', () => {
     ])
       expect(railText).toContain(step)
     expect(doneSteps()).toBe(0)
-    expect(screen.getByText('Step 1 of 6')).toBeTruthy()
+    // The welcome isn't counted: its "five short steps" are the steps after it.
+    expect(screen.queryByText(/^Step \d of/)).toBeNull()
     await user.click(screen.getByRole('link', { name: 'Get started' }))
 
     // 1Password: nothing reachable yet. Setting it up shows it ready, and the step done.
     await heading('Where your Woolworths password comes from')
+    expect(screen.getByText('Step 1 of 5')).toBeTruthy()
     expect(screen.getByText(/Valet can’t reach 1Password yet/)).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Skip for now' }).className).not.toContain('bg-accent')
     expect(isOff(screen.getByRole('button', { name: 'Continue' }))).toBe(true)

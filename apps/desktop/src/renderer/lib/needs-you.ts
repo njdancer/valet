@@ -99,8 +99,8 @@ export function needsYouView(
         description: first
           ? 'Nothing from it runs until you approve it.'
           : item.addsPermissions
-            ? 'It asks for more than the version you approved. Calls keep using the approved one until you decide.'
-            : 'It asks for nothing new. Calls keep using the approved version until you decide.',
+            ? 'It asks for more than the version you approved. Its tools are off until you decide.'
+            : 'It asks for nothing new. Its tools are off until you decide.',
         adapterId: item.adapterId,
         adapterName: item.adapterName,
         callId: null,

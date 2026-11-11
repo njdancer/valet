@@ -24,11 +24,11 @@ export interface ReasonWording {
 export const NEEDS_USER_WORDING: Readonly<Record<NeedsUserReason, ReasonWording>> = {
   'login-required': {
     short: 'Login needed',
-    detail: "It needs you to sign in yourself; Valet couldn't do it with the secrets you granted.",
+    detail: 'It needs you to sign in yourself; Valet couldn’t do it with the login you gave it.',
   },
   'otp-required': {
     short: 'One-time code',
-    detail: 'It asked for a one-time code that Valet has no grant to read.',
+    detail: 'It asked for a one-time code that Valet hasn’t been allowed to read.',
   },
   captcha: {
     short: 'Verification check',

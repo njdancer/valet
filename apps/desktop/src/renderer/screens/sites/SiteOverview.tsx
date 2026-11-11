@@ -36,6 +36,7 @@ import {
   PROVIDER_WORDING,
   SESSION_WORDING,
 } from '../../lib/wording'
+import { matchesOutcome } from '../activity/calls-list'
 import type { SiteData } from './SitePage'
 import { ActionError, callers, callsToday, SiteFixButton, SiteText } from './site-ui'
 
@@ -113,7 +114,25 @@ export function updateSummary(review: PendingReview): string {
       ? plural(d.requests.added.length, 'kind of request', 'kinds of request')
       : null,
   ].filter((x): x is string => x !== null)
-  if (parts.length === 0) return 'It asks for nothing new.'
+  // A tool whose side effect or hints changed shows as removed and added under the same name.
+  const changedTools = d.tools.added.filter((t) => removedTools.has(t.name)).length
+  const changes = changedTools > 0 ? `It changes ${plural(changedTools, 'tool')}.` : null
+  if (parts.length === 0) {
+    if (changes !== null) return changes
+    // Anything else added (login steps, cookies, storage, settings) still asks for more: the review
+    // says what, and the menu bar and Needs you say "asks for more" from the same diff.
+    const more = [
+      d.frameOrigins,
+      d.cookieDomains,
+      d.storage,
+      d.secretFills,
+      d.authSteps,
+      d.messagesSources,
+      d.settings,
+    ].some((list) => list.added.length > 0)
+    return more ? 'It asks for more than the version you approved.' : 'It asks for nothing new.'
+  }
+  if (changes !== null) parts.push(`changes ${plural(changedTools, 'tool')}`)
   const list = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}`
   return `It adds ${list}.`
 }
@@ -246,7 +265,8 @@ function SettingCard({ adapter, name }: { readonly adapter: AdapterDetail; reado
           ) : null
         }
       >
-        {!approved ? (
+        {/* A store chosen for the approved version stays chosen while an update waits. */}
+        {!approved && (chosen === null || adapter.pendingUpdate === null) ? (
           <Text tone="subtle">You choose a {noun} after approving.</Text>
         ) : chosen === null ? (
           <Text tone="muted">
@@ -480,7 +500,7 @@ function TodayCard({
     )
   }
   const today = callsToday(runs, adapter.id, now)
-  const failed = today.filter((r) => r.outcome === 'failed').length
+  const failed = today.filter((r) => matchesOutcome(r, 'failed')).length
   const blocked = today.reduce((n, r) => n + r.blockedRequests, 0)
   const last = today[0] ?? null
   const by = callers(today)
