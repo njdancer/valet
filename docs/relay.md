@@ -222,10 +222,16 @@ The second slice (2026-11-10) adds the authorisation server and consent, on the 
   listener binds `127.0.0.1`, so only a process on the Mac can set it, and one that lies only
   escapes the per-source limits; the global ones still hold.
 
+The control panel's setup (2026-11-11): the **Remote sign-in** screen opens with a **Remote
+access** card that turns remote access on or pauses it, adds and removes the public names the
+tunnel forwards (each shown with its connector URL, `https://<name>/mcp`), shows the loopback
+address to point the tunnel at, and lists every tool of each approved adapter with its own switch,
+all off to start. Turning a tool on needs its adapter approved; turning it off always works.
+
 Not built: Client ID Metadata Documents (the metadata says `client_id_metadata_document_supported:
-false`; they need the fetcher [below](#before-consent-fetching-and-limits)), the control-panel
-screens for turning tools on and setting the public name, the typed `transport` field in
-`tool-called` ([Core changes](#core-changes)), and the tunnel itself.
+false`; they need the fetcher [below](#before-consent-fetching-and-limits)), the typed `transport`
+field in `tool-called` ([Core changes](#core-changes)), and running the tunnel (the person runs
+`cloudflared` themselves, D14).
 
 ### A separate listener with its own guards
 

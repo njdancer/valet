@@ -72,6 +72,7 @@ const ORIGIN = z.string().min(1).max(300)
 const ISO_TIME = z.iso.datetime({ offset: true })
 /** `<adapterId>.<tool>`, as the consent window grants tools. */
 const REMOTE_TOOL = z.string().regex(/^[a-z][a-z0-9-]{1,63}\.[a-z][a-z0-9_]{0,63}$/)
+const TOOL_NAME = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)
 const REMOTE_CLIENT_ID = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,63}$/)
 
 const grantRequest = z
@@ -216,6 +217,14 @@ const HANDLERS: Readonly<
   'remote.clients': entry(none, (api) => api.remote.clients()),
   'remote.revokeClient': entry(z.tuple([REMOTE_CLIENT_ID]), (api, [id]) => api.remote.revokeClient(id)),
   'remote.revokeAllClients': entry(none, (api) => api.remote.revokeAllClients()),
+  'remote.setup': entry(none, (api) => api.remote.setup()),
+  'remote.setEnabled': entry(z.tuple([z.boolean()]), (api, [enabled]) => api.remote.setEnabled(enabled)),
+  'remote.setHosts': entry(z.tuple([z.array(z.string().min(1).max(253)).max(8)]), (api, [hosts]) =>
+    api.remote.setHosts(hosts),
+  ),
+  'remote.setTool': entry(z.tuple([ADAPTER_ID, TOOL_NAME, z.boolean()]), (api, [adapterId, tool, enabled]) =>
+    api.remote.setTool(adapterId, tool, enabled),
+  ),
   'app.status': entry(none, (api) => api.app.status()),
   'app.setPaused': entry(z.tuple([z.boolean()]), (api, [paused]) => api.app.setPaused(paused)),
   'app.openControlPanel': entry(z.union([none, z.tuple([hashRoute])]), (api, args) =>

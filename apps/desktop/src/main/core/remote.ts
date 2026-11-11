@@ -16,7 +16,8 @@
 // remote-clients.json, so pausing and restarting keep every connector; access tokens are memory
 // only. Consent is answered here, by the person typing the code their browser shows (relay.md,
 // "Consent happens on the Mac"); a client may then call only the remote-enabled tools they ticked.
-// Not here yet: the tunnel (D14: Cloudflare Tunnel, which the person runs themselves).
+// The control panel sets it up (RemoteConsent.tsx). Not here: the tunnel (D14: Cloudflare Tunnel,
+// which the person runs themselves).
 
 import type { ToolDeclaration } from '@valet/core'
 import { ValetError } from '@valet/core'
