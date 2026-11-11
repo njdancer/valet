@@ -147,7 +147,9 @@ export function PageHeader({
       <div className="flex min-w-0 items-start gap-3">
         {leading ? <div className="shrink-0 pt-0.5">{leading}</div> : null}
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <h1 className="m-0 truncate text-2xl font-semibold tracking-tight text-fg">{title}</h1>
+          <h1 className="m-0 line-clamp-2 text-2xl break-words font-semibold tracking-tight text-fg">
+            {title}
+          </h1>
           {description ? <p className="m-0 text-md text-fg-muted text-pretty">{description}</p> : null}
         </div>
         {actions ? <div className="flex shrink-0 items-center gap-2">{actions}</div> : null}

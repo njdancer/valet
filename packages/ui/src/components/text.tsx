@@ -2,6 +2,7 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { Slot } from 'radix-ui'
 import type { ComponentProps, ReactNode } from 'react'
 import { cn } from '../lib/cn'
+import { formatShortcut } from '../lib/shortcut'
 import { CopyButton } from './copy-button'
 
 export const headingVariants = cva('text-fg text-balance', {
@@ -76,17 +77,37 @@ export function Value({
   mono?: boolean
   /** The text to copy. Gives the value a copy button. */
   copy?: string
-  truncate?: boolean
+  /**
+   * Cut a long value to fit. `middle` keeps the end in view, for paths, IDs and URLs where the end
+   * is what tells them apart ("…/adapters/woolworths.ts"). The whole value stays in the DOM, so
+   * selecting and copying get all of it.
+   */
+  truncate?: boolean | 'end' | 'middle'
   className?: string
   title?: string
 }) {
+  const text = typeof children === 'string' ? children : undefined
+  const middle = truncate === 'middle' && text !== undefined && text.length > 16
+  const tail = middle ? Math.min(12, Math.floor(text.length / 3)) : 0
   return (
     <span className={cn('inline-flex min-w-0 max-w-full items-center gap-1 align-middle', className)}>
       <span
-        title={title ?? (truncate && typeof children === 'string' ? children : undefined)}
-        className={cn('selectable min-w-0', mono && 'font-mono text-[0.92em]', truncate && 'truncate')}
+        title={title ?? (truncate ? text : undefined)}
+        className={cn(
+          'selectable min-w-0',
+          mono && 'font-mono text-[0.92em]',
+          truncate && !middle && 'truncate',
+          middle && 'flex whitespace-nowrap',
+        )}
       >
-        {children}
+        {middle ? (
+          <>
+            <span className="min-w-0 truncate">{text.slice(0, -tail)}</span>
+            <span className="shrink-0">{text.slice(-tail)}</span>
+          </>
+        ) : (
+          children
+        )}
       </span>
       {copy !== undefined ? <CopyButton value={copy} label="Copy" /> : null}
     </span>
@@ -165,6 +186,14 @@ export function Kbd({ className, ...props }: ComponentProps<'kbd'>) {
       {...props}
     />
   )
+}
+
+/**
+ * A keyboard shortcut written platform-neutral (keys="mod+K") and shown as that OS writes it: ⌘K
+ * on macOS, Ctrl+K on Windows and Linux.
+ */
+export function Shortcut({ keys, className }: { keys: string; className?: string }) {
+  return <Kbd className={className}>{formatShortcut(keys)}</Kbd>
 }
 
 /** A link inside text. Internal navigation uses this too: it is still a link, not a button. */

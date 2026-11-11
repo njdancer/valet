@@ -4,8 +4,8 @@ import { cn } from '../lib/cn'
 import { useFieldControlProps } from './field'
 
 export const controlSurface = cn(
-  'rounded-sm bg-raised text-fg shadow-[inset_0_0_0_0.5px_var(--border-control),inset_0_1px_1px_oklch(0_0_0/0.04)] transition-interactive',
-  'hover:shadow-[inset_0_0_0_0.5px_var(--border-strong),inset_0_1px_1px_oklch(0_0_0/0.04)]',
+  'rounded-sm bg-raised text-fg shadow-[inset_0_0_0_1px_var(--border-control),inset_0_1px_1px_oklch(0_0_0/0.04)] transition-interactive',
+  'hover:shadow-[inset_0_0_0_1px_var(--border-strong),inset_0_1px_1px_oklch(0_0_0/0.04)]',
   'focus-within:outline-2 focus-within:outline-offset-1 focus-within:outline-line-focus',
   'has-[[aria-invalid=true]]:shadow-[inset_0_0_0_1px_var(--danger-solid)]',
   'has-disabled:opacity-50',
@@ -38,7 +38,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
       <input
         ref={ref}
         {...field}
-        className="h-full min-w-0 flex-1 bg-transparent outline-none placeholder:text-fg-subtle focus-visible:outline-none"
+        className="h-full min-w-0 flex-1 bg-transparent outline-hidden placeholder:text-fg-subtle focus-visible:outline-hidden"
         {...props}
       />
       {trailing}
@@ -72,7 +72,7 @@ export const SearchInput = forwardRef<
           <button
             type="button"
             aria-label="Clear search"
-            className="-mr-1 flex size-5 cursor-pointer items-center justify-center rounded-full text-fg-subtle hover:bg-hover hover:text-fg"
+            className="-mr-1.5 flex size-6 items-center justify-center rounded-full text-fg-subtle hover:bg-hover hover:text-fg"
             onClick={() => onValueChange('')}
           >
             <X className="size-3" />
@@ -96,7 +96,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, ComponentProps<'textarea
       {...field}
       className={cn(
         controlSurface,
-        'field-sizing-content min-h-16 w-full resize-y px-2 py-1.5 text-md outline-none placeholder:text-fg-subtle focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-line-focus',
+        'field-sizing-content min-h-16 w-full resize-y px-2 py-1.5 text-md outline-hidden placeholder:text-fg-subtle focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-line-focus',
         'aria-[invalid=true]:shadow-[inset_0_0_0_1px_var(--danger-solid)]',
         className,
       )}

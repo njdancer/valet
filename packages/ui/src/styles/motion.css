@@ -12,11 +12,11 @@
   --animate-fade-out: v-fade-out var(--v-duration-fast) var(--v-ease-exit) both;
   --animate-pop-in: v-pop-in var(--v-duration-base) var(--v-ease-enter) both;
   --animate-pop-out: v-pop-out var(--v-duration-fast) var(--v-ease-exit) both;
-  --animate-dialog-in: v-dialog-in var(--v-duration-slow) var(--v-ease-emphasized) both;
+  --animate-dialog-in: v-dialog-in var(--v-duration-moderate) var(--v-ease-enter) both;
   --animate-dialog-out: v-dialog-out var(--v-duration-fast) var(--v-ease-exit) both;
-  --animate-sheet-in: v-sheet-in var(--v-duration-slow) var(--v-ease-emphasized) both;
+  --animate-sheet-in: v-sheet-in var(--v-duration-moderate) var(--v-ease-enter) both;
   --animate-sheet-out: v-sheet-out var(--v-duration-base) var(--v-ease-exit) both;
-  --animate-drawer-in: v-drawer-in var(--v-duration-slow) var(--v-ease-emphasized) both;
+  --animate-drawer-in: v-drawer-in var(--v-duration-moderate) var(--v-ease-enter) both;
   --animate-drawer-out: v-drawer-out var(--v-duration-base) var(--v-ease-exit) both;
   --animate-rise-in: v-rise-in var(--v-duration-slow) var(--v-ease-enter) both;
   --animate-collapse-open: v-collapse-open var(--v-duration-base) var(--v-ease-standard);
@@ -254,4 +254,18 @@
   .valet-spark {
     display: none;
   }
+}
+
+/* Travel: something that glides from one place to another (switch thumb, tab underline, segmented
+   pill, hold fill). With reduced motion it jumps instead, since sliding is the motion that bothers. */
+@media (prefers-reduced-motion: reduce) {
+  [data-travel] {
+    transition-duration: 0s !important;
+  }
+}
+[data-motion="reduce"] [data-travel] {
+  transition-duration: 0s !important;
+}
+[data-motion="reduce"] .animate-spin {
+  animation-duration: 2.4s !important;
 }

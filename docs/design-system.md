@@ -86,6 +86,31 @@ more`) strengthens every line.
 - **Keyboard first.** `⌘K`/`Ctrl+K` (`CommandPalette`) reaches every page, site, call and action.
   Arrow keys within composite widgets (menus, tabs, segmented, radio, table rows, timeline steps, tray
   rows), Tab between them, Escape closes the top layer and returns focus.
+- **Shortcuts are written once.** Pass `"mod+K"`, `"mod+shift+P"`, `"alt+T"` to `shortcut` props and
+  `<Shortcut keys>`; they show as ⌘K on macOS and Ctrl+K on Windows and Linux (`formatShortcut`), and
+  `IconButton` sets `aria-keyshortcuts`. Never hard-code ⌘.
+- **Cursor.** The arrow for every control (buttons, switches, tabs, menu items, rows that are
+  buttons), as native apps do. The pointing hand only for links: `TextLink`, `ObjectLink`, row links,
+  breadcrumbs.
+- **Actions in a row are visible buttons.** A row's action is a small secondary `Button` with a
+  verb and an object ("Change store"), never quiet grey text that reads as a label. Icon-only actions
+  in rows are `IconButton`s with a tooltip.
+- **Context menus are shortcuts, not the only path.** A `ContextMenuTrigger` wraps a focusable row
+  link or button (so Shift+F10 and the Menu key work), and every item in it is also in a visible
+  "More actions" `DropdownMenu`.
+- **Risk is not status.** `RiskBadge` (Reads, Changes, Can't be undone) is square-cornered and
+  outlined with an icon (eye, pencil, stop sign). Status (`Badge` tones, `StatusDot`) is a round soft
+  pill. The two never share a shape, so "Can't be undone" never reads as "Error".
+- **Announce arrivals, not furniture.** `Banner live` and `InboxItem appear` are for things that
+  arrived while the page was open; they are announced and animate in. What is there on load is
+  neither. `DeadlineChip subject="Woolworths code"` names what an announcement is about.
+- **Selection is more than colour.** Selected rows, nav items and timeline steps get
+  `aria-current` and a 2 px accent bar as well as the selected fill.
+- **Accessibility floors** (tested): text 4.5:1 including `fg-subtle`; control edges 3:1
+  (`border-control`, 1 px); targets 24 px (hit areas extend past small checkboxes and switches);
+  Windows High Contrast (`forced-colors`) gives every control a system-colour border and every
+  selection an outline; `prefers-contrast: more` firms borders; reduced motion stops travel
+  (`data-travel`) and slides but keeps fades.
 
 ## Motion
 

@@ -24,25 +24,23 @@ import {
   HealthLine,
   IconButton,
   Inline,
-  Kbd,
   List,
   ListRow,
   NavItem,
+  NavTabs,
   Page,
   PageBody,
   PageHeader,
   RiskBadge,
   SecretBadge,
   Section,
+  Shortcut,
   Sidebar,
   SidebarFooter,
   SidebarGroup,
   SiteAvatar,
   StatusDot,
   Switch,
-  Tabs,
-  TabsList,
-  TabsTrigger,
   Text,
   ValetMark,
 } from '../../src'
@@ -64,7 +62,7 @@ export function SampleApp() {
             <ValetMark size={20} />
             <span className="text-md font-semibold">Valet</span>
             <span className="flex-1" />
-            <IconButton size="sm" variant="quiet" label="Search" shortcut="⌘K" icon={<Search />} />
+            <IconButton size="sm" variant="quiet" label="Search" shortcut="mod+K" icon={<Search />} />
           </Inline>
           <SidebarGroup>
             <NavItem href="#/patterns" icon={<Home />} count={2} attention>
@@ -138,18 +136,15 @@ export function SampleApp() {
             </>
           }
         >
-          <Tabs defaultValue="overview">
-            <TabsList>
-              <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="tools" count={6}>
-                Tools
-              </TabsTrigger>
-              <TabsTrigger value="access">Access</TabsTrigger>
-              <TabsTrigger value="updates" count={1} attention>
-                Updates
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
+          <NavTabs
+            label="Woolworths"
+            items={[
+              { href: '#/patterns', label: 'Overview', active: true },
+              { href: '#/patterns', label: 'Tools', active: false, count: 6 },
+              { href: '#/patterns', label: 'Access', active: false },
+              { href: '#/patterns', label: 'Updates', active: false, count: 1, attention: true },
+            ]}
+          />
         </PageHeader>
         <PageBody width="form">
           <Banner
@@ -165,24 +160,10 @@ export function SampleApp() {
           </Banner>
           <Section title="Status">
             <div className="flex flex-col gap-2 rounded-lg bg-surface p-4 shadow-1 ring-[0.5px] ring-line ring-inset">
-              <HealthLine
-                tone="success"
-                action={
-                  <Button size="sm" variant="quiet">
-                    Sign out
-                  </Button>
-                }
-              >
+              <HealthLine tone="success" action={<Button size="sm">Sign out</Button>}>
                 Signed in as tess@example.com · last call 2 min ago
               </HealthLine>
-              <HealthLine
-                tone="neutral"
-                action={
-                  <Button size="sm" variant="quiet">
-                    Change
-                  </Button>
-                }
-              >
+              <HealthLine tone="neutral" action={<Button size="sm">Change store</Button>}>
                 Store: Bondi Junction
               </HealthLine>
             </div>
@@ -190,11 +171,7 @@ export function SampleApp() {
           <Section
             title="Tools"
             description="What Claude can ask Woolworths to do. Turn off any you don't want."
-            actions={
-              <Button size="sm" variant="quiet">
-                Rename…
-              </Button>
-            }
+            actions={<Button size="sm">Rename tools…</Button>}
           >
             <List label="Tools">
               {tools.map((t) => (
@@ -232,7 +209,7 @@ export function SampleApp() {
             />
           </Section>
           <Text size="sm" tone="subtle">
-            Tip: press <Kbd>⌘</Kbd> <Kbd>K</Kbd> to jump anywhere. <Badge size="sm">demo</Badge>
+            Tip: press <Shortcut keys="mod+K" /> to jump anywhere. <Badge size="sm">demo</Badge>
           </Text>
         </PageBody>
       </Page>

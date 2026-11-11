@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef, useState } from 'react'
+import { type ReactNode, useEffect, useId, useRef, useState } from 'react'
 import { cn } from '../lib/cn'
 
 // Moments of delight. Each marks a finished job, never decoration for its own sake, and each
@@ -14,6 +14,8 @@ export function ValetMark({
   className?: string
   title?: string
 }) {
+  // Gradient ids are per instance: two marks on a page must not share (or lose) a gradient.
+  const uid = useId().replace(/:/g, '')
   return (
     <svg
       width={size}
@@ -25,21 +27,21 @@ export function ValetMark({
       className={cn('shrink-0', className)}
     >
       <defs>
-        <linearGradient id="valet-mark-ink" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={`${uid}-ink`} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0" stopColor="oklch(0.4 0.12 258)" />
           <stop offset="1" stopColor="oklch(0.26 0.07 258)" />
         </linearGradient>
-        <linearGradient id="valet-mark-brass" x1="0" y1="0" x2="1" y2="1">
+        <linearGradient id={`${uid}-brass`} x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stopColor="oklch(0.88 0.1 85)" />
           <stop offset="0.55" stopColor="oklch(0.74 0.12 75)" />
           <stop offset="1" stopColor="oklch(0.6 0.11 65)" />
         </linearGradient>
       </defs>
-      <rect width="32" height="32" rx="8" fill="url(#valet-mark-ink)" />
+      <rect width="32" height="32" rx="8" fill={`url(#${uid}-ink)`} />
       <rect x="0.5" y="0.5" width="31" height="31" rx="7.5" fill="none" stroke="oklch(1 0 0 / 0.18)" />
       <path
         d="M6.5 10.2c0-.9 1-1.5 1.8-1l6.2 4.1a2 2 0 0 1 1.5-.7 2 2 0 0 1 1.5.7l6.2-4.1c.8-.5 1.8.1 1.8 1v11.6c0 .9-1 1.5-1.8 1l-6.2-4.1a2 2 0 0 1-1.5.7 2 2 0 0 1-1.5-.7l-6.2 4.1c-.8.5-1.8-.1-1.8-1Z"
-        fill="url(#valet-mark-brass)"
+        fill={`url(#${uid}-brass)`}
       />
     </svg>
   )
@@ -110,6 +112,7 @@ export function ApprovalSeal({
   className?: string
   label?: string
 }) {
+  const uid = useId().replace(/:/g, '')
   const teeth = 18
   const points: string[] = []
   for (let i = 0; i < teeth * 2; i++) {
@@ -127,13 +130,13 @@ export function ApprovalSeal({
       className={cn('animate-seal', className)}
     >
       <defs>
-        <linearGradient id="valet-seal-brass" x1="0" y1="0" x2="1" y2="1">
+        <linearGradient id={`${uid}-seal`} x1="0" y1="0" x2="1" y2="1">
           <stop offset="0" stopColor="oklch(0.9 0.09 88)" />
           <stop offset="0.5" stopColor="oklch(0.75 0.12 76)" />
           <stop offset="1" stopColor="oklch(0.58 0.11 64)" />
         </linearGradient>
       </defs>
-      <polygon points={points.join(' ')} fill="url(#valet-seal-brass)" />
+      <polygon points={points.join(' ')} fill={`url(#${uid}-seal)`} />
       <circle cx="36" cy="36" r="25" fill="none" stroke="oklch(1 0 0 / 0.55)" strokeWidth="1" />
       <circle cx="36" cy="36" r="22" fill="oklch(0.3 0.08 258)" />
       <path
@@ -197,7 +200,9 @@ export function AnimatedNumber({
   const [shown, setShown] = useState(value)
   const from = useRef(value)
   useEffect(() => {
-    const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+    const reduce =
+      (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches) ||
+      document.querySelector('[data-motion="reduce"]') !== null
     if (reduce || typeof requestAnimationFrame !== 'function') {
       setShown(value)
       from.current = value

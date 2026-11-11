@@ -10,7 +10,7 @@ import { useFieldControlProps } from './field'
 import { Spinner } from './spinner'
 
 const box =
-  'peer inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-xs bg-raised text-fg-on-accent shadow-[inset_0_0_0_0.5px_var(--border-strong)] transition-interactive press disabled:cursor-not-allowed disabled:opacity-45 data-[state=checked]:bg-accent-solid data-[state=checked]:shadow-none data-[state=indeterminate]:bg-accent-solid data-[state=indeterminate]:shadow-none aria-[invalid=true]:shadow-[inset_0_0_0_1px_var(--danger-solid)]'
+  'peer relative inline-flex size-4 shrink-0 items-center justify-center rounded-xs bg-raised text-fg-on-accent shadow-[inset_0_0_0_1px_var(--border-control)] transition-interactive press after:absolute after:-inset-1 after:content-[""] disabled:cursor-not-allowed disabled:opacity-45 data-[state=checked]:bg-accent-solid data-[state=checked]:shadow-none data-[state=indeterminate]:bg-accent-solid data-[state=indeterminate]:shadow-none aria-[invalid=true]:shadow-[inset_0_0_0_1px_var(--danger-solid)]'
 
 export function Checkbox({ className, id, ...props }: ComponentProps<typeof CheckboxPrimitive.Root>) {
   const field = useFieldControlProps(id)
@@ -47,8 +47,9 @@ export function Switch({
   return (
     <SwitchPrimitive.Root
       className={cn(
-        'peer inline-flex shrink-0 cursor-pointer items-center rounded-full p-0.5 transition-interactive',
-        'bg-[color-mix(in_oklab,var(--fg-default)_18%,transparent)] data-[state=checked]:bg-accent-solid',
+        'peer relative inline-flex shrink-0 items-center rounded-full p-0.5 transition-interactive',
+        'bg-control-off data-[state=checked]:bg-accent-solid',
+        size === 'sm' && 'after:absolute after:-inset-y-1 after:-inset-x-0.5 after:content-[""]',
         'disabled:cursor-not-allowed disabled:opacity-45',
         size === 'md' ? 'h-5 w-8.5' : 'h-4 w-6.5',
         className,
@@ -59,6 +60,8 @@ export function Switch({
       {...props}
     >
       <SwitchPrimitive.Thumb
+        data-slot="switch-thumb"
+        data-travel=""
         className={cn(
           'pointer-events-none flex items-center justify-center rounded-full bg-white text-accent-solid shadow-[0_1px_2px_oklch(0_0_0/0.25),0_0_0_0.5px_oklch(0_0_0/0.06)]',
           'transition-transform duration-(--v-duration-slow) ease-spring',
@@ -81,13 +84,16 @@ export function RadioItem({ className, ...props }: ComponentProps<typeof RadioPr
   return (
     <RadioPrimitive.Item
       className={cn(
-        'peer inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-full bg-raised shadow-[inset_0_0_0_0.5px_var(--border-strong)] transition-interactive press',
+        'peer relative inline-flex size-4 shrink-0 items-center justify-center rounded-full bg-raised shadow-[inset_0_0_0_1px_var(--border-control)] transition-interactive press after:absolute after:-inset-1 after:rounded-full after:content-[""]',
         'data-[state=checked]:bg-accent-solid data-[state=checked]:shadow-none disabled:cursor-not-allowed disabled:opacity-45',
         className,
       )}
       {...props}
     >
-      <RadioPrimitive.Indicator className="block size-1.5 animate-pop-in rounded-full bg-white" />
+      <RadioPrimitive.Indicator
+        data-slot="radio-dot"
+        className="block size-1.5 animate-pop-in rounded-full bg-white"
+      />
     </RadioPrimitive.Item>
   )
 }
@@ -115,7 +121,7 @@ export function RadioOption({
         aria-describedby={description ? `${id}-d` : undefined}
       />
       <div className="flex flex-col gap-0.5 peer-disabled:opacity-50">
-        <label htmlFor={id} className="cursor-pointer text-md text-fg peer-disabled:cursor-not-allowed">
+        <label htmlFor={id} className="text-md text-fg peer-disabled:cursor-not-allowed">
           {label}
         </label>
         {description ? (

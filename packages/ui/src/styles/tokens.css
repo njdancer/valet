@@ -187,14 +187,14 @@
   --bg-selected-strong: var(--v-blue-600);
   --bg-backdrop: color-mix(in oklab, var(--v-gray-950) 28%, transparent);
   --fg-default: var(--v-gray-950);
-  --fg-muted: var(--v-gray-600);
-  --fg-subtle: var(--v-gray-500);
+  --fg-muted: var(--v-gray-700);
+  --fg-subtle: var(--v-gray-600);
   --fg-disabled: var(--v-gray-400);
   --fg-on-accent: var(--v-white);
   --fg-on-selected: var(--v-white);
   --fg-link: var(--v-blue-600);
-  --fg-muted-on-glass: var(--v-gray-700);
-  --fg-subtle-on-glass: var(--v-gray-600);
+  --fg-muted-on-glass: var(--v-gray-800);
+  --fg-subtle-on-glass: var(--v-gray-700);
   --border-subtle: color-mix(in oklab, var(--v-gray-950) 7%, transparent);
   --border-default: color-mix(in oklab, var(--v-gray-950) 12%, transparent);
   --border-strong: color-mix(in oklab, var(--v-gray-950) 22%, transparent);

@@ -22,7 +22,7 @@ export function SelectTrigger({
       {...field}
       className={cn(
         controlSurface,
-        'inline-flex min-w-0 cursor-pointer items-center justify-between gap-2 px-2 text-left outline-none focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-line-focus',
+        'inline-flex min-w-0 items-center justify-between gap-2 px-2 text-left outline-hidden focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-line-focus',
         'data-[placeholder]:text-fg-subtle [&>span]:truncate',
         size === 'md' ? 'h-7 text-md' : 'h-6 text-sm',
         className,
@@ -76,7 +76,7 @@ export function SelectItem({
   return (
     <SelectPrimitive.Item
       className={cn(
-        'relative flex cursor-pointer flex-col rounded-xs py-1 pr-2 pl-7 text-md outline-none',
+        'relative flex flex-col rounded-xs py-1 pr-2 pl-8 text-md outline-hidden',
         'data-[highlighted]:bg-selected-strong data-[highlighted]:text-fg-on-selected data-[disabled]:opacity-45',
         'group',
         className,

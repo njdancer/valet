@@ -9,6 +9,8 @@ export async function expectAccessible(node: Element = document.body): Promise<v
   const result = await axe.run(node, {
     rules: { 'color-contrast': { enabled: false }, region: { enabled: false } },
   })
-  const problems = result.violations.map((v) => `${v.id}: ${v.help} (${v.nodes.map((n) => n.target.join(' ')).join(', ')})`)
+  const problems = result.violations.map(
+    (v) => `${v.id}: ${v.help} (${v.nodes.map((n) => n.target.join(' ')).join(', ')})`,
+  )
   expect(problems).toEqual([])
 }

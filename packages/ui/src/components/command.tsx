@@ -1,8 +1,9 @@
-import { Command as CommandPrimitive } from 'cmdk'
+import { Command as CommandPrimitive, useCommandState } from 'cmdk'
 import { Search } from 'lucide-react'
 import { Dialog as DialogPrimitive } from 'radix-ui'
-import type { ComponentProps, ReactNode } from 'react'
+import { type ComponentProps, type ReactNode, useEffect, useRef } from 'react'
 import { cn } from '../lib/cn'
+import { formatShortcut } from '../lib/shortcut'
 import { Kbd } from './text'
 
 /**
@@ -21,25 +22,35 @@ export function CommandPalette({
   children: ReactNode
   placeholder?: string
 }) {
+  // Opened by a shortcut there is no trigger to go back to, so remember where focus was.
+  const returnTo = useRef<HTMLElement | null>(null)
+  useEffect(() => {
+    if (open) returnTo.current = document.activeElement as HTMLElement | null
+  }, [open])
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="fixed inset-0 z-[var(--v-z-overlay)] bg-backdrop/40 data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out" />
         <DialogPrimitive.Content
           aria-describedby={undefined}
-          data-glass="refract"
+          onCloseAutoFocus={(e) => {
+            if (returnTo.current?.isConnected) {
+              e.preventDefault()
+              returnTo.current.focus()
+            }
+          }}
           className={cn(
-            'material-floating fixed top-[14vh] left-1/2 z-[var(--v-z-modal)] w-[min(600px,calc(100vw-48px))] -translate-x-1/2 overflow-hidden rounded-xl text-fg outline-none',
+            'material-floating fixed top-[14vh] left-1/2 z-[var(--v-z-modal)] w-[min(600px,calc(100vw-48px))] -translate-x-1/2 overflow-hidden rounded-xl text-fg outline-hidden',
             'data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out',
           )}
         >
           <DialogPrimitive.Title className="sr-only">Command palette</DialogPrimitive.Title>
-          <CommandPrimitive loop className="flex flex-col">
+          <CommandPrimitive loop label={placeholder.replace(/…$/, '')} className="flex flex-col">
             <div className="flex items-center gap-2 border-b border-line-subtle px-4">
               <Search className="size-4 shrink-0 text-fg-subtle" aria-hidden="true" />
               <CommandPrimitive.Input
                 placeholder={placeholder}
-                className="h-12 flex-1 bg-transparent text-lg outline-none placeholder:text-fg-subtle"
+                className="h-12 flex-1 bg-transparent text-lg outline-hidden placeholder:text-fg-subtle"
               />
               <Kbd>Esc</Kbd>
             </div>
@@ -49,10 +60,22 @@ export function CommandPalette({
               </CommandPrimitive.Empty>
               {children}
             </CommandPrimitive.List>
+            <ResultCount />
           </CommandPrimitive>
         </DialogPrimitive.Content>
       </DialogPrimitive.Portal>
     </DialogPrimitive.Root>
+  )
+}
+
+/** Announces how many results the search left, after typing settles. */
+function ResultCount() {
+  const count = useCommandState((state) => state.filtered.count)
+  const search = useCommandState((state) => state.search)
+  return (
+    <span className="sr-only" aria-live="polite">
+      {search ? (count === 0 ? 'No results' : `${count} result${count === 1 ? '' : 's'}`) : ''}
+    </span>
   )
 }
 
@@ -83,7 +106,7 @@ export function CommandItem({
   return (
     <CommandPrimitive.Item
       className={cn(
-        'group flex h-9 cursor-pointer items-center gap-2.5 rounded-sm px-2.5 text-md outline-none',
+        'group flex h-9 items-center gap-2.5 rounded-sm px-2.5 text-md outline-hidden',
         'data-[selected=true]:bg-selected-strong data-[selected=true]:text-fg-on-selected data-[disabled=true]:opacity-40',
         '[&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-fg-muted data-[selected=true]:[&_svg]:text-fg-on-selected',
         className,
@@ -99,7 +122,7 @@ export function CommandItem({
       ) : null}
       {shortcut ? (
         <span className="text-sm text-fg-subtle group-data-[selected=true]:text-fg-on-selected/80">
-          {shortcut}
+          {typeof shortcut === 'string' ? formatShortcut(shortcut) : shortcut}
         </span>
       ) : null}
     </CommandPrimitive.Item>

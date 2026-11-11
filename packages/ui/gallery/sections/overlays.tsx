@@ -38,12 +38,12 @@ import {
   Field,
   HashChip,
   Input,
-  Kbd,
   Popover,
   PopoverContent,
   PopoverTrigger,
   RiskBadge,
   SheetContent,
+  Shortcut,
   SiteAvatar,
   Stack,
   Text,
@@ -194,7 +194,7 @@ export function OverlaysSection() {
           </Popover>
         </Row>
         <Row label="Tooltip">
-          <Tooltip content="Search Valet" shortcut="⌘K">
+          <Tooltip content="Search Valet" shortcut="mod+K">
             <Button leading={<Search />}>Hover or focus me</Button>
           </Tooltip>
         </Row>
@@ -205,7 +205,7 @@ export function OverlaysSection() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start">
               <DropdownMenuLabel>Woolworths</DropdownMenuLabel>
-              <DropdownMenuItem icon={<ExternalLink />} shortcut="⌘O">
+              <DropdownMenuItem icon={<ExternalLink />} shortcut="mod+O">
                 Open trolley
               </DropdownMenuItem>
               <DropdownMenuItem icon={<Pause />}>Pause tools</DropdownMenuItem>
@@ -252,10 +252,7 @@ export function OverlaysSection() {
           <Button leading={<Keyboard />} onClick={() => setPalette(true)}>
             Open palette
           </Button>
-          <span className="inline-flex gap-1">
-            <Kbd>⌘</Kbd>
-            <Kbd>K</Kbd>
-          </span>
+          <Shortcut keys="mod+K" />
         </Row>
         <CommandPalette open={palette} onOpenChange={setPalette}>
           <CommandGroup heading="Waiting for you">
@@ -268,16 +265,16 @@ export function OverlaysSection() {
             </CommandItem>
           </CommandGroup>
           <CommandGroup heading="Go to">
-            <CommandItem icon={<Store />} shortcut="⌘1">
+            <CommandItem icon={<Store />} shortcut="mod+1">
               Adapters
             </CommandItem>
-            <CommandItem icon={<Activity />} shortcut="⌘2">
+            <CommandItem icon={<Activity />} shortcut="mod+2">
               Activity
             </CommandItem>
-            <CommandItem icon={<FileClock />} shortcut="⌘3">
+            <CommandItem icon={<FileClock />} shortcut="mod+3">
               Audit log
             </CommandItem>
-            <CommandItem icon={<Settings />} shortcut="⌘,">
+            <CommandItem icon={<Settings />} shortcut="mod+,">
               Settings
             </CommandItem>
           </CommandGroup>

@@ -94,7 +94,12 @@ describe('Dialog, sheet and drawer', () => {
     wrap(
       <>
         <Dialog defaultOpen>
-          <SheetContent title="Grant login" description="Typed into woolworths.com.au only." footer={<Button>Not now</Button>} wide>
+          <SheetContent
+            title="Grant login"
+            description="Typed into woolworths.com.au only."
+            footer={<Button>Not now</Button>}
+            wide
+          >
             Sheet body
           </SheetContent>
         </Dialog>
@@ -110,7 +115,12 @@ describe('Dialog, sheet and drawer', () => {
   it('a drawer opens beside the list', () => {
     wrap(
       <Dialog defaultOpen>
-        <DrawerContent title="update_cart" description="2 min ago" footer={<Button>Open call</Button>} width={500}>
+        <DrawerContent
+          title="update_cart"
+          description="2 min ago"
+          footer={<Button>Open call</Button>}
+          width={500}
+        >
           Drawer body
         </DrawerContent>
       </Dialog>,
@@ -160,10 +170,52 @@ describe('ConfirmDialog', () => {
   })
 
   it('a non-destructive confirm uses the primary button', () => {
-    wrap(<ConfirmDialog open title="Turn on?" description="Claude can reach Valet." confirmLabel="Turn on" onConfirm={() => {}} />)
+    wrap(
+      <ConfirmDialog
+        open
+        title="Turn on?"
+        description="Claude can reach Valet."
+        confirmLabel="Turn on"
+        onConfirm={() => {}}
+      />,
+    )
     expect(screen.getByRole('button', { name: 'Turn on' }).className).toContain('bg-accent-solid')
   })
 })
+
+function Menu({ onPause }: { onPause: () => void }) {
+  const [allow, setAllow] = useState(true)
+  const [sort, setSort] = useState('new')
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button>Actions</Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent>
+        <DropdownMenuLabel>Woolworths</DropdownMenuLabel>
+        <DropdownMenuItem icon={<Copy />} shortcut="⌘C">
+          Copy ID
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={onPause}>Pause</DropdownMenuItem>
+        <DropdownMenuCheckboxItem checked={allow} onCheckedChange={setAllow}>
+          Allow add_to_cart
+        </DropdownMenuCheckboxItem>
+        <DropdownMenuRadioGroup value={sort} onValueChange={setSort}>
+          <DropdownMenuRadioItem value="new">Newest</DropdownMenuRadioItem>
+          <DropdownMenuRadioItem value="old">Oldest</DropdownMenuRadioItem>
+        </DropdownMenuRadioGroup>
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger icon={<Copy />}>More</DropdownMenuSubTrigger>
+          <DropdownMenuSubContent>
+            <DropdownMenuItem>Nested</DropdownMenuItem>
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem destructive>Remove</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
 
 describe('Popover, tooltip and menus', () => {
   it('a popover opens from its trigger', async () => {
@@ -192,45 +244,16 @@ describe('Popover, tooltip and menus', () => {
 
   it('a dropdown menu opens by keyboard and runs items', async () => {
     const onPause = vi.fn()
-    function Menu() {
-      const [allow, setAllow] = useState(true)
-      const [sort, setSort] = useState('new')
-      return (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button>Actions</Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent>
-            <DropdownMenuLabel>Woolworths</DropdownMenuLabel>
-            <DropdownMenuItem icon={<Copy />} shortcut="⌘C">
-              Copy ID
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={onPause}>Pause</DropdownMenuItem>
-            <DropdownMenuCheckboxItem checked={allow} onCheckedChange={setAllow}>
-              Allow add_to_cart
-            </DropdownMenuCheckboxItem>
-            <DropdownMenuRadioGroup value={sort} onValueChange={setSort}>
-              <DropdownMenuRadioItem value="new">Newest</DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="old">Oldest</DropdownMenuRadioItem>
-            </DropdownMenuRadioGroup>
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger icon={<Copy />}>More</DropdownMenuSubTrigger>
-              <DropdownMenuSubContent>
-                <DropdownMenuItem>Nested</DropdownMenuItem>
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem destructive>Remove</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )
-    }
-    wrap(<Menu />)
+    wrap(<Menu onPause={onPause} />)
     screen.getByRole('button', { name: 'Actions' }).focus()
     await userEvent.keyboard('{Enter}')
     const menu = screen.getByRole('menu')
-    expect(within(menu).getByRole('menuitemcheckbox', { name: 'Allow add_to_cart' }).getAttribute('aria-checked')).toBe('true')
-    expect(within(menu).getByRole('menuitemradio', { name: 'Newest' }).getAttribute('aria-checked')).toBe('true')
+    expect(
+      within(menu).getByRole('menuitemcheckbox', { name: 'Allow add_to_cart' }).getAttribute('aria-checked'),
+    ).toBe('true')
+    expect(within(menu).getByRole('menuitemradio', { name: 'Newest' }).getAttribute('aria-checked')).toBe(
+      'true',
+    )
     await userEvent.click(within(menu).getByRole('menuitem', { name: 'Pause' }))
     expect(onPause).toHaveBeenCalled()
   })
@@ -260,7 +283,11 @@ describe('Popover, tooltip and menus', () => {
     const onPause = vi.fn()
     const onLock = vi.fn()
     wrap(
-      <SplitButton onClick={onPause} menuLabel="More ways to pause" menu={<DropdownMenuItem onSelect={onLock}>Lock down</DropdownMenuItem>}>
+      <SplitButton
+        onClick={onPause}
+        menuLabel="More ways to pause"
+        menu={<DropdownMenuItem onSelect={onLock}>Lock down</DropdownMenuItem>}
+      >
         Pause Valet
       </SplitButton>,
     )

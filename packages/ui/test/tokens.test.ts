@@ -102,7 +102,9 @@ describe('text on glass', () => {
       ] as const) {
         it(`${theme}: ${fgName} on glass over ${name} is at least ${min}:1`, () => {
           const fg = over(solid((color[fgName] as Themed)[theme]), surface)
-          expect(wcagContrast({ mode: 'rgb', ...fg }, { mode: 'rgb', ...surface })).toBeGreaterThanOrEqual(min)
+          expect(wcagContrast({ mode: 'rgb', ...fg }, { mode: 'rgb', ...surface })).toBeGreaterThanOrEqual(
+            min,
+          )
         })
       }
     }

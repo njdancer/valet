@@ -113,13 +113,80 @@
   .tabular {
     font-variant-numeric: tabular-nums;
   }
+}
 
-  /* High contrast: borders go solid and soft fills get an outline. */
-  @media (prefers-contrast: more) {
-    :root {
-      --border-subtle: var(--border-strong);
-      --border-default: var(--fg-muted);
-      --border-control: var(--fg-muted);
-    }
+/* High contrast. Unlayered and on the same selectors as tokens.css, so it wins over the themes. */
+@media (prefers-contrast: more) {
+  :root,
+  [data-theme="light"],
+  [data-theme="dark"] {
+    --border-subtle: var(--border-strong);
+    --border-default: var(--fg-muted);
+    --border-control: var(--fg-muted);
+    --fg-subtle: var(--fg-muted);
+    --control-off: var(--fg-muted);
+  }
+}
+
+/* Forced colours (Windows High Contrast). Box shadows and backgrounds are dropped, so every control
+   gets a real border, and state that was only a fill becomes an outline in system colours. */
+@media (forced-colors: active) {
+  button,
+  [role="switch"],
+  [role="checkbox"],
+  [role="radio"],
+  [role="combobox"],
+  [role="tab"],
+  input,
+  textarea,
+  select,
+  .material-floating,
+  [role="dialog"],
+  [role="alertdialog"] {
+    border: 1px solid ButtonText;
+  }
+  [data-highlighted],
+  [cmdk-item][data-selected="true"],
+  [role="tab"][data-state="active"],
+  [role="radio"][data-state="on"],
+  [role="radio"][data-state="checked"],
+  [aria-current]:not([aria-current="false"]) {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+  [role="switch"],
+  [role="switch"] *,
+  [role="checkbox"],
+  [role="checkbox"] *,
+  [role="radio"],
+  [role="radio"] *,
+  [data-slot="hold-fill"],
+  [data-slot="progress-fill"] {
+    forced-color-adjust: none;
+  }
+  [role="switch"],
+  [role="checkbox"],
+  [role="radio"] {
+    background: Canvas;
+    color: CanvasText;
+  }
+  [role="switch"][data-state="checked"],
+  [role="checkbox"][data-state="checked"],
+  [role="checkbox"][data-state="indeterminate"] {
+    background: Highlight;
+    color: HighlightText;
+  }
+  [role="switch"] [data-slot="switch-thumb"] {
+    background: CanvasText;
+  }
+  [role="switch"][data-state="checked"] [data-slot="switch-thumb"] {
+    background: HighlightText;
+  }
+  [role="radio"] [data-slot="radio-dot"] {
+    background: CanvasText;
+  }
+  [data-slot="hold-fill"],
+  [data-slot="progress-fill"] {
+    background: Highlight;
   }
 }

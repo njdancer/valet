@@ -102,11 +102,11 @@ export function Timeline({
               <button
                 type="button"
                 data-step={item.id}
-                aria-current={isSelected ? 'step' : undefined}
+                aria-current={isSelected || undefined}
                 tabIndex={isSelected || (selected === undefined && i === 0) ? 0 : -1}
                 onClick={() => onSelect(item.id)}
                 className={cn(
-                  'flex w-full cursor-pointer gap-3 rounded-sm px-2.5 py-1.5 outline-offset-[-2px] transition-interactive hover:bg-hover',
+                  'flex w-full gap-3 rounded-sm px-2.5 py-1.5 outline-offset-[-2px] transition-interactive hover:bg-hover',
                   isSelected && 'bg-selected hover:bg-selected',
                 )}
               >

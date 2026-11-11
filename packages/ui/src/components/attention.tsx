@@ -35,8 +35,11 @@ export function DeadlineChip({
   className,
   now: nowProp,
   locale,
+  subject,
 }: {
   until: number
+  /** What the deadline is for ("Woolworths code"), so an announcement makes sense on its own. */
+  subject?: string
   expired?: string
   className?: string
   /** Freeze the clock (tests, stories). */
@@ -79,7 +82,7 @@ export function DeadlineChip({
       </span>
       <span className="sr-only">{ended ? `${expired} at ${clock}` : `Open until ${clock}`}</span>
       <span className="sr-only" aria-live="polite">
-        {announcementFor(left)}
+        {announcementFor(left) && subject ? `${subject}: ${announcementFor(left)}` : announcementFor(left)}
       </span>
     </span>
   )
@@ -124,8 +127,11 @@ export function InboxItem({
   href,
   tone = 'accent',
   missed = false,
+  appear = false,
   className,
 }: {
+  /** It just arrived while the page was open: it rises in. Items present on load don't animate. */
+  appear?: boolean
   /** The item ran out of time: it stays for 24 h, muted, with a follow-up action. */
   missed?: boolean
   icon?: ReactNode
@@ -142,31 +148,45 @@ export function InboxItem({
   return (
     <li
       className={cn(
-        'relative m-0 flex min-w-0 animate-rise-in items-center gap-3 rounded-lg bg-surface py-3 pr-3 pl-4 shadow-1 ring-[0.5px] ring-line ring-inset',
+        // Wraps to two rows in a narrow column (the tray, 880 px) so the action never squeezes the title.
+        '@container relative m-0 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 rounded-lg bg-surface py-3 pr-3 pl-4 shadow-1 ring-[0.5px] ring-line ring-inset',
         'before:absolute before:top-3 before:bottom-3 before:left-0 before:w-[3px] before:rounded-r-full',
         tone === 'accent' && 'before:bg-accent-solid',
         tone === 'warning' && 'before:bg-warning-solid',
         tone === 'danger' && 'before:bg-danger-solid',
         missed && 'bg-canvas shadow-none before:bg-fg-subtle',
+        appear && 'animate-rise-in',
         className,
       )}
     >
       {icon ? <span className="flex shrink-0">{icon}</span> : null}
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+      <div className="flex min-w-[min(100%,16rem)] flex-1 flex-col gap-0.5">
         {href ? (
           <a
             href={href}
-            className="cursor-pointer truncate text-md font-semibold text-fg no-underline hover:underline"
+            className="cursor-pointer line-clamp-2 text-md font-semibold break-words text-fg no-underline hover:underline"
           >
             {title}
+            {missed ? (
+              <span className="sr-only"> (missed)</span>
+            ) : tone === 'danger' ? (
+              <span className="sr-only"> (urgent)</span>
+            ) : null}
           </a>
         ) : (
-          <span className="truncate text-md font-semibold text-fg">{title}</span>
+          <span className="line-clamp-2 text-md font-semibold break-words text-fg">
+            {title}
+            {missed ? (
+              <span className="sr-only"> (missed)</span>
+            ) : tone === 'danger' ? (
+              <span className="sr-only"> (urgent)</span>
+            ) : null}
+          </span>
         )}
         {description ? <span className="line-clamp-2 text-sm text-fg-muted">{description}</span> : null}
       </div>
       {meta ? <span className="flex shrink-0 items-center gap-1.5">{meta}</span> : null}
-      <span className="flex shrink-0 items-center gap-2">{action}</span>
+      <span className="ml-auto flex shrink-0 items-center gap-2">{action}</span>
     </li>
   )
 }

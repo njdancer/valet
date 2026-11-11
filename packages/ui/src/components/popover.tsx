@@ -22,7 +22,7 @@ export function PopoverContent({
         sideOffset={sideOffset}
         data-glass={refract ? 'refract' : undefined}
         className={cn(
-          'material-floating z-[var(--v-z-popover)] w-72 rounded-lg p-3 text-fg outline-none',
+          'material-floating z-[var(--v-z-popover)] w-72 rounded-lg p-3 text-fg outline-hidden',
           'origin-(--radix-popover-content-transform-origin) data-[state=open]:animate-pop-in data-[state=closed]:animate-pop-out',
           className,
         )}

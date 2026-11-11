@@ -1,6 +1,7 @@
 import { Tooltip as TooltipPrimitive } from 'radix-ui'
 import type { ComponentProps, ReactNode } from 'react'
 import { cn } from '../lib/cn'
+import { formatShortcut } from '../lib/shortcut'
 
 /** Wrap the app once. Tooltips open after 500 ms, then instantly while moving between them. */
 export function TooltipProvider({
@@ -34,7 +35,9 @@ export function TooltipContent({
       >
         <span className="inline-flex items-center gap-2">
           {children}
-          {shortcut ? <kbd className="font-sans text-xs text-fg-subtle">{shortcut}</kbd> : null}
+          {shortcut ? (
+            <kbd className="font-sans text-xs text-fg-subtle">{formatShortcut(shortcut)}</kbd>
+          ) : null}
         </span>
       </TooltipPrimitive.Content>
     </TooltipPrimitive.Portal>

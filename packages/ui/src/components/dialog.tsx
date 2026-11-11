@@ -9,6 +9,21 @@ export const Dialog = DialogPrimitive.Root
 export const DialogTrigger = DialogPrimitive.Trigger
 export const DialogClose = DialogPrimitive.Close
 
+/**
+ * Where focus lands on open: the first form field if there is one, otherwise the overlay itself
+ * (so Tab starts at the top). Never an icon button, whose tooltip would open and eat the first Escape.
+ */
+function focusFirstField(e: Event, own?: (e: Event) => void) {
+  own?.(e)
+  if (e.defaultPrevented) return
+  const content = e.target as HTMLElement
+  const field = content.querySelector<HTMLElement>(
+    'input:not([type="hidden"]):not([disabled]), textarea:not([disabled]), select:not([disabled]), [role="combobox"]',
+  )
+  e.preventDefault()
+  ;(field ?? content).focus({ preventScroll: true })
+}
+
 const overlay =
   'fixed inset-0 z-[var(--v-z-overlay)] bg-backdrop data-[state=open]:animate-fade-in data-[state=closed]:animate-fade-out'
 
@@ -42,7 +57,7 @@ export function DialogContent({
       <DialogPrimitive.Content
         className={cn(
           'fixed top-1/2 left-1/2 z-[var(--v-z-modal)] flex max-h-[calc(100vh-48px)] w-[calc(100vw-48px)] -translate-x-1/2 -translate-y-1/2 flex-col',
-          'rounded-xl bg-raised text-fg shadow-4 ring-[0.5px] ring-line ring-inset outline-none',
+          'rounded-xl bg-raised text-fg shadow-4 ring-[0.5px] ring-line ring-inset outline-hidden',
           'data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out',
           size === 'sm' && 'max-w-[400px]',
           size === 'md' && 'max-w-[520px]',
@@ -51,6 +66,8 @@ export function DialogContent({
         )}
         {...(description ? {} : { 'aria-describedby': undefined })}
         {...props}
+        tabIndex={-1}
+        onOpenAutoFocus={(e) => focusFirstField(e, props.onOpenAutoFocus)}
       >
         <OverlayHeader title={title} description={description} />
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">{children}</div>
@@ -64,9 +81,13 @@ export function DialogContent({
 function OverlayHeader({ title, description }: { title: ReactNode; description?: ReactNode }) {
   return (
     <div className="flex shrink-0 flex-col gap-1 px-5 pt-5 pb-3 pr-12">
-      <DialogPrimitive.Title className="m-0 text-lg font-semibold tracking-snug text-fg">{title}</DialogPrimitive.Title>
+      <DialogPrimitive.Title className="m-0 text-lg font-semibold tracking-snug text-fg">
+        {title}
+      </DialogPrimitive.Title>
       {description ? (
-        <DialogPrimitive.Description className="m-0 text-md text-fg-muted text-pretty">{description}</DialogPrimitive.Description>
+        <DialogPrimitive.Description className="m-0 text-md text-fg-muted text-pretty">
+          {description}
+        </DialogPrimitive.Description>
       ) : null}
     </div>
   )
@@ -79,7 +100,14 @@ function OverlayHeader({ title, description }: { title: ReactNode; description?:
 function OverlayClose() {
   return (
     <DialogPrimitive.Close asChild>
-      <IconButton label="Close" icon={<X />} variant="quiet" size="sm" className="absolute top-4 right-4" shortcut="Esc" />
+      <IconButton
+        label="Close"
+        icon={<X />}
+        variant="quiet"
+        size="sm"
+        className="absolute top-4 right-4"
+        shortcut="Esc"
+      />
     </DialogPrimitive.Close>
   )
 }
@@ -112,14 +140,16 @@ export function SheetContent({
       <DialogPrimitive.Overlay className={overlay} />
       <DialogPrimitive.Content
         className={cn(
-          'fixed top-0 left-1/2 z-[var(--v-z-modal)] flex max-h-[calc(100vh-24px)] -translate-x-1/2 flex-col',
+          'fixed top-(--titlebar-height) left-1/2 z-[var(--v-z-modal)] flex max-h-[calc(100vh-24px-var(--titlebar-height))] -translate-x-1/2 flex-col',
           wide ? 'w-[min(720px,calc(100vw-32px))]' : 'w-[min(560px,calc(100vw-32px))]',
-          'rounded-b-xl bg-raised text-fg shadow-4 ring-[0.5px] ring-line ring-inset outline-none',
+          'rounded-b-xl bg-raised text-fg shadow-4 ring-[0.5px] ring-line ring-inset outline-hidden',
           'data-[state=open]:animate-sheet-in data-[state=closed]:animate-sheet-out',
           className,
         )}
         {...(description ? {} : { 'aria-describedby': undefined })}
         {...props}
+        tabIndex={-1}
+        onOpenAutoFocus={(e) => focusFirstField(e, props.onOpenAutoFocus)}
       >
         <OverlayHeader title={title} description={description} />
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">{children}</div>
@@ -137,26 +167,34 @@ export function DrawerContent({
   description,
   footer,
   width = 440,
+  overlay: dim = true,
   ...props
 }: Omit<ComponentProps<typeof DialogPrimitive.Content>, 'title'> & {
   title: ReactNode
   description?: ReactNode
   footer?: ReactNode
   width?: number
+  /**
+   * Dim the list behind. Leave it on for a modal drawer. For a drawer you keep open while working
+   * the list (an inspector), use <Dialog modal={false}> with overlay={false}.
+   */
+  overlay?: boolean
 }) {
   return (
     <DialogPrimitive.Portal>
-      <DialogPrimitive.Overlay className={cn(overlay, 'bg-backdrop/50')} />
+      {dim ? <DialogPrimitive.Overlay className={cn(overlay, 'bg-backdrop/50')} /> : null}
       <DialogPrimitive.Content
         style={{ width: `min(${width}px, calc(100vw - 48px))` }}
         className={cn(
-          'fixed top-0 right-0 bottom-0 z-[var(--v-z-modal)] flex flex-col',
-          'border-l border-line bg-raised text-fg shadow-4 outline-none',
+          'fixed top-(--titlebar-height) right-0 bottom-0 z-[var(--v-z-modal)] flex flex-col',
+          'border-l border-line bg-raised text-fg shadow-4 outline-hidden',
           'data-[state=open]:animate-drawer-in data-[state=closed]:animate-drawer-out',
           className,
         )}
         {...(description ? {} : { 'aria-describedby': undefined })}
         {...props}
+        tabIndex={-1}
+        onOpenAutoFocus={(e) => focusFirstField(e, props.onOpenAutoFocus)}
       >
         <OverlayHeader title={title} description={description} />
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">{children}</div>
@@ -202,7 +240,7 @@ export function ConfirmDialog({
         <AlertPrimitive.Content
           className={cn(
             'fixed top-1/2 left-1/2 z-[var(--v-z-modal)] flex w-[min(420px,calc(100vw-48px))] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 p-5',
-            'rounded-xl bg-raised text-fg shadow-4 ring-[0.5px] ring-line ring-inset outline-none',
+            'rounded-xl bg-raised text-fg shadow-4 ring-[0.5px] ring-line ring-inset outline-hidden',
             'data-[state=open]:animate-dialog-in data-[state=closed]:animate-dialog-out',
           )}
         >

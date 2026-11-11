@@ -29,7 +29,7 @@ export function Disclosure({
       onOpenChange={onOpenChange}
       className={className}
     >
-      <CollapsiblePrimitive.Trigger className="group -mx-1 inline-flex cursor-pointer items-center gap-1 rounded-xs px-1 text-md font-medium text-fg-muted hover:text-fg">
+      <CollapsiblePrimitive.Trigger className="group -mx-1 inline-flex items-center gap-1 rounded-xs px-1 text-md font-medium text-fg-muted hover:text-fg">
         <ChevronRight
           aria-hidden="true"
           className="size-3.5 transition-transform duration-(--v-duration-base) ease-standard group-data-[state=open]:rotate-90"
@@ -64,7 +64,7 @@ export function AccordionItem({
       className={cn('border-b border-line-subtle last:border-b-0', className)}
     >
       <AccordionPrimitive.Header className="m-0">
-        <AccordionPrimitive.Trigger className="group flex w-full cursor-pointer items-center gap-2 px-1 py-2.5 text-left text-md font-medium text-fg hover:bg-hover">
+        <AccordionPrimitive.Trigger className="group flex w-full items-center gap-2 px-1 py-2.5 text-left text-md font-medium text-fg hover:bg-hover">
           <ChevronRight
             aria-hidden="true"
             className="size-3.5 shrink-0 text-fg-subtle transition-transform duration-(--v-duration-base) ease-standard group-data-[state=open]:rotate-90"

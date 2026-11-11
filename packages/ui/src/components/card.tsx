@@ -48,7 +48,8 @@ export function CardDescription({ className, ...props }: ComponentProps<'p'>) {
 }
 
 export function CardContent({ className, ...props }: ComponentProps<'div'>) {
-  return <div className={cn('px-4 py-2', className)} {...props} />
+  // The last block in a card gets the same bottom padding as a header's top, so cards never end tight.
+  return <div className={cn('px-4 py-2 last:pb-4 first:pt-4', className)} {...props} />
 }
 
 export function CardFooter({ className, ...props }: ComponentProps<'div'>) {

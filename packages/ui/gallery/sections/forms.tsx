@@ -22,6 +22,7 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  Shortcut,
   Stack,
   StatusDot,
   Switch,
@@ -83,7 +84,7 @@ export function FormsSection() {
           </Button>
         </Row>
         <Row label="Icon buttons">
-          <IconButton label="Refresh" icon={<RefreshCw />} shortcut="⌘R" />
+          <IconButton label="Refresh" icon={<RefreshCw />} shortcut="mod+R" />
           <IconButton label="Pause tools" icon={<Pause />} />
           <IconButton label="More actions" icon={<MoreHorizontal />} variant="secondary" />
           <IconButton label="Delete" icon={<Trash2 />} variant="danger-soft" />
@@ -267,10 +268,8 @@ export function FormsSection() {
           </span>
         </Row>
         <Row label="Keys">
-          <span className="inline-flex gap-1">
-            <Kbd>⌘</Kbd>
-            <Kbd>K</Kbd>
-          </span>
+          <Shortcut keys="mod+K" />
+          <Shortcut keys="mod+shift+P" />
           <span className="inline-flex gap-1">
             <Kbd>Ctrl</Kbd>
             <Kbd>K</Kbd>

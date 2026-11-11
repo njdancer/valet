@@ -435,31 +435,41 @@ export function Showcase() {
   }, [t, scene, index, playing])
   if (!scene) return null
   return (
-    <div className="flex h-screen flex-col bg-canvas text-fg">
+    <main className="flex h-screen flex-col bg-canvas text-fg">
+      <h1 className="sr-only">Valet motion showcase</h1>
       <div key={scene.id} className="relative min-h-0 flex-1 animate-fade-in">
         {scene.view(playing ? t : Math.max(t, scene.ms))}
       </div>
       <div className="flex shrink-0 items-center gap-4 border-t border-line-subtle px-8 py-4">
-        <div key={`${scene.id}-cap`} className="flex min-w-0 flex-1 animate-rise-in flex-col">
-          <span className="text-lg font-semibold">{scene.title}</span>
+        <div
+          key={`${scene.id}-cap`}
+          className="flex min-w-0 flex-1 animate-rise-in flex-col"
+          aria-live="polite"
+        >
+          <h2 className="m-0 text-lg font-semibold">{scene.title}</h2>
           <span className="text-md text-fg-muted">{scene.caption}</span>
         </div>
-        <div className="flex items-center gap-1.5" role="tablist" aria-label="Scenes">
+        <nav className="flex items-center" aria-label="Scenes">
           {scenes.map((s, i) => (
+            // A 24 px target around a small dot.
             <button
               key={s.id}
               type="button"
-              role="tab"
-              aria-selected={i === index}
+              aria-current={i === index || undefined}
               aria-label={s.title}
               onClick={() => setIndex(i)}
-              className={cn(
-                'h-1.5 cursor-pointer rounded-full transition-[width,background-color] duration-(--v-duration-slow) ease-spring',
-                i === index ? 'w-6 bg-accent-solid' : 'w-1.5 bg-fg-subtle/40 hover:bg-fg-subtle',
-              )}
-            />
+              className="group flex h-6 items-center justify-center px-[3px]"
+            >
+              <span
+                data-travel=""
+                className={cn(
+                  'block h-1.5 rounded-full transition-[width,background-color] duration-(--v-duration-slow) ease-spring',
+                  i === index ? 'w-6 bg-accent-solid' : 'w-1.5 bg-fg-subtle/40 group-hover:bg-fg-subtle',
+                )}
+              />
+            </button>
           ))}
-        </div>
+        </nav>
         <Inline gap={1}>
           <Button
             size="sm"
@@ -490,6 +500,6 @@ export function Showcase() {
           </Button>
         </Inline>
       </div>
-    </div>
+    </main>
   )
 }

@@ -8,9 +8,26 @@ import { cn } from '../lib/cn'
  * Rows that open something use RowLink in their first cell, so the row is clickable but the link
  * is the one focus stop.
  */
-export function Table({ className, ...props }: ComponentProps<'table'>) {
+export function Table({
+  className,
+  scroll = 'page',
+  ...props
+}: ComponentProps<'table'> & {
+  /**
+   * `page`: the table grows and the page scrolls, the header sticking to the top of the page's
+   * scroll area. `self`: the table fills its container and scrolls on its own (a split view pane).
+   */
+  scroll?: 'page' | 'self'
+}) {
   return (
-    <div className="min-w-0 overflow-auto rounded-lg bg-surface shadow-1 ring-[0.5px] ring-line ring-inset">
+    <div
+      data-slot="table"
+      className={cn(
+        'min-w-0 rounded-lg bg-surface shadow-1 ring-[0.5px] ring-line ring-inset',
+        // overflow-x: clip makes no scroll container, so the sticky header follows the page.
+        scroll === 'page' ? 'overflow-x-clip' : 'h-full min-h-0 overflow-auto',
+      )}
+    >
       <table className={cn('w-full border-separate border-spacing-0 text-md', className)} {...props} />
     </div>
   )
@@ -57,11 +74,12 @@ export function TR({
 }: ComponentProps<'tr'> & { interactive?: boolean; selected?: boolean }) {
   return (
     <tr
-      aria-selected={selected || undefined}
+      aria-current={selected || undefined}
       className={cn(
         'group [&+&>td]:border-t [&+&>td]:border-line-subtle',
         interactive && 'relative cursor-pointer hover:bg-hover',
-        selected && 'bg-selected hover:bg-selected',
+        selected &&
+          'bg-selected hover:bg-selected [&>td:first-child]:shadow-[inset_2px_0_0_var(--accent-solid)]',
         className,
       )}
       {...props}
@@ -99,7 +117,11 @@ export function TH({
       {...props}
     >
       {onSort ? (
-        <button type="button" onClick={onSort} className="-mx-1 cursor-pointer rounded-xs px-1 hover:text-fg">
+        <button
+          type="button"
+          onClick={onSort}
+          className="-mx-1 inline-flex h-6 items-center rounded-xs px-1 hover:text-fg"
+        >
           {label}
         </button>
       ) : (
@@ -141,7 +163,7 @@ export function RowLink({
       href={href}
       data-row-link=""
       className={cn(
-        'cursor-pointer font-medium text-fg no-underline outline-offset-[-2px] after:absolute after:inset-0 after:content-[""] focus-visible:after:rounded-xs focus-visible:after:outline-2 focus-visible:after:outline-line-focus focus-visible:outline-none',
+        'cursor-pointer font-medium text-fg no-underline outline-offset-[-2px] after:absolute after:inset-0 after:content-[""] focus-visible:after:rounded-xs focus-visible:after:outline-2 focus-visible:after:outline-line-focus focus-visible:outline-hidden',
         className,
       )}
     >

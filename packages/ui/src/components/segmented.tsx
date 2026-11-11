@@ -1,6 +1,7 @@
 import { ToggleGroup } from 'radix-ui'
-import { type ReactNode, useLayoutEffect, useRef, useState } from 'react'
+import { type ReactNode, useRef } from 'react'
 import { cn } from '../lib/cn'
+import { useIndicator } from '../lib/use-indicator'
 
 /**
  * A segmented control: one of a few views or filters. The selection is a pill that glides between
@@ -12,6 +13,7 @@ export function Segmented<T extends string>({
   onValueChange,
   label,
   size = 'md',
+  fullWidth = false,
   className,
 }: {
   options: readonly { value: T; label: ReactNode; icon?: ReactNode }[]
@@ -19,15 +21,12 @@ export function Segmented<T extends string>({
   onValueChange: (value: T) => void
   label: string
   size?: 'sm' | 'md'
+  /** Stretch to the container, segments sharing the width equally (in a narrow panel or sheet). */
+  fullWidth?: boolean
   className?: string
 }) {
   const root = useRef<HTMLDivElement>(null)
-  const [pill, setPill] = useState<{ left: number; width: number } | null>(null)
-  // biome-ignore lint/correctness/useExhaustiveDependencies: re-measure when the selection or the options change
-  useLayoutEffect(() => {
-    const el = root.current?.querySelector<HTMLElement>('[data-state="on"]')
-    if (el) setPill({ left: el.offsetLeft, width: el.offsetWidth })
-  }, [value, options])
+  const pill = useIndicator(root, '[data-state="on"]')
   return (
     <ToggleGroup.Root
       ref={root}
@@ -38,7 +37,8 @@ export function Segmented<T extends string>({
         if (v) onValueChange(v as T)
       }}
       className={cn(
-        'relative inline-flex shrink-0 items-center rounded-sm bg-inset p-0.5',
+        'relative items-center rounded-sm bg-inset p-0.5',
+        fullWidth ? 'flex w-full' : 'inline-flex shrink-0',
         size === 'md' ? 'h-7' : 'h-6',
         className,
       )}
@@ -46,6 +46,7 @@ export function Segmented<T extends string>({
       {pill ? (
         <span
           aria-hidden="true"
+          data-travel=""
           className="absolute top-0.5 bottom-0.5 rounded-xs bg-raised shadow-1 transition-[left,width] duration-(--v-duration-slow) ease-spring"
           style={{ left: pill.left, width: pill.width }}
         />
@@ -55,7 +56,8 @@ export function Segmented<T extends string>({
           key={o.value}
           value={o.value}
           className={cn(
-            'relative z-[1] inline-flex h-full cursor-pointer items-center gap-1.5 rounded-xs px-2.5 font-medium text-fg-muted transition-interactive',
+            fullWidth && 'flex-1 justify-center',
+            'relative z-[1] inline-flex h-full items-center gap-1.5 rounded-xs px-2.5 font-medium text-fg-muted transition-interactive',
             'hover:text-fg data-[state=on]:text-fg [&_svg]:size-3.5',
             size === 'md' ? 'text-md' : 'text-sm',
           )}

@@ -1,5 +1,5 @@
 import { cva, type VariantProps } from 'class-variance-authority'
-import { KeyRound } from 'lucide-react'
+import { Eye, KeyRound, OctagonAlert, PencilLine } from 'lucide-react'
 import type { ComponentProps, ReactNode } from 'react'
 import { cn } from '../lib/cn'
 
@@ -50,29 +50,34 @@ const purposeWords: Record<Purpose, string> = {
   irreversible: 'Can’t be undone',
 }
 
-/** What a tool does to the outside world, in words and colour (never colour alone). */
+/**
+ * What a tool does to the outside world, in words, an icon and colour (never colour alone). Risk
+ * badges are square-cornered and outlined, so they never read as a status pill (Running, Paused),
+ * which is round and soft.
+ */
 export function RiskBadge({
   purpose,
   children,
+  className,
   ...props
 }: { purpose: Purpose; children?: ReactNode } & Omit<BadgeProps, 'tone'>) {
   return (
-    <Badge tone={purpose} {...props}>
+    <Badge
+      tone={purpose}
+      data-risk={purpose}
+      className={cn('rounded-xs ring-1 ring-current/35 ring-inset', className)}
+      {...props}
+    >
       <RiskGlyph purpose={purpose} />
       {children ?? purposeWords[purpose]}
     </Badge>
   )
 }
 
-/** A shape per risk level, so the levels differ without colour: circle, triangle, octagon. */
-export function RiskGlyph({ purpose }: { purpose: Purpose }) {
-  return (
-    <svg viewBox="0 0 12 12" aria-hidden="true" className="size-2.5 fill-current">
-      {purpose === 'read' ? <circle cx="6" cy="6" r="4" /> : null}
-      {purpose === 'write' ? <path d="M6 1.5 10.8 10H1.2Z" /> : null}
-      {purpose === 'irreversible' ? <path d="M4 1h4l3 3v4l-3 3H4L1 8V4Z" /> : null}
-    </svg>
-  )
+/** An icon per risk level, so the levels differ without colour: an eye, a pencil, a stop sign. */
+export function RiskGlyph({ purpose, className }: { purpose: Purpose; className?: string }) {
+  const Icon = purpose === 'read' ? Eye : purpose === 'write' ? PencilLine : OctagonAlert
+  return <Icon aria-hidden="true" strokeWidth={2.25} className={cn('size-3', className)} />
 }
 
 /** A credential a tool or step uses. */

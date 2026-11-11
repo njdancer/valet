@@ -22,7 +22,13 @@ function csp(): Plugin {
   return {
     name: 'gallery-csp',
     apply: 'build',
-    transformIndexHtml: () => [{ tag: 'meta', attrs: { 'http-equiv': 'Content-Security-Policy', content: CSP }, injectTo: 'head-prepend' }],
+    transformIndexHtml: () => [
+      {
+        tag: 'meta',
+        attrs: { 'http-equiv': 'Content-Security-Policy', content: CSP },
+        injectTo: 'head-prepend',
+      },
+    ],
   }
 }
 

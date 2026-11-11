@@ -1,6 +1,7 @@
 import { Tabs as TabsPrimitive } from 'radix-ui'
-import { type ComponentProps, type ReactNode, useLayoutEffect, useRef, useState } from 'react'
+import { type ComponentProps, type ReactNode, useRef } from 'react'
 import { cn } from '../lib/cn'
+import { useIndicator } from '../lib/use-indicator'
 import { Count } from './badge'
 
 export const Tabs = TabsPrimitive.Root
@@ -11,19 +12,7 @@ export const Tabs = TabsPrimitive.Root
  */
 export function TabsList({ className, children, ...props }: ComponentProps<typeof TabsPrimitive.List>) {
   const ref = useRef<HTMLDivElement>(null)
-  const [bar, setBar] = useState<{ left: number; width: number } | null>(null)
-  useLayoutEffect(() => {
-    const list = ref.current
-    if (!list) return
-    const update = () => {
-      const el = list.querySelector<HTMLElement>('[data-state="active"]')
-      if (el) setBar({ left: el.offsetLeft, width: el.offsetWidth })
-    }
-    update()
-    const observer = new MutationObserver(update)
-    observer.observe(list, { attributes: true, subtree: true, attributeFilter: ['data-state'] })
-    return () => observer.disconnect()
-  }, [])
+  const bar = useIndicator(ref, '[data-state="active"]')
   return (
     <TabsPrimitive.List
       ref={ref}
@@ -34,6 +23,7 @@ export function TabsList({ className, children, ...props }: ComponentProps<typeo
       {bar ? (
         <span
           aria-hidden="true"
+          data-travel=""
           className="absolute bottom-0 h-0.5 rounded-full bg-accent-solid transition-[left,width] duration-(--v-duration-slow) ease-spring"
           style={{ left: bar.left, width: bar.width }}
         />
@@ -52,14 +42,20 @@ export function TabsTrigger({
   return (
     <TabsPrimitive.Trigger
       className={cn(
-        'inline-flex h-9 cursor-pointer items-center gap-1.5 border-b-2 border-transparent text-md font-medium text-fg-muted transition-interactive',
+        'inline-flex h-9 items-center gap-1.5 border-b-2 border-transparent text-md font-medium text-fg-muted transition-interactive',
         'hover:text-fg data-[state=active]:text-fg disabled:opacity-40',
         className,
       )}
       {...props}
     >
       {children}
-      {count !== undefined ? <Count value={count} attention={attention} /> : null}
+      {count !== undefined ? (
+        <Count
+          value={count}
+          attention={attention}
+          label={attention ? `, ${count} waiting for you` : `, ${count}`}
+        />
+      ) : null}
     </TabsPrimitive.Trigger>
   )
 }
@@ -67,7 +63,7 @@ export function TabsTrigger({
 export function TabsContent({ className, ...props }: ComponentProps<typeof TabsPrimitive.Content>) {
   return (
     <TabsPrimitive.Content
-      className={cn('outline-none data-[state=active]:animate-fade-in', className)}
+      className={cn('outline-hidden data-[state=active]:animate-fade-in', className)}
       {...props}
     />
   )
@@ -96,7 +92,13 @@ export function NavTabs({
           )}
         >
           {t.label}
-          {t.count !== undefined ? <Count value={t.count} attention={t.attention} /> : null}
+          {t.count !== undefined ? (
+            <Count
+              value={t.count}
+              attention={t.attention}
+              label={t.attention ? `, ${t.count} waiting for you` : `, ${t.count}`}
+            />
+          ) : null}
         </a>
       ))}
     </nav>

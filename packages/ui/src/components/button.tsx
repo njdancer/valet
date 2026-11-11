@@ -101,7 +101,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       ) : (
         <>
           {loading ? <Spinner className="absolute" /> : null}
-          <span className={cn('inline-flex items-center gap-[inherit]', loading && 'invisible')}>
+          <span className={cn('inline-flex items-center gap-[inherit]', loading && 'opacity-0')}>
             {leading}
             {children}
             {trailing}

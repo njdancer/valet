@@ -2,17 +2,18 @@ import { Check, ChevronRight } from 'lucide-react'
 import { ContextMenu as ContextPrimitive, DropdownMenu as MenuPrimitive } from 'radix-ui'
 import type { ComponentProps, ReactNode } from 'react'
 import { cn } from '../lib/cn'
+import { formatShortcut } from '../lib/shortcut'
 
 // Dropdown and context menus share one look. Every row that names an object in the app should also
 // be reachable from a context menu on that object (Open, Copy ID, Reveal in Audit log), so actions
 // are where a person reaches for them.
 
 const content = cn(
-  'material-floating z-[var(--v-z-popover)] min-w-44 overflow-hidden rounded-md p-1 text-fg outline-none',
+  'material-floating z-[var(--v-z-popover)] min-w-44 overflow-hidden rounded-lg p-1 text-fg outline-hidden',
   'data-[state=open]:animate-pop-in data-[state=closed]:animate-pop-out',
 )
 const item = cn(
-  'group relative flex h-7 cursor-pointer items-center gap-2 rounded-xs px-2 text-md outline-none',
+  'group relative flex h-7 items-center gap-2 rounded-xs px-2 text-md outline-hidden',
   'data-[highlighted]:bg-selected-strong data-[highlighted]:text-fg-on-selected',
   'data-[disabled]:pointer-events-none data-[disabled]:opacity-40',
   '[&_svg]:size-4 [&_svg]:shrink-0 [&_svg]:text-fg-muted data-[highlighted]:[&_svg]:text-fg-on-selected',
@@ -22,7 +23,7 @@ const danger = 'text-danger-fg data-[highlighted]:bg-danger-solid [&_svg]:text-d
 function Shortcut({ children }: { children: ReactNode }) {
   return (
     <span className="ml-auto pl-4 text-sm tracking-wide text-fg-subtle group-data-[highlighted]:text-fg-on-selected/80">
-      {children}
+      {typeof children === 'string' ? formatShortcut(children) : children}
     </span>
   )
 }
@@ -76,7 +77,7 @@ export function DropdownMenuCheckboxItem({
   ...props
 }: ComponentProps<typeof MenuPrimitive.CheckboxItem>) {
   return (
-    <MenuPrimitive.CheckboxItem className={cn(item, 'pl-7', className)} {...props}>
+    <MenuPrimitive.CheckboxItem className={cn(item, 'pl-8', className)} {...props}>
       <span className="absolute left-2 flex size-4 items-center justify-center">
         <MenuPrimitive.ItemIndicator>
           <Check strokeWidth={2.5} />
@@ -93,7 +94,7 @@ export function DropdownMenuRadioItem({
   ...props
 }: ComponentProps<typeof MenuPrimitive.RadioItem>) {
   return (
-    <MenuPrimitive.RadioItem className={cn(item, 'pl-7', className)} {...props}>
+    <MenuPrimitive.RadioItem className={cn(item, 'pl-8', className)} {...props}>
       <span className="absolute left-2 flex size-4 items-center justify-center">
         <MenuPrimitive.ItemIndicator>
           <span className="block size-1.5 rounded-full bg-current" />

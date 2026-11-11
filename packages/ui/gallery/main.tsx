@@ -125,7 +125,13 @@ function App() {
           />
         </SidebarFooter>
       </Sidebar>
-      <main key={current.id} className="min-h-0 min-w-0 flex-1 animate-rise-in overflow-y-auto">
+      <main
+        key={current.id}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: a scroll region must be reachable by keyboard (axe scrollable-region-focusable)
+        tabIndex={0}
+        aria-label={current.label}
+        className="min-h-0 min-w-0 flex-1 animate-rise-in overflow-y-auto"
+      >
         {current.view}
       </main>
     </div>

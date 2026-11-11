@@ -25,8 +25,8 @@ function Curve({ name, value }: { name: string; value: string }) {
     <button
       type="button"
       onClick={() => setRun((r) => r + 1)}
-      className="flex cursor-pointer flex-col gap-2 rounded-lg bg-canvas p-3 text-left ring-[0.5px] ring-line ring-inset hover:ring-line-strong"
-      aria-label={`Play the ${name} curve`}
+      className="flex flex-col gap-2 rounded-lg bg-canvas p-3 text-left ring-[0.5px] ring-line ring-inset hover:ring-line-strong"
+      aria-description={`Plays the ${name} curve`}
     >
       <div className="relative h-10 overflow-hidden rounded-sm bg-inset">
         <span

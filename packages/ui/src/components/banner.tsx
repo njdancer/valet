@@ -33,6 +33,7 @@ export function Banner({
   action,
   onDismiss,
   icon,
+  live = false,
   className,
 }: {
   tone?: BannerTone
@@ -41,13 +42,21 @@ export function Banner({
   action?: ReactNode
   onDismiss?: () => void
   icon?: ReactNode
+  /**
+   * The banner arrived after the page loaded (a call just failed, an update just landed): it is
+   * announced (danger interrupts, the rest wait) and rises in. A banner that is part of the page
+   * from the start is neither, so it isn't read out on every visit.
+   */
+  live?: boolean
   className?: string
 }) {
   return (
     <div
-      role={tone === 'danger' || tone === 'warning' ? 'alert' : 'status'}
+      role={live ? (tone === 'danger' ? 'alert' : 'status') : undefined}
+      data-tone={tone}
       className={cn(
-        'flex animate-rise-in items-start gap-2.5 rounded-md px-3.5 py-2.5 ring-[0.5px] ring-inset [&>svg]:mt-px [&>svg]:size-4 [&>svg]:shrink-0',
+        live && 'animate-rise-in',
+        'flex items-start gap-2.5 rounded-md px-3.5 py-2.5 ring-[0.5px] ring-inset [&>svg]:mt-px [&>svg]:size-4 [&>svg]:shrink-0',
         toneClass[tone],
         className,
       )}

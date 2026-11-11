@@ -2,10 +2,11 @@ import { ChevronDown, ChevronLeft, ChevronRight, Search } from 'lucide-react'
 import { DropdownMenu as MenuPrimitive } from 'radix-ui'
 import type { ComponentProps, ReactNode } from 'react'
 import { cn } from '../lib/cn'
+import { ariaShortcut } from '../lib/shortcut'
 import { Button, type ButtonProps, buttonVariants } from './button'
 import { IconButton } from './icon-button'
 import { DropdownMenuContent } from './menu'
-import { Kbd } from './text'
+import { Shortcut } from './text'
 
 /**
  * The window's title bar: back and forward, the page title, the search field that opens the command
@@ -51,7 +52,7 @@ export function TitleBar({
             size="sm"
             variant="quiet"
             label="Back"
-            shortcut="⌘["
+            shortcut="mod+["
             icon={<ChevronLeft />}
             disabled={!canGoBack}
             onClick={onBack}
@@ -60,7 +61,7 @@ export function TitleBar({
             size="sm"
             variant="quiet"
             label="Forward"
-            shortcut="⌘]"
+            shortcut="mod+]"
             icon={<ChevronRight />}
             disabled={!canGoForward}
             onClick={onForward}
@@ -73,13 +74,13 @@ export function TitleBar({
         <button
           type="button"
           onClick={onSearch}
-          className="flex h-7 w-56 cursor-pointer items-center gap-2 rounded-sm bg-inset px-2 text-md text-fg-subtle transition-interactive hover:bg-hover max-compact:w-7 max-compact:justify-center max-compact:px-0"
+          aria-keyshortcuts={ariaShortcut('mod+K')}
+          className="flex h-7 w-56 items-center gap-2 rounded-sm bg-inset px-2 text-md text-fg-subtle transition-interactive hover:bg-hover max-compact:w-7 max-compact:justify-center max-compact:px-0"
         >
           <Search className="size-3.5 shrink-0" aria-hidden="true" />
           <span className="flex-1 truncate text-left max-compact:sr-only">Search Valet</span>
           <span className="inline-flex gap-0.5 max-compact:hidden" aria-hidden="true">
-            <Kbd>⌘</Kbd>
-            <Kbd>K</Kbd>
+            <Shortcut keys="mod+K" />
           </span>
         </button>
       ) : null}

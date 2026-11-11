@@ -7,8 +7,8 @@ import {
   AccordionItem,
   ActionBar,
   AnimatedNumber,
-  AppShell,
   ApprovalSeal,
+  AppShell,
   Badge,
   Banner,
   Breadcrumb,
@@ -178,7 +178,12 @@ describe('Layout', () => {
             <div>tabs</div>
           </PageHeader>
           <PageBody width="form">
-            <Section id="tools" title="Tools" description="What Claude can do." actions={<Button>Rename</Button>}>
+            <Section
+              id="tools"
+              title="Tools"
+              description="What Claude can do."
+              actions={<Button>Rename</Button>}
+            >
               <Stack gap={2} align="center" justify="between">
                 <Inline gap={1} justify="end" wrap={false}>
                   <span>a</span>
@@ -313,7 +318,15 @@ describe('Navigation', () => {
     const onBack = vi.fn()
     const onSearch = vi.fn()
     wrap(
-      <TitleBar title="Sites" onBack={onBack} onForward={() => {}} canGoForward={false} onSearch={onSearch} actions={<Button>Pause</Button>} insetStart />,
+      <TitleBar
+        title="Sites"
+        onBack={onBack}
+        onForward={() => {}}
+        canGoForward={false}
+        onSearch={onSearch}
+        actions={<Button>Pause</Button>}
+        insetStart
+      />,
     )
     await userEvent.click(screen.getByRole('button', { name: 'Back' }))
     expect(onBack).toHaveBeenCalled()
@@ -340,7 +353,14 @@ describe('Lists and tables', () => {
     const onSelect = vi.fn()
     wrap(
       <List label="Sites">
-        <ListRow href="#/w" title="Woolworths" description="6 tools" meta={<Badge>Signed in</Badge>} leading={<SiteAvatar id="w" name="W" />} selected />
+        <ListRow
+          href="#/w"
+          title="Woolworths"
+          description="6 tools"
+          meta={<Badge>Signed in</Badge>}
+          leading={<SiteAvatar id="w" name="W" />}
+          selected
+        />
         <ListRow href="#/y" title="Yahoo" trailing={<Button>Open</Button>} />
         <ListRow onSelect={onSelect} title="Pick me" selected />
         <ListRow title="Static" trailing={<Button>Act</Button>} />
@@ -408,16 +428,18 @@ describe('Status and feedback', () => {
     const onDismiss = vi.fn()
     wrap(
       <>
-        <Banner tone="danger" title="Chain broken" action={<Button>See where</Button>}>
+        <Banner tone="danger" live title="Chain broken" action={<Button>See where</Button>}>
           Edited
         </Banner>
         <Banner tone="success" title="Intact" onDismiss={onDismiss} />
         <Banner tone="attention" title="Update waiting" />
-        <Banner tone="warning" title="Waiting" icon={<Plug />} />
+        <Banner tone="warning" live title="Waiting" icon={<Plug />} />
         <Banner title="Info" />
       </>,
     )
-    expect(screen.getAllByRole('alert').length).toBe(2)
+    // Only banners that arrived after load are announced; danger interrupts, warning waits.
+    expect(screen.getAllByRole('alert').length).toBe(1)
+    expect(screen.getAllByRole('status').length).toBe(1)
     await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
     expect(onDismiss).toHaveBeenCalled()
     await expectAccessible()
@@ -446,7 +468,14 @@ describe('Status and feedback', () => {
         <HealthLine tone="danger" live action={<Button>Sign in</Button>}>
           Signed out
         </HealthLine>
-        <InboxItem title="Review update" href="#/r" description="1 permission" meta={<Badge>new</Badge>} icon={<Plug />} action={<Button>Review</Button>} />
+        <InboxItem
+          title="Review update"
+          href="#/r"
+          description="1 permission"
+          meta={<Badge>new</Badge>}
+          icon={<Plug />}
+          action={<Button>Review</Button>}
+        />
         <InboxItem title="Enter code" tone="warning" action={<Button>Enter</Button>} />
         <NeedsYouItem title="Missed: confirm" tone="danger" missed action={<Button>Ask again</Button>} />
       </ul>,
@@ -523,10 +552,17 @@ describe('Objects', () => {
     wrap(
       <p>
         Last call to{' '}
-        <ObjectLink href="#/sites/w" icon={<SiteAvatar id="w" name="W" size="xs" />} card={<span>Card body</span>}>
+        <ObjectLink
+          href="#/sites/w"
+          icon={<SiteAvatar id="w" name="W" size="xs" />}
+          card={<span>Card body</span>}
+        >
           Woolworths
         </ObjectLink>{' '}
-        and <ObjectLink href="#/c/1" mono>7F2A</ObjectLink>
+        and{' '}
+        <ObjectLink href="#/c/1" mono>
+          7F2A
+        </ObjectLink>
       </p>,
     )
     expect(screen.getByRole('link', { name: 'Woolworths' }).getAttribute('href')).toBe('#/sites/w')
@@ -542,9 +578,11 @@ describe('Objects', () => {
         <HashChip value="short" />
       </>,
     )
-    expect(screen.getAllByText('abcdef01…').length).toBe(2)
-    expect(screen.getByRole('link', { name: 'audit hash abcdef0123456789' })).toBeTruthy()
-    expect(screen.getByText('23456789').className).toContain('sr-only')
+    expect(screen.getAllByText('abcdef01…').length).toBe(1)
+    const link = screen.getByRole('link', { name: 'abcdef01…, audit hash' })
+    expect(link.getAttribute('aria-description')).toBe('abcdef0123456789')
+    // Unlinked, the whole value is in the DOM (clipped by CSS) so selection and copy get all of it.
+    expect(screen.getByText('abcdef0123456789').style.maxWidth).toBe('9ch')
     expect(screen.getByText('short')).toBeTruthy()
   })
 
@@ -591,11 +629,11 @@ describe('Diff, timeline and sparkline', () => {
       />,
     )
     const list = screen.getByRole('list', { name: 'Changes' })
-    expect(within(list).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
-      'Unchanged: Read trolley',
-      'Added: Place ordersnew',
-      'Removed: Read lists',
-    ])
+    expect(
+      within(list)
+        .getAllByRole('listitem')
+        .map((li) => li.textContent),
+    ).toEqual(['Unchanged: Read trolley', 'Added: Place ordersnew', 'Removed: Read lists'])
   })
 
   it('timeline steps say their kind and move with arrow keys', async () => {
@@ -615,11 +653,17 @@ describe('Diff, timeline and sparkline', () => {
             { id: 'g', title: 'Waiting', kind: 'waiting' },
           ]}
         />
-        <Timeline items={[{ id: 'x', title: 'Dot step', tone: 'success', live: true }, { id: 'y', title: 'Plain' }]} label="Login" />
+        <Timeline
+          items={[
+            { id: 'x', title: 'Dot step', tone: 'success', live: true },
+            { id: 'y', title: 'Plain' },
+          ]}
+          label="Login"
+        />
       </>,
     )
     const current = screen.getByRole('button', { name: /Filled login/ })
-    expect(current.getAttribute('aria-current')).toBe('step')
+    expect(current.getAttribute('aria-current')).toBe('true')
     expect(current.textContent).toContain('Filled a login:')
     current.focus()
     await userEvent.keyboard('{ArrowDown}')

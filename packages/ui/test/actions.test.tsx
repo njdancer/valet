@@ -166,7 +166,14 @@ describe('Badges, dots and counts', () => {
         </Badge>
       </>,
     )
-    for (const words of ['Reads', 'Changes', 'Can’t be undone', 'Adds items', 'Woolworths login', 'Built in']) {
+    for (const words of [
+      'Reads',
+      'Changes',
+      'Can’t be undone',
+      'Adds items',
+      'Woolworths login',
+      'Built in',
+    ]) {
       expect(screen.getByText(words)).toBeTruthy()
     }
   })
@@ -216,7 +223,10 @@ describe('Fields and inputs', () => {
     const input = screen.getByRole('textbox', { name: /Store/ })
     expect(input.getAttribute('aria-invalid')).toBe('true')
     const describedBy = input.getAttribute('aria-describedby')?.split(' ') ?? []
-    expect(describedBy.map((id) => document.getElementById(id)?.textContent)).toEqual(['Where you shop.', 'Pick a store.'])
+    expect(describedBy.map((id) => document.getElementById(id)?.textContent)).toEqual([
+      'Where you shop.',
+      'Pick a store.',
+    ])
     expect(screen.getByRole('alert').textContent).toBe('Pick a store.')
     expect(screen.getByText('(optional)')).toBeTruthy()
     await expectAccessible()
@@ -375,7 +385,8 @@ describe('CopyButton', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Copy hash' }))
     expect(writeText).toHaveBeenCalledWith('abc')
     expect(onCopied).toHaveBeenCalled()
-    expect(await screen.findByRole('button', { name: 'Copied' })).toBeTruthy()
+    expect(await screen.findByText('Copied')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Copy hash' })).toBeTruthy()
   })
 
   it('stays quiet when the clipboard refuses', async () => {

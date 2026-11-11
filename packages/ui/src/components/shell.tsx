@@ -1,6 +1,9 @@
-import type { ComponentProps, ReactNode } from 'react'
+import { type ComponentProps, createContext, type ReactNode, useContext, useId } from 'react'
 import { cn } from '../lib/cn'
 import { Count } from './badge'
+
+/** NavItem renders an <li> only inside a SidebarGroup's list, so a footer link stays valid markup. */
+const InList = createContext(false)
 
 /** The control panel window: sidebar and main column. The window itself never scrolls. */
 export function AppShell({
@@ -17,7 +20,10 @@ export function AppShell({
 }) {
   const Content = embedded ? 'div' : 'main'
   return (
-    <div data-slot="app-shell" className={cn('flex h-full min-h-0 w-full overflow-hidden bg-canvas text-fg', className)}>
+    <div
+      data-slot="app-shell"
+      className={cn('flex h-full min-h-0 w-full overflow-hidden bg-canvas text-fg', className)}
+    >
       {sidebar}
       <Content className="flex min-h-0 min-w-0 flex-1 flex-col bg-canvas">{children}</Content>
     </div>
@@ -41,14 +47,17 @@ export function Sidebar({
       aria-label={label}
       data-collapsible={collapsible || undefined}
       className={cn(
-        'group/sidebar material-sidebar flex w-56 shrink-0 flex-col gap-4 overflow-y-auto border-r border-line-subtle px-2.5 pb-3',
+        'group/sidebar material-sidebar relative flex w-56 shrink-0 flex-col gap-4 overflow-y-auto border-r border-line-subtle px-2.5 pb-3',
         'pt-[calc(12px+var(--window-inset-top))]',
         collapsible && 'max-[1000px]:w-14 max-[1000px]:px-2',
         className,
       )}
       {...props}
     >
-      <div aria-hidden="true" className="pointer-events-auto absolute top-0 left-0 h-[calc(12px+var(--window-inset-top))] w-56 [-webkit-app-region:drag]" />
+      <div
+        aria-hidden="true"
+        className="absolute inset-x-0 top-0 h-[calc(12px+var(--window-inset-top))] [-webkit-app-region:drag]"
+      />
       {children}
     </nav>
   )
@@ -63,12 +72,22 @@ export function SidebarGroup({
   children: ReactNode
   className?: string
 }) {
+  const id = useId()
   return (
     <div className={cn('flex flex-col gap-px', className)}>
       {label ? (
-        <div className="px-2 pb-1 text-2xs font-semibold uppercase tracking-wide text-fg-subtle">{label}</div>
+        <div
+          id={id}
+          className="px-2 pb-1 text-2xs font-semibold uppercase tracking-wide text-fg-subtle group-data-[collapsible]/sidebar:max-[1000px]:sr-only"
+        >
+          {label}
+        </div>
       ) : null}
-      <ul className="m-0 flex list-none flex-col gap-px p-0">{children}</ul>
+      <InList.Provider value={true}>
+        <ul aria-labelledby={label ? id : undefined} className="m-0 flex list-none flex-col gap-px p-0">
+          {children}
+        </ul>
+      </InList.Provider>
     </div>
   )
 }
@@ -102,8 +121,10 @@ export function NavItem({
   attention?: boolean
   trailing?: ReactNode
 }) {
+  const inList = useContext(InList)
+  const Item = inList ? 'li' : 'div'
   return (
-    <li className="m-0">
+    <Item className="m-0">
       <a
         aria-current={active ? 'page' : undefined}
         title={typeof children === 'string' ? children : undefined}
@@ -111,14 +132,18 @@ export function NavItem({
           'group relative flex h-7 w-full items-center gap-2 rounded-sm px-2 text-md text-fg no-underline transition-interactive',
           'group-data-[collapsible]/sidebar:max-[1000px]:justify-center',
           'hover:bg-hover active:bg-pressed',
-          active && 'bg-selected font-medium hover:bg-selected',
+          // Selection isn't colour alone: a short accent bar marks the current page.
+          active &&
+            'bg-selected font-medium hover:bg-selected before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-accent-solid',
           '[&_svg]:size-4 [&_svg]:shrink-0',
           className,
         )}
         {...props}
       >
         {icon ? <span className={cn('flex text-fg-muted', active && 'text-accent-fg')}>{icon}</span> : null}
-        <span className="min-w-0 flex-1 truncate group-data-[collapsible]/sidebar:max-[1000px]:sr-only">{children}</span>
+        <span className="min-w-0 flex-1 truncate group-data-[collapsible]/sidebar:max-[1000px]:sr-only">
+          {children}
+        </span>
         <span className="contents group-data-[collapsible]/sidebar:max-[1000px]:hidden">{trailing}</span>
         {count !== undefined ? (
           <Count
@@ -128,6 +153,6 @@ export function NavItem({
           />
         ) : null}
       </a>
-    </li>
+    </Item>
   )
 }

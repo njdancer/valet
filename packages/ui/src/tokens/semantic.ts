@@ -24,15 +24,15 @@ export const color = {
 
   // Text and icons.
   'fg-default': { light: 'gray.950', dark: 'gray.25' },
-  'fg-muted': { light: 'gray.600', dark: 'gray.300' },
-  'fg-subtle': { light: 'gray.500', dark: 'gray.400' },
+  'fg-muted': { light: 'gray.700', dark: 'gray.300' },
+  'fg-subtle': { light: 'gray.600', dark: 'gray.400' },
   'fg-disabled': { light: 'gray.400', dark: 'gray.600' },
   'fg-on-accent': { light: 'white', dark: 'white' },
   'fg-on-selected': { light: 'white', dark: 'white' },
   'fg-link': { light: 'blue.600', dark: 'blue.300' },
   // Secondary text on glass, which can sit over anything: one step stronger than fg-muted.
-  'fg-muted-on-glass': { light: 'gray.700', dark: 'gray.200' },
-  'fg-subtle-on-glass': { light: 'gray.600', dark: 'gray.300' },
+  'fg-muted-on-glass': { light: 'gray.800', dark: 'gray.200' },
+  'fg-subtle-on-glass': { light: 'gray.700', dark: 'gray.300' },
 
   // Lines.
   'border-subtle': { light: 'gray.950/7', dark: 'white/7' },
@@ -113,7 +113,13 @@ export const contrastPairs: readonly {
   { fg: 'fg-muted', bg: 'bg-canvas', min: 4.5 },
   { fg: 'fg-muted', bg: 'bg-surface', min: 4.5 },
   { fg: 'fg-muted', bg: 'bg-sidebar', min: 4.5 },
-  { fg: 'fg-subtle', bg: 'bg-surface', min: 3 },
+  // fg-subtle carries real text (placeholders, group labels, shortcuts), so it must pass AA too.
+  { fg: 'fg-subtle', bg: 'bg-surface', min: 4.5 },
+  { fg: 'fg-subtle', bg: 'bg-canvas', min: 4.5 },
+  { fg: 'fg-subtle', bg: 'bg-sidebar', min: 4.5 },
+  { fg: 'fg-subtle', bg: 'bg-raised', min: 4.5 },
+  { fg: 'fg-muted', bg: 'bg-inset', over: 'bg-sidebar', min: 4.5 },
+  { fg: 'fg-muted', bg: 'bg-raised', min: 4.5 },
   { fg: 'fg-link', bg: 'bg-surface', min: 4.5 },
   { fg: 'fg-on-accent', bg: 'accent-solid', min: 4.5 },
   { fg: 'fg-on-selected', bg: 'bg-selected-strong', min: 4.5 },
@@ -175,7 +181,10 @@ export const shadow = {
 export const material = {
   'glass-bg': { light: 'oklch(0.99 0.003 265 / 0.82)', dark: 'oklch(0.235 0.01 265 / 0.78)' },
   // Dark glass pulls bright content behind it down, so light text on it stays legible.
-  'glass-filter': { light: 'blur(22px) saturate(185%) brightness(1.04)', dark: 'blur(22px) saturate(160%) brightness(0.72)' },
+  'glass-filter': {
+    light: 'blur(22px) saturate(185%) brightness(1.04)',
+    dark: 'blur(22px) saturate(160%) brightness(0.72)',
+  },
   'glass-rim': { light: 'oklch(1 0 0 / 0.75)', dark: 'oklch(1 0 0 / 0.16)' },
   'glass-edge': { light: 'oklch(0.2 0.01 265 / 0.12)', dark: 'oklch(0 0 0 / 0.5)' },
   'glass-sheen': {

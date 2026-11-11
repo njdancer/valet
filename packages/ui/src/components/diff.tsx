@@ -52,7 +52,7 @@ export function Diff({
           >
             {line.text}
           </span>
-          {line.note ? <span className="shrink-0 text-sm opacity-80">{line.note}</span> : null}
+          {line.note ? <span className="shrink-0 text-sm">{line.note}</span> : null}
         </li>
       ))}
     </ul>

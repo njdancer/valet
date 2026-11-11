@@ -31,8 +31,8 @@ export function ObjectLink({
     <a
       href={href}
       className={cn(
-        'inline-flex max-w-full cursor-pointer items-center gap-1 rounded-xs align-baseline font-medium text-fg no-underline',
-        'decoration-current/30 underline-offset-2 hover:underline [&_svg]:size-3.5 [&_svg]:text-fg-muted',
+        'inline-flex max-w-full cursor-pointer items-center gap-1 rounded-xs align-baseline font-medium text-fg',
+        'underline decoration-dotted decoration-current/35 underline-offset-[3px] hover:decoration-solid hover:decoration-current/60 [&_svg]:size-3.5 [&_svg]:text-fg-muted',
         mono && 'font-mono text-[0.92em] font-regular',
         className,
       )}
@@ -80,18 +80,25 @@ export function HashChip({
   const shown = value.length > short + 1 ? `${value.slice(0, short)}…` : value
   const chip = cn(
     'inline-flex h-5 items-center rounded-xs bg-code-bg px-1.5 font-mono text-xs text-code-fg no-underline',
-    href && 'cursor-pointer hover:bg-hover hover:underline',
+    href &&
+      'cursor-pointer underline decoration-dotted decoration-current/40 underline-offset-2 hover:bg-hover hover:decoration-solid',
   )
   return (
     <span className={cn('inline-flex items-center gap-0.5 align-middle', className)}>
       {href ? (
-        <a href={href} title={value} className={chip} aria-label={`${label} ${value}`}>
+        <a href={href} title={value} className={chip} aria-description={value}>
           {shown}
+          <span className="sr-only">, {label}</span>
         </a>
       ) : (
+        // The whole value is in the DOM and only clipped, so selecting and copying get all of it.
         <span title={value} className={cn(chip, 'selectable')}>
-          {shown}
-          <span className="sr-only">{value.slice(short)}</span>
+          <span
+            className="block overflow-hidden text-ellipsis whitespace-nowrap"
+            style={{ maxWidth: `${short + 1}ch` }}
+          >
+            {value}
+          </span>
         </span>
       )}
       <CopyButton value={value} label={`Copy ${label}`} />

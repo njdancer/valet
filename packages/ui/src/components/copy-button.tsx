@@ -27,6 +27,7 @@ export function CopyButton({
   onCopied?: () => void
 }) {
   const [copied, setCopied] = useState(false)
+  const [message, setMessage] = useState('')
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => () => clearTimeout(timer.current), [])
   return (
@@ -34,20 +35,25 @@ export function CopyButton({
       <IconButton
         size={size}
         variant="quiet"
-        label={copied ? 'Copied' : label}
+        label={label}
         className={cn(copied && 'text-success-fg', className)}
         icon={copied ? <Check className="animate-pop-in" /> : <Copy />}
         onClick={async () => {
-          if (await copyText(value)) {
+          const ok = await copyText(value)
+          clearTimeout(timer.current)
+          setMessage(ok ? 'Copied' : "Couldn't copy")
+          if (ok) {
             setCopied(true)
             onCopied?.()
-            clearTimeout(timer.current)
-            timer.current = setTimeout(() => setCopied(false), 1400)
           }
+          timer.current = setTimeout(() => {
+            setCopied(false)
+            setMessage('')
+          }, 1400)
         }}
       />
       <span className="sr-only" aria-live="polite">
-        {copied ? 'Copied' : ''}
+        {message}
       </span>
     </>
   )
