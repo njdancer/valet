@@ -19,6 +19,7 @@
     "@playwright/test": "^1.65.0",
     "@valet/browser-electron": "workspace:*",
     "@valet/fake-woolworths-site": "workspace:*",
+    "@valet/runtime": "workspace:*",
     "electron": "^44.10.2"
   }
 }

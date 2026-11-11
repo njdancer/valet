@@ -8,6 +8,8 @@ import {
   type ToolContext,
   ValetError,
 } from '@valet/core'
+import { runInToolContext } from '@valet/runtime/in-context'
+import { buildToolScript } from '@valet/runtime/tool-script'
 import { describe, expect, it } from 'vitest'
 import { createAdapter } from '../src/adapter'
 import { getArticle, getSummary, searchArticles } from '../src/articles'
@@ -120,5 +122,29 @@ describe('the Wikipedia manifest', () => {
     expect(manifest.egress).toEqual(['en.wikipedia.org'])
     expect(manifest.requests.every((r) => r.method === 'GET' && r.purpose === 'read')).toBe(true)
     expect(() => createAdapter()).not.toThrow()
+  })
+})
+
+// As the app runs them: bundled, in the tool process's context, which has no URL or
+// URLSearchParams. The first live run of Yahoo Finance failed every call on exactly that.
+describe('in the tool process', () => {
+  it('runs each tool against the captured responses', async () => {
+    const script = await buildToolScript(new URL('../src/tools.ts', import.meta.url).pathname)
+    const { ctx, fetched } = wiki({
+      '/w/rest.php/v1/search/page': json(fixture('search-kangaroo.json')),
+      '/api/rest_v1/page/summary/Red_kangaroo': json(fixture('summary-kangaroo.json')),
+      '/w/api.php': json(fixture('extract-kangaroo.json')),
+    })
+    const found = (await runInToolContext(script, 'search_articles', { query: 'red kangaroo' }, ctx)) as {
+      results: { title: string }[]
+    }
+    expect(found.results[0]?.title).toBe('Kangaroo')
+    expect(await runInToolContext(script, 'get_summary', { title: 'Red kangaroo' }, ctx)).toMatchObject({
+      url: expect.stringContaining('/wiki/'),
+    })
+    expect(
+      await runInToolContext(script, 'get_article', { title: 'Kangaroo', maxChars: 1000 }, ctx),
+    ).toMatchObject({ title: 'Kangaroo', truncated: true })
+    expect(fetched[0]?.url.searchParams.get('q')).toBe('red kangaroo')
   })
 })

@@ -8,7 +8,10 @@ const titleSchema = z
   .trim()
   .min(1)
   .max(255)
-  .refine((t) => !/[\u0000-\u001f#<>[\]{}|]/.test(t), 'not a valid article title')
+  .refine(
+    (t) => !/[#<>[\]{}|]/.test(t) && ![...t].some((c) => c.charCodeAt(0) < 0x20),
+    'not a valid article title',
+  )
 
 export const searchArticles = tool({
   input: z.object({

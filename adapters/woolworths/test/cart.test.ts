@@ -1,4 +1,6 @@
 import { NeedsUserError, ValetError } from '@valet/core'
+import { runInToolContext } from '@valet/runtime/in-context'
+import { buildToolScript } from '@valet/runtime/tool-script'
 import { describe, expect, it } from 'vitest'
 import { addToCart, getCart, NOTICES, removeFromCart, setCartQuantity } from '../src/cart'
 import { FAKE_ORIGIN, FakeToolContext, json, loadFixture } from './fake-context'
@@ -696,4 +698,17 @@ describe('cart tools without a login', () => {
       expect(ctx.fetches).toEqual([])
     })
   }
+})
+
+// As the app runs it: bundled, in the tool process's context, which has no URL. cartUrl was built
+// with `new URL` inside a try, so in the app it was always null and nobody noticed.
+describe('get_cart in the tool process', () => {
+  it('still links the trolley page', async () => {
+    const script = await buildToolScript(new URL('../src/tools.ts', import.meta.url).pathname)
+    const ctx = new FakeToolContext().on('GET', TROLLEY, json(loadFixture('trolley-two-items.json')))
+    expect(await runInToolContext(script, 'get_cart', {}, ctx)).toMatchObject({
+      cartUrl: `${FAKE_ORIGIN}/shop/cart`,
+      itemCount: 2,
+    })
+  })
 })

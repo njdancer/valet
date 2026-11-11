@@ -2,8 +2,8 @@
 // the browser sends them as the site's own pages do. Every failure leaves as a ValetError with no
 // page text in it.
 
-import { type FetchResult, type ToolContext, ValetError } from '@valet/core'
-import { apiOriginFor } from './origins'
+import { type FetchResult, httpsOriginOf, type ToolContext, urlOn, ValetError } from '@valet/core'
+import { apiOriginFor, REAL_ORIGIN } from './origins'
 import { siteUrl } from './quote'
 
 export async function getApi(
@@ -12,11 +12,10 @@ export async function getApi(
   query: Record<string, string>,
 ): Promise<unknown> {
   if (ctx.signal.aborted) throw new ValetError('tool-run', 'aborted')
-  const url = new URL(path, apiOriginFor(new URL(siteUrl(ctx, '/')).origin))
-  for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value)
+  const url = urlOn(apiOriginFor(httpsOriginOf(siteUrl(ctx, '/')) ?? REAL_ORIGIN), path, query)
   let response: FetchResult
   try {
-    response = await ctx.page.fetch(url.href, { headers: { accept: 'application/json' } })
+    response = await ctx.page.fetch(url, { headers: { accept: 'application/json' } })
   } catch (error) {
     if (error instanceof ValetError) throw error
     throw new ValetError('tool-run', 'unavailable')

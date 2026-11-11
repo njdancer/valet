@@ -4,7 +4,7 @@
 // (v7/finance/quote, the page's main one asks for fiftyTwoWeekHigh first) and the quote summary
 // (v10/finance/quoteSummary: valuation, dividends, analyst figures, profile).
 
-import { type ToolContext, tool, ValetError } from '@valet/core'
+import { httpsOriginOf, pathnameOf, type ToolContext, tool, urlOn, ValetError } from '@valet/core'
 import { z } from 'zod'
 import { REAL_ORIGIN } from './origins'
 import { symbolSchema, symbolSegment } from './symbols'
@@ -79,21 +79,15 @@ export const getQuote = tool({
  * the page has loaded anything, the real site.
  */
 export function siteUrl(ctx: ToolContext, path: string): string {
-  let origin = REAL_ORIGIN
-  try {
-    const current = new URL(ctx.page.currentUrl())
-    if (current.protocol === 'https:') origin = current.origin
-  } catch {
-    // about:blank or nothing yet.
-  }
-  return new URL(path, origin).href
+  // about:blank, or nothing yet, means the real site.
+  return urlOn(httpsOriginOf(ctx.page.currentUrl()) ?? REAL_ORIGIN, path)
 }
 
 async function readQuotePage(ctx: ToolContext, symbol: string, url: string): Promise<Quote> {
   if (ctx.signal.aborted) throw new ValetError('tool-run', 'aborted')
   await ctx.page.goto(url)
   // A symbol the site doesn't know answers 404 and its inline script moves the page home.
-  if (!new URL(ctx.page.currentUrl()).pathname.startsWith('/quote/'))
+  if (!(pathnameOf(ctx.page.currentUrl()) ?? '').startsWith('/quote/'))
     throw new ValetError('tool-run', 'not-found')
   const quoteBody = embedded(await ctx.page.extract(QUOTE_SCRIPT))
   if (quoteBody === undefined) throw new ValetError('tool-run', 'site-changed')

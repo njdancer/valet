@@ -1,6 +1,6 @@
 // Calls to Wikipedia's APIs from the tool page, which is on the site, so they are same-origin.
 
-import { type FetchResult, type ToolContext, ValetError } from '@valet/core'
+import { type FetchResult, httpsOriginOf, type ToolContext, urlOn, ValetError } from '@valet/core'
 
 export const REAL_ORIGIN = 'https://en.wikipedia.org'
 
@@ -9,16 +9,8 @@ const API_USER_AGENT = 'Valet/0.1 (https://github.com/njdancer/valet)'
 
 /** `path` on the tool page's origin, or the real site's before the page has loaded. */
 export function siteUrl(ctx: ToolContext, path: string, query: Record<string, string> = {}): string {
-  let origin = REAL_ORIGIN
-  try {
-    const current = new URL(ctx.page.currentUrl())
-    if (current.protocol === 'https:') origin = current.origin
-  } catch {
-    // about:blank, or nothing yet.
-  }
-  const url = new URL(path, origin)
-  for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value)
-  return url.href
+  // about:blank, or nothing yet, means the real site.
+  return urlOn(httpsOriginOf(ctx.page.currentUrl()) ?? REAL_ORIGIN, path, query)
 }
 
 /** The JSON body, or null for a 404 (no such article). Other failures throw a ValetError. */

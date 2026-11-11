@@ -315,32 +315,18 @@ async function main() {
     'Now the Yahoo Finance adapter. Its tools stay hidden from every client until it is approved',
     '3 · Approve',
   )
-  await attempt(
-    'approving Yahoo Finance',
-    async () => {
-      await control.evaluate(() => {
-        window.location.hash = '#/adapters'
-      })
-      await sleep(2500)
-      await still(control, 'adapters')
-      const callout = control.locator('.callout', { hasText: 'Yahoo Finance' })
-      await click(callout.getByRole('link', { name: 'Review changes' }))
-      await sleep(3000)
-      await still(control, 'review-yahoo')
-      caption(
-        'The review: it reaches finance.yahoo.com and its API host only, reads only, and asks for no login',
-        '3 · Approve',
-      )
-      await control.mouse.wheel(0, 500)
-      await sleep(2500)
-      await still(control, 'review-yahoo-2')
-      const ack = control.getByRole('checkbox', { name: 'I’ve read the highlighted additions' })
-      if (await ack.isVisible().catch(() => false)) await click(ack)
-      await click(control.getByRole('button', { name: /^Approve \d/ }))
-      await sleep(2500)
-      await still(control, 'approved')
-    },
-    { page: control },
+  await approve(
+    control,
+    'Yahoo Finance',
+    'yahoo',
+    'The review: it reaches finance.yahoo.com and its API host only, reads only, and asks for no login',
+  )
+  caption('And Wikipedia, approved the same way', '3 · Approve')
+  await approve(
+    control,
+    'Wikipedia',
+    'wikipedia',
+    'Wikipedia: en.wikipedia.org only, three read-only APIs, no login',
   )
 
   caption('A chat app: a scripted stand-in for Claude that speaks real MCP', '4 · Chat')
@@ -456,6 +442,29 @@ async function main() {
   await sleep(5000)
   await still(chat, 'chat-done')
 
+  if (tool('get_summary') !== undefined) {
+    const follow = 'Thanks. And what does BHP actually do?'
+    await type(chat.locator('#input'), follow)
+    await click(chat.locator('#send'), 400)
+    await chat.evaluate((t) => window.chat.user(t), follow)
+    caption('A follow-up the agent answers from Wikipedia, read live through Valet', '4 · Chat')
+    const articles = await callTool(chat, client, tool('search_articles'), { query: 'BHP', limit: 3 }, (s) =>
+      s === null ? 'no articles' : s.results.map((r) => r.title).join(' · '),
+    )
+    const title = articles?.results?.[0]?.title ?? 'BHP'
+    const summary = await callTool(chat, client, tool('get_summary'), { title }, (s) =>
+      s === null ? 'no summary' : `${s.title}: ${(s.extract ?? '').slice(0, 120)}…`,
+    )
+    await chat.evaluate(
+      (t) => window.chat.assistant(t),
+      summary?.extract ? `From Wikipedia: ${summary.extract}` : 'I couldn’t reach Wikipedia just now.',
+    )
+    await sleep(5000)
+    await still(chat, 'chat-wikipedia')
+  } else {
+    await finding('major', `the client sees no Wikipedia tools: ${names.join(', ')}`, chat)
+  }
+
   caption('Back in Valet: every call is in its audited activity log', '5 · Valet')
   execFileSync('/usr/bin/open', ['-a', APP])
   await sleep(2500)
@@ -476,6 +485,34 @@ async function main() {
   await sleep(2500)
   await client.close().catch(() => undefined)
   await chrome.close().catch(() => undefined)
+}
+
+/** Reviews and approves one built-in adapter from the Adapters page. */
+async function approve(control, name, slug, review) {
+  await attempt(
+    `approving ${name}`,
+    async () => {
+      await control.evaluate(() => {
+        window.location.hash = '#/adapters'
+      })
+      await sleep(2500)
+      await still(control, `adapters-${slug}`)
+      const callout = control.locator('.callout', { hasText: name })
+      await click(callout.getByRole('link', { name: 'Review changes' }))
+      await sleep(3000)
+      await still(control, `review-${slug}`)
+      caption(review, '3 · Approve')
+      await control.mouse.wheel(0, 500)
+      await sleep(2500)
+      await still(control, `review-${slug}-2`)
+      const ack = control.getByRole('checkbox', { name: 'I’ve read the highlighted additions' })
+      if (await ack.isVisible().catch(() => false)) await click(ack)
+      await click(control.getByRole('button', { name: /^Approve \d/ }))
+      await sleep(2500)
+      await still(control, `approved-${slug}`)
+    },
+    { page: control },
+  )
 }
 
 async function connectToApp() {
