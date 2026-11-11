@@ -476,7 +476,7 @@ function TodayCard({
     )
   }
   const today = callsToday(runs, adapter.id, now)
-  const failed = today.filter((r) => r.outcome !== 'ok' && r.outcome !== 'running').length
+  const failed = today.filter((r) => r.outcome === 'failed').length
   const blocked = today.reduce((n, r) => n + r.blockedRequests, 0)
   const last = today[0] ?? null
   const by = callers(today)
