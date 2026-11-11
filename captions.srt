@@ -1,0 +1,67 @@
+1
+00:00:00,001 --> 00:00:03,505
+Valet, live: A fresh macOS machine, and a real website: Yahoo Finance. No account, no login.
+
+2
+00:00:03,505 --> 00:00:16,283
+1 · Install: Install Valet from its disk image
+
+3
+00:00:16,283 --> 00:00:22,900
+2 · Set up: First launch (with a debugging port only this test build accepts, so the script can drive it)
+
+4
+00:00:22,900 --> 00:00:33,042
+2 · Set up: Setup walks through the shop adapter first. This run skips it: it is about a real site
+
+5
+00:00:33,042 --> 00:00:42,193
+2 · Set up: Connect a chat app. Valet gives it a config that starts its own bridge, with no token in it
+
+6
+00:00:42,193 --> 00:00:49,660
+3 · Approve: Now the Yahoo Finance adapter. Its tools stay hidden from every client until it is approved
+
+7
+00:00:49,660 --> 00:00:56,951
+3 · Approve: The review: it reaches finance.yahoo.com and its API host only, reads only, and asks for no login
+
+8
+00:00:56,951 --> 00:01:03,778
+3 · Approve: And Wikipedia, approved the same way
+
+9
+00:01:03,778 --> 00:01:11,065
+3 · Approve: Wikipedia: en.wikipedia.org only, three read-only APIs, no login
+
+10
+00:01:11,065 --> 00:01:25,418
+4 · Chat: A chat app: a scripted stand-in for Claude that speaks real MCP
+
+11
+00:01:25,418 --> 00:01:35,176
+4 · Chat: Connected through Valet’s bridge: 6 tools
+
+12
+00:01:35,176 --> 00:01:39,837
+4 · Chat: The agent searches for a symbol. Valet fetches it live from Yahoo Finance
+
+13
+00:01:39,837 --> 00:01:54,068
+4 · Chat: Then quotes: each is the stock’s page on finance.yahoo.com, read by Valet’s own browser
+
+14
+00:01:54,068 --> 00:02:06,042
+4 · Chat: Valet spaces its requests to the site a few seconds apart, so this is unhurried on purpose
+
+15
+00:02:06,042 --> 00:02:14,338
+4 · Chat: A follow-up the agent answers from Wikipedia, read live through Valet
+
+16
+00:02:14,338 --> 00:02:23,217
+5 · Valet: Back in Valet: every call is in its audited activity log
+
+17
+00:02:23,217 --> 00:02:26,955
+Valet, live: End of the run

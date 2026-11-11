@@ -1,0 +1,104 @@
+[
+  {
+    "start": 0.001,
+    "step": "Valet, live",
+    "text": "A fresh macOS machine, and a real website: Yahoo Finance. No account, no login.",
+    "end": 3.505
+  },
+  {
+    "start": 3.505,
+    "step": "1 · Install",
+    "text": "Install Valet from its disk image",
+    "end": 16.283
+  },
+  {
+    "start": 16.283,
+    "step": "2 · Set up",
+    "text": "First launch (with a debugging port only this test build accepts, so the script can drive it)",
+    "end": 22.9
+  },
+  {
+    "start": 22.9,
+    "step": "2 · Set up",
+    "text": "Setup walks through the shop adapter first. This run skips it: it is about a real site",
+    "end": 33.042
+  },
+  {
+    "start": 33.042,
+    "step": "2 · Set up",
+    "text": "Connect a chat app. Valet gives it a config that starts its own bridge, with no token in it",
+    "end": 42.193
+  },
+  {
+    "start": 42.193,
+    "step": "3 · Approve",
+    "text": "Now the Yahoo Finance adapter. Its tools stay hidden from every client until it is approved",
+    "end": 49.66
+  },
+  {
+    "start": 49.66,
+    "step": "3 · Approve",
+    "text": "The review: it reaches finance.yahoo.com and its API host only, reads only, and asks for no login",
+    "end": 56.951
+  },
+  {
+    "start": 56.951,
+    "step": "3 · Approve",
+    "text": "And Wikipedia, approved the same way",
+    "end": 63.778
+  },
+  {
+    "start": 63.778,
+    "step": "3 · Approve",
+    "text": "Wikipedia: en.wikipedia.org only, three read-only APIs, no login",
+    "end": 71.065
+  },
+  {
+    "start": 71.065,
+    "step": "4 · Chat",
+    "text": "A chat app: a scripted stand-in for Claude that speaks real MCP",
+    "end": 85.418
+  },
+  {
+    "start": 85.418,
+    "step": "4 · Chat",
+    "text": "Connected through Valet’s bridge: 6 tools",
+    "end": 95.176
+  },
+  {
+    "start": 95.176,
+    "step": "4 · Chat",
+    "text": "The agent searches for a symbol. Valet fetches it live from Yahoo Finance",
+    "end": 99.837
+  },
+  {
+    "start": 99.837,
+    "step": "4 · Chat",
+    "text": "Then quotes: each is the stock’s page on finance.yahoo.com, read by Valet’s own browser",
+    "end": 114.068
+  },
+  {
+    "start": 114.068,
+    "step": "4 · Chat",
+    "text": "Valet spaces its requests to the site a few seconds apart, so this is unhurried on purpose",
+    "end": 126.042
+  },
+  {
+    "start": 126.042,
+    "step": "4 · Chat",
+    "text": "A follow-up the agent answers from Wikipedia, read live through Valet",
+    "end": 134.338
+  },
+  {
+    "start": 134.338,
+    "step": "5 · Valet",
+    "text": "Back in Valet: every call is in its audited activity log",
+    "end": 143.217
+  },
+  {
+    "start": 143.217,
+    "step": "Valet, live",
+    "text": "End of the run",
+    "end": 146.955
+  }
+]
