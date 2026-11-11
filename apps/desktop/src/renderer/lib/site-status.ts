@@ -12,14 +12,7 @@ export interface SiteStatus {
   /** "Ready", "Woolworths is limiting requests · calls resume at 9:52 pm". */
   readonly text: string
   /** What fixes it, when the person can: the IA's "do the task where you notice it". */
-  readonly fix:
-    | 'review'
-    | 'review-update'
-    | 'login'
-    | 'show-login'
-    | 'choose-setting'
-    | 'resume'
-    | null
+  readonly fix: 'review' | 'review-update' | 'login' | 'show-login' | 'choose-setting' | 'resume' | null
 }
 
 export function healthFor(adapter: AdapterSummary, sites: readonly SiteHealth[]): SiteHealth | null {

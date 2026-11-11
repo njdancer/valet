@@ -143,7 +143,7 @@ export function TrayPopover() {
           <button
             type="button"
             className="menu-row"
-            onClick={() => action.run(() => api.app.openControlPanel(href.activity()))}
+            onClick={() => action.run(() => api.app.openControlPanel(href.calls()))}
           >
             Activity… <span className="kbd">⌘1</span>
           </button>

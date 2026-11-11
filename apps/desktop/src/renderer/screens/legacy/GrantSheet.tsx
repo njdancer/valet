@@ -6,12 +6,12 @@ import type { ProviderKind } from '@valet/core'
 // From core's browser-safe vocabulary: core's index pulls in Node modules the renderer can't load.
 import { MESSAGES_SECRET } from '@valet/core/vocab'
 import { type ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { AdapterDetail, GrantInfo, HashRoute, ProviderStatus, VaultItem } from '../../shared/api'
-import { ActionFailed, Avatar, Icon, SecretBadge } from '../components/ui'
-import { useAction, useApi, useLoad } from '../lib/api-context'
-import { hostOf, plural, shortHash } from '../lib/format'
-import { href, navigate } from '../lib/router'
-import { FIELD_WORDING, PROVIDER_WORDING } from '../lib/wording'
+import type { AdapterDetail, GrantInfo, HashRoute, ProviderStatus, VaultItem } from '../../../shared/api'
+import { ActionFailed, Avatar, Icon, SecretBadge } from '../../components/ui'
+import { useAction, useApi, useLoad } from '../../lib/api-context'
+import { hostOf, plural, shortHash } from '../../lib/format'
+import { href, navigate } from '../../lib/router'
+import { FIELD_WORDING, PROVIDER_WORDING } from '../../lib/wording'
 
 export { MESSAGES_SECRET }
 
@@ -82,7 +82,7 @@ export function GrantSheet({
 }) {
   const detail = useLoad((api) => api.adapters.get(adapterId), [adapterId], ['adapters-changed'])
   const providers = useLoad((api) => api.grants.providers(), [], ['grants-changed', 'settings-changed'])
-  const back = closeTo ?? href.adapter(adapterId)
+  const back = closeTo ?? href.site(adapterId)
   const close = () => navigate(back)
   const sheet = useRef<HTMLDivElement>(null)
 

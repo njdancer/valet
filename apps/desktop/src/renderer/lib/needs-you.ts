@@ -4,8 +4,8 @@
 // one action that answers it (IA section 5).
 
 import type { AttentionItem, ValetApi } from '../../shared/api'
-import { needsUserWording } from './wording'
 import { href } from './routes'
+import { needsUserWording } from './wording'
 
 /** What the item's main action does. A confirmation is never answered inline (only its window can). */
 export type NeedsYouAction =
@@ -56,7 +56,10 @@ export function reviewTitle(adapterName: string, version: string, firstInstall: 
  * The view of one item. Kinds this build doesn't know (a newer main process) still show, as a
  * generic item that opens Needs you, rather than vanishing.
  */
-export function needsYouView(item: AttentionItem, firstInstall: (adapterId: string) => boolean): NeedsYouView {
+export function needsYouView(
+  item: AttentionItem,
+  firstInstall: (adapterId: string) => boolean,
+): NeedsYouView {
   const base = {
     id: item.id,
     kind: item.kind,

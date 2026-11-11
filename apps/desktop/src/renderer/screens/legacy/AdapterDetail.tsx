@@ -9,7 +9,7 @@ import type {
   SecretRequestInfo,
   SettingChoicesReply,
   SiteHealth,
-} from '../../shared/api'
+} from '../../../shared/api'
 import {
   ActionFailed,
   AdapterText,
@@ -21,12 +21,12 @@ import {
   OutcomePill,
   SecretBadge,
   SideEffect,
-} from '../components/ui'
-import { useAction, useApi, useLoad, useNow } from '../lib/api-context'
-import { formatDay, formatDuration, formatIn, formatTime, hostOf, plural } from '../lib/format'
-import { probeText } from '../lib/permissions'
-import { href } from '../lib/router'
-import { FIELD_WORDING, needsUserWording, PROVIDER_WORDING, SESSION_WORDING } from '../lib/wording'
+} from '../../components/ui'
+import { useAction, useApi, useLoad, useNow } from '../../lib/api-context'
+import { formatDay, formatDuration, formatIn, formatTime, hostOf, plural } from '../../lib/format'
+import { probeText } from '../../lib/permissions'
+import { href } from '../../lib/router'
+import { FIELD_WORDING, needsUserWording, PROVIDER_WORDING, SESSION_WORDING } from '../../lib/wording'
 
 export function AdapterDetailPage({ adapterId }: { readonly adapterId: string }) {
   const detail = useLoad(
@@ -42,14 +42,14 @@ export function AdapterDetailPage({ adapterId }: { readonly adapterId: string })
     <>
       <div className="titlebar">
         <nav className="row" aria-label="Breadcrumb">
-          <a className="muted" href={href.adapters()}>
+          <a className="muted" href={href.sites()}>
             Adapters
           </a>
           <Icon name="chevron" size="sm" className="tertiary" />
           <span className="title">{name}</span>
         </nav>
         <div className="tools">
-          <a className="btn" href={href.activity()}>
+          <a className="btn" href={href.calls()}>
             All activity
           </a>
         </div>
@@ -184,7 +184,7 @@ function Detail({
             <div className="card-head">
               <span className="h3">Recent runs</span>
               <span className="actions">
-                <a className="btn ghost" href={href.activity()}>
+                <a className="btn ghost" href={href.calls()}>
                   All activity
                 </a>
               </span>
@@ -207,7 +207,7 @@ function Detail({
                     <tr key={r.callId}>
                       <td className="mono xs">{formatTime(r.startedAt, now)}</td>
                       <td className="mono">
-                        <a href={href.activity(r.callId)}>{r.tool}</a>
+                        <a href={href.call(r.callId)}>{r.tool}</a>
                       </td>
                       <td>
                         <ClientName reported={r.client} />

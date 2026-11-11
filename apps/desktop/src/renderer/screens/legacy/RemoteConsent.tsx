@@ -22,10 +22,10 @@ import {
   type RemoteConsentTool,
   type RemoteSetup,
   type RemoteSetupTool,
-} from '../../shared/api'
-import { ActionFailed, Icon, LoadState, SideEffect } from '../components/ui'
-import { useAction, useApi, useLoad, useNow } from '../lib/api-context'
-import { formatAgo, formatCountdown, formatDay } from '../lib/format'
+} from '../../../shared/api'
+import { ActionFailed, Icon, LoadState, SideEffect } from '../../components/ui'
+import { useAction, useApi, useLoad, useNow } from '../../lib/api-context'
+import { formatAgo, formatCountdown, formatDay } from '../../lib/format'
 import { useArmed } from './Confirmation'
 
 /** Crockford base32 without separators: what a typed code must come to (mcp-server's normaliseCode). */

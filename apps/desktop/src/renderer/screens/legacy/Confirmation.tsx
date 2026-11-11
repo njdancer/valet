@@ -9,12 +9,12 @@
 // as browser permission prompts do. The main process enforces the same delay on its side.
 
 import { useEffect, useRef, useState } from 'react'
-import { CONFIRM_ARM_MS, type ConfirmationItem } from '../../shared/api'
-import { Preview } from '../components/Preview'
-import { ActionFailed, Avatar, capText, Hash, Icon, LoadState, SideEffect } from '../components/ui'
-import { useAction, useApi, useLoad, useNow } from '../lib/api-context'
-import { formatCountdown, formatDay } from '../lib/format'
-import { clientClaim, TRANSPORT_WORDING } from '../lib/wording'
+import { CONFIRM_ARM_MS, type ConfirmationItem } from '../../../shared/api'
+import { Preview } from '../../components/Preview'
+import { ActionFailed, Avatar, capText, Hash, Icon, LoadState, SideEffect } from '../../components/ui'
+import { useAction, useApi, useLoad, useNow } from '../../lib/api-context'
+import { formatCountdown, formatDay } from '../../lib/format'
+import { clientClaim, TRANSPORT_WORDING } from '../../lib/wording'
 
 /**
  * False until `delayMs` has passed since mount, and false again from the moment the window loses

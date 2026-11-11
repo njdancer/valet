@@ -131,3 +131,12 @@ export function formatClock(iso: string | number): string {
   const date = new Date(iso)
   return Number.isNaN(date.getTime()) ? '—' : timeFormat.format(date)
 }
+
+/**
+ * A call's short ref, "7F2A": what tool results, notifications and Activity all call it. The first
+ * four hex digits of the call id, upper case.
+ */
+export function callRef(callId: string): string {
+  const hex = callId.replace(/[^0-9a-fA-F]/g, '')
+  return (hex.length >= 4 ? hex.slice(0, 4) : callId.slice(0, 4)).toUpperCase()
+}

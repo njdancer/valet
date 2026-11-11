@@ -2,12 +2,12 @@
 // fills → hand-off → probe again → tool code and every request decision → redacted output.
 
 import { useState } from 'react'
-import type { RunSummary, RunTrace, TraceStep } from '../../shared/api'
-import { Preview } from '../components/Preview'
-import { Avatar, ClientName, Hash, Icon, LoadState, Segmented, SideEffect } from '../components/ui'
-import { useLoad, useNow } from '../lib/api-context'
-import { formatBytes, formatDuration, formatTime, hostOf, plural } from '../lib/format'
-import { href } from '../lib/router'
+import type { RunSummary, RunTrace, TraceStep } from '../../../shared/api'
+import { Preview } from '../../components/Preview'
+import { Avatar, ClientName, Hash, Icon, LoadState, Segmented, SideEffect } from '../../components/ui'
+import { useLoad, useNow } from '../../lib/api-context'
+import { formatBytes, formatDuration, formatTime, hostOf, plural } from '../../lib/format'
+import { href } from '../../lib/router'
 import {
   askedToRetry,
   blockedExplanation,
@@ -23,7 +23,7 @@ import {
   stageWording,
   toolPhrase,
   waitWording,
-} from '../lib/wording'
+} from '../../lib/wording'
 
 export function ActivityPage({ callId }: { readonly callId: string | null }) {
   if (callId === null) return <ActivityList />
@@ -141,7 +141,7 @@ function ActivityList() {
                   <ul className="activity-list" aria-label="Tool calls">
                     {shown.map(({ run, retries }) => (
                       <li key={run.callId}>
-                        <a className="activity-row" href={href.activity(run.callId)}>
+                        <a className="activity-row" href={href.call(run.callId)}>
                           <span className={`dot ${runTone(run) || 'tertiary'}`} />
                           <span className="grow truncate">
                             {toolPhrase(run.tool)}
@@ -187,7 +187,7 @@ function TraceView({ callId }: { readonly callId: string }) {
     <>
       <div className="titlebar">
         <nav className="row" aria-label="Breadcrumb">
-          <a className="muted" href={href.activity()}>
+          <a className="muted" href={href.calls()}>
             Activity
           </a>
           <Icon name="chevron" size="sm" className="tertiary" />

@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'react'
 import { parseRoute, type Route } from './routes'
 
-export { href, parseRoute, type Route, SETUP_STEPS, type SetupStep } from './routes'
+export * from './routes'
 
 export function navigate(to: string): void {
   window.location.hash = to

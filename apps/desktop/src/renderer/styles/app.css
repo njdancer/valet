@@ -22,3 +22,9 @@
     background: transparent;
   }
 }
+
+/* A page heading takes focus after navigation (for screen readers and Tab order); it is not a
+   control, so it shows no ring. */
+h1[tabindex="-1"]:focus {
+  outline: none;
+}

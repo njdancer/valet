@@ -4,12 +4,12 @@
 // bridge, which reads its client's token itself.
 
 import { useState } from 'react'
-import type { ClientInfo, ClientKind, SettingsPatch, UpdateStatus } from '../../shared/api'
-import { AddToClaudeDesktop } from '../components/AddToClaudeDesktop'
-import { ActionFailed, Icon, LoadState, Segmented, Switch } from '../components/ui'
-import { useAction, useApi, useLoad, useNow } from '../lib/api-context'
-import { formatAgo, formatDay, formatTime } from '../lib/format'
-import { updatesOffWording } from '../lib/wording'
+import type { ClientInfo, ClientKind, SettingsPatch, UpdateStatus } from '../../../shared/api'
+import { AddToClaudeDesktop } from '../../components/AddToClaudeDesktop'
+import { ActionFailed, Icon, LoadState, Segmented, Switch } from '../../components/ui'
+import { useAction, useApi, useLoad, useNow } from '../../lib/api-context'
+import { formatAgo, formatDay, formatTime } from '../../lib/format'
+import { updatesOffWording } from '../../lib/wording'
 
 const SNIPPET_TITLES: Readonly<Record<ClientKind, { readonly title: string; readonly detail: string }>> = {
   'claude-code': { title: 'Add to Claude Code', detail: 'stdio bridge, bundled with the app' },

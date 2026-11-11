@@ -2,7 +2,7 @@
 // reads it, additions highlighted, and Approve gated on an acknowledgement whenever anything is added.
 
 import { type ReactNode, useState } from 'react'
-import type { AuthStepEntry, HashRoute, LimitsInfo, ListDiff, PendingReview } from '../../shared/api'
+import type { AuthStepEntry, HashRoute, LimitsInfo, ListDiff, PendingReview } from '../../../shared/api'
 import {
   ActionFailed,
   Avatar,
@@ -12,9 +12,9 @@ import {
   LoadState,
   SecretBadge,
   SideEffect,
-} from '../components/ui'
-import { useAction, useApi, useLoad, useNow } from '../lib/api-context'
-import { formatTime, hostOf, plural, shortHash } from '../lib/format'
+} from '../../components/ui'
+import { useAction, useApi, useLoad, useNow } from '../../lib/api-context'
+import { formatTime, hostOf, plural, shortHash } from '../../lib/format'
 import {
   additionBadges,
   addsPermissions,
@@ -27,9 +27,9 @@ import {
   secretChanges,
   type Tone,
   toolChanges,
-} from '../lib/permissions'
-import { href, navigate } from '../lib/router'
-import { FIELD_WORDING } from '../lib/wording'
+} from '../../lib/permissions'
+import { href, navigate } from '../../lib/router'
+import { FIELD_WORDING } from '../../lib/wording'
 
 /** Why an added login step matters, by op. The step's detail is the runtime's rendering of the manifest. */
 const STEP_WHY: Readonly<Record<AuthStepEntry['op'], string>> = {
@@ -73,7 +73,7 @@ export function ReviewUpdate({
   readonly exits?: ReviewExits
 }) {
   const reviews = useLoad((api) => api.approvals.pending(), [], ['approvals-changed'])
-  const closeHref = exits?.closed ?? href.adapter(adapterId)
+  const closeHref = exits?.closed ?? href.site(adapterId)
   return (
     <LoadState loaded={reviews} what="the review">
       {(list) => {
@@ -129,14 +129,12 @@ function Review({
     if (exits !== undefined) navigate(exits.approved)
     else
       navigate(
-        grantNext && first !== undefined
-          ? href.grant(review.adapterId, first)
-          : href.adapter(review.adapterId),
+        grantNext && first !== undefined ? href.grant(review.adapterId, first) : href.site(review.adapterId),
       )
   }
   const reject = async () => {
     const ok = await action.run(() => api.approvals.reject(review.adapterId, review.to.hash))
-    if (ok) navigate(exits?.closed ?? href.adapter(review.adapterId))
+    if (ok) navigate(exits?.closed ?? href.site(review.adapterId))
   }
 
   return (
@@ -150,7 +148,7 @@ function Review({
           </div>
         </div>
         <div className="tools">
-          <a className="btn" href={exits?.closed ?? href.adapter(review.adapterId)}>
+          <a className="btn" href={exits?.closed ?? href.site(review.adapterId)}>
             Close
           </a>
         </div>

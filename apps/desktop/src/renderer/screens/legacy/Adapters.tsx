@@ -2,13 +2,13 @@
 // secrets, session and site health, plus the circuit breakers and credential providers.
 
 import { useState } from 'react'
-import type { AdapterSummary, PendingReview, ProviderStatus, RunStats, SiteHealth } from '../../shared/api'
-import { Avatar, Hash, Icon, LoadState, SecretBadge, Segmented, SideEffect, Spark } from '../components/ui'
-import { useLoad, useNow } from '../lib/api-context'
-import { formatAgo, formatCountdown, formatIn, formatTime, plural } from '../lib/format'
-import { additionBadges } from '../lib/permissions'
-import { href } from '../lib/router'
-import { needsUserWording, PROVIDER_WORDING, SESSION_WORDING } from '../lib/wording'
+import type { AdapterSummary, PendingReview, ProviderStatus, RunStats, SiteHealth } from '../../../shared/api'
+import { Avatar, Hash, Icon, LoadState, SecretBadge, Segmented, SideEffect, Spark } from '../../components/ui'
+import { useLoad, useNow } from '../../lib/api-context'
+import { formatAgo, formatCountdown, formatIn, formatTime, plural } from '../../lib/format'
+import { additionBadges } from '../../lib/permissions'
+import { href } from '../../lib/router'
+import { needsUserWording, PROVIDER_WORDING, SESSION_WORDING } from '../../lib/wording'
 
 type Filter = 'all' | 'needs-you'
 
@@ -158,7 +158,7 @@ function AdapterRow({
         <div className="adapter-cell">
           <Avatar adapterId={adapter.id} name={adapter.name} />
           <div>
-            <a className="h3" href={href.adapter(adapter.id)} style={{ color: 'inherit' }}>
+            <a className="h3" href={href.site(adapter.id)} style={{ color: 'inherit' }}>
               {adapter.name}
             </a>
             <div className="xs muted">{adapter.site}</div>
@@ -261,7 +261,7 @@ function AdapterRow({
           <span className="xs tertiary">—</span>
         ) : adapter.settingsNeeded.length > 0 ? (
           <>
-            <a className="pill warn" href={href.adapter(adapter.id)}>
+            <a className="pill warn" href={href.site(adapter.id)}>
               Choose {adapter.settingsNeeded[0]?.toLowerCase()}
             </a>
             <div className="xs muted" style={{ marginTop: 2 }}>

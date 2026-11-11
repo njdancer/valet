@@ -4,12 +4,12 @@
 
 import type { AuditEvent, AuditRecord } from '@valet/core'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
-import type { AuditCategory, AuditPage, ChainStatus } from '../../shared/api'
-import { highlight } from '../components/Preview'
-import { ActionFailed, ClientName, Hash, Icon, OutcomePill } from '../components/ui'
-import { useAction, useApi, useLoad, useNow } from '../lib/api-context'
-import { formatDuration, formatSeconds, formatTime, hostOf, tinyHash } from '../lib/format'
-import { href } from '../lib/router'
+import type { AuditCategory, AuditPage, ChainStatus } from '../../../shared/api'
+import { highlight } from '../../components/Preview'
+import { ActionFailed, ClientName, Hash, Icon, OutcomePill } from '../../components/ui'
+import { useAction, useApi, useLoad, useNow } from '../../lib/api-context'
+import { formatDuration, formatSeconds, formatTime, hostOf, tinyHash } from '../../lib/format'
+import { href } from '../../lib/router'
 import {
   blockedWording,
   errorWording,
@@ -17,7 +17,7 @@ import {
   PROVIDER_WORDING,
   stageWording,
   waitWording,
-} from '../lib/wording'
+} from '../../lib/wording'
 
 const CATEGORIES: readonly { readonly value: AuditCategory | 'all'; readonly label: string }[] = [
   { value: 'all', label: 'All' },
@@ -680,7 +680,7 @@ function Inspector({
       </div>
       <div className="row">
         {adapterId !== null ? (
-          <a className="btn" href={href.adapter(adapterId)}>
+          <a className="btn" href={href.site(adapterId)}>
             Open adapter
           </a>
         ) : null}

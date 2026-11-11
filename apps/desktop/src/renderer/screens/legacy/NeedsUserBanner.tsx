@@ -2,11 +2,11 @@
 // above the auth window's web view, at #/needs-user/<adapterId>: trust signals live here, outside
 // the page, because anything drawn inside the page the site could imitate.
 
-import type { NeedsUserItem } from '../../shared/api'
-import { ActionFailed, Avatar, capText, Icon, LoadState } from '../components/ui'
-import { useAction, useApi, useLoad, useNow } from '../lib/api-context'
-import { formatCountdown, formatTime, hostOf } from '../lib/format'
-import { clientClaim, needsUserWording } from '../lib/wording'
+import type { NeedsUserItem } from '../../../shared/api'
+import { ActionFailed, Avatar, capText, Icon, LoadState } from '../../components/ui'
+import { useAction, useApi, useLoad, useNow } from '../../lib/api-context'
+import { formatCountdown, formatTime, hostOf } from '../../lib/format'
+import { clientClaim, needsUserWording } from '../../lib/wording'
 
 export function NeedsUserBanner({ adapterId }: { readonly adapterId: string }) {
   const attention = useLoad((api) => api.attention.list(), [], ['attention-changed'])

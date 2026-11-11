@@ -1,12 +1,12 @@
 // Every grant across adapters, and the credential providers. Grants are listed by item title and
 // origin; the item reference and the values stay in the main process.
 
-import type { GrantInfo, ProviderStatus } from '../../shared/api'
-import { ActionFailed, Hash, LoadState, SecretBadge } from '../components/ui'
-import { useAction, useApi, useLoad, useNow } from '../lib/api-context'
-import { formatTime, hostOf, plural } from '../lib/format'
-import { href } from '../lib/router'
-import { PROVIDER_WORDING } from '../lib/wording'
+import type { GrantInfo, ProviderStatus } from '../../../shared/api'
+import { ActionFailed, Hash, LoadState, SecretBadge } from '../../components/ui'
+import { useAction, useApi, useLoad, useNow } from '../../lib/api-context'
+import { formatTime, hostOf, plural } from '../../lib/format'
+import { href } from '../../lib/router'
+import { PROVIDER_WORDING } from '../../lib/wording'
 
 export function CredentialsPage() {
   const grants = useLoad((api) => api.grants.list(), [], ['grants-changed'])
@@ -116,7 +116,7 @@ function GrantRow({ grant, adapterName }: { readonly grant: GrantInfo; readonly 
   return (
     <tr>
       <td>
-        <a href={href.adapter(grant.adapterId)}>{adapterName}</a>
+        <a href={href.site(grant.adapterId)}>{adapterName}</a>
       </td>
       <td>{grant.provider === 'messages' ? 'SMS codes' : <SecretBadge name={grant.secret} />}</td>
       <td>

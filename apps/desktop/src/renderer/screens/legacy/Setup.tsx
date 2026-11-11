@@ -14,13 +14,13 @@ import type {
   PendingReview,
   ProviderStatus,
   Settings,
-} from '../../shared/api'
-import { AddToClaudeDesktop } from '../components/AddToClaudeDesktop'
-import { ActionFailed, Avatar, Hash, Icon, SecretBadge, SideEffect } from '../components/ui'
-import { useAction, useApi, useLoad, useNow } from '../lib/api-context'
-import { hostOf, plural } from '../lib/format'
-import { href, navigate, SETUP_STEPS, type SetupStep } from '../lib/router'
-import { FIELD_WORDING, PROVIDER_WORDING } from '../lib/wording'
+} from '../../../shared/api'
+import { AddToClaudeDesktop } from '../../components/AddToClaudeDesktop'
+import { ActionFailed, Avatar, Hash, Icon, SecretBadge, SideEffect } from '../../components/ui'
+import { useAction, useApi, useLoad, useNow } from '../../lib/api-context'
+import { hostOf, plural } from '../../lib/format'
+import { href, navigate, SETUP_STEPS, type SetupStep } from '../../lib/router'
+import { FIELD_WORDING, PROVIDER_WORDING } from '../../lib/wording'
 import { SettingBlock } from './AdapterDetail'
 import { OnePasswordAccountSetting } from './ClientsSettings'
 import { MESSAGES_SECRET } from './GrantSheet'
@@ -183,7 +183,7 @@ function SetupFrame({
   const next = SETUP_STEPS[index + 1]
   const stepDone = done?.[step] ?? false
   const end = async () => {
-    if (await finish.run(() => api.setup.finish())) navigate(href.adapters())
+    if (await finish.run(() => api.setup.finish())) navigate(href.sites())
   }
   return (
     <div className="setup">
