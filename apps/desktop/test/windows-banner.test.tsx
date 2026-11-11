@@ -137,7 +137,7 @@ describe('the login hand-off banner', () => {
     renderBanner(api)
     expect(await screen.findByText('Sign in to Woolworths in this window.')).toBeTruthy()
     expect(screen.getByText(/nothing was filled in for you/)).toBeTruthy()
-    expect(screen.queryByText(/couldn't do it with the secrets you granted/)).toBeNull()
+    expect(screen.queryByText(/couldn’t do it with the login you gave it/)).toBeNull()
     expect(screen.queryByText('Valet filled in')).toBeNull()
     expect(screen.queryByTestId('manifest-note')).toBeNull()
   })

@@ -85,6 +85,22 @@ describe('the control panel shell', () => {
     expect(window.location.hash).toBe('#/sites/woolworths/versions/review')
   })
 
+  it('lists unfinished setup as one item, and counts it in the sidebar as the menu bar does', async () => {
+    const api = createFakeApi({ now: NOW, firstRun: true })
+    renderAt('#/needs-you', api)
+    const list = await screen.findByRole('list', { name: 'Waiting for you' })
+    const setup = await within(list).findByText(/^Finish setup \(\d steps? left\)$/)
+    expect(setup).toBeTruthy()
+    expect(within(list).getByRole('link', { name: 'Continue setup' }).getAttribute('href')).toBe('#/setup')
+    const waiting = (await api.attention.list()).filter((i) => i.kind !== 'missed').length
+    const nav = screen.getByRole('navigation', { name: 'Places' })
+    await waitFor(() =>
+      expect(within(nav).getByRole('link', { name: /^Needs you/ }).textContent).toContain(
+        String(waiting + 1),
+      ),
+    )
+  })
+
   it('opens the item a notification names, and leaves Needs you as the address', async () => {
     const api = renderAt('#/needs-you/cf_a40f3c')
     await waitFor(() => expect(called(api, 'openConfirmation')).toEqual([['cf_a40f3c']]))

@@ -4,6 +4,7 @@
 import type { DotTone } from '@valet/ui'
 import type { AppStatus } from '../../shared/api'
 import { useLoad } from '../lib/api-context'
+import { useSetupLeft } from '../screens/setup/setup-logic'
 
 export interface ShellState {
   readonly ready: boolean
@@ -26,7 +27,11 @@ export function useShellState(): ShellState {
   const status = app.status === 'ready' ? app.data : null
   const paused = status?.paused === true
   const lockedDown = status !== null && isLockedDown(status)
-  const needsYou = attention.status === 'ready' ? attention.data.filter((i) => i.kind !== 'missed').length : 0
+  const setupLeft = useSetupLeft()
+  // Unfinished setup is one more waiting item, as the menu bar counts it.
+  const needsYou =
+    (attention.status === 'ready' ? attention.data.filter((i) => i.kind !== 'missed').length : 0) +
+    (setupLeft === null ? 0 : 1)
   const apps = endpoint.status === 'ready' ? endpoint.data.connectedClients : null
   const listening = endpoint.status === 'ready' ? endpoint.data.listening : null
   let tone: DotTone = 'success'

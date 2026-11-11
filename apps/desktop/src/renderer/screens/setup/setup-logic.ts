@@ -116,3 +116,15 @@ export function useSetupFacts(): Loaded<SetupFacts> {
     },
   }
 }
+
+/**
+ * The "Finish setup (N steps left)" Needs you item: the number of action steps left, or null while
+ * loading or once none are. The menu bar, the Needs you page and the sidebar's count all read it, so
+ * they agree (IA principle 1: badges add up to the one inbox).
+ */
+export function useSetupLeft(): number | null {
+  const facts = useSetupFacts()
+  if (facts.status !== 'ready') return null
+  const left = stepsLeft(stepsDone(facts.data))
+  return left > 0 ? left : null
+}

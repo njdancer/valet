@@ -47,7 +47,7 @@ export function Sidebar({
       aria-label={label}
       data-collapsible={collapsible || undefined}
       className={cn(
-        'group/sidebar material-sidebar relative flex w-56 shrink-0 flex-col gap-4 overflow-y-auto border-r border-line-subtle px-2.5 pb-3',
+        'group/sidebar material-sidebar relative flex w-56 shrink-0 flex-col gap-4 overflow-x-hidden overflow-y-auto border-r border-line-subtle px-2.5 pb-3',
         'pt-[calc(12px+var(--window-inset-top))]',
         collapsible && 'max-[1000px]:w-14 max-[1000px]:px-2',
         className,

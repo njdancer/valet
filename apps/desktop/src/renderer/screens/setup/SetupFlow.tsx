@@ -40,6 +40,7 @@ import {
   WelcomeStep,
 } from './SetupSteps'
 import {
+  ACTION_STEPS,
   resumeStep,
   type SetupFacts,
   type StepsDone,
@@ -222,9 +223,12 @@ function StepPage({
     <Page>
       <PageBody>
         <div className="mx-auto flex w-full max-w-[760px] flex-col gap-5 pt-6">
-          <Text size="sm" tone="muted" weight="medium">
-            Step {index + 1} of {SETUP_STEPS.length}
-          </Text>
+          {/* The welcome isn't a step: "five short steps", as it says, are the action steps. */}
+          {step === 'welcome' ? null : (
+            <Text size="sm" tone="muted" weight="medium">
+              Step {index} of {ACTION_STEPS.length}
+            </Text>
+          )}
           <StepBody step={step} facts={facts} siteName={siteName} />
         </div>
       </PageBody>

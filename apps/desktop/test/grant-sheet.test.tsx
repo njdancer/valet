@@ -186,7 +186,8 @@ describe('the grant sheet', () => {
 
   it('says so when the site’s logins can’t be loaded', async () => {
     const api = createFakeApi({ now: NOW })
-    api.fake.failNext('grants.providers')
+    // The sidebar's Needs you count reads the providers too (for unfinished setup).
+    api.fake.failNext('grants.providers', Number.POSITIVE_INFINITY)
     renderAt(LOGIN, api)
     expect(await screen.findByText(/Couldn’t load this site’s logins/)).toBeTruthy()
   })

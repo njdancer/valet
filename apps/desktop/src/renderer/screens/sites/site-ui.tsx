@@ -8,6 +8,7 @@ import type { AdapterSummary, RunSummary, ValetApi } from '../../../shared/api'
 import { useAction, useApi } from '../../lib/api-context'
 import { href } from '../../lib/router'
 import type { SiteStatus } from '../../lib/site-status'
+import { foldRetries } from '../activity/calls-list'
 
 /** Adapter-written text is cut to this many characters wherever the app shows it. */
 export const MAX_SITE_TEXT = 280
@@ -175,7 +176,11 @@ export function startOfDay(now: number): number {
 /** Calls to one site since midnight. */
 export function callsToday(runs: readonly RunSummary[], adapterId: string, now: number): RunSummary[] {
   const since = startOfDay(now)
-  return runs.filter((r) => r.adapterId === adapterId && Date.parse(r.startedAt) >= since)
+  // As the Calls list shows them: a "call again" answer folded into the call that followed it, so
+  // the counts here match the list they link to (its retries aren't failures the person must read).
+  return foldRetries(runs)
+    .map((l) => l.run)
+    .filter((r) => r.adapterId === adapterId && Date.parse(r.startedAt) >= since)
 }
 
 /** Who called, most calls first: the reported client name and how many calls. */

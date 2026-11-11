@@ -53,12 +53,20 @@ export function Sidebar({ route }: { readonly route: Route }) {
 
   return (
     <SidebarFrame label="Places" collapsible>
-      <div className="flex h-7 items-center gap-2 px-2">
+      {/* Collapsed (under 1000 px) the brand is the mark alone, centred like the icons below it. */}
+      <div className="flex h-7 items-center gap-2 px-2 group-data-[collapsible]/sidebar:max-[1000px]:justify-center group-data-[collapsible]/sidebar:max-[1000px]:px-0">
         <ValetMark size={20} />
-        <span className="text-md font-semibold">Valet</span>
+        <span className="text-md font-semibold group-data-[collapsible]/sidebar:max-[1000px]:sr-only">
+          Valet
+        </span>
         {shell.demo ? (
           <Tooltip content="A local fake shop and a test account, never a real one">
-            <Badge tone="warning" size="sm" tabIndex={0}>
+            <Badge
+              tone="warning"
+              size="sm"
+              tabIndex={0}
+              className="group-data-[collapsible]/sidebar:max-[1000px]:hidden"
+            >
               Demo
             </Badge>
           </Tooltip>
