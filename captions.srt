@@ -1,0 +1,143 @@
+1
+00:00:00,001 --> 00:00:04,007
+Valet demo: A fresh macOS machine. Everything in this run is fake: a made-up shop, a test account and a scripted chat.
+
+2
+00:00:04,007 --> 00:00:10,543
+1 · Install: Open the downloaded disk image, as a new user would
+
+3
+00:00:10,543 --> 00:00:21,061
+1 · Install: Copy Valet Demo into Applications (the script copies it; a person drags the icon)
+
+4
+00:00:21,061 --> 00:00:24,067
+1 · Install: Installed. This test build is unsigned and was never downloaded, so Gatekeeper does not ask about it
+
+5
+00:00:24,067 --> 00:00:30,137
+2 · Set up: First launch. (Started with a debugging port that only this demo build accepts, so the script can drive it)
+
+6
+00:00:30,137 --> 00:00:34,287
+2 · Set up: Valet opens its first-run setup
+
+7
+00:00:34,287 --> 00:00:39,354
+2 · Set up: Where logins come from: your own 1Password. Name the account, as its sidebar shows it
+
+8
+00:00:39,354 --> 00:00:43,426
+2 · Set up: Nothing is read yet: Valet asks 1Password only when you pick an item
+
+9
+00:00:43,426 --> 00:00:50,608
+2 · Set up: Review the shop adapter: the sites it may reach, and what each tool can do
+
+10
+00:00:50,608 --> 00:00:51,622
+2 · Set up: Approve it. Until now its tools were hidden from every chat client
+
+11
+00:00:51,622 --> 00:00:55,633
+2 · Set up: Let the adapter use the login, typed only into the shop’s sign-in page
+
+12
+00:00:55,633 --> 00:00:58,883
+2 · Set up: To list your items, Valet asks 1Password, which asks you. (A made-up stand-in, Keyhold, plays 1Password here)
+
+13
+00:00:58,883 --> 00:01:01,515
+2 · Set up: It is locked, so unlock it first (Touch ID or the account password)
+
+14
+00:01:01,515 --> 00:01:07,101
+2 · Set up: Then allow Valet. The approval lasts until it locks, or ten idle minutes
+
+15
+00:01:07,101 --> 00:01:14,406
+2 · Set up: Pick the item. Valet copies it into your Keychain once, so later logins need no prompt
+
+16
+00:01:14,406 --> 00:01:22,765
+2 · Set up: The shop texts a code at sign-in, so let Valet read that one sender’s codes (here from the fake’s outbox, not Messages)
+
+17
+00:01:22,765 --> 00:01:33,750
+2 · Set up: Prices and stock follow a store, so pick the pick-up store the tools shop at
+
+18
+00:01:33,750 --> 00:01:45,611
+2 · Set up: Connect a chat app. Valet gives it a config that starts its own bridge, with no token in it
+
+19
+00:01:45,611 --> 00:01:54,697
+3 · Chat: Now a chat app. This one is a scripted stand-in for Claude that speaks real MCP
+
+20
+00:01:54,697 --> 00:02:01,428
+3 · Chat: Paste the config Valet copied
+
+21
+00:02:01,428 --> 00:02:12,889
+3 · Chat: Connected through Valet’s bridge: 7 tools
+
+22
+00:02:12,889 --> 00:03:13,275
+3 · Chat: The agent searches the shop through Valet. Searching needs no login
+
+23
+00:03:13,275 --> 00:03:29,681
+3 · Chat: Valet spaces the shop’s requests 10 to 15 seconds apart, so this is unhurried on purpose
+
+24
+00:03:29,681 --> 00:04:29,728
+Valet answers at once that it is logging in, and the agent calls again when told
+
+25
+00:04:29,728 --> 00:05:09,785
+Valet: an earlier call still holds the shop's turn. Call again in 10 s.
+
+26
+00:05:09,785 --> 00:06:54,346
+Valet: an earlier call still holds the shop's turn. Call again in 10 s.
+
+27
+00:06:54,346 --> 00:07:31,208
+3 · Chat: The agent reads the trolley back
+
+28
+00:07:31,208 --> 00:07:39,967
+4 · Valet: Back in Valet: every call, and the login, is in its audited activity log
+
+29
+00:07:39,967 --> 00:07:47,121
+5 · Checkout: Now the shopper opens the shop’s website to check out
+
+30
+00:07:47,121 --> 00:07:54,670
+5 · Checkout: Sign in on the shop’s own login page (a stand-in for its Auth0 page), with the test account
+
+31
+00:07:54,670 --> 00:08:03,387
+5 · Checkout: The shop texts a code. A test phone page shows it
+
+32
+00:08:03,387 --> 00:08:09,607
+5 · Checkout: The trolley holds what the agent added through Valet
+
+33
+00:08:09,607 --> 00:08:15,139
+5 · Checkout: Checkout: pick up today. The person places the order; Valet’s MVP never does
+
+34
+00:08:15,139 --> 00:08:20,223
+5 · Checkout: Order 100000001 placed
+
+35
+00:08:20,223 --> 00:08:42,791
+6 · Done: Back in the chat, the agent can see the trolley is empty now
+
+36
+00:08:42,791 --> 00:08:46,554
+Valet demo: End of the demo

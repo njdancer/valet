@@ -1,0 +1,218 @@
+[
+  {
+    "start": 0.001,
+    "step": "Valet demo",
+    "text": "A fresh macOS machine. Everything in this run is fake: a made-up shop, a test account and a scripted chat.",
+    "end": 4.007
+  },
+  {
+    "start": 4.007,
+    "step": "1 · Install",
+    "text": "Open the downloaded disk image, as a new user would",
+    "end": 10.543
+  },
+  {
+    "start": 10.543,
+    "step": "1 · Install",
+    "text": "Copy Valet Demo into Applications (the script copies it; a person drags the icon)",
+    "end": 21.061
+  },
+  {
+    "start": 21.061,
+    "step": "1 · Install",
+    "text": "Installed. This test build is unsigned and was never downloaded, so Gatekeeper does not ask about it",
+    "end": 24.067
+  },
+  {
+    "start": 24.067,
+    "step": "2 · Set up",
+    "text": "First launch. (Started with a debugging port that only this demo build accepts, so the script can drive it)",
+    "end": 30.137
+  },
+  {
+    "start": 30.137,
+    "step": "2 · Set up",
+    "text": "Valet opens its first-run setup",
+    "end": 34.287
+  },
+  {
+    "start": 34.287,
+    "step": "2 · Set up",
+    "text": "Where logins come from: your own 1Password. Name the account, as its sidebar shows it",
+    "end": 39.354
+  },
+  {
+    "start": 39.354,
+    "step": "2 · Set up",
+    "text": "Nothing is read yet: Valet asks 1Password only when you pick an item",
+    "end": 43.426
+  },
+  {
+    "start": 43.426,
+    "step": "2 · Set up",
+    "text": "Review the shop adapter: the sites it may reach, and what each tool can do",
+    "end": 50.608
+  },
+  {
+    "start": 50.608,
+    "step": "2 · Set up",
+    "text": "Approve it. Until now its tools were hidden from every chat client",
+    "end": 51.622
+  },
+  {
+    "start": 51.622,
+    "step": "2 · Set up",
+    "text": "Let the adapter use the login, typed only into the shop’s sign-in page",
+    "end": 55.633
+  },
+  {
+    "start": 55.633,
+    "step": "2 · Set up",
+    "text": "To list your items, Valet asks 1Password, which asks you. (A made-up stand-in, Keyhold, plays 1Password here)",
+    "end": 58.883
+  },
+  {
+    "start": 58.883,
+    "step": "2 · Set up",
+    "text": "It is locked, so unlock it first (Touch ID or the account password)",
+    "end": 61.515
+  },
+  {
+    "start": 61.515,
+    "step": "2 · Set up",
+    "text": "Then allow Valet. The approval lasts until it locks, or ten idle minutes",
+    "end": 67.101
+  },
+  {
+    "start": 67.101,
+    "step": "2 · Set up",
+    "text": "Pick the item. Valet copies it into your Keychain once, so later logins need no prompt",
+    "end": 74.406
+  },
+  {
+    "start": 74.406,
+    "step": "2 · Set up",
+    "text": "The shop texts a code at sign-in, so let Valet read that one sender’s codes (here from the fake’s outbox, not Messages)",
+    "end": 82.765
+  },
+  {
+    "start": 82.765,
+    "step": "2 · Set up",
+    "text": "Prices and stock follow a store, so pick the pick-up store the tools shop at",
+    "end": 93.75
+  },
+  {
+    "start": 93.75,
+    "step": "2 · Set up",
+    "text": "Connect a chat app. Valet gives it a config that starts its own bridge, with no token in it",
+    "end": 105.611
+  },
+  {
+    "start": 105.611,
+    "step": "3 · Chat",
+    "text": "Now a chat app. This one is a scripted stand-in for Claude that speaks real MCP",
+    "end": 114.697
+  },
+  {
+    "start": 114.697,
+    "step": "3 · Chat",
+    "text": "Paste the config Valet copied",
+    "end": 121.428
+  },
+  {
+    "start": 121.428,
+    "step": "3 · Chat",
+    "text": "Connected through Valet’s bridge: 7 tools",
+    "end": 132.889
+  },
+  {
+    "start": 132.889,
+    "step": "3 · Chat",
+    "text": "The agent searches the shop through Valet. Searching needs no login",
+    "end": 193.275
+  },
+  {
+    "start": 193.275,
+    "step": "3 · Chat",
+    "text": "Valet spaces the shop’s requests 10 to 15 seconds apart, so this is unhurried on purpose",
+    "end": 209.681
+  },
+  {
+    "start": 209.681,
+    "step": "",
+    "text": "Valet answers at once that it is logging in, and the agent calls again when told",
+    "end": 269.728
+  },
+  {
+    "start": 269.728,
+    "step": "",
+    "text": "Valet: an earlier call still holds the shop's turn. Call again in 10 s.",
+    "end": 309.785
+  },
+  {
+    "start": 309.785,
+    "step": "",
+    "text": "Valet: an earlier call still holds the shop's turn. Call again in 10 s.",
+    "end": 414.346
+  },
+  {
+    "start": 414.346,
+    "step": "3 · Chat",
+    "text": "The agent reads the trolley back",
+    "end": 451.208
+  },
+  {
+    "start": 451.208,
+    "step": "4 · Valet",
+    "text": "Back in Valet: every call, and the login, is in its audited activity log",
+    "end": 459.967
+  },
+  {
+    "start": 459.967,
+    "step": "5 · Checkout",
+    "text": "Now the shopper opens the shop’s website to check out",
+    "end": 467.121
+  },
+  {
+    "start": 467.121,
+    "step": "5 · Checkout",
+    "text": "Sign in on the shop’s own login page (a stand-in for its Auth0 page), with the test account",
+    "end": 474.67
+  },
+  {
+    "start": 474.67,
+    "step": "5 · Checkout",
+    "text": "The shop texts a code. A test phone page shows it",
+    "end": 483.387
+  },
+  {
+    "start": 483.387,
+    "step": "5 · Checkout",
+    "text": "The trolley holds what the agent added through Valet",
+    "end": 489.607
+  },
+  {
+    "start": 489.607,
+    "step": "5 · Checkout",
+    "text": "Checkout: pick up today. The person places the order; Valet’s MVP never does",
+    "end": 495.139
+  },
+  {
+    "start": 495.139,
+    "step": "5 · Checkout",
+    "text": "Order 100000001 placed",
+    "end": 500.223
+  },
+  {
+    "start": 500.223,
+    "step": "6 · Done",
+    "text": "Back in the chat, the agent can see the trolley is empty now",
+    "end": 522.791
+  },
+  {
+    "start": 522.791,
+    "step": "Valet demo",
+    "text": "End of the demo",
+    "end": 526.554
+  }
+]
