@@ -1,0 +1,7 @@
+[
+  {
+    "at": 119.212,
+    "severity": "major",
+    "what": "yahoo_finance_get_quote returned an error: The tool failed at stage tool-run: site-changed."
+  }
+]

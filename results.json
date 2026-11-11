@@ -1,0 +1,450 @@
+[
+  {
+    "name": "yahoo_finance_search_symbols",
+    "args": {
+      "query": "commonwealth bank",
+      "limit": 5
+    },
+    "ok": true,
+    "structured": {
+      "matches": [
+        {
+          "symbol": "CBA.AX",
+          "name": "Commonwealth Bank of Australia",
+          "type": "EQUITY",
+          "exchange": "Australian",
+          "sector": "Financial Services",
+          "industry": "Banks—Diversified"
+        },
+        {
+          "symbol": "CMWAY",
+          "name": "Commonwealth Bank of Australia",
+          "type": "EQUITY",
+          "exchange": "OTC Markets",
+          "sector": "Financial Services",
+          "industry": "Banks—Diversified"
+        },
+        {
+          "symbol": "CWW.HA",
+          "name": "Commonwealth Bank of Australia",
+          "type": "EQUITY",
+          "exchange": "Hanover",
+          "sector": "Financial Services",
+          "industry": "Banks—Diversified"
+        },
+        {
+          "symbol": "CBAPK.AX",
+          "name": "Commonwealth Bank of Australia",
+          "type": "EQUITY",
+          "exchange": "Australian",
+          "sector": "Financial Services",
+          "industry": "Banks—Diversified"
+        },
+        {
+          "symbol": "CBAPI.AX",
+          "name": "Commonwealth Bank of Australia",
+          "type": "EQUITY",
+          "exchange": "Australian",
+          "sector": "Financial Services",
+          "industry": "Banks—Diversified"
+        }
+      ]
+    }
+  },
+  {
+    "name": "yahoo_finance_get_quote",
+    "args": {
+      "symbol": "BHP.AX"
+    },
+    "ok": true,
+    "structured": {
+      "symbol": "BHP.AX",
+      "name": "BHP Group Limited",
+      "type": "EQUITY",
+      "exchange": "ASX",
+      "currency": "AUD",
+      "marketState": "POSTPOST",
+      "price": 60.39,
+      "change": 0.52,
+      "changePercent": 0.8685,
+      "previousClose": 59.87,
+      "open": 59.15,
+      "dayLow": 58.78,
+      "dayHigh": 60.48,
+      "fiftyTwoWeekLow": 40.175,
+      "fiftyTwoWeekHigh": 68.77,
+      "volume": 5169158,
+      "averageVolume": 7982706,
+      "marketCap": 306959581184,
+      "trailingPE": 21.189474,
+      "forwardPE": 16.4554,
+      "dividendYield": 4.04,
+      "eps": 2.85,
+      "beta": 0.886,
+      "analystTargetPrice": 60.986275,
+      "analystRecommendation": "hold",
+      "analystCount": 17,
+      "sector": "Basic Materials",
+      "industry": "Other Industrial Metals & Mining",
+      "time": "2026-11-11T05:10:08.000Z",
+      "delayedMinutes": 20,
+      "preMarket": null,
+      "postMarket": null,
+      "url": "https://finance.yahoo.com/quote/BHP.AX/"
+    }
+  },
+  {
+    "name": "yahoo_finance_get_quote",
+    "args": {
+      "symbol": "CBA.AX"
+    },
+    "ok": true,
+    "structured": {
+      "symbol": "CBA.AX",
+      "name": "Commonwealth Bank of Australia",
+      "type": "EQUITY",
+      "exchange": "ASX",
+      "currency": "AUD",
+      "marketState": "POSTPOST",
+      "price": 166.94,
+      "change": -2.05,
+      "changePercent": -1.2131,
+      "previousClose": 168.99,
+      "open": 170,
+      "dayLow": 165.63,
+      "dayHigh": 171,
+      "fiftyTwoWeekLow": 146.98,
+      "fiftyTwoWeekHigh": 185.59,
+      "volume": 2445933,
+      "averageVolume": 2152735,
+      "marketCap": 279144333312,
+      "trailingPE": 25.604296,
+      "forwardPE": 24.655912,
+      "dividendYield": 2.99,
+      "eps": 6.52,
+      "beta": 0.785,
+      "analystTargetPrice": 125.47942,
+      "analystRecommendation": "sell",
+      "analystCount": 14,
+      "sector": "Financial Services",
+      "industry": "Banks - Diversified",
+      "time": "2026-11-11T05:20:59.000Z",
+      "delayedMinutes": 20,
+      "preMarket": null,
+      "postMarket": null,
+      "url": "https://finance.yahoo.com/quote/CBA.AX/"
+    }
+  },
+  {
+    "name": "yahoo_finance_get_quote",
+    "args": {
+      "symbol": "^GSPC"
+    },
+    "ok": true,
+    "structured": {
+      "symbol": "^GSPC",
+      "name": "S&P 500",
+      "type": "INDEX",
+      "exchange": "SNP",
+      "currency": "USD",
+      "marketState": "PRE",
+      "price": 7520.93,
+      "change": -29.0098,
+      "changePercent": -0.3842,
+      "previousClose": 7549.94,
+      "open": 7513.09,
+      "dayLow": 7470.43,
+      "dayHigh": 7543.92,
+      "fiftyTwoWeekLow": 6316.91,
+      "fiftyTwoWeekHigh": 7844.52,
+      "volume": 3018981000,
+      "averageVolume": 5184505312,
+      "marketCap": null,
+      "trailingPE": null,
+      "forwardPE": null,
+      "dividendYield": null,
+      "eps": null,
+      "beta": null,
+      "analystTargetPrice": null,
+      "analystRecommendation": null,
+      "analystCount": null,
+      "sector": null,
+      "industry": null,
+      "time": "2026-11-10T22:00:31.000Z",
+      "delayedMinutes": 0,
+      "preMarket": null,
+      "postMarket": null,
+      "url": "https://finance.yahoo.com/quote/%5EGSPC/"
+    }
+  },
+  {
+    "name": "yahoo_finance_get_quote",
+    "args": {
+      "symbol": "AUDUSD=X"
+    },
+    "ok": false,
+    "text": "The tool failed at stage tool-run: site-changed."
+  },
+  {
+    "name": "yahoo_finance_get_price_history",
+    "args": {
+      "symbol": "^GSPC",
+      "range": "1mo",
+      "interval": "1d"
+    },
+    "ok": true,
+    "structured": {
+      "symbol": "^GSPC",
+      "currency": "USD",
+      "exchange": "SNP",
+      "range": "1mo",
+      "interval": "1d",
+      "truncated": false,
+      "points": [
+        {
+          "time": "2026-10-12T13:30:00.000Z",
+          "open": 7813.0400390625,
+          "high": 7821.669921875,
+          "low": 7796.93994140625,
+          "close": 7807.240234375,
+          "adjustedClose": 7807.240234375,
+          "volume": 4148500000
+        },
+        {
+          "time": "2026-10-13T13:30:00.000Z",
+          "open": 7795.27001953125,
+          "high": 7814.14990234375,
+          "low": 7786.10986328125,
+          "close": 7805.4501953125,
+          "adjustedClose": 7805.4501953125,
+          "volume": 4869340000
+        },
+        {
+          "time": "2026-10-14T13:30:00.000Z",
+          "open": 7774.18017578125,
+          "high": 7789.14990234375,
+          "low": 7693.31005859375,
+          "close": 7718.93994140625,
+          "adjustedClose": 7718.93994140625,
+          "volume": 5955580000
+        },
+        {
+          "time": "2026-10-15T13:30:00.000Z",
+          "open": 7687.31005859375,
+          "high": 7754.14990234375,
+          "low": 7669.66015625,
+          "close": 7744.06005859375,
+          "adjustedClose": 7744.06005859375,
+          "volume": 6055670000
+        },
+        {
+          "time": "2026-10-16T13:30:00.000Z",
+          "open": 7745.31982421875,
+          "high": 7756.83984375,
+          "low": 7631.77001953125,
+          "close": 7659.43994140625,
+          "adjustedClose": 7659.43994140625,
+          "volume": 5482060000
+        },
+        {
+          "time": "2026-10-19T13:30:00.000Z",
+          "open": 7702.77001953125,
+          "high": 7731.18017578125,
+          "low": 7684.7900390625,
+          "close": 7690.72998046875,
+          "adjustedClose": 7690.72998046875,
+          "volume": 4587260000
+        },
+        {
+          "time": "2026-10-20T13:30:00.000Z",
+          "open": 7679.009765625,
+          "high": 7748.419921875,
+          "low": 7668.02978515625,
+          "close": 7712.56982421875,
+          "adjustedClose": 7712.56982421875,
+          "volume": 5004770000
+        },
+        {
+          "time": "2026-10-21T13:30:00.000Z",
+          "open": 7736.43017578125,
+          "high": 7770.39990234375,
+          "low": 7709.33984375,
+          "close": 7757.169921875,
+          "adjustedClose": 7757.169921875,
+          "volume": 4921480000
+        },
+        {
+          "time": "2026-10-22T13:30:00.000Z",
+          "open": 7694.6201171875,
+          "high": 7702.93994140625,
+          "low": 7637.35986328125,
+          "close": 7663.43017578125,
+          "adjustedClose": 7663.43017578125,
+          "volume": 5972620000
+        },
+        {
+          "time": "2026-10-23T13:30:00.000Z",
+          "open": 7637.18017578125,
+          "high": 7660.14990234375,
+          "low": 7612.06982421875,
+          "close": 7623.68017578125,
+          "adjustedClose": 7623.68017578125,
+          "volume": 5062330000
+        },
+        {
+          "time": "2026-10-26T13:30:00.000Z",
+          "open": 7639.7001953125,
+          "high": 7702.1298828125,
+          "low": 7639.7001953125,
+          "close": 7676.77001953125,
+          "adjustedClose": 7676.77001953125,
+          "volume": 5838070000
+        },
+        {
+          "time": "2026-10-27T13:30:00.000Z",
+          "open": 7699.47021484375,
+          "high": 7736.240234375,
+          "low": 7677.16015625,
+          "close": 7722.60009765625,
+          "adjustedClose": 7722.60009765625,
+          "volume": 5160120000
+        },
+        {
+          "time": "2026-10-28T13:30:00.000Z",
+          "open": 7735.56005859375,
+          "high": 7758.43017578125,
+          "low": 7718.3701171875,
+          "close": 7743.97998046875,
+          "adjustedClose": 7743.97998046875,
+          "volume": 5466960000
+        },
+        {
+          "time": "2026-10-29T13:30:00.000Z",
+          "open": 7699.60986328125,
+          "high": 7732.2099609375,
+          "low": 7690.93994140625,
+          "close": 7720.39013671875,
+          "adjustedClose": 7720.39013671875,
+          "volume": 5827600000
+        },
+        {
+          "time": "2026-10-30T13:30:00.000Z",
+          "open": 7631.06982421875,
+          "high": 7637.47998046875,
+          "low": 7527.56005859375,
+          "close": 7580.06982421875,
+          "adjustedClose": 7580.06982421875,
+          "volume": 6149170000
+        },
+        {
+          "time": "2026-11-02T14:30:00.000Z",
+          "open": 7610.830078125,
+          "high": 7662.22998046875,
+          "low": 7539.3798828125,
+          "close": 7541.39990234375,
+          "adjustedClose": 7541.39990234375,
+          "volume": 5712790000
+        },
+        {
+          "time": "2026-11-03T14:30:00.000Z",
+          "open": 7552.919921875,
+          "high": 7594.60986328125,
+          "low": 7545.39013671875,
+          "close": 7568.919921875,
+          "adjustedClose": 7568.919921875,
+          "volume": 5481240000
+        },
+        {
+          "time": "2026-11-04T14:30:00.000Z",
+          "open": 7635.81005859375,
+          "high": 7715.56982421875,
+          "low": 7635.81005859375,
+          "close": 7688.6201171875,
+          "adjustedClose": 7688.6201171875,
+          "volume": 7390830000
+        },
+        {
+          "time": "2026-11-05T14:30:00.000Z",
+          "open": 7678.72021484375,
+          "high": 7681.2900390625,
+          "low": 7350.35009765625,
+          "close": 7353.72998046875,
+          "adjustedClose": 7353.72998046875,
+          "volume": 7654840000
+        },
+        {
+          "time": "2026-11-06T14:30:00.000Z",
+          "open": 7377.64990234375,
+          "high": 7444.2001953125,
+          "low": 7369.5498046875,
+          "close": 7376.85986328125,
+          "adjustedClose": 7376.85986328125,
+          "volume": 5701900000
+        },
+        {
+          "time": "2026-11-09T14:30:00.000Z",
+          "open": 7422.240234375,
+          "high": 7577.39013671875,
+          "low": 7422.240234375,
+          "close": 7549.93994140625,
+          "adjustedClose": 7549.93994140625,
+          "volume": 5819360000
+        },
+        {
+          "time": "2026-11-10T14:30:00.000Z",
+          "open": 7513.08984375,
+          "high": 7543.919921875,
+          "low": 7470.43017578125,
+          "close": 7520.93017578125,
+          "adjustedClose": 7520.93017578125,
+          "volume": 5056350000
+        }
+      ]
+    }
+  },
+  {
+    "name": "wikipedia_search_articles",
+    "args": {
+      "query": "BHP",
+      "limit": 3
+    },
+    "ok": true,
+    "structured": {
+      "results": [
+        {
+          "title": "BHP",
+          "description": "Australian multinational mining and metals company",
+          "excerpt": "BHP Group Limited, founded as the Broken Hill Proprietary Company, is an Australian multinational mining and metals corporation. BHP was established in",
+          "url": "https://en.wikipedia.org/wiki/BHP"
+        },
+        {
+          "title": "BHP (disambiguation)",
+          "description": "Topics referred to by the same term",
+          "excerpt": "BHP, bhp or similar may refer to: BHP, large Australian multinational mining, metals and petroleum company. BHP Nevada Railroad, a former railroad owned",
+          "url": "https://en.wikipedia.org/wiki/BHP_(disambiguation)"
+        },
+        {
+          "title": "List of Volkswagen Group petrol engines",
+          "description": null,
+          "excerpt": "conversions to imperial units such as the horsepower (hp) or brake horsepower (bhp). (Conversions: one PS = 735.5 watts (W); ˜ 0.98632 hp (SAE)). In case of",
+          "url": "https://en.wikipedia.org/wiki/List_of_Volkswagen_Group_petrol_engines"
+        }
+      ]
+    }
+  },
+  {
+    "name": "wikipedia_get_summary",
+    "args": {
+      "title": "BHP"
+    },
+    "ok": true,
+    "structured": {
+      "title": "BHP",
+      "description": "Australian multinational mining and metals company",
+      "summary": "BHP Group Limited, founded as the Broken Hill Proprietary Company, is an Australian multinational mining and metals corporation. BHP was established in August 1885 in Broken Hill and is headquartered in Melbourne, Victoria. The company specialises in mining and selling iron ore, copper and coal.",
+      "type": "standard",
+      "lastEdited": "2026-11-07T18:18:00Z",
+      "url": "https://en.wikipedia.org/wiki/BHP"
+    }
+  }
+]
