@@ -6251,7 +6251,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
       sc.style.transform = `scale(${s})`; st.style.height = `${h * s + 28}px`
     }
   }
-  it(); addEventListener('resize', fit)
+  fit(); addEventListener('resize', fit)
   if (location.hash) { const t = document.getElementById(location.hash.slice(1)); if (t) t.scrollIntoView() }
 })()
 </script>
