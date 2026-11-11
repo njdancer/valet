@@ -1,0 +1,51 @@
+
+=== https://en.wikipedia.org/wiki/Special:UserLogin
+status 302 type text/html; charset=UTF-8 server mw-web.codfw.main-9945d4ccf-v7p8k cf-ray false location https://auth.wikimedia.org/metawiki/wiki/Special:CentralAutoLogin/checkLoggedIn?useformat=desktop&type=redirect&returnUrlToken=6472f95404629100e4488837d77b1570&wikiid=enwiki&usesul3=1&useformat=desktop
+cookies CentralAuthAnonTopLevel,WMF-Last-Access,WMF-Last-Access-Global,GeoIP,NetworkProbeLimit,WMF-Uniq  length 0  title undefined
+
+=== https://en.wikipedia.org/w/api.php?action=query&meta=userinfo&format=json
+status 200 type application/json; charset=utf-8 server mw-api-ext.codfw.main-58754879c4-c7zzb cf-ray false location null
+cookies WMF-Last-Access,WMF-Last-Access-Global,GeoIP,NetworkProbeLimit,WMF-Uniq  length 84  title undefined
+  json {"batchcomplete":"","query":{"userinfo":{"id":0,"name":"13.105.117.251","anon":""}}}
+
+=== https://auth.wikimedia.org/enwiki/wiki/Special:UserLogin
+status 200 type text/html; charset=UTF-8 server mw-web.codfw.main-9945d4ccf-5grjb cf-ray false location null
+cookies authSession,WMF-Last-Access,GeoIP,NetworkProbeLimit,WMF-Uniq  length 38875  title Log in - Wikipedia
+  form <form action="/enwiki/w/index.php" id="searchform" class="cdx-search-input cdx-search-input--has-end-button">
+    <input class="cdx-text-input__input mw-searchInput" autocomplete="off" type="search" name="search" placeholder="Search Wikipedia" aria-label="Search Wikipedia" autocapitalize="none" spellcheck="false" title="Search Wikip
+    <input type="hidden" name="title" value="Special:Search">
+    <button class="cdx-button cdx-search-input__end-button">
+  form <form class="mw-htmlform mw-htmlform-codex" action="/enwiki/wiki/Special:UserLogin" method="post" name="userlogin">
+    <input type="hidden" value="Special:UserLogin" name="title">
+    <input id="wpName1" name="wpName" size="20" placeholder="Enter your username" class="loginText mw-userlogin-username cdx-text-input__input" tabindex="1" autofocus="" autocomplete="username webauthn">
+    <input id="wpPassword1" name="wpPassword" size="20" placeholder="Enter your password" class="loginPassword mw-userlogin-password cdx-text-input__input" tabindex="2" autocomplete="current-password" type="password">
+    <input id="wpRemember" tabindex="3" class="mw-userlogin-rememberme cdx-checkbox__input" type="checkbox" value="1" name="wpRemember">
+    <input type="hidden" value="1" name="wmevents_userlogin_noscript">
+    <button class="mw-htmlform-submit cdx-button cdx-button--size-large cdx-button--weight-primary cdx-button--action-progressive" id="wpLoginAttempt" type="submit" name="wploginattempt" value="Log in" tabindex="7">
+    <input id="wpEditToken" type="hidden" value="+\" name="wpEditToken">
+    <input name="authAction" type="hidden" value="login">
+    <input name="force" type="hidden">
+    <input name="wpLoginToken" type="hidden" value="…">
+    <input id="mw-input-auth_info" name="auth_info" type="hidden" value="…">
+    <input id="mw-input-credential" name="credential" type="hidden">
+  form <form action="/enwiki/w/index.php" id="vector-sticky-search-form" class="cdx-search-input cdx-search-input--has-end-button">
+    <input class="cdx-text-input__input mw-searchInput" autocomplete="off" type="search" name="search" placeholder="Search Wikipedia">
+    <input type="hidden" name="title" value="Special:Search">
+    <button class="cdx-button cdx-search-input__end-button">
+  NOTE: challenge/captcha words present
+
+=== https://finance.yahoo.com/quote/AAPL/
+ERROR TypeError: fetch failed
+
+=== https://www.coles.com.au/
+status 200 type text/html; charset=utf-8 server null cf-ray false location null
+cookies visid_incap_2800108,incap_ses_2214_2800108  length 375431  title Coles Plus Logo
+  NOTE: challenge/captcha words present
+
+=== https://www.allbirds.com/cart.js
+status 200 type text/javascript; charset=utf-8 server cloudflare cf-ray true location null
+cookies cart_currency  length 303  title undefined
+
+=== https://www.gymshark.com/cart.js
+status 404 type text/html server AmazonS3 cf-ray false location null
+cookies   length 16065  title Gymshark
