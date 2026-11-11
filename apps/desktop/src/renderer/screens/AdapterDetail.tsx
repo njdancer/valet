@@ -353,7 +353,7 @@ function SettingsCard({ adapter, now }: { readonly adapter: AdapterDetail; reado
  * One setting: what is chosen, and a search for choices. The search is a real, paced request to the
  * site through the adapter, so it runs only when the person asks, never as they type.
  */
-function SettingBlock({
+export function SettingBlock({
   adapter,
   setting,
   now,

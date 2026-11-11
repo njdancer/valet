@@ -12,7 +12,8 @@
 // `build --mode demo` only, and __VALET_DEV_SERVER__ (trusting the dev server's URL) for `dev`
 // only. The fake imports its fixtures as JSON modules, so they are inlined in the demo chunk and no
 // folder is copied beside it. __VALET_SMOKE_BUILD__ (the package smoke's own argv and self-check, core/smoke.ts) is
-// true for `build --mode smoke` only. A plain `build`, which packaging uses, has none of them. Only
+// true for `build --mode smoke` only. __VALET_SHOWCASE_BUILD__ (a packaged app that is always in demo
+// mode, core/showcase.ts) is true for `build --mode showcase` only, which is a demo build too. A plain `build`, which packaging uses, has none of them. Only
 // a plain build compiles in an update feed, and only when its environment names both
 // VALET_UPDATE_URL and VALET_FEED_PUBLIC_KEY_FILE (__VALET_FEED_BASE_URL__,
 // __VALET_FEED_PUBLIC_KEY__); with VALET_RELEASE=1 it must (core/feed-defines.ts).
@@ -31,13 +32,15 @@ import { contentSecurityPolicy } from './vite.config'
 const here = import.meta.dirname
 
 export default defineConfig(({ command, mode }) => {
-  const plainBuild = command === 'build' && mode !== 'demo' && mode !== 'smoke'
+  const showcase = command === 'build' && mode === 'showcase'
+  const plainBuild = command === 'build' && mode !== 'demo' && mode !== 'smoke' && !showcase
   const feed = feedDefines(process.env, plainBuild)
   return {
     main: {
       plugins: [toolScripts()],
       define: {
-        __VALET_DEMO_BUILD__: JSON.stringify(command === 'serve' || mode === 'demo'),
+        __VALET_DEMO_BUILD__: JSON.stringify(command === 'serve' || mode === 'demo' || showcase),
+        __VALET_SHOWCASE_BUILD__: JSON.stringify(showcase),
         __VALET_DEV_SERVER__: JSON.stringify(command === 'serve'),
         __VALET_SMOKE_BUILD__: JSON.stringify(command === 'build' && mode === 'smoke'),
         __VALET_FEED_BASE_URL__: JSON.stringify(feed.url),

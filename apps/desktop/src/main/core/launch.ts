@@ -28,12 +28,18 @@ export interface LaunchContext {
   readonly packaged: boolean
   /** Whether the bundle carries demo mode at all (electron-vite dev, or `build --mode demo`). */
   readonly demoBuild: boolean
+  /**
+   * A showcase build (`build --mode showcase`, core/showcase.ts): demo mode always, packaged or
+   * not, whatever argv and the environment say. It is a demo build, and never a release.
+   */
+  readonly showcaseBuild?: boolean
 }
 
 /**
  * Demo mode and the userData override are development switches: a packaged app, or a build made
  * without demo mode, ignores both, so nothing in argv or the environment can point a real install
- * at a fake site, a fake certificate or another data folder.
+ * at a fake site, a fake certificate or another data folder. A showcase build is the exception
+ * the other way: it is demo mode always, so nothing can point it at the real site.
  */
 export function launchMode(
   argv: readonly string[],
@@ -41,10 +47,11 @@ export function launchMode(
   context: LaunchContext,
 ): LaunchMode {
   const override = context.packaged ? undefined : env['VALET_USER_DATA']
+  const showcase = context.showcaseBuild === true && context.demoBuild
   const demoAllowed = context.demoBuild && !context.packaged
   const e2e = env['VALET_E2E'] === '1'
   return {
-    demo: demoAllowed && (env['VALET_DEMO'] === '1' || argv.includes('--demo')),
+    demo: showcase || (demoAllowed && (env['VALET_DEMO'] === '1' || argv.includes('--demo'))),
     e2e,
     // A relative path would land wherever the app was started from; it is ignored.
     userData: override !== undefined && isAbsolute(override) ? resolve(override) : null,

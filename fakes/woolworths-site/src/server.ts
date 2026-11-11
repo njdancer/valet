@@ -8,6 +8,8 @@ import { AccountStore, type FakeAccount, SESSION_COOKIE, type Visitor } from './
 import { accessDeniedHtml, newSensorValue, SENSOR_COOKIE } from './akamai'
 import { type AuthHostile, FakeAuth0, type SentMessage } from './auth-server'
 import { beaconScript, type PageBeacon, validBeacon } from './beacon'
+import { rebrandJson } from './brand'
+import { catalogue, findProduct, roundMoney } from './catalogue'
 import { applyShapeDrift, SHAPE_DRIFTS, type ShapeDrift } from './drift'
 import {
   closeServer,
@@ -24,13 +26,18 @@ import {
 } from './http'
 import { LoginBroker } from './logins'
 import {
+  checkoutPage,
   homePage,
   loginFailedPage,
   myAccountPage,
   notFoundPage,
   notLoggedInPage,
+  orderPage,
   type PageContext,
+  phonePage,
+  type ShopLine,
   searchPage,
+  trolleyPage,
 } from './pages'
 import { type RateLimit, RateLimiter } from './rate-limit'
 import { routePath } from './route-path'
@@ -44,7 +51,14 @@ import {
   searchResponse,
 } from './search'
 import { fulfilmentResponse, storeChosenBy, storesForPostcode } from './stores'
-import { applyTrolleyUpdate, type TrolleyLine, trolleyLines, trolleyResponse } from './trolley'
+import {
+  applyTrolleyUpdate,
+  MINIMUM_SPEND,
+  type Trolley,
+  type TrolleyLine,
+  trolleyLines,
+  trolleyResponse,
+} from './trolley'
 
 export interface FakeWoolworthsOptions {
   readonly accounts?: readonly FakeAccount[]
@@ -84,6 +98,17 @@ export interface FakeWoolworthsOptions {
    * www's callback redirect to the login's `path` unchecked, e.g. https://evil.test/.
    */
   readonly hostile?: Hostile
+  /**
+   * Swaps the captured house brand ("Woolworths …" products and messages) in API answers for this
+   * one, so a demo shows only the fake's made-up brand (brand.ts). Off by default: the adapter's
+   * tests and fixtures keep the captured names.
+   */
+  readonly houseBrand?: string
+  /**
+   * Demo only: `GET /_demo/phone` on www shows the texts the fake "sent" (the MFA codes), as a test
+   * phone, so a person can sign in on the shop's own pages during a recorded demo. Off by default.
+   */
+  readonly demoPhone?: boolean
 }
 
 /** See FakeWoolworthsOptions.unknownSensor. */
@@ -198,6 +223,8 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
   let shapeDrift: ShapeDrift | null = null
   let deniedCount = 0
   let nextOrderId = 100_000_001
+  /** Placed orders by id: who placed them and what was in the trolley. */
+  const orders = new Map<number, { readonly username: string | null; readonly lines: readonly ShopLine[] }>()
 
   const send = (exchange: Exchange, status: number, type: string, body: string): Sent => {
     const headers: Record<string, string | string[]> = { 'content-type': type, 'cache-control': 'no-store' }
@@ -251,7 +278,20 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
   const page = (exchange: Exchange): PageContext => {
     const sensorValue = newSensorValue()
     issuedSensors.add(sensorValue)
-    return { sensorValue, shopper: store.firstNameOf(exchange.visitor), pageScript }
+    const lines = shopLines(store.trolleyOf(exchange.visitor))
+    const count = lines.reduce((n, line) => n + line.quantity, 0)
+    const total = roundMoney(
+      lines.reduce(
+        (sum, line) => sum + (line.product.IsAvailable ? line.product.Price * line.quantity : 0),
+        0,
+      ),
+    )
+    return {
+      sensorValue,
+      shopper: store.firstNameOf(exchange.visitor),
+      pageScript,
+      trolley: { count, total },
+    }
   }
 
   const switchVisitor = (exchange: Exchange, username: string | null): void => {
@@ -304,8 +344,14 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
   }
 
   /** A product-bearing API response, drifted while setShapeDrift() is on. */
-  const productJson = (exchange: Exchange, status: number, body: unknown): Sent =>
-    json(exchange, status, shapeDrift === null ? body : applyShapeDrift(body, shapeDrift))
+  const productJson = (exchange: Exchange, status: number, body: unknown): Sent => {
+    const shaped = shapeDrift === null ? body : applyShapeDrift(body, shapeDrift)
+    return json(
+      exchange,
+      status,
+      options.houseBrand === undefined ? shaped : rebrandJson(shaped, options.houseBrand),
+    )
+  }
 
   const api = (exchange: Exchange): Sent => {
     const { method, path } = exchange
@@ -349,6 +395,7 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
       // Exists only so tests can prove the runtime never lets a request reach it.
       const orderId = nextOrderId
       nextOrderId += 1
+      orders.set(orderId, { username: exchange.visitor.username, lines: shopLines(trolley) })
       trolley.clear()
       return json(exchange, 200, { OrderId: orderId })
     }
@@ -358,7 +405,28 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
   const site = (exchange: Exchange): Sent => {
     const { method, path } = exchange
     const loggedIn = exchange.visitor.username !== null
-    if (method === 'GET' && path === '/') return html(exchange, 200, homePage(page(exchange)))
+    if (method === 'GET' && path === '/') {
+      const specials = catalogue.filter((product) => product.IsOnSpecial && product.IsAvailable).slice(0, 8)
+      return html(exchange, 200, homePage(page(exchange), specials))
+    }
+    if (method === 'GET' && path === '/shop/trolley') {
+      const lines = shopLines(store.trolleyOf(exchange.visitor))
+      return html(exchange, 200, trolleyPage(page(exchange), lines, MINIMUM_SPEND))
+    }
+    if (method === 'GET' && path === '/shop/checkout') {
+      if (!loggedIn)
+        return html(exchange, 200, notLoggedInPage(page(exchange), loginHref(origin, '/shop/checkout')))
+      return html(exchange, 200, checkoutPage(page(exchange), shopLines(store.trolleyOf(exchange.visitor))))
+    }
+    const placed = /^\/shop\/order\/(\d{1,12})$/.exec(path)
+    if (method === 'GET' && placed !== null) {
+      const order = orders.get(Number(placed[1]))
+      if (order === undefined || order.username !== exchange.visitor.username)
+        return html(exchange, 404, notFoundPage(page(exchange)))
+      return html(exchange, 200, orderPage(page(exchange), Number(placed[1]), order.lines))
+    }
+    if (method === 'GET' && path === '/_demo/phone' && options.demoPhone === true)
+      return html(exchange, 200, phonePage(auth0.outbox.filter((m) => m.channel === 'sms')))
     if (method === 'GET' && path === '/shop/securelogin') {
       if (loggedIn) return redirect(exchange, '/shop/myaccount')
       return html(exchange, 200, notLoggedInPage(page(exchange), loginHref(origin, '/shop/myaccount')))
@@ -382,7 +450,12 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
         sort: 'TraderRelevance',
         specialsOnly: false,
       }).slice(0, MAX_PAGE_SIZE)
-      return html(exchange, 200, searchPage(page(exchange), term, products))
+      const trolley = store.trolleyOf(exchange.visitor)
+      return html(
+        exchange,
+        200,
+        searchPage(page(exchange), term, products, (stockcode) => trolley.get(stockcode) ?? 0),
+      )
     }
     return html(exchange, 404, notFoundPage(page(exchange)))
   }
@@ -553,6 +626,16 @@ export async function startFakeWoolworths(options: FakeWoolworthsOptions = {}): 
       shapeDrift = drift
     },
   }
+}
+
+/** A trolley's lines with their products, in the order they were added. */
+function shopLines(trolley: Trolley): ShopLine[] {
+  const lines: ShopLine[] = []
+  for (const [stockcode, quantity] of trolley) {
+    const product = findProduct(stockcode)
+    if (product !== null) lines.push({ product, quantity })
+  }
+  return lines
 }
 
 /** The sensor cookie's lifetime, as the sensor script sets it: a year. */

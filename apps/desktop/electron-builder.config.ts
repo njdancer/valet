@@ -18,6 +18,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { signAsync } from '@electron/osx-sign'
 import type { Configuration } from 'electron-builder'
+import { SHOWCASE_BUILD_MARKER } from './src/main/core/showcase'
 import { SMOKE_BUILD_MARKER } from './src/main/core/smoke'
 import { validateFeedUrl } from './src/main/updater/feed-url'
 
@@ -26,6 +27,9 @@ export const RELEASE_APP_ID = 'me.dncr.valet'
 export const DEV_APP_ID = `${RELEASE_APP_ID}.dev`
 export const RELEASE_PRODUCT_NAME = 'Valet'
 export const DEV_PRODUCT_NAME = 'Valet Dev'
+/** The showcase package (VALET_SHOWCASE=1, scripts/package-showcase.mjs): demo mode only, never a release. */
+export const SHOWCASE_APP_ID = `${RELEASE_APP_ID}.demo`
+export const SHOWCASE_PRODUCT_NAME = 'Valet Demo'
 
 /**
  * Electron fuses, flipped in the Electron binary before signing. With these off, no local process can
@@ -107,6 +111,7 @@ export const DEV_REQUIREMENT_TEMPLATE = 'designated-requirement.dev.txt'
 export interface BuildEnv {
   readonly VALET_RELEASE?: string
   readonly VALET_RELEASE_DRY_RUN?: string
+  readonly VALET_SHOWCASE?: string
   readonly VALET_TEAM_ID?: string
   readonly VALET_UPDATE_URL?: string
   readonly CSC_NAME?: string
@@ -170,6 +175,8 @@ export function checkReleaseBundle(bundle: string | null, feedUrl: string): void
     throw new BuildConfigError('out/main has no feed public key: rebuild it with VALET_FEED_PUBLIC_KEY_FILE')
   if (bundle.includes(SMOKE_BUILD_MARKER))
     throw new BuildConfigError('out/main is a smoke build: rebuild it with a plain `electron-vite build`')
+  if (bundle.includes(SHOWCASE_BUILD_MARKER))
+    throw new BuildConfigError('out/main is a showcase build: rebuild it with a plain `electron-vite build`')
 }
 
 /**
@@ -275,10 +282,24 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
   if (dryRun && !release) {
     throw new BuildConfigError('VALET_RELEASE_DRY_RUN is a dry run of a release: set VALET_RELEASE=1 too')
   }
-  const appId = release ? RELEASE_APP_ID : DEV_APP_ID
-  const productName = release ? RELEASE_PRODUCT_NAME : DEV_PRODUCT_NAME
+  // A showcase package (scripts/package-showcase.mjs): an unsigned development build of a showcase
+  // bundle, with its own identity so it never shares data or Keychain items with the others.
+  const showcaseFlag = env.VALET_SHOWCASE
+  if (showcaseFlag !== undefined && showcaseFlag !== '' && showcaseFlag !== '0' && showcaseFlag !== '1') {
+    throw new BuildConfigError('VALET_SHOWCASE must be 1 for a showcase package, or unset')
+  }
+  const showcase = showcaseFlag === '1'
+  if (showcase && release)
+    throw new BuildConfigError('a showcase package is never a release: unset VALET_RELEASE')
+  if (showcase && !(deps.readMainBundle() ?? '').includes(SHOWCASE_BUILD_MARKER)) {
+    throw new BuildConfigError(
+      'a showcase package needs a showcase bundle: run `electron-vite build --mode showcase`',
+    )
+  }
+  const appId = release ? RELEASE_APP_ID : showcase ? SHOWCASE_APP_ID : DEV_APP_ID
+  const productName = release ? RELEASE_PRODUCT_NAME : showcase ? SHOWCASE_PRODUCT_NAME : DEV_PRODUCT_NAME
   // File and package names: no capitals or spaces.
-  const slug = release ? 'valet' : 'valet-dev'
+  const slug = release ? 'valet' : showcase ? 'valet-demo' : 'valet-dev'
   const identityGiven = set(env, 'CSC_NAME') || set(env, 'CSC_LINK')
   const canNotarise = notarisationCredentials(env)
   const teamId = env.VALET_TEAM_ID
@@ -347,6 +368,8 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
       appId,
       teamId: teamId as string,
     })
+  } else if (showcase && identityGiven) {
+    throw new BuildConfigError('a showcase package is never signed: unset CSC_NAME and CSC_LINK')
   } else if (identityGiven) {
     // For a non-MAS development build electron-builder searches both "Mac Developer" and "Developer
     // ID Application" certificates for a CSC_NAME (MacTargetHelper.getCertificateTypes), so a name
@@ -392,12 +415,18 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
     // differ there too.
     extraMetadata: { name: slug, productName },
     // Into Contents/MacOS, signed with the app. A development build without it shows no snippets.
-    extraFiles: deps.bridgeBuilt()
-      ? [
-          ...NATIVE_EXECUTABLES.map((name) => ({ from: `${SWIFT_BUILD_DIR}/${name}`, to: `MacOS/${name}` })),
-          { from: launchAgentSource(appId), to: LAUNCH_AGENT_PLIST },
-        ]
-      : [],
+    // A showcase carries the bridge only: demo mode reads codes from the fake, never Messages.
+    extraFiles: !deps.bridgeBuilt()
+      ? []
+      : showcase
+        ? [{ from: `${SWIFT_BUILD_DIR}/${BRIDGE_EXECUTABLE}`, to: `MacOS/${BRIDGE_EXECUTABLE}` }]
+        : [
+            ...NATIVE_EXECUTABLES.map((name) => ({
+              from: `${SWIFT_BUILD_DIR}/${name}`,
+              to: `MacOS/${name}`,
+            })),
+            { from: launchAgentSource(appId), to: LAUNCH_AGENT_PLIST },
+          ],
     asar: true,
     npmRebuild: false,
     forceCodeSigning: release,
@@ -416,7 +445,13 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
       // native binaries are named here, signed with the app's identity and options. It signs
       // Contents/MacOS/Valet before them, though, and codesign refuses that while a sibling is
       // unsigned, so scripts/release.mjs signs them once beforehand. Relative to the .app.
-      ...(deps.bridgeBuilt() ? { binaries: NATIVE_EXECUTABLES.map((name) => `Contents/MacOS/${name}`) } : {}),
+      ...(deps.bridgeBuilt()
+        ? {
+            binaries: (showcase ? [BRIDGE_EXECUTABLE] : NATIVE_EXECUTABLES).map(
+              (name) => `Contents/MacOS/${name}`,
+            ),
+          }
+        : {}),
       // A dry run signs ad hoc: electron-builder's "-" identity, which uses no key and no keychain.
       ...(dryRun ? { identity: '-' } : signs ? {} : { identity: null }),
       type: release ? 'distribution' : 'development',

@@ -27,6 +27,7 @@ import {
   outboxOtpReader,
   savedDemoPorts,
 } from '../core/demo'
+import { SHOWCASE_HOUSE_BRAND } from '../core/showcase'
 
 export const DEMO_HOSTS = ['www.woolworths.test', 'auth.woolworths.test'] as const
 
@@ -45,12 +46,21 @@ export interface DemoSite {
  * origins, and with them its hash, its approval and its grants, survive a restart. Ports taken by
  * something else: new ones, and the adapter waits for review again.
  */
-export async function startDemoSite(userData: string): Promise<DemoSite> {
+export async function startDemoSite(
+  userData: string,
+  { showcase = false }: { readonly showcase?: boolean } = {},
+): Promise<DemoSite> {
   // Needs the openssl CLI; the certificate lives as long as this launch.
   const tls = await generateTestCertificate([...DEMO_HOSTS])
   const portsFile = join(userData, DEMO_PORTS_FILE)
   const saved = savedDemoPorts(await readFile(portsFile, 'utf8').catch(() => null))
-  const options = { tls, hostname: DEMO_HOSTS[0], accounts: [DEMO_ACCOUNT] }
+  // A showcase shows only the fake's made-up brand, and its test phone for signing in on the shop.
+  const options = {
+    tls,
+    hostname: DEMO_HOSTS[0],
+    accounts: [DEMO_ACCOUNT],
+    ...(showcase ? { houseBrand: SHOWCASE_HOUSE_BRAND, demoPhone: true } : {}),
+  }
   const site =
     saved === null
       ? await startFakeWoolworths(options)

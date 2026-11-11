@@ -16,11 +16,13 @@ import type {
   Settings,
 } from '../../shared/api'
 import { ActionFailed, Avatar, Hash, Icon, SecretBadge, SideEffect } from '../components/ui'
-import { useAction, useApi, useLoad } from '../lib/api-context'
+import { useAction, useApi, useLoad, useNow } from '../lib/api-context'
 import { hostOf, plural } from '../lib/format'
 import { href, navigate, SETUP_STEPS, type SetupStep } from '../lib/router'
 import { FIELD_WORDING, PROVIDER_WORDING } from '../lib/wording'
+import { SettingBlock } from './AdapterDetail'
 import { OnePasswordAccountSetting } from './ClientsSettings'
+import { MESSAGES_SECRET } from './GrantSheet'
 
 /** The adapter setup approves and grants: the bundled one. */
 export const SETUP_ADAPTER = 'woolworths'
@@ -68,7 +70,14 @@ export function stepsDone(facts: SetupFacts): Readonly<Record<SetupStep, boolean
   const adapter = facts.adapter
   const onepassword = vaultProviders(facts.providers).some((p) => p.available)
   const approve = adapter !== null && adapter.approval === 'approved'
-  const grant = approve && adapter.secretRequests.every((s) => s.grant !== null)
+  // Every secret, and the one-time codes when the adapter reads any: a login that needs a code it
+  // may not read stops at the code page, so setup isn't done without that grant either. Nor without
+  // a required setting (the store, D69): until it is chosen every tool ends needsUser.
+  const grant =
+    approve &&
+    adapter.secretRequests.every((s) => s.grant !== null) &&
+    (adapter.messages.length === 0 || adapter.messages.some((m) => m.grant !== null)) &&
+    adapter.settings.every((s) => !s.required || s.chosen !== null)
   const clients = facts.clients.some((c) => c.revokedAt === null)
   // A provider can be ready before the person has done anything (set up outside the app, or demo
   // mode's test provider), so it alone doesn't skip the welcome.
@@ -518,14 +527,19 @@ function AdapterCard({
 }
 
 function Grant({ adapter }: { readonly adapter: AdapterDetail | null }) {
+  const now = useNow(30_000)
   if (adapter === null) return <NoAdapter />
   const approved = adapter.approval === 'approved'
+  const required = adapter.settings.filter((s) => s.required)
   return (
     <section aria-labelledby="setup-title">
       <h1 id="setup-title">Let {adapter.name} use your login</h1>
       <p className="lede">
         Pick the 1Password item {adapter.name} may use. Valet types it only on the sign-in origins listed
         here, and only for this exact version: an update needs a new grant.
+        {required.length === 0
+          ? null
+          : ` Then choose the ${required.map((r) => r.title.toLowerCase()).join(' and ')} its tools use.`}
       </p>
       {!approved ? (
         <div className="callout info">
@@ -571,9 +585,49 @@ function Grant({ adapter }: { readonly adapter: AdapterDetail | null }) {
               </a>
             </div>
           ))}
-          {adapter.secretRequests.length === 0 ? (
+          {adapter.messages.length === 0 ? null : (
+            <div className="setup-bind">
+              <Icon name="key" className="secret-text" />
+              <span className="badge secret">SMS code</span>
+              <span>
+                {adapter.messages.some((m) => m.grant !== null) ? (
+                  <>
+                    Reads one-time codes from{' '}
+                    {adapter.messages.find((m) => m.grant !== null)?.grant?.itemTitle} in Messages, typed only
+                    where the login asks for them
+                  </>
+                ) : (
+                  <>
+                    Not granted. The login asks for a one-time code sent by{' '}
+                    {adapter.messages.map((m) => (
+                      <span key={m.sender} className="mono">
+                        {m.sender}
+                      </span>
+                    ))}
+                  </>
+                )}
+              </span>
+              <a
+                className={`btn${adapter.messages.some((m) => m.grant !== null) ? '' : ' primary'}`}
+                style={{ marginLeft: 'auto' }}
+                href={href.setupGrant(MESSAGES_SECRET)}
+              >
+                {adapter.messages.some((m) => m.grant !== null) ? 'Change…' : 'Allow codes…'}
+              </a>
+            </div>
+          )}
+          {adapter.secretRequests.length === 0 && adapter.messages.length === 0 ? (
             <div className="empty">{adapter.name} doesn’t ask for any secrets.</div>
           ) : null}
+        </div>
+      )}
+      {!approved || required.length === 0 ? null : (
+        <div className="card" data-testid="setup-settings">
+          <div className="card-body stack gap-3">
+            {required.map((s) => (
+              <SettingBlock key={s.name} adapter={adapter} setting={s} now={now} />
+            ))}
+          </div>
         </div>
       )}
     </section>

@@ -4,6 +4,7 @@
 // must not pick by mistake (the passkey and Everyday buttons, resend, another method), are modelled.
 
 import type { MfaChannel } from './accounts'
+import { BASE_CSS, LOGO_SVG, STORE_NAME } from './brand'
 import { escapeHtml } from './pages'
 
 /** An error Auth0 shows under a field, with the machine-readable code it puts on the element. */
@@ -26,15 +27,31 @@ export const ERRORS = {
   missingUsername: { code: 'invalid-username', message: 'Please enter an email address' },
 } as const satisfies Record<string, FieldError>
 
+const AUTH_CSS = `
+body{display:flex;justify-content:center;padding:60px 16px}
+._widget{width:400px;background:#fff;border:1px solid var(--line);border-radius:18px;padding:32px;box-shadow:0 10px 30px rgba(0,0,0,.06)}
+.auth-brand{display:flex;align-items:center;gap:10px;font-weight:800;font-size:18px;color:var(--leaf);margin-bottom:14px}
+h1{font-size:24px;margin:6px 0 16px}
+label{display:block;font-weight:600;font-size:14px;margin:12px 0 6px}
+.input{width:100%;padding:12px 14px;border:1.5px solid var(--line);border-radius:10px;font:inherit}
+form{margin:0 0 10px}
+button{width:100%;margin-top:12px;padding:12px;border-radius:999px;border:1.5px solid var(--leaf);background:#fff;color:var(--leaf);font:600 15px inherit;font-family:inherit;cursor:pointer}
+button[data-action-button-primary]{background:var(--leaf);color:#fff}
+.ulp-input-error-message{display:block;color:var(--sale);font-size:13px;margin-top:6px}
+.ulp-checkbox{display:flex;gap:8px;align-items:center;margin-top:12px}.ulp-checkbox label{margin:0;font-weight:400}
+`
+
 function document(title: string, main: string): string {
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <title>${escapeHtml(title)}</title>
+  <style>${BASE_CSS}${AUTH_CSS}</style>
 </head>
 <body class="_widget-auto-layout">
   <main class="_widget">
+    <div class="auth-brand">${LOGO_SVG}<span>${STORE_NAME}</span></div>
 ${main}
   </main>
 </body>
@@ -77,7 +94,7 @@ export interface IdentifierPageOptions {
 export function identifierPage({ state, error, captcha, captchaFrameSrc }: IdentifierPageOptions): string {
   const action = `/u/login/identifier?state=${encodeURIComponent(state)}`
   return document(
-    'Log in | Woolworths',
+    `Log in | ${STORE_NAME}`,
     `    <h1>Log in</h1>
     <form method="POST" class="_form-login-id" data-form-primary="true" action="${escapeHtml(action)}">
         ${stateInput(state)}
@@ -118,7 +135,7 @@ export function passwordPage({
   passwordType = 'password',
 }: PasswordPageOptions): string {
   return document(
-    'Enter your password | Woolworths',
+    `Enter your password | ${STORE_NAME}`,
     `    <h1>Enter your password</h1>
     <form method="POST" class="_form-login-password" data-form-primary="true" action="${escapeHtml(action)}">
         ${stateInput(state)}
@@ -155,7 +172,7 @@ export function mfaPage({ channel, state, error, codeType = 'text' }: MfaPageOpt
         <button type="submit" name="action" value="resend-code">Resend code</button>
     </form>`
   return document(
-    'Verify your identity | Woolworths',
+    `Verify your identity | ${STORE_NAME}`,
     `    <h1>Verify your identity</h1>
     <p>${MFA_PROMPTS[channel]}</p>
     <form method="POST" class="_form-mfa-${channel}-challenge" data-form-primary="true" action="${action}">
@@ -195,7 +212,7 @@ export function captchaFramePage(): string {
 /** Auth0's generic error page, for a bad state, a callback URL it doesn't know, and the like. */
 export function errorPage(code: string, message: string): string {
   return document(
-    'Error | Woolworths',
+    `Error | ${STORE_NAME}`,
     `    <h1>Something went wrong</h1>
     <p id="error-description" data-error-code="${escapeHtml(code)}">${escapeHtml(message)}</p>`,
   )

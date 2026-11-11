@@ -34,6 +34,7 @@ import {
   signWithRequirement,
 } from '../../electron-builder.config'
 import { RELEASE_APP_ID as SCRIPT_RELEASE_APP_ID } from '../../scripts/make-feed.mjs'
+import { SHOWCASE_BUILD_MARKER } from '../../src/main/core/showcase'
 import { SMOKE_BUILD_MARKER } from '../../src/main/core/smoke'
 
 /** An Apple Development identity's SHA-1, as `security find-identity` prints it. */
@@ -654,5 +655,39 @@ describe('docs/release-and-updates.md', () => {
     for (const [fuse, value] of Object.entries(ELECTRON_FUSES)) {
       expect(DOC).toMatch(new RegExp(`${fuse}: ${value}\\b`))
     }
+  })
+})
+
+describe('a showcase package (VALET_SHOWCASE=1)', () => {
+  const showcaseDeps = { ...DEPS, readMainBundle: () => `bundle ${SHOWCASE_BUILD_MARKER}` }
+  const showcase = (env: BuildEnv = {}): any =>
+    createBuilderConfig({ VALET_SHOWCASE: '1', CSC_IDENTITY_AUTO_DISCOVERY: 'false', ...env }, showcaseDeps)
+
+  it('is Valet Demo, with its own bundle ID, unsigned, carrying the bridge and no helpers', () => {
+    const built = showcase()
+    expect(built.appId).toBe('me.dncr.valet.demo')
+    expect(built.productName).toBe('Valet Demo')
+    expect(built.extraMetadata).toEqual({ name: 'valet-demo', productName: 'Valet Demo' })
+    expect(built.mac.identity).toBeNull()
+    expect(built.mac.notarize).toBe(false)
+    expect(built.extraFiles).toEqual([
+      { from: expect.stringMatching(/valet-bridge$/), to: 'MacOS/valet-bridge' },
+    ])
+    expect(built.mac.binaries).toEqual(['Contents/MacOS/valet-bridge'])
+  })
+
+  it('needs a showcase bundle, and is never a release or signed', () => {
+    expect(() => createBuilderConfig({ VALET_SHOWCASE: '1' }, DEPS)).toThrow(/showcase bundle/)
+    expect(() => createBuilderConfig({ ...RELEASE_ENV, VALET_SHOWCASE: '1' }, showcaseDeps)).toThrow(
+      /never a release/,
+    )
+    expect(() => showcase({ CSC_NAME: DEV_IDENTITY })).toThrow(/never signed/)
+    expect(() => createBuilderConfig({ VALET_SHOWCASE: 'yes' }, showcaseDeps)).toThrow(/VALET_SHOWCASE/)
+    expect(createBuilderConfig({ VALET_SHOWCASE: '0' }, DEPS).appId).toBe('me.dncr.valet.dev')
+  })
+
+  it('is refused as a release bundle', () => {
+    const bundle = { ...DEPS, readMainBundle: () => `${RELEASE_BUNDLE}${SHOWCASE_BUILD_MARKER}` }
+    expect(() => createBuilderConfig(RELEASE_ENV, bundle)).toThrow(/showcase build/)
   })
 })
