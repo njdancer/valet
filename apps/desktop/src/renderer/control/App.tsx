@@ -75,7 +75,15 @@ function Shell({ route }: { readonly route: Route }) {
  * opening shouldn't announce twice.
  */
 function useHeadingFocus(route: Route, main: React.RefObject<HTMLDivElement | null>): void {
-  const key = canonicalHref(route)?.split('?')[0] ?? route.page
+  // A sheet opens over its page and returns to it: opening or closing one isn't a navigation, and
+  // the sheet puts focus back on what opened it.
+  const base: Route =
+    route.page === 'grant' || route.page === 'setting'
+      ? { page: 'site', adapterId: route.adapterId, tab: 'overview' }
+      : route.page === 'approve-connection'
+        ? { page: 'needs-you', item: null }
+        : route
+  const key = canonicalHref(base)?.split('?')[0] ?? route.page
   const first = useRef(true)
   // biome-ignore lint/correctness/useExhaustiveDependencies: runs on each new address
   useEffect(() => {
