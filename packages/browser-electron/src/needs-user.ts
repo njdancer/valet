@@ -12,6 +12,8 @@ const WORDING: Readonly<Record<NeedsUserReason, (site: string) => string>> = {
   'terms-update': (site) => `${site} wants you to accept updated terms`,
   'site-changed': (site) => `${site}’s login page has changed: finish logging in yourself`,
   'login-attempt-pending': (site) => `A login to ${site} may not have finished: check before trying again`,
+  // Never a hand-off window's reason: the person answers it in the adapter's settings, not here.
+  'setting-required': (site) => `${site} needs a setting chosen in Valet`,
   other: (site) => `${site} needs you to finish logging in`,
 }
 

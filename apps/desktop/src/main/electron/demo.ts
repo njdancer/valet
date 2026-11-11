@@ -101,6 +101,8 @@ export interface DemoE2eHook {
   wrongPassword(on: boolean): void
   /** How many times the password form has been posted to Auth0 since launch (AC10). */
   passwordPosts(): number
+  /** The pick-up store (by address id) of each session logged in to the demo account; null: none. */
+  pickupStores(): readonly (number | null)[]
 }
 
 export function exposeToE2e(demo: DemoSite): void {
@@ -117,6 +119,7 @@ export function exposeToE2e(demo: DemoSite): void {
     passwordPosts: () =>
       demo.site.authRequests.filter((r) => r.method === 'POST' && r.path.startsWith('/u/login/password'))
         .length,
+    pickupStores: () => [...demo.site.pickupAddresses(DEMO_ACCOUNT.username)],
   }
   Object.defineProperty(globalThis, '__valetE2e', { value: Object.freeze(hook) })
 }

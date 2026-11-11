@@ -6,6 +6,7 @@ import {
   messagesSourcesIn,
   parseManifest,
   secretRefsIn,
+  settingToolNames,
   toolHints,
   touchesDeniedSegment,
 } from '@valet/core'
@@ -54,7 +55,7 @@ function stepsIn(steps: readonly unknown[]): any[] {
 describe('the real manifest', () => {
   it('is the default export and points at the live site', () => {
     expect(realManifest.home).toBe('https://www.woolworths.com.au/')
-    expect(realManifest.version).toBe('0.2.0')
+    expect(realManifest.version).toBe('0.3.0')
     expect(manifestSchema.parse(realManifest)).toEqual(realManifest)
   })
 
@@ -334,9 +335,10 @@ describe('the request surface', () => {
     }
   })
 
-  it('only lets the trolley update write', () => {
+  it('only lets the trolley update and the choice of store write', () => {
     expect(requests.filter((request) => request.purpose === 'write')).toEqual([
       { method: 'POST', path: '/api/v3/ui/trolley/update', purpose: 'write', refreshes: '/apis/ui/Trolley' },
+      { method: 'POST', path: '/api/v3/ui/fulfilment', purpose: 'write' },
     ])
   })
 
@@ -345,6 +347,7 @@ describe('the request surface', () => {
       { method: 'POST', path: '/apis/ui/Search/products', purpose: 'read', cacheSeconds: 900 },
       { method: 'GET', path: '/apis/ui/product/detail/:stockcode', purpose: 'read', cacheSeconds: 900 },
       { method: 'GET', path: '/apis/ui/Trolley', purpose: 'read', cacheSeconds: 120 },
+      { method: 'GET', path: '/api/v3/ui/fulfilment/stores', purpose: 'read' },
     ])
   })
 
@@ -429,6 +432,8 @@ describe('the tool declarations', () => {
       add_to_cart: 'write',
       set_cart_quantity: 'write',
       remove_from_cart: 'write',
+      find_stores: 'read',
+      apply_store: 'write',
     })
   })
 
@@ -440,7 +445,34 @@ describe('the tool declarations', () => {
       add_to_cart: { destructive: true, idempotent: false },
       set_cart_quantity: { destructive: true, idempotent: true },
       remove_from_cart: { destructive: true, idempotent: true },
+      apply_store: { destructive: true, idempotent: true },
     })
+  })
+})
+
+describe('the store setting (D69)', () => {
+  it('is found by postcode and applied by the adapter', () => {
+    expect(createManifest({ origin: FAKE_ORIGIN }).settings).toEqual({
+      store: {
+        title: 'Store',
+        description: expect.stringContaining('pick-up store'),
+        required: true,
+        choices: { tool: 'find_stores', queryLabel: 'Postcode' },
+        apply: { tool: 'apply_store' },
+      },
+    })
+  })
+
+  it('is optional on the real site until its requests have been seen live, and required on a fake', () => {
+    expect(realManifest.settings['store']?.required).toBe(false)
+    expect(createManifest({ storeRequired: true }).settings['store']?.required).toBe(true)
+    expect(createManifest({ origin: FAKE_ORIGIN, storeRequired: false }).settings['store']?.required).toBe(
+      false,
+    )
+  })
+
+  it('keeps its two tools away from MCP clients', () => {
+    expect([...settingToolNames(realManifest)]).toEqual(['find_stores', 'apply_store'])
   })
 })
 

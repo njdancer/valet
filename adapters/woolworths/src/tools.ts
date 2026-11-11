@@ -5,6 +5,7 @@
 import type { ToolImplementation } from '@valet/core'
 import { addToCart, getCart, removeFromCart, setCartQuantity } from './cart'
 import { getProduct, searchProducts } from './products'
+import { applyStore, findStores } from './stores'
 
 export const tools: Readonly<Record<string, ToolImplementation>> = {
   search_products: searchProducts,
@@ -13,4 +14,7 @@ export const tools: Readonly<Record<string, ToolImplementation>> = {
   add_to_cart: addToCart,
   set_cart_quantity: setCartQuantity,
   remove_from_cart: removeFromCart,
+  // The store setting's own tools, which only the runtime runs (stores.ts).
+  find_stores: findStores,
+  apply_store: applyStore,
 }

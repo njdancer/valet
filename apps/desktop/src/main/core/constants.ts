@@ -46,8 +46,13 @@ export const HANDOFF_WINDOW_MS = 15 * 60_000
  */
 export const LOGIN_WAIT_MS = 30_000
 
-/** The auth flow's own budget, including waiting for a one-time code. */
-export const AUTH_FLOW_TIMEOUT_MS = 90_000
+/**
+ * The auth flow's own budget, including waiting for a one-time code. The Woolworths login alone
+ * takes close to 90 s against the fake under the site's request pacing (D28: four a minute), and
+ * longer when a request or two went out in the minute before it, so 90 s cut a good login short.
+ * The caller isn't kept for it: a call that has to log in is answered after a few seconds (D50).
+ */
+export const AUTH_FLOW_TIMEOUT_MS = 180_000
 export const TYPING_DELAY_MS = 60
 
 /** Runs whose input and output previews are kept in memory for the run trace. Nothing is persisted. */
@@ -66,6 +71,8 @@ export interface DataPaths {
   /** When each site's last request went out, so a restart keeps the pace (the runtime's own). */
   readonly budgets: string
   readonly settings: string
+  /** What the person chose for each adapter's settings (D69). */
+  readonly adapterSettings: string
   readonly clients: string
   /** One bridge config file per client (clients.ts), each mode 0600. */
   readonly clientConfigs: string
@@ -98,6 +105,7 @@ export function dataPaths(dir: string): DataPaths {
     breakers: join(dir, 'breakers.json'),
     budgets: join(dir, 'budgets.json'),
     settings: join(dir, 'settings.json'),
+    adapterSettings: join(dir, 'adapter-settings.json'),
     clients: join(dir, 'clients.json'),
     clientConfigs: join(dir, 'client-configs'),
     legacyBridgeConfig: join(dir, 'bridge.json'),

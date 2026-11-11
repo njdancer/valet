@@ -45,6 +45,7 @@ const state: AdapterState = {
   ]),
   lastUsed: () => null,
   handedOver: null,
+  chosen: {},
 }
 
 /** Every key, at any depth, of a JSON value. */

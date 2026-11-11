@@ -349,6 +349,21 @@ async function main() {
       await sheet.waitFor({ state: 'hidden' })
       await sleep(2500)
       await still(control, 'grants-done')
+      caption(
+        'Prices and stock follow a store, so pick the pick-up store the tools shop at',
+        '2 · Set up',
+      )
+      const settings = control.getByTestId('setup-settings')
+      await type(settings.getByRole('textbox'), '2000')
+      await click(settings.getByRole('button', { name: 'Search' }))
+      const choose = settings.getByRole('button', { name: 'Choose' }).first()
+      await choose.waitFor({ timeout: 90_000 })
+      await sleep(2000)
+      await still(control, 'store-choices')
+      await click(choose)
+      await settings.getByTestId('setting-chosen').waitFor({ timeout: 30_000 })
+      await sleep(2500)
+      await still(control, 'store-chosen')
       await click(control.getByRole('link', { name: 'Continue' }))
     },
     { page: control },

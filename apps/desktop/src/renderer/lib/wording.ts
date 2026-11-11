@@ -49,6 +49,10 @@ export const NEEDS_USER_WORDING: Readonly<Record<NeedsUserReason, ReasonWording>
     short: 'Earlier login unfinished',
     detail: 'An earlier login attempt never finished, so Valet won’t try again until you check the account.',
   },
+  'setting-required': {
+    short: 'Setting needed',
+    detail: 'The adapter needs a setting chosen before its tools can run. Open the adapter to pick it.',
+  },
   other: {
     short: 'Needs you',
     detail: 'It stopped at a step Valet can’t finish by itself.',

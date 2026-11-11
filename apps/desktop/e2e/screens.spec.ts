@@ -13,6 +13,7 @@ import {
   CONTROL,
   callTool,
   changedAdapterBuild,
+  chooseStore,
   clickClosing,
   connectMcp,
   type Launched,
@@ -76,14 +77,14 @@ let stockcode = 0
 test('first run: the adapter waits for review', async () => {
   userData = tempDir('screens')
   await start()
-  await expect(control.getByText('Woolworths 0.2.0 is ready for review.')).toBeVisible()
+  await expect(control.getByText('Woolworths 0.3.0 is ready for review.')).toBeVisible()
   await shot(control, 'adapters')
   await control.getByRole('link', { name: 'Review changes' }).click()
-  await expect(control.getByRole('button', { name: 'Approve 0.2.0' })).toBeVisible()
+  await expect(control.getByRole('button', { name: 'Approve 0.3.0' })).toBeVisible()
   await shot(control, 'approve-adapter')
   const ack = control.getByRole('checkbox', { name: 'I’ve read the highlighted additions' })
   if (await ack.isVisible()) await ack.check()
-  await control.getByRole('button', { name: 'Approve 0.2.0' }).click()
+  await control.getByRole('button', { name: 'Approve 0.3.0' }).click()
   await expect
     .poll(async () => (await control.evaluate(() => window.valet?.approvals.pending()))?.length)
     .toBe(0)
@@ -102,6 +103,7 @@ test('the grant sheet, then the approved adapter', async () => {
   await sheet.getByRole('button', { name: 'Grant', exact: true }).click()
   await expect(sheet).toBeHidden()
 
+  await chooseStore(control)
   const found = await callTool(mcp(), 'woolworths_search_products', { query: 'milk' })
   stockcode = (found.structured as { products: { stockcode: number }[] }).products[0]?.stockcode ?? 0
   const added = await callTool(mcp(), 'woolworths_add_to_cart', { stockcode, quantity: 2 })
@@ -144,7 +146,7 @@ test('a changed bundle under review, and its irreversible tool’s confirmation'
   await expect(control.getByText('This update asks for more')).toBeVisible()
   await shot(control, 'approve-update')
   await control.getByRole('checkbox', { name: 'I’ve read the highlighted additions' }).check()
-  await control.getByRole('button', { name: 'Approve 0.2.0' }).click()
+  await control.getByRole('button', { name: 'Approve 0.3.0' }).click()
   const detail = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
   const origins = detail?.secretRequests[0]?.origins ?? []
   await control.evaluate(

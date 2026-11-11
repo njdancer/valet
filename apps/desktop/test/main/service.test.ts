@@ -10,6 +10,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   utimesSync,
   writeFileSync,
 } from 'node:fs'
@@ -17,7 +18,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import { CredentialError, ValetError } from '@valet/core'
+import { type AdapterDefinition, CredentialError, ValetError } from '@valet/core'
 import type { LiveSessions, SessionReportingEndpoint, ToolCall, ToolCaller } from '@valet/mcp-server'
 import { LoginAttemptMarker } from '@valet/runtime'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -32,7 +33,16 @@ import { AppService, fillSelector } from '../../src/main/core/service'
 import { disabledUpdates, type UpdatesHooks, type UpdatesPort } from '../../src/main/core/updates'
 import type { AppEvent, ConfirmationItem, HashRoute } from '../../src/shared/api'
 import { CONFIRM_ARM_MS } from '../../src/shared/api'
-import { FakeAuthPage, FakeDriver, SHOP, SHOP_FILES, shopDefinition } from './fixtures'
+import {
+  FakeAuthPage,
+  FakeDriver,
+  SHOP,
+  SHOP_FILES,
+  SHOP_STORES,
+  type StoreShopLog,
+  shopDefinition,
+  storeShopDefinition,
+} from './fixtures'
 import { tunnelFetch } from './tunnel-fetch'
 
 const TOKEN = 't'.repeat(43)
@@ -54,6 +64,8 @@ async function setup(
     /** breakers.json as the runtime finds it at start. */
     breakers?: unknown
     credentials?: Credentials
+    /** The adapter the build ships, in place of the plain shop. */
+    definition?: AdapterDefinition
     leftovers?: readonly string[]
   } = {},
 ) {
@@ -66,7 +78,7 @@ async function setup(
   }
   let now = Date.parse('2026-11-07T00:00:00.000Z')
   const driver = new FakeDriver()
-  const adapter = builtinAdapter(shopDefinition(), SHOP_FILES)
+  const adapter = builtinAdapter(options.definition ?? shopDefinition(), SHOP_FILES)
   const events: AppEvent[] = []
   const ui = {
     clipboard: [] as string[],
@@ -1483,6 +1495,165 @@ describe('nothing secret crosses', () => {
     ]) {
       expect(text).not.toContain(canary)
     }
+  })
+})
+
+describe('an adapter setting (D69)', () => {
+  async function storeShop(dir?: string) {
+    const log: StoreShopLog = { queries: [], applied: [], answer: { choices: SHOP_STORES } }
+    const s = await setup({ definition: storeShopDefinition(log), ...(dir === undefined ? {} : { dir }) })
+    if (dir === undefined) await s.api.approvals.approve('shop', s.adapter.hash)
+    return { ...s, log }
+  }
+  const types = (s: { paths: { audit: string } }) =>
+    readFileSync(s.paths.audit, 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line).event as { type: string; tool?: string; client?: string })
+
+  it('stops every tool until the person chooses, and says so on the adapter', async () => {
+    const s = await storeShop()
+    expect(await s.call('echo', { text: 'hi' })).toEqual({ status: 'needsUser', reason: 'setting-required' })
+    expect((await s.api.adapters.list())[0]?.settingsNeeded).toEqual(['Store'])
+    const detail = await s.api.adapters.get('shop')
+    expect(detail?.settings).toEqual([
+      {
+        name: 'store',
+        title: 'Store',
+        description: 'The store the shop quotes prices for.',
+        required: true,
+        queryLabel: 'Postcode',
+        chosen: null,
+      },
+    ])
+    expect(s.log.applied).toEqual([])
+  })
+
+  it('lists and counts only the tools a client can call', async () => {
+    const s = await storeShop()
+    expect(s.endpoint.caller?.listTools().map((t) => t.declaration.name)).toEqual(['echo', 'add'])
+    const detail = await s.api.adapters.get('shop')
+    expect(detail?.toolCounts).toEqual({ read: 1, write: 1, irreversible: 0 })
+    expect(detail?.tools.map((t) => [t.name, t.internal])).toEqual([
+      ['echo', false],
+      ['add', false],
+      ['find_stores', true],
+      ['apply_store', true],
+    ])
+    expect(await s.call('apply_store', { value: '99' })).toMatchObject({
+      status: 'failed',
+      errorClass: 'not-found',
+    })
+    expect(s.log.applied).toEqual([])
+  })
+
+  it('searches through the adapter, saves the choice the person makes, and applies it before the next call', async () => {
+    const s = await storeShop()
+    expect(await s.api.adapters.settingChoices('shop', 'store', '2000')).toEqual({
+      status: 'ok',
+      choices: [
+        { id: '11', label: 'Shop Central', detail: '1 Main St' },
+        { id: '12', label: 'Shop <b>North</b>', detail: null },
+      ],
+    })
+    expect(s.log.queries).toEqual(['2000'])
+
+    s.events.length = 0
+    await s.api.adapters.setSetting('shop', 'store', '11')
+    expect(s.events).toContainEqual({ type: 'adapters-changed' })
+    const detail = await s.api.adapters.get('shop')
+    expect(detail?.settingsNeeded).toEqual([])
+    expect(detail?.settings[0]?.chosen).toEqual({
+      id: '11',
+      label: 'Shop Central',
+      detail: '1 Main St',
+      chosenAt: '2026-11-07T00:00:00.000Z',
+    })
+
+    expect(await s.call('echo', { text: 'hi' })).toEqual({ status: 'ok', output: { text: 'hi' } })
+    expect(await s.call('echo', { text: 'again' })).toEqual({ status: 'ok', output: { text: 'again' } })
+    expect(s.log.applied).toEqual(['11'])
+    const log = types(s)
+    expect(log.filter((e) => e.type === 'setting-changed')).toEqual([
+      { type: 'setting-changed', adapterId: 'shop', setting: 'store', cleared: false },
+    ])
+    expect(log.filter((e) => e.type === 'tool-called').map((e) => [e.tool, e.client])).toEqual([
+      ['find_stores', 'Valet (settings)'],
+      ['echo', 'Claude Code'],
+      ['apply_store', 'Valet (settings)'],
+      ['echo', 'Claude Code'],
+    ])
+    // The log says a setting changed, never to what: the label is the site's text.
+    expect(readFileSync(s.paths.audit, 'utf8')).not.toContain('Shop Central')
+  })
+
+  it('keeps the choice across a restart, in an owner-only file', async () => {
+    const s = await storeShop()
+    await s.api.adapters.settingChoices('shop', 'store', '2000')
+    await s.api.adapters.setSetting('shop', 'store', '12')
+    expect(statSync(s.paths.adapterSettings).mode & 0o777).toBe(0o600)
+    await s.service.stop()
+    const again = await storeShop(s.dir)
+    expect((await again.api.adapters.get('shop'))?.settings[0]?.chosen?.id).toBe('12')
+    expect(await again.call('echo', { text: 'hi' })).toMatchObject({ status: 'ok' })
+    expect(again.log.applied).toEqual(['12'])
+  })
+
+  it('takes only a value the last search offered', async () => {
+    const s = await storeShop()
+    await expect(s.api.adapters.setSetting('shop', 'store', '11')).rejects.toBeInstanceOf(ValetError)
+    await s.api.adapters.settingChoices('shop', 'store', '2000')
+    await expect(s.api.adapters.setSetting('shop', 'store', '99')).rejects.toBeInstanceOf(ValetError)
+    s.log.answer = { choices: [] }
+    await s.api.adapters.settingChoices('shop', 'store', '0000')
+    await expect(s.api.adapters.setSetting('shop', 'store', '11')).rejects.toBeInstanceOf(ValetError)
+    expect((await s.api.adapters.get('shop'))?.settings[0]?.chosen).toBeNull()
+    expect(types(s).some((e) => e.type === 'setting-changed')).toBe(false)
+  })
+
+  it('refuses a setting the adapter does not declare', async () => {
+    const s = await storeShop()
+    for (const name of ['postcode', 'constructor', '__proto__']) {
+      await expect(s.api.adapters.settingChoices('shop', name, '2000')).rejects.toBeInstanceOf(ValetError)
+      await expect(s.api.adapters.setSetting('shop', name, '11')).rejects.toBeInstanceOf(ValetError)
+      await expect(s.api.adapters.clearSetting('shop', name)).rejects.toBeInstanceOf(ValetError)
+    }
+    await expect(s.api.adapters.settingChoices('other', 'store', '2000')).rejects.toBeInstanceOf(ValetError)
+    expect(s.log.queries).toEqual([])
+  })
+
+  it('answers a failed search with a fixed reason, never the adapter’s or the site’s text', async () => {
+    const s = await storeShop()
+    s.log.answer = new Error('page text')
+    expect(await s.api.adapters.settingChoices('shop', 'store', '2000')).toEqual({ status: 'failed' })
+    s.log.answer = new ValetError('tool-run', 'site-changed')
+    expect(await s.api.adapters.settingChoices('shop', 'store', '2000')).toEqual({ status: 'site-changed' })
+    s.log.answer = { choices: [{ value: '1', label: 'A', script: '<script>' }] }
+    expect(await s.api.adapters.settingChoices('shop', 'store', '2000')).toEqual({ status: 'failed' })
+
+    const unapproved = await setup({ definition: storeShopDefinition(s.log) })
+    expect(await unapproved.api.adapters.settingChoices('shop', 'store', '2000')).toEqual({
+      status: 'not-approved',
+    })
+  })
+
+  it('clears a choice, with a record, and the tools stop again', async () => {
+    const s = await storeShop()
+    await s.api.adapters.settingChoices('shop', 'store', '2000')
+    await s.api.adapters.setSetting('shop', 'store', '11')
+    await s.api.adapters.clearSetting('shop', 'store')
+    expect((await s.api.adapters.get('shop'))?.settingsNeeded).toEqual(['Store'])
+    expect(await s.call('echo', { text: 'hi' })).toEqual({ status: 'needsUser', reason: 'setting-required' })
+    expect(types(s).filter((e) => e.type === 'setting-changed')).toHaveLength(2)
+  })
+
+  it('reads a damaged file as nothing chosen', async () => {
+    const s = await storeShop()
+    await s.api.adapters.settingChoices('shop', 'store', '2000')
+    await s.api.adapters.setSetting('shop', 'store', '11')
+    writeFileSync(s.paths.adapterSettings, '{"version":1,"adapters":{"shop":{"store":{"value":""}}}}')
+    expect((await s.api.adapters.get('shop'))?.settings[0]?.chosen).toBeNull()
+    expect(await s.call('echo', { text: 'hi' })).toEqual({ status: 'needsUser', reason: 'setting-required' })
   })
 })
 

@@ -10,6 +10,9 @@ export const PATHS = {
   productDetail: (stockcode: number) => `/apis/ui/product/detail/${stockcode}`,
   trolley: '/apis/ui/Trolley',
   trolleyUpdate: '/api/v3/ui/trolley/update',
+  /** Assumed, never seen live: see stores.ts. */
+  pickupStores: '/api/v3/ui/fulfilment/stores',
+  fulfilment: '/api/v3/ui/fulfilment',
 } as const
 
 /**

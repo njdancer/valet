@@ -51,6 +51,8 @@ const MAX_TEXT = 10_000
 const ADAPTER_ID = z.string().regex(/^[a-z][a-z0-9-]{1,63}$/)
 const HASH = z.string().regex(/^[0-9a-f]{64}$/)
 const SECRET = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)
+/** A setting's name in a manifest: the same alphabet as a secret's. */
+const SETTING = SECRET
 /** Call, confirmation and client ids: the runtime's call-id alphabet. */
 const OPAQUE_ID = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)
 const PROVIDER = z.enum([
@@ -141,6 +143,16 @@ const HANDLERS: Readonly<
 > = {
   'adapters.list': entry(none, (api) => api.adapters.list()),
   'adapters.get': entry(z.tuple([ADAPTER_ID]), (api, [id]) => api.adapters.get(id)),
+  'adapters.settingChoices': entry(z.tuple([ADAPTER_ID, SETTING, z.string().max(100)]), (api, [id, s, q]) =>
+    api.adapters.settingChoices(id, s, q),
+  ),
+  'adapters.setSetting': entry(
+    z.tuple([ADAPTER_ID, SETTING, z.string().min(1).max(100)]),
+    (api, [id, s, v]) => api.adapters.setSetting(id, s, v),
+  ),
+  'adapters.clearSetting': entry(z.tuple([ADAPTER_ID, SETTING]), (api, [id, s]) =>
+    api.adapters.clearSetting(id, s),
+  ),
   'approvals.pending': entry(none, (api) => api.approvals.pending()),
   'approvals.approve': entry(z.tuple([ADAPTER_ID, HASH]), (api, [id, hash]) =>
     api.approvals.approve(id, hash),

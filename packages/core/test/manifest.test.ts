@@ -8,8 +8,10 @@ import {
   messagesSourcesIn,
   parseManifest,
   secretRefsIn,
+  settingToolNames,
   toolHints,
 } from '../src/manifest'
+import { settingChoicesSchema, settingQuerySchema, settingValueSchema } from '../src/settings'
 
 // A complete, valid manifest. Each test copies it with structuredClone and changes one thing.
 const VALID: ManifestInput = {
@@ -518,5 +520,125 @@ describe('defineAdapter', () => {
     expect(() =>
       defineAdapter({ manifest, tools: { get_cart: getCart, add_to_cart: getCart, checkout: getCart } }),
     ).toThrow('tool checkout is implemented but not declared')
+  })
+})
+
+describe('settings (D69)', () => {
+  const store = {
+    title: 'Store',
+    description: 'The store whose prices the tools quote.',
+    required: true,
+    choices: { tool: 'find_stores', queryLabel: 'Postcode' },
+    apply: { tool: 'apply_store' },
+  }
+  const withSettings = (change: (m: ManifestInput) => void = () => {}): ManifestInput => {
+    const m = structuredClone(VALID)
+    m.tools = [
+      ...m.tools,
+      { name: 'find_stores', title: 'Find stores', description: 'Stores', sideEffect: 'read' },
+      { name: 'apply_store', title: 'Use store', description: 'Sets the store', sideEffect: 'write' },
+    ]
+    m.settings = { store: structuredClone(store) }
+    change(m)
+    return m
+  }
+  const messages = (input: ManifestInput): string[] => {
+    const parsed = manifestSchema.safeParse(input)
+    return parsed.success ? [] : parsed.error.issues.map((i) => i.message)
+  }
+
+  it('defaults to none', () => {
+    expect(parseManifest(VALID).settings).toEqual({})
+    expect(settingToolNames(parseManifest(VALID)).size).toBe(0)
+  })
+
+  it('accepts a setting whose tools are declared, and names them', () => {
+    const manifest = parseManifest(withSettings())
+    expect(manifest.settings['store']?.required).toBe(true)
+    expect([...settingToolNames(manifest)]).toEqual(['find_stores', 'apply_store'])
+  })
+
+  it('is not required unless it says so, and needs no apply tool', () => {
+    const manifest = parseManifest(
+      withSettings((m) => {
+        m.settings = { store: { title: 'Store', description: 'Store', choices: store.choices } }
+      }),
+    )
+    expect(manifest.settings['store']).toMatchObject({ required: false })
+    expect([...settingToolNames(manifest)]).toEqual(['find_stores'])
+  })
+
+  it('rejects a tool that is not declared', () => {
+    expect(
+      messages(
+        withSettings((m) => {
+          m.tools = m.tools.filter((t) => t.name !== 'apply_store')
+        }),
+      ),
+    ).toContain('setting store names undeclared tool apply_store')
+  })
+
+  it('rejects a choices tool that writes, and an apply tool that is irreversible', () => {
+    expect(
+      messages(
+        withSettings((m) => {
+          m.tools = m.tools.map((t) => (t.name === 'find_stores' ? { ...t, sideEffect: 'write' } : t))
+        }),
+      ),
+    ).toContain("setting store's choices tool find_stores may not be write")
+    expect(
+      messages(
+        withSettings((m) => {
+          m.tools = m.tools.map((t) => (t.name === 'apply_store' ? { ...t, sideEffect: 'irreversible' } : t))
+        }),
+      ),
+    ).toContain("setting store's apply tool apply_store may not be irreversible")
+  })
+
+  it('rejects one tool serving two jobs', () => {
+    expect(
+      messages(
+        withSettings((m) => {
+          m.settings = { store: { ...store, apply: { tool: 'find_stores' } } }
+        }),
+      ),
+    ).toContain('tool find_stores serves more than one setting')
+  })
+
+  it('rejects a manifest that leaves no tool for clients', () => {
+    expect(
+      messages(
+        withSettings((m) => {
+          m.tools = m.tools.filter((t) => t.name === 'find_stores' || t.name === 'apply_store')
+        }),
+      ),
+    ).toContain('every tool serves a setting: none is left for clients')
+  })
+
+  it('rejects unknown keys and more than eight settings', () => {
+    expect(
+      manifestSchema.safeParse(
+        withSettings((m) => {
+          m.settings = { store: { ...store, html: '<b>' } as never }
+        }),
+      ).success,
+    ).toBe(false)
+    expect(
+      messages(
+        withSettings((m) => {
+          m.settings = Object.fromEntries(Array.from({ length: 9 }, (_, i) => [`s${i}`, store]))
+        }),
+      ),
+    ).toContain('at most 8 settings')
+  })
+
+  it('fixes the shapes a setting’s tools exchange with the runtime', () => {
+    expect(settingQuerySchema.safeParse({ query: '2000' }).success).toBe(true)
+    expect(settingQuerySchema.safeParse({ query: 'x'.repeat(101) }).success).toBe(false)
+    expect(settingValueSchema.safeParse({ value: '' }).success).toBe(false)
+    expect(
+      settingChoicesSchema.safeParse({ choices: [{ value: '1', label: 'A', detail: 'B' }] }).success,
+    ).toBe(true)
+    expect(settingChoicesSchema.safeParse({ choices: [{ value: '1', label: '' }] }).success).toBe(false)
   })
 })

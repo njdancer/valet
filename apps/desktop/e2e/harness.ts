@@ -177,6 +177,24 @@ export async function connectMcp(control: Page, userData: string, name = 'e2e-ag
   return client
 }
 
+/**
+ * Chooses the adapter's store (D69) through the control panel's API, as the settings card does: one
+ * search of the fake site by postcode, then the first store it offers. Without a store, every
+ * Woolworths tool ends needsUser. Returns the chosen store's name.
+ */
+export async function chooseStore(control: Page, postcode = '2000'): Promise<string> {
+  const chosen = await control.evaluate(async (postcode) => {
+    const reply = await window.valet?.adapters.settingChoices('woolworths', 'store', postcode)
+    if (reply?.status !== 'ok') return `search: ${reply?.status ?? 'no api'}`
+    const first = reply.choices[0]
+    if (first === undefined) return 'search: nothing found'
+    await window.valet?.adapters.setSetting('woolworths', 'store', first.id)
+    return `ok ${first.label}`
+  }, postcode)
+  if (!chosen.startsWith('ok ')) throw new Error(`could not choose a store (${chosen})`)
+  return chosen.slice(3)
+}
+
 export interface ToolResult {
   readonly isError: boolean
   readonly text: string
@@ -319,6 +337,7 @@ interface DemoHook {
   trolley(): readonly { readonly stockcode: number; readonly quantity: number }[]
   wrongPassword(on: boolean): void
   passwordPosts(): number
+  pickupStores(): readonly (number | null)[]
 }
 
 /** Logs the demo account out everywhere and makes the fake refuse its password, or stop. */
@@ -336,6 +355,15 @@ export async function passwordPosts(launched: Launched): Promise<number> {
     const hook = (globalThis as { __valetE2e?: DemoHook }).__valetE2e
     if (hook === undefined) throw new Error('no e2e hook: not a demo build in e2e mode')
     return hook.passwordPosts()
+  })
+}
+
+/** The pick-up store, by address id, of each of the demo account's logged-in sessions on the fake. */
+export async function sitePickupStores(launched: Launched): Promise<readonly (number | null)[]> {
+  return launched.app.evaluate(() => {
+    const hook = (globalThis as { __valetE2e?: DemoHook }).__valetE2e
+    if (hook === undefined) throw new Error('no e2e hook: not a demo build in e2e mode')
+    return [...hook.pickupStores()]
   })
 }
 

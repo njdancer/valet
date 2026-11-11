@@ -1,7 +1,15 @@
 // One adapter (docs/mockups/adapter-detail.html): version and hash, tools by side effect, recent
 // runs, permissions as declared, the session and its partitions, and each secret's grant.
 
-import type { AdapterDetail, RunSummary, SecretRequestInfo, SiteHealth } from '../../shared/api'
+import { useState } from 'react'
+import type {
+  AdapterDetail,
+  AdapterSettingInfo,
+  RunSummary,
+  SecretRequestInfo,
+  SettingChoicesReply,
+  SiteHealth,
+} from '../../shared/api'
 import {
   ActionFailed,
   AdapterText,
@@ -132,8 +140,8 @@ function Detail({
             <div className="card-head">
               <span className="h3">Tools</span>
               <span className="muted">
-                {plural(adapter.tools.length, 'tool')} exposed over MCP · any tool may make any declared
-                request
+                {plural(adapter.tools.filter((t) => !t.internal).length, 'tool')} exposed over MCP · any tool
+                may make any declared request
               </span>
             </div>
             <table className="table tight">
@@ -150,6 +158,14 @@ function Detail({
                   <tr key={t.name}>
                     <td>
                       <span className="mono">{t.name}</span>
+                      {t.internal ? (
+                        <div
+                          className="xs muted"
+                          title="Valet runs this tool itself. No client can list or call it."
+                        >
+                          Settings only · not exposed
+                        </div>
+                      ) : null}
                     </td>
                     <td>
                       <SideEffect purpose={t.sideEffect} />
@@ -269,6 +285,7 @@ function Detail({
         </div>
 
         <div className="stack gap-4">
+          {adapter.settings.length === 0 ? null : <SettingsCard adapter={adapter} now={now} />}
           <SessionCard adapter={adapter} breaker={breaker} now={now} />
           <div className="card">
             <div className="card-head">
@@ -308,6 +325,227 @@ function Detail({
         </div>
       </div>
     </>
+  )
+}
+
+function SettingsCard({ adapter, now }: { readonly adapter: AdapterDetail; readonly now: number }) {
+  const needed = adapter.settings.filter((s) => s.required && s.chosen === null).length
+  return (
+    <div className="card" data-testid="adapter-settings">
+      <div className="card-head">
+        <span className="h3">Settings</span>
+        {needed > 0 ? (
+          <span className="pill warn">Waiting for you</span>
+        ) : (
+          <span className="muted">chosen by you, used by every tool</span>
+        )}
+      </div>
+      <div className="card-body stack gap-3">
+        {adapter.settings.map((s) => (
+          <SettingBlock key={s.name} adapter={adapter} setting={s} now={now} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * One setting: what is chosen, and a search for choices. The search is a real, paced request to the
+ * site through the adapter, so it runs only when the person asks, never as they type.
+ */
+export function SettingBlock({
+  adapter,
+  setting,
+  now,
+}: {
+  readonly adapter: AdapterDetail
+  readonly setting: AdapterSettingInfo
+  readonly now: number
+}) {
+  const api = useApi()
+  const search = useAction()
+  const choose = useAction()
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const [reply, setReply] = useState<{ readonly query: string; readonly reply: SettingChoicesReply } | null>(
+    null,
+  )
+  const searching = open || setting.chosen === null
+  const approved = adapter.approval === 'approved'
+  const title = setting.title.toLowerCase()
+
+  const runSearch = () =>
+    search.run(async () => {
+      const asked = query.trim()
+      setReply(null)
+      setReply({ query: asked, reply: await api.adapters.settingChoices(adapter.id, setting.name, asked) })
+    })
+  const pick = (choiceId: string) =>
+    choose.run(async () => {
+      await api.adapters.setSetting(adapter.id, setting.name, choiceId)
+      setOpen(false)
+      setReply(null)
+      setQuery('')
+    })
+
+  return (
+    <div className="stack" data-testid={`setting-${setting.name}`}>
+      <div className="row">
+        <span className="h3 grow">{setting.title}</span>
+        {setting.chosen !== null ? (
+          <span className="pill ok">Chosen</span>
+        ) : setting.required ? (
+          <span className="pill warn">Needed</span>
+        ) : (
+          <span className="pill">Not chosen</span>
+        )}
+      </div>
+      <div className="xs">
+        <AdapterText text={setting.description} />
+      </div>
+      {setting.chosen !== null ? (
+        <>
+          <dl className="kv">
+            <dt>Chosen</dt>
+            <dd data-testid="setting-chosen">
+              <AdapterText text={setting.chosen.label} />
+              {setting.chosen.detail === null || setting.chosen.detail === '' ? null : (
+                <div className="xs muted">
+                  <AdapterText text={setting.chosen.detail} />
+                </div>
+              )}
+            </dd>
+            <dt>Since</dt>
+            <dd>{formatTime(setting.chosen.chosenAt, now)}</dd>
+          </dl>
+          {searching ? null : (
+            <div className="row">
+              <button type="button" className="btn ghost" onClick={() => setOpen(true)}>
+                Change…
+              </button>
+            </div>
+          )}
+        </>
+      ) : setting.required ? (
+        <div className="xs muted">
+          Nothing chosen yet, so {adapter.name}’s tools won’t run: an agent that calls one is told you need to
+          choose a {title}.
+        </div>
+      ) : null}
+      {!searching ? null : !approved ? (
+        <div className="xs muted">Approve the adapter first: the search runs its code against the site.</div>
+      ) : (
+        <>
+          <form
+            className="row"
+            onSubmit={(event) => {
+              event.preventDefault()
+              if (!search.busy && query.trim() !== '') void runSearch()
+            }}
+          >
+            <input
+              className="input grow"
+              aria-label={`${setting.queryLabel} to find a ${title}`}
+              placeholder={setting.queryLabel}
+              maxLength={100}
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            <button type="submit" className="btn primary" disabled={search.busy || query.trim() === ''}>
+              {search.busy ? 'Searching…' : 'Search'}
+            </button>
+            {open ? (
+              <button
+                type="button"
+                className="btn ghost"
+                onClick={() => {
+                  setOpen(false)
+                  setReply(null)
+                }}
+              >
+                Cancel
+              </button>
+            ) : null}
+          </form>
+          <div className="xs muted">
+            Searching asks {adapter.site} through the adapter, {adapter.limits.minGapMs / 1000} s apart like
+            every call, so it can take a moment.
+          </div>
+          <ActionFailed failed={search.failed} what={`search for a ${title}`} />
+          {reply === null ? null : (
+            <SettingChoices reply={reply} busy={choose.busy} now={now} onPick={pick} />
+          )}
+          <ActionFailed failed={choose.failed} what={`save the ${title}`} />
+        </>
+      )}
+    </div>
+  )
+}
+
+function SettingChoices({
+  reply: { query, reply },
+  busy,
+  now,
+  onPick,
+}: {
+  readonly reply: { readonly query: string; readonly reply: SettingChoicesReply }
+  readonly busy: boolean
+  readonly now: number
+  readonly onPick: (choiceId: string) => void
+}) {
+  if (reply.status === 'blocked') {
+    return (
+      <div className="xs muted" role="status">
+        The site is refusing or slowing Valet. Try again {formatIn(reply.retryAt, now)}.
+      </div>
+    )
+  }
+  if (reply.status === 'not-approved') {
+    return (
+      <div className="xs muted" role="status">
+        The adapter isn’t approved, so it can’t search.
+      </div>
+    )
+  }
+  if (reply.status === 'site-changed') {
+    return (
+      <div className="xs muted" role="status">
+        The site answered in a way the adapter doesn’t understand. The adapter may need an update.
+      </div>
+    )
+  }
+  if (reply.status === 'failed') {
+    return (
+      <div className="xs muted" role="status">
+        The search didn’t work. Try again in a moment.
+      </div>
+    )
+  }
+  if (reply.choices.length === 0) {
+    return (
+      <div className="xs muted" role="status">
+        Nothing found for “{query}”.
+      </div>
+    )
+  }
+  return (
+    <ul className="stack" style={{ listStyle: 'none', margin: 0, padding: 0 }} aria-label="Choices">
+      {reply.choices.map((choice) => (
+        <li className="row" key={choice.id}>
+          <span className="grow">
+            <AdapterText text={choice.label} />
+            {choice.detail === null || choice.detail === '' ? null : (
+              <div className="xs muted">
+                <AdapterText text={choice.detail} />
+              </div>
+            )}
+          </span>
+          <button type="button" className="btn" disabled={busy} onClick={() => onPick(choice.id)}>
+            Choose
+          </button>
+        </li>
+      ))}
+    </ul>
   )
 }
 

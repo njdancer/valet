@@ -16,7 +16,7 @@ import {
   manifestText,
   permissionDiff,
 } from '../../src/main/core/permission-diff'
-import { SHOP } from './fixtures'
+import { SHOP, SHOP_WITH_STORE } from './fixtures'
 
 const before = parseManifest(SHOP)
 function after(change: (m: ManifestInput) => ManifestInput) {
@@ -204,6 +204,33 @@ describe('permissionDiff', () => {
       expect(addsPermissions(diff)).toBe(true)
     })
   }
+
+  it('flags a new setting, and one whose apply tool changed, naming the tools Valet runs for it (D69)', () => {
+    const withStore = parseManifest(SHOP_WITH_STORE)
+    const store = {
+      name: 'store',
+      title: 'Store',
+      required: true,
+      choicesTool: 'find_stores',
+      applyTool: 'apply_store',
+    }
+    const added = permissionDiff(before, withStore)
+    expect(added.settings).toEqual({ added: [store], removed: [], unchanged: [] })
+    expect(addsPermissions(added)).toBe(true)
+
+    const input = structuredClone(SHOP_WITH_STORE)
+    const { apply: _apply, ...rest } = input.settings?.['store'] ?? {}
+    const noApply = parseManifest({
+      ...input,
+      tools: input.tools.filter((t) => t.name !== 'apply_store'),
+      settings: { store: rest as NonNullable<ManifestInput['settings']>[string] },
+    })
+    const changed = permissionDiff(noApply, withStore)
+    expect(changed.settings.added).toEqual([store])
+    expect(changed.settings.removed).toEqual([{ ...store, applyTool: null }])
+    expect(addsPermissions(changed)).toBe(true)
+    expect(permissionDiff(withStore, withStore).settings.unchanged).toEqual([store])
+  })
 
   it('flags an irreversible tool that names one more request to unlock (C15)', () => {
     const order = { name: 'order', title: 'Order', description: 'Places it.', sideEffect: 'irreversible' }

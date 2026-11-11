@@ -283,6 +283,9 @@ describe('every channel', () => {
   const valid: Record<(typeof INVOKE_METHODS)[number], unknown[]> = {
     'adapters.list': [],
     'adapters.get': ['woolworths'],
+    'adapters.settingChoices': ['woolworths', 'store', '2000'],
+    'adapters.setSetting': ['woolworths', 'store', '9001201'],
+    'adapters.clearSetting': ['woolworths', 'store'],
     'approvals.pending': [],
     'approvals.approve': ['woolworths', HASH64],
     'approvals.reject': ['woolworths', HASH64],

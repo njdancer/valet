@@ -35,6 +35,11 @@ export interface Visitor {
   readonly username: string | null
   /** An anonymous visitor's own trolley. Logged-in visitors use their account's. */
   readonly trolley: Trolley
+  /**
+   * The pick-up store this session chose, by its address id. It belongs to the session, not the
+   * account (assumed: README), so a login, which starts a new session, starts without one.
+   */
+  readonly fulfilment: { addressId: number | null }
 }
 
 export function newToken(): string {
@@ -74,7 +79,12 @@ export class AccountStore {
   /** Starts a new visitor session, discarding `replacing` if given. */
   startVisitor(username: string | null = null, replacing?: Visitor): Visitor {
     if (replacing !== undefined) this.visitors.delete(replacing.token)
-    const visitor: Visitor = { token: newToken(), username, trolley: new Map() }
+    const visitor: Visitor = {
+      token: newToken(),
+      username,
+      trolley: new Map(),
+      fulfilment: { addressId: null },
+    }
     this.visitors.set(visitor.token, visitor)
     return visitor
   }
@@ -82,6 +92,18 @@ export class AccountStore {
   trolleyOf(visitor: Visitor): Trolley {
     if (visitor.username === null) return visitor.trolley
     return this.accounts.get(visitor.username)?.trolley ?? visitor.trolley
+  }
+
+  /** The pick-up address ids of the sessions now logged in to `username`, oldest first. */
+  pickupAddressesOf(username: string): (number | null)[] {
+    return [...this.visitors.values()]
+      .filter((v) => v.username === username)
+      .map((v) => v.fulfilment.addressId)
+  }
+
+  /** The pick-up address ids of the anonymous sessions, oldest first. */
+  anonymousPickupAddresses(): (number | null)[] {
+    return [...this.visitors.values()].filter((v) => v.username === null).map((v) => v.fulfilment.addressId)
   }
 
   firstNameOf(visitor: Visitor): string | null {

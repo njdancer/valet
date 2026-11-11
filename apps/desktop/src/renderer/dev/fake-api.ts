@@ -33,6 +33,7 @@ import type {
   RunStats,
   RunSummary,
   RunTrace,
+  SettingChoiceInfo,
   Settings,
   SetupStatus,
   SiteHealth,
@@ -205,6 +206,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         description: 'Search the Woolworths range by keyword: prices, cup prices, specials and availability.',
         sideEffect: 'read',
         calls7d: 54,
+        internal: false,
       },
       {
         name: 'product_details',
@@ -212,6 +214,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         description: 'Full details for one product by stockcode: ingredients, allergens and nutrition.',
         sideEffect: 'read',
         calls7d: 19,
+        internal: false,
       },
       {
         name: 'get_cart',
@@ -219,6 +222,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         description: 'The items in the cart, with quantities, line totals, subtotal and savings.',
         sideEffect: 'read',
         calls7d: 27,
+        internal: false,
       },
       {
         name: 'add_to_cart',
@@ -226,6 +230,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         description: 'Adds a quantity of a product to the cart, on top of any already there.',
         sideEffect: 'write',
         calls7d: 14,
+        internal: false,
       },
       {
         name: 'update_cart_line',
@@ -233,6 +238,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         description: 'Sets the exact quantity of a product in the cart.',
         sideEffect: 'write',
         calls7d: 11,
+        internal: false,
       },
       {
         name: 'remove_from_cart',
@@ -240,6 +246,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         description: 'Removes a product from the cart entirely. Asks you first.',
         sideEffect: 'write',
         calls7d: 3,
+        internal: false,
       },
     ],
     secretRequests: [
@@ -253,6 +260,23 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     ],
     messages: [],
     handedOver: { cookies: 14, storageKeys: 0 },
+    settingsNeeded: [],
+    settings: [
+      {
+        name: 'store',
+        title: 'Store',
+        description:
+          'The Woolworths pick-up store your agents shop at. Prices, specials and what is in stock are that store’s.',
+        required: true,
+        queryLabel: 'Postcode',
+        chosen: {
+          id: '9001201',
+          label: 'Woolworths Town Hall',
+          detail: 'Cnr Park & George Streets, Sydney, NSW, 2000',
+          chosenAt: ago(5 * 24 * 60 + 90),
+        },
+      },
+    ],
   }
 
   const colesBase: AdapterDetail = {
@@ -292,15 +316,31 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         description: 'Search Coles products.',
         sideEffect: 'read',
         calls7d: 20,
+        internal: false,
       },
-      { name: 'get_product', title: 'Product', description: 'One product.', sideEffect: 'read', calls7d: 6 },
-      { name: 'get_trolley', title: 'Trolley', description: 'The trolley.', sideEffect: 'read', calls7d: 12 },
+      {
+        name: 'get_product',
+        title: 'Product',
+        description: 'One product.',
+        sideEffect: 'read',
+        calls7d: 6,
+        internal: false,
+      },
+      {
+        name: 'get_trolley',
+        title: 'Trolley',
+        description: 'The trolley.',
+        sideEffect: 'read',
+        calls7d: 12,
+        internal: false,
+      },
       {
         name: 'update_trolley',
         title: 'Update',
         description: 'Change a line.',
         sideEffect: 'write',
         calls7d: 3,
+        internal: false,
       },
     ],
     secretRequests: [
@@ -321,12 +361,37 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       },
     ],
     handedOver: { cookies: 9, storageKeys: 0 },
+    settingsNeeded: [],
+    settings: [],
   }
 
   const adapters = new Map<string, AdapterDetail>([
     ['woolworths', woolworthsBase],
     ['coles', colesBase],
   ])
+
+  /** The stores the fake's settingChoices finds, by postcode, and what the last search offered. */
+  const FAKE_STORES: readonly (SettingChoiceInfo & { readonly postcode: string })[] = [
+    {
+      postcode: '2000',
+      id: '9001201',
+      label: 'Woolworths Town Hall',
+      detail: 'Cnr Park & George Streets, Sydney, NSW, 2000',
+    },
+    {
+      postcode: '2000',
+      id: '9001245',
+      label: 'Woolworths Metro Wynyard',
+      detail: '301 George Street, Sydney, NSW, 2000',
+    },
+    {
+      postcode: '2010',
+      id: '9001310',
+      label: 'Woolworths Surry Hills',
+      detail: '2-4 Baptist Street, Surry Hills, NSW, 2010',
+    },
+  ]
+  let offered: readonly (SettingChoiceInfo & { readonly postcode: string })[] = []
 
   let reviews: PendingReview[] = [
     {
@@ -393,6 +458,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         },
         authSteps: { added: [], removed: [], unchanged: WOOLWORTHS_AUTH_STEPS },
         messagesSources: { added: [], removed: [], unchanged: [] },
+        settings: { added: [], removed: [], unchanged: [] },
         limits: { before: WOOLWORTHS_LIMITS, after: WOOLWORTHS_LIMITS },
         probe: { before: WOOLWORTHS_PROBE, after: WOOLWORTHS_PROBE },
       },
@@ -695,6 +761,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
           ]),
           authSteps: all(WOOLWORTHS_AUTH_STEPS),
           messagesSources: all([]),
+          settings: all([]),
           limits: null,
           probe: null,
         },
@@ -763,6 +830,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     messagesSources: detail.messagesSources,
     session: detail.session,
     calls7d: detail.calls7d,
+    settingsNeeded: detail.settings.filter((s) => s.required && s.chosen === null).map((s) => s.title),
   })
 
   // ---------- The API ----------
@@ -777,6 +845,39 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         enter('adapters.get', adapterId)
         const base = adapters.get(adapterId)
         return base === undefined ? null : clone(detailOf(base))
+      },
+      async settingChoices(adapterId, setting, query) {
+        enter('adapters.settingChoices', adapterId, setting, query)
+        const stores = FAKE_STORES.filter((store) => store.postcode === query.trim())
+        offered = stores
+        return clone({
+          status: 'ok' as const,
+          choices: stores.map(({ postcode: _postcode, ...choice }) => choice),
+        })
+      },
+      async setSetting(adapterId, setting, value) {
+        enter('adapters.setSetting', adapterId, setting, value)
+        const base = adapters.get(adapterId)
+        const choice = offered.find((store) => store.id === value)
+        if (base === undefined || choice === undefined) throw new Error('refused')
+        const { postcode: _postcode, ...chosen } = choice
+        adapters.set(adapterId, {
+          ...base,
+          settings: base.settings.map((s) =>
+            s.name === setting ? { ...s, chosen: { ...chosen, chosenAt: ago(0) } } : s,
+          ),
+        })
+        emit({ type: 'adapters-changed' })
+      },
+      async clearSetting(adapterId, setting) {
+        enter('adapters.clearSetting', adapterId, setting)
+        const base = adapters.get(adapterId)
+        if (base === undefined) throw new Error('refused')
+        adapters.set(adapterId, {
+          ...base,
+          settings: base.settings.map((s) => (s.name === setting ? { ...s, chosen: null } : s)),
+        })
+        emit({ type: 'adapters-changed' })
       },
     },
     approvals: {
@@ -1360,6 +1461,7 @@ const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent['type']
     'update-installed',
     'remote-state',
     'remote-tool',
+    'setting-changed',
     'remote-consent',
     'remote-revoked',
     'remote-token-reuse',

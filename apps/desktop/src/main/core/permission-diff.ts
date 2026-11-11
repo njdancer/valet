@@ -22,6 +22,7 @@ import type {
   ProbeInfo,
   SecretDiffEntry,
   SecretFillEntry,
+  SettingDiffEntry,
   ToolDiffEntry,
 } from '../../shared/api'
 
@@ -97,6 +98,16 @@ function secrets(manifest: AdapterManifest): SecretDiffEntry[] {
     description: request.description,
     fields: [...request.fields],
     origins: [...request.origins],
+  }))
+}
+
+function settings(manifest: AdapterManifest): SettingDiffEntry[] {
+  return Object.entries(manifest.settings).map(([name, setting]) => ({
+    name,
+    title: setting.title,
+    required: setting.required,
+    choicesTool: setting.choices.tool,
+    applyTool: setting.apply?.tool ?? null,
   }))
 }
 
@@ -217,6 +228,7 @@ export function permissionDiff(before: AdapterManifest | null, after: AdapterMan
     secretFills: pick((m) => secretFills(m.auth.steps)),
     authSteps: pick((m) => authStepEntries(m.auth.steps)),
     messagesSources: pick(senders),
+    settings: pick(settings),
     limits: before === null ? null : { before: limitsInfo(before), after: limitsInfo(after) },
     probe: before === null ? null : { before: probeInfo(before), after: probeInfo(after) },
   }
@@ -239,6 +251,8 @@ export function addsPermissions(diff: PermissionDiff): boolean {
     diff.secretFills,
     diff.authSteps,
     diff.messagesSources,
+    // A new setting runs a tool on the person's behalf before each call; a changed one runs another.
+    diff.settings,
   ]
   if (lists.some((list) => list.added.length > 0)) return true
   // A removed needsUser, fail or assertLoggedIn takes a stop out of the login.

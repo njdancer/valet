@@ -133,6 +133,16 @@ export type AuditEvent =
     }
   | {
       /**
+       * The person chose (or cleared) one of an adapter's settings in the app (D69). Which setting,
+       * never what was chosen: a choice's value and label come from the site.
+       */
+      readonly type: 'setting-changed'
+      readonly adapterId: string
+      readonly setting: string
+      readonly cleared: boolean
+    }
+  | {
+      /**
        * A remote client's consent request ended (relay.md, "Consent happens on the Mac"): approved
        * with the person's typed code, declined, expired unanswered, or cancelled by wrong codes.
        */

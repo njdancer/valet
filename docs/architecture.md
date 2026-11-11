@@ -75,6 +75,9 @@ use the round-1 names.
    writes the attempt marker and calls the injected `AuthRunner`, which the app implements with
    `runAuthFlow` against `driver.openAuthPage()`, the grant store, the credential resolver and the
    OTP reader. After `ok`, the runtime has the driver hand the session off and probes again.
+   Before any of this, a required adapter setting with no value (the Woolworths store, D69) ends
+   the call as `needsUser`, and a setting whose apply tool is due runs first as its own audited
+   run ([security model](security-model.md#adapter-settings)).
 6. Output is parsed with the tool's schema, converted to plain JSON, redacted, and returned.
    `tool-finished` is audited with the outcome.
 

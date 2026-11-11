@@ -148,6 +148,14 @@ export interface ManifestOptions {
    * challenge's frame and the person can't solve it in the login window.
    */
   readonly captchaFrameOrigins?: readonly string[]
+  /**
+   * Hold every tool until the person has chosen a store (D69). On for a fake origin. Off for the
+   * real site until a live session has confirmed the two store requests (README, "Store"): they
+   * have never been seen live, and a required setting whose requests are wrong would hold every
+   * tool with no way through. Off, the tools run on the site's own choice of store until the
+   * person picks one, and a store that can't be applied can be cleared again.
+   */
+  readonly storeRequired?: boolean
 }
 
 /** How long a write tool may rest on the last "logged in" probe before probing again. */
@@ -165,6 +173,7 @@ export function createManifest({
   authOrigin = defaultAuthOrigin(origin),
   totp = false,
   captchaFrameOrigins = [],
+  storeRequired = origin !== REAL_ORIGIN,
 }: ManifestOptions = {}): AdapterManifest {
   const host = new URL(origin).hostname
   // A cookie set for ".woolworths.com.au" is stored against the bare host, so copy both. Auth0's
@@ -178,7 +187,7 @@ export function createManifest({
     schemaVersion: 1,
     id: 'woolworths',
     name: 'Woolworths',
-    version: '0.2.0',
+    version: '0.3.0',
     description: 'Search Woolworths (Australia) products and manage the online shopping cart.',
     home: `${origin}/`,
     // The tool partition never needs the auth origin: Auth0's session stays in the auth partition.
@@ -236,6 +245,9 @@ export function createManifest({
       },
       { method: 'GET', path: '/apis/ui/Trolley', purpose: 'read', cacheSeconds: TROLLEY_CACHE_SECONDS },
       { method: 'POST', path: '/api/v3/ui/trolley/update', purpose: 'write', refreshes: '/apis/ui/Trolley' },
+      // The store setting's two calls (stores.ts). Assumed paths, never seen live.
+      { method: 'GET', path: '/api/v3/ui/fulfilment/stores', purpose: 'read' },
+      { method: 'POST', path: '/api/v3/ui/fulfilment', purpose: 'write' },
     ],
     tools: [
       {
@@ -287,7 +299,36 @@ export function createManifest({
         destructive: true,
         idempotent: true,
       },
+      // The store setting's tools. The runtime runs them; no MCP client can list or call them.
+      {
+        name: 'find_stores',
+        title: 'Find stores',
+        description: 'Lists the Woolworths pick-up stores in a postcode, for you to choose one in Valet.',
+        sideEffect: 'read',
+      },
+      {
+        name: 'apply_store',
+        title: 'Shop at your store',
+        description:
+          'Tells Woolworths which pick-up store this session shops at: the one you chose in Valet.',
+        sideEffect: 'write',
+        // Replaces the session's store with the chosen one; the same store twice is the same session.
+        destructive: true,
+        idempotent: true,
+      },
     ],
+    // D69: prices, specials and stock follow the store. Where it is required, the tools don't run
+    // until one is chosen.
+    settings: {
+      store: {
+        title: 'Store',
+        description:
+          'The Woolworths pick-up store your agents shop at. Prices, specials and what is in stock are that store’s.',
+        required: storeRequired,
+        choices: { tool: 'find_stores', queryLabel: 'Postcode' },
+        apply: { tool: 'apply_store' },
+      },
+    },
     // Every tool needs at most two site calls. The live site flagged scripted calls 2.5 s apart
     // within minutes (docs/findings/2026-11-07-woolworths-live-probe.md), so the gap is D28's 10 s.
     // D28 asked for at most 60 requests an hour, which the thirty-item shop (73 requests, more with
