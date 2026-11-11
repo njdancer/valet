@@ -4,20 +4,13 @@
 const UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36'
 const PAGES = [
-  'https://automationexercise.com/',
-  'https://automationexercise.com/login',
-  'https://automationexercise.com/api/productsList',
-  'https://automationexercise.com/view_cart',
-  'https://authenticationtest.com/',
-  'https://authenticationtest.com/simpleFormAuth/',
-  'https://authenticationtest.com/totpChallenge/',
-  'https://practice.expandtesting.com/login',
-  'https://practice.expandtesting.com/otp-login',
-  'https://practicesoftwaretesting.com/',
-  'https://api.practicesoftwaretesting.com/products?page=1',
-  'https://www.demoblaze.com/',
-  'https://demo.nopcommerce.com/login',
-  'https://bot.sannysoft.com/',
+  'https://en.wikipedia.org/wiki/Special:UserLogin',
+  'https://en.wikipedia.org/w/api.php?action=query&meta=userinfo&format=json',
+  'https://auth.wikimedia.org/enwiki/wiki/Special:UserLogin',
+  'https://finance.yahoo.com/quote/AAPL/',
+  'https://www.coles.com.au/',
+  'https://www.allbirds.com/cart.js',
+  'https://www.gymshark.com/cart.js',
 ]
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 for (const url of PAGES) {
