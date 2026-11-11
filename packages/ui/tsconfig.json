@@ -1,0 +1,11 @@
+// The design system: React components (DOM, JSX), their tests and the gallery. Kept out of the root
+// tsconfig, like apps/desktop, so the Node packages typecheck without browser globals.
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2024", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["node", "vite/client"]
+  },
+  "include": ["src", "test", "gallery", "scripts", "vitest.config.ts"]
+}

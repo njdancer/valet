@@ -10,9 +10,12 @@
       "!swift-bridge/.build",
       "!spikes/*/results",
       "!docs/mockups/vendor",
-      "!.claude"
+      "!.claude",
+      "!packages/ui/src/styles/tokens.css",
+      "!packages/ui/src/styles/theme.css"
     ]
   },
+  "css": { "parser": { "tailwindDirectives": true } },
   "formatter": { "indentStyle": "space", "indentWidth": 2, "lineWidth": 110 },
   "javascript": { "formatter": { "quoteStyle": "single", "semicolons": "asNeeded" } },
   "linter": {
