@@ -335,8 +335,30 @@ describe('reviewing an update', () => {
       expect(added.some((row) => row?.includes(text))).toBe(true)
     }
     expect(screen.getAllByTestId('perm-removed')).toHaveLength(11)
-    expect(screen.getByText('+1 irreversible tool')).toBeTruthy()
+    // A first install's badges say what it asks for, not what it adds (D-review).
+    expect(screen.getByText('What it asks for')).toBeTruthy()
+    expect(screen.getByText('1 irreversible tool')).toBeTruthy()
     expect(screen.getByText('removed')).toBeTruthy()
+  })
+
+  it('opens a first install on a plain summary, folds the raw manifest and code, and needs no tick', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW, firstRun: true })
+    renderAt('#/adapters/woolworths/review', api)
+    const summary = await screen.findByTestId('first-install-summary')
+    expect(summary.textContent).toContain('What Woolworths may do')
+    expect(summary.textContent).toContain('www.woolworths.com.au')
+    expect(summary.textContent).toMatch(/Reads.*Search products/)
+    expect(summary.textContent).toMatch(/username, password, typed only on.*auth\.woolworths\.com\.au/)
+    // The full detail is one click away, not the first thing on screen.
+    const folds = [...document.querySelectorAll('details.fold')] as HTMLDetailsElement[]
+    expect(folds.map((f) => f.querySelector('.h3')?.textContent)).toContain('Every permission, in detail')
+    expect(folds.every((f) => !f.open)).toBe(true)
+    expect(screen.queryByRole('checkbox', { name: 'I’ve read the highlighted additions' })).toBeNull()
+    const approve = screen.getByRole('button', { name: /^Approve / }) as HTMLButtonElement
+    expect(approve.disabled).toBe(false)
+    await user.click(approve)
+    expect(api.fake.calls.filter((c) => c.method === 'approvals.approve')).toHaveLength(1)
   })
 
   it('shows a login step the update adds, such as a terms click, as an addition that needs the tick', async () => {

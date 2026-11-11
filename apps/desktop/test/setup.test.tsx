@@ -75,8 +75,9 @@ describe('first-run setup', () => {
     expect(window.location.hash).toBe('#/setup/approve/review')
     // Setup's next step is the grant, so the review doesn't offer its own "grant next".
     expect(screen.queryByText(/opens the grant sheet/)).toBeNull()
-    expect(screen.getByRole('button', { name: 'Approve 0.3.0' })).toHaveProperty('disabled', true)
-    await user.click(screen.getByRole('checkbox', { name: 'I’ve read the highlighted additions' }))
+    // A first install opens on a summary, with no tick box to tick first (D-review).
+    expect(screen.getByTestId('first-install-summary')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Approve 0.3.0' })).toHaveProperty('disabled', false)
     await user.click(screen.getByRole('button', { name: 'Approve 0.3.0' }))
     await waitFor(() => expect(window.location.hash).toBe('#/setup/grant'))
     expect(called(api, 'approvals.approve')).toEqual([['woolworths', WOOLWORTHS_NEXT_HASH]])

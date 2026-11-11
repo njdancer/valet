@@ -75,7 +75,7 @@ test('approve the bundled Woolworths adapter in its review, back into setup', as
   const perms = control.locator('.setup-perms')
   await expect(perms).toContainText(/www\.woolworths\.test/)
   await expect(perms).toContainText(/auth\.woolworths\.test/)
-  await expect(perms).toContainText(/3 read.*3 write.*0 irreversible/)
+  await expect(perms).toContainText(/3 read.*4 write.*0 irreversible/)
   await control.getByRole('link', { name: /^Review Woolworths .*…$/ }).click()
   const approve = control.getByRole('button', { name: /^Approve \d/ })
   await expect(approve).toBeVisible()
