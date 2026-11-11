@@ -19,9 +19,7 @@ import { useShellState } from './shell-state'
 
 /** Lock down's API is newer than some main processes; this asks for it without assuming. */
 export async function setLockedDown(api: ReturnType<typeof useApi>, locked: boolean): Promise<void> {
-  const app = api.app as { setLockedDown?: (locked: boolean) => Promise<void> }
-  if (app.setLockedDown === undefined) throw new Error('lock down unavailable')
-  await app.setLockedDown(locked)
+  await api.app.setLockedDown(locked)
 }
 
 export function TitleArea({ onSearch }: { readonly onSearch: () => void }) {

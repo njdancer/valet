@@ -173,7 +173,6 @@ function NeedsYouRow({ view, now }: { readonly view: NeedsYouView; readonly now:
 function MissedRow({ view }: { readonly view: NeedsYouView }) {
   const api = useApi()
   const action = useAction()
-  const dismiss = (api.attention as { dismiss?: (id: string) => Promise<void> }).dismiss
   const sentence = `Valet asked me "${view.title.replace(/^Missed: /, '')}" and I missed it. Please try again.`
   return (
     <InboxItem
@@ -182,11 +181,13 @@ function MissedRow({ view }: { readonly view: NeedsYouView }) {
       description={view.callId !== null ? `Call ${callRef(view.callId)}` : null}
       action={
         <>
-          {dismiss !== undefined ? (
-            <Button size="sm" variant="ghost" onClick={() => void action.run(() => dismiss(view.id))}>
-              Dismiss
-            </Button>
-          ) : null}
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => void action.run(() => api.attention.dismiss(view.id))}
+          >
+            Dismiss
+          </Button>
           <Button size="sm" onClick={() => void action.run(() => api.app.copyText(sentence))}>
             Copy “try again” for Claude
           </Button>

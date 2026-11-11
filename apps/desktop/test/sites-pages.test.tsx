@@ -132,12 +132,7 @@ describe('the Sites list', () => {
 
   it('pauses and resumes a site only when the main process can', async () => {
     const user = userEvent.setup()
-    renderAt('#/sites', createFakeApi({ now: NOW }))
-    await screen.findByRole('list', { name: 'All sites' })
-    expect(screen.queryByRole('button', { name: 'Pause Woolworths' })).toBeNull()
-
     const api = withPause(createFakeApi({ now: NOW }))
-    cleanup()
     renderAt('#/sites', api)
     await user.click(await screen.findByRole('button', { name: 'Pause Woolworths' }))
     expect(api.pauses).toEqual([['woolworths', true]])
@@ -266,6 +261,7 @@ describe('a site’s Overview', () => {
       'Show in Audit log',
       'Review Woolworths update',
       'Copy adapter id',
+      'Pause Woolworths',
     ])
     await user.click(menu.getByRole('menuitem', { name: 'Copy adapter id' }))
     expect(called(api, 'app.copyText')).toEqual([['woolworths']])

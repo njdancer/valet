@@ -42,7 +42,8 @@ describe('callRef', () => {
   it('is the first four hex digits of the call id, uppercased', () => {
     expect(callRef('7f2a91c0-e4b1-4c55')).toBe('7F2A')
     expect(callRef('7f-2a-91')).toBe('7F2A')
-    expect(callRef('cf_9a71beef')).toBe('CF9A')
+    expect(callRef('cf_9a71beef')).toBe('9A71')
+    expect(callRef('c_8f2e1b')).toBe('8F2E')
   })
 
   it('falls back to the id’s first letters and digits, or dashes', () => {

@@ -26,7 +26,8 @@ export function plainName(text: string, max: number = MAX_NAME): string {
  * as `st_` doesn't show; an id with fewer than four hex digits uses its first four letters or digits.
  */
 export function callRef(callId: string): string {
-  const hex = callId.replace(/[^0-9a-fA-F]/g, '')
+  // A short lower-case prefix ("c_", "st_") is a kind marker, not part of the id.
+  const hex = callId.replace(/^[a-z]{1,4}_/, '').replace(/[^0-9a-fA-F]/g, '')
   if (hex.length >= 4) return hex.slice(0, 4).toUpperCase()
   const plain = callId.replace(/[^0-9A-Za-z]/g, '')
   return (plain.length > 0 ? plain.slice(0, 4) : '----').toUpperCase()

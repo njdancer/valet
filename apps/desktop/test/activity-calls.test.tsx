@@ -42,7 +42,7 @@ describe('Activity › Calls', () => {
     const t = await table()
     expect(rows(t)).toHaveLength(runs.length)
     const row = rows(t).find((r) => r.textContent?.includes('update_cart_line')) as HTMLElement
-    expect(within(row).getByRole('link', { name: 'Call C8F2' }).getAttribute('href')).toBe(
+    expect(within(row).getByRole('link', { name: 'Call 8F2E' }).getAttribute('href')).toBe(
       '#/activity/calls/c_8f2e1b',
     )
     expect(within(row).getByRole('link', { name: 'Woolworths' }).getAttribute('href')).toBe(

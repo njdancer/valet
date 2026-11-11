@@ -24,7 +24,7 @@ export function siteStatus(adapter: AdapterSummary, health: SiteHealth | null): 
     return { tone: 'danger', text: 'You turned this version down · its tools are off', fix: 'review' }
   if (adapter.approval === 'unapproved')
     return { tone: 'accent', text: 'Not approved yet · its tools are off until you review it', fix: 'review' }
-  if ((adapter as { readonly paused?: boolean }).paused === true)
+  if (adapter.paused)
     return { tone: 'neutral', text: `${adapter.name} paused · calls are refused`, fix: 'resume' }
   if (adapter.session.state === 'needs-user') {
     const reason = adapter.session.needsUser

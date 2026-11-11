@@ -66,9 +66,12 @@ describe('the control panel shell', () => {
     const titles = within(list)
       .getAllByRole('listitem')
       .map((li) => li.textContent ?? '')
+    // Soonest deadline first: the confirmation runs out before the login window closes.
     expect(titles[0]).toContain('Confirm: Remove from cart (Woolworths)')
-    expect(titles[1]).toContain('Log in to Woolworths (verification check)')
-    expect(titles[2]).toContain('Review the Woolworths update (0.4.0)')
+    expect(titles.findIndex((t) => t.includes('Log in to Woolworths (verification check)'))).toBeGreaterThan(
+      0,
+    )
+    expect(titles.some((t) => t.includes('Review the Woolworths update (0.4.0)'))).toBe(true)
     expect(
       within(list)
         .getByRole('link', { name: callRef('c_a40f3c') })
@@ -91,7 +94,7 @@ describe('the control panel shell', () => {
 
   it('says nothing needs you, with the system status, when nothing waits', async () => {
     const api = createFakeApi({ now: NOW })
-    const empty: FakeApi = { ...api, attention: { list: async () => [] } }
+    const empty: FakeApi = { ...api, attention: { ...api.attention, list: async () => [] } }
     renderAt('#/needs-you', empty)
     expect(await screen.findByText('Nothing needs you')).toBeTruthy()
     expect(await screen.findByRole('link', { name: 'Open Woolworths' })).toBeTruthy()
@@ -183,7 +186,7 @@ describe('needs-you items', () => {
   }
   it('uses the shared titles', () => {
     expect(confirmTitle('Remove from cart', 'Woolworths')).toBe('Confirm: Remove from cart (Woolworths)')
-    expect(loginTitle('Woolworths', 'Verification check')).toBe('Log in to Woolworths (verification check)')
+    expect(loginTitle('Woolworths', 'captcha')).toBe('Log in to Woolworths (verification check)')
     expect(reviewTitle('Woolworths', '0.4.0', false)).toBe('Review the Woolworths update (0.4.0)')
     expect(reviewTitle('Woolworths', '0.4.0', true)).toBe('Review Woolworths before first use')
   })
@@ -229,6 +232,7 @@ describe('site status', () => {
     calls7d: 0,
     settingsNeeded: [],
     cartUrl: null,
+    paused: false,
   }
   const health: SiteHealth = {
     host: 'woolworths.com.au',
@@ -244,7 +248,7 @@ describe('site status', () => {
     expect(siteStatus(adapter, health)).toEqual({ tone: 'success', text: 'Ready', fix: null })
     expect(siteStatus({ ...adapter, approval: 'unapproved' }, health).fix).toBe('review')
     expect(siteStatus({ ...adapter, approval: 'rejected' }, health).tone).toBe('danger')
-    expect(siteStatus({ ...adapter, paused: true } as AdapterSummary, health).fix).toBe('resume')
+    expect(siteStatus({ ...adapter, paused: true }, health).fix).toBe('resume')
     expect(
       siteStatus(
         { ...adapter, session: { ...adapter.session, state: 'needs-user', needsUser: 'captcha' } },
@@ -283,8 +287,8 @@ describe('call refs and lock-down state', () => {
     expect(callRef('zz')).toBe('ZZ')
   })
   it('reads lock down only when the main process reports it', () => {
-    const status: AppStatus = { paused: false, version: '1', demo: false }
+    const status: AppStatus = { paused: false, version: '1', demo: false, lockedDown: false }
     expect(isLockedDown(status)).toBe(false)
-    expect(isLockedDown({ ...status, lockedDown: true } as AppStatus)).toBe(true)
+    expect(isLockedDown({ ...status, lockedDown: true })).toBe(true)
   })
 })

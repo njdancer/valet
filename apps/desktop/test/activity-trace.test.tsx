@@ -246,7 +246,7 @@ describe('a call’s trace', () => {
   it('opens from the list, and the old #/activity/<id> address still lands on it', async () => {
     const user = userEvent.setup()
     renderAt('#/activity/calls', createFakeApi({ now: NOW }))
-    await user.click(await screen.findByRole('link', { name: 'Call C8F2' }))
+    await user.click(await screen.findByRole('link', { name: 'Call 8F2E' }))
     expect(await screen.findByRole('heading', { level: 1, name: 'Changed a trolley line' })).toBeTruthy()
     document.body.innerHTML = ''
     renderAt('#/activity/c_8f2e1b', createFakeApi({ now: NOW }))

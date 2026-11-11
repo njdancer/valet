@@ -15,9 +15,8 @@ export interface ShellState {
   readonly line: string
 }
 
-/** Locked down is newer than AppStatus in some builds; read it without assuming. */
 export function isLockedDown(status: AppStatus): boolean {
-  return (status as { readonly lockedDown?: boolean }).lockedDown === true
+  return status.lockedDown
 }
 
 export function useShellState(): ShellState {
@@ -27,10 +26,7 @@ export function useShellState(): ShellState {
   const status = app.status === 'ready' ? app.data : null
   const paused = status?.paused === true
   const lockedDown = status !== null && isLockedDown(status)
-  const needsYou =
-    attention.status === 'ready'
-      ? attention.data.filter((i) => (i as { readonly kind: string }).kind !== 'missed').length
-      : 0
+  const needsYou = attention.status === 'ready' ? attention.data.filter((i) => i.kind !== 'missed').length : 0
   const apps = endpoint.status === 'ready' ? endpoint.data.connectedClients : null
   const listening = endpoint.status === 'ready' ? endpoint.data.listening : null
   let tone: DotTone = 'success'

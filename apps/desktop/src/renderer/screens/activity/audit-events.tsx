@@ -44,8 +44,8 @@ export const EVENT_WORDS = {
   'remote-revoked': { label: 'Cloud agent removed', tone: 'neutral' },
   'remote-token-reuse': { label: 'Stolen token refused', tone: 'danger' },
   confirmation: { label: 'Confirmation answered', tone: 'warning' },
-  // When core adds them: 'lock-down': { label: 'Locked down', tone: 'danger' },
-  // 'site-paused': { label: 'Site paused', tone: 'warning' },
+  'lock-down': { label: 'Lock down', tone: 'danger' },
+  'site-paused': { label: 'Site paused', tone: 'warning' },
 } as const satisfies Readonly<Record<EventType, { readonly label: string; readonly tone: DotTone }>>
 
 const OTHER = { label: 'Other event', tone: 'neutral' } as const
@@ -267,6 +267,26 @@ export function details(event: AuditEvent, now: number): ReactNode {
       return (
         <Quiet>A used {event.token === 'code' ? 'code' : 'refresh token'} came back; access revoked</Quiet>
       )
+    case 'lock-down':
+      return event.locked ? (
+        <>
+          Locked down
+          {event.revokedClients > 0 ? (
+            <Quiet>
+              {' '}
+              · {event.revokedClients} cloud {event.revokedClients === 1 ? 'agent' : 'agents'} removed
+            </Quiet>
+          ) : null}
+        </>
+      ) : (
+        <>Unlocked</>
+      )
+    case 'site-paused':
+      return (
+        <>
+          {event.adapterId} <Quiet>{event.paused ? 'paused' : 'resumed'}</Quiet>
+        </>
+      )
     default:
       return null
   }
@@ -319,8 +339,8 @@ export const EVENT_FIELDS = {
   'remote-revoked': ['type', 'clientId', 'clients'],
   'remote-token-reuse': ['type', 'clientId', 'token'],
   confirmation: ['type', 'adapterId', 'tool', 'client', 'callId', 'answer'],
-  // When core adds them: 'lock-down': ['type', 'locked', 'revokedClients'],
-  // 'site-paused': ['type', 'adapterId', 'paused'],
+  'lock-down': ['type', 'locked', 'revokedClients'],
+  'site-paused': ['type', 'adapterId', 'paused'],
 } as const satisfies {
   readonly [K in EventType]: readonly (keyof Extract<AuditEvent, { readonly type: K }>)[]
 }

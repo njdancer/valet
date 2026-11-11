@@ -314,7 +314,7 @@ describe('the audit log', () => {
     const api = createFakeApi({ now: NOW })
     renderAt('#/activity/audit?call=c_8f2e1b', api)
     await rowLink(4801)
-    const calls = screen.getAllByRole('link', { name: 'Call C8F2' })
+    const calls = screen.getAllByRole('link', { name: 'Call 8F2E' })
     expect(calls.length).toBe(rowLinks().length)
     expect(calls[0]?.getAttribute('href')).toBe('#/activity/calls/c_8f2e1b')
     expect(queries(api).at(-1)?.search).toBe('c_8f2e1b')
@@ -554,7 +554,7 @@ describe('the audit log', () => {
   it('opens the call a record belongs to', async () => {
     renderAt('#/activity/audit/4801', createFakeApi({ now: NOW }))
     const open = await within(await screen.findByRole('region', { name: 'Record' })).findByRole('link', {
-      name: 'Open call C8F2',
+      name: 'Open call 8F2E',
     })
     expect(open.getAttribute('href')).toBe('#/activity/calls/c_8f2e1b')
   })
