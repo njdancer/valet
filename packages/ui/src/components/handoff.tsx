@@ -46,6 +46,7 @@ export function HandoffBanner({
   className?: string
 }) {
   const primary = useRef<HTMLButtonElement>(null)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refocus the primary button whenever the state changes
   useEffect(() => {
     primary.current?.focus()
   }, [state])
