@@ -40,10 +40,19 @@ function classicFake() {
     ...fake,
     attention: {
       ...fake.attention,
-      list: async () =>
-        (await fake.attention.list()).filter((i) =>
-          ['confirmation', 'needs-user', 'review'].includes(i.kind),
-        ),
+      // An update waiting for another site sits beside Woolworths' confirmation and login: the
+      // site that waits for review has its tools off, so nothing of its own waits meanwhile.
+      list: async () => [
+        ...(await fake.attention.list()).filter((i) => ['confirmation', 'needs-user'].includes(i.kind)),
+        {
+          kind: 'review' as const,
+          id: 'rv_coles',
+          adapterId: 'coles',
+          adapterName: 'Coles',
+          version: '0.2.0',
+          addsPermissions: true,
+        },
+      ],
     },
   }
 }
@@ -63,7 +72,7 @@ describe('the menu bar popover', () => {
     expect(rows.map((r) => r.textContent)).toEqual([
       expect.stringContaining('Confirm: Remove from cart (Woolworths)'),
       expect.stringContaining('Log in to Woolworths (verification check)'),
-      expect.stringContaining('Review the Woolworths update (0.4.0)'),
+      expect.stringContaining('Review the Coles update (0.2.0)'),
     ])
     // The client's name is only a claim, and the row says so.
     expect(rows[0]?.textContent).toContain('a client calling itself “Claude Code”')
@@ -81,7 +90,7 @@ describe('the menu bar popover', () => {
     // Answer brings the confirmation's own panel forward: only it can approve.
     expect(called(api, 'openConfirmation')).toEqual([['cf_a40f3c']])
     expect(called(api, 'openLoginWindow')).toEqual([['woolworths']])
-    expect(called(api, 'app.openControlPanel')).toEqual([['#/sites/woolworths/versions/review']])
+    expect(called(api, 'app.openControlPanel')).toEqual([['#/sites/coles/versions/review']])
     // The popover's own address never changes: links open in Valet, not here.
     expect(window.location.hash).toBe('')
   })
@@ -104,8 +113,8 @@ describe('the menu bar popover', () => {
       {
         kind: 'review',
         id: 'rv_b',
-        adapterId: 'coles',
-        adapterName: 'Coles',
+        adapterId: 'wikipedia',
+        adapterName: 'Wikipedia',
         version: '0.2.0',
         addsPermissions: false,
       },
@@ -113,7 +122,7 @@ describe('the menu bar popover', () => {
     const api = { ...fake, attention: { ...fake.attention, list: async () => [...items, ...extra] } }
     renderTray(api)
     const more = await screen.findByRole('link', { name: /\+1 more:/ })
-    expect(more.textContent).toContain('Review the Coles update (0.2.0)')
+    expect(more.textContent).toContain('Wikipedia')
     const user = userEvent.setup()
     await user.click(more)
     expect(called(fake, 'app.openControlPanel')).toEqual([['#/needs-you']])

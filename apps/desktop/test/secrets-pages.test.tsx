@@ -156,10 +156,6 @@ describe('a login’s page', () => {
     expect(screen.getByRole('link', { name: 'Change…' }).getAttribute('href')).toBe(
       '#/sites/woolworths/login/login',
     )
-    // The update waiting isn't given the login yet; its review is one click away.
-    expect(screen.getByRole('link', { name: 'Review Woolworths update' }).getAttribute('href')).toBe(
-      '#/sites/woolworths/versions/review',
-    )
   })
 
   it('asks before revoking, naming what isn’t touched', async () => {

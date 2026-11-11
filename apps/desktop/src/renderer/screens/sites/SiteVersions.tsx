@@ -36,6 +36,9 @@ export function SiteVersions({ data }: { readonly data: SiteData }) {
       ? null
       : adapter.pendingUpdate
   const approved = adapter.approval === 'approved'
+  // An update as the main process has it: the changed bundle is installed and waiting, and the
+  // version it replaced, approved before, is no longer kept.
+  const replaced = !approved && adapter.approval !== 'rejected' && review !== null ? review.from : null
   const loginGiven = adapter.secretRequests.some((s) => s.grant !== null)
   return (
     <Stack gap={3}>
@@ -94,6 +97,8 @@ export function SiteVersions({ data }: { readonly data: SiteData }) {
                 <span className="font-semibold">{adapter.version}</span>
                 {approved ? (
                   <Badge tone="success">Live</Badge>
+                ) : replaced !== null ? (
+                  <Badge tone="warning">Waiting</Badge>
                 ) : adapter.approval === 'rejected' ? (
                   <Badge>Turned down</Badge>
                 ) : (
@@ -124,6 +129,26 @@ export function SiteVersions({ data }: { readonly data: SiteData }) {
               ) : null}
             </TD>
           </TR>
+          {replaced !== null ? (
+            <TR>
+              <TD>
+                <Inline gap={2} wrap={false}>
+                  <span className="font-semibold">{replaced.version}</span>
+                  <Badge>Replaced</Badge>
+                </Inline>
+              </TD>
+              <TD>
+                <HashChip value={replaced.hash} label={`Content hash of ${replaced.version}`} />
+              </TD>
+              <TD className="text-fg-muted">Approved earlier</TD>
+              <TD className="text-fg-subtle">—</TD>
+              <TD className="text-fg-subtle">not used now</TD>
+              <TD align="right" className="text-fg-subtle">
+                —
+              </TD>
+              <TD />
+            </TR>
+          ) : null}
         </TBody>
       </Table>
       <Text size="sm" tone="subtle">
