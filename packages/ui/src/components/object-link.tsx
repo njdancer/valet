@@ -1,3 +1,4 @@
+import { X } from 'lucide-react'
 import { HoverCard as HoverCardPrimitive } from 'radix-ui'
 import type { ComponentProps, ReactNode } from 'react'
 import { cn } from '../lib/cn'
@@ -108,5 +109,50 @@ export function FilterBar({ className, ...props }: ComponentProps<'search'>) {
       )}
       {...props}
     />
+  )
+}
+
+/**
+ * One active filter ("Site: Woolworths"), removable. Filters live in the URL, so removing one is a
+ * navigation and Back brings it back.
+ */
+export function FilterChip({
+  label,
+  value,
+  onRemove,
+  onClick,
+  className,
+}: {
+  label: ReactNode
+  value: ReactNode
+  onRemove: () => void
+  /** Opens the filter's choices. */
+  onClick?: () => void
+  className?: string
+}) {
+  return (
+    <span
+      className={cn(
+        'inline-flex h-6 items-center rounded-full bg-accent-soft text-sm text-accent-fg',
+        className,
+      )}
+    >
+      <button
+        type="button"
+        onClick={onClick}
+        className="flex h-full cursor-pointer items-center gap-1 rounded-l-full pr-1 pl-2.5 hover:bg-selected"
+      >
+        <span className="text-fg-muted">{label}:</span>
+        <span className="font-medium">{value}</span>
+      </button>
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`Remove filter ${typeof label === 'string' ? label : ''}`.trim()}
+        className="flex size-6 cursor-pointer items-center justify-center rounded-r-full hover:bg-selected"
+      >
+        <X className="size-3" aria-hidden="true" />
+      </button>
+    </span>
   )
 }

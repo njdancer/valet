@@ -1,8 +1,9 @@
 import { cva, type VariantProps } from 'class-variance-authority'
 import { Slot } from 'radix-ui'
-import { type ComponentProps, forwardRef, type ReactNode } from 'react'
+import { type ComponentProps, forwardRef, type MouseEvent, type ReactNode } from 'react'
 import { cn } from '../lib/cn'
 import { Spinner } from './spinner'
+import { Tooltip } from './tooltip'
 
 export const buttonVariants = cva(
   [
@@ -45,6 +46,12 @@ export type ButtonProps = ComponentProps<'button'> &
     loading?: boolean
     leading?: ReactNode
     trailing?: ReactNode
+    /**
+     * Why the button can't be used yet ("Available in 3 s", "Choose a store first"). With `disabled`,
+     * the button stays focusable, shows this as a tooltip and reads it as its description, instead
+     * of vanishing from the tab order unexplained.
+     */
+    disabledReason?: string
   }
 
 /**
@@ -62,22 +69,31 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     trailing,
     children,
     disabled,
+    disabledReason,
     onClick,
     ...props
   },
   ref,
 ) {
   const Comp = asChild ? Slot.Root : 'button'
-  return (
+  const explained = Boolean(disabled && disabledReason)
+  const softDisabled = asChild || explained
+  const blocked = loading || (softDisabled && disabled)
+  const button = (
     <Comp
       ref={ref}
       data-slot="button"
       type={asChild ? undefined : (props.type ?? 'button')}
-      className={cn(buttonVariants({ variant, size }), className)}
-      disabled={asChild ? undefined : disabled}
-      aria-disabled={asChild && disabled ? true : undefined}
+      className={cn(
+        buttonVariants({ variant, size }),
+        explained && 'aria-disabled:pointer-events-auto aria-disabled:cursor-not-allowed',
+        className,
+      )}
+      disabled={softDisabled ? undefined : disabled}
+      aria-disabled={softDisabled && disabled ? true : undefined}
+      aria-description={explained ? disabledReason : undefined}
       aria-busy={loading || undefined}
-      onClick={loading ? (e) => e.preventDefault() : onClick}
+      onClick={blocked ? (e: MouseEvent<HTMLButtonElement>) => e.preventDefault() : onClick}
       {...props}
     >
       {asChild ? (
@@ -94,4 +110,5 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       )}
     </Comp>
   )
+  return explained ? <Tooltip content={disabledReason}>{button}</Tooltip> : button
 })

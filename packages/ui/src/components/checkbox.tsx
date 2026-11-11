@@ -7,6 +7,7 @@ import {
 import { type ComponentProps, type ReactNode, useId } from 'react'
 import { cn } from '../lib/cn'
 import { useFieldControlProps } from './field'
+import { Spinner } from './spinner'
 
 const box =
   'peer inline-flex size-4 shrink-0 cursor-pointer items-center justify-center rounded-xs bg-raised text-fg-on-accent shadow-[inset_0_0_0_0.5px_var(--border-strong)] transition-interactive press disabled:cursor-not-allowed disabled:opacity-45 data-[state=checked]:bg-accent-solid data-[state=checked]:shadow-none data-[state=indeterminate]:bg-accent-solid data-[state=indeterminate]:shadow-none aria-[invalid=true]:shadow-[inset_0_0_0_1px_var(--danger-solid)]'
@@ -34,8 +35,14 @@ export function Switch({
   className,
   id,
   size = 'md',
+  pending = false,
+  onClick,
   ...props
-}: ComponentProps<typeof SwitchPrimitive.Root> & { size?: 'sm' | 'md' }) {
+}: ComponentProps<typeof SwitchPrimitive.Root> & {
+  size?: 'sm' | 'md'
+  /** The change is being applied: the thumb shows a spinner and clicks wait. */
+  pending?: boolean
+}) {
   const field = useFieldControlProps(id)
   return (
     <SwitchPrimitive.Root
@@ -46,18 +53,22 @@ export function Switch({
         size === 'md' ? 'h-5 w-8.5' : 'h-4 w-6.5',
         className,
       )}
+      aria-busy={pending || undefined}
+      onClick={pending ? (e) => e.preventDefault() : onClick}
       {...field}
       {...props}
     >
       <SwitchPrimitive.Thumb
         className={cn(
-          'pointer-events-none block rounded-full bg-white shadow-[0_1px_2px_oklch(0_0_0/0.25),0_0_0_0.5px_oklch(0_0_0/0.06)]',
+          'pointer-events-none flex items-center justify-center rounded-full bg-white text-accent-solid shadow-[0_1px_2px_oklch(0_0_0/0.25),0_0_0_0.5px_oklch(0_0_0/0.06)]',
           'transition-transform duration-(--v-duration-slow) ease-spring',
           size === 'md'
             ? 'size-4 data-[state=checked]:translate-x-3.5'
             : 'size-3 data-[state=checked]:translate-x-2.5',
         )}
-      />
+      >
+        {pending ? <Spinner size={size === 'md' ? 10 : 8} /> : null}
+      </SwitchPrimitive.Thumb>
     </SwitchPrimitive.Root>
   )
 }
@@ -81,7 +92,7 @@ export function RadioItem({ className, ...props }: ComponentProps<typeof RadioPr
   )
 }
 
-/** A radio with its label and an optional hint, all one click target. */
+/** A radio with its label and an optional hint. The label is the click target; the hint describes. */
 export function RadioOption({
   value,
   label,
@@ -103,17 +114,16 @@ export function RadioOption({
         className="mt-0.5"
         aria-describedby={description ? `${id}-d` : undefined}
       />
-      <label
-        htmlFor={id}
-        className="flex cursor-pointer flex-col gap-0.5 peer-disabled:cursor-not-allowed peer-disabled:opacity-50"
-      >
-        <span className="text-md text-fg">{label}</span>
+      <div className="flex flex-col gap-0.5 peer-disabled:opacity-50">
+        <label htmlFor={id} className="cursor-pointer text-md text-fg peer-disabled:cursor-not-allowed">
+          {label}
+        </label>
         {description ? (
           <span id={`${id}-d`} className="text-sm text-fg-muted">
             {description}
           </span>
         ) : null}
-      </label>
+      </div>
     </div>
   )
 }

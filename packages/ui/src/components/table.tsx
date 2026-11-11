@@ -20,8 +20,33 @@ export function THead({ className, ...props }: ComponentProps<'thead'>) {
   return <thead className={cn('sticky top-0 z-[1] bg-surface', className)} {...props} />
 }
 
-export function TBody(props: ComponentProps<'tbody'>) {
-  return <tbody {...props} />
+/**
+ * Up and Down move between rows (from one RowLink to the next), Home and End to the ends, so a long
+ * table isn't a long Tab walk.
+ */
+export function TBody({ onKeyDown, ...props }: ComponentProps<'tbody'>) {
+  return (
+    <tbody
+      onKeyDown={(e) => {
+        onKeyDown?.(e)
+        if (e.defaultPrevented || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return
+        const links = [...e.currentTarget.querySelectorAll<HTMLElement>('[data-row-link]')]
+        const at = links.indexOf(document.activeElement as HTMLElement)
+        if (at === -1) return
+        const next =
+          e.key === 'Home'
+            ? 0
+            : e.key === 'End'
+              ? links.length - 1
+              : e.key === 'ArrowDown'
+                ? Math.min(links.length - 1, at + 1)
+                : Math.max(0, at - 1)
+        e.preventDefault()
+        links[next]?.focus()
+      }}
+      {...props}
+    />
+  )
 }
 
 export function TR({
@@ -114,6 +139,7 @@ export function RowLink({
   return (
     <a
       href={href}
+      data-row-link=""
       className={cn(
         'cursor-pointer font-medium text-fg no-underline outline-offset-[-2px] after:absolute after:inset-0 after:content-[""] focus-visible:after:rounded-xs focus-visible:after:outline-2 focus-visible:after:outline-line-focus focus-visible:outline-none',
         className,

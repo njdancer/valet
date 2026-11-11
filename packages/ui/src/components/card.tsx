@@ -10,15 +10,22 @@ import { cn } from '../lib/cn'
 export function Card({
   className,
   interactive = false,
+  flush = false,
   asChild = false,
   ...props
-}: ComponentProps<'div'> & { interactive?: boolean; asChild?: boolean }) {
+}: ComponentProps<'div'> & {
+  interactive?: boolean
+  /** No inner padding and clipped corners, for a table or list that fills the card. */
+  flush?: boolean
+  asChild?: boolean
+}) {
   const Comp = asChild ? Slot.Root : 'div'
   return (
     <Comp
       data-slot="card"
       className={cn(
         'flex flex-col rounded-lg bg-surface shadow-1 ring-[0.5px] ring-line ring-inset',
+        flush && 'overflow-hidden',
         interactive &&
           'cursor-pointer transition-interactive hover:shadow-2 hover:ring-line-strong active:shadow-1 press text-inherit no-underline',
         className,

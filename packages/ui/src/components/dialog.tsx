@@ -52,48 +52,35 @@ export function DialogContent({
         {...(description ? {} : { 'aria-describedby': undefined })}
         {...props}
       >
-        <OverlayHeader title={title} description={description} hideClose={hideClose} />
+        <OverlayHeader title={title} description={description} />
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">{children}</div>
         {footer ? <OverlayFooter>{footer}</OverlayFooter> : null}
+        {hideClose ? null : <OverlayClose />}
       </DialogPrimitive.Content>
     </DialogPrimitive.Portal>
   )
 }
 
-function OverlayHeader({
-  title,
-  description,
-  hideClose,
-}: {
-  title: ReactNode
-  description?: ReactNode
-  hideClose: boolean
-}) {
+function OverlayHeader({ title, description }: { title: ReactNode; description?: ReactNode }) {
   return (
-    <div className="flex shrink-0 items-start gap-3 px-5 pt-5 pb-3">
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <DialogPrimitive.Title className="m-0 text-lg font-semibold tracking-snug text-fg">
-          {title}
-        </DialogPrimitive.Title>
-        {description ? (
-          <DialogPrimitive.Description className="m-0 text-md text-fg-muted text-pretty">
-            {description}
-          </DialogPrimitive.Description>
-        ) : null}
-      </div>
-      {hideClose ? null : (
-        <DialogPrimitive.Close asChild>
-          <IconButton
-            label="Close"
-            icon={<X />}
-            variant="quiet"
-            size="sm"
-            className="-mt-0.5 -mr-1"
-            shortcut="Esc"
-          />
-        </DialogPrimitive.Close>
-      )}
+    <div className="flex shrink-0 flex-col gap-1 px-5 pt-5 pb-3 pr-12">
+      <DialogPrimitive.Title className="m-0 text-lg font-semibold tracking-snug text-fg">{title}</DialogPrimitive.Title>
+      {description ? (
+        <DialogPrimitive.Description className="m-0 text-md text-fg-muted text-pretty">{description}</DialogPrimitive.Description>
+      ) : null}
     </div>
+  )
+}
+
+/**
+ * The close button sits last in the DOM (so focus starts on the first field, not on Close, and its
+ * tooltip doesn't open on arrival) but shows in the top corner.
+ */
+function OverlayClose() {
+  return (
+    <DialogPrimitive.Close asChild>
+      <IconButton label="Close" icon={<X />} variant="quiet" size="sm" className="absolute top-4 right-4" shortcut="Esc" />
+    </DialogPrimitive.Close>
   )
 }
 
@@ -111,18 +98,22 @@ export function SheetContent({
   title,
   description,
   footer,
+  wide = false,
   ...props
 }: Omit<ComponentProps<typeof DialogPrimitive.Content>, 'title'> & {
   title: ReactNode
   description?: ReactNode
   footer?: ReactNode
+  /** 720 px instead of 560, for a sheet with a table or two columns. */
+  wide?: boolean
 }) {
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay className={overlay} />
       <DialogPrimitive.Content
         className={cn(
-          'fixed top-0 left-1/2 z-[var(--v-z-modal)] flex max-h-[calc(100vh-24px)] w-[min(560px,calc(100vw-32px))] -translate-x-1/2 flex-col',
+          'fixed top-0 left-1/2 z-[var(--v-z-modal)] flex max-h-[calc(100vh-24px)] -translate-x-1/2 flex-col',
+          wide ? 'w-[min(720px,calc(100vw-32px))]' : 'w-[min(560px,calc(100vw-32px))]',
           'rounded-b-xl bg-raised text-fg shadow-4 ring-[0.5px] ring-line ring-inset outline-none',
           'data-[state=open]:animate-sheet-in data-[state=closed]:animate-sheet-out',
           className,
@@ -130,9 +121,10 @@ export function SheetContent({
         {...(description ? {} : { 'aria-describedby': undefined })}
         {...props}
       >
-        <OverlayHeader title={title} description={description} hideClose={false} />
+        <OverlayHeader title={title} description={description} />
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">{children}</div>
         {footer ? <OverlayFooter>{footer}</OverlayFooter> : null}
+        <OverlayClose />
       </DialogPrimitive.Content>
     </DialogPrimitive.Portal>
   )
@@ -166,9 +158,10 @@ export function DrawerContent({
         {...(description ? {} : { 'aria-describedby': undefined })}
         {...props}
       >
-        <OverlayHeader title={title} description={description} hideClose={false} />
+        <OverlayHeader title={title} description={description} />
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">{children}</div>
         {footer ? <OverlayFooter>{footer}</OverlayFooter> : null}
+        <OverlayClose />
       </DialogPrimitive.Content>
     </DialogPrimitive.Portal>
   )

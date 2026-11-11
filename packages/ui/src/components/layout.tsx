@@ -239,35 +239,57 @@ export function Section({
 }
 
 /**
- * A list beside its detail (Activity, Audit log): the list scrolls on its own, the detail on its own.
- * Below the compact breakpoint the detail takes the whole width and the list hides.
+ * A list beside its detail (Activity, Audit log), with an optional inspector on the right (the
+ * selected step of a call). Each pane scrolls on its own. The layout answers to its own width, not
+ * the window's (container queries): under 1000 px the inspector folds below the detail, and under
+ * 880 px only the detail shows when something is selected (the list returns with Back).
  */
 export function SplitView({
   list,
   detail,
+  inspector,
   listWidth = 320,
+  inspectorWidth = 300,
   showDetail = true,
   className,
 }: {
   list: ReactNode
   detail: ReactNode
+  inspector?: ReactNode
   listWidth?: number
+  inspectorWidth?: number
   showDetail?: boolean
   className?: string
 }) {
   return (
-    <div className={cn('flex min-h-0 flex-1', className)}>
-      <div
-        className={cn(
-          'min-h-0 shrink-0 overflow-y-auto border-r border-line-subtle',
-          showDetail && 'max-compact:hidden',
-        )}
-        style={{ width: listWidth }}
-      >
-        {list}
-      </div>
-      <div className={cn('min-h-0 min-w-0 flex-1 overflow-y-auto', !showDetail && 'max-compact:hidden')}>
-        {detail}
+    <div className={cn('@container flex min-h-0 flex-1', className)}>
+      <div className="flex min-h-0 min-w-0 flex-1">
+        <div
+          className={cn(
+            'min-h-0 shrink-0 overflow-y-auto border-r border-line-subtle',
+            showDetail && '@max-[880px]:hidden',
+          )}
+          style={{ width: listWidth }}
+        >
+          {list}
+        </div>
+        <div
+          className={cn(
+            'flex min-h-0 min-w-0 flex-1 @max-[1000px]:flex-col',
+            !showDetail && '@max-[880px]:hidden',
+          )}
+        >
+          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto">{detail}</div>
+          {inspector ? (
+            <aside
+              aria-label="Inspector"
+              className="min-h-0 shrink-0 overflow-y-auto border-l border-line-subtle bg-sunken/40 @max-[1000px]:max-h-[45%] @max-[1000px]:w-full! @max-[1000px]:border-t @max-[1000px]:border-l-0"
+              style={{ width: inspectorWidth }}
+            >
+              {inspector}
+            </aside>
+          ) : null}
+        </div>
       </div>
     </div>
   )

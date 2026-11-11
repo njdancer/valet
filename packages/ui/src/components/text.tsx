@@ -129,18 +129,21 @@ export function CodeBlock({
       )}
     >
       {/* A scrolling block must be reachable by keyboard (WCAG 2.1.1), so it's a named, focusable region. */}
-      {/* biome-ignore lint/a11y: a <section> can't be preformatted text, and the region must take focus */}
-      <pre
-        tabIndex={0}
-        role="region"
+      <section
         aria-label={label ?? 'Code'}
-        className={cn(
-          'selectable m-0 max-h-80 overflow-auto p-3 pr-10 font-mono text-sm leading-normal text-code-fg',
-          wrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre',
-        )}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: a scrolling region must take focus
+        tabIndex={0}
+        className="max-h-80 overflow-auto rounded-[inherit] outline-offset-[-2px]"
       >
-        {children}
-      </pre>
+        <pre
+          className={cn(
+            'selectable m-0 p-3 pr-10 font-mono text-sm leading-normal text-code-fg',
+            wrap ? 'whitespace-pre-wrap break-words' : 'whitespace-pre',
+          )}
+        >
+          {children}
+        </pre>
+      </section>
       {copy ? (
         <div className="absolute top-1.5 right-1.5 opacity-70 transition-interactive group-hover:opacity-100 focus-within:opacity-100">
           <CopyButton value={children} label={label ? `Copy ${label}` : 'Copy'} />

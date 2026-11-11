@@ -3,30 +3,45 @@ import { type ReactNode, useEffect, useState } from 'react'
 import { cn } from '../lib/cn'
 import { type DotTone, StatusDot } from './badge'
 
-function remaining(until: number, now: number): string {
-  const s = Math.max(0, Math.round((until - now) / 1000))
+function remaining(ms: number): string {
+  const s = Math.max(0, Math.ceil(ms / 1000))
   if (s >= 3600) return `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`
-  if (s >= 60) return `${Math.floor(s / 60)} min ${s % 60 ? `${s % 60} s` : ''}`.trim()
+  if (s >= 120) return `${Math.ceil(s / 60)} min`
+  if (s >= 60) return `1 min ${s % 60 ? `${s % 60} s` : ''}`.trim()
   return `${s} s`
 }
 
+export function clockTime(at: number, locale?: string): string {
+  return new Intl.DateTimeFormat(locale, { hour: 'numeric', minute: '2-digit' }).format(at)
+}
+
+/** The announcement thresholds, in ms left: a screen reader hears these, not every second. */
+const ANNOUNCE_AT = [120_000, 60_000, 30_000] as const
+
+function announcementFor(left: number): string | null {
+  if (left <= 0) return 'Time is up'
+  for (const t of [...ANNOUNCE_AT].reverse()) if (left <= t) return `${remaining(t)} left`
+  return null
+}
+
 /**
- * Time left to act ("Expires in 4 min 10 s"): a code to enter, a confirmation waiting. Turns to
- * warning under a minute. Updates every second, but announces only on the minute.
+ * When something waiting must be answered by: a confirmation, a code, a login. The clock time is
+ * always shown ("until 9:52 pm"); under 2 minutes the countdown comes first, under 30 s it turns
+ * urgent, and at zero it reads Missed. A screen reader hears it only at 2 min, 1 min and 30 s.
  */
 export function DeadlineChip({
   until,
-  prefix = 'Expires in',
-  expired = 'Expired',
+  expired = 'Missed',
   className,
   now: nowProp,
+  locale,
 }: {
   until: number
-  prefix?: string
   expired?: string
   className?: string
-  /** For tests and stories: freeze the clock. */
+  /** Freeze the clock (tests, stories). */
   now?: number
+  locale?: string
 }) {
   const [now, setNow] = useState(() => nowProp ?? Date.now())
   useEffect(() => {
@@ -36,21 +51,36 @@ export function DeadlineChip({
   }, [nowProp])
   const t = nowProp ?? now
   const left = until - t
-  const urgent = left < 60_000
+  const ended = left <= 0
+  const soon = left < 120_000
+  const urgent = left < 30_000
+  const clock = clockTime(until, locale)
   return (
     <span
       className={cn(
-        'tabular inline-flex h-5 items-center gap-1 rounded-full px-2 text-xs font-semibold [&_svg]:size-3',
-        left <= 0
+        'tabular inline-flex h-5 items-center gap-1 rounded-full px-2 text-xs font-semibold whitespace-nowrap [&_svg]:size-3',
+        ended
           ? 'bg-inset text-fg-muted'
           : urgent
-            ? 'bg-warning-soft text-warning-fg'
-            : 'bg-inset text-fg-muted',
+            ? 'bg-danger-soft text-danger-fg'
+            : soon
+              ? 'bg-warning-soft text-warning-fg'
+              : 'bg-inset text-fg-muted',
         className,
       )}
     >
       <Clock aria-hidden="true" />
-      {left <= 0 ? expired : `${prefix} ${remaining(until, t)}`}
+      <span aria-hidden="true">
+        {ended
+          ? `${expired} · ${clock}`
+          : soon
+            ? `${remaining(left)} · until ${clock}`
+            : `until ${clock} · ${remaining(left)}`}
+      </span>
+      <span className="sr-only">{ended ? `${expired} at ${clock}` : `Open until ${clock}`}</span>
+      <span className="sr-only" aria-live="polite">
+        {announcementFor(left)}
+      </span>
     </span>
   )
 }
@@ -93,8 +123,11 @@ export function InboxItem({
   action,
   href,
   tone = 'accent',
+  missed = false,
   className,
 }: {
+  /** The item ran out of time: it stays for 24 h, muted, with a follow-up action. */
+  missed?: boolean
   icon?: ReactNode
   title: ReactNode
   description?: ReactNode
@@ -114,6 +147,7 @@ export function InboxItem({
         tone === 'accent' && 'before:bg-accent-solid',
         tone === 'warning' && 'before:bg-warning-solid',
         tone === 'danger' && 'before:bg-danger-solid',
+        missed && 'bg-canvas shadow-none before:bg-fg-subtle',
         className,
       )}
     >
@@ -136,3 +170,6 @@ export function InboxItem({
     </li>
   )
 }
+
+/** The IA's name for an inbox item: a thing in Needs you. */
+export const NeedsYouItem = InboxItem
