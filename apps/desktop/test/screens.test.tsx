@@ -239,8 +239,28 @@ describe('the adapter page', () => {
 })
 
 describe('activity and run traces', () => {
-  it('shows the newest run when none is chosen', async () => {
+  it('lists every call in words, and filters by outcome and client (F27)', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    const runs = await api.runs.list()
+    renderAt('#/activity', api)
+    const list = await screen.findByRole('list', { name: 'Tool calls' })
+    expect(list.querySelectorAll('li')).toHaveLength(runs.length)
+    expect(screen.getAllByText(/Read the trolley on Woolworths/).length).toBeGreaterThan(0)
+    await user.click(screen.getByRole('button', { name: 'Needed you' }))
+    const needing = runs.filter((r) => r.outcome === 'needsUser').length
+    expect(list.querySelectorAll('li')).toHaveLength(needing)
+    await user.click(screen.getByRole('button', { name: 'All' }))
+    const firstClient = runs[0]?.client as string
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Client' }), firstClient)
+    expect(list.querySelectorAll('li')).toHaveLength(runs.filter((r) => r.client === firstClient).length)
+  })
+
+  it('opens a run from the list', async () => {
+    const user = userEvent.setup()
     renderAt('#/activity', createFakeApi({ now: NOW }))
+    const first = (await screen.findAllByRole('link', { name: /Read the trolley on Woolworths/ }))[0]
+    await user.click(first as HTMLElement)
     expect(await screen.findByText('woolworths.get_cart')).toBeTruthy()
     expect(screen.getByText('Needs you: Verification check')).toBeTruthy()
     expect(

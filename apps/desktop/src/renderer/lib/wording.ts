@@ -322,3 +322,23 @@ export function waitWording(reason: 'queue' | 'pace', waitedMs: number, ahead: n
     ? `Waited ${time} for its turn`
     : `Waited ${time} for its turn, ${ahead === 1 ? '1 call' : `${ahead} calls`} ahead`
 }
+
+// F27: a call worded as what it did. Known tool names get a phrase; others read as their name.
+const TOOL_PHRASES: Readonly<Record<string, string>> = {
+  search_products: 'Searched products',
+  get_product: 'Looked up a product',
+  get_cart: 'Read the trolley',
+  add_to_cart: 'Added to the trolley',
+  set_cart_quantity: 'Changed a quantity in the trolley',
+  update_cart_line: 'Changed a trolley line',
+  remove_from_cart: 'Removed from the trolley',
+  update_cart: 'Updated the trolley',
+  find_stores: 'Looked up stores',
+  apply_store: 'Picked a store',
+}
+
+export function toolPhrase(tool: string): string {
+  if (Object.hasOwn(TOOL_PHRASES, tool)) return TOOL_PHRASES[tool] as string
+  const words = tool.replace(/_/g, ' ').trim()
+  return words === '' ? 'Called a tool' : `Ran ${words}`
+}

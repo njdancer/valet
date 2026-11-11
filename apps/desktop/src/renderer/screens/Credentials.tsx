@@ -108,13 +108,7 @@ function ProviderCard({ provider: p }: { readonly provider: ProviderStatus }) {
   )
 }
 
-function GrantRow({
-  grant,
-  adapterName,
-}: {
-  readonly grant: GrantInfo
-  readonly adapterName: string
-}) {
+function GrantRow({ grant, adapterName }: { readonly grant: GrantInfo; readonly adapterName: string }) {
   const api = useApi()
   const now = useNow(60_000)
   const action = useAction()
@@ -123,9 +117,7 @@ function GrantRow({
       <td>
         <a href={href.adapter(grant.adapterId)}>{adapterName}</a>
       </td>
-      <td>
-        {grant.provider === 'messages' ? 'SMS codes' : <SecretBadge name={grant.secret} />}
-      </td>
+      <td>{grant.provider === 'messages' ? 'SMS codes' : <SecretBadge name={grant.secret} />}</td>
       <td>
         {grant.provider === 'messages'
           ? `Texts from ${grant.itemTitle}`
