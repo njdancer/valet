@@ -61,7 +61,7 @@ function leaky(api: ValetApi): ValetApi {
 
 // The review page and the grant sheet have their own copy of this check: review-grant-no-secrets.
 const ROUTES: [string, string][] = [
-  ['#/sites', 'Review Woolworths update'],
+  ['#/sites', 'Show login window'],
   ['#/sites/woolworths', 'Called by'],
   ['#/sites/woolworths/permissions', 'woolworths.com.au'],
   ['#/sites/coles', '+61 400 000 111'],

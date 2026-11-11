@@ -312,12 +312,12 @@ describe('first-run setup', () => {
     expect(rail().querySelector('[aria-current="step"]')?.textContent).toContain('Connect Claude')
   })
 
-  it('shows the approved adapter and an update waiting for review', async () => {
-    const api = createFakeApi({ now: NOW })
+  it('shows an update waiting for review, with the tools off until it is approved', async () => {
+    const api = createFakeApi({ now: NOW, updateWaiting: true })
     renderAt('#/setup/approve', api)
     await heading('Approve Woolworths')
     expect(screen.getByRole('link', { name: 'Review Woolworths 0.4.0…' })).toBeTruthy()
-    expect(screen.getByText('0.3.0 stays approved until you decide on 0.4.0.')).toBeTruthy()
+    expect(screen.getByText('Until you approve, its tools stay off MCP.')).toBeTruthy()
   })
 
   it('shows a load failure without the error’s text', async () => {

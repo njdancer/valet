@@ -58,6 +58,13 @@ export interface FakeOptions {
    * no 1Password provider set up, and setup not finished. Otherwise the app has been in use for days.
    */
   readonly firstRun?: boolean
+  /**
+   * Woolworths 0.4.0 waiting for review, as the main process has it: the changed bundle is the
+   * installed one and unapproved, so its tools are off and its login, granted to 0.3.0, isn't given
+   * to it; nothing of Woolworths' can be waiting for a confirmation or a login meanwhile. Otherwise
+   * Woolworths 0.3.0 is approved with nothing waiting for review.
+   */
+  readonly updateWaiting?: boolean
 }
 
 /** Test and dev hooks that the real API doesn't have. */
@@ -196,7 +203,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     version: '0.3.0',
     hash: WOOLWORTHS_HASH,
     approval: 'approved',
-    pendingUpdate: { version: '0.4.0', hash: WOOLWORTHS_NEXT_HASH },
+    pendingUpdate: null,
     toolCounts: { read: 3, write: 3, irreversible: 0 },
     secrets: [{ name: 'login', granted: true }],
     messagesSources: [],
@@ -784,6 +791,27 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     ['onepassword-service-account', true],
     ['onepassword-cli', true],
   ])
+
+  if (options.firstRun !== true && options.updateWaiting !== true) {
+    reviews = reviews.filter((r) => r.adapterId !== 'woolworths')
+    attention = attention.filter((a) => !(a.kind === 'review' && a.adapterId === 'woolworths'))
+  }
+  if (options.updateWaiting === true && options.firstRun !== true) {
+    const next = { version: '0.4.0', hash: WOOLWORTHS_NEXT_HASH }
+    adapters.set('woolworths', {
+      ...woolworthsBase,
+      version: next.version,
+      hash: next.hash,
+      approval: 'unapproved',
+      pendingUpdate: next,
+      session: { state: 'logged-in', checkedAt: ago(30), needsUser: null, since: ago(300) },
+    })
+    grants = grants.filter((g) => g.adapterId !== 'woolworths')
+    attention = attention.filter(
+      (a) =>
+        !(a.kind !== 'review' && a.kind !== 'missed' && 'adapterId' in a && a.adapterId === 'woolworths'),
+    )
+  }
 
   if (options.firstRun === true) {
     // The bundled adapter as a first launch finds it: installed, never approved, its whole manifest

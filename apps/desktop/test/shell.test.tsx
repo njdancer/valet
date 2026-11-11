@@ -70,7 +70,6 @@ describe('the control panel shell', () => {
     expect(titles.findIndex((t) => t.includes('Log in to Woolworths (verification check)'))).toBeGreaterThan(
       0,
     )
-    expect(titles.some((t) => t.includes('Review the Woolworths update (0.4.0)'))).toBe(true)
     expect(
       within(list)
         .getByRole('link', { name: callRef('c_a40f3c') })
@@ -81,6 +80,18 @@ describe('the control panel shell', () => {
     expect(called(api, 'openConfirmation')).toEqual([['cf_a40f3c']])
     await user.click(screen.getByRole('button', { name: 'Show login window' }))
     expect(called(api, 'openLoginWindow')).toEqual([['woolworths']])
+  })
+
+  it('lists an update waiting for review, with its tools off, and opens the review', async () => {
+    const user = userEvent.setup()
+    renderAt('#/needs-you', createFakeApi({ now: NOW, updateWaiting: true }))
+    const list = await screen.findByRole('list', { name: 'Waiting for you' })
+    const titles = within(list)
+      .getAllByRole('listitem')
+      .map((li) => li.textContent ?? '')
+    expect(titles.some((t) => t.includes('Review the Woolworths update (0.4.0)'))).toBe(true)
+    // Nothing of Woolworths' can wait for a confirmation or a login while its tools are off.
+    expect(titles.some((t) => t.includes('Confirm: Remove from cart (Woolworths)'))).toBe(false)
     await user.click(screen.getByRole('button', { name: 'Review update' }))
     expect(window.location.hash).toBe('#/sites/woolworths/versions/review')
   })

@@ -90,14 +90,21 @@ describe('the Sites list', () => {
     expect(screen.getByText(/there’s nothing to add here/)).toBeTruthy()
   })
 
-  it('keeps the update review one click away even when a login check is the more urgent line', async () => {
+  it('keeps a login check one click away', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })
     renderAt('#/sites', api)
+    await user.click(await screen.findByRole('button', { name: 'Show login window' }))
+    expect(called(api, 'openLoginWindow')).toEqual([['woolworths']])
+  })
+
+  it('shows an update waiting with its tools off, and its review one click away', async () => {
+    renderAt('#/sites', createFakeApi({ now: NOW, updateWaiting: true }))
     const review = await screen.findByRole('link', { name: 'Review Woolworths update' })
     expect(review.getAttribute('href')).toBe('#/sites/woolworths/versions/review')
-    await user.click(screen.getByRole('button', { name: 'Show login window' }))
-    expect(called(api, 'openLoginWindow')).toEqual([['woolworths']])
+    expect(
+      screen.getByText(/Update 0\.4\.0 waiting for review · its tools are off until you approve it/),
+    ).toBeTruthy()
   })
 
   it('puts the fix for a missing store and a missing login next to the line that asks for it', async () => {
@@ -164,10 +171,9 @@ describe('the Sites list', () => {
 
 describe('a site’s Overview', () => {
   it('has the header, the tabs as addresses, and the update’s Review button on the page itself', async () => {
-    renderAt('#/sites/woolworths', createFakeApi({ now: NOW }))
+    renderAt('#/sites/woolworths', createFakeApi({ now: NOW, updateWaiting: true }))
     expect(await screen.findByRole('heading', { level: 1, name: 'Woolworths' })).toBeTruthy()
-    expect(screen.getByText('woolworths 0.3.0')).toBeTruthy()
-    expect(screen.getByText('0.4.0 waiting for review')).toBeTruthy()
+    expect(screen.getByText('woolworths 0.4.0')).toBeTruthy()
     const tabs = within(screen.getByRole('navigation', { name: 'Woolworths sections' }))
     expect(tabs.getAllByRole('link').map((l) => l.getAttribute('href'))).toEqual([
       '#/sites/woolworths',
@@ -180,7 +186,7 @@ describe('a site’s Overview', () => {
     expect(screen.getByText('Woolworths 0.4.0 is waiting for your review.')).toBeTruthy()
     expect(screen.getByText(/It adds 1 web address, 1 tool and 1 kind of request\./)).toBeTruthy()
     const reviews = screen.getAllByRole('link', { name: 'Review Woolworths update' })
-    expect(reviews.length).toBe(2)
+    expect(reviews.length).toBe(1)
     for (const r of reviews) expect(r.getAttribute('href')).toBe('#/sites/woolworths/versions/review')
   })
 
@@ -260,7 +266,6 @@ describe('a site’s Overview', () => {
     expect(menu.getAllByRole('menuitem').map((i) => i.textContent)).toEqual([
       'Show Woolworths calls',
       'Show in Audit log',
-      'Review Woolworths update',
       'Copy adapter id',
       'Pause Woolworths',
     ])
@@ -412,7 +417,6 @@ describe('a site’s other tabs', () => {
       '#/activity/calls?site=woolworths&tool=add_to_cart',
     )
     expect(table.getByRole('link', { name: '14 calls to Add to cart in 7 days' })).toBeTruthy()
-    expect(screen.getByText(/Everyday Rewards balance arrives with 0\.4\.0/)).toBeTruthy()
     expect(
       screen.getByText('6 tools your apps can call. Any tool may make any request Woolworths declares;', {
         exact: false,
@@ -470,14 +474,12 @@ describe('a site’s other tabs', () => {
   })
 
   it('Versions: the waiting update with its Review button, then the live version and its hash', async () => {
-    renderAt('#/sites/woolworths/versions', createFakeApi({ now: NOW }))
+    renderAt('#/sites/woolworths/versions', createFakeApi({ now: NOW, updateWaiting: true }))
     const table = within(await screen.findByRole('table', { name: 'Woolworths adapter versions' }))
     const rows = table.getAllByRole('row').slice(1)
     expect(rows.map((r) => r.textContent)).toEqual([
-      expect.stringMatching(
-        /0\.4\.0Waiting.*Authoring agent \(IDE\).*not yet.*asks on approve.*Review 0\.4\.0/,
-      ),
-      expect.stringMatching(/0\.3\.0Live.*Installed.*given.*128/),
+      expect.stringMatching(/0\.4\.0Waiting.*Installed.*not yet.*not given.*Review 0\.4\.0/),
+      expect.stringMatching(/0\.3\.0Replaced.*Approved earlier.*not used now/),
     ])
     expect(table.getByRole('link', { name: 'Review 0.4.0' }).getAttribute('href')).toBe(
       '#/sites/woolworths/versions/review',
@@ -549,7 +551,7 @@ describe('no secret reaches a Sites page', () => {
 
 describe('the update banner’s summary', () => {
   it('says a tool changed when only a tool’s side effect did, never "nothing new"', async () => {
-    const api = createFakeApi({ now: NOW })
+    const api = createFakeApi({ now: NOW, updateWaiting: true })
     const review = (await api.approvals.pending()).find((r) => r.from !== null)
     if (review === undefined) throw new Error('no update in the fake')
     const before = {

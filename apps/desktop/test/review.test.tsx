@@ -100,7 +100,7 @@ const REMOVALS_ONLY: PendingReview = {
 
 describe('reviewing an update', () => {
   it('is a page in the shell with a breadcrumb back to the site and its versions', async () => {
-    renderAt(REVIEW, createFakeApi({ now: NOW }))
+    renderAt(REVIEW, createFakeApi({ now: NOW, updateWaiting: true }))
     expect(
       await screen.findByRole('heading', { level: 1, name: 'Review the Woolworths update (0.4.0)' }),
     ).toBeTruthy()
@@ -110,13 +110,13 @@ describe('reviewing an update', () => {
     expect(crumbs.getByRole('link', { name: 'Versions' }).getAttribute('href')).toBe(
       '#/sites/woolworths/versions',
     )
-    expect(screen.getByText('Calls use 0.3.0 until you decide')).toBeTruthy()
+    expect(screen.getByText('Its tools are off until you decide')).toBeTruthy()
     expect(screen.getByRole('link', { name: /^Close/ }).getAttribute('href')).toBe('#/sites/woolworths')
     expect(screen.getByRole('link', { name: 'Decide later' }).getAttribute('href')).toBe('#/sites/woolworths')
   })
 
   it('shows the permission diff with the added host highlighted', async () => {
-    const api = createFakeApi({ now: NOW })
+    const api = createFakeApi({ now: NOW, updateWaiting: true })
     renderAt(REVIEW, api)
     expect(await screen.findByText('Permission changes')).toBeTruthy()
     const added = screen.getAllByTestId('perm-added')
@@ -137,7 +137,7 @@ describe('reviewing an update', () => {
 
   it('keeps Approve disabled until the additions are acknowledged, then approves exactly the reviewed hash', async () => {
     const user = userEvent.setup()
-    const api = createFakeApi({ now: NOW })
+    const api = createFakeApi({ now: NOW, updateWaiting: true })
     renderAt(REVIEW, api)
     const approve = await screen.findByRole('button', { name: 'Approve 0.4.0' })
     expect(disabled(approve)).toBe(true)
@@ -164,7 +164,7 @@ describe('reviewing an update', () => {
 
   it('does not ask for the tick when the update only removes things or tightens limits', async () => {
     const user = userEvent.setup()
-    const api = createFakeApi({ now: NOW })
+    const api = createFakeApi({ now: NOW, updateWaiting: true })
     api.fake.setPendingReview(REMOVALS_ONLY)
     renderAt(REVIEW, api)
     const approve = await screen.findByRole('button', { name: 'Approve 0.3.1' })
@@ -184,7 +184,7 @@ describe('reviewing an update', () => {
 
   it('clears the tick when a different bundle replaces the one being reviewed', async () => {
     const user = userEvent.setup()
-    const api = createFakeApi({ now: NOW })
+    const api = createFakeApi({ now: NOW, updateWaiting: true })
     renderAt(REVIEW, api)
     await user.click(await screen.findByRole('checkbox', { name: ACK }))
     expect(disabled(screen.getByRole('button', { name: 'Approve 0.4.0' }))).toBe(false)
@@ -212,7 +212,7 @@ describe('reviewing an update', () => {
   })
 
   it('highlights an escalated tool and looser limits as additions', async () => {
-    const api = createFakeApi({ now: NOW })
+    const api = createFakeApi({ now: NOW, updateWaiting: true })
     api.fake.setPendingReview({
       ...REMOVALS_ONLY,
       diff: {
@@ -250,7 +250,7 @@ describe('reviewing an update', () => {
 
   it('rejects, and stays put with an error when the main process refuses', async () => {
     const user = userEvent.setup()
-    const api = createFakeApi({ now: NOW })
+    const api = createFakeApi({ now: NOW, updateWaiting: true })
     renderAt(REVIEW, api)
     api.fake.failNext('approvals.reject')
     await user.click(await screen.findByRole('button', { name: 'Reject' }))
@@ -267,7 +267,7 @@ describe('reviewing an update', () => {
 
   it('says so when an approval fails, and approves nothing else', async () => {
     const user = userEvent.setup()
-    const api = createFakeApi({ now: NOW })
+    const api = createFakeApi({ now: NOW, updateWaiting: true })
     renderAt(REVIEW, api)
     await user.click(await screen.findByRole('checkbox', { name: ACK }))
     api.fake.failNext('approvals.approve')
@@ -279,7 +279,7 @@ describe('reviewing an update', () => {
 
   it('opens the grant sheet next when asked', async () => {
     const user = userEvent.setup()
-    const api = createFakeApi({ now: NOW })
+    const api = createFakeApi({ now: NOW, updateWaiting: true })
     renderAt(REVIEW, api)
     const next = await screen.findByRole('checkbox', { name: 'Choose the login for 0.4.0 next' })
     // Unticked on an update: the person chooses.
@@ -292,7 +292,7 @@ describe('reviewing an update', () => {
 
   it('closes on Escape, back to the site', async () => {
     const user = userEvent.setup()
-    renderAt(REVIEW, createFakeApi({ now: NOW }))
+    renderAt(REVIEW, createFakeApi({ now: NOW, updateWaiting: true }))
     await screen.findByRole('button', { name: 'Approve 0.4.0' })
     await user.keyboard('{Escape}')
     await waitFor(() => expect(window.location.hash).toBe('#/sites/woolworths'))
@@ -300,7 +300,7 @@ describe('reviewing an update', () => {
 
   it('shows every kind of addition and removal, for a first install', async () => {
     const user = userEvent.setup()
-    const api = createFakeApi({ now: NOW })
+    const api = createFakeApi({ now: NOW, updateWaiting: true })
     api.fake.setPendingReview({
       ...REMOVALS_ONLY,
       from: null,
@@ -451,7 +451,7 @@ describe('reviewing an update', () => {
 
   it('shows a login step the update adds, such as a terms click, as an addition that needs the tick', async () => {
     const user = userEvent.setup()
-    const api = createFakeApi({ now: NOW })
+    const api = createFakeApi({ now: NOW, updateWaiting: true })
     api.fake.setPendingReview({
       ...REMOVALS_ONLY,
       diff: {
@@ -479,7 +479,7 @@ describe('reviewing an update', () => {
   })
 
   it('shows a setting the update adds, with the tools Valet runs for it, as an addition that needs the tick (D69)', async () => {
-    const api = createFakeApi({ now: NOW })
+    const api = createFakeApi({ now: NOW, updateWaiting: true })
     api.fake.setPendingReview({
       ...REMOVALS_ONLY,
       diff: {
@@ -515,7 +515,7 @@ describe('reviewing an update', () => {
   })
 
   it('shows a changed login check, before and after, as an addition that needs the tick', async () => {
-    const api = createFakeApi({ now: NOW })
+    const api = createFakeApi({ now: NOW, updateWaiting: true })
     api.fake.setPendingReview({
       ...REMOVALS_ONLY,
       diff: {
@@ -539,7 +539,7 @@ describe('reviewing an update', () => {
   })
 
   it('names each changed limit', async () => {
-    const api = createFakeApi({ now: NOW })
+    const api = createFakeApi({ now: NOW, updateWaiting: true })
     api.fake.setPendingReview({
       ...REMOVALS_ONLY,
       diff: {
@@ -559,13 +559,13 @@ describe('reviewing an update', () => {
   })
 
   it('says so when nothing is waiting, with the way back', async () => {
-    renderAt('#/sites/coles/versions/review', createFakeApi({ now: NOW }))
+    renderAt('#/sites/coles/versions/review', createFakeApi({ now: NOW, updateWaiting: true }))
     expect(await screen.findByText('Nothing is waiting for review for this adapter.')).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Back to the site' }).getAttribute('href')).toBe('#/sites/coles')
   })
 
   it('says so when the review can’t be loaded', async () => {
-    const api = createFakeApi({ now: NOW })
+    const api = createFakeApi({ now: NOW, updateWaiting: true })
     // The sidebar's Needs you count reads the pending reviews too (for unfinished setup).
     api.fake.failNext('approvals.pending', Number.POSITIVE_INFINITY)
     renderAt(REVIEW, api)
@@ -573,7 +573,7 @@ describe('reviewing an update', () => {
   })
 
   it('still opens from the old address', async () => {
-    renderAt('#/adapters/woolworths/review', createFakeApi({ now: NOW }))
+    renderAt('#/adapters/woolworths/review', createFakeApi({ now: NOW, updateWaiting: true }))
     expect(await screen.findByRole('button', { name: 'Approve 0.4.0' })).toBeTruthy()
   })
 })

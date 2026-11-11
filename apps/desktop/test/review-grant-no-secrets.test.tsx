@@ -63,14 +63,14 @@ const ROUTES: [string, string][] = [
 
 describe('no secret reaches the review page or the grant sheet', () => {
   it('the leaky API really does leak, so the tests below are not vacuous', async () => {
-    const api = leaky(createFakeApi({ now: NOW }))
+    const api = leaky(createFakeApi({ now: NOW, updateWaiting: true }))
     expect(JSON.stringify(await api.approvals.pending())).toContain(CANARY)
     expect(JSON.stringify(await api.grants.vaultItems('onepassword-service-account'))).toContain(CANARY)
   })
 
   for (const [hash, landmark] of ROUTES) {
     it(`renders ${hash} without fields it doesn't name, even when the main process sends them`, async () => {
-      show(hash, createFakeApi({ now: NOW }))
+      show(hash, createFakeApi({ now: NOW, updateWaiting: true }))
       expect((await screen.findAllByText(landmark)).length).toBeGreaterThan(0)
       await waitFor(() => expect(document.body.querySelector('[aria-busy="true"]')).toBeNull())
       expect(document.documentElement.innerHTML).not.toContain(CANARY)
