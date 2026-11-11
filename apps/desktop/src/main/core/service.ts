@@ -1031,7 +1031,8 @@ export class AppService {
         },
       },
       runs: {
-        list: async (query) => runSummaries(await this.reader.records(), this.lookup(), query ?? {}),
+        list: async (query) =>
+          runSummaries(await this.reader.records(), this.lookup(), query ?? {}, this.memory),
         trace: async (callId) =>
           runTrace(await this.reader.records(), callId, this.lookup(), this.memory, (id) => {
             const adapter = this.adapter(id)

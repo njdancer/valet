@@ -213,7 +213,7 @@ function byCall(records: readonly AuditRecord[]): Map<string, CallRecords> {
   return calls
 }
 
-function summaryOf(call: CallRecords, adapters: AdapterLookup): RunSummary {
+function summaryOf(call: CallRecords, adapters: AdapterLookup, memory?: RunMemory): RunSummary {
   const { called, finished } = call
   const event = called.event
   const done = finished?.event
@@ -231,6 +231,7 @@ function summaryOf(call: CallRecords, adapters: AdapterLookup): RunSummary {
     stage: done?.stage ?? null,
     errorClass: done?.errorClass ?? null,
     blockedRequests: call.related.filter((r) => r.event.type === 'request-blocked').length,
+    detail: memory?.get(event.callId)?.detail ?? null,
   }
 }
 
@@ -238,12 +239,13 @@ export function runSummaries(
   records: readonly AuditRecord[],
   adapters: AdapterLookup,
   query: { readonly adapterId?: string; readonly limit?: number } = {},
+  memory?: RunMemory,
 ): RunSummary[] {
   const list = [...byCall(records).values()]
     .filter((c) => query.adapterId === undefined || c.called.event.adapterId === query.adapterId)
     .sort((a, b) => b.called.seq - a.called.seq)
     .slice(0, query.limit ?? 100)
-  return list.map((c) => summaryOf(c, adapters))
+  return list.map((c) => summaryOf(c, adapters, memory))
 }
 
 const FILL_CHECKS: readonly FillCheck[] = [
@@ -262,7 +264,7 @@ export function runTrace(
 ): RunTrace | null {
   const call = byCall(records).get(callId)
   if (call === undefined) return null
-  const summary = summaryOf(call, adapters)
+  const summary = summaryOf(call, adapters, memory)
   const start = Date.parse(call.called.at)
   const offset = (record: AuditRecord) => Math.max(0, Date.parse(record.at) - start)
   const steps: TraceStep[] = [

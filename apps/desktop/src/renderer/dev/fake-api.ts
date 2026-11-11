@@ -526,9 +526,14 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     }),
     run('c_8f2e1b', 'woolworths', 'Woolworths', 'update_cart_line', 'write', 'claude-code', 17, 5194, 'ok', {
       blockedRequests: 2,
+      detail: 'Dairy Farmers Milk 2L × 2',
     }),
-    run('c_7b0c44', 'woolworths', 'Woolworths', 'search_products', 'read', 'claude-code', 18, 1420, 'ok'),
-    run('c_5e1f20', 'woolworths', 'Woolworths', 'add_to_cart', 'write', 'claude-code', 36, 2210, 'ok'),
+    run('c_7b0c44', 'woolworths', 'Woolworths', 'search_products', 'read', 'claude-code', 18, 1420, 'ok', {
+      detail: '“milk”',
+    }),
+    run('c_5e1f20', 'woolworths', 'Woolworths', 'add_to_cart', 'write', 'claude-code', 36, 2210, 'ok', {
+      detail: 'Wonder White Sandwich Bread 700g',
+    }),
     run('c_2a8f10', 'woolworths', 'Woolworths', 'get_cart', 'read', 'claude-ai', 350, 902, 'blocked', {
       stage: 'tool-run',
       errorClass: 'blocked-by-site',
@@ -1443,7 +1448,9 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     minutesAgo: number,
     durationMs: number,
     outcome: RunSummary['outcome'],
-    extra: Partial<Pick<RunSummary, 'needsUser' | 'stage' | 'errorClass' | 'blockedRequests'>> = {},
+    extra: Partial<
+      Pick<RunSummary, 'needsUser' | 'stage' | 'errorClass' | 'blockedRequests' | 'detail'>
+    > = {},
   ): RunSummary {
     return {
       callId,
@@ -1459,6 +1466,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       stage: extra.stage ?? null,
       errorClass: extra.errorClass ?? null,
       blockedRequests: extra.blockedRequests ?? 0,
+      detail: extra.detail ?? null,
     }
   }
 

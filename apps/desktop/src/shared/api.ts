@@ -378,6 +378,11 @@ export interface RunSummary {
   readonly stage: Stage | null
   readonly errorClass: ErrorClass | null
   readonly blockedRequests: number
+  /**
+   * What the call was about, e.g. "Dairy Farmers Milk 2L × 2" or a search's “milk”. Held in memory
+   * only, for recent calls since the app started; null otherwise.
+   */
+  readonly detail: string | null
 }
 
 export type FillCheck = 'frame-origin' | 'input-type' | 'form-action' | 'paced-keystrokes' | 'input-reachable'
