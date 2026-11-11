@@ -334,6 +334,24 @@ describe('setup’s step logic', () => {
     expect(stepsDone(noSecrets).grant).toBe(true)
   })
 
+  it('an adapter that reads SMS codes is not granted until the codes are too', async () => {
+    const f = await facts(createFakeApi({ now: NOW }))
+    if (f.adapter === null) throw new Error('no adapter')
+    const login = f.adapter.secretRequests.map((r) => ({
+      ...r,
+      grant: { provider: 'fake', itemId: 'x', itemTitle: 'x', origins: r.origins, grantedAt: NOW } as never,
+    }))
+    const code = { sender: 'Woolworths', maxAgeSeconds: 300, requestedOrigins: [], grant: null }
+    const adapter = { ...f.adapter, approval: 'approved' as const, secretRequests: login }
+    expect(stepsDone({ ...f, adapter: { ...adapter, messages: [code] } }).grant).toBe(false)
+    const granted = {
+      ...code,
+      grant: { provider: 'messages', itemId: 'Woolworths', itemTitle: 'Woolworths' } as never,
+    }
+    expect(stepsDone({ ...f, adapter: { ...adapter, messages: [granted] } }).grant).toBe(true)
+    expect(stepsDone({ ...f, adapter: { ...adapter, messages: [] } }).grant).toBe(true)
+  })
+
   it('resumes at the last step when everything is done', () => {
     expect(resumeStep({ welcome: true, onepassword: true, approve: true, grant: true, clients: true })).toBe(
       'clients',

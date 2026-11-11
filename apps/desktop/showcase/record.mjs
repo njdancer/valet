@@ -337,6 +337,18 @@ async function main() {
       await click(sheet.getByRole('button', { name: 'Grant', exact: true }))
       await sheet.waitFor({ state: 'hidden' })
       await sleep(2000)
+      caption(
+        'The shop texts a code at sign-in, so let Valet read that one sender’s codes (here from the fake’s outbox, not Messages)',
+        '2 · Set up',
+      )
+      await click(control.getByRole('link', { name: 'Allow codes…' }))
+      await sheet.waitFor()
+      await sleep(2500)
+      await still(control, 'codes-sheet')
+      await click(sheet.getByRole('button', { name: 'Grant', exact: true }))
+      await sheet.waitFor({ state: 'hidden' })
+      await sleep(2500)
+      await still(control, 'grants-done')
       await click(control.getByRole('link', { name: 'Continue' }))
     },
     { page: control },

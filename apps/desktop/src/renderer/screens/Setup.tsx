@@ -21,6 +21,7 @@ import { hostOf, plural } from '../lib/format'
 import { href, navigate, SETUP_STEPS, type SetupStep } from '../lib/router'
 import { FIELD_WORDING, PROVIDER_WORDING } from '../lib/wording'
 import { OnePasswordAccountSetting } from './ClientsSettings'
+import { MESSAGES_SECRET } from './GrantSheet'
 
 /** The adapter setup approves and grants: the bundled one. */
 export const SETUP_ADAPTER = 'woolworths'
@@ -68,7 +69,12 @@ export function stepsDone(facts: SetupFacts): Readonly<Record<SetupStep, boolean
   const adapter = facts.adapter
   const onepassword = vaultProviders(facts.providers).some((p) => p.available)
   const approve = adapter !== null && adapter.approval === 'approved'
-  const grant = approve && adapter.secretRequests.every((s) => s.grant !== null)
+  // Every secret, and the one-time codes when the adapter reads any: a login that needs a code it
+  // may not read stops at the code page, so setup isn't done without that grant either.
+  const grant =
+    approve &&
+    adapter.secretRequests.every((s) => s.grant !== null) &&
+    (adapter.messages.length === 0 || adapter.messages.some((m) => m.grant !== null))
   const clients = facts.clients.some((c) => c.revokedAt === null)
   // A provider can be ready before the person has done anything (set up outside the app, or demo
   // mode's test provider), so it alone doesn't skip the welcome.
@@ -571,7 +577,38 @@ function Grant({ adapter }: { readonly adapter: AdapterDetail | null }) {
               </a>
             </div>
           ))}
-          {adapter.secretRequests.length === 0 ? (
+          {adapter.messages.length === 0 ? null : (
+            <div className="setup-bind">
+              <Icon name="key" className="secret-text" />
+              <span className="badge secret">SMS code</span>
+              <span>
+                {adapter.messages.some((m) => m.grant !== null) ? (
+                  <>
+                    Reads one-time codes from{' '}
+                    {adapter.messages.find((m) => m.grant !== null)?.grant?.itemTitle} in Messages, typed only
+                    where the login asks for them
+                  </>
+                ) : (
+                  <>
+                    Not granted. The login asks for a one-time code sent by{' '}
+                    {adapter.messages.map((m) => (
+                      <span key={m.sender} className="mono">
+                        {m.sender}
+                      </span>
+                    ))}
+                  </>
+                )}
+              </span>
+              <a
+                className={`btn${adapter.messages.some((m) => m.grant !== null) ? '' : ' primary'}`}
+                style={{ marginLeft: 'auto' }}
+                href={href.setupGrant(MESSAGES_SECRET)}
+              >
+                {adapter.messages.some((m) => m.grant !== null) ? 'Change…' : 'Allow codes…'}
+              </a>
+            </div>
+          )}
+          {adapter.secretRequests.length === 0 && adapter.messages.length === 0 ? (
             <div className="empty">{adapter.name} doesn’t ask for any secrets.</div>
           ) : null}
         </div>
