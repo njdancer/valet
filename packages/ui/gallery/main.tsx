@@ -21,6 +21,7 @@ import { FoundationsSection } from './sections/foundations'
 import { MotionSection } from './sections/motion'
 import { OverlaysSection } from './sections/overlays'
 import { PatternsSection } from './sections/patterns'
+import { RedesignSection } from './sections/redesign'
 import { Showcase } from './sections/showcase'
 
 const sections = [
@@ -30,6 +31,7 @@ const sections = [
   { id: 'overlays', label: 'Overlays', icon: <Layers />, view: <OverlaysSection /> },
   { id: 'data', label: 'Data and status', icon: <Table2 />, view: <DataSection /> },
   { id: 'patterns', label: 'Layout and patterns', icon: <PanelsTopLeft />, view: <PatternsSection /> },
+  { id: 'redesign', label: 'Redesign additions', icon: <Sparkles />, view: <RedesignSection /> },
 ] as const
 
 function useHash(): string {
