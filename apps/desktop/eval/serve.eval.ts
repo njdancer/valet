@@ -27,7 +27,6 @@ import { type Page, test } from '@playwright/test'
 import { generateTestCertificate } from '@valet/fake-woolworths-site'
 import {
   appDir,
-  approveInKeyhold,
   CONTROL,
   callToolOnce,
   connectFakeOnePassword,
@@ -92,7 +91,9 @@ interface E2eRequests {
 
 test('hold the app open for an eval', async () => {
   test.setTimeout(0)
-  const userData = tempDir('eval')
+  // EVAL_USER_DATA picks up where an earlier run left off (a rebuilt app, say), and is kept.
+  const kept = process.env['EVAL_USER_DATA']
+  const userData = kept === undefined || kept === '' ? tempDir('eval') : kept
   // The library: its certificate trusted for this user's Chromium (NSS) while the eval runs.
   const tls = await generateTestCertificate([LIBRARY_HOST])
   const library = await startLibrarySite(tls)
@@ -191,7 +192,8 @@ test('hold the app open for an eval', async () => {
       await control.screenshot({ path })
       return path
     },
-    // A grant of a fake 1Password item to an installed adapter, approved in the fake 1Password.
+    // A grant of a fake 1Password item to an installed adapter. The fake 1Password allows Valet on
+    // its own (connectFakeOnePassword), as the person would in its prompt.
     'POST /grant': async (body) => {
       const request = {
         adapterId: String(body['adapterId']),
@@ -206,7 +208,6 @@ test('hold the app open for an eval', async () => {
           window.valet?.grants.make(r as Parameters<NonNullable<typeof window.valet>['grants']['make']>[0]),
         request,
       )
-      if (request.provider === 'keychain-copy') await approveInKeyhold(launched)
       await made
       return true
     },
@@ -237,5 +238,5 @@ test('hold the app open for an eval', async () => {
   await launched.close()
   await library.close()
   execFileSync('certutil', ['-D', '-n', NICK, '-d', nss], { stdio: 'ignore' })
-  rmSync(userData, { recursive: true, force: true })
+  if (kept === undefined || kept === '') rmSync(userData, { recursive: true, force: true })
 })
