@@ -585,9 +585,12 @@ the none tier; this is the same call E made for reads, and is put to B.)
    per registrable domain an hour, 3 seconds apart); sharing the runtime's rate budget and breaker
    with installed adapters comes with live trials. **2b:** live trials (built: `valet_live_trial`,
    `drafts/trial.ts`, `trialLabel` partitions, `ToolHost.siteGuards`, the `draft-trial` record and
-   the card's trial lines); still to come in 2b: the fixture browser (cases with pages),
-   `display.agentTests`, the Drafts page on the Mac (`mac-sites-drafts`, `mac-draft-page`), and the
-   e2e over MCP against the built app.
+   the card's trial lines) and drafts on the Mac (built: a Drafts section on Sites, shown only when
+   there are drafts, and a draft's page at `#/sites/drafts/<id>` with Valet's checks of the files as
+   they are now, the live trials, the files with Valet-recorded fixtures marked, Review when it
+   waits, and Open draft folder; `mac-sites-drafts`, `mac-draft-page`); still to come in 2b: the
+   fixture browser (cases with pages), `display.agentTests`, and the e2e over MCP against the built
+   app.
 3. **PR 3:** repair tickets and the reproduction check; signed-in sessions; private network; the
    hostile-page suite; the eval (an agent from a clean chat builds Yahoo Finance and a fake-login
    site's adapter, and repairs a broken one), run by a model through the MCP endpoint against the

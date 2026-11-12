@@ -18,6 +18,9 @@ function isSetupStep(value: string): value is SetupStep {
   return (SETUP_STEPS as readonly string[]).includes(value)
 }
 
+/** The draft store's id rule (drafts/store.ts). */
+const DRAFT_ID = /^dr-[a-z2-7]{10}$/
+
 export const SITE_TABS = ['overview', 'tools', 'permissions', 'versions'] as const
 export type SiteTab = (typeof SITE_TABS)[number]
 
@@ -59,6 +62,8 @@ export type Route =
   | { readonly page: 'needs-you'; readonly item: string | null }
   | { readonly page: 'sites' }
   | { readonly page: 'site'; readonly adapterId: string; readonly tab: SiteTab }
+  /** A draft adapter an agent is writing (wireframe `mac-draft-page`). */
+  | { readonly page: 'draft'; readonly draftId: string }
   /** The full review page of a site's pending bundle (update or first install). */
   | { readonly page: 'review'; readonly adapterId: string }
   /** The grant sheet ("Give Valet your login") over the site's page. */
@@ -234,6 +239,9 @@ export function parseRoute(hash: string): Route {
 function siteRoute(rest: readonly string[]): Route {
   const [id, tab, x] = rest
   if (id === undefined) return { page: 'sites' }
+  // Draft ids start dr-, which no site tab does, so an adapter named "drafts" keeps its tabs.
+  if (id === 'drafts' && rest.length === 2 && tab !== undefined && DRAFT_ID.test(tab))
+    return { page: 'draft', draftId: tab }
   if (rest.length === 1) return { page: 'site', adapterId: id, tab: 'overview' }
   if (rest.length === 2) {
     const t = pick(tab, SITE_TABS)
@@ -289,6 +297,7 @@ export const href = {
   site: (id: string, tab: SiteTab = 'overview'): HashRoute =>
     tab === 'overview' ? `#/sites/${enc(id)}` : `#/sites/${enc(id)}/${tab}`,
   review: (id: string): HashRoute => `#/sites/${enc(id)}/versions/review`,
+  draft: (draftId: string): HashRoute => `#/sites/drafts/${enc(draftId)}`,
   grant: (id: string, secret: string): HashRoute => `#/sites/${enc(id)}/login/${enc(secret)}`,
   setting: (id: string, setting: string): HashRoute => `#/sites/${enc(id)}/store/${enc(setting)}`,
   calls: (filters: Partial<CallFilters> = {}): HashRoute =>
@@ -339,6 +348,8 @@ export function canonicalHref(route: Route): HashRoute | null {
       return href.site(route.adapterId, route.tab)
     case 'review':
       return href.review(route.adapterId)
+    case 'draft':
+      return href.draft(route.draftId)
     case 'grant':
       return href.grant(route.adapterId, route.secret)
     case 'setting':
@@ -375,6 +386,7 @@ export function placeOf(route: Route): Place | null {
       return 'needs-you'
     case 'sites':
     case 'site':
+    case 'draft':
     case 'review':
     case 'grant':
     case 'setting':

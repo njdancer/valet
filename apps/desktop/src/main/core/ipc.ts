@@ -50,6 +50,7 @@ export type MainApi = Omit<ValetApi, 'onEvent' | 'answerConfirmation'> & {
 const MAX_TEXT = 10_000
 const ADAPTER_ID = z.string().regex(/^[a-z][a-z0-9-]{1,63}$/)
 const HASH = z.string().regex(/^[0-9a-f]{64}$/)
+const DRAFT = z.string().regex(/^dr-[a-z2-7]{10}$/)
 const SECRET = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)
 /** A setting's name in a manifest: the same alphabet as a secret's. */
 const SETTING = SECRET
@@ -173,6 +174,9 @@ const HANDLERS: Readonly<
     api.adapters.rollback(id, hash),
   ),
   'adapters.canInstallFromFolder': entry(none, (api) => api.adapters.canInstallFromFolder()),
+  'drafts.list': entry(none, (api) => api.drafts.list()),
+  'drafts.get': entry(z.tuple([DRAFT]), (api, [id]) => api.drafts.get(id)),
+  'drafts.openFolder': entry(z.tuple([DRAFT]), (api, [id]) => api.drafts.openFolder(id)),
   'adapters.installFromFolder': entry(none, (api) => api.adapters.installFromFolder()),
   'approvals.pending': entry(none, (api) => api.approvals.pending()),
   'approvals.approve': entry(z.tuple([ADAPTER_ID, HASH]), (api, [id, hash]) =>

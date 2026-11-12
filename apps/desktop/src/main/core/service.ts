@@ -13,6 +13,7 @@ import {
   type AuditRecord,
   type AuditSink,
   type BlockedRequest,
+  bundleHash,
   CredentialError,
   DEFAULT_SANDBOX,
   type Grant,
@@ -23,11 +24,13 @@ import {
   needsYouTitle,
   type PackageFiles,
   type ProviderKind,
+  parseManifest,
   type Requester,
   type SecretField,
   type SessionDriver,
   type SettingChoice,
   settingToolNames,
+  sha256Hex,
   ValetError,
 } from '@valet/core'
 import { FileGrantStore } from '@valet/credentials'
@@ -66,6 +69,8 @@ import type {
   ClientInfo,
   ClientSnippet,
   ConfirmationItem,
+  DraftOverview,
+  DraftPage,
   EndpointStatus,
   HashRoute,
   PendingReview,
@@ -119,7 +124,7 @@ import {
 import type { Credentials } from './credentials'
 import { DraftAuthoring, type RequestState, type SubmitOutcome, type SubmitRequest } from './drafts/authoring'
 import { draftDomains, type ScratchHandle, ScratchSessions } from './drafts/research'
-import { DraftStore } from './drafts/store'
+import { type DraftRecord, DraftStore } from './drafts/store'
 import { type EraseKind, type EraseReport, type EraseStep, eraseEverything } from './erase'
 import { ensurePrivateDir, JsonDocument } from './files'
 import { checkGrantRequest, grantInfo } from './grants'
@@ -150,6 +155,8 @@ export interface UiPort {
   writeClipboard(text: string): void
   /** Opens an https page in the person's default browser. */
   openExternal(url: string): void
+  /** Shows a folder of Valet's own (a draft's) in Finder. */
+  showFolder(path: string): void
   /** A native save dialog. Null when cancelled. */
   chooseSaveFile(defaultName: string): Promise<string | null>
   /** A native open dialog for the 1Password CLI. Null when cancelled. */
@@ -463,7 +470,7 @@ export class AppService {
     this.versions = new VersionStore(paths.versions)
     this.setup = new SetupStore(paths.setup, deps.now)
     this.snapshots = new SnapshotStore(paths.manifests)
-    this.drafts = new DraftStore(paths.drafts, date)
+    this.drafts = new DraftStore(paths.drafts, date, () => this.emit('drafts-changed'))
     this.installed = [...deps.adapters]
     this.packages =
       deps.packages === undefined
@@ -1743,6 +1750,74 @@ export class AppService {
     return out
   }
 
+  /** Sites' Drafts section: open drafts, and closed ones from the last week, newest first. */
+  private async draftOverviews(): Promise<DraftOverview[]> {
+    const weekAgo = this.deps.now() - 7 * 24 * 3600_000
+    const records = (await this.drafts.list().catch(() => [] as DraftRecord[]))
+      .filter((r) => r.status === 'editing' || r.status === 'waiting' || Date.parse(r.updatedAt) >= weekAgo)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    const out: DraftOverview[] = []
+    for (const record of records) {
+      const files = await this.drafts.files(record.id).catch(() => null)
+      if (files !== null) out.push(this.draftOverview(record, files))
+    }
+    return out
+  }
+
+  private async draftPage(draftId: string): Promise<DraftPage | null> {
+    const record = await this.drafts.record(draftId).catch(() => null)
+    if (record === null) return null
+    const files = await this.drafts.files(draftId).catch(() => null)
+    if (files === null) return null
+    return {
+      ...this.draftOverview(record, files),
+      createdAt: record.createdAt,
+      files: Object.entries(files)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([path, text]) => ({
+          path,
+          bytes: Buffer.byteLength(text, 'utf8'),
+          recordedByValet: record.recorded[path] === sha256Hex(text),
+        })),
+    }
+  }
+
+  /** What Valet ran and recorded, bound to the files as they are now; nothing the agent claims. */
+  private draftOverview(record: DraftRecord, files: PackageFiles): DraftOverview {
+    let name = record.adapterId
+    let version: string | null = null
+    try {
+      const manifest = parseManifest(JSON.parse(files['manifest.json'] ?? 'null'))
+      name = manifest.name
+      version = manifest.version
+    } catch {
+      // A manifest that doesn't parse yet: the draft is still named by its id.
+    }
+    const packageHash = bundleHash(files)
+    const latest = new Map<string, DraftRecord['trials'][number]>()
+    for (const t of record.trials) if (t.packageHash === packageHash) latest.set(t.tool, t)
+    const check = record.lastCheck
+    return {
+      draftId: record.id,
+      adapterId: record.adapterId,
+      name,
+      version,
+      writtenBy: record.createdByName,
+      status: record.status,
+      updatedAt: record.updatedAt,
+      check:
+        check === null || check.packageHash !== packageHash
+          ? null
+          : { at: check.at, ok: check.ok, cases: check.cases, passed: check.passed, problem: check.problem },
+      trials: [...latest.values()].map((t) => ({ tool: t.tool, at: t.at, ok: t.ok, problem: t.problem })),
+      submission:
+        record.submission === null
+          ? null
+          : { ref: record.submission.ref, at: record.submission.at, note: record.submission.note },
+      update: record.basedOn !== null,
+    }
+  }
+
   /** The scratch browsers' rules from what is installed and signed in now. */
   private scratchSessions(open: NonNullable<ServiceDeps['scratch']>): ScratchSessions {
     return new ScratchSessions({
@@ -2370,6 +2445,15 @@ export class AppService {
           } catch (error) {
             return { ok: false, reason: installReason(error) }
           }
+        },
+      },
+      drafts: {
+        list: () => this.draftOverviews(),
+        get: (draftId) => this.draftPage(draftId),
+        openFolder: async (draftId) => {
+          const record = await this.drafts.record(draftId).catch(() => null)
+          if (record === null) throw new ValetError('config', 'not-found')
+          deps.ui.showFolder(this.drafts.filesFolder(draftId))
         },
       },
       approvals: {

@@ -145,6 +145,7 @@ async function setup(
   const ui = {
     clipboard: [] as string[],
     opened: [] as string[],
+    folders: [] as string[],
     shownConfirmations: [] as string[],
     focusedConfirmations: [] as string[],
     closedConfirmations: [] as string[],
@@ -251,6 +252,7 @@ async function setup(
     ui: {
       writeClipboard: (text) => ui.clipboard.push(text),
       openExternal: (url) => ui.opened.push(url),
+      showFolder: (path) => ui.folders.push(path),
       chooseSaveFile: async () => ui.saveTo,
       chooseOpFile: async () => ui.opChoice,
       openControlPanel: (route) => ui.panels.push(route),
@@ -3168,6 +3170,43 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
       await s.api.approvals.approve('example', asked.adapterHash)
       expect((await authoring.getDraft(viewer, false, draft.draftId)).draft.status).toBe('approved')
       expect(s.endpoint.caller?.listTools().some((t) => t.adapterId === 'example')).toBe(true)
+    })
+
+    it('shows drafts on the Mac with only what Valet ran, and opens a draft’s folder', async () => {
+      const s = await withPackages()
+      const viewer: ClientIdentity = {
+        origin: 'local',
+        clientId: (await s.api.clients.add('Claude Code')).id,
+      }
+      const authoring = s.endpoint.authoring as Authoring
+      const before = s.events.length
+      const { draft } = await authoring.createDraft(viewer, {
+        adapterId: 'example',
+        from: 'blank',
+        name: 'Example',
+      })
+      expect(s.events.slice(before).some((e) => e.type === 'drafts-changed')).toBe(true)
+      expect(await s.api.drafts.list()).toMatchObject([
+        {
+          draftId: draft.draftId,
+          name: 'Example',
+          version: '0.1.0',
+          writtenBy: 'Claude Code',
+          status: 'editing',
+          check: null,
+          update: false,
+        },
+      ])
+      await authoring.check(viewer, draft.draftId)
+      expect((await s.api.drafts.get(draft.draftId))?.check).toMatchObject({ ok: true, cases: 2, passed: 2 })
+      // An edit since the check: the check no longer stands for the files.
+      await authoring.writeFile(viewer, draft.draftId, 'README.md', 'x')
+      const page = await s.api.drafts.get(draft.draftId)
+      expect(page?.check).toBeNull()
+      expect(page?.files.map((f) => f.path)).toContain('README.md')
+      await s.api.drafts.openFolder(draft.draftId)
+      expect(s.ui.folders).toEqual([join(s.paths.drafts, draft.draftId, 'files')])
+      expect(await s.api.drafts.get('dr-aaaaaaaaaa')).toBeNull()
     })
 
     it('tries a draft’s read tool through a trial driver of its own, and audits it', async () => {

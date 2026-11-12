@@ -116,6 +116,8 @@ export class DraftStore {
   constructor(
     private readonly root: string,
     private readonly now: () => Date = () => new Date(),
+    /** Called after each change to a draft (the Mac's Drafts section refreshes on it). Must not throw. */
+    private readonly changed: () => void = () => {},
   ) {}
 
   folder(id: string): string {
@@ -184,6 +186,7 @@ export class DraftStore {
     await mkdir(this.filesFolder(id), { mode: 0o700 })
     for (const [path, text] of Object.entries(files)) await this.writeUnder(id, path, text)
     await writeJsonFile(join(this.folder(id), 'draft.json'), record)
+    this.changed()
     return record
   }
 
@@ -295,7 +298,13 @@ export class DraftStore {
 
   private queued<T>(id: string, run: () => Promise<T>): Promise<T> {
     const before = this.queues.get(id) ?? Promise.resolve()
-    const next = before.catch(() => undefined).then(run)
+    const next = before
+      .catch(() => undefined)
+      .then(run)
+      .then((value) => {
+        this.changed()
+        return value
+      })
     const settled = next.catch(() => undefined)
     this.queues.set(id, settled)
     void settled.then(() => {
