@@ -95,6 +95,14 @@ export interface DataPaths {
   readonly appState: string
   /** Needs you items nobody answered, kept 24 hours (attention.ts). */
   readonly missed: string
+  /** The approval broker's anchored ledger: pending requests, evidence, devices (approvals/ledger.ts). */
+  readonly trusted: string
+  /** A dev build's software approval keys, when it signs without the Secure Enclave helper. */
+  readonly devApprovalKeys: string
+  /** A dev build's anchor for the ledger, when it has no Keychain helper. */
+  readonly devAnchor: string
+  /** Installed adapter versions, by id and hash (@valet/adapter-store, docs/adapter-packages.md). */
+  readonly adapters: string
 }
 
 /** Every file the app keeps, under one owner-only directory (D45). */
@@ -122,5 +130,9 @@ export function dataPaths(dir: string): DataPaths {
     diagnosticsLog: join(dir, 'logs', 'valet.log'),
     appState: join(dir, 'app-state.json'),
     missed: join(dir, 'missed.json'),
+    trusted: join(dir, 'trusted.json'),
+    devApprovalKeys: join(dir, 'dev-approval-keys.json'),
+    devAnchor: join(dir, 'dev-anchor.json'),
+    adapters: join(dir, 'adapters'),
   }
 }

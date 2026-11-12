@@ -8,8 +8,7 @@ enum Biometrics {
       return true
     #else
       let context = LAContext()
-      context.localizedFallbackTitle = ""
-      return (try? await context.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, localizedReason: reason)) ?? false
+      return (try? await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason)) ?? false
     #endif
   }
 }

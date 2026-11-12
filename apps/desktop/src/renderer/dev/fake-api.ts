@@ -487,6 +487,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         settings: { added: [], removed: [], unchanged: [] },
         limits: { before: WOOLWORTHS_LIMITS, after: WOOLWORTHS_LIMITS },
         probe: { before: WOOLWORTHS_PROBE, after: WOOLWORTHS_PROBE },
+        sandbox: { unsandboxed: false, becameUnsandboxed: false, reason: null, exceptions: [] },
       },
       manifestDiff: [
         { kind: 'hunk', oldLine: null, newLine: null, text: '@@ "version" @@' },
@@ -603,6 +604,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     },
     {
       kind: 'confirmation',
+      ref: '7B3F',
       id: 'cf_a40f3c',
       adapterId: 'woolworths',
       adapterName: 'Woolworths',
@@ -730,7 +732,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     },
   ]
   /** The code the fake browser shows for the one waiting remote sign-in. */
-  const remoteCode = 'ABCD2345'
+  const remoteCode = 'ABCDEFGH'
   let remoteRequests: RemoteConsentRequest[] = [
     {
       id: 'cs_demo',
@@ -874,6 +876,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
           settings: all([]),
           limits: null,
           probe: null,
+          sandbox: { unsandboxed: false, becameUnsandboxed: false, reason: null, exceptions: [] },
         },
         manifestDiff: [],
         files: [],
@@ -1036,6 +1039,42 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       async openCart(adapterId) {
         enter('adapters.openCart', adapterId)
         if (adapters.get(adapterId)?.cartUrl == null) throw new Error('refused')
+      },
+      async versions(adapterId) {
+        enter('adapters.versions', adapterId)
+        const base = adapters.get(adapterId)
+        if (base === undefined) throw new Error('refused')
+        return {
+          adapterId,
+          pinned: false,
+          versions: [
+            {
+              hash: base.hash,
+              version: base.version,
+              source: 'builtin' as const,
+              installedAt: '2026-11-12T00:00:00.000Z',
+              appVersion: '0.1.0',
+              active: true,
+              canRollBack: false,
+            },
+          ],
+        }
+      },
+      async rollbackPreview(adapterId, hash) {
+        enter('adapters.rollbackPreview', adapterId, hash)
+        throw new Error('refused')
+      },
+      async rollback(adapterId, hash) {
+        enter('adapters.rollback', adapterId, hash)
+        throw new Error('refused')
+      },
+      async canInstallFromFolder() {
+        enter('adapters.canInstallFromFolder')
+        return false
+      },
+      async installFromFolder() {
+        enter('adapters.installFromFolder')
+        return null
       },
       async setPaused(adapterId, paused) {
         enter('adapters.setPaused', adapterId, paused)
@@ -1376,6 +1415,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       ]
       emit({ type: 'attention-changed' })
       emit({ type: 'runs-changed' })
+      return true
     },
     async openLoginWindow(adapterId) {
       enter('openLoginWindow', adapterId)
@@ -1705,6 +1745,9 @@ const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent['type']
   'approvals-grants': [
     'adapter-approved',
     'adapter-rejected',
+    'adapter-installed',
+    'adapter-activated',
+    'adapter-refused',
     'grant-made',
     'grant-revoked',
     'grant-copied',

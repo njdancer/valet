@@ -48,6 +48,7 @@ import {
   defineAdapter,
   type EnsureResult,
   type ErrorClass,
+  type LocalAccess,
   manifestSchema,
   NeedsUserError,
   type RequestDeclaration,
@@ -78,7 +79,7 @@ import {
   PURPOSE_RANK,
   plainMethod,
 } from './guarded-page'
-import { runIsolated, type ToolProcessFactory } from './isolation/host'
+import { checkInputIsolated, runIsolated, type ToolProcessFactory } from './isolation/host'
 import type { LoginMarkerStore } from './login-marker'
 import { KeyedMutex } from './mutex'
 import { probeDeclaration } from './probe'
@@ -167,6 +168,11 @@ export interface RegisteredAdapter {
 export interface ToolIsolation {
   readonly script: string
   readonly start: ToolProcessFactory
+  /**
+   * What tool code reaches through `ctx.local` (docs/sandbox.md): the adapter's declared sandbox
+   * exceptions, enforced by the implementation. Without it every local call is not-granted.
+   */
+  readonly local?: LocalAccess
 }
 
 export interface ToolHostOptions {
@@ -246,6 +252,8 @@ export class ToolHost {
   private readonly locks = new KeyedMutex()
   /** Per adapter, one ticket for each call or login step holding or waiting for its lock, in order. */
   private readonly queues = new Map<string, symbol[]>()
+  /** Per adapter, the input checks running in tool processes now (MAX_INPUT_CHECKS). */
+  private readonly checking = new Map<string, number>()
   private readonly protection: SiteProtection
   private readonly clock: Clock
   private readonly sleep: Sleep
@@ -324,6 +332,39 @@ export class ToolHost {
     })
   }
 
+  /**
+   * Swaps in another version of a registered adapter (docs/adapter-packages.md#install-update-and-rollback),
+   * or registers it if its id is new. It takes the adapter's lock like a call, so running calls
+   * finish first; a call that was queued behind it finds a different entry when its turn comes and
+   * is answered "busy" without starting. The site's guards are the host's and carry over, as do
+   * the login's secrets for redaction; the login markers are keyed by id and persist anyway.
+   * Rejects with ValetError('config', 'busy') if the lock isn't free within `waitMs`. The caller
+   * closes the old driver once this resolves.
+   */
+  async replace(adapter: RegisteredAdapter, waitMs: number = this.queueWaitMs): Promise<void> {
+    const id = manifestSchema.parse(adapter.definition.manifest).id
+    const previous = this.adapters.get(id)
+    if (previous === undefined) {
+      this.register(adapter)
+      return
+    }
+    const lock = await this.acquireLock(id, boundOf(waitMs, this.queueWaitMs), undefined)
+    if (typeof lock !== 'function') throw new ValetError('config', 'busy')
+    try {
+      const current = this.adapters.get(id)
+      this.adapters.delete(id)
+      try {
+        this.register(adapter)
+      } catch (error) {
+        if (current !== undefined) this.adapters.set(id, current)
+        throw error
+      }
+      if (current !== undefined) this.adapters.get(id)?.gate.inherit(current.gate)
+    } finally {
+      lock()
+    }
+  }
+
   /** The tools of every adapter whose registered hash is approved. */
   async listTools(): Promise<ListedTool[]> {
     const listed: ListedTool[] = []
@@ -387,6 +428,7 @@ export class ToolHost {
     external?.addEventListener('abort', stop, { once: true })
     let unsettled: Promise<unknown> | null = null
     try {
+      if (this.adapters.get(adapterId) !== entry) throw new ValetError('login', 'busy')
       if (!(await this.isApproved(entry))) throw new ValetError('manifest', 'not-granted')
       // The person is logging in or out: nothing remembered about the old session holds.
       forget(entry)
@@ -561,6 +603,23 @@ export class ToolHost {
     if (settingToolNames(manifest).has(declaration.name) !== internal) return failed('manifest', 'not-found')
     const input = await this.validate(implementation.input, request.input, 'tool-input')
     if (input.status !== 'ok') return input
+    // Code that runs in the tool process has its own schemas there; they decide too, now, before the
+    // queue, any setting's apply tool or a confirmation, so a call they refuse sends nothing.
+    const isolation = entry.isolation
+    if (isolation !== undefined && !internal) {
+      // Each check is a tool process of its own, started before the queue's limits apply, so a
+      // client firing calls in parallel is held to a few at once.
+      const checking = this.checking.get(manifest.id) ?? 0
+      if (checking >= MAX_INPUT_CHECKS) return busy(entry.site, 0)
+      this.checking.set(manifest.id, checking + 1)
+      let accepted: boolean
+      try {
+        accepted = await checkInputIsolated(isolation.start, isolation.script, declaration.name, input.output)
+      } finally {
+        this.checking.set(manifest.id, (this.checking.get(manifest.id) ?? 1) - 1)
+      }
+      if (!accepted) return failed('tool-input', 'invalid')
+    }
 
     // One lock per adapter, for reads and writes alike: the driver holds one run policy at a time,
     // so two calls on one session can't safely overlap.
@@ -591,6 +650,9 @@ export class ToolHost {
     let handedOn = false
     try {
       if (external?.aborted) return failed('tool-run', 'aborted')
+      // Another version was swapped in while this call waited (replace): nothing was started, and
+      // the call may be made again against the version now installed.
+      if (this.adapters.get(manifest.id) !== entry) return busy(entry.site, 0)
       // Again, because a revocation can land while this call waits for the lock.
       if (!(await this.isApproved(entry))) return failed('manifest', 'not-granted')
       if (entry.site.breaker.isOpen()) return blocked(entry.site)
@@ -890,6 +952,9 @@ export class ToolHost {
         return (await state.track(asking)) === 'approved'
       },
       signal: controller.signal,
+      ...(entry.isolation?.local === undefined
+        ? {}
+        : { local: this.liveLocal(entry.isolation.local, manifest.id, state) }),
     }
 
     const isolation = entry.isolation
@@ -1202,6 +1267,41 @@ export class ToolHost {
       .catch(() => false)
   }
 
+  /**
+   * `local` for one call: each capability refused once the call is over, tracked like a capability
+   * call so the call waits for it, and audited with its outcome (never its path or body).
+   */
+  private liveLocal(local: LocalAccess, adapterId: string, state: CallState): LocalAccess {
+    const wrap =
+      <A extends unknown[], R>(capability: string, fn: (...args: A) => Promise<R>) =>
+      async (...args: A): Promise<R> => {
+        state.assertLive()
+        let errorClass: ErrorClass | null = null
+        try {
+          return await state.track(fn(...args))
+        } catch (error) {
+          errorClass = error instanceof ValetError ? error.errorClass : 'internal'
+          throw error instanceof ValetError ? error : new ValetError('tool-run', 'internal')
+        } finally {
+          await this.record({ type: 'local-access', adapterId, callId: state.callId, capability, errorClass })
+        }
+      }
+    const files = local.files
+    return {
+      files: {
+        list: wrap('files.list', (d) => files.list(d)),
+        stat: wrap('files.stat', (p) => files.stat(p)),
+        read: wrap('files.read', (p, o) => files.read(p, o)),
+        write: wrap('files.write', (p, c, o) => files.write(p, c, o)),
+        mkdir: wrap('files.mkdir', (d) => files.mkdir(d)),
+      },
+      fetch: wrap('fetch', (u, i) => local.fetch(u, i)),
+      service: wrap('service', (port, p, i) => local.service(port, p, i)),
+      run: wrap('run', (a, o) => local.run(a, o)),
+      appleScript: wrap('appleScript', (id, source) => local.appleScript(id, source)),
+    }
+  }
+
   private async record(event: AuditEvent): Promise<void> {
     try {
       await this.options.audit.append(event)
@@ -1308,10 +1408,14 @@ function blocked(site: SiteGuards): ToolCallResult {
   return { status: 'blocked', retryAfterMs: site.breaker.retryAfterMs() }
 }
 
+/** Input checks one adapter may have running at once; a call past that is told to retry. */
+export const MAX_INPUT_CHECKS = 4
+
 /**
  * A call that gave up waiting its turn. The time to try again is a guess, since nothing says how
  * long the calls in front will take: one of the site's gaps for each, within fixed bounds.
  */
+
 function busy(site: SiteGuards, ahead: number): ToolCallResult {
   const calls = Math.max(1, ahead)
   const estimate = calls * site.budget.gapMs

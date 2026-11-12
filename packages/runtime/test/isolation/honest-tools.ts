@@ -68,5 +68,11 @@ export const tools = {
       throw new Error('secret-looking text that must not travel')
     },
   }),
+  /** Its own schema refuses what a looser one in the main process lets through. */
+  refined: tool({
+    input: z.object({ n: z.number() }).refine((v) => v.n > 0),
+    output: z.number(),
+    run: async (_ctx: ToolContext, input: { n: number }) => input.n,
+  }),
   returns_nothing: tool({ input: z.object({}), output: z.undefined(), run: async () => undefined }),
 }

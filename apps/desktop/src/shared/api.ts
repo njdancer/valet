@@ -312,6 +312,27 @@ export interface PermissionDiff {
   readonly limits: { readonly before: LimitsInfo; readonly after: LimitsInfo } | null
   /** Null for a first install. The renderer compares the two itself. */
   readonly probe: { readonly before: ProbeInfo; readonly after: ProbeInfo } | null
+  /** What the new version can reach on this Mac (docs/sandbox.md). */
+  readonly sandbox: SandboxDiff
+}
+
+export interface SandboxDiff {
+  /** The new version runs without the sandbox: it can reach anything the person can. */
+  readonly unsandboxed: boolean
+  /** It wasn't unsandboxed before (or is new): the strongest warning Valet has. */
+  readonly becameUnsandboxed: boolean
+  /** The author's reason for running unsandboxed, shown as their claim. */
+  readonly reason: string | null
+  /** Each exception, in the app's words, with the author's purpose beside it. */
+  readonly exceptions: readonly SandboxExceptionLine[]
+}
+
+export interface SandboxExceptionLine {
+  readonly change: 'added' | 'removed' | 'same'
+  readonly text: string
+  /** The author's words. */
+  readonly purpose: string
+  readonly risk: 'low' | 'medium' | 'high' | 'critical'
 }
 
 export interface ManifestDiffLine {
@@ -341,6 +362,56 @@ export interface PendingReview {
   readonly diff: PermissionDiff
   readonly manifestDiff: readonly ManifestDiffLine[]
   readonly files: readonly FileChange[]
+  /**
+   * Where this version's package came from (docs/adapter-packages.md). Whether it runs in the
+   * sandbox is the diff's `sandbox`, from its manifest, wherever it came from.
+   */
+  readonly origin?: PackageOrigin
+  /**
+   * The adapter logs in, and this version isn't the app's own: once approved it uses the person's
+   * signed-in session for the site (B's review, point 4). The review leads with that.
+   */
+  readonly takesSession?: boolean
+}
+
+export type PackageOrigin = 'builtin' | 'folder' | 'draft'
+
+export type InstallResult =
+  | { readonly ok: true; readonly adapterId: string; readonly hash: string }
+  /** Why, in words: a package rule, a compile error's first line. Never file contents beyond that. */
+  | { readonly ok: false; readonly reason: string }
+
+/** One stored version of an adapter (docs/adapter-packages.md#storage). */
+export interface AdapterVersionInfo {
+  readonly hash: string
+  readonly version: string
+  readonly source: PackageOrigin
+  readonly installedAt: IsoTime
+  /** The app version that installed it: what the hash doesn't cover. */
+  readonly appVersion: string
+  readonly active: boolean
+  /** Approved before and never rejected since, by the audit log, and not the active one. */
+  readonly canRollBack: boolean
+}
+
+export interface AdapterVersions {
+  readonly adapterId: string
+  /** The person chose this version: a newer built-in doesn't replace it. */
+  readonly pinned: boolean
+  /** Newest first. */
+  readonly versions: readonly AdapterVersionInfo[]
+}
+
+/** What a rollback would change, against the active version, before the person confirms it. */
+export interface RollbackPreview {
+  readonly adapterId: string
+  readonly hash: string
+  readonly version: string
+  readonly changes: PermissionDiff
+  /** It can reach or do something the active version can't (addsPermissions). */
+  readonly widens: boolean
+  /** The secrets whose grants come back with it: exactly those still in the grant store. */
+  readonly grants: readonly string[]
 }
 
 // ---------- Grants ----------
@@ -668,6 +739,11 @@ export interface ConfirmationItem {
   /** The validated tool input, redacted. */
   readonly input: readonly PreviewPart[]
   readonly adapterNote: string | null
+  /**
+   * The signed request's reference, as the Touch ID prompt names it ("request 7B3F"); null until
+   * the request is made, and Approve waits for it.
+   */
+  readonly ref: string | null
 }
 
 export interface ReviewItem {
@@ -1001,6 +1077,22 @@ export interface ValetApi {
      * (config: site-paused). Audited, and kept across restarts.
      */
     setPaused(adapterId: string, paused: boolean): Promise<void>
+    /** The stored versions of an adapter (docs/adapter-packages.md). */
+    versions(adapterId: string): Promise<AdapterVersions>
+    /** What rolling back to `hash` would change against the active version. */
+    rollbackPreview(adapterId: string, hash: string): Promise<RollbackPreview>
+    /**
+     * Rolls back to a version the person approved before; the click is the approval. Rejects for
+     * a version that isn't offered.
+     */
+    rollback(adapterId: string, hash: string): Promise<void>
+    /** Whether this build installs from a folder (development builds only). */
+    canInstallFromFolder(): Promise<boolean>
+    /**
+     * Asks for a folder in a picker of the main process and installs the package in it. The new
+     * version waits for approval. Null if the person cancelled.
+     */
+    installFromFolder(): Promise<InstallResult | null>
   }
   readonly approvals: {
     pending(): Promise<readonly PendingReview[]>
@@ -1067,10 +1159,11 @@ export interface ValetApi {
     dismiss(id: string): Promise<void>
   }
   /**
-   * The main process refuses an approval that arrives within CONFIRM_ARM_MS of the confirmation
-   * window showing or regaining focus, as the renderer's own delay does.
+   * Declines at once. An approval is accepted only from the confirmation's own panel, and only
+   * raises the Touch ID prompt: it resolves true once the signed approval went through, false if
+   * the person cancelled the prompt (the confirmation still waits).
    */
-  answerConfirmation(confirmationId: string, approved: boolean): Promise<void>
+  answerConfirmation(confirmationId: string, approved: boolean): Promise<boolean>
   /**
    * Brings a waiting confirmation's own panel forward and focuses it, reopening it if it was
    * closed. Only that panel can approve, so nothing else ever shows a confirmation. Rejects for one

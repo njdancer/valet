@@ -10,6 +10,7 @@
 // process. A process that exits before saying it is done ends the run as `tool-run/internal`.
 
 import { type ToolContext, ValetError } from '@valet/core'
+import { dispatchLocal } from './local-dispatch'
 import {
   type Capability,
   decodeError,
@@ -130,6 +131,7 @@ export function runIsolated(
 
 /** Calls the guarded capability. Its own checks (types, the request surface, C4) apply as in process. */
 function dispatch(ctx: ToolContext, capability: Capability, args: readonly unknown[]): Promise<unknown> {
+  if (capability.startsWith('local.')) return dispatchLocal(ctx.local, capability, args)
   // Strings where the capability takes a selector, a URL or source text; the guards check the rest.
   const takesString = capability.startsWith('page.')
   if (takesString && typeof args[0] !== 'string') return Promise.reject(new ValetError('tool-run', 'invalid'))
@@ -154,5 +156,96 @@ function dispatch(ctx: ToolContext, capability: Capability, args: readonly unkno
       return ctx.session.ensure()
     case 'confirm':
       return ctx.confirm(a)
+    default:
+      return Promise.reject(new ValetError('tool-run', 'invalid'))
   }
+}
+
+/** How long describe may take, the process's start included. */
+export const DESCRIBE_TIMEOUT_MS = 5_000
+
+/**
+ * Starts a fresh process from `start`, evaluates `script` and asks it for each tool's schemas as
+ * JSON Schema (worker.ts, `describe`). Resolves with what it said, by tool, unchecked beyond plain
+ * JSON: the caller bounds it (packages/adapter-store). Rejects if the process says nothing usable,
+ * exits or takes longer than `timeoutMs`. Nothing is answered: the script gets no capabilities.
+ */
+export function describeIsolated(
+  start: ToolProcessFactory,
+  script: string,
+  timeoutMs: number = DESCRIBE_TIMEOUT_MS,
+): Promise<Readonly<Record<string, unknown>>> {
+  return new Promise((resolve, reject) => {
+    let channel: ToolChannel
+    try {
+      channel = start()
+    } catch {
+      reject(new ValetError('tool-run', 'internal'))
+      return
+    }
+    let settled = false
+    const finish = (outcome: { ok: true; value: Record<string, unknown> } | { ok: false }): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      channel.kill()
+      if (outcome.ok) resolve(outcome.value)
+      else reject(new ValetError('tool-run', 'invalid'))
+    }
+    const timer = setTimeout(() => finish({ ok: false }), timeoutMs)
+    channel.onExit(() => finish({ ok: false }))
+    channel.onMessage((message) => {
+      if (settled) return
+      if (!isPlainJson(message) || !withinSize(message)) return finish({ ok: false })
+      const m = message as Partial<Record<'t' | 'tools', unknown>>
+      if (m.t === 'ready') return
+      if (m.t !== 'described' || m.tools === null || typeof m.tools !== 'object' || Array.isArray(m.tools))
+        return finish({ ok: false })
+      finish({ ok: true, value: m.tools as Record<string, unknown> })
+    })
+    channel.send({ t: 'init', script })
+    channel.send({ t: 'describe' })
+  })
+}
+
+/**
+ * Asks a fresh process whether `tool`'s own input schema accepts `input` (worker.ts, `check`).
+ * Resolves true or false; false too if the process says anything else, exits or takes longer than
+ * `timeoutMs`. The script gets no capabilities.
+ */
+export function checkInputIsolated(
+  start: ToolProcessFactory,
+  script: string,
+  tool: string,
+  input: unknown,
+  timeoutMs: number = DESCRIBE_TIMEOUT_MS,
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    let channel: ToolChannel
+    try {
+      channel = start()
+    } catch {
+      resolve(false)
+      return
+    }
+    let settled = false
+    const finish = (ok: boolean): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      channel.kill()
+      resolve(ok)
+    }
+    const timer = setTimeout(() => finish(false), timeoutMs)
+    channel.onExit(() => finish(false))
+    channel.onMessage((message) => {
+      if (settled) return
+      if (!isPlainJson(message) || !withinSize(message)) return finish(false)
+      const m = message as Partial<Record<'t' | 'ok', unknown>>
+      if (m.t === 'ready') return
+      finish(m.t === 'checked' && m.ok === true)
+    })
+    channel.send({ t: 'init', script })
+    channel.send({ t: 'check', tool, input })
+  })
 }

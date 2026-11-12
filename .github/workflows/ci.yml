@@ -75,6 +75,10 @@ jobs:
         env:
           VALET_SWIFT_KEYCHAIN: ${{ github.workspace }}/swift-bridge/.build/debug/valet-keychain
           VALET_SWIFT_MESSAGES_HELPER: ${{ github.workspace }}/swift-bridge/.build/debug/valet-messages-helper
+      - name: approver contract suite (software keys; runners have no Secure Enclave)
+        run: pnpm exec vitest run --project desktop test/main/approver-contract
+        env:
+          VALET_SWIFT_APPROVER: ${{ github.workspace }}/swift-bridge/.build/debug/valet-approver
 
   release-dry-run:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository

@@ -1,6 +1,7 @@
 // The phone's three keys (docs/ios-app.md, Keys on the phone).
 //
-// - Approval: Secure Enclave, `.privateKeyUsage` + `.biometryCurrentSet` (CR-1). Every signature
+// - Approval: Secure Enclave, `.privateKeyUsage` + `.userPresence`: Face ID, or the passcode, as in
+//   any iPhone app (Nick's decision, 2026-11-12, which replaced CR-1's Face ID only). Every signature
 //   loads the key from its blob with a brand-new LAContext whose reuse window is zero, so each one
 //   asks for Face ID. Nothing caches the key or the context.
 // - Transport: Secure Enclave, no user presence. Answers the relay's challenge.
@@ -33,9 +34,8 @@ public struct DevicePublicKeys: Equatable, Sendable {
 }
 
 public enum KeyError: Error, Equatable {
-  /// Face ID failed, was cancelled, or the enrolment changed and the key is gone.
+  /// Face ID or the passcode failed or was cancelled.
   case userCancelled
-  case biometryChanged
   case unavailable
   case corrupt
 }
@@ -74,7 +74,7 @@ public struct StoredKeys: Codable, Equatable, Sendable {
   /// The access-control flags each key is made with. A unit test pins them, since software keys
   /// in the simulator can't show they hold.
   public enum KeyPolicy {
-    public static let approvalFlags: SecAccessControlCreateFlags = [.privateKeyUsage, .biometryCurrentSet]
+    public static let approvalFlags: SecAccessControlCreateFlags = [.privateKeyUsage, .userPresence]
     public static let approvalAccessible = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
     public static let transportFlags: SecAccessControlCreateFlags = [.privateKeyUsage]
     public static let transportAccessible = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
@@ -147,7 +147,6 @@ public struct StoredKeys: Codable, Equatable, Sendable {
         let context = LAContext()
         context.touchIDAuthenticationAllowableReuseDuration = 0
         context.localizedReason = reason
-        context.localizedFallbackTitle = ""
         do {
           let key = try SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: blob, authenticationContext: context)
           return try key.signature(for: input).rawRepresentation

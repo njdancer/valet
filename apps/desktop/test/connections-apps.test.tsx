@@ -149,7 +149,7 @@ describe('connections', () => {
     const api = createFakeApi({ now: NOW })
     await api.remote.setHosts(['valet.example.com'])
     await api.remote.setEnabled(true)
-    await api.remote.approveConsent('ABCD2345', ['woolworths.view_cart'])
+    await api.remote.approveConsent('ABCDEFGH', ['woolworths.view_cart'])
     renderPage(api, <ConnectionsPage />)
     const agents = within(await screen.findByRole('table', { name: 'Cloud agents' }))
     expect(agents.getByRole('link', { name: 'claude.ai' }).getAttribute('href')).toBe(
@@ -259,7 +259,7 @@ describe('a cloud agent’s page', () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })
     await api.remote.setHosts(['valet.example.com'])
-    await api.remote.approveConsent('ABCD2345', ['woolworths.get_cart', 'gone.old_tool'])
+    await api.remote.approveConsent('ABCDEFGH', ['woolworths.get_cart', 'gone.old_tool'])
     renderPage(api, <ClientPage clientId="rcdemodemodemodemodemo" />)
     expect(await screen.findByRole('heading', { level: 1, name: 'claude.ai' })).toBeTruthy()
     expect(screen.getByText(/Calls itself “Claude” \(not verified\)/)).toBeTruthy()

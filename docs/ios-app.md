@@ -56,7 +56,7 @@ into contracts v2 (PR #76), so nothing here is Proposed any more except where ma
 | Logic placement      | In the app target; in a Swift package the app depends on                   | **A Swift package, `ValetPhoneKit`.** Its unit tests run with `swift test` on the macOS runner in seconds, without a simulator. The app target is views only.                                                                                                 |
 | JSON                 | `Codable` with `JSONDecoder`; a strict parser                              | **A strict parser** that refuses duplicate keys, unknown keys, and anything but the schema's shape. `JSONDecoder` ignores unknown keys, and B requires them refused.                                                                                          |
 | Talking to a fake    | A Node fake relay over WebSocket in CI; an in-process fake Mac and relay   | **Both, in order.** The in-process fake (`FakeMac`) drives UI tests deterministically with no network. A WebSocket transport follows once G publishes a local Workers runtime the CI job can start.                                                           |
-| Key for approvals    | `.userPresence` (biometrics or passcode); `.biometryCurrentSet`; two keys  | **`.biometryCurrentSet` (CR-1, accepted).** A's card spec needs "a thief who knows the passcode can't approve", which only a key that needs the current Face ID enrolment can enforce. See below.                                                             |
+| Key for approvals    | `.userPresence` (biometrics or passcode); `.biometryCurrentSet`; two keys  | **`.userPresence`** (Nick, 2026-11-12): the passcode always works, as in any iPhone app. CR-1's Face ID only key was accepted first and then replaced. See below.                                                                                             |
 | Interop with the Mac | Port the zod schemas by hand; generate Swift from zod; shared test vectors | **Hand port plus shared vectors.** Generation from zod loses the refinements. A TypeScript script writes vectors (request texts, digests, Mac-signed device records); Swift checks them, and Swift's signed decisions go back through `verifyDecision` in CI. |
 
 ## Architecture
@@ -94,7 +94,7 @@ Three P-256 keys, as B's table says, made at pairing and never exported.
 
 | Key       | Where and access control                                                                                                                                                                                | Used for                                    |
 | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| Approval  | Secure Enclave, `.privateKeyUsage` + `.biometryCurrentSet` (CR-1)                                                                                                                                       | Signing `ApprovalDecision` only             |
+| Approval  | Secure Enclave, `.privateKeyUsage` + `.userPresence` (Nick's decision)                                                                                                                                  | Signing `ApprovalDecision` only             |
 | Transport | Secure Enclave, `.privateKeyUsage`, `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`                                                                                                                  | Answering the relay's challenge             |
 | Agreement | A CryptoKit P-256 key in the Keychain, after first unlock, this device only (B allows "or Keychain"; moves into the Secure Enclave once a spike shows CryptoKit HPKE takes an enclave key in auth mode) | HPKE auth mode with the Mac's agreement key |
 
@@ -103,16 +103,10 @@ Three P-256 keys, as B's table says, made at pairing and never exported.
 - The simulator has no Secure Enclave. `SoftwareKeyStore` (CryptoKit software keys) is used there
   and in tests, and the app says "Simulator keys, for testing" on the Valet tab. A release build
   refuses to pair if the Secure Enclave isn't available.
-- **Why `.biometryCurrentSet`.** With B's `.userPresence`, the passcode unlocks the key, so a thief
-  who watched the passcode can approve anything. A's spec (§6, R1) wants every card that widens
-  access to need Face ID with the current enrolment. The cost: adding a face or fingerprint, or
-  turning Face ID off, destroys the key, and the phone must pair again at the Mac. The app checks
-  `LAContext.evaluatedPolicyDomainState` at launch and says so before the person meets a failed
-  approval ("Face ID changed on this iPhone. Pair it again at your Mac to approve.").
-- **The passcode fallback on neutral cards** (A §6) would need a second approval key with
-  `.userPresence` and a field in the device record naming which key may sign which cards. Not in
-  the first version: neutral cards also need Face ID, and the person can approve at the Mac. Listed
-  as CR-1b if Nick wants it.
+- **Why `.userPresence`.** Nick decided on 2026-11-12 that the passcode always works for
+  approvals, as in any iPhone app: Face ID is tried first and the passcode is the fallback. This
+  replaced CR-1's Face ID only key. One key, with no Face ID only cards, and a change of Face ID
+  enrolment no longer destroys it. Mac-only kinds stay Mac only.
 - **A fresh check for every signature.** Each approval builds a new `LAContext` with
   `touchIDAuthenticationAllowableReuseDuration = 0`, loads the key from its blob with that context,
   signs, and drops both. Nothing caches a key or a context, and the "Face ID to open" context is
@@ -291,7 +285,6 @@ into the pinned bar at accessibility sizes (A rule 6); VoiceOver order is A §2'
 | Request text fails the schema                 | Not shown; "couldn't read" row; acked                                                                                                                                                                 |
 | Request expired on arrival                    | Shown as Expired                                                                                                                                                                                      |
 | Face ID fails or is cancelled                 | "Face ID didn't work. Try again, or approve on your Mac." Nothing sent                                                                                                                                |
-| Face ID enrolment changed (key gone)          | Approve disabled; "Pair this iPhone again at your Mac"                                                                                                                                                |
 | Phone offline                                 | "No connection. Nothing was sent." Card stays                                                                                                                                                         |
 | Mac offline (from `mac-online`)               | Kind strip "Mac last seen 7:39 pm"; approvals queue in the outbox and say so                                                                                                                          |
 | No ack within 30 s                            | Not confirmed yet, with Check again                                                                                                                                                                   |
@@ -312,7 +305,7 @@ decoys at the Mac instead of words. All of these are built in the phone.
 
 | CR    | Change                                                                                                                                                          | Why                                                                       |
 | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| CR-1  | iPhone approval key uses `.biometryCurrentSet`, not `.userPresence`                                                                                             | A §6, R1: a thief with the passcode can't approve                         |
+| CR-1  | iPhone approval key uses `.biometryCurrentSet` (later replaced: Nick chose `.userPresence`)                                                                     | A §6, R1: a thief with the passcode can't approve                         |
 | CR-1b | Optional second approval key with `.userPresence` for neutral cards                                                                                             | A's passcode fallback; deferred                                           |
 | CR-2  | Pairing wire format: a sealed `PairingReply`, the relay's `pairing-reply` / `pairing-result` frames, the code's derivation (and 44 bits if A's four words stay) | Not defined in core; the phone can't reach the Mac before it's registered |
 | CR-3  | Mac-to-phone `status`: Mac state (paused, locked down), sites and health, agents, recent changes and calls, devices, all display text                           | Activity, Sites, Agents and Valet tabs have no data otherwise             |
@@ -332,7 +325,7 @@ decoys at the Mac instead of words. All of these are built in the phone.
   control key wait for B and G's designs. Lock at the relay (J7 F1) is built against the fake relay.
 - `valet://` links open a list or a card read-only; a link can never land on a card with Approve
   armed, since Approve always needs the card on screen for 1 s and a Face ID match.
-- Neutral cards also need Face ID (no "Use passcode instead") until CR-1b.
+- The passcode works on every card the phone can approve (Nick), not only on neutral ones.
 - Pairing shows six digits, and the Mac shows them among two decoys (B), not A's four words.
 - Notification titles are B's fixed text until CR-8, and push waits for Nick's APNs key.
 - Undo is an `ask`: the phone asks the Mac to build the card, then approves it like any other.
@@ -397,7 +390,7 @@ fixed, each with a regression test where one fits:
    expiry on this phone's clock, and expired texts are dropped from storage.
 8. A key that couldn't be read at launch silently unpaired the phone. The pairing is now kept.
 9. Any unexpected signing error was reported as a Face ID change. It is reported as a failed
-   match; the launch-time enrolment check is still to do.
+   match. With the passcode now allowed, no enrolment check is needed.
 10. The strict reader matched keys by Swift's canonical string equality. It compares UTF-16 code
     units, as JavaScript does, and a second text for a request is compared byte for byte.
 11. Remove a device was one tap. It now asks to confirm, then for Face ID.

@@ -22,6 +22,7 @@ export type EraseStep =
   | 'keychain-copies'
   | 'keychain-token'
   | 'messages-helper'
+  | 'approvals-anchor'
   | 'login-item'
   | 'browser-data'
   | 'data'
@@ -176,6 +177,8 @@ const FAILED_WORDING: Readonly<Record<EraseStep, string>> = {
   'keychain-token':
     'The 1Password service-account token. In Keychain Access, delete the “valet” item named “onepassword-service-account”.',
   'messages-helper': 'The Messages helper. Turn it off under System Settings > General > Login Items.',
+  'approvals-anchor':
+    'The record that vouches for your approvals. Valet will open locked down; unlock it with Touch ID.',
   'login-item': 'Opening Valet at login. Remove it under System Settings > General > Login Items.',
   'browser-data': 'The site sessions held in memory. They go when Valet quits.',
   data: 'Some files in Valet’s data folder in ~/Library/Application Support.',

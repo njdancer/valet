@@ -61,7 +61,8 @@ const subjects = {
       packageHash: hash,
       /** The approved hash this replaces; null for a first install. */
       previousHash: hash.nullable(),
-      source: z.enum(['draft', 'local-folder', 'rollback']),
+      /** `builtin`: a built-in adapter's new version, shipped with a new app version (D's ask). */
+      source: z.enum(['draft', 'local-folder', 'rollback', 'builtin']),
       /** True if this replaces an adapter that has a signed-in session or grants (it inherits it). */
       inheritsSession: z.boolean(),
       /** Reference adapters the agent says it read. A claim, shown as one. */
@@ -176,6 +177,11 @@ const subjects = {
       adapterHash: hash,
       tool: name,
       callId: z.string().regex(/^[A-Za-z0-9_-]{1,80}$/),
+      /**
+       * Which `ctx.confirm` question in the call this is (D's review): two questions in one call
+       * must never share a request, or approving one could answer the other.
+       */
+      confirmationId: z.string().regex(/^cf_[A-Za-z0-9_-]{1,60}$/),
       /** The input as the runtime rendered it, one line per part. */
       preview: z.array(displayText(200)).max(20),
     })

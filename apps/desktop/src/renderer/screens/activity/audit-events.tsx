@@ -23,6 +23,9 @@ type EventType = AuditEvent['type']
 export const EVENT_WORDS = {
   'adapter-approved': { label: 'Version approved', tone: 'success' },
   'adapter-rejected': { label: 'Version rejected', tone: 'neutral' },
+  'adapter-installed': { label: 'Version installed', tone: 'neutral' },
+  'adapter-activated': { label: 'Rolled back', tone: 'warning' },
+  'adapter-refused': { label: 'Version refused', tone: 'danger' },
   'grant-made': { label: 'Login given', tone: 'brass' },
   'grant-revoked': { label: 'Login taken back', tone: 'neutral' },
   'grant-copied': { label: 'Login copied', tone: 'brass' },
@@ -32,6 +35,7 @@ export const EVENT_WORDS = {
   'login-started': { label: 'Login started', tone: 'neutral' },
   'login-finished': { label: 'Login finished', tone: 'success' },
   'secret-used': { label: 'Login typed', tone: 'brass' },
+  'local-access': { label: 'Local data used', tone: 'brass' },
   'request-blocked': { label: 'Request blocked', tone: 'danger' },
   'breaker-opened': { label: 'Site paused calls', tone: 'warning' },
   'breaker-closed': { label: 'Site allows calls again', tone: 'success' },
@@ -139,6 +143,27 @@ export function details(event: AuditEvent, now: number): ReactNode {
           <Badge>rejected</Badge>
         </>
       )
+    case 'adapter-installed':
+      return (
+        <>
+          {event.adapterId} {event.version} <HashChip value={event.adapterHash} label="adapter hash" />{' '}
+          <Quiet>from {event.source === 'builtin' ? 'the app' : event.source}, waiting for approval</Quiet>
+        </>
+      )
+    case 'adapter-activated':
+      return (
+        <>
+          {event.adapterId} back to {event.version}{' '}
+          <HashChip value={event.adapterHash} label="adapter hash" />
+        </>
+      )
+    case 'adapter-refused':
+      return (
+        <>
+          {event.adapterId} <HashChip value={event.adapterHash} label="adapter hash" />{' '}
+          <Quiet>failed its checks ({event.reason}) and did not run</Quiet>
+        </>
+      )
     case 'grant-made':
       return (
         <>
@@ -198,6 +223,13 @@ export function details(event: AuditEvent, now: number): ReactNode {
       return (
         <>
           {event.secret}.{event.field} · <Code>{hostOf(event.origin)}</Code>
+        </>
+      )
+    case 'local-access':
+      return (
+        <>
+          <Code>{event.capability}</Code>{' '}
+          <Quiet>{event.errorClass === null ? 'allowed' : event.errorClass}</Quiet>
         </>
       )
     case 'request-blocked':
@@ -334,6 +366,19 @@ export function callOf(event: AuditEvent): string | null {
 export const EVENT_FIELDS = {
   'adapter-approved': ['type', 'adapterId', 'adapterHash', 'version', 'previousHash'],
   'adapter-rejected': ['type', 'adapterId', 'adapterHash', 'version'],
+  'adapter-installed': [
+    'type',
+    'adapterId',
+    'adapterHash',
+    'version',
+    'source',
+    'previousHash',
+    'appVersion',
+    'preludeHash',
+    'compiler',
+  ],
+  'adapter-activated': ['type', 'adapterId', 'adapterHash', 'version', 'previousHash'],
+  'adapter-refused': ['type', 'adapterId', 'adapterHash', 'reason'],
   'grant-made': ['type', 'adapterId', 'adapterHash', 'secret', 'provider', 'origins'],
   'grant-revoked': ['type', 'adapterId', 'secret'],
   'grant-copied': ['type', 'adapterId', 'secret', 'fields'],
@@ -352,6 +397,7 @@ export const EVENT_FIELDS = {
   'login-started': ['type', 'adapterId', 'callId'],
   'login-finished': ['type', 'adapterId', 'outcome', 'needsUser', 'stage', 'errorClass'],
   'secret-used': ['type', 'adapterId', 'adapterHash', 'secret', 'field', 'origin', 'callId'],
+  'local-access': ['type', 'adapterId', 'callId', 'capability', 'errorClass'],
   'request-blocked': ['type', 'adapterId', 'method', 'target', 'reason', 'initiator', 'partition', 'callId'],
   'breaker-opened': ['type', 'host', 'cause', 'retryAt', 'callId'],
   'breaker-closed': ['type', 'host'],

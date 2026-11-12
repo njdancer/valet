@@ -332,9 +332,7 @@ enum CardStateText {
     case .macOnly: return "This can only be approved on your Mac."
     case .needsReadTick: return "Tick \u{201c}I\u{2019}ve read what this does\u{201d} first."
     case .wrongCode: return "Type the eight-letter code your agent shows you."
-    case .faceIDFailed: return "Face ID didn\u{2019}t work. Nothing was approved."
-    case .faceIDChanged:
-      return "Face ID changed on this iPhone, so it can\u{2019}t approve any more. Pair it again from your Mac."
+    case .faceIDFailed: return "Face ID or the passcode didn\u{2019}t work. Nothing was approved."
     case .notPaired: return "This iPhone isn\u{2019}t paired."
     case .tooSoon: return "This just changed. Read it again, then approve."
     case .needsChoice: return "Pick one first."

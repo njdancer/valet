@@ -1,0 +1,24 @@
+{
+  "name": "@valet/relay",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "description": "The Cloudflare Workers relay: remote MCP clients reach a Mac that only dials out (docs/relay-worker.md)",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "wrangler dev",
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "@valet/core": "workspace:*",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261109.1",
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@valet/mcp-server": "workspace:*",
+    "miniflare": "^4.20260730.0",
+    "wrangler": "^4.158.0"
+  }
+}

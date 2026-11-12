@@ -58,9 +58,9 @@ describe('an isolated tool', () => {
       },
     })
     expect(w.page.toolFetches()).toContain(`${HOME}/api/trolley`)
-    // One process for the call, ended with it.
-    expect(w.processes.channels).toHaveLength(1)
-    expect(w.processes.killed()).toBe(1)
+    // One process to check the input with the tool's own schema, one for the run; both ended.
+    expect(w.processes.channels).toHaveLength(2)
+    expect(w.processes.killed()).toBe(2)
   })
 
   it('drives the page with every capability', async () => {
@@ -110,7 +110,8 @@ describe('an isolated tool', () => {
     const w = await isolated(HOSTILE, hostileTools)
     expect(await w.run('remember')).toEqual({ status: 'ok', output: null })
     expect(await w.run('remember')).toEqual({ status: 'ok', output: null })
-    expect(w.processes.channels).toHaveLength(2)
+    // Each call: an input check and a run.
+    expect(w.processes.channels).toHaveLength(4)
   })
 })
 
@@ -183,7 +184,7 @@ describe('escape attempts from isolated tool code', () => {
     })
     expect(await w.run('flood')).toEqual({ status: 'failed', stage: 'tool-run', errorClass: 'invalid' })
     expect(w.page.toolFetches().length).toBeLessThanOrEqual(MAX_IN_FLIGHT)
-    expect(w.processes.killed()).toBe(1)
+    expect(w.processes.killed()).toBe(2)
   })
 
   it('fails output that isn’t JSON', async () => {
@@ -201,7 +202,7 @@ describe('the tool process as a real child process', () => {
     const processes = childProcess()
     const w = await isolated(HONEST, honestTools, processes)
     expect(await w.run('read_trolley')).toMatchObject({ status: 'ok' })
-    expect(processes.killed()).toBe(1)
+    expect(processes.killed()).toBe(2)
   }, 30_000)
 
   it('is killed at the deadline when tool code never yields, and the next call gets a new one', async () => {
@@ -217,12 +218,12 @@ describe('the tool process as a real child process', () => {
       stage: 'timeout',
       errorClass: 'timed-out',
     })
-    expect(processes.killed()).toBe(1)
+    expect(processes.killed()).toBe(2)
     expect(await w.host.call({ ...call, callId: 'call-2', tool: 'remember', input: {} })).toEqual({
       status: 'ok',
       output: null,
     })
-    expect(processes.pids).toHaveLength(2)
+    expect(processes.pids).toHaveLength(4)
   }, 30_000)
 })
 

@@ -5,6 +5,7 @@
 
 import { randomBytes } from 'node:crypto'
 import { copyFile, mkdir, rm } from 'node:fs/promises'
+import { AdapterStore, type BuildRecord, type PackageRuntime } from '@valet/adapter-store'
 import {
   type AdapterManifest,
   type AuditEvent,
@@ -12,10 +13,14 @@ import {
   type AuditSink,
   type BlockedRequest,
   CredentialError,
+  DEFAULT_SANDBOX,
   type Grant,
+  isDisplayText,
+  type LocalAccess,
   MESSAGES_SECRET,
   type NeedsUserReason,
   needsYouTitle,
+  type PackageFiles,
   type ProviderKind,
   type SecretField,
   type SessionDriver,
@@ -51,17 +56,20 @@ import {
 import { z } from 'zod'
 import { href } from '../../renderer/lib/routes'
 import type {
+  AdapterVersions,
   AppEvent,
   AttentionItem,
   ChainStatus,
   ClientInfo,
   ClientSnippet,
+  ConfirmationItem,
   EndpointStatus,
   HashRoute,
   RemoteConsentItem,
   RemoteSetup,
   RemoteSetupTool,
   RepairItem,
+  RollbackPreview,
   SettingChoicesReply,
   Settings,
   UpdateStatus,
@@ -69,6 +77,15 @@ import type {
 import { AdapterSettingsStore } from './adapter-settings'
 import { adminReader } from './admin'
 import { AppStateStore } from './app-state'
+import {
+  AnchoredFile,
+  ApprovalBroker,
+  DeviceStore,
+  type KindHandlers,
+  type MacApprovalKeys,
+  TRUSTED_STORE,
+  TrustedLedger,
+} from './approvals'
 import { MissedItems, sortAttention } from './attention'
 import {
   type AdapterLookup,
@@ -83,7 +100,7 @@ import { BlockedAudit, LoginSecrets } from './blocked'
 import { type AppRefusal, RuntimeToolCaller } from './caller'
 import { addToDesktopConfig } from './claude-desktop'
 import { ClientRegistry, shownTransport } from './clients'
-import { ConfirmationBroker, type Timers } from './confirmations'
+import { ConfirmationBroker, type ConfirmationSigning, type Timers } from './confirmations'
 import {
   AUTH_FLOW_TIMEOUT_MS,
   CONFIRMATION_TIMEOUT_MS,
@@ -94,12 +111,14 @@ import {
   TYPING_DELAY_MS,
 } from './constants'
 import type { Credentials } from './credentials'
-import { type EraseKind, type EraseReport, eraseEverything } from './erase'
+import { type EraseKind, type EraseReport, type EraseStep, eraseEverything } from './erase'
 import { ensurePrivateDir, JsonDocument } from './files'
 import { checkGrantRequest, grantInfo } from './grants'
 import type { AppWindow, MainApi } from './ipc'
 import { createAuthRunner, Handoffs, isBlockedPage, SessionTracker } from './login'
 import { type AppNotification, attentionTitle, Notifier } from './notifications'
+import { type FolderInstall, InstallError, installReason, PackageManager, rollbackEligible } from './packages'
+import { addsPermissions, permissionDiff } from './permission-diff'
 import { type ApprovedSnapshot, type BuiltinAdapter, SnapshotStore } from './registry'
 import { RemoteAccess } from './remote'
 import { RunMemory } from './run-memory'
@@ -156,15 +175,44 @@ export interface ServiceDeps {
   readonly now: () => number
   readonly timers: Timers
   readonly sleep: (ms: number) => Promise<void>
+  /**
+   * Adapters already loaded, for tests. With `packages`, the service loads its own from the adapter
+   * store at start, and these are ignored.
+   */
   readonly adapters: readonly BuiltinAdapter[]
+  /**
+   * Adapter packages (docs/adapter-packages.md): the built-ins this build ships, seeded into the
+   * store; how to compile and describe them; and what the hash doesn't cover, for the history.
+   */
+  readonly packages?: {
+    readonly builtins: readonly PackageFiles[]
+    readonly runtime: PackageRuntime
+    readonly build: BuildRecord
+    /** Development builds only: installing a package from a folder (docs/adapter-packages.md). */
+    readonly folders?: FolderInstall
+  }
   /**
    * Starts a tool process for one call. With it, an adapter that has a tool script runs its tool
    * code there; without it (unit tests), in this process.
    */
   readonly toolProcess?: ToolProcessFactory
+  /**
+   * The adapter sandbox (docs/sandbox.md). With it, a sandboxed adapter's tool code runs in a
+   * sandbox renderer for its version, and an unsandboxed one in `toolProcess`; each gets `local`,
+   * the capabilities its declared exceptions allow. Without it, every adapter runs in `toolProcess`.
+   */
+  readonly sandbox?: {
+    forAdapter(adapterHash: string): ToolProcessFactory
+    local(manifest: AdapterManifest): LocalAccess
+  }
   /** Builds an adapter's driver, with the reporters its refusals outside a run go to. */
   readonly createDriver: (manifest: AdapterManifest, reporters: DriverReporters) => Promise<SessionDriver>
   readonly credentials: Credentials
+  /**
+   * The Mac's approval keys and the trusted ledger's anchor (approvals/mac-keys.ts): the Secure
+   * Enclave and the Keychain in a packaged app.
+   */
+  readonly approvalKeys: MacApprovalKeys
   /**
    * Starts the MCP endpoint with a token for each of `clients`, written to its config file; it
    * reports its live sessions to `onSessionsChanged`. `admin` is Valet's own read-only tools, for
@@ -227,6 +275,9 @@ class ObservedAudit implements AuditSink {
 const EVENTS_FOR: Readonly<Partial<Record<AuditEvent['type'], readonly AppEvent['type'][]>>> = {
   'adapter-approved': ['approvals-changed', 'adapters-changed', 'attention-changed'],
   'adapter-rejected': ['approvals-changed', 'adapters-changed', 'attention-changed'],
+  'adapter-installed': ['approvals-changed', 'adapters-changed', 'attention-changed'],
+  'adapter-activated': ['approvals-changed', 'adapters-changed', 'attention-changed'],
+  'adapter-refused': ['adapters-changed', 'health-changed', 'attention-changed'],
   // A grant or a setting can make a "Give Valet your login" or "Choose your store" item come or go.
   'grant-made': ['grants-changed', 'adapters-changed', 'attention-changed'],
   'grant-revoked': ['grants-changed', 'adapters-changed', 'attention-changed'],
@@ -295,8 +346,23 @@ export class AppService {
   private readonly memory = new RunMemory()
   private readonly sessions: SessionTracker
   private readonly broker: ConfirmationBroker
+  /**
+   * Signed approvals (docs/approval-broker.md), from start() on. Null before, or if the Mac's keys
+   * couldn't be read: then nothing that needs an approval can be approved.
+   */
+  private approvalBroker: ApprovalBroker | null = null
+  /**
+   * The trusted ledger, opened at start whatever happens to the keys: its lockdown, and a lockdown
+   * for tampering, hold even while the broker can't open.
+   */
+  private ledger: TrustedLedger | null = null
   private readonly handoffs: Handoffs
   private readonly drivers = new Map<string, SessionDriver>()
+  /** Per adapter, the install or rollback in progress: they run one at a time. */
+  private readonly changing = new Map<string, Promise<unknown>>()
+  /** The adapter versions registered now: deps.adapters, or what the store loaded at start. */
+  private installed: BuiltinAdapter[]
+  private readonly packages: PackageManager | null
   /** The runtime, from start() on. */
   private host: ToolHost | null = null
   private readonly loginSecrets = new LoginSecrets()
@@ -357,6 +423,18 @@ export class AppService {
     this.versions = new VersionStore(paths.versions)
     this.setup = new SetupStore(paths.setup, deps.now)
     this.snapshots = new SnapshotStore(paths.manifests)
+    this.installed = [...deps.adapters]
+    this.packages =
+      deps.packages === undefined
+        ? null
+        : new PackageManager({
+            store: new AdapterStore(paths.adapters),
+            runtime: deps.packages.runtime,
+            build: deps.packages.build,
+            audit: this.audit,
+            now: date,
+            keep: (id) => this.keepHashes(id),
+          })
     this.clients = new ClientRegistry(paths.clients, paths.clientConfigs, date)
     this.titles = new JsonDocument(paths.grantItems, titlesSchema, () => ({}), true)
     this.reader = new AuditReader(paths.audit)
@@ -407,6 +485,7 @@ export class AppService {
           at: item.requestedAt,
         }),
       onChange: () => this.emit('attention-changed'),
+      signing: this.confirmationSigning(),
       now: deps.now,
       timeoutMs: CONFIRMATION_TIMEOUT_MS,
       timers: deps.timers,
@@ -500,6 +579,7 @@ export class AppService {
     await mkdir(paths.traces, { recursive: true, mode: 0o700 })
     // Before the endpoint starts: a lock down set before a restart refuses the first call too.
     await this.appState.load()
+    await this.openApprovals()
     await this.missed.load()
     this.scheduleMissedExpiry()
     await this.loadRepairs()
@@ -558,27 +638,18 @@ export class AppService {
       diagnostics: (d) => this.deps.diagnostics?.(d),
     })
     this.host = host
-    for (const adapter of this.deps.adapters) {
-      const id = adapter.definition.manifest.id
-      const driver = await this.deps.createDriver(adapter.definition.manifest, {
-        onBlocked: this.blocked.betweenRuns(id),
-        onAuthBlocked: this.blocked.authPartition(id),
-        onAuthReportsDropped: () => this.deps.diagnostics?.({ type: 'auth-reports-dropped', adapterId: id }),
-      })
-      this.drivers.set(id, driver)
-      const start = this.deps.toolProcess
-      host.register({
-        definition: adapter.definition,
-        bundleHash: adapter.hash,
-        driver,
-        ...(start === undefined || adapter.toolScript === null
-          ? {}
-          : { isolation: { script: adapter.toolScript, start } }),
-      })
+    if (this.packages !== null && this.deps.packages !== undefined) {
+      await mkdir(paths.adapters, { recursive: true, mode: 0o700 })
+      this.installed = await this.packages.boot(this.deps.packages.builtins)
+    }
+    for (const adapter of this.installed) {
+      const driver = await this.driverFor(adapter)
+      host.register(this.registration(adapter, driver))
+      this.drivers.set(adapter.definition.manifest.id, driver)
     }
     this.caller = new RuntimeToolCaller(host, {
       paused: () => this.paused,
-      lockedDown: () => this.appState.lockedDown,
+      lockedDown: () => this.lockedDown,
       sitePaused: (adapterId) => this.appState.sitePaused(adapterId),
       explain: (call, outcome) => this.explain(call, outcome),
       started: (call) => {
@@ -622,7 +693,7 @@ export class AppService {
     const status = this.remote.status()
     const on = new Set(status.tools)
     const tools: RemoteSetupTool[] = []
-    for (const adapter of this.deps.adapters) {
+    for (const adapter of this.installed) {
       const { manifest } = adapter.definition
       if (!(await this.approvals.isApproved(manifest.id, adapter.hash).catch(() => false))) continue
       // A setting's tools (the store's) run only for Valet itself; no client lists or calls them,
@@ -658,6 +729,7 @@ export class AppService {
     // Calls still running are cancelled: each ends failed tool-run/aborted, its prompt declined.
     this.caller?.cancelAll()
     this.broker.declineAll()
+    this.approvalBroker?.stop()
     this.handoffs.closeAll()
     this.notifier.clear()
     if (this.missedTimer !== null) this.deps.timers.clearTimeout(this.missedTimer)
@@ -676,14 +748,14 @@ export class AppService {
     this.loginSecrets.dispose()
   }
 
-  /** For the Electron glue: the confirmation window was shown or focused. */
-  confirmationArmed(id: string): void {
-    this.broker.armed(id)
-  }
-
   /** Whether a confirmation is still waiting (the glue closes windows for ones that aren't). */
   confirmationPending(id: string): boolean {
     return this.broker.has(id)
+  }
+
+  /** The ids of the adapters registered now. */
+  adapterIds(): string[] {
+    return this.installed.map((a) => a.definition.manifest.id)
   }
 
   hasHandoff(adapterId: string): boolean {
@@ -740,7 +812,7 @@ export class AppService {
     const host = this.host
     if (host === null) return
     await Promise.all(
-      this.deps.adapters.map(async (a) => {
+      this.installed.map(async (a) => {
         try {
           await host.runLoginStep(a.definition.manifest.id, async () => {}, { waitMs: LOGIN_WAIT_MS })
         } catch (error) {
@@ -786,7 +858,7 @@ export class AppService {
 
   /** The name of the one adapter on a host, for a notification; null when none or several. */
   private siteName(host: string): string | undefined {
-    const on = this.deps.adapters.filter((a) => {
+    const on = this.installed.filter((a) => {
       const { manifest } = a.definition
       return manifest.navigation.some((origin) => {
         try {
@@ -959,20 +1031,155 @@ export class AppService {
    */
   private async setLockedDown(locked: boolean): Promise<void> {
     if (!locked) {
-      // Audited first, like a grant: an unlock that can't be recorded isn't made.
-      await this.audit.append({ type: 'lock-down', locked, revokedClients: 0 })
-      await this.appState.setLockedDown(false)
+      // Unlocking needs the person at this Mac: a signed `resume`, Touch ID in a packaged app. A
+      // phone can lock down but never unlock, and neither can a click on its own. The handler
+      // (approvalHandlers) clears the switch once the decision is signed.
+      if (!this.lockedDown) return
+      // The helper may have been slow at launch: try again before refusing.
+      if (this.approvalBroker === null) await this.openApprovals()
+      const broker = this.approvalBroker
+      if (broker === null) throw new ValetError('config', 'unavailable')
+      const asked = await broker.request('resume', { from: 'lockdown' }, { kind: 'person' })
+      if (!asked.ok) throw new ValetError('config', 'unavailable')
+      const answered = await broker.approveOnMac(asked.requestId)
+      // Cancelled at the prompt: still locked, and the request is withdrawn rather than left
+      // waiting. A second click while the first prompt is open leaves that prompt alone.
+      if (!answered.ok && answered.reason !== 'busy') {
+        await broker.withdraw(asked.requestId, { kind: 'person' }).catch(() => false)
+      }
       return
     }
     // In memory at once: no call gets through while the rest happens, even if a write fails.
     const saved = this.appState.setLockedDown(true)
+    const ledger = this.approvalBroker?.lockdown().catch(() => undefined)
     let revoked = 0
     if (locked) {
       this.broker.declineAll()
       revoked = await this.remote.revokeAllClients().catch(() => 0)
     }
+    await ledger
     await saved
     await this.audit.append({ type: 'lock-down', locked: true, revokedClients: revoked })
+  }
+
+  /**
+   * Locked down by the person's switch (app-state.json), or by the ledger: a phone's lockdown, or a
+   * ledger that didn't match its anchor at launch. Either keeps every call refused.
+   */
+  private get lockedDown(): boolean {
+    // No ledger at all (it couldn't be opened): locked, so nothing it might have held is lost.
+    return this.appState.lockedDown || (this.ledger?.data.safety.lockdown ?? true)
+  }
+
+  /**
+   * Opens the trusted ledger, then the approval broker. The ledger opens first and on its own: a
+   * failure to read the Mac's keys leaves approvals unavailable, never the ledger's lockdown lifted.
+   */
+  private async openApprovals(): Promise<void> {
+    const keys = this.deps.approvalKeys
+    if (this.ledger === null) {
+      this.ledger = await TrustedLedger.open(
+        new AnchoredFile(this.deps.paths.trusted, TRUSTED_STORE, keys.anchor),
+      )
+      if (this.ledger.tampered !== null)
+        this.deps.diagnostics?.({ type: `approvals-ledger-${this.ledger.tampered}` })
+    }
+    const ledger = this.ledger
+    try {
+      const devices = new DeviceStore(ledger, await keys.signer.keys())
+      this.approvalBroker = await ApprovalBroker.open({
+        ledger,
+        devices,
+        signer: keys.signer,
+        audit: this.audit,
+        handlers: this.approvalHandlers(),
+        now: this.deps.now,
+        timers: this.deps.timers,
+        onChange: () => {
+          this.emit('app-changed')
+          this.emit('attention-changed')
+        },
+      })
+    } catch {
+      this.approvalBroker = null
+      this.deps.diagnostics?.({ type: 'approvals-unavailable' })
+    }
+  }
+
+  /** What each approved kind does here. Kinds not listed aren't wired yet and do nothing. */
+  private approvalHandlers(): KindHandlers {
+    return {
+      // The signed subject names the confirmation (and its preview shows it first), so an approval
+      // applies to the one question it was signed for, never another of the same call.
+      'irreversible-call': {
+        precheck: (subject) => {
+          const id = confirmationOf(subject)
+          return id !== null && this.broker.waiting(id)
+        },
+        apply: async (subject) => {
+          const id = confirmationOf(subject)
+          if (id === null || !this.broker.approvedById(id)) throw new ValetError('config', 'not-found')
+        },
+      },
+      resume: {
+        precheck: (subject) =>
+          subject.from === 'lockdown' ? this.lockedDown : (this.approvalBroker?.isRemotePaused() ?? false),
+        supersedes: () => true,
+        apply: async (subject) => {
+          if (subject.from !== 'lockdown') return
+          await this.audit.append({ type: 'lock-down', locked: false, revokedClients: 0 })
+          await this.appState.setLockedDown(false)
+          this.emit('app-changed')
+        },
+      },
+    }
+  }
+
+  /** The approval broker's side of each confirmation the runtime asks for (confirmations.ts). */
+  private confirmationSigning(): ConfirmationSigning {
+    const app = { kind: 'app' } as const
+    return {
+      open: async (item) => {
+        const broker = this.approvalBroker
+        if (broker === null) return null
+        const siteName = shown(item.adapterName, 80)
+        const toolTitle = shown(item.toolTitle, 80)
+        const asked = await broker.request(
+          'irreversible-call',
+          {
+            adapterId: item.adapterId,
+            adapterHash: item.adapterHash,
+            tool: item.tool,
+            callId: item.callId,
+            confirmationId: item.id,
+            preview: confirmationPreview(item),
+          },
+          app,
+          {
+            display: {
+              ...(shown(item.client, 100) === undefined
+                ? {}
+                : { client: { label: shown(item.client, 100) as string, badge: 'local' as const } }),
+              fromAdapter: {
+                ...(siteName === undefined ? {} : { siteName }),
+                ...(toolTitle === undefined ? {} : { toolTitles: { [item.tool]: toolTitle } }),
+              },
+            },
+          },
+        )
+        return asked.ok ? { requestId: asked.requestId, ref: asked.ref } : null
+      },
+      approve: async (requestId) => {
+        const broker = this.approvalBroker
+        if (broker === null) return 'refused'
+        const answered = await broker.approveOnMac(requestId)
+        if (answered.ok) return 'approved'
+        return answered.reason === 'cancelled' ? 'cancelled' : 'refused'
+      },
+      withdraw: (requestId) => {
+        void this.approvalBroker?.withdraw(requestId, app).catch(() => false)
+      },
+    }
   }
 
   private async setSitePaused(adapterId: string, paused: boolean): Promise<void> {
@@ -981,8 +1188,209 @@ export class AppService {
     await this.audit.append({ type: 'site-paused', adapterId, paused })
   }
 
+  private async driverFor(adapter: BuiltinAdapter): Promise<SessionDriver> {
+    const id = adapter.definition.manifest.id
+    return this.deps.createDriver(adapter.definition.manifest, {
+      onBlocked: this.blocked.betweenRuns(id),
+      onAuthBlocked: this.blocked.authPartition(id),
+      onAuthReportsDropped: () => this.deps.diagnostics?.({ type: 'auth-reports-dropped', adapterId: id }),
+    })
+  }
+
+  private registration(adapter: BuiltinAdapter, driver: SessionDriver) {
+    const manifest = adapter.definition.manifest
+    const sandbox = this.deps.sandbox
+    // Unsandboxed only when the manifest says so, and then it was approved as such (docs/sandbox.md).
+    const sandboxed = (manifest.sandbox ?? DEFAULT_SANDBOX).mode === 'sandboxed'
+    const start =
+      sandbox !== undefined && sandboxed ? sandbox.forAdapter(adapter.hash) : this.deps.toolProcess
+    return {
+      definition: adapter.definition,
+      bundleHash: adapter.hash,
+      driver,
+      ...(start === undefined || adapter.toolScript === null
+        ? {}
+        : {
+            isolation: {
+              script: adapter.toolScript,
+              start,
+              ...(sandbox === undefined ? {} : { local: sandbox.local(manifest) }),
+            },
+          }),
+    }
+  }
+
+  /** The hashes the store must keep for an adapter: the approved one and any a grant names. */
+  private async keepHashes(adapterId: string): Promise<ReadonlySet<string>> {
+    const keep = new Set<string>(await this.approvals.approvedHashes(adapterId).catch(() => []))
+    for (const grant of await this.grants.list().catch(() => [] as readonly Grant[]))
+      if (grant.adapterId === adapterId) keep.add(grant.adapterHash)
+    return keep
+  }
+
+  /**
+   * Swaps `next` in for whatever version of its adapter is registered now: the runtime takes the
+   * adapter's lock (running calls finish first, queued ones are told to retry), then the old
+   * driver closes. Refused while the person is in the middle of a login for it, since the login
+   * window belongs to the old driver.
+   */
+  private async swapIn(next: BuiltinAdapter): Promise<void> {
+    const host = this.runtime()
+    const id = next.definition.manifest.id
+    if (this.handoffs.has(id)) throw new InstallError('Finish or cancel the login for this site first.')
+    const previous = this.drivers.get(id)
+    const driver = await this.driverFor(next)
+    try {
+      await host.replace(this.registration(next, driver))
+    } catch (error) {
+      await driver.close().catch(() => undefined)
+      throw error instanceof ValetError && error.errorClass === 'busy'
+        ? new InstallError('The site is busy with calls; try again in a minute.')
+        : error
+    }
+    // Only now: until the swap is done, a login window or a blocked report finds the old driver.
+    this.drivers.set(id, driver)
+    await previous?.close().catch(() => undefined)
+    const at = this.installed.findIndex((a) => a.definition.manifest.id === id)
+    if (at === -1) this.installed.push(next)
+    else this.installed[at] = next
+    await this.refreshTools()
+    this.emit('adapters-changed')
+  }
+
+  /**
+   * Installs a package (docs/adapter-packages.md#install-update-and-rollback). The new version
+   * starts unapproved, so its tools stay hidden until the person approves it with the permission
+   * diff. Throws InstallError.
+   */
+  async installPackage(
+    files: PackageFiles,
+    source: 'folder' | 'draft',
+  ): Promise<{ adapterId: string; hash: string }> {
+    const packages = this.packages
+    if (packages === null) throw new InstallError('This build cannot install adapters.')
+    const prepared = await packages.prepare(files, source)
+    const { adapter } = prepared
+    const id = adapter.definition.manifest.id
+    await this.oneAtATime(id, async () => {
+      // Stored and audited only once it is the version running, so a refused swap changes nothing.
+      await this.swapIn(adapter)
+      await packages.commit(prepared)
+    })
+    return { adapterId: id, hash: adapter.hash }
+  }
+
+  /** Runs `change` after any other install or rollback of the same adapter has finished. */
+  private oneAtATime<T>(adapterId: string, change: () => Promise<T>): Promise<T> {
+    const before = this.changing.get(adapterId) ?? Promise.resolve()
+    const run = before.catch(() => undefined).then(change)
+    const settled = run.catch(() => undefined)
+    this.changing.set(adapterId, settled)
+    void settled.then(() => {
+      if (this.changing.get(adapterId) === settled) this.changing.delete(adapterId)
+    })
+    return run
+  }
+
+  /**
+   * The stored versions of one adapter, newest first, each with whether a rollback to it is
+   * offered: a version the person approved and never rejected afterwards, by the audit chain,
+   * that isn't the one active now.
+   */
+  async adapterVersions(adapterId: string): Promise<AdapterVersions> {
+    const active = this.requireAdapter(adapterId)
+    const state = this.packages === null ? null : await this.packages.versions(adapterId)
+    const records = await this.reader.records()
+    const eligible = rollbackEligible(records, adapterId)
+    const versions = [...(state?.versions ?? [])].reverse().map((v) => ({
+      hash: v.hash,
+      version: v.version,
+      source: v.source,
+      installedAt: v.installedAt,
+      appVersion: v.build.appVersion,
+      active: v.hash === active.hash,
+      canRollBack: v.hash !== active.hash && eligible.has(v.hash),
+    }))
+    return { adapterId, pinned: state?.pinned ?? false, versions }
+  }
+
+  /**
+   * What a rollback to `hash` would change, against the version active now (B's review, point 3):
+   * the permission diff, and the grants that come back with it.
+   */
+  async rollbackPreview(adapterId: string, hash: string): Promise<RollbackPreview> {
+    const target = await this.rollbackTarget(adapterId, hash)
+    const active = this.requireAdapter(adapterId)
+    const grants = (await this.grants.list().catch(() => [] as readonly Grant[])).filter(
+      (g) => g.adapterId === adapterId && g.adapterHash === hash,
+    )
+    const changes = permissionDiff(active.definition.manifest, target.definition.manifest)
+    return {
+      adapterId,
+      hash,
+      version: target.definition.manifest.version,
+      changes,
+      widens: addsPermissions(changes),
+      grants: grants.map((g) => g.secret),
+    }
+  }
+
+  /**
+   * Rolls back to a stored version the person approved before. The click in the app is the
+   * approval: audited as adapter-approved (with the hash it replaces) and adapter-activated. Its
+   * grants come back exactly as the grant store still holds them; a revoked one stays revoked.
+   */
+  rollback(adapterId: string, hash: string): Promise<void> {
+    return this.oneAtATime(adapterId, () => this.rollbackNow(adapterId, hash))
+  }
+
+  private async rollbackNow(adapterId: string, hash: string): Promise<void> {
+    const target = await this.rollbackTarget(adapterId, hash)
+    const active = this.requireAdapter(adapterId)
+    await this.swapIn(target)
+    const version = target.definition.manifest.version
+    const already = (await this.approvals.approvedHashes(adapterId)).includes(hash)
+    await this.approvals.approve(adapterId, hash, version)
+    // The click is the decision even when the hash was still the approved one (an update installed
+    // but never approved), so it is audited either way.
+    if (already)
+      await this.audit.append({
+        type: 'adapter-approved',
+        adapterId,
+        adapterHash: hash,
+        version,
+        previousHash: hash,
+      })
+    const at = new Date(this.deps.now()).toISOString()
+    await this.snapshots.put(adapterId, target, at)
+    this.approvedAt.set(`${adapterId}:${hash}`, at)
+    await this.packages?.activate(adapterId, hash)
+    await this.audit.append({
+      type: 'adapter-activated',
+      adapterId,
+      adapterHash: hash,
+      version,
+      previousHash: active.hash,
+    })
+    await this.refreshTools()
+  }
+
+  private async rollbackTarget(adapterId: string, hash: string): Promise<BuiltinAdapter> {
+    if (this.packages === null) throw new InstallError('This build cannot roll back adapters.')
+    const active = this.requireAdapter(adapterId)
+    if (hash === active.hash) throw new InstallError('That version is already active.')
+    // Eligibility comes from the audit log, so only from one whose chain checks out: a line added
+    // by hand doesn't make a version look approved.
+    if ((await this.reader.verify(new Date(this.deps.now()))).state !== 'intact')
+      throw new InstallError('The activity log doesn’t verify, so Valet can’t tell what you approved.')
+    const eligible = rollbackEligible(await this.reader.records(), adapterId)
+    if (!eligible.has(hash))
+      throw new InstallError('Only a version you approved before can be rolled back to.')
+    return this.packages.load(adapterId, hash)
+  }
+
   private adapter(adapterId: string): BuiltinAdapter | null {
-    return this.deps.adapters.find((a) => a.definition.manifest.id === adapterId) ?? null
+    return this.installed.find((a) => a.definition.manifest.id === adapterId) ?? null
   }
 
   private requireAdapter(adapterId: string): BuiltinAdapter {
@@ -1047,7 +1455,7 @@ export class AppService {
   private async states(): Promise<AdapterState[]> {
     const records = await this.reader.records()
     const grants = await this.grants.list().catch(() => [] as readonly Grant[])
-    return Promise.all(this.deps.adapters.map((a) => this.state(a, records, grants)))
+    return Promise.all(this.installed.map((a) => this.state(a, records, grants)))
   }
 
   /**
@@ -1221,7 +1629,7 @@ export class AppService {
         const client = this.clients.get(clientId)
         return capabilities === null || client === null ? null : { ...capabilities, name: client.name }
       },
-      lockedDown: () => this.appState.lockedDown,
+      lockedDown: () => this.lockedDown,
       remoteTools: () => new Set(this.remote.status().tools),
       sensitive: (texts) => this.knownSecretIn(texts),
       // Which tool, never what matched.
@@ -1334,6 +1742,21 @@ export class AppService {
           deps.ui.openExternal(url)
         },
         setPaused: (adapterId, paused) => this.setSitePaused(adapterId, paused),
+        versions: (adapterId) => this.adapterVersions(adapterId),
+        rollbackPreview: (adapterId, hash) => this.rollbackPreview(adapterId, hash),
+        rollback: (adapterId, hash) => this.rollback(adapterId, hash),
+        canInstallFromFolder: async () => this.packages !== null && deps.packages?.folders !== undefined,
+        installFromFolder: async () => {
+          const folders = deps.packages?.folders
+          if (this.packages === null || folders === undefined) throw new ValetError('config', 'unavailable')
+          try {
+            const files = await folders.pick()
+            if (files === null) return null
+            return { ok: true, ...(await this.installPackage(files, 'folder')) }
+          } catch (error) {
+            return { ok: false, reason: installReason(error) }
+          }
+        },
       },
       approvals: {
         pending: async () =>
@@ -1369,7 +1792,7 @@ export class AppService {
           // Only grants for an adapter's installed hash, while that hash is approved: a grant for an
           // older bundle (or one waiting for review) can't be used, so it isn't counted as live.
           const live = new Set<string>()
-          for (const adapter of deps.adapters) {
+          for (const adapter of this.installed) {
             const id = adapter.definition.manifest.id
             if (await this.approvals.isApproved(id, adapter.hash).catch(() => false))
               live.add(`${id}:${adapter.hash}`)
@@ -1554,9 +1977,8 @@ export class AppService {
           if (!this.missed.dismiss(id)) throw new ValetError('config', 'not-found')
         },
       },
-      answerConfirmation: async (confirmationId: string, approved: boolean, from: AppWindow) => {
-        this.broker.answer(confirmationId, approved, from)
-      },
+      answerConfirmation: (confirmationId: string, approved: boolean, from: AppWindow) =>
+        this.broker.answer(confirmationId, approved, from),
       openConfirmation: async (confirmationId: string) => {
         if (!this.broker.has(confirmationId)) throw new ValetError('config', 'not-found')
         deps.ui.focusConfirmation(confirmationId)
@@ -1710,7 +2132,7 @@ export class AppService {
       app: {
         status: async () => ({
           paused: this.paused,
-          lockedDown: this.appState.lockedDown,
+          lockedDown: this.lockedDown,
           version: deps.version,
           demo: deps.demo,
         }),
@@ -1732,7 +2154,12 @@ export class AppService {
               dataDir: deps.paths.dir,
               leftovers: deps.leftovers ?? [],
               stop: () => this.stop(),
-              eraseCredentials: () => deps.credentials.erase(),
+              eraseCredentials: async () => {
+                const failed = [...(await deps.credentials.erase())] as EraseStep[]
+                // Without this, the next launch's empty ledger wouldn't match its anchor.
+                await deps.approvalKeys.forget().catch(() => failed.push('approvals-anchor'))
+                return failed
+              },
               setLaunchAtLogin: (enabled) => deps.ui.setLaunchAtLogin(enabled),
               clearBrowserData: () => deps.ui.clearBrowserData(),
             })
@@ -1807,4 +2234,41 @@ function lastUsed(records: readonly AuditRecord[], grant: Grant): string | null 
     }
   }
   return null
+}
+
+/** Text a signed request may carry for a card: cut to `max`, or left out if it isn't display text. */
+function shown(text: string, max: number): string | undefined {
+  const cut = [...text.replace(/\s+/g, ' ').trim()].slice(0, max).join('')
+  return cut !== '' && isDisplayText(cut) ? cut : undefined
+}
+
+const QUESTION = /^Question (cf_[A-Za-z0-9_-]{1,60})$/
+
+/**
+ * What a confirmation's signed request shows, at most 20 lines of 200 characters: first its own id,
+ * so two questions of one call never share a request; then what it asks (the requests it would
+ * make, the adapter's note as the adapter's words); then the input.
+ */
+function confirmationPreview(item: ConfirmationItem): string[] {
+  const lines = [`Question ${item.id}`]
+  for (const r of [...item.unlocks, ...item.requests]) {
+    const kept = shown(`${r.method} ${r.path}`, 200)
+    if (kept !== undefined) lines.push(kept)
+  }
+  if (item.adapterNote !== null) {
+    const note = shown(`The adapter says: ${item.adapterNote}`, 200)
+    if (note !== undefined) lines.push(note)
+  }
+  const text = item.input.map((p) => (p.kind === 'text' ? p.text : `[${p.label}]`)).join('')
+  for (const line of text.split('\n')) {
+    const kept = shown(line, 200)
+    if (kept !== undefined) lines.push(kept)
+  }
+  return lines.slice(0, 20)
+}
+
+/** The confirmation a signed request names, or null when its preview shows a different one. */
+function confirmationOf(subject: { confirmationId: string; preview: readonly string[] }): string | null {
+  const shownId = QUESTION.exec(subject.preview[0] ?? '')?.[1] ?? null
+  return shownId === subject.confirmationId ? shownId : null
 }

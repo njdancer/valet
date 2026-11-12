@@ -164,6 +164,9 @@ describe('a release build', () => {
       '!node_modules/**/*',
       'node_modules/@1password/sdk/**/*',
       'node_modules/@1password/sdk-core/**/*',
+      'node_modules/esbuild-wasm/package.json',
+      'node_modules/esbuild-wasm/lib/browser.js',
+      'node_modules/esbuild-wasm/esbuild.wasm',
     ])
     expect(c.asar).toBe(true)
     expect(c.directories).toEqual({ output: 'dist', buildResources: 'build' })
@@ -285,6 +288,7 @@ describe('a release build refuses to be built weaker', () => {
       { from: SWIFT_BRIDGE_BUILD, to: `MacOS/${BRIDGE_EXECUTABLE}` },
       { from: `${SWIFT_BUILD_DIR}/valet-keychain`, to: 'MacOS/valet-keychain' },
       { from: `${SWIFT_BUILD_DIR}/valet-messages-helper`, to: 'MacOS/valet-messages-helper' },
+      { from: `${SWIFT_BUILD_DIR}/valet-approver`, to: 'MacOS/valet-approver' },
       {
         from: 'build/launch-agents/me.dncr.valet.messages-helper.plist',
         to: 'Library/LaunchAgents/messages-helper.plist',
@@ -361,6 +365,7 @@ describe('a release dry run', () => {
       'Contents/MacOS/valet-bridge',
       'Contents/MacOS/valet-keychain',
       'Contents/MacOS/valet-messages-helper',
+      'Contents/MacOS/valet-approver',
     ]
     expect(c.mac.binaries).toEqual(binaries)
     expect(release.mac.binaries).toEqual(binaries)

@@ -28,6 +28,8 @@ export interface BuiltinAdapter {
    * definition's own implementations (overnight queue item 7). Null: tool code runs in this process.
    */
   readonly toolScript: string | null
+  /** Where its package came from; the built-ins (and tests) leave it out. */
+  readonly source?: 'builtin' | 'folder' | 'draft'
 }
 
 export function builtinAdapter(

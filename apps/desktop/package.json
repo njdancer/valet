@@ -20,6 +20,8 @@
   },
   "dependencies": {
     "@1password/sdk": "^0.5.0",
+    "esbuild-wasm": "0.28.2",
+    "@valet/adapter-store": "workspace:*",
     "@valet/adapter-wikipedia": "workspace:*",
     "@valet/adapter-woolworths": "workspace:*",
     "@valet/adapter-yahoo-finance": "workspace:*",
@@ -30,7 +32,8 @@
     "@valet/mcp-server": "workspace:*",
     "@valet/runtime": "workspace:*",
     "electron-updater": "^6.8.11",
-    "zod": "^4.6.7"
+    "zod": "^4.6.7",
+    "@valet/sandbox": "workspace:*"
   },
   "devDependencies": {
     "@electron/fuses": "^1.8.0",

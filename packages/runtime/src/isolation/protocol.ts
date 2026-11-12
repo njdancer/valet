@@ -3,9 +3,9 @@
 // with isPlainJson() before it looks inside, because the other side runs adapter code.
 //
 // host → process: init (the tool script), run (a tool and its validated input), reply (to a
-//   capability call), abort (the call's signal).
+//   capability call), abort (the call's signal); or init then describe (the tools' schemas).
 // process → host: ready, call (a capability: page.*, session.ensure, confirm), done (the tool's
-//   result or what it threw).
+//   result or what it threw), described (the answer to describe).
 
 import {
   ERROR_CLASSES,
@@ -28,6 +28,16 @@ export const CAPABILITIES = [
   'page.fetch',
   'session.ensure',
   'confirm',
+  // Sandbox exceptions (docs/sandbox.md): each answered only if the manifest declares its kind.
+  'local.files.list',
+  'local.files.stat',
+  'local.files.read',
+  'local.files.write',
+  'local.files.mkdir',
+  'local.fetch',
+  'local.service',
+  'local.run',
+  'local.appleScript',
 ] as const
 export type Capability = (typeof CAPABILITIES)[number]
 
@@ -62,6 +72,10 @@ export type HostMessage =
       readonly url: string
     }
   | { readonly t: 'abort' }
+  /** Instead of run: asks for each tool's input and output schemas as JSON Schema. */
+  | { readonly t: 'describe' }
+  /** Instead of run: asks whether the tool's own input schema accepts `input`. */
+  | { readonly t: 'check'; readonly tool: string; readonly input: unknown }
 
 export type ProcessMessage =
   | { readonly t: 'ready' }
@@ -73,6 +87,14 @@ export type ProcessMessage =
     }
   | { readonly t: 'done'; readonly ok: true; readonly value?: unknown }
   | { readonly t: 'done'; readonly ok: false; readonly error: WireError }
+  /** The answer to describe: by tool, its schemas (null where one isn't representable), or null. */
+  | { readonly t: 'checked'; readonly ok: boolean }
+  | { readonly t: 'described'; readonly tools: Readonly<Record<string, DescribedTool | null>> | null }
+
+export interface DescribedTool {
+  readonly input: unknown
+  readonly output: unknown
+}
 
 /**
  * True for JSON-shaped data only: null, booleans, finite numbers, strings, arrays, and objects whose

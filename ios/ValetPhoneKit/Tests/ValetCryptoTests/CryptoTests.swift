@@ -223,11 +223,11 @@ final class SealTests: XCTestCase {
 
   #if canImport(LocalAuthentication)
     /// Software keys can't show the Secure Enclave flags hold, so pin them here (review finding 16).
-    func testApprovalKeyNeedsCurrentBiometrics() {
-      XCTAssertTrue(KeyPolicy.approvalFlags.contains(.biometryCurrentSet))
+    func testApprovalKeyNeedsThePerson() {
+      // Face ID or the passcode (Nick, 2026-11-12), and never without the person.
+      XCTAssertTrue(KeyPolicy.approvalFlags.contains(.userPresence))
       XCTAssertTrue(KeyPolicy.approvalFlags.contains(.privateKeyUsage))
-      XCTAssertFalse(KeyPolicy.approvalFlags.contains(.userPresence))
-      XCTAssertFalse(KeyPolicy.approvalFlags.contains(.devicePasscode))
+      XCTAssertFalse(KeyPolicy.approvalFlags.contains(.biometryCurrentSet))
       XCTAssertEqual(KeyPolicy.approvalAccessible, kSecAttrAccessibleWhenUnlockedThisDeviceOnly)
       XCTAssertFalse(KeyPolicy.transportFlags.contains(.userPresence))
       XCTAssertEqual(KeyPolicy.transportAccessible, kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly)

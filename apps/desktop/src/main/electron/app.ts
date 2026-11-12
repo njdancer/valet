@@ -5,18 +5,24 @@ import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
+import toolLibrary from 'virtual:valet-tool-library'
+import { buildRecord, readPackageFolder } from '@valet/adapter-store'
 import {
   createElectronSessionDriver,
   hardenProcess,
   type ManifestOptions,
   partitionName,
+  startEgressProxy,
 } from '@valet/browser-electron'
-import { messagesHelperSocketPath } from '@valet/credentials'
+import { DEFAULT_SANDBOX } from '@valet/core'
+import { KeychainHelper, messagesHelperSocketPath } from '@valet/credentials'
 import { startEndpoint } from '@valet/mcp-server'
+import { createLocalAccess } from '@valet/sandbox'
 import { app, clipboard, dialog, protocol, session, shell } from 'electron'
 import { href } from '../../renderer/lib/routes'
-import { builtinAdapters } from '../adapters'
+import { builtinPackages } from '../adapters'
 import { APP_SCHEME, APP_SCHEME_PRIVILEGES, createAppSchemeHandler } from '../core/app-scheme'
+import { ANCHOR_SERVICE, macApprovalKeys } from '../core/approvals'
 import { dataPaths, MCP_SERVER_NAME, nativeNames } from '../core/constants'
 import { checkOpBinary, defaultOpCheckDeps, realCredentials } from '../core/credentials'
 import {
@@ -33,7 +39,15 @@ import {
   leftoverPaths,
   sweepCommand,
 } from '../core/erase'
-import { DEV_DATA_NAME, demoResolverRules, launchMode, rendererBase, userDataDir } from '../core/launch'
+import {
+  DEV_DATA_NAME,
+  demoResolverRules,
+  launchMode,
+  RELEASE_DATA_NAME,
+  rendererBase,
+  userDataDir,
+} from '../core/launch'
+import { addOwnPort, ownPorts, recordOwnPorts } from '../core/own-ports'
 import { AppService } from '../core/service'
 import { SHOWCASE_BUILD_MARKER } from '../core/showcase'
 import type { BridgeCommand } from '../core/snippets'
@@ -41,6 +55,7 @@ import type { DemoSite } from './demo'
 import { launchRefused } from './guard'
 import { broadcast, registerIpc } from './ipc'
 import { systemNotifications } from './notifications'
+import { SandboxPool } from './sandbox'
 import { utilityToolProcess } from './tool-process'
 import { type AppTray, createTray } from './tray'
 import { bundleSignature, electronUpdates } from './updates'
@@ -68,6 +83,10 @@ function beforeReady(): void {
     userDataDir(mode, app.getPath('appData'), app.isPackaged ? app.getName() : DEV_DATA_NAME),
   )
   hardenProcess(app)
+  // Before any server starts: a local-service exception may never reach one of them (docs/sandbox.md).
+  recordOwnPorts()
+  const debugging = Number(app.commandLine.getSwitchValue('remote-debugging-port'))
+  if (debugging > 0) addOwnPort(debugging)
   if (mode.demo) app.commandLine.appendSwitch('host-resolver-rules', demoResolverRules(mode))
   protocol.registerSchemesAsPrivileged([{ scheme: APP_SCHEME, privileges: APP_SCHEME_PRIVILEGES }])
 }
@@ -222,7 +241,6 @@ async function main(): Promise<void> {
     demo: mode.demo,
     e2e: mode.e2e,
     devTools: !app.isPackaged,
-    onConfirmationArmed: (id) => service?.confirmationArmed(id),
   })
   windows.lockDefaultSession()
 
@@ -239,20 +257,43 @@ async function main(): Promise<void> {
     if (__VALET_SHOWCASE_BUILD__) log(`showcase build (${SHOWCASE_BUILD_MARKER})`)
   }
   const demoSite = demo
-  const adapters = builtinAdapters(
+  // The demo's Woolworths is a built-in of its own, made for the fake site; demo mode has its own
+  // data folder (launch.ts), so it never meets the real one's versions or approvals.
+  const builtins = builtinPackages(
     demoSite === null ? {} : { origin: demoSite.site.origin, authOrigin: demoSite.site.authOrigin },
   )
+  const toolProcess = utilityToolProcess(join(import.meta.dirname, 'tool-process.js'))
+  // The adapter sandbox (docs/sandbox.md): anything that slips past a sandbox window's request
+  // filter meets a proxy that refuses every host.
+  const sandboxProxy = await startEgressProxy({ allow: () => false })
+  const sandboxes = new SandboxPool({
+    preload: join(import.meta.dirname, '../preload/sandbox.cjs'),
+    wasm: join(import.meta.dirname, '../preload/quickjs.wasm'),
+    proxyUrl: sandboxProxy.url,
+    log,
+  })
+  if (mode.e2e)
+    Object.defineProperty(globalThis, '__valetE2eSandbox', {
+      value: Object.freeze({
+        escaped: (key: string, source: string, world: 'preload' | 'main') =>
+          sandboxes.escapedForE2e(key, source, world),
+        windows: () => sandboxes.size,
+      }),
+    })
+  const home = app.getPath('home')
   const driverOptions: ManifestOptions = demoSite === null ? {} : { egressPorts: [demoSite.site.port] }
   const opDeps = defaultOpCheckDeps()
-  // The packaged app's name is "valet" for a release and "valet-dev" otherwise (electron-builder).
-  const names = nativeNames(app.isPackaged && app.getName() === 'valet')
+  // The packaged app's name is "Valet" for a release and "Valet Dev" otherwise (electron-builder's
+  // productName, which app.getName() returns; launch.ts names the data folder by it too).
+  const release = app.isPackaged && app.getName() === RELEASE_DATA_NAME
+  const names = nativeNames(release)
   const messagesBinary = app.isPackaged ? nativeHelper('valet-messages-helper') : null
   const credentialDeps = {
     ...opDeps,
     keychainHelper: nativeHelper('valet-keychain'),
     copyService: names.copyService,
     // The token's Keychain item is shared by every build, so only the release app's erase removes it.
-    ownsToken: app.isPackaged && app.getName() === 'valet',
+    ownsToken: release,
     // Only a packaged app has the launch agent's plist for SMAppService; a dev build reads Messages
     // in process, with Full Disk Access on the app that runs it.
     messagesHelper:
@@ -260,6 +301,38 @@ async function main(): Promise<void> {
         ? null
         : { binary: messagesBinary, socketPath: messagesHelperSocketPath(names.messagesHelperLabel) },
   }
+  // The Mac's approval keys: the Secure Enclave helper and a Keychain anchor in a release build,
+  // nothing weaker. A build that carries demo mode is never a release (launch.ts).
+  const strictApprovals = app.isPackaged && !mode.demo
+  const keychainHelper = credentialDeps.keychainHelper
+  const approvalKeys = await macApprovalKeys({
+    packaged: strictApprovals,
+    approverPath: nativeHelper('valet-approver'),
+    // A demo launch keeps its anchor in its own data folder, never the Keychain.
+    keychain:
+      keychainHelper === null || mode.demo ? null : new KeychainHelper({ helperPath: keychainHelper }),
+    anchorService: release ? ANCHOR_SERVICE : 'valet-dev.anchor',
+    devKeysPath: paths.devApprovalKeys,
+    devAnchorPath: paths.devAnchor,
+    // A dev build signing in software asks in a native dialog of the main process, where the
+    // Touch ID prompt would be; the end-to-end suite answers yes.
+    devPresent: async (reason) => {
+      if (mode.e2e) return true
+      const { response } = await dialog.showMessageBox({
+        type: 'question',
+        message: `Valet is trying to ${reason}.`,
+        detail: 'Development build: this dialog stands in for Touch ID.',
+        buttons: ['Cancel', 'Approve'],
+        defaultId: 0,
+        cancelId: 0,
+      })
+      return response === 1
+    },
+    log,
+  })
+  log(
+    `approvals: signing with ${approvalKeys.kind === 'software' ? 'software keys (dev build)' : 'the Secure Enclave'}`,
+  )
   const signature = await bundleSignature()
   const notifications = systemNotifications((target) => {
     // A click only ever opens the window the notification was about, if it is still waiting.
@@ -280,8 +353,38 @@ async function main(): Promise<void> {
       clearTimeout: (h) => clearTimeout(h as NodeJS.Timeout),
     },
     sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
-    adapters,
-    toolProcess: utilityToolProcess(join(import.meta.dirname, 'tool-process.js')),
+    adapters: [],
+    packages: {
+      builtins,
+      // Describing and checking anything new runs in a sandbox window of its own: no code that isn't
+      // approved yet runs anywhere else (docs/sandbox.md#lifting-cs-guard).
+      runtime: { prelude: toolLibrary, start: sandboxes.oneShot() },
+      build: buildRecord(app.getVersion(), toolLibrary),
+      // Development builds only: a packaged app installs from drafts once the sandbox exists.
+      ...(app.isPackaged
+        ? {}
+        : {
+            folders: {
+              pick: async () => {
+                // The e2e suite can't drive the native picker: it names the folder at launch instead.
+                const named = mode.e2e ? process.env['VALET_E2E_INSTALL_FOLDER'] : undefined
+                if (named !== undefined) return readPackageFolder(named)
+                const result = await dialog.showOpenDialog({
+                  title: 'Install an adapter from a folder',
+                  properties: ['openDirectory'],
+                })
+                const folder = result.canceled ? undefined : result.filePaths[0]
+                return folder === undefined ? null : readPackageFolder(folder)
+              },
+            },
+          }),
+    },
+    toolProcess,
+    sandbox: {
+      forAdapter: (hash) => sandboxes.forAdapter(hash),
+      local: (manifest) =>
+        createLocalAccess(manifest.sandbox ?? DEFAULT_SANDBOX, 'declared', { home, refusedPorts: ownPorts }),
+    },
     // Demo mode keeps only the shop on this machine: the other built-ins (no login, public data)
     // reach their real sites.
     createDriver: (manifest, reporters) =>
@@ -289,6 +392,7 @@ async function main(): Promise<void> {
         ? createElectronSessionDriver(manifest, { ...driverOptions, ...reporters }, { dial: demoSite.dial })
         : createElectronSessionDriver(manifest, { ...reporters }),
     credentials: demoSite === null ? realCredentials(credentialDeps) : demoSite.credentials,
+    approvalKeys,
     startEndpoint: (caller, clients, onSessionsChanged, admin) =>
       startEndpoint({
         caller,
@@ -358,10 +462,8 @@ async function main(): Promise<void> {
         return true
       },
       clearBrowserData: async () => {
-        const sessions = adapters.flatMap((a) =>
-          (['auth', 'tool'] as const).map((role) =>
-            session.fromPartition(partitionName(role, a.definition.manifest.id)),
-          ),
+        const sessions = (service?.adapterIds() ?? []).flatMap((id) =>
+          (['auth', 'tool'] as const).map((role) => session.fromPartition(partitionName(role, id))),
         )
         for (const s of [...sessions, session.defaultSession]) {
           await s.clearStorageData().catch(() => undefined)
@@ -412,6 +514,7 @@ async function main(): Promise<void> {
     // the app (and its endpoint port) alive past the bound.
     const done = () => {
       windows.closeAll()
+      sandboxes.closeAll()
       app.exit(0)
     }
     const bound = setTimeout(done, QUIT_BOUND_MS)

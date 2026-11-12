@@ -258,7 +258,7 @@ contracts. Recorded here as each signs:
 | D      | Card payload, Because, states, follow-ons, limits, "Not confirmed yet", "Changed before order"             | waiting                     |
 | E      | Section 5's tool table and wording; scoping of See Valet                                                   | signed with changes (below) |
 | F      | Drafts frozen on submit, checks vs tests, reproduction check on Valet-recorded fixtures, private addresses | waiting                     |
-| G      | Consent through the relay, Accept new agents, offline behaviour, lock at the relay, recovery page          | waiting                     |
+| G      | Consent through the relay, Accept new agents, offline behaviour, lock at the relay, recovery page          | signed                      |
 | H      | The iOS IA, card layout at AX sizes, VoiceOver order, notifications without actions, Face ID to open       | signed (notes below)        |
 
 ### B's sign-off (contracts, 2026-11-12)
@@ -287,31 +287,33 @@ Contracts in `packages/core`, design in `docs/agent-run-security.md`.
   (`.biometryCurrentSet`). If Nick says yes, the phone gets a second, passcode-capable key for
   neutral kinds only; that is a contract addition, not a change.
 
-### B's sign-off (contracts, 2026-11-12)
+### G's sign-off (relay, 2026-11-12)
 
-Contracts in `packages/core`, design in `docs/agent-run-security.md`.
+The relay in `apps/relay`, design in `docs/relay-worker.md`.
 
-- **Tiers, Mac-only list, recovery code, signed lock:** match. Resuming from pause or lockdown is
-  now Mac only in the contract too (`approvableOn`), and no agent can ask for it.
-- **Section 10:** all five amendments made: `relay.md` (consent on the Mac or a paired phone),
-  `security-model.md` (phone notifications), `authoring-agent.md` (the gesture fallback lives
-  there, not in `security-model.md`; and private addresses, now the `private-network` approval
-  kind for the Private network card).
-- **Consent code:** letters only (`consentCodeSchema`), typed on the device, and signed inside the
-  approval (`typedCode`). The card never has the code to show.
-- **Pairing words:** the contract derives **six digits** (`pairingCode`), not four words. Keep
-  the pick-from-three: the Mac shows the real six digits among two random decoy sets and the
-  person taps the one their phone shows. That keeps the comparison compulsory with no word list
-  to keep in step between Swift and TypeScript.
-- **Two keys, presence and control:** the "control key" is the phone's agreement key. A stricter
-  change travels in an HPKE auth-mode envelope, which proves which phone sent it, so it needs no
-  extra signature.
-- **"Signed approvals expire 2 minutes after signing":** not so. The signer's clock isn't trusted,
-  so a signature is good once, while its request is pending and unexpired, by the Mac's clock.
-  Only an irreversible call's request lives 2 minutes.
-- **Passcode for neutral cards** (open question 3): today the phone's key accepts Face ID only
-  (`.biometryCurrentSet`). If Nick says yes, the phone gets a second, passcode-capable key for
-  neutral kinds only; that is a contract addition, not a change.
+- **Consent through the relay** (`br-consent-code`): matches. The relay's page shows the Mac's
+  letters-only code, "Type this code into Valet on your Mac or iPhone", "Valet never sends this
+  code by text message", the close-this-page warning, and moves on by itself. Two differences:
+  - The heading doesn't name the agent ("Connect Claude to Valet"). The client's name comes from
+    its own registration, so the relay page doesn't repeat it; the card on the device shows where
+    the sign-in goes back to.
+  - "Ends in about 10 minutes" rather than "Ends at 8:35 pm": the relay doesn't know the reader's
+    time zone.
+- **Accept new agents** (`br-consent-mac-asleep`, F5): the Mac answers `closed`, and the page says
+  "This Mac doesn't accept new agents right now. Nothing was connected."
+- **Offline** (F3): the page says the Mac isn't connected, or didn't answer, and nothing waits for
+  later. A tool call to an offline Mac gets a tool error; nothing is queued.
+- **Lock at the relay:** the tool result is section 5's wording exactly. The lock holds while the
+  Mac is offline, and only the Mac lifts it.
+- **Recovery page** (`br-recovery`): it locks and can remove phones; it never approves, unlocks or
+  pairs. Three differences from the frame:
+  - The page is the Mac's own relay address plus `/recover`, not one shared page, so the code
+    needs no lookup. **For H:** the saved recovery note (`ph-pair-recovery`) must include that
+    address.
+  - It removes every paired phone, not one chosen from a list: the relay keeps no device names, by
+    design. The Mac stays, so it is never the last device.
+  - It doesn't say "Your Mac is online", which would tell anyone holding the URL whether the Mac
+    is up. Tries are limited to 10 an hour per Mac (the frame assumed 5).
 
 ### E's sign-off (read tier, 2026-11-12)
 
@@ -346,7 +348,8 @@ The app is in `ios/`, its design in `docs/ios-app.md`.
   the card on screen for a second and a Face ID match. Titles are B's fixed text until the Mac can
   seal them (CR-8), and push itself waits for Nick's Apple Developer account.
 - **Face ID to open:** yes, with a cover over the app switcher snapshot. Opening falls back to
-  the passcode; approving never does (B's note above).
-- **Departures:** six digits instead of words (B), no passcode on neutral cards yet, and no
+  the passcode, and so does approving: Nick decided (2026-11-12) that the passcode always works,
+  as in any iPhone app. Mac-only kinds stay Mac only.
+- **Departures:** six digits instead of words (B), and no
   recovery code, Pause this site, Secrets or Add an agent on the phone until B and G design them.
   The full list is in `docs/ios-app.md`, "Where H departs from A's wireframes".

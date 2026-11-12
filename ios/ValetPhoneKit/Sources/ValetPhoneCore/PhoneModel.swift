@@ -120,7 +120,6 @@ public enum ApproveRefusal: Error, Equatable {
   case needsReadTick
   case wrongCode
   case faceIDFailed
-  case faceIDChanged
   case notPaired
   /// Approve is held for a moment after anything on the card changed (review finding 8).
   case tooSoon
@@ -673,9 +672,6 @@ public final class PhoneModel {
     let signature: Data
     do {
       signature = try await keys.signApproval(Signing.input(.approvalDecision, payload), reason: entry.card.faceIDReason)
-    } catch KeyError.biometryChanged {
-      setState(id, .waiting)
-      throw ApproveRefusal.faceIDChanged
     } catch {
       setState(id, .waiting)
       throw ApproveRefusal.faceIDFailed

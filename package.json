@@ -10,7 +10,7 @@
   "scripts": {
     "lint": "biome check .",
     "format": "biome check --write .",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p apps/desktop && tsc --noEmit -p apps/desktop/tsconfig.node.json && tsc --noEmit -p packages/ui",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p apps/desktop && tsc --noEmit -p apps/desktop/tsconfig.node.json && tsc --noEmit -p packages/ui && tsc --noEmit -p apps/relay",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
     "check": "pnpm lint && pnpm typecheck && pnpm coverage",

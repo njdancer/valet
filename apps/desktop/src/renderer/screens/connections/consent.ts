@@ -2,10 +2,10 @@
 
 import type { RemoteConsentAnswer } from '../../../shared/api'
 
-/** Crockford base32 without separators: what a typed code must come to (mcp-server's normaliseCode). */
+/** Eight letters without I or O, separators ignored: what a typed code must come to (mcp-server's normaliseCode). */
 export function codeReady(typed: string): boolean {
-  const code = typed.toUpperCase().replace(/[\s-]/g, '').replace(/O/g, '0').replace(/[IL]/g, '1')
-  return /^[0-9A-HJKMNP-TV-Z]{8}$/.test(code)
+  const code = typed.toUpperCase().replace(/[\s-]/g, '')
+  return /^[A-HJ-NP-Z]{8}$/.test(code)
 }
 
 export const ANSWER_TEXT: Readonly<Record<Exclude<RemoteConsentAnswer, 'approved'>, string>> = {

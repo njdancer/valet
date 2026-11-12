@@ -18,11 +18,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { buildRecord } from '@valet/adapter-store'
 import {
   type AdapterDefinition,
   CredentialError,
+  checkPackage,
   defineAdapter,
+  type ManifestInput,
   NeedsUserError,
+  type PackageFiles,
+  packageOf,
   parseManifest,
   ValetError,
 } from '@valet/core'
@@ -44,9 +49,18 @@ import {
   type ToolCall,
   type ToolCaller,
 } from '@valet/mcp-server'
-import { LoginAttemptMarker } from '@valet/runtime'
+import { LoginAttemptMarker, type ToolProcessFactory } from '@valet/runtime'
+import { inMemoryToolProcess } from '@valet/runtime/in-context'
+import { buildToolLibrary } from '@valet/runtime/tool-script'
+import { NO_LOCAL_ACCESS } from '@valet/sandbox'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
+import {
+  FileAnchor,
+  type MacApprovalKeys,
+  SoftwareSigner,
+  softwareKeysAt,
+} from '../../src/main/core/approvals'
 import type { ClientRegistry } from '../../src/main/core/clients'
 import { dataPaths } from '../../src/main/core/constants'
 import { type Credentials, disabledOtpReader } from '../../src/main/core/credentials'
@@ -55,10 +69,9 @@ import type { EraseKind, EraseReport } from '../../src/main/core/erase'
 import type { AppNotification } from '../../src/main/core/notifications'
 import { builtinAdapter } from '../../src/main/core/registry'
 import type { RemoteAccess } from '../../src/main/core/remote'
-import { AppService, fillSelector } from '../../src/main/core/service'
+import { AppService, fillSelector, type ServiceDeps } from '../../src/main/core/service'
 import { disabledUpdates, type UpdatesHooks, type UpdatesPort } from '../../src/main/core/updates'
 import type { AppEvent, ConfirmationItem, HashRoute } from '../../src/shared/api'
-import { CONFIRM_ARM_MS } from '../../src/shared/api'
 import {
   FakeAuthPage,
   FakeDriver,
@@ -97,6 +110,12 @@ async function setup(
     leftovers?: readonly string[]
     /** Timers the test fires by hand; real ones by default. */
     timers?: ManualTimers
+    /** The Mac's approval keys; software keys whose Touch ID `presence` answers, by default. */
+    approvalKeys?: MacApprovalKeys
+    /** Adapter packages in place of `definition` (docs/adapter-packages.md). */
+    packages?: ServiceDeps['packages']
+    toolProcess?: ToolProcessFactory
+    sandbox?: ServiceDeps['sandbox']
   } = {},
 ) {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'sa-service-'))
@@ -107,6 +126,16 @@ async function setup(
     writeFileSync(paths.breakers, JSON.stringify(options.breakers))
   }
   let now = Date.parse('2026-11-07T00:00:00.000Z')
+  // The person's finger on Touch ID: each prompt's reason, and whether they answered it.
+  const presence = { answer: true, prompts: [] as string[] }
+  // Kept in the test's folder, as a dev build keeps them: a restart on the same folder is the same Mac.
+  const signer = new SoftwareSigner(
+    (reason) => {
+      presence.prompts.push(reason)
+      return presence.answer
+    },
+    await softwareKeysAt(join(dir, 'approval-keys.json')),
+  )
   const driver = new FakeDriver()
   const adapter = builtinAdapter(options.definition ?? shopDefinition(), SHOP_FILES)
   const events: AppEvent[] = []
@@ -157,11 +186,20 @@ async function setup(
     timeZone: 'UTC',
     sleep: async () => {},
     adapters: [adapter],
+    ...(options.packages === undefined ? {} : { packages: options.packages }),
+    ...(options.toolProcess === undefined ? {} : { toolProcess: options.toolProcess }),
+    ...(options.sandbox === undefined ? {} : { sandbox: options.sandbox }),
     createDriver: async (_manifest, reporters) => {
       driver.reporters = reporters
       return driver
     },
     credentials: options.credentials ?? testCredentials(disabledOtpReader),
+    approvalKeys: options.approvalKeys ?? {
+      signer,
+      anchor: new FileAnchor(join(dir, 'anchor.json')),
+      kind: 'software',
+      forget: async () => {},
+    },
     startEndpoint: async (caller, clients, onSessionsChanged, admin): Promise<SessionReportingEndpoint> => {
       endpoint.caller = caller
       endpoint.admin = admin
@@ -254,6 +292,7 @@ async function setup(
     paths,
     dir,
     call,
+    presence,
     advance: (ms: number) => {
       now += ms
     },
@@ -797,13 +836,16 @@ describe('tool calls', () => {
     expect(JSON.stringify(events)).not.toContain('call_nope')
   })
 
-  it('asks the person in the confirmation panel, and only an armed approval from it counts', async () => {
+  it('asks the person in the confirmation panel, and only Touch ID raised from that panel approves', async () => {
     const s = await approved()
     const pending = s.call('add', { item: 'milk' }, 'Claude Code', 'call_add', { transport: 'stdio-bridge' })
-    for (let i = 0; i < 50 && s.ui.shownConfirmations.length === 0; i++)
-      await new Promise((r) => setTimeout(r, 10))
+    await expect.poll(() => s.ui.shownConfirmations.length).toBe(1)
     const [id] = s.ui.shownConfirmations
-    const item = (await s.api.attention.list()).find((i): i is ConfirmationItem => i.kind === 'confirmation')
+    const confirmation = async () =>
+      (await s.api.attention.list()).find((i): i is ConfirmationItem => i.kind === 'confirmation')
+    // The signed request behind it is made at once; its ref is what the Touch ID prompt names.
+    await expect.poll(async () => (await confirmation())?.ref).toMatch(/^[0-9A-F]{4}$/)
+    const item = await confirmation()
     expect(item).toMatchObject({
       id,
       tool: 'add',
@@ -813,24 +855,27 @@ describe('tool calls', () => {
     })
     expect(item?.approvedAt).toBe('2026-11-07T00:00:00.000Z')
     expect(JSON.stringify(item?.input)).toContain('milk')
-    // Not yet shown, from the wrong window, and too soon after showing: all refused.
-    await expect(
-      s.api.answerConfirmation(id as string, true, { role: 'confirmation', shows: id as string }),
-    ).rejects.toThrow()
-    s.service.confirmationArmed(id as string)
+    // From the wrong window, or a panel opened for some other request: refused, and no prompt.
     await expect(
       s.api.answerConfirmation(id as string, true, { role: 'control', shows: null }),
     ).rejects.toThrow()
     await expect(
-      s.api.answerConfirmation(id as string, true, { role: 'confirmation', shows: id as string }),
-    ).rejects.toThrow()
-    s.advance(CONFIRM_ARM_MS)
-    // Armed, but from a confirmation panel opened for some other request.
-    await expect(
       s.api.answerConfirmation(id as string, true, { role: 'confirmation', shows: 'cf_other' }),
     ).rejects.toThrow()
+    expect(s.presence.prompts).toEqual([])
+    // A click from its own panel only raises Touch ID: cancelled there, nothing is approved.
+    s.presence.answer = false
+    await expect(
+      s.api.answerConfirmation(id as string, true, { role: 'confirmation', shows: id as string }),
+    ).resolves.toBe(false)
+    expect(s.presence.prompts).toEqual([
+      `confirm something that can’t be undone (request ${item?.ref})`.replace('’', "'"),
+    ])
     expect(s.service.confirmationPending(id as string)).toBe(true)
-    await s.api.answerConfirmation(id as string, true, { role: 'confirmation', shows: id as string })
+    s.presence.answer = true
+    await expect(
+      s.api.answerConfirmation(id as string, true, { role: 'confirmation', shows: id as string }),
+    ).resolves.toBe(true)
     expect(await pending).toEqual({ status: 'ok', output: { added: true } })
     expect(s.ui.closedConfirmations).toEqual([id])
     const records = await s.api.audit.page({ category: 'confirmations' })
@@ -839,6 +884,12 @@ describe('tool calls', () => {
       answer: 'approved',
       client: 'Claude Code',
     })
+    // The approval itself is in the log, signed by this Mac.
+    const events = (await s.api.audit.page({})).records.map((r) => r.event)
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'approval-requested', kind: 'irreversible-call' }),
+    )
+    expect(events).toContainEqual(expect.objectContaining({ type: 'approval-answered', answer: 'approved' }))
   })
 
   it('takes a decline from any window', async () => {
@@ -860,9 +911,12 @@ describe('tool calls', () => {
     await s.api.openConfirmation(id)
     expect(s.ui.focusedConfirmations).toEqual([id])
     expect(s.ui.panels.length).toBe(panels)
-    // Approved from that panel once armed, as the tray leads the person there.
-    s.service.confirmationArmed(id)
-    s.advance(CONFIRM_ARM_MS)
+    // Approved from that panel, as the tray leads the person there.
+    await expect
+      .poll(async () =>
+        (await s.api.attention.list()).some((i) => i.kind === 'confirmation' && i.ref !== null),
+      )
+      .toBe(true)
     await s.api.answerConfirmation(id, true, { role: 'confirmation', shows: id })
     expect(await pending).toEqual({ status: 'ok', output: { added: true } })
     // Answered, it has no panel to bring back.
@@ -2243,13 +2297,72 @@ describe('lock down (IA 2.10)', () => {
     const again = await setup({ dir: s.dir })
     expect((await again.api.app.status()).lockedDown).toBe(true)
     expect((await again.call('echo', { text: 'x' })).status).toBe('failed')
+    // Unlocking asks for Touch ID; cancelled there, Valet stays locked and nothing waits.
+    again.presence.answer = false
     await again.api.app.setLockedDown(false)
+    expect(again.presence.prompts).toEqual([expect.stringMatching(/^resume Valet \(request [0-9A-F]{4}\)$/)])
+    expect((await again.api.app.status()).lockedDown).toBe(true)
+    expect((await again.call('echo', { text: 'x' })).status).toBe('failed')
+    again.presence.answer = true
+    await again.api.app.setLockedDown(false)
+    expect((await again.api.app.status()).lockedDown).toBe(false)
     expect(await again.call('echo', { text: 'x' })).toEqual({ status: 'ok', output: { text: 'x' } })
     expect((await again.api.audit.page({})).records.map((r) => r.event)).toContainEqual({
       type: 'lock-down',
       locked: false,
       revokedClients: 0,
     })
+  })
+
+  it('opens locked down when the approvals ledger was changed outside Valet, until Touch ID resumes', async () => {
+    const s = await approved()
+    await s.api.app.setLockedDown(true)
+    s.presence.answer = true
+    await s.api.app.setLockedDown(false)
+    await s.service.stop()
+    // Something with write access to the data folder rewrites the ledger: its anchor no longer matches.
+    const text = readFileSync(s.paths.trusted, 'utf8')
+    writeFileSync(s.paths.trusted, text.replace('"lockdown":false', '"lockdown":false '))
+    const again = await setup({ dir: s.dir })
+    expect((await again.api.app.status()).lockedDown).toBe(true)
+    expect((await again.call('echo', { text: 'x' })).status).toBe('failed')
+    const events = (await again.api.audit.page({})).records.map((r) => r.event)
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'store-refused', reason: 'anchor-mismatch' }),
+    )
+    await again.api.app.setLockedDown(false)
+    expect((await again.api.app.status()).lockedDown).toBe(false)
+    await again.service.stop()
+    // The resume wrote a fresh ledger and anchored it: the next launch trusts it.
+    const third = await setup({ dir: s.dir })
+    expect((await third.api.app.status()).lockedDown).toBe(false)
+  })
+
+  it('keeps the ledger’s lockdown when the Mac’s keys can’t be read, and asks the keys again to unlock', async () => {
+    const s = await approved()
+    await s.api.app.setLockedDown(true)
+    await s.service.stop()
+    // Only the ledger says locked (a phone's lockdown would be just that).
+    writeFileSync(s.paths.appState, JSON.stringify({ lockedDown: false, pausedSites: [] }))
+    const signer = new SoftwareSigner(() => true, await softwareKeysAt(join(s.dir, 'approval-keys.json')))
+    let keysWork = false
+    const again = await setup({
+      dir: s.dir,
+      approvalKeys: {
+        signer: {
+          keys: () => (keysWork ? signer.keys() : Promise.reject(new Error('helper timed out'))),
+          signDecision: (request, payload) => signer.signDecision(request, payload),
+        },
+        anchor: new FileAnchor(join(s.dir, 'anchor.json')),
+        kind: 'software',
+        forget: async () => {},
+      },
+    })
+    expect((await again.api.app.status()).lockedDown).toBe(true)
+    expect((await again.call('echo', { text: 'x' })).status).toBe('failed')
+    keysWork = true
+    await again.api.app.setLockedDown(false)
+    expect((await again.api.app.status()).lockedDown).toBe(false)
   })
 
   it('reads a damaged state file as locked down', async () => {
@@ -2463,9 +2576,9 @@ describe('Needs you items', () => {
       clientName: 'Claude (claude.ai)',
       source: '203.0.113.24',
       requestedAt: '2026-11-07T00:00:00.000Z',
-      expiresAt: '2026-11-07T00:05:00.000Z',
+      expiresAt: '2026-11-07T00:10:00.000Z',
     })
-    s.advance(5 * 60_000)
+    s.advance(10 * 60_000)
     const after = await s.api.attention.list()
     expect(after.map((i) => i.kind)).not.toContain('remote-consent')
     expect(after.find((i) => i.kind === 'missed')).toMatchObject({
@@ -2550,6 +2663,264 @@ describe('what a tool result is told about Needs you', () => {
         callId: '9a71bbbb',
       })
     expect(s.ui.notifications.at(-1)).toMatchObject({ title: 'Missed: Log in to Shop (verification check)' })
+  })
+})
+
+describe('adapter packages (docs/adapter-packages.md)', () => {
+  const echoTools = (reply: string) =>
+    [
+      "import { z } from 'zod'",
+      'export const tools = {',
+      `  echo: { input: z.object({ text: z.string() }), output: z.object({ text: z.string() }), run: async (_ctx, a) => ({ text: '${reply}' + a.text }) },`,
+      '  add: { input: z.object({ item: z.string() }), output: z.object({ added: z.boolean() }), run: async () => ({ added: false }) },',
+      '}',
+    ].join('\n')
+  const shopPackage = (reply: string, input: ManifestInput = SHOP) =>
+    packageOf(parseManifest(input), { 'src/tools.ts': echoTools(reply) })
+
+  async function withPackages(
+    folder: PackageFiles | null = null,
+    dir?: string,
+    describe: 'answers' | 'hangs' = 'answers',
+    sandbox?: ServiceDeps['sandbox'],
+  ) {
+    const start = inMemoryToolProcess()
+    const prelude = await buildToolLibrary()
+    // A tool process that never answers describe: a launch where the tool process is too slow.
+    const hanging = () => ({ send: () => {}, onMessage: () => {}, onExit: () => {}, kill: () => {} })
+    const picked = { next: folder }
+    const s = await setup({
+      ...(dir === undefined ? {} : { dir }),
+      packages: {
+        builtins: [shopPackage('v1:')],
+        runtime:
+          describe === 'answers' ? { prelude, start } : { prelude, start: hanging, describeTimeoutMs: 50 },
+        build: buildRecord('0.1.0', prelude),
+        folders: { pick: async () => picked.next },
+      },
+      toolProcess: start,
+      ...(sandbox === undefined ? {} : { sandbox }),
+    })
+    const hashOf = (files: PackageFiles) => checkPackage(files).adapterHash
+    return { ...s, picked, hashOf }
+  }
+
+  it('seeds the built-in, runs it from its compiled package, and keeps it across a restart', async () => {
+    const s = await withPackages()
+    const builtin = s.hashOf(shopPackage('v1:'))
+    const [review] = await s.api.approvals.pending()
+    expect(review?.to.hash).toBe(builtin)
+    expect(review?.origin).toBe('builtin')
+    expect(review?.takesSession).toBe(false)
+    await s.api.approvals.approve('shop', builtin)
+    expect(await s.call('echo', { text: 'hi' })).toMatchObject({ status: 'ok', output: { text: 'v1:hi' } })
+    const versions = await s.api.adapters.versions('shop')
+    expect(versions.versions).toEqual([
+      expect.objectContaining({ hash: builtin, source: 'builtin', active: true }),
+    ])
+    const events = readAudit(s.paths.audit).map((e) => e.type)
+    expect(events).toContain('adapter-installed')
+    await s.service.stop()
+    const again = await withPackages(null, s.dir)
+    expect((await again.api.adapters.list()).map((a) => a.approval)).toEqual(['approved'])
+    expect(readAudit(again.paths.audit).filter((e) => e.type === 'adapter-installed')).toHaveLength(1)
+  })
+
+  it('runs a sandboxed adapter in its version’s sandbox, with its exceptions, and an unsandboxed one in the tool process', async () => {
+    const quick = inMemoryToolProcess()
+    const sandboxed: string[] = []
+    const locals: string[] = []
+    const sandbox: ServiceDeps['sandbox'] = {
+      forAdapter: (hash) => () => {
+        sandboxed.push(hash)
+        return quick()
+      },
+      local: (manifest) => {
+        locals.push(manifest.sandbox?.mode ?? 'default')
+        return NO_LOCAL_ACCESS
+      },
+    }
+    const unsandboxed = {
+      ...SHOP,
+      version: '2.0.0',
+      sandbox: { mode: 'unsandboxed' as const, reason: 'Needs it' },
+    }
+    const s = await withPackages(shopPackage('v2:', unsandboxed), undefined, 'answers', sandbox)
+    const v1 = s.hashOf(shopPackage('v1:'))
+    await s.api.approvals.approve('shop', v1)
+    expect(await s.call('echo', { text: 'hi' })).toMatchObject({ status: 'ok', output: { text: 'v1:hi' } })
+    expect(sandboxed.length).toBeGreaterThan(0)
+    expect(new Set(sandboxed)).toEqual(new Set([v1]))
+    expect(locals).toContain('default')
+    // The unsandboxed version says so in its review, and runs outside the sandbox once approved.
+    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true })
+    const review = (await s.api.approvals.pending()).find((r) => r.to.hash !== v1)
+    expect(review?.diff.sandbox).toEqual({
+      unsandboxed: true,
+      becameUnsandboxed: true,
+      reason: 'Needs it',
+      exceptions: [],
+    })
+    const before = sandboxed.length
+    await s.api.approvals.approve('shop', review?.to.hash ?? '')
+    expect(await s.call('echo', { text: 'hi' })).toMatchObject({ status: 'ok', output: { text: 'v2:hi' } })
+    expect(sandboxed.length).toBe(before)
+  })
+
+  it('installs from a folder: the new version waits for approval, says it takes the session, and can be rolled back', async () => {
+    const s = await withPackages(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
+    const v1 = s.hashOf(shopPackage('v1:'))
+    const v2 = s.hashOf(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
+    await s.api.approvals.approve('shop', v1)
+    expect(await s.api.adapters.canInstallFromFolder()).toBe(true)
+    expect(await s.api.adapters.installFromFolder()).toEqual({ ok: true, adapterId: 'shop', hash: v2 })
+    // Unapproved: no tools, and the review leads with the session it inherits.
+    expect(s.endpoint.caller?.listTools()).toEqual([])
+    const [review] = await s.api.approvals.pending()
+    expect(review).toMatchObject({
+      from: { hash: v1 },
+      to: { hash: v2 },
+      origin: 'folder',
+      takesSession: true,
+    })
+    await s.api.approvals.approve('shop', v2)
+    expect(await s.call('echo', { text: 'hi' })).toMatchObject({ output: { text: 'v2:hi' } })
+    // Back to v1, which the person approved before.
+    const versions = await s.api.adapters.versions('shop')
+    expect(versions.versions.map((v) => [v.version, v.active, v.canRollBack])).toEqual([
+      ['2.0.0', true, false],
+      ['1.0.0', false, true],
+    ])
+    const preview = await s.api.adapters.rollbackPreview('shop', v1)
+    expect(preview).toMatchObject({ version: '1.0.0', grants: [] })
+    await s.api.adapters.rollback('shop', v1)
+    expect(await s.call('echo', { text: 'hi' })).toMatchObject({ output: { text: 'v1:hi' } })
+    expect((await s.api.adapters.versions('shop')).pinned).toBe(true)
+    const types = readAudit(s.paths.audit)
+      .map((e) => e.type)
+      .filter((t) => t.startsWith('adapter-'))
+    expect(types.slice(-2)).toEqual(['adapter-approved', 'adapter-activated'])
+  })
+
+  it('never offers a rollback to a version the person never approved, or rejected', async () => {
+    const s = await withPackages(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
+    const v1 = s.hashOf(shopPackage('v1:'))
+    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true })
+    await expect(s.api.adapters.rollback('shop', v1)).rejects.toThrow()
+    expect((await s.api.adapters.versions('shop')).versions.every((v) => !v.canRollBack)).toBe(true)
+    // Approved, then rejected: not offered either.
+    s.picked.next = shopPackage('v3:', { ...SHOP, version: '3.0.0' })
+    const v2 = s.hashOf(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
+    await s.api.approvals.approve('shop', v2)
+    await s.api.approvals.reject('shop', v2)
+    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true })
+    expect((await s.api.adapters.versions('shop')).versions.every((v) => !v.canRollBack)).toBe(true)
+  })
+
+  it('refuses a package that breaks a rule, and says why', async () => {
+    const s = await withPackages({ ...shopPackage('v2:'), 'src/evil.js': '' })
+    expect(await s.api.adapters.installFromFolder()).toEqual({
+      ok: false,
+      reason: expect.stringContaining('placement'),
+    })
+    s.picked.next = {
+      ...shopPackage('v2:'),
+      'src/tools.ts': "import { readFileSync } from 'node:fs'\nexport const tools = { readFileSync }",
+    }
+    expect(await s.api.adapters.installFromFolder()).toEqual({
+      ok: false,
+      reason: expect.stringContaining('compile'),
+    })
+    s.picked.next = null
+    expect(await s.api.adapters.installFromFolder()).toBeNull()
+    expect((await s.api.adapters.versions('shop')).versions).toHaveLength(1)
+  })
+
+  it('refuses a stored version changed on disk, audits it, and heals the built-in from the app', async () => {
+    const s = await withPackages()
+    const builtin = s.hashOf(shopPackage('v1:'))
+    await s.api.approvals.approve('shop', builtin)
+    await s.service.stop()
+    const file = join(s.paths.adapters, 'shop', `${builtin}.json`)
+    const stored = JSON.parse(readFileSync(file, 'utf8'))
+    stored.files['src/tools.ts'] = echoTools('evil:')
+    writeFileSync(file, JSON.stringify(stored))
+    const again = await withPackages(null, s.dir)
+    const refused = readAudit(again.paths.audit).find((e) => e.type === 'adapter-refused')
+    expect(refused).toMatchObject({ adapterId: 'shop', adapterHash: builtin, reason: 'hash-mismatch' })
+    expect(await again.call('echo', { text: 'hi' })).toMatchObject({ output: { text: 'v1:hi' } })
+  })
+
+  it('audits a rollback as the person’s approval even when the target was still the approved hash', async () => {
+    const s = await withPackages(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
+    const v1 = s.hashOf(shopPackage('v1:'))
+    await s.api.approvals.approve('shop', v1)
+    // v2 installed and never approved: v1 is still the approved hash.
+    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true })
+    await s.api.adapters.rollback('shop', v1)
+    const events = readAudit(s.paths.audit).filter((e) => e.type.startsWith('adapter-'))
+    expect(events.slice(-2)).toEqual([
+      expect.objectContaining({ type: 'adapter-approved', adapterHash: v1 }),
+      expect.objectContaining({ type: 'adapter-activated', adapterHash: v1 }),
+    ])
+    expect(await s.call('echo', { text: 'hi' })).toMatchObject({ output: { text: 'v1:hi' } })
+  })
+
+  it('refuses a rollback when the activity log doesn’t verify', async () => {
+    const s = await withPackages(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
+    const v1 = s.hashOf(shopPackage('v1:'))
+    await s.api.approvals.approve('shop', v1)
+    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true })
+    const lines = readFileSync(s.paths.audit, 'utf8').split('\n')
+    lines[0] = lines[0]?.replace('"adapter-installed"', '"adapter-approved"') ?? ''
+    writeFileSync(s.paths.audit, lines.join('\n'))
+    await expect(s.api.adapters.rollback('shop', v1)).rejects.toThrow(/verify/)
+  })
+
+  it('keeps the person’s version when it only fails to describe at launch', async () => {
+    const s = await withPackages(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
+    const v2 = s.hashOf(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
+    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true })
+    await s.service.stop()
+    const slow = await withPackages(null, s.dir, 'hangs')
+    expect(readAudit(slow.paths.audit).at(-1)).toMatchObject({ type: 'adapter-refused', reason: 'describe' })
+    await slow.service.stop()
+    // Nothing was rewritten: the next ordinary launch runs the folder version again.
+    const state = JSON.parse(readFileSync(join(s.paths.adapters, 'shop', 'state.json'), 'utf8'))
+    expect(state).toMatchObject({ active: v2, pinned: true })
+  })
+
+  it('repairs a damaged version file when the same package is installed again', async () => {
+    const v2files = shopPackage('v2:', { ...SHOP, version: '2.0.0' })
+    const s = await withPackages(v2files)
+    const v2 = s.hashOf(v2files)
+    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true })
+    const file = join(s.paths.adapters, 'shop', `${v2}.json`)
+    writeFileSync(file, '{')
+    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true, hash: v2 })
+    await s.api.approvals.approve('shop', v2)
+    await s.service.stop()
+    const again = await withPackages(null, s.dir)
+    expect(await again.call('echo', { text: 'hi' })).toMatchObject({ output: { text: 'v2:hi' } })
+  })
+
+  it('pointing state.json at an unapproved version gets nothing: its tools stay hidden', async () => {
+    const s = await withPackages(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
+    const v1 = s.hashOf(shopPackage('v1:'))
+    const v2 = s.hashOf(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
+    await s.api.approvals.approve('shop', v1)
+    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true })
+    await s.api.adapters.rollback('shop', v1)
+    await s.service.stop()
+    const statePath = join(s.paths.adapters, 'shop', 'state.json')
+    const state = JSON.parse(readFileSync(statePath, 'utf8'))
+    writeFileSync(statePath, JSON.stringify({ ...state, active: v2 }))
+    const again = await withPackages(null, s.dir)
+    expect(again.endpoint.caller?.listTools()).toEqual([])
+    expect(await again.call('echo', { text: 'hi' })).toMatchObject({
+      status: 'failed',
+      errorClass: 'not-granted',
+    })
   })
 })
 
@@ -2710,3 +3081,10 @@ describe('admin tools (docs/admin-tools.md)', () => {
     })
   })
 })
+
+function readAudit(path: string): { type: string; [key: string]: unknown }[] {
+  return readFileSync(path, 'utf8')
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => (JSON.parse(line) as { event: { type: string } }).event)
+}
