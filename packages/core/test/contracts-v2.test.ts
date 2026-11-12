@@ -9,6 +9,7 @@ import {
   keyId,
   macToPhoneMessageSchema,
   macToRelaySchema,
+  normaliseRecoveryCode,
   openSealed,
   pairingAad,
   pairingCode,
@@ -17,6 +18,7 @@ import {
   pairingSealKey,
   phoneToMacMessageSchema,
   phoneToRelaySchema,
+  recoveryCodeHash,
   relayAuthPayload,
   relayHelloSchema,
   SIGNING_DOMAINS,
@@ -333,5 +335,17 @@ describe('sequence numbers and envelope info', () => {
     expect(
       macToPhoneMessageSchema.safeParse({ type: 'unpaired', seq: 9, at: '2026-11-12T03:00:00.000Z' }).success,
     ).toBe(true)
+  })
+})
+
+describe('recovery code', () => {
+  it('normalises the way the relay does and hashes the result', () => {
+    expect(normaliseRecoveryCode('abcd-efgh ijkl-2345')).toBe('ABCDEFGHIJKL2345')
+    expect(normaliseRecoveryCode('short-1')).toBeNull()
+    expect(normaliseRecoveryCode('ABCD-EFGH-IJKL-234!')).toBeNull()
+    // A fixed vector for the relay's own test.
+    expect(recoveryCodeHash('abcd-efgh ijkl-2345')).toBe(
+      'b9880d7c06e097c42704a1566f627b1cfad0795a8693f185eb7b673001dbeca5',
+    )
   })
 })

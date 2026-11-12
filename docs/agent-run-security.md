@@ -533,6 +533,15 @@ Asked for by D, G and H while building, 2026-11-12. Accepted unless marked other
     - Forwarded responses are limited to `application/json` and `text/event-stream`, with a CSP
       sandbox.
 
+11. After the relay was built (PR #79):
+    - `RelayStoredState.lockedBy`, so `relay-locked` on reconnect names who locked it.
+    - `normaliseRecoveryCode` and `recoveryCodeHash` pin the recovery code: upper-cased,
+      spaces and dashes removed, 16 to 64 of A-Z and 0-9, then SHA-256 hex. A fixed vector is in
+      the core tests for the relay's own.
+    - `consent-view` carries an optional `expiresAt` for the page's "Ends at".
+    - The relay checks the binding with WebCrypto, since workerd lacks parts of `node:crypto`; its
+      test checks it agrees with `verifyRelayBinding`.
+
 ## Open questions
 
 - **D78 (web audit):** a browser as another paired device would fit this design (its own keys,
