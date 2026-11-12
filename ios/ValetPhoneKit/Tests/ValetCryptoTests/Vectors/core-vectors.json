@@ -1,98 +1,122 @@
 {
   "note": "Written by packages/core/test/ios-interop.test.ts with VALET_WRITE_IOS_VECTORS. Do not edit by hand.",
-  "macId": "c3ca4330ed434ea3cfcbfaeb8377fb83",
-  "macApprovalKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9r9pfT7WXWPPugxdC3ho3jrLn3gJPxrkJX2N8JCbfb6CxEEn7yhqFY0SVVhtdAhGCrpaQwBoVv7dIzapFRuTdA",
+  "macId": "6f084837c02c96e251bfe4b75b55b397",
+  "macApprovalKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAECpwCod16-nvAyOce3OnzPfDIJMoMBev-66x7lDxpGaplC-61fhVEPELmpxFdqJIp1Z85fhVGbSaVM85b2WnWNQ",
   "requests": [
     {
       "kind": "adapter-install",
-      "text": "{\"agentNote\":\"You asked for stock quotes. \\\"Quotes\\\" é́ 😀\",\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-13T08:40:00.000Z\",\"id\":\"7B3Fxxxxxxxxxxxxxxxxxx\",\"kind\":\"adapter-install\",\"macId\":\"c3ca4330ed434ea3cfcbfaeb8377fb83\",\"requester\":{\"clientId\":\"local:claude-code\",\"clientName\":\"Claude Code\",\"kind\":\"agent\"},\"subject\":{\"adapterHash\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"adapterId\":\"yahoo-finance\",\"adapterName\":\"Yahoo Finance\",\"changes\":[{\"area\":\"egress\",\"change\":\"added\",\"items\":[\"query1.finance.yahoo.com\"],\"risk\":\"low\"}],\"inheritsSession\":false,\"packageHash\":\"b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"previousHash\":null,\"references\":[\"https://github.com/example/yahoo-adapter\"],\"source\":\"draft\",\"unsandboxed\":false,\"version\":\"1.0.0\"},\"tier\":\"approve\",\"v\":1}",
-      "digest": "4f8dff929806fcf8fe7f9794e0196f0a61ff578f6d0a6364aee9060163a31470"
+      "text": "{\"agentNote\":\"You asked for stock quotes. \\\"Quotes\\\" é́ 😀\",\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-13T08:40:00.000Z\",\"id\":\"7B3Fxxxxxxxxxxxxxxxxxx\",\"kind\":\"adapter-install\",\"macId\":\"6f084837c02c96e251bfe4b75b55b397\",\"requester\":{\"clientId\":\"local:claude-code\",\"clientName\":\"Claude Code\",\"kind\":\"agent\"},\"subject\":{\"adapterHash\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"adapterId\":\"yahoo-finance\",\"adapterName\":\"Yahoo Finance\",\"changes\":[{\"area\":\"egress\",\"change\":\"added\",\"items\":[\"query1.finance.yahoo.com\"],\"risk\":\"low\"}],\"inheritsSession\":false,\"packageHash\":\"b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"previousHash\":null,\"references\":[\"https://github.com/example/yahoo-adapter\"],\"source\":\"draft\",\"unsandboxed\":false,\"version\":\"1.0.0\"},\"tier\":\"approve\",\"v\":1}",
+      "digest": "1165654af280c4d7d2345e4c26b72bbf4db95213893b9870a41935b35f5dc8f0"
     },
     {
       "kind": "secret-grant",
-      "text": "{\"agentNote\":\"You asked for stock quotes. \\\"Quotes\\\" é́ 😀\",\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-13T08:40:00.000Z\",\"id\":\"2A10xxxxxxxxxxxxxxxxxx\",\"kind\":\"secret-grant\",\"macId\":\"c3ca4330ed434ea3cfcbfaeb8377fb83\",\"requester\":{\"clientId\":\"local:claude-code\",\"clientName\":\"Claude Code\",\"kind\":\"agent\"},\"subject\":{\"adapterHash\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"adapterId\":\"woolworths\",\"fields\":[\"username\",\"password\"],\"itemFingerprint\":\"0123456789abcdef\",\"itemTitle\":\"Woolworths\",\"origins\":[\"https://auth.woolworths.com.au\"],\"provider\":\"onepassword-service-account\",\"secret\":\"account\"},\"tier\":\"approve\",\"v\":1}",
-      "digest": "390199730670a74992ba09cf854bb906164a6530dd15a44ab2227ce3489f883d"
+      "text": "{\"agentNote\":\"You asked for stock quotes. \\\"Quotes\\\" é́ 😀\",\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-13T08:40:00.000Z\",\"id\":\"2A10xxxxxxxxxxxxxxxxxx\",\"kind\":\"secret-grant\",\"macId\":\"6f084837c02c96e251bfe4b75b55b397\",\"requester\":{\"clientId\":\"local:claude-code\",\"clientName\":\"Claude Code\",\"kind\":\"agent\"},\"subject\":{\"adapterHash\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"adapterId\":\"woolworths\",\"fields\":[\"username\",\"password\"],\"itemFingerprint\":\"0123456789abcdef\",\"itemTitle\":\"Woolworths\",\"origins\":[\"https://auth.woolworths.com.au\"],\"provider\":\"onepassword-service-account\",\"secret\":\"account\"},\"tier\":\"approve\",\"v\":1}",
+      "digest": "16b064c43cf1fa134c0934c059d0d2ca421e04ea4755c4976035565a4063f66a"
     },
     {
       "kind": "tool-enable",
-      "text": "{\"agentNote\":\"You asked for stock quotes. \\\"Quotes\\\" é́ 😀\",\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-13T08:40:00.000Z\",\"id\":\"9D02xxxxxxxxxxxxxxxxxx\",\"kind\":\"tool-enable\",\"macId\":\"c3ca4330ed434ea3cfcbfaeb8377fb83\",\"requester\":{\"clientId\":\"local:claude-code\",\"clientName\":\"Claude Code\",\"kind\":\"agent\"},\"subject\":{\"adapterHash\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"adapterId\":\"yahoo-finance\",\"clientId\":\"remote:claude-app\",\"scope\":\"remote\",\"sideEffect\":\"read\",\"tool\":\"search_symbols\"},\"tier\":\"approve\",\"v\":1}",
-      "digest": "ff0e83bc2dc3ba44ccf4917cc83e8bb60160b83688751b28dcb85735c3825746"
+      "text": "{\"agentNote\":\"You asked for stock quotes. \\\"Quotes\\\" é́ 😀\",\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-13T08:40:00.000Z\",\"id\":\"9D02xxxxxxxxxxxxxxxxxx\",\"kind\":\"tool-enable\",\"macId\":\"6f084837c02c96e251bfe4b75b55b397\",\"requester\":{\"clientId\":\"local:claude-code\",\"clientName\":\"Claude Code\",\"kind\":\"agent\"},\"subject\":{\"adapterHash\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"adapterId\":\"yahoo-finance\",\"clientId\":\"remote:claude-app\",\"scope\":\"remote\",\"sideEffect\":\"read\",\"tool\":\"search_symbols\"},\"tier\":\"approve\",\"v\":1}",
+      "digest": "b916a001301b48deb30462f2b770bd78886280ef641fa0e1480bacb7f2789302"
     },
     {
       "kind": "remote-client",
-      "text": "{\"agentNote\":null,\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-12T08:50:00.000Z\",\"id\":\"4C55xxxxxxxxxxxxxxxxxx\",\"kind\":\"remote-client\",\"macId\":\"c3ca4330ed434ea3cfcbfaeb8377fb83\",\"requester\":{\"kind\":\"person\"},\"subject\":{\"clientId\":\"remote:new-client\",\"code\":\"K7QX-29PD\",\"host\":\"claude.ai\",\"sourceAddress\":\"203.0.113.7\",\"tools\":[\"yahoo-finance.get_quote\"]},\"tier\":\"approve\",\"v\":1}",
-      "digest": "7313b6ddf7d8c7f7f242a7d51632ae89302aec74370e943582f29d5f49be8482"
+      "text": "{\"agentNote\":null,\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-12T08:50:00.000Z\",\"id\":\"4C55xxxxxxxxxxxxxxxxxx\",\"kind\":\"remote-client\",\"macId\":\"6f084837c02c96e251bfe4b75b55b397\",\"requester\":{\"kind\":\"person\"},\"subject\":{\"clientId\":\"remote:new-client\",\"host\":\"claude.ai\",\"sourceAddress\":\"203.0.113.7\",\"tools\":[\"yahoo-finance.get_quote\"]},\"tier\":\"approve\",\"v\":1}",
+      "digest": "ef268b393c74b91062ada6a3fc4140c3c99eb5d8b8ae2e114ab936432f877858"
     },
     {
       "kind": "setting",
-      "text": "{\"agentNote\":\"You asked for stock quotes. \\\"Quotes\\\" é́ 😀\",\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-13T08:40:00.000Z\",\"id\":\"3B77xxxxxxxxxxxxxxxxxx\",\"kind\":\"setting\",\"macId\":\"c3ca4330ed434ea3cfcbfaeb8377fb83\",\"requester\":{\"clientId\":\"local:claude-code\",\"clientName\":\"Claude Code\",\"kind\":\"agent\"},\"subject\":{\"adapterId\":\"woolworths\",\"from\":\"Town Hall\",\"label\":\"Woolworths store\",\"scope\":\"adapter\",\"setting\":\"store\",\"to\":\"Bondi Junction\"},\"tier\":\"approve\",\"v\":1}",
-      "digest": "0edd021ceaed46a525e8c9a875e4d7a03499a3b2d78cd5547bebbc73b102a13b"
+      "text": "{\"agentNote\":\"You asked for stock quotes. \\\"Quotes\\\" é́ 😀\",\"context\":{\"kind\":\"repair\",\"repairId\":\"R-4E1C\"},\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"display\":{\"because\":\"You asked Claude app to change your store\",\"checks\":[\"Valet read the store list from woolworths.com.au\"],\"client\":{\"badge\":\"remote\",\"label\":\"Claude app\"},\"domain\":\"woolworths.com.au\",\"followOns\":[\"Turn on \\\"Search products\\\" for Claude app\"],\"fromAdapter\":{\"siteName\":\"Woolworths\",\"toolTitles\":{\"search_products\":\"Search products\"}}},\"expiresAt\":\"2026-11-13T08:40:00.000Z\",\"id\":\"3B77xxxxxxxxxxxxxxxxxx\",\"kind\":\"setting\",\"macId\":\"6f084837c02c96e251bfe4b75b55b397\",\"requester\":{\"clientId\":\"local:claude-code\",\"clientName\":\"Claude Code\",\"kind\":\"agent\"},\"subject\":{\"adapterId\":\"woolworths\",\"choices\":[{\"label\":\"Woolworths Town Hall\",\"value\":\"1234\"},{\"label\":\"Woolworths Bondi Junction\",\"value\":\"2050\"}],\"from\":\"Town Hall\",\"label\":\"Woolworths store\",\"scope\":\"adapter\",\"setting\":\"store\",\"to\":\"Town Hall\"},\"tier\":\"approve\",\"v\":1}",
+      "digest": "8bdca247f889e0d396fb9dcb825679ced5cc50de1b1329391f459b15033e2fb3"
+    },
+    {
+      "kind": "private-network",
+      "text": "{\"agentNote\":\"You asked for stock quotes. \\\"Quotes\\\" é́ 😀\",\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-12T09:10:00.000Z\",\"id\":\"7P00xxxxxxxxxxxxxxxxxx\",\"kind\":\"private-network\",\"macId\":\"6f084837c02c96e251bfe4b75b55b397\",\"requester\":{\"clientId\":\"local:claude-code\",\"clientName\":\"Claude Code\",\"kind\":\"agent\"},\"subject\":{\"adapterId\":\"router\",\"address\":\"192.168.1.20\",\"draftId\":\"draft-7p00\",\"minutes\":30,\"port\":8080},\"tier\":\"approve\",\"v\":1}",
+      "digest": "bf79b5c92193075ec7000f40c47b4ee250bf9a432a2bf3d808fe212e05338c46"
     },
     {
       "kind": "authoring-session",
-      "text": "{\"agentNote\":\"You asked for stock quotes. \\\"Quotes\\\" é́ 😀\",\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-12T09:10:00.000Z\",\"id\":\"6E11xxxxxxxxxxxxxxxxxx\",\"kind\":\"authoring-session\",\"macId\":\"c3ca4330ed434ea3cfcbfaeb8377fb83\",\"requester\":{\"clientId\":\"local:claude-code\",\"clientName\":\"Claude Code\",\"kind\":\"agent\"},\"subject\":{\"adapterId\":\"woolworths\",\"draftId\":\"draft-4e1c\",\"minutes\":30,\"origins\":[\"https://www.woolworths.com.au\"]},\"tier\":\"approve\",\"v\":1}",
-      "digest": "eaa2d5249044deed5e2573e0cbb5724144481ebc33e879b3926f7e86ff8e131d"
+      "text": "{\"agentNote\":\"You asked for stock quotes. \\\"Quotes\\\" é́ 😀\",\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-12T09:10:00.000Z\",\"id\":\"6E11xxxxxxxxxxxxxxxxxx\",\"kind\":\"authoring-session\",\"macId\":\"6f084837c02c96e251bfe4b75b55b397\",\"requester\":{\"clientId\":\"local:claude-code\",\"clientName\":\"Claude Code\",\"kind\":\"agent\"},\"subject\":{\"adapterId\":\"woolworths\",\"draftId\":\"draft-4e1c\",\"minutes\":30,\"origins\":[\"https://www.woolworths.com.au\"]},\"tier\":\"approve\",\"v\":1}",
+      "digest": "6ceabefb8eeedae5126f97f50318eda8ca81bc76a6742cca1708f69e26b4cda8"
     },
     {
       "kind": "irreversible-call",
-      "text": "{\"agentNote\":\"You asked for stock quotes. \\\"Quotes\\\" é́ 😀\",\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-12T08:42:00.000Z\",\"id\":\"8F20xxxxxxxxxxxxxxxxxx\",\"kind\":\"irreversible-call\",\"macId\":\"c3ca4330ed434ea3cfcbfaeb8377fb83\",\"requester\":{\"clientId\":\"local:claude-code\",\"clientName\":\"Claude Code\",\"kind\":\"agent\"},\"subject\":{\"adapterHash\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"adapterId\":\"woolworths\",\"callId\":\"call-6b3e\",\"preview\":[\"12 items, $84.20\",\"Card ending 4421\"],\"tool\":\"checkout\"},\"tier\":\"approve-each-use\",\"v\":1}",
-      "digest": "a13ef02fa66920a3374cedc0a1b0f94d41cb54917503728772816b1742c551f5"
+      "text": "{\"agentNote\":\"You asked for stock quotes. \\\"Quotes\\\" é́ 😀\",\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-12T08:42:00.000Z\",\"id\":\"8F20xxxxxxxxxxxxxxxxxx\",\"kind\":\"irreversible-call\",\"macId\":\"6f084837c02c96e251bfe4b75b55b397\",\"requester\":{\"clientId\":\"local:claude-code\",\"clientName\":\"Claude Code\",\"kind\":\"agent\"},\"subject\":{\"adapterHash\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"adapterId\":\"woolworths\",\"callId\":\"call-6b3e\",\"preview\":[\"12 items, $84.20\",\"Card ending 4421\"],\"tool\":\"checkout\"},\"tier\":\"approve-each-use\",\"v\":1}",
+      "digest": "20f073f22db3f177610cedbdcabcd6c7f2c7bc3873ea6e0f4dfaaef775cb597f"
     },
     {
       "kind": "resume",
-      "text": "{\"agentNote\":\"You asked for stock quotes. \\\"Quotes\\\" é́ 😀\",\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-12T08:50:00.000Z\",\"id\":\"5R00xxxxxxxxxxxxxxxxxx\",\"kind\":\"resume\",\"macId\":\"c3ca4330ed434ea3cfcbfaeb8377fb83\",\"requester\":{\"clientId\":\"local:claude-code\",\"clientName\":\"Claude Code\",\"kind\":\"agent\"},\"subject\":{\"from\":\"lockdown\"},\"tier\":\"approve\",\"v\":1}",
-      "digest": "1408dc4055da960d05fb089b11a09b6311b7735032ac381c66a08cd2bb46f4c4"
+      "text": "{\"agentNote\":null,\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-12T08:50:00.000Z\",\"id\":\"5R00xxxxxxxxxxxxxxxxxx\",\"kind\":\"resume\",\"macId\":\"6f084837c02c96e251bfe4b75b55b397\",\"requester\":{\"kind\":\"person\"},\"subject\":{\"from\":\"lockdown\"},\"tier\":\"approve\",\"v\":1}",
+      "digest": "151b3f1837172c104976da20e92cd24f48dabb588bd24b0ec1d341f5ad8182a7"
     },
     {
       "kind": "device-pair",
-      "text": "{\"agentNote\":\"You asked for stock quotes. \\\"Quotes\\\" é́ 😀\",\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-12T08:45:00.000Z\",\"id\":\"1P00xxxxxxxxxxxxxxxxxx\",\"kind\":\"device-pair\",\"macId\":\"c3ca4330ed434ea3cfcbfaeb8377fb83\",\"requester\":{\"clientId\":\"local:claude-code\",\"clientName\":\"Claude Code\",\"kind\":\"agent\"},\"subject\":{\"confirmation\":\"042917\",\"deviceId\":\"00000000000000000000000000000000\",\"deviceName\":\"iPhone\",\"platform\":\"ios\"},\"tier\":\"approve\",\"v\":1}",
-      "digest": "3762251ea8d80121580cb35aa30dc380a13ab0cd018074781b1b2efe27d32bb2"
+      "text": "{\"agentNote\":\"You asked for stock quotes. \\\"Quotes\\\" é́ 😀\",\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-12T08:45:00.000Z\",\"id\":\"1P00xxxxxxxxxxxxxxxxxx\",\"kind\":\"device-pair\",\"macId\":\"6f084837c02c96e251bfe4b75b55b397\",\"requester\":{\"clientId\":\"local:claude-code\",\"clientName\":\"Claude Code\",\"kind\":\"agent\"},\"subject\":{\"confirmation\":\"042917\",\"deviceId\":\"00000000000000000000000000000000\",\"deviceName\":\"iPhone\",\"platform\":\"ios\"},\"tier\":\"approve\",\"v\":1}",
+      "digest": "f6e051325c2df441a431851ebb121bc8c81401194eb990b453b8c8e77cd36fe6"
     }
   ],
   "invalidRequests": [
     {
       "why": "unknown key",
-      "text": "{\"agentNote\":\"You asked for stock quotes. \\\"Quotes\\\" é́ 😀\",\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-13T08:40:00.000Z\",\"id\":\"7B3Fxxxxxxxxxxxxxxxxxx\",\"kind\":\"adapter-install\",\"macId\":\"c3ca4330ed434ea3cfcbfaeb8377fb83\",\"requester\":{\"clientId\":\"local:claude-code\",\"clientName\":\"Claude Code\",\"kind\":\"agent\"},\"subject\":{\"adapterHash\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"adapterId\":\"yahoo-finance\",\"adapterName\":\"Yahoo Finance\",\"changes\":[{\"area\":\"egress\",\"change\":\"added\",\"items\":[\"query1.finance.yahoo.com\"],\"risk\":\"low\"}],\"inheritsSession\":false,\"packageHash\":\"b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"previousHash\":null,\"references\":[\"https://github.com/example/yahoo-adapter\"],\"source\":\"draft\",\"unsandboxed\":false,\"version\":\"1.0.0\"},\"tier\":\"approve\",\"v\":1,\"extra\":true}"
+      "text": "{\"agentNote\":\"You asked for stock quotes. \\\"Quotes\\\" é́ 😀\",\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-13T08:40:00.000Z\",\"id\":\"7B3Fxxxxxxxxxxxxxxxxxx\",\"kind\":\"adapter-install\",\"macId\":\"6f084837c02c96e251bfe4b75b55b397\",\"requester\":{\"clientId\":\"local:claude-code\",\"clientName\":\"Claude Code\",\"kind\":\"agent\"},\"subject\":{\"adapterHash\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"adapterId\":\"yahoo-finance\",\"adapterName\":\"Yahoo Finance\",\"changes\":[{\"area\":\"egress\",\"change\":\"added\",\"items\":[\"query1.finance.yahoo.com\"],\"risk\":\"low\"}],\"inheritsSession\":false,\"packageHash\":\"b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"previousHash\":null,\"references\":[\"https://github.com/example/yahoo-adapter\"],\"source\":\"draft\",\"unsandboxed\":false,\"version\":\"1.0.0\"},\"tier\":\"approve\",\"v\":1,\"extra\":true}"
     },
     {
       "why": "wrong tier",
-      "text": "{\"agentNote\":\"You asked for stock quotes. \\\"Quotes\\\" é́ 😀\",\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-13T08:40:00.000Z\",\"id\":\"7B3Fxxxxxxxxxxxxxxxxxx\",\"kind\":\"adapter-install\",\"macId\":\"c3ca4330ed434ea3cfcbfaeb8377fb83\",\"requester\":{\"clientId\":\"local:claude-code\",\"clientName\":\"Claude Code\",\"kind\":\"agent\"},\"subject\":{\"adapterHash\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"adapterId\":\"yahoo-finance\",\"adapterName\":\"Yahoo Finance\",\"changes\":[{\"area\":\"egress\",\"change\":\"added\",\"items\":[\"query1.finance.yahoo.com\"],\"risk\":\"low\"}],\"inheritsSession\":false,\"packageHash\":\"b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"previousHash\":null,\"references\":[\"https://github.com/example/yahoo-adapter\"],\"source\":\"draft\",\"unsandboxed\":false,\"version\":\"1.0.0\"},\"tier\":\"approve-each-use\",\"v\":1}"
+      "text": "{\"agentNote\":\"You asked for stock quotes. \\\"Quotes\\\" é́ 😀\",\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-13T08:40:00.000Z\",\"id\":\"7B3Fxxxxxxxxxxxxxxxxxx\",\"kind\":\"adapter-install\",\"macId\":\"6f084837c02c96e251bfe4b75b55b397\",\"requester\":{\"clientId\":\"local:claude-code\",\"clientName\":\"Claude Code\",\"kind\":\"agent\"},\"subject\":{\"adapterHash\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"adapterId\":\"yahoo-finance\",\"adapterName\":\"Yahoo Finance\",\"changes\":[{\"area\":\"egress\",\"change\":\"added\",\"items\":[\"query1.finance.yahoo.com\"],\"risk\":\"low\"}],\"inheritsSession\":false,\"packageHash\":\"b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"previousHash\":null,\"references\":[\"https://github.com/example/yahoo-adapter\"],\"source\":\"draft\",\"unsandboxed\":false,\"version\":\"1.0.0\"},\"tier\":\"approve-each-use\",\"v\":1}"
     },
     {
       "why": "bad display text",
-      "text": "{\"agentNote\":\"You asked for stock quotes. \\\"Quotes\\\" é́ 😀\",\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-13T08:40:00.000Z\",\"id\":\"7B3Fxxxxxxxxxxxxxxxxxx\",\"kind\":\"adapter-install\",\"macId\":\"c3ca4330ed434ea3cfcbfaeb8377fb83\",\"requester\":{\"clientId\":\"local:claude-code\",\"clientName\":\"Claude Code\",\"kind\":\"agent\"},\"subject\":{\"adapterHash\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"adapterId\":\"yahoo-finance\",\"adapterName\":\"Yahoo\\u200bFinance\",\"changes\":[{\"area\":\"egress\",\"change\":\"added\",\"items\":[\"query1.finance.yahoo.com\"],\"risk\":\"low\"}],\"inheritsSession\":false,\"packageHash\":\"b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"previousHash\":null,\"references\":[\"https://github.com/example/yahoo-adapter\"],\"source\":\"draft\",\"unsandboxed\":false,\"version\":\"1.0.0\"},\"tier\":\"approve\",\"v\":1}"
+      "text": "{\"agentNote\":\"You asked for stock quotes. \\\"Quotes\\\" é́ 😀\",\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-13T08:40:00.000Z\",\"id\":\"7B3Fxxxxxxxxxxxxxxxxxx\",\"kind\":\"adapter-install\",\"macId\":\"6f084837c02c96e251bfe4b75b55b397\",\"requester\":{\"clientId\":\"local:claude-code\",\"clientName\":\"Claude Code\",\"kind\":\"agent\"},\"subject\":{\"adapterHash\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"adapterId\":\"yahoo-finance\",\"adapterName\":\"Yahoo\\u200bFinance\",\"changes\":[{\"area\":\"egress\",\"change\":\"added\",\"items\":[\"query1.finance.yahoo.com\"],\"risk\":\"low\"}],\"inheritsSession\":false,\"packageHash\":\"b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"previousHash\":null,\"references\":[\"https://github.com/example/yahoo-adapter\"],\"source\":\"draft\",\"unsandboxed\":false,\"version\":\"1.0.0\"},\"tier\":\"approve\",\"v\":1}"
     },
     {
       "why": "expires before created",
-      "text": "{\"agentNote\":\"You asked for stock quotes. \\\"Quotes\\\" é́ 😀\",\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-12T08:39:00.000Z\",\"id\":\"7B3Fxxxxxxxxxxxxxxxxxx\",\"kind\":\"adapter-install\",\"macId\":\"c3ca4330ed434ea3cfcbfaeb8377fb83\",\"requester\":{\"clientId\":\"local:claude-code\",\"clientName\":\"Claude Code\",\"kind\":\"agent\"},\"subject\":{\"adapterHash\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"adapterId\":\"yahoo-finance\",\"adapterName\":\"Yahoo Finance\",\"changes\":[{\"area\":\"egress\",\"change\":\"added\",\"items\":[\"query1.finance.yahoo.com\"],\"risk\":\"low\"}],\"inheritsSession\":false,\"packageHash\":\"b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"previousHash\":null,\"references\":[\"https://github.com/example/yahoo-adapter\"],\"source\":\"draft\",\"unsandboxed\":false,\"version\":\"1.0.0\"},\"tier\":\"approve\",\"v\":1}"
+      "text": "{\"agentNote\":\"You asked for stock quotes. \\\"Quotes\\\" é́ 😀\",\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-12T08:39:00.000Z\",\"id\":\"7B3Fxxxxxxxxxxxxxxxxxx\",\"kind\":\"adapter-install\",\"macId\":\"6f084837c02c96e251bfe4b75b55b397\",\"requester\":{\"clientId\":\"local:claude-code\",\"clientName\":\"Claude Code\",\"kind\":\"agent\"},\"subject\":{\"adapterHash\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"adapterId\":\"yahoo-finance\",\"adapterName\":\"Yahoo Finance\",\"changes\":[{\"area\":\"egress\",\"change\":\"added\",\"items\":[\"query1.finance.yahoo.com\"],\"risk\":\"low\"}],\"inheritsSession\":false,\"packageHash\":\"b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"previousHash\":null,\"references\":[\"https://github.com/example/yahoo-adapter\"],\"source\":\"draft\",\"unsandboxed\":false,\"version\":\"1.0.0\"},\"tier\":\"approve\",\"v\":1}"
     },
     {
       "why": "unsandboxed refinement",
-      "text": "{\"agentNote\":\"You asked for stock quotes. \\\"Quotes\\\" é́ 😀\",\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-13T08:40:00.000Z\",\"id\":\"7B3Fxxxxxxxxxxxxxxxxxx\",\"kind\":\"adapter-install\",\"macId\":\"c3ca4330ed434ea3cfcbfaeb8377fb83\",\"requester\":{\"clientId\":\"local:claude-code\",\"clientName\":\"Claude Code\",\"kind\":\"agent\"},\"subject\":{\"adapterHash\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"adapterId\":\"yahoo-finance\",\"adapterName\":\"Yahoo Finance\",\"changes\":[{\"area\":\"sandbox-mode\",\"change\":\"added\",\"items\":[\"query1.finance.yahoo.com\"],\"risk\":\"critical\"}],\"inheritsSession\":false,\"packageHash\":\"b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"previousHash\":null,\"references\":[\"https://github.com/example/yahoo-adapter\"],\"source\":\"draft\",\"unsandboxed\":false,\"version\":\"1.0.0\"},\"tier\":\"approve\",\"v\":1}"
+      "text": "{\"agentNote\":\"You asked for stock quotes. \\\"Quotes\\\" é́ 😀\",\"createdAt\":\"2026-11-12T08:40:00.000Z\",\"expiresAt\":\"2026-11-13T08:40:00.000Z\",\"id\":\"7B3Fxxxxxxxxxxxxxxxxxx\",\"kind\":\"adapter-install\",\"macId\":\"6f084837c02c96e251bfe4b75b55b397\",\"requester\":{\"clientId\":\"local:claude-code\",\"clientName\":\"Claude Code\",\"kind\":\"agent\"},\"subject\":{\"adapterHash\":\"a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\"adapterId\":\"yahoo-finance\",\"adapterName\":\"Yahoo Finance\",\"changes\":[{\"area\":\"sandbox-mode\",\"change\":\"added\",\"items\":[\"query1.finance.yahoo.com\"],\"risk\":\"critical\"}],\"inheritsSession\":false,\"packageHash\":\"b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"previousHash\":null,\"references\":[\"https://github.com/example/yahoo-adapter\"],\"source\":\"draft\",\"unsandboxed\":false,\"version\":\"1.0.0\"},\"tier\":\"approve\",\"v\":1}"
     }
   ],
   "deviceRecord": {
     "signed": {
-      "payload": "{\"agreementKey\":\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEibErEUf92PPld2Us8DhK-pSouRarGuh7EWOGMV-ztVgpMghgqF3Kk4Z_Olp9sl5Z6B3A-ZNnxRSC2QnYhrCcEw\",\"approvalKey\":\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEZMaQtuLHotzxRwjtf1qv3tS0vkCCfksREm8khREEIlaLeP0MdAifow4x_PpvLVV6eguuP0Uw_QfOFmdLfF1xAQ\",\"deviceId\":\"b7aae6c78395eebe56c0432397c1f44a\",\"macId\":\"c3ca4330ed434ea3cfcbfaeb8377fb83\",\"name\":\"iPhone\",\"pairedAt\":\"2026-11-12T08:40:00.000Z\",\"platform\":\"ios\",\"role\":\"phone\",\"transportKey\":\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE1mpPH8j8kCGWyQ1_eZwLD7hicQDggzHQgXPiPrPBBBkrW1CfLoTD16m1er4P7wRAnw-2UPGN_jhX-neC7CLo_A\",\"v\":1}",
-      "signature": "SfbDlTsZyMfCVCFFoYekTuaIXFcvvh2X7B8RnCMcnvfxLhhxivy7ypNdvnlw9ZhUpt8vktpKxT8Ng2-oqi9H3g"
+      "payload": "{\"agreementKey\":\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE2aMaw6I2T28UGsU6w5wc7DVuNMLHpgynriNNHXPUjbQw4LbgDkwfTp78tHBJTfY4tE0xQxpzsQ_99_4zDpK9Og\",\"approvalKey\":\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEe6Ri9R-5x27fKlO9FH0A-vBpgIlgvzFGQQ0Wh7bNk2vQaPLgP-YgUnARXPmaEdfg_hkFdrAGxliBCu-qWHQtEQ\",\"deviceId\":\"a3577746fb932cf51c1aa4ff2bdead30\",\"macId\":\"6f084837c02c96e251bfe4b75b55b397\",\"name\":\"iPhone\",\"pairedAt\":\"2026-11-12T08:40:00.000Z\",\"platform\":\"ios\",\"role\":\"phone\",\"transportKey\":\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEyp4SU1Gr3lhaNiPZi0xYfeqAVBSMyB1CdmeTOgWgo1iBAN1gVWI-jtpC3TllTpQRzGbCcNwcxtVu4kWZzhZDnw\",\"v\":1}",
+      "signature": "UcSfWmNoVXXAl8PD2rFluOA1wY687FLU9XesC11BFyX30OtM13-NuS4IR9eZ0-fkXNy2TZpkng5yulHBgu2O_Q"
     },
-    "deviceId": "b7aae6c78395eebe56c0432397c1f44a"
+    "deviceId": "a3577746fb932cf51c1aa4ff2bdead30"
   },
   "hello": {
-    "id": "b7aae6c78395eebe56c0432397c1f44a",
     "nonce": "NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN",
     "relay": "https://relay.valet.test",
-    "payload": "{\"id\":\"b7aae6c78395eebe56c0432397c1f44a\",\"nonce\":\"NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN\",\"relay\":\"https://relay.valet.test\",\"role\":\"phone\"}"
+    "role": "phone",
+    "id": "a3577746fb932cf51c1aa4ff2bdead30",
+    "payload": "{\"nonce\":\"NNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNNN\",\"relay\":\"https://relay.valet.test\",\"role\":\"phone\",\"id\":\"a3577746fb932cf51c1aa4ff2bdead30\"}"
   },
   "decision": {
     "v": 1,
     "decision": "approve",
-    "macId": "c3ca4330ed434ea3cfcbfaeb8377fb83",
+    "macId": "6f084837c02c96e251bfe4b75b55b397",
     "requestId": "7B3Fxxxxxxxxxxxxxxxxxx",
-    "requestDigest": "4f8dff929806fcf8fe7f9794e0196f0a61ff578f6d0a6364aee9060163a31470",
-    "deviceId": "b7aae6c78395eebe56c0432397c1f44a",
+    "requestDigest": "1165654af280c4d7d2345e4c26b72bbf4db95213893b9870a41935b35f5dc8f0",
+    "deviceId": "a3577746fb932cf51c1aa4ff2bdead30",
     "decidedAt": "2026-11-12T08:41:00.000Z",
-    "payload": "{\"decidedAt\":\"2026-11-12T08:41:00.000Z\",\"decision\":\"approve\",\"deviceId\":\"b7aae6c78395eebe56c0432397c1f44a\",\"macId\":\"c3ca4330ed434ea3cfcbfaeb8377fb83\",\"requestDigest\":\"4f8dff929806fcf8fe7f9794e0196f0a61ff578f6d0a6364aee9060163a31470\",\"requestId\":\"7B3Fxxxxxxxxxxxxxxxxxx\",\"v\":1}"
+    "choice": "2050",
+    "payload": "{\"choice\":\"2050\",\"decidedAt\":\"2026-11-12T08:41:00.000Z\",\"decision\":\"approve\",\"deviceId\":\"a3577746fb932cf51c1aa4ff2bdead30\",\"macId\":\"6f084837c02c96e251bfe4b75b55b397\",\"requestDigest\":\"1165654af280c4d7d2345e4c26b72bbf4db95213893b9870a41935b35f5dc8f0\",\"requestId\":\"7B3Fxxxxxxxxxxxxxxxxxx\",\"v\":1}"
+  },
+  "pairing": {
+    "offerQr": "valet-pair:eyJ2IjoxLCJtYWNJZCI6IjZmMDg0ODM3YzAyYzk2ZTI1MWJmZTRiNzViNTViMzk3IiwibWFjQXBwcm92YWxLZXkiOiJNRmt3RXdZSEtvWkl6ajBDQVFZSUtvWkl6ajBEQVFjRFFnQUVDcHdDb2QxNi1udkF5T2NlM09uelBmRElKTW9NQmV2LTY2eDdsRHhwR2FwbEMtNjFmaFZFUEVMbXB4RmRxSklwMVo4NWZoVkdiU2FWTTg1YjJXbldOUSIsIm1hY0FncmVlbWVudEtleSI6Ik1Ga3dFd1lIS29aSXpqMENBUVlJS29aSXpqMERBUWNEUWdBRTJhTWF3NkkyVDI4VUdzVTZ3NXdjN0RWdU5NTEhwZ3lucmlOTkhYUFVqYlF3NExiZ0Rrd2ZUcDc4dEhCSlRmWTR0RTB4UXhwenNRXzk5XzR6RHBLOU9nIiwicmVsYXkiOiJodHRwczovL3JlbGF5LnZhbGV0LnRlc3QiLCJzZWNyZXQiOiJoNFNqTUVQcFdabE5YYVpWdlI4RVpiYjVxSERQR3doRXNKOUhSSXZRM2FRIiwiZXhwaXJlc0F0IjoiMjAyNi0xMS0xMlQwODo0NTowMC4wMDBaIn0",
+    "offerId": "e9a3e752f55a6d1c7e0ea75ab64a08cf",
+    "reply": "{\"v\":1,\"deviceName\":\"iPhone\",\"platform\":\"ios\",\"approvalKey\":\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEe6Ri9R-5x27fKlO9FH0A-vBpgIlgvzFGQQ0Wh7bNk2vQaPLgP-YgUnARXPmaEdfg_hkFdrAGxliBCu-qWHQtEQ\",\"transportKey\":\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEyp4SU1Gr3lhaNiPZi0xYfeqAVBSMyB1CdmeTOgWgo1iBAN1gVWI-jtpC3TllTpQRzGbCcNwcxtVu4kWZzhZDnw\",\"agreementKey\":\"MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE2aMaw6I2T28UGsU6w5wc7DVuNMLHpgynriNNHXPUjbQw4LbgDkwfTp78tHBJTfY4tE0xQxpzsQ_99_4zDpK9Og\"}",
+    "sealedResult": {
+      "iv": "JGIgRZm3kqIOw0N3",
+      "ct": "8h08dDKW66IkJ5HSqfvb4ev1kCjAM5khqNyJEeoGYpmd5j_TInY"
+    },
+    "resultPlaintext": "{\"outcome\":\"declined\"}",
+    "macNonce": "j-xI1NEVKpSmFQKPo23wkQHEYgtsnfdIGw0kB5gW3G4",
+    "code": "918579"
+  },
+  "envelopeInfo": {
+    "from": "6f084837c02c96e251bfe4b75b55b397",
+    "to": "a3577746fb932cf51c1aa4ff2bdead30",
+    "info": "6f084837c02c96e251bfe4b75b55b397a3577746fb932cf51c1aa4ff2bdead30"
   },
   "displayText": [
     {

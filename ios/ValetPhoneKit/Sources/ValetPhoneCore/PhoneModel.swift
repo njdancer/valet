@@ -156,7 +156,6 @@ public final class PhoneModel {
   private let transport: RelayTransport
   private let store: PhoneStore
   private let clock: PhoneClock
-  private let allowSoftwareKeys: Bool
   private var persisted: PersistedPhone?
   private var keys: DeviceKeys?
   private var connection: RelayConnection?
@@ -166,12 +165,32 @@ public final class PhoneModel {
   private var held: [Int: MacToPhone] = [:]
   private var alertCounter = 0
 
-  public init(transport: RelayTransport, store: PhoneStore, clock: PhoneClock = .system, allowSoftwareKeys: Bool) {
+  /// How the model makes and loads keys. Tests pass their own, so they hold the software keys.
+  public struct Keys {
+    public var make: () throws -> DeviceKeys
+    public var load: (StoredKeys) throws -> DeviceKeys
+
+    public init(make: @escaping () throws -> DeviceKeys, load: @escaping (StoredKeys) throws -> DeviceKeys) {
+      self.make = make
+      self.load = load
+    }
+
+    public static func system(allowSoftware: Bool) -> Keys {
+      Keys(
+        make: { try DeviceKeyFactory.make(allowSoftware: allowSoftware) },
+        load: { try DeviceKeyFactory.load($0, allowSoftware: allowSoftware) }
+      )
+    }
+  }
+
+  private let keyFactory: Keys
+
+  public init(transport: RelayTransport, store: PhoneStore, clock: PhoneClock = .system, keys keyFactory: Keys) {
     self.transport = transport
     self.store = store
     self.clock = clock
-    self.allowSoftwareKeys = allowSoftwareKeys
-    if let saved = store.load(), saved.paired, let keys = try? DeviceKeyFactory.load(saved.keys, allowSoftware: allowSoftwareKeys) {
+    self.keyFactory = keyFactory
+    if let saved = store.load(), saved.paired, let keys = try? keyFactory.load(saved.keys) {
       persisted = saved
       self.keys = keys
       hardwareKeys = keys.hardwareBacked
@@ -202,7 +221,7 @@ public final class PhoneModel {
     else { return fail(.notACode) }
     guard offer.expiresAt.addingTimeInterval(60) > clock.now() else { return fail(.expired) }
     let newKeys: DeviceKeys
-    do { newKeys = try DeviceKeyFactory.make(allowSoftware: allowSoftwareKeys) } catch { return fail(.noSecureEnclave) }
+    do { newKeys = try keyFactory.make() } catch { return fail(.noSecureEnclave) }
     let publicKeys = newKeys.publicKeys
     let cleanName = DisplayText.isValid(name, max: 60) ? name : "iPhone"
     let reply = PairingReply(

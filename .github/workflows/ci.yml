@@ -102,13 +102,33 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  ios:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    # The iOS companion app (docs/ios-app.md). Its Swift package is tested on the Mac, the shared
+    # vectors are checked both ways against packages/core, and the app runs its journeys on the
+    # simulator against the fake Mac and relay. Nothing is signed: simulator builds need no team.
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2.4.4
+      - run: pnpm install --frozen-lockfile
+      - name: Swift package tests
+        run: swift test --package-path ios/ValetPhoneKit
+        env:
+          VALET_IOS_SWIFT_OUT: ${{ runner.temp }}/ios-swift-out
+      - name: core checks what Swift signed and sealed
+        run: pnpm exec vitest run --project core test/ios-interop
+        env:
+          VALET_IOS_SWIFT_OUT: ${{ runner.temp }}/ios-swift-out
+
   ci:
     # The one check to require on main. It passes only when every job above passed, so the branch
     # protection rule names this job alone and never needs editing when jobs are added or renamed.
     # `if: always()` matters: without it a failed job would leave this one skipped, and GitHub counts
     # a skipped required check as passed.
     if: always()
-    needs: [check, e2e, swift-bridge, release-dry-run]
+    needs: [check, e2e, swift-bridge, release-dry-run, ios]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
