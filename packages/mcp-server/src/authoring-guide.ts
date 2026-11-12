@@ -80,7 +80,8 @@ export const tools = {
 - \`fetch\`: \`[{ method?, url, status?, contentType?, body: "fixtures/<file>" | { inline } }]\` answers.
 - \`session\`: \`ok\` (default), \`needs-user\` or \`failed\`: what \`ensure()\` answers in the case.
 - \`expect\`: \`{ output }\`, \`{ error: { stage, errorClass } }\` or \`{ needsUser: reason }\`.
-- \`reproduces: "R-XXXX"\` on a repair's case (see valet_list_repairs).
+- \`reproduces: "R-XXXX"\` on a repair's case (see valet_list_repairs). For a page behind the sign-in,
+  a signed-in live trial of the ticket's tool is the reproduction instead.
 
 Save real pages with valet_capture_fixture (marked as recorded by Valet on the card) rather than
 writing them by hand where you can.

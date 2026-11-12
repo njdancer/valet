@@ -490,7 +490,9 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
       '(the site changed). Each ticket names the tool, the version, the stage and the error class. To fix one, ' +
       'start a draft from "installed" with its repairId, capture fixtures of the site as it is now with ' +
       'valet_capture_fixture, and add a case with "reproduces": "<repairId>" on those fixtures that expects ' +
-      'the right output: Valet checks the installed version fails it as the ticket says, and your draft passes.',
+      'the right output: Valet checks the installed version fails it as the ticket says, and your draft passes. ' +
+      'For a page behind the sign-in, which Valet can’t record, a signed-in valet_live_trial of the ticket’s tool ' +
+      'on your draft is the reproduction: Valet runs the installed version straight after on the same input.',
     input: z.object({}),
     output: repairListSchema,
     needs: 'see',

@@ -613,13 +613,24 @@ export class DraftAuthoring implements Authoring {
     const ticket = this.deps.repairs?.get(id) ?? null
     if (ticket === null) return `Valet no longer has repair ticket ${id}.`
     if (installed === null) return `${record.adapterId} isn’t installed now, so there’s nothing to repair.`
+    const current = await this.deps.store.require(record.id)
+    // Behind a sign-in: a signed-in trial of this very package that Valet saw reproduce the ticket.
+    const packageHash = bundleHash(files)
+    const live = current.trials.some(
+      (t) =>
+        t.reproduces === id &&
+        t.packageHash === packageHash &&
+        Date.parse(t.at) >= Date.parse(ticket.openedAt),
+    )
+    if (live) return null
     const mine = readCases(files).cases.filter((c) => c.case.reproduces === id)
     if (mine.length === 0)
       return (
         `A repair needs a case with "reproduces": "${id}" that calls ${ticket.tool} on fixtures Valet ` +
-        `recorded after ${id} opened (valet_capture_fixture).`
+        `recorded after ${id} opened (valet_capture_fixture). For a page behind the sign-in, run ` +
+        `${ticket.tool} in a signed-in valet_live_trial of this version instead: Valet runs the installed ` +
+        'version straight after, and its failing as the ticket says is the reproduction.'
       )
-    const current = await this.deps.store.require(record.id)
     let old: LoadedPackage
     try {
       old = await this.deps.prepare(installed.files)
@@ -1099,6 +1110,10 @@ export class DraftAuthoring implements Authoring {
       this.trialing.delete(draftId)
     }
     const problem = trialProblem(result, session !== null)
+    const reproduces =
+      session !== null && problem === null
+        ? await this.reproducedLive(record, tool, parsed.data, session, trials, draftId)
+        : null
     const summary: TrialSummary = {
       tool,
       packageHash,
@@ -1106,6 +1121,7 @@ export class DraftAuthoring implements Authoring {
       ok: problem === null,
       problem: problem === null ? null : clip(problem, 200),
       signedIn: session !== null,
+      reproduces,
     }
     await this.deps.store
       .update(draftId, (r) => ({ ...r, trials: [...r.trials, summary].slice(-20) }))
@@ -1133,6 +1149,52 @@ export class DraftAuthoring implements Authoring {
       problem,
       blocked: result.blocked.map((b) => ({ ...b })),
       ms: Math.max(0, Math.round(result.ms)),
+    }
+  }
+
+  /**
+   * A repair of a page behind the sign-in, where Valet can record no fixture: after the draft's
+   * signed-in trial of the ticket's tool worked, the installed version runs on the same input and
+   * session. Its failing as the ticket says is the reproduction (check step 7). The ticket's id,
+   * or null.
+   */
+  private async reproducedLive(
+    record: DraftRecord,
+    tool: string,
+    input: unknown,
+    session: SignedInTrial,
+    trials: TrialDeps,
+    draftId: string,
+  ): Promise<string | null> {
+    const ticket = record.repairId === null ? null : (this.deps.repairs?.get(record.repairId) ?? null)
+    if (ticket === null || ticket.state !== 'open' || ticket.tool !== tool) return null
+    const installed = await this.deps.installed(record.adapterId).catch(() => null)
+    if (installed === null) return null
+    let old: LoadedPackage
+    try {
+      old = await this.deps.prepare(installed.files)
+    } catch {
+      return null
+    }
+    this.trialing.add(draftId)
+    try {
+      const before = await runTrial(
+        { manifest: old.manifest, script: old.script, tools: old.definition.tools },
+        tool,
+        input,
+        `${draftId.toLowerCase()}-${++this.trialCount}`,
+        trials,
+        this.deps.now,
+        session,
+      )
+      const o = before.outcome
+      return o.kind === 'error' && o.stage === ticket.stage && o.errorClass === ticket.errorClass
+        ? ticket.id
+        : null
+    } catch {
+      return null
+    } finally {
+      this.trialing.delete(draftId)
     }
   }
 
@@ -1258,10 +1320,14 @@ export function checkLines(
     `Fixtures: ${provenance.recordedByValet} recorded by Valet, ${provenance.writtenByAgent} written by the agent`,
   )
   out.push(...trialLines(trials, report.packageHash))
-  if (repairId !== null)
+  if (repairId !== null) {
+    const live = trials.some((t) => t.reproduces === repairId && t.packageHash === report.packageHash)
     out.push(
-      `Repair ${repairId}: on what Valet recorded, the installed version fails as it did, and this one works`,
+      live
+        ? `Repair ${repairId}: in a signed-in trial, the installed version fails as it did, and this one works`
+        : `Repair ${repairId}: on what Valet recorded, the installed version fails as it did, and this one works`,
     )
+  }
   return out.slice(0, 20)
 }
 

@@ -48,6 +48,16 @@ const trialSummarySchema = z
     problem: z.string().max(200).nullable(),
     /** Run with the adapter's session, under an authoring-session approval (PR 3). */
     signedIn: z.boolean().default(false),
+    /**
+     * A repair's evidence behind a sign-in: the repair ticket this signed-in trial reproduced. The
+     * draft returned good output, and the installed version, run by Valet straight after on the
+     * same input and session, failed with the ticket's stage and class.
+     */
+    reproduces: z
+      .string()
+      .regex(/^R-[A-Z2-7]{4}$/)
+      .nullable()
+      .default(null),
   })
   .strict()
 
