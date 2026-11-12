@@ -231,6 +231,19 @@ export class RemoteClients {
     return { ok: true, registration: next, refreshToken }
   }
 
+  /**
+   * Adds tools to a client's existing grant, keeping its tokens. False with no grant, a malformed
+   * tool, or more tools than a grant holds.
+   */
+  addTools(id: string, tools: readonly string[]): boolean {
+    const grant = this.get(id)?.grant
+    if (grant == null) return false
+    const next = [...new Set([...grant.tools, ...tools])].sort()
+    if (next.length > MAX_TOOLS || tools.some((t) => !toolRef.safeParse(t).success)) return false
+    this.replace(id, (r) => ({ ...r, grant: { ...grant, tools: next } }))
+    return true
+  }
+
   /** Drops a grant and its refresh tokens, keeping the registration (it expires if unused). */
   revokeGrant(id: string): void {
     if (this.get(id)?.grant == null) return

@@ -86,7 +86,7 @@ export interface SubmitRequest {
   readonly checks: readonly string[]
   readonly agentTests: { readonly passed: number; readonly failed: number }
   readonly domain: string
-  /** The draft's earlier waiting request, to withdraw first (or replace in one step, once D has it). */
+  /** The draft's earlier waiting request, which the new one replaces once it is made. */
   readonly replaces: string | null
 }
 
@@ -739,9 +739,13 @@ export class DraftAuthoring implements Authoring {
         replaces: current.status === 'waiting' ? (current.submission?.requestId ?? null) : null,
       })
       if (!asked.ok) {
+        // A refused resubmission leaves the earlier request waiting (the broker replaces it only
+        // once the new one is made); the draft says withdrawn only if it no longer is.
+        const earlier = current.status === 'waiting' ? current.submission?.requestId : undefined
+        const stillWaiting = earlier !== undefined && this.deps.requestState(earlier).state === 'pending'
         await this.deps.store.update(draftId, (r) => ({
           ...r,
-          status: r.status === 'waiting' ? 'withdrawn' : r.status,
+          status: r.status === 'waiting' && !stillWaiting ? 'withdrawn' : r.status,
         }))
         throw new AuthoringRefusal(`Not submitted: ${asked.sentence}`)
       }

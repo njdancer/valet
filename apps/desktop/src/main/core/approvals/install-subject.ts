@@ -7,15 +7,28 @@ import {
   type AdapterManifest,
   type ApprovalSubject,
   bundleHash,
+  canonicalJson,
   isDisplayText,
   type PermissionChange,
   type Risk,
+  STOP_STEPS,
   sandboxPermissionChanges,
 } from '@valet/core'
-import type { ListDiff } from '../../../shared/api'
+import type { ListDiff, ProbeInfo } from '../../../shared/api'
 import { permissionDiff } from '../permission-diff'
 
 type Area = PermissionChange['area']
+
+/** How a session probe decides "signed in", in a few words. */
+function probeText(probe: ProbeInfo): string {
+  if (probe.kind === 'none') return 'no login'
+  if (probe.kind === 'cookie') return `cookie ${probe.name}`
+  const value =
+    probe.jsonPath === null
+      ? ''
+      : ` with ${probe.jsonPath}${probe.equals === null ? '' : ` = ${String(probe.equals)}`}`
+  return `GET ${probe.path} answers ${probe.expectStatus}${value}`
+}
 
 const MAX_LINES = 200
 const MAX_ITEMS = 50
@@ -133,6 +146,30 @@ export function permissionChanges(
   list('secret-origins', diff.secretFills, (f) => `${f.secret} ${f.field} into ${f.selector}`, 'high')
   list('messages-sender', diff.messagesSources, (m) => m.sender, 'high')
   list('setting', diff.settings, (s) => s.name, 'medium')
+  // Login steps: an added step at medium; a removed stop step (where the login hands over to the
+  // person, fails, or checks it is signed in) means it now runs further on its own, so high.
+  push(
+    'auth-steps',
+    'added',
+    diff.authSteps.added.map((s) => s.detail),
+    'medium',
+  )
+  const stops = diff.authSteps.removed.filter((s) => (STOP_STEPS as readonly string[]).includes(s.op))
+  push(
+    'auth-steps',
+    'removed',
+    stops.map((s) => s.detail),
+    'high',
+  )
+  push(
+    'auth-steps',
+    'removed',
+    diff.authSteps.removed.filter((s) => !stops.includes(s)).map((s) => s.detail),
+    'low',
+  )
+  // The probe decides "signed in", so any change to it is high.
+  if (diff.probe !== null && canonicalJson(diff.probe.before) !== canonicalJson(diff.probe.after))
+    push('probe', 'widened', [`${probeText(diff.probe.before)} → ${probeText(diff.probe.after)}`], 'high')
   if (diff.limits !== null) {
     const { before: was, after: now } = diff.limits
     const looser: string[] = []
