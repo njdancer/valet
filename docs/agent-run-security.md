@@ -10,6 +10,21 @@ The types this document names are in `packages/core` (`signing.ts`, `devices.ts`
 Status marks are the security model's: **Contract** means the types and checks are in core with
 tests but nothing uses them yet; **Designed** means decided here and not built.
 
+## Who this guards against first
+
+Nick, 2026-11-12: "I don't think our threat model is that strict. These approvals are to limit
+what we expose to the models." So the main adversary is **the agent**: a model that overreaches,
+or one steered by a page or a reference adapter it read. Everything aimed at that stays: the
+tiers, signed approvals (an agent with access to the Mac could otherwise fake a click), the
+sandbox and its exceptions, agents never seeing secrets, and the Mac building every card.
+
+Stronger attackers (a thief with the phone and its passcode, a compromised relay or service, a
+breach of the person's accounts) come second. What is built against them stays where it is
+cheap, but it isn't extended, and any of it that gets in the person's way is removed rather than
+defended: the recovery page, the relay-side lock, a new-device cooling-off, Face ID-only cards
+(already dropped for "Passcode always works"). The test for any new rule is whether it stops an
+agent.
+
 ## Summary
 
 - **Agents can do anything that only reads or tightens. Anything that widens what an adapter, a
