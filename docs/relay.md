@@ -323,34 +323,44 @@ registered, but bounded:
 
 - `/authorize` is rate-limited per source address (10 an hour) and globally (30 an hour), before
   any fetch or prompt;
-- at most five pending consent requests at once, each expiring after five minutes; beyond that,
-  `/authorize` answers "try later" without notifying the Mac;
-- the Mac shows **one** consent window at a time, listing every pending request in it, never a
-  notification per request, so a flood can't bury the screen or train the person to click
-  through.
+- at most five pending consent requests at once, each expiring after ten minutes (time to reach
+  the phone); beyond that, `/authorize` answers "try later" (`too-many`) without notifying
+  anyone. Consents have their own bucket (`APPROVAL_LIMITS.consentPending`), outside the five
+  waiting cards agents share, so a flood of consents can't crowd out an agent's request, or the
+  reverse;
+- the Mac and each phone show **one** consent card at a time, listing every pending request in
+  it, never a notification per request, so a flood can't bury the screen or train the person to
+  click through.
 
 The source address comes from the transport: from cloudflared's `Cf-Connecting-Ip` for Cloudflare
 Tunnel (D14; trusted only because the listener is on loopback), from tailscaled's forwarding headers
 for Funnel (_verify_ which it sets; not built), and from the relay's frame for D. Where it's unknown, the global limits alone apply. The numbers are a
 starting point for one person; they're settings, not constants.
 
-### Consent happens on the Mac
+### Consent happens on the Mac or a paired phone
 
-The authorise endpoint never decides by itself, and the Mac never approves a request it can't
-tie to the browser the person is holding:
+The authorise endpoint never decides by itself, and Valet never approves a request it can't tie
+to the browser the person is holding:
 
 1. The client sends the person's browser (on their phone, say) to `/authorize`.
-2. The page there shows a code (8 characters from an unambiguous 32-symbol alphabet, about 40
-   bits) and says: "Type this code into Valet on your Mac. If you didn't just add a
-   connector, close this page."
-3. The menu-bar app shows a notification and one window. It shows, for each pending request,
-   when it arrived and from which address, and the client's _claimed_ identity (its metadata
-   document's host, or its redirect URI's host). It **doesn't show the code**. It has an empty
-   code field, and the remote-enabled tools with checkboxes, `write` tools unticked by default.
+2. The page there shows a code (8 letters from a 24-letter alphabet with no I or O, about 37
+   bits, `consentCodeSchema` in `packages/core`; letters only, so a phone keyboard needs no
+   switching) and says: "Type this code into Valet on your Mac or iPhone. If you didn't just add
+   a connector, close this page."
+3. The menu-bar app, and each paired phone, show a notification and one card. It shows, for each
+   pending request, when it arrived and from which address, and the client's _claimed_ identity:
+   its redirect URI's host, shown in full and never shortened. It **doesn't show the code**: the
+   request the device renders has no code in it, and the Mac keeps the code beside the pending
+   request. It has an empty code field, and the remote-enabled tools with checkboxes, `write`
+   tools unticked by default.
 4. The person types the code from their own browser. The typed code selects the request it
    belongs to; nothing can be approved until it matches. Three wrong codes cancel every pending
    request.
-5. The person approves on the Mac; the phone's page continues to the client's redirect.
+5. The person approves with Touch ID at the Mac or Face ID on the phone; there is no passcode
+   fallback for consent. On the phone, the typed code is part of the signed approval
+   (`typedCode`), and the Mac accepts it only if it matches the code it issued (`wrong-code`
+   otherwise, which counts as a wrong code). The browser's page continues to the client's
+   redirect.
 
 **Why typed, not shown on both sides.** An attacker can add a custom connector in their _own_
 claude.ai account, pointed at the person's public URL. Their consent request then names
@@ -364,10 +374,10 @@ So the rule the app states in the window, and the docs repeat: **a consent promp
 start was started by someone else. Decline it.** Requests that expire or are declined are
 audited with their time and source address.
 
-Adding a connector therefore needs the person at their Mac once. After that, refresh tokens keep
-it working from anywhere. Nobody who merely knows the URL, or has phished the person's relay
+Adding a connector therefore needs the person at their Mac, or at a phone paired with it, once.
+After that, refresh tokens keep it working from anywhere. Nobody who merely knows the URL, or has phished the person's relay
 account, can grant themselves access. If the Mac is asleep or offline, consent fails rather than
-waiting.
+waiting, even with the phone at hand: the phone only signs, and the Mac decides.
 
 ### Per-tool remote policy
 

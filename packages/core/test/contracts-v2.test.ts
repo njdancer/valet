@@ -220,6 +220,36 @@ describe('choices on a setting card', () => {
     expect(verifyDecision(decide('9999'), request, live)).toEqual({ ok: false, reason: 'bad-choice' })
     expect(verifyDecision(decide(), request, live)).toEqual({ ok: false, reason: 'bad-choice' })
   })
+
+  it('takes a remote client consent only with the code the person typed, never one shown to them', () => {
+    const consent = serializeRequest({
+      ...request.request,
+      id: 'CCCCCCCCCCCCCCCCCCCCCC',
+      kind: 'remote-client',
+      context: undefined,
+      subject: { clientId: 'remote:abc', host: 'claude.ai', sourceAddress: null, tools: [] },
+    } as unknown as ApprovalRequest)
+    expect(consent.text).not.toContain('code')
+    const sign2 = (typedCode?: string) => {
+      const payload = decisionPayload({
+        v: 1,
+        decision: 'approve',
+        macId,
+        requestId: consent.request.id,
+        requestDigest: consent.digest,
+        deviceId: phoneId,
+        decidedAt: '2026-11-12T01:04:00.000Z',
+        ...(typedCode === undefined ? {} : { typedCode }),
+      })
+      return { payload, signature: signWith(phone.privateKey, SIGNING_DOMAINS.approvalDecision, payload) }
+    }
+    const ctx = { ...live, consentCode: () => 'KXRT-MWPA' }
+    expect(verifyDecision(sign2('KXRT-MWPA'), consent, ctx)).toMatchObject({ ok: true })
+    expect(verifyDecision(sign2('KXRT-MWPB'), consent, ctx)).toEqual({ ok: false, reason: 'wrong-code' })
+    expect(verifyDecision(sign2(), consent, ctx)).toEqual({ ok: false, reason: 'wrong-code' })
+    expect(() => sign2('KXRT-MW0A')).toThrow()
+    expect(verifyDecision(sign2('KXRT-MWPA'), request, live)).toMatchObject({ ok: false })
+  })
 })
 
 describe('new channel messages', () => {

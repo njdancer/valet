@@ -13,7 +13,7 @@
 
 import { z } from 'zod'
 import type { AdminAction } from './admin-actions'
-import { clientIdSchema, DECISION_REFUSALS, requestIdSchema } from './approvals'
+import { clientIdSchema, consentCodeSchema, DECISION_REFUSALS, requestIdSchema } from './approvals'
 import { canRevokeDevice, keyIdSchema } from './devices'
 import { displayText } from './display-text'
 import { sealedSchema } from './pairing'
@@ -419,10 +419,7 @@ export const macToRelaySchema = z.discriminatedUnion('type', [
       /** `closed`: Valet isn't accepting new agents (A's J2 F5). */
       /** `busy` and `too-many`: the Mac or the relay is refusing for load; try again later. */
       state: z.enum(['waiting', 'approved', 'declined', 'expired', 'closed', 'busy', 'too-many']),
-      code: z
-        .string()
-        .regex(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/)
-        .optional(),
+      code: consentCodeSchema.optional(),
       redirect: z.url({ protocol: /^https$/ }).optional(),
     })
     .strict(),

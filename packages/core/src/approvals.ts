@@ -21,6 +21,16 @@ const adapterId = z.string().regex(/^[a-z][a-z0-9-]{1,63}$/)
 const name = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)
 const origin = z.string().regex(/^https:\/\/[a-z0-9.-]+(?::\d{1,5})?$/)
 /** A client's id as its credential names it: `local:<id>` or `remote:<id>`. */
+
+/**
+ * The consent code: eight letters from 24 (no I or O), shown only in the browser that started a
+ * remote client's flow and typed by the person on the Mac or a paired phone. Letters only, so a
+ * phone keyboard needs no switching (A's IA section 10); about 36.7 bits, and three wrong codes
+ * cancel every pending consent. Typed input is upper-cased and the hyphen added before checking.
+ */
+export const CONSENT_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
+export const consentCodeSchema = z.string().regex(/^[A-HJ-NP-Z]{4}-[A-HJ-NP-Z]{4}$/)
+
 export const clientIdSchema = z.string().regex(/^(?:local|remote):[A-Za-z0-9_-]{1,64}$/)
 /** A tool as `<adapterId>.<tool>`. */
 const qualifiedTool = z.string().regex(/^[a-z][a-z0-9-]{1,63}\.[a-z][a-z0-9_]{0,63}$/)
@@ -110,8 +120,9 @@ const subjects = {
       host: z.string().regex(/^[a-z0-9.-]{1,253}$/),
       /** As the relay or tunnel reported it: a claim, shown as one. */
       sourceAddress: address.nullable(),
-      /** The code the browser that started the flow shows; the person checks it matches. */
-      code: z.string().regex(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/),
+      // No code here: the request is what the device renders, and the person must type the code
+      // from the browser that started the flow, never compare it (relay.md, "Consent happens on
+      // the Mac or a paired phone"). The Mac keeps the code beside the pending request.
       tools: z.array(qualifiedTool).max(200),
     })
     .strict(),
@@ -141,6 +152,20 @@ const subjects = {
       adapterId,
       draftId: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/),
       origins: z.array(origin).min(1).max(10),
+      minutes: z.number().int().min(1).max(60),
+    })
+    .strict(),
+  /**
+   * A draft's scratch browser or live trial reaching one private address (A's Private network
+   * card, R21). Without it both refuse every private, loopback, link-local and tailnet address,
+   * by relay.md's fetch rules. Lasts for one authoring session's length at most.
+   */
+  'private-network': z
+    .object({
+      adapterId,
+      draftId: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/),
+      address,
+      port: z.number().int().min(1).max(65535).nullable(),
       minutes: z.number().int().min(1).max(60),
     })
     .strict(),
@@ -178,7 +203,8 @@ export type ApprovalSubject<K extends ApprovalKind = ApprovalKind> = z.infer<(ty
  * running unsandboxed code, which defeats every other guarantee; those need the person at the Mac.
  */
 export function approvableOn(kind: ApprovalKind, subject: ApprovalSubject): readonly DeviceRole[] {
-  if (kind === 'device-pair') return ['mac']
+  // Pairing, and lifting a pause or lockdown: a stolen phone must not undo the person's own stop.
+  if (kind === 'device-pair' || kind === 'resume') return ['mac']
   if (kind === 'adapter-install') {
     const install = subject as ApprovalSubject<'adapter-install'>
     // Anything critical (unsandboxed, a command exception) is as good as unsandboxed: Mac only.
@@ -198,6 +224,7 @@ export const KIND_TIER: Readonly<Record<ApprovalKind, 'approve' | 'approve-each-
   'remote-client': 'approve',
   setting: 'approve',
   'authoring-session': 'approve',
+  'private-network': 'approve',
   'irreversible-call': 'approve-each-use',
   resume: 'approve',
   'device-pair': 'approve',
@@ -211,6 +238,7 @@ export const APPROVAL_TTL_MS: Readonly<Record<ApprovalKind, number>> = {
   'remote-client': 10 * 60_000,
   setting: 24 * 3600_000,
   'authoring-session': 30 * 60_000,
+  'private-network': 30 * 60_000,
   'irreversible-call': 2 * 60_000,
   resume: 10 * 60_000,
   'device-pair': 5 * 60_000,
@@ -219,8 +247,12 @@ export const APPROVAL_TTL_MS: Readonly<Record<ApprovalKind, number>> = {
 /** Limits against approval fatigue (docs/agent-run-security.md#approval-tiers). */
 export const APPROVAL_LIMITS = {
   pendingPerClient: 3,
-  /** Across all agents (A's card spec). */
+  /** Across all agents (A's card spec). Remote-client consents don't count here. */
   pendingTotal: 5,
+  /** Remote-client consents waiting at once, in their own bucket (relay.md, D's ask 7). */
+  consentPending: 5,
+  /** `/authorize` opens from one source address in an hour, before any card is made. */
+  consentPerSourcePerHour: 10,
   /** Requests one client may make in a day, answered or not. */
   perClientPerDay: 20,
   /** Declines from one client, within the window, after which its requests are refused. */
@@ -308,6 +340,7 @@ export const approvalRequestSchema = z
     requestOf('remote-client'),
     requestOf('setting'),
     requestOf('authoring-session'),
+    requestOf('private-network'),
     requestOf('irreversible-call'),
     requestOf('resume'),
     requestOf('device-pair'),
@@ -354,6 +387,8 @@ export const approvalDecisionSchema = z
     decidedAt: z.iso.datetime(),
     /** The value picked on a card that offers `choices` (H's CR-7). Signed with the rest. */
     choice: z.string().min(1).max(200).optional(),
+    /** A remote client's consent only: the code the person typed from their browser. */
+    typedCode: consentCodeSchema.optional(),
   })
   .strict()
 export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>
@@ -370,6 +405,7 @@ export const DECISION_REFUSALS = [
   'expired',
   'not-allowed-on-device',
   'bad-choice',
+  'wrong-code',
 ] as const
 export type DecisionRefusal = (typeof DECISION_REFUSALS)[number]
 
@@ -393,6 +429,8 @@ export interface DecisionContext {
   readonly receivedAt?: string
   /** Live only: whether the Mac still holds this request id as pending, unanswered. */
   readonly isPending?: (requestId: string) => boolean
+  /** Live only, for a remote client's consent: the code the Mac issued for this request. */
+  readonly consentCode?: (requestId: string) => string | null
   readonly now?: Date
 }
 
@@ -451,6 +489,15 @@ export function verifyDecision(
     choices === undefined ? decision.choice !== undefined : !choices.some((c) => c.value === decision.choice)
   ) {
     return { ok: false, reason: 'bad-choice' }
+  }
+  if (request.request.kind === 'remote-client') {
+    // Stored evidence was matched when it arrived; the receipt says so. Live, it must match now.
+    if (decision.typedCode === undefined) return { ok: false, reason: 'wrong-code' }
+    if (context.mode === 'live' && decision.typedCode !== context.consentCode?.(request.request.id)) {
+      return { ok: false, reason: 'wrong-code' }
+    }
+  } else if (decision.typedCode !== undefined) {
+    return { ok: false, reason: 'wrong-code' }
   }
   return { ok: true, decision, role: device.role }
 }

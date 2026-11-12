@@ -83,7 +83,7 @@ Final for D74, as `ADMIN_ACTION_TIERS` and `KIND_TIER` in core (**Contract**).
 | ---------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | None             | Done at once and audited                                       | Every read (status, adapters, tools, health, repairs, calls, redacted traces, audit, settings, devices). Scratch browsing. Editing, building and testing a draft (tests run sandboxed only, below). Deleting a draft.                                      |
 | Notify           | Done at once, audited, and the person is told on Mac and phone | Creating a draft; a paced live trial of a read tool in the scratch partition; turning a tool off; removing an adapter; revoking a secret, a client or a device; a setting that only tightens; choosing an adapter setting (the store); pause and lockdown. |
-| Approve          | Nothing happens until a device signs                           | Installing, updating or rolling back an adapter; a secret grant; turning a tool on, locally or remotely; a setting that loosens; a signed-in authoring session; resuming from pause or lockdown; a remote client's consent.                                |
+| Approve          | Nothing happens until a device signs                           | Installing, updating or rolling back an adapter; a secret grant; turning a tool on, locally or remotely; a setting that loosens; a signed-in authoring session; resuming from pause or lockdown (at the Mac only); a remote client's consent. |
 | Approve each use | As Approve, never remembered                                   | An irreversible tool call (D46).                                                                                                                                                                                                                           |
 
 Rules that go with it:
@@ -91,10 +91,12 @@ Rules that go with it:
 - **The Mac classifies, never the caller.** An admin tool names an action; the Mac decides whether
   a setting change tightens or loosens from its own table of settings, not from the agent's claim.
   An action not in the table is refused.
-- **Never over MCP, at any tier:** pairing a device, answering an approval, reading a secret's value.
-- **Where each kind may be approved:** everywhere except pairing a device and installing
-  unsandboxed code, which need the person at the Mac (`approvableOn`). Both defeat every other
-  guarantee if a stolen phone could do them.
+- **Never over MCP, at any tier:** pairing a device, answering an approval, reading a secret's
+  value, resuming from pause or lockdown.
+- **Where each kind may be approved:** everywhere except pairing a device, installing
+  unsandboxed code and resuming, which need the person at the Mac (`approvableOn`). The first two
+  defeat every other guarantee if a stolen phone could do them; lockdown is what the person
+  reaches for when the phone is lost, so the phone can't lift it.
 - **Expiry:** an irreversible call keeps the confirmation's short life (2 minutes); a remote
   client's consent and a resume 10 minutes; an authoring session 30; the rest 24 hours, so an
   install can wait for the person to be back (`APPROVAL_TTL_MS`).
@@ -479,6 +481,27 @@ Asked for by D, G and H while building, 2026-11-12. Accepted unless marked other
    - One rule with it: any tightening record that supersedes evidence must be in the ledger too.
      That covers a tool turned off after it was enabled, and a grant revoked. Otherwise an edit to
      an unanchored store would bring the old evidence back into force.
+5. **Face ID only on the phone:** already so since H's 1 (`.biometryCurrentSet`); there is no
+   passcode-capable key to tell apart. If Nick takes A's passcode fallback for neutral cards, the
+   phone gets a second, `.userPresence` key in its device record, and the Mac picks from its own
+   request which key a decision must be signed with.
+6. **Resume at the Mac only:** `approvableOn('resume')` is `['mac']`, and `valet.resume` left
+   `ADMIN_ACTION_TIERS` for `NEVER_OVER_MCP`.
+7. **Consent code typed, not compared:** the remote-client request carries no code; the phone
+   puts the typed code in the signed decision (`typedCode`, letters only, `consentCodeSchema`) and
+   the Mac refuses a mismatch (`wrong-code`, given the issued code through `consentCode`).
+   Consents have their own bucket (`consentPending`, `consentPerSourcePerHour`) outside
+   `pendingTotal`.
+
+**From A (screens), signing off section 10 of the information architecture:**
+
+- `relay.md` now has consent on the Mac or a paired phone, the letters-only typed code, the
+  redirect host in full, and a ten-minute consent life to match `APPROVAL_TTL_MS`.
+- The approval gesture fallback lives in `authoring-agent.md`, not `security-model.md`: on a Mac
+  without Touch ID it is now the Mac account password through the system prompt
+  (`.userPresence`), not typing characters of the hash.
+- Phone notifications follow the Mac's rules, and the relay-visible push text is fixed
+  (`security-model.md`, Notifications).
 
 **From G (relay):**
 
