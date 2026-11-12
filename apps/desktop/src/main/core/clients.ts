@@ -37,8 +37,10 @@ const clientSchema = z
         /** Those tools show other agents' calls too, not only its own. */
         allActivity: z.boolean(),
         /**
-         * Valet's write tools answer it (docs/admin-tools.md, "Write tier"). Absent in files from
-         * before them: the default.
+         * "Ask for changes": Valet's write tools (docs/admin-tools.md, "Write tier") and the
+         * authoring tools (docs/authoring-tools.md), each still approved by the person where it
+         * widens. Absent in files from before it: on, as for a new local app, unless the person had
+         * taken See Valet away.
          */
         askForChanges: z.boolean().optional(),
       })
@@ -178,9 +180,9 @@ export class ClientRegistry {
     const client = this.get(id)
     if (client === null || client.revokedAt !== null) return null
     const stored = client.capabilities
+    if (stored === undefined) return DEFAULT_CAPABILITIES
     // A file from before Ask for changes: on, unless the person had taken See Valet away.
-    const ask = stored?.askForChanges ?? stored?.seeValet ?? DEFAULT_CAPABILITIES.askForChanges
-    return { ...DEFAULT_CAPABILITIES, ...stored, askForChanges: ask }
+    return { ...stored, askForChanges: stored.askForChanges ?? stored.seeValet }
   }
 
   /** Changes what a client may see. False for an unknown or revoked client. */

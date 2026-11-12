@@ -28,6 +28,7 @@ import {
   type PackageFiles,
   type ProviderKind,
   plainName,
+  type Requester,
   type SecretField,
   type SessionDriver,
   type SettingChoice,
@@ -37,6 +38,7 @@ import {
 import { FileGrantStore } from '@valet/credentials'
 import {
   type AdminReader,
+  type Authoring,
   type CallOutcome,
   displayCode,
   type EndpointClient,
@@ -74,6 +76,7 @@ import type {
   ConfirmationItem,
   EndpointStatus,
   HashRoute,
+  PendingReview,
   RemoteConsentItem,
   RemoteSetup,
   RemoteSetupTool,
@@ -98,6 +101,7 @@ import {
   itemFingerprint,
   type KindHandlers,
   type MacApprovalKeys,
+  permissionChanges,
   remoteClientSubject,
   requestRef,
   settingSubject,
@@ -135,6 +139,8 @@ import {
   TYPING_DELAY_MS,
 } from './constants'
 import type { Credentials } from './credentials'
+import { DraftAuthoring, type RequestState, type SubmitOutcome, type SubmitRequest } from './drafts/authoring'
+import { DraftStore } from './drafts/store'
 import { type EraseKind, type EraseReport, type EraseStep, eraseEverything } from './erase'
 import { ensurePrivateDir, JsonDocument } from './files'
 import { checkGrantRequest, grantInfo } from './grants'
@@ -240,13 +246,15 @@ export interface ServiceDeps {
   /**
    * Starts the MCP endpoint with a token for each of `clients`, written to its config file; it
    * reports its live sessions to `onSessionsChanged`. `admin` is Valet's own read-only tools, for
-   * local clients' sessions (docs/admin-tools.md).
+   * local clients' sessions (docs/admin-tools.md); `authoring`, the tools agents write adapters
+   * with (docs/authoring-tools.md), when this build can install adapters.
    */
   readonly startEndpoint: (
     caller: ToolCaller,
     clients: readonly EndpointClient[],
     onSessionsChanged: (sessions: LiveSessions) => void,
     admin: AdminReader,
+    authoring: Authoring | null,
   ) => Promise<SessionReportingEndpoint>
   readonly ui: UiPort
   readonly emit: (event: AppEvent) => void
@@ -433,6 +441,15 @@ export class AppService {
     string,
     { readonly callId: string; readonly errorClass: string; readonly at: string }
   >()
+  /** Drafts agents are writing (docs/authoring-tools.md), and the tools over them once started. */
+  private readonly drafts: DraftStore
+  private authoring: DraftAuthoring | null = null
+  /** Who asked each draft's approval request, for the broker's asker-only status. */
+  private readonly draftAskers = new Map<string, Requester>()
+  /** Staged draft versions loaded once at submit (or on first view), by `adapterId:hash`. */
+  private readonly stagedAdapters = new Map<string, BuiltinAdapter>()
+  /** Staged drafts' swaps and tidying, one after another, outside the broker's lock. */
+  private staging: Promise<unknown> = Promise.resolve()
   /** Adapters whose last call-started login the person closed without finishing, not yet told to a call. */
   private readonly gaveUp = new Set<string>()
 
@@ -466,6 +483,7 @@ export class AppService {
     this.versions = new VersionStore(paths.versions)
     this.setup = new SetupStore(paths.setup, deps.now)
     this.snapshots = new SnapshotStore(paths.manifests)
+    this.drafts = new DraftStore(paths.drafts, date)
     this.installed = [...deps.adapters]
     this.packages =
       deps.packages === undefined
@@ -713,6 +731,7 @@ export class AppService {
     })
     await this.caller.refresh()
     await this.reapplyInstalls()
+    this.authoring = await this.startAuthoring()
     // Reads approval times into the cache the confirmation panel uses.
     await this.states()
     await this.startListening().catch(() => undefined)
@@ -1154,6 +1173,8 @@ export class AppService {
         onChange: () => {
           this.emit('app-changed')
           this.emit('attention-changed')
+          this.emit('approvals-changed')
+          this.tidyDraftsSoon()
         },
       })
     } catch {
@@ -1182,17 +1203,42 @@ export class AppService {
         },
       },
       'adapter-install': {
-        // A rollback is applied by rollbackNow itself, after the swap; anything else is the
+        // A rollback is applied by rollbackNow itself, after the swap. A staged draft (an update
+        // an agent submitted while the approved version keeps serving) is fresh while it is still
+        // stored and the version it replaces is still the one active. Anything else is the
         // version installed now, and stale if that changed.
-        precheck: (subject) =>
-          subject.source === 'rollback' || this.adapter(subject.adapterId)?.hash === subject.adapterHash,
+        precheck: async (subject) => {
+          if (subject.source === 'rollback') return true
+          const active = this.adapter(subject.adapterId)
+          if (active?.hash === subject.adapterHash) return true
+          return (
+            subject.source === 'draft' &&
+            active !== null &&
+            active.hash === subject.previousHash &&
+            (await this.isStored(subject.adapterId, subject.adapterHash))
+          )
+        },
         apply: async (subject) => {
-          if (subject.source !== 'rollback') await this.applyInstall(subject.adapterId, subject.adapterHash)
+          if (subject.source === 'rollback') return
+          if (this.adapter(subject.adapterId)?.hash === subject.adapterHash) {
+            await this.applyInstall(subject.adapterId, subject.adapterHash)
+            // An agent's request has no signInstall around it to retire the others; that revokes
+            // through the broker, so after its lock is let go.
+            if (subject.source === 'draft') {
+              const { adapterId, adapterHash } = subject
+              this.staging = this.staging
+                .then(() => this.retireOthers(adapterId, adapterHash))
+                .catch(() => undefined)
+            }
+          } else if (subject.source === 'draft') this.finishStagedSoon(subject.adapterId, subject.adapterHash)
         },
         // One approved hash per adapter: a new approval replaces the evidence of the last. Not a
-        // rollback's, until its swap has worked (rollbackNow), so a failed swap leaves the running
-        // version approved.
-        supersedes: (next, older) => next.source !== 'rollback' && next.adapterId === older.adapterId,
+        // rollback's or a staged draft's, until its swap has worked (rollbackNow, finishStaged), so
+        // a failed swap leaves the running version approved.
+        supersedes: (next, older) =>
+          next.source !== 'rollback' &&
+          next.adapterId === older.adapterId &&
+          this.adapter(next.adapterId)?.hash === next.adapterHash,
       },
       // The person's own grant (grants.make) stores the grant once signed; the gate then reads
       // this evidence (grantSigned). Stale once the version it names isn't the one installed.
@@ -1365,6 +1411,8 @@ export class AppService {
     const keep = new Set<string>(await this.approvals.approvedHashes(adapterId).catch(() => []))
     for (const grant of await this.grants.list().catch(() => [] as readonly Grant[]))
       if (grant.adapterId === adapterId) keep.add(grant.adapterHash)
+    // A draft waiting for the person, staged or installed: its version must still be there.
+    for (const request of this.draftRequests(adapterId)) keep.add(request.subject.adapterHash)
     return keep
   }
 
@@ -1867,6 +1915,306 @@ export class AppService {
       if (!(await this.approvals.isApproved(id, adapter.hash).catch(() => true)))
         await this.applyInstall(id, adapter.hash).catch(() => undefined)
     }
+    // A staged draft approved before a crash, or whose swap was busy: finished now.
+    for (const adapter of [...this.installed]) {
+      const id = adapter.definition.manifest.id
+      let hash: string | null = null
+      const staged = this.approvalBroker?.honoured('adapter-install', (s) => {
+        const match =
+          s.adapterId === id &&
+          s.source === 'draft' &&
+          s.adapterHash !== adapter.hash &&
+          s.previousHash === adapter.hash
+        if (match) hash = s.adapterHash
+        return match
+      })
+      if (staged === null || staged === undefined || hash === null) continue
+      if (await this.isStored(id, hash)) await this.finishStaged(id, hash).catch(() => undefined)
+    }
+  }
+
+  // ---------- Drafts (docs/authoring-tools.md) ----------
+
+  /** The authoring tools over the draft store, when this build can install adapters. */
+  private async startAuthoring(): Promise<DraftAuthoring | null> {
+    const packages = this.packages
+    const runtime = this.deps.packages?.runtime
+    if (packages === null || runtime === undefined) return null
+    for (const record of await this.drafts.list().catch(() => [])) {
+      if (record.submission === null) continue
+      this.draftAskers.set(record.submission.requestId, {
+        kind: 'agent',
+        clientId: record.submission.by,
+        clientName: record.createdByName,
+      })
+    }
+    this.tidyDraftsSoon()
+    return new DraftAuthoring({
+      store: this.drafts,
+      prepare: async (files) => (await packages.prepare(files, 'draft')).loaded,
+      // Each case in a fresh one-shot sandbox window, as describing a package runs (docs/sandbox.md).
+      caseProcess: runtime.start,
+      installed: async (adapterId) => {
+        const adapter = this.adapter(adapterId)
+        return adapter === null
+          ? null
+          : { manifest: adapter.definition.manifest, hash: adapter.hash, files: adapter.files }
+      },
+      approved: async (adapterId) => {
+        const snapshot = await this.snapshots.get(adapterId)
+        return snapshot === null ? null : { manifest: snapshot.manifest, hash: snapshot.hash }
+      },
+      sites: () =>
+        this.installed.map((a) => ({ id: a.definition.manifest.id, name: a.definition.manifest.name })),
+      permissionLines: (before, after) =>
+        permissionChanges(
+          before,
+          after,
+          (after.sandbox ?? DEFAULT_SANDBOX).mode === 'unsandboxed' || this.deps.sandbox === undefined,
+        ),
+      submit: (request) => this.submitDraft(request),
+      withdraw: async (requestId) => {
+        const asker = this.draftAskers.get(requestId)
+        if (asker !== undefined) await this.approvalBroker?.withdraw(requestId, asker).catch(() => false)
+      },
+      requestState: (requestId) => this.draftRequestState(requestId),
+      clientName: (viewer) =>
+        viewer.origin === 'local' ? (this.clients.get(viewer.clientId)?.name ?? 'An app') : 'A cloud agent',
+      audit: async (event) => {
+        await this.audit.append(event)
+      },
+      notify: (text) => this.notifier.draftActivity(text),
+      now: this.deps.now,
+    })
+  }
+
+  /**
+   * A draft the person is asked to approve (docs/authoring-tools.md#submitting). A first install,
+   * or an update to a version that isn't approved, is installed and waits, its tools hidden, as a
+   * folder install does. An update to an approved version is staged: stored, not active, so the
+   * approved one keeps serving, and the approval's apply swaps it in. Either way the request is
+   * the agent's, so its status and a decline's note go back to it.
+   */
+  private async submitDraft(request: SubmitRequest): Promise<SubmitOutcome> {
+    const broker = this.approvalBroker
+    const packages = this.packages
+    if (broker === null || packages === null)
+      return { ok: false, sentence: 'Not submitted: Valet can’t ask for approvals right now.' }
+    if (this.lockedDown) return { ok: false, sentence: 'Not submitted: Valet is locked down.' }
+    const requester: Requester = {
+      kind: 'agent',
+      clientId: request.requester.clientId,
+      clientName: request.requester.clientName,
+    }
+    let prepared: ReturnType<PackageManager['prepared']>
+    try {
+      prepared = packages.prepared(request.loaded, 'draft')
+    } catch (error) {
+      return { ok: false, sentence: `Not submitted: ${installReason(error)}` }
+    }
+    const { adapter } = prepared
+    const id = adapter.definition.manifest.id
+    // The draft's earlier request goes first, so the person never sees two of one draft.
+    if (request.replaces !== null) await broker.withdraw(request.replaces, requester).catch(() => false)
+    let staged = false
+    let stagedNew = false
+    try {
+      // Only the store and the swap under the adapter's lock: the broker's own lock is taken after,
+      // never inside it (an approval's apply takes the adapter's lock under the broker's).
+      await this.oneAtATime(id, async () => {
+        const active = this.adapter(id)
+        if (active !== null && active.hash === adapter.hash)
+          throw new InstallError('That version is the one installed now.')
+        if (active !== null && (await this.installGate.isApproved(id, active.hash))) {
+          stagedNew = !(await this.isStored(id, adapter.hash))
+          await packages.stage(prepared)
+          staged = true
+        } else {
+          await this.swapIn(adapter)
+          await packages.commit(prepared)
+        }
+      })
+    } catch (error) {
+      return { ok: false, sentence: `Not submitted: ${installReason(error)}` }
+    }
+    if (staged) this.stagedAdapters.set(`${id}:${adapter.hash}`, adapter)
+    const snapshot = await this.snapshots.get(id)
+    const previous = snapshot !== null && snapshot.hash !== adapter.hash ? snapshot : null
+    const grants = await this.grants.list().catch(() => [] as readonly Grant[])
+    const subject = {
+      ...installSubject({
+        manifest: adapter.definition.manifest,
+        hash: adapter.hash,
+        files: adapter.files,
+        previous: previous === null ? null : { hash: previous.hash, manifest: previous.manifest },
+        source: 'draft',
+        inheritsSession: previous !== null && grants.some((g) => g.adapterId === id),
+        unsandboxed: this.runsUnsandboxed(adapter),
+      }),
+      references: request.references.filter((r) => /^https:\/\/\S{1,490}$/.test(r)).slice(0, 10),
+    }
+    const asked = await broker.request('adapter-install', subject, requester, {
+      agentNote: request.agentNote === null ? null : request.agentNote.slice(0, 280),
+      context: { kind: 'draft', draftId: request.draftId },
+      display: {
+        client: {
+          label: request.requester.clientName,
+          badge: request.requester.clientId.startsWith('remote:') ? 'remote' : 'local',
+        },
+        ...(/^[a-z0-9.-]{1,253}$/.test(request.domain) ? { domain: request.domain } : {}),
+        checks: request.checks.slice(0, 20).map((line) => line.slice(0, 200)),
+      },
+    })
+    if (!asked.ok) {
+      if (staged && stagedNew) await this.discardStaged(id, adapter.hash)
+      return { ok: false, sentence: submitRefusal(asked.reason, asked.until) }
+    }
+    this.draftAskers.set(asked.requestId, requester)
+    this.emit('approvals-changed')
+    this.emit('attention-changed')
+    return {
+      ok: true,
+      requestId: asked.requestId,
+      ref: asked.ref,
+      expiresAt: asked.expiresAt,
+      previousHash: subject.previousHash,
+      stagedNew,
+    }
+  }
+
+  private draftRequestState(requestId: string): RequestState {
+    const asker = this.draftAskers.get(requestId)
+    const status = asker === undefined ? null : (this.approvalBroker?.status(requestId, asker) ?? null)
+    if (status === null) return { state: 'unknown', note: null }
+    if (!('outcome' in status)) return { state: 'pending', note: null }
+    return { state: status.outcome, note: status.note ?? null }
+  }
+
+  /** The agents' draft install requests waiting now, for one adapter or all. */
+  private draftRequests(adapterId?: string) {
+    return (this.approvalBroker?.list() ?? []).flatMap((p) => {
+      const r = p.request
+      if (r.kind !== 'adapter-install' || r.requester.kind !== 'agent' || r.context?.kind !== 'draft')
+        return []
+      if (adapterId !== undefined && r.subject.adapterId !== adapterId) return []
+      return [r]
+    })
+  }
+
+  private draftRequestFor(adapterId: string, hash: string) {
+    return this.draftRequests(adapterId).find((r) => r.subject.adapterHash === hash) ?? null
+  }
+
+  private async isStored(adapterId: string, hash: string): Promise<boolean> {
+    const state = await this.packages?.versions(adapterId)
+    return state?.versions.some((v) => v.hash === hash) ?? false
+  }
+
+  /** A staged version, loaded once (a compile and a describe in the sandbox). */
+  private async stagedAdapter(adapterId: string, hash: string): Promise<BuiltinAdapter | null> {
+    const key = `${adapterId}:${hash}`
+    const cached = this.stagedAdapters.get(key)
+    if (cached !== undefined) return cached
+    const loaded = await this.packages?.load(adapterId, hash).catch(() => null)
+    if (loaded === null || loaded === undefined) return null
+    this.stagedAdapters.set(key, loaded)
+    return loaded
+  }
+
+  /**
+   * An approved staged draft, swapped in after the broker's lock is let go: then activated,
+   * approved and the others retired, as a rollback is. A swap that fails takes the approval away
+   * again, so the version still running keeps its own (docs/authoring-tools.md#submitting).
+   */
+  private finishStagedSoon(adapterId: string, hash: string): void {
+    this.staging = this.staging
+      .then(() => this.finishStaged(adapterId, hash))
+      .catch(() => this.deps.diagnostics?.({ type: 'draft-apply-failed', adapterId }))
+  }
+
+  private finishStaged(adapterId: string, hash: string): Promise<void> {
+    return this.oneAtATime(adapterId, async () => {
+      const packages = this.packages
+      const active = this.adapter(adapterId)
+      if (packages === null || active === null) return
+      if (active.hash === hash) {
+        await this.applyInstall(adapterId, hash)
+        return
+      }
+      try {
+        const target = await packages.load(adapterId, hash)
+        await this.swapIn(target)
+      } catch (error) {
+        await this.revokeInstall(adapterId, hash, { legacy: false })
+        throw error
+      }
+      await packages.activate(adapterId, hash)
+      const now = this.adapter(adapterId)
+      const build = this.deps.packages?.build
+      if (now !== null && build !== undefined)
+        await this.audit.append({
+          type: 'adapter-installed',
+          adapterId,
+          adapterHash: hash,
+          version: now.definition.manifest.version,
+          source: 'draft',
+          previousHash: active.hash,
+          ...build,
+        })
+      await this.applyInstall(adapterId, hash)
+      await this.retireOthers(adapterId, hash)
+      this.stagedAdapters.delete(`${adapterId}:${hash}`)
+      this.emit('approvals-changed')
+    })
+  }
+
+  private tidyDraftsSoon(): void {
+    this.staging = this.staging.then(() => this.tidyDrafts()).catch(() => undefined)
+  }
+
+  /**
+   * Once a draft's request is closed without approval, a version that was stored only for it is
+   * dropped, unless it is active, kept for another reason, or another draft still names it.
+   */
+  private async tidyDrafts(): Promise<void> {
+    for (const record of await this.drafts.list().catch(() => [])) {
+      const submission = record.submission
+      if (submission === null || !submission.stagedNew) continue
+      const state = this.draftRequestState(submission.requestId).state
+      if (state === 'pending' || state === 'approved') continue
+      await this.discardStaged(record.adapterId, submission.adapterHash)
+      await this.drafts
+        .update(record.id, (r) =>
+          r.submission === null ? r : { ...r, submission: { ...r.submission, stagedNew: false } },
+        )
+        .catch(() => undefined)
+    }
+  }
+
+  private async discardStaged(adapterId: string, hash: string): Promise<void> {
+    if (this.adapter(adapterId)?.hash === hash) return
+    if ((await this.keepHashes(adapterId)).has(hash)) return
+    await this.packages?.discard(adapterId, hash).catch(() => false)
+    this.stagedAdapters.delete(`${adapterId}:${hash}`)
+  }
+
+  /** The Mac's review of each staged draft, against the approved version it would replace. */
+  private async stagedReviews(states: readonly AdapterState[]): Promise<PendingReview[]> {
+    const out: PendingReview[] = []
+    for (const request of this.draftRequests()) {
+      const { adapterId, adapterHash } = request.subject
+      const state = states.find((s) => s.adapter.definition.manifest.id === adapterId)
+      if (state === undefined || state.adapter.hash === adapterHash) continue
+      const staged = await this.stagedAdapter(adapterId, adapterHash)
+      if (staged === null) continue
+      const snapshot = await this.snapshots.get(adapterId)
+      const review = pendingReview(
+        { ...state, adapter: staged, approved: false, rejected: false, previous: snapshot },
+        request.createdAt,
+      )
+      if (review !== null) out.push(review)
+    }
+    return out
   }
 
   private async rollbackTarget(adapterId: string, hash: string): Promise<BuiltinAdapter> {
@@ -2102,6 +2450,7 @@ export class AppService {
       this.clients.active(),
       () => this.emit('endpoint-changed'),
       this.adminReader(),
+      this.authoring,
     )
     this.endpoint.refresh()
     this.emit('endpoint-changed')
@@ -2379,13 +2728,29 @@ export class AppService {
         },
       },
       approvals: {
-        pending: async () =>
-          (await this.states()).flatMap((s) => {
-            const review = pendingReview(s, this.startedAt)
-            return review === null ? [] : [review]
-          }),
+        pending: async () => {
+          const states = await this.states()
+          return [
+            ...states.flatMap((s) => {
+              const review = pendingReview(s, this.startedAt)
+              return review === null ? [] : [review]
+            }),
+            ...(await this.stagedReviews(states)),
+          ]
+        },
         approve: async (adapterId, hash) => {
           const adapter = this.requireAdapter(adapterId)
+          // An agent's draft: the person approves the agent's own request, so the agent learns
+          // the outcome and the card it was shown is the one signed (docs/authoring-tools.md).
+          const draft = this.draftRequestFor(adapterId, hash)
+          if (draft !== null) {
+            const broker = this.approvalBroker
+            if (broker === null) throw new ValetError('config', 'unavailable')
+            const answered = await broker.approveOnMac(draft.id)
+            if (!answered.ok && answered.reason !== 'cancelled' && answered.reason !== 'busy')
+              throw new ValetError('manifest', 'invalid')
+            return
+          }
           // Only the bundle installed and waiting now; a stale review's hash is refused.
           if (adapter.hash !== hash) throw new ValetError('manifest', 'invalid')
           // Touch ID at this Mac signs it; the handler applies it (approvalHandlers).
@@ -2399,6 +2764,10 @@ export class AppService {
         },
         reject: async (adapterId, hash) => {
           const adapter = this.requireAdapter(adapterId)
+          // An agent's draft is declined, so the agent hears it; a staged one never ran.
+          const draft = this.draftRequestFor(adapterId, hash)
+          if (draft !== null) await this.approvalBroker?.decline(draft.id, { via: 'mac' }).catch(() => false)
+          if (draft !== null && adapter.hash !== hash) return
           if (adapter.hash !== hash) throw new ValetError('manifest', 'invalid')
           // Only tightens: the evidence goes first, so a failed store write still leaves it off.
           await this.revokeInstall(adapterId, hash)
@@ -2591,10 +2960,13 @@ export class AppService {
       attention: {
         list: async (): Promise<AttentionItem[]> => {
           const states = await this.states()
-          const reviews = states.flatMap((s) => {
-            const review = pendingReview(s, this.startedAt)
-            return review === null ? [] : [reviewItem(review)]
-          })
+          const reviews = [
+            ...states.flatMap((s) => {
+              const review = pendingReview(s, this.startedAt)
+              return review === null ? [] : [review]
+            }),
+            ...(await this.stagedReviews(states)),
+          ].map(reviewItem)
           return sortAttention([
             ...this.handoffs.list(),
             ...this.broker.list(),
@@ -2955,3 +3327,24 @@ interface ConsentExtras {
 
 /** As remote.ts keeps them: more is refused whole. */
 const MAX_REMOTE_HOSTS = 8
+
+/** A broker refusal of a draft's request, in words for the agent. */
+function submitRefusal(reason: string, until?: string): string {
+  const when = until === undefined ? '' : ` until ${until}`
+  switch (reason) {
+    case 'locked-down':
+      return 'Not submitted: Valet is locked down.'
+    case 'cooling-down':
+      return `Not submitted: the person declined your last request and asked for a pause${when}.`
+    case 'daily-limit':
+      return `Not submitted: you have asked for as many approvals as Valet allows in a day${when}.`
+    case 'too-many-waiting':
+      return 'Not submitted: you have as many requests waiting as Valet allows. Withdraw one first.'
+    case 'too-many-total':
+      return 'Not submitted: the person has as many requests waiting as Valet shows. Try later.'
+    case 'not-allowed':
+      return 'Not submitted: Valet doesn’t take this request from an agent.'
+    default:
+      return 'Not submitted: Valet can’t ask for approvals right now.'
+  }
+}

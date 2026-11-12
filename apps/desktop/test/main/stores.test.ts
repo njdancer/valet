@@ -191,10 +191,12 @@ describe('ClientRegistry', () => {
     await registry.load()
     const { id } = await registry.add('Claude Code')
     expect(registry.capabilities(id)).toEqual({ seeValet: true, allActivity: false, askForChanges: true })
+    expect(await registry.setCapabilities(id, { askForChanges: false })).toBe(true)
+    expect(registry.capabilities(id)?.askForChanges).toBe(false)
     expect(await registry.setCapabilities(id, { allActivity: true })).toBe(true)
     const again = new ClientRegistry(path, '/configs', () => new Date())
     await again.load()
-    expect(again.capabilities(id)).toEqual({ seeValet: true, allActivity: true, askForChanges: true })
+    expect(again.capabilities(id)).toEqual({ seeValet: true, allActivity: true, askForChanges: false })
     // The screens' view doesn't carry them yet.
     expect(again.list(() => 0)[0]).not.toHaveProperty('capabilities')
     expect(again.list(() => 0)[0]).not.toHaveProperty('toolsOff')

@@ -1,6 +1,7 @@
 export * from './admin-tools'
 export * from './admin-write'
 export * from './auth'
+export * from './authoring-tools'
 export * from './bridge'
 export * from './bridge-config'
 export * from './endpoint'

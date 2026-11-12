@@ -359,6 +359,9 @@ const EVENT_FIELDS: Readonly<Record<AuditEvent['type'], readonly string[]>> = {
   'device-paired': ['deviceId', 'platform'],
   'device-revoked': ['deviceId', 'by'],
   'store-refused': ['store', 'reason', 'records'],
+  'draft-created': ['draftId', 'adapterId', 'clientId'],
+  'draft-submitted': ['draftId', 'adapterId', 'clientId', 'adapterHash', 'packageHash', 'requestId'],
+  'draft-deleted': ['draftId', 'adapterId', 'clientId'],
 }
 
 function eventEntry(event: AuditEvent): AdminAuditPage['records'][number]['event'] {

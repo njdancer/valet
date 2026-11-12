@@ -9,6 +9,7 @@ import { NeedsUserError, type ToolDeclaration, toolHints, toReportable } from '@
 import { z } from 'zod'
 import { type AdminReader, registerAdminTools } from './admin-tools'
 import type { ClientIdentity } from './auth'
+import { type Authoring, registerAuthoringTools } from './authoring-tools'
 import { failedResult, type ResultContext, toolResult } from './results'
 import type { CallOutcome, ClientTransport, ListedTool, ToolCaller } from './tool-caller'
 import { type ExposedTool, planTools, type SkippedTool, type ToolPlan } from './tool-names'
@@ -39,6 +40,11 @@ export interface ServerOptions {
    * client's: a cloud agent, or a session with no identity, never sees them.
    */
   readonly admin?: AdminReader
+  /**
+   * The authoring tools (docs/authoring-tools.md). Registered only with `admin`, for a local
+   * client's session, as the admin tools are.
+   */
+  readonly authoring?: Authoring
 }
 
 /**
@@ -200,11 +206,14 @@ export function createMcpServer(
   // name could take one of these.
   // Only for a session a local client's credential opened: never a cloud agent's, and never one
   // with no identity at all.
-  if (options.admin !== undefined && options.identity?.origin === 'local')
+  if (options.admin !== undefined && options.identity?.origin === 'local') {
     registerAdminTools(server, options.admin, options.identity, {
       now: options.now ?? Date.now,
       ...(options.timeZone === undefined ? {} : { timeZone: options.timeZone }),
     })
+    if (options.authoring !== undefined)
+      registerAuthoringTools(server, options.admin, options.authoring, options.identity)
+  }
 
   let registered: RegisteredTool[] = []
   const apply = (plan: ToolPlan): void => {

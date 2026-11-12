@@ -261,6 +261,32 @@ export type AuditEvent =
       /** A setting's new value as Valet stores it; null for the others. */
       readonly value: string | null
     }
+  | {
+      /** An agent started a draft adapter (docs/authoring-tools.md). Notify tier. */
+      readonly type: 'draft-created'
+      readonly draftId: string
+      readonly adapterId: string
+      readonly clientId: string
+    }
+  | {
+      /**
+       * An agent submitted a draft for approval. The package hash fixes every file it held; edits
+       * before it aren't audited one by one (B, 2026-11-12).
+       */
+      readonly type: 'draft-submitted'
+      readonly draftId: string
+      readonly adapterId: string
+      readonly clientId: string
+      readonly adapterHash: string
+      readonly packageHash: string
+      readonly requestId: string
+    }
+  | {
+      readonly type: 'draft-deleted'
+      readonly draftId: string
+      readonly adapterId: string
+      readonly clientId: string
+    }
   | { readonly type: 'device-paired'; readonly deviceId: string; readonly platform: 'ios' | 'macos' }
   | { readonly type: 'device-revoked'; readonly deviceId: string; readonly by: string }
   | {

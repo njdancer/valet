@@ -41,6 +41,7 @@ import {
   type AdminArgs,
   type AdminCallTrace,
   type AdminReader,
+  type Authoring,
   adminNotAllowedResult,
   askNotAllowedResult,
   type ClientIdentity,
@@ -169,6 +170,7 @@ async function setup(
   const endpoint = {
     caller: null as ToolCaller | null,
     admin: null as AdminReader | null,
+    authoring: null as Authoring | null,
     refreshes: 0,
     resets: 0,
     closes: 0,
@@ -205,9 +207,16 @@ async function setup(
       kind: 'software',
       forget: async () => {},
     },
-    startEndpoint: async (caller, clients, onSessionsChanged, admin): Promise<SessionReportingEndpoint> => {
+    startEndpoint: async (
+      caller,
+      clients,
+      onSessionsChanged,
+      admin,
+      authoring,
+    ): Promise<SessionReportingEndpoint> => {
       endpoint.caller = caller
       endpoint.admin = admin
+      endpoint.authoring = authoring
       endpoint.sessionsChanged = onSessionsChanged
       endpoint.starts++
       const issue = (id: string, configPath: string) => {
@@ -3197,6 +3206,98 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
     expect(await again.call('echo', { text: 'hi' })).toMatchObject({
       status: 'failed',
       errorClass: 'not-granted',
+    })
+  })
+
+  describe('drafts an agent submits (docs/authoring-tools.md)', () => {
+    const NO_NOTE = { note: null, references: [], followOns: [] }
+    const CASES = JSON.stringify({
+      cases: [
+        { name: 'echoes', tool: 'echo', input: { text: 'hi' }, expect: { output: { text: 'v2:hi' } } },
+        { name: 'adds nothing', tool: 'add', input: { item: 'x' }, expect: { output: { added: false } } },
+      ],
+    })
+
+    async function withDraft() {
+      const s = await withPackages()
+      const v1 = s.hashOf(shopPackage('v1:'))
+      await s.api.approvals.approve('shop', v1)
+      const viewer: ClientIdentity = {
+        origin: 'local',
+        clientId: (await s.api.clients.add('Claude Code')).id,
+      }
+      const authoring = s.endpoint.authoring as Authoring
+      const { draft } = await authoring.createDraft(viewer, { adapterId: 'shop', from: 'installed' })
+      const update = shopPackage('v2:', { ...SHOP, version: '2.0.0' })
+      for (const [path, content] of Object.entries({ ...update, 'test/shop.json': CASES }))
+        await authoring.writeFile(viewer, draft.draftId, path, content)
+      const v2 = s.hashOf(update)
+      return { ...s, v1, v2, viewer, authoring, draftId: draft.draftId }
+    }
+
+    it('stages an update: the approved version serves until the person approves the agent’s own request', async () => {
+      const s = await withDraft()
+      const asked = await s.authoring.submit(s.viewer, s.draftId, NO_NOTE)
+      expect(asked).toMatchObject({ adapterHash: s.v2 })
+      // Still v1: staging doesn't touch what runs.
+      expect(await s.call('echo', { text: 'hi' })).toMatchObject({ output: { text: 'v1:hi' } })
+      const versions = await s.api.adapters.versions('shop')
+      expect(versions.versions.find((v) => v.hash === s.v2)).toMatchObject({ active: false })
+      const review = (await s.api.approvals.pending()).find((r) => r.to.hash === s.v2)
+      expect(review).toMatchObject({ from: { hash: s.v1 }, to: { hash: s.v2 } })
+      expect((await s.api.attention.list()).some((i) => i.kind === 'review')).toBe(true)
+      expect((await s.authoring.getDraft(s.viewer, false, s.draftId)).draft.status).toBe('waiting')
+      await s.api.approvals.approve('shop', s.v2)
+      await vi.waitFor(async () =>
+        expect(await s.call('echo', { text: 'hi' })).toMatchObject({ output: { text: 'v2:hi' } }),
+      )
+      expect((await s.authoring.getDraft(s.viewer, false, s.draftId)).draft.status).toBe('approved')
+      expect((await s.api.adapters.list()).map((a) => a.approval)).toEqual(['approved'])
+      const types = readAudit(s.paths.audit).map((e) => e.type)
+      expect(types).toContain('draft-submitted')
+      expect(types.filter((t) => t === 'adapter-installed')).toHaveLength(2)
+      // The agent's request was the one signed: its subject names the draft as the source.
+      expect(readFileSync(s.paths.trusted, 'utf8')).toMatch(/source\\*":\\*"draft/)
+    })
+
+    it('a decline reaches the agent, and a version stored only for the draft goes', async () => {
+      const s = await withDraft()
+      await s.authoring.submit(s.viewer, s.draftId, NO_NOTE)
+      await s.api.approvals.reject('shop', s.v2)
+      await vi.waitFor(async () =>
+        expect((await s.api.adapters.versions('shop')).versions.map((v) => v.hash)).toEqual([s.v1]),
+      )
+      expect((await s.authoring.getDraft(s.viewer, false, s.draftId)).draft.status).toBe('declined')
+      expect(await s.call('echo', { text: 'hi' })).toMatchObject({ output: { text: 'v1:hi' } })
+      expect((await s.api.approvals.pending()).some((r) => r.to.hash === s.v2)).toBe(false)
+    })
+
+    it('a staged draft goes stale if the version it replaces changed', async () => {
+      const s = await withDraft()
+      await s.authoring.submit(s.viewer, s.draftId, NO_NOTE)
+      // Another version is installed from a folder meanwhile, so the draft's diff no longer holds.
+      s.picked.next = shopPackage('v3:', { ...SHOP, version: '3.0.0' })
+      expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true })
+      await expect(s.api.approvals.approve('shop', s.v2)).rejects.toThrow(/invalid/)
+      await expect(s.call('echo', { text: 'hi' })).resolves.not.toMatchObject({ output: { text: 'v2:hi' } })
+      expect((await s.authoring.getDraft(s.viewer, false, s.draftId)).draft.status).toBe('withdrawn')
+    })
+
+    it('installs a first draft unapproved, and the person’s approval answers the agent', async () => {
+      const s = await withPackages()
+      const viewer: ClientIdentity = {
+        origin: 'local',
+        clientId: (await s.api.clients.add('Claude Code')).id,
+      }
+      const authoring = s.endpoint.authoring as Authoring
+      const { draft } = await authoring.createDraft(viewer, { adapterId: 'example', from: 'blank' })
+      const asked = await authoring.submit(viewer, draft.draftId, NO_NOTE)
+      const review = (await s.api.approvals.pending()).find((r) => r.adapterId === 'example')
+      expect(review).toMatchObject({ from: null, to: { hash: asked.adapterHash }, origin: 'draft' })
+      expect(s.endpoint.caller?.listTools().some((t) => t.adapterId === 'example')).toBe(false)
+      await s.api.approvals.approve('example', asked.adapterHash)
+      expect((await authoring.getDraft(viewer, false, draft.draftId)).draft.status).toBe('approved')
+      expect(s.endpoint.caller?.listTools().some((t) => t.adapterId === 'example')).toBe(true)
     })
   })
 })

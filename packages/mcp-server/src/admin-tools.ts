@@ -329,7 +329,7 @@ export interface AdminAccess {
   readonly seeValet: boolean
   /** "All agents' activity": other agents' calls, their inputs and their audit records too. */
   readonly allActivity: boolean
-  /** "Ask for changes": the write tools (admin-write.ts). Absent means no. */
+  /** "Ask for changes": the write tools (admin-write.ts) and the authoring tools. Absent means no. */
   readonly askForChanges?: boolean
   /** The person's name for the app, for the refusal sentence. */
   readonly name: string

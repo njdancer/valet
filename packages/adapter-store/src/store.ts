@@ -213,6 +213,22 @@ export class AdapterStore {
     })
   }
 
+  /**
+   * Removes one stored version that isn't active: a draft that was staged for approval and then
+   * declined, withdrawn or expired. The caller decides it was stored only for that request.
+   * Returns false if there was nothing to remove. Throws StoreError('invalid') for the active one.
+   */
+  discard(id: string, hash: string): Promise<boolean> {
+    return this.serial(async () => {
+      const current = await this.state(id)
+      if (current === null || !current.versions.some((v) => v.hash === hash)) return false
+      if (current.active === hash) throw new StoreError('invalid', 'the active version')
+      await this.writeState(id, { ...current, versions: current.versions.filter((v) => v.hash !== hash) })
+      await rm(join(this.dir, id, `${hash}.json`), { force: true })
+      return true
+    })
+  }
+
   private async writeState(id: string, state: AdapterState): Promise<void> {
     await writeFileAtomic(
       join(this.dir, id, 'state.json'),
