@@ -380,3 +380,16 @@ describe('signed pairing challenge (CR-11)', () => {
     ).toBe(true)
   })
 })
+
+describe('login-step and probe permission lines', () => {
+  it('accepts the two new areas', async () => {
+    const { manifestPermissionChangeSchema, STOP_STEPS } = await import('../src/permission-change')
+    expect(STOP_STEPS).toEqual(['needsUser', 'fail', 'assertLoggedIn'])
+    for (const line of [
+      { area: 'auth-steps', change: 'removed', items: ['assertLoggedIn'], risk: 'high' },
+      { area: 'probe', change: 'widened', items: ['cookie sid → cookie session'], risk: 'high' },
+    ]) {
+      expect(manifestPermissionChangeSchema.safeParse(line).success).toBe(true)
+    }
+  })
+})
