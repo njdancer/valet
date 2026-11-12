@@ -176,9 +176,17 @@ test('rolling back from the Sites page brings the approved built-in back, pinned
       return [adapter?.hash, adapter?.approval]
     })
     .toEqual([builtinHash, 'approved'])
-  const state = storedState('wikipedia')
-  expect(state.active).toBe(builtinHash)
-  expect(state.pinned).toBe(true)
+  // The state file is written after the in-memory swap, so wait for it too rather than reading it once.
+  await expect
+    .poll(() => {
+      try {
+        const state = storedState('wikipedia')
+        return [state.active, state.pinned]
+      } catch {
+        return null // caught mid-write
+      }
+    })
+    .toEqual([builtinHash, true])
   expect(
     adapterEvents()
       .filter((e) => e.adapterId === 'wikipedia')
