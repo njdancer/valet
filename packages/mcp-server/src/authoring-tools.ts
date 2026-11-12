@@ -149,10 +149,18 @@ export const submitReportSchema = z.object({
 
 export const deletedSchema = z.object({ draftId: z.string(), deleted: z.boolean() })
 
-/** A page as the scratch browser read it. Every string from the site sits under `fromSite`. */
+/** A string the site wrote: data for the agent, never instructions. */
+const fromSite = z.object({ fromSite: z.string() })
+
+/**
+ * A page as the scratch browser read it. Every string the site wrote sits under a `fromSite` key;
+ * the fields outside one are Valet's own (refs) or one of a fixed set of names (tags, roles, input
+ * types), so injected text can only ever arrive marked as the site's.
+ */
 export const browserViewSchema = z.object({
-  url: z.string(),
-  title: z.object({ fromSite: z.string() }),
+  /** Where the page is now, scrubbed: identifier-like path segments as :param, query values as types. */
+  url: fromSite,
+  title: fromSite,
   nodes: z.array(
     z.object({
       ref: z.string(),
@@ -160,7 +168,7 @@ export const browserViewSchema = z.object({
       tag: z.string(),
       role: z.string().nullable(),
       fromSite: z.string(),
-      href: z.string().nullable(),
+      href: fromSite.nullable(),
       inputType: z.string().nullable(),
     }),
   ),
@@ -172,8 +180,8 @@ export const browserQuerySchema = z.object({
   matches: z.array(
     z.object({
       tag: z.string(),
-      id: z.string().nullable(),
-      classes: z.string(),
+      id: fromSite.nullable(),
+      classes: fromSite,
       fromSite: z.string(),
       visible: z.boolean(),
     }),
@@ -186,7 +194,7 @@ export const networkLogSchema = z.object({
       seq: z.number().int(),
       method: z.string(),
       /** Scrubbed: identifier-like path segments as :param, query values as their type and length. */
-      url: z.string(),
+      url: fromSite,
       resourceType: z.string(),
       status: z.number().int(),
       mimeType: z.string().nullable(),
@@ -196,7 +204,7 @@ export const networkLogSchema = z.object({
 
 export const networkBodySchema = z.object({
   seq: z.number().int(),
-  url: z.string(),
+  url: fromSite,
   mimeType: z.string().nullable(),
   /** The body as JSON or text, cut; values that look like secrets replaced. */
   fromSite: z.unknown(),

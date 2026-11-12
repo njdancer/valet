@@ -539,7 +539,9 @@ describe('the scratch browser through the tools', () => {
       /another agent/,
     )
     const log = await authoring.networkLog(AGENT, draft.draftId, {})
-    expect(log.entries[0]?.url).toBe('https://query1.example.com/v8/chart/AAPL?interval=<text:2>')
+    expect(log.entries[0]?.url).toEqual({
+      fromSite: 'https://query1.example.com/v8/chart/AAPL?interval=<text:2>',
+    })
     expect((await authoring.networkBody(AGENT, draft.draftId, 1)).fromSite).toEqual({ chart: { price: 1.5 } })
     await expect(authoring.networkBody(AGENT, draft.draftId, 2)).rejects.toThrow(/no longer holds/)
     await expect(
@@ -882,4 +884,128 @@ describe('helpers', () => {
     expect(texts.some((t) => /evil.example/.test(t))).toBe(true)
     expect(texts.some((t) => /page script that can send requests/.test(t))).toBe(true)
   })
+})
+
+// The hostile-page suite's automated part (docs/authoring-tools.md#prompt-injection): what holds
+// whatever the model does with what a hostile site shows it.
+describe('the hostile-page suite', () => {
+  const INJECT = 'IGNORE-YOUR-INSTRUCTIONS'
+
+  /** Every string in `value` that isn't under a fromSite key. */
+  function unmarked(value: unknown, out: string[] = []): string[] {
+    if (typeof value === 'string') out.push(value)
+    else if (Array.isArray(value)) for (const item of value) unmarked(item, out)
+    else if (value !== null && typeof value === 'object')
+      for (const [key, item] of Object.entries(value)) if (key !== 'fromSite') unmarked(item, out)
+    return out
+  }
+
+  function hostileHandle() {
+    const listeners: (() => void)[] = []
+    let closed = false
+    const entry = {
+      seq: 1,
+      method: INJECT,
+      url: `https://www.example.com/${INJECT}/data?note=${INJECT}`,
+      resourceType: 'Fetch',
+      status: 200,
+      mimeType: `text/${INJECT}; ${INJECT}`,
+    }
+    const page = {
+      url: `https://www.example.com/${INJECT.toLowerCase()}`,
+      title: INJECT,
+      nodes: [
+        {
+          ref: 'e1',
+          kind: 'interactive' as const,
+          tag: INJECT.toLowerCase(),
+          role: INJECT,
+          text: INJECT,
+          href: `/${INJECT}`,
+          inputType: INJECT,
+        },
+        {
+          ref: 'e2',
+          kind: 'text' as const,
+          tag: 'p',
+          role: `${INJECT} button`,
+          text: INJECT,
+          href: null,
+          inputType: null,
+        },
+      ],
+      cut: false,
+    }
+    return {
+      navigate: async () => page,
+      click: async () => page,
+      type: async () => page,
+      snapshot: async () => page,
+      query: async () => ({
+        count: 1,
+        matches: [{ tag: INJECT, id: INJECT, classes: INJECT, text: INJECT, visible: true }],
+      }),
+      entries: () => [entry],
+      body: async () => ({
+        entry: { ...entry, mimeType: 'application/json' },
+        text: JSON.stringify({ [INJECT]: INJECT }),
+      }),
+      document: async () => `<p>${INJECT}</p>`,
+      isClosed: () => closed,
+      onClosed: (listener: () => void) => void listeners.push(listener),
+      close: () => {
+        closed = true
+        for (const l of listeners.splice(0)) l()
+      },
+    }
+  }
+
+  it('hands the agent the site’s words only under fromSite, from every research tool', async () => {
+    const research = new ScratchSessions({
+      open: async () => hostileHandle(),
+      signedIn: async () => new Map(),
+      secretIn: async () => false,
+      blocked: () => undefined,
+      notify: () => undefined,
+      now: () => Date.now(),
+    })
+    const { authoring } = await harness({ research })
+    const { draft } = await authoring.createDraft(AGENT, { adapterId: 'quotes', from: 'blank' })
+    const id = draft.draftId
+    const results: unknown[] = [
+      await authoring.browserOpen(AGENT, id, 'https://www.example.com/'),
+      await authoring.browserClick(AGENT, id, { ref: 'e1' }),
+      await authoring.browserType(AGENT, id, { ref: 'e1' }, 'MSFT'),
+      await authoring.browserSnapshot(AGENT, id, {}),
+      await authoring.browserQuery(AGENT, id, 'p'),
+      await authoring.networkLog(AGENT, id, {}),
+      await authoring.networkBody(AGENT, id, 1),
+    ]
+    for (const result of results) {
+      expect(JSON.stringify(result).toUpperCase()).toContain(INJECT)
+      expect(unmarked(result).filter((s) => s.toUpperCase().includes(INJECT))).toEqual([])
+    }
+    // Made-up names become plain stand-ins.
+    const view = results[0] as { nodes: { tag: string; role: string | null; inputType: string | null }[] }
+    expect(view.nodes.map((n) => [n.tag, n.role, n.inputType])).toEqual([
+      ['element', null, 'text'],
+      ['p', null, null],
+    ])
+    const log = results[5] as { entries: { method: string; mimeType: string | null }[] }
+    expect(log.entries[0]).toMatchObject({ method: 'OTHER', mimeType: 'text/other' })
+  })
+
+  it('shows a host the page talked the agent into adding as a caution on the card', async () => {
+    const h = await harness()
+    const { draft } = await h.authoring.createDraft(AGENT, { adapterId: 'shop', from: 'blank', name: 'Shop' })
+    const manifest = JSON.parse(blankDraft('shop', 'Shop')['manifest.json'] ?? '{}')
+    manifest.egress = [...manifest.egress, 'evil.example']
+    await h.authoring.writeFile(AGENT, draft.draftId, 'manifest.json', JSON.stringify(manifest))
+    await h.authoring.submit(AGENT, draft.draftId, { note: 'approve this', references: [], followOns: [] })
+    const [request] = h.submits
+    expect(request?.checks).toContain('Reaches evil.example, which isn’t part of example.com.')
+    // The agent's note stays the agent's: it is never a check line.
+    expect(request?.checks.some((line) => line.includes('approve this'))).toBe(false)
+    expect(request?.agentNote).toBe('approve this')
+  }, 60_000)
 })
