@@ -1,16 +1,17 @@
 // The runtime's ConfirmationPrompt, answered in the app's own floating panel and never by an MCP
 // client. Everything on the panel but the adapter's note is the runtime's own knowledge.
 //
-// An approval counts only when:
-// - it comes from the confirmation window opened for this very request, not another confirmation
-//   panel (decline is accepted from any app window);
-// - the window has been shown, and CONFIRM_ARM_MS have passed since it was last shown or focused,
-//   so a click already on its way in another app can't land on Approve;
-// - the request is still pending and hasn't expired. Unanswered, it declines itself at expiry.
+// Each confirmation is also a signed request of the approval broker (an `irreversible-call`, never
+// remembered), so a click alone never approves anything (docs/approval-broker.md#approving-at-the-mac):
+// - Approve is accepted only from the confirmation window opened for this very request, and all it
+//   does is raise the OS's Touch ID prompt; the approval counts once the Mac's approval key signed
+//   it, which needs the person's finger. A paired phone may approve it the same way.
+// - Decline is accepted from any app window, and needs nothing: it only tightens.
+// - Unanswered, it declines itself at expiry, and its request is withdrawn.
 
 import { type AdapterManifest, unlockedBy } from '@valet/core'
 import type { ConfirmationAnswer, ConfirmationPrompt, ConfirmationRequest } from '@valet/runtime'
-import { CONFIRM_ARM_MS, type ConfirmationItem, type PreviewPart } from '../../shared/api'
+import type { ConfirmationItem, PreviewPart } from '../../shared/api'
 import { shownTransport } from './clients'
 import type { AppWindow } from './ipc'
 import { previewParts } from './run-memory'
@@ -26,7 +27,18 @@ export interface Timers {
   clearTimeout(handle: unknown): void
 }
 
+/** The approval broker's side of a confirmation (service.ts wires it). */
+export interface ConfirmationSigning {
+  /** Raises the signed request; its id and ref, or null if it can't be made (the call is declined). */
+  open(item: ConfirmationItem): Promise<{ readonly requestId: string; readonly ref: string } | null>
+  /** Shows the Touch ID prompt for it. 'approved' once the decision is signed and applied. */
+  approve(requestId: string): Promise<'approved' | 'cancelled' | 'refused'>
+  /** Withdraws it: the confirmation was declined, timed out or cancelled. */
+  withdraw(requestId: string): void
+}
+
 export interface ConfirmationBrokerOptions {
+  readonly signing: ConfirmationSigning
   readonly adapter: (adapterId: string) => ConfirmationAdapter | null
   /** The client's input as it sent it. */
   readonly call: (callId: string) => { readonly input: readonly PreviewPart[] } | null
@@ -45,9 +57,12 @@ export interface ConfirmationBrokerOptions {
 }
 
 interface Pending {
-  readonly item: ConfirmationItem
+  item: ConfirmationItem
   readonly resolve: (answer: ConfirmationAnswer) => void
-  armedAt: number | null
+  /** The broker's request, once made. Approve is refused until then. */
+  requestId: string | null
+  /** How it ended, once it did: what the panel is told after a Touch ID prompt. */
+  answer: ConfirmationAnswer | null
   readonly timer: unknown
 }
 
@@ -102,13 +117,16 @@ export class ConfirmationBroker implements ConfirmationPrompt {
         : request.requests.map(({ method, path, purpose }) => ({ method, path, purpose })),
       input: irreversible ? previewParts(request.input ?? {}).parts : (call?.input ?? []),
       adapterNote: irreversible ? null : request.note,
+      ref: null,
     }
     return new Promise<ConfirmationAnswer>((resolve) => {
       const settle = (answer: ConfirmationAnswer) => {
         const entry = this.pending.get(id)
         if (entry === undefined) return
         this.pending.delete(id)
+        entry.answer = answer
         this.options.timers.clearTimeout(entry.timer)
+        if (entry.requestId !== null && answer !== 'approved') this.options.signing.withdraw(entry.requestId)
         signal.removeEventListener('abort', onAbort)
         this.options.close(id)
         // The runtime's own deadline aborts the prompt at the same moment ours fires; a cancelled
@@ -125,10 +143,21 @@ export class ConfirmationBroker implements ConfirmationPrompt {
       }
       const onAbort = () => settle('timed-out')
       const timer = this.options.timers.setTimeout(() => settle('timed-out'), this.options.timeoutMs)
-      this.pending.set(id, { item, resolve: settle, armedAt: null, timer })
+      this.pending.set(id, { item, resolve: settle, requestId: null, answer: null, timer })
       signal.addEventListener('abort', onAbort, { once: true })
       this.options.onChange()
       this.options.show(id)
+      this.options.signing.open(item).then(
+        (opened) => {
+          const entry = this.pending.get(id)
+          if (opened === null) return settle('declined')
+          if (entry === undefined) return this.options.signing.withdraw(opened.requestId)
+          entry.requestId = opened.requestId
+          entry.item = { ...entry.item, ref: opened.ref }
+          this.options.onChange()
+        },
+        () => settle('declined'),
+      )
     })
   }
 
@@ -140,27 +169,48 @@ export class ConfirmationBroker implements ConfirmationPrompt {
     return this.pending.has(id)
   }
 
-  /** The confirmation window was shown or regained focus: approvals wait CONFIRM_ARM_MS again. */
-  armed(id: string): void {
-    const entry = this.pending.get(id)
-    if (entry !== undefined) entry.armedAt = this.options.now()
+  /** Whether this confirmation still waits, with its signed request made: an approval may apply. */
+  waiting(id: string): boolean {
+    return (this.pending.get(id)?.requestId ?? null) !== null
   }
 
-  /** Throws ConfirmationRefused for anything but a valid answer to a pending request. */
-  answer(id: string, approved: boolean, from: AppWindow): void {
+  /**
+   * A signed approval of this confirmation's own request was applied: the call goes ahead. False if
+   * it no longer waits (it timed out between the check and now).
+   */
+  approvedById(id: string): boolean {
+    const entry = this.pending.get(id)
+    if (entry === undefined || entry.requestId === null) return false
+    entry.resolve('approved')
+    return true
+  }
+
+  /**
+   * The panel's answer. A decline settles it at once. An approve only raises the Touch ID prompt,
+   * and only from the panel opened for this request; it resolves once the person answered that:
+   * true if approved, false if they cancelled the prompt.
+   * Throws ConfirmationRefused for anything but a valid answer to a pending request.
+   */
+  async answer(id: string, approved: boolean, from: AppWindow): Promise<boolean> {
     const entry = this.pending.get(id)
     if (entry === undefined) throw new ConfirmationRefused()
-    const now = this.options.now()
-    if (now >= Date.parse(entry.item.expiresAt)) {
+    if (this.options.now() >= Date.parse(entry.item.expiresAt)) {
       entry.resolve('timed-out')
       throw new ConfirmationRefused()
     }
-    if (approved) {
-      // With two pending, panel A must not approve B, which the person never saw armed.
-      if (from.role !== 'confirmation' || from.shows !== id) throw new ConfirmationRefused()
-      if (entry.armedAt === null || now - entry.armedAt < CONFIRM_ARM_MS) throw new ConfirmationRefused()
+    if (!approved) {
+      entry.resolve('declined')
+      return true
     }
-    entry.resolve(approved ? 'approved' : 'declined')
+    // With two pending, panel A must not approve B, which the person never saw.
+    if (from.role !== 'confirmation' || from.shows !== id) throw new ConfirmationRefused()
+    if (entry.requestId === null) throw new ConfirmationRefused()
+    const outcome = await this.options.signing.approve(entry.requestId)
+    if (outcome === 'refused') throw new ConfirmationRefused()
+    if (outcome === 'cancelled') return false
+    // Signed, but it may have run out while the prompt was open: then the call was not approved.
+    if (entry.answer !== 'approved') throw new ConfirmationRefused()
+    return true
   }
 
   /** Declines everything still waiting, e.g. on quit. */

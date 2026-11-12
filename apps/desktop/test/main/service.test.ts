@@ -54,6 +54,12 @@ import { inMemoryToolProcess } from '@valet/runtime/in-context'
 import { buildToolLibrary } from '@valet/runtime/tool-script'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
+import {
+  FileAnchor,
+  type MacApprovalKeys,
+  SoftwareSigner,
+  softwareKeysAt,
+} from '../../src/main/core/approvals'
 import type { ClientRegistry } from '../../src/main/core/clients'
 import { dataPaths } from '../../src/main/core/constants'
 import { type Credentials, disabledOtpReader } from '../../src/main/core/credentials'
@@ -65,7 +71,6 @@ import type { RemoteAccess } from '../../src/main/core/remote'
 import { AppService, fillSelector, type ServiceDeps } from '../../src/main/core/service'
 import { disabledUpdates, type UpdatesHooks, type UpdatesPort } from '../../src/main/core/updates'
 import type { AppEvent, ConfirmationItem, HashRoute } from '../../src/shared/api'
-import { CONFIRM_ARM_MS } from '../../src/shared/api'
 import {
   FakeAuthPage,
   FakeDriver,
@@ -104,6 +109,8 @@ async function setup(
     leftovers?: readonly string[]
     /** Timers the test fires by hand; real ones by default. */
     timers?: ManualTimers
+    /** The Mac's approval keys; software keys whose Touch ID `presence` answers, by default. */
+    approvalKeys?: MacApprovalKeys
     /** Adapter packages in place of `definition` (docs/adapter-packages.md). */
     packages?: ServiceDeps['packages']
     toolProcess?: ToolProcessFactory
@@ -117,6 +124,16 @@ async function setup(
     writeFileSync(paths.breakers, JSON.stringify(options.breakers))
   }
   let now = Date.parse('2026-11-07T00:00:00.000Z')
+  // The person's finger on Touch ID: each prompt's reason, and whether they answered it.
+  const presence = { answer: true, prompts: [] as string[] }
+  // Kept in the test's folder, as a dev build keeps them: a restart on the same folder is the same Mac.
+  const signer = new SoftwareSigner(
+    (reason) => {
+      presence.prompts.push(reason)
+      return presence.answer
+    },
+    await softwareKeysAt(join(dir, 'approval-keys.json')),
+  )
   const driver = new FakeDriver()
   const adapter = builtinAdapter(options.definition ?? shopDefinition(), SHOP_FILES)
   const events: AppEvent[] = []
@@ -174,6 +191,12 @@ async function setup(
       return driver
     },
     credentials: options.credentials ?? testCredentials(disabledOtpReader),
+    approvalKeys: options.approvalKeys ?? {
+      signer,
+      anchor: new FileAnchor(join(dir, 'anchor.json')),
+      kind: 'software',
+      forget: async () => {},
+    },
     startEndpoint: async (caller, clients, onSessionsChanged, admin): Promise<SessionReportingEndpoint> => {
       endpoint.caller = caller
       endpoint.admin = admin
@@ -266,6 +289,7 @@ async function setup(
     paths,
     dir,
     call,
+    presence,
     advance: (ms: number) => {
       now += ms
     },
@@ -809,13 +833,16 @@ describe('tool calls', () => {
     expect(JSON.stringify(events)).not.toContain('call_nope')
   })
 
-  it('asks the person in the confirmation panel, and only an armed approval from it counts', async () => {
+  it('asks the person in the confirmation panel, and only Touch ID raised from that panel approves', async () => {
     const s = await approved()
     const pending = s.call('add', { item: 'milk' }, 'Claude Code', 'call_add', { transport: 'stdio-bridge' })
-    for (let i = 0; i < 50 && s.ui.shownConfirmations.length === 0; i++)
-      await new Promise((r) => setTimeout(r, 10))
+    await expect.poll(() => s.ui.shownConfirmations.length).toBe(1)
     const [id] = s.ui.shownConfirmations
-    const item = (await s.api.attention.list()).find((i): i is ConfirmationItem => i.kind === 'confirmation')
+    const confirmation = async () =>
+      (await s.api.attention.list()).find((i): i is ConfirmationItem => i.kind === 'confirmation')
+    // The signed request behind it is made at once; its ref is what the Touch ID prompt names.
+    await expect.poll(async () => (await confirmation())?.ref).toMatch(/^[0-9A-F]{4}$/)
+    const item = await confirmation()
     expect(item).toMatchObject({
       id,
       tool: 'add',
@@ -825,24 +852,27 @@ describe('tool calls', () => {
     })
     expect(item?.approvedAt).toBe('2026-11-07T00:00:00.000Z')
     expect(JSON.stringify(item?.input)).toContain('milk')
-    // Not yet shown, from the wrong window, and too soon after showing: all refused.
-    await expect(
-      s.api.answerConfirmation(id as string, true, { role: 'confirmation', shows: id as string }),
-    ).rejects.toThrow()
-    s.service.confirmationArmed(id as string)
+    // From the wrong window, or a panel opened for some other request: refused, and no prompt.
     await expect(
       s.api.answerConfirmation(id as string, true, { role: 'control', shows: null }),
     ).rejects.toThrow()
     await expect(
-      s.api.answerConfirmation(id as string, true, { role: 'confirmation', shows: id as string }),
-    ).rejects.toThrow()
-    s.advance(CONFIRM_ARM_MS)
-    // Armed, but from a confirmation panel opened for some other request.
-    await expect(
       s.api.answerConfirmation(id as string, true, { role: 'confirmation', shows: 'cf_other' }),
     ).rejects.toThrow()
+    expect(s.presence.prompts).toEqual([])
+    // A click from its own panel only raises Touch ID: cancelled there, nothing is approved.
+    s.presence.answer = false
+    await expect(
+      s.api.answerConfirmation(id as string, true, { role: 'confirmation', shows: id as string }),
+    ).resolves.toBe(false)
+    expect(s.presence.prompts).toEqual([
+      `confirm something that can’t be undone (request ${item?.ref})`.replace('’', "'"),
+    ])
     expect(s.service.confirmationPending(id as string)).toBe(true)
-    await s.api.answerConfirmation(id as string, true, { role: 'confirmation', shows: id as string })
+    s.presence.answer = true
+    await expect(
+      s.api.answerConfirmation(id as string, true, { role: 'confirmation', shows: id as string }),
+    ).resolves.toBe(true)
     expect(await pending).toEqual({ status: 'ok', output: { added: true } })
     expect(s.ui.closedConfirmations).toEqual([id])
     const records = await s.api.audit.page({ category: 'confirmations' })
@@ -851,6 +881,12 @@ describe('tool calls', () => {
       answer: 'approved',
       client: 'Claude Code',
     })
+    // The approval itself is in the log, signed by this Mac.
+    const events = (await s.api.audit.page({})).records.map((r) => r.event)
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'approval-requested', kind: 'irreversible-call' }),
+    )
+    expect(events).toContainEqual(expect.objectContaining({ type: 'approval-answered', answer: 'approved' }))
   })
 
   it('takes a decline from any window', async () => {
@@ -872,9 +908,12 @@ describe('tool calls', () => {
     await s.api.openConfirmation(id)
     expect(s.ui.focusedConfirmations).toEqual([id])
     expect(s.ui.panels.length).toBe(panels)
-    // Approved from that panel once armed, as the tray leads the person there.
-    s.service.confirmationArmed(id)
-    s.advance(CONFIRM_ARM_MS)
+    // Approved from that panel, as the tray leads the person there.
+    await expect
+      .poll(async () =>
+        (await s.api.attention.list()).some((i) => i.kind === 'confirmation' && i.ref !== null),
+      )
+      .toBe(true)
     await s.api.answerConfirmation(id, true, { role: 'confirmation', shows: id })
     expect(await pending).toEqual({ status: 'ok', output: { added: true } })
     // Answered, it has no panel to bring back.
@@ -2255,13 +2294,72 @@ describe('lock down (IA 2.10)', () => {
     const again = await setup({ dir: s.dir })
     expect((await again.api.app.status()).lockedDown).toBe(true)
     expect((await again.call('echo', { text: 'x' })).status).toBe('failed')
+    // Unlocking asks for Touch ID; cancelled there, Valet stays locked and nothing waits.
+    again.presence.answer = false
     await again.api.app.setLockedDown(false)
+    expect(again.presence.prompts).toEqual([expect.stringMatching(/^resume Valet \(request [0-9A-F]{4}\)$/)])
+    expect((await again.api.app.status()).lockedDown).toBe(true)
+    expect((await again.call('echo', { text: 'x' })).status).toBe('failed')
+    again.presence.answer = true
+    await again.api.app.setLockedDown(false)
+    expect((await again.api.app.status()).lockedDown).toBe(false)
     expect(await again.call('echo', { text: 'x' })).toEqual({ status: 'ok', output: { text: 'x' } })
     expect((await again.api.audit.page({})).records.map((r) => r.event)).toContainEqual({
       type: 'lock-down',
       locked: false,
       revokedClients: 0,
     })
+  })
+
+  it('opens locked down when the approvals ledger was changed outside Valet, until Touch ID resumes', async () => {
+    const s = await approved()
+    await s.api.app.setLockedDown(true)
+    s.presence.answer = true
+    await s.api.app.setLockedDown(false)
+    await s.service.stop()
+    // Something with write access to the data folder rewrites the ledger: its anchor no longer matches.
+    const text = readFileSync(s.paths.trusted, 'utf8')
+    writeFileSync(s.paths.trusted, text.replace('"lockdown":false', '"lockdown":false '))
+    const again = await setup({ dir: s.dir })
+    expect((await again.api.app.status()).lockedDown).toBe(true)
+    expect((await again.call('echo', { text: 'x' })).status).toBe('failed')
+    const events = (await again.api.audit.page({})).records.map((r) => r.event)
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'store-refused', reason: 'anchor-mismatch' }),
+    )
+    await again.api.app.setLockedDown(false)
+    expect((await again.api.app.status()).lockedDown).toBe(false)
+    await again.service.stop()
+    // The resume wrote a fresh ledger and anchored it: the next launch trusts it.
+    const third = await setup({ dir: s.dir })
+    expect((await third.api.app.status()).lockedDown).toBe(false)
+  })
+
+  it('keeps the ledger’s lockdown when the Mac’s keys can’t be read, and asks the keys again to unlock', async () => {
+    const s = await approved()
+    await s.api.app.setLockedDown(true)
+    await s.service.stop()
+    // Only the ledger says locked (a phone's lockdown would be just that).
+    writeFileSync(s.paths.appState, JSON.stringify({ lockedDown: false, pausedSites: [] }))
+    const signer = new SoftwareSigner(() => true, await softwareKeysAt(join(s.dir, 'approval-keys.json')))
+    let keysWork = false
+    const again = await setup({
+      dir: s.dir,
+      approvalKeys: {
+        signer: {
+          keys: () => (keysWork ? signer.keys() : Promise.reject(new Error('helper timed out'))),
+          signDecision: (request, payload) => signer.signDecision(request, payload),
+        },
+        anchor: new FileAnchor(join(s.dir, 'anchor.json')),
+        kind: 'software',
+        forget: async () => {},
+      },
+    })
+    expect((await again.api.app.status()).lockedDown).toBe(true)
+    expect((await again.call('echo', { text: 'x' })).status).toBe('failed')
+    keysWork = true
+    await again.api.app.setLockedDown(false)
+    expect((await again.api.app.status()).lockedDown).toBe(false)
   })
 
   it('reads a damaged state file as locked down', async () => {

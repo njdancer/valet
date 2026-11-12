@@ -1,18 +1,20 @@
 // @vitest-environment node
-// The confirmation broker: only the confirmation window approves, only once armed, only before
-// expiry; anything else declines or is refused.
+// The confirmation broker: each confirmation is a signed request; only its own window may raise the
+// Touch ID prompt for it, a click alone approves nothing, and anything else declines or is refused.
 
 import { parseManifest } from '@valet/core'
 import type { ConfirmationRequest } from '@valet/runtime'
 import { describe, expect, it } from 'vitest'
 import { ConfirmationBroker, ConfirmationRefused } from '../../src/main/core/confirmations'
-import { CONFIRM_ARM_MS } from '../../src/shared/api'
 import { ManualTimers, SHOP } from './fixtures'
 
 const HASH = 'd'.repeat(64)
 const TIMEOUT = 120_000
 
-function setup(ids: readonly string[] = ['cf_1']) {
+function setup(
+  ids: readonly string[] = ['cf_1'],
+  options: { opens?: boolean; prompt?: 'approved' | 'cancelled' | 'refused' } = {},
+) {
   let now = 1_000_000
   let asked = 0
   const timers = new ManualTimers()
@@ -38,7 +40,30 @@ function setup(ids: readonly string[] = ['cf_1']) {
       },
     ],
   })
-  const broker = new ConfirmationBroker({
+  const signing = {
+    opened: [] as string[],
+    prompts: [] as string[],
+    withdrawn: [] as string[],
+    prompt: options.prompt ?? 'approved',
+  }
+  // The approval broker's stand-in: a request per confirmation; an approved prompt applies it.
+  const broker: ConfirmationBroker = new ConfirmationBroker({
+    signing: {
+      open: async (item) => {
+        if (options.opens === false) return null
+        signing.opened.push(item.id)
+        return { requestId: `rq_${item.id}`, ref: 'AB12' }
+      },
+      approve: async (requestId) => {
+        signing.prompts.push(requestId)
+        if (signing.prompt === 'approved') {
+          const item = broker.list().find((i) => `rq_${i.id}` === requestId)
+          if (item !== undefined) broker.approvedById(item.id)
+        }
+        return signing.prompt
+      },
+      withdraw: (requestId) => void signing.withdrawn.push(requestId),
+    },
     adapter: (id) =>
       id === 'shop' ? { manifest, hash: HASH, approvedAt: '2026-11-07T00:00:00.000Z' } : null,
     call: (callId) => (callId === 'call1' ? { input: [{ kind: 'text', text: '{"item":"milk"}' }] } : null),
@@ -52,6 +77,7 @@ function setup(ids: readonly string[] = ['cf_1']) {
   })
   return {
     broker,
+    signing,
     timers,
     shown,
     closed,
@@ -75,10 +101,13 @@ const toolRequest: ConfirmationRequest = {
 }
 
 describe('ConfirmationBroker', () => {
-  it('shows a panel built from the runtime’s own knowledge, the adapter’s text only as a note', () => {
+  it('shows a panel built from the runtime’s own knowledge, the adapter’s text only as a note', async () => {
     const { broker, shown } = setup()
     void broker.ask(toolRequest, new AbortController().signal)
     expect(shown).toEqual(['cf_1'])
+    // The signed request's ref arrives once it's made; Approve waits for it.
+    expect(broker.list()[0]?.ref).toBeNull()
+    await settle()
     expect(broker.list()).toEqual([
       {
         kind: 'confirmation',
@@ -102,6 +131,7 @@ describe('ConfirmationBroker', () => {
         requests: [{ method: 'POST', path: '/api/cart', purpose: 'write' }],
         input: [{ kind: 'text', text: '{"item":"milk"}' }],
         adapterNote: 'Add milk? <b>Trust me</b>',
+        ref: 'AB12',
       },
     ])
   })
@@ -128,106 +158,151 @@ describe('ConfirmationBroker', () => {
     expect(item?.sideEffect).toBe('irreversible')
   })
 
-  it('approves from the confirmation window once armed for CONFIRM_ARM_MS', async () => {
-    const { broker, advance, closed } = setup()
+  it('approves only once the Touch ID prompt the panel raised was answered', async () => {
+    const { broker, signing, closed } = setup()
     const answer = broker.ask(toolRequest, new AbortController().signal)
-    broker.armed('cf_1')
-    advance(CONFIRM_ARM_MS)
-    broker.answer('cf_1', true, { role: 'confirmation', shows: 'cf_1' })
+    await settle()
+    await expect(broker.answer('cf_1', true, { role: 'confirmation', shows: 'cf_1' })).resolves.toBe(true)
+    expect(signing.prompts).toEqual(['rq_cf_1'])
     await expect(answer).resolves.toBe('approved')
     expect(closed).toEqual(['cf_1'])
     expect(broker.list()).toEqual([])
+    // An approved request isn't withdrawn: the broker closed it.
+    expect(signing.withdrawn).toEqual([])
   })
 
-  it('refuses an approval before the window was ever shown', () => {
-    const { broker, advance } = setup()
+  it('keeps waiting when the person cancels the prompt: the click alone approved nothing', async () => {
+    const { broker, signing } = setup(['cf_1'], { prompt: 'cancelled' })
     void broker.ask(toolRequest, new AbortController().signal)
-    advance(10_000)
-    expect(() => broker.answer('cf_1', true, { role: 'confirmation', shows: 'cf_1' })).toThrow(
+    await settle()
+    await expect(broker.answer('cf_1', true, { role: 'confirmation', shows: 'cf_1' })).resolves.toBe(false)
+    expect(broker.has('cf_1')).toBe(true)
+    signing.prompt = 'refused'
+    await expect(broker.answer('cf_1', true, { role: 'confirmation', shows: 'cf_1' })).rejects.toThrow(
       ConfirmationRefused,
     )
     expect(broker.has('cf_1')).toBe(true)
   })
 
-  it('refuses an approval within CONFIRM_ARM_MS of showing, and again after refocus', () => {
-    const { broker, advance } = setup()
+  it('refuses an approval before its signed request exists', async () => {
+    const { broker, signing } = setup()
     void broker.ask(toolRequest, new AbortController().signal)
-    broker.armed('cf_1')
-    advance(CONFIRM_ARM_MS - 1)
-    expect(() => broker.answer('cf_1', true, { role: 'confirmation', shows: 'cf_1' })).toThrow(
+    await expect(broker.answer('cf_1', true, { role: 'confirmation', shows: 'cf_1' })).rejects.toThrow(
       ConfirmationRefused,
     )
-    advance(1)
-    broker.armed('cf_1') // the window regained focus
-    advance(CONFIRM_ARM_MS - 1)
-    expect(() => broker.answer('cf_1', true, { role: 'confirmation', shows: 'cf_1' })).toThrow(
-      ConfirmationRefused,
-    )
+    expect(signing.prompts).toEqual([])
+    expect(broker.has('cf_1')).toBe(true)
   })
 
-  it.each(['control', 'tray', 'needs-user'] as const)('refuses an approval from the %s window', (role) => {
-    const { broker, advance } = setup()
-    void broker.ask(toolRequest, new AbortController().signal)
-    broker.armed('cf_1')
-    advance(CONFIRM_ARM_MS)
-    expect(() => broker.answer('cf_1', true, { role, shows: null })).toThrow(ConfirmationRefused)
+  it('declines at once when the signed request can’t be made', async () => {
+    const { broker } = setup(['cf_1'], { opens: false })
+    await expect(broker.ask(toolRequest, new AbortController().signal)).resolves.toBe('declined')
   })
+
+  it.each(['control', 'tray', 'needs-user'] as const)(
+    'refuses an approval from the %s window',
+    async (role) => {
+      const { broker, signing } = setup()
+      void broker.ask(toolRequest, new AbortController().signal)
+      await settle()
+      await expect(broker.answer('cf_1', true, { role, shows: null })).rejects.toThrow(ConfirmationRefused)
+      expect(signing.prompts).toEqual([])
+    },
+  )
 
   it('refuses an approval from the panel of another pending confirmation', async () => {
-    const { broker, advance, shown } = setup(['cf_a', 'cf_b'])
+    const { broker, shown, signing } = setup(['cf_a', 'cf_b'])
     const a = broker.ask(toolRequest, new AbortController().signal)
-    const b = broker.ask(toolRequest, new AbortController().signal)
+    const b = broker.ask({ ...toolRequest, callId: 'call2' }, new AbortController().signal)
     expect(shown).toEqual(['cf_a', 'cf_b'])
-    broker.armed('cf_a')
-    broker.armed('cf_b')
-    advance(CONFIRM_ARM_MS)
-    // Panel A's renderer tries to approve B, which the person never saw armed in A.
-    expect(() => broker.answer('cf_b', true, { role: 'confirmation', shows: 'cf_a' })).toThrow(
+    await settle()
+    // Panel A's renderer tries to approve B, which the person never saw.
+    await expect(broker.answer('cf_b', true, { role: 'confirmation', shows: 'cf_a' })).rejects.toThrow(
       ConfirmationRefused,
     )
-    expect(() => broker.answer('cf_b', true, { role: 'confirmation', shows: null })).toThrow(
+    await expect(broker.answer('cf_b', true, { role: 'confirmation', shows: null })).rejects.toThrow(
       ConfirmationRefused,
     )
+    expect(signing.prompts).toEqual([])
     expect(broker.has('cf_b')).toBe(true)
     // Each panel answers its own.
-    broker.answer('cf_a', true, { role: 'confirmation', shows: 'cf_a' })
-    broker.answer('cf_b', true, { role: 'confirmation', shows: 'cf_b' })
+    await broker.answer('cf_a', true, { role: 'confirmation', shows: 'cf_a' })
+    await broker.answer('cf_b', true, { role: 'confirmation', shows: 'cf_b' })
     await expect(a).resolves.toBe('approved')
     await expect(b).resolves.toBe('approved')
   })
 
-  it('takes a decline of another confirmation from a panel, as from any window', async () => {
-    const { broker } = setup(['cf_a', 'cf_b'])
+  it('takes a decline of another confirmation from a panel, as from any window, and withdraws it', async () => {
+    const { broker, signing } = setup(['cf_a', 'cf_b'])
     void broker.ask(toolRequest, new AbortController().signal)
     const b = broker.ask(toolRequest, new AbortController().signal)
-    broker.answer('cf_b', false, { role: 'confirmation', shows: 'cf_a' })
+    await settle()
+    await broker.answer('cf_b', false, { role: 'confirmation', shows: 'cf_a' })
     await expect(b).resolves.toBe('declined')
+    expect(signing.withdrawn).toEqual(['rq_cf_b'])
   })
 
   it('accepts a decline from any window, at once', async () => {
     const { broker } = setup()
     const answer = broker.ask(toolRequest, new AbortController().signal)
-    broker.answer('cf_1', false, { role: 'tray', shows: null })
+    await broker.answer('cf_1', false, { role: 'tray', shows: null })
     await expect(answer).resolves.toBe('declined')
   })
 
-  it('refuses an id that was answered or never existed', () => {
-    const { broker } = setup()
-    void broker.ask(toolRequest, new AbortController().signal)
-    broker.answer('cf_1', false, { role: 'control', shows: null })
-    expect(() => broker.answer('cf_1', false, { role: 'control', shows: null })).toThrow(ConfirmationRefused)
-    expect(() => broker.answer('cf_2', false, { role: 'control', shows: null })).toThrow(ConfirmationRefused)
+  it('applies a signed approval only to the question it was signed for, never another of the same call', async () => {
+    const { broker } = setup(['cf_a', 'cf_b'])
+    const a = broker.ask(toolRequest, new AbortController().signal)
+    const b = broker.ask(toolRequest, new AbortController().signal)
+    expect(broker.waiting('cf_b')).toBe(false)
+    await settle()
+    expect(broker.waiting('cf_b')).toBe(true)
+    expect(broker.approvedById('cf_nope')).toBe(false)
+    expect(broker.approvedById('cf_b')).toBe(true)
+    await expect(b).resolves.toBe('approved')
+    expect(broker.has('cf_a')).toBe(true)
+    expect(broker.approvedById('cf_b')).toBe(false)
+    await broker.answer('cf_a', false, { role: 'tray', shows: null })
+    await expect(a).resolves.toBe('declined')
   })
 
-  it('declines itself at expiry, and refuses an answer that arrives after it', async () => {
-    const { broker, timers, advance } = setup()
+  it('tells the panel it wasn’t approved when it ran out while Touch ID was open', async () => {
+    const { broker, signing, advance, timers } = setup()
     const answer = broker.ask(toolRequest, new AbortController().signal)
-    broker.armed('cf_1')
+    await settle()
+    signing.prompt = 'approved'
+    // The prompt is signed, but the confirmation timed out first: nothing applies it.
+    const original = broker.approvedById.bind(broker)
+    broker.approvedById = () => false
+    const pending = broker.answer('cf_1', true, { role: 'confirmation', shows: 'cf_1' })
     advance(TIMEOUT)
-    expect(() => broker.answer('cf_1', true, { role: 'confirmation', shows: 'cf_1' })).toThrow(
+    timers.fire()
+    await expect(pending).rejects.toThrow(ConfirmationRefused)
+    await expect(answer).resolves.toBe('timed-out')
+    broker.approvedById = original
+  })
+
+  it('refuses an id that was answered or never existed', async () => {
+    const { broker } = setup()
+    void broker.ask(toolRequest, new AbortController().signal)
+    await broker.answer('cf_1', false, { role: 'control', shows: null })
+    await expect(broker.answer('cf_1', false, { role: 'control', shows: null })).rejects.toThrow(
+      ConfirmationRefused,
+    )
+    await expect(broker.answer('cf_2', false, { role: 'control', shows: null })).rejects.toThrow(
+      ConfirmationRefused,
+    )
+  })
+
+  it('declines itself at expiry, withdraws its request, and refuses an answer that arrives after it', async () => {
+    const { broker, timers, advance, signing } = setup()
+    const answer = broker.ask(toolRequest, new AbortController().signal)
+    await settle()
+    advance(TIMEOUT)
+    await expect(broker.answer('cf_1', true, { role: 'confirmation', shows: 'cf_1' })).rejects.toThrow(
       ConfirmationRefused,
     )
     await expect(answer).resolves.toBe('timed-out')
+    expect(signing.withdrawn).toEqual(['rq_cf_1'])
     const second = broker.ask(toolRequest, new AbortController().signal)
     timers.fire()
     await expect(second).resolves.toBe('timed-out')
@@ -257,3 +332,8 @@ describe('ConfirmationBroker', () => {
     await expect(answer).resolves.toBe('declined')
   })
 })
+
+/** Lets the signed request's creation (a promise) land. */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 5; i++) await Promise.resolve()
+}

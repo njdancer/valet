@@ -43,6 +43,7 @@ const confirmation: ConfirmationItem = {
   requests: [],
   input: [{ kind: 'text', text: 'INPUT-TEXT' }],
   adapterNote: 'ADAPTER-NOTE',
+  ref: 'AB12',
 }
 
 const signIn: NeedsUserItem = {

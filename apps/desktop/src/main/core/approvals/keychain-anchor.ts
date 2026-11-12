@@ -9,15 +9,29 @@
 import { type AnchorState, anchorStateSchema, CredentialError, type StoreAnchor } from '@valet/core'
 import type { KeychainStore } from '@valet/credentials'
 
-const SERVICE = 'valet.anchor'
+/** The release build's anchors. A dev build keeps its own (`valet-dev.anchor`): it has its own data. */
+export const ANCHOR_SERVICE = 'valet.anchor'
 
 export class KeychainAnchor implements StoreAnchor {
-  constructor(private readonly keychain: KeychainStore) {}
+  constructor(
+    private readonly keychain: KeychainStore,
+    private readonly service: string = ANCHOR_SERVICE,
+  ) {}
+
+  /** Removes a store's anchor (a reset or an uninstall, after its file is gone). */
+  async forget(store: string): Promise<void> {
+    try {
+      await this.keychain.delete(this.service, store)
+    } catch (error) {
+      if (error instanceof CredentialError && error.failure === 'not-found') return
+      throw error
+    }
+  }
 
   async read(store: string): Promise<AnchorState | null> {
     let text: string
     try {
-      const secret = await this.keychain.read(SERVICE, store)
+      const secret = await this.keychain.read(this.service, store)
       try {
         text = secret.reveal((plaintext) => plaintext)
       } finally {
@@ -33,7 +47,7 @@ export class KeychainAnchor implements StoreAnchor {
   async write(store: string, state: AnchorState): Promise<void> {
     const valid = anchorStateSchema.parse(state)
     await this.keychain.write(
-      SERVICE,
+      this.service,
       store,
       Buffer.from(JSON.stringify(valid), 'utf8'),
       'Valet store anchor',
