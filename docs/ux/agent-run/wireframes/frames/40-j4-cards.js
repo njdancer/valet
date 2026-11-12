@@ -458,7 +458,7 @@
         where: 'This Mac',
         extra: P.banner(
           'info',
-          `<b>Waits for: ${K.link('Install "Gumleaf" for gumleaf.example')}</b><span>It can\'t be approved before the adapter is installed.</span>`,
+          `<b>Waits for: ${K.link('Install "Gumleaf" for gumleaf.example')}</b><span>It can't be approved before the adapter is installed.</span>`,
         ),
         risk: ['caution', 'Your password.', 'Gumleaf may type your password, only on login.gumleaf.example.'],
         rows: [['Uses', 'add', '1Password item "Gumleaf"']],
@@ -739,7 +739,7 @@
             { cols: '1.4fr 1.4fr auto' },
           ),
         )}
-        ${K.card('Fallbacks', `<div class="col">${K.check('On iPhone, offer "Use passcode instead" on neutral cards', true)}<span class="faint">Cards that widen access, connect an agent or spend money always need Face ID or Touch ID. On a Mac without Touch ID, the Mac account password. An accessibility exception for someone who can\'t use Face ID is for B to decide.</span></div>`)}
+        ${K.card('Fallbacks', `<div class="col">${K.check('On iPhone, offer "Use passcode instead" on neutral cards', true)}<span class="faint">Cards that widen access, connect an agent or spend money always need Face ID or Touch ID. On a Mac without Touch ID, the Mac account password. An accessibility exception for someone who can't use Face ID is for B to decide.</span></div>`)}
         ${K.card(
           'Request limits',
           K.kv([

@@ -19,7 +19,11 @@ export const SIGNING_DOMAINS = {
   approvalDecision: 'valet/approval-decision/v1',
   deviceRecord: 'valet/device-record/v1',
   relayAuth: 'valet/relay-auth/v1',
+  /** The Mac's approval key vouching for its relay transport key, once (no trust on first use). */
+  relayBinding: 'valet/relay-binding/v1',
   pairing: 'valet/pairing/v1',
+  /** The Mac vouching for the nonce it sent and the reply it accepted (H's CR-11). */
+  pairingChallenge: 'valet/pairing/v1 challenge',
 } as const
 export type SigningDomain = (typeof SIGNING_DOMAINS)[keyof typeof SIGNING_DOMAINS]
 

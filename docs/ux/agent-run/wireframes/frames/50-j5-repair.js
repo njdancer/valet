@@ -76,7 +76,7 @@
       window.WF.updateCard({
         extra: P.banner(
           'ok',
-          `<b>Approving closes repair R-4E1C.</b><span>Claude Code will see this the next time it checks Valet. A second agent\'s fix, if any, shows here as "2 fixes for R-4E1C" (R41).</span>`,
+          `<b>Approving closes repair R-4E1C.</b><span>Claude Code will see this the next time it checks Valet. A second agent's fix, if any, shows here as "2 fixes for R-4E1C" (R41).</span>`,
         ),
       }),
       { title: 'Needs you', right: '1 of 1', actions: P.approveBar() },

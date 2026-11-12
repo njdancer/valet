@@ -606,6 +606,11 @@ boundary.
   line with control and direction characters removed. A tool's title, an adapter's note or
   `confirm()` message, a client's reported name, tool input and page text never appear in one
   (**Enforced**): outside the app nothing attributes text to the adapter that wrote it.
+- The same rules cover notifications on a paired phone, which also have no actions: a tap opens
+  the card, and approving still needs Face ID in the app. The push the relay sees and Apple
+  delivers carries only one of two fixed lines, "Valet needs you" or "Something changed in Valet";
+  the card's own words reach the phone
+  sealed, through the relay's phone channel (`pushPayloadSchema`, **Contract**).
 
 ## Reset and uninstall
 
