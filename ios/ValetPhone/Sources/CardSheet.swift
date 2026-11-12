@@ -366,12 +366,12 @@ enum CardStateText {
   }
 }
 
-/// On iOS 26 a scroll view's top edge fades the content under the toolbar, which leaves the card's
-/// first line (kind, ref, deadline) faded at rest. A hard edge keeps it at full contrast.
+/// On iOS 26 a scroll view's edges fade the content under the toolbar and the action bar, which leaves the card's
+/// first and last lines faded at rest. Hard edges keep them at full contrast.
 private struct HardTopEdge: ViewModifier {
   func body(content: Content) -> some View {
     if #available(iOS 26.0, *) {
-      content.scrollEdgeEffectStyle(.hard, for: .top)
+      content.scrollEdgeEffectStyle(.hard, for: .all)
     } else {
       content
     }
