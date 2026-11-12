@@ -417,8 +417,10 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
     description:
       'Creates or replaces one file of your draft. Tool code may import only zod, @valet/core and its own ' +
       'files under src/. Cases go in test/<name>.json as {"cases":[{name, tool, input, fetch:[{method, url, ' +
-      'status, contentType, body: "fixtures/<file>" | {inline}}], expect: {output: {...}} | {error: {stage, ' +
-      'errorClass}}}]}: Valet runs each one in its sandbox against those responses only.',
+      'status, contentType, body: "fixtures/<file>" | {inline}}], pages: {"<https URL>": "fixtures/<file>.html"}, ' +
+      'expect: {output: {...}} | {error: {stage, errorClass}}}]}: Valet runs each one in its sandbox against ' +
+      'those responses only. A tool that uses the page (goto, extract, click...) needs pages: Valet serves them ' +
+      'in a browser of its own with their scripts off.',
     input: z.object({ draftId: draftIdInput, path: pathInput, content: z.string().max(1024 * 1024) }),
     output: writtenSchema,
     needs: 'ask',

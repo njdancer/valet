@@ -595,7 +595,10 @@ the none tier; this is the same call E made for reads, and is put to B.)
    they are now, the live trials, the files with Valet-recorded fixtures marked, Review when it
    waits, and Open draft folder; `mac-sites-drafts`, `mac-draft-page`) and the fixture browser
    (cases with pages) and `display.agentTests` (the agent's cases, counted on the signed request
-   apart from Valet's checks); still to come in 2b: the e2e over MCP against the built app.
+   apart from Valet's checks), and the e2e over MCP against the built app
+   (`apps/desktop/e2e/authoring.spec.ts`: a blank draft, a case with a hostile page run in the
+   fixture browser with nothing sent, the Mac's Drafts and draft page, submit, approve, the agent
+   reads the answer).
 3. **PR 3:** repair tickets and the reproduction check; signed-in sessions; private network; the
    hostile-page suite; the eval (an agent from a clean chat builds Yahoo Finance and a fake-login
    site's adapter, and repairs a broken one), run by a model through the MCP endpoint against the
