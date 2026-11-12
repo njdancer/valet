@@ -68,11 +68,13 @@ export function verifyDeviceRecord(signed: SignedText, macApprovalKey: string): 
 export const deviceRevocationSchema = z
   .object({
     deviceId: keyIdSchema,
+    macId: keyIdSchema,
     revokedAt: z.iso.datetime(),
     /** Which device the person revoked it from, or 'mac-ui' for the Mac's own window. */
     by: z.union([keyIdSchema, z.literal('mac-ui')]),
   })
   .strict()
+  .refine((r) => canRevokeDevice(r.deviceId, r.macId), 'the Mac itself can never be revoked')
 export type DeviceRevocation = z.infer<typeof deviceRevocationSchema>
 
 /**

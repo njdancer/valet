@@ -124,8 +124,8 @@ request carries:
 - **For an install:** the Mac's permission diff (`PermissionChange[]`, each with a risk), the
   source (draft, local folder or rollback), whether it replaces an adapter and inherits its
   signed-in session (`inheritsSession`), the references the agent says it read, and whether it
-  runs unsandboxed. The schema refuses an install whose `unsandboxed` flag disagrees with its
-  diff. Any critical line (unsandboxed, a `command` exception) makes the whole card Mac only.
+  runs unsandboxed. The Mac sets `unsandboxed` from the new manifest (and, before the sandbox ships, for
+  every adapter not built in), and the schema refuses a critical `sandbox-mode` line without it. Any critical line (unsandboxed, a `command` exception) makes the whole card Mac only.
 - The system's own Face ID or Touch ID prompt names the action in the app's words, so the last
   thing the person sees before signing is drawn by the OS.
 
@@ -229,8 +229,10 @@ and whose `state.json` decides nothing: what runs is what the approvals store ap
   mismatch, Valet goes into lockdown, treats that store as empty (so everything it would have
   allowed is off), tells the person, and audits it. Lockdown rather than "empty" alone because
   some stores also hold tightening records without evidence (a tool turned off); emptying those
-  would loosen. A write may not begin while another is uncommitted (`beginWrite` throws; a load
-  that finds the old file uses `abandonWrite`), and a failed commit is fatal for that change: the
+  would loosen. A write may not begin while another is uncommitted (`beginWrite` throws). A load
+  that finds the old file with a write begun (`interrupted`) can't tell a crash from the new
+  file being swapped back, and the lost write may have been a revocation, so it also locks down
+  and asks the person to repeat the change before `abandonWrite`, and a failed commit is fatal for that change: the
   person is told a revocation is done only after its commit. That stops a
   rolled-back file from bringing a revoked grant back, which evidence alone can't, because the old
   grant's evidence is still valid.
@@ -239,6 +241,9 @@ and whose `state.json` decides nothing: what runs is what the approvals store ap
   and asks for Touch ID once; the Mac's approval key then signs evidence for each. Until the person
   does, the old records keep working, so the Woolworths login isn't interrupted (and the app says
   migration is waiting).
+- **Lockdown on tamper is a denial of service by design.** A local process that corrupts one byte
+  of a store forces lockdown. That's the safe direction, and a process running as the person could
+  stop Valet anyway.
 - **Dev builds.** An unsigned build's Keychain items are reachable by any process running as the
   person, so the anchor is only as strong as the evidence there. A signed release build closes it.
 
@@ -300,10 +305,17 @@ How workstreams E and F stay inside guarantee 3. **Designed**.
   provider), 1Password's data, every browser's cookies and profiles, Mail, LaunchAgents and
   Preferences, `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config`, shell startup files, `~/.local/bin`,
   and the system folders.
-- **Never as an exception:** a shell, interpreter or script runner as a `command` (`sh`, `zsh`,
-  `env`, `osascript`, `python`, `node` and the like), and Apple Events to apps that run anything
-  (Terminal, iTerm, System Events, Script Editor, Finder, Shortcuts, Automator, System Settings,
-  Keychain Access, 1Password). Each would be unsandboxed mode under another name.
+- **Writing is allow-listed.** A deny list can't name every file that runs code (shell and editor
+  configs, an MCP client's config), so `read-write` paths must be under `~/Documents`,
+  `~/Downloads`, `~/Desktop`, `~/Pictures`, `~/Movies`, `~/Music` or another disk
+  (`WRITABLE_ROOTS`).
+- **Apple Events are allow-listed** (`ALLOWED_APPS`): Calendar, Reminders, Notes, Contacts, Music,
+  Photos and Numbers, which hold the person's data and can't run code or send anything. Browsers,
+  Mail, Messages, terminals and editors are egress or code execution under another name.
+- **Commands** are critical and Mac only whatever they name. Shells, interpreters and script
+  runners are refused outright, as is any program in a folder the person can write to (`/Users`,
+  `/Volumes`, `/tmp`, Homebrew), since anything running as them could swap it. The runtime checks
+  the program's real path again before each run.
 - **Risk** (`exceptionRisk`): reading files is medium; writing, or a `**` pattern, is high; Apple
   Events and network are high; a local service is medium; a command is critical.
 - **The diff** lists each new exception (`sandboxWidening`). Any change to one counts as new.
@@ -341,7 +353,7 @@ remote MCP client ─HTTPS─▶ relay Worker ─▶ Durable Object per Mac ◀�
   relay replaying or reordering alerts. Approvals inside are signed as well, so a broken seal
   still can't approve. What goes inside is one schema per direction: `macToPhoneMessageSchema` (request text,
   closings, alerts) and `phoneToMacMessageSchema` (signed decisions, declines, the tightening
-  commands below). Each side acknowledges what it received (`ack`), so a phone shows a command as
+  commands below). The Mac parses a phone's messages only with `parsePhoneToMac`. Each side acknowledges what it received (`ack`), so a phone shows a command as
   "not confirmed" until the Mac's ack arrives, and a relay that drops one can't hide it. H and D
   may add kinds; each is a contract change.
 - **Phone commands without Face ID.** A phone can send tightening commands, which are pause, lockdown, revoke a client and
@@ -363,7 +375,8 @@ phone channel's contents, or approvals.
 
 - **Lockdown** (J7) from the Mac or a phone: every call is refused, every remote client revoked,
   every pending request withdrawn, and authoring sessions end. Undoing it is a `resume` approval.
-- **The Mac can't be revoked**, from any channel or tool (`canRevokeDevice`). Otherwise an
+- **The Mac can't be revoked**, from any channel or tool (`canRevokeDevice`, enforced by
+  `deviceRevocationSchema` and `parsePhoneToMac`). Otherwise an
   unlocked phone, or an agent at notify tier, could revoke the Mac and leave the stolen phone as
   the only approver.
 - **Revoking a device** removes its record from use at once: its future signatures fail as

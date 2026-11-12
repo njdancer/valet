@@ -13,7 +13,7 @@
 
 import { z } from 'zod'
 import { clientIdSchema, requestIdSchema } from './approvals'
-import { keyIdSchema } from './devices'
+import { canRevokeDevice, keyIdSchema } from './devices'
 import { displayText } from './display-text'
 import { p256PublicKeySchema, p256SignatureSchema, signedTextSchema } from './signing'
 
@@ -100,7 +100,7 @@ export const relayHelloSchema = z
   })
   .strict()
 
-/** A sealed Mac-to-phone or phone-to-Mac message. See channelMessageSchema for what's inside. */
+/** A sealed Mac-to-phone or phone-to-Mac message. See macToPhoneMessageSchema and phoneToMacMessageSchema for what's inside. */
 export const envelopeSchema = z
   .object({
     v: z.literal(1),
@@ -180,9 +180,23 @@ export const phoneToMacMessageSchema = z.discriminatedUnion('type', [
 ])
 export type PhoneToMacMessage = z.infer<typeof phoneToMacMessageSchema>
 
-/** Either direction; a receiver parses with its own direction's schema. */
-export const channelMessageSchema = z.union([macToPhoneMessageSchema, phoneToMacMessageSchema])
-export type ChannelMessage = z.infer<typeof channelMessageSchema>
+/**
+ * How the Mac reads a phone's message: its own direction's schema, and never a command to revoke
+ * the Mac itself. Null for anything else.
+ */
+export function parsePhoneToMac(raw: unknown, macId: string): PhoneToMacMessage | null {
+  const result = phoneToMacMessageSchema.safeParse(raw)
+  if (!result.success) return null
+  const message = result.data
+  if (
+    message.type === 'command' &&
+    message.command.kind === 'revoke-device' &&
+    !canRevokeDevice(message.command.deviceId, macId)
+  ) {
+    return null
+  }
+  return message
+}
 
 export const macToRelaySchema = z.discriminatedUnion('type', [
   relayHelloSchema,

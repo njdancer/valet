@@ -63,8 +63,11 @@ const subjects = {
     })
     .strict()
     .refine(
-      (s) => s.unsandboxed === s.changes.some((c) => c.area === 'sandbox-mode' && c.risk === 'critical'),
-      'unsandboxed must agree with a critical sandbox-mode line',
+      // One direction only: an adapter that was already unsandboxed has no sandbox-mode line on
+      // its update, and is still unsandboxed. The Mac sets `unsandboxed` from the new manifest,
+      // and before the sandbox ships, for every adapter that isn't built in.
+      (s) => s.unsandboxed || !s.changes.some((c) => c.area === 'sandbox-mode' && c.risk === 'critical'),
+      'a critical sandbox-mode line means unsandboxed',
     ),
   /** Let an adapter's login use a secret, typed only into these origins. */
   'secret-grant': z

@@ -12,12 +12,14 @@ import {
   type DeviceLookup,
   type DeviceRecord,
   decisionPayload,
+  deviceRevocationSchema,
   domainDigest,
   isDisplayText,
   KIND_TIER,
   keyId,
   NEVER_OVER_MCP,
   type PermissionChange,
+  parsePhoneToMac,
   parseRequestText,
   SIGNING_DOMAINS,
   type SignedText,
@@ -384,7 +386,9 @@ describe('signed decisions', () => {
     }
     const base = { ...grantRequest(), kind: 'adapter-install', tier: 'approve' }
     expect(() => serializeRequest({ ...base, subject: install([mode], false) } as ApprovalRequest)).toThrow()
-    expect(() => serializeRequest({ ...base, subject: install([], true) } as ApprovalRequest)).toThrow()
+    // An update to an adapter that was already unsandboxed has no sandbox-mode line, and stays Mac only.
+    const already = serializeRequest({ ...base, subject: install([], true) } as ApprovalRequest)
+    expect(approvableOn('adapter-install', already.request.subject)).toEqual(['mac'])
     expect(
       serializeRequest({ ...base, subject: install([mode], true) } as ApprovalRequest).request.kind,
     ).toBe('adapter-install')
@@ -498,10 +502,32 @@ describe('display text and revocation', () => {
     expect(isDisplayText('\u3164\u3164')).toBe(false)
     expect(isDisplayText(`a${'\u0336'.repeat(270)}`)).toBe(false)
     expect(isDisplayText('   ')).toBe(false)
+    for (const bad of [
+      '\u{E0100}\u{E0101}',
+      'a\u0489',
+      '\u20DD\u20DD',
+      '\uFDFD\uFDFD',
+      `a${'\u2000'.repeat(5)}b`,
+      '\u0301\u0301',
+    ]) {
+      expect(isDisplayText(bad), JSON.stringify(bad)).toBe(false)
+    }
   })
 
   it('never lets anyone revoke the Mac itself', () => {
     expect(canRevokeDevice(macId, macId)).toBe(false)
     expect(canRevokeDevice(phoneId, macId)).toBe(true)
+    const revocation = { deviceId: macId, macId, revokedAt: '2026-11-12T02:00:00.000Z', by: phoneId }
+    expect(deviceRevocationSchema.safeParse(revocation).success).toBe(false)
+    expect(deviceRevocationSchema.safeParse({ ...revocation, deviceId: phoneId, by: 'mac-ui' }).success).toBe(
+      true,
+    )
+    const command = (deviceId: string) => ({
+      type: 'command',
+      seq: 1,
+      command: { kind: 'revoke-device', deviceId },
+    })
+    expect(parsePhoneToMac(command(macId), macId)).toBeNull()
+    expect(parsePhoneToMac(command(phoneId), macId)).not.toBeNull()
   })
 })

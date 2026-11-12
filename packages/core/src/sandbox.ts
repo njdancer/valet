@@ -71,6 +71,24 @@ export const FORBIDDEN_PATHS = [
   '~/.bash_profile',
   '~/.profile',
   '~/.local/bin',
+  '~/bin',
+  '~/Applications',
+  '~/Library/Services',
+  '~/Library/Application Support/Claude',
+  '~/Library/Application Support/Code',
+  '~/Library/Application Support/Cursor',
+  '~/.claude',
+  '~/.codex',
+  '~/.cursor',
+  '~/.vscode',
+  '~/.netrc',
+  '~/.docker',
+  '~/.kube',
+  '~/.git-credentials',
+  '~/.gitconfig',
+  '~/.npmrc',
+  '~/.pypirc',
+  '~/.gem',
   '/System',
   '/Library',
   '/private',
@@ -106,7 +124,13 @@ export function touchesForbiddenPath(path: string, home?: string): boolean {
   }
   if (root === '~') return true
   if (root === '/users' || root.startsWith('/users/')) return true
-  if (root === '/volumes' || /^\/volumes\/[^/]+(\/users(\/|$)|$)/.test(root)) return true
+  // A volume is another disk's root: refuse it whole, and the system folders on it.
+  if (
+    root === '/volumes' ||
+    /^\/volumes\/[^/]+(\/(users|library|system|private|applications|etc|usr)(\/|$)|$)/.test(root)
+  ) {
+    return true
+  }
   return FORBIDDEN_PATHS.some((forbidden) => {
     const f = fold(forbidden)
     return root === f || root.startsWith(`${f}/`) || f.startsWith(`${root}/`)
@@ -117,23 +141,51 @@ export function touchesForbiddenPath(path: string, home?: string): boolean {
  * Programs and apps that would give tool code everything unsandboxed mode gives it: shells,
  * interpreters, and anything that runs scripts. Refused as `command` and `app` exceptions.
  */
+// Belt and braces: a command is critical and Mac only whatever this says; this catches the obvious.
 const FORBIDDEN_COMMAND =
-  /\/(?:[a-z]*sh|env|osascript|osacompile|python[0-9.]*|perl[0-9.]*|ruby|node|php|tclsh|expect|awk|sudo|su|open|launchctl|xargs|find|script|login|security|sqlite3|curl|wget|nc|ssh|scp|git)$/i
-export const FORBIDDEN_APPS = [
-  'com.apple.terminal',
-  'com.googlecode.iterm2',
-  'com.apple.systemevents',
-  'com.apple.scripteditor2',
-  'com.apple.finder',
-  'com.apple.automator',
-  'com.apple.shortcuts',
-  'com.apple.systempreferences',
-  'com.apple.keychainaccess',
-  'com.1password.1password',
+  /\/(?:[a-z]*sh|env|osascript|osacompile|python|perl|ruby|node|bun|deno|php|tclsh|wish|expect|awk|sudo|su|open|launchctl|xargs|find|script|login|security|sqlite3|curl|wget|nc|ssh|scp|git|swift|swiftc|arch|nohup|time|caffeinate|sandbox-exec|xcrun|xcodebuild|make|vim?|nvim|emacs|lldb|gdb|java|jshell|automator|shortcuts|defaults|plutil|tccutil|codesign|spctl|dscl|crontab|at|batch|screen|tmux)[0-9.]*$/i
+
+/**
+ * The apps an `app` exception may send Apple Events to: ones that hold the person's own data and
+ * can neither run code nor send anything anywhere. Browsers, Mail, Messages, terminals, editors
+ * and script runners are all egress or code execution under another name, so this is a list of
+ * what is allowed, not of what isn't. Adding one is a contract change.
+ */
+export const ALLOWED_APPS = [
+  'com.apple.ical',
+  'com.apple.reminders',
+  'com.apple.notes',
+  'com.apple.addressbook',
+  'com.apple.music',
+  'com.apple.photos',
+  'com.apple.iwork.numbers',
 ] as const
+
+/** Folders a program may not be in, because anything running as the person could replace it. */
+const USER_WRITABLE_PROGRAM = /^\/(users|volumes|tmp|private|var|opt\/homebrew)\//
 
 export function isForbiddenCommand(path: string): boolean {
   return FORBIDDEN_COMMAND.test(path.normalize('NFKC'))
+}
+
+/**
+ * Where a read-write exception may point: the person's own document folders and other disks. A
+ * deny list can't name every file that runs code (a shell config, an editor's settings, an MCP
+ * client's config), so writing is allowed only here.
+ */
+export const WRITABLE_ROOTS = [
+  '~/Documents',
+  '~/Downloads',
+  '~/Desktop',
+  '~/Pictures',
+  '~/Movies',
+  '~/Music',
+] as const
+
+export function isWritablePath(path: string): boolean {
+  const root = fold(patternRoot(path))
+  if (/^\/volumes\/[^/]+\/.+/.test(root)) return !touchesForbiddenPath(path)
+  return WRITABLE_ROOTS.some((r) => root.startsWith(`${fold(r)}/`)) && !touchesForbiddenPath(path)
 }
 
 const pathPattern = z
@@ -150,7 +202,11 @@ export const sandboxExceptionSchema = z.discriminatedUnion('kind', [
       paths: z.array(pathPattern).min(1).max(10),
       purpose,
     })
-    .strict(),
+    .strict()
+    .refine(
+      (e) => e.access === 'read' || e.paths.every(isWritablePath),
+      'read-write only under Documents, Downloads, Desktop, Pictures, Movies, Music or another disk',
+    ),
   /** Send Apple Events to one app (Calendar, Reminders), by bundle id. */
   z
     .object({
@@ -158,8 +214,8 @@ export const sandboxExceptionSchema = z.discriminatedUnion('kind', [
       bundleId: z
         .string()
         .refine(
-          (id) => !(FORBIDDEN_APPS as readonly string[]).includes(id.toLowerCase()),
-          'that app can run anything',
+          (id) => (ALLOWED_APPS as readonly string[]).includes(id.toLowerCase()),
+          'only apps that hold the person’s own data and can’t run code or send anything',
         )
         .regex(/^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/)
         .max(155),
@@ -194,7 +250,11 @@ export const sandboxExceptionSchema = z.discriminatedUnion('kind', [
               .every((seg) => seg !== '' && seg !== '.' && seg !== '..'),
           'no empty, . or .. segments',
         )
-        .refine((p) => !isForbiddenCommand(p), 'shells, interpreters and script runners are never allowed'),
+        .refine((p) => !isForbiddenCommand(p), 'shells, interpreters and script runners are never allowed')
+        .refine(
+          (p) => !USER_WRITABLE_PROGRAM.test(fold(p)),
+          'a program in a folder the person can write to could be swapped',
+        ),
       purpose,
     })
     .strict(),

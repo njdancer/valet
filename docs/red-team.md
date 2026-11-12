@@ -140,3 +140,15 @@ test:
   - There were no acknowledgements for phone commands.
   - The channel schema had no direction.
   - Rollback had no source of its own.
+
+A second pass by the same agent checked those fixes. It found one new high issue: an update to
+an already unsandboxed adapter could be approved on the phone. It also found gaps that a deny
+list can't close: writable code-execution files, apps that are egress, and a swapped-back store
+file after a crash. Each is fixed in the same PR:
+
+- the unsandboxed check runs in one direction only;
+- read-write paths and Apple Events targets are allow-listed;
+- commands in folders the person can write to are refused;
+- an `interrupted` anchor state fails closed;
+- the Mac can't be revoked, enforced in the schemas;
+- more invisible characters are refused.

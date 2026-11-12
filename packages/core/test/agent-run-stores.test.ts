@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest'
 import {
   abandonWrite,
   beginWrite,
-  channelMessageSchema,
   checkAnchor,
   commitWrite,
   DEFAULT_SANDBOX,
@@ -37,7 +36,8 @@ describe('store anchors', () => {
   it('recovers from a crash on either side of the file write', () => {
     const one = commitWrite(beginWrite(null, 'one'))
     const begun = beginWrite(one, 'two')
-    expect(checkAnchor('one', begun)).toBe('ok')
+    // The old file with a write begun: a crash before writing, or the new file swapped back. Fail closed.
+    expect(checkAnchor('one', begun)).toBe('interrupted')
     expect(checkAnchor('two', begun)).toBe('advance')
   })
 
@@ -137,6 +137,66 @@ describe('sandbox declarations', () => {
         exceptions: [{ kind: 'app', bundleId: 'com.apple.iCal', purpose: 'x' }],
       }).success,
     ).toBe(true)
+  })
+
+  it('allows writing only in document folders and on other disks, and Apple Events only to data apps', () => {
+    const files = (access: 'read' | 'read-write', path: string) =>
+      sandboxDeclarationSchema.safeParse({
+        mode: 'sandboxed',
+        exceptions: [{ kind: 'files', access, paths: [path], purpose: 'x' }],
+      }).success
+    expect(files('read-write', '~/Documents/Receipts/*')).toBe(true)
+    expect(files('read-write', '/Volumes/Backup/exports/**')).toBe(true)
+    for (const p of [
+      '~/.claude/**',
+      '~/Library/Application Support/Claude/*',
+      '~/Applications/**',
+      '~/bin/*',
+      '~/Projects/app/**',
+    ]) {
+      expect(files('read-write', p), p).toBe(false)
+    }
+    for (const p of [
+      '~/.netrc',
+      '~/.docker/*',
+      '~/.kube/*',
+      '~/.git-credentials',
+      '~/.npmrc',
+      '~/.codex/*',
+      '/Volumes/Macintosh HD/Library/Keychains/*',
+    ]) {
+      expect(files('read', p), p).toBe(false)
+    }
+    const app = (bundleId: string) =>
+      sandboxDeclarationSchema.safeParse({
+        mode: 'sandboxed',
+        exceptions: [{ kind: 'app', bundleId, purpose: 'x' }],
+      }).success
+    expect(app('com.apple.reminders')).toBe(true)
+    for (const id of [
+      'com.apple.Safari',
+      'com.google.Chrome',
+      'com.apple.mail',
+      'com.apple.MobileSMS',
+      'com.microsoft.VSCode',
+    ]) {
+      expect(app(id), id).toBe(false)
+    }
+    const command = (path: string) =>
+      sandboxDeclarationSchema.safeParse({
+        mode: 'sandboxed',
+        exceptions: [{ kind: 'command', path, purpose: 'x' }],
+      }).success
+    for (const p of [
+      '/usr/bin/tclsh8.6',
+      '/usr/bin/caffeinate',
+      '/usr/bin/sandbox-exec',
+      '/Users/nick/bin/sh2',
+      '/opt/homebrew/bin/jq',
+    ]) {
+      expect(command(p), p).toBe(false)
+    }
+    expect(command('/usr/local/bin/ledger-export')).toBe(true)
   })
 
   it('sees a widening hidden by a comma in a path', () => {
@@ -244,7 +304,7 @@ describe('channel messages', () => {
     expect(
       phoneToMacMessageSchema.safeParse({ type: 'command', seq: 1, command: { kind: 'resume' } }).success,
     ).toBe(false)
-    expect(channelMessageSchema.safeParse({ type: 'ack', seq: 2, ackSeq: 1 }).success).toBe(true)
+    expect(phoneToMacMessageSchema.safeParse({ type: 'ack', seq: 2, ackSeq: 1 }).success).toBe(true)
   })
 
   it('keeps each direction to its own messages', () => {

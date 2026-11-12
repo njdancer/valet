@@ -93,9 +93,11 @@ export interface StoreAnchor {
  * - ok: the file is the one the anchor names.
  * - advance: the file is the one a write was about to commit; call commitWrite and carry on.
  * - fresh: no file and no anchor, a first run.
- * - mismatch: anything else. Treat the store as empty (fail closed), tell the person, and audit.
+ * - interrupted: the committed file, with a write begun and never committed. Lock down and tell
+ *   the person, who repeats the change (it may have been a revocation); then abandonWrite.
+ * - mismatch: anything else. Lock down, treat the store as empty, tell the person, and audit.
  */
-export type AnchorCheck = 'ok' | 'advance' | 'fresh' | 'mismatch'
+export type AnchorCheck = 'ok' | 'advance' | 'fresh' | 'mismatch' | 'interrupted'
 
 /** The anchor hash of a store that has never been written. */
 export const EMPTY_STORE_SHA256 = sha256Hex('')
@@ -108,7 +110,10 @@ export function checkAnchor(file: Uint8Array | string | null, state: AnchorState
       : 'mismatch'
   if (state === null) return 'mismatch'
   const digest = sha256Hex(file)
-  if (digest === state.sha256) return 'ok'
+  // The committed file, but a write was begun and never committed: either a crash before the
+  // file was written, or the new file was written and then replaced with the old one. The two
+  // look the same, and the lost write may have been a revocation, so the caller fails closed.
+  if (digest === state.sha256) return state.next === null ? 'ok' : 'interrupted'
   if (state.next !== null && digest === state.next) return 'advance'
   return 'mismatch'
 }
@@ -125,8 +130,8 @@ export function beginWrite(state: AnchorState | null, nextFile: Uint8Array | str
 }
 
 /**
- * After a load found the file at the committed hash (`ok`) while `next` was set: the write never
- * happened, so forget it before the next one.
+ * After an `interrupted` load, once Valet has locked down and told the person: forget the lost
+ * write so the next one can begin.
  */
 export function abandonWrite(state: AnchorState): AnchorState {
   return { ...state, next: null }
