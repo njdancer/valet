@@ -83,8 +83,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/walkthrough/crashes"
           find ~/Library/Logs/DiagnosticReports -newer "$RUNNER_TEMP/ios-build.log" -type f -exec cp {} "$RUNNER_TEMP/walkthrough/crashes/" \; 2>/dev/null || true
           for f in "$RUNNER_TEMP"/walkthrough/crashes/*; do [ -f "$f" ] && { echo "== $f"; head -c 6000 "$f"; echo; }; done
-          xcrun simctl spawn "$SIMULATOR" log show --last 40m --style compact --predicate 'process CONTAINS "Valet"' > "$RUNNER_TEMP/walkthrough/phone-os.log" 2>&1 || true
-          grep -iE "fault|crash|fatal|error" "$RUNNER_TEMP/walkthrough/phone-os.log" | tail -40 || true
+          xcrun simctl spawn "$SIMULATOR" log show --last 40m --style compact --predicate 'process CONTAINS "Valet" OR process == "SpringBoard" OR process == "runningboardd" OR process == "backboardd" OR process == "ReportCrash"' > "$RUNNER_TEMP/walkthrough/phone-os.log" 2>&1 || true
+          grep -E "SpringBoard|runningboardd|ReportCrash" "$RUNNER_TEMP/walkthrough/phone-os.log" | grep -iE "valet" | grep -iE "terminat|exit|crash|background|suspend|foreground|state|reason" | head -80 || true
       - name: push the recording to a branch
         if: always()
         run: |
