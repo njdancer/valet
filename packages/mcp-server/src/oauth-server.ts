@@ -28,7 +28,7 @@ import {
   RegistrationRefused,
   type RemoteClients,
 } from './oauth-clients'
-import type { ConsentRequest, ConsentRequests } from './oauth-consent'
+import { type ConsentRequest, type ConsentRequests, displayCode } from './oauth-consent'
 import { type PageProblem, problemPage, sendPage, waitingPage } from './oauth-pages'
 import { SourceLimits as Limits, type SourceLimits, type WindowLimit } from './rate-limit'
 import {
@@ -129,6 +129,8 @@ export class RemoteAuthorization {
   private readonly authorize: SourceLimits
   private readonly token: SourceLimits
   private readonly codes = new Map<string, IssuedCode>()
+  /** The relay's consent ids, each standing for one waiting page's handle. */
+  private readonly relayHandles = new Map<string, string>()
 
   constructor(private readonly options: RemoteAuthorizationOptions) {
     this.now = options.now ?? Date.now
@@ -247,9 +249,55 @@ export class RemoteAuthorization {
   // ---------- Authorisation ----------
 
   private async startAuthorization(req: IncomingMessage, res: ServerResponse, host: string): Promise<void> {
-    // The limit comes before anything else: no lookup, no prompt, for a flood.
-    if (!this.authorize.take(this.source(req))) return sendPage(res, 429, problemPage('too-many'))
     const params = new URL(req.url ?? '/', 'https://valet.invalid').searchParams
+    return sendOutcome(res, this.authorizeOutcome(params, host, this.source(req)))
+  }
+
+  /** The browser's waiting page asks again. Pending: the same page. Answered: on to the client. */
+  private async wait(req: IncomingMessage, res: ServerResponse, host: string): Promise<void> {
+    const handle = new URL(req.url ?? '/', 'https://valet.invalid').searchParams.get('h')
+    return sendOutcome(res, this.waitOutcome(handle, host))
+  }
+
+  /**
+   * The relay's `/authorize` (docs/relay-worker.md, "Consent"). The relay renders a fixed page from
+   * the answer, so the same checks run as for the Mac's own `/authorize`, and only the shape of the
+   * answer differs. The relay's id stands in for the waiting page's handle: a known id with an
+   * empty query is the relay's page asking again; an unknown one with an empty query has ended.
+   * Ids are the relay's random 128-bit request ids, so another browser can't poll one.
+   */
+  relayConsent(relayId: string, query: string, source: string | null, host: string): RelayConsentView {
+    this.sweepRelayHandles()
+    let outcome: AuthorizeOutcome
+    if (query === '') {
+      const handle = this.relayHandles.get(relayId) ?? null
+      outcome = handle === null ? { kind: 'page', status: 404, problem: 'ended' } : this.waitOutcome(handle, host)
+      if (outcome.kind !== 'waiting') this.relayHandles.delete(relayId)
+    } else {
+      outcome = this.authorizeOutcome(new URLSearchParams(query), host, source)
+      if (outcome.kind === 'waiting') {
+        if (this.relayHandles.size >= MAX_PENDING_CODES) this.relayHandles.delete(this.relayHandles.keys().next().value as string)
+        this.relayHandles.set(relayId, outcome.handle)
+      }
+    }
+    switch (outcome.kind) {
+      case 'waiting':
+        return { state: 'waiting', code: displayCode(outcome.code) }
+      case 'redirect':
+        return { state: outcome.approved ? 'approved' : 'declined', redirect: outcome.location }
+      case 'page':
+        return { state: outcome.problem === 'ended' ? 'expired' : 'declined' }
+    }
+  }
+
+  private sweepRelayHandles(): void {
+    for (const [id, handle] of this.relayHandles)
+      if (this.options.consents.byHandle(handle) === null) this.relayHandles.delete(id)
+  }
+
+  private authorizeOutcome(params: URLSearchParams, host: string, source: string | null): AuthorizeOutcome {
+    // The limit comes before anything else: no lookup, no prompt, for a flood.
+    if (!this.authorize.take(source)) return { kind: 'page', status: 429, problem: 'too-many' }
     const single = (name: string): string | null => {
       const all = params.getAll(name)
       return all.length === 1 ? (all[0] as string) : null
@@ -257,61 +305,59 @@ export class RemoteAuthorization {
     // Until the client and its redirect URI check out, errors stay on this page (RFC 6749 4.1.2.1).
     const clientId = single('client_id')
     const registration = clientId === null ? null : this.options.clients.get(clientId)
-    if (registration === null) return sendPage(res, 400, problemPage('unknown-client'))
+    if (registration === null) return { kind: 'page', status: 400, problem: 'unknown-client' }
     const asked = params.getAll('redirect_uri')
     let redirectUri: string | null = null
     if (asked.length === 0 && registration.redirectUris.length === 1)
       redirectUri = registration.redirectUris[0] as string
     if (asked.length === 1 && registration.redirectUris.includes(asked[0] as string))
       redirectUri = asked[0] as string
-    if (redirectUri === null) return sendPage(res, 400, problemPage('bad-redirect'))
+    if (redirectUri === null) return { kind: 'page', status: 400, problem: 'bad-redirect' }
 
     const state = single('state')
     if (params.getAll('state').length > 1 || (state !== null && state.length > MAX_STATE_LENGTH))
-      return redirect(res, redirectUri, host, { error: 'invalid_request' }, null)
+      return redirectTo(redirectUri, host, { error: 'invalid_request' }, null)
     if (single('response_type') !== 'code')
-      return redirect(res, redirectUri, host, { error: 'unsupported_response_type' }, state)
+      return redirectTo(redirectUri, host, { error: 'unsupported_response_type' }, state)
     const challenge = single('code_challenge')
     if (
       single('code_challenge_method') !== 'S256' ||
       challenge === null ||
       !/^[A-Za-z0-9_-]{43}$/.test(challenge)
     )
-      return redirect(res, redirectUri, host, { error: 'invalid_request' }, state)
+      return redirectTo(redirectUri, host, { error: 'invalid_request' }, state)
     const resources = params.getAll('resource')
     const resource = remoteResource(host)
     if (resources.length > 1 || (resources.length === 1 && resources[0] !== resource))
-      return redirect(res, redirectUri, host, { error: 'invalid_target' }, state)
+      return redirectTo(redirectUri, host, { error: 'invalid_target' }, state)
 
     const request = this.options.consents.open(
       { clientId: registration.id, redirectUri, state, codeChallenge: challenge, resource },
-      { clientHost: hostOf(redirectUri), clientName: registration.clientName, source: this.source(req) },
+      { clientHost: hostOf(redirectUri), clientName: registration.clientName, source },
     )
     // Five already waiting: try later, without bothering the Mac.
-    if (request === null) return sendPage(res, 429, problemPage('busy'))
+    if (request === null) return { kind: 'page', status: 429, problem: 'busy' }
     try {
       this.options.consentRequested?.(request)
     } catch {
       // The app's window is not ours to fail.
     }
-    return sendPage(res, 200, waitingPage(request.code, request.handle))
+    return { kind: 'waiting', code: request.code, handle: request.handle }
   }
 
-  /** The browser's waiting page asks again. Pending: the same page. Answered: on to the client. */
-  private async wait(req: IncomingMessage, res: ServerResponse, host: string): Promise<void> {
-    const handle = new URL(req.url ?? '/', 'https://valet.invalid').searchParams.get('h')
+  private waitOutcome(handle: string | null, host: string): AuthorizeOutcome {
     const request = handle === null ? null : this.options.consents.byHandle(handle)
-    if (request === null) return sendPage(res, 404, problemPage('ended'))
-    if (request.status === 'pending') return sendPage(res, 200, waitingPage(request.code, request.handle))
+    if (request === null) return { kind: 'page', status: 404, problem: 'ended' }
+    if (request.status === 'pending') return { kind: 'waiting', code: request.code, handle: request.handle }
     this.options.consents.finish(request.handle)
     if (request.status !== 'approved')
-      return redirect(res, request.redirectUri, host, { error: 'access_denied' }, request.state)
+      return redirectTo(request.redirectUri, host, { error: 'access_denied' }, request.state)
     // The registration may have been revoked while the browser waited.
     if (this.options.clients.get(request.clientId) === null)
-      return redirect(res, request.redirectUri, host, { error: 'access_denied' }, request.state)
+      return redirectTo(request.redirectUri, host, { error: 'access_denied' }, request.state)
     const code = this.newCode()
     this.sweepCodes()
-    if (this.codes.size >= MAX_PENDING_CODES) return sendPage(res, 429, problemPage('busy'))
+    if (this.codes.size >= MAX_PENDING_CODES) return { kind: 'page', status: 429, problem: 'busy' }
     this.codes.set(digest(code), {
       clientId: request.clientId,
       redirectUri: request.redirectUri,
@@ -321,7 +367,7 @@ export class RemoteAuthorization {
       expiresAt: this.now() + AUTH_CODE_TTL_MS,
       used: false,
     })
-    return redirect(res, request.redirectUri, host, { code }, request.state)
+    return redirectTo(request.redirectUri, host, { code }, request.state)
   }
 
   // ---------- Tokens ----------
@@ -568,24 +614,46 @@ function tokenResponse(res: ServerResponse, accessToken: string, refreshToken: s
   )
 }
 
-function redirect(
-  res: ServerResponse,
+/** What `/authorize` and its waiting page answer, before it is rendered for a browser or the relay. */
+type AuthorizeOutcome =
+  | { readonly kind: 'page'; readonly status: number; readonly problem: PageProblem }
+  | { readonly kind: 'waiting'; readonly code: string; readonly handle: string }
+  | { readonly kind: 'redirect'; readonly location: string; readonly approved: boolean }
+
+/** What the Mac answers the relay's `/authorize` with: the fields of a `consent-view` frame. */
+export type RelayConsentView =
+  | { readonly state: 'waiting'; readonly code: string }
+  | { readonly state: 'approved' | 'declined'; readonly redirect: string }
+  | { readonly state: 'declined' | 'expired' }
+
+function redirectTo(
   redirectUri: string,
   host: string,
   params: Readonly<Record<string, string>>,
   state: string | null,
-): void {
+): AuthorizeOutcome {
   const target = new URL(redirectUri)
   for (const [key, value] of Object.entries(params)) target.searchParams.set(key, value)
   if (state !== null) target.searchParams.set('state', state)
   target.searchParams.set('iss', issuer(host))
-  res.writeHead(302, {
-    location: target.toString(),
-    'cache-control': 'no-store',
-    'referrer-policy': 'no-referrer',
-    connection: 'close',
-  })
-  res.end()
+  return { kind: 'redirect', location: target.toString(), approved: params['code'] !== undefined }
+}
+
+function sendOutcome(res: ServerResponse, outcome: AuthorizeOutcome): void {
+  switch (outcome.kind) {
+    case 'page':
+      return sendPage(res, outcome.status, problemPage(outcome.problem))
+    case 'waiting':
+      return sendPage(res, 200, waitingPage(outcome.code, outcome.handle))
+    case 'redirect':
+      res.writeHead(302, {
+        location: outcome.location,
+        'cache-control': 'no-store',
+        'referrer-policy': 'no-referrer',
+        connection: 'close',
+      })
+      res.end()
+  }
 }
 
 export type { PageProblem }

@@ -8,7 +8,10 @@
     ".": "./src/index.ts",
     "./vocab": "./src/vocab.ts",
     "./vocabulary": "./src/vocabulary.ts",
-    "./tool-code": "./src/tool-code.ts"
+    "./tool-code": "./src/tool-code.ts",
+    "./relay-protocol": "./src/relay-protocol.ts",
+    "./signing": "./src/signing.ts",
+    "./devices": "./src/devices.ts"
   },
   "dependencies": {
     "zod": "^4.6.7"
