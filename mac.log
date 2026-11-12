@@ -1,0 +1,9 @@
+valet: demo: fake Woolworths at https://www.woolworths.test:51469, signing in at https://auth.woolworths.test:51470
+valet: demo: fake 1Password (Keyhold) at http://127.0.0.1:51471/
+valet: approvals: signing with software keys (dev build)
+[relay] connecting
+[console] [relay] connecting[relay] online
+[console] [relay] online[console] [relay] ready[relay] ready
+[relay] pairing-reply
+[console] [relay] pairing-reply[relay] device-online ada3a915cb8c9d6d56b6e762f00fa3a7 true
+[console] [relay] device-online ada3a915cb8c9d6d56b6e762f00fa3a7 truevalet: sandbox: window one-shot ended (no answer to ping)
