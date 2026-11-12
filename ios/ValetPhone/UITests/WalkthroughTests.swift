@@ -74,7 +74,9 @@ final class WalkthroughTests: XCTestCase {
     waitFor("card.approve").tap()
     Thread.sleep(forTimeInterval: 1.5)
     mark("faceid")
-    XCTAssertTrue(waitFor("card.state", timeout: 30).label.contains("Approved"), element("card.state").label)
+    // The state line exists from the tap ("Waiting for Face ID…"), so wait for its words to change.
+    let approved = expectation(for: NSPredicate(format: "label CONTAINS 'Approved'"), evaluatedWith: waitFor("card.state"))
+    XCTAssertEqual(XCTWaiter.wait(for: [approved], timeout: 60), .completed, element("card.state").label)
     Thread.sleep(forTimeInterval: 2.5)
     if element("card.close").exists { element("card.close").tap() }
   }
