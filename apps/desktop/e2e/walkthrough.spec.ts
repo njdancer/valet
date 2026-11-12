@@ -200,6 +200,42 @@ export const tools = {
   }),
 }
 `
+const MANIFEST = `${JSON.stringify(
+  {
+    schemaVersion: 1,
+    id: 'leafline-library',
+    name: 'Leafline Library',
+    version: '0.1.0',
+    description: 'Looks up a book at the Leafline Library: its title and whether it is on the shelf.',
+    home: 'https://www.example.com/',
+    navigation: ['https://www.example.com'],
+    egress: ['www.example.com'],
+    secrets: {},
+    session: { cookieDomains: [], storage: [], probe: { kind: 'none' } },
+    auth: { steps: [], frameOrigins: [] },
+    requests: [],
+    tools: [
+      {
+        name: 'get_book',
+        title: 'Get book',
+        description: 'One book by its id: its title and whether it is on the shelf.',
+        sideEffect: 'read',
+      },
+    ],
+    settings: {},
+    limits: {
+      requestsPerRun: 5,
+      minGapMs: 3000,
+      requestsPerHour: 120,
+      requestsPerMinute: 10,
+      gapJitterPercent: 50,
+      cooldownSeconds: 600,
+      maxCooldownSeconds: 7200,
+    },
+  },
+  null,
+  2,
+)}\n`
 const BOOK_PAGE =
   '<!doctype html><title>Leafline Library</title><h1>The Long Paddock</h1><p class="status">On the shelf</p>'
 const CASES = JSON.stringify({
@@ -368,7 +404,10 @@ test('pairing an iPhone, and approving an agent’s requests on it', async () =>
     name: 'Leafline Library',
   })
   const draftId = String((created.structured as { draft: { draftId: string } }).draft.draftId)
+  await call(client, 'valet_write_draft_file', { draftId, path: 'manifest.json', content: MANIFEST }, false)
   await call(client, 'valet_write_draft_file', { draftId, path: 'src/tools.ts', content: TOOLS }, false)
+  await call(client, 'valet_delete_draft_file', { draftId, path: 'test/example.json' }, false)
+  await call(client, 'valet_delete_draft_file', { draftId, path: 'fixtures/item-abc-1.json' }, false)
   agentLine('agent', 'valet_write_draft_file(src/tools.ts, a test case, a fixture page)')
   await call(client, 'valet_write_draft_file', { draftId, path: 'test/book.json', content: CASES }, false)
   await call(
