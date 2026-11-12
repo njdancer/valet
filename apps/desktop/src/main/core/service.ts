@@ -58,6 +58,7 @@ import {
 import {
   ApprovalStore,
   AuditLog,
+  DEFAULT_LOGIN_BACKOFF,
   JsonFileStore,
   LoginAttemptMarker,
   pruneOlderThan,
@@ -162,13 +163,13 @@ import { type DraftRecord, DraftStore } from './drafts/store'
 import type { SignedInTrial } from './drafts/trial'
 import { type EraseKind, type EraseReport, type EraseStep, eraseEverything } from './erase'
 import { ensurePrivateDir, JsonDocument } from './files'
-import { checkGrantRequest, grantInfo } from './grants'
+import { carriesOver, checkGrantRequest, grantInfo } from './grants'
 import type { AppWindow, MainApi } from './ipc'
 import { createAuthRunner, Handoffs, isBlockedPage, SessionTracker } from './login'
 import { type AppNotification, attentionTitle, Notifier } from './notifications'
 import { type FolderInstall, InstallError, installReason, PackageManager, rollbackEligible } from './packages'
 import { addsPermissions, permissionDiff } from './permission-diff'
-import { type ApprovedSnapshot, type BuiltinAdapter, SnapshotStore } from './registry'
+import { type ApprovedSnapshot, type BuiltinAdapter, SnapshotStore, snapshotIntact } from './registry'
 import { RemoteAccess } from './remote'
 import { RunMemory } from './run-memory'
 import { DEFAULT_SETTINGS, SettingsStore, traceRetentionDaysSchema } from './settings'
@@ -1153,7 +1154,26 @@ export class AppService {
     // Told once: the call after this one finds the login held as any other.
     if (this.gaveUp.delete(adapterId)) return { kind: 'gave-up' }
     if (reason === 'login-required' && (await this.loginMissing(adapterId))) return { kind: 'login-missing' }
-    return null
+    return this.loginHoldHint(adapterId)
+  }
+
+  /**
+   * What a login hold means for the agent, when nothing in Needs you is open for it: a backoff
+   * waits for a time (nobody is asked), any other hold waits for the person, who hasn't been asked
+   * either. Null when there is no hold, and the plain wording applies.
+   */
+  private async loginHoldHint(adapterId: string): Promise<NeedsYouHint | null> {
+    const marker = await this.markers.read(adapterId).catch(() => null)
+    if (marker === null || marker.kind === 'unset') return null
+    const now = this.deps.now()
+    const waiting = (at: number): NeedsYouHint | null =>
+      at > now ? { kind: 'login-waiting', retryAt: new Date(at).toISOString() } : null
+    if (marker.kind === 'held')
+      return marker.retryAt === null ? { kind: 'login-stopped' } : waiting(marker.retryAt)
+    // D35: a login that stopped before typing anything holds like a first failure's backoff.
+    if (marker.attempted === false && marker.startedAt !== undefined)
+      return waiting(marker.startedAt + DEFAULT_LOGIN_BACKOFF.baseMs)
+    return { kind: 'login-stopped' }
   }
 
   /** True when the installed bundle declares a login with no grant for its hash. */
@@ -1943,10 +1963,22 @@ export class AppService {
 
   /**
    * Whether a stored grant may hand out its secret: signed `secret-grant` evidence for exactly it
-   * (the item, the provider, origins within those signed), or the legacy record, honoured only
+   * (the item, the provider, origins within those signed); a grant an approved update kept (the
+   * ledger's `carried`, while that install's evidence stands); or the legacy record, honoured only
    * for origins the version's own manifest declares (B's condition).
    */
   private grantSigned(grant: Grant): boolean {
+    const adapter = this.adapter(grant.adapterId)
+    if (this.secretGrantSigned(grant) || this.grantCarried(grant)) return true
+    return (
+      adapter !== null &&
+      adapter.hash === grant.adapterHash &&
+      this.legacyGrant(grant, adapter.definition.manifest)
+    )
+  }
+
+  /** Signed `secret-grant` evidence for exactly `grant`. */
+  private secretGrantSigned(grant: Grant): boolean {
     const fingerprint = itemFingerprint(grant.itemRef)
     const signed = this.approvalBroker?.honoured(
       'secret-grant',
@@ -1958,15 +1990,46 @@ export class AppService {
         s.itemFingerprint === fingerprint &&
         grant.origins.every((o) => s.origins.includes(o)),
     )
-    if (signed !== null && signed !== undefined) return true
+    return signed !== null && signed !== undefined
+  }
+
+  /**
+   * A grant an approved update kept from the version it replaced: the ledger's record of exactly
+   * it, and the signed install that kept it, which said it inherits the session, still honoured.
+   * A retired or rejected install takes its carried grants with it.
+   */
+  private grantCarried(grant: Grant): boolean {
+    const fingerprint = itemFingerprint(grant.itemRef)
+    const records = (this.ledger?.data.carried ?? []).filter(
+      (c) =>
+        c.adapterId === grant.adapterId &&
+        c.toHash === grant.adapterHash &&
+        c.secret === grant.secret &&
+        c.provider === subjectProvider(grant.provider) &&
+        c.itemFingerprint === fingerprint &&
+        grant.origins.every((o) => c.origins.includes(o)),
+    )
+    return records.some((c) => {
+      const install = this.approvalBroker?.honoured(
+        'adapter-install',
+        (s) =>
+          s.adapterId === c.adapterId &&
+          s.adapterHash === c.toHash &&
+          s.previousHash === c.fromHash &&
+          s.inheritsSession &&
+          s.source !== 'rollback',
+      )
+      return install !== null && install !== undefined
+    })
+  }
+
+  /** The legacy record for `grant`, honoured only for origins `manifest` declares for it. */
+  private legacyGrant(grant: Grant, manifest: AdapterManifest): boolean {
     const legacy = (this.ledger?.data.legacy?.grants ?? []).some(
       (l) =>
         l.adapterId === grant.adapterId && l.adapterHash === grant.adapterHash && l.secret === grant.secret,
     )
     if (!legacy) return false
-    const adapter = this.adapter(grant.adapterId)
-    if (adapter === null || adapter.hash !== grant.adapterHash) return false
-    const manifest = adapter.definition.manifest
     const declared =
       grant.secret === MESSAGES_SECRET
         ? messagesSourcesIn(manifest.auth.steps).some((m) => m.sender === grant.itemRef)
@@ -1976,6 +2039,103 @@ export class AppService {
           ? (manifest.secrets[grant.secret]?.origins ?? [])
           : []
     return grant.origins.length > 0 && grant.origins.every((o) => declared.includes(o))
+  }
+
+  /**
+   * After a signed update that said it inherits the session (`inheritsSession`, shown on its card),
+   * keeps each of the replaced version's grants the update doesn't widen (carriesOver), for the
+   * new hash, so the person isn't asked for the same login again (D47). A grant the update widens
+   * stays behind, and the person grants it again as before. Never for a rollback, whose own
+   * version's grants come back as they were. Best effort: a grant not kept is only asked for again.
+   */
+  private async carryGrants(
+    adapterId: string,
+    adapterHash: string,
+    previous: ApprovedSnapshot | null,
+  ): Promise<void> {
+    const ledger = this.ledger
+    const adapter = this.adapter(adapterId)
+    if (ledger === null || ledger.tampered !== null || previous === null || adapter?.hash !== adapterHash)
+      return
+    // The old manifest decides what isn't widened, so it must be the approved version's own.
+    if (!snapshotIntact(previous)) return
+    const install = this.approvalBroker?.honoured(
+      'adapter-install',
+      (s) =>
+        s.adapterId === adapterId &&
+        s.adapterHash === adapterHash &&
+        s.previousHash === previous.hash &&
+        s.inheritsSession &&
+        s.source !== 'rollback',
+    )
+    if (install === null || install === undefined) return
+    const all = await this.grants.list().catch(() => [] as readonly Grant[])
+    const kept = all.filter(
+      (g) =>
+        g.adapterId === adapterId &&
+        g.adapterHash === previous.hash &&
+        // Signed for the old version (its install may be retired by now, so not grantCarried's
+        // check of the install), and not widened by this update.
+        this.grantBackedFor(g, previous.manifest) &&
+        carriesOver(g, previous.manifest, adapter.definition.manifest) &&
+        // One already made for the new version, by the person, stands as it is.
+        !all.some(
+          (n) =>
+            n.adapterId === adapterId &&
+            n.adapterHash === adapterHash &&
+            n.secret === g.secret &&
+            (g.secret !== MESSAGES_SECRET || n.itemRef === g.itemRef),
+        ),
+    )
+    if (kept.length === 0) return
+    const at = new Date(this.deps.now()).toISOString()
+    try {
+      await ledger.commit((draft) => {
+        const records = (draft.carried ?? []).filter(
+          (c) => !(c.adapterId === adapterId && c.toHash === adapterHash),
+        )
+        for (const g of kept)
+          records.push({
+            adapterId,
+            fromHash: previous.hash,
+            toHash: adapterHash,
+            secret: g.secret,
+            provider: subjectProvider(g.provider),
+            itemFingerprint: itemFingerprint(g.itemRef),
+            origins: [...g.origins],
+            at,
+          })
+        // Only the latest carry per adapter matters; older ones name hashes no longer approved.
+        draft.carried = records
+          .filter((c) => c.adapterId !== adapterId || c.toHash === adapterHash)
+          .slice(-500)
+      })
+    } catch {
+      return
+    }
+    for (const g of kept) {
+      const grant: Grant = { ...g, origins: [...g.origins], adapterHash, grantedAt: at }
+      try {
+        await this.audit.append({
+          type: 'grant-made',
+          adapterId,
+          adapterHash,
+          secret: g.secret,
+          provider: g.provider,
+          origins: [...g.origins],
+          carriedFrom: previous.hash,
+        })
+        await this.grants.put(grant)
+      } catch {
+        // Not kept: the person is asked for it again, as before.
+      }
+    }
+    this.emit('grants-changed')
+  }
+
+  /** `grant` signed for its own version, whose manifest is `manifest` (active or not). */
+  private grantBackedFor(grant: Grant, manifest: AdapterManifest): boolean {
+    return this.secretGrantSigned(grant) || this.grantCarried(grant) || this.legacyGrant(grant, manifest)
   }
 
   /** The grant store as everything that hands out secrets sees it: only grants the person signed. */
@@ -1999,6 +2159,8 @@ export class AppService {
             draft.legacy.grants = draft.legacy.grants.filter(
               (l) => !(l.adapterId === adapterId && l.secret === secret),
             )
+          if (draft.carried !== undefined)
+            draft.carried = draft.carried.filter((c) => !(c.adapterId === adapterId && c.secret === secret))
         },
         { tightening: true },
       )
@@ -2010,6 +2172,9 @@ export class AppService {
     const adapter = this.adapter(adapterId)
     if (adapter === null || adapter.hash !== adapterHash) return
     await this.approvals.approve(adapterId, adapterHash, adapter.definition.manifest.version)
+    // Before the snapshot moves on: the grants kept are the approved version's.
+    const previous = await this.snapshots.get(adapterId).catch(() => null)
+    await this.carryGrants(adapterId, adapterHash, previous?.hash === adapterHash ? null : previous)
     const at = new Date(this.deps.now()).toISOString()
     await this.snapshots.put(adapterId, adapter, at)
     this.approvedAt.set(`${adapterId}:${adapterHash}`, at)
