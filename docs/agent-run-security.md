@@ -546,6 +546,31 @@ Asked for by D, G and H while building, 2026-11-12. Accepted unless marked other
     - The relay checks the binding with WebCrypto, since workerd lacks parts of `node:crypto`; its
       test checks it agrees with `verifyRelayBinding`.
 
+## Accounts, when the service has them (D79)
+
+Nick's answer (2026-11-12): an ordinary account login with 2FA, with a QR code as a sign-in
+shortcut, and no separate device-approval step on top. Until the service has accounts, pairing
+stays exactly as above, so nothing in the contracts changes now.
+
+What changes when accounts arrive:
+
+- **Who can make a device that approves.** Today only the Mac can: it trusts only keys it accepted
+  itself, so even a fully compromised relay can't approve anything. With accounts, the service
+  decides which devices belong to the person. Its security then bounds approvals too: a breach of
+  the service (every user's Mac at once), a "lost my 2FA" recovery, or a stolen SMS code would
+  yield a device that can approve installs and checkouts. Nick accepted that trade.
+- **What stays.** Approvals are still Secure Enclave signatures over the exact request, verified
+  by the Mac (`verifyDecision`); the Mac-only kinds stay Mac only; lockdown and the relay lock
+  stay. Only enrolment moves: the Mac would accept a device the account vouches for, through a
+  signed statement from the service, in place of the QR pairing ceremony.
+- **The QR login** is the signed-in device scanning a code the new one shows. It replaces typing
+  the password and 2FA there, and is never needed in addition.
+
+Proposed by A, **not confirmed by Nick**, because they recover most of what device approval gave:
+2FA by passkey or authenticator app, never SMS; "new device signed in" alerts on the person's
+other devices and the Mac; and a 24-hour cooling-off before a newly signed-in device can approve,
+unless a device they already have says yes, restarted by any recovery that resets 2FA.
+
 ## Open questions
 
 - **D78 (web audit):** a browser as another paired device would fit this design (its own keys,
