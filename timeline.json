@@ -1,0 +1,79 @@
+{
+  "macStartedAt": 1794492495742,
+  "phoneStartedAt": 1794492522938,
+  "captions": [
+    {
+      "at": 1794492524827,
+      "text": "Valet on the Mac, and the iPhone app in the Simulator. Both talk through Valet’s relay, running locally here."
+    },
+    {
+      "at": 1794492640034,
+      "text": "To pair, open Settings › Devices on the Mac and choose Pair an iPhone."
+    },
+    {
+      "at": 1794492646056,
+      "text": "The Mac shows a one-time QR code. The Simulator has no camera, so this test build reads the same code over a local link."
+    },
+    {
+      "at": 1794492673969,
+      "text": "The phone shows six digits. The Mac shows three codes, and you pick the one that matches the phone."
+    },
+    {
+      "at": 1794492687461,
+      "text": "Picking it asks for Touch ID on the Mac (this test build answers that itself). The phone is paired."
+    },
+    {
+      "at": 1794492696443,
+      "text": "Now an agent, connected to Valet over MCP, writes an adapter for a made-up library site."
+    }
+  ],
+  "agent": [
+    {
+      "at": 1794492696534,
+      "who": "agent",
+      "text": "valet_create_draft({\"adapterId\":\"leafline-library\",\"from\":\"blank\",\"name\":\"Leafline Library\"})"
+    },
+    {
+      "at": 1794492698037,
+      "who": "valet",
+      "text": "{\"draft\":{\"draftId\":\"dr-64g2c7yxf3\",\"adapterId\":\"leafline-library\",\"status\":\"editing\",\"createdBy\":\"Claude Code\",\"updatedAt\":\"2026-11-12T14:11:36.802Z\",\"lastCheck\":null,\"basedOn\":null,\"repairId\":null,\"files\":[{\"path\":\"fixtures/item-abc-1.json\",\"bytes\":63,\"sha256\":\"8b366307d84cb1b0\",\"recordedByValet\":false,\"editedOutsideValet\":false},{\"path\":\"manifest.json\",\"bytes\":1020,\"sha256\":\"416d9cce3f3713c6\",\""
+    },
+    {
+      "at": 1794492703335,
+      "who": "agent",
+      "text": "valet_write_draft_file(src/tools.ts, a test case, a fixture page)"
+    },
+    {
+      "at": 1794492714416,
+      "who": "valet",
+      "text": "valet_check_draft: {\"ok\":false,\"packageHash\":\"ec94c52fc751546e6c71800fff26d6266252006a9d5cc7f8cb1b724a03cbdd2d\",\"adapterHash\":null,\"steps\":[{\"step\":\"build\",\"ok\":false}],\"findings\":[{\"level\":\"error\",\"check\":\"build\",\"text"
+    },
+    {
+      "at": 1794492714439,
+      "who": "agent",
+      "text": "valet_submit_draft({\"draftId\":\"dr-64g2c7yxf3\",\"note\":\"Looks up one book’s title and whether it is on the shelf.\"})"
+    },
+    {
+      "at": 1794492718324,
+      "who": "valet",
+      "text": "Not submitted: The package did not load (describe): the tool process gave no usable answer"
+    }
+  ],
+  "marks": [
+    {
+      "at": 1794492635558,
+      "name": "launched",
+      "value": ""
+    },
+    {
+      "at": 1794492673964,
+      "name": "code",
+      "value": "031294"
+    },
+    {
+      "at": 1794492690220,
+      "name": "paired",
+      "value": ""
+    }
+  ]
+}
