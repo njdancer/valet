@@ -46,6 +46,8 @@ const trialSummarySchema = z
     ok: z.boolean(),
     /** How it ended otherwise, in Valet's words. */
     problem: z.string().max(200).nullable(),
+    /** Run with the adapter's session, under an authoring-session approval (PR 3). */
+    signedIn: z.boolean().default(false),
   })
   .strict()
 
@@ -84,6 +86,8 @@ export const draftRecordSchema = z
     lastCheck: checkSummarySchema.nullable(),
     /** Fixtures Valet recorded (PR 2): path → sha-256 of what it wrote. */
     recorded: z.record(z.string().max(200), hash).default({}),
+    /** When Valet recorded each of those (PR 3): a repair's reproduction uses only newer ones. */
+    recordedAt: z.record(z.string().max(200), z.iso.datetime()).default({}),
     /** The latest live trials, newest last (PR 2b). */
     trials: z.array(trialSummarySchema).max(20).default([]),
     submission: submissionSchema.nullable(),
@@ -178,6 +182,7 @@ export class DraftStore {
       status: 'editing',
       lastCheck: null,
       recorded: {},
+      recordedAt: {},
       trials: [],
       submission: null,
     })

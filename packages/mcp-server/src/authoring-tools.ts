@@ -108,7 +108,7 @@ export const removedSchema = z.object({ path: z.string(), removed: z.boolean() }
 
 const finding = z.object({
   level: z.enum(['error', 'caution']),
-  check: z.enum(['package', 'build', 'names', 'lint', 'cases']),
+  check: z.enum(['package', 'build', 'names', 'lint', 'cases', 'reproduction']),
   text: z.string(),
 })
 
@@ -148,6 +148,38 @@ export const submitReportSchema = z.object({
 })
 
 export const deletedSchema = z.object({ draftId: z.string(), deleted: z.boolean() })
+
+/**
+ * A repair ticket (PR 3): structured data only. No page text, no exception messages, no values;
+ * the failing responses stay in Valet.
+ */
+export const repairSchema = z.object({
+  repairId: z.string(),
+  adapterId: z.string(),
+  /** The version that failed. */
+  adapterHash: hash,
+  tool: z.string(),
+  stage: z.string(),
+  errorClass: z.string(),
+  openedAt: z.string(),
+  lastFailedAt: z.string(),
+  failures: z.number().int().nonnegative(),
+  state: z.enum(['open', 'fixed']),
+  /** Your draft repairing it, if you started one. */
+  draftId: z.string().nullable(),
+})
+/** A request the agent made of the person: give them `tellThePerson`, then ask valet_get_approval. */
+export const askReportSchema = z.object({
+  requestId: z.string(),
+  ref: z.string(),
+  expiresAt: z.string(),
+  tellThePerson: z.string(),
+})
+export type AskReport = z.output<typeof askReportSchema>
+
+export const repairListSchema = z.object({ repairs: z.array(repairSchema) })
+export type Repair = z.output<typeof repairSchema>
+export type RepairList = z.output<typeof repairListSchema>
 
 /** A string the site wrote: data for the agent, never instructions. */
 const fromSite = z.object({ fromSite: z.string() })
@@ -254,6 +286,14 @@ export interface Authoring {
     request: { readonly adapterId: string; readonly from: 'blank' | 'installed'; readonly name?: string },
   ): Promise<DraftDetail>
   listDrafts(viewer: ClientIdentity, all: boolean): Promise<DraftList>
+  requestPrivateNetwork(
+    viewer: ClientIdentity,
+    draftId: string,
+    request: { readonly address: string; readonly port: number | null; readonly minutes: number },
+  ): Promise<AskReport>
+  // Repairs (PR 3).
+  listRepairs(viewer: ClientIdentity): Promise<RepairList>
+  getRepair(viewer: ClientIdentity, repairId: string): Promise<Repair>
   getDraft(viewer: ClientIdentity, all: boolean, draftId: string): Promise<DraftDetail>
   readFile(
     viewer: ClientIdentity,
@@ -308,7 +348,14 @@ export interface Authoring {
     path: string,
   ): Promise<Captured>
   // Live trials (PR 2b): one call of a read tool against the real site, signed out.
-  liveTrial(viewer: ClientIdentity, draftId: string, tool: string, input: unknown): Promise<TrialReport>
+  liveTrial(
+    viewer: ClientIdentity,
+    draftId: string,
+    tool: string,
+    input: unknown,
+    signedIn?: boolean,
+  ): Promise<TrialReport>
+  requestSession(viewer: ClientIdentity, draftId: string, minutes: number): Promise<AskReport>
 }
 
 // ---------- Tools ----------
@@ -376,6 +423,11 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
         .max(80)
         .optional()
         .describe('The site’s name, for a blank draft, e.g. "Yahoo Finance".'),
+      repairId: z
+        .string()
+        .regex(/^R-[A-Z2-7]{4}$/)
+        .optional()
+        .describe('The repair ticket this draft fixes (from "installed"), from valet_list_repairs.'),
     }),
     output: draftDetailSchema,
     needs: 'ask',
@@ -385,7 +437,59 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
         adapterId: args['adapterId'] as string,
         from: (args['from'] as 'blank' | 'installed' | undefined) ?? 'blank',
         ...(typeof args['name'] === 'string' ? { name: args['name'] } : {}),
+        ...(typeof args['repairId'] === 'string' ? { repairId: args['repairId'] } : {}),
       }),
+  },
+  {
+    name: 'valet_request_private_network',
+    title: 'Ask to reach an address on the person’s network',
+    description:
+      'Asks the person to let your draft’s scratch browser and live trials reach one private IP address ' +
+      '(a device on their home network, say), on one port or any, for up to 60 minutes. Without it both ' +
+      'refuse every private, loopback and link-local address. Tell the person the sentence in tellThePerson.',
+    input: z.object({
+      draftId: draftIdInput,
+      address: z
+        .string()
+        .regex(/^[0-9A-Fa-f:.]{2,45}$/)
+        .describe('An IP address, e.g. 192.168.1.20.'),
+      port: z.number().int().min(1).max(65535).optional(),
+      minutes: z.number().int().min(1).max(60).default(30),
+    }),
+    output: askReportSchema,
+    needs: 'ask',
+    annotations: { ...EDITS, idempotentHint: false, openWorldHint: true },
+    run: (a, args, s) =>
+      a.requestPrivateNetwork(s.viewer, args['draftId'] as string, {
+        address: args['address'] as string,
+        port: typeof args['port'] === 'number' ? args['port'] : null,
+        minutes: typeof args['minutes'] === 'number' ? args['minutes'] : 30,
+      }),
+  },
+  {
+    name: 'valet_list_repairs',
+    title: 'List repair tickets',
+    description:
+      'Installed adapters whose tools fail the same way twice in a row, in a way only a new version fixes ' +
+      '(the site changed). Each ticket names the tool, the version, the stage and the error class. To fix one, ' +
+      'start a draft from "installed" with its repairId, capture fixtures of the site as it is now with ' +
+      'valet_capture_fixture, and add a case with "reproduces": "<repairId>" on those fixtures that expects ' +
+      'the right output: Valet checks the installed version fails it as the ticket says, and your draft passes.',
+    input: z.object({}),
+    output: repairListSchema,
+    needs: 'see',
+    annotations: READS,
+    run: (a, _args, s) => a.listRepairs(s.viewer),
+  },
+  {
+    name: 'valet_get_repair',
+    title: 'Get a repair ticket',
+    description: 'One repair ticket, as valet_list_repairs describes them.',
+    input: z.object({ repairId: z.string().regex(/^R-[A-Z2-7]{4}$/) }),
+    output: repairSchema,
+    needs: 'see',
+    annotations: READS,
+    run: (a, args, s) => a.getRepair(s.viewer, args['repairId'] as string),
   },
   {
     name: 'valet_list_drafts',
@@ -686,17 +790,46 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
       'Valet’s sandbox, held to the manifest’s egress and read requests, but signed out and in a browser that ' +
       'forgets everything after. Write tools can’t be tried; test them with cases. Calls are paced with the ' +
       'site’s installed adapters, so a trial can take a while, and a few an hour per draft is the most. The ' +
-      'output is the site’s data. A trial of the files you submit shows on the person’s card.',
+      'output is the site’s data. A trial of the files you submit shows on the person’s card. With signedIn, ' +
+      'during a session the person approved (valet_request_session), it runs with the installed adapter’s ' +
+      'session, and only the GET reads the installed version declares reach it.',
     input: z.object({
       draftId: draftIdInput,
       tool: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
       input: z.record(z.string(), z.unknown()).default({}),
+      signedIn: z.boolean().default(false),
     }),
     output: trialReportSchema,
     needs: 'ask',
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     run: (a, args, s) =>
-      a.liveTrial(s.viewer, args['draftId'] as string, args['tool'] as string, args['input'] ?? {}),
+      a.liveTrial(
+        s.viewer,
+        args['draftId'] as string,
+        args['tool'] as string,
+        args['input'] ?? {},
+        args['signedIn'] === true,
+      ),
+  },
+  {
+    name: 'valet_request_session',
+    title: 'Ask to try a draft signed in',
+    description:
+      'Asks the person to let your draft’s live trials use the installed adapter’s signed-in session for up ' +
+      'to 60 minutes, to update or repair an adapter for a site that needs a login. You never see the session: ' +
+      'its cookies are copied one way into each trial’s own browser, only the GET reads the installed version ' +
+      'declares reach it, and output holding a session value is withheld. The scratch browser stays signed ' +
+      'out. Tell the person the sentence in tellThePerson.',
+    input: z.object({ draftId: draftIdInput, minutes: z.number().int().min(1).max(60).default(30) }),
+    output: askReportSchema,
+    needs: 'ask',
+    annotations: { ...EDITS, idempotentHint: false },
+    run: (a, args, s) =>
+      a.requestSession(
+        s.viewer,
+        args['draftId'] as string,
+        typeof args['minutes'] === 'number' ? args['minutes'] : 30,
+      ),
   },
 ]
 

@@ -81,7 +81,7 @@ import { builtinAdapter } from '../../src/main/core/registry'
 import type { RemoteAccess } from '../../src/main/core/remote'
 import { AppService, fillSelector, type ServiceDeps } from '../../src/main/core/service'
 import { disabledUpdates, type UpdatesHooks, type UpdatesPort } from '../../src/main/core/updates'
-import type { AppEvent, ConfirmationItem, HashRoute } from '../../src/shared/api'
+import type { AppEvent, ConfirmationItem, HashRoute, RepairItem } from '../../src/shared/api'
 import {
   FakeAuthPage,
   FakeDriver,
@@ -2832,10 +2832,18 @@ describe('Needs you items', () => {
         errorClass: 'site-changed',
       })
     expect(s.ui.notifications.map((n) => n.title)).toContain('Shop changed: the adapter needs an update')
+    const repairOf = async (api: typeof s.api) =>
+      (await api.attention.list()).find((i): i is RepairItem => i.kind === 'repair')?.repairId
+    expect(await repairOf(s.api)).toBeNull()
+    // The same failure again opens a ticket an agent can fix (docs/authoring-tools.md#repairs-pr-3).
+    await s.call('echo', { text: 'broken' }, 'Claude Code', '6b3e0002')
+    await expect.poll(() => repairOf(s.api)).toMatch(/^R-[A-Z2-7]{4}$/)
+    const ticket = await repairOf(s.api)
     await s.service.stop()
-    // Read back from the audit log at the next launch.
+    // Read back from the audit log at the next launch, the ticket with the same id.
     const again = await setup({ dir: s.dir, definition })
     expect((await again.api.attention.list()).map((i) => i.kind)).toContain('repair')
+    expect(await repairOf(again.api)).toBe(ticket)
     await again.call('echo', { text: 'fine' })
     await expect
       .poll(async () => (await again.api.attention.list()).map((i) => i.kind))
@@ -3509,6 +3517,91 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
         host: 'www.example.com',
         outcome: 'output',
       })
+    })
+
+    it('lends a draft’s trials the session once approved, shows it on the Mac, and ends it there', async () => {
+      const s = await withDraft()
+      const broker = (s.service as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
+      const asked = await broker.request(
+        'authoring-session',
+        { adapterId: 'shop', draftId: s.draftId, origins: ['https://shop.test'], minutes: 20 },
+        { kind: 'agent', clientId: `local:${s.viewer.clientId}`, clientName: 'Claude Code' },
+        { agentNote: null, context: { kind: 'draft', draftId: s.draftId } },
+      )
+      if (!asked.ok) throw new Error(asked.reason)
+      expect((await s.api.drafts.get(s.draftId))?.session).toBeNull()
+      expect(await broker.approveOnMac(asked.requestId)).toEqual({ ok: true })
+      expect((await s.api.drafts.get(s.draftId))?.session).not.toBeNull()
+      // It lapses on its own.
+      s.advance(21 * 60_000)
+      expect((await s.api.drafts.get(s.draftId))?.session).toBeNull()
+      const again = await broker.request(
+        'authoring-session',
+        { adapterId: 'shop', draftId: s.draftId, origins: ['https://shop.test'], minutes: 20 },
+        { kind: 'agent', clientId: `local:${s.viewer.clientId}`, clientName: 'Claude Code' },
+        { agentNote: null, context: { kind: 'draft', draftId: s.draftId } },
+      )
+      if (!again.ok) throw new Error(again.reason)
+      await broker.approveOnMac(again.requestId)
+      expect((await s.api.drafts.get(s.draftId))?.session).not.toBeNull()
+      await s.api.drafts.endSession(s.draftId)
+      expect((await s.api.drafts.get(s.draftId))?.session).toBeNull()
+    })
+
+    it('lets a draft reach one private address once the person approves, on that port, for a while', async () => {
+      let allow: ((address: string, port: number) => boolean) | null = null
+      const trialDriver: NonNullable<ServiceDeps['trialDriver']> = async (
+        _manifest,
+        _label,
+        allowPrivate,
+      ) => {
+        allow = allowPrivate
+        return {
+          beginRun: () => undefined,
+          endRun: () => undefined,
+          close: async () => undefined,
+          toolPage: async () => ({
+            fetch: async () => ({
+              status: 200,
+              contentType: 'application/json',
+              body: { id: 'abc-1', title: 'NAS', price: 1 },
+            }),
+          }),
+        } as unknown as SessionDriver
+      }
+      const s = await withPackages(null, undefined, 'answers', undefined, trialDriver)
+      const viewer: ClientIdentity = {
+        origin: 'local',
+        clientId: (await s.api.clients.add('Claude Code')).id,
+      }
+      const authoring = s.endpoint.authoring as Authoring
+      const { draft } = await authoring.createDraft(viewer, { adapterId: 'example', from: 'blank' })
+      await expect(
+        authoring.requestPrivateNetwork(viewer, draft.draftId, {
+          address: '93.184.216.34',
+          port: null,
+          minutes: 30,
+        }),
+      ).rejects.toThrow(/public/)
+      const asked = await authoring.requestPrivateNetwork(viewer, draft.draftId, {
+        address: '192.168.1.20',
+        port: 8443,
+        minutes: 30,
+      })
+      expect(asked.tellThePerson).toMatch(/192.168.1.20 port 8443/)
+      await authoring.liveTrial(viewer, draft.draftId, 'get_item', { id: 'abc-1' })
+      const before = allow as unknown as (address: string, port: number) => boolean
+      // Asked, not yet approved: nothing private.
+      expect(before('192.168.1.20', 8443)).toBe(false)
+      const broker = (s.service as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
+      expect(await broker.approveOnMac(asked.requestId)).toEqual({ ok: true })
+      // The same dial asks again at each connection, so the approval reaches a browser already open.
+      expect(before('192.168.1.20', 8443)).toBe(true)
+      expect(before('::ffff:192.168.1.20', 8443)).toBe(true)
+      expect(before('192.168.1.20', 22)).toBe(false)
+      expect(before('192.168.1.21', 8443)).toBe(false)
+      s.advance(31 * 60_000)
+      expect(before('192.168.1.20', 8443)).toBe(false)
     })
   })
 })

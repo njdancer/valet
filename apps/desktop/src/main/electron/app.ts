@@ -399,11 +399,11 @@ async function main(): Promise<void> {
     credentials: demoSite === null ? realCredentials(credentialDeps) : demoSite.credentials,
     approvalKeys,
     // Each open its own in-memory partition, so nothing a page left behind is there the next time.
-    scratch: (draftId, rules) =>
+    scratch: (draftId, rules, allowPrivate) =>
       openElectronScratchBrowser({
         partition: `scratch:${draftId}:${++scratchOpens}`,
         rules,
-        dial: publicOnlyDial(),
+        dial: publicOnlyDial(undefined, allowPrivate),
       }),
     // A live trial: the same driver a real call uses, in partitions of its own that live in memory,
     // through the dial that refuses private addresses (docs/authoring-tools.md#live-trials).
@@ -416,8 +416,12 @@ async function main(): Promise<void> {
       })
       return { page: browser.page, close: () => browser.close() }
     },
-    trialDriver: (manifest, label) =>
-      createElectronSessionDriver(manifest, { trialLabel: label }, { dial: publicOnlyDial() }),
+    trialDriver: (manifest, label, allowPrivate, session) =>
+      createElectronSessionDriver(
+        manifest,
+        { trialLabel: label, ...(session === null ? {} : { trialSession: session }) },
+        { dial: publicOnlyDial(undefined, allowPrivate) },
+      ),
     startEndpoint: (caller, clients, onSessionsChanged, admin, authoring) =>
       startEndpoint({
         caller,

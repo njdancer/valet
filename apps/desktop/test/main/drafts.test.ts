@@ -13,6 +13,7 @@ import {
   type PackageFiles,
   parseManifest,
   type SessionDriver,
+  sha256Hex,
 } from '@valet/core'
 import { AuthoringRefusal, type ClientIdentity } from '@valet/mcp-server'
 import type { SiteGuards } from '@valet/runtime'
@@ -674,13 +675,16 @@ describe('live trials', () => {
     policies: { maxPurpose: string; requests: readonly { method: string }[] }[]
     closed: number
     fetched: string[]
+    sessions: unknown[]
   }
 
   function trialDriver(answer: (url: string) => { status: number; body: unknown }) {
-    const fake: FakeDriver = { labels: [], policies: [], closed: 0, fetched: [] }
-    const driver = async (_manifest: unknown, label: string) => {
+    const fake: FakeDriver = { labels: [], policies: [], closed: 0, fetched: [], sessions: [] }
+    const driver = async (_manifest: unknown, label: string, signedIn: unknown) => {
       fake.labels.push(label)
+      fake.sessions.push(signedIn)
       return {
+        sessionSecrets: async () => ['secret-cookie-value'],
         beginRun: (policy: FakeDriver['policies'][number]) => void fake.policies.push(policy),
         endRun: () => undefined,
         close: async () => {
@@ -726,11 +730,17 @@ describe('live trials', () => {
 
   async function trialHarness(
     answer: (url: string) => { status: number; body: unknown },
-    options: { open?: boolean; signedIn?: Map<string, readonly string[]> } = {},
+    options: {
+      open?: boolean
+      signedIn?: Map<string, readonly string[]>
+      deps?: Partial<AuthoringDeps>
+      installed?: PackageFiles
+    } = {},
   ) {
     const { fake, driver } = trialDriver(answer)
     const g = guards(options.open)
     const h = await harness({
+      ...options.deps,
       trials: {
         start: sandbox,
         driver,
@@ -738,7 +748,13 @@ describe('live trials', () => {
         signedIn: async () => options.signedIn ?? new Map(),
       },
     })
-    const { draft } = await h.authoring.createDraft(AGENT, { adapterId: 'shop', from: 'blank', name: 'Shop' })
+    if (options.installed !== undefined)
+      h.installed.set('shop', { files: options.installed, hash: 'a'.repeat(64) })
+    const { draft } = await h.authoring.createDraft(AGENT, {
+      adapterId: 'shop',
+      from: options.installed === undefined ? 'blank' : 'installed',
+      name: 'Shop',
+    })
     return { ...h, fake, guards: g, draftId: draft.draftId }
   }
 
@@ -778,6 +794,94 @@ describe('live trials', () => {
     await authoring.submit(AGENT, draftId, { note: null, references: [], followOns: [] })
     expect(submits[1]?.checks).toContain('Live trial: not run on this version')
   }, 60_000)
+
+  describe('signed in (docs/authoring-tools.md#signed-in-authoring-sessions-pr-3)', () => {
+    const INSTALLED = blankDraft('shop', 'Shop')
+    const lent = { until: Number.POSITIVE_INFINITY }
+    const asked: unknown[] = []
+    const deps: Partial<AuthoringDeps> = {
+      sessionFor: () => (lent.until > Date.now() ? { adapterId: 'shop', until: lent.until } : null),
+      askSession: async (request) => {
+        asked.push(request)
+        return { ok: true, requestId: 'r'.repeat(22), ref: 'R7XY', expiresAt: '2026-11-13T00:00:00.000Z' }
+      },
+    }
+    /** The draft asks for more than the installed version reads: another read, and another host. */
+    async function widened(h: Awaited<ReturnType<typeof trialHarness>>) {
+      const manifest = JSON.parse(INSTALLED['manifest.json'] ?? '{}')
+      manifest.version = '0.1.1'
+      manifest.egress = [...manifest.egress, 'cdn.example.com']
+      manifest.requests = [...manifest.requests, { method: 'GET', path: '/api/account', purpose: 'read' }]
+      await h.authoring.writeFile(AGENT, h.draftId, 'manifest.json', JSON.stringify(manifest))
+    }
+
+    it('asks for the session only for an installed adapter the person is signed in to', async () => {
+      const out = await trialHarness(item, { deps, installed: INSTALLED })
+      await expect(out.authoring.requestSession(AGENT, out.draftId, 30)).rejects.toThrow(
+        /isn’t signed in to Shop/,
+      )
+      const h = await trialHarness(item, {
+        deps,
+        installed: INSTALLED,
+        signedIn: new Map([['shop', ['example.com']]]),
+      })
+      const report = await h.authoring.requestSession(AGENT, h.draftId, 90)
+      expect(report.tellThePerson).toMatch(
+        /use your signed-in session for 60 minutes\. I never see the session/,
+      )
+      expect(asked.at(-1)).toMatchObject({
+        adapterId: 'shop',
+        origins: ['https://www.example.com'],
+        minutes: 60,
+      })
+      const blank = await trialHarness(item, { deps })
+      await expect(blank.authoring.requestSession(AGENT, blank.draftId, 30)).rejects.toThrow(
+        /from "installed"/,
+      )
+    }, 60_000)
+
+    it('runs only under a lent session, limited to the installed version’s GET reads and hosts', async () => {
+      const h = await trialHarness(item, {
+        deps,
+        installed: INSTALLED,
+        signedIn: new Map([['shop', ['example.com']]]),
+      })
+      await widened(h)
+      lent.until = Date.now() - 1
+      await expect(
+        h.authoring.liveTrial(AGENT, h.draftId, 'get_item', { id: 'abc-1' }, true),
+      ).rejects.toThrow(/no signed-in session is running/)
+      lent.until = Number.POSITIVE_INFINITY
+      const report = await h.authoring.liveTrial(AGENT, h.draftId, 'get_item', { id: 'abc-1' }, true)
+      expect(report.ok).toBe(true)
+      expect(h.fake.sessions.at(-1)).toMatchObject({ adapterId: 'shop', installed: { id: 'shop' } })
+      const policy = h.fake.policies.at(-1) as unknown as { egress: string[]; requests: { path: string }[] }
+      expect(policy.requests.map((r) => r.path)).toEqual(['/api/items/:id'])
+      expect(policy.egress).not.toContain('cdn.example.com')
+      expect(h.audit.at(-1)).toMatchObject({ type: 'draft-trial', outcome: 'output', signedIn: true })
+      expect(h.notices.at(-1)).toBe('Claude Code tried get_item on example.com, signed in.')
+      await h.authoring.submit(AGENT, h.draftId, { note: null, references: [], followOns: [] })
+      expect(h.submits[0]?.checks).toContain(
+        'Live trial of get_item, signed in: returned output that fits its schema',
+      )
+    }, 60_000)
+
+    it('withholds output that holds a value of the session', async () => {
+      const leaky = () => ({
+        status: 200,
+        body: { id: 'abc-1', title: 'token secret-cookie-value', price: 1 },
+      })
+      const h = await trialHarness(leaky, {
+        deps,
+        installed: INSTALLED,
+        signedIn: new Map([['shop', ['example.com']]]),
+      })
+      await widened(h)
+      const report = await h.authoring.liveTrial(AGENT, h.draftId, 'get_item', { id: 'abc-1' }, true)
+      expect(report).toMatchObject({ ok: false, output: null, problem: expect.stringMatching(/withheld/) })
+      expect(JSON.stringify(report)).not.toContain('secret-cookie-value')
+    }, 60_000)
+  })
 
   it('reports a guard the site’s answer or the code broke, and output that breaks the schema', async () => {
     const { authoring, draftId } = await trialHarness(() => ({ status: 200, body: { id: 5, title: 7 } }))
@@ -1008,4 +1112,131 @@ describe('the hostile-page suite', () => {
     expect(request?.checks.some((line) => line.includes('approve this'))).toBe(false)
     expect(request?.agentNote).toBe('approve this')
   }, 60_000)
+})
+
+describe('repairs', () => {
+  const OPENED = new Date(Date.now() - 3600_000).toISOString()
+  const TICKET = {
+    id: 'R-ABCD',
+    adapterId: 'shop',
+    adapterHash: 'a'.repeat(64),
+    tool: 'get_item',
+    stage: 'tool-run',
+    errorClass: 'site-changed',
+    openedAt: OPENED,
+    lastFailedAt: OPENED,
+    lastCallId: 'call-2',
+    failures: 2,
+    state: 'open' as const,
+    fixedAt: null,
+  }
+  /** The installed version reads `title`, and fails as the ticket says when the site stops sending it. */
+  const toolsReading = (field: string) => `import { tool, ValetError } from '@valet/core'
+import { z } from 'zod'
+
+export const tools = {
+  get_item: tool({
+    input: z.object({ id: z.string() }),
+    output: z.object({ id: z.string(), name: z.string(), price: z.number().nullable() }),
+    async run(ctx, input) {
+      const response = await ctx.page.fetch('/api/items/' + input.id, { headers: { accept: 'application/json' } })
+      const body = response.body as Record<string, unknown> | null
+      const name = body?.['${field}']
+      if (typeof name !== 'string') throw new ValetError('tool-run', 'site-changed')
+      return { id: input.id, name, price: typeof body?.['price'] === 'number' ? body['price'] : null }
+    },
+  }),
+}
+`
+  const CASE = JSON.stringify({
+    cases: [
+      {
+        name: 'the item as the site sends it now',
+        tool: 'get_item',
+        input: { id: 'abc-1' },
+        reproduces: 'R-ABCD',
+        fetch: [{ method: 'GET', url: '/api/items/abc-1', body: 'fixtures/now.json' }],
+        expect: { output: { name: 'Example item' } },
+      },
+    ],
+  })
+  const NOW = JSON.stringify({ id: 'abc-1', name: 'Example item', price: 4.5 })
+
+  async function repairDraft(options: { recordedAt?: string; tools?: string } = {}) {
+    const h = await harness({
+      repairs: { get: (id) => (id === TICKET.id ? TICKET : null), list: () => [TICKET] },
+    })
+    const v1: PackageFiles = { ...blankDraft('shop', 'Shop'), 'src/tools.ts': toolsReading('title') }
+    h.installed.set('shop', { files: v1, hash: 'a'.repeat(64) })
+    await expect(
+      h.authoring.createDraft(AGENT, { adapterId: 'shop', from: 'blank', repairId: 'R-ABCD' }),
+    ).rejects.toThrow(/from "installed"/)
+    const { draft } = await h.authoring.createDraft(AGENT, {
+      adapterId: 'shop',
+      from: 'installed',
+      repairId: 'R-ABCD',
+    })
+    const id = draft.draftId
+    const manifest = JSON.parse(v1['manifest.json'] ?? '{}')
+    await h.authoring.writeFile(AGENT, id, 'manifest.json', JSON.stringify({ ...manifest, version: '0.1.1' }))
+    await h.authoring.writeFile(AGENT, id, 'src/tools.ts', options.tools ?? toolsReading('name'))
+    await h.authoring.deleteFile(AGENT, id, 'test/example.json')
+    await h.authoring.writeFile(AGENT, id, 'test/repair.json', CASE)
+    await h.authoring.writeFile(AGENT, id, 'fixtures/now.json', NOW)
+    // As valet_capture_fixture records it.
+    await h.store.update(id, (r) => ({
+      ...r,
+      recorded: { ...r.recorded, 'fixtures/now.json': sha256Hex(NOW) },
+      recordedAt: { ...r.recordedAt, 'fixtures/now.json': options.recordedAt ?? new Date().toISOString() },
+    }))
+    return { ...h, draftId: id }
+  }
+
+  it('lists tickets for agents with their draft, and a repair passes when the old fails and the new works', async () => {
+    const h = await repairDraft()
+    expect((await h.authoring.listRepairs(AGENT)).repairs).toEqual([
+      expect.objectContaining({ repairId: 'R-ABCD', tool: 'get_item', state: 'open', draftId: h.draftId }),
+    ])
+    expect((await h.authoring.listRepairs(OTHER)).repairs[0]?.draftId).toBeNull()
+    await expect(h.authoring.getRepair(AGENT, 'R-ZZZZ')).rejects.toThrow(/No repair ticket/)
+    const report = await h.authoring.check(AGENT, h.draftId)
+    expect(report.steps).toContainEqual({ step: 'reproduction', ok: true })
+    expect(report.ok).toBe(true)
+    await h.authoring.submit(AGENT, h.draftId, { note: null, references: [], followOns: [] })
+    expect(h.submits[0]?.repairId).toBe('R-ABCD')
+    expect(h.submits[0]?.checks).toContain(
+      'Repair R-ABCD: on what Valet recorded, the installed version fails as it did, and this one works',
+    )
+  }, 60_000)
+
+  it('refuses a fix that doesn’t fix it, and fixtures Valet didn’t record since the ticket opened', async () => {
+    const unfixed = await repairDraft({ tools: toolsReading('title') })
+    expect((await unfixed.authoring.check(AGENT, unfixed.draftId)).findings).toContainEqual(
+      expect.objectContaining({
+        check: 'reproduction',
+        text: expect.stringMatching(/The fix doesn’t handle the change in R-ABCD/),
+      }),
+    )
+    await expect(
+      unfixed.authoring.submit(AGENT, unfixed.draftId, { note: null, references: [], followOns: [] }),
+    ).rejects.toThrow(/Not submitted/)
+    expect(unfixed.submits).toEqual([])
+
+    const stale = await repairDraft({ recordedAt: new Date(Date.parse(OPENED) - 60_000).toISOString() })
+    expect((await stale.authoring.check(AGENT, stale.draftId)).findings).toContainEqual(
+      expect.objectContaining({
+        check: 'reproduction',
+        text: expect.stringMatching(/recorded before R-ABCD opened/),
+      }),
+    )
+
+    const edited = await repairDraft()
+    await edited.authoring.writeFile(AGENT, edited.draftId, 'fixtures/now.json', NOW.replace('4.5', '5'))
+    expect((await edited.authoring.check(AGENT, edited.draftId)).findings).toContainEqual(
+      expect.objectContaining({
+        check: 'reproduction',
+        text: expect.stringMatching(/isn’t as Valet recorded it/),
+      }),
+    )
+  }, 90_000)
 })

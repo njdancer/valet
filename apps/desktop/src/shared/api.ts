@@ -408,6 +408,8 @@ export interface DraftOverview {
   readonly submission: { readonly ref: string; readonly at: IsoTime; readonly note: string | null } | null
   /** An update of an installed site, not a first install. */
   readonly update: boolean
+  /** A signed-in session the person lent its live trials, while it runs (D81). */
+  readonly session: { readonly until: IsoTime } | null
 }
 
 export interface DraftPage extends DraftOverview {
@@ -854,6 +856,11 @@ export interface RepairItem {
   readonly callId: string
   readonly errorClass: ErrorClass
   readonly at: IsoTime
+  /**
+   * The repair ticket an agent can fix (docs/authoring-tools.md#repairs-pr-3), once the same failure
+   * came twice in a row; null before that.
+   */
+  readonly repairId: string | null
 }
 
 /** What a missed item was before nobody answered it. */
@@ -1147,6 +1154,8 @@ export interface ValetApi {
     get(draftId: string): Promise<DraftPage | null>
     /** Shows the draft's folder in Finder, for a person who wants to edit it (R53). */
     openFolder(draftId: string): Promise<void>
+    /** Ends the signed-in session lent to the draft's live trials, before its time is up. */
+    endSession(draftId: string): Promise<void>
   }
   readonly approvals: {
     pending(): Promise<readonly PendingReview[]>

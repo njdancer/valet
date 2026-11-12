@@ -474,6 +474,30 @@ As authoring-agent.md's repair loop, with the IDE replaced by MCP:
   fix doesn't handle the change in R-4E1C."
 - A second agent's fix is a second card, each naming the other (A's J5 F4).
 
+**Built (PR 3b).** `drafts/repairs.ts` keeps the tickets, rebuilt from the audit log's
+`tool-called` and `tool-finished` records at launch, so they need no file. A ticket opens on the
+second failure in a row of one tool with one stage and class from `tool-output/invalid`,
+`tool-output/site-changed`, `tool-run/site-changed`, `tool-run/element-missing`,
+`tool-run/unexpected-shape` and `request-surface/undeclared-request`. Its id is `R-` and four
+characters derived from the first failing call, so it survives a relaunch, and the next good call
+of that tool closes it. Tickets show on the Needs you item ("Ask your agent to fix repair R-…").
+Agents read them with `valet_list_repairs` and `valet_get_repair`, and start a fix with
+`valet_create_draft` from `installed` with the `repairId`. The reproduction check is check step 7,
+a repair's only. Every case marked `"reproduces": "R-…"` must:
+
+- call the ticket's tool;
+- expect output;
+- use only fixtures (pages and fetch bodies, no inline ones) that Valet recorded after the ticket
+  opened and that are unchanged since (`recordedAt`, new in the draft record);
+- pass on the draft, and fail on the installed version with the ticket's stage and class.
+
+The card then carries "Repair R-…: on what Valet recorded, the installed version fails as it did,
+and this one works".
+
+Not built yet: the runtime keeping the failing response as evidence (for signed-in sites, where the
+scratch browser can't record the page), and the ticket's shape diff. Until then, a signed-in
+site's repair can't pass the reproduction check.
+
 ## Signed-in authoring sessions (PR 3)
 
 Off by default. `valet_request_session` asks for `authoring-session` (B's kind: adapter id, draft
@@ -495,6 +519,31 @@ id, the adapter's origins, at most 60 minutes, 30-minute expiry to answer). Whil
   page is the account's data handed to the model, and nothing in J3 or J5 needs it.
 - Every trial is audited; the Mac shows a running banner with **End now**; the phone shows
   `ph-session-running`.
+
+**Built (PR 3).** `valet_request_session` (a draft started from `installed`, for an adapter the
+person is signed in to, at most 60 minutes) asks for `authoring-session` with the installed
+manifest's https origins. Once approved, `valet_live_trial` with `signedIn: true` runs with:
+
+- the driver's `trialSession`: the live tool partition's cookies on the installed manifest's
+  cookie domains, copied into the trial's in-memory tool partition when it is set up, and never
+  back. Storage keys aren't copied yet;
+- the policy narrowed to the draft's egress hosts that the installed manifest also lists, and the
+  draft's read declarations that the installed manifest declares as `GET` reads;
+- output checked against the driver's session values. Output holding one is withheld whole
+  (`session-value`: "The output held a value of the person's session, so Valet withheld it.").
+
+Each trial is audited with `signedIn: true`, and the card's trial line says "signed in". The
+draft's page on the Mac shows "Using your <site> session" until the time ends, with **End now**
+(`api.drafts.endSession`). Lockdown ends every session and private address.
+
+## The private network (PR 3)
+
+Built: `valet_request_private_network` asks for B's `private-network` kind for one IP address,
+optionally one port, for up to 60 minutes. A public address is refused, since it needs no asking.
+Once approved, the draft's scratch browser and live trials may dial that address, and only that
+address and port, until the time runs out. The dial (`publicOnlyDial`) asks at each connection,
+so an approval reaches a browser that is already open and lapses on its own. Nothing else about
+the browser changes: navigation is still https to the draft's own domains.
 
 ## Prompt injection
 

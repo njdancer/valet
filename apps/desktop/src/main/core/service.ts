@@ -146,10 +146,20 @@ import {
   TYPING_DELAY_MS,
 } from './constants'
 import type { Credentials } from './credentials'
-import { DraftAuthoring, type RequestState, type SubmitOutcome, type SubmitRequest } from './drafts/authoring'
+import {
+  type AskOutcome,
+  DraftAuthoring,
+  type PrivateNetworkRequest,
+  type RequestState,
+  type SessionRequest,
+  type SubmitOutcome,
+  type SubmitRequest,
+} from './drafts/authoring'
 import type { CaseBrowser } from './drafts/cases'
+import { RepairTickets } from './drafts/repairs'
 import { draftDomains, type ScratchHandle, ScratchSessions } from './drafts/research'
 import { type DraftRecord, DraftStore } from './drafts/store'
+import type { SignedInTrial } from './drafts/trial'
 import { type EraseKind, type EraseReport, type EraseStep, eraseEverything } from './erase'
 import { ensurePrivateDir, JsonDocument } from './files'
 import { checkGrantRequest, grantInfo } from './grants'
@@ -272,13 +282,24 @@ export interface ServiceDeps {
    * out, in memory, through a proxy that refuses private addresses once resolved. None in tests
    * that don't drive a browser, and then the research tools say so.
    */
-  readonly scratch?: (draftId: string, rules: ScratchRules) => Promise<ScratchHandle>
+  readonly scratch?: (
+    draftId: string,
+    rules: ScratchRules,
+    /** The private addresses (and ports) the person let this draft reach, asked at each dial. */
+    allowPrivate: (address: string, port: number) => boolean,
+  ) => Promise<ScratchHandle>
   /**
    * A session driver for a draft's live trial (docs/authoring-tools.md#live-trials): partitions in
    * memory named by `label`, through the same public-only dial. None in tests that don't drive a
    * browser, and then valet_live_trial says so.
    */
-  readonly trialDriver?: (manifest: AdapterManifest, label: string) => Promise<SessionDriver>
+  readonly trialDriver?: (
+    manifest: AdapterManifest,
+    label: string,
+    allowPrivate: (address: string, port: number) => boolean,
+    /** A signed-in trial: the installed adapter whose tool-partition cookies are copied in, one way. */
+    session: { readonly adapterId: string; readonly cookieDomains: readonly string[] } | null,
+  ) => Promise<SessionDriver>
   /**
    * The fixture browser for a case's pages (docs/authoring-tools.md#the-agents-cases): served from
    * memory, scripts off, nothing sent. None in tests that don't drive a browser.
@@ -474,6 +495,18 @@ export class AppService {
     string,
     { readonly callId: string; readonly errorClass: string; readonly at: string }
   >()
+  /** Private addresses the person let a draft reach, until when (R21), by draft id. */
+  private readonly privateNetwork = new Map<
+    string,
+    { readonly address: string; readonly port: number | null; readonly until: number }[]
+  >()
+  /** Signed-in authoring sessions the person lent a draft's live trials (D81), by draft id. */
+  private readonly authoringSessions = new Map<
+    string,
+    { readonly adapterId: string; readonly until: number }
+  >()
+  /** Repair tickets for installed adapters (docs/authoring-tools.md#repairs-pr-3), from the audit log. */
+  private readonly repairTickets = new RepairTickets()
   /** Drafts agents are writing (docs/authoring-tools.md), and the tools over them once started. */
   private readonly drafts: DraftStore
   private authoring: DraftAuthoring | null = null
@@ -970,6 +1003,7 @@ export class AppService {
     else if (event.type === 'breaker-closed') this.notifier.breakerClosed(event.host)
     else if (event.type === 'tool-finished' && this.noteFinished(event, record.at))
       this.emit('attention-changed')
+    if (this.repairTickets.note(event, record.at)) this.emit('attention-changed')
     for (const type of EVENTS_FOR[record.event.type] ?? [])
       this.emit(type as Exclude<AppEvent['type'], 'audit-appended' | 'focus-banner'>)
   }
@@ -1009,15 +1043,22 @@ export class AppService {
   /** The repair items as the audit log stood at launch. */
   private async loadRepairs(): Promise<void> {
     try {
-      for (const record of await this.reader.records())
+      for (const record of await this.reader.records()) {
         if (record.event.type === 'tool-finished') this.noteFinished(record.event, record.at)
+        this.repairTickets.note(record.event, record.at)
+      }
     } catch {
       // An unreadable log raises none.
     }
   }
 
   private repairItems(): RepairItem[] {
-    return [...this.repairs].flatMap(([adapterId, repair]) => {
+    const failing = new Map(this.repairs)
+    // A ticket raises the item too: the same failure twice in a row, of any kind a new version fixes.
+    for (const t of this.repairTickets.list())
+      if (t.state === 'open' && !failing.has(t.adapterId))
+        failing.set(t.adapterId, { callId: t.lastCallId, errorClass: t.errorClass, at: t.lastFailedAt })
+    return [...failing].flatMap(([adapterId, repair]) => {
       const adapter = this.adapter(adapterId)
       if (adapter === null) return []
       return [
@@ -1029,6 +1070,7 @@ export class AppService {
           callId: repair.callId,
           errorClass: repair.errorClass as RepairItem['errorClass'],
           at: repair.at,
+          repairId: this.repairTickets.openForAdapter(adapterId)?.id ?? null,
         },
       ]
     })
@@ -1170,6 +1212,9 @@ export class AppService {
     // In memory at once: no call gets through while the rest happens, even if a write fails.
     const saved = this.appState.setLockedDown(true)
     this.authoring?.closeBrowsers()
+    // Lockdown ends every lent session and private address (B).
+    this.authoringSessions.clear()
+    this.privateNetwork.clear()
     const ledger = this.approvalBroker?.lockdown().catch(() => undefined)
     let revoked = 0
     if (locked) {
@@ -1385,6 +1430,42 @@ export class AppService {
           if (code === undefined) throw new ValetError('config', 'invalid')
           const answer = await this.remote.approveConsent(code, subject.tools)
           if (answer !== 'approved') throw new ValetError('config', 'not-found')
+        },
+      },
+      // A draft's live trials may use the adapter's signed-in session for a while (D81).
+      'authoring-session': {
+        precheck: async (subject) => {
+          const record = await this.drafts.record(subject.draftId).catch(() => null)
+          return (
+            record !== null &&
+            record.adapterId === subject.adapterId &&
+            this.adapter(subject.adapterId) !== null
+          )
+        },
+        apply: async (subject) => {
+          this.authoringSessions.set(subject.draftId, {
+            adapterId: subject.adapterId,
+            until: this.deps.now() + subject.minutes * 60_000,
+          })
+          const name = this.adapter(subject.adapterId)?.definition.manifest.name ?? subject.adapterId
+          this.notifier.draftActivity(
+            `An agent’s draft may try ${name} with your session for ${subject.minutes} minutes. End it from the draft’s page.`,
+          )
+          this.emit('drafts-changed')
+        },
+      },
+      // A draft's scratch browser and live trials may reach one private address for a while (R21).
+      'private-network': {
+        precheck: async (subject) => (await this.drafts.record(subject.draftId).catch(() => null)) !== null,
+        apply: async (subject) => {
+          const until = this.deps.now() + subject.minutes * 60_000
+          const now = this.deps.now()
+          const kept = (this.privateNetwork.get(subject.draftId) ?? []).filter((g) => g.until > now)
+          kept.push({ address: subject.address.toLowerCase(), port: subject.port, until })
+          this.privateNetwork.set(subject.draftId, kept.slice(-5))
+          this.notifier.draftActivity(
+            `An agent’s draft may reach ${subject.address} on your network for ${subject.minutes} minutes.`,
+          )
         },
       },
       resume: {
@@ -2056,6 +2137,7 @@ export class AppService {
     this.tidyDraftsSoon()
     return new DraftAuthoring({
       store: this.drafts,
+      repairs: this.repairTickets,
       prepare: async (files) => (await packages.prepare(files, 'draft')).loaded,
       // Each case in a fresh one-shot sandbox window, as describing a package runs (docs/sandbox.md).
       caseProcess: runtime.start,
@@ -2078,6 +2160,12 @@ export class AppService {
           (after.sandbox ?? DEFAULT_SANDBOX).mode === 'unsandboxed' || this.deps.sandbox === undefined,
         ),
       submit: (request) => this.submitDraft(request),
+      askPrivateNetwork: (request) => this.askPrivateNetwork(request),
+      askSession: (request) => this.askSession(request),
+      sessionFor: (draftId) => {
+        const lent = this.authoringSessions.get(draftId)
+        return lent === undefined || lent.until <= this.deps.now() ? null : lent
+      },
       withdraw: async (requestId) => {
         const asker = this.draftAskers.get(requestId)
         if (asker !== undefined) await this.approvalBroker?.withdraw(requestId, asker).catch(() => false)
@@ -2098,7 +2186,18 @@ export class AppService {
             trials: {
               // A fresh one-shot sandbox window for the call, as for a case.
               start: runtime.start,
-              driver: this.deps.trialDriver,
+              driver: (manifest: AdapterManifest, label: string, signedIn: SignedInTrial | null) =>
+                (this.deps.trialDriver as NonNullable<ServiceDeps['trialDriver']>)(
+                  manifest,
+                  label,
+                  this.privateAllowance(/^(dr-[a-z2-7]{10})-/.exec(label)?.[1] ?? ''),
+                  signedIn === null
+                    ? null
+                    : {
+                        adapterId: signedIn.adapterId,
+                        cookieDomains: signedIn.installed.session.cookieDomains,
+                      },
+                ),
               // The installed adapters' own budget and breaker for the host.
               guards: (host: string) => this.runtime().siteGuards(host),
               signedIn: () => this.signedInDomains(),
@@ -2188,13 +2287,112 @@ export class AppService {
           ? null
           : { ref: record.submission.ref, at: record.submission.at, note: record.submission.note },
       update: record.basedOn !== null,
+      session: this.lentSession(record.id),
     }
   }
 
   /** The scratch browsers' rules from what is installed and signed in now. */
+  /** What a draft's dial may reach besides public addresses: what the person approved, until it ends. */
+  private privateAllowance(draftId: string): (address: string, port: number) => boolean {
+    return (address, port) => {
+      const now = this.deps.now()
+      const plain = address.toLowerCase().replace(/^::ffff:/, '')
+      return (this.privateNetwork.get(draftId) ?? []).some(
+        (g) => g.until > now && g.address === plain && (g.port === null || g.port === port),
+      )
+    }
+  }
+
+  /** An agent asks to try its draft with the adapter's session (docs/authoring-tools.md, D81). */
+  private async askSession(request: SessionRequest): Promise<AskOutcome> {
+    const broker = this.approvalBroker
+    if (broker === null) return { ok: false, sentence: 'Valet can’t ask for approvals right now.' }
+    if (this.lockedDown) return { ok: false, sentence: 'Valet is locked down.' }
+    const requester: Requester = {
+      kind: 'agent',
+      clientId: request.requester.clientId,
+      clientName: request.requester.clientName,
+    }
+    const asked = await broker.request(
+      'authoring-session',
+      {
+        adapterId: request.adapterId,
+        draftId: request.draftId,
+        origins: [...request.origins],
+        minutes: request.minutes,
+      },
+      requester,
+      {
+        agentNote: null,
+        context: { kind: 'draft', draftId: request.draftId },
+        display: {
+          client: {
+            label: request.requester.clientName,
+            badge: request.requester.clientId.startsWith('remote:') ? 'remote' : 'local',
+          },
+        },
+      },
+    )
+    if (!asked.ok)
+      return { ok: false, sentence: submitRefusal(asked.reason, asked.until).replace(/^Not submitted: /, '') }
+    this.emit('approvals-changed')
+    this.emit('attention-changed')
+    return { ok: true, requestId: asked.requestId, ref: asked.ref, expiresAt: asked.expiresAt }
+  }
+
+  /** The draft's lent session for the Mac, while it runs. */
+  private lentSession(draftId: string): { readonly until: string } | null {
+    const lent = this.authoringSessions.get(draftId)
+    if (lent === undefined || lent.until <= this.deps.now()) return null
+    return { until: new Date(lent.until).toISOString() }
+  }
+
+  /** The person ends a draft's signed-in session early, from the draft's page. */
+  endAuthoringSession(draftId: string): void {
+    if (this.authoringSessions.delete(draftId)) this.emit('drafts-changed')
+  }
+
+  /** An agent asks for one private address for its draft (docs/authoring-tools.md, R21). */
+  private async askPrivateNetwork(request: PrivateNetworkRequest): Promise<AskOutcome> {
+    const broker = this.approvalBroker
+    if (broker === null) return { ok: false, sentence: 'Valet can’t ask for approvals right now.' }
+    if (this.lockedDown) return { ok: false, sentence: 'Valet is locked down.' }
+    const requester: Requester = {
+      kind: 'agent',
+      clientId: request.requester.clientId,
+      clientName: request.requester.clientName,
+    }
+    const asked = await broker.request(
+      'private-network',
+      {
+        adapterId: request.adapterId,
+        draftId: request.draftId,
+        address: request.address,
+        port: request.port,
+        minutes: request.minutes,
+      },
+      requester,
+      {
+        agentNote: null,
+        context: { kind: 'draft', draftId: request.draftId },
+        display: {
+          client: {
+            label: request.requester.clientName,
+            badge: request.requester.clientId.startsWith('remote:') ? 'remote' : 'local',
+          },
+        },
+      },
+    )
+    if (!asked.ok)
+      return { ok: false, sentence: submitRefusal(asked.reason, asked.until).replace(/^Not submitted: /, '') }
+    this.emit('approvals-changed')
+    this.emit('attention-changed')
+    return { ok: true, requestId: asked.requestId, ref: asked.ref, expiresAt: asked.expiresAt }
+  }
+
   private scratchSessions(open: NonNullable<ServiceDeps['scratch']>): ScratchSessions {
     return new ScratchSessions({
-      open,
+      open: (draftId, rules) => open(draftId, rules, this.privateAllowance(draftId)),
       signedIn: () => this.signedInDomains(),
       secretIn: (text) => this.knownSecretIn([text]),
       blocked: (host) => {
@@ -2965,6 +3163,7 @@ export class AppService {
           if (record === null) throw new ValetError('config', 'not-found')
           deps.ui.showFolder(this.drafts.filesFolder(draftId))
         },
+        endSession: async (draftId) => this.endAuthoringSession(draftId),
       },
       approvals: {
         pending: async () => {

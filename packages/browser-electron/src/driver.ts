@@ -137,6 +137,13 @@ export interface DriverOptions {
    * outlives the installed adapter's session. Each trial its own label.
    */
   readonly trialLabel?: string
+  /**
+   * A signed-in trial (docs/authoring-tools.md#signed-in-authoring-sessions-pr-3): the installed
+   * adapter's tool-partition cookies on these domains are copied into the trial's tool partition
+   * when it is set up, one way, so the trial is signed in and nothing it does reaches the live
+   * partition. Only with trialLabel. The values join the ones tool output must never contain.
+   */
+  readonly trialSession?: { readonly adapterId: string; readonly cookieDomains: readonly string[] }
 }
 
 /** What openAuthPage() may be given: core's AuthPageOptions, with the driver's reporting rules. */
@@ -722,6 +729,18 @@ export class ElectronSessionDriver implements SessionDriver {
     }
     session.filterRequests((request) => this.allowToolRequest(request))
     session.onCookieChanged((cookie) => this.values.cookie(cookie))
+    const seed = this.options.trialSession
+    if (seed !== undefined && this.options.trialLabel !== undefined) {
+      const live = this.platform.session(partitionName('tool', seed.adapterId))
+      try {
+        for (const cookie of cookiesForDomains(await live.getCookies(), seed.cookieDomains)) {
+          this.values.cookie(cookie)
+          await session.setCookie(cookieSetDetails(cookie))
+        }
+      } catch {
+        throw new ValetError('session-handoff', 'internal')
+      }
+    }
     // Stops the page resolving hostnames it only links to: a hostname can carry data out
     // through DNS without any request that webRequest would see.
     session.addResponseHeader('X-DNS-Prefetch-Control', 'off')

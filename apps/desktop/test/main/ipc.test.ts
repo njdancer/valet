@@ -321,6 +321,7 @@ describe('every channel', () => {
     'drafts.list': [],
     'drafts.get': ['dr-abcdefgh23'],
     'drafts.openFolder': ['dr-abcdefgh23'],
+    'drafts.endSession': ['dr-abcdefgh23'],
     'approvals.pending': [],
     'approvals.approve': ['woolworths', HASH64],
     'approvals.reject': ['woolworths', HASH64],

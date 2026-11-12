@@ -13,7 +13,7 @@ export const MAX_TITLE = 40
 
 export interface Finding {
   readonly level: 'error' | 'caution'
-  readonly check: 'package' | 'build' | 'names' | 'lint' | 'cases'
+  readonly check: 'package' | 'build' | 'names' | 'lint' | 'cases' | 'reproduction'
   readonly text: string
 }
 

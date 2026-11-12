@@ -3,6 +3,7 @@
 // service gives it the builder (C's prepare, describing in a one-shot sandbox window), the sandbox
 // factory for cases, what is installed and approved, and the broker's side of a submit.
 
+import { isIP } from 'node:net'
 import type { LoadedPackage } from '@valet/adapter-store'
 import {
   type AdapterManifest,
@@ -14,6 +15,7 @@ import {
   sha256Hex,
 } from '@valet/core'
 import {
+  type AskReport,
   type Authoring,
   AuthoringRefusal,
   type BrowserQuery,
@@ -27,12 +29,14 @@ import {
   type DraftList,
   type NetworkBody,
   type NetworkLog,
+  type Repair,
+  type RepairList,
   type SubmitReport,
   type TrialReport,
 } from '@valet/mcp-server'
 import type { ToolProcessFactory } from '@valet/runtime'
-import { NO_LOCAL_ACCESS } from '@valet/sandbox'
-import { type CaseBrowser, type CaseRun, runCases } from './cases'
+import { isPublicAddress, NO_LOCAL_ACCESS } from '@valet/sandbox'
+import { type CaseBrowser, type CaseRun, readCases, runCase, runCases } from './cases'
 import {
   caseFindings,
   checkNames,
@@ -42,6 +46,7 @@ import {
   lint,
   siteDomain,
 } from './checks'
+import type { RepairTicket } from './repairs'
 import {
   draftDomains,
   fixtureFits,
@@ -55,7 +60,7 @@ import {
 import { siteInputType, siteMethod, siteMime, siteRole, siteTag } from './site-text'
 import { DRAFT_LIMITS, DraftError, type DraftRecord, type DraftStore, type TrialSummary } from './store'
 import { blankDraft } from './template'
-import { runTrial, TRIAL_LIMITS, type TrialDeps, type TrialResult } from './trial'
+import { runTrial, type SignedInTrial, TRIAL_LIMITS, type TrialDeps, type TrialResult } from './trial'
 
 /** A whole check's time, so a submit answers inside an MCP client's usual timeout. */
 export const CHECK_BUDGET_MS = 45_000
@@ -97,6 +102,28 @@ export type SubmitOutcome =
     }
   | { readonly ok: false; readonly sentence: string }
 
+export interface PrivateNetworkRequest {
+  readonly draftId: string
+  readonly adapterId: string
+  readonly address: string
+  readonly port: number | null
+  readonly minutes: number
+  readonly requester: { readonly clientId: string; readonly clientName: string }
+}
+
+export interface SessionRequest {
+  readonly draftId: string
+  readonly adapterId: string
+  /** The installed adapter's https origins, as the card lists them. */
+  readonly origins: readonly string[]
+  readonly minutes: number
+  readonly requester: { readonly clientId: string; readonly clientName: string }
+}
+
+export type AskOutcome =
+  | { readonly ok: true; readonly requestId: string; readonly ref: string; readonly expiresAt: string }
+  | { readonly ok: false; readonly sentence: string }
+
 export interface RequestState {
   readonly state: 'pending' | 'approved' | 'declined' | 'expired' | 'withdrawn' | 'unknown'
   readonly note: string | null
@@ -109,6 +136,11 @@ export interface AuthoringDeps {
   /** A fresh sandbox process per case (SandboxPool.oneShot()). */
   readonly caseProcess: ToolProcessFactory
   readonly installed: (adapterId: string) => Promise<InstalledVersion | null>
+  /** Repair tickets (PR 3), from the audit log. Without them no draft can be a repair. */
+  readonly repairs?: {
+    get(id: string): RepairTicket | null
+    list(): readonly RepairTicket[]
+  }
   /** The version the person last approved, which the card diffs against; null for none. */
   readonly approved: (
     adapterId: string,
@@ -121,6 +153,18 @@ export interface AuthoringDeps {
   ) => readonly PermissionChange[]
   readonly submit: (request: SubmitRequest) => Promise<SubmitOutcome>
   readonly withdraw: (requestId: string) => Promise<void>
+  /**
+   * Asks the person to let the draft's scratch browser and live trials reach one private address
+   * (B's private-network kind, R21). The broker's own refusals come back as a sentence.
+   */
+  readonly askPrivateNetwork?: (request: PrivateNetworkRequest) => Promise<AskOutcome>
+  /**
+   * Asks the person to let the draft's live trials use the installed adapter's session for a while
+   * (B's authoring-session kind, D81).
+   */
+  readonly askSession?: (request: SessionRequest) => Promise<AskOutcome>
+  /** The draft's approved signed-in session, while it lasts; null for none. */
+  readonly sessionFor?: (draftId: string) => { readonly adapterId: string; readonly until: number } | null
   readonly requestState: (requestId: string) => RequestState
   /** The person's name for a client, for the draft record. */
   readonly clientName: (viewer: ClientIdentity) => string
@@ -167,7 +211,12 @@ export class DraftAuthoring implements Authoring {
 
   async createDraft(
     viewer: ClientIdentity,
-    request: { readonly adapterId: string; readonly from: 'blank' | 'installed'; readonly name?: string },
+    request: {
+      readonly adapterId: string
+      readonly from: 'blank' | 'installed'
+      readonly name?: string
+      readonly repairId?: string
+    },
   ): Promise<DraftDetail> {
     const client = clientKey(viewer)
     const all = await this.deps.store.list()
@@ -178,6 +227,17 @@ export class DraftAuthoring implements Authoring {
         'Not started: Valet holds as many drafts as it keeps. Ask the person to delete some.',
       )
     const installed = await this.deps.installed(request.adapterId)
+    if (request.repairId !== undefined) {
+      const ticket = this.deps.repairs?.get(request.repairId) ?? null
+      if (ticket === null || ticket.adapterId !== request.adapterId)
+        throw new AuthoringRefusal(
+          `No repair ticket ${request.repairId} for ${request.adapterId}. valet_list_repairs lists them.`,
+        )
+      if (ticket.state !== 'open')
+        throw new AuthoringRefusal(`${ticket.id} is closed: a later call of ${ticket.tool} worked.`)
+      if (request.from !== 'installed')
+        throw new AuthoringRefusal('A repair starts from the installed adapter: from "installed".')
+    }
     let files: PackageFiles
     let basedOn: string | null = null
     if (request.from === 'installed') {
@@ -200,7 +260,7 @@ export class DraftAuthoring implements Authoring {
           createdBy: client,
           createdByName: this.deps.clientName(viewer).slice(0, 100),
           basedOn,
-          repairId: null,
+          repairId: request.repairId ?? null,
         },
         files,
       ),
@@ -227,6 +287,121 @@ export class DraftAuthoring implements Authoring {
       .filter((d) => all || d.createdBy === client)
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     return { drafts: await Promise.all(drafts.map(async (d) => this.summary(await this.refreshed(d)))) }
+  }
+
+  // ---------- The private network ----------
+
+  async requestPrivateNetwork(
+    viewer: ClientIdentity,
+    draftId: string,
+    request: { readonly address: string; readonly port: number | null; readonly minutes: number },
+  ): Promise<AskReport> {
+    const record = await this.own(viewer, draftId)
+    const ask = this.deps.askPrivateNetwork
+    if (ask === undefined) throw new AuthoringRefusal('This build of Valet can’t reach a private network.')
+    if (!isIP(request.address))
+      throw new AuthoringRefusal('Give the address as an IP address, e.g. 192.168.1.20.')
+    if (isPublicAddress(request.address))
+      throw new AuthoringRefusal('That address is public: the scratch browser reaches it without asking.')
+    const asked = await ask({
+      draftId,
+      adapterId: record.adapterId,
+      address: request.address.toLowerCase(),
+      port: request.port,
+      minutes: Math.min(60, Math.max(1, Math.round(request.minutes))),
+      requester: { clientId: clientKey(viewer), clientName: this.deps.clientName(viewer).slice(0, 100) },
+    })
+    if (!asked.ok) throw new AuthoringRefusal(`Not asked: ${asked.sentence}`)
+    return {
+      requestId: asked.requestId,
+      ref: asked.ref,
+      expiresAt: asked.expiresAt,
+      tellThePerson: `I’ve asked Valet to let my draft reach ${request.address}${
+        request.port === null ? '' : ` port ${request.port}`
+      } on your network for ${request.minutes} minutes. Approve it on your phone or Mac (${asked.ref}).`,
+    }
+  }
+
+  // ---------- Signed-in sessions ----------
+
+  async requestSession(viewer: ClientIdentity, draftId: string, minutes: number): Promise<AskReport> {
+    const record = await this.own(viewer, draftId)
+    const ask = this.deps.askSession
+    const trials = this.deps.trials
+    if (ask === undefined || trials === undefined)
+      throw new AuthoringRefusal('This build of Valet can’t lend a signed-in session.')
+    const installed = record.basedOn === null ? null : await this.deps.installed(record.adapterId)
+    if (installed === null)
+      throw new AuthoringRefusal(
+        'A signed-in session is for updating or repairing an installed adapter: start the draft from "installed".',
+      )
+    const signedIn = await trials.signedIn().catch(() => new Map<string, readonly string[]>())
+    if (!signedIn.has(record.adapterId))
+      throw new AuthoringRefusal(`The person isn’t signed in to ${installed.manifest.name} in Valet.`)
+    const origins = [
+      ...new Set(
+        [installed.manifest.home, ...installed.manifest.navigation]
+          .map((o) => {
+            try {
+              const url = new URL(o)
+              return url.protocol === 'https:' ? url.origin : null
+            } catch {
+              return null
+            }
+          })
+          .filter((o): o is string => o !== null),
+      ),
+    ].slice(0, 10)
+    const span = Math.min(60, Math.max(1, Math.round(minutes)))
+    const asked = await ask({
+      draftId,
+      adapterId: record.adapterId,
+      origins,
+      minutes: span,
+      requester: { clientId: clientKey(viewer), clientName: this.deps.clientName(viewer).slice(0, 100) },
+    })
+    if (!asked.ok) throw new AuthoringRefusal(`Not asked: ${asked.sentence}`)
+    return {
+      requestId: asked.requestId,
+      ref: asked.ref,
+      expiresAt: asked.expiresAt,
+      tellThePerson:
+        `I’ve asked Valet to let my live trials of the ${installed.manifest.name} draft use your signed-in ` +
+        `session for ${span} minutes. I never see the session itself. Approve it on your phone or Mac (${asked.ref}).`,
+    }
+  }
+
+  // ---------- Repairs ----------
+
+  async listRepairs(viewer: ClientIdentity): Promise<RepairList> {
+    const tickets = this.deps.repairs?.list() ?? []
+    const drafts = await this.deps.store.list()
+    return { repairs: tickets.map((t) => this.repairView(viewer, t, drafts)) }
+  }
+
+  async getRepair(viewer: ClientIdentity, repairId: string): Promise<Repair> {
+    const ticket = this.deps.repairs?.get(repairId) ?? null
+    if (ticket === null)
+      throw new AuthoringRefusal('No repair ticket has that id. valet_list_repairs lists them.')
+    return this.repairView(viewer, ticket, await this.deps.store.list())
+  }
+
+  private repairView(viewer: ClientIdentity, t: RepairTicket, drafts: readonly DraftRecord[]): Repair {
+    const client = clientKey(viewer)
+    const mine = drafts.find((d) => d.repairId === t.id && d.createdBy === client)
+    return {
+      repairId: t.id,
+      adapterId: t.adapterId,
+      adapterHash: t.adapterHash,
+      tool: t.tool,
+      stage: t.stage,
+      errorClass: t.errorClass,
+      openedAt: t.openedAt,
+      lastFailedAt: t.lastFailedAt,
+      failures: t.failures,
+      state: t.state,
+      draftId: mine?.id ?? null,
+    }
   }
 
   async getDraft(viewer: ClientIdentity, all: boolean, draftId: string): Promise<DraftDetail> {
@@ -413,7 +588,87 @@ export class DraftAuthoring implements Authoring {
     const caseErrors = caseFindings(manifest, run, tool)
     findings.push(...caseErrors)
     steps.push({ step: 'cases', ok: !caseErrors.some((f) => f.level === 'error') })
+    // 7, a repair's only: the ticket's failure, reproduced on what Valet recorded.
+    if (record.repairId !== null && tool === undefined) {
+      const problem = await this.reproduce(record, files, run, installed, started + budget)
+      steps.push({ step: 'reproduction', ok: problem === null })
+      if (problem !== null) findings.push({ level: 'error', check: 'reproduction', text: problem })
+    }
     return this.saved(record, report(loaded, run, changes))
+  }
+
+  /**
+   * A repair's reproduction check (docs/authoring-tools.md#repairs-pr-3): each case that names the
+   * ticket uses only fixtures Valet recorded after it opened, fails on the installed version with
+   * the ticket's stage and class, and passes on the draft. Null when it holds; else why not.
+   */
+  private async reproduce(
+    record: DraftRecord,
+    files: PackageFiles,
+    run: CaseRun,
+    installed: InstalledVersion | null,
+    deadline: number,
+  ): Promise<string | null> {
+    const id = record.repairId ?? ''
+    const ticket = this.deps.repairs?.get(id) ?? null
+    if (ticket === null) return `Valet no longer has repair ticket ${id}.`
+    if (installed === null) return `${record.adapterId} isn’t installed now, so there’s nothing to repair.`
+    const mine = readCases(files).cases.filter((c) => c.case.reproduces === id)
+    if (mine.length === 0)
+      return (
+        `A repair needs a case with "reproduces": "${id}" that calls ${ticket.tool} on fixtures Valet ` +
+        `recorded after ${id} opened (valet_capture_fixture).`
+      )
+    const current = await this.deps.store.require(record.id)
+    let old: LoadedPackage
+    try {
+      old = await this.deps.prepare(installed.files)
+    } catch {
+      return 'Valet couldn’t load the installed version to compare with.'
+    }
+    for (const { file, case: c } of mine) {
+      const named = `"${clip(c.name, 80)}"`
+      if (c.tool !== ticket.tool)
+        return `The case ${named} reproduces ${id}, which is about ${ticket.tool}, not ${c.tool}.`
+      if (!('output' in c.expect)) return `The case ${named} must expect output: it shows the fix works.`
+      const paths = [...Object.values(c.pages)]
+      for (const f of c.fetch) {
+        if (f.body !== undefined && typeof f.body !== 'string')
+          return `The case ${named} has an inline body; a reproduction uses only what Valet recorded.`
+        if (typeof f.body === 'string') paths.push(f.body)
+      }
+      if (paths.length === 0) return `The case ${named} uses no fixtures Valet recorded.`
+      for (const path of paths) {
+        const text = files[path]
+        if (text === undefined || current.recorded[path] !== sha256Hex(text))
+          return `The case ${named} uses ${path}, which isn’t as Valet recorded it: capture it again.`
+        const at = current.recordedAt[path]
+        if (at === undefined || Date.parse(at) < Date.parse(ticket.openedAt))
+          return `The case ${named} uses ${path}, recorded before ${id} opened: capture it again.`
+      }
+      const mineNow = run.results.find((r) => r.file === file && r.name === c.name)
+      if (mineNow?.passed !== true)
+        return `The fix doesn’t handle the change in ${id}: ${named} fails on the draft.`
+      const before = await runCase(
+        { manifest: old.manifest, script: old.script, tools: old.definition.tools },
+        files,
+        file,
+        { ...c, expect: { error: { stage: ticket.stage, errorClass: ticket.errorClass } } },
+        {
+          start: this.deps.caseProcess,
+          local: NO_LOCAL_ACCESS,
+          ...(this.deps.caseBrowser === undefined ? {} : { browser: this.deps.caseBrowser }),
+          now: this.deps.now,
+          timeoutMs: Math.min(5_000, Math.max(1, deadline - this.deps.now())),
+        },
+      )
+      if (!before.passed)
+        return (
+          `The installed version doesn’t fail ${named} with ${ticket.stage}/${ticket.errorClass} as ${id} ` +
+          'did, so the case doesn’t reproduce the change.'
+        )
+    }
+    return null
   }
 
   /** Records the check on the draft (bound to its package hash) and returns it. */
@@ -468,7 +723,7 @@ export class DraftAuthoring implements Authoring {
       const provenance = fixtureProvenance(outcome.run, outcome.files, current.recorded)
       const passed = outcome.run.results.filter((r) => r.passed).length
       const failed = outcome.run.results.length - passed
-      const checks = checkLines(outcome.report, provenance, current.trials)
+      const checks = checkLines(outcome.report, provenance, current.trials, record.repairId)
       const domain = siteDomain(new URL(loaded.manifest.home).hostname)
       const asked = await this.deps.submit({
         draftId,
@@ -736,7 +991,11 @@ export class DraftAuthoring implements Authoring {
     const digest = sha256Hex(text)
     this.written.set(`${draftId}:${path}`, digest)
     await this.wrap(() =>
-      this.deps.store.update(draftId, (r) => ({ ...r, recorded: { ...r.recorded, [path]: digest } })),
+      this.deps.store.update(draftId, (r) => ({
+        ...r,
+        recorded: { ...r.recorded, [path]: digest },
+        recordedAt: { ...r.recordedAt, [path]: new Date(this.deps.now()).toISOString() },
+      })),
     )
     return { path, bytes: Buffer.byteLength(text, 'utf8'), recordedByValet: true }
   }
@@ -748,6 +1007,7 @@ export class DraftAuthoring implements Authoring {
     draftId: string,
     tool: string,
     input: unknown,
+    signedIn = false,
   ): Promise<TrialReport> {
     const record = await this.own(viewer, draftId)
     const trials = this.deps.trials
@@ -778,14 +1038,24 @@ export class DraftAuthoring implements Authoring {
     // Never a site the person is signed in to, except this draft's own adapter's, as for the
     // scratch browser.
     const domains = draftDomains(manifest)
-    const signedIn = await trials.signedIn().catch(() => null)
-    if (signedIn === null)
+    const signedInSites = await trials.signedIn().catch(() => null)
+    if (signedInSites === null)
       throw new AuthoringRefusal('Not tried: Valet can’t tell which sites are signed in.')
-    for (const [id, list] of signedIn) {
+    for (const [id, list] of signedInSites) {
       if (id === record.adapterId) continue
       const shared = list.find((d) => domains.includes(d))
       if (shared !== undefined)
         throw new AuthoringRefusal(`Not tried: the person is signed in to ${shared} with another adapter.`)
+    }
+    let session: SignedInTrial | null = null
+    if (signedIn) {
+      const lent = this.deps.sessionFor?.(draftId) ?? null
+      const installed = record.basedOn === null ? null : await this.deps.installed(record.adapterId)
+      if (lent === null || lent.until <= this.deps.now() || installed === null)
+        throw new AuthoringRefusal(
+          'Not tried: no signed-in session is running for this draft. valet_request_session asks the person for one.',
+        )
+      session = { adapterId: record.adapterId, installed: installed.manifest }
     }
     if (!take(this.trialTimes, draftId, TRIAL_LIMITS.perDraftPerHour, this.deps.now()))
       throw new AuthoringRefusal(
@@ -803,6 +1073,7 @@ export class DraftAuthoring implements Authoring {
         `${draftId.toLowerCase()}-${++this.trialCount}`,
         trials,
         this.deps.now,
+        session,
       )
     } catch {
       throw new AuthoringRefusal('Not tried: Valet couldn’t open a browser for the trial.')
@@ -816,6 +1087,7 @@ export class DraftAuthoring implements Authoring {
       at: new Date(this.deps.now()).toISOString(),
       ok: problem === null,
       problem: problem === null ? null : clip(problem, 200),
+      signedIn: session !== null,
     }
     await this.deps.store
       .update(draftId, (r) => ({ ...r, trials: [...r.trials, summary].slice(-20) }))
@@ -829,9 +1101,12 @@ export class DraftAuthoring implements Authoring {
       host,
       packageHash,
       outcome: result.outcome.kind,
+      ...(session === null ? {} : { signedIn: true }),
     })
     // The tool's name, never its agent-written title.
-    this.deps.notify(`${this.deps.clientName(viewer)} tried ${tool} on ${siteDomain(host)}.`)
+    this.deps.notify(
+      `${this.deps.clientName(viewer)} tried ${tool} on ${siteDomain(host)}${session === null ? '' : ', signed in'}.`,
+    )
     return {
       tool,
       packageHash,
@@ -951,6 +1226,7 @@ export function checkLines(
   report: CheckReport,
   provenance: { readonly recordedByValet: number; readonly writtenByAgent: number },
   trials: readonly TrialSummary[] = [],
+  repairId: string | null = null,
 ): string[] {
   const out = [
     'Package and manifest: pass',
@@ -964,6 +1240,10 @@ export function checkLines(
     `Fixtures: ${provenance.recordedByValet} recorded by Valet, ${provenance.writtenByAgent} written by the agent`,
   )
   out.push(...trialLines(trials, report.packageHash))
+  if (repairId !== null)
+    out.push(
+      `Repair ${repairId}: on what Valet recorded, the installed version fails as it did, and this one works`,
+    )
   return out.slice(0, 20)
 }
 
@@ -972,13 +1252,13 @@ function trialLines(trials: readonly TrialSummary[], packageHash: string | null)
   const these = trials.filter((t) => t.packageHash === packageHash)
   if (these.length === 0) return ['Live trial: not run on this version']
   const byTool = new Map<string, TrialSummary>()
-  for (const t of these) byTool.set(t.tool, t)
+  for (const t of these) byTool.set(`${t.tool}:${t.signedIn}`, t)
   return [...byTool.values()]
     .slice(0, 4)
     .map((t) =>
       t.ok
-        ? `Live trial of ${t.tool}, signed out: returned output that fits its schema`
-        : `Live trial of ${t.tool}, signed out: ${clip(t.problem ?? 'failed', 120)}`,
+        ? `Live trial of ${t.tool}, ${t.signedIn ? 'signed in' : 'signed out'}: returned output that fits its schema`
+        : `Live trial of ${t.tool}, ${t.signedIn ? 'signed in' : 'signed out'}: ${clip(t.problem ?? 'failed', 120)}`,
     )
 }
 
@@ -990,6 +1270,8 @@ function trialProblem(result: TrialResult): string | null {
       return null
     case 'invalid-output':
       return 'The output doesn’t match the tool’s output schema.'
+    case 'session-value':
+      return 'The output held a value of the person’s session, so Valet withheld it.'
     case 'timeout':
       return `Ran over ${Math.round(TRIAL_LIMITS.timeoutMs / 1000)} seconds.`
     case 'needs-user':
