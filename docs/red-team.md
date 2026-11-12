@@ -30,14 +30,17 @@ write it.
 
 Each pass plays one role, against the fake site and the test doubles only.
 
-| Role                  | Starts with                                    | Tries to                                                                                       |
-| --------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Hostile adapter       | A manifest and tool code the person approved   | Read a canary secret; send a request to an undeclared host; get free text to the client or log |
-| Hostile page          | Control of what the fake site serves           | Get a secret typed into the wrong field or origin; get instructions or a secret into a result  |
-| Hostile MCP client    | One valid client token                         | Use or disturb another client's session; skip a confirmation; exhaust the site's rate budget   |
-| Hostile local process | The person's user account, no token            | Read a token or secret from disk; talk to the endpoint; forge an audit entry                   |
-| Hostile update feed   | Control of the feed's bytes                    | Get an unsigned or older build installed                                                       |
-| Hostile remote client | A remote credential (once remote mode has one) | Reach a tool the person didn't enable remotely; outlive the kill switch                        |
+| Role                  | Starts with                                     | Tries to                                                                                                          |
+| --------------------- | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Hostile adapter       | A manifest and tool code the person approved    | Read a canary secret; send a request to an undeclared host; get free text to the client or log                    |
+| Hostile page          | Control of what the fake site serves            | Get a secret typed into the wrong field or origin; get instructions or a secret into a result                     |
+| Hostile MCP client    | One valid client token                          | Use or disturb another client's session; skip a confirmation; exhaust the site's rate budget                      |
+| Hostile local process | The person's user account, no token             | Read a token or secret from disk; talk to the endpoint; forge an audit entry                                      |
+| Hostile update feed   | Control of the feed's bytes                     | Get an unsigned or older build installed                                                                          |
+| Hostile remote client | A remote credential (once remote mode has one)  | Reach a tool the person didn't enable remotely; outlive the kill switch                                           |
+| Hostile agent         | Admin and authoring MCP tools (agent-run Valet) | Widen anything without a device's signature; get draft code run before approval; launder a widening past the diff |
+| Hostile relay         | The relay's position and storage                | Approve, or forge or read a Mac-to-phone message; replay an old approval; keep call data                          |
+| Stolen phone          | A paired phone, locked                          | Approve anything, pair another device, or keep access after it's revoked                                          |
 
 ## Rules
 
@@ -108,3 +111,44 @@ will type Nick's real password in the first live login.
   is the password, and a code is single-use.
 - **Not tried yet:** the driver's own typing loop (`packages/browser-electron/src/auth-page.ts`)
   against focus theft between keystrokes, beyond what its e2e suite covers.
+
+### 2026-11-12: agent-run design and contracts (hostile agent, page, relay, phone, local process, adapter)
+
+A fresh agent reviewed `docs/agent-run-security.md` and its core contracts before anything was
+built on them, and ran tests for most findings. All were fixed in the same PR (#71), each with a
+test:
+
+- **High.** The forbidden-path check missed absolute and resolved home paths (`/Users/<name>/.ssh`)
+  and Unicode case folding. Fixed: `~` expansion, `/Users` and `/Volumes` rules, NFKC, and more
+  forbidden places.
+- **High.** `command` exceptions for a shell, and Apple Events to Terminal, were phone-approvable.
+  Fixed: shells, interpreters and script-running apps are refused, and any critical line is Mac
+  only.
+- **High (design).** A store mismatch read as "empty" could loosen tightening records. Fixed:
+  mismatch means lockdown, and settings and safety state are anchored too.
+- **Medium.**
+  - Stored evidence trusted the signer's `decidedAt`. Fixed: the Mac's own receipt.
+  - A comma in a path hid a widening.
+  - Agent-authored card fields were not called out, and some ids had no character rules.
+  - The Mac could be revoked.
+  - An uncommitted anchor write kept the old file valid.
+  - Which permissions draft code runs with was unstated.
+- **Low.**
+  - Remote enablement wasn't per version.
+  - Never-stored kinds were accepted as evidence.
+  - There was no item fingerprint on grants.
+  - There were no acknowledgements for phone commands.
+  - The channel schema had no direction.
+  - Rollback had no source of its own.
+
+A second pass by the same agent checked those fixes. It found one new high issue: an update to
+an already unsandboxed adapter could be approved on the phone. It also found gaps that a deny
+list can't close: writable code-execution files, apps that are egress, and a swapped-back store
+file after a crash. Each is fixed in the same PR:
+
+- the unsandboxed check runs in one direction only;
+- read-write paths and Apple Events targets are allow-listed;
+- commands in folders the person can write to are refused;
+- an `interrupted` anchor state fails closed;
+- the Mac can't be revoked, enforced in the schemas;
+- more invisible characters are refused.

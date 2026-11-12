@@ -27,6 +27,7 @@ import {
 } from '@valet/core'
 import { FileGrantStore } from '@valet/credentials'
 import {
+  type AdminReader,
   type CallOutcome,
   type EndpointClient,
   identityLabel,
@@ -43,7 +44,9 @@ import {
   LoginAttemptMarker,
   pruneOlderThan,
   type RuntimeDiagnostic,
+  SecretRedactionSet,
   type Sleep,
+  sensitiveMatcher,
   ToolHost,
   type ToolProcessFactory,
 } from '@valet/runtime'
@@ -68,6 +71,7 @@ import type {
   UpdateStatus,
 } from '../../shared/api'
 import { AdapterSettingsStore } from './adapter-settings'
+import { adminReader } from './admin'
 import { AppStateStore } from './app-state'
 import { MissedItems, sortAttention } from './attention'
 import {
@@ -184,12 +188,14 @@ export interface ServiceDeps {
   readonly credentials: Credentials
   /**
    * Starts the MCP endpoint with a token for each of `clients`, written to its config file; it
-   * reports its live sessions to `onSessionsChanged`.
+   * reports its live sessions to `onSessionsChanged`. `admin` is Valet's own read-only tools, for
+   * local clients' sessions (docs/admin-tools.md).
    */
   readonly startEndpoint: (
     caller: ToolCaller,
     clients: readonly EndpointClient[],
     onSessionsChanged: (sessions: LiveSessions) => void,
+    admin: AdminReader,
   ) => Promise<SessionReportingEndpoint>
   readonly ui: UiPort
   readonly emit: (event: AppEvent) => void
@@ -1416,11 +1422,61 @@ export class AppService {
 
   private async startListening(): Promise<void> {
     if (this.endpoint !== null || this.caller === null) return
-    this.endpoint = await this.deps.startEndpoint(this.caller, this.clients.active(), () =>
-      this.emit('endpoint-changed'),
+    this.endpoint = await this.deps.startEndpoint(
+      this.caller,
+      this.clients.active(),
+      () => this.emit('endpoint-changed'),
+      this.adminReader(),
     )
     this.endpoint.refresh()
     this.emit('endpoint-changed')
+  }
+
+  /** The valet_ tools' view of the app: the control panel's, mapped and scanned (admin.ts). */
+  private adminReader(): AdminReader {
+    return adminReader({
+      api: this.api,
+      adapterDetails: async () => (await this.states()).map(adapterDetail),
+      callIndex: async () =>
+        (await this.reader.records()).flatMap((r) =>
+          r.event.type === 'tool-called'
+            ? [{ callId: r.event.callId, startedAt: r.at, clientId: r.event.clientId ?? null }]
+            : [],
+        ),
+      access: (clientId) => {
+        const capabilities = this.clients.capabilities(clientId)
+        const client = this.clients.get(clientId)
+        return capabilities === null || client === null ? null : { ...capabilities, name: client.name }
+      },
+      lockedDown: () => this.appState.lockedDown,
+      remoteTools: () => new Set(this.remote.status().tools),
+      sensitive: (texts) => this.knownSecretIn(texts),
+      // Which tool, never what matched.
+      withheld: () => this.deps.diagnostics?.({ type: 'admin-result-withheld' }),
+    })
+  }
+
+  /**
+   * True when any of `texts` holds a secret a login registered this session, or a value from any
+   * adapter's tool-partition session. Each session is read once per call. Fails closed: a session
+   * that can't be read counts as a match.
+   */
+  private async knownSecretIn(texts: readonly string[]): Promise<boolean> {
+    for (const adapter of this.deps.adapters) {
+      const { id, session } = adapter.definition.manifest
+      if (texts.some((text) => this.loginSecrets.occursIn(id, text))) return true
+      const driver = this.drivers.get(id)
+      if (driver === undefined) continue
+      let values: readonly string[]
+      try {
+        values = await driver.sessionSecrets(session.cookieDomains, session.storage)
+      } catch {
+        return true
+      }
+      const match = sensitiveMatcher(values, NO_SECRETS)
+      if (texts.some(match)) return true
+    }
+    return false
   }
 
   /** Snippets that launch the bridge with this client's own config file. */
@@ -1938,6 +1994,9 @@ export class AppService {
 const CALL_ID = /^[A-Za-z0-9_-]{1,64}$/
 
 /** A client name as the runtime records it: printable, trimmed, at most 100 characters. */
+/** A set nothing is registered in: sensitiveMatcher's secrets, when only session values are matched. */
+const NO_SECRETS = new SecretRedactionSet()
+
 export function printableClient(client: string): string {
   const printable = client.replace(/[\p{Cc}\p{Cf}]/gu, '').trim()
   return printable.length === 0 ? '(unknown)' : printable.slice(0, 100)

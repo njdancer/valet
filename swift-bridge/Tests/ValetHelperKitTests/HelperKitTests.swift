@@ -115,3 +115,42 @@ final class RequestTests: XCTestCase {
     XCTAssertEqual(String(decoding: responseLine(.failure(.notFound)), as: UTF8.self), "{\"error\":\"not-found\"}\n")
   }
 }
+
+final class ApprovalTests: XCTestCase {
+  let macId = String(repeating: "a", count: 32)
+
+  func request(_ subject: String, kind: String = "tool-enable") -> String {
+    "{\"id\":\"rrrrrrrrrrrrrrrrrrrrrr\",\"kind\":\"\(kind)\",\"macId\":\"\(macId)\",\"subject\":\(subject)}"
+  }
+
+  func payload(for requestText: String, digest: String? = nil, deviceId: String? = nil) -> String {
+    let digest = digest ?? domainDigest(approvalRequestDomain, requestText)
+    return "{\"decidedAt\":\"2026-11-12T03:00:00.000Z\",\"decision\":\"approve\",\"deviceId\":\"\(deviceId ?? macId)\","
+      + "\"macId\":\"\(macId)\",\"requestDigest\":\"\(digest)\",\"requestId\":\"rrrrrrrrrrrrrrrrrrrrrr\",\"v\":1}"
+  }
+
+  func testSignsOnlyAnApprovalOfTheRequestShown() {
+    let text = request("{\"scope\":\"local\",\"tool\":\"get_quote\"}")
+    let toSign = approvalToSign(requestText: text, payload: payload(for: text), deviceId: macId)
+    XCTAssertNotNil(toSign)
+    let ref = String(domainDigest(approvalRequestDomain, text).prefix(4)).uppercased()
+    XCTAssertEqual(toSign?.reason, "turn on a tool (get_quote, on this Mac) (request \(ref))")
+    XCTAssertEqual(toSign?.input, Data("\(approvalDecisionDomain)\n\(payload(for: text))".utf8))
+    XCTAssertNil(approvalToSign(requestText: text, payload: payload(for: text, digest: String(repeating: "0", count: 64)), deviceId: macId))
+    XCTAssertNil(approvalToSign(requestText: text, payload: payload(for: text, deviceId: String(repeating: "b", count: 32)), deviceId: String(repeating: "b", count: 32)))
+    XCTAssertNil(approvalToSign(requestText: text, payload: "{}", deviceId: macId))
+    XCTAssertNil(approvalToSign(requestText: request("{}", kind: "approve-everything"), payload: payload(for: request("{}", kind: "approve-everything")), deviceId: macId))
+  }
+
+  func testReasonsNameTheMacsOwnFacts() {
+    let install = request(
+      "{\"changes\":[{\"area\":\"navigation\",\"change\":\"added\",\"items\":[\"https://finance.yahoo.com\"]}],\"unsandboxed\":false}",
+      kind: "adapter-install")
+    XCTAssertTrue(approvalToSign(requestText: install, payload: payload(for: install), deviceId: macId)?.reason.hasPrefix("approve an adapter that reaches finance.yahoo.com (") ?? false)
+    let loose = request("{\"changes\":[],\"unsandboxed\":true}", kind: "adapter-install")
+    XCTAssertTrue(approvalToSign(requestText: loose, payload: payload(for: loose), deviceId: macId)?.reason.hasPrefix("approve an adapter that runs without the sandbox (") ?? false)
+    XCTAssertEqual(hostOf("https://www.woolworths.com.au:8443"), "www.woolworths.com.au:8443")
+    XCTAssertEqual(hostOf("https://auth.woolworths.com.au:443"), "auth.woolworths.com.au")
+    XCTAssertNil(hostOf("http://example.com"))
+  }
+}

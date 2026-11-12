@@ -26,6 +26,7 @@ import {
   onePasswordPrompts,
   renderedText,
   secretsIn,
+  siteTools,
   tempDir,
   windowWithTitle,
 } from './harness'
@@ -203,7 +204,7 @@ test('Claude Code’s token lists the six namespaced tools with manifest-derived
     }),
   )
   const { tools } = await client.listTools()
-  const byName = Object.fromEntries(tools.map((t) => [t.name, t.annotations]))
+  const byName = Object.fromEntries(siteTools(tools).map((t) => [t.name, t.annotations]))
   expect(Object.keys(byName).sort()).toEqual([
     'woolworths_add_to_cart',
     'woolworths_get_cart',

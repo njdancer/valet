@@ -185,6 +185,25 @@ describe('ClientRegistry', () => {
     await expect(registry.add(42)).rejects.toEqual(new ValetError('config', 'invalid'))
   })
 
+  it('keeps what each app may see: Valet, and only its own calls, until the person changes it', async () => {
+    const path = join(dir(), 'clients.json')
+    const registry = new ClientRegistry(path, '/configs', () => new Date('2026-11-12T00:00:00.000Z'))
+    await registry.load()
+    const { id } = await registry.add('Claude Code')
+    expect(registry.capabilities(id)).toEqual({ seeValet: true, allActivity: false })
+    expect(await registry.setCapabilities(id, { allActivity: true })).toBe(true)
+    const again = new ClientRegistry(path, '/configs', () => new Date())
+    await again.load()
+    expect(again.capabilities(id)).toEqual({ seeValet: true, allActivity: true })
+    // The screens' view doesn't carry them yet.
+    expect(again.list(() => 0)[0]).not.toHaveProperty('capabilities')
+    expect(await again.setCapabilities('c_ffffffffffffffff', { seeValet: false })).toBe(false)
+    expect(again.capabilities('c_ffffffffffffffff')).toBeNull()
+    await again.revoke(id)
+    expect(again.capabilities(id)).toBeNull()
+    expect(await again.setCapabilities(id, { seeValet: true })).toBe(false)
+  })
+
   it('records what a client says it is beside the person’s name, as a claim', async () => {
     let now = Date.parse('2026-11-07T00:00:00.000Z')
     const registry = new ClientRegistry(join(dir(), 'clients.json'), '/configs', () => new Date(now))

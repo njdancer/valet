@@ -86,7 +86,7 @@ describe('remote access', () => {
   it('asks before revoking every cloud agent', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })
-    await api.remote.approveConsent('ABCD2345', ['woolworths.view_cart'])
+    await api.remote.approveConsent('ABCDEFGH', ['woolworths.view_cart'])
     renderPage(api, <RemotePage />)
     const row = await screen.findByRole('link', { name: 'claude.ai' })
     expect(row.getAttribute('href')).toBe('#/connections/rcdemodemodemodemodemo')
@@ -129,17 +129,17 @@ describe('approve a connection', () => {
     expect(write.getAttribute('aria-checked')).toBe('false')
     await user.click(read)
     const field = screen.getByRole('textbox', { name: 'Code from your browser' })
-    await user.type(field, 'abcd-234')
+    await user.type(field, 'abcd-efg')
     await user.click(approve)
     expect(called(api, 'remote.approveConsent')).toEqual([])
-    await user.type(field, '5')
+    await user.type(field, 'h')
     // Once it can be pressed it is a plain button again, with no reason to give.
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Approve' }).getAttribute('aria-disabled')).toBeNull(),
     )
     await user.click(screen.getByRole('button', { name: 'Approve' }))
     await screen.findByText(/Approved\. Your browser carries on/)
-    expect(called(api, 'remote.approveConsent')).toEqual([['abcd-2345', ['woolworths.view_cart']]])
+    expect(called(api, 'remote.approveConsent')).toEqual([['abcd-efgh', ['woolworths.view_cart']]])
     expect(screen.getByRole('link', { name: 'Open claude.ai’s page' }).getAttribute('href')).toBe(
       '#/connections/rcdemodemodemodemodemo',
     )
@@ -150,7 +150,7 @@ describe('approve a connection', () => {
     const api = createFakeApi({ now: NOW })
     renderPage(api, <ApproveConnectionSheet armDelayMs={60_000} />)
     const field = await screen.findByRole('textbox', { name: 'Code from your browser' })
-    await user.type(field, 'ABCD2345{Enter}')
+    await user.type(field, 'ABCDEFGH{Enter}')
     const approve = screen.getByRole('button', { name: 'Approve' })
     expect(approve.getAttribute('aria-disabled')).toBe('true')
     expect(approve.getAttribute('aria-description')).toBe('Just a moment')
@@ -238,10 +238,10 @@ describe('approve a connection', () => {
   })
 
   it('reads codes the way the Mac’s check does', () => {
-    expect(codeReady('abcd-2345')).toBe(true)
-    expect(codeReady('ABCD 2345')).toBe(true)
-    expect(codeReady('OIL0-ABCD')).toBe(true)
-    expect(codeReady('ABCD-234U')).toBe(false)
+    expect(codeReady('abcd-efgh')).toBe(true)
+    expect(codeReady('ABCD EFGH')).toBe(true)
+    expect(codeReady('ABCD-EFGO')).toBe(false)
+    expect(codeReady('ABCD-2345')).toBe(false)
     expect(codeReady('ABC')).toBe(false)
     expect(tunnelTarget('http://127.0.0.1:47823/mcp')).toBe('http://127.0.0.1:47823')
     expect(connectorUrl('valet.example.com')).toBe('https://valet.example.com/mcp')

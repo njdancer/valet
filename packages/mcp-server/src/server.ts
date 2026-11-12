@@ -7,6 +7,7 @@ import { McpServer, type RegisteredTool } from '@modelcontextprotocol/sdk/server
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js'
 import { NeedsUserError, type ToolDeclaration, toolHints, toReportable } from '@valet/core'
 import { z } from 'zod'
+import { type AdminReader, registerAdminTools } from './admin-tools'
 import type { ClientIdentity } from './auth'
 import { failedResult, type ResultContext, toolResult } from './results'
 import type { CallOutcome, ClientTransport, ListedTool, ToolCaller } from './tool-caller'
@@ -33,6 +34,11 @@ export interface ServerOptions {
   readonly timeZone?: string
   /** The clock results compute "calls resume at" from; Date.now by default. */
   readonly now?: () => number
+  /**
+   * Valet's own read-only tools (docs/admin-tools.md). Registered only when `identity` is a local
+   * client's: a cloud agent, or a session with no identity, never sees them.
+   */
+  readonly admin?: AdminReader
 }
 
 /**
@@ -189,6 +195,13 @@ export function createMcpServer(
       },
     )
   }
+
+  // Before any site tool, and never removed by apply(): planTools withholds every site tool whose
+  // name could take one of these.
+  // Only for a session a local client's credential opened: never a cloud agent's, and never one
+  // with no identity at all.
+  if (options.admin !== undefined && options.identity?.origin === 'local')
+    registerAdminTools(server, options.admin, options.identity)
 
   let registered: RegisteredTool[] = []
   const apply = (plan: ToolPlan): void => {

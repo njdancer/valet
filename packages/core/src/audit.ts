@@ -213,6 +213,42 @@ export type AuditEvent =
       readonly revokedClients: number
     }
   | {
+      /**
+       * The Mac asked the person to approve something (docs/agent-run-security.md). `digest` is the
+       * request text's digest, which the answer and any stored evidence name.
+       */
+      readonly type: 'approval-requested'
+      readonly requestId: string
+      readonly kind: string
+      readonly digest: string
+      /** `local:<id>` or `remote:<id>` for an agent; null when the person or the app asked. */
+      readonly clientId: string | null
+    }
+  | {
+      /**
+       * How an approval request ended. `deviceId` is the device whose signature approved, or that
+       * declined; null if it expired or was withdrawn. A refused signature is audited too, with
+       * `answer: 'refused'` and the reason, so a forged or replayed approval leaves a record.
+       */
+      readonly type: 'approval-answered'
+      readonly requestId: string
+      readonly answer: 'approved' | 'declined' | 'expired' | 'withdrawn' | 'refused'
+      readonly deviceId: string | null
+      readonly reason?: string
+    }
+  | { readonly type: 'device-paired'; readonly deviceId: string; readonly platform: 'ios' | 'macos' }
+  | { readonly type: 'device-revoked'; readonly deviceId: string; readonly by: string }
+  | {
+      /**
+       * A trusted store's file didn't match its Keychain anchor, or a record's evidence failed, and
+       * the store (or the record) was ignored.
+       */
+      readonly type: 'store-refused'
+      readonly store: string
+      readonly reason: 'anchor-mismatch' | 'evidence'
+      readonly records: number
+    }
+  | {
       /** The person paused one site, or resumed it: its calls are refused without reaching it. */
       readonly type: 'site-paused'
       readonly adapterId: string

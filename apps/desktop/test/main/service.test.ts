@@ -31,12 +31,30 @@ import {
   parseManifest,
   ValetError,
 } from '@valet/core'
-import type { LiveSessions, SessionReportingEndpoint, ToolCall, ToolCaller } from '@valet/mcp-server'
+import {
+  ADMIN_LOCKED_DOWN_RESULT,
+  ADMIN_OTHER_AGENT_RESULT,
+  ADMIN_TOOLS,
+  ADMIN_WITHHELD_RESULT,
+  type AdminAdapterDetail,
+  type AdminAdapterList,
+  type AdminArgs,
+  type AdminCallTrace,
+  type AdminReader,
+  adminNotAllowedResult,
+  type ClientIdentity,
+  type LiveSessions,
+  runAdminTool,
+  type SessionReportingEndpoint,
+  type ToolCall,
+  type ToolCaller,
+} from '@valet/mcp-server'
 import { LoginAttemptMarker, type ToolProcessFactory } from '@valet/runtime'
 import { inMemoryToolProcess } from '@valet/runtime/in-context'
 import { buildToolLibrary } from '@valet/runtime/tool-script'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
+import type { ClientRegistry } from '../../src/main/core/clients'
 import { dataPaths } from '../../src/main/core/constants'
 import { type Credentials, disabledOtpReader } from '../../src/main/core/credentials'
 import { DEMO_ACCOUNT } from '../../src/main/core/demo'
@@ -126,6 +144,7 @@ async function setup(
   }
   const endpoint = {
     caller: null as ToolCaller | null,
+    admin: null as AdminReader | null,
     refreshes: 0,
     resets: 0,
     closes: 0,
@@ -155,8 +174,9 @@ async function setup(
       return driver
     },
     credentials: options.credentials ?? testCredentials(disabledOtpReader),
-    startEndpoint: async (caller, clients, onSessionsChanged): Promise<SessionReportingEndpoint> => {
+    startEndpoint: async (caller, clients, onSessionsChanged, admin): Promise<SessionReportingEndpoint> => {
       endpoint.caller = caller
+      endpoint.admin = admin
       endpoint.sessionsChanged = onSessionsChanged
       endpoint.starts++
       const issue = (id: string, configPath: string) => {
@@ -2455,9 +2475,9 @@ describe('Needs you items', () => {
       clientName: 'Claude (claude.ai)',
       source: '203.0.113.24',
       requestedAt: '2026-11-07T00:00:00.000Z',
-      expiresAt: '2026-11-07T00:05:00.000Z',
+      expiresAt: '2026-11-07T00:10:00.000Z',
     })
-    s.advance(5 * 60_000)
+    s.advance(10 * 60_000)
     const after = await s.api.attention.list()
     expect(after.map((i) => i.kind)).not.toContain('remote-consent')
     expect(after.find((i) => i.kind === 'missed')).toMatchObject({
@@ -2545,224 +2565,160 @@ describe('what a tool result is told about Needs you', () => {
   })
 })
 
-describe('adapter packages (docs/adapter-packages.md)', () => {
-  const echoTools = (reply: string) =>
-    [
-      "import { z } from 'zod'",
-      'export const tools = {',
-      `  echo: { input: z.object({ text: z.string() }), output: z.object({ text: z.string() }), run: async (_ctx, a) => ({ text: '${reply}' + a.text }) },`,
-      '  add: { input: z.object({ item: z.string() }), output: z.object({ added: z.boolean() }), run: async () => ({ added: false }) },',
-      '}',
-    ].join('\n')
-  const shopPackage = (reply: string, input: ManifestInput = SHOP) =>
-    packageOf(parseManifest(input), { 'src/tools.ts': echoTools(reply) })
-
-  async function withPackages(
-    folder: PackageFiles | null = null,
-    dir?: string,
-    describe: 'answers' | 'hangs' = 'answers',
-  ) {
-    const start = inMemoryToolProcess()
-    const prelude = await buildToolLibrary()
-    // A tool process that never answers describe: a launch where the tool process is too slow.
-    const hanging = () => ({ send: () => {}, onMessage: () => {}, onExit: () => {}, kill: () => {} })
-    const picked = { next: folder }
-    const s = await setup({
-      ...(dir === undefined ? {} : { dir }),
-      packages: {
-        builtins: [shopPackage('v1:')],
-        runtime:
-          describe === 'answers' ? { prelude, start } : { prelude, start: hanging, describeTimeoutMs: 50 },
-        build: buildRecord('0.1.0', prelude),
-        folders: { pick: async () => picked.next },
-      },
-      toolProcess: start,
+describe('admin tools (docs/admin-tools.md)', () => {
+  async function withLogin() {
+    const s = await approved()
+    const C1: ClientIdentity = { origin: 'local', clientId: (await s.api.clients.add('Claude Code')).id }
+    const C2: ClientIdentity = { origin: 'local', clientId: (await s.api.clients.add('Claude Desktop')).id }
+    const registry = (s.service as unknown as { clients: ClientRegistry }).clients
+    await s.api.grants.make({
+      adapterId: 'shop',
+      adapterHash: s.adapter.hash,
+      secret: 'login',
+      provider: 'fake',
+      itemRef: 'demo-woolworths',
+      origins: ['https://login.shop.test'],
     })
-    const hashOf = (files: PackageFiles) => checkPackage(files).adapterHash
-    return { ...s, picked, hashOf }
+    s.driver.sessionValues = ['session-cookie-canary-0001']
+    await s.call('echo', { text: 'milk' }, 'Claude Code', 'c_7f2a01', { transport: 'http', identity: C1 })
+    await s.api.openLoginWindow('shop')
+    return { ...s, C1, C2, registry, admin: s.endpoint.admin as AdminReader }
   }
 
-  it('seeds the built-in, runs it from its compiled package, and keeps it across a restart', async () => {
-    const s = await withPackages()
-    const builtin = s.hashOf(shopPackage('v1:'))
-    const [review] = await s.api.approvals.pending()
-    expect(review?.to.hash).toBe(builtin)
-    expect(review?.origin).toBe('builtin')
-    expect(review?.takesSession).toBe(false)
-    await s.api.approvals.approve('shop', builtin)
-    expect(await s.call('echo', { text: 'hi' })).toMatchObject({ status: 'ok', output: { text: 'v1:hi' } })
-    const versions = await s.api.adapters.versions('shop')
-    expect(versions.versions).toEqual([
-      expect.objectContaining({ hash: builtin, source: 'builtin', active: true }),
-    ])
-    const events = readAudit(s.paths.audit).map((e) => e.type)
-    expect(events).toContain('adapter-installed')
-    await s.service.stop()
-    const again = await withPackages(null, s.dir)
-    expect((await again.api.adapters.list()).map((a) => a.approval)).toEqual(['approved'])
-    expect(readAudit(again.paths.audit).filter((e) => e.type === 'adapter-installed')).toHaveLength(1)
-  })
+  const text = (result: { content: unknown }) => (result.content as { text: string }[])[0]?.text
 
-  it('installs from a folder: the new version waits for approval, says it takes the session, and can be rolled back', async () => {
-    const s = await withPackages(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
-    const v1 = s.hashOf(shopPackage('v1:'))
-    const v2 = s.hashOf(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
-    await s.api.approvals.approve('shop', v1)
-    expect(await s.api.adapters.canInstallFromFolder()).toBe(true)
-    expect(await s.api.adapters.installFromFolder()).toEqual({ ok: true, adapterId: 'shop', hash: v2 })
-    // Unapproved: no tools, and the review leads with the session it inherits.
-    expect(s.endpoint.caller?.listTools()).toEqual([])
-    const [review] = await s.api.approvals.pending()
-    expect(review).toMatchObject({
-      from: { hash: v1 },
-      to: { hash: v2 },
-      origin: 'folder',
-      takesSession: true,
-    })
-    await s.api.approvals.approve('shop', v2)
-    expect(await s.call('echo', { text: 'hi' })).toMatchObject({ output: { text: 'v2:hi' } })
-    // Back to v1, which the person approved before.
-    const versions = await s.api.adapters.versions('shop')
-    expect(versions.versions.map((v) => [v.version, v.active, v.canRollBack])).toEqual([
-      ['2.0.0', true, false],
-      ['1.0.0', false, true],
-    ])
-    const preview = await s.api.adapters.rollbackPreview('shop', v1)
-    expect(preview).toMatchObject({ version: '1.0.0', grants: [] })
-    await s.api.adapters.rollback('shop', v1)
-    expect(await s.call('echo', { text: 'hi' })).toMatchObject({ output: { text: 'v1:hi' } })
-    expect((await s.api.adapters.versions('shop')).pinned).toBe(true)
-    const types = readAudit(s.paths.audit)
-      .map((e) => e.type)
-      .filter((t) => t.startsWith('adapter-'))
-    expect(types.slice(-2)).toEqual(['adapter-approved', 'adapter-activated'])
-  })
+  const run = (
+    admin: AdminReader,
+    name: string,
+    args: AdminArgs = {},
+    viewer: ClientIdentity | null = null,
+  ) =>
+    runAdminTool(
+      ADMIN_TOOLS.find((t) => t.name === name) as (typeof ADMIN_TOOLS)[number],
+      admin,
+      args,
+      viewer,
+    )
 
-  it('never offers a rollback to a version the person never approved, or rejected', async () => {
-    const s = await withPackages(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
-    const v1 = s.hashOf(shopPackage('v1:'))
-    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true })
-    await expect(s.api.adapters.rollback('shop', v1)).rejects.toThrow()
-    expect((await s.api.adapters.versions('shop')).versions.every((v) => !v.canRollBack)).toBe(true)
-    // Approved, then rejected: not offered either.
-    s.picked.next = shopPackage('v3:', { ...SHOP, version: '3.0.0' })
-    const v2 = s.hashOf(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
-    await s.api.approvals.approve('shop', v2)
-    await s.api.approvals.reject('shop', v2)
-    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true })
-    expect((await s.api.adapters.versions('shop')).versions.every((v) => !v.canRollBack)).toBe(true)
-  })
-
-  it('refuses a package that breaks a rule, and says why', async () => {
-    const s = await withPackages({ ...shopPackage('v2:'), 'src/evil.js': '' })
-    expect(await s.api.adapters.installFromFolder()).toEqual({
-      ok: false,
-      reason: expect.stringContaining('placement'),
-    })
-    s.picked.next = {
-      ...shopPackage('v2:'),
-      'src/tools.ts': "import { readFileSync } from 'node:fs'\nexport const tools = { readFileSync }",
+  it('answers every admin tool, and no answer carries a password, the token, a session value or a 1Password item', async () => {
+    const s = await withLogin()
+    const results = await Promise.all(
+      ADMIN_TOOLS.map((t) => run(s.admin, t.name, { adapterId: 'shop', call: 'c_7f2a01', limit: 100 }, s.C1)),
+    )
+    for (const [i, result] of results.entries()) {
+      expect(result.isError, ADMIN_TOOLS[i]?.name).toBeUndefined()
+      expect(result.structuredContent).toBeDefined()
     }
-    expect(await s.api.adapters.installFromFolder()).toEqual({
-      ok: false,
-      reason: expect.stringContaining('compile'),
+    const text = JSON.stringify(results)
+    for (const canary of [
+      DEMO_ACCOUNT.password,
+      DEMO_ACCOUNT.username,
+      TOKEN,
+      'op://',
+      'demo-woolworths',
+      'session-cookie-canary-0001',
+      'itemTitle',
+      'itemId',
+    ]) {
+      expect(text).not.toContain(canary)
+    }
+  })
+
+  it('describes the site, its tools by the names clients call them, and the logins without their items', async () => {
+    const s = await withLogin()
+    const list = (await run(s.admin, 'valet_list_adapters', {}, s.C1)).structuredContent as AdminAdapterList
+    const shop = list.adapters.find((a) => a.id === 'shop')
+    expect(shop?.approval).toBe('approved')
+    expect(shop?.tools.find((t) => t.name === 'echo')).toMatchObject({ mcpName: 'shop_echo', remote: false })
+    const detail = (await run(s.admin, 'valet_get_adapter', { adapterId: 'shop' }, s.C1))
+      .structuredContent as AdminAdapterDetail
+    expect(detail.adapter?.loginDetails.find((l) => l.name === 'login')?.given).toMatchObject({
+      provider: 'fake',
     })
-    s.picked.next = null
-    expect(await s.api.adapters.installFromFolder()).toBeNull()
-    expect((await s.api.adapters.versions('shop')).versions).toHaveLength(1)
   })
 
-  it('refuses a stored version changed on disk, audits it, and heals the built-in from the app', async () => {
-    const s = await withPackages()
-    const builtin = s.hashOf(shopPackage('v1:'))
-    await s.api.approvals.approve('shop', builtin)
-    await s.service.stop()
-    const file = join(s.paths.adapters, 'shop', `${builtin}.json`)
-    const stored = JSON.parse(readFileSync(file, 'utf8'))
-    stored.files['src/tools.ts'] = echoTools('evil:')
-    writeFileSync(file, JSON.stringify(stored))
-    const again = await withPackages(null, s.dir)
-    const refused = readAudit(again.paths.audit).find((e) => e.type === 'adapter-refused')
-    expect(refused).toMatchObject({ adapterId: 'shop', adapterHash: builtin, reason: 'hash-mismatch' })
-    expect(await again.call('echo', { text: 'hi' })).toMatchObject({ output: { text: 'v1:hi' } })
+  it('shows a call’s input only to the client that made it', async () => {
+    const s = await withLogin()
+    const own = (await run(s.admin, 'valet_get_call', { call: '7F2A' }, s.C1))
+      .structuredContent as AdminCallTrace
+    expect(own.call?.input).toContain('milk')
+    expect(await run(s.admin, 'valet_get_call', { call: '7F2A' }, s.C2)).toEqual({
+      content: [{ type: 'text', text: ADMIN_OTHER_AGENT_RESULT }],
+      isError: true,
+    })
+    // With All agents' activity, the other app sees it, input and all.
+    await s.registry.setCapabilities(s.C2.clientId, { allActivity: true })
+    const all = (await run(s.admin, 'valet_get_call', { call: '7F2A' }, s.C2))
+      .structuredContent as AdminCallTrace
+    expect(all.call?.input).toContain('milk')
   })
 
-  it('audits a rollback as the person’s approval even when the target was still the approved hash', async () => {
-    const s = await withPackages(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
-    const v1 = s.hashOf(shopPackage('v1:'))
-    await s.api.approvals.approve('shop', v1)
-    // v2 installed and never approved: v1 is still the approved hash.
-    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true })
-    await s.api.adapters.rollback('shop', v1)
-    const events = readAudit(s.paths.audit).filter((e) => e.type.startsWith('adapter-'))
-    expect(events.slice(-2)).toEqual([
-      expect.objectContaining({ type: 'adapter-approved', adapterHash: v1 }),
-      expect.objectContaining({ type: 'adapter-activated', adapterHash: v1 }),
-    ])
-    expect(await s.call('echo', { text: 'hi' })).toMatchObject({ output: { text: 'v1:hi' } })
+  it('lists only the app’s own calls and their audit records, unless it may see all', async () => {
+    const s = await withLogin()
+    await s.call('echo', { text: 'bread' }, 'Claude Desktop', 'c_9b01aa', {
+      transport: 'http',
+      identity: s.C2,
+    })
+    const ids = async (viewer: ClientIdentity) =>
+      (
+        (await run(s.admin, 'valet_list_calls', {}, viewer)).structuredContent as {
+          calls: { callId: string }[]
+        }
+      ).calls.map((c) => c.callId)
+    expect(await ids(s.C1)).toEqual(['c_7f2a01'])
+    expect(await ids(s.C2)).toEqual(['c_9b01aa'])
+    const callIds = async (viewer: ClientIdentity) => {
+      const page = (await run(s.admin, 'valet_audit_log', { limit: 100 }, viewer)).structuredContent as {
+        records: { event: { callId?: string } }[]
+        total: number
+      }
+      return new Set(page.records.flatMap((r) => (r.event.callId === undefined ? [] : [r.event.callId])))
+    }
+    expect(await callIds(s.C1)).toEqual(new Set(['c_7f2a01']))
+    await s.registry.setCapabilities(s.C1.clientId, { allActivity: true })
+    expect(await ids(s.C1)).toEqual(['c_9b01aa', 'c_7f2a01'])
+    expect(await callIds(s.C1)).toEqual(new Set(['c_7f2a01', 'c_9b01aa']))
   })
 
-  it('refuses a rollback when the activity log doesn’t verify', async () => {
-    const s = await withPackages(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
-    const v1 = s.hashOf(shopPackage('v1:'))
-    await s.api.approvals.approve('shop', v1)
-    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true })
-    const lines = readFileSync(s.paths.audit, 'utf8').split('\n')
-    lines[0] = lines[0]?.replace('"adapter-installed"', '"adapter-approved"') ?? ''
-    writeFileSync(s.paths.audit, lines.join('\n'))
-    await expect(s.api.adapters.rollback('shop', v1)).rejects.toThrow(/verify/)
+  it('refuses an app the person hasn’t let see Valet, and one it doesn’t know', async () => {
+    const s = await withLogin()
+    await s.registry.setCapabilities(s.C2.clientId, { seeValet: false })
+    expect(await run(s.admin, 'valet_status', {}, s.C2)).toEqual({
+      content: [{ type: 'text', text: adminNotAllowedResult('Claude Desktop') }],
+      isError: true,
+    })
+    expect(
+      text(await run(s.admin, 'valet_status', {}, { origin: 'local', clientId: 'c_0000000000000000' })),
+    ).toBe(adminNotAllowedResult('This app'))
+    expect(text(await run(s.admin, 'valet_status', {}, { origin: 'remote', clientId: 'r1' }))).toBe(
+      adminNotAllowedResult('This app'),
+    )
+    // Revoking the app takes its access with it.
+    await s.api.clients.revoke(s.C1.clientId)
+    expect(text(await run(s.admin, 'valet_status', {}, s.C1))).toBe(adminNotAllowedResult('This app'))
   })
 
-  it('keeps the person’s version when it only fails to describe at launch', async () => {
-    const s = await withPackages(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
-    const v2 = s.hashOf(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
-    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true })
-    await s.service.stop()
-    const slow = await withPackages(null, s.dir, 'hangs')
-    expect(readAudit(slow.paths.audit).at(-1)).toMatchObject({ type: 'adapter-refused', reason: 'describe' })
-    await slow.service.stop()
-    // Nothing was rewritten: the next ordinary launch runs the folder version again.
-    const state = JSON.parse(readFileSync(join(s.paths.adapters, 'shop', 'state.json'), 'utf8'))
-    expect(state).toMatchObject({ active: v2, pinned: true })
+  it('withholds a result that would carry a session value, whatever field it sits in', async () => {
+    const s = await withLogin()
+    // A client that names itself after the session cookie gets its name into the log.
+    await s.call('echo', { text: 'x' }, 'session-cookie-canary-0001', 'c_5e55aa', {
+      transport: 'http',
+      identity: s.C1,
+    })
+    const calls = await run(s.admin, 'valet_list_calls', {}, s.C1)
+    expect(calls).toEqual({ content: [{ type: 'text', text: ADMIN_WITHHELD_RESULT }], isError: true })
+    expect(await s.admin.sensitive(['ok', 'x session-cookie-canary-0001 y'])).toBe(true)
+    expect(await s.admin.sensitive(['nothing here'])).toBe(false)
   })
 
-  it('repairs a damaged version file when the same package is installed again', async () => {
-    const v2files = shopPackage('v2:', { ...SHOP, version: '2.0.0' })
-    const s = await withPackages(v2files)
-    const v2 = s.hashOf(v2files)
-    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true })
-    const file = join(s.paths.adapters, 'shop', `${v2}.json`)
-    writeFileSync(file, '{')
-    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true, hash: v2 })
-    await s.api.approvals.approve('shop', v2)
-    await s.service.stop()
-    const again = await withPackages(null, s.dir)
-    expect(await again.call('echo', { text: 'hi' })).toMatchObject({ output: { text: 'v2:hi' } })
-  })
-
-  it('pointing state.json at an unapproved version gets nothing: its tools stay hidden', async () => {
-    const s = await withPackages(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
-    const v1 = s.hashOf(shopPackage('v1:'))
-    const v2 = s.hashOf(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
-    await s.api.approvals.approve('shop', v1)
-    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true })
-    await s.api.adapters.rollback('shop', v1)
-    await s.service.stop()
-    const statePath = join(s.paths.adapters, 'shop', 'state.json')
-    const state = JSON.parse(readFileSync(statePath, 'utf8'))
-    writeFileSync(statePath, JSON.stringify({ ...state, active: v2 }))
-    const again = await withPackages(null, s.dir)
-    expect(again.endpoint.caller?.listTools()).toEqual([])
-    expect(await again.call('echo', { text: 'hi' })).toMatchObject({
-      status: 'failed',
-      errorClass: 'not-granted',
+  it('answers only valet_status while Valet is locked down', async () => {
+    const s = await withLogin()
+    await s.api.app.setLockedDown(true)
+    const status = (await run(s.admin, 'valet_status', {}, s.C1)).structuredContent as { lockedDown: boolean }
+    expect(status.lockedDown).toBe(true)
+    expect(await run(s.admin, 'valet_audit_log', {}, s.C1)).toEqual({
+      content: [{ type: 'text', text: ADMIN_LOCKED_DOWN_RESULT }],
+      isError: true,
     })
   })
 })
-
-function readAudit(path: string): { type: string; [key: string]: unknown }[] {
-  return readFileSync(path, 'utf8')
-    .split('\n')
-    .filter((line) => line.trim() !== '')
-    .map((line) => (JSON.parse(line) as { event: { type: string } }).event)
-}

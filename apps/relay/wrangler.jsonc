@@ -1,0 +1,32 @@
+// The relay Worker. Nothing here is deployed without Nick (docs/relay-worker.md, "What needs Nick").
+// RELAY_HOST is a placeholder until he picks the host; the route needs a proxied wildcard DNS record.
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "valet-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "compatibility_flags": ["nodejs_compat", "enable_request_signal"],
+  "workers_dev": false,
+  // Payload-bearing routes: no Workers Logs, no Logpush, no traces (agent-run-security.md).
+  "observability": { "enabled": false },
+  "logpush": false,
+  "vars": {
+    "RELAY_HOST": "relay.example.invalid",
+    "RELAY_ORIGIN": "https://relay.example.invalid"
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "MAC_RELAY", "class_name": "MacRelay" },
+      { "name": "PUSH", "class_name": "PushRelay" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MacRelay", "PushRelay"] }],
+  "ratelimits": [
+    { "name": "CONNECT_LIMIT", "namespace_id": "4101", "simple": { "limit": 20, "period": 60 } },
+    { "name": "FORWARD_LIMIT", "namespace_id": "4102", "simple": { "limit": 120, "period": 60 } },
+    { "name": "SIGN_IN_LIMIT", "namespace_id": "4103", "simple": { "limit": 20, "period": 60 } },
+    { "name": "POLL_LIMIT", "namespace_id": "4104", "simple": { "limit": 40, "period": 60 } }
+  ]
+  // Secrets, set with `wrangler secret put`: WAIT_SECRET, APNS_KEY. Vars at deploy: APNS_KEY_ID,
+  // APNS_TEAM_ID, APNS_TOPIC, APNS_HOST.
+}

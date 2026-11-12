@@ -22,6 +22,7 @@ import {
   type Launched,
   launch,
   type McpClient,
+  siteTools,
   siteTrolley,
   type ToolResult,
   tempDir,
@@ -141,7 +142,13 @@ test('the built app, approved and granted, logs in and adds a line', async () =>
   expect(firstHash).toMatch(/^[0-9a-f]{64}$/)
   await control.evaluate((hash) => window.valet?.approvals.approve('woolworths', hash), firstHash)
   await grantBoth(firstHash)
-  await expect.poll(async () => (await mcp().listTools()).tools.map((t) => t.name).sort()).toEqual(TOOLS)
+  await expect
+    .poll(async () =>
+      siteTools((await mcp().listTools()).tools)
+        .map((t) => t.name)
+        .sort(),
+    )
+    .toEqual(TOOLS)
   // Chosen once: the choice belongs to the adapter, not to a hash, so the changed bundle keeps it.
   await chooseStore(control)
 
@@ -166,7 +173,13 @@ test('a restart of the same build keeps the approval and the grants', async () =
   expect(detail?.hash).toBe(firstHash)
   expect(detail?.approval).toBe('approved')
   expect(detail?.secretRequests.map((s) => s.grant?.itemTitle)).toEqual([COPY_ITEM_TITLE])
-  await expect.poll(async () => (await mcp().listTools()).tools.map((t) => t.name).sort()).toEqual(TOOLS)
+  await expect
+    .poll(async () =>
+      siteTools((await mcp().listTools()).tools)
+        .map((t) => t.name)
+        .sort(),
+    )
+    .toEqual(TOOLS)
   // And the restarted demo works: the fake is new, so the cart is empty and the login runs again.
   const cart = await callTool(mcp(), 'woolworths_get_cart', {})
   expect(cart.isError, `${cart.text}\n${recentAudit()}`).toBe(false)
@@ -205,7 +218,7 @@ test('the changed bundle waits for review: tools off MCP, no grants, a diff agai
   expect(review?.files.map((f) => [f.path, f.status])).toEqual([['src/manifest.ts', 'modified']])
 
   // Nothing of the new bundle is callable, and nothing granted for the old hash reaches it.
-  expect((await mcp().listTools()).tools.map((t) => t.name)).toEqual([])
+  expect(siteTools((await mcp().listTools()).tools).map((t) => t.name)).toEqual([])
   const refused = await callTool(mcp(), 'woolworths_get_cart', {})
   expect(refused.isError).toBe(true)
   const detail = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
@@ -238,7 +251,13 @@ test('the review screen shows the change, and Approve waits for the acknowledgem
   await expect(approve).toBeDisabled()
   await control.getByRole('checkbox', { name: 'I’ve read the highlighted additions' }).check()
   await approve.click()
-  await expect.poll(async () => (await mcp().listTools()).tools.map((t) => t.name).sort()).toEqual(TOOLS)
+  await expect
+    .poll(async () =>
+      siteTools((await mcp().listTools()).tools)
+        .map((t) => t.name)
+        .sort(),
+    )
+    .toEqual(TOOLS)
   const detail = await control.evaluate(() => window.valet?.adapters.get('woolworths'))
   expect(detail?.approval).toBe('approved')
   expect(detail?.secretRequests.map((s) => s.grant)).toEqual([null])
