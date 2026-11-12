@@ -124,6 +124,15 @@ const subjects = {
       label: displayText(80),
       from: displayText(120),
       to: displayText(120),
+      /**
+       * When the person picks the value on the card (a store, J8b): the values offered. The
+       * signed decision then names the one picked (`choice`), and `to` is ignored.
+       */
+      choices: z
+        .array(z.object({ value: z.string().min(1).max(200), label: displayText(120) }).strict())
+        .min(2)
+        .max(50)
+        .optional(),
     })
     .strict(),
   /** An agent driving a signed-in session for authoring or repair (D81), for at most this long. */
@@ -210,7 +219,10 @@ export const APPROVAL_TTL_MS: Readonly<Record<ApprovalKind, number>> = {
 /** Limits against approval fatigue (docs/agent-run-security.md#approval-tiers). */
 export const APPROVAL_LIMITS = {
   pendingPerClient: 3,
-  pendingTotal: 10,
+  /** Across all agents (A's card spec). */
+  pendingTotal: 5,
+  /** Requests one client may make in a day, answered or not. */
+  perClientPerDay: 20,
   /** Declines from one client, within the window, after which its requests are refused. */
   declinesBeforeCooldown: 3,
   declineWindowMs: 3600_000,
@@ -237,6 +249,45 @@ const requestBase = {
   agentNote: displayText(280).nullable(),
   createdAt: z.iso.datetime(),
   expiresAt: z.iso.datetime(),
+  /** Why this request exists, in the Mac's terms: the card's "Because" row (D). */
+  context: z
+    .discriminatedUnion('kind', [
+      z.object({ kind: z.literal('repair'), repairId: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/) }).strict(),
+      z.object({ kind: z.literal('draft'), draftId: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/) }).strict(),
+      /** A follow-on (A section 8): its own request, signed on its own, after this one. */
+      z.object({ kind: z.literal('follows'), requestId: requestIdSchema }).strict(),
+      z.object({ kind: z.literal('replaces'), requestId: requestIdSchema }).strict(),
+    ])
+    .optional(),
+  /**
+   * What the card shows besides the subject, written by the Mac (H's CR-4). Part of the request
+   * text, so the signature covers it. `fromAdapter` is text the adapter's author wrote: cards show
+   * it as "the adapter says", never as a headline.
+   */
+  display: z
+    .object({
+      because: displayText(200).optional(),
+      client: z
+        .object({ label: displayText(100), badge: z.enum(['local', 'remote', 'app', 'person']) })
+        .strict()
+        .optional(),
+      /** The site's registrable domain, from the manifest's origins by the Mac. */
+      domain: z
+        .string()
+        .regex(/^[a-z0-9.-]{1,253}$/)
+        .optional(),
+      followOns: z.array(displayText(120)).max(10).optional(),
+      checks: z.array(displayText(200)).max(20).optional(),
+      fromAdapter: z
+        .object({
+          siteName: displayText(80).optional(),
+          toolTitles: z.record(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/), displayText(80)).optional(),
+        })
+        .strict()
+        .optional(),
+    })
+    .strict()
+    .optional(),
 }
 
 const requestOf = <K extends ApprovalKind>(kind: K) =>
@@ -301,21 +352,26 @@ export const approvalDecisionSchema = z
     requestDigest: hash,
     deviceId: keyIdSchema,
     decidedAt: z.iso.datetime(),
+    /** The value picked on a card that offers `choices` (H's CR-7). Signed with the rest. */
+    choice: z.string().min(1).max(200).optional(),
   })
   .strict()
 export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>
 export { signedTextSchema as signedDecisionSchema }
 
-export type DecisionRefusal =
-  | 'malformed'
-  | 'unknown-device'
-  | 'device-revoked'
-  | 'bad-signature'
-  | 'wrong-mac'
-  | 'wrong-request'
-  | 'not-pending'
-  | 'expired'
-  | 'not-allowed-on-device'
+export const DECISION_REFUSALS = [
+  'malformed',
+  'unknown-device',
+  'device-revoked',
+  'bad-signature',
+  'wrong-mac',
+  'wrong-request',
+  'not-pending',
+  'expired',
+  'not-allowed-on-device',
+  'bad-choice',
+] as const
+export type DecisionRefusal = (typeof DECISION_REFUSALS)[number]
 
 export type DecisionCheck =
   | { readonly ok: true; readonly decision: ApprovalDecision; readonly role: DeviceRole }
@@ -389,6 +445,12 @@ export function verifyDecision(
     }
     if (revokedAt !== null && Date.parse(revokedAt) <= receivedAt)
       return { ok: false, reason: 'device-revoked' }
+  }
+  const choices = request.request.kind === 'setting' ? request.request.subject.choices : undefined
+  if (
+    choices === undefined ? decision.choice !== undefined : !choices.some((c) => c.value === decision.choice)
+  ) {
+    return { ok: false, reason: 'bad-choice' }
   }
   return { ok: true, decision, role: device.role }
 }

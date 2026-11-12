@@ -275,6 +275,11 @@ const EVENT_FIELDS: Readonly<Record<AuditEvent['type'], readonly string[]>> = {
   'site-paused': ['adapterId', 'paused'],
   'call-waited': ['adapterId', 'callId', 'reason', 'waitedMs', 'ahead'],
   confirmation: ['adapterId', 'tool', 'client', 'callId', 'answer'],
+  'approval-requested': ['requestId', 'kind', 'digest', 'clientId'],
+  'approval-answered': ['requestId', 'answer', 'deviceId', 'reason'],
+  'device-paired': ['deviceId', 'platform'],
+  'device-revoked': ['deviceId', 'by'],
+  'store-refused': ['store', 'reason', 'records'],
 }
 
 function eventEntry(event: AuditEvent): AdminAuditPage['records'][number]['event'] {

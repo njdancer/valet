@@ -12,10 +12,19 @@
 // The relay is never an authority: it holds no tokens, no grants and no approvals.
 
 import { z } from 'zod'
-import { clientIdSchema, requestIdSchema } from './approvals'
+import type { AdminAction } from './admin-actions'
+import { clientIdSchema, DECISION_REFUSALS, requestIdSchema } from './approvals'
 import { canRevokeDevice, keyIdSchema } from './devices'
 import { displayText } from './display-text'
-import { p256PublicKeySchema, p256SignatureSchema, signedTextSchema } from './signing'
+import { sealedSchema } from './pairing'
+import {
+  keyId,
+  p256PublicKeySchema,
+  p256SignatureSchema,
+  SIGNING_DOMAINS,
+  signedTextSchema,
+  verifyP256,
+} from './signing'
 
 export const RELAY_PROTOCOL_VERSION = 1
 
@@ -85,20 +94,59 @@ export const relayChallengeSchema = z
   .strict()
 
 /**
- * The answer, signed by the transport key over `valet/relay-auth/v1\n` + canonical JSON of
- * `{ nonce, relay, role, id }`. A Mac's id is its macId; a phone's is its deviceId, and the Mac
- * must have registered it (`device-register`) first.
+ * The text a hello's signature covers: `JSON.stringify` of exactly these keys in exactly this
+ * order, so Swift, the Mac and the relay sign and check the same bytes (G's request).
+ */
+export function relayAuthPayload(fields: {
+  readonly nonce: string
+  readonly relay: string
+  readonly role: 'mac' | 'phone'
+  readonly id: string
+}): string {
+  return JSON.stringify({ nonce: fields.nonce, relay: fields.relay, role: fields.role, id: fields.id })
+}
+
+/**
+ * The answer, signed by the transport key over `valet/relay-auth/v1\n` + relayAuthPayload. A
+ * Mac's id is its macId; a phone's is its deviceId, and the Mac must have registered it
+ * (`device-register`) first.
  */
 export const relayHelloSchema = z
   .object({
     type: z.literal('hello'),
     role: z.enum(['mac', 'phone']),
     id: keyIdSchema,
-    /** Only on a Mac's first connection, when the relay has no key for this id yet. */
+    /**
+     * Only on a Mac's first connection, when the relay has no key for this id yet, and always with
+     * `binding`: the Mac's approval key (whose keyId is the macId) signing this transport key once,
+     * with Touch ID. Without it, anyone who knew a macId (it's in the host name) could register
+     * first after the relay lost its storage (G's finding).
+     */
     transportKey: p256PublicKeySchema.optional(),
+    binding: z
+      .object({ approvalKey: p256PublicKeySchema, signature: p256SignatureSchema })
+      .strict()
+      .optional(),
     signature: p256SignatureSchema,
   })
   .strict()
+  .refine(
+    (h) => (h.transportKey === undefined) === (h.binding === undefined),
+    'transportKey and binding go together',
+  )
+  .refine((h) => h.transportKey === undefined || h.role === 'mac', 'only a Mac registers itself')
+
+/** The relay's check of a first hello's binding: the macId is the approval key's, and it signed. */
+export function verifyRelayBinding(hello: z.infer<typeof relayHelloSchema>): boolean {
+  if (hello.transportKey === undefined || hello.binding === undefined) return false
+  if (keyId(hello.binding.approvalKey) !== hello.id) return false
+  return verifyP256(
+    hello.binding.approvalKey,
+    SIGNING_DOMAINS.relayBinding,
+    hello.transportKey,
+    hello.binding.signature,
+  )
+}
 
 /** A sealed Mac-to-phone or phone-to-Mac message. See macToPhoneMessageSchema and phoneToMacMessageSchema for what's inside. */
 export const envelopeSchema = z
@@ -137,7 +185,75 @@ export const macToPhoneMessageSchema = z.discriminatedUnion('type', [
       type: z.literal('approval-closed'),
       seq,
       requestId: requestIdSchema,
-      outcome: z.enum(['approved', 'declined', 'expired', 'withdrawn']),
+      outcome: z.enum(['approved', 'declined', 'expired', 'withdrawn', 'refused']),
+      /** For `refused`: why the Mac didn't accept a signature. */
+      reason: z.enum(DECISION_REFUSALS).optional(),
+      /** The device that answered, if one did. */
+      deviceId: keyIdSchema.nullable().optional(),
+    })
+    .strict(),
+  /** What the phone's tabs show (H's CR-3). Replaces the last one; the Mac's own wording. */
+  z
+    .object({
+      type: z.literal('status'),
+      seq,
+      at: z.iso.datetime(),
+      safety: z.enum(['running', 'paused', 'remote-paused', 'lockdown']),
+      sites: z
+        .array(
+          z
+            .object({
+              adapterId: z.string().regex(/^[a-z][a-z0-9-]{1,63}$/),
+              name: displayText(80),
+              health: z.enum(['ok', 'needs-you', 'paused', 'blocked', 'repair', 'off']),
+              note: displayText(200).optional(),
+            })
+            .strict(),
+        )
+        .max(50),
+      agents: z
+        .array(
+          z
+            .object({
+              clientId: clientIdSchema,
+              label: displayText(100),
+              transport: z.enum(['local', 'remote']),
+              lastCallAt: z.iso.datetime().nullable(),
+            })
+            .strict(),
+        )
+        .max(50),
+      devices: z
+        .array(
+          z
+            .object({
+              deviceId: keyIdSchema,
+              name: displayText(60),
+              platform: z.enum(['macos', 'ios']),
+              lastSeenAt: z.iso.datetime().nullable(),
+            })
+            .strict(),
+        )
+        .max(10),
+      recent: z
+        .array(
+          z
+            .object({ at: z.iso.datetime(), kind: z.enum(['call', 'change']), text: displayText(200) })
+            .strict(),
+        )
+        .max(50),
+    })
+    .strict(),
+  /** A login needs the person (J6; H's CR-10). `code` means the phone may send a one-time code. */
+  z
+    .object({
+      type: z.literal('handoff'),
+      seq,
+      handoffId: z.string().regex(/^[A-Za-z0-9_-]{8,40}$/),
+      adapterId: z.string().regex(/^[a-z][a-z0-9-]{1,63}$/),
+      domain: z.string().regex(/^[a-z0-9.-]{1,253}$/),
+      kind: z.enum(['code', 'captcha', 'other']),
+      expiresAt: z.iso.datetime(),
     })
     .strict(),
   /** Something the person should know. Fixed kinds; text in the app's words. */
@@ -159,10 +275,64 @@ export type MacToPhoneMessage = z.infer<typeof macToPhoneMessageSchema>
  * What an envelope from a phone holds once opened. Commands only tighten, and the phone shows each
  * as "not confirmed" until the Mac's ack arrives, so a relay that drops one can't hide it.
  */
+/** What a phone may ask the Mac to start. Pairing and resume are never asked from a phone. */
+export const PHONE_ASKS = [
+  'tool.enable',
+  'tool.remote-enable',
+  'setting.adapter-choice',
+  'setting.loosen',
+  'adapter.rollback',
+] as const satisfies readonly AdminAction[]
+
 export const phoneToMacMessageSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('approval-decision'), seq, decision: signedTextSchema }).strict(),
-  /** No. Needs no signature. */
-  z.object({ type: z.literal('approval-decline'), seq, requestId: requestIdSchema }).strict(),
+  /** No. Needs no signature. The note goes to the agent; stopAsking refuses its requests for a while. */
+  z
+    .object({
+      type: z.literal('approval-decline'),
+      seq,
+      requestId: requestIdSchema,
+      note: displayText(280).optional(),
+      stopAsking: z.boolean().optional(),
+    })
+    .strict(),
+  /**
+   * Ask the Mac to start something that needs approval (H's CR-9). The Mac looks the tier up in
+   * ADMIN_ACTION_TIERS and builds the request itself, exactly as for an agent; an ask approves
+   * nothing.
+   */
+  z
+    .object({
+      type: z.literal('ask'),
+      seq,
+      action: z.enum(PHONE_ASKS),
+      adapterId: z
+        .string()
+        .regex(/^[a-z][a-z0-9-]{1,63}$/)
+        .optional(),
+      tool: z
+        .string()
+        .regex(/^[a-z][a-z0-9_]{0,63}$/)
+        .optional(),
+      setting: z
+        .string()
+        .regex(/^[a-z][a-z0-9_]{0,63}$/)
+        .optional(),
+      value: z.string().min(1).max(200).optional(),
+    })
+    .strict(),
+  /**
+   * A one-time code the person typed on the phone for a login hand-off (J6). The Mac holds it as a
+   * secret: only for that hand-off's OTP step, never logged, audited as a secret use.
+   */
+  z
+    .object({
+      type: z.literal('login-code'),
+      seq,
+      handoffId: z.string().regex(/^[A-Za-z0-9_-]{8,40}$/),
+      code: z.string().regex(/^[A-Za-z0-9-]{4,12}$/),
+    })
+    .strict(),
   /** A tightening command. Undoing any of them is a `resume` approval. The Mac's own id can't be revoked. */
   z
     .object({
@@ -221,7 +391,8 @@ export const macToRelaySchema = z.discriminatedUnion('type', [
     .object({
       type: z.literal('consent-view'),
       id: requestId,
-      state: z.enum(['waiting', 'approved', 'declined', 'expired']),
+      /** `closed`: Valet isn't accepting new agents (A's J2 F5). */
+      state: z.enum(['waiting', 'approved', 'declined', 'expired', 'closed']),
       code: z
         .string()
         .regex(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/)
@@ -235,6 +406,16 @@ export const macToRelaySchema = z.discriminatedUnion('type', [
     .strict(),
   z.object({ type: z.literal('device-unregister'), deviceId: keyIdSchema }).strict(),
   z.object({ type: z.literal('envelope'), envelope: envelopeSchema }).strict(),
+  /** Accept pairing replies for this offer until it expires. The relay never sees the secret. */
+  z.object({ type: z.literal('pairing-open'), offerId: keyIdSchema, expiresAt: z.iso.datetime() }).strict(),
+  z.object({ type: z.literal('pairing-result'), offerId: keyIdSchema, sealed: sealedSchema }).strict(),
+  /** Lift a relay-side lock (G's request 4). Only the Mac can. */
+  z.object({ type: z.literal('relay-unlock') }).strict(),
+  /**
+   * Set the recovery code's hash: SHA-256 hex of a 128-bit code shown once at setup. The code's
+   * page can only lock the relay and unregister phones, never unlock or reach the Mac.
+   */
+  z.object({ type: z.literal('recovery-register'), codeHash: z.string().regex(/^[0-9a-f]{64}$/) }).strict(),
   /** Wake a phone. The relay sends a push with fixed text and no content; see pushPayloadSchema. */
   z.object({ type: z.literal('push'), deviceId: keyIdSchema, kind: z.enum(['needs-you', 'alert']) }).strict(),
 ])
@@ -270,11 +451,38 @@ export const relayToMacSchema = z.discriminatedUnion('type', [
     .strict(),
   z.object({ type: z.literal('envelope'), envelope: envelopeSchema }).strict(),
   z.object({ type: z.literal('device-online'), deviceId: keyIdSchema, online: z.boolean() }).strict(),
+  z.object({ type: z.literal('pairing-reply'), offerId: keyIdSchema, sealed: sealedSchema }).strict(),
+  /**
+   * The relay stopped forwarding remote traffic to this Mac (a phone asked, or the recovery page
+   * was used); envelopes still flow. `phonesUnregistered`: the recovery page also dropped phones.
+   */
+  z
+    .object({
+      type: z.literal('relay-locked'),
+      locked: z.boolean(),
+      by: z.enum(['phone', 'recovery', 'mac']),
+      phonesUnregistered: z.boolean(),
+    })
+    .strict(),
 ])
 export type RelayToMac = z.infer<typeof relayToMacSchema>
 
 export const phoneToRelaySchema = z.discriminatedUnion('type', [
   relayHelloSchema,
+  /**
+   * The only frame a phone may send without a hello: its sealed reply to an open offer. Refused
+   * unless the Mac opened that offer; one per offer.
+   */
+  z
+    .object({
+      type: z.literal('pairing-reply'),
+      macId: keyIdSchema,
+      offerId: keyIdSchema,
+      sealed: sealedSchema,
+    })
+    .strict(),
+  /** Stop forwarding remote traffic to my Mac (J7). Only the Mac lifts it. */
+  z.object({ type: z.literal('relay-lock') }).strict(),
   z.object({ type: z.literal('envelope'), envelope: envelopeSchema }).strict(),
   /** The APNs token. The only thing the relay stores about a phone besides its key. */
   z.object({ type: z.literal('push-token'), token: z.string().regex(/^[0-9a-f]{64,200}$/) }).strict(),
@@ -286,6 +494,14 @@ export const relayToPhoneSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ready'), macOnline: z.boolean() }).strict(),
   z.object({ type: z.literal('envelope'), envelope: envelopeSchema }).strict(),
   z.object({ type: z.literal('mac-online'), online: z.boolean() }).strict(),
+  z.object({ type: z.literal('pairing-result'), offerId: keyIdSchema, sealed: sealedSchema }).strict(),
+  z
+    .object({
+      type: z.literal('relay-locked'),
+      locked: z.boolean(),
+      by: z.enum(['phone', 'recovery', 'mac']),
+    })
+    .strict(),
 ])
 export type RelayToPhone = z.infer<typeof relayToPhoneSchema>
 
@@ -314,5 +530,8 @@ export interface RelayStoredState {
     readonly transportKey: string
     readonly pushToken: string | null
   }[]
+  /** SHA-256 of the recovery code, if one was set. */
+  readonly recoveryCodeHash: string | null
+  readonly locked: boolean
   readonly createdAt: string
 }

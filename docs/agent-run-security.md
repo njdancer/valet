@@ -416,6 +416,78 @@ library prelude are app code. The rules B asked for:
   text in the app's words; pushes carry nothing.
 - **I:** exceptions as capabilities; forbidden paths after `realpath`; the unsandboxed wording.
 
+## Contract changes after the first merge
+
+Asked for by D, G and H while building, 2026-11-12. Accepted unless marked otherwise.
+
+**From H (iPhone):**
+
+1. **The iPhone's approval key uses `.biometryCurrentSet`,** not `.userPresence`, so a thief who
+   knows the passcode still can't approve. A Face ID enrolment change kills the key and the phone
+   re-pairs. The Mac keeps `.userPresence`, since a Mac may have no Touch ID. A second,
+   passcode-capable key for neutral cards waits for a separate decision.
+2. **Pairing wire format** (`pairing.ts`):
+   - The Mac opens an offer at the relay by id only (`pairing-open`). `pairingOfferId` is a hash
+     of the secret.
+   - The phone sends `pairing-reply` without a hello, sealed with AES-256-GCM under
+     `pairingSealKey`.
+   - The Mac answers with `pairing-result`, sealed the same way.
+   - `pairingCode` gives the six digits: HKDF over the secret, salted with the Mac id, with the
+     offer text and the reply in the info.
+   - Six digits (20 bits) is enough because the QR is single use, the reply is sealed, and three
+     wrong confirmations end the offer. A's four words would also do if the card spec wants them.
+3. **`status`**, Mac to phone, for the phone's tabs.
+4. **`display`** on requests: the Mac's own words for the card ("Because", client badge, the
+   registrable domain, follow-ons, checks), plus `fromAdapter` (site name and tool titles), which
+   cards show as the adapter's words. It's inside the request text, so the signature covers it.
+5. **A note on declines,** and D's `stopAsking`.
+6. **`approval-closed` with `refused`**, the reason and the device that answered.
+7. **`choice`** on a signed decision, checked against the setting's offered `choices` (the store,
+   J8b).
+8. A sealed notification title is for later, with a Notification Service Extension; no contract
+   yet.
+9. **`ask`**, phone to Mac, limited to `PHONE_ASKS`. The Mac builds the request itself, as it
+   does for an agent. Pairing and resume are never asked from a phone. H not offering Unlock on
+   the phone is fine: `approvableOn` allows it, but the UI needn't.
+10. **J6:**
+    - `handoff` tells the phone a login needs it.
+    - `login-code` carries a one-time code the person typed on the phone. The Mac treats it as a
+      secret: used only for that hand-off's OTP step, never logged, and audited as a secret use.
+
+**From D (broker):**
+
+1. **`context`** on requests: repair, draft, follows, replaces.
+   - A follow-on is its own request and signed on its own.
+   - One Face ID (one `LAContext`) may sign several requests only when the phone showed them
+     together as one list, and never a critical one.
+2. **Decline note and "stop asking"**, as H's 5.
+3. **Limits** follow A's card spec: 5 pending across agents, 3 per agent, 20 requests per agent
+   per day.
+4. **One anchored ledger** (`trusted.json`) for pending requests, evidence, devices, revocations
+   and safety state, instead of evidence beside each store.
+   - Accepted. It has one anchor and no crash window across files.
+   - One rule with it: any tightening record that supersedes evidence must be in the ledger too.
+     That covers a tool turned off after it was enabled, and a grant revoked. Otherwise an edit to
+     an unanchored store would bring the old evidence back into force.
+
+**From G (relay):**
+
+1. **`relayAuthPayload`**: the hello signs `JSON.stringify` of `{nonce, relay, role, id}` in
+   that order.
+2. **Consent polling.** The waiting page polls through `consent-open` with the same id and an
+   empty query. The Mac treats a known id as a poll and an unknown one as expired.
+3. **No `Origin` header.** The relay refuses forwarded requests that carry one (except GET
+   `/authorize`), and `/mcp` POST bodies must be JSON-RPC.
+4. **Relay-side lock and recovery code.**
+   - A phone can ask the relay to stop forwarding remote traffic to its Mac (`relay-lock`). Only
+     the Mac lifts it (`relay-unlock`).
+   - A 128-bit recovery code, shown once, whose hash the Mac registers. The code's page can only
+     lock and unregister phones.
+5. **`closed`** consent state, for "not accepting new agents".
+6. **No trust on first use.** A Mac's first hello carries `binding`: its approval key, whose key
+   id is the Mac id, signing the transport key once with Touch ID (`verifyRelayBinding`). A relay
+   that lost its storage can't be claimed by someone who only knows the Mac id.
+
 ## Open questions
 
 - **D78 (web audit):** a browser as another paired device would fit this design (its own keys,
