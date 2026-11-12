@@ -1414,7 +1414,7 @@ export class AppService {
    */
   private async signInstall(
     adapter: BuiltinAdapter,
-    source: 'draft' | 'local-folder' | 'rollback',
+    source: 'draft' | 'local-folder' | 'rollback' | 'builtin',
     against?: BuiltinAdapter,
   ): Promise<boolean> {
     const broker = this.approvalBroker
@@ -1943,7 +1943,13 @@ export class AppService {
           // Only the bundle installed and waiting now; a stale review's hash is refused.
           if (adapter.hash !== hash) throw new ValetError('manifest', 'invalid')
           // Touch ID at this Mac signs it; the handler applies it (approvalHandlers).
-          await this.signInstall(adapter, adapter.source === 'draft' ? 'draft' : 'local-folder')
+          // A version this app ships is labelled built in; anything else by where it came from.
+          const source = !this.runsUnsandboxed(adapter)
+            ? 'builtin'
+            : adapter.source === 'draft'
+              ? 'draft'
+              : 'local-folder'
+          await this.signInstall(adapter, source)
         },
         reject: async (adapterId, hash) => {
           const adapter = this.requireAdapter(adapterId)

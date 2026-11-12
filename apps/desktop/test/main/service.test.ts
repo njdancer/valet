@@ -2794,6 +2794,8 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
     expect(review?.takesSession).toBe(false)
     await s.api.approvals.approve('shop', builtin)
     expect(await s.call('echo', { text: 'hi' })).toMatchObject({ status: 'ok', output: { text: 'v1:hi' } })
+    // Signed as the app's own, by its shipped hash.
+    expect(readFileSync(s.paths.trusted, 'utf8')).toMatch(/source\\*":\\*"builtin/)
     const versions = await s.api.adapters.versions('shop')
     expect(versions.versions).toEqual([
       expect.objectContaining({ hash: builtin, source: 'builtin', active: true }),
