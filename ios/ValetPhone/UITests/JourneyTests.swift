@@ -170,6 +170,9 @@ final class JourneyTests: XCTestCase {
     }
     try audit("Needs you")
     openCard("1D99")
+    // Scrolled to the end, so no line is half under the pinned action bar (the audit reads a line
+    // cut by the bar as low contrast; at rest the last lines always are).
+    app.swipeUp()
     try audit("Card")
     waitFor("card.close").tap()
     for tab in ["Activity", "Sites", "Agents", "Valet"] {
