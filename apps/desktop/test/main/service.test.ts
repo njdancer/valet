@@ -302,6 +302,72 @@ async function approved() {
   return s
 }
 
+describe('signed installs (docs/approval-broker.md)', () => {
+  it('approves an adapter only with Touch ID: a cancelled prompt leaves it off', async () => {
+    const s = await setup()
+    s.presence.answer = false
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    expect(s.presence.prompts).toEqual([
+      expect.stringMatching(/^approve an adapter.*\(request [0-9A-F]{4}\)$/),
+    ])
+    expect((await s.api.adapters.list())[0]?.approval).toBe('unapproved')
+    expect(s.endpoint.caller?.listTools()).toEqual([])
+    s.presence.answer = true
+    await s.api.approvals.approve('shop', s.adapter.hash)
+    expect((await s.api.adapters.list())[0]?.approval).toBe('approved')
+    const events = (await s.api.audit.page({})).records.map((r) => r.event)
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'approval-requested', kind: 'adapter-install' }),
+    )
+  })
+
+  it('ignores an approval written into approvals.json by hand', async () => {
+    const first = await setup()
+    const hash = first.adapter.hash
+    await first.service.stop()
+    writeFileSync(first.paths.approvals, JSON.stringify({ version: 1, approved: { shop: [hash] } }))
+    const again = await setup({ dir: first.dir })
+    expect((await again.api.adapters.list())[0]?.approval).toBe('unapproved')
+    expect(await again.call('echo', { text: 'hi' })).toMatchObject({
+      status: 'failed',
+      errorClass: 'not-granted',
+    })
+  })
+
+  it('carries over what was approved before signatures, once, for the built-ins only', async () => {
+    const first = await approved()
+    await first.service.stop()
+    // A data folder from before signed approvals: approvals.json, and no ledger or anchor yet.
+    rmSync(first.paths.trusted, { force: true })
+    rmSync(join(first.dir, 'anchor.json'), { force: true })
+    const again = await setup({ dir: first.dir })
+    expect((await again.api.adapters.list())[0]?.approval).toBe('approved')
+    expect(await again.call('echo', { text: 'hi' })).toEqual({ status: 'ok', output: { text: 'hi' } })
+    expect(again.presence.prompts).toEqual([])
+    // Rejected, its legacy record goes too: approving it again needs Touch ID.
+    await again.api.approvals.reject('shop', again.adapter.hash)
+    expect((await again.api.adapters.list())[0]?.approval).not.toBe('approved')
+    await again.service.stop()
+    writeFileSync(
+      again.paths.approvals,
+      JSON.stringify({ version: 1, approved: { shop: [again.adapter.hash] } }),
+    )
+    const third = await setup({ dir: first.dir })
+    expect((await third.api.adapters.list())[0]?.approval).not.toBe('approved')
+    expect(await third.call('echo', { text: 'hi' })).toMatchObject({ status: 'failed' })
+  })
+
+  it('honours nothing from a ledger changed outside Valet', async () => {
+    const s = await approved()
+    await s.service.stop()
+    const text = readFileSync(s.paths.trusted, 'utf8')
+    writeFileSync(s.paths.trusted, `${text} `)
+    const again = await setup({ dir: s.dir })
+    expect((await again.api.adapters.list())[0]?.approval).toBe('unapproved')
+    expect((await again.api.app.status()).lockedDown).toBe(true)
+  })
+})
+
 describe('first run', () => {
   it('shows the adapter pending review, and runs nothing until it is approved', async () => {
     const s = await setup()
@@ -859,7 +925,9 @@ describe('tool calls', () => {
     await expect(
       s.api.answerConfirmation(id as string, true, { role: 'confirmation', shows: 'cf_other' }),
     ).rejects.toThrow()
-    expect(s.presence.prompts).toEqual([])
+    // Only the adapter's own approval asked for Touch ID so far.
+    expect(s.presence.prompts).toEqual([expect.stringMatching(/^approve an adapter/)])
+    s.presence.prompts.length = 0
     // A click from its own panel only raises Touch ID: cancelled there, nothing is approved.
     s.presence.answer = false
     await expect(
@@ -1580,7 +1648,8 @@ describe('endpoint, settings, audit and the app', () => {
     // Launch checks the chain in the background, so the sidebar never sits at "not verified yet".
     await vi.waitFor(async () => expect((await s.api.audit.chainStatus()).state).toBe('intact'))
     const verified = await s.api.audit.verify()
-    expect(verified).toMatchObject({ state: 'intact', records: 1 })
+    // The approval's request, its signed answer, and the adapter-approved record.
+    expect(verified).toMatchObject({ state: 'intact', records: 3 })
     expect(await s.api.audit.chainStatus()).toEqual(verified)
     // Every window's chain status refetches: the sidebar shows the answer at once.
     expect(s.events).toContainEqual({ type: 'audit-verified' })
@@ -2747,6 +2816,11 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
     ])
     const preview = await s.api.adapters.rollbackPreview('shop', v1)
     expect(preview).toMatchObject({ version: '1.0.0', grants: [] })
+    // A rollback is an approval too: Touch ID first, and cancelled there nothing is swapped.
+    s.presence.answer = false
+    await expect(s.api.adapters.rollback('shop', v1)).rejects.toThrow(/cancelled/)
+    expect(await s.call('echo', { text: 'hi' })).toMatchObject({ output: { text: 'v2:hi' } })
+    s.presence.answer = true
     await s.api.adapters.rollback('shop', v1)
     expect(await s.call('echo', { text: 'hi' })).toMatchObject({ output: { text: 'v1:hi' } })
     expect((await s.api.adapters.versions('shop')).pinned).toBe(true)
