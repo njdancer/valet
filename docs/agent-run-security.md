@@ -519,6 +519,13 @@ Asked for by D, G and H while building, 2026-11-12. Accepted unless marked other
    remote on and remote hosts become `setting` requests. One condition: adding a local client is
    unsigned but notifies on the Mac and phone like any Notify action, so a client that appears
    without the person is seen.
+10. **`builtin` install source**, for a built-in adapter's update that arrives with the app.
+11. **Migration from unsigned approvals** (D's design, agreed): the first signed launch records a
+    one-time `legacy` list in the ledger, holding today's approvals for the built-ins' own hashes
+    only, and their grants. Each is honoured until the person confirms it with Touch ID or
+    revokes it, and the list only shrinks. One condition: a legacy grant is honoured only for
+    origins and fields the built-in's own manifest declares, so a planted `grants.json` can't
+    point a real secret at another origin.
 
 **From A (screens), signing off section 10 of the information architecture:**
 
