@@ -253,7 +253,7 @@ contracts. Recorded here as each signs:
 | Stream | What to check                                                                                              | Status                      |
 | ------ | ---------------------------------------------------------------------------------------------------------- | --------------------------- |
 | B      | Tiers, gestures, Mac-only list, nonce and expiry, pairing words, recovery code, signed lock, amendments    | signed (notes below)        |
-| D      | Card payload, Because, states, follow-ons, limits, "Not confirmed yet", "Changed before order"             | waiting                     |
+| D      | Card payload, Because, states, follow-ons, limits, "Not confirmed yet", "Changed before order"             | signed with changes (below) |
 | E      | Section 5's tool table and wording; scoping of See Valet                                                   | signed with changes (below) |
 | F      | Drafts frozen on submit, checks vs tests, reproduction check on Valet-recorded fixtures, private addresses | waiting                     |
 | G      | Consent through the relay, Accept new agents, offline behaviour, lock at the relay, recovery page          | signed                      |
@@ -311,6 +311,43 @@ The relay in `apps/relay`, design in `docs/relay-worker.md`.
     design. The Mac stays, so it is never the last device.
   - It doesn't say "Your Mac is online", which would tell anyone holding the URL whether the Mac
     is up. Tries are limited to 10 an hour per Mac (the frame assumed 5).
+
+### D's sign-off (approval broker, 2026-11-12)
+
+Checked against what PRs #75, #81, #84, #89 and #93 built (`docs/approval-broker.md`).
+
+- **Card payload:** matches. The Mac builds every subject from its own facts: manifests, hashes,
+  the grant, the setting's current value. An agent supplies only its note and, for a draft, its
+  references, shown as claims. `display` (client and badge, domain, Valet's checks, the agent's
+  tests counted apart, the adapter's own words) is part of the request text, so the signature
+  covers it. Text a card can't print is written out as codes and never dropped. A list cut to fit
+  says how many more it left out.
+- **Because:** the request carries `context` (`draft`, `repair`, `follows`, `replaces`) for the
+  card to build its row from. Drafts fill it today. Two things are not built yet: the "First
+  request of this kind" line, and the "already holds" line (R19). Both are for the card, using
+  the broker's list and the grants.
+- **States:**
+  - Waiting, Declined (with the note, for the asking agent only), Expired, Replaced, Locked down
+    and Changed while open come from the broker. Expiry is 24 hours for adapter kinds, 2 minutes
+    for Confirm and 10 for Connect. Withdrawals carry `replaced` or `lockdown` as their reason.
+    Changed while open is a request whose facts changed by the time it is approved: it is
+    withdrawn as `stale`, never applied.
+  - **Not confirmed yet:** a resend of the same signed approval is one approval. The second copy
+    is refused as not pending, and the `approval-closed` message tells every phone the outcome.
+    So Already approved and Not used are both the closed outcome, not a second answer.
+  - Refused by the Mac is a wrong device, a bad signature or a locked Valet.
+  - Checking and Mac offline are the phone's (H, G).
+- **Changed before order:** not the broker's. An approved Confirm releases only its own call (the
+  `callId` and `confirmationId` are signed). Whether the trolley changed at run time is the
+  checkout tool's own check.
+- **Follow-ons:** not built. The contract has `follows` and `display.followOns`, and the kind a
+  follow-on would be, a remote tool for the asking agent only, is wired (#93). F refuses
+  follow-ons for now, so they don't count with their parent yet.
+- **Limits:** built as section 8 has them, with two differences:
+  - Confirm cards (raised by Valet for an agent's irreversible call) don't count towards an
+    agent's 3 waiting or 20 a day. They are refused while it is paused, though, and declining
+    one counts towards its pause.
+  - "Revoke Claude app?" after a second pause in a day is not built.
 
 ### E's sign-off (read tier, 2026-11-12)
 

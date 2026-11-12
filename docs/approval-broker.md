@@ -154,7 +154,7 @@ Refused, with a reason the tool result can say (A's section 11), when:
 - Valet is locked down, unless the kind is `resume`;
 - an agent asks for `device-pair` or `irreversible-call` (only the app raises those), or for
   `resume` (only the person);
-- the agent has `pendingPerClient` (3) waiting, or all agents `pendingTotal` (10);
+- the agent has `pendingPerClient` (3) waiting, or all agents `pendingTotal` (5);
 - the agent has `declinesBeforeCooldown` (3) declines within `declineWindowMs`; it is refused
   until `cooldownMs` after the last of them;
 - an app-raised confirmation is made `onBehalfOf` an agent that is cooling down. The confirmation
