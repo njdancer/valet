@@ -271,10 +271,40 @@ Revoking one of these removes its evidence from the ledger (a tightening, no sig
 
 ## Migration
 
-Today's `approvals.json` and grants have no evidence. On the first launch of the wired version
-(**Designed**, PR 3), the Mac lists them on one screen and asks for Touch ID once; the Swift signer
-signs one decision per record under the same `LAContext`. Until then the old records keep working
-and the app says migration is waiting, so the Woolworths login is never interrupted (B).
+**Built** for installs (grants next). The first launch of a signed build records, once, a `legacy`
+list in the anchored ledger: the adapters approved in `approvals.json` whose active hash is the
+one this app ships, and the grants for those hashes. "Built in" is always the shipped hash, never
+the `source` tag in the store's `state.json`, which is a plain file anything can write. Each record
+is honoured until the person confirms it with Touch ID or it is revoked or rejected, and the list
+only ever shrinks: once any version of an adapter is approved with Touch ID, that adapter's legacy
+records and its other versions' evidence go, so an old version put back as active by hand needs
+Touch ID again. A later hand-written `approvals.json` approves nothing: the install gate needs the
+applied mark there _and_ signed evidence (or the legacy record).
+
+The migration never runs again. A ledger reset after a tamper (the person resuming at the Mac)
+writes an empty `legacy`, so what `approvals.json` and the store hold after a tamper is never
+carried over; the person approves each adapter again with Touch ID. B's condition for grants: a
+legacy grant is honoured only for the origins and fields the built-in's own manifest declares.
+The migration screen (one Touch ID per record) comes with the grants PR.
+
+Accepted: a built-in update that ships with the first signed release (a new hash the store makes
+active on launch) is not carried over, because nobody approved that hash. It asks for Touch ID
+like any update.
+
+Installs, updates and rollbacks are signed `adapter-install` requests at the Mac. The subject's
+permission lines are the Mac's own diff in B's areas (`approvals/install-subject.ts`), with the
+sandbox's own lines from `sandboxPermissionChanges` (a `command` exception reads "which can read
+your files", critical). `unsandboxed` comes from the manifest's `sandbox.mode`, or, in a build
+without the sandbox, from not being one of the app's shipped hashes; an unsandboxed version always
+carries the critical sandbox-mode line, so it is Mac only. A line never
+loses an item it can't print: hidden or control characters are written out as their codes, the
+purpose of a request or tool is kept outside the cut, a secret's line says which origins it may be
+typed into, and past 50 items the last one says how many were left out. The gate binds the sandbox
+mode: evidence counts only if its `unsandboxed` matches how the hash would run now. A rollback asks
+for Touch ID before anything is swapped, and the version it replaces keeps its approval until the
+swap has worked, so a failed swap leaves the running version approved. A signed install whose apply
+didn't finish (a crash after the evidence was written) is applied at the next launch without asking
+again.
 
 ## Wiring into the app
 
@@ -304,9 +334,9 @@ are the next PRs of this workstream.
 | `app.setLockedDown(false)`                   | `resume { from: 'lockdown' }`, Mac only                                     | **Built**          |
 | `app.setLockedDown(true)`                    | Tightening: app-state and the ledger                                        | **Built**          |
 | `app.setPaused(false)`                       | Not signed: Valet's own Pause is in memory and a restart lifts it anyway    | Decided            |
-| `approvals.approve(id, hash)`                | `adapter-install`; the install gate asks `honoured`, bound to sandbox mode  | Next, after PR #77 |
-| rollback (PR #77's `rollbackNow`)            | `adapter-install` with `source: 'rollback'`                                 | Next, after PR #77 |
-| `approvals.reject`                           | Tightening                                                                  | Next               |
+| `approvals.approve(id, hash)`                | `adapter-install`; the install gate asks `honoured`, bound to sandbox mode  | **Built**          |
+| rollback (PR #77's `rollbackNow`)            | `adapter-install` with `source: 'rollback'`                                 | **Built**          |
+| `approvals.reject`                           | Tightening                                                                  | **Built**          |
 | `grants.make`                                | `secret-grant`; the grant gate asks `honoured`                              | Next               |
 | `grants.revoke`                              | Tightening: `broker.revoke('secret-grant', ...)` and the store              | Next               |
 | `grants.resync`                              | Not widening: the same item, origins and fields                             | Decided            |
@@ -327,10 +357,7 @@ counts a click: `answerConfirmation(id, true)` from the panel opened for `id` on
 `approveOnMac`, and resolves false if the person cancels Touch ID. The panel shows the request's
 ref (`ConfirmationItem.ref`), which the Touch ID prompt names. A paired phone may approve the same
 request; the broker's apply then lets the call go ahead. The confirmation request is app-raised,
-so it never counts against an agent's limits. Its preview's first line is the confirmation's own id
-(`Question cf_…`), then the requests it would make and the adapter's note, so two questions of one
-call never share a request and an approval applies only to the one it was signed for. (Asked of B:
-a `confirmationId` field in the `irreversible-call` subject, in place of that line.)
+so it never counts against an agent's limits. Its subject names the confirmation (`confirmationId`, B's contract v2.1), and its preview lists the requests it would make and the adapter's note, so two questions of one call never share a request and an approval applies only to the one it was signed for.
 
 An adversarial review of this wiring found that sharing, a release build using the dev build's
 anchor (`app.getName()` is "Valet", not "valet"; the same bug made release builds use the dev

@@ -58,6 +58,16 @@ export class InstallError extends Error {
 export class PackageManager {
   constructor(private readonly options: PackageManagerOptions) {}
 
+  private readonly shippedHashes = new Map<string, string>()
+
+  /**
+   * Whether this is the hash this app ships for the adapter: the only thing that makes an adapter
+   * built in. A stored version's source tag is a plain file anyone can write, so it never does.
+   */
+  isShipped(adapterId: string, adapterHash: string): boolean {
+    return this.shippedHashes.get(adapterId) === adapterHash
+  }
+
   /**
    * Seeds each built-in that isn't stored yet (active unless the person pinned another version),
    * then loads every stored adapter's active version. A version that fails its checks is audited
@@ -70,6 +80,7 @@ export class PackageManager {
     for (const files of builtins) {
       const checked = checkPackage(files)
       shipped.set(checked.manifest.id, checked)
+      this.shippedHashes.set(checked.manifest.id, checked.adapterHash)
       const state = await store.state(checked.manifest.id).catch(() => null)
       if (state?.versions.some((v) => v.hash === checked.adapterHash) === true) continue
       await this.put(checked, 'builtin', { activate: state === null || !state.pinned, pin: false }, state)

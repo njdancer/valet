@@ -903,7 +903,14 @@ export class ApprovalBroker {
     }
     if (ledger.tampered !== null) {
       // Everything in memory since launch was made live by this process; nothing from the file is.
-      await ledger.reset({ ...emptyLedger(), ...ledger.data, safety }).catch(() => undefined)
+      // The legacy record is never made again over a reset: what approvals.json and the store
+      // hold after a tamper is not what the person approved (docs/approval-broker.md#migration).
+      const legacy = ledger.data.legacy ?? {
+        at: new Date(this.now()).toISOString(),
+        installs: [],
+        grants: [],
+      }
+      await ledger.reset({ ...emptyLedger(), ...ledger.data, safety, legacy }).catch(() => undefined)
       return
     }
     await ledger
