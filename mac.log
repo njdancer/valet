@@ -1,0 +1,32 @@
+valet: demo: fake Woolworths at https://www.woolworths.test:50012, signing in at https://auth.woolworths.test:50013
+valet: demo: fake 1Password (Keyhold) at http://127.0.0.1:50014/
+valet: approvals: signing with software keys (dev build)
+[relay] connecting
+[console] [relay] connecting[relay] online
+[relay] ready
+[console] [relay] online[console] [relay] ready[5336:1112/162432.369941:ERROR:base/process/process_mac.cc:53] task_policy_set TASK_CATEGORY_POLICY: (os/kern) invalid argument (4)
+[5336:1112/162432.369978:ERROR:base/process/process_mac.cc:98] task_policy_set TASK_SUPPRESSION_POLICY: (os/kern) invalid argument (4)
+[relay] pairing-reply
+[console] [relay] pairing-reply[relay] device-online 05ac0be55746c847a6ba9352d4802b32 true
+[console] [relay] device-online 05ac0be55746c847a6ba9352d4802b32 true[relay] envelope
+[console] [relay] envelope[relay] envelope
+[console] [relay] envelope[relay] envelope
+[console] [relay] envelope[relay] envelope
+[console] [relay] envelope[5336:1112/162808.719272:ERROR:base/process/process_mac.cc:53] task_policy_set TASK_CATEGORY_POLICY: (os/kern) invalid argument (4)
+[5336:1112/162808.719346:ERROR:base/process/process_mac.cc:98] task_policy_set TASK_SUPPRESSION_POLICY: (os/kern) invalid argument (4)
+[5336:1112/162808.726608:ERROR:base/process/process_mac.cc:53] task_policy_set TASK_CATEGORY_POLICY: (os/kern) invalid argument (4)
+[5336:1112/162808.726642:ERROR:base/process/process_mac.cc:98] task_policy_set TASK_SUPPRESSION_POLICY: (os/kern) invalid argument (4)
+[5336:1112/162810.056237:ERROR:base/process/process_mac.cc:53] task_policy_set TASK_CATEGORY_POLICY: (os/kern) invalid argument (4)
+[5336:1112/162810.056286:ERROR:base/process/process_mac.cc:98] task_policy_set TASK_SUPPRESSION_POLICY: (os/kern) invalid argument (4)
+[relay] envelope
+[console] [relay] envelope[relay] envelope
+[console] [relay] envelope[relay] envelope
+[console] [relay] envelope[relay] envelope
+[console] [relay] envelope[relay] envelope
+[console] [relay] envelope[relay] envelope
+[console] [relay] envelope[relay] envelope
+[console] [relay] envelope[relay] device-online 05ac0be55746c847a6ba9352d4802b32 true
+[console] [relay] device-online 05ac0be55746c847a6ba9352d4802b32 true[relay] envelope
+[console] [relay] envelope[relay] envelope
+[console] [relay] envelope[relay] envelope
+[console] [relay] envelope
