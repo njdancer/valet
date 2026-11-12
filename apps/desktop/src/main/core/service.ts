@@ -145,7 +145,14 @@ import {
   TYPING_DELAY_MS,
 } from './constants'
 import type { Credentials } from './credentials'
-import { DraftAuthoring, type RequestState, type SubmitOutcome, type SubmitRequest } from './drafts/authoring'
+import {
+  type AskOutcome,
+  DraftAuthoring,
+  type PrivateNetworkRequest,
+  type RequestState,
+  type SubmitOutcome,
+  type SubmitRequest,
+} from './drafts/authoring'
 import type { CaseBrowser } from './drafts/cases'
 import { RepairTickets } from './drafts/repairs'
 import { draftDomains, type ScratchHandle, ScratchSessions } from './drafts/research'
@@ -272,13 +279,22 @@ export interface ServiceDeps {
    * out, in memory, through a proxy that refuses private addresses once resolved. None in tests
    * that don't drive a browser, and then the research tools say so.
    */
-  readonly scratch?: (draftId: string, rules: ScratchRules) => Promise<ScratchHandle>
+  readonly scratch?: (
+    draftId: string,
+    rules: ScratchRules,
+    /** The private addresses (and ports) the person let this draft reach, asked at each dial. */
+    allowPrivate: (address: string, port: number) => boolean,
+  ) => Promise<ScratchHandle>
   /**
    * A session driver for a draft's live trial (docs/authoring-tools.md#live-trials): partitions in
    * memory named by `label`, through the same public-only dial. None in tests that don't drive a
    * browser, and then valet_live_trial says so.
    */
-  readonly trialDriver?: (manifest: AdapterManifest, label: string) => Promise<SessionDriver>
+  readonly trialDriver?: (
+    manifest: AdapterManifest,
+    label: string,
+    allowPrivate: (address: string, port: number) => boolean,
+  ) => Promise<SessionDriver>
   /**
    * The fixture browser for a case's pages (docs/authoring-tools.md#the-agents-cases): served from
    * memory, scripts off, nothing sent. None in tests that don't drive a browser.
@@ -471,6 +487,11 @@ export class AppService {
   private readonly repairs = new Map<
     string,
     { readonly callId: string; readonly errorClass: string; readonly at: string }
+  >()
+  /** Private addresses the person let a draft reach, until when (R21), by draft id. */
+  private readonly privateNetwork = new Map<
+    string,
+    { readonly address: string; readonly port: number | null; readonly until: number }[]
   >()
   /** Repair tickets for installed adapters (docs/authoring-tools.md#repairs-pr-3), from the audit log. */
   private readonly repairTickets = new RepairTickets()
@@ -1356,6 +1377,20 @@ export class AppService {
           if (answer !== 'approved') throw new ValetError('config', 'not-found')
         },
       },
+      // A draft's scratch browser and live trials may reach one private address for a while (R21).
+      'private-network': {
+        precheck: async (subject) => (await this.drafts.record(subject.draftId).catch(() => null)) !== null,
+        apply: async (subject) => {
+          const until = this.deps.now() + subject.minutes * 60_000
+          const now = this.deps.now()
+          const kept = (this.privateNetwork.get(subject.draftId) ?? []).filter((g) => g.until > now)
+          kept.push({ address: subject.address.toLowerCase(), port: subject.port, until })
+          this.privateNetwork.set(subject.draftId, kept.slice(-5))
+          this.notifier.draftActivity(
+            `An agent’s draft may reach ${subject.address} on your network for ${subject.minutes} minutes.`,
+          )
+        },
+      },
       resume: {
         precheck: (subject) =>
           subject.from === 'lockdown' ? this.lockedDown : (this.approvalBroker?.isRemotePaused() ?? false),
@@ -2023,6 +2058,7 @@ export class AppService {
           (after.sandbox ?? DEFAULT_SANDBOX).mode === 'unsandboxed' || this.deps.sandbox === undefined,
         ),
       submit: (request) => this.submitDraft(request),
+      askPrivateNetwork: (request) => this.askPrivateNetwork(request),
       withdraw: async (requestId) => {
         const asker = this.draftAskers.get(requestId)
         if (asker !== undefined) await this.approvalBroker?.withdraw(requestId, asker).catch(() => false)
@@ -2043,7 +2079,12 @@ export class AppService {
             trials: {
               // A fresh one-shot sandbox window for the call, as for a case.
               start: runtime.start,
-              driver: this.deps.trialDriver,
+              driver: (manifest: AdapterManifest, label: string) =>
+                (this.deps.trialDriver as NonNullable<ServiceDeps['trialDriver']>)(
+                  manifest,
+                  label,
+                  this.privateAllowance(/^(dr-[a-z2-7]{10})-/.exec(label)?.[1] ?? ''),
+                ),
               // The installed adapters' own budget and breaker for the host.
               guards: (host: string) => this.runtime().siteGuards(host),
               signedIn: () => this.signedInDomains(),
@@ -2137,9 +2178,58 @@ export class AppService {
   }
 
   /** The scratch browsers' rules from what is installed and signed in now. */
+  /** What a draft's dial may reach besides public addresses: what the person approved, until it ends. */
+  private privateAllowance(draftId: string): (address: string, port: number) => boolean {
+    return (address, port) => {
+      const now = this.deps.now()
+      const plain = address.toLowerCase().replace(/^::ffff:/, '')
+      return (this.privateNetwork.get(draftId) ?? []).some(
+        (g) => g.until > now && g.address === plain && (g.port === null || g.port === port),
+      )
+    }
+  }
+
+  /** An agent asks for one private address for its draft (docs/authoring-tools.md, R21). */
+  private async askPrivateNetwork(request: PrivateNetworkRequest): Promise<AskOutcome> {
+    const broker = this.approvalBroker
+    if (broker === null) return { ok: false, sentence: 'Valet can’t ask for approvals right now.' }
+    if (this.lockedDown) return { ok: false, sentence: 'Valet is locked down.' }
+    const requester: Requester = {
+      kind: 'agent',
+      clientId: request.requester.clientId,
+      clientName: request.requester.clientName,
+    }
+    const asked = await broker.request(
+      'private-network',
+      {
+        adapterId: request.adapterId,
+        draftId: request.draftId,
+        address: request.address,
+        port: request.port,
+        minutes: request.minutes,
+      },
+      requester,
+      {
+        agentNote: null,
+        context: { kind: 'draft', draftId: request.draftId },
+        display: {
+          client: {
+            label: request.requester.clientName,
+            badge: request.requester.clientId.startsWith('remote:') ? 'remote' : 'local',
+          },
+        },
+      },
+    )
+    if (!asked.ok)
+      return { ok: false, sentence: submitRefusal(asked.reason, asked.until).replace(/^Not submitted: /, '') }
+    this.emit('approvals-changed')
+    this.emit('attention-changed')
+    return { ok: true, requestId: asked.requestId, ref: asked.ref, expiresAt: asked.expiresAt }
+  }
+
   private scratchSessions(open: NonNullable<ServiceDeps['scratch']>): ScratchSessions {
     return new ScratchSessions({
-      open,
+      open: (draftId, rules) => open(draftId, rules, this.privateAllowance(draftId)),
       signedIn: () => this.signedInDomains(),
       secretIn: (text) => this.knownSecretIn([text]),
       blocked: (host) => {

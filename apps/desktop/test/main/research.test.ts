@@ -223,6 +223,20 @@ describe('the scratch browser’s dial', () => {
     })
     publicOnlyDial((_host, cb) => cb(null, [{ address: '93.184.216.34', family: 4 }]))('public.test', 443)
     expect(connect).toHaveBeenCalledWith({ host: '93.184.216.34', port: 443 })
+    // A private address the person let the draft reach, on its port only.
+    const allowed = (address: string, port: number) => address === '192.168.1.20' && port === 8443
+    publicOnlyDial((_host, cb) => cb(null, [{ address: '192.168.1.20', family: 4 }]), allowed)(
+      'nas.test',
+      8443,
+    )
+    expect(connect).toHaveBeenLastCalledWith({ host: '192.168.1.20', port: 8443 })
     connect.mockRestore()
+    const otherPort = publicOnlyDial(
+      (_host, cb) => cb(null, [{ address: '192.168.1.20', family: 4 }]),
+      allowed,
+    )('nas.test', 22)
+    otherPort.on('error', () => undefined)
+    await new Promise<void>((resolve) => otherPort.once('close', () => resolve()))
+    expect(otherPort.destroyed).toBe(true)
   })
 })

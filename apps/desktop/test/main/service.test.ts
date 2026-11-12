@@ -3416,6 +3416,62 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
         outcome: 'output',
       })
     })
+
+    it('lets a draft reach one private address once the person approves, on that port, for a while', async () => {
+      let allow: ((address: string, port: number) => boolean) | null = null
+      const trialDriver: NonNullable<ServiceDeps['trialDriver']> = async (
+        _manifest,
+        _label,
+        allowPrivate,
+      ) => {
+        allow = allowPrivate
+        return {
+          beginRun: () => undefined,
+          endRun: () => undefined,
+          close: async () => undefined,
+          toolPage: async () => ({
+            fetch: async () => ({
+              status: 200,
+              contentType: 'application/json',
+              body: { id: 'abc-1', title: 'NAS', price: 1 },
+            }),
+          }),
+        } as unknown as SessionDriver
+      }
+      const s = await withPackages(null, undefined, 'answers', undefined, trialDriver)
+      const viewer: ClientIdentity = {
+        origin: 'local',
+        clientId: (await s.api.clients.add('Claude Code')).id,
+      }
+      const authoring = s.endpoint.authoring as Authoring
+      const { draft } = await authoring.createDraft(viewer, { adapterId: 'example', from: 'blank' })
+      await expect(
+        authoring.requestPrivateNetwork(viewer, draft.draftId, {
+          address: '93.184.216.34',
+          port: null,
+          minutes: 30,
+        }),
+      ).rejects.toThrow(/public/)
+      const asked = await authoring.requestPrivateNetwork(viewer, draft.draftId, {
+        address: '192.168.1.20',
+        port: 8443,
+        minutes: 30,
+      })
+      expect(asked.tellThePerson).toMatch(/192.168.1.20 port 8443/)
+      await authoring.liveTrial(viewer, draft.draftId, 'get_item', { id: 'abc-1' })
+      const before = allow as unknown as (address: string, port: number) => boolean
+      // Asked, not yet approved: nothing private.
+      expect(before('192.168.1.20', 8443)).toBe(false)
+      const broker = (s.service as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
+      expect(await broker.approveOnMac(asked.requestId)).toEqual({ ok: true })
+      // The same dial asks again at each connection, so the approval reaches a browser already open.
+      expect(before('192.168.1.20', 8443)).toBe(true)
+      expect(before('::ffff:192.168.1.20', 8443)).toBe(true)
+      expect(before('192.168.1.20', 22)).toBe(false)
+      expect(before('192.168.1.21', 8443)).toBe(false)
+      s.advance(31 * 60_000)
+      expect(before('192.168.1.20', 8443)).toBe(false)
+    })
   })
 })
 

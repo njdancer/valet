@@ -168,6 +168,15 @@ export const repairSchema = z.object({
   /** Your draft repairing it, if you started one. */
   draftId: z.string().nullable(),
 })
+/** A request the agent made of the person: give them `tellThePerson`, then ask valet_get_approval. */
+export const askReportSchema = z.object({
+  requestId: z.string(),
+  ref: z.string(),
+  expiresAt: z.string(),
+  tellThePerson: z.string(),
+})
+export type AskReport = z.output<typeof askReportSchema>
+
 export const repairListSchema = z.object({ repairs: z.array(repairSchema) })
 export type Repair = z.output<typeof repairSchema>
 export type RepairList = z.output<typeof repairListSchema>
@@ -277,6 +286,11 @@ export interface Authoring {
     request: { readonly adapterId: string; readonly from: 'blank' | 'installed'; readonly name?: string },
   ): Promise<DraftDetail>
   listDrafts(viewer: ClientIdentity, all: boolean): Promise<DraftList>
+  requestPrivateNetwork(
+    viewer: ClientIdentity,
+    draftId: string,
+    request: { readonly address: string; readonly port: number | null; readonly minutes: number },
+  ): Promise<AskReport>
   // Repairs (PR 3).
   listRepairs(viewer: ClientIdentity): Promise<RepairList>
   getRepair(viewer: ClientIdentity, repairId: string): Promise<Repair>
@@ -417,6 +431,32 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
         from: (args['from'] as 'blank' | 'installed' | undefined) ?? 'blank',
         ...(typeof args['name'] === 'string' ? { name: args['name'] } : {}),
         ...(typeof args['repairId'] === 'string' ? { repairId: args['repairId'] } : {}),
+      }),
+  },
+  {
+    name: 'valet_request_private_network',
+    title: 'Ask to reach an address on the person’s network',
+    description:
+      'Asks the person to let your draft’s scratch browser and live trials reach one private IP address ' +
+      '(a device on their home network, say), on one port or any, for up to 60 minutes. Without it both ' +
+      'refuse every private, loopback and link-local address. Tell the person the sentence in tellThePerson.',
+    input: z.object({
+      draftId: draftIdInput,
+      address: z
+        .string()
+        .regex(/^[0-9A-Fa-f:.]{2,45}$/)
+        .describe('An IP address, e.g. 192.168.1.20.'),
+      port: z.number().int().min(1).max(65535).optional(),
+      minutes: z.number().int().min(1).max(60).default(30),
+    }),
+    output: askReportSchema,
+    needs: 'ask',
+    annotations: { ...EDITS, idempotentHint: false, openWorldHint: true },
+    run: (a, args, s) =>
+      a.requestPrivateNetwork(s.viewer, args['draftId'] as string, {
+        address: args['address'] as string,
+        port: typeof args['port'] === 'number' ? args['port'] : null,
+        minutes: typeof args['minutes'] === 'number' ? args['minutes'] : 30,
       }),
   },
   {

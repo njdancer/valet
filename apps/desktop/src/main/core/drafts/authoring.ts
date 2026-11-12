@@ -3,6 +3,7 @@
 // service gives it the builder (C's prepare, describing in a one-shot sandbox window), the sandbox
 // factory for cases, what is installed and approved, and the broker's side of a submit.
 
+import { isIP } from 'node:net'
 import type { LoadedPackage } from '@valet/adapter-store'
 import {
   type AdapterManifest,
@@ -14,6 +15,7 @@ import {
   sha256Hex,
 } from '@valet/core'
 import {
+  type AskReport,
   type Authoring,
   AuthoringRefusal,
   type BrowserQuery,
@@ -33,7 +35,7 @@ import {
   type TrialReport,
 } from '@valet/mcp-server'
 import type { ToolProcessFactory } from '@valet/runtime'
-import { NO_LOCAL_ACCESS } from '@valet/sandbox'
+import { isPublicAddress, NO_LOCAL_ACCESS } from '@valet/sandbox'
 import { type CaseBrowser, type CaseRun, readCases, runCase, runCases } from './cases'
 import {
   caseFindings,
@@ -100,6 +102,19 @@ export type SubmitOutcome =
     }
   | { readonly ok: false; readonly sentence: string }
 
+export interface PrivateNetworkRequest {
+  readonly draftId: string
+  readonly adapterId: string
+  readonly address: string
+  readonly port: number | null
+  readonly minutes: number
+  readonly requester: { readonly clientId: string; readonly clientName: string }
+}
+
+export type AskOutcome =
+  | { readonly ok: true; readonly requestId: string; readonly ref: string; readonly expiresAt: string }
+  | { readonly ok: false; readonly sentence: string }
+
 export interface RequestState {
   readonly state: 'pending' | 'approved' | 'declined' | 'expired' | 'withdrawn' | 'unknown'
   readonly note: string | null
@@ -129,6 +144,11 @@ export interface AuthoringDeps {
   ) => readonly PermissionChange[]
   readonly submit: (request: SubmitRequest) => Promise<SubmitOutcome>
   readonly withdraw: (requestId: string) => Promise<void>
+  /**
+   * Asks the person to let the draft's scratch browser and live trials reach one private address
+   * (B's private-network kind, R21). The broker's own refusals come back as a sentence.
+   */
+  readonly askPrivateNetwork?: (request: PrivateNetworkRequest) => Promise<AskOutcome>
   readonly requestState: (requestId: string) => RequestState
   /** The person's name for a client, for the draft record. */
   readonly clientName: (viewer: ClientIdentity) => string
@@ -251,6 +271,39 @@ export class DraftAuthoring implements Authoring {
       .filter((d) => all || d.createdBy === client)
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     return { drafts: await Promise.all(drafts.map(async (d) => this.summary(await this.refreshed(d)))) }
+  }
+
+  // ---------- The private network ----------
+
+  async requestPrivateNetwork(
+    viewer: ClientIdentity,
+    draftId: string,
+    request: { readonly address: string; readonly port: number | null; readonly minutes: number },
+  ): Promise<AskReport> {
+    const record = await this.own(viewer, draftId)
+    const ask = this.deps.askPrivateNetwork
+    if (ask === undefined) throw new AuthoringRefusal('This build of Valet can’t reach a private network.')
+    if (!isIP(request.address))
+      throw new AuthoringRefusal('Give the address as an IP address, e.g. 192.168.1.20.')
+    if (isPublicAddress(request.address))
+      throw new AuthoringRefusal('That address is public: the scratch browser reaches it without asking.')
+    const asked = await ask({
+      draftId,
+      adapterId: record.adapterId,
+      address: request.address.toLowerCase(),
+      port: request.port,
+      minutes: Math.min(60, Math.max(1, Math.round(request.minutes))),
+      requester: { clientId: clientKey(viewer), clientName: this.deps.clientName(viewer).slice(0, 100) },
+    })
+    if (!asked.ok) throw new AuthoringRefusal(`Not asked: ${asked.sentence}`)
+    return {
+      requestId: asked.requestId,
+      ref: asked.ref,
+      expiresAt: asked.expiresAt,
+      tellThePerson: `I’ve asked Valet to let my draft reach ${request.address}${
+        request.port === null ? '' : ` port ${request.port}`
+      } on your network for ${request.minutes} minutes. Approve it on your phone or Mac (${asked.ref}).`,
+    }
   }
 
   // ---------- Repairs ----------

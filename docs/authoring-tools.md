@@ -520,6 +520,15 @@ id, the adapter's origins, at most 60 minutes, 30-minute expiry to answer). Whil
 - Every trial is audited; the Mac shows a running banner with **End now**; the phone shows
   `ph-session-running`.
 
+## The private network (PR 3)
+
+Built: `valet_request_private_network` asks for B's `private-network` kind for one IP address,
+optionally one port, for up to 60 minutes. A public address is refused, since it needs no asking.
+Once approved, the draft's scratch browser and live trials may dial that address, and only that
+address and port, until the time runs out. The dial (`publicOnlyDial`) asks at each connection,
+so an approval reaches a browser that is already open and lapses on its own. Nothing else about
+the browser changes: navigation is still https to the draft's own domains.
+
 ## Prompt injection
 
 Where it comes from and what an attacker aims for are as in authoring-agent.md. The mitigations
