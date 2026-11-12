@@ -1,0 +1,48 @@
+name: iOS screens
+
+# Screens of the iPhone app for review (persona QA), from the fakes build on the simulator. Run it
+# by pushing any commit to a branch named ios-screens-request/<anything>. The cloud container can't
+# download Actions artifacts, so the PNGs are pushed to the branch ios-screens/<run id>.
+
+on:
+  push:
+    branches: ['ios-screens-request/**']
+
+permissions:
+  contents: write
+
+jobs:
+  screens:
+    runs-on: macos-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: generate the Xcode project
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen
+      - name: pick a simulator
+        run: |
+          id=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          ios = sorted((k for k in devices if "iOS" in k), reverse=True)
+          print(next(d["udid"] for k in ios for d in devices[k] if d["name"].startswith("iPhone")))')
+          echo "SIMULATOR=$id" >> "$GITHUB_ENV"
+      - name: screens
+        run: |
+          xcodebuild test -project ios/ValetPhone.xcodeproj -scheme ValetPhoneDev -destination "id=$SIMULATOR" \
+            -only-testing:ValetPhoneUITests/JourneyTests/testScreensForReview \
+            -only-testing:ValetPhoneUITests/JourneyTests/testCardAtTheLargestTextSizeInDarkMode \
+            -resultBundlePath "$RUNNER_TEMP/screens.xcresult" CODE_SIGNING_ALLOWED=NO > "$RUNNER_TEMP/screens.log" 2>&1 || true
+          grep -E "error:|Test Case" "$RUNNER_TEMP/screens.log" | tail -20
+          mkdir -p "$RUNNER_TEMP/shots"
+          xcrun xcresulttool export attachments --path "$RUNNER_TEMP/screens.xcresult" --output-path "$RUNNER_TEMP/shots"
+          ls "$RUNNER_TEMP/shots"
+      - name: push the screens to a branch
+        run: |
+          cd "$RUNNER_TEMP/shots"
+          git init -q -b main .
+          git add -A
+          git -c user.name=ci -c user.email=ci@invalid commit -q -m "iOS screens from run ${GITHUB_RUN_ID}"
+          git push -q "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" "HEAD:refs/heads/ios-screens/${GITHUB_RUN_ID}"

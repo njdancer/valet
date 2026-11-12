@@ -147,7 +147,7 @@ struct CommandsSection: View {
 
   var body: some View {
     if !model.commands.isEmpty {
-      Section("Sent to your Mac") {
+      Section(header: SectionHeader("Sent to your Mac")) {
         ForEach(model.commands.reversed()) { command in
           HStack {
             Text(verbatim: describe(command.command))
@@ -198,7 +198,7 @@ struct ValetView: View {
         }
         CommandsSection(model: model)
         if let devices = model.status?.devices, !devices.isEmpty {
-          Section("Devices") {
+          Section(header: SectionHeader("Devices")) {
             ForEach(devices) { device in
               HStack {
                 Text(verbatim: device.name)

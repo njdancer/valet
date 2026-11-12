@@ -18,3 +18,14 @@ enum Palette {
     })
   }
 }
+
+/// A list section's header in the primary colour: the system's grey header text on the grouped
+/// background falls just short of the contrast the accessibility audit asks for.
+struct SectionHeader: View {
+  let text: String
+  init(_ text: String) { self.text = text }
+  var body: some View {
+    Text(verbatim: text).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).textCase(nil)
+      .accessibilityAddTraits(.isHeader)
+  }
+}

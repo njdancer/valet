@@ -26,7 +26,7 @@ struct NeedsYouView: View {
           }
         }
         if !model.handoffs.isEmpty {
-          Section("Logins") {
+          Section(header: SectionHeader("Logins")) {
             ForEach(model.handoffs) { entry in
               HandoffRow(model: model, entry: entry)
             }
@@ -40,7 +40,7 @@ struct NeedsYouView: View {
           .accessibilityIdentifier("needs.empty")
         }
         if !model.openCards.isEmpty {
-          Section("Waiting for you") {
+          Section(header: SectionHeader("Waiting for you")) {
             ForEach(model.openCards) { entry in
               Button {
                 selected = entry.id
@@ -53,7 +53,7 @@ struct NeedsYouView: View {
         }
         let answered = model.cards.filter { !$0.state.isOpen }
         if !answered.isEmpty {
-          Section("Answered") {
+          Section(header: SectionHeader("Answered")) {
             ForEach(answered.reversed()) { entry in
               Button {
                 selected = entry.id
@@ -69,7 +69,7 @@ struct NeedsYouView: View {
           }
         }
         if !model.alerts.isEmpty {
-          Section("From your Mac") {
+          Section(header: SectionHeader("From your Mac")) {
             ForEach(model.alerts.reversed()) { alert in
               VStack(alignment: .leading, spacing: 4) {
                 Text(verbatim: alert.title).font(.headline)
