@@ -14,7 +14,7 @@ describe('remote access', () => {
     renderPage(api, <RemotePage />)
     const toggle = await screen.findByRole('switch', { name: 'Remote access on' })
     expect(toggle.hasAttribute('disabled')).toBe(true)
-    expect(screen.getByTestId('remote-state').textContent).toContain('Add the public name')
+    expect(screen.getByTestId('remote-state').textContent).toContain('add the public name')
     const names = within(screen.getByRole('region', { name: 'Public names' }))
     await user.type(names.getByRole('textbox', { name: 'Add a public name' }), 'Valet.Example.com{Enter}')
     await names.findByText('https://valet.example.com/mcp')
@@ -34,6 +34,22 @@ describe('remote access', () => {
 
     await user.click(names.getByRole('button', { name: 'Remove valet.example.com' }))
     await names.findByText('None yet.')
+  })
+
+  it('can be turned on with only the relay, and shows its connector URL to copy', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    api.fake.setRelayUrl('https://m1.relay.example/mcp')
+    renderPage(api, <RemotePage />)
+    const relay = within(await screen.findByRole('region', { name: 'Through Valet’s relay' }))
+    relay.getByText('https://m1.relay.example/mcp')
+    const toggle = screen.getByRole('switch', { name: 'Remote access on' })
+    expect(toggle.hasAttribute('disabled')).toBe(false)
+    expect(screen.getByTestId('remote-state').textContent).toContain('can’t reach this Mac')
+    await user.click(relay.getByRole('button', { name: 'Copy the relay URL' }))
+    expect(called(api, 'app.copyText')).toEqual([['https://m1.relay.example/mcp']])
+    await user.click(toggle)
+    expect(called(api, 'remote.setEnabled')).toEqual([[true]])
   })
 
   it('says so when a public name is refused', async () => {

@@ -28,6 +28,7 @@ import {
   EMPTY_REMOTE_CLIENTS,
   type LiveSessions,
   normaliseRemoteHost,
+  type RelayConsentView,
   RemoteAccessTokens,
   RemoteAuthorization,
   type RemoteClientInfo,
@@ -87,6 +88,8 @@ export interface RemoteStatus {
   readonly clients: number
   /** Consent requests waiting for the person. */
   readonly pendingConsents: number
+  /** The connector URL through Valet's relay (`https://<macId>.<relay host>/mcp`), once it's set up. */
+  readonly relayUrl: string | null
 }
 
 /** A tool the consent window offers to tick: remote-enabled now. */
@@ -166,6 +169,8 @@ export class RemoteAccess {
   private caller: ToolCaller | null = null
   /** Changes run one at a time: a pause never interleaves with a start. */
   private queue: Promise<unknown> = Promise.resolve()
+  /** This Mac's name at the relay, `<macId>.<relay host>`, while the relay client runs. */
+  private relayHost: string | null = null
 
   constructor(private readonly deps: RemoteAccessDeps) {
     this.tokens = new RemoteAccessTokens({ now: deps.now })
@@ -330,7 +335,29 @@ export class RemoteAccess {
       tools: tools.sort(),
       clients: this.clients.list().length,
       pendingConsents: this.consents.prompts().length,
+      relayUrl: this.relayHost === null ? null : `https://${this.relayHost}/mcp`,
     }
+  }
+
+  /**
+   * The relay's public name for this Mac (docs/relay-worker.md), set while the relay client runs:
+   * the listener answers for it beside the tunnel's names. Not saved; the relay setting is.
+   */
+  setRelayHost(host: string | null): void {
+    if (host === this.relayHost) return
+    this.relayHost = host
+    this.deps.changed()
+  }
+
+  /** Where the relay client forwards: the listener, while remote access is on and listening. */
+  relayListener(): string | null {
+    return this.current.enabled ? (this.listener?.url ?? null) : null
+  }
+
+  /** The relay's consent page, answered by the same authorisation server as the tunnel's. */
+  relayConsent(id: string, query: string, source: string | null): RelayConsentView {
+    if (this.relayHost === null || !this.current.enabled) return { state: 'expired' }
+    return this.authorization.relayConsent(id, query, source, this.relayHost)
   }
 
   /**
@@ -437,7 +464,8 @@ export class RemoteAccess {
       policy: this,
       tokens: this.tokens,
       authorization: this.authorization,
-      hosts: () => new Set(this.current.hosts),
+      hosts: () =>
+        new Set(this.relayHost === null ? this.current.hosts : [...this.current.hosts, this.relayHost]),
       info: this.deps.info,
       // A kept port, so the tunnel's configuration stays right. If something else holds it, this
       // fails rather than move: the tunnel would keep forwarding to whatever has it.

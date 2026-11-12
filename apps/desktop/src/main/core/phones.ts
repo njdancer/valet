@@ -5,7 +5,7 @@
 import { readFile, rename, writeFile } from 'node:fs/promises'
 import { hostname } from 'node:os'
 import { type DeviceRecord, SIGNING_DOMAINS, verifyP256 } from '@valet/core'
-import { RelayClient, type RelayClientStatus } from '@valet/mcp-server'
+import { RelayClient, type RelayClientStatus, type RelayConsentView } from '@valet/mcp-server'
 import type { PairingView, PhonesStatus } from '../../shared/api'
 import type { ApprovalBroker, MacToPhoneBody, PhoneOutbox } from './approvals/broker'
 import type { DeviceStore } from './approvals/devices'
@@ -28,6 +28,20 @@ export interface PhonesOptions {
   readonly bindingPath: string
   readonly emit: () => void
   readonly log?: (line: string) => void
+  /**
+   * Remote access, for agents that reach this Mac through the relay (docs/relay-worker.md): the
+   * relay client forwards their requests to its listener, byte for byte, and asks it about the
+   * relay's consent pages. Without it the relay carries only the phone channel.
+   */
+  readonly remote?: RelayRemote
+}
+
+export interface RelayRemote {
+  /** The relay's public name for this Mac, while the relay client runs; null when it stops. */
+  setRelayHost(host: string | null): void
+  /** The listener's loopback URL, or null while remote access is off. */
+  relayListener(): string | null
+  relayConsent(id: string, query: string, source: string | null): RelayConsentView
 }
 
 export interface PhonesParts {
@@ -98,9 +112,10 @@ export class Phones implements PhoneOutbox {
       macId: parts.devices.macId,
       signer: { publicKey: keys.transportKey, sign: (payload) => keysOps.signTransport(payload) },
       binding,
-      // Remote MCP over the relay isn't wired into the app yet: only the phone channel runs.
-      listener: () => null,
-      consent: () => ({ state: 'declined' }),
+      // Remote agents: a byte pipe to the same listener, OAuth server and policy as a tunnel's.
+      listener: () => this.options.remote?.relayListener() ?? null,
+      consent: (id, query, source) =>
+        this.options.remote?.relayConsent(id, query, source) ?? { state: 'declined' },
       ...(relay.connectUrl === undefined ? {} : { connectUrl: relay.connectUrl }),
       onStatus: (status) => {
         // A local relay (VALET_RELAY_CONNECT, dev builds only): say what it does, for the walkthrough.
@@ -138,10 +153,12 @@ export class Phones implements PhoneOutbox {
       ...(this.options.log === undefined ? {} : { log: this.options.log }),
     })
     this.client = client
+    this.options.remote?.setRelayHost(client.publicHost)
     client.start()
   }
 
   stop(): void {
+    this.options.remote?.setRelayHost(null)
     this.client?.stop()
     this.client = null
     this.channel = null

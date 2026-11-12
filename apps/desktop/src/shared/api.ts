@@ -1077,6 +1077,11 @@ export interface RemoteSetup {
   readonly url: string | null
   /** The public names the tunnel forwards. */
   readonly hosts: readonly string[]
+  /**
+   * The connector URL through Valet's relay, `https://<macId>.<relay host>/mcp`, while the relay
+   * is set up in Settings › Devices; null otherwise. Needs no tunnel.
+   */
+  readonly relayUrl: string | null
   /** Tools of approved adapters, by adapter then tool. */
   readonly tools: readonly RemoteSetupTool[]
 }

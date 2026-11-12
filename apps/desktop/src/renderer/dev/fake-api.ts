@@ -84,6 +84,8 @@ export interface FakeControls {
    * Infinity when several parts of the window load the same thing and every one should fail.
    */
   failNext(method: string, times?: number): void
+  /** The connector URL through the relay, as the Mac reports it once the relay client runs. */
+  setRelayUrl(url: string | null): void
   /** Appends a record to the audit log, as the runtime would, and emits audit-appended. */
   appendAudit(event: AuditEvent): AuditRecord
   /** What the next settings.chooseOpPath() dialog picks; null is a cancelled dialog. */
@@ -786,6 +788,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     listening: false,
     url: null,
     hosts: [],
+    relayUrl: null,
     tools: [
       ...remoteTools.map((t) => ({ ...t, enabled: false })),
       {
@@ -1782,6 +1785,9 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       setPendingReview(review) {
         reviews = [...reviews.filter((r) => r.adapterId !== review.adapterId), review]
         emit({ type: 'approvals-changed' })
+      },
+      setRelayUrl(url) {
+        remoteSetupChanged({ ...remoteSetup, relayUrl: url })
       },
       failNext(method, times = 1) {
         failing.set(method, times)

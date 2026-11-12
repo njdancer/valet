@@ -1,5 +1,6 @@
-// Remote access (#/connections/remote): on or off, the public names the person's tunnel forwards
-// (Cloudflare Tunnel, D14, which they run), the cloud agents approved, and which tools cloud agents
+// Remote access (#/connections/remote): on or off, the connector URL through Valet's relay when
+// it's set up (Settings › Devices), the public names the person's tunnel forwards (Cloudflare
+// Tunnel, which they run), the cloud agents approved, and which tools cloud agents
 // may use at all. Every tool starts off; only approved sites' tools are listed. Consent itself is
 // answered in the code sheet (ApproveConnectionSheet), never here.
 
@@ -72,7 +73,7 @@ export function RemotePage() {
                 aria-label="Remote access on"
                 aria-describedby="remote-state"
                 checked={data.enabled}
-                disabled={!data.enabled && data.hosts.length === 0}
+                disabled={!data.enabled && data.hosts.length === 0 && data.relayUrl === null}
                 pending={toggle.busy}
                 onCheckedChange={(on) => void setEnabled(on)}
               />
@@ -91,9 +92,9 @@ export function RemotePage() {
 
 function stateWords(setup: RemoteSetup): string {
   if (!setup.enabled)
-    return setup.hosts.length > 0
+    return setup.hosts.length > 0 || setup.relayUrl !== null
       ? 'Off. Cloud agents can’t reach this Mac.'
-      : 'Off. Add the public name your tunnel forwards, then turn it on.'
+      : 'Off. Set up Valet’s relay in Settings, or add the public name your tunnel forwards, then turn it on.'
   if (setup.listening && setup.url !== null)
     return 'On. Cloud agents you approve can reach the tools you allow.'
   return 'On, but not listening: something else holds its port.'
@@ -110,6 +111,7 @@ function RemoteBody({ setup }: { readonly setup: RemoteSetup }) {
           </CardContent>
         </Card>
       ) : null}
+      {setup.relayUrl !== null ? <ThroughRelay url={setup.relayUrl} /> : null}
       <PublicNames setup={setup} />
       <Section
         title="Cloud agents"
@@ -120,6 +122,24 @@ function RemoteBody({ setup }: { readonly setup: RemoteSetup }) {
       </Section>
       <RemoteTools setup={setup} />
     </>
+  )
+}
+
+function ThroughRelay({ url }: { readonly url: string }) {
+  const api = useApi()
+  return (
+    <Card aria-label="Through Valet’s relay" role="region">
+      <CardHeader className="flex-col gap-0.5">
+        <CardTitle>Through Valet’s relay</CardTitle>
+        <Text size="sm" tone="muted">
+          No tunnel needed. A cloud agent connects to this URL, and the relay passes its calls to this Mac.
+        </Text>
+      </CardHeader>
+      <CardContent className="flex flex-wrap items-center gap-2" data-testid="remote-relay">
+        <Value mono>{url}</Value>
+        <CopyThrough label="Copy the relay URL" copy={() => api.app.copyText(url)} />
+      </CardContent>
+    </Card>
   )
 }
 

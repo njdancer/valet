@@ -541,6 +541,12 @@ export class AppService {
       bindingPath: join(deps.paths.dir, 'relay-binding.json'),
       emit: () => this.emit('phones-changed'),
       log: (line) => deps.diagnostics?.({ type: line }),
+      // Made below; only called once the relay client runs.
+      remote: {
+        setRelayHost: (host) => this.remote.setRelayHost(host),
+        relayListener: () => this.remote.relayListener(),
+        relayConsent: (id, query, source) => this.remote.relayConsent(id, query, source),
+      },
     })
     const { paths } = deps
     const clock = { now: deps.now }
@@ -891,6 +897,7 @@ export class AppService {
       listening: status.listening,
       url: status.url,
       hosts: status.hosts,
+      relayUrl: status.relayUrl,
       tools,
     }
   }

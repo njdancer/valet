@@ -2299,6 +2299,7 @@ describe('remote access', () => {
       tools: [],
       clients: 0,
       pendingConsents: 0,
+      relayUrl: null,
     })
     expect(existsSync(s.paths.remote)).toBe(false)
   })
@@ -2310,6 +2311,7 @@ describe('remote access', () => {
       listening: false,
       url: null,
       hosts: [],
+      relayUrl: null,
       tools: [],
     })
     await expect(s.api.remote.setTool('shop', 'echo', true)).rejects.toMatchObject({
