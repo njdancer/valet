@@ -26,6 +26,19 @@ const clientSchema = z
     reportedName: z.string().min(1).max(200).nullable(),
     transport: z.enum(['http', 'stdio']).nullable(),
     revokedAt: z.iso.datetime().nullable(),
+    /**
+     * What the app may do besides calling site tools (docs/ux/agent-run/information-architecture.md,
+     * "Use tools · See Valet · Ask for changes"). Absent in files from before it: the defaults.
+     */
+    capabilities: z
+      .object({
+        /** Valet's own read-only tools answer it. */
+        seeValet: z.boolean(),
+        /** Those tools show other agents' calls too, not only its own. */
+        allActivity: z.boolean(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
 
@@ -36,6 +49,14 @@ const fileSchema = z
   .strict()
 
 type StoredClient = z.infer<typeof clientSchema>
+
+export type ClientCapabilities = NonNullable<StoredClient['capabilities']>
+
+/**
+ * A local app sees Valet, and only its own calls, until the person says otherwise: section 5's
+ * "own; All with the tick". The tick lives on the app's Connections page (not built yet).
+ */
+export const DEFAULT_CAPABILITIES: ClientCapabilities = { seeValet: true, allActivity: false }
 
 /**
  * How the screens name a transport: the bridge as stdio, everything else as HTTP. The endpoint
@@ -135,6 +156,26 @@ export class ClientRegistry {
     return true
   }
 
+  /** What an active client may see; null for an unknown or revoked one. */
+  capabilities(id: string): ClientCapabilities | null {
+    const client = this.get(id)
+    if (client === null || client.revokedAt !== null) return null
+    return client.capabilities ?? DEFAULT_CAPABILITIES
+  }
+
+  /** Changes what a client may see. False for an unknown or revoked client. */
+  async setCapabilities(id: string, patch: Partial<ClientCapabilities>): Promise<boolean> {
+    const current = this.capabilities(id)
+    if (current === null) return false
+    const next: ClientCapabilities = {
+      seeValet: patch.seeValet ?? current.seeValet,
+      allActivity: patch.allActivity ?? current.allActivity,
+    }
+    this.clients = this.clients.map((c) => (c.id === id ? { ...c, capabilities: next } : c))
+    await this.save()
+    return true
+  }
+
   /** Records a call from a client: when, and what it says it is. Returns true when the shown row changed. */
   seen(id: string, reportedName: string, transport: 'http' | 'stdio'): boolean {
     const existing = this.get(id)
@@ -149,7 +190,8 @@ export class ClientRegistry {
   }
 
   list(calls7d: (id: string) => number): ClientInfo[] {
-    return this.clients.map((c) => ({ ...c, calls7d: calls7d(c.id) }))
+    // Capabilities aren't in ClientInfo yet: the Connections page that shows them comes later.
+    return this.clients.map(({ capabilities: _capabilities, ...c }) => ({ ...c, calls7d: calls7d(c.id) }))
   }
 
   private async save(): Promise<void> {
