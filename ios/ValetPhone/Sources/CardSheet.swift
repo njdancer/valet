@@ -42,13 +42,13 @@ struct CardSheet: View {
       VStack(alignment: .leading, spacing: 16) {
         ViewThatFits(in: .horizontal) {
           HStack {
-            Text(verbatim: "\(card.kindWord) \u{00b7} \(card.ref)").font(.footnote.monospaced())
+            Text(verbatim: "\(card.kindWord) \u{00b7} \(card.ref)").font(.footnote.weight(.semibold).monospacedDigit())
             Spacer()
             Text(verbatim: Deadline.text(model.remaining(entry))).font(.caption).foregroundStyle(Color.secondary)
           }
           VStack(alignment: .leading, spacing: 2) {
-            Text(verbatim: card.kindWord).font(.footnote.monospaced())
-            Text(verbatim: card.ref).font(.footnote.monospaced())
+            Text(verbatim: card.kindWord).font(.footnote.weight(.semibold).monospacedDigit())
+            Text(verbatim: card.ref).font(.footnote.weight(.semibold).monospacedDigit())
             Text(verbatim: Deadline.text(model.remaining(entry))).font(.caption).foregroundStyle(Color.secondary)
           }
         }
@@ -130,7 +130,7 @@ struct CardSheet: View {
               ForEach(card.details) { detail in
                 VStack(alignment: .leading) {
                   Text(verbatim: detail.label).font(.caption).foregroundStyle(.secondary)
-                  Text(verbatim: detail.value).font(.footnote.monospaced()).italic(detail.isClaim)
+                  Text(verbatim: detail.value).font(.footnote.weight(.semibold).monospacedDigit()).italic(detail.isClaim)
                     .textSelection(.enabled)
                 }
               }
