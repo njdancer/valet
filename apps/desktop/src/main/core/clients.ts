@@ -36,8 +36,21 @@ const clientSchema = z
         seeValet: z.boolean(),
         /** Those tools show other agents' calls too, not only its own. */
         allActivity: z.boolean(),
+        /**
+         * Valet's write tools answer it (docs/admin-tools.md, "Write tier"). Absent in files from
+         * before them: the default.
+         */
+        askForChanges: z.boolean().optional(),
       })
       .strict()
+      .optional(),
+    /**
+     * Site tools the app turned off for itself (`<adapterId>.<tool>`), with valet_turn_off_tool.
+     * Only ever narrows what it sees, so nothing here needs an approval.
+     */
+    toolsOff: z
+      .array(z.string().regex(/^[a-z][a-z0-9-]{1,63}\.[a-z][a-z0-9_]{0,63}$/))
+      .max(500)
       .optional(),
   })
   .strict()
@@ -50,13 +63,17 @@ const fileSchema = z
 
 type StoredClient = z.infer<typeof clientSchema>
 
-export type ClientCapabilities = NonNullable<StoredClient['capabilities']>
+export type ClientCapabilities = Required<NonNullable<StoredClient['capabilities']>>
 
 /**
  * A local app sees Valet, and only its own calls, until the person says otherwise: section 5's
  * "own; All with the tick". The tick lives on the app's Connections page (not built yet).
  */
-export const DEFAULT_CAPABILITIES: ClientCapabilities = { seeValet: true, allActivity: false }
+export const DEFAULT_CAPABILITIES: ClientCapabilities = {
+  seeValet: true,
+  allActivity: false,
+  askForChanges: true,
+}
 
 /**
  * How the screens name a transport: the bridge as stdio, everything else as HTTP. The endpoint
@@ -160,7 +177,7 @@ export class ClientRegistry {
   capabilities(id: string): ClientCapabilities | null {
     const client = this.get(id)
     if (client === null || client.revokedAt !== null) return null
-    return client.capabilities ?? DEFAULT_CAPABILITIES
+    return { ...DEFAULT_CAPABILITIES, ...client.capabilities }
   }
 
   /** Changes what a client may see. False for an unknown or revoked client. */
@@ -170,10 +187,34 @@ export class ClientRegistry {
     const next: ClientCapabilities = {
       seeValet: patch.seeValet ?? current.seeValet,
       allActivity: patch.allActivity ?? current.allActivity,
+      askForChanges: patch.askForChanges ?? current.askForChanges,
     }
     this.clients = this.clients.map((c) => (c.id === id ? { ...c, capabilities: next } : c))
     await this.save()
     return true
+  }
+
+  /** Site tools an active client turned off for itself, as `<adapterId>.<tool>`; empty otherwise. */
+  toolsOff(id: string): ReadonlySet<string> {
+    const client = this.get(id)
+    if (client === null || client.revokedAt !== null) return new Set()
+    return new Set(client.toolsOff ?? [])
+  }
+
+  /**
+   * Turns one site tool off for one client. 'already' if it was off; 'not-found' for an unknown or
+   * revoked client, or a full list.
+   */
+  async turnOffTool(id: string, qualified: string): Promise<'done' | 'already' | 'not-found'> {
+    const off = this.toolsOff(id)
+    if (this.capabilities(id) === null) return 'not-found'
+    if (off.has(qualified)) return 'already'
+    if (off.size >= 500) return 'not-found'
+    this.clients = this.clients.map((c) =>
+      c.id === id ? { ...c, toolsOff: [...(c.toolsOff ?? []), qualified] } : c,
+    )
+    await this.save()
+    return 'done'
   }
 
   /** Records a call from a client: when, and what it says it is. Returns true when the shown row changed. */
@@ -191,7 +232,10 @@ export class ClientRegistry {
 
   list(calls7d: (id: string) => number): ClientInfo[] {
     // Capabilities aren't in ClientInfo yet: the Connections page that shows them comes later.
-    return this.clients.map(({ capabilities: _capabilities, ...c }) => ({ ...c, calls7d: calls7d(c.id) }))
+    return this.clients.map(({ capabilities: _capabilities, toolsOff: _toolsOff, ...c }) => ({
+      ...c,
+      calls7d: calls7d(c.id),
+    }))
   }
 
   private async save(): Promise<void> {

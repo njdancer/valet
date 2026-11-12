@@ -19,6 +19,7 @@
 
 import {
   type CallOutcome,
+  type ClientIdentity,
   identityLabel,
   type ListedTool,
   type ToolCall,
@@ -35,6 +36,8 @@ export const LOCKED_DOWN_REFUSAL: AppRefusal = {
   stage: 'config',
   errorClass: 'locked-down',
 }
+/** A tool the client turned off for itself: as if it weren't there. */
+export const TOOL_OFF_REFUSAL: AppRefusal = { status: 'failed', stage: 'config', errorClass: 'not-found' }
 export const SITE_PAUSED_REFUSAL: AppRefusal = {
   status: 'failed',
   stage: 'config',
@@ -48,6 +51,11 @@ export interface CallerHooks {
   /** The person paused this one site. Absent: never. */
   readonly sitePaused?: (adapterId: string) => boolean
   /**
+   * Site tools this client turned off for itself (valet_turn_off_tool), as `<adapterId>.<tool>`:
+   * left out of its listing and refused if it calls one anyway. Absent: none.
+   */
+  readonly toolsOff?: (identity: ClientIdentity) => ReadonlySet<string>
+  /**
    * Adds what the app knows about an outcome for the tool result: which Needs you item it is under
    * (a login window and when it closes, a login given up, a missing setting or login).
    */
@@ -58,6 +66,8 @@ export interface CallerHooks {
   /** The app refused a call itself: audit it. A refusal that can't be recorded is still a refusal. */
   readonly refused: (call: ToolCall, refusal: AppRefusal) => Promise<void>
 }
+
+const NONE: ReadonlySet<string> = new Set()
 
 export class RuntimeToolCaller implements ToolCaller {
   private tools: readonly ListedTool[] = []
@@ -82,8 +92,19 @@ export class RuntimeToolCaller implements ToolCaller {
     )
   }
 
-  listTools(): readonly ListedTool[] {
-    return this.tools
+  listTools(identity?: ClientIdentity): readonly ListedTool[] {
+    const off = this.off(identity)
+    if (off.size === 0) return this.tools
+    return this.tools.filter((t) => !off.has(`${t.adapterId}.${t.declaration.name}`))
+  }
+
+  private off(identity: ClientIdentity | undefined): ReadonlySet<string> {
+    if (identity === undefined || this.hooks.toolsOff === undefined) return NONE
+    try {
+      return this.hooks.toolsOff(identity)
+    } catch {
+      return NONE
+    }
   }
 
   /** Cancels every call in flight, and every later one, e.g. on quit. */
@@ -96,6 +117,7 @@ export class RuntimeToolCaller implements ToolCaller {
     if (this.hooks.lockedDown?.() === true) return LOCKED_DOWN_REFUSAL
     if (this.hooks.paused()) return PAUSED_REFUSAL
     if (this.hooks.sitePaused?.(call.adapterId) === true) return SITE_PAUSED_REFUSAL
+    if (this.off(call.identity).has(`${call.adapterId}.${call.tool}`)) return TOOL_OFF_REFUSAL
     return null
   }
 
