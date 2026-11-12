@@ -18,6 +18,7 @@
   "devDependencies": {
     "@playwright/test": "^1.65.0",
     "@valet/fake-woolworths-site": "workspace:*",
-    "electron": "^44.10.2"
+    "electron": "^44.10.2",
+    "jsdom": "^31.0.0"
   }
 }

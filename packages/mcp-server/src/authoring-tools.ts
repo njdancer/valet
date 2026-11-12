@@ -149,6 +149,74 @@ export const submitReportSchema = z.object({
 
 export const deletedSchema = z.object({ draftId: z.string(), deleted: z.boolean() })
 
+/** A page as the scratch browser read it. Every string from the site sits under `fromSite`. */
+export const browserViewSchema = z.object({
+  url: z.string(),
+  title: z.object({ fromSite: z.string() }),
+  nodes: z.array(
+    z.object({
+      ref: z.string(),
+      kind: z.enum(['interactive', 'text']),
+      tag: z.string(),
+      role: z.string().nullable(),
+      fromSite: z.string(),
+      href: z.string().nullable(),
+      inputType: z.string().nullable(),
+    }),
+  ),
+  cut: z.boolean(),
+})
+
+export const browserQuerySchema = z.object({
+  count: z.number().int().nonnegative(),
+  matches: z.array(
+    z.object({
+      tag: z.string(),
+      id: z.string().nullable(),
+      classes: z.string(),
+      fromSite: z.string(),
+      visible: z.boolean(),
+    }),
+  ),
+})
+
+export const networkLogSchema = z.object({
+  entries: z.array(
+    z.object({
+      seq: z.number().int(),
+      method: z.string(),
+      /** Scrubbed: identifier-like path segments as :param, query values as their type and length. */
+      url: z.string(),
+      resourceType: z.string(),
+      status: z.number().int(),
+      mimeType: z.string().nullable(),
+    }),
+  ),
+})
+
+export const networkBodySchema = z.object({
+  seq: z.number().int(),
+  url: z.string(),
+  mimeType: z.string().nullable(),
+  /** The body as JSON or text, cut; values that look like secrets replaced. */
+  fromSite: z.unknown(),
+  truncated: z.boolean(),
+})
+
+export const capturedSchema = z.object({
+  path: z.string(),
+  bytes: z.number().int().nonnegative(),
+  /** The card says "recorded by Valet" for this file while it stays as written. */
+  recordedByValet: z.boolean(),
+})
+
+export type BrowserView = z.output<typeof browserViewSchema>
+export type BrowserQuery = z.output<typeof browserQuerySchema>
+export type NetworkLog = z.output<typeof networkLogSchema>
+export type NetworkBody = z.output<typeof networkBodySchema>
+export type Captured = z.output<typeof capturedSchema>
+export type BrowserTarget = { readonly ref: string } | { readonly selector: string }
+
 export type DraftList = z.output<typeof draftListSchema>
 export type DraftDetail = z.output<typeof draftDetailSchema>
 export type CheckReport = z.output<typeof checkReportSchema>
@@ -188,6 +256,33 @@ export interface Authoring {
     },
   ): Promise<SubmitReport>
   deleteDraft(viewer: ClientIdentity, draftId: string): Promise<z.output<typeof deletedSchema>>
+  // The scratch browser (PR 2): signed out, in memory, one per draft.
+  browserOpen(viewer: ClientIdentity, draftId: string, url: string): Promise<BrowserView>
+  browserClick(viewer: ClientIdentity, draftId: string, target: BrowserTarget): Promise<BrowserView>
+  browserType(
+    viewer: ClientIdentity,
+    draftId: string,
+    target: BrowserTarget,
+    text: string,
+  ): Promise<BrowserView>
+  browserSnapshot(
+    viewer: ClientIdentity,
+    draftId: string,
+    options: { readonly root?: string; readonly maxNodes?: number },
+  ): Promise<BrowserView>
+  browserQuery(viewer: ClientIdentity, draftId: string, selector: string): Promise<BrowserQuery>
+  networkLog(
+    viewer: ClientIdentity,
+    draftId: string,
+    filter: { readonly sinceSeq?: number; readonly host?: string; readonly type?: string },
+  ): Promise<NetworkLog>
+  networkBody(viewer: ClientIdentity, draftId: string, seq: number): Promise<NetworkBody>
+  captureFixture(
+    viewer: ClientIdentity,
+    draftId: string,
+    source: { readonly seq: number } | { readonly page: true },
+    path: string,
+  ): Promise<Captured>
 }
 
 // ---------- Tools ----------
@@ -409,7 +504,160 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
     annotations: { ...EDITS, destructiveHint: true },
     run: (a, args, s) => a.deleteDraft(s.viewer, args['draftId'] as string),
   },
+  {
+    name: 'valet_browser_open',
+    title: 'Open a page in the draft’s scratch browser',
+    description:
+      'Opens https `url` in your draft’s scratch browser and returns what is on the page: text and the ' +
+      'things you can click or type into, each with a ref. The browser is signed out and kept in memory ' +
+      'only, so it holds nothing of the person’s. It opens pages only under the domains in your draft’s ' +
+      'manifest (home, navigation, egress); put the site there first. Valet spaces page loads on a site, so ' +
+      'one may wait. Calling it again navigates the open browser.',
+    input: z.object({ draftId: draftIdInput, url: z.url({ protocol: /^https$/ }).max(2000) }),
+    output: browserViewSchema,
+    needs: 'ask',
+    annotations: { ...READS, openWorldHint: true, idempotentHint: false },
+    run: (a, args, s) => a.browserOpen(s.viewer, args['draftId'] as string, args['url'] as string),
+  },
+  {
+    name: 'valet_browser_click',
+    title: 'Click in the scratch browser',
+    description:
+      'Clicks an element of the open page, by a ref from the last snapshot or a CSS selector, and returns ' +
+      'the page after it settles. A form that posts doesn’t go anywhere here.',
+    input: z.object({
+      draftId: draftIdInput,
+      ref: z
+        .string()
+        .regex(/^e\d{1,5}$/)
+        .optional(),
+      selector: z.string().min(1).max(500).optional(),
+    }),
+    output: browserViewSchema,
+    needs: 'ask',
+    annotations: { ...READS, openWorldHint: true, idempotentHint: false },
+    run: (a, args, s) => a.browserClick(s.viewer, args['draftId'] as string, target(args)),
+  },
+  {
+    name: 'valet_browser_type',
+    title: 'Type in the scratch browser',
+    description:
+      'Types literal text into a field of the open page (a search box, say), by ref or selector. Never into a ' +
+      'password or one-time-code field, and the browser has no logins to type.',
+    input: z.object({
+      draftId: draftIdInput,
+      ref: z
+        .string()
+        .regex(/^e\d{1,5}$/)
+        .optional(),
+      selector: z.string().min(1).max(500).optional(),
+      text: z.string().min(1).max(500),
+    }),
+    output: browserViewSchema,
+    needs: 'ask',
+    annotations: { ...READS, openWorldHint: true, idempotentHint: false },
+    run: (a, args, s) =>
+      a.browserType(s.viewer, args['draftId'] as string, target(args), args['text'] as string),
+  },
+  {
+    name: 'valet_browser_snapshot',
+    title: 'Read the scratch browser’s page',
+    description:
+      'The open page again: text and interactive elements with refs, without input values, scripts or hidden ' +
+      'nodes. `root` limits it to one part of the page.',
+    input: z.object({
+      draftId: draftIdInput,
+      root: z.string().min(1).max(500).optional(),
+      maxNodes: z.number().int().min(1).max(1000).optional(),
+    }),
+    output: browserViewSchema,
+    needs: 'ask',
+    annotations: READS,
+    run: (a, args, s) =>
+      a.browserSnapshot(s.viewer, args['draftId'] as string, {
+        ...(typeof args['root'] === 'string' ? { root: args['root'] } : {}),
+        ...(typeof args['maxNodes'] === 'number' ? { maxNodes: args['maxNodes'] } : {}),
+      }),
+  },
+  {
+    name: 'valet_browser_query',
+    title: 'Test a selector in the scratch browser',
+    description:
+      'How many elements of the open page a CSS selector matches, and a short look at the first ten.',
+    input: z.object({ draftId: draftIdInput, selector: z.string().min(1).max(500) }),
+    output: browserQuerySchema,
+    needs: 'ask',
+    annotations: READS,
+    run: (a, args, s) => a.browserQuery(s.viewer, args['draftId'] as string, args['selector'] as string),
+  },
+  {
+    name: 'valet_network_log',
+    title: 'List the scratch browser’s requests',
+    description:
+      'The responses the scratch browser received, oldest first, each with a seq: how you find the site’s ' +
+      'JSON APIs. Filter by host or type (XHR, Fetch, Document, Script…). Ids in paths show as :param and ' +
+      'query values as their type and length.',
+    input: z.object({
+      draftId: draftIdInput,
+      sinceSeq: z.number().int().min(0).optional(),
+      host: z.string().min(1).max(253).optional(),
+      type: z.string().min(1).max(20).optional(),
+    }),
+    output: networkLogSchema,
+    needs: 'ask',
+    annotations: READS,
+    run: (a, args, s) =>
+      a.networkLog(s.viewer, args['draftId'] as string, {
+        ...(typeof args['sinceSeq'] === 'number' ? { sinceSeq: args['sinceSeq'] } : {}),
+        ...(typeof args['host'] === 'string' ? { host: args['host'] } : {}),
+        ...(typeof args['type'] === 'string' ? { type: args['type'] } : {}),
+      }),
+  },
+  {
+    name: 'valet_network_body',
+    title: 'Read one response of the scratch browser',
+    description:
+      'One response body from the network log, by seq: JSON as JSON, cut to a readable size. HTML isn’t ' +
+      'returned; read pages with valet_browser_snapshot. To keep a response for a case, save it with ' +
+      'valet_capture_fixture.',
+    input: z.object({ draftId: draftIdInput, seq: z.number().int().min(1) }),
+    output: networkBodySchema,
+    needs: 'ask',
+    annotations: READS,
+    run: (a, args, s) => a.networkBody(s.viewer, args['draftId'] as string, args['seq'] as number),
+  },
+  {
+    name: 'valet_capture_fixture',
+    title: 'Save a response as a test fixture',
+    description:
+      'Saves a response from the network log (by seq), or the open page (page: true), into your draft’s ' +
+      'fixtures/ exactly as the site sent it, cookie values replaced. Valet remembers it recorded the file, ' +
+      'and the person’s card says so while you leave it unchanged. Use it as a case’s body.',
+    input: z.object({
+      draftId: draftIdInput,
+      seq: z.number().int().min(1).optional(),
+      page: z.boolean().optional(),
+      path: pathInput,
+    }),
+    output: capturedSchema,
+    needs: 'ask',
+    annotations: { ...EDITS, idempotentHint: false },
+    run: (a, args, s) =>
+      a.captureFixture(
+        s.viewer,
+        args['draftId'] as string,
+        args['page'] === true ? { page: true } : { seq: (args['seq'] as number | undefined) ?? 0 },
+        args['path'] as string,
+      ),
+  },
 ]
+
+/** A click or type target: a ref from the last snapshot, else a selector. */
+function target(args: Record<string, unknown>): BrowserTarget {
+  if (typeof args['ref'] === 'string') return { ref: args['ref'] }
+  if (typeof args['selector'] === 'string') return { selector: args['selector'] }
+  throw new AuthoringRefusal('Give a ref from the last snapshot or a CSS selector.')
+}
 
 export const AUTHORING_TOOL_NAMES: ReadonlySet<string> = new Set(AUTHORING_TOOLS.map((t) => t.name))
 
