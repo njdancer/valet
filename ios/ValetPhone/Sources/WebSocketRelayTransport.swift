@@ -2,15 +2,25 @@ import Foundation
 import ValetPhoneCore
 
 /// The relay over a WebSocket (URLSessionWebSocketTask). The relay only forwards sealed envelopes;
-/// everything that matters is checked by PhoneModel. Until G's relay exists this is untested against
-/// a real server, so the app's journeys run on the fake relay.
+/// everything that matters is checked by PhoneModel. Tested against the real relay in a local
+/// Workers runtime by the pairing walkthrough (docs/phone-channel.md).
 @MainActor
 final class WebSocketRelayTransport: RelayTransport {
+  /// Where to dial instead of the relay's own origin: a local relay, in a fakes build only
+  /// (`-valet-relay-connect`). The origin still has to match every challenge.
+  private let connectOverride: URL?
+
+  init(connectOverride: URL? = nil) {
+    self.connectOverride = connectOverride
+  }
+
   func connect(
-    relay: String, path: RelayPath, onFrame: @escaping @MainActor (String) -> Void,
+    relay: String, macId: String, path: RelayPath, onFrame: @escaping @MainActor (String) -> Void,
     onClose: @escaping @MainActor () -> Void
   ) -> RelayConnection {
-    WebSocketConnection(relay: relay, path: path, onFrame: onFrame, onClose: onClose)
+    WebSocketConnection(
+      relay: relay, macId: macId, connectOverride: connectOverride, onFrame: onFrame, onClose: onClose
+    )
   }
 }
 
@@ -21,17 +31,27 @@ final class WebSocketConnection: RelayConnection {
   private let onClose: @MainActor () -> Void
   private var closed = false
 
-  init(relay: String, path: RelayPath, onFrame: @escaping @MainActor (String) -> Void, onClose: @escaping @MainActor () -> Void) {
+  init(
+    relay: String, macId: String, connectOverride: URL?, onFrame: @escaping @MainActor (String) -> Void,
+    onClose: @escaping @MainActor () -> Void
+  ) {
     self.onFrame = onFrame
     self.onClose = onClose
-    // Only https relays: the pairing offer refuses anything else, so this is wss.
-    guard var components = URLComponents(string: relay), components.scheme == "https" else {
+    // Only https relays: the pairing offer refuses anything else, so this is wss. A macId is hex.
+    guard var components = URLComponents(string: relay), components.scheme == "https",
+      macId.count == 32, macId.allSatisfy({ $0.isHexDigit && !$0.isUppercase })
+    else {
       closed = true
       Task { @MainActor in onClose() }
       return
     }
     components.scheme = "wss"
-    components.path = path.rawValue
+    if let connectOverride, let local = URLComponents(url: connectOverride, resolvingAgainstBaseURL: false) {
+      components.scheme = local.scheme == "https" ? "wss" : "ws"
+      components.host = local.host
+      components.port = local.port
+    }
+    components.path = RelayPath.url(macId: macId)
     guard let url = components.url else {
       closed = true
       Task { @MainActor in onClose() }

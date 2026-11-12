@@ -39,12 +39,12 @@ public final class FakeRelay: RelayTransport {
   }
 
   public func connect(
-    relay: String, path: RelayPath, onFrame: @escaping @MainActor (String) -> Void, onClose: @escaping @MainActor () -> Void
+    relay: String, macId: String, path: RelayPath, onFrame: @escaping @MainActor (String) -> Void, onClose: @escaping @MainActor () -> Void
   ) -> RelayConnection {
     let connection = FakeConnection(relay: self, path: path, onFrame: onFrame, onClose: onClose)
     enqueue { [weak self] in
       guard let self else { return }
-      guard self.reachable, relay == self.origin else { return connection.closeFromRelay() }
+      guard self.reachable, relay == self.origin, macId == self.mac.macId else { return connection.closeFromRelay() }
       switch path {
       case .pair:
         self.pairing = connection

@@ -25,7 +25,10 @@ const origin = new URL(values.origin)
 if (origin.protocol !== 'https:') throw new Error('the origin is https://<host>')
 
 // Under the package: workerd won't load a module from outside its starting directory.
-const scratch = join(fileURLToPath(new URL('..', import.meta.url)), '.test-runtime')
+const root = fileURLToPath(new URL('..', import.meta.url))
+// workerd resolves the script against the working directory, and refuses to climb out of it.
+process.chdir(root)
+const scratch = join(root, '.test-runtime')
 mkdirSync(scratch, { recursive: true })
 const scriptPath = await buildWorker(join(mkdtempSync(join(scratch, 'local-')), 'worker.js'))
 const limit = (namespace) => ({ namespace_id: namespace, simple: { limit: 10_000, period: 60 } })

@@ -13,17 +13,22 @@ public protocol RelayConnection: AnyObject {
 /// transport once G's relay exists. Callbacks arrive on the main actor.
 @MainActor
 public protocol RelayTransport: AnyObject {
+  /// `macId` names the Mac whose channel this is: the relay routes phones by it.
   func connect(
-    relay: String, path: RelayPath, onFrame: @escaping @MainActor (String) -> Void,
+    relay: String, macId: String, path: RelayPath, onFrame: @escaping @MainActor (String) -> Void,
     onClose: @escaping @MainActor () -> Void
   ) -> RelayConnection
 }
 
+/// What the connection is for. Both dial the same address, `/v1/phone/<macId>` (the relay's
+/// DEVICE_PATH): a pairing connection sends its one sealed reply after the challenge, instead of a
+/// hello; the device channel answers the challenge with a hello once the Mac registered the phone.
 public enum RelayPath: String, Sendable {
-  /// The device channel, after the Mac registered this phone.
-  case phone = "/v1/phone"
-  /// Proposed (CR-2): the unauthenticated path for one sealed pairing reply.
-  case pair = "/v1/pair"
+  case phone
+  case pair
+
+  /// The path on the relay for this Mac.
+  public static func url(macId: String) -> String { "/v1/phone/\(macId)" }
 }
 
 /// What the phone keeps between launches. On a phone it lives in the Keychain, this device only

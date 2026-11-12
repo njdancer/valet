@@ -3,7 +3,7 @@
 // speaks the relay's phone frames exactly as the iPhone app does: dial /v1/phone/<macId>, send the
 // sealed pairing reply after the challenge, then, once registered, a signed hello.
 
-import { diffieHellman, generateKeyPairSync, type KeyObject, sign } from 'node:crypto'
+import { sign } from 'node:crypto'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -12,16 +12,12 @@ import {
   type AuditEvent,
   type AuditRecord,
   decisionPayload,
-  keyId,
-  openEnvelope,
   openSealed,
   pairingAad,
   pairingCode,
   pairingOfferId,
   pairingSealKey,
-  relayAuthPayload,
   SIGNING_DOMAINS,
-  sealEnvelope,
   sealPairing,
   signingInput,
 } from '@valet/core'
@@ -39,6 +35,7 @@ import {
   SoftwareSigner,
   TrustedLedger,
 } from '../../desktop/src/main/core/approvals'
+import { Phone } from './phone'
 import { RELAY_ORIGIN, type Runtime, startRelay } from './runtime'
 
 const cleanup: Array<() => Promise<void> | void> = []
@@ -133,83 +130,6 @@ async function startMac(relay: Runtime) {
   return { signer, keys, devices, broker, channel, client, macChannel: channel }
 }
 
-function p256() {
-  const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' })
-  return { privateKey, spki: publicKey.export({ type: 'spki', format: 'der' }).toString('base64url') }
-}
-
-/** A phone over a real WebSocket, as the iPhone app speaks to the relay. */
-class Phone {
-  readonly approval = p256()
-  readonly transport = p256()
-  readonly agreement = p256()
-  readonly deviceId = keyId(this.approval.spki)
-  readonly frames: Record<string, unknown>[] = []
-  readonly messages: Record<string, unknown>[] = []
-  socket: WebSocket | null = null
-  private seq = 0
-  constructor(
-    private readonly relay: Runtime,
-    private readonly macId: string,
-    private readonly macAgreementKey: string,
-  ) {}
-
-  agree = async (peer: KeyObject) => diffieHellman({ privateKey: this.agreement.privateKey, publicKey: peer })
-
-  dial(onChallenge: (nonce: string) => void): Promise<void> {
-    const socket = new WebSocket(`${this.relay.url.replace(/^http/, 'ws')}/v1/phone/${this.macId}`)
-    this.socket = socket
-    cleanup.push(() => socket.close())
-    socket.addEventListener('message', (event) => {
-      if (event.data === 'pong') return
-      const frame = JSON.parse(String(event.data))
-      this.frames.push(frame)
-      if (frame.type === 'challenge') onChallenge(frame.nonce)
-      if (frame.type === 'envelope') void this.open(frame.envelope)
-    })
-    return new Promise((resolve) => socket.addEventListener('open', () => resolve()))
-  }
-
-  hello(nonce: string) {
-    const payload = relayAuthPayload({ nonce, relay: RELAY_ORIGIN, role: 'phone', id: this.deviceId })
-    const signature = sign('sha256', signingInput(SIGNING_DOMAINS.relayAuth, payload), {
-      key: this.transport.privateKey,
-      dsaEncoding: 'ieee-p1363',
-    }).toString('base64url')
-    this.socket?.send(JSON.stringify({ type: 'hello', role: 'phone', id: this.deviceId, signature }))
-  }
-
-  private async open(envelope: never) {
-    const text = await openEnvelope(
-      envelope,
-      {
-        from: this.macId,
-        to: this.deviceId,
-        senderKey: this.macAgreementKey,
-        recipientKey: this.agreement.spki,
-      },
-      this.agree,
-    )
-    if (text !== null) this.messages.push(JSON.parse(text))
-  }
-
-  async send(message: Record<string, unknown>) {
-    // Acks never take a number: they carry the last seq sent.
-    if (message['type'] !== 'ack') this.seq += 1
-    const envelope = await sealEnvelope(
-      JSON.stringify({ ...message, seq: Math.max(1, this.seq) }),
-      {
-        from: this.deviceId,
-        to: this.macId,
-        senderKey: this.agreement.spki,
-        recipientKey: this.macAgreementKey,
-      },
-      this.agree,
-    )
-    this.socket?.send(JSON.stringify({ type: 'envelope', envelope }))
-  }
-}
-
 describe('the phone channel through the relay', () => {
   it('pairs a phone, delivers a card, takes its approval, and resends what waited while it was away', async () => {
     const relay = await startRelay()
@@ -223,7 +143,9 @@ describe('the phone channel through the relay', () => {
     const offer = JSON.parse(offerText)
     expect(offer.relay).toBe(RELAY_ORIGIN)
     const offerId = pairingOfferId(offer.secret)
-    const phone = new Phone(relay, offer.macId, offer.macAgreementKey)
+    const phone = new Phone(relay.url, offer.macId, offer.macAgreementKey, RELAY_ORIGIN, (c) =>
+      cleanup.push(c),
+    )
     const reply = JSON.stringify({
       v: 1,
       deviceName: 'Test iPhone',

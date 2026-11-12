@@ -1,0 +1,91 @@
+# The pairing and approval walkthrough video (docs/phone-channel.md#the-walkthrough): the Mac app,
+# the relay in a local Workers runtime and the iPhone app's dev build in the simulator, on one
+# macOS runner. Nothing is deployed or signed. Pushes the video and its parts to the branch
+# walkthrough/<run id>, since Actions artifacts can't be fetched from every environment.
+name: Walkthrough video
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/project-thread-jy5l12]
+    paths:
+      - .github/workflows/walkthrough.yml
+      - apps/desktop/e2e/walkthrough.spec.ts
+      - apps/desktop/showcase/walkthrough-video.mjs
+      - ios/ValetPhone/UITests/WalkthroughTests.swift
+
+permissions:
+  contents: write
+
+concurrency:
+  group: walkthrough-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  record:
+    runs-on: macos-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2.4.4
+      - run: pnpm install --frozen-lockfile
+      - name: tools
+        run: brew install ffmpeg xcodegen
+      - name: Electron's binary
+        working-directory: apps/desktop
+        run: test -d node_modules/electron/dist || (cd node_modules/electron && node install.js)
+      - name: Chromium, for the captions
+        working-directory: apps/desktop
+        run: pnpm exec playwright install chromium
+      - name: the Mac app, demo build
+        working-directory: apps/desktop
+        run: pnpm exec electron-vite build --mode demo
+      - name: pick and boot a simulator
+        run: |
+          id=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          ios = sorted((k for k in devices if "iOS" in k), reverse=True)
+          print(next(d["udid"] for k in ios for d in devices[k] if d["name"].startswith("iPhone") and "Pro" in d["name"]))')
+          echo "SIMULATOR=$id" >> "$GITHUB_ENV"
+          xcrun simctl boot "$id" || true
+          xcrun simctl bootstatus "$id" -b
+          xcrun simctl status_bar "$id" override --time 9:41 --batteryState charged --batteryLevel 100 --wifiBars 3 || true
+          xcrun simctl ui "$id" appearance light || true
+      - name: the iPhone app's dev build and its UI tests
+        run: |
+          cd ios && xcodegen && cd ..
+          xcodebuild build-for-testing -project ios/ValetPhone.xcodeproj -scheme ValetPhoneDev \
+            -destination "id=$SIMULATOR" -derivedDataPath "$RUNNER_TEMP/ios-dd" CODE_SIGNING_ALLOWED=NO \
+            > "$RUNNER_TEMP/ios-build.log" 2>&1 || { grep -E "error:" "$RUNNER_TEMP/ios-build.log" | head -50; tail -50 "$RUNNER_TEMP/ios-build.log"; exit 1; }
+          echo "XCTESTRUN=$(find "$RUNNER_TEMP/ios-dd" -name '*.xctestrun' | head -1)" >> "$GITHUB_ENV"
+      - name: record
+        working-directory: apps/desktop
+        env:
+          VALET_E2E_WALKTHROUGH: "1"
+          WALKTHROUGH_OUT: ${{ runner.temp }}/walkthrough
+        run: pnpm exec playwright test -c e2e/playwright.config.ts walkthrough --trace off --reporter=line
+      - name: compose the video
+        if: always()
+        working-directory: apps/desktop
+        run: test -f "$RUNNER_TEMP/walkthrough/timeline.json" && node showcase/walkthrough-video.mjs --out "$RUNNER_TEMP/walkthrough"
+      - name: what the phone's test said
+        if: always()
+        run: |
+          if [ -d "$RUNNER_TEMP/walkthrough/phone.xcresult" ]; then
+            xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/walkthrough/phone.xcresult" > "$RUNNER_TEMP/walkthrough/phone-summary.json" || true
+            mkdir -p "$RUNNER_TEMP/walkthrough/phone-shots"
+            xcrun xcresulttool export attachments --path "$RUNNER_TEMP/walkthrough/phone.xcresult" --output-path "$RUNNER_TEMP/walkthrough/phone-shots" || true
+            cat "$RUNNER_TEMP/walkthrough/phone-summary.json" | head -100
+          fi
+          cp apps/desktop/test-results -R "$RUNNER_TEMP/walkthrough/playwright" 2>/dev/null || true
+      - name: push the recording to a branch
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/walkthrough" && cd "$RUNNER_TEMP/walkthrough"
+          rm -rf phone.xcresult parts/*.png
+          test -n "$(ls -A)" || exit 0
+          find . -size +95M -delete
+          git init -q -b recording && git add -A
+          git -c user.name=walkthrough -c user.email=walkthrough@users.noreply.github.com commit -qm "Walkthrough, run ${{ github.run_id }}"
+          git push -f "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" HEAD:refs/heads/walkthrough/${{ github.run_id }}

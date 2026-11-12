@@ -84,7 +84,7 @@ describe('channel seal (RFC 9180 auth mode)', () => {
     expect(await openEnvelope(env, { ...parties, from: other.id }, phone.agree)).toBeNull()
     expect(await openEnvelope(env, { ...parties, recipientKey: other.spki }, other.agree)).toBeNull()
     const bytes = Buffer.from(env.ct, 'base64url')
-    bytes[0] ^= 1
+    bytes[0] = (bytes[0] ?? 0) ^ 1
     expect(await openEnvelope({ ...env, ct: bytes.toString('base64url') }, parties, phone.agree)).toBeNull()
   })
 

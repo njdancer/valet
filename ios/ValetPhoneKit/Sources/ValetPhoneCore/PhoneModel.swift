@@ -253,7 +253,7 @@ public final class PhoneModel {
     )
     phase = .pairing(.sending)
     touch()
-    let conn = transport.connect(relay: offer.relay, path: .pair, onFrame: { [weak self] text in
+    let conn = transport.connect(relay: offer.relay, macId: offer.macId, path: .pair, onFrame: { [weak self] text in
       self?.receivePairingFrame(text)
     }, onClose: { [weak self] in
       self?.pairingClosed()
@@ -355,7 +355,7 @@ public final class PhoneModel {
   /// Opens the device channel. Called at launch when paired, and after the Mac registered us.
   public func connect() {
     guard let persisted, connection == nil else { return }
-    let conn = transport.connect(relay: persisted.relay, path: .phone, onFrame: { [weak self] text in
+    let conn = transport.connect(relay: persisted.relay, macId: persisted.macId, path: .phone, onFrame: { [weak self] text in
       self?.receive(frame: text)
     }, onClose: { [weak self] in
       self?.closed()
