@@ -2960,6 +2960,7 @@ export class AppService {
           request: (kind, subject, requester, note) => broker.request(kind, subject, requester, note),
           status: (id, asker) => broker.status(id, asker),
           withdraw: (id, asker) => broker.withdraw(id, asker),
+          ended: () => broker.ended(),
           waiting: () =>
             broker.list().map((p) => ({
               requestId: p.request.id,

@@ -53,6 +53,14 @@ export interface AgentBroker {
     readonly createdAt: string
     readonly expiresAt: string
   }[]
+  /** Requests that ended and are still remembered: an agent's asked elsewhere (a draft's) too. */
+  ended(): readonly {
+    readonly requestId: string
+    readonly ref: string
+    readonly kind: ApprovalKind
+    readonly requester: Requester
+    readonly at: string
+  }[]
   /** The Mac's own device id: an approval signed by it was made at the Mac. */
   readonly macId: string
 }
@@ -406,6 +414,21 @@ export class AdminWriterImpl implements AdminWriter {
           expiresAt: w.expiresAt,
           told: false,
           closedAt: null,
+        })
+      }
+      // Ended before this agent asked after it: one a draft's tools made, say (an install, a
+      // signed-in session), which never went through this writer.
+      for (const c of broker.ended()) {
+        if (c.requester.kind !== 'agent' || c.requester.clientId !== key) continue
+        if (list.some((a) => a.requestId === c.requestId)) continue
+        list.push({
+          requestId: c.requestId,
+          ref: c.ref,
+          title: TITLE_BY_KIND[c.kind],
+          askedAt: c.at,
+          expiresAt: c.at,
+          told: false,
+          closedAt: Date.parse(c.at),
         })
       }
       this.asked.set(key, list)
