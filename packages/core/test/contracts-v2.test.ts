@@ -5,6 +5,7 @@ import {
   type ApprovalRequest,
   type DeviceLookup,
   decisionPayload,
+  envelopeInfo,
   keyId,
   macToPhoneMessageSchema,
   macToRelaySchema,
@@ -19,6 +20,7 @@ import {
   relayAuthPayload,
   relayHelloSchema,
   SIGNING_DOMAINS,
+  seqVerdict,
   serializeRequest,
   signingInput,
   verifyDecision,
@@ -70,13 +72,20 @@ describe('pairing', () => {
   })
 
   it('shows six digits that change with any part of the transcript', () => {
-    const code = pairingCode(secret, macId, 'offer', 'reply')
+    const nonce = randomBytes(32).toString('base64url')
+    const code = pairingCode(secret, macId, 'offer', 'reply', nonce)
     expect(code).toMatch(/^\d{6}$/)
-    expect(pairingCode(secret, macId, 'offer', 'reply')).toBe(code)
+    expect(pairingCode(secret, macId, 'offer', 'reply', nonce)).toBe(code)
+    const fresh = new Set(
+      Array.from({ length: 20 }, () =>
+        pairingCode(secret, macId, 'offer', 'reply', randomBytes(32).toString('base64url')),
+      ),
+    )
+    expect(fresh.size).toBeGreaterThan(15)
     const others = [
-      pairingCode(secret, macId, 'offer!', 'reply'),
-      pairingCode(secret, macId, 'offer', 'reply!'),
-      pairingCode(secret, 'b'.repeat(32), 'offer', 'reply'),
+      pairingCode(secret, macId, 'offer!', 'reply', nonce),
+      pairingCode(secret, macId, 'offer', 'reply!', nonce),
+      pairingCode(secret, 'b'.repeat(32), 'offer', 'reply', nonce),
     ]
     expect(others.filter((c) => c === code).length).toBeLessThan(2)
   })
@@ -272,6 +281,27 @@ describe('new channel messages', () => {
         reason: 'expired',
         deviceId: null,
       }).success,
+    ).toBe(true)
+  })
+})
+
+describe('sequence numbers and envelope info', () => {
+  it('accepts only the next message, re-acks duplicates and holds gaps', () => {
+    expect(seqVerdict(4, 5)).toBe('accept')
+    expect(seqVerdict(4, 4)).toBe('duplicate')
+    expect(seqVerdict(4, 2)).toBe('duplicate')
+    expect(seqVerdict(4, 6)).toBe('gap')
+  })
+
+  it('pins the HPKE info as the two key ids’ bytes, sender first', () => {
+    expect(envelopeInfo('00'.repeat(16), 'ff'.repeat(16)).toString('hex')).toBe(
+      `${'00'.repeat(16)}${'ff'.repeat(16)}`,
+    )
+  })
+
+  it('tells a revoked phone to unpair', () => {
+    expect(
+      macToPhoneMessageSchema.safeParse({ type: 'unpaired', seq: 9, at: '2026-11-12T03:00:00.000Z' }).success,
     ).toBe(true)
   })
 })

@@ -349,8 +349,8 @@ remote MCP client ─HTTPS─▶ relay Worker ─▶ Durable Object per Mac ◀�
 - **The phone channel.** `envelope` frames carry HPKE (RFC 9180) auth-mode ciphertext between the
   sender's and recipient's agreement keys, suite DHKEM(P-256, HKDF-SHA256), HKDF-SHA256,
   AES-256-GCM, with `info` set to the sender and recipient ids. Auth mode means a phone accepts
-  only what the Mac's key sealed, and the reverse. Inside, a per-sender sequence number stops the
-  relay replaying or reordering alerts. Approvals inside are signed as well, so a broken seal
+  only what the Mac's key sealed, and the reverse. Inside, a per-sender sequence number, accepted only in order (`seqVerdict`), stops the
+  relay replaying, reordering or silently dropping messages. Approvals inside are signed as well, so a broken seal
   still can't approve. What goes inside is one schema per direction: `macToPhoneMessageSchema` (request text,
   closings, alerts) and `phoneToMacMessageSchema` (signed decisions, declines, the tightening
   commands below). The Mac parses a phone's messages only with `parsePhoneToMac`. Each side acknowledges what it received (`ack`), so a phone shows a command as
@@ -433,10 +433,20 @@ Asked for by D, G and H while building, 2026-11-12. Accepted unless marked other
      `pairingSealKey`.
    - The Mac answers with `pairing-result`, sealed the same way.
    - `pairingCode` gives the six digits: HKDF over the secret, salted with the Mac id, with the
-     offer text and the reply in the info.
+     offer text, the reply and a fresh Mac nonce in the info. The Mac accepts only the first
+     reply to an offer, then sends the nonce (`pairing-challenge`). Without it, someone who saw
+     the QR and controls the relay could open the reply and grind substitutes until the digits
+     matched (H's review).
+   - The reply travels on the phone's ordinary relay socket, as the one frame allowed before a
+     hello, for an offer the Mac opened. That's G's rendezvous, without a second endpoint.
    - Six digits (20 bits) is enough because the QR is single use, the reply is sealed, and three
      wrong confirmations end the offer. A's four words would also do if the card spec wants them.
-3. **`status`**, Mac to phone, for the phone's tabs.
+3. **`status`**, Mac to phone, for the phone's tabs, and **`unpaired`**: a sealed notice that
+   tells a revoked phone to delete its keys, since the relay refuses its hello without saying why.
+   - **Sequence numbers:** accept only the next one, re-ack a duplicate without acting, and hold a
+     gap (`seqVerdict`). The first design's "drop anything not above the last" let a relay hold
+     back a lockdown and make every resend look old.
+   - **HPKE `info`** is pinned as `envelopeInfo`: the sender's then the recipient's key id bytes.
 4. **`display`** on requests: the Mac's own words for the card ("Because", client badge, the
    registrable domain, follow-ons, checks), plus `fromAdapter` (site name and tool titles), which
    cards show as the adapter's words. It's inside the request text, so the signature covers it.
@@ -483,10 +493,22 @@ Asked for by D, G and H while building, 2026-11-12. Accepted unless marked other
      the Mac lifts it (`relay-unlock`).
    - A 128-bit recovery code, shown once, whose hash the Mac registers. The code's page can only
      lock and unregister phones.
-5. **`closed`** consent state, for "not accepting new agents".
+5. **More consent states:** `closed` ("not accepting new agents"), and `busy` and `too-many`
+   for load.
 6. **No trust on first use.** A Mac's first hello carries `binding`: its approval key, whose key
    id is the Mac id, signing the transport key once with Touch ID (`verifyRelayBinding`). A relay
-   that lost its storage can't be claimed by someone who only knows the Mac id.
+   that lost its storage can't be claimed by someone who only knows the Mac id. The same binding
+   lets a Mac rotate its transport key. With it, the relay may delete Macs unseen for a long
+   time (`lastSeenAt`), since re-registering needs the binding.
+7. `/revoke` is no longer forwarded: the Mac's OAuth server has no RFC 7009 endpoint.
+8. The envelope's byte cap applies to the whole frame.
+9. A phone's lockdown sent while the Mac is offline is lost, but the relay-side lock (4) holds
+   at the relay, so a stolen token's calls can't land first when the Mac reconnects.
+10. G's own choices, no contract change:
+    - Consent polls carry an HMAC'd wait token bound to the original `redirect_uri`, and the
+      relay redirects only there.
+    - Forwarded responses are limited to `application/json` and `text/event-stream`, with a CSP
+      sandbox.
 
 ## Open questions
 

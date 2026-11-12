@@ -48,7 +48,6 @@ export const RELAY_FORWARDED_PATHS = [
   '/mcp',
   '/register',
   '/token',
-  '/revoke',
   '/.well-known/oauth-authorization-server',
   '/.well-known/oauth-protected-resource',
   '/.well-known/oauth-protected-resource/mcp',
@@ -82,6 +81,7 @@ const headers = (allowed: readonly string[]) =>
     .record(z.string(), z.string().max(8192))
     .refine((h) => Object.keys(h).every((k) => allowed.includes(k)), 'header not allowed')
 const nonce = z.string().regex(/^[A-Za-z0-9_-]{43}$/)
+const macNonceSchema = nonce
 
 /** First frame on every connection, from the relay: sign this to prove you hold the key. */
 export const relayChallengeSchema = z
@@ -120,7 +120,8 @@ export const relayHelloSchema = z
      * Only on a Mac's first connection, when the relay has no key for this id yet, and always with
      * `binding`: the Mac's approval key (whose keyId is the macId) signing this transport key once,
      * with Touch ID. Without it, anyone who knew a macId (it's in the host name) could register
-     * first after the relay lost its storage (G's finding).
+     * first after the relay lost its storage (G's finding). The same binding lets a Mac rotate its
+     * transport key: a hello with a new key and a valid binding replaces the stored one.
      */
     transportKey: p256PublicKeySchema.optional(),
     binding: z
@@ -156,15 +157,34 @@ export const envelopeSchema = z
     suite: z.literal('hpke-auth-p256-sha256-aes256gcm'),
     from: keyIdSchema,
     to: keyIdSchema,
-    /** The encapsulated key and the ciphertext, base64url. The `info` is from || to. */
+    /** The encapsulated key and the ciphertext, base64url. The `info` is envelopeInfo(from, to). The whole frame is also held to maxEnvelopeBytes. */
     enc: z.string().regex(/^[A-Za-z0-9_-]{87}$/),
     ct: z
       .string()
       .regex(/^[A-Za-z0-9_-]+$/)
-      .max(180_000),
+      .max(174_000),
   })
   .strict()
 export type Envelope = z.infer<typeof envelopeSchema>
+
+/**
+ * The HPKE `info` for an envelope: the sender's then the recipient's key id, each as its 16
+ * bytes (hex-decoded). Pinned so the Mac, the phone and tests agree.
+ */
+export function envelopeInfo(from: string, to: string): Buffer {
+  return Buffer.concat([Buffer.from(from, 'hex'), Buffer.from(to, 'hex')])
+}
+
+/**
+ * Sequence numbers, per sender. A receiver accepts only the next one. A duplicate (at or below
+ * the last) is acked again but not acted on. A gap is held, not skipped: with "drop anything not
+ * above the last", a relay could hold back a lockdown, deliver the message after it, and every
+ * resend of the lockdown would then look old (H's review). Acks carry a seq but are never acked.
+ */
+export function seqVerdict(lastAccepted: number, seq: number): 'accept' | 'duplicate' | 'gap' {
+  if (seq === lastAccepted + 1) return 'accept'
+  return seq <= lastAccepted ? 'duplicate' : 'gap'
+}
 
 const seq = z.number().int().min(1)
 /** A receiver's acknowledgement of a sender's message by its seq, so a dropped one shows. */
@@ -244,6 +264,11 @@ export const macToPhoneMessageSchema = z.discriminatedUnion('type', [
         .max(50),
     })
     .strict(),
+  /**
+   * The Mac revoked this phone. The relay refuses a revoked phone's hello without saying why, so
+   * this sealed notice is how the phone learns to delete its keys and unpair.
+   */
+  z.object({ type: z.literal('unpaired'), seq, at: z.iso.datetime() }).strict(),
   /** A login needs the person (J6; H's CR-10). `code` means the phone may send a one-time code. */
   z
     .object({
@@ -392,7 +417,8 @@ export const macToRelaySchema = z.discriminatedUnion('type', [
       type: z.literal('consent-view'),
       id: requestId,
       /** `closed`: Valet isn't accepting new agents (A's J2 F5). */
-      state: z.enum(['waiting', 'approved', 'declined', 'expired', 'closed']),
+      /** `busy` and `too-many`: the Mac or the relay is refusing for load; try again later. */
+      state: z.enum(['waiting', 'approved', 'declined', 'expired', 'closed', 'busy', 'too-many']),
       code: z
         .string()
         .regex(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/)
@@ -408,6 +434,8 @@ export const macToRelaySchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('envelope'), envelope: envelopeSchema }).strict(),
   /** Accept pairing replies for this offer until it expires. The relay never sees the secret. */
   z.object({ type: z.literal('pairing-open'), offerId: keyIdSchema, expiresAt: z.iso.datetime() }).strict(),
+  /** After the first reply to an offer (later ones are refused): the nonce the code includes. */
+  z.object({ type: z.literal('pairing-challenge'), offerId: keyIdSchema, macNonce: macNonceSchema }).strict(),
   z.object({ type: z.literal('pairing-result'), offerId: keyIdSchema, sealed: sealedSchema }).strict(),
   /** Lift a relay-side lock (G's request 4). Only the Mac can. */
   z.object({ type: z.literal('relay-unlock') }).strict(),
@@ -494,6 +522,7 @@ export const relayToPhoneSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ready'), macOnline: z.boolean() }).strict(),
   z.object({ type: z.literal('envelope'), envelope: envelopeSchema }).strict(),
   z.object({ type: z.literal('mac-online'), online: z.boolean() }).strict(),
+  z.object({ type: z.literal('pairing-challenge'), offerId: keyIdSchema, macNonce: macNonceSchema }).strict(),
   z.object({ type: z.literal('pairing-result'), offerId: keyIdSchema, sealed: sealedSchema }).strict(),
   z
     .object({
@@ -534,4 +563,6 @@ export interface RelayStoredState {
   readonly recoveryCodeHash: string | null
   readonly locked: boolean
   readonly createdAt: string
+  /** For deleting Macs not seen in a long while; safe because re-registering needs the binding. */
+  readonly lastSeenAt: string
 }

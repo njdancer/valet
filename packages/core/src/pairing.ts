@@ -38,19 +38,30 @@ export function pairingSealKey(secret: string, macId: string): Buffer {
 
 /**
  * The six digits both screens show. HKDF-SHA256 over the secret, salted with the Mac's id, with
- * the offer text and the reply's plaintext in the info, so any change to either gives other
- * digits. The first four bytes, big-endian, mod 1,000,000, zero-padded.
+ * the offer text, the reply's plaintext and the Mac's fresh nonce in the info (each length-
+ * prefixed in bytes). The first four bytes, big-endian, mod 1,000,000, zero-padded.
+ *
+ * The nonce is why the digits can't be forced: someone who saw the QR and controls the relay can
+ * open the reply and could grind substitute replies until one gives the same digits. The Mac
+ * accepts only the first reply to an offer, and only then sends a random 32-byte nonce
+ * (`pairing-challenge`), so nothing can be computed ahead (H's review).
  */
 export function pairingCode(
   secret: string,
   macId: string,
   offerText: string,
   replyPlaintext: string,
+  macNonce: string,
 ): string {
+  const nonce = Buffer.from(macNonce, 'base64url')
+  if (nonce.length !== 32) throw new Error('the Mac nonce is 32 bytes')
   const info = Buffer.concat([
     Buffer.from(`${INFO.code}\n`),
-    Buffer.from(`${offerText.length}:${offerText}`),
-    Buffer.from(`${replyPlaintext.length}:${replyPlaintext}`),
+    Buffer.from(`${Buffer.byteLength(offerText)}:`),
+    Buffer.from(offerText),
+    Buffer.from(`${Buffer.byteLength(replyPlaintext)}:`),
+    Buffer.from(replyPlaintext),
+    nonce,
   ])
   const okm = Buffer.from(hkdfSync('sha256', secretBytes(secret), Buffer.from(macId), info, 4))
   return String(okm.readUInt32BE(0) % 1_000_000).padStart(6, '0')
