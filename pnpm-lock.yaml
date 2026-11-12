@@ -350,6 +350,9 @@ importers:
         specifier: ^4.6.7
         version: 4.6.7
     devDependencies:
+      '@valet/adapter-store':
+        specifier: workspace:*
+        version: link:../adapter-store
       '@valet/fake-woolworths-site':
         specifier: workspace:*
         version: link:../../fakes/woolworths-site

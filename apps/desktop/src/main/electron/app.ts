@@ -265,6 +265,14 @@ async function main(): Promise<void> {
     proxyUrl: sandboxProxy.url,
     log,
   })
+  if (mode.e2e)
+    Object.defineProperty(globalThis, '__valetE2eSandbox', {
+      value: Object.freeze({
+        escaped: (key: string, source: string, world: 'preload' | 'main') =>
+          sandboxes.escapedForE2e(key, source, world),
+        windows: () => sandboxes.size,
+      }),
+    })
   const home = app.getPath('home')
   const driverOptions: ManifestOptions = demoSite === null ? {} : { egressPorts: [demoSite.site.port] }
   const opDeps = defaultOpCheckDeps()

@@ -16,6 +16,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@valet/fake-woolworths-site": "workspace:*"
+    "@valet/fake-woolworths-site": "workspace:*",
+    "@valet/adapter-store": "workspace:*"
   }
 }

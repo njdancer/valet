@@ -92,6 +92,21 @@ export class SandboxPool {
     for (const w of [...this.windows.values()]) this.destroy(w, 'closed')
   }
 
+  /**
+   * e2e only: runs `source` in a sandbox window's preload world, as if tool code had broken out of
+   * QuickJS (docs/sandbox.md#what-an-escape-reaches). `main` runs it in the page's world instead.
+   */
+  async escapedForE2e(key: string, source: string, world: 'preload' | 'main'): Promise<unknown> {
+    const name = `e2e:${key}`
+    const entry = this.windows.get(name) ?? this.open(name)
+    if (!(await entry.ready)) throw new Error('the sandbox window did not start')
+    const contents = entry.window.webContents
+    // Electron's preload world is isolated world 999.
+    return world === 'main'
+      ? contents.executeJavaScript(source, true)
+      : contents.executeJavaScriptInIsolatedWorld(999, [{ code: source }], true)
+  }
+
   /** How many windows are open now (for tests and diagnostics). */
   get size(): number {
     return this.windows.size
