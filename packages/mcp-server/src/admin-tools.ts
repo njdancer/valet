@@ -8,7 +8,7 @@
 
 import type { McpServer, RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js'
-import { callRef, ERROR_CLASSES, NEEDS_USER_REASONS, STAGES } from '@valet/core'
+import { callRef, ERROR_CLASSES, NEEDS_USER_REASONS, plainName, STAGES } from '@valet/core'
 import { z } from 'zod'
 import type { ClientIdentity } from './auth'
 
@@ -28,6 +28,15 @@ export const ADMIN_LOCKED_DOWN_RESULT =
 export const ADMIN_FAILED_RESULT = 'The tool failed at stage config: internal. Try again shortly.'
 export const ADMIN_INVALID_RESULT = 'The tool failed at stage tool-output: invalid.'
 export const ADMIN_WITHHELD_RESULT = 'The tool failed at stage tool-output: internal.'
+
+export const ADMIN_OTHER_AGENT_RESULT =
+  "That call belongs to another agent. The person can allow All agents' activity in Valet, Connections."
+
+/** The refusal for an app the person hasn't let see Valet. `name` is the person's name for it. */
+export function adminNotAllowedResult(name: string): string {
+  const app = plainName(name)
+  return `${app} isn't allowed to see Valet's settings. The person can allow it in Valet, Connections, ${app}.`
+}
 
 /** The manifest's id pattern (packages/core/src/manifest.ts). */
 const ADAPTER_ID = /^[a-z][a-z0-9-]{1,63}$/
@@ -255,6 +264,8 @@ export const callTraceSchema = z.object({
     .nullable(),
   /** Set when a short ref matched more than one call: call again with one of these ids. */
   matches: z.array(z.object({ callId: z.string(), callRef: z.string(), startedAt: iso })),
+  /** The call exists but another agent made it, and this app may see only its own. */
+  otherAgent: z.boolean(),
 })
 
 const chainSchema = statusSchema.shape.auditChain
@@ -301,6 +312,22 @@ export interface AdminAuditQuery {
   readonly limit: number
 }
 
+/** What one app may see through the admin tools. */
+export interface AdminAccess {
+  /** "See Valet": the admin tools answer at all. */
+  readonly seeValet: boolean
+  /** "All agents' activity": other agents' calls, their inputs and their audit records too. */
+  readonly allActivity: boolean
+  /** The person's name for the app, for the refusal sentence. */
+  readonly name: string
+}
+
+/** Whose calls a result may show: the asking app's own, or everyone's. */
+export interface AdminScope {
+  readonly viewer: ClientIdentity
+  readonly all: boolean
+}
+
 /**
  * What the admin tools need from the app. Each method returns the app's own view, mapped field by
  * field; the tools parse it against their schemas anyway.
@@ -308,7 +335,6 @@ export interface AdminAuditQuery {
 export interface AdminReader {
   /** Locked down: every admin tool but valet_status answers with the locked-down sentence. */
   lockedDown(): boolean
-  /** True when `text` contains a secret or session value the app knows of now. */
   /**
    * True when any of `texts` contains a secret or session value the app knows of now. Called once
    * per result, with every string in it, so session values are read once.
@@ -319,10 +345,19 @@ export interface AdminReader {
   adapter(adapterId: string): Promise<AdminAdapterDetail>
   health(): Promise<AdminHealth>
   needsYou(): Promise<AdminNeedsYou>
-  calls(query: { readonly adapterId?: string; readonly limit: number }): Promise<AdminCallList>
+  /**
+   * What the session's app may see (docs/ux/agent-run/information-architecture.md, section 5):
+   * See Valet at all, and other agents' calls ("All agents' activity"), with the name the person
+   * gave the app for the refusal. Asked on every admin call, so a change applies at once.
+   */
+  access(viewer: ClientIdentity): AdminAccess | Promise<AdminAccess>
+  calls(
+    query: { readonly adapterId?: string; readonly limit: number },
+    scope: AdminScope,
+  ): Promise<AdminCallList>
   /** A full call id, or a 4-character ref. */
-  call(idOrRef: string, viewer: ClientIdentity | null): Promise<AdminCallTrace>
-  audit(query: AdminAuditQuery): Promise<AdminAuditPage>
+  call(idOrRef: string, scope: AdminScope): Promise<AdminCallTrace>
+  audit(query: AdminAuditQuery, scope: AdminScope): Promise<AdminAuditPage>
   /** A result was withheld because it held something sensitive. No value is passed. */
   withheld?(tool: string): void
 }
@@ -353,7 +388,7 @@ interface AdminTool {
    * skipped: this tool keeps answering even when a session can't be read.
    */
   readonly noFreeText?: true
-  readonly run: (reader: AdminReader, args: AdminArgs, viewer: ClientIdentity | null) => Promise<unknown>
+  readonly run: (reader: AdminReader, args: AdminArgs, scope: AdminScope) => Promise<unknown>
   /** A sentence instead of the data, for a result that found nothing. */
   readonly empty?: (output: unknown, args: AdminArgs) => string | null
 }
@@ -441,25 +476,30 @@ export const ADMIN_TOOLS: readonly AdminTool[] = [
     description:
       'Recent tool calls, newest first: which site and tool, which app called, when, how long it ' +
       'took, how it ended, and for a failure the stage and error class. Each has the short ref the ' +
-      'person sees in Valet, Activity.',
+      'person sees in Valet, Activity. Only your own calls, unless the person allowed this app ' +
+      'All agents’ activity.',
     input: z.object({
       adapterId: adapterIdInput.optional().describe('Only this site’s calls.'),
       limit: limitInput(20),
     }),
     output: callListSchema,
-    run: (reader, args) =>
-      reader.calls({
-        ...(typeof args.adapterId === 'string' ? { adapterId: args.adapterId } : {}),
-        limit: (args.limit as number | undefined) ?? 20,
-      }),
+    run: (reader, args, scope) =>
+      reader.calls(
+        {
+          ...(typeof args.adapterId === 'string' ? { adapterId: args.adapterId } : {}),
+          limit: (args.limit as number | undefined) ?? 20,
+        },
+        scope,
+      ),
   },
   {
     name: 'valet_get_call',
     title: 'Get one call',
     description:
       'One call’s trace, to see why it failed: every step (logins, probes, requests made and ' +
-      'refused, waits, confirmations), the logins it used (names only), and the input it was sent, ' +
-      'but only for a call your app made itself (null for any other app’s or a cloud agent’s). Takes the call id or the 4-character ref a result or the person gave you.',
+      'refused, waits, confirmations), the logins it used (names only), and the input it was sent. ' +
+      'Only your own calls, unless the person allowed this app All agents’ activity. Takes the ' +
+      'call id or the 4-character ref a result or the person gave you.',
     input: z.object({
       call: z
         .string()
@@ -469,10 +509,11 @@ export const ADMIN_TOOLS: readonly AdminTool[] = [
         .describe('A call id, or its 4-character ref such as "7F2A".'),
     }),
     output: callTraceSchema,
-    run: (reader, args, viewer) => reader.call(args.call as string, viewer),
+    run: (reader, args, scope) => reader.call(args.call as string, scope),
     empty: (output) => {
       const trace = output as AdminCallTrace
       if (trace.call !== null) return null
+      if (trace.otherAgent) return ADMIN_OTHER_AGENT_RESULT
       if (trace.matches.length === 0) return 'No call matches. valet_list_calls lists recent ones.'
       return null
     },
@@ -484,7 +525,8 @@ export const ADMIN_TOOLS: readonly AdminTool[] = [
       'Valet’s hash-chained audit log, newest first: approvals, logins given, tool calls, logins, ' +
       'secrets typed (which and where, never the value), refused requests, confirmations and ' +
       'settings changed. Filter by category, site, time or a search over call ids, tools and ' +
-      'hosts; page back with beforeSeq. Also says when the chain was last checked.',
+      'hosts; page back with beforeSeq. Also says when the chain was last checked. Records about ' +
+      'other agents’ calls are left out unless the person allowed this app All agents’ activity.',
     input: z.object({
       category: z.enum(AUDIT_CATEGORIES).optional(),
       adapterId: adapterIdInput.optional().describe('Only this site’s records.'),
@@ -497,15 +539,18 @@ export const ADMIN_TOOLS: readonly AdminTool[] = [
       limit: limitInput(50),
     }),
     output: auditPageSchema,
-    run: (reader, args) =>
-      reader.audit({
-        ...(args.category === undefined ? {} : { category: args.category as AdminAuditCategory }),
-        ...(typeof args.adapterId === 'string' ? { adapterId: args.adapterId } : {}),
-        ...(typeof args.since === 'string' ? { since: args.since } : {}),
-        ...(typeof args.search === 'string' ? { search: args.search } : {}),
-        ...(typeof args.beforeSeq === 'number' ? { beforeSeq: args.beforeSeq } : {}),
-        limit: (args.limit as number | undefined) ?? 50,
-      }),
+    run: (reader, args, scope) =>
+      reader.audit(
+        {
+          ...(args.category === undefined ? {} : { category: args.category as AdminAuditCategory }),
+          ...(typeof args.adapterId === 'string' ? { adapterId: args.adapterId } : {}),
+          ...(typeof args.since === 'string' ? { since: args.since } : {}),
+          ...(typeof args.search === 'string' ? { search: args.search } : {}),
+          ...(typeof args.beforeSeq === 'number' ? { beforeSeq: args.beforeSeq } : {}),
+          limit: (args.limit as number | undefined) ?? 50,
+        },
+        scope,
+      ),
   },
 ]
 
@@ -528,9 +573,18 @@ export async function runAdminTool(
 ): Promise<CallToolResult> {
   if (tool.whileLockedDown !== true && safely(() => reader.lockedDown(), true))
     return errorText(ADMIN_LOCKED_DOWN_RESULT)
+  // No identity, no access: only a local client's session ever gets here (server.ts).
+  if (viewer === null) return errorText(adminNotAllowedResult('This app'))
+  let access: AdminAccess
+  try {
+    access = await reader.access(viewer)
+  } catch {
+    return errorText(ADMIN_FAILED_RESULT)
+  }
+  if (!access.seeValet) return errorText(adminNotAllowedResult(access.name))
   let raw: unknown
   try {
-    raw = await tool.run(reader, args, viewer)
+    raw = await tool.run(reader, args, { viewer, all: access.allActivity })
   } catch {
     return errorText(ADMIN_FAILED_RESULT)
   }
