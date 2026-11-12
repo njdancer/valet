@@ -57,8 +57,10 @@ import {
   readFuses,
 } from './packaging.mjs'
 import {
+  CI_RUNS_URL,
   checkStart,
   DRY_RUN_FEED_URL,
+  fullSuiteVerdict,
   normaliseRequirement,
   refusalLaunches,
   samePlist,
@@ -183,6 +185,24 @@ try {
   rmSync(work, { recursive: true, force: true })
 }
 
+// The pre-release gate: pull requests run only CI's fast suite, so a release asks GitHub whether the
+// full one (nightly, or run by hand) passed on this very commit. Read without a token: the repository
+// is public. Any failure to ask is a refusal, never a pass.
+async function fullSuiteOnHead() {
+  const sha = git('rev-parse', 'HEAD').stdout.trim()
+  try {
+    const response = await fetch(`${CI_RUNS_URL}?head_sha=${sha}&per_page=100`, {
+      headers: { accept: 'application/vnd.github+json' },
+      signal: AbortSignal.timeout(20_000),
+    })
+    if (!response.ok)
+      return { passed: false, reason: `GitHub answered ${response.status} for the CI runs on ${sha}` }
+    return fullSuiteVerdict(sha, (await response.json()).workflow_runs)
+  } catch (error) {
+    return { passed: false, reason: `could not ask GitHub for the CI runs on ${sha} (${error.message})` }
+  }
+}
+
 async function release() {
   const packageVersion = JSON.parse(readFileSync(join(APP_DIR, 'package.json'), 'utf8')).version
   const verdict = checkStart({
@@ -197,6 +217,7 @@ async function release() {
     skipCheck: values['skip-check'],
     allowDirty: values['allow-dirty'],
     noPublish: values['no-publish'],
+    fullSuite: dryRun ? undefined : await fullSuiteOnHead(),
   })
   for (const note of verdict.notes) say(`note (${mode}): ${note}`)
   summary.notes.push(...verdict.notes)

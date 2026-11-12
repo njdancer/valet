@@ -560,8 +560,14 @@ pnpm release 0.1.0 --dry-run [--skip-check] [--allow-dirty] [--arch both|arm64|x
 pnpm release 0.1.0 --no-publish   # Nick's Mac, with the release variables below
 ```
 
+A real release also waits for CI's full suite. Pull requests run only the fast suite (no Swift or
+release jobs unless their files changed, and the desktop end-to-end suite without `journey` and
+`update`), so the script asks GitHub for a passed nightly or by-hand run of `ci.yml` on the very
+commit it releases (`fullSuiteVerdict` in `scripts/release-lib.ts`), and refuses without one. Start
+one from Actions > CI > Run workflow, or `gh workflow run ci.yml --ref main`. A dry run doesn't ask.
+
 `--dry-run` is the same command with three effects swapped, and CI's `release-dry-run` job runs it
-on every push:
+nightly, and on any push that changes what it packages:
 
 - **Signing is ad hoc.** `VALET_RELEASE_DRY_RUN=1` gives electron-builder the `-` identity for the
   release bundle (`me.dncr.valet`, the same fuses, entitlements, targets and feed), never notarises,
