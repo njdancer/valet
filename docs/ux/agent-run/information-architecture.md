@@ -254,14 +254,16 @@ contracts. Recorded here as each signs:
 
 | Stream | What to check                                                                                              | Status                      |
 | ------ | ---------------------------------------------------------------------------------------------------------- | --------------------------- |
-| B      | Tiers, gestures, Mac-only list, nonce and expiry, pairing words, recovery code, signed lock, amendments    | signed                      |
+| B      | Tiers, gestures, Mac-only list, nonce and expiry, pairing words, recovery code, signed lock, amendments    | signed (notes below)        |
 | D      | Card payload, Because, states, follow-ons, limits, "Not confirmed yet", "Changed before order"             | waiting                     |
 | E      | Section 5's tool table and wording; scoping of See Valet                                                   | signed with changes (below) |
 | F      | Drafts frozen on submit, checks vs tests, reproduction check on Valet-recorded fixtures, private addresses | waiting                     |
 | G      | Consent through the relay, Accept new agents, offline behaviour, lock at the relay, recovery page          | signed                      |
 | H      | The iOS IA, card layout at AX sizes, VoiceOver order, notifications without actions, Face ID to open       | waiting                     |
 
-**B's notes** (contracts in `packages/core`, design in `docs/agent-run-security.md`):
+### B's sign-off (contracts, 2026-11-12)
+
+Contracts in `packages/core`, design in `docs/agent-run-security.md`.
 
 - **Tiers, Mac-only list, recovery code, signed lock:** match. Resuming from pause or lockdown is
   now Mac only in the contract too (`approvableOn`), and no agent can ask for it.
@@ -285,7 +287,9 @@ contracts. Recorded here as each signs:
   (`.biometryCurrentSet`). If Nick says yes, the phone gets a second, passcode-capable key for
   neutral kinds only; that is a contract addition, not a change.
 
-**G's notes** (the relay in `apps/relay`, design in `docs/relay-worker.md`):
+### G's sign-off (relay, 2026-11-12)
+
+The relay in `apps/relay`, design in `docs/relay-worker.md`.
 
 - **Consent through the relay** (`br-consent-code`): matches. The relay's page shows the Mac's
   letters-only code, "Type this code into Valet on your Mac or iPhone", "Valet never sends this
@@ -293,7 +297,8 @@ contracts. Recorded here as each signs:
   - The heading doesn't name the agent ("Connect Claude to Valet"). The client's name comes from
     its own registration, so the relay page doesn't repeat it; the card on the device shows where
     the sign-in goes back to.
-  - No "Ends at" time: `consent-view` carries no expiry. Small contract addition if wanted.
+  - "Ends in about 10 minutes" rather than "Ends at 8:35 pm": the relay doesn't know the reader's
+    time zone.
 - **Accept new agents** (`br-consent-mac-asleep`, F5): the Mac answers `closed`, and the page says
   "This Mac doesn't accept new agents right now. Nothing was connected."
 - **Offline** (F3): the page says the Mac isn't connected, or didn't answer, and nothing waits for

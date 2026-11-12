@@ -71,7 +71,7 @@ const CODE = /^[A-HJ-NP-Z]{4}-[A-HJ-NP-Z]{4}$/
 const ID = /^[A-Za-z0-9_.-]{1,1200}$/
 
 /** The page a browser waits on. `code` is checked against the contract's shape again here. */
-export function waitingPage(code: string, id: string): Response {
+export function waitingPage(code: string, id: string, minutesLeft?: number): Response {
   if (!CODE.test(code) || !ID.test(id)) return problemPage('cant-go-on', 502)
   const next = `/authorize?wait=${encodeURIComponent(id)}`
   return html(
@@ -82,11 +82,18 @@ export function waitingPage(code: string, id: string): Response {
 <p>Valet is showing a sign-in request on your Mac and your iPhone. Type this code into either to approve it.</p>
 <div class="code">${escapeHtml(code)}</div>
 <p>Valet never sends this code by text message.</p>
-<p class="warn"><strong>If you didn’t just add a connector, close this page.</strong> Someone else started this sign-in.</p>
+${ends(minutesLeft)}<p class="warn"><strong>If you didn’t just add a connector, close this page.</strong> Someone else started this sign-in.</p>
 <p>This page moves on by itself once you answer on the Mac.</p>`,
       `<meta http-equiv="refresh" content="${WAIT_REFRESH_SECONDS};url=${escapeHtml(next)}">`,
     ),
   )
+}
+
+/** "Ends at" without a time zone: the relay doesn't know the reader's, so it counts minutes. */
+function ends(minutesLeft: number | undefined): string {
+  if (minutesLeft === undefined || !Number.isFinite(minutesLeft)) return ''
+  const minutes = Math.max(1, Math.min(60, Math.round(minutesLeft)))
+  return `<p>This sign-in ends in about ${minutes} minute${minutes === 1 ? '' : 's'}.</p>\n`
 }
 
 export function problemPage(problem: RelayPageProblem, status: number): Response {

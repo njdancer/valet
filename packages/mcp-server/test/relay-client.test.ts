@@ -359,7 +359,7 @@ describe('consent', () => {
       consent: (id, query, source) => {
         asked.push({ id, query, source })
         if (query === 'boom') throw new Error('x')
-        return { state: 'waiting', code: 'ABCD-1234' }
+        return { state: 'waiting', code: 'ABCD-EFGH', expiresAt: '2026-11-12T03:10:00.000Z' }
       },
     })
     relay.start()
@@ -372,7 +372,13 @@ describe('consent', () => {
       { id: 'c2', query: 'boom', source: '198.51.100.2' },
     ])
     expect(socket.frames().slice(-2)).toEqual([
-      { type: 'consent-view', id: 'c1', state: 'waiting', code: 'ABCD-1234' },
+      {
+        type: 'consent-view',
+        id: 'c1',
+        state: 'waiting',
+        code: 'ABCD-EFGH',
+        expiresAt: '2026-11-12T03:10:00.000Z',
+      },
       { type: 'consent-view', id: 'c2', state: 'declined' },
     ])
   })
@@ -441,9 +447,13 @@ describe('red-team regressions', () => {
     socket.deliver(request('r1', { headers: { authorization: 'Bearer t\r\nx-injected: 1' } }))
     socket.deliver(request('r2', { source: 'a\nb' }))
     socket.deliver(request('r3', { headers: { authorization: 'Bearer  ' } }))
-    await vi.waitFor(() => expect(socket.frames().filter((f) => f['type'] === 'http-response-end')).toHaveLength(3))
+    await vi.waitFor(() =>
+      expect(socket.frames().filter((f) => f['type'] === 'http-response-end')).toHaveLength(3),
+    )
     for (const id of ['r1', 'r2', 'r3'])
-      expect(socket.frames().find((f) => f['id'] === id && f['type'] === 'http-response-start')).toMatchObject({
+      expect(
+        socket.frames().find((f) => f['id'] === id && f['type'] === 'http-response-start'),
+      ).toMatchObject({
         status: 400,
       })
     expect(hits).toBe(0)

@@ -236,6 +236,7 @@ describe('through the relay', () => {
       'devices',
       'lastSeenAt',
       'locked',
+      'lockedBy',
       'macId',
       'macTransportKey',
       'recoveryCodeHash',

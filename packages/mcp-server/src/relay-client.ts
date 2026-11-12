@@ -240,7 +240,7 @@ export class RelayClient {
     }
   }
 
-  private forward(socket: WebSocket, frame: Extract<RelayToMac, { type: 'http-request' }>): void {
+  private forward(socket: WebSocket, frame: Extract<RelayToMac, { type: 'http-request' }>) {
     const answer = (status: number, headers: Record<string, string> = {}) => {
       this.sendOn(socket, { type: 'http-response-start', id: frame.id, status, headers })
       this.sendOn(socket, { type: 'http-response-end', id: frame.id })

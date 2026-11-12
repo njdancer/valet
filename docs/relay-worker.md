@@ -139,8 +139,8 @@ For a request on `<macId>.<RELAY_HOST>`:
    - The query is at most 2048 characters (414), and each forwarded header at most 8 KiB (431).
    - The body is at most `maxRequestBodyBytes` (1 MiB), read as UTF-8 text; above it the answer
      is 413.
-   - A POST to `/mcp` must be one JSON-RPC message, or a batch of 1 to 100, or it is 400. The
-     relay is not a general tunnel.
+   - A POST to `/mcp` must be one JSON-RPC message, or a batch of 1 to 100, or it is 400. GET
+     and DELETE must carry no body. The relay is not a general tunnel.
 6. **Mac offline.** Answered at once, with nothing queued.
    - A `tools/call` gets a JSON-RPC result with `isError: true`: "The Mac running Valet isn't
      connected to its relay…"
@@ -157,8 +157,9 @@ For a request on `<macId>.<RELAY_HOST>`:
 9. **The Mac's answer** streams back as `http-response-start`, then `-chunk`s, then `-end`.
    - Only `RELAY_RESPONSE_HEADERS` are kept.
    - The content type must be `application/json` or `text/event-stream`. Anything else, or a 1xx
-     status, is 502 and `http-cancel`. A "Mac" is any program that speaks the protocol, and must
-     not be able to serve pages or files from the relay's domain.
+     status, is 502 and `http-cancel`. An answer with no content type (a 202, say) is labelled
+     `application/json`. A "Mac" is any program that speaks the protocol, and must not be able to
+     serve pages or files from the relay's domain.
    - Every response gets `content-security-policy: sandbox; default-src 'none'; frame-ancestors
 'none'`, `x-content-type-options: nosniff` and `referrer-policy: no-referrer`. It also gets
      `cache-control: no-store` unless the Mac set one.
@@ -206,14 +207,19 @@ structured `consent-view`, never with HTML from the Mac.
    `RemoteAuthorization.relayConsent`, which shares its code with the HTTP route. It answers with
    one of these:
    - `waiting` with `code`: a consent request is open on the Mac. The relay shows the code and
-     "Type this code into Valet on your Mac or iPhone". The page refreshes every 3 s to
-     `/authorize?wait=<token>`.
-   - `approved` or `declined` with `redirect`: the relay answers 302 to the redirect, which
-     carries `code` or `error`. It does so only if the redirect's origin and path equal the
-     `redirect_uri` the browser asked with. Otherwise it shows "can't go on", so a Mac can't turn
-     the relay's domain into an open redirect.
-   - `declined` without `redirect`: "Valet can't go on with this sign-in" (an unknown client or a
-     bad redirect URI).
+     "Type this code into Valet on your Mac or iPhone", and "ends in about N minutes" from the
+     view's `expiresAt` (the relay doesn't know the reader's time zone). The page refreshes every
+     3 s to `/authorize?wait=<token>`.
+   - `approved` with `redirect`: the relay answers 302 to the redirect, which carries `code`. It
+     does so only if the redirect's origin and path equal the `redirect_uri` the browser asked
+     with. Otherwise it shows "can't go on".
+   - `declined`: never a redirect, even with one. With `redirect` the page says the sign-in was
+     declined; without, "Valet can't go on with this sign-in" (an unknown client or a bad
+     redirect URI). So a stranger who registers a client with their own redirect URI can't bounce
+     people through a real Mac's host with an error.
+   - Anyone can run a "Mac" of their own and approve their own client, so `<theirMacId>.<host>`
+     can redirect to a URI they chose, as any site of theirs could. That is why each Mac's host
+     is its own origin, and why the relay's domain should go on the Public Suffix List.
    - `expired`: "This sign-in has ended."
    - `closed`: "This Valet isn't accepting new agents right now." (403)
    - `busy` or `too-many`: "Valet has too many sign-ins waiting." (429)
@@ -243,7 +249,9 @@ it can't open.
 2. **Reply.** The phone connects to `/v1/phone/<macId>`, which is not yet registered. Instead of a
    hello it sends `pairing-reply { macId, offerId, sealed }`.
    - The relay passes it to the Mac only once per offer, and only while the offer is open.
-   - Replies are limited to 10 a minute per Mac.
+   - Replies to a real open offer are limited to 10 a minute per Mac. Junk replies aren't
+     counted, so strangers can't use the budget up and block the person's phone.
+   - Opening an offer again keeps it answered if it was.
    - Everything else is refused (4401), and so is any frame the phone sends while it waits.
 3. **Challenge and result.** The Mac's `pairing-challenge` and `pairing-result` go to that waiting
    socket only. After the result the relay closes it (1000). A phone that paired connects again
@@ -263,8 +271,8 @@ it can't open.
   the device is offline (`device-online` or `mac-online`), and the inner `ack`s show what
   arrived; nothing is queued. Resending unacked envelopes when a device comes back is the Mac's
   job (D's broker), on `device-online`.
-- **Rate.** A phone may send `maxEnvelopesPerMinutePerDevice` (60) a minute. Past that, its socket
-  closes (4429).
+- **Rate.** A phone may send `maxEnvelopesPerMinutePerDevice` (60) frames a minute, envelopes,
+  locks and push tokens together. Past that, its socket closes (4429).
 - **Registration.** `device-register` stores the phone's id and transport key, for at most
   `maxDevicesPerMac` phones; beyond that the frame is ignored. `device-unregister` removes it.
   Either one closes the phone's socket at once if its key changed or it was removed.
@@ -292,8 +300,9 @@ These are J7 F1 and F2, and the contract's item 4 from G.
   - With the right code the relay locks, as above, and if asked also removes every paired phone
     and closes their sockets. The Mac gets `relay-locked { by: 'recovery', phonesUnregistered }`.
   - It can never unlock, approve or pair.
-- **Recovery limits.** Tries are limited to 10 an hour per Mac, in the Durable Object, and to 20
-  a minute per source at the front door.
+- **Recovery limits.** Wrong tries are limited to 10 an hour per Mac, in the Durable Object, and
+  all tries to 20 a minute per source at the front door.
+  - The right code always works, so nobody can use the budget up to stop the owner locking down.
   - A Mac with no code set gets the same answer as a wrong code.
   - The code is 128 bits, so the limits are against noise, not guessing.
 
@@ -320,7 +329,7 @@ that a one-file change.
 - **Storage:** exactly `RelayStoredState`, under one key:
   - `macId` and `macTransportKey`;
   - each device's id, transport key and push token;
-  - `recoveryCodeHash`, `locked`, `createdAt` and `lastSeenAt`.
+  - `recoveryCodeHash`, `locked`, `lockedBy`, `createdAt` and `lastSeenAt`.
 
   Nothing else is ever written. A test reads the whole storage after a full OAuth and tool-call
   run and checks this.
@@ -376,16 +385,34 @@ that a one-file change.
 - **Polling consent with the bare id in the URL.** Replaced by the signed wait token, which also
   binds the redirect the relay may follow.
 
+## Red team (2026-11-12)
+
+An adversarial review of the built relay found eight issues, none high. Each one is fixed, with a
+regression test (`red-team regressions` in the relay's and the relay client's tests):
+
+- A phone revoked or re-keyed while its hello was being verified could still become ready.
+- An answer with no content type could be sniffed as a page.
+- Junk recovery tries could use up the budget and block the owner's lockdown.
+- Junk pairing replies could use up the budget and block the person's phone.
+- A declined sign-in followed the Mac's redirect, so it could bounce people elsewhere.
+- DELETE `/mcp` passed any body.
+- A header value Node refuses made the Mac's client throw and leave the request hanging.
+- The 180-day forget alarm never ran once every socket was gone.
+
 ## Risks and open questions
 
 - **Wiring into the app** waits for the device keys in the Swift helper (D's or H's pairing
   work). The relay client takes a `TransportSigner` and a `RelayBinding`, and the app passes the
   helper's when they exist.
 - **APNs over Workers fetch** is _verify_ on staging.
-- **Who locked.** `relay-locked` on reconnect says `by: 'phone'` even after a recovery-page lock,
-  because storage keeps only `locked`. Proposed to B: store `lockedBy`.
-- **Recovery code normalisation** is the relay's (`recoveryCodeHash` in `src/core.ts`). Proposed
-  to B: pin it in core, so the Mac hashes the same way.
+- **Recovery code hash.** Core pins it (`recoveryCodeHash`, with `node:crypto`). The relay has a
+  WebCrypto copy, and a test checks both against B's test vector.
+- **A leaked transport key and its binding** can always re-register and replace the real Mac's
+  socket: bindings don't expire, and the Mac id is the approval key's. Recovering means a new
+  approval key, so a new Mac id. Proposed to B for later: an expiring or counted binding.
+- **Durable Object memory.** Response chunks are queued for a slow client without backpressure:
+  16 requests of 8 MiB is the object's whole 128 MiB. Only an authorised client reading slowly
+  can cause it, and the object restarts. To revisit if it shows up.
 - **Sign-up abuse.** Anyone with a key pair can create a Durable Object by registering. The
   per-source connection limit bounds it; invites or payment come with D16.
 - **In-memory limits** (recovery tries, pairing replies, the frame bucket) reset if Cloudflare

@@ -16,6 +16,7 @@ import type { AdminAction } from './admin-actions'
 import { clientIdSchema, consentCodeSchema, DECISION_REFUSALS, requestIdSchema } from './approvals'
 import { canRevokeDevice, keyIdSchema } from './devices'
 import { displayText } from './display-text'
+import { sha256Hex } from './hash'
 import { sealedSchema } from './pairing'
 import {
   keyId,
@@ -420,6 +421,8 @@ export const macToRelaySchema = z.discriminatedUnion('type', [
       /** `busy` and `too-many`: the Mac or the relay is refusing for load; try again later. */
       state: z.enum(['waiting', 'approved', 'declined', 'expired', 'closed', 'busy', 'too-many']),
       code: consentCodeSchema.optional(),
+      /** While waiting: when the request expires, for the page's "Ends at". */
+      expiresAt: z.iso.datetime().optional(),
       redirect: z.url({ protocol: /^https$/ }).optional(),
     })
     .strict(),
@@ -432,7 +435,15 @@ export const macToRelaySchema = z.discriminatedUnion('type', [
   /** Accept pairing replies for this offer until it expires. The relay never sees the secret. */
   z.object({ type: z.literal('pairing-open'), offerId: keyIdSchema, expiresAt: z.iso.datetime() }).strict(),
   /** After the first reply to an offer (later ones are refused): the nonce the code includes. */
-  z.object({ type: z.literal('pairing-challenge'), offerId: keyIdSchema, macNonce: macNonceSchema }).strict(),
+  z
+    .object({
+      type: z.literal('pairing-challenge'),
+      offerId: keyIdSchema,
+      macNonce: macNonceSchema,
+      /** Over `pairingChallengePayload`, by the Mac's approval key (H's CR-11). */
+      signature: p256SignatureSchema,
+    })
+    .strict(),
   z.object({ type: z.literal('pairing-result'), offerId: keyIdSchema, sealed: sealedSchema }).strict(),
   /** Lift a relay-side lock (G's request 4). Only the Mac can. */
   z.object({ type: z.literal('relay-unlock') }).strict(),
@@ -519,7 +530,15 @@ export const relayToPhoneSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ready'), macOnline: z.boolean() }).strict(),
   z.object({ type: z.literal('envelope'), envelope: envelopeSchema }).strict(),
   z.object({ type: z.literal('mac-online'), online: z.boolean() }).strict(),
-  z.object({ type: z.literal('pairing-challenge'), offerId: keyIdSchema, macNonce: macNonceSchema }).strict(),
+  z
+    .object({
+      type: z.literal('pairing-challenge'),
+      offerId: keyIdSchema,
+      macNonce: macNonceSchema,
+      /** Over `pairingChallengePayload`, by the Mac's approval key (H's CR-11). */
+      signature: p256SignatureSchema,
+    })
+    .strict(),
   z.object({ type: z.literal('pairing-result'), offerId: keyIdSchema, sealed: sealedSchema }).strict(),
   z
     .object({
@@ -556,10 +575,27 @@ export interface RelayStoredState {
     readonly transportKey: string
     readonly pushToken: string | null
   }[]
-  /** SHA-256 of the recovery code, if one was set. */
+  /** SHA-256 of the recovery code, if one was set (`recoveryCodeHash`). */
   readonly recoveryCodeHash: string | null
   readonly locked: boolean
+  /** Who set the lock, so `relay-locked` on reconnect names them (G's request). Null when unlocked. */
+  readonly lockedBy: 'phone' | 'recovery' | 'mac' | null
   readonly createdAt: string
   /** For deleting Macs not seen in a long while; safe because re-registering needs the binding. */
   readonly lastSeenAt: string
+}
+
+/**
+ * The recovery code as typed: upper-cased, spaces and dashes removed, then 16 to 64 of A-Z and 0-9
+ * (G's request, pinned so the Mac and the relay agree). Null for anything else.
+ */
+export function normaliseRecoveryCode(typed: string): string | null {
+  const code = typed.toUpperCase().replace(/[\s-]/g, '')
+  return /^[A-Z0-9]{16,64}$/.test(code) ? code : null
+}
+
+/** What `recovery-register` sends and the relay compares: SHA-256 hex of the normalised code. */
+export function recoveryCodeHash(typed: string): string | null {
+  const code = normaliseRecoveryCode(typed)
+  return code === null ? null : sha256Hex(code)
 }

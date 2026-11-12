@@ -4,7 +4,14 @@ import { generateKeyPairSync, verify } from 'node:crypto'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { keyId, pushPayloadSchema, relayAuthPayload, SIGNING_DOMAINS, verifyRelayBinding } from '@valet/core'
+import {
+  recoveryCodeHash as coreRecoveryCodeHash,
+  keyId,
+  pushPayloadSchema,
+  relayAuthPayload,
+  SIGNING_DOMAINS,
+  verifyRelayBinding,
+} from '@valet/core'
 import { describe, expect, it, vi } from 'vitest'
 import { fromBase64url, randomToken, toBase64url } from '../src/encoding'
 import { logFailure } from '../src/log'
@@ -204,5 +211,22 @@ describe('the binding check', () => {
       verdicts.push(ours)
     }
     expect(verdicts).toEqual([true, false, false, false])
+  })
+})
+
+describe('the recovery code hash', () => {
+  it('matches core’s, and B’s test vector', async () => {
+    const { recoveryCodeHash } = await import('../src/core')
+    const vector = 'b9880d7c06e097c42704a1566f627b1cfad0795a8693f185eb7b673001dbeca5'
+    expect(await recoveryCodeHash('abcd-efgh ijkl-2345')).toBe(vector)
+    expect(coreRecoveryCodeHash('abcd-efgh ijkl-2345')).toBe(vector)
+    for (const code of [
+      'RKQ4-7MXT-PW9C-3HJD',
+      'short',
+      'x'.repeat(65),
+      'ABCD EFGH IJKL MNOP QRST',
+      'ÄBCD-EFGH-IJKL-MNOP',
+    ])
+      expect(await recoveryCodeHash(code)).toBe(coreRecoveryCodeHash(code))
   })
 })

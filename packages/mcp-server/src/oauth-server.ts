@@ -284,7 +284,11 @@ export class RemoteAuthorization {
     }
     switch (outcome.kind) {
       case 'waiting':
-        return { state: 'waiting', code: displayCode(outcome.code) }
+        return {
+          state: 'waiting',
+          code: displayCode(outcome.code),
+          expiresAt: new Date(outcome.expiresAt).toISOString(),
+        }
       case 'redirect':
         return { state: outcome.approved ? 'approved' : 'declined', redirect: outcome.location }
       case 'page':
@@ -354,13 +358,14 @@ export class RemoteAuthorization {
     } catch {
       // The app's window is not ours to fail.
     }
-    return { kind: 'waiting', code: request.code, handle: request.handle }
+    return { kind: 'waiting', code: request.code, handle: request.handle, expiresAt: request.expiresAt }
   }
 
   private waitOutcome(handle: string | null, host: string): AuthorizeOutcome {
     const request = handle === null ? null : this.options.consents.byHandle(handle)
     if (request === null) return { kind: 'page', status: 404, problem: 'ended' }
-    if (request.status === 'pending') return { kind: 'waiting', code: request.code, handle: request.handle }
+    if (request.status === 'pending')
+      return { kind: 'waiting', code: request.code, handle: request.handle, expiresAt: request.expiresAt }
     this.options.consents.finish(request.handle)
     if (request.status !== 'approved')
       return redirectTo(request.redirectUri, host, { error: 'access_denied' }, request.state)
@@ -629,12 +634,12 @@ function tokenResponse(res: ServerResponse, accessToken: string, refreshToken: s
 /** What `/authorize` and its waiting page answer, before it is rendered for a browser or the relay. */
 type AuthorizeOutcome =
   | { readonly kind: 'page'; readonly status: number; readonly problem: PageProblem }
-  | { readonly kind: 'waiting'; readonly code: string; readonly handle: string }
+  | { readonly kind: 'waiting'; readonly code: string; readonly handle: string; readonly expiresAt: number }
   | { readonly kind: 'redirect'; readonly location: string; readonly approved: boolean }
 
 /** What the Mac answers the relay's `/authorize` with: the fields of a `consent-view` frame. */
 export type RelayConsentView =
-  | { readonly state: 'waiting'; readonly code: string }
+  | { readonly state: 'waiting'; readonly code: string; readonly expiresAt: string }
   | { readonly state: 'approved' | 'declined'; readonly redirect: string }
   | { readonly state: 'declined' | 'expired' | 'busy' | 'too-many' }
 

@@ -439,6 +439,10 @@ Asked for by D, G and H while building, 2026-11-12. Accepted unless marked other
      reply to an offer, then sends the nonce (`pairing-challenge`). Without it, someone who saw
      the QR and controls the relay could open the reply and grind substitutes until the digits
      matched (H's review).
+   - The Mac signs the challenge with its approval key, which the QR pins, over the offer, the
+     nonce and the hash of the reply it accepted (`pairingChallengePayload`, H's CR-11). The phone
+     checks both. Otherwise that same attacker could answer first with its own reply, then grind
+     a nonce for the phone until both screens showed the same digits.
    - The reply travels on the phone's ordinary relay socket, as the one frame allowed before a
      hello, for an offer the Mac opened. That's G's rendezvous, without a second endpoint.
    - Six digits (20 bits) is enough because the QR is single use, the reply is sealed, and three
@@ -532,6 +536,15 @@ Asked for by D, G and H while building, 2026-11-12. Accepted unless marked other
       relay redirects only there.
     - Forwarded responses are limited to `application/json` and `text/event-stream`, with a CSP
       sandbox.
+
+11. After the relay was built (PR #79):
+    - `RelayStoredState.lockedBy`, so `relay-locked` on reconnect names who locked it.
+    - `normaliseRecoveryCode` and `recoveryCodeHash` pin the recovery code: upper-cased,
+      spaces and dashes removed, 16 to 64 of A-Z and 0-9, then SHA-256 hex. A fixed vector is in
+      the core tests for the relay's own.
+    - `consent-view` carries an optional `expiresAt` for the page's "Ends at".
+    - The relay checks the binding with WebCrypto, since workerd lacks parts of `node:crypto`; its
+      test checks it agrees with `verifyRelayBinding`.
 
 ## Open questions
 

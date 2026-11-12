@@ -164,7 +164,7 @@ interface Pending {
 }
 
 export type ConsentAnswer =
-  | { readonly state: 'waiting'; readonly code: string }
+  | { readonly state: 'waiting'; readonly code: string; readonly expiresAt?: string }
   | { readonly state: 'approved' | 'declined'; readonly redirect?: string }
   | { readonly state: 'expired' }
   | { readonly state: 'closed' | 'busy' | 'too-many' }
@@ -347,6 +347,7 @@ export class RelayCore {
           devices: [],
           recoveryCodeHash: null,
           locked: false,
+          lockedBy: null,
           createdAt: nowIso,
           lastSeenAt: nowIso,
         })
@@ -373,14 +374,20 @@ export class RelayCore {
       this.bucket = { tokens: RELAY_CAPS.frameBurst, at: this.now(), key: state.key }
       this.sendTo(socket, { type: 'ready', devices: (current?.devices ?? []).map((d) => d.deviceId) })
       if (locked)
-        this.sendTo(socket, { type: 'relay-locked', locked: true, by: 'phone', phonesUnregistered: false })
+        this.sendTo(socket, {
+          type: 'relay-locked',
+          locked: true,
+          by: current?.lockedBy ?? 'phone',
+          phonesUnregistered: false,
+        })
       for (const phone of this.readySockets('phone')) {
         this.sendTo(phone, { type: 'mac-online', online: true })
         this.sendTo(socket, { type: 'device-online', deviceId: idOf(phone), online: true })
       }
     } else {
       this.sendTo(socket, { type: 'ready', macOnline: this.macSocket() !== null })
-      if (locked) this.sendTo(socket, { type: 'relay-locked', locked: true, by: 'phone' })
+      if (locked)
+        this.sendTo(socket, { type: 'relay-locked', locked: true, by: current?.lockedBy ?? 'phone' })
       const mac = this.macSocket()
       if (mac !== null) this.sendTo(mac, { type: 'device-online', deviceId: hello.id, online: true })
     }
@@ -462,7 +469,11 @@ export class RelayCore {
         this.consents.delete(frame.id)
         if (frame.state === 'waiting') {
           if (frame.code === undefined) return resolve({ state: 'no-answer' })
-          return resolve({ state: 'waiting', code: frame.code })
+          return resolve(
+            frame.expiresAt === undefined
+              ? { state: 'waiting', code: frame.code }
+              : { state: 'waiting', code: frame.code, expiresAt: frame.expiresAt },
+          )
         }
         if (
           frame.state === 'expired' ||
@@ -497,7 +508,12 @@ export class RelayCore {
       case 'pairing-challenge': {
         const phone = this.pairingSocket(frame.offerId)
         if (phone !== null)
-          this.sendTo(phone, { type: 'pairing-challenge', offerId: frame.offerId, macNonce: frame.macNonce })
+          this.sendTo(phone, {
+            type: 'pairing-challenge',
+            offerId: frame.offerId,
+            macNonce: frame.macNonce,
+            signature: frame.signature,
+          })
         return
       }
       case 'pairing-result': {
@@ -525,7 +541,9 @@ export class RelayCore {
   ): Promise<void> {
     const stored = await this.state()
     if (stored === null) return
-    if (stored.locked !== locked) await this.save({ ...stored, locked })
+    const lockedBy = locked ? by : null
+    if (stored.locked !== locked || stored.lockedBy !== lockedBy)
+      await this.save({ ...stored, locked, lockedBy })
     if (locked) this.failAll()
     const mac = this.macSocket()
     if (mac !== null) this.sendTo(mac, { type: 'relay-locked', locked, by, phonesUnregistered })

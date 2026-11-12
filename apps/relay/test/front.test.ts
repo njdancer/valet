@@ -431,3 +431,14 @@ describe('red-team regressions', () => {
     expect((await frontDoor(req(`https://${HOST}/mcp`, { method: 'DELETE' }), h.door)).status).toBe(200)
   })
 })
+
+describe('the waiting page', () => {
+  it('says roughly when the sign-in ends, from the Mac’s expiry', async () => {
+    const h = await harness()
+    ;(h.door as { now?: () => number }).now = () => Date.parse('2026-11-12T03:00:00.000Z')
+    h.answer = { state: 'waiting', code: 'ABCD-EFGH', expiresAt: '2026-11-12T03:09:40.000Z' }
+    const url = `https://${HOST}/authorize?response_type=code&client_id=c1&redirect_uri=${encodeURIComponent(REDIRECT)}`
+    const page = await frontDoor(req(url), h.door)
+    expect(await page.text()).toContain('ends in about 10 minutes')
+  })
+})

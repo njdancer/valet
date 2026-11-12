@@ -176,7 +176,7 @@ async function consent(
     if (token === null) return problemPage('ended', 404)
     if (!(await allowed(door.limits.poll, key))) return problemPage('too-many', 429)
     const answer = await door.mac(macId).consent(token.id, '', source)
-    return render(answer, wait, token.redirect)
+    return render(answer, wait, token.redirect, now)
   }
 
   if (!(await allowed(door.limits.signIn, key))) return problemPage('too-many', 429)
@@ -189,13 +189,17 @@ async function consent(
   const id = randomToken(15)
   const answer = await door.mac(macId).consent(id, query, source)
   const token = await sealWaitToken(door.waitKey, { id, macId, redirect, exp: now + WAIT_TOKEN_TTL_MS })
-  return render(answer, token, redirect)
+  return render(answer, token, redirect, now)
 }
 
-function render(answer: ConsentAnswer, token: string, redirect: string): Response {
+function render(answer: ConsentAnswer, token: string, redirect: string, now: number): Response {
   switch (answer.state) {
     case 'waiting':
-      return waitingPage(answer.code, token)
+      return waitingPage(
+        answer.code,
+        token,
+        answer.expiresAt === undefined ? undefined : (Date.parse(answer.expiresAt) - now) / 60_000,
+      )
     case 'approved':
       // Only ever back to the redirect URI the client named. A "Mac" is any program with a key,
       // and could name any URI for itself, so only an approval redirects: errors get the relay's

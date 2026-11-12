@@ -9,14 +9,17 @@ import {
   keyId,
   macToPhoneMessageSchema,
   macToRelaySchema,
+  normaliseRecoveryCode,
   openSealed,
   pairingAad,
+  pairingChallengePayload,
   pairingCode,
   pairingOfferId,
   pairingReplySchema,
   pairingSealKey,
   phoneToMacMessageSchema,
   phoneToRelaySchema,
+  recoveryCodeHash,
   relayAuthPayload,
   relayHelloSchema,
   SIGNING_DOMAINS,
@@ -24,6 +27,7 @@ import {
   serializeRequest,
   signingInput,
   verifyDecision,
+  verifyPairingChallenge,
   verifyRelayBinding,
 } from '../src'
 
@@ -332,6 +336,47 @@ describe('sequence numbers and envelope info', () => {
   it('tells a revoked phone to unpair', () => {
     expect(
       macToPhoneMessageSchema.safeParse({ type: 'unpaired', seq: 9, at: '2026-11-12T03:00:00.000Z' }).success,
+    ).toBe(true)
+  })
+})
+
+describe('recovery code', () => {
+  it('normalises the way the relay does and hashes the result', () => {
+    expect(normaliseRecoveryCode('abcd-efgh ijkl-2345')).toBe('ABCDEFGHIJKL2345')
+    expect(normaliseRecoveryCode('short-1')).toBeNull()
+    expect(normaliseRecoveryCode('ABCD-EFGH-IJKL-234!')).toBeNull()
+    // A fixed vector for the relay's own test.
+    expect(recoveryCodeHash('abcd-efgh ijkl-2345')).toBe(
+      'b9880d7c06e097c42704a1566f627b1cfad0795a8693f185eb7b673001dbeca5',
+    )
+  })
+})
+
+describe('signed pairing challenge (CR-11)', () => {
+  it('lets the phone tell a challenge over its own reply from one over an attacker reply', () => {
+    const mac = p256()
+    const offerId = 'a'.repeat(32)
+    const nonce = randomBytes(32).toString('base64url')
+    const phoneReply = '{"v":1,"deviceName":"Phone"}'
+    const attackerReply = '{"v":1,"deviceName":"Phone "}'
+    const sig = (reply: string, n = nonce) =>
+      signWith(mac.privateKey, SIGNING_DOMAINS.pairingChallenge, pairingChallengePayload(offerId, n, reply))
+    expect(verifyPairingChallenge(mac.spki, offerId, nonce, phoneReply, sig(phoneReply))).toBe(true)
+    // The Mac accepted the attacker's reply: its signature names that reply, not the phone's.
+    expect(verifyPairingChallenge(mac.spki, offerId, nonce, phoneReply, sig(attackerReply))).toBe(false)
+    // A ground nonce the Mac never signed.
+    const ground = randomBytes(32).toString('base64url')
+    expect(verifyPairingChallenge(mac.spki, offerId, ground, phoneReply, sig(phoneReply))).toBe(false)
+    expect(macToRelaySchema.safeParse({ type: 'pairing-challenge', offerId, macNonce: nonce }).success).toBe(
+      false,
+    )
+    expect(
+      macToRelaySchema.safeParse({
+        type: 'pairing-challenge',
+        offerId,
+        macNonce: nonce,
+        signature: sig(phoneReply),
+      }).success,
     ).toBe(true)
   })
 })

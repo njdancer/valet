@@ -193,6 +193,7 @@ describe('connections', () => {
       devices: [],
       recoveryCodeHash: null,
       locked: false,
+      lockedBy: null,
       createdAt: '2026-11-12T03:00:00.000Z',
       lastSeenAt: '2026-11-12T03:00:00.000Z',
     })
@@ -700,8 +701,9 @@ describe('pairing', () => {
     expect(chatty.closedWith?.code).toBe(CLOSE.badFrame)
 
     const macNonce = 'N'.repeat(43)
-    await send(world, mac, { type: 'pairing-challenge', offerId: OFFER, macNonce })
-    expect(phone.last()).toEqual({ type: 'pairing-challenge', offerId: OFFER, macNonce })
+    const signature = 'S'.repeat(86)
+    await send(world, mac, { type: 'pairing-challenge', offerId: OFFER, macNonce, signature })
+    expect(phone.last()).toEqual({ type: 'pairing-challenge', offerId: OFFER, macNonce, signature })
     await send(world, mac, { type: 'pairing-result', offerId: OFFER, sealed })
     expect(phone.frames('pairing-result')).toEqual([{ type: 'pairing-result', offerId: OFFER, sealed }])
     expect(phone.closedWith?.code).toBe(1000)
@@ -795,7 +797,10 @@ describe('lock and recovery', () => {
     // The Mac reconnecting is told at once.
     const back = world.open('mac')
     await hello(world, back, macKey, { role: 'mac', id: MAC_ID, transportKey: null })
-    expect(back.frames('relay-locked')).toHaveLength(1)
+    expect(back.frames('relay-locked')).toEqual([
+      { type: 'relay-locked', locked: true, by: 'phone', phonesUnregistered: false },
+    ])
+    expect(world.stored?.lockedBy).toBe('phone')
 
     await send(world, back, { type: 'relay-unlock' })
     expect(world.stored?.locked).toBe(false)
@@ -828,6 +833,7 @@ describe('lock and recovery', () => {
     expect(world.stored?.locked).toBe(false)
     expect(await world.core.recover(code, true)).toBe('done')
     expect(world.stored?.locked).toBe(true)
+    expect(world.stored?.lockedBy).toBe('recovery')
     expect(world.stored?.devices).toEqual([])
     expect(phone.closedWith?.code).toBe(CLOSE.unregistered)
     expect(mac.last()).toEqual({
@@ -874,7 +880,11 @@ describe('red-team regressions', () => {
       const world = new World(MAC_ID)
       const mac = await macOnline(world, testKey())
       const phoneKey = testKey()
-      await send(world, mac, { type: 'device-register', deviceId: PHONE_ID, transportKey: phoneKey.publicKey })
+      await send(world, mac, {
+        type: 'device-register',
+        deviceId: PHONE_ID,
+        transportKey: phoneKey.publicKey,
+      })
       const phone = world.open('phone')
       const pending = hello(world, phone, phoneKey, { role: 'phone', id: PHONE_ID, transportKey: null })
       await send(
@@ -925,7 +935,8 @@ describe('red-team regressions', () => {
     const world = new World(MAC_ID)
     const mac = await macOnline(world, testKey())
     const phone = await phoneOnline(world, mac, testKey(), PHONE_ID)
-    for (let i = 0; i < 60; i++) await send(world, phone, { type: 'push-token', token: (i % 2 ? 'ab' : 'cd').repeat(32) })
+    for (let i = 0; i < 60; i++)
+      await send(world, phone, { type: 'push-token', token: (i % 2 ? 'ab' : 'cd').repeat(32) })
     expect(phone.closedWith).toBeNull()
     await send(world, phone, { type: 'relay-lock' })
     expect(phone.closedWith?.code).toBe(CLOSE.tooMany)
