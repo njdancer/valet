@@ -149,7 +149,7 @@ struct CardSheet: View {
       }
       .padding()
     }
-    .modifier(HardTopEdge())
+    .modifier(HardScrollEdges())
     .safeAreaInset(edge: .bottom) { actions(entry) }
     .sheet(isPresented: $declining) {
       DeclineSheet(card: card) { note, stopAsking in
@@ -368,7 +368,7 @@ enum CardStateText {
 
 /// On iOS 26 a scroll view's edges fade the content under the toolbar and the action bar, which leaves the card's
 /// first and last lines faded at rest. Hard edges keep them at full contrast.
-private struct HardTopEdge: ViewModifier {
+private struct HardScrollEdges: ViewModifier {
   func body(content: Content) -> some View {
     if #available(iOS 26.0, *) {
       content.scrollEdgeEffectStyle(.hard, for: .all)
