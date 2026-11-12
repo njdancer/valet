@@ -207,7 +207,10 @@ export function createMcpServer(
   // Only for a session a local client's credential opened: never a cloud agent's, and never one
   // with no identity at all.
   if (options.admin !== undefined && options.identity?.origin === 'local') {
-    registerAdminTools(server, options.admin, options.identity)
+    registerAdminTools(server, options.admin, options.identity, {
+      now: options.now ?? Date.now,
+      ...(options.timeZone === undefined ? {} : { timeZone: options.timeZone }),
+    })
     if (options.authoring !== undefined)
       registerAuthoringTools(server, options.admin, options.authoring, options.identity)
   }
