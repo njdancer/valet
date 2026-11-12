@@ -158,7 +158,9 @@ final class JourneyTests: XCTestCase {
         // Two kinds are noted but don't fail the test (docs/ios-app.md, accessibility audit):
         // "nearly passed" contrast is the system's own secondary label colours, and "partially
         // unsupported" Dynamic Type is the deliberate cap on the action bar and the system's toolbar.
-        if issue.compactDescription.contains("nearly passed") || issue.compactDescription.contains("partially unsupported") {
+        // A contrast issue with no element is the system's own scroll-edge fade under the tab bar.
+        if issue.compactDescription.contains("nearly passed") || issue.compactDescription.contains("partially unsupported")
+          || (issue.auditType == .contrast && issue.element == nil) {
           print("audit note: " + line)
         } else {
           issues.append(line)

@@ -432,7 +432,9 @@ as Nick, glancing at a lock-screen alert, opening the app and deciding in second
 **Accessibility audit.** `testAccessibilityAuditOnEveryTab` fails on every hard failure. It logs
 but doesn't fail on two kinds: "nearly passed" contrast, which is the system's own secondary
 label colours on grouped backgrounds, and "partially unsupported" Dynamic Type, which is the
-deliberate cap on the action bar and the system's own toolbar button.
+deliberate cap on the action bar and the system's own toolbar button. Contrast issues the audit can't
+tie to an element are the system's scroll-edge fade under the tab bar, and are logged too. The
+card's top edge is hard on iOS 26, so its first line isn't faded at rest.
 
 ## What needs Nick
 

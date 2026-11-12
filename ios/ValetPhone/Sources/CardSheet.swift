@@ -146,6 +146,7 @@ struct CardSheet: View {
       }
       .padding()
     }
+    .modifier(HardTopEdge())
     .safeAreaInset(edge: .bottom) { actions(entry) }
     .sheet(isPresented: $declining) {
       DeclineSheet(card: card) { note, stopAsking in
@@ -358,6 +359,18 @@ enum CardStateText {
     case .notPaired: return "This iPhone isn\u{2019}t paired."
     case .tooSoon: return "This just changed. Read it again, then approve."
     case .needsChoice: return "Pick one first."
+    }
+  }
+}
+
+/// On iOS 26 a scroll view's top edge fades the content under the toolbar, which leaves the card's
+/// first line (kind, ref, deadline) faded at rest. A hard edge keeps it at full contrast.
+private struct HardTopEdge: ViewModifier {
+  func body(content: Content) -> some View {
+    if #available(iOS 26.0, *) {
+      content.scrollEdgeEffectStyle(.hard, for: .top)
+    } else {
+      content
     }
   }
 }
