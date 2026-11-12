@@ -1,0 +1,71 @@
+1
+00:00:00,273 --> 00:00:20,891
+Valet on the Mac, and the iPhone app in the Simulator. Both talk through Valet’s relay, running locally here.
+
+2
+00:00:20,891 --> 00:00:33,140
+To pair, open Settings › Devices on the Mac and choose Pair an iPhone.
+
+3
+00:00:33,140 --> 00:00:49,149
+The Mac shows a one-time QR code. The Simulator has no camera, so this test build reads the same code over a local link.
+
+4
+00:00:49,149 --> 00:00:55,245
+The phone shows six digits. The Mac shows three codes, and you pick the one that matches the phone.
+
+5
+00:00:55,245 --> 00:01:07,357
+Picking it asks for Touch ID on the Mac (this test build answers that itself). The phone is paired.
+
+6
+00:01:07,357 --> 00:01:24,126
+Now an agent, connected to Valet over MCP, writes an adapter for a made-up library site.
+
+7
+00:01:24,126 --> 00:01:39,606
+Installing it needs your approval. The request is sealed to the phone and sent through the relay.
+
+8
+00:01:39,606 --> 00:02:03,804
+The card on the phone says what the adapter can reach and who asked. Approve asks for Face ID.
+
+9
+00:02:03,804 --> 00:02:06,015
+Approved with Face ID on the phone. The signed approval goes back to the Mac, which checks it and installs.
+
+10
+00:02:06,015 --> 00:02:10,217
+The agent asks how its request went: approved, and the adapter is installed.
+
+11
+00:02:10,217 --> 00:02:23,018
+Next the agent asks to keep call traces for 3 days instead of 14. Shortening them removes evidence, so it needs an approval.
+
+12
+00:02:23,018 --> 00:02:42,376
+This time you decline on the phone, with a note for the agent. No Face ID is needed to say no.
+
+13
+00:02:42,376 --> 00:02:46,381
+The agent is told it was declined, and gets your note. Nothing changed.
+
+14
+00:02:46,381 --> 00:02:48,486
+Without a paid Apple developer account there are no push notifications. Here the phone app is closed when the agent asks.
+
+15
+00:02:48,486 --> 00:02:54,229
+The Mac keeps the request until the phone confirms it has it.
+
+16
+00:02:54,229 --> 00:03:29,114
+Open Valet on the phone and it reconnects. The waiting card arrives straight away.
+
+17
+00:03:29,114 --> 00:03:30,869
+Approved with Face ID, same as before.
+
+18
+00:03:30,869 --> 00:03:37,131
+Every request, approval and decline is in the Mac’s audit log.

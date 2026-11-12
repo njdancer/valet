@@ -1,0 +1,26 @@
+valet: demo: fake Woolworths at https://www.woolworths.test:51212, signing in at https://auth.woolworths.test:51213
+valet: demo: fake 1Password (Keyhold) at http://127.0.0.1:51214/
+valet: approvals: signing with software keys (dev build)
+[relay] connecting
+[console] [relay] connecting[relay] online
+[relay] ready
+[console] [relay] online[console] [relay] ready[relay] pairing-reply
+[console] [relay] pairing-reply[relay] device-online 78f743ec073496f27face7a5af166c8d true
+[console] [relay] device-online 78f743ec073496f27face7a5af166c8d true[relay] envelope
+[console] [relay] envelope[relay] envelope
+[relay] envelope
+[console] [relay] envelope[console] [relay] envelopevalet: sandbox: window one-shot ended (no answer to ping)
+[6494:1112/154433.213940:ERROR:base/process/process_mac.cc:53] task_policy_set TASK_CATEGORY_POLICY: (os/kern) invalid argument (4)
+[6494:1112/154433.213983:ERROR:base/process/process_mac.cc:98] task_policy_set TASK_SUPPRESSION_POLICY: (os/kern) invalid argument (4)
+[relay] envelope
+[console] [relay] envelope[relay] envelope
+[console] [relay] envelope[relay] envelope
+[console] [relay] envelope[relay] envelope
+[console] [relay] envelope[relay] envelope
+[console] [relay] envelope[relay] envelope
+[console] [relay] envelope[relay] device-online 78f743ec073496f27face7a5af166c8d true
+[console] [relay] device-online 78f743ec073496f27face7a5af166c8d true[relay] envelope
+[console] [relay] envelope[relay] envelope
+[console] [relay] envelope[relay] envelope
+[console] [relay] envelope[relay] envelope
+[console] [relay] envelope
