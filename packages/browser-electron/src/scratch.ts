@@ -45,12 +45,15 @@ export interface ScratchRules {
   readonly mayNavigate: (url: URL) => boolean
   /** Any request at all, subresources included (a signed-in site's domain is refused here). */
   readonly mayRequest: (url: URL) => boolean
-  /** Waits for the site's rate budget before a top-level navigation; rejects to refuse it. */
+  /**
+   * Waits for the site's rate budget before a top-level navigation; rejects to refuse it, with an
+   * error whose `detail` is the sentence for the agent.
+   */
   readonly pace: (host: string) => Promise<void>
   /** The site refused the browser (a 429, an HTML 403): it has closed. */
   readonly blocked: (host: string, status: number) => void
-  /** False for text the browser must not type (a username Valet holds). */
-  readonly mayType: (text: string) => boolean
+  /** False for text the browser must not type (a login secret or session value Valet knows). */
+  readonly mayType: (text: string) => boolean | Promise<boolean>
 }
 
 export interface ScratchOptions {
@@ -271,7 +274,7 @@ export class ScratchBrowser {
     this.open()
     if (text.length > SCRATCH_LIMITS.typeChars)
       throw new ScratchError('That is more text than the browser types.')
-    if (!this.options.rules.mayType(text)) throw new ScratchError('Valet doesn’t type that here.')
+    if (!(await this.options.rules.mayType(text))) throw new ScratchError('Valet doesn’t type that here.')
     const selector = this.selectorOf(target)
     const field = (await this.run(fieldScript(selector))) as {
       error?: string
@@ -360,7 +363,8 @@ export class ScratchBrowser {
     return this.options.rules.pace(url.hostname).then(
       () => !this.closed,
       (error: unknown) => {
-        this.refusal = error instanceof ScratchError ? error.detail : 'Valet held that page back.'
+        const detail = (error as { readonly detail?: unknown } | null)?.detail
+        this.refusal = typeof detail === 'string' ? detail.slice(0, 300) : 'Valet held that page back.'
         return false
       },
     )

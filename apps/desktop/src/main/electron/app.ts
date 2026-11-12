@@ -11,6 +11,7 @@ import {
   createElectronSessionDriver,
   hardenProcess,
   type ManifestOptions,
+  openElectronScratchBrowser,
   partitionName,
   startEgressProxy,
 } from '@valet/browser-electron'
@@ -55,6 +56,7 @@ import type { DemoSite } from './demo'
 import { launchRefused } from './guard'
 import { broadcast, registerIpc } from './ipc'
 import { systemNotifications } from './notifications'
+import { publicOnlyDial } from './public-dial'
 import { SandboxPool } from './sandbox'
 import { utilityToolProcess } from './tool-process'
 import { type AppTray, createTray } from './tray'
@@ -266,6 +268,7 @@ async function main(): Promise<void> {
   // The adapter sandbox (docs/sandbox.md): anything that slips past a sandbox window's request
   // filter meets a proxy that refuses every host.
   const sandboxProxy = await startEgressProxy({ allow: () => false })
+  let scratchOpens = 0
   const sandboxes = new SandboxPool({
     preload: join(import.meta.dirname, '../preload/sandbox.cjs'),
     wasm: join(import.meta.dirname, '../preload/quickjs.wasm'),
@@ -393,6 +396,13 @@ async function main(): Promise<void> {
         : createElectronSessionDriver(manifest, { ...reporters }),
     credentials: demoSite === null ? realCredentials(credentialDeps) : demoSite.credentials,
     approvalKeys,
+    // Each open its own in-memory partition, so nothing a page left behind is there the next time.
+    scratch: (draftId, rules) =>
+      openElectronScratchBrowser({
+        partition: `scratch:${draftId}:${++scratchOpens}`,
+        rules,
+        dial: publicOnlyDial(),
+      }),
     startEndpoint: (caller, clients, onSessionsChanged, admin, authoring) =>
       startEndpoint({
         caller,

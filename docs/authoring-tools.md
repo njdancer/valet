@@ -118,8 +118,7 @@ a new request.
 
 | Tool                     | Input                                    | Action (tier)           | What it does                                                                                                                                                                                       |
 | ------------------------ | ---------------------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `valet_browser_open`     | `draftId`, `url`                         | `scratch.browse` (none) | Opens the draft's scratch browser (anonymous, in memory) at `url`, and returns a snapshot.                                                                                                         |
-| `valet_browser_navigate` | `draftId`, `url`                         | `scratch.browse` (none) | The same, in the open page.                                                                                                                                                                        |
+| `valet_browser_open`     | `draftId`, `url`                         | `scratch.browse` (none) | Opens the draft's scratch browser (anonymous, in memory) at `url`, or navigates it there if open, and returns a snapshot.                                                                          |
 | `valet_browser_click`    | `draftId`, `ref` or `selector`           | `scratch.browse` (none) | Clicks, as trusted input; returns a snapshot.                                                                                                                                                      |
 | `valet_browser_type`     | `draftId`, `ref` or `selector`, `text`   | `scratch.browse` (none) | Types literal text. Refused into password and one-time-code fields.                                                                                                                                |
 | `valet_browser_snapshot` | `draftId`, `root?`, `maxNodes?`          | `scratch.browse` (none) | The page as interactive and text nodes with refs. Scripts, comments, hidden nodes and every input's value are stripped; text is cut to 200 characters a node; all of it is marked as the site's.   |
@@ -567,8 +566,15 @@ the none tier; this is the same call E made for reads, and is put to B.)
    store, and service tests through the real broker. Moved to PR 2: the e2e over MCP against the
    built app, and `display.agentTests` once B's PR #86 lands (until then the card shows Valet's
    checks only, never the agent's cases).
-2. **PR 2:** the scratch browser, network log, fixture capture, the fixture browser (cases with
-   pages), live trials; the Drafts page on the Mac (`mac-sites-drafts`, `mac-draft-page`).
+2. **PR 2**, in two parts. **2a (built):** the scratch browser (`ScratchBrowser` in
+   `@valet/browser-electron`, `ScratchSessions` and the scrubbing in `drafts/research.ts`), the
+   research tools (`valet_browser_open` also navigates, so there is no separate navigate tool), the
+   network log over the DevTools Network domain, fixture capture with provenance, and the dial
+   that refuses private addresses once resolved. Pacing in 2a is the authoring budget (30 loads
+   per registrable domain an hour, 3 seconds apart); sharing the runtime's rate budget and breaker
+   with installed adapters comes with live trials. **2b:** live trials, the fixture browser (cases
+   with pages), `display.agentTests`, the Drafts page on the Mac (`mac-sites-drafts`,
+   `mac-draft-page`), and the e2e over MCP against the built app.
 3. **PR 3:** repair tickets and the reproduction check; signed-in sessions; private network; the
    hostile-page suite; the eval (an agent from a clean chat builds Yahoo Finance and a fake-login
    site's adapter, and repairs a broken one), run by a model through the MCP endpoint against the

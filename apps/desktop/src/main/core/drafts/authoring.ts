@@ -10,16 +10,23 @@ import {
   bundleHash,
   type PackageFiles,
   type PermissionChange,
+  parseManifest,
   sha256Hex,
 } from '@valet/core'
 import {
   type Authoring,
   AuthoringRefusal,
+  type BrowserQuery,
+  type BrowserTarget,
+  type BrowserView,
+  type Captured,
   type CheckReport,
   type ClientIdentity,
   type DiffReport,
   type DraftDetail,
   type DraftList,
+  type NetworkBody,
+  type NetworkLog,
   type SubmitReport,
 } from '@valet/mcp-server'
 import type { ToolProcessFactory } from '@valet/runtime'
@@ -34,6 +41,14 @@ import {
   lint,
   siteDomain,
 } from './checks'
+import {
+  fixtureFits,
+  ResearchRefusal,
+  type ScratchHandle,
+  type ScratchSessions,
+  scrubBody,
+  scrubUrl,
+} from './research'
 import { DRAFT_LIMITS, DraftError, type DraftRecord, type DraftStore } from './store'
 import { blankDraft } from './template'
 
@@ -109,6 +124,8 @@ export interface AuthoringDeps {
   readonly notify: (text: string) => void
   readonly now: () => number
   readonly checkBudgetMs?: number
+  /** The scratch browsers (PR 2); without them the research tools say this build has none. */
+  readonly research?: ScratchSessions
 }
 
 interface CheckOutcome {
@@ -225,6 +242,7 @@ export class DraftAuthoring implements Authoring {
     const record = await this.own(viewer, draftId)
     if (record.status === 'waiting' && record.submission !== null)
       await this.deps.withdraw(record.submission.requestId).catch(() => undefined)
+    this.deps.research?.close(draftId)
     await this.deps.store.delete(draftId)
     for (const key of [...this.written.keys()]) if (key.startsWith(`${draftId}:`)) this.written.delete(key)
     await this.deps.audit({
@@ -576,6 +594,155 @@ export class DraftAuthoring implements Authoring {
     }
   }
 
+  // ---------- The scratch browser (PR 2) ----------
+
+  async browserOpen(viewer: ClientIdentity, draftId: string, url: string): Promise<BrowserView> {
+    const record = await this.own(viewer, draftId)
+    const files = await this.wrap(() => this.deps.store.files(draftId))
+    let manifest: AdapterManifest | null = null
+    try {
+      manifest = parseManifest(JSON.parse(files['manifest.json'] ?? 'null'))
+    } catch {
+      manifest = null
+    }
+    const browser = await this.researching(() =>
+      this.sessions().browser(
+        draftId,
+        clientKey(viewer),
+        this.deps.clientName(viewer),
+        record.adapterId,
+        manifest,
+      ),
+    )
+    return view(await this.researching(() => browser.navigate(url)))
+  }
+
+  async browserClick(viewer: ClientIdentity, draftId: string, target: BrowserTarget): Promise<BrowserView> {
+    const browser = await this.scratch(viewer, draftId)
+    return view(await this.researching(() => browser.click(target)))
+  }
+
+  async browserType(
+    viewer: ClientIdentity,
+    draftId: string,
+    target: BrowserTarget,
+    text: string,
+  ): Promise<BrowserView> {
+    const browser = await this.scratch(viewer, draftId)
+    return view(await this.researching(() => browser.type(target, text)))
+  }
+
+  async browserSnapshot(
+    viewer: ClientIdentity,
+    draftId: string,
+    options: { readonly root?: string; readonly maxNodes?: number },
+  ): Promise<BrowserView> {
+    const browser = await this.scratch(viewer, draftId)
+    return view(await this.researching(() => browser.snapshot(options)))
+  }
+
+  async browserQuery(viewer: ClientIdentity, draftId: string, selector: string): Promise<BrowserQuery> {
+    const browser = await this.scratch(viewer, draftId)
+    const found = await this.researching(() => browser.query(selector))
+    return {
+      count: found.count,
+      matches: found.matches.map((m) => ({
+        tag: m.tag,
+        id: m.id,
+        classes: m.classes,
+        fromSite: m.text,
+        visible: m.visible,
+      })),
+    }
+  }
+
+  async networkLog(
+    viewer: ClientIdentity,
+    draftId: string,
+    filter: { readonly sinceSeq?: number; readonly host?: string; readonly type?: string },
+  ): Promise<NetworkLog> {
+    const browser = await this.scratch(viewer, draftId)
+    return {
+      entries: browser.entries(filter).map((e) => ({ ...e, url: scrubUrl(e.url) })),
+    }
+  }
+
+  async networkBody(viewer: ClientIdentity, draftId: string, seq: number): Promise<NetworkBody> {
+    const browser = await this.scratch(viewer, draftId)
+    const found = await this.researching(() => browser.body(seq))
+    if (found === null)
+      throw new AuthoringRefusal('The browser no longer holds that response. Load the page again.')
+    const scrubbed = scrubBody(found.text, found.entry.mimeType)
+    if ('refused' in scrubbed) throw new AuthoringRefusal(scrubbed.refused)
+    return {
+      seq,
+      url: scrubUrl(found.entry.url),
+      mimeType: found.entry.mimeType,
+      fromSite: scrubbed.value,
+      truncated: scrubbed.truncated,
+    }
+  }
+
+  async captureFixture(
+    viewer: ClientIdentity,
+    draftId: string,
+    source: { readonly seq: number } | { readonly page: true },
+    path: string,
+  ): Promise<Captured> {
+    await this.own(viewer, draftId)
+    const browser = await this.scratch(viewer, draftId)
+    let text: string
+    if ('page' in source) {
+      const misfit = fixtureFits(path, 'text/html', true)
+      if (misfit !== null) throw new AuthoringRefusal(misfit)
+      text = await this.researching(() => browser.document())
+    } else {
+      const found = await this.researching(() => browser.body(source.seq))
+      if (found === null)
+        throw new AuthoringRefusal('The browser no longer holds that response. Load the page again.')
+      const misfit = fixtureFits(path, found.entry.mimeType, false)
+      if (misfit !== null) throw new AuthoringRefusal(misfit)
+      text = found.text
+    }
+    await this.wrap(() => this.deps.store.write(draftId, path, text))
+    const digest = sha256Hex(text)
+    this.written.set(`${draftId}:${path}`, digest)
+    await this.wrap(() =>
+      this.deps.store.update(draftId, (r) => ({ ...r, recorded: { ...r.recorded, [path]: digest } })),
+    )
+    return { path, bytes: Buffer.byteLength(text, 'utf8'), recordedByValet: true }
+  }
+
+  /** On lockdown or pause: every scratch browser closes. */
+  closeBrowsers(): void {
+    this.deps.research?.closeAll()
+  }
+
+  private sessions(): ScratchSessions {
+    const research = this.deps.research
+    if (research === undefined) throw new AuthoringRefusal('This build of Valet has no scratch browser.')
+    return research
+  }
+
+  private async scratch(viewer: ClientIdentity, draftId: string): Promise<ScratchHandle> {
+    await this.own(viewer, draftId)
+    return this.researching(async () => this.sessions().current(draftId))
+  }
+
+  /** The browser's and the sessions' refusals, in their words; anything else stays hidden. */
+  private async researching<T>(run: () => Promise<T>): Promise<T> {
+    try {
+      return await run()
+    } catch (error) {
+      if (error instanceof AuthoringRefusal) throw error
+      if (error instanceof ResearchRefusal) throw new AuthoringRefusal(error.detail)
+      const detail = error as { readonly name?: unknown; readonly detail?: unknown } | null
+      if (detail?.name === 'ScratchError' && typeof detail.detail === 'string')
+        throw new AuthoringRefusal(detail.detail)
+      throw error
+    }
+  }
+
   private checkLimit(client: string): void {
     if (!take(this.checks, client, CHECKS_PER_CLIENT_PER_HOUR, this.deps.now()))
       throw new AuthoringRefusal(
@@ -595,6 +762,37 @@ export class DraftAuthoring implements Authoring {
       if (error instanceof DraftError) throw new AuthoringRefusal(error.detail)
       throw error
     }
+  }
+}
+
+/** A snapshot for the agent: everything the site wrote under fromSite. */
+function view(snapshot: {
+  readonly url: string
+  readonly title: string
+  readonly nodes: readonly {
+    readonly ref: string
+    readonly kind: 'interactive' | 'text'
+    readonly tag: string
+    readonly role: string | null
+    readonly text: string
+    readonly href: string | null
+    readonly inputType: string | null
+  }[]
+  readonly cut: boolean
+}): BrowserView {
+  return {
+    url: scrubUrl(snapshot.url),
+    title: { fromSite: snapshot.title },
+    nodes: snapshot.nodes.map((n) => ({
+      ref: n.ref,
+      kind: n.kind,
+      tag: n.tag,
+      role: n.role,
+      fromSite: n.text,
+      href: n.href,
+      inputType: n.inputType,
+    })),
+    cut: snapshot.cut,
   }
 }
 
