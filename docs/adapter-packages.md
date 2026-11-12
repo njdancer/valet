@@ -9,7 +9,8 @@ drafts written by agents are F. This document is what those streams build on.
 Status: built (2026-11-12). Reviewed by the security-design thread (B) before it was built, with
 its six points folded in (/mnt/project-files/reviews/2026-11-12-b-review-of-c-packages.md), and by
 an adversarial review of the design, whose findings are folded in below (schema patterns, the swap
-race, rollback eligibility, pruning, checking input before anything waits).
+race, rollback eligibility, pruning, checking input before anything waits), and by an adversarial
+review of the code, whose fixes are noted where they apply.
 
 ## What changes, in one paragraph
 
@@ -107,7 +108,10 @@ adapterHash = bundleHash({ ...every file under src/, ":manifest.json": canonical
   JavaScript only, so the app ships no native binary to sign and notarise, and spawns no process
   (esbuild-wasm's Node API would start `node` from the PATH). The worker gets `browser.js` and
   `esbuild.wasm` as data, which electron-builder packs with the app. The worker is started on first
-  use and held open only while a compile waits.
+  use and held open only while a compile waits. A compile has 30 seconds; one that runs over, or
+  that breaks esbuild itself rather than failing with a located error (deep nesting can), has
+  its worker terminated and the next compile starts a fresh one, so one hostile package can't
+  stop every later install. The worker's heap is capped.
 - **Input:** only the in-memory files. The browser build has no file system at all; a resolver
   plugin serves relative imports of `.ts` files under `src/` that are in the map, and refuses
   everything else, so a package can't name a file outside itself.
@@ -145,7 +149,9 @@ which means adapter code (a `refine`, a `transform`) runs in the trusted process
    check, and before the call joins the site's queue, reads settings or asks for confirmation, a
    short-lived tool process parses the input with the adapter's real zod schema (`check`). So a
    pattern or refinement the main process couldn't apply still refuses the call before it costs
-   the person a confirmation or a place in the queue. Each call then uses two tool processes.
+   the person a confirmation or a place in the queue. Each call then uses two tool processes; at
+   most four checks per adapter run at once (`MAX_INPUT_CHECKS`), and a call past that is told
+   to retry, so parallel calls can't start processes without bound.
 5. **Authoritative parse at run.** The tool process parses the raw input with the real schema
    again before `run` (so transforms, defaults and refinements behave exactly as written), and
    parses the output with the real output schema before sending it. The main process's check is
@@ -184,6 +190,9 @@ adapters/
   registered, the audit gets `adapter-refused` with the reason, and the adapter shows a health
   problem. For a built-in, the app's own copy is written back (it's part of the signed app), so a
   corrupted Woolworths file heals at the next launch; for anything else the adapter stays off.
+  Only a damaged file (a store error) heals like that: a version that fails to compile or
+  describe (describe is tried twice, since a cold launch can be slow) is audited and skipped for
+  that launch, the built-in serving in memory, and the person's pinned choice is left as it is.
 - **The approval store decides what runs, not `state.json`.** Invariant: an adapter has at most
   one approved hash (`ApprovalStore.approve` replaces the earlier one; a test pins it). The active
   version's tools are listed only if its hash is the approved one. So `state.json`'s `active` is
@@ -198,9 +207,9 @@ adapters/
 
 ## Install, update and rollback
 
-One code path, `PackageManager.install(package, source)` in the app (over `loadPackage` and
-`AdapterStore.put` in `@valet/adapter-store`), used by the built-ins, the development
-folder and (later) drafts:
+One code path in the app's `PackageManager` (over `loadPackage` and `AdapterStore.put` in
+`@valet/adapter-store`), used by the development folder and (later) drafts; the built-ins use its
+steps 1 to 3 at launch. Installs and rollbacks of one adapter run one at a time.
 
 1. `checkPackage`, hash, compile and describe. Any failure ends here with nothing stored.
    **Until workstream I's sandbox exists, `install` refuses the `draft` source** (the package
@@ -209,17 +218,20 @@ folder and (later) drafts:
    (`node:vm` is not a boundary), so it must only ever run code the person put there themselves:
    the app's built-ins and a development folder in a development build. F's draft tests and live
    trials fall under the same rule.
-2. Write the version file (if that hash isn't stored already) and add it to the history.
-3. Make it the active version. For `folder` and `draft` it is also pinned (below).
-4. Swap it into the running tool host (`ToolHost.replace`): take the adapter's lock (a running
+2. Swap it into the running tool host (`ToolHost.replace`): take the adapter's lock (a running
    call finishes first; if it doesn't within the wait, the install fails with "busy" and the old
    version keeps serving), close the old driver, register the new one. A call that was queued
    behind the swap finds a different version when it gets the lock and returns busy without
    starting, so no call checked against one version's schemas runs another's code; the same holds
    for a login step. An install is refused while a login handoff is open. Login sessions survive,
    because the browser partitions are named by adapter id, not hash, and the redaction secrets the
-   old session learned carry to the new one.
-5. Audit `adapter-installed` with the hash, version, source, the hash it replaced and the `app`
+   old session learned carry to the new one. The service's own driver map changes only once the
+   swap is done, so a login window opened meanwhile belongs to the old version.
+3. Only now, with it running: write the version file (always, since the content is fixed by the
+   hash, which also repairs a damaged file when the same package is installed again), add it to
+   the history and make it active; for `folder` and `draft` it is also pinned (below). So a swap
+   that is refused leaves the store and the audit as they were.
+4. Audit `adapter-installed` with the hash, version, source, the hash it replaced and the `app`
    record above.
 
 The new hash starts unapproved, so its tools stay hidden until the person approves it on the
@@ -245,11 +257,15 @@ or installed their own version keeps it.
 
 **Rollback.** From an adapter's Versions tab in the Mac app ("Kept versions"), the person picks
 a stored version and clicks Roll back. Only versions whose **latest** decision in the audit log
-is `adapter-approved` are offered (and the service refuses any other), so a version rejected after
+is `adapter-approved` are offered (and the service refuses any other, and refuses any rollback
+while the audit chain doesn't verify, so a line added by hand can't make a version look
+approved), so a version rejected after
 it was once approved never comes back. The confirmation shows the
 target's permission diff against the **active** version, because an older version can have more
 egress, requests or secrets than the one it replaces. That click is the approval: a gesture in
-the app, audited as `adapter-approved` with the hash it replaces, plus `adapter-activated`. The
+the app, audited as `adapter-approved` with the hash it replaces, plus `adapter-activated`
+(the approval is audited even when the target was still the approved hash, as when an update was
+installed and never approved). The
 version is swapped in and pinned. The grants that come back are exactly the ones still in the
 grant store for that hash: one the person revoked after moving off that version stays revoked
 (tested). Once D lands, rollback becomes one of its `adapter-install` approval requests. A
@@ -288,6 +304,17 @@ names the fake shop's origins and so has a different hash, never meets the real 
 | Rolling back to a version never approved, or rejected | Not offered; the service refuses it                                          |
 | An install from the `draft` source                    | Refused until the sandbox (I) exists                                         |
 | `active` in `state.json` edited to another version    | That version loads with no tools: its hash isn't the approved one            |
+
+## Known gaps
+
+- A call's login that carries on after the caller was answered can outlive the adapter's lock, so
+  a swap can close the old driver in the middle of it. The login fails and runs again; nothing
+  of the new version runs in it.
+- The folder reader checks each entry with `lstat` and then reads it, so a file swapped for a
+  symlink in between is followed. It reads only a folder the person picked, in a development
+  build.
+- An adapter whose only stored version fails to load disappears from Sites for that launch, so
+  its history isn't reachable from the app until it loads again.
 
 ## Options considered
 

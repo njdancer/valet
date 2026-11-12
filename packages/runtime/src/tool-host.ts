@@ -246,6 +246,8 @@ export class ToolHost {
   private readonly locks = new KeyedMutex()
   /** Per adapter, one ticket for each call or login step holding or waiting for its lock, in order. */
   private readonly queues = new Map<string, symbol[]>()
+  /** Per adapter, the input checks running in tool processes now (MAX_INPUT_CHECKS). */
+  private readonly checking = new Map<string, number>()
   private readonly protection: SiteProtection
   private readonly clock: Clock
   private readonly sleep: Sleep
@@ -599,12 +601,17 @@ export class ToolHost {
     // queue, any setting's apply tool or a confirmation, so a call they refuse sends nothing.
     const isolation = entry.isolation
     if (isolation !== undefined && !internal) {
-      const accepted = await checkInputIsolated(
-        isolation.start,
-        isolation.script,
-        declaration.name,
-        input.output,
-      )
+      // Each check is a tool process of its own, started before the queue's limits apply, so a
+      // client firing calls in parallel is held to a few at once.
+      const checking = this.checking.get(manifest.id) ?? 0
+      if (checking >= MAX_INPUT_CHECKS) return busy(entry.site, 0)
+      this.checking.set(manifest.id, checking + 1)
+      let accepted: boolean
+      try {
+        accepted = await checkInputIsolated(isolation.start, isolation.script, declaration.name, input.output)
+      } finally {
+        this.checking.set(manifest.id, (this.checking.get(manifest.id) ?? 1) - 1)
+      }
       if (!accepted) return failed('tool-input', 'invalid')
     }
 
@@ -1357,10 +1364,14 @@ function blocked(site: SiteGuards): ToolCallResult {
   return { status: 'blocked', retryAfterMs: site.breaker.retryAfterMs() }
 }
 
+/** Input checks one adapter may have running at once; a call past that is told to retry. */
+export const MAX_INPUT_CHECKS = 4
+
 /**
  * A call that gave up waiting its turn. The time to try again is a guess, since nothing says how
  * long the calls in front will take: one of the site's gaps for each, within fixed bounds.
  */
+
 function busy(site: SiteGuards, ahead: number): ToolCallResult {
   const calls = Math.max(1, ahead)
   const estimate = calls * site.budget.gapMs

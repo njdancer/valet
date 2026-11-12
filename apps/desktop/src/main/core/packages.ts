@@ -28,6 +28,13 @@ export interface InstalledAdapter extends BuiltinAdapter {
   readonly source: PackageSource
 }
 
+/** A version checked, compiled and described, not yet stored. */
+export interface PreparedInstall {
+  readonly loaded: LoadedPackage
+  readonly source: PackageSource
+  readonly adapter: InstalledAdapter
+}
+
 /** Hashes the store must not drop for an adapter: the approved one and any with grants. */
 export type KeepHashes = (adapterId: string) => Promise<ReadonlySet<string>>
 
@@ -83,14 +90,11 @@ export class PackageManager {
   }
 
   /**
-   * Checks, compiles and describes `files`, then stores the version and makes it active. Throws
-   * InstallError with the first problem; nothing is stored then. The draft source is refused
+   * Checks, compiles and describes `files`, storing nothing: the caller swaps the result in and
+   * only then commits it. Throws InstallError with the first problem. The draft source is refused
    * until the sandbox exists (the store refuses it too).
    */
-  async install(
-    files: PackageFiles,
-    source: PackageSource,
-  ): Promise<{ readonly adapter: InstalledAdapter; readonly previousHash: string | null }> {
+  async prepare(files: PackageFiles, source: PackageSource): Promise<PreparedInstall> {
     if (source === 'draft') throw new InstallError('Drafts can be installed once the adapter sandbox exists.')
     let loaded: LoadedPackage
     try {
@@ -98,11 +102,13 @@ export class PackageManager {
     } catch (error) {
       throw new InstallError(describeFailure(error))
     }
-    const id = loaded.manifest.id
-    const state = await this.options.store.state(id).catch(() => null)
-    const previousHash = state?.active ?? null
-    await this.put(loaded, source, { activate: true }, state)
-    return { adapter: toInstalled(loaded, source), previousHash }
+    return { loaded, source, adapter: toInstalled(loaded, source) }
+  }
+
+  /** Stores a prepared version and makes it active, auditing adapter-installed. */
+  async commit(prepared: PreparedInstall): Promise<void> {
+    const state = await this.options.store.state(prepared.loaded.manifest.id).catch(() => null)
+    await this.put(prepared.loaded, prepared.source, { activate: true }, state)
   }
 
   /** The adapter's history, or null. */
@@ -135,19 +141,24 @@ export class PackageManager {
   ): Promise<InstalledAdapter | null> {
     const { store } = this.options
     const state = await store.state(id).catch(() => null)
+    let damaged = state === null
     if (state !== null) {
       const entry = state.versions.find((v) => v.hash === state.active)
       try {
         const checked = await store.read(id, state.active)
-        return toInstalled(await loadPackage(checked.files, this.options.runtime), entry?.source ?? 'folder')
+        return toInstalled(await this.loadRetrying(checked.files), entry?.source ?? 'folder')
       } catch (error) {
         await this.refused(id, state.active, error)
+        // Only a stored version that is missing or isn't what its hash says is damaged. A compile
+        // or describe that failed (a slow launch, say) leaves the person's choice as it is.
+        damaged = error instanceof StoreError
       }
     }
     if (builtin === undefined) return null
-    // The app's own copy, written back and made active, unpinned. It needs approval again only if
-    // its hash isn't the approved one.
-    await this.put(builtin, 'builtin', { activate: true, pin: false, rewrite: true }, state)
+    // The app's own copy. If the stored one was damaged it is written back and made active,
+    // unpinned; otherwise it serves for this launch only. Either way it needs approval again only
+    // if its hash isn't the approved one.
+    if (damaged) await this.put(builtin, 'builtin', { activate: true, pin: false }, state)
     try {
       return toInstalled(await loadPackage(builtin.files, this.options.runtime), 'builtin')
     } catch (error) {
@@ -159,7 +170,7 @@ export class PackageManager {
   private async put(
     checked: CheckedPackage,
     source: PackageSource,
-    how: { readonly activate: boolean; readonly pin?: boolean; readonly rewrite?: boolean },
+    how: { readonly activate: boolean; readonly pin?: boolean },
     before: StoredState | null,
   ): Promise<void> {
     const id = checked.manifest.id
@@ -169,7 +180,6 @@ export class PackageManager {
       now: this.options.now(),
       activate: how.activate,
       ...(how.pin === undefined ? {} : { pin: how.pin }),
-      ...(how.rewrite === true ? { rewrite: true } : {}),
       keep: await this.options.keep(id),
     })
     if (!how.activate) return
@@ -184,6 +194,16 @@ export class PackageManager {
       previousHash,
       ...this.options.build,
     })
+  }
+
+  /** Loads, once more after a failure that isn't the package's own (the tool process, a timeout). */
+  private async loadRetrying(files: PackageFiles): Promise<LoadedPackage> {
+    try {
+      return await loadPackage(files, this.options.runtime)
+    } catch (error) {
+      if (!(error instanceof LoadError) || error.stage !== 'describe') throw error
+      return loadPackage(files, this.options.runtime)
+    }
   }
 
   private async refused(adapterId: string, adapterHash: string, error: unknown): Promise<void> {

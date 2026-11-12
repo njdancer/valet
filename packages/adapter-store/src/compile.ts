@@ -19,6 +19,9 @@ import { TOOL_LIBRARY_GLOBAL } from '@valet/runtime/tool-script'
 /** The esbuild version compiling packages. A test checks it matches the installed esbuild-wasm. */
 export const COMPILER_VERSION = '0.28.2'
 
+/** A compile that takes longer is abandoned and its worker replaced. */
+export const COMPILE_TIMEOUT_MS = 30_000
+
 export class CompileError extends Error {
   constructor(readonly detail: string) {
     super(`compile failed: ${detail}`)
@@ -108,13 +111,16 @@ parentPort.on('message', async ({ id, files, entry, global }) => {
   } catch (error) {
     const first = error && Array.isArray(error.errors) ? error.errors[0] : undefined
     let detail = 'the bundler failed'
+    // Without a located error the bundler itself broke (deep nesting can kill esbuild's service):
+    // the main thread then replaces this worker rather than keep one that fails every compile.
+    const fatal = !first
     if (first) {
       const at = first.location && typeof first.location.file === 'string'
         ? first.location.file.replace('valet-package:', '') + ':' + first.location.line + ': '
         : ''
       detail = clip(at + (typeof first.text === 'string' ? first.text : 'error'))
     }
-    parentPort.postMessage({ id, ok: false, detail })
+    parentPort.postMessage({ id, ok: false, detail, fatal })
   }
 })
 `
@@ -130,7 +136,10 @@ export class Compiler {
   private readonly pending = new Map<number, Pending>()
   private next = 1
 
-  constructor(private readonly files: CompilerFiles = defaultCompilerFiles()) {}
+  constructor(
+    private readonly files: CompilerFiles = defaultCompilerFiles(),
+    private readonly timeoutMs = COMPILE_TIMEOUT_MS,
+  ) {}
 
   /**
    * The adapter's own code as one IIFE defining `__valetTools` (`tools`, `ValetError`,
@@ -142,11 +151,39 @@ export class Compiler {
     const worker = await this.start()
     const id = this.next++
     return new Promise<string>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject })
+      const timer = setTimeout(() => {
+        if (!this.pending.has(id)) return
+        this.pending.delete(id)
+        reject(new CompileError('the compile took too long'))
+        // A worker stuck on one package would hold every later compile: start afresh.
+        void this.discard(worker)
+      }, this.timeoutMs)
+      this.pending.set(id, {
+        resolve: (text) => {
+          clearTimeout(timer)
+          resolve(text)
+        },
+        reject: (error) => {
+          clearTimeout(timer)
+          reject(error)
+        },
+      })
       // Held open only while a compile is waiting, so an idle compiler never keeps a process alive.
       worker.ref()
       worker.postMessage({ id, files: { ...files }, entry: PACKAGE_ENTRY, global: TOOL_LIBRARY_GLOBAL })
     })
+  }
+
+  /** Drops `worker` if it is still the current one, failing whatever waits on it. */
+  private async discard(worker: Worker): Promise<void> {
+    const current = this.worker === null ? null : await this.worker.catch(() => null)
+    if (current !== worker) return
+    this.worker = null
+    for (const [id, waiting] of this.pending) {
+      this.pending.delete(id)
+      waiting.reject(new CompileError('the compiler stopped'))
+    }
+    await worker.terminate()
   }
 
   /** Stops the worker. A later compile starts another. */
@@ -157,22 +194,34 @@ export class Compiler {
   }
 
   private start(): Promise<Worker> {
-    this.worker ??= (async () => {
+    if (this.worker !== null) return this.worker
+    const started: Promise<Worker> = (async () => {
       const [source, wasm] = await Promise.all([
         readFile(this.files.browserJs, 'utf8'),
         readFile(this.files.wasm),
       ])
-      const worker = new Worker(WORKER, { eval: true, workerData: { source, wasm } })
-      worker.unref()
-      worker.on('message', (m: { id: number; ok: boolean; text?: string; detail?: string }) => {
-        const waiting = this.pending.get(m.id)
-        if (waiting === undefined) return
-        this.pending.delete(m.id)
-        if (this.pending.size === 0) worker.unref()
-        if (m.ok && typeof m.text === 'string') waiting.resolve(m.text)
-        else waiting.reject(new CompileError(typeof m.detail === 'string' ? m.detail : 'failed'))
+      const worker = new Worker(WORKER, {
+        eval: true,
+        workerData: { source, wasm },
+        // A hostile package can't take the main process's memory with it.
+        resourceLimits: { maxOldGenerationSizeMb: 512 },
       })
+      worker.unref()
+      worker.on(
+        'message',
+        (m: { id: number; ok: boolean; text?: string; detail?: string; fatal?: boolean }) => {
+          const waiting = this.pending.get(m.id)
+          if (waiting !== undefined) {
+            this.pending.delete(m.id)
+            if (this.pending.size === 0) worker.unref()
+            if (m.ok && typeof m.text === 'string') waiting.resolve(m.text)
+            else waiting.reject(new CompileError(typeof m.detail === 'string' ? m.detail : 'failed'))
+          }
+          if (m.fatal === true) void this.discard(worker)
+        },
+      )
       const fail = (): void => {
+        if (this.worker !== started) return
         this.worker = null
         for (const [id, waiting] of this.pending) {
           this.pending.delete(id)
@@ -183,7 +232,12 @@ export class Compiler {
       worker.on('exit', fail)
       return worker
     })()
-    return this.worker
+    this.worker = started
+    // A compiler that couldn't start (its files unreadable) is tried again next time.
+    started.catch(() => {
+      if (this.worker === started) this.worker = null
+    })
+    return started
   }
 }
 

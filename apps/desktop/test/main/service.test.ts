@@ -2557,15 +2557,22 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
   const shopPackage = (reply: string, input: ManifestInput = SHOP) =>
     packageOf(parseManifest(input), { 'src/tools.ts': echoTools(reply) })
 
-  async function withPackages(folder: PackageFiles | null = null, dir?: string) {
+  async function withPackages(
+    folder: PackageFiles | null = null,
+    dir?: string,
+    describe: 'answers' | 'hangs' = 'answers',
+  ) {
     const start = inMemoryToolProcess()
     const prelude = await buildToolLibrary()
+    // A tool process that never answers describe: a launch where the tool process is too slow.
+    const hanging = () => ({ send: () => {}, onMessage: () => {}, onExit: () => {}, kill: () => {} })
     const picked = { next: folder }
     const s = await setup({
       ...(dir === undefined ? {} : { dir }),
       packages: {
         builtins: [shopPackage('v1:')],
-        runtime: { prelude, start },
+        runtime:
+          describe === 'answers' ? { prelude, start } : { prelude, start: hanging, describeTimeoutMs: 50 },
         build: buildRecord('0.1.0', prelude),
         folders: { pick: async () => picked.next },
       },
@@ -2678,6 +2685,59 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
     const refused = readAudit(again.paths.audit).find((e) => e.type === 'adapter-refused')
     expect(refused).toMatchObject({ adapterId: 'shop', adapterHash: builtin, reason: 'hash-mismatch' })
     expect(await again.call('echo', { text: 'hi' })).toMatchObject({ output: { text: 'v1:hi' } })
+  })
+
+  it('audits a rollback as the person’s approval even when the target was still the approved hash', async () => {
+    const s = await withPackages(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
+    const v1 = s.hashOf(shopPackage('v1:'))
+    await s.api.approvals.approve('shop', v1)
+    // v2 installed and never approved: v1 is still the approved hash.
+    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true })
+    await s.api.adapters.rollback('shop', v1)
+    const events = readAudit(s.paths.audit).filter((e) => e.type.startsWith('adapter-'))
+    expect(events.slice(-2)).toEqual([
+      expect.objectContaining({ type: 'adapter-approved', adapterHash: v1 }),
+      expect.objectContaining({ type: 'adapter-activated', adapterHash: v1 }),
+    ])
+    expect(await s.call('echo', { text: 'hi' })).toMatchObject({ output: { text: 'v1:hi' } })
+  })
+
+  it('refuses a rollback when the activity log doesn’t verify', async () => {
+    const s = await withPackages(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
+    const v1 = s.hashOf(shopPackage('v1:'))
+    await s.api.approvals.approve('shop', v1)
+    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true })
+    const lines = readFileSync(s.paths.audit, 'utf8').split('\n')
+    lines[0] = lines[0]?.replace('"adapter-installed"', '"adapter-approved"') ?? ''
+    writeFileSync(s.paths.audit, lines.join('\n'))
+    await expect(s.api.adapters.rollback('shop', v1)).rejects.toThrow(/verify/)
+  })
+
+  it('keeps the person’s version when it only fails to describe at launch', async () => {
+    const s = await withPackages(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
+    const v2 = s.hashOf(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
+    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true })
+    await s.service.stop()
+    const slow = await withPackages(null, s.dir, 'hangs')
+    expect(readAudit(slow.paths.audit).at(-1)).toMatchObject({ type: 'adapter-refused', reason: 'describe' })
+    await slow.service.stop()
+    // Nothing was rewritten: the next ordinary launch runs the folder version again.
+    const state = JSON.parse(readFileSync(join(s.paths.adapters, 'shop', 'state.json'), 'utf8'))
+    expect(state).toMatchObject({ active: v2, pinned: true })
+  })
+
+  it('repairs a damaged version file when the same package is installed again', async () => {
+    const v2files = shopPackage('v2:', { ...SHOP, version: '2.0.0' })
+    const s = await withPackages(v2files)
+    const v2 = s.hashOf(v2files)
+    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true })
+    const file = join(s.paths.adapters, 'shop', `${v2}.json`)
+    writeFileSync(file, '{')
+    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true, hash: v2 })
+    await s.api.approvals.approve('shop', v2)
+    await s.service.stop()
+    const again = await withPackages(null, s.dir)
+    expect(await again.call('echo', { text: 'hi' })).toMatchObject({ output: { text: 'v2:hi' } })
   })
 
   it('pointing state.json at an unapproved version gets nothing: its tools stay hidden', async () => {

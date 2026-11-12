@@ -315,6 +315,8 @@ export class AppService {
   private readonly broker: ConfirmationBroker
   private readonly handoffs: Handoffs
   private readonly drivers = new Map<string, SessionDriver>()
+  /** Per adapter, the install or rollback in progress: they run one at a time. */
+  private readonly changing = new Map<string, Promise<unknown>>()
   /** The adapter versions registered now: deps.adapters, or what the store loaded at start. */
   private installed: BuiltinAdapter[]
   private readonly packages: PackageManager | null
@@ -598,6 +600,7 @@ export class AppService {
     for (const adapter of this.installed) {
       const driver = await this.driverFor(adapter)
       host.register(this.registration(adapter, driver))
+      this.drivers.set(adapter.definition.manifest.id, driver)
     }
     this.caller = new RuntimeToolCaller(host, {
       paused: () => this.paused,
@@ -1019,7 +1022,6 @@ export class AppService {
   }
 
   private registration(adapter: BuiltinAdapter, driver: SessionDriver) {
-    this.drivers.set(adapter.definition.manifest.id, driver)
     const start = this.deps.toolProcess
     return {
       definition: adapter.definition,
@@ -1054,12 +1056,13 @@ export class AppService {
     try {
       await host.replace(this.registration(next, driver))
     } catch (error) {
-      if (previous !== undefined) this.drivers.set(id, previous)
       await driver.close().catch(() => undefined)
       throw error instanceof ValetError && error.errorClass === 'busy'
         ? new InstallError('The site is busy with calls; try again in a minute.')
         : error
     }
+    // Only now: until the swap is done, a login window or a blocked report finds the old driver.
+    this.drivers.set(id, driver)
     await previous?.close().catch(() => undefined)
     const at = this.installed.findIndex((a) => a.definition.manifest.id === id)
     if (at === -1) this.installed.push(next)
@@ -1077,10 +1080,29 @@ export class AppService {
     files: PackageFiles,
     source: 'folder' | 'draft',
   ): Promise<{ adapterId: string; hash: string }> {
-    if (this.packages === null) throw new InstallError('This build cannot install adapters.')
-    const { adapter } = await this.packages.install(files, source)
-    await this.swapIn(adapter)
-    return { adapterId: adapter.definition.manifest.id, hash: adapter.hash }
+    const packages = this.packages
+    if (packages === null) throw new InstallError('This build cannot install adapters.')
+    const prepared = await packages.prepare(files, source)
+    const { adapter } = prepared
+    const id = adapter.definition.manifest.id
+    await this.oneAtATime(id, async () => {
+      // Stored and audited only once it is the version running, so a refused swap changes nothing.
+      await this.swapIn(adapter)
+      await packages.commit(prepared)
+    })
+    return { adapterId: id, hash: adapter.hash }
+  }
+
+  /** Runs `change` after any other install or rollback of the same adapter has finished. */
+  private oneAtATime<T>(adapterId: string, change: () => Promise<T>): Promise<T> {
+    const before = this.changing.get(adapterId) ?? Promise.resolve()
+    const run = before.catch(() => undefined).then(change)
+    const settled = run.catch(() => undefined)
+    this.changing.set(adapterId, settled)
+    void settled.then(() => {
+      if (this.changing.get(adapterId) === settled) this.changing.delete(adapterId)
+    })
+    return run
   }
 
   /**
@@ -1131,12 +1153,27 @@ export class AppService {
    * approval: audited as adapter-approved (with the hash it replaces) and adapter-activated. Its
    * grants come back exactly as the grant store still holds them; a revoked one stays revoked.
    */
-  async rollback(adapterId: string, hash: string): Promise<void> {
+  rollback(adapterId: string, hash: string): Promise<void> {
+    return this.oneAtATime(adapterId, () => this.rollbackNow(adapterId, hash))
+  }
+
+  private async rollbackNow(adapterId: string, hash: string): Promise<void> {
     const target = await this.rollbackTarget(adapterId, hash)
     const active = this.requireAdapter(adapterId)
     await this.swapIn(target)
     const version = target.definition.manifest.version
+    const already = (await this.approvals.approvedHashes(adapterId)).includes(hash)
     await this.approvals.approve(adapterId, hash, version)
+    // The click is the decision even when the hash was still the approved one (an update installed
+    // but never approved), so it is audited either way.
+    if (already)
+      await this.audit.append({
+        type: 'adapter-approved',
+        adapterId,
+        adapterHash: hash,
+        version,
+        previousHash: hash,
+      })
     const at = new Date(this.deps.now()).toISOString()
     await this.snapshots.put(adapterId, target, at)
     this.approvedAt.set(`${adapterId}:${hash}`, at)
@@ -1155,6 +1192,10 @@ export class AppService {
     if (this.packages === null) throw new InstallError('This build cannot roll back adapters.')
     const active = this.requireAdapter(adapterId)
     if (hash === active.hash) throw new InstallError('That version is already active.')
+    // Eligibility comes from the audit log, so only from one whose chain checks out: a line added
+    // by hand doesn't make a version look approved.
+    if ((await this.reader.verify(new Date(this.deps.now()))).state !== 'intact')
+      throw new InstallError('The activity log doesn’t verify, so Valet can’t tell what you approved.')
     const eligible = rollbackEligible(await this.reader.records(), adapterId)
     if (!eligible.has(hash))
       throw new InstallError('Only a version you approved before can be rolled back to.')

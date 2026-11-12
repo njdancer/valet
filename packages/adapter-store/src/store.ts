@@ -99,8 +99,6 @@ export interface PutOptions {
   readonly pin?: boolean
   /** Hashes that must not be dropped to keep within MAX_VERSIONS: the approved one, any with grants. */
   readonly keep?: ReadonlySet<string>
-  /** Write the version file even if that hash is stored: the app's own copy healing a damaged one. */
-  readonly rewrite?: boolean
 }
 
 export class AdapterStore {
@@ -188,11 +186,9 @@ export class AdapterStore {
       const hash = checked.adapterHash
       const current = await this.state(id).catch(() => null)
       const stored = current?.versions.find((v) => v.hash === hash)
-      if (stored === undefined || options.rewrite === true)
-        await writeFileAtomic(
-          join(folder, `${hash}.json`),
-          JSON.stringify({ format: 1, files: checked.files }),
-        )
+      // Always written: the content is fixed by the hash, so writing it again repairs a damaged
+      // file when the same package is installed again (or a built-in heals).
+      await writeFileAtomic(join(folder, `${hash}.json`), JSON.stringify({ format: 1, files: checked.files }))
       const entry: StoredVersion = stored ?? {
         hash,
         packageHash: checked.packageHash,
@@ -206,7 +202,7 @@ export class AdapterStore {
       const pinned = activate ? (options.pin ?? options.source !== 'builtin') : (current?.pinned ?? false)
       const others = (current?.versions ?? []).filter((v) => v.hash !== hash)
       const keep = new Set([active, ...(options.keep ?? [])])
-      const versions = trim([...others, entry], keep)
+      const versions = trim([...others, entry], keep, active)
       const dropped = (current?.versions ?? []).filter((v) => !versions.some((w) => w.hash === v.hash))
       const state: AdapterState = { active, pinned, versions }
       await this.writeState(id, state)
@@ -242,10 +238,17 @@ export class AdapterStore {
 }
 
 /** Oldest first; drops the oldest that isn't kept until within MAX_VERSIONS. */
-function trim(versions: StoredVersion[], keep: ReadonlySet<string>): StoredVersion[] {
+function trim(versions: StoredVersion[], keep: ReadonlySet<string>, active: string): StoredVersion[] {
   const out = [...versions]
   while (out.length > MAX_VERSIONS) {
     const index = out.findIndex((v) => !keep.has(v.hash))
+    if (index === -1) break
+    out.splice(index, 1)
+  }
+  // Kept versions may hold the count above MAX_VERSIONS, but never past what state.json may hold:
+  // past that the oldest kept one goes too (its grants then name a version no longer stored).
+  while (out.length > MAX_VERSIONS * 2) {
+    const index = out.findIndex((v) => v.hash !== active)
     if (index === -1) break
     out.splice(index, 1)
   }
