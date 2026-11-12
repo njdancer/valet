@@ -357,6 +357,7 @@ const EVENT_FIELDS: Readonly<Record<AuditEvent['type'], readonly string[]>> = {
   'draft-created': ['draftId', 'adapterId', 'clientId'],
   'draft-submitted': ['draftId', 'adapterId', 'clientId', 'adapterHash', 'packageHash', 'requestId'],
   'draft-deleted': ['draftId', 'adapterId', 'clientId'],
+  'draft-trial': ['draftId', 'adapterId', 'clientId', 'tool', 'host', 'packageHash', 'outcome'],
 }
 
 function eventEntry(event: AuditEvent): AdminAuditPage['records'][number]['event'] {

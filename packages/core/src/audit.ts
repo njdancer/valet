@@ -272,6 +272,20 @@ export type AuditEvent =
       readonly adapterId: string
       readonly clientId: string
     }
+  | {
+      /**
+       * An agent ran one of a draft's read tools against the real site, signed out
+       * (docs/authoring-tools.md#live-trials). Notify tier. The output itself isn't kept.
+       */
+      readonly type: 'draft-trial'
+      readonly draftId: string
+      readonly adapterId: string
+      readonly clientId: string
+      readonly tool: string
+      readonly host: string
+      readonly packageHash: string
+      readonly outcome: 'output' | 'invalid-output' | 'timeout' | 'needs-user' | 'site-resting' | 'error'
+    }
   | { readonly type: 'device-paired'; readonly deviceId: string; readonly platform: 'ios' | 'macos' }
   | { readonly type: 'device-revoked'; readonly deviceId: string; readonly by: string }
   | {

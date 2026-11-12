@@ -241,6 +241,12 @@ export interface ServiceDeps {
    * that don't drive a browser, and then the research tools say so.
    */
   readonly scratch?: (draftId: string, rules: ScratchRules) => Promise<ScratchHandle>
+  /**
+   * A session driver for a draft's live trial (docs/authoring-tools.md#live-trials): partitions in
+   * memory named by `label`, through the same public-only dial. None in tests that don't drive a
+   * browser, and then valet_live_trial says so.
+   */
+  readonly trialDriver?: (manifest: AdapterManifest, label: string) => Promise<SessionDriver>
   readonly ui: UiPort
   readonly emit: (event: AppEvent) => void
   /** The stdio bridge's command line for a client's config file, for snippets; null when it can't be launched. */
@@ -1706,24 +1712,42 @@ export class AppService {
       notify: (text) => this.notifier.draftActivity(text),
       now: this.deps.now,
       ...(this.deps.scratch === undefined ? {} : { research: this.scratchSessions(this.deps.scratch) }),
+      ...(this.deps.trialDriver === undefined
+        ? {}
+        : {
+            trials: {
+              // A fresh one-shot sandbox window for the call, as for a case.
+              start: runtime.start,
+              driver: this.deps.trialDriver,
+              // The installed adapters' own budget and breaker for the host.
+              guards: (host: string) => this.runtime().siteGuards(host),
+              signedIn: () => this.signedInDomains(),
+            },
+          }),
     })
+  }
+
+  /**
+   * The registrable domains of installed adapters with a grant or a signed-in (or expired)
+   * session, by adapter id: scratch browsers and live trials don't reach them but for their own.
+   */
+  private async signedInDomains(): Promise<ReadonlyMap<string, readonly string[]>> {
+    const grants = await this.grants.list().catch(() => [] as readonly Grant[])
+    const out = new Map<string, readonly string[]>()
+    for (const adapter of this.installed) {
+      const id = adapter.definition.manifest.id
+      const session = this.sessions.get(id).state
+      if (grants.some((g) => g.adapterId === id) || session === 'logged-in' || session === 'expired')
+        out.set(id, draftDomains(adapter.definition.manifest))
+    }
+    return out
   }
 
   /** The scratch browsers' rules from what is installed and signed in now. */
   private scratchSessions(open: NonNullable<ServiceDeps['scratch']>): ScratchSessions {
     return new ScratchSessions({
       open,
-      signedIn: async () => {
-        const grants = await this.grants.list().catch(() => [] as readonly Grant[])
-        const out = new Map<string, readonly string[]>()
-        for (const adapter of this.installed) {
-          const id = adapter.definition.manifest.id
-          const session = this.sessions.get(id).state
-          if (grants.some((g) => g.adapterId === id) || session === 'logged-in' || session === 'expired')
-            out.set(id, draftDomains(adapter.definition.manifest))
-        }
-        return out
-      },
+      signedIn: () => this.signedInDomains(),
       secretIn: (text) => this.knownSecretIn([text]),
       blocked: (host) => {
         this.deps.diagnostics?.({ type: 'scratch-blocked' })

@@ -345,12 +345,12 @@ function describeExpect(expected: DraftCase['expect']): string {
   return 'output'
 }
 
-type Described =
+export type Described =
   | { kind: 'error'; stage: string; errorClass: string; text: string }
   | { kind: 'needs-user'; reason: string; text: string }
   | { kind: 'other'; text: string }
 
-function describeError(error: unknown): Described {
+export function describeError(error: unknown): Described {
   if (error instanceof ValetError) {
     return {
       kind: 'error',

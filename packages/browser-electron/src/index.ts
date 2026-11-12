@@ -24,7 +24,7 @@ export {
   underApiRoot,
 } from './guards'
 export { needsUserTitle } from './needs-user'
-export { partitionName } from './partitions'
+export { partitionName, trialPartitionName } from './partitions'
 export type * from './platform'
 export { CHROMIUM_SWITCHES, hardenProcess } from './process-hardening'
 export {

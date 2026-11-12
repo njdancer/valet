@@ -89,3 +89,18 @@ describe('the hourly cap', () => {
     await expect(host.runLoginStep('example-shop', async () => 'done')).resolves.toBe('done')
   })
 })
+
+describe('a live trial’s guards', () => {
+  it('are the installed adapter’s own for its host, and fresh defaults for any other', async () => {
+    const { run, host } = setup()
+    for (let i = 0; i < 4; i++) await run()
+    const shared = host.siteGuards(new URL(HOME).hostname.toUpperCase())
+    // The installed adapter spent the hour's budget; a trial on its site waits on the same one.
+    expect(shared.budget.waitMs()).toBeGreaterThan(0)
+    expect((await run()).status).toBe('blocked')
+    const other = host.siteGuards('elsewhere.test')
+    expect(other).not.toBe(shared)
+    expect(other.budget.gapMs).toBe(2000)
+    expect(host.siteGuards('elsewhere.test')).toBe(other)
+  })
+})

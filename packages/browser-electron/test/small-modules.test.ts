@@ -1,7 +1,7 @@
 import { NEEDS_USER_REASONS, ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import { needsUserTitle } from '../src/needs-user'
-import { partitionName } from '../src/partitions'
+import { partitionName, trialPartitionName } from '../src/partitions'
 import { sleep } from '../src/platform'
 import { CHROMIUM_SWITCHES, hardenProcess } from '../src/process-hardening'
 import { withTimeout } from '../src/timeout'
@@ -18,6 +18,13 @@ describe('partitionName', () => {
     for (const id of ['woolworths:x', '../woolworths', 'Woolworths', 'w', '', 'a b', 'tool:woolworths']) {
       expect(() => partitionName('auth', id), id).toThrow(ValetError)
     }
+  })
+
+  it('names a trial’s partitions in memory, never persistent, and refuses a label that could', () => {
+    expect(trialPartitionName('tool', 'dr-aaaaaaaaaa-1')).toBe('trial:tool:dr-aaaaaaaaaa-1')
+    expect(trialPartitionName('auth', 'dr-aaaaaaaaaa-1').startsWith('persist:')).toBe(false)
+    for (const label of ['', 'a:b', 'persist:x', 'A', 'a b', `a${'b'.repeat(80)}`])
+      expect(() => trialPartitionName('tool', label), label).toThrow(ValetError)
   })
 })
 

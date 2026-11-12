@@ -116,17 +116,17 @@ a new request.
 
 ### Research (PR 2)
 
-| Tool                     | Input                                    | Action (tier)           | What it does                                                                                                                                                                                       |
-| ------------------------ | ---------------------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `valet_browser_open`     | `draftId`, `url`                         | `scratch.browse` (none) | Opens the draft's scratch browser (anonymous, in memory) at `url`, or navigates it there if open, and returns a snapshot.                                                                          |
-| `valet_browser_click`    | `draftId`, `ref` or `selector`           | `scratch.browse` (none) | Clicks, as trusted input; returns a snapshot.                                                                                                                                                      |
-| `valet_browser_type`     | `draftId`, `ref` or `selector`, `text`   | `scratch.browse` (none) | Types literal text. Refused into password and one-time-code fields.                                                                                                                                |
-| `valet_browser_snapshot` | `draftId`, `root?`, `maxNodes?`          | `scratch.browse` (none) | The page as interactive and text nodes with refs. Scripts, comments, hidden nodes and every input's value are stripped; text is cut to 200 characters a node; all of it is marked as the site's.   |
-| `valet_browser_query`    | `draftId`, `selector`                    | `scratch.browse` (none) | How many elements match and a short description of each: for checking a selector before using it in code.                                                                                          |
-| `valet_network_log`      | `draftId`, `sinceSeq?`, `host?`, `type?` | `scratch.browse` (none) | The scratch partition's requests, scrubbed (below).                                                                                                                                                |
-| `valet_network_body`     | `draftId`, `seq`, `jsonPath?`            | `scratch.browse` (none) | One response body, scrubbed and cut.                                                                                                                                                               |
-| `valet_capture_fixture`  | `draftId`, `seq` or `page: true`, `path` | `draft.edit` (none)     | Saves a response body, or the current document, into the draft's `fixtures/` as Valet recorded it, with cookie values replaced. Valet remembers its hash, so the card can say "recorded by Valet". |
-| `valet_live_trial`       | `draftId`, `tool`, `input`               | `draft.trial` (notify)  | Runs one of the draft's read tools for real, in a fresh anonymous partition, in the sandbox, under the draft manifest's own guards. Paced, budgeted, recorded on the draft for the card.           |
+| Tool                     | Input                                    | Action (tier)           | What it does                                                                                                                                                                                               |
+| ------------------------ | ---------------------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `valet_browser_open`     | `draftId`, `url`                         | `scratch.browse` (none) | Opens the draft's scratch browser (anonymous, in memory) at `url`, or navigates it there if open, and returns a snapshot.                                                                                  |
+| `valet_browser_click`    | `draftId`, `ref` or `selector`           | `scratch.browse` (none) | Clicks, as trusted input; returns a snapshot.                                                                                                                                                              |
+| `valet_browser_type`     | `draftId`, `ref` or `selector`, `text`   | `scratch.browse` (none) | Types literal text. Refused into password and one-time-code fields.                                                                                                                                        |
+| `valet_browser_snapshot` | `draftId`, `root?`, `maxNodes?`          | `scratch.browse` (none) | The page as interactive and text nodes with refs. Scripts, comments, hidden nodes and every input's value are stripped; text is cut to 200 characters a node; all of it is marked as the site's.           |
+| `valet_browser_query`    | `draftId`, `selector`                    | `scratch.browse` (none) | How many elements match and a short description of each: for checking a selector before using it in code.                                                                                                  |
+| `valet_network_log`      | `draftId`, `sinceSeq?`, `host?`, `type?` | `scratch.browse` (none) | The scratch partition's requests, scrubbed (below).                                                                                                                                                        |
+| `valet_network_body`     | `draftId`, `seq`, `jsonPath?`            | `scratch.browse` (none) | One response body, scrubbed and cut.                                                                                                                                                                       |
+| `valet_capture_fixture`  | `draftId`, `seq` or `page: true`, `path` | `draft.edit` (none)     | Saves a response body, or the current document, into the draft's `fixtures/` as Valet recorded it, with cookie values replaced. Valet remembers its hash, so the card can say "recorded by Valet".         |
+| `valet_live_trial`       | `draftId`, `tool`, `input`               | `draft.trial` (notify)  | Runs one of the draft's read tools for real, in a fresh anonymous partition, in the sandbox, under the draft manifest's surface and the site's own budget and breaker. Recorded on the draft for the card. |
 
 No tool runs script in a page (`page_evaluate` from authoring-agent.md is gone): the agent reads
 pages through snapshots and queries, and the draft's own `page.evaluate` runs only inside a live
@@ -418,21 +418,32 @@ B's rules ("Agents as authors") and authoring-agent.md's `scratch` partition, ad
 
 ## Live trials (PR 2)
 
-- Read tools only (`sideEffect: 'read'`); a write or irreversible tool can't be trialled. Because
-  the agent writes those labels, a trial also refuses every non-GET request, whatever its declared
-  purpose.
-- Runs the draft's tool code in a one-shot sandbox window with `createLocalAccess(…, 'none', …)`,
-  against a **fresh** anonymous partition (not the agent's scratch browser, so nothing the agent left
-  there runs with it), through the same `ElectronSessionDriver` a real call uses, with the draft
-  manifest's egress, navigation and request surface and `maxPurpose: 'read'`, through the egress
-  proxy, with the scratch browser's rules for private addresses, signed-in sites, caps and blocks.
-  `session.ensure` returns `needs-user` ("trials run signed out"). (B's "egress limited to the
-  scratch partition's": the scratch rules apply on top of the manifest's, which can only narrow.)
-- Paced like a real call (the site's rate budget, the breaker) and limited to 6 trials per draft per
-  hour. Notify tier: the person is told "Claude Code tried get_quote on yahoo.com" (the tool's
-  name, not its agent-written title).
-- The result is parsed against the output schema and returned to the agent marked as the site's
-  data, and recorded on the draft with the package hash, for the card's "Live trial" line.
+Built in PR 2b: `drafts/trial.ts` runs the call, `DraftAuthoring.liveTrial` decides whether it may.
+
+- Read tools only (`sideEffect: 'read'`); a write or irreversible tool can't be tried. Because the
+  agent writes those labels, the run's policy also allows only the manifest's `read` declarations
+  (`maxPurpose: 'read'`), and the runtime's `GuardedToolPage` holds the tool to them.
+- The draft is built afresh (C's `prepare`) and its compiled code runs in a one-shot sandbox
+  window with no local access, through the same `ElectronSessionDriver` a real call uses, opened
+  with `trialLabel`: both partitions are in memory (`trial:<role>:<draftId>-<n>`), new for each
+  trial, so nothing the agent's scratch browser or the installed adapter holds is there. The
+  driver's proxy dials through `publicOnlyDial`, so private addresses stay refused.
+- `session.ensure` answers `needs-user` `login-required` ("trials are signed out"), unless the
+  manifest's probe is `none`. A draft whose domains include a site the person is signed in to with
+  another adapter is refused, as for the scratch browser.
+- Paced as a real call: `ToolHost.siteGuards(host)` hands the trial the installed adapters' own
+  rate budget and breaker for the host (manifest defaults when none has it; a draft's limits never
+  widen them). An open breaker or a spent hourly cap sends nothing ("the site is resting"); a block
+  the trial meets trips the breaker for everyone. At most 6 trials per draft an hour, one at a time,
+  60 seconds each.
+- Notify tier: the person is told "Claude Code tried get_quote on yahoo.com." (the tool's name,
+  not its agent-written title), and the `draft-trial` audit record keeps the tool, host, package
+  hash and outcome, never the output.
+- The output, held to the tool's output schema by the sandbox, goes back under `fromSite`, cut at
+  20,000 characters of JSON, with the requests the driver refused (scrubbed) so the agent can fix
+  egress or requests. The trial is recorded on the draft with the package hash; a submit of exactly
+  those files puts "Live trial of get_quote, signed out: returned output that fits its schema" (or
+  how it failed) on the card, and "Live trial: not run on this version" otherwise.
 
 ## Repairs (PR 3)
 
@@ -572,9 +583,11 @@ the none tier; this is the same call E made for reads, and is put to B.)
    network log over the DevTools Network domain, fixture capture with provenance, and the dial
    that refuses private addresses once resolved. Pacing in 2a is the authoring budget (30 loads
    per registrable domain an hour, 3 seconds apart); sharing the runtime's rate budget and breaker
-   with installed adapters comes with live trials. **2b:** live trials, the fixture browser (cases
-   with pages), `display.agentTests`, the Drafts page on the Mac (`mac-sites-drafts`,
-   `mac-draft-page`), and the e2e over MCP against the built app.
+   with installed adapters comes with live trials. **2b:** live trials (built: `valet_live_trial`,
+   `drafts/trial.ts`, `trialLabel` partitions, `ToolHost.siteGuards`, the `draft-trial` record and
+   the card's trial lines); still to come in 2b: the fixture browser (cases with pages),
+   `display.agentTests`, the Drafts page on the Mac (`mac-sites-drafts`, `mac-draft-page`), and the
+   e2e over MCP against the built app.
 3. **PR 3:** repair tickets and the reproduction check; signed-in sessions; private network; the
    hostile-page suite; the eval (an agent from a clean chat builds Yahoo Finance and a fake-login
    site's adapter, and repairs a broken one), run by a model through the MCP endpoint against the

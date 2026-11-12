@@ -29,6 +29,7 @@ import {
   type PackageFiles,
   packageOf,
   parseManifest,
+  type SessionDriver,
   ValetError,
 } from '@valet/core'
 import {
@@ -117,6 +118,7 @@ async function setup(
     packages?: ServiceDeps['packages']
     toolProcess?: ToolProcessFactory
     sandbox?: ServiceDeps['sandbox']
+    trialDriver?: ServiceDeps['trialDriver']
   } = {},
 ) {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'sa-service-'))
@@ -191,6 +193,7 @@ async function setup(
     ...(options.packages === undefined ? {} : { packages: options.packages }),
     ...(options.toolProcess === undefined ? {} : { toolProcess: options.toolProcess }),
     ...(options.sandbox === undefined ? {} : { sandbox: options.sandbox }),
+    ...(options.trialDriver === undefined ? {} : { trialDriver: options.trialDriver }),
     createDriver: async (_manifest, reporters) => {
       driver.reporters = reporters
       return driver
@@ -2777,6 +2780,7 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
     dir?: string,
     describe: 'answers' | 'hangs' = 'answers',
     sandbox?: ServiceDeps['sandbox'],
+    trialDriver?: ServiceDeps['trialDriver'],
   ) {
     const start = inMemoryToolProcess()
     const prelude = await buildToolLibrary()
@@ -2794,6 +2798,7 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
       },
       toolProcess: start,
       ...(sandbox === undefined ? {} : { sandbox }),
+      ...(trialDriver === undefined ? {} : { trialDriver }),
     })
     const hashOf = (files: PackageFiles) => checkPackage(files).adapterHash
     return { ...s, picked, hashOf }
@@ -3163,6 +3168,41 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
       await s.api.approvals.approve('example', asked.adapterHash)
       expect((await authoring.getDraft(viewer, false, draft.draftId)).draft.status).toBe('approved')
       expect(s.endpoint.caller?.listTools().some((t) => t.adapterId === 'example')).toBe(true)
+    })
+
+    it('tries a draft’s read tool through a trial driver of its own, and audits it', async () => {
+      const opened: { id: string; label: string }[] = []
+      const trialDriver: NonNullable<ServiceDeps['trialDriver']> = async (manifest, label) => {
+        opened.push({ id: manifest.id, label })
+        return {
+          beginRun: () => undefined,
+          endRun: () => undefined,
+          close: async () => undefined,
+          toolPage: async () => ({
+            fetch: async () => ({
+              status: 200,
+              contentType: 'application/json',
+              body: { id: 'abc-1', title: 'Live', price: 1 },
+            }),
+          }),
+        } as unknown as SessionDriver
+      }
+      const s = await withPackages(null, undefined, 'answers', undefined, trialDriver)
+      const viewer: ClientIdentity = {
+        origin: 'local',
+        clientId: (await s.api.clients.add('Claude Code')).id,
+      }
+      const authoring = s.endpoint.authoring as Authoring
+      const { draft } = await authoring.createDraft(viewer, { adapterId: 'example', from: 'blank' })
+      const report = await authoring.liveTrial(viewer, draft.draftId, 'get_item', { id: 'abc-1' })
+      expect(report).toMatchObject({ ok: true, output: { fromSite: { name: 'Live', price: 1 } } })
+      expect(opened).toEqual([{ id: 'example', label: `${draft.draftId.toLowerCase()}-1` }])
+      expect(readAudit(s.paths.audit).find((e) => e.type === 'draft-trial')).toMatchObject({
+        adapterId: 'example',
+        tool: 'get_item',
+        host: 'www.example.com',
+        outcome: 'output',
+      })
     })
   })
 })

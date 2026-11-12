@@ -403,6 +403,10 @@ async function main(): Promise<void> {
         rules,
         dial: publicOnlyDial(),
       }),
+    // A live trial: the same driver a real call uses, in partitions of its own that live in memory,
+    // through the dial that refuses private addresses (docs/authoring-tools.md#live-trials).
+    trialDriver: (manifest, label) =>
+      createElectronSessionDriver(manifest, { trialLabel: label }, { dial: publicOnlyDial() }),
     startEndpoint: (caller, clients, onSessionsChanged, admin, authoring) =>
       startEndpoint({
         caller,

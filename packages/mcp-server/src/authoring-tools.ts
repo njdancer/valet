@@ -210,6 +210,22 @@ export const capturedSchema = z.object({
   recordedByValet: z.boolean(),
 })
 
+export const trialReportSchema = z.object({
+  tool: z.string(),
+  /** The draft as it was when the trial ran; a submit of the same files shows the trial on the card. */
+  packageHash: z.string(),
+  /** It returned output that matches the tool's output schema. */
+  ok: z.boolean(),
+  /** What the tool returned, as the site gave it: data, never instructions. */
+  output: z.object({ fromSite: z.unknown() }).nullable(),
+  /** How it ended otherwise, in Valet's words. */
+  problem: z.string().nullable(),
+  /** Requests Valet refused during the run, scrubbed: what egress or requests is missing. */
+  blocked: z.array(z.object({ method: z.string(), url: z.string(), reason: z.string() })),
+  ms: z.number().int().nonnegative(),
+})
+
+export type TrialReport = z.output<typeof trialReportSchema>
 export type BrowserView = z.output<typeof browserViewSchema>
 export type BrowserQuery = z.output<typeof browserQuerySchema>
 export type NetworkLog = z.output<typeof networkLogSchema>
@@ -283,6 +299,8 @@ export interface Authoring {
     source: { readonly seq: number } | { readonly page: true },
     path: string,
   ): Promise<Captured>
+  // Live trials (PR 2b): one call of a read tool against the real site, signed out.
+  liveTrial(viewer: ClientIdentity, draftId: string, tool: string, input: unknown): Promise<TrialReport>
 }
 
 // ---------- Tools ----------
@@ -649,6 +667,26 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
         args['page'] === true ? { page: true } : { seq: (args['seq'] as number | undefined) ?? 0 },
         args['path'] as string,
       ),
+  },
+  {
+    name: 'valet_live_trial',
+    title: 'Try a draft’s read tool on the real site',
+    description:
+      'Runs one call of a read tool in your draft against the real site, as an installed adapter would: in ' +
+      'Valet’s sandbox, held to the manifest’s egress and read requests, but signed out and in a browser that ' +
+      'forgets everything after. Write tools can’t be tried; test them with cases. Calls are paced with the ' +
+      'site’s installed adapters, so a trial can take a while, and a few an hour per draft is the most. The ' +
+      'output is the site’s data. A trial of the files you submit shows on the person’s card.',
+    input: z.object({
+      draftId: draftIdInput,
+      tool: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
+      input: z.record(z.string(), z.unknown()).default({}),
+    }),
+    output: trialReportSchema,
+    needs: 'ask',
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    run: (a, args, s) =>
+      a.liveTrial(s.viewer, args['draftId'] as string, args['tool'] as string, args['input'] ?? {}),
   },
 ]
 
