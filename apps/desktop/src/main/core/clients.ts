@@ -36,6 +36,11 @@ const clientSchema = z
         seeValet: z.boolean(),
         /** Those tools show other agents' calls too, not only its own. */
         allActivity: z.boolean(),
+        /**
+         * "Ask for changes": drafts, checks and submits (docs/authoring-tools.md), each still
+         * approved by the person. Absent in files from before it: on, as for a new local app.
+         */
+        askForChanges: z.boolean().optional(),
       })
       .strict()
       .optional(),
@@ -50,13 +55,17 @@ const fileSchema = z
 
 type StoredClient = z.infer<typeof clientSchema>
 
-export type ClientCapabilities = NonNullable<StoredClient['capabilities']>
+export type ClientCapabilities = Required<NonNullable<StoredClient['capabilities']>>
 
 /**
  * A local app sees Valet, and only its own calls, until the person says otherwise: section 5's
  * "own; All with the tick". The tick lives on the app's Connections page (not built yet).
  */
-export const DEFAULT_CAPABILITIES: ClientCapabilities = { seeValet: true, allActivity: false }
+export const DEFAULT_CAPABILITIES: ClientCapabilities = {
+  seeValet: true,
+  allActivity: false,
+  askForChanges: true,
+}
 
 /**
  * How the screens name a transport: the bridge as stdio, everything else as HTTP. The endpoint
@@ -160,7 +169,9 @@ export class ClientRegistry {
   capabilities(id: string): ClientCapabilities | null {
     const client = this.get(id)
     if (client === null || client.revokedAt !== null) return null
-    return client.capabilities ?? DEFAULT_CAPABILITIES
+    const stored = client.capabilities
+    if (stored === undefined) return DEFAULT_CAPABILITIES
+    return { ...stored, askForChanges: stored.askForChanges ?? DEFAULT_CAPABILITIES.askForChanges }
   }
 
   /** Changes what a client may see. False for an unknown or revoked client. */
@@ -170,6 +181,7 @@ export class ClientRegistry {
     const next: ClientCapabilities = {
       seeValet: patch.seeValet ?? current.seeValet,
       allActivity: patch.allActivity ?? current.allActivity,
+      askForChanges: patch.askForChanges ?? current.askForChanges,
     }
     this.clients = this.clients.map((c) => (c.id === id ? { ...c, capabilities: next } : c))
     await this.save()

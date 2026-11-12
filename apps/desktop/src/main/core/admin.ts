@@ -56,9 +56,12 @@ export interface AdminSource {
     readonly { readonly callId: string; readonly startedAt: string; readonly clientId: string | null }[]
   >
   /** What a local app may see (its stored capabilities); null for one the app doesn't know. */
-  readonly access: (
-    clientId: string,
-  ) => { readonly seeValet: boolean; readonly allActivity: boolean; readonly name: string } | null
+  readonly access: (clientId: string) => {
+    readonly seeValet: boolean
+    readonly allActivity: boolean
+    readonly askForChanges: boolean
+    readonly name: string
+  } | null
   readonly lockedDown: () => boolean
   /** The tools on for cloud agents now, as `<adapterId>.<tool>`. */
   readonly remoteTools: () => ReadonlySet<string>
@@ -76,6 +79,7 @@ export function adminReader(source: AdminSource): AdminReader {
       (viewer.origin === 'local' ? source.access(viewer.clientId) : null) ?? {
         seeValet: false,
         allActivity: false,
+        askForChanges: false,
         name: 'This app',
       },
     sensitive: (texts) => source.sensitive(texts),
@@ -350,6 +354,9 @@ const EVENT_FIELDS: Readonly<Record<AuditEvent['type'], readonly string[]>> = {
   'device-paired': ['deviceId', 'platform'],
   'device-revoked': ['deviceId', 'by'],
   'store-refused': ['store', 'reason', 'records'],
+  'draft-created': ['draftId', 'adapterId', 'clientId'],
+  'draft-submitted': ['draftId', 'adapterId', 'clientId', 'adapterHash', 'packageHash', 'requestId'],
+  'draft-deleted': ['draftId', 'adapterId', 'clientId'],
 }
 
 function eventEntry(event: AuditEvent): AdminAuditPage['records'][number]['event'] {
