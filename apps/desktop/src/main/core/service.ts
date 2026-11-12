@@ -1209,22 +1209,30 @@ export class AppService {
   private adminReader(): AdminReader {
     return adminReader({
       api: this.api,
+      adapterDetails: async () => (await this.states()).map(adapterDetail),
+      callIndex: async () =>
+        (await this.reader.records()).flatMap((r) =>
+          r.event.type === 'tool-called'
+            ? [{ callId: r.event.callId, startedAt: r.at, clientId: r.event.clientId ?? null }]
+            : [],
+        ),
       lockedDown: () => this.appState.lockedDown,
       remoteTools: () => new Set(this.remote.status().tools),
-      sensitive: (text) => this.knownSecretIn(text),
+      sensitive: (texts) => this.knownSecretIn(texts),
       // Which tool, never what matched.
       withheld: () => this.deps.diagnostics?.({ type: 'admin-result-withheld' }),
     })
   }
 
   /**
-   * True when `text` holds a secret a login registered this session, or a value from any adapter's
-   * tool-partition session. Fails closed: a session that can't be read counts as a match.
+   * True when any of `texts` holds a secret a login registered this session, or a value from any
+   * adapter's tool-partition session. Each session is read once per call. Fails closed: a session
+   * that can't be read counts as a match.
    */
-  private async knownSecretIn(text: string): Promise<boolean> {
+  private async knownSecretIn(texts: readonly string[]): Promise<boolean> {
     for (const adapter of this.deps.adapters) {
       const { id, session } = adapter.definition.manifest
-      if (this.loginSecrets.occursIn(id, text)) return true
+      if (texts.some((text) => this.loginSecrets.occursIn(id, text))) return true
       const driver = this.drivers.get(id)
       if (driver === undefined) continue
       let values: readonly string[]
@@ -1233,7 +1241,8 @@ export class AppService {
       } catch {
         return true
       }
-      if (sensitiveMatcher(values, NO_SECRETS)(text)) return true
+      const match = sensitiveMatcher(values, NO_SECRETS)
+      if (texts.some(match)) return true
     }
     return false
   }

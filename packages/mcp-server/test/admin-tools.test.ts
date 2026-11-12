@@ -250,7 +250,7 @@ describe('runAdminTool', () => {
     const withheld: string[] = []
     const r = reader({
       calls: async () => ({ calls: [{ ...CALL, client: 'hunter2-client' }] }),
-      sensitive: (t) => t.includes('hunter2'),
+      sensitive: (ts) => ts.some((t) => t.includes('hunter2')),
       withheld: (name) => withheld.push(name),
     })
     const result = await runAdminTool(tool('valet_list_calls'), r, {})
@@ -262,9 +262,31 @@ describe('runAdminTool', () => {
     const secret = 'pa"ss\\word'
     const r = reader({
       calls: async () => ({ calls: [{ ...CALL, client: `x${secret}y` }] }),
-      sensitive: (t) => t.includes(secret),
+      sensitive: (ts) => ts.some((t) => t.includes(secret)),
     })
     expect(text(await runAdminTool(tool('valet_list_calls'), r, {}))).toBe(ADMIN_WITHHELD_RESULT)
+  })
+
+  it('scans once per result, with every string in it', async () => {
+    const scans: (readonly string[])[] = []
+    const r = reader({
+      sensitive: (ts) => {
+        scans.push(ts)
+        return false
+      },
+    })
+    await runAdminTool(tool('valet_list_calls'), r, {})
+    expect(scans).toHaveLength(1)
+    expect(scans[0]).toContain('Claude Code')
+    expect(scans[0]).toContain('callId')
+  })
+
+  it('keeps a page whose call recorded a negative duration or an unknown outcome', async () => {
+    const r = reader({
+      calls: async () => ({ calls: [{ ...CALL, durationMs: -40, outcome: 'unknown' as const }] }),
+    })
+    const result = await runAdminTool(tool('valet_list_calls'), r, {})
+    expect(result.isError).toBeUndefined()
   })
 
   it('fails closed when the scan itself throws', async () => {

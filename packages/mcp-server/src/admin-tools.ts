@@ -221,8 +221,11 @@ const callSchema = z.object({
   /** The client's self-reported name. */
   client: z.string(),
   startedAt: iso,
-  durationMs: count.nullable(),
-  outcome: z.enum(['ok', 'needsUser', 'failed', 'blocked', 'declined', 'running']),
+  // Not count: a wall clock that steps back during a call records a negative duration, and one
+  // such record must not fail every page it is on.
+  durationMs: z.number().nullable(),
+  /** `unknown` for a code this build doesn't know (an older or newer log). */
+  outcome: z.enum(['ok', 'needsUser', 'failed', 'blocked', 'declined', 'running', 'unknown']),
   needsUser: needsUserReason.nullable(),
   stage: stage.nullable(),
   errorClass: errorClass.nullable(),
@@ -306,7 +309,11 @@ export interface AdminReader {
   /** Locked down: every admin tool but valet_status answers with the locked-down sentence. */
   lockedDown(): boolean
   /** True when `text` contains a secret or session value the app knows of now. */
-  sensitive(text: string): boolean | Promise<boolean>
+  /**
+   * True when any of `texts` contains a secret or session value the app knows of now. Called once
+   * per result, with every string in it, so session values are read once.
+   */
+  sensitive(texts: readonly string[]): boolean | Promise<boolean>
   status(): Promise<AdminStatus>
   adapters(): Promise<AdminAdapterList>
   adapter(adapterId: string): Promise<AdminAdapterDetail>
@@ -451,8 +458,8 @@ export const ADMIN_TOOLS: readonly AdminTool[] = [
     title: 'Get one call',
     description:
       'One call’s trace, to see why it failed: every step (logins, probes, requests made and ' +
-      'refused, waits, confirmations), the logins it used (names only), and its input with secrets ' +
-      'redacted. Takes the call id or the 4-character ref a result or the person gave you.',
+      'refused, waits, confirmations), the logins it used (names only), and the input it was sent, ' +
+      'but only for a call your app made itself (null for any other app’s or a cloud agent’s). Takes the call id or the 4-character ref a result or the person gave you.',
     input: z.object({
       call: z
         .string()
@@ -541,7 +548,7 @@ export async function runAdminTool(
     try {
       // Every string on its own as well as the whole: JSON escapes a quote or a backslash, so a
       // secret holding one would not appear verbatim in the serialised text.
-      leaked = await anySensitive(reader, [text, ...stringsIn(output)])
+      leaked = await reader.sensitive([...new Set([text, ...stringsIn(output)])])
     } catch {
       // A scan that can't run can't vouch for the result.
       leaked = true
@@ -590,11 +597,6 @@ export function matchCalls<T extends { readonly callId: string }>(calls: readonl
   if (idOrRef.length !== 4) return []
   const ref = idOrRef.toUpperCase()
   return calls.filter((call) => callRef(call.callId) === ref)
-}
-
-async function anySensitive(reader: AdminReader, texts: readonly string[]): Promise<boolean> {
-  for (const text of new Set(texts)) if (await reader.sensitive(text)) return true
-  return false
 }
 
 /** Every string in JSON data, object keys included. */

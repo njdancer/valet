@@ -2632,8 +2632,8 @@ describe('admin tools (docs/admin-tools.md)', () => {
     await s.call('echo', { text: 'x' }, 'session-cookie-canary-0001')
     const calls = await run(s.admin, 'valet_list_calls')
     expect(calls).toEqual({ content: [{ type: 'text', text: ADMIN_WITHHELD_RESULT }], isError: true })
-    expect(await s.admin.sensitive('x session-cookie-canary-0001 y')).toBe(true)
-    expect(await s.admin.sensitive('nothing here')).toBe(false)
+    expect(await s.admin.sensitive(['ok', 'x session-cookie-canary-0001 y'])).toBe(true)
+    expect(await s.admin.sensitive(['nothing here'])).toBe(false)
   })
 
   it('answers only valet_status while Valet is locked down', async () => {

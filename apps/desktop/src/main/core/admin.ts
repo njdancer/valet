@@ -4,7 +4,7 @@
 // detail line and its output preview (both site text), the auth partition's name. The tools then
 // parse every result against their schemas and scan it for the app's known secrets.
 
-import { type AuditEvent, callRef } from '@valet/core'
+import { type AuditEvent, callRef, ERROR_CLASSES, NEEDS_USER_REASONS, STAGES } from '@valet/core'
 import {
   type AdminAdapterDetail,
   type AdminAdapterList,
@@ -41,22 +41,25 @@ export interface AdminSource {
     MainApi,
     'adapters' | 'runs' | 'audit' | 'attention' | 'health' | 'updates' | 'app' | 'remote' | 'grants'
   >
+  /** Every installed site in full, from one pass over the app's state. */
+  readonly adapterDetails: () => Promise<readonly AdapterDetail[]>
+  /** Every call the log has, oldest first, with the credential that made it (`local:<id>`). */
+  readonly callIndex: () => Promise<
+    readonly { readonly callId: string; readonly startedAt: string; readonly clientId: string | null }[]
+  >
   readonly lockedDown: () => boolean
   /** The tools on for cloud agents now, as `<adapterId>.<tool>`. */
   readonly remoteTools: () => ReadonlySet<string>
-  /** True when the text holds a login secret or session value the app knows of now. */
-  readonly sensitive: (text: string) => Promise<boolean>
+  /** True when any of the texts holds a login secret or session value the app knows of now. */
+  readonly sensitive: (texts: readonly string[]) => Promise<boolean>
   readonly withheld: (tool: string) => void
 }
-
-/** Every call, for matching a short ref. */
-const ALL = Number.MAX_SAFE_INTEGER
 
 export function adminReader(source: AdminSource): AdminReader {
   const { api } = source
   return {
     lockedDown: () => source.lockedDown(),
-    sensitive: (text) => source.sensitive(text),
+    sensitive: (texts) => source.sensitive(texts),
     withheld: (tool) => source.withheld(tool),
 
     async status(): Promise<AdminStatus> {
@@ -99,13 +102,8 @@ export function adminReader(source: AdminSource): AdminReader {
     },
 
     async adapters(): Promise<AdminAdapterList> {
-      const summaries = await api.adapters.list()
-      // The summary has no tools; the detail does, and nothing else of it is used here.
-      const details = await Promise.all(summaries.map((s) => api.adapters.get(s.id)))
       const remote = source.remoteTools()
-      return {
-        adapters: summaries.map((summary, i) => adapterEntry(summary, details[i]?.tools ?? [], remote)),
-      }
+      return { adapters: (await source.adapterDetails()).map((d) => adapterEntry(d, d.tools, remote)) }
     },
 
     async adapter(adapterId): Promise<AdminAdapterDetail> {
@@ -142,7 +140,8 @@ export function adminReader(source: AdminSource): AdminReader {
     },
 
     async call(idOrRef, viewer): Promise<AdminCallTrace> {
-      const matches = matchCalls(await api.runs.list({ limit: ALL }), idOrRef)
+      // Newest first, as the app lists them.
+      const matches = matchCalls([...(await source.callIndex())].reverse(), idOrRef)
       const [only] = matches
       if (only === undefined) return { call: null, matches: [] }
       if (matches.length > 1) {
@@ -157,7 +156,7 @@ export function adminReader(source: AdminSource): AdminReader {
       }
       const trace = await api.runs.trace(only.callId)
       if (trace === null) return { call: null, matches: [] }
-      const own = viewer !== null && (await callerOf(api, only.callId)) === identityLabel(viewer)
+      const own = viewer !== null && only.clientId === identityLabel(viewer)
       return {
         call: {
           summary: callEntry(trace.summary),
@@ -197,16 +196,6 @@ export function adminReader(source: AdminSource): AdminReader {
       }
     },
   }
-}
-
-/** The credential behind a call (`local:<id>`, `remote:<id>`), from its tool-called record. */
-async function callerOf(api: AdminSource['api'], callId: string): Promise<string | null> {
-  const page = await api.audit.page({ category: 'tool-calls', search: callId, limit: ALL })
-  for (const record of page.records) {
-    const event = record.event
-    if (event.type === 'tool-called' && event.callId === callId) return event.clientId ?? null
-  }
-  return null
 }
 
 type Flat = string | number | boolean | null | readonly string[]
@@ -426,8 +415,10 @@ function deadlineOf(item: AttentionItem): string | null {
       return item.expiresAt
     case 'needs-user':
       return item.closesAt
-    case 'missed':
-      return new Date(Date.parse(item.missedAt) + MISSED_KEEP_MS).toISOString()
+    case 'missed': {
+      const missed = Date.parse(item.missedAt)
+      return Number.isFinite(missed) ? new Date(missed + MISSED_KEEP_MS).toISOString() : null
+    }
     default:
       return null
   }
@@ -444,12 +435,20 @@ function callEntry(run: RunSummary): AdminCallList['calls'][number] {
     client: run.client,
     startedAt: run.startedAt,
     durationMs: run.durationMs,
-    outcome: run.outcome,
-    needsUser: run.needsUser,
-    stage: run.stage,
-    errorClass: run.errorClass,
+    // The log is read without checks: a code this build doesn't know is null (or `unknown`), so
+    // one old record can't fail the page it is on.
+    outcome: OUTCOMES.includes(run.outcome) ? run.outcome : 'unknown',
+    needsUser: known(NEEDS_USER_REASONS, run.needsUser),
+    stage: known(STAGES, run.stage),
+    errorClass: known(ERROR_CLASSES, run.errorClass),
     blockedRequests: run.blockedRequests,
   }
+}
+
+const OUTCOMES: readonly string[] = ['ok', 'needsUser', 'failed', 'blocked', 'declined', 'running']
+
+function known<T extends string>(codes: readonly T[], code: T | null): T | null {
+  return code !== null && codes.includes(code) ? code : null
 }
 
 /** A redacted preview as one string, each redaction as [redacted]. */

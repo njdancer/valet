@@ -78,8 +78,6 @@ reading the log through it. Paused doesn't stop reads: pausing is about calls to
 
 ## The no-secrets guarantee
 
-Four layers, each enough on its own for what it covers:
-
 Four layers. The first three stop secrets by construction; the fourth is a net for what they
 miss, and only covers values the app holds while it runs.
 
@@ -104,8 +102,9 @@ miss, and only covers values the app holds while it runs.
    (`tool-output: internal`); it is never partly redacted. The scan fails closed: a session that
    can't be read refuses the result. `valet_status` is not scanned, because its schema holds no free
    text (codes, counts, times and version strings), so an agent can still learn Valet's state when a
-   session can't be read. The scan reads each adapter's session values on every call; that is a few
-   cookie reads, and caching them would mean holding copies longer.
+   session can't be read. The scan is one call per result with every string in it, so each adapter's
+   session values are read once per admin call (a cookie query and a storage snapshot), not once
+   per string; caching them would mean holding copies longer.
 
 Tests cover each layer: the mapping on the real service with a grant and a session cookie, the
 schemas with a view that carries extra fields, nested values and an off-vocabulary code, and the
@@ -167,15 +166,16 @@ In the app, `apps/desktop/src/main/core/admin.ts` implements `AdminReader` over 
 
 ## Failure cases
 
-| Case                                          | Result                                                                                                                                                             |
-| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| The reader throws (a store unreadable, a bug) | `The tool failed at stage config: internal.`, as text, `isError`. Never the exception text. Not `config: unavailable`, which every other result uses for "paused". |
-| The result fails its schema                   | `tool-output: invalid`, `isError`.                                                                                                                                 |
-| The last scan finds a secret                  | `tool-output: internal`, `isError`, and a diagnostics event (no value).                                                                                            |
-| Locked down (any tool but `valet_status`)     | The locked-down sentence, `isError`.                                                                                                                               |
-| `valet_get_adapter` for an unknown id         | `No site has that id. valet_list_adapters lists them.`                                                                                                             |
-| `valet_get_call` for an unknown call or ref   | `No call matches.` A ref matching several: their ids and refs, to call again with one.                                                                             |
-| Inputs out of range (limit 0, a bad `since`)  | The SDK's input validation error, before the reader is asked.                                                                                                      |
+| Case                                                                    | Result                                                                                                                                                             |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| The reader throws (a store unreadable, a bug)                           | `The tool failed at stage config: internal.`, as text, `isError`. Never the exception text. Not `config: unavailable`, which every other result uses for "paused". |
+| The result fails its schema                                             | `tool-output: invalid`, `isError`.                                                                                                                                 |
+| The last scan finds a secret                                            | `tool-output: internal`, `isError`, and a diagnostics event (no value).                                                                                            |
+| Locked down (any tool but `valet_status`)                               | The locked-down sentence, `isError`.                                                                                                                               |
+| `valet_get_adapter` for an unknown id                                   | `No site has that id. valet_list_adapters lists them.`                                                                                                             |
+| `valet_get_call` for an unknown call or ref                             | `No call matches.` A ref matching several: their ids and refs, to call again with one.                                                                             |
+| A log record with a negative duration or a code this build doesn't know | The duration as recorded; the code as null (outcome `unknown`). The page still answers.                                                                            |
+| Inputs out of range (limit 0, a bad `since`)                            | The SDK's input validation error, before the reader is asked.                                                                                                      |
 
 ## Not yet covered
 
