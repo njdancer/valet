@@ -55,7 +55,8 @@ final class JourneyTests: XCTestCase {
   func testJ4ApprovesAnInstall() {
     launch("install")
     openCard("7B3F")
-    XCTAssertEqual(element("card.title").label, "Install an adapter for yahoo.com")
+    // The tone word may come first ("Check this."); the title itself follows.
+    XCTAssertTrue(element("card.title").label.hasSuffix("Install an adapter for yahoo.com"), element("card.title").label)
     waitFor("card.approve").tap()
     XCTAssertTrue(waitFor("card.state").label.contains("Approved with Face ID"))
   }

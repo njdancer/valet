@@ -138,8 +138,13 @@ jobs:
         run: |
           xcodebuild test -project ios/ValetPhone.xcodeproj -scheme ValetPhoneDev \
             -destination "id=$SIMULATOR" -resultBundlePath "$RUNNER_TEMP/ios-ui.xcresult" \
-            CODE_SIGNING_ALLOWED=NO | tail -200
-          test "${PIPESTATUS[0]}" = 0
+            CODE_SIGNING_ALLOWED=NO > "$RUNNER_TEMP/ios-ui.log" 2>&1 || status=$?
+          grep -E "error:|Test Case .*(passed|failed)|\*\* TEST" "$RUNNER_TEMP/ios-ui.log" | tail -150
+          if [ "${status:-0}" != 0 ]; then
+            # What each failing test said, and the accessibility audit's issues.
+            xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/ios-ui.xcresult" || tail -100 "$RUNNER_TEMP/ios-ui.log"
+            exit 1
+          fi
       - name: the shipping build has no fakes in it
         run: |
           xcodebuild build -project ios/ValetPhone.xcodeproj -scheme ValetPhone -configuration Release \
