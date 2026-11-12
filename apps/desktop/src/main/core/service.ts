@@ -6,6 +6,7 @@
 import { randomBytes } from 'node:crypto'
 import { copyFile, mkdir, rm } from 'node:fs/promises'
 import { AdapterStore, type BuildRecord, type PackageRuntime } from '@valet/adapter-store'
+import type { ScratchRules } from '@valet/browser-electron'
 import {
   type AdapterManifest,
   type ApprovalKind,
@@ -140,6 +141,7 @@ import {
 } from './constants'
 import type { Credentials } from './credentials'
 import { DraftAuthoring, type RequestState, type SubmitOutcome, type SubmitRequest } from './drafts/authoring'
+import { draftDomains, type ScratchHandle, ScratchSessions } from './drafts/research'
 import { DraftStore } from './drafts/store'
 import { type EraseKind, type EraseReport, type EraseStep, eraseEverything } from './erase'
 import { ensurePrivateDir, JsonDocument } from './files'
@@ -256,6 +258,12 @@ export interface ServiceDeps {
     admin: AdminReader,
     authoring: Authoring | null,
   ) => Promise<SessionReportingEndpoint>
+  /**
+   * Opens a draft's scratch browser (docs/authoring-tools.md#the-scratch-browser-pr-2): signed
+   * out, in memory, through a proxy that refuses private addresses once resolved. None in tests
+   * that don't drive a browser, and then the research tools say so.
+   */
+  readonly scratch?: (draftId: string, rules: ScratchRules) => Promise<ScratchHandle>
   readonly ui: UiPort
   readonly emit: (event: AppEvent) => void
   /** The stdio bridge's command line for a client's config file, for snippets; null when it can't be launched. */
@@ -1125,6 +1133,7 @@ export class AppService {
     }
     // In memory at once: no call gets through while the rest happens, even if a write fails.
     const saved = this.appState.setLockedDown(true)
+    this.authoring?.closeBrowsers()
     const ledger = this.approvalBroker?.lockdown().catch(() => undefined)
     let revoked = 0
     if (locked) {
@@ -1991,6 +2000,33 @@ export class AppService {
       },
       notify: (text) => this.notifier.draftActivity(text),
       now: this.deps.now,
+      ...(this.deps.scratch === undefined ? {} : { research: this.scratchSessions(this.deps.scratch) }),
+    })
+  }
+
+  /** The scratch browsers' rules from what is installed and signed in now. */
+  private scratchSessions(open: NonNullable<ServiceDeps['scratch']>): ScratchSessions {
+    return new ScratchSessions({
+      open,
+      signedIn: async () => {
+        const grants = await this.grants.list().catch(() => [] as readonly Grant[])
+        const out = new Map<string, readonly string[]>()
+        for (const adapter of this.installed) {
+          const id = adapter.definition.manifest.id
+          const session = this.sessions.get(id).state
+          if (grants.some((g) => g.adapterId === id) || session === 'logged-in' || session === 'expired')
+            out.set(id, draftDomains(adapter.definition.manifest))
+        }
+        return out
+      },
+      secretIn: (text) => this.knownSecretIn([text]),
+      blocked: (host) => {
+        this.deps.diagnostics?.({ type: 'scratch-blocked' })
+        this.notifier.draftActivity(`${host} refused an agent’s signed-out browser, so Valet closed it.`)
+      },
+      notify: (text) => this.notifier.draftActivity(text),
+      now: this.deps.now,
+      timers: this.deps.timers,
     })
   }
 
@@ -3187,6 +3223,7 @@ export class AppService {
         }),
         setPaused: async (paused) => {
           this.paused = paused
+          if (paused) this.authoring?.closeBrowsers()
           this.emit('app-changed')
         },
         setLockedDown: (locked) => this.setLockedDown(locked),

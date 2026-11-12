@@ -36,6 +36,13 @@ const DETAIL: DraftDetail = {
   },
 }
 
+const VIEW = {
+  url: 'https://finance.example.com/',
+  title: { fromSite: 'Quotes' },
+  nodes: [],
+  cut: false,
+}
+
 function reader(overrides: Partial<AdminReader> = {}): AdminReader {
   return {
     access: () => ({ seeValet: true, allActivity: false, askForChanges: true, name: 'Claude Code' }),
@@ -86,6 +93,20 @@ function authoring(overrides: Partial<Authoring> = {}): Authoring & { writes: st
       tellThePerson: 'Waiting for the person in Valet.',
     }),
     deleteDraft: async () => ({ draftId: DRAFT, deleted: true }),
+    browserOpen: async () => VIEW,
+    browserClick: async () => VIEW,
+    browserType: async () => VIEW,
+    browserSnapshot: async () => VIEW,
+    browserQuery: async () => ({ count: 0, matches: [] }),
+    networkLog: async () => ({ entries: [] }),
+    networkBody: async () => ({
+      seq: 1,
+      url: 'https://x.test/',
+      mimeType: null,
+      fromSite: null,
+      truncated: false,
+    }),
+    captureFixture: async (_v, _d, _s, path) => ({ path, bytes: 1, recordedByValet: true }),
     ...overrides,
   }
 }

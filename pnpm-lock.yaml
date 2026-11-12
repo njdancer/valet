@@ -274,6 +274,9 @@ importers:
       electron:
         specifier: ^44.10.2
         version: 44.10.2
+      jsdom:
+        specifier: ^31.0.0
+        version: 31.0.0(@noble/hashes@1.8.0)
 
   packages/core:
     dependencies:

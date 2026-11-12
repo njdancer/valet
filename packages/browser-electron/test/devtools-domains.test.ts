@@ -19,6 +19,11 @@ const ALLOWED = new Set([
   'DOMStorage.enable',
   // Resumes a target paused on attach; it doesn't enable the Runtime domain.
   'Runtime.runIfWaitingForDebugger',
+  // The scratch browser's network log only (watchNetwork): the Network domain runs in the browser
+  // process and leaves nothing a page's script can see, unlike Runtime or Console. Never on a tool
+  // or auth page.
+  'Network.enable',
+  'Network.getResponseBody',
 ])
 
 // A quoted `Domain.method` string: how every command is named, whether passed straight to
@@ -31,6 +36,8 @@ const EVENTS = new Set([
   'Target.targetCreated',
   'DOMStorage.domStorageItemAdded',
   'DOMStorage.domStorageItemUpdated',
+  'Network.requestWillBeSent',
+  'Network.responseReceived',
 ])
 
 function sources(dir: string): string[] {

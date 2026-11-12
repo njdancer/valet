@@ -125,6 +125,15 @@ const subjects = {
       // from the browser that started the flow, never compare it (relay.md, "Consent happens on
       // the Mac or a paired phone"). The Mac keeps the code beside the pending request.
       tools: z.array(qualifiedTool).max(200),
+      /**
+       * What else this remote agent may do beyond Use tools (A's capabilities), each unticked by
+       * default and granted only by this signature. Kept in the trusted ledger (F's design).
+       */
+      capabilities: z
+        .array(z.enum(['see-valet', 'ask-for-changes']))
+        .max(2)
+        .refine((c) => new Set(c).size === c.length, 'each at most once')
+        .optional(),
     })
     .strict(),
   /** A setting that loosens something. Values are shown, never secrets (settings hold none). */
@@ -316,6 +325,14 @@ const requestBase = {
         .optional(),
       followOns: z.array(displayText(120)).max(10).optional(),
       checks: z.array(displayText(200)).max(20).optional(),
+      /**
+       * The tests the agent wrote, as Valet ran them (F's ask): counted apart from `checks`,
+       * which are Valet's own, so the card can't let an agent's tests pass for Valet's checks.
+       */
+      agentTests: z
+        .object({ passed: z.number().int().min(0).max(10_000), failed: z.number().int().min(0).max(10_000) })
+        .strict()
+        .optional(),
       fromAdapter: z
         .object({
           siteName: displayText(80).optional(),
