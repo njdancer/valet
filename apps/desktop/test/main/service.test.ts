@@ -42,17 +42,17 @@ import {
   type AdminCallTrace,
   type AdminReader,
   adminNotAllowedResult,
+  askNotAllowedResult,
   type ClientIdentity,
   type LiveSessions,
   runAdminTool,
   runWriteTool,
-  WRITE_TOOLS,
-  type WriteArgs,
-  withAnswers,
-  askNotAllowedResult,
   type SessionReportingEndpoint,
   type ToolCall,
   type ToolCaller,
+  WRITE_TOOLS,
+  type WriteArgs,
+  withAnswers,
 } from '@valet/mcp-server'
 import { LoginAttemptMarker, type ToolProcessFactory } from '@valet/runtime'
 import { inMemoryToolProcess } from '@valet/runtime/in-context'
@@ -3359,8 +3359,14 @@ describe('admin write tools (docs/admin-tools.md, "Write tier")', () => {
   }
 
   const write = (admin: AdminReader, name: string, args: WriteArgs, viewer: ClientIdentity) =>
-    runWriteTool(WRITE_TOOLS.find((t) => t.name === name) as (typeof WRITE_TOOLS)[number], admin, args, viewer)
-  const text = (result: { content: unknown }) => (result.content as { text: string }[]).map((c) => c.text).join('\n')
+    runWriteTool(
+      WRITE_TOOLS.find((t) => t.name === name) as (typeof WRITE_TOOLS)[number],
+      admin,
+      args,
+      viewer,
+    )
+  const text = (result: { content: unknown }) =>
+    (result.content as { text: string }[]).map((c) => c.text).join('\n')
 
   it('turns a tool off for the asking app only: gone from its listing, refused if called, kept for others', async () => {
     const s = await agents()
@@ -3369,9 +3375,15 @@ describe('admin write tools (docs/admin-tools.md, "Write tier")', () => {
     const caller = s.endpoint.caller as ToolCaller
     expect(caller.listTools(s.C1).map((t) => t.declaration.name)).not.toContain('echo')
     expect(caller.listTools(s.C2).map((t) => t.declaration.name)).toContain('echo')
-    const refused = await s.call('echo', { text: 'x' }, 'Claude Code', 'c_1', { transport: 'http', identity: s.C1 })
+    const refused = await s.call('echo', { text: 'x' }, 'Claude Code', 'c_1', {
+      transport: 'http',
+      identity: s.C1,
+    })
     expect(refused).toMatchObject({ status: 'failed', stage: 'config', errorClass: 'not-found' })
-    const ok = await s.call('echo', { text: 'x' }, 'Claude Desktop', 'c_2', { transport: 'http', identity: s.C2 })
+    const ok = await s.call('echo', { text: 'x' }, 'Claude Desktop', 'c_2', {
+      transport: 'http',
+      identity: s.C2,
+    })
     expect(ok.status).toBe('ok')
     const events = (await s.api.audit.page({})).records.map((r) => r.event)
     expect(events).toContainEqual({
@@ -3387,10 +3399,20 @@ describe('admin write tools (docs/admin-tools.md, "Write tier")', () => {
   it('makes a stricter setting change at once and asks for a looser one', async () => {
     const s = await agents()
     await s.api.settings.set({ traceRetentionDays: 14 })
-    const longer = await write(s.admin, 'valet_set_setting', { setting: 'traceRetentionDays', value: 30 }, s.C1)
+    const longer = await write(
+      s.admin,
+      'valet_set_setting',
+      { setting: 'traceRetentionDays', value: 30 },
+      s.C1,
+    )
     expect(text(longer)).toMatch(/^Done: Keep call details for set to 30 days/)
     expect((await s.api.settings.get()).traceRetentionDays).toBe(30)
-    const shorter = await write(s.admin, 'valet_set_setting', { setting: 'traceRetentionDays', value: 1 }, s.C1)
+    const shorter = await write(
+      s.admin,
+      'valet_set_setting',
+      { setting: 'traceRetentionDays', value: 1 },
+      s.C1,
+    )
     // A request once the setting handler is wired (D), until then "not available": never a change.
     expect(text(shorter)).toMatch(
       s.service.wiredKinds().has('setting')
@@ -3418,7 +3440,9 @@ describe('admin write tools (docs/admin-tools.md, "Write tier")', () => {
     const results: string[] = []
     for (const [name, args] of hostile) results.push(text(await write(s.admin, name, args, s.C1)))
     // Another agent's requests and its tools are beyond reach.
-    const theirs = text(await write(s.admin, 'valet_set_setting', { setting: 'remoteAccess', value: true }, s.C2))
+    const theirs = text(
+      await write(s.admin, 'valet_set_setting', { setting: 'remoteAccess', value: true }, s.C2),
+    )
     const ref = /approval ([0-9A-F]{4})/.exec(theirs)?.[1] ?? 'ZZZZ'
     results.push(text(await write(s.admin, 'valet_withdraw_approval', { approval: ref }, s.C1)))
     results.push(text(await write(s.admin, 'valet_get_approval', { approval: ref }, s.C1)))
@@ -3450,14 +3474,20 @@ describe('admin write tools (docs/admin-tools.md, "Write tier")', () => {
     const s = await agents()
     // Needs the setting handler (D's next PR): until then there is nothing to answer.
     if (!s.service.wiredKinds().has('setting')) return
-    const asked = text(await write(s.admin, 'valet_set_setting', { setting: 'remoteAccess', value: true }, s.C1))
+    const asked = text(
+      await write(s.admin, 'valet_set_setting', { setting: 'remoteAccess', value: true }, s.C1),
+    )
     const ref = /approval ([0-9A-F]{4})/.exec(asked)?.[1]
     expect(ref).toBeDefined()
     await write(s.admin, 'valet_withdraw_approval', { approval: ref }, s.C1)
     const status = ADMIN_TOOLS.find((t) => t.name === 'valet_status') as (typeof ADMIN_TOOLS)[number]
-    const next = await withAnswers(await runAdminTool(status, s.admin, {}, s.C1), s.admin, s.C1, { now: Date.now })
+    const next = await withAnswers(await runAdminTool(status, s.admin, {}, s.C1), s.admin, s.C1, {
+      now: Date.now,
+    })
     expect(text(next)).toContain(`Answers to your requests:\nApproval ${ref}`)
-    const again = await withAnswers(await runAdminTool(status, s.admin, {}, s.C1), s.admin, s.C1, { now: Date.now })
+    const again = await withAnswers(await runAdminTool(status, s.admin, {}, s.C1), s.admin, s.C1, {
+      now: Date.now,
+    })
     expect(text(again)).not.toContain('Answers to your requests')
   })
 

@@ -81,20 +81,16 @@ with fakes. **Built** in the first PR unless marked.
 interface MacSigner {
   /** Public keys, creating the device's keys on first use. Never a private key. */
   keys(): Promise<{
-    approvalKey: string;
-    transportKey: string;
-    agreementKey: string;
-  }>;
+    approvalKey: string
+    transportKey: string
+    agreementKey: string
+  }>
   /** Shows the OS prompt with `reason`; resolves the signature, or null if the person cancelled. */
-  sign(
-    domain: SigningDomain,
-    payload: string,
-    reason: string,
-  ): Promise<string | null>;
+  sign(domain: SigningDomain, payload: string, reason: string): Promise<string | null>
 }
 interface PhoneOutbox {
   /** Seals and sends one message to one phone (G and H). Absent until the relay exists. */
-  send(deviceId: string, message: MacToPhoneMessageBody): void;
+  send(deviceId: string, message: MacToPhoneMessageBody): void
 }
 ```
 

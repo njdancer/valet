@@ -207,7 +207,7 @@ describe('AdminWriterImpl', () => {
     expect(outcome).toEqual({ kind: 'unchanged', current: 'Read login codes from Messages is already off' })
     const done = await writer.setSetting(ME, 'traceRetentionDays', 30, null)
     expect(done).toEqual({ kind: 'done', what: 'Keep call details for set to 30 days' })
-    expect(values.traceRetentionDays).toBe(30)
+    expect(values['traceRetentionDays']).toBe(30)
     expect(audited).toEqual([
       { clientId: 'local:c_me', action: 'setting', target: 'traceRetentionDays', value: '30' },
     ])
@@ -318,12 +318,12 @@ describe('AdminWriterImpl', () => {
       },
     })
     expect(await writer.setSetting(ME, 'notifications', false, null)).toMatchObject({ kind: 'asked' })
-    values.notifications = false
+    values['notifications'] = false
     expect(await writer.setSetting(ME, 'notifications', true, null)).toEqual({
       kind: 'refused',
       reason: 'unavailable',
     })
-    expect(values.notifications).toBe(false)
+    expect(values['notifications']).toBe(false)
   })
 
   it('refuses everything while locked down, from a remote client, or from an unknown one', async () => {
