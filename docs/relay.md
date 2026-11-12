@@ -356,8 +356,7 @@ to the browser the person is holding:
 4. The person types the code from their own browser. The typed code selects the request it
    belongs to; nothing can be approved until it matches. Three wrong codes cancel every pending
    request.
-5. The person approves with Touch ID at the Mac or Face ID on the phone; there is no passcode
-   fallback for consent. On the phone, the typed code is part of the signed approval
+5. The person approves with Touch ID at the Mac, or Face ID or the passcode on the phone. On the phone, the typed code is part of the signed approval
    (`typedCode`), and the Mac accepts it only if it matches the code it issued (`wrong-code`
    otherwise, which counts as a wrong code). The browser's page continues to the client's
    redirect.

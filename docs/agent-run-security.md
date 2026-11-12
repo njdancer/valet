@@ -456,10 +456,12 @@ Asked for by D, G and H while building, 2026-11-12. Accepted unless marked other
 
 **From H (iPhone):**
 
-1. **The iPhone's approval key uses `.biometryCurrentSet`,** not `.userPresence`, so a thief who
-   knows the passcode still can't approve. A Face ID enrolment change kills the key and the phone
-   re-pairs. The Mac keeps `.userPresence`, since a Mac may have no Touch ID. A second,
-   passcode-capable key for neutral cards waits for a separate decision.
+1. **The iPhone's approval key uses `.userPresence`** (Face ID, or the passcode when Face ID
+   fails), like the Mac's. H proposed `.biometryCurrentSet`, so a thief who had watched the
+   passcode couldn't approve; Nick chose standard iPhone behaviour instead (2026-11-12, "Passcode
+   always works"). The accepted risk: someone holding the phone and its passcode can approve
+   anything a phone can. Mac-only kinds stay Mac only, and a lost phone is still revoked from
+   the Mac or the recovery page.
 2. **Pairing wire format** (`pairing.ts`):
    - The Mac opens an offer at the relay by id only (`pairing-open`). `pairingOfferId` is a hash
      of the secret.
@@ -517,10 +519,8 @@ Asked for by D, G and H while building, 2026-11-12. Accepted unless marked other
    - One rule with it: any tightening record that supersedes evidence must be in the ledger too.
      That covers a tool turned off after it was enabled, and a grant revoked. Otherwise an edit to
      an unanchored store would bring the old evidence back into force.
-5. **Face ID only on the phone:** already so since H's 1 (`.biometryCurrentSet`); there is no
-   passcode-capable key to tell apart. If Nick takes A's passcode fallback for neutral cards, the
-   phone gets a second, `.userPresence` key in its device record, and the Mac picks from its own
-   request which key a decision must be signed with.
+5. **Face ID only on the phone:** overtaken by Nick's answer (H's 1): one `.userPresence` key,
+   so the passcode always works, and no second key.
 6. **Resume at the Mac only:** `approvableOn('resume')` is `['mac']`, and `valet.resume` left
    `ADMIN_ACTION_TIERS` for `NEVER_OVER_MCP`.
 7. **Consent code typed, not compared:** the remote-client request carries no code; the phone

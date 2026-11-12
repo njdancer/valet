@@ -283,9 +283,9 @@ Contracts in `packages/core`, design in `docs/agent-run-security.md`.
 - **"Signed approvals expire 2 minutes after signing":** not so. The signer's clock isn't trusted,
   so a signature is good once, while its request is pending and unexpired, by the Mac's clock.
   Only an irreversible call's request lives 2 minutes.
-- **Passcode for neutral cards** (open question 3): today the phone's key accepts Face ID only
-  (`.biometryCurrentSet`). If Nick says yes, the phone gets a second, passcode-capable key for
-  neutral kinds only; that is a contract addition, not a change.
+- **Passcode** (open question 3): Nick answered 2026-11-12, "Passcode always works". The phone's
+  approval key is `.userPresence`, so Face ID or the passcode approves every card a phone can;
+  "Face ID only" cards and the neutral-only passcode rule are gone (A to update the card spec).
 
 ### G's sign-off (relay, 2026-11-12)
 
