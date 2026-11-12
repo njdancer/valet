@@ -22,6 +22,7 @@ import {
   needsYouTitle,
   type PackageFiles,
   type ProviderKind,
+  plainName,
   type SecretField,
   type SessionDriver,
   type SettingChoice,
@@ -76,14 +77,19 @@ import type {
 } from '../../shared/api'
 import { AdapterSettingsStore } from './adapter-settings'
 import { adminReader } from './admin'
+import { AdminWriterImpl, type AgentSettingValues, type WriterSource } from './admin-writer'
 import { AppStateStore } from './app-state'
 import {
   AnchoredFile,
   ApprovalBroker,
+  adapterSettingSubject,
   DeviceStore,
   installSubject,
   type KindHandlers,
   type MacApprovalKeys,
+  requestRef,
+  settingSubject,
+  settingWidens,
   TRUSTED_STORE,
   TrustedLedger,
 } from './approvals'
@@ -299,6 +305,14 @@ const EVENTS_FOR: Readonly<Partial<Record<AuditEvent['type'], readonly AppEvent[
   'site-paused': ['adapters-changed', 'health-changed'],
 }
 
+/** The write tools' setting names, as the signed `setting` subject names them (approvals/subjects.ts). */
+const SETTING_SUBJECT_NAMES = {
+  messagesOtpEnabled: 'messages_otp',
+  notifications: 'notifications',
+  traceRetentionDays: 'trace_retention',
+  remoteAccess: 'remote_enabled',
+} as const
+
 /** Error classes only an adapter update fixes: the site's last call raises a repair item. */
 const NEEDS_REPAIR: ReadonlySet<string> = new Set(['site-changed'])
 
@@ -334,6 +348,10 @@ export class AppService {
   private readonly newId: () => string
   /** The settings as last read or written: the updater reads them synchronously at every check. */
   private settingsNow: Settings = DEFAULT_SETTINGS
+  /** Paired devices, once the approval broker is open: whether a phone was told too. */
+  private deviceStore: DeviceStore | null = null
+  /** The write tools' side (admin-writer.ts): one for the app's life, so it remembers requests. */
+  private writer: AdminWriterImpl | null = null
   private readonly versions: VersionStore
   private readonly setup: SetupStore
   private updates: UpdatesPort | null = null
@@ -662,6 +680,9 @@ export class AppService {
       paused: () => this.paused,
       lockedDown: () => this.lockedDown,
       sitePaused: (adapterId) => this.appState.sitePaused(adapterId),
+      // What a local app turned off for itself with valet_turn_off_tool.
+      toolsOff: (identity) =>
+        identity.origin === 'local' ? this.clients.toolsOff(identity.clientId) : new Set(),
       explain: (call, outcome) => this.explain(call, outcome),
       started: (call) => {
         this.memory.started(call.callId, call.tool, call.client, call.input)
@@ -1099,6 +1120,7 @@ export class AppService {
     const ledger = this.ledger
     try {
       const devices = new DeviceStore(ledger, await keys.signer.keys())
+      this.deviceStore = devices
       this.approvalBroker = await ApprovalBroker.open({
         ledger,
         devices,
@@ -1839,7 +1861,124 @@ export class AppService {
       sensitive: (texts) => this.knownSecretIn(texts),
       // Which tool, never what matched.
       withheld: () => this.deps.diagnostics?.({ type: 'admin-result-withheld' }),
+      writer: this.adminWriter(),
     })
+  }
+
+  private adminWriter(): AdminWriterImpl {
+    this.writer ??= new AdminWriterImpl(this.writerSource())
+    return this.writer
+  }
+
+  /**
+   * What the write tools may do here (docs/admin-tools.md, "Write tier"). Every widening goes
+   * through the broker with D's subject builders; this only makes changes that tighten.
+   */
+  private writerSource(): WriterSource {
+    return {
+      now: () => this.deps.now(),
+      lockedDown: () => this.lockedDown,
+      client: (viewer) => {
+        if (viewer.origin !== 'local' || !this.clients.isActive(viewer.clientId)) return null
+        const client = this.clients.get(viewer.clientId)
+        return client === null ? null : { name: client.name }
+      },
+      broker: () => {
+        const broker = this.approvalBroker
+        if (broker === null) return null
+        return {
+          macId: broker.macId,
+          request: (kind, subject, requester, note) => broker.request(kind, subject, requester, note),
+          status: (id, asker) => broker.status(id, asker),
+          withdraw: (id, asker) => broker.withdraw(id, asker),
+          waiting: () =>
+            broker.list().map((p) => ({
+              requestId: p.request.id,
+              ref: requestRef(p),
+              kind: p.request.kind,
+              requester: p.request.requester,
+              createdAt: p.request.createdAt,
+              expiresAt: p.request.expiresAt,
+            })),
+        }
+      },
+      wiredKinds: () => this.wiredKinds(),
+      phonePaired: () => (this.deviceStore?.activePhones().length ?? 0) > 0,
+      settings: () => this.agentSettings(),
+      widens: (name, from, to) => settingWidens(SETTING_SUBJECT_NAMES[name], from, to),
+      settingSubject: (name, from, to) => settingSubject(SETTING_SUBJECT_NAMES[name], from, to),
+      applySetting: async (name, value) => {
+        // Only changes that tighten reach here; the writer asks the broker for the rest.
+        if (name === 'remoteAccess') {
+          if (value !== false) throw new ValetError('config', 'invalid')
+          await this.remote.setEnabled(false)
+          this.emit('endpoint-changed')
+          return
+        }
+        await this.api.settings.set({ [name]: value })
+      },
+      adapterSetting: async (adapterId, setting, query) => {
+        const adapter = this.adapter(adapterId)
+        const manifest = adapter?.definition.manifest
+        const declared = manifest === undefined ? undefined : manifest.settings[setting]
+        if (adapter === null || manifest === undefined || declared === undefined)
+          return { ok: false, reason: 'not-found' }
+        if (!(await this.installGate.isApproved(adapterId, adapter.hash).catch(() => false)))
+          return { ok: false, reason: 'not-found' }
+        const reply = await this.settingChoices(adapterId, setting, query ?? '')
+        if (reply.status === 'blocked') return { ok: false, reason: 'unavailable' }
+        if (reply.status !== 'ok') return { ok: false, reason: 'no-choices' }
+        const chosen = (await this.adapterSettings.chosen(adapterId).catch(() => null))?.[setting]
+        const subject = adapterSettingSubject(manifest, setting, chosen?.label ?? null, reply.choices)
+        if (subject === null) return { ok: false, reason: 'no-choices' }
+        return { ok: true, subject, title: `Choose ${subject.label} for ${plainName(manifest.name)}` }
+      },
+      tool: (adapterId, tool) => {
+        const listed = this.caller
+          ?.listTools()
+          .find((t) => t.adapterId === adapterId && t.declaration.name === tool)
+        return listed === undefined
+          ? null
+          : { adapterName: listed.adapterName, title: listed.declaration.title }
+      },
+      turnOffTool: async (clientId, qualified) => {
+        const done = await this.clients.turnOffTool(clientId, qualified)
+        if (done === 'done') {
+          this.endpoint?.refresh()
+          this.emit('clients-changed')
+        }
+        return done
+      },
+      disconnect: async (clientId) => {
+        if (!this.clients.isActive(clientId)) return false
+        await this.clients.revoke(clientId)
+        await this.approvalBroker?.withdrawClient(`local:${clientId}`).catch(() => 0)
+        await rm(this.clients.configPath(clientId), { force: true }).catch(() => undefined)
+        // The token stops working now (the registry says revoked); the session itself ends just
+        // after, so this call's own result still reaches the agent.
+        const timer = setTimeout(() => {
+          void this.endpoint?.removeClient(clientId)
+          this.emit('clients-changed')
+          this.emit('endpoint-changed')
+        }, 1000)
+        timer.unref?.()
+        return true
+      },
+      audit: async (event) => {
+        await this.audit.append({ type: 'agent-change', ...event })
+      },
+      told: (clientId, name, count) => this.notifier.agentChanges(clientId, name, count),
+    }
+  }
+
+  /** Valet's own settings as the write tools name them. */
+  private agentSettings(): AgentSettingValues {
+    return {
+      messagesOtpEnabled: this.settingsNow.messagesOtpEnabled,
+      notifications: this.settingsNow.notifications,
+      traceRetentionDays: this.settingsNow.traceRetentionDays,
+      remoteAccess: this.remote.status().enabled,
+    }
   }
 
   /**

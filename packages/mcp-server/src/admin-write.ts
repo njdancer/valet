@@ -488,7 +488,7 @@ export const WRITE_TOOLS: readonly WriteTool[] = [
     name: 'valet_disconnect',
     title: 'Disconnect from Valet',
     description:
-      'Removes your own connection to Valet: your token stops working at once and your waiting ' +
+      'Removes your own connection to Valet: your token stops working within a second and your waiting ' +
       'requests are withdrawn. The person is told. Only the person can connect you again.',
     input: writeInputs.disconnect,
     needs: 'any',

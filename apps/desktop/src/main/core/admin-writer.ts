@@ -241,7 +241,7 @@ export class AdminWriterImpl implements AdminWriter {
     }
     this.record(viewer, 'Disconnected itself', 'notify', null)
     this.source.told(identityLabel(viewer), gate.name, this.recentNotify(viewer).length + 1)
-    return { kind: 'done', what: 'you are disconnected from Valet. Your token no longer works' }
+    return { kind: 'done', what: 'you are disconnected from Valet. Your token stops working in a moment' }
   }
 
   async approvals(viewer: ClientIdentity, ref: string | null): Promise<readonly RequestView[]> {
