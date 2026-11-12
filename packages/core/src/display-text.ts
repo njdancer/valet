@@ -9,8 +9,7 @@ export const DISPLAY_TEXT = /^[^\p{Cc}\p{Cf}\p{Zl}\p{Zp}]+$/u
  * Characters that render as nothing or draw over their neighbours: Hangul fillers, the braille
  * blank, variation selectors, enclosing marks, and the very wide ligatures.
  */
-const INVISIBLE =
-  /[\u115F\u1160\u3164\uFFA0\u2800\u180E\u17B4\u17B5\uFE00-\uFE0F\u{E0100}-\u{E01EF}\uFDFD\uFDFA\uFDFB\u2E3B\p{Me}]/u
+const INVISIBLE = /[\u115F\u1160\u3164\uFFA0\u2800\u180E\u17B4\u17B5\uFDFD\uFDFA\uFDFB\u2E3B\p{Me}]/u
 /** Variation selectors, which render as nothing on their own. */
 const VARIATION = /\p{Variation_Selector}/u
 /** More than two combining marks in a row stack into a smear that hides other text. */
