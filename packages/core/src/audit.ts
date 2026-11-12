@@ -122,6 +122,16 @@ export type AuditEvent =
       readonly callId: string | null
     }
   | {
+      /** Tool code used a sandbox exception (docs/sandbox.md): which capability, and how it ended. */
+      readonly type: 'local-access'
+      readonly adapterId: string
+      readonly callId: string
+      /** `files.read`, `fetch`, `service`, `run` and so on. */
+      readonly capability: string
+      /** Null when it was allowed and worked; else the error class it was refused or failed with. */
+      readonly errorClass: ErrorClass | null
+    }
+  | {
       readonly type: 'breaker-opened'
       /** The site host whose breaker opened; every adapter on that host waits. */
       readonly host: string

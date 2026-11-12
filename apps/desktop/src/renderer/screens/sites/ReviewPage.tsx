@@ -321,6 +321,12 @@ function Review({
         exits={exits}
       />
       <PageBody>
+        {review.diff.sandbox.unsandboxed ? (
+          <Banner tone="danger" title="Runs without the sandbox: it can reach anything you can on this Mac">
+            That includes your other sites’ logins that Valet holds. Its author says why:{' '}
+            <q>{review.diff.sandbox.reason}</q>. Approve it only if you trust whoever wrote it.
+          </Banner>
+        ) : null}
         {review.takesSession === true || (review.origin !== undefined && review.origin !== 'builtin') ? (
           <Banner
             tone="danger"
@@ -330,10 +336,43 @@ function Review({
                 : 'This version didn’t come with Valet'
             }
           >
-            {review.origin === 'draft' ? 'Your agent wrote it' : 'It was installed from a folder'}
-            {review.from === null ? '' : ', and replaces the version in use'}. It runs without a sandbox, so
-            approve it only if you trust whoever wrote it.
+            {review.origin === 'draft'
+              ? 'Your agent wrote it'
+              : review.origin === 'folder'
+                ? 'It was installed from a folder'
+                : 'It came with Valet'}
+            {review.from === null ? '' : ', and replaces the version in use'}.{' '}
+            {review.diff.sandbox.unsandboxed
+              ? 'Approve it only if you trust whoever wrote it.'
+              : 'It runs in the sandbox, with only the access listed here.'}
           </Banner>
+        ) : null}
+        {review.diff.sandbox.exceptions.length > 0 ? (
+          <Card>
+            <CardHeader className="flex-col gap-1">
+              <CardTitle>On this Mac</CardTitle>
+              <CardDescription>
+                What its code can reach outside the sandbox. The reasons are its author’s words.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ul aria-label="Access on this Mac" className="m-0 flex list-none flex-col gap-2 p-0">
+                {review.diff.sandbox.exceptions.map((e) => (
+                  <li key={`${e.change}:${e.text}`} className="flex flex-col gap-0.5">
+                    <span className="inline-flex flex-wrap items-center gap-1.5">
+                      <Badge tone={e.change === 'added' ? 'write' : 'neutral'}>
+                        {e.change === 'added' ? 'Adds' : e.change === 'removed' ? 'Removes' : 'Same'}
+                      </Badge>
+                      <Code>{e.text}</Code>
+                    </span>
+                    <Text size="sm" tone="muted">
+                      Why, says its author: {e.purpose}
+                    </Text>
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
         ) : null}
         <Card>
           <CardHeader className="flex-wrap items-center gap-y-2">

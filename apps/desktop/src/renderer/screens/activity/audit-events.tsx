@@ -35,6 +35,7 @@ export const EVENT_WORDS = {
   'login-started': { label: 'Login started', tone: 'neutral' },
   'login-finished': { label: 'Login finished', tone: 'success' },
   'secret-used': { label: 'Login typed', tone: 'brass' },
+  'local-access': { label: 'Local data used', tone: 'brass' },
   'request-blocked': { label: 'Request blocked', tone: 'danger' },
   'breaker-opened': { label: 'Site paused calls', tone: 'warning' },
   'breaker-closed': { label: 'Site allows calls again', tone: 'success' },
@@ -224,6 +225,13 @@ export function details(event: AuditEvent, now: number): ReactNode {
           {event.secret}.{event.field} · <Code>{hostOf(event.origin)}</Code>
         </>
       )
+    case 'local-access':
+      return (
+        <>
+          <Code>{event.capability}</Code>{' '}
+          <Quiet>{event.errorClass === null ? 'allowed' : event.errorClass}</Quiet>
+        </>
+      )
     case 'request-blocked':
       return (
         <>
@@ -389,6 +397,7 @@ export const EVENT_FIELDS = {
   'login-started': ['type', 'adapterId', 'callId'],
   'login-finished': ['type', 'adapterId', 'outcome', 'needsUser', 'stage', 'errorClass'],
   'secret-used': ['type', 'adapterId', 'adapterHash', 'secret', 'field', 'origin', 'callId'],
+  'local-access': ['type', 'adapterId', 'callId', 'capability', 'errorClass'],
   'request-blocked': ['type', 'adapterId', 'method', 'target', 'reason', 'initiator', 'partition', 'callId'],
   'breaker-opened': ['type', 'host', 'cause', 'retryAt', 'callId'],
   'breaker-closed': ['type', 'host'],

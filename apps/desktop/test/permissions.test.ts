@@ -55,6 +55,7 @@ const NOTHING_NEW: PermissionDiff = {
   settings: { added: [], removed: [], unchanged: [] },
   limits: { before: LIMITS, after: LIMITS },
   probe: { before: PROBE, after: PROBE },
+  sandbox: { unsandboxed: false, becameUnsandboxed: false, reason: null, exceptions: [] },
 }
 
 describe('addsPermissions', () => {

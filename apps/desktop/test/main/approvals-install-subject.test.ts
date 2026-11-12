@@ -103,4 +103,24 @@ describe('permissionChanges', () => {
     const [paths] = permissionChanges(null, emoji, false).filter((l) => l.area === 'requests')
     expect(paths?.items[0]?.length).toBeLessThanOrEqual(200)
   })
+
+  it('carries the sandbox’s own lines: a command exception says it can read your files, critical', () => {
+    const withCommand = parseManifest({
+      ...SHOP,
+      sandbox: {
+        mode: 'sandboxed',
+        exceptions: [{ kind: 'command', path: '/usr/bin/sips', purpose: 'resize' }],
+      },
+    })
+    const lines = permissionChanges(before, withCommand, false)
+    expect(lines).toContainEqual({
+      area: 'sandbox-exception',
+      change: 'added',
+      items: ['Run /usr/bin/sips, which can read your files'],
+      risk: 'critical',
+    })
+    // Becoming unsandboxed is one critical line, not two.
+    const off = parseManifest({ ...SHOP, sandbox: { mode: 'unsandboxed', reason: 'needs Node' } })
+    expect(permissionChanges(before, off, true).filter((l) => l.area === 'sandbox-mode')).toHaveLength(1)
+  })
 })

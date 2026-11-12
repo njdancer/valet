@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "id": "local-portfolio",
+  "name": "Local portfolio",
+  "version": "0.1.0",
+  "description": "Your holdings from a file on your Mac, valued at Yahoo Finance's latest prices. An example of a local-data adapter: it reads one file, through one declared sandbox exception.",
+  "home": "https://finance.yahoo.com/",
+  "navigation": ["https://finance.yahoo.com"],
+  "egress": ["finance.yahoo.com", "query1.finance.yahoo.com"],
+  "secrets": {},
+  "session": { "cookieDomains": [], "storage": [], "probe": { "kind": "none" } },
+  "auth": { "steps": [], "frameOrigins": [] },
+  "requests": [
+    { "method": "GET", "path": "/v8/finance/chart/:symbol", "purpose": "read", "cacheSeconds": 300 }
+  ],
+  "tools": [
+    {
+      "name": "get_portfolio",
+      "title": "Get portfolio",
+      "description": "Your holdings from ~/Documents/Valet/portfolio.csv (lines of symbol,quantity), each with its latest price, currency and value. Prices are delayed as the exchange requires.",
+      "sideEffect": "read"
+    }
+  ],
+  "settings": {},
+  "limits": {
+    "requestsPerRun": 21,
+    "minGapMs": 3000,
+    "requestsPerHour": 240,
+    "requestsPerMinute": 12,
+    "gapJitterPercent": 50,
+    "cooldownSeconds": 600,
+    "maxCooldownSeconds": 7200
+  },
+  "sandbox": {
+    "mode": "sandboxed",
+    "exceptions": [
+      {
+        "kind": "files",
+        "access": "read",
+        "paths": ["~/Documents/Valet/portfolio.csv"],
+        "purpose": "Your holdings: one line per symbol, with the quantity you hold."
+      }
+    ]
+  }
+}

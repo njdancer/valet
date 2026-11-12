@@ -328,6 +328,7 @@ const EVENT_FIELDS: Readonly<Record<AuditEvent['type'], readonly string[]>> = {
   'login-started': ['adapterId', 'callId'],
   'login-finished': ['adapterId', 'outcome', 'needsUser', 'stage', 'errorClass'],
   'secret-used': ['adapterId', 'adapterHash', 'secret', 'field', 'origin', 'callId'],
+  'local-access': ['adapterId', 'callId', 'capability', 'errorClass'],
   'request-blocked': ['adapterId', 'method', 'target', 'reason', 'initiator', 'partition', 'callId'],
   'breaker-opened': ['host', 'cause', 'retryAt', 'callId'],
   'breaker-closed': ['host'],

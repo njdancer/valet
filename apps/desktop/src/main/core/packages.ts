@@ -102,17 +102,21 @@ export class PackageManager {
 
   /**
    * Checks, compiles and describes `files`, storing nothing: the caller swaps the result in and
-   * only then commits it. Throws InstallError with the first problem. The draft source is refused
-   * until the sandbox exists (the store refuses it too).
+   * only then commits it. Throws InstallError with the first problem. Describing runs the package's
+   * code, in the sandbox for every source (the app's runtime.start, docs/sandbox.md), so a draft
+   * nobody has approved yet runs nowhere else.
    */
   async prepare(files: PackageFiles, source: PackageSource): Promise<PreparedInstall> {
-    if (source === 'draft') throw new InstallError('Drafts can be installed once the adapter sandbox exists.')
     let loaded: LoadedPackage
     try {
       loaded = await loadPackage(files, this.options.runtime)
     } catch (error) {
       throw new InstallError(describeFailure(error))
     }
+    // The contract refuses these too; a second line, until Apple Events are typed operations.
+    const sandbox = loaded.manifest.sandbox
+    if (sandbox?.mode === 'sandboxed' && sandbox.exceptions.some((e) => e.kind === 'app'))
+      throw new InstallError('Apple Events exceptions aren’t supported yet.')
     return { loaded, source, adapter: toInstalled(loaded, source) }
   }
 

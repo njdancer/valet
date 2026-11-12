@@ -3,5 +3,12 @@
 // DOM and JSX), which also reaches these files through the tests.
 {
   "extends": "../../tsconfig.base.json",
-  "include": ["src/main", "src/preload", "src/shared", "electron-builder.config.ts", "scripts/*.d.mts"]
+  "include": [
+    "src/main",
+    "src/preload",
+    "src/sandbox-preload",
+    "src/shared",
+    "electron-builder.config.ts",
+    "scripts/*.d.mts"
+  ]
 }

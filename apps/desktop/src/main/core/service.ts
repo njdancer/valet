@@ -13,8 +13,10 @@ import {
   type AuditSink,
   type BlockedRequest,
   CredentialError,
+  DEFAULT_SANDBOX,
   type Grant,
   isDisplayText,
+  type LocalAccess,
   MESSAGES_SECRET,
   type NeedsUserReason,
   needsYouTitle,
@@ -195,6 +197,15 @@ export interface ServiceDeps {
    * code there; without it (unit tests), in this process.
    */
   readonly toolProcess?: ToolProcessFactory
+  /**
+   * The adapter sandbox (docs/sandbox.md). With it, a sandboxed adapter's tool code runs in a
+   * sandbox renderer for its version, and an unsandboxed one in `toolProcess`; each gets `local`,
+   * the capabilities its declared exceptions allow. Without it, every adapter runs in `toolProcess`.
+   */
+  readonly sandbox?: {
+    forAdapter(adapterHash: string): ToolProcessFactory
+    local(manifest: AdapterManifest): LocalAccess
+  }
   /** Builds an adapter's driver, with the reporters its refusals outside a run go to. */
   readonly createDriver: (manifest: AdapterManifest, reporters: DriverReporters) => Promise<SessionDriver>
   readonly credentials: Credentials
@@ -1208,14 +1219,25 @@ export class AppService {
   }
 
   private registration(adapter: BuiltinAdapter, driver: SessionDriver) {
-    const start = this.deps.toolProcess
+    const manifest = adapter.definition.manifest
+    const sandbox = this.deps.sandbox
+    // Unsandboxed only when the manifest says so, and then it was approved as such (docs/sandbox.md).
+    const sandboxed = (manifest.sandbox ?? DEFAULT_SANDBOX).mode === 'sandboxed'
+    const start =
+      sandbox !== undefined && sandboxed ? sandbox.forAdapter(adapter.hash) : this.deps.toolProcess
     return {
       definition: adapter.definition,
       bundleHash: adapter.hash,
       driver,
       ...(start === undefined || adapter.toolScript === null
         ? {}
-        : { isolation: { script: adapter.toolScript, start } }),
+        : {
+            isolation: {
+              script: adapter.toolScript,
+              start,
+              ...(sandbox === undefined ? {} : { local: sandbox.local(manifest) }),
+            },
+          }),
     }
   }
 
@@ -1385,12 +1407,20 @@ export class AppService {
   }
 
   /**
-   * An adapter not built into this app runs without the sandbox until it exists (B). Built in means
-   * the hash this app ships, never a stored version's source tag, which anything can write.
+   * Whether this version would run without the sandbox here: its manifest says unsandboxed, or this
+   * build has no sandbox and it isn't one of the app's own built-ins (B). Built in means the hash
+   * this app ships, never a stored version's source tag, which anything can write.
    */
   private runsUnsandboxed(adapter: BuiltinAdapter): boolean {
-    if (this.packages === null) return adapter.source !== undefined && adapter.source !== 'builtin'
-    return !this.packages.isShipped(adapter.definition.manifest.id, adapter.hash)
+    if ((adapter.definition.manifest.sandbox ?? DEFAULT_SANDBOX).mode === 'unsandboxed') return true
+    if (this.deps.sandbox !== undefined) return false
+    return !this.isBuiltIn(adapter)
+  }
+
+  /** One of the app's own built-ins: the hash it ships (or, without a store, its own copy). */
+  private isBuiltIn(adapter: BuiltinAdapter): boolean {
+    if (this.packages === null) return adapter.source === undefined || adapter.source === 'builtin'
+    return this.packages.isShipped(adapter.definition.manifest.id, adapter.hash)
   }
 
   /** Signed evidence (or the legacy record) for this hash, in the mode it would run in now. */
@@ -1515,7 +1545,7 @@ export class AppService {
   private async recordLegacy(): Promise<void> {
     const ledger = this.ledger
     if (ledger === null || ledger.tampered !== null || ledger.data.legacy !== undefined) return
-    const builtin = this.installed.filter((a) => !this.runsUnsandboxed(a))
+    const builtin = this.installed.filter((a) => this.isBuiltIn(a))
     const installs: { adapterId: string; adapterHash: string }[] = []
     for (const adapter of builtin) {
       const id = adapter.definition.manifest.id
@@ -1944,7 +1974,7 @@ export class AppService {
           if (adapter.hash !== hash) throw new ValetError('manifest', 'invalid')
           // Touch ID at this Mac signs it; the handler applies it (approvalHandlers).
           // A version this app ships is labelled built in; anything else by where it came from.
-          const source = !this.runsUnsandboxed(adapter)
+          const source = this.isBuiltIn(adapter)
             ? 'builtin'
             : adapter.source === 'draft'
               ? 'draft'

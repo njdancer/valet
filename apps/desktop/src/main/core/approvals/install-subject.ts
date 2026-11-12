@@ -10,6 +10,7 @@ import {
   isDisplayText,
   type PermissionChange,
   type Risk,
+  sandboxPermissionChanges,
 } from '@valet/core'
 import type { ListDiff } from '../../../shared/api'
 import { permissionDiff } from '../permission-diff'
@@ -77,8 +78,8 @@ function items(values: readonly Shown[]): string[] {
 
 /**
  * The Mac's permission diff from `before` (null for a first install) to `after`, as B's lines.
- * Additions carry the area's risk; removals are low. `unsandboxed` adds the critical
- * sandbox-mode line, which makes the request Mac only (approvableOn).
+ * Additions carry the area's risk; removals are low. `unsandboxed` (how this version would run
+ * here) adds the critical sandbox-mode line, which makes the request Mac only (approvableOn).
  */
 export function permissionChanges(
   before: AdapterManifest | null,
@@ -98,8 +99,13 @@ export function permissionChanges(
     }
     push(area, 'removed', d.removed.map(show), 'low')
   }
-  if (unsandboxed)
+  // The sandbox's own lines (docs/sandbox.md#the-permission-diff): becoming unsandboxed, and each
+  // exception at its own risk. A version that runs unsandboxed always carries the critical line,
+  // even when the one it replaces did too, so its request is Mac only every time.
+  const sandbox = sandboxPermissionChanges(before === null ? null : (before.sandbox ?? null), after.sandbox)
+  if (unsandboxed && !sandbox.some((c) => c.area === 'sandbox-mode' && c.risk === 'critical'))
     push('sandbox-mode', 'added', ['Runs without the sandbox: it can do anything you can'], 'critical')
+  for (const change of sandbox) push(change.area, change.change, change.items, change.risk)
   list('navigation', diff.navigation, (o) => o, 'medium')
   list('egress', diff.egress, (o) => o, 'medium')
   list('auth-frames', diff.frameOrigins, (o) => o, 'high')

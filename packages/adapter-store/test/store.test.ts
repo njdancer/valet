@@ -56,9 +56,9 @@ describe('AdapterStore', () => {
     expect(state.versions.map((v) => v.version)).toEqual(['0.1.1', '0.1.2', '0.1.3'])
   })
 
-  it('refuses the draft source until the sandbox exists', async () => {
-    await expect(put(1, { source: 'draft' })).rejects.toMatchObject({ problem: 'draft-unsandboxed' })
-    expect(await store.ids()).toEqual([])
+  it('stores a draft like any other source, now the sandbox runs its code', async () => {
+    const state = await put(1, { source: 'draft' })
+    expect(state.versions.map((v) => v.source)).toEqual(['draft'])
   })
 
   it('installs the same package once', async () => {

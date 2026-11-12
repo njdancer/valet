@@ -292,8 +292,11 @@ active on launch) is not carried over, because nobody approved that hash. It ask
 like any update.
 
 Installs, updates and rollbacks are signed `adapter-install` requests at the Mac. The subject's
-permission lines are the Mac's own diff in B's areas (`approvals/install-subject.ts`), and an
-adapter that isn't built in carries the critical sandbox-mode line, so it is Mac only. A line never
+permission lines are the Mac's own diff in B's areas (`approvals/install-subject.ts`), with the
+sandbox's own lines from `sandboxPermissionChanges` (a `command` exception reads "which can read
+your files", critical). `unsandboxed` comes from the manifest's `sandbox.mode`, or, in a build
+without the sandbox, from not being one of the app's shipped hashes; an unsandboxed version always
+carries the critical sandbox-mode line, so it is Mac only. A line never
 loses an item it can't print: hidden or control characters are written out as their codes, the
 purpose of a request or tool is kept outside the cut, a secret's line says which origins it may be
 typed into, and past 50 items the last one says how many were left out. The gate binds the sandbox

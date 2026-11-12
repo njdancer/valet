@@ -12,9 +12,12 @@ import {
   hardenProcess,
   type ManifestOptions,
   partitionName,
+  startEgressProxy,
 } from '@valet/browser-electron'
+import { DEFAULT_SANDBOX } from '@valet/core'
 import { KeychainHelper, messagesHelperSocketPath } from '@valet/credentials'
 import { startEndpoint } from '@valet/mcp-server'
+import { createLocalAccess } from '@valet/sandbox'
 import { app, clipboard, dialog, protocol, session, shell } from 'electron'
 import { href } from '../../renderer/lib/routes'
 import { builtinPackages } from '../adapters'
@@ -44,6 +47,7 @@ import {
   rendererBase,
   userDataDir,
 } from '../core/launch'
+import { addOwnPort, ownPorts, recordOwnPorts } from '../core/own-ports'
 import { AppService } from '../core/service'
 import { SHOWCASE_BUILD_MARKER } from '../core/showcase'
 import type { BridgeCommand } from '../core/snippets'
@@ -51,6 +55,7 @@ import type { DemoSite } from './demo'
 import { launchRefused } from './guard'
 import { broadcast, registerIpc } from './ipc'
 import { systemNotifications } from './notifications'
+import { SandboxPool } from './sandbox'
 import { utilityToolProcess } from './tool-process'
 import { type AppTray, createTray } from './tray'
 import { bundleSignature, electronUpdates } from './updates'
@@ -78,6 +83,10 @@ function beforeReady(): void {
     userDataDir(mode, app.getPath('appData'), app.isPackaged ? app.getName() : DEV_DATA_NAME),
   )
   hardenProcess(app)
+  // Before any server starts: a local-service exception may never reach one of them (docs/sandbox.md).
+  recordOwnPorts()
+  const debugging = Number(app.commandLine.getSwitchValue('remote-debugging-port'))
+  if (debugging > 0) addOwnPort(debugging)
   if (mode.demo) app.commandLine.appendSwitch('host-resolver-rules', demoResolverRules(mode))
   protocol.registerSchemesAsPrivileged([{ scheme: APP_SCHEME, privileges: APP_SCHEME_PRIVILEGES }])
 }
@@ -254,6 +263,24 @@ async function main(): Promise<void> {
     demoSite === null ? {} : { origin: demoSite.site.origin, authOrigin: demoSite.site.authOrigin },
   )
   const toolProcess = utilityToolProcess(join(import.meta.dirname, 'tool-process.js'))
+  // The adapter sandbox (docs/sandbox.md): anything that slips past a sandbox window's request
+  // filter meets a proxy that refuses every host.
+  const sandboxProxy = await startEgressProxy({ allow: () => false })
+  const sandboxes = new SandboxPool({
+    preload: join(import.meta.dirname, '../preload/sandbox.cjs'),
+    wasm: join(import.meta.dirname, '../preload/quickjs.wasm'),
+    proxyUrl: sandboxProxy.url,
+    log,
+  })
+  if (mode.e2e)
+    Object.defineProperty(globalThis, '__valetE2eSandbox', {
+      value: Object.freeze({
+        escaped: (key: string, source: string, world: 'preload' | 'main') =>
+          sandboxes.escapedForE2e(key, source, world),
+        windows: () => sandboxes.size,
+      }),
+    })
+  const home = app.getPath('home')
   const driverOptions: ManifestOptions = demoSite === null ? {} : { egressPorts: [demoSite.site.port] }
   const opDeps = defaultOpCheckDeps()
   // The packaged app's name is "Valet" for a release and "Valet Dev" otherwise (electron-builder's
@@ -329,7 +356,9 @@ async function main(): Promise<void> {
     adapters: [],
     packages: {
       builtins,
-      runtime: { prelude: toolLibrary, start: toolProcess },
+      // Describing and checking anything new runs in a sandbox window of its own: no code that isn't
+      // approved yet runs anywhere else (docs/sandbox.md#lifting-cs-guard).
+      runtime: { prelude: toolLibrary, start: sandboxes.oneShot() },
       build: buildRecord(app.getVersion(), toolLibrary),
       // Development builds only: a packaged app installs from drafts once the sandbox exists.
       ...(app.isPackaged
@@ -351,6 +380,11 @@ async function main(): Promise<void> {
           }),
     },
     toolProcess,
+    sandbox: {
+      forAdapter: (hash) => sandboxes.forAdapter(hash),
+      local: (manifest) =>
+        createLocalAccess(manifest.sandbox ?? DEFAULT_SANDBOX, 'declared', { home, refusedPorts: ownPorts }),
+    },
     // Demo mode keeps only the shop on this machine: the other built-ins (no login, public data)
     // reach their real sites.
     createDriver: (manifest, reporters) =>
@@ -480,6 +514,7 @@ async function main(): Promise<void> {
     // the app (and its endpoint port) alive past the bound.
     const done = () => {
       windows.closeAll()
+      sandboxes.closeAll()
       app.exit(0)
     }
     const bound = setTimeout(done, QUIT_BOUND_MS)

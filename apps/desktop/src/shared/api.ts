@@ -312,6 +312,27 @@ export interface PermissionDiff {
   readonly limits: { readonly before: LimitsInfo; readonly after: LimitsInfo } | null
   /** Null for a first install. The renderer compares the two itself. */
   readonly probe: { readonly before: ProbeInfo; readonly after: ProbeInfo } | null
+  /** What the new version can reach on this Mac (docs/sandbox.md). */
+  readonly sandbox: SandboxDiff
+}
+
+export interface SandboxDiff {
+  /** The new version runs without the sandbox: it can reach anything the person can. */
+  readonly unsandboxed: boolean
+  /** It wasn't unsandboxed before (or is new): the strongest warning Valet has. */
+  readonly becameUnsandboxed: boolean
+  /** The author's reason for running unsandboxed, shown as their claim. */
+  readonly reason: string | null
+  /** Each exception, in the app's words, with the author's purpose beside it. */
+  readonly exceptions: readonly SandboxExceptionLine[]
+}
+
+export interface SandboxExceptionLine {
+  readonly change: 'added' | 'removed' | 'same'
+  readonly text: string
+  /** The author's words. */
+  readonly purpose: string
+  readonly risk: 'low' | 'medium' | 'high' | 'critical'
 }
 
 export interface ManifestDiffLine {
@@ -342,8 +363,8 @@ export interface PendingReview {
   readonly manifestDiff: readonly ManifestDiffLine[]
   readonly files: readonly FileChange[]
   /**
-   * Where this version's package came from (docs/adapter-packages.md). Anything but `builtin` runs
-   * unsandboxed until the sandbox exists, and is shown so.
+   * Where this version's package came from (docs/adapter-packages.md). Whether it runs in the
+   * sandbox is the diff's `sandbox`, from its manifest, wherever it came from.
    */
   readonly origin?: PackageOrigin
   /**

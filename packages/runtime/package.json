@@ -7,6 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./tool-worker": "./src/isolation/worker.ts",
+    "./bootstrap": "./src/isolation/bootstrap.ts",
+    "./protocol": "./src/isolation/protocol.ts",
     "./tool-script": "./src/isolation/tool-script.ts",
     "./in-context": "./src/isolation/in-context.ts"
   },
