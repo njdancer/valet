@@ -144,6 +144,14 @@ describe.skipIf(HELPER === undefined || HELPER === '')('valet-approver with soft
       },
     ],
     ['resume', { from: 'lockdown' }],
+    [
+      'private-network',
+      { adapterId: 'home-hub', draftId: 'd1', address: '192.168.1.20', port: 8080, minutes: 30 },
+    ],
+    [
+      'private-network',
+      { adapterId: 'home-hub', draftId: 'd1', address: '192.168.1.20', port: null, minutes: 30 },
+    ],
   ]
 
   it('signs what core verifies, with the same prompt wording as the app', async () => {

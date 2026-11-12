@@ -283,14 +283,14 @@ describe('asking', () => {
     expect(t.broker.list()[0]?.request.agentNote).toBeNull()
   })
 
-  it('limits each agent to 3 waiting and all agents to 10', async () => {
+  it('limits each agent to 3 waiting and all agents to 5', async () => {
     const t = await setup()
     for (const name of ['get_a', 'get_b', 'get_c']) await requested(t, tool({ tool: name }))
     expect(await t.broker.request('tool-enable', tool({ tool: 'get_d' }), agent())).toEqual({
       ok: false,
       reason: 'too-many-waiting',
     })
-    for (const n of [1, 2, 3, 4, 5, 6, 7]) await requested(t, tool({ tool: 'get_a' }), agent(`a${n}`))
+    for (const n of [1, 2]) await requested(t, tool({ tool: 'get_a' }), agent(`a${n}`))
     expect(await t.broker.request('tool-enable', tool(), agent('a8'))).toEqual({
       ok: false,
       reason: 'too-many-total',
@@ -920,11 +920,12 @@ describe('the rest of a request’s life', () => {
     const t = await setup()
     const consent = await t.broker.request(
       'remote-client',
-      { clientId: 'remote:abc', host: 'claude.ai', sourceAddress: null, code: 'ABCD-1234', tools: [] },
+      { clientId: 'remote:abc', host: 'claude.ai', sourceAddress: null, tools: [] },
       app,
+      { consentCode: 'ABCD-EFGH' },
     )
     if (!consent.ok) throw new Error('refused')
-    await t.broker.approveOnMac(consent.requestId)
+    expect(await t.broker.approveOnMac(consent.requestId, { typedCode: 'abcdefgh' })).toEqual({ ok: true })
     const kept = await requested(t)
     await t.broker.approveOnMac(kept)
     expect(t.broker.honoured('remote-client', () => true)).not.toBeNull()
@@ -1013,5 +1014,131 @@ describe('the phone inbox', () => {
       await t.box.receive(t.phoneId, JSON.stringify({ type: 'command', seq: seq + 1, command }))
     }
     expect(t.calls).toEqual([`pause ${t.phoneId}`, `lockdown ${t.phoneId}`, 'revoke-client remote:abc'])
+  })
+})
+
+describe('contracts v2', () => {
+  const consent = (clientId = 'remote:abc') =>
+    ({ clientId, host: 'claude.ai', sourceAddress: null, tools: [] }) as ApprovalSubject<'remote-client'>
+
+  it('a consent needs the code typed, keeps the code out of the request, and three wrong codes end every consent', async () => {
+    const t = await setup()
+    expect(await t.broker.request('remote-client', consent(), app)).toEqual({
+      ok: false,
+      reason: 'not-allowed',
+    })
+    const one = await t.broker.request('remote-client', consent('remote:one'), app, {
+      consentCode: 'ABCD-EFGH',
+    })
+    const two = await t.broker.request('remote-client', consent('remote:two'), app, {
+      consentCode: 'JKLM-NPQR',
+    })
+    if (!one.ok || !two.ok) throw new Error('refused')
+    expect(t.broker.get(one.requestId)?.text).not.toContain('ABCD')
+    expect(await t.broker.approveOnMac(one.requestId)).toEqual({ ok: false, reason: 'wrong-code' })
+    expect(await t.broker.approveOnMac(one.requestId, { typedCode: 'JKLMNPQR' })).toEqual({
+      ok: false,
+      reason: 'wrong-code',
+    })
+    expect(t.broker.list()).toHaveLength(2)
+    expect(await t.broker.approveOnMac(two.requestId, { typedCode: 'ABCDEFGH' })).toEqual({
+      ok: false,
+      reason: 'wrong-code',
+    })
+    expect(t.broker.list()).toEqual([])
+    expect(t.broker.status(two.requestId, app)).toMatchObject({ outcome: 'withdrawn', reason: 'wrong-codes' })
+  })
+
+  it('keeps consents in their own bucket, and drops them on a restart', async () => {
+    const t = await setup()
+    for (let n = 0; n < 5; n++) {
+      expect(
+        await t.broker.request('remote-client', consent(`remote:c${n}`), app, { consentCode: 'ABCD-EFGH' }),
+      ).toMatchObject({ ok: true })
+    }
+    expect(
+      await t.broker.request('remote-client', consent('remote:c9'), app, { consentCode: 'ABCD-EFGH' }),
+    ).toEqual({
+      ok: false,
+      reason: 'too-many-consents',
+    })
+    // Agents' requests are counted apart.
+    expect(await t.broker.request('tool-enable', tool(), agent())).toMatchObject({ ok: true })
+    const again = await t.reopen()
+    expect(again.broker.list().map((r) => r.request.kind)).toEqual(['tool-enable'])
+  })
+
+  it('signs the choice the person made on a setting card', async () => {
+    const t = await setup()
+    const store = await t.broker.request(
+      'setting',
+      {
+        scope: 'adapter',
+        adapterId: 'woolworths',
+        setting: 'store',
+        label: 'Store',
+        from: 'None',
+        to: 'Chosen on the card',
+        choices: [
+          { value: '1234', label: 'Bondi Junction' },
+          { value: '5678', label: 'Surry Hills' },
+        ],
+      },
+      agent(),
+    )
+    if (!store.ok) throw new Error('refused')
+    expect(await t.broker.approveOnMac(store.requestId, { choice: '9999' })).toEqual({
+      ok: false,
+      reason: 'bad-choice',
+    })
+    expect(await t.broker.approveOnMac(store.requestId, { choice: '5678' })).toEqual({ ok: true })
+    const evidence = t.broker.honoured('setting', (s) => s.setting === 'store')
+    expect(JSON.parse(evidence?.decision.payload ?? '{}')).toMatchObject({ choice: '5678' })
+  })
+
+  it('signs the context and display the Mac adds', async () => {
+    const t = await setup()
+    const result = await t.broker.request('tool-enable', tool(), agent(), {
+      agentNote: 'for the repair',
+      context: { kind: 'repair', repairId: 'R-4E1C' },
+      display: { because: 'Repair R-4E1C', domain: 'yahoo.com' },
+    })
+    if (!result.ok) throw new Error('refused')
+    expect(t.broker.get(result.requestId)?.request).toMatchObject({
+      agentNote: 'for the repair',
+      context: { kind: 'repair', repairId: 'R-4E1C' },
+      display: { because: 'Repair R-4E1C' },
+    })
+  })
+
+  it('lets an agent ask for a private network address', async () => {
+    const t = await setup()
+    const result = await t.broker.request(
+      'private-network',
+      { adapterId: 'home-hub', draftId: 'd1', address: '192.168.1.20', port: 8080, minutes: 30 },
+      agent(),
+    )
+    if (!result.ok) throw new Error('refused')
+    expect(promptReason(t.broker.get(result.requestId) as never)).toBe(
+      `let an agent's scratch browser reach your home network (192.168.1.20 port 8080) (request ${result.ref})`,
+    )
+  })
+
+  it('passes a decline note to the agent, which pauses it only when the person says stop asking', async () => {
+    const t = await setup()
+    for (const name of ['get_a', 'get_b', 'get_c']) {
+      const id = await requested(t, tool({ tool: name }))
+      await t.broker.decline(id, { via: 'mac' }, { note: 'query1 is enough' })
+      expect(t.broker.status(id, agent())).toMatchObject({ outcome: 'declined', note: 'query1 is enough' })
+    }
+    expect(await t.broker.request('tool-enable', tool({ tool: 'get_d' }), agent())).toMatchObject({
+      ok: true,
+    })
+    const id = await requested(t, tool({ tool: 'get_e' }))
+    await t.broker.decline(id, { via: 'mac' }, { note: 'no more', stopAsking: true })
+    expect(await t.broker.request('tool-enable', tool({ tool: 'get_f' }), agent())).toMatchObject({
+      ok: false,
+      reason: 'cooling-down',
+    })
   })
 })

@@ -20,10 +20,12 @@ import {
   type AuditSink,
   approvableOn,
   canonicalJson,
+  consentCodeSchema,
   type DecisionRefusal,
   decisionPayload,
   type Evidence,
   type EvidenceCheck,
+  isDisplayText,
   KIND_TIER,
   type MacToPhoneMessage,
   NEVER_STORED,
@@ -49,6 +51,7 @@ export const AGENT_KINDS: readonly ApprovalKind[] = [
   'tool-enable',
   'setting',
   'authoring-session',
+  'private-network',
 ]
 /** Kinds only the person may ask for, at the Mac. */
 const PERSON_ONLY: readonly ApprovalKind[] = ['resume', 'device-pair']
@@ -57,10 +60,11 @@ const APP_ONLY: readonly ApprovalKind[] = ['irreversible-call', 'remote-client']
 
 /**
  * Requests an agent may make in a day, whatever becomes of them, so withdrawing and asking again
- * can't push cards to the phone without end (approval-cards.md section 8). A's number; B's
- * contract has no daily cap yet.
+ * can't push cards to the phone without end (approval-cards.md section 8).
  */
-export const ASKS_PER_CLIENT_PER_DAY = 20
+export const ASKS_PER_CLIENT_PER_DAY = APPROVAL_LIMITS.perClientPerDay
+/** Wrong consent codes, across all pending consents, before every one of them is withdrawn. */
+export const CONSENT_CODE_STRIKES = 3
 const DAY_MS = 24 * 3600_000
 /**
  * How long after a device signed its decision the Mac still takes it (A's "Not confirmed yet"
@@ -104,9 +108,42 @@ export interface Closed {
   readonly deviceId: string | null
   /** Why it was withdrawn: by the asker, replaced, stale, lockdown, client revoked. */
   readonly reason?: WithdrawReason
+  /** A decline's note, for the asking agent only. */
+  readonly note?: string
 }
 
-export type WithdrawReason = 'asker' | 'replaced' | 'stale' | 'lockdown' | 'client-revoked'
+/** What the Mac adds to a request besides its subject. All of it is signed with the request. */
+export interface RequestExtras {
+  readonly agentNote?: string | null
+  readonly context?: ApprovalRequest['context']
+  readonly display?: ApprovalRequest['display']
+  /**
+   * A remote client's consent only: the code the browser that started the flow shows. Kept beside
+   * the pending request, in memory, never in the request itself: the person must type it.
+   */
+  readonly consentCode?: string
+}
+
+/** What the person entered on the Mac's card, signed into the decision. */
+export interface DecisionExtras {
+  readonly choice?: string
+  readonly typedCode?: string
+}
+
+export interface DeclineExtras {
+  readonly note?: string
+  /** "Decline and stop asking": the agent's requests are refused for the cooldown at once. */
+  readonly stopAsking?: boolean
+}
+
+export type WithdrawReason =
+  | 'asker'
+  | 'replaced'
+  | 'stale'
+  | 'lockdown'
+  | 'client-revoked'
+  | 'wrong-codes'
+  | 'restarted'
 
 export type RequestRefusal =
   | 'locked-down'
@@ -115,6 +152,7 @@ export type RequestRefusal =
   | 'too-many-total'
   | 'cooling-down'
   | 'daily-limit'
+  | 'too-many-consents'
   | 'unavailable'
 
 export type RequestResult =
@@ -170,6 +208,9 @@ export class ApprovalBroker {
   private readonly pending = new Map<string, SerializedRequest>()
   private readonly closed: Closed[] = []
   private readonly waiters = new Map<string, ((closed: Closed) => void)[]>()
+  /** Each pending consent's code, never written anywhere: a restart withdraws the consent. */
+  private readonly consentCodes = new Map<string, string>()
+  private wrongCodes = 0
   /** Stored evidence checks, by signature; cleared when the devices or revocations change. */
   private readonly evidenceChecks = new Map<string, EvidenceCheck>()
   private evidenceDevices: unknown = null
@@ -253,11 +294,24 @@ export class ApprovalBroker {
     kind: K,
     subject: ApprovalSubject<K>,
     requester: Requester,
-    agentNote: string | null = null,
+    extras: RequestExtras | string | null = null,
   ): Promise<RequestResult> {
+    const {
+      agentNote = null,
+      context,
+      display,
+      consentCode,
+    } = typeof extras === 'string' || extras === null ? { agentNote: extras } : extras
     return this.exclusive(async () => {
       const refusal = this.refusal(kind, subject, requester)
       if (refusal !== null) return refusal
+      if (kind === 'remote-client') {
+        if (consentCode === undefined || !consentCodeSchema.safeParse(consentCode).success) {
+          return { ok: false, reason: 'not-allowed' }
+        }
+        const waiting = this.list().filter((p) => p.request.kind === 'remote-client').length
+        if (waiting >= APPROVAL_LIMITS.consentPending) return { ok: false, reason: 'too-many-consents' }
+      }
 
       const existing = this.list().find(
         (p) =>
@@ -265,7 +319,7 @@ export class ApprovalBroker {
           sameAsker(p.request.requester, requester) &&
           canonicalJson(p.request.subject) === canonicalJson(subject),
       )
-      if (existing !== undefined) {
+      if (existing !== undefined && kind !== 'remote-client') {
         return {
           ok: true,
           requestId: existing.request.id,
@@ -287,6 +341,8 @@ export class ApprovalBroker {
         subject,
         createdAt: new Date(now).toISOString(),
         expiresAt: new Date(now + APPROVAL_TTL_MS[kind]).toISOString(),
+        ...(context === undefined ? {} : { context }),
+        ...(display === undefined ? {} : { display }),
       } as ApprovalRequest)
       const id = serialized.request.id
 
@@ -312,6 +368,7 @@ export class ApprovalBroker {
         }
       }
       this.pending.set(id, serialized)
+      if (kind === 'remote-client' && consentCode !== undefined) this.consentCodes.set(id, consentCode)
       if (approvableOn(kind, subject).includes('phone')) {
         for (const phone of this.options.devices.activePhones()) {
           this.options.outbox?.send(phone.deviceId, {
@@ -336,7 +393,7 @@ export class ApprovalBroker {
    * Touch ID prompt: without the person's finger (or password) nothing is signed. One prompt at a
    * time. The renderer sends only the request id and never sees the signature.
    */
-  async approveOnMac(requestId: string): Promise<MacApproveResult> {
+  async approveOnMac(requestId: string, extras: DecisionExtras = {}): Promise<MacApproveResult> {
     if (this.prompting) return { ok: false, reason: 'busy' }
     const request = this.pending.get(requestId)
     if (request === undefined) return { ok: false, reason: 'not-pending' }
@@ -350,6 +407,8 @@ export class ApprovalBroker {
       requestDigest: request.digest,
       deviceId: this.macId,
       decidedAt: new Date(this.now()).toISOString(),
+      ...(extras.choice === undefined ? {} : { choice: extras.choice }),
+      ...(extras.typedCode === undefined ? {} : { typedCode: normaliseCode(extras.typedCode) }),
     })
     try {
       signature = await this.options.signer.signDecision(request, payload)
@@ -375,9 +434,20 @@ export class ApprovalBroker {
         devices: this.options.devices,
         mode: 'live',
         isPending: (id) => this.pending.has(id),
+        consentCode: (id) => this.consentCodes.get(id) ?? null,
         now: new Date(this.now()),
       })
-      if (!check.ok) return this.refuse(requestId, from, check.reason)
+      if (!check.ok) {
+        const refused = await this.refuse(requestId, from, check.reason)
+        if (check.reason === 'wrong-code' && ++this.wrongCodes >= CONSENT_CODE_STRIKES) {
+          // Three wrong codes: someone may be guessing. Every waiting consent goes (relay.md).
+          this.wrongCodes = 0
+          for (const consent of this.list().filter((p) => p.request.kind === 'remote-client')) {
+            await this.close(consent, 'withdrawn', null, 'wrong-codes')
+          }
+        }
+        return refused
+      }
       const expected = from.via === 'mac' ? this.macId : from.deviceId
       if (check.decision.deviceId !== expected) return this.refuse(requestId, from, 'wrong-device')
       const kind = request.request.kind
@@ -449,19 +519,33 @@ export class ApprovalBroker {
   }
 
   /** A decline from the Mac window, or from a paired, unrevoked phone. Needs no signature. */
-  decline(requestId: string, from: AnswerSource): Promise<boolean> {
+  decline(requestId: string, from: AnswerSource, extras: DeclineExtras = {}): Promise<boolean> {
     return this.exclusive(async () => {
       const request = this.pending.get(requestId)
       if (request === undefined) return false
       if (from.via === 'phone' && !this.options.devices.isActivePhone(from.deviceId)) return false
       const deviceId = from.via === 'mac' ? this.macId : from.deviceId
       const requester = request.request.requester
-      await this.close(request, 'declined', deviceId, undefined, (draft) => {
-        if (requester.kind !== 'agent') return
-        const keepAfter = this.now() - DECLINES_KEPT_MS
-        draft.declines = draft.declines.filter((d) => Date.parse(d.at) > keepAfter)
-        draft.declines.push({ clientId: requester.clientId, at: new Date(this.now()).toISOString() })
-      })
+      const note =
+        extras.note !== undefined && isDisplayText(extras.note) ? extras.note.slice(0, 280) : undefined
+      await this.close(
+        request,
+        'declined',
+        deviceId,
+        undefined,
+        (draft) => {
+          if (requester.kind !== 'agent') return
+          // A decline with a note is the person explaining, not refusing to be asked (A section 8),
+          // unless they also said to stop asking, which starts the cooldown at once.
+          if (note !== undefined && extras.stopAsking !== true) return
+          const keepAfter = this.now() - DECLINES_KEPT_MS
+          const at = new Date(this.now()).toISOString()
+          draft.declines = draft.declines.filter((d) => Date.parse(d.at) > keepAfter)
+          const count = extras.stopAsking === true ? APPROVAL_LIMITS.declinesBeforeCooldown : 1
+          for (let n = 0; n < count; n++) draft.declines.push({ clientId: requester.clientId, at })
+        },
+        note,
+      )
       return true
     })
   }
@@ -652,6 +736,19 @@ export class ApprovalBroker {
       )
         continue
       if (this.pending.has(request.request.id)) continue
+      if (request.request.kind === 'remote-client') {
+        // Its code was kept in memory only, so nobody can answer it now.
+        await this.options.audit
+          .append({
+            type: 'approval-answered',
+            requestId: request.request.id,
+            answer: 'withdrawn',
+            deviceId: null,
+            reason: 'restarted',
+          })
+          .catch(() => undefined)
+        continue
+      }
       this.pending.set(request.request.id, request)
       kept.push(entry.requestText)
     }
@@ -732,6 +829,7 @@ export class ApprovalBroker {
     deviceId: string | null,
     reason?: WithdrawReason,
     also?: (draft: import('./ledger').LedgerData) => void,
+    note?: string,
   ): Promise<void> {
     await this.options.audit
       .append({
@@ -754,7 +852,7 @@ export class ApprovalBroker {
         )
         .catch(() => undefined)
     }
-    this.finish(request, outcome, deviceId, reason)
+    this.finish(request, outcome, deviceId, reason, note)
   }
 
   private finish(
@@ -762,9 +860,11 @@ export class ApprovalBroker {
     outcome: Outcome,
     deviceId: string | null,
     reason?: WithdrawReason,
+    note?: string,
   ): void {
     const id = request.request.id
     this.pending.delete(id)
+    this.consentCodes.delete(id)
     const closed: Closed = {
       requestId: id,
       ref: requestRef(request),
@@ -774,6 +874,7 @@ export class ApprovalBroker {
       at: new Date(this.now()).toISOString(),
       deviceId,
       ...(reason === undefined ? {} : { reason }),
+      ...(note === undefined ? {} : { note }),
     }
     this.closed.unshift(closed)
     this.closed.length = Math.min(this.closed.length, CLOSED_KEPT)
@@ -848,6 +949,12 @@ export class ApprovalBroker {
     this.queue = done.catch(() => undefined)
     return done
   }
+}
+
+/** A typed consent code as core checks it: upper case, with the hyphen in the middle. */
+export function normaliseCode(typed: string): string {
+  const letters = typed.toUpperCase().replace(/[^A-Z]/g, '')
+  return letters.length === 8 ? `${letters.slice(0, 4)}-${letters.slice(4)}` : letters
 }
 
 function sameAsker(a: Requester, b: Requester): boolean {

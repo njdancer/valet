@@ -21,6 +21,7 @@ let approvalActions: [String: String] = [
   "remote-client": "let a remote agent connect",
   "setting": "change a setting",
   "authoring-session": "let an agent use a signed-in session",
+  "private-network": "let an agent's scratch browser reach your home network",
   "irreversible-call": "confirm something that can't be undone",
   "resume": "resume Valet",
   "device-pair": "pair a new device",
@@ -80,6 +81,10 @@ func detail(kind: String, subject: [String: Any]) -> String {
     let tool = subject["tool"] as? String ?? ""
     let scope = subject["scope"] as? String == "remote" ? "for remote use" : "on this Mac"
     return " (\(tool), \(scope))"
+  case "private-network":
+    let address = subject["address"] as? String ?? ""
+    if let port = subject["port"] as? Int { return " (\(address) port \(port))" }
+    return " (\(address))"
   case "secret-grant":
     let hosts = (subject["origins"] as? [String] ?? []).compactMap(hostOf)
     return " on \(hosts.joined(separator: ", "))"

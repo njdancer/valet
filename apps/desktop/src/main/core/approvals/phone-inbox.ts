@@ -20,18 +20,30 @@ export interface SafetySwitches {
   revokeDevice(deviceId: string, by: string): Promise<void>
 }
 
+/**
+ * What a phone may start but not decide: an `ask` (the Mac builds the request itself, exactly as
+ * for an agent, and the ask approves nothing), and a one-time code typed for a login hand-off (J6).
+ * The service provides both; until it does, they are dropped.
+ */
+export interface PhoneRequests {
+  ask(from: string, ask: Extract<PhoneToMacMessage, { type: 'ask' }>): Promise<void>
+  loginCode(from: string, handoffId: string, code: string): Promise<void>
+}
+
 export type InboxResult =
   | { readonly handled: 'decision'; readonly result: AnswerResult }
   | { readonly handled: 'decline'; readonly declined: boolean }
   | { readonly handled: 'command' }
   | { readonly handled: 'ack'; readonly ackSeq: number }
-  | { readonly handled: 'dropped'; readonly why: 'unknown-device' | 'malformed' }
+  | { readonly handled: 'ask' | 'login-code' }
+  | { readonly handled: 'dropped'; readonly why: 'unknown-device' | 'malformed' | 'unsupported' }
 
 export class PhoneInbox {
   constructor(
     private readonly broker: ApprovalBroker,
     private readonly devices: DeviceStore,
     private readonly safety: SafetySwitches,
+    private readonly requests: PhoneRequests | null = null,
   ) {}
 
   /** `plaintext` is the opened envelope's content; `from` the envelope's authenticated sender. */
@@ -54,7 +66,14 @@ export class PhoneInbox {
       case 'approval-decline':
         return {
           handled: 'decline',
-          declined: await this.broker.decline(message.requestId, { via: 'phone', deviceId: from }),
+          declined: await this.broker.decline(
+            message.requestId,
+            { via: 'phone', deviceId: from },
+            {
+              ...(message.note === undefined ? {} : { note: message.note }),
+              ...(message.stopAsking === undefined ? {} : { stopAsking: message.stopAsking }),
+            },
+          ),
         }
       case 'command': {
         const command = message.command
@@ -66,6 +85,14 @@ export class PhoneInbox {
       }
       case 'ack':
         return { handled: 'ack', ackSeq: message.ackSeq }
+      case 'ask':
+        if (this.requests === null) return { handled: 'dropped', why: 'unsupported' }
+        await this.requests.ask(from, message)
+        return { handled: 'ask' }
+      case 'login-code':
+        if (this.requests === null) return { handled: 'dropped', why: 'unsupported' }
+        await this.requests.loginCode(from, message.handoffId, message.code)
+        return { handled: 'login-code' }
     }
   }
 }

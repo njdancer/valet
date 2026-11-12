@@ -18,6 +18,7 @@ const ACTIONS: Readonly<Record<ApprovalKind, string>> = {
   'remote-client': 'let a remote agent connect',
   setting: 'change a setting',
   'authoring-session': 'let an agent use a signed-in session',
+  'private-network': "let an agent's scratch browser reach your home network",
   'irreversible-call': "confirm something that can't be undone",
   resume: 'resume Valet',
   'device-pair': 'pair a new device',
@@ -46,6 +47,10 @@ function detail(serialized: SerializedRequest): string {
     }
     case 'tool-enable':
       return ` (${request.subject.tool}, ${request.subject.scope === 'remote' ? 'for remote use' : 'on this Mac'})`
+    case 'private-network': {
+      const { address, port } = request.subject
+      return ` (${address}${port === null ? '' : ` port ${port}`})`
+    }
     case 'secret-grant':
       return ` on ${request.subject.origins
         .map(hostOf)

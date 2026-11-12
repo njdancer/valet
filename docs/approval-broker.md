@@ -338,6 +338,30 @@ A fresh adversarial reviewer read this design, B's contracts, A's spec and the f
 | 24  | No file and no anchor reads as fresh                                                      | PR 2: a Keychain read error locks down; a missing anchor with a first-run marker present counts as tampering.                                                                                             |
 | 25  | Implementation points                                                                     | Requester only inside the request text (done); prune before caps (done for declines and asks); evidence checks cached per device change (done).                                                           |
 
+## Contracts v2
+
+B accepted all seven asks below (PR #76), and the broker builds to the result:
+
+- **Limits** are A's: 3 waiting per agent, 5 across agents, 20 requests per agent per day
+  (`APPROVAL_LIMITS`).
+- **Consent** (`remote-client`): the request carries no code. The Mac keeps the code the browser
+  shows beside the pending request, in memory only, so a restart withdraws a waiting consent. The
+  person types it on the card and the device signs it into the decision (`typedCode`);
+  `verifyDecision` refuses a mismatch as `wrong-code`. Three wrong codes withdraw every waiting
+  consent. Consents have their own bucket of 5, apart from agents' requests; the per-source limit
+  on `/authorize` is the OAuth server's, before any card is made.
+- **Setting choices:** a card that offers `choices` signs the one picked (`choice`), and the
+  evidence carries it.
+- **Context and display** (the Because row, the domain, follow-ons) are passed by the Mac with the
+  request and signed with it.
+- **Declines** carry an optional note, given to the asking agent only, and "stop asking". A decline
+  with a note doesn't count towards the cooldown unless the person also said stop asking, which
+  starts it at once.
+- **Resume** is Mac only in `approvableOn` too, and off the admin table.
+- **Private network** is a kind an agent may ask for, with its own prompt wording.
+- **Phone asks and login codes** reach the service through `PhoneRequests`; the inbox drops them
+  until it's wired.
+
 ## Contract changes asked of B
 
 Sent to the security thread; the first PR builds without them.
