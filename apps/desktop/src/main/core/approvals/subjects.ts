@@ -149,8 +149,9 @@ export function settingSubject(
 }
 
 /**
- * The `setting` subject for an adapter's own setting (a store): the person picks the value on the
- * card from `choices`, the adapter's own list as the Mac fetched it; an agent never supplies it
+ * The `setting` subject for an adapter's own setting (a store), with choice labels cut to what a
+ * stored choice holds (100). The person picks the value on the card from `choices`, the
+ * adapter's own list as the Mac fetched it; an agent never supplies it
  * (A's R8). The approved decision names the pick (`choice`). Null with fewer than two choices,
  * when there is nothing to pick between, or for a setting the manifest doesn't declare.
  */
@@ -165,7 +166,7 @@ export function adapterSettingSubject(
   const offered = choices
     .slice(0, 50)
     .filter((c) => c.id.length > 0 && c.id.length <= 200)
-    .map((c) => ({ value: c.id, label: label(c.label, 120, c.id.slice(0, 120)) }))
+    .map((c) => ({ value: c.id, label: label(c.label, 100, c.id.slice(0, 100)) }))
   if (offered.length < 2) return null
   return {
     scope: 'adapter',

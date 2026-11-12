@@ -1203,9 +1203,15 @@ export class AppService {
         },
         apply: async (subject, evidence) => {
           if (subject.scope === 'adapter') {
-            const choice = evidence === null ? undefined : decisionChoice(evidence.decision.payload)
-            if (subject.adapterId === null || choice === undefined) throw new ValetError('config', 'invalid')
-            await this.setSetting(subject.adapterId, subject.setting, choice)
+            const value = evidence === null ? undefined : decisionChoice(evidence.decision.payload)
+            // From the signed card's own list (the decision was checked against it), not the
+            // picker's latest lookup, which another search or a restart may have replaced.
+            const picked = subject.choices?.find((c) => c.value === value)
+            if (subject.adapterId === null || picked === undefined) throw new ValetError('config', 'invalid')
+            await this.storeSetting(subject.adapterId, subject.setting, {
+              value: picked.value,
+              label: picked.label,
+            })
             return
           }
           const name = subject.setting as WideningSetting
@@ -2053,6 +2059,12 @@ export class AppService {
     this.requireSetting(adapterId, setting)
     const choice = this.offered.get(`${adapterId}/${setting}`)?.find((c) => c.value === value)
     if (choice === undefined) throw new ValetError('config', 'invalid')
+    await this.storeSetting(adapterId, setting, choice)
+  }
+
+  /** Stores a choice already checked: one offered now, or one picked on a signed card. */
+  private async storeSetting(adapterId: string, setting: string, choice: SettingChoice): Promise<void> {
+    this.requireSetting(adapterId, setting)
     // Audited first: a choice that can't be recorded isn't made.
     await this.audit.append({ type: 'setting-changed', adapterId, setting, cleared: false })
     await this.adapterSettings.set(adapterId, setting, choice, new Date(this.deps.now()).toISOString())

@@ -56,6 +56,8 @@ import { NO_LOCAL_ACCESS } from '@valet/sandbox'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import {
+  type ApprovalBroker,
+  adapterSettingSubject,
   FileAnchor,
   type MacApprovalKeys,
   SoftwareSigner,
@@ -1926,6 +1928,30 @@ describe('an adapter setting (D69)', () => {
     ])
     // The log says a setting changed, never to what: the label is the site's text.
     expect(readFileSync(s.paths.audit, 'utf8')).not.toContain('Shop Central')
+  })
+
+  it('stores the pick from the signed card, even after another search replaced the picker’s list', async () => {
+    const s = await storeShop()
+    const broker = (s.service as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
+    const subject = adapterSettingSubject(
+      s.adapter.definition.manifest,
+      'store',
+      null,
+      SHOP_STORES.map((c) => ({ id: c.value, label: c.label })),
+    )
+    if (subject === null) throw new Error('no subject')
+    const asked = await broker.request('setting', subject, {
+      kind: 'agent',
+      clientId: 'remote:abc',
+      clientName: 'Claude',
+    })
+    if (!asked.ok) throw new Error(asked.reason)
+    // The picker searches again before the person answers: its list no longer holds '12'.
+    s.log.answer = { choices: [{ value: '31', label: 'Shop South' }] }
+    await s.api.adapters.settingChoices('shop', 'store', '3000')
+    expect(await broker.approveOnMac(asked.requestId, { choice: '12' })).toEqual({ ok: true })
+    const detail = await s.api.adapters.get('shop')
+    expect(detail?.settings[0]?.chosen).toMatchObject({ id: '12', label: 'Shop <b>North</b>' })
   })
 
   it('keeps the choice across a restart, in an owner-only file', async () => {
