@@ -1,0 +1,232 @@
+{
+  "macStartedAt": 1794503331636,
+  "phoneStartedAt": 1794503337748,
+  "captions": [
+    {
+      "at": 1794503338504,
+      "text": "Valet on the Mac, and the iPhone app in the Simulator. Both talk through Valet’s relay, running locally here."
+    },
+    {
+      "at": 1794503469701,
+      "text": "To pair, open Settings › Devices on the Mac and choose Pair an iPhone."
+    },
+    {
+      "at": 1794503473547,
+      "text": "The Mac shows a one-time QR code. The Simulator has no camera, so this test build reads the same code over a local link."
+    },
+    {
+      "at": 1794503533321,
+      "text": "The phone shows six digits. The Mac shows three codes, and you pick the one that matches the phone."
+    },
+    {
+      "at": 1794503540130,
+      "text": "Picking it asks for Touch ID on the Mac (this test build answers that itself). The phone is paired."
+    },
+    {
+      "at": 1794503552507,
+      "text": "Now an agent, connected to Valet over MCP, writes an adapter for a made-up library site."
+    },
+    {
+      "at": 1794503560611,
+      "text": "Installing it needs your approval. The request is sealed to the phone and sent through the relay."
+    },
+    {
+      "at": 1794503572702,
+      "text": "The card on the phone says what the adapter can reach and who asked. Approve asks for Face ID."
+    },
+    {
+      "at": 1794503593714,
+      "text": "Approved with Face ID on the phone. The signed approval goes back to the Mac, which checks it and installs."
+    },
+    {
+      "at": 1794503595952,
+      "text": "The agent asks how its request went: approved, and the adapter is installed."
+    },
+    {
+      "at": 1794503600256,
+      "text": "Next the agent asks to keep call traces for 3 days instead of 14. Shortening them removes evidence, so it needs an approval."
+    },
+    {
+      "at": 1794503609429,
+      "text": "This time you decline on the phone, with a note for the agent. No Face ID is needed to say no."
+    },
+    {
+      "at": 1794503641538,
+      "text": "The agent is told it was declined, and gets your note. Nothing changed."
+    },
+    {
+      "at": 1794503645569,
+      "text": "Without a paid Apple developer account there are no push notifications. Here the phone app is closed when the agent asks."
+    },
+    {
+      "at": 1794503647764,
+      "text": "The Mac keeps the request until the phone confirms it has it."
+    },
+    {
+      "at": 1794503653790,
+      "text": "Open Valet on the phone and it reconnects. The waiting card arrives straight away."
+    },
+    {
+      "at": 1794503717390,
+      "text": "Approved with Face ID, same as before."
+    },
+    {
+      "at": 1794503719470,
+      "text": "Every request, approval and decline is in the Mac’s audit log."
+    }
+  ],
+  "agent": [
+    {
+      "at": 1794503552562,
+      "who": "agent",
+      "text": "valet_create_draft({\"adapterId\":\"leafline-library\",\"from\":\"blank\",\"name\":\"Leafline Library\"})"
+    },
+    {
+      "at": 1794503552927,
+      "who": "valet",
+      "text": "{\"draft\":{\"draftId\":\"dr-protidpy77\",\"adapterId\":\"leafline-library\",\"status\":\"editing\",\"createdBy\":\"Claude Code\",\"updatedAt\":\"2026-11-12T17:12:32.573Z\",\"lastCheck\":null,\"basedOn\":null,\"repairId\":null,\"files\":[{\"path\":\"fixtures/item-abc-1.json\",\"bytes\":63,\"sha256\":\"8b366307d84cb1b0\",\"recordedByValet\":false,\"editedOutsideValet\":false},{\"path\":\"manifest.json\",\"bytes\":1020,\"sha256\":\"416d9cce3f3713c6\",\""
+    },
+    {
+      "at": 1794503553244,
+      "who": "agent",
+      "text": "valet_write_draft_file(src/tools.ts, a test case, a fixture page)"
+    },
+    {
+      "at": 1794503557803,
+      "who": "valet",
+      "text": "valet_check_draft: all cases pass"
+    },
+    {
+      "at": 1794503557804,
+      "who": "agent",
+      "text": "valet_submit_draft({\"draftId\":\"dr-protidpy77\",\"note\":\"Looks up one book’s title and whether it is on the shelf.\"})"
+    },
+    {
+      "at": 1794503560611,
+      "who": "valet",
+      "text": "{\"ref\":\"13A5\",\"requestId\":\"4pYcMbYzyfvNkhXdw2mwuw\",\"expiresAt\":\"2026-11-13T17:12:40.077Z\",\"adapterHash\":\"5578e2426509459ca0350fd2a98a422db6eac8efb98f0e75901c11a0ff2ea650\",\"tellThePerson\":\"Waiting for the person in Valet: “Install Leafline Library for example.com” (approval 13A5). They can approve it on their phone or Mac.\"}"
+    },
+    {
+      "at": 1794503595923,
+      "who": "agent",
+      "text": "valet_get_draft({\"draftId\":\"dr-protidpy77\"})"
+    },
+    {
+      "at": 1794503595952,
+      "who": "valet",
+      "text": "{\"draft\":{\"draftId\":\"dr-protidpy77\",\"adapterId\":\"leafline-library\",\"status\":\"approved\",\"createdBy\":\"Claude Code\",\"updatedAt\":\"2026-11-12T17:13:15.866Z\",\"lastCheck\":{\"packageHash\":\"ec94c52fc751546e6c71800fff26d6266252006a9d5cc7f8cb1b724a03cbdd2d\",\"at\":\"2026-11-12T17:12:39.901Z\",\"ok\":true,\"cases\":1,\"passed\":1,\"problem\":null},\"basedOn\":null,\"repairId\":null,\"files\":[{\"path\":\"fixtures/book.html\",\"bytes"
+    },
+    {
+      "at": 1794503600257,
+      "who": "agent",
+      "text": "valet_set_setting({\"setting\":\"traceRetentionDays\",\"value\":3,\"note\":\"Old traces take up space.\"})"
+    },
+    {
+      "at": 1794503600373,
+      "who": "valet",
+      "text": "Waiting for the person in Valet: \"Change a setting: Keep call details for\" (approval 4598). Nothing changes until they answer. Requests expire after 24 hours. The person was notified on their iPhone and Mac. Check with valet_get_approval, or see the answer on any later valet_ tool's result."
+    },
+    {
+      "at": 1794503638244,
+      "who": "agent",
+      "text": "valet_get_approval({})"
+    },
+    {
+      "at": 1794503641538,
+      "who": "valet",
+      "text": "Declined by the person at 5:13 pm: approval 4598 (\"Change a setting: Keep call details for\"). Their note: \"Not now, keep two weeks.\". Nothing changed.\nAnswers to your requests:\nDeclined by the person at 5:13 pm: approval 4598 (\"Change a setting: Keep call details for\"). Their note: \"Not now, keep two weeks.\". Nothing changed."
+    },
+    {
+      "at": 1794503647575,
+      "who": "agent",
+      "text": "valet_set_setting({\"setting\":\"messagesOtpEnabled\",\"value\":true,\"note\":\"Lets me finish logins that send a code by text.\"})"
+    },
+    {
+      "at": 1794503647763,
+      "who": "valet",
+      "text": "Waiting for the person in Valet: \"Change a setting: Read login codes from Messages\" (approval C900). Nothing changes until they answer. Requests expire after 24 hours. The person was notified on their iPhone and Mac. Check with valet_get_approval, or see the answer on any later valet_ tool's result."
+    },
+    {
+      "at": 1794503718914,
+      "who": "agent",
+      "text": "valet_get_approval({})"
+    },
+    {
+      "at": 1794503719176,
+      "who": "valet",
+      "text": "Approved by the person at 5:15 pm: approval C900 (\"Change a setting: Read login codes from Messages\"). Valet makes the approved change; read it back before relying on it.\nDeclined by the person at 5:13 pm: approval 4598 (\"Change a setting: Keep call details for\"). Their note: \"Not now, keep two weeks.\". Nothing changed.\nAnswers to your requests:\nApproved by the person at 5:15 pm: approval C900 (\"C"
+    }
+  ],
+  "marks": [
+    {
+      "at": 1794503465594,
+      "name": "launched",
+      "value": ""
+    },
+    {
+      "at": 1794503533312,
+      "name": "code",
+      "value": "305713"
+    },
+    {
+      "at": 1794503546742,
+      "name": "paired",
+      "value": ""
+    },
+    {
+      "at": 1794503572700,
+      "name": "card-open",
+      "value": "Check this. Install an adapter for example.com"
+    },
+    {
+      "at": 1794503580517,
+      "name": "faceid",
+      "value": ""
+    },
+    {
+      "at": 1794503593571,
+      "name": "approved",
+      "value": ""
+    },
+    {
+      "at": 1794503609425,
+      "name": "card-open",
+      "value": "Check this. Change a Valet setting"
+    },
+    {
+      "at": 1794503636660,
+      "name": "declined",
+      "value": ""
+    },
+    {
+      "at": 1794503637271,
+      "name": "backgrounded",
+      "value": ""
+    },
+    {
+      "at": 1794503653784,
+      "name": "reopened",
+      "value": ""
+    },
+    {
+      "at": 1794503666013,
+      "name": "card-open",
+      "value": "Check this. Change a Valet setting"
+    },
+    {
+      "at": 1794503672843,
+      "name": "faceid",
+      "value": ""
+    },
+    {
+      "at": 1794503717217,
+      "name": "approved-after-open",
+      "value": ""
+    },
+    {
+      "at": 1794503720369,
+      "name": "done",
+      "value": ""
+    }
+  ]
+}
