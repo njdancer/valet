@@ -31,7 +31,6 @@ import {
   type Requester,
   requestIdSchema,
   type SerializedRequest,
-  SIGNING_DOMAINS,
   type SignedText,
   serializeRequest,
   signedTextSchema,
@@ -40,7 +39,7 @@ import {
 } from '@valet/core'
 import type { DeviceStore } from './devices'
 import { emptyLedger, type TrustedLedger } from './ledger'
-import { promptReason, requestRef } from './prompts'
+import { requestRef } from './prompts'
 import type { MacSigner } from './signer'
 
 /** Kinds an agent may ask for. Everything else is raised by the app or the person. */
@@ -353,11 +352,7 @@ export class ApprovalBroker {
       decidedAt: new Date(this.now()).toISOString(),
     })
     try {
-      signature = await this.options.signer.sign(
-        SIGNING_DOMAINS.approvalDecision,
-        payload,
-        promptReason(request),
-      )
+      signature = await this.options.signer.signDecision(request, payload)
     } catch {
       signature = null
     } finally {
@@ -797,6 +792,14 @@ export class ApprovalBroker {
       subject.from === 'lockdown'
         ? { ...ledger.data.safety, lockdown: false }
         : { ...ledger.data.safety, pausedRemote: false }
+    if (ledger.tampered === 'unreadable') {
+      // The file may be fine and the Keychain only busy: never overwrite it. The resume holds for
+      // this run; the next launch reads the file again.
+      await ledger.commit((draft) => {
+        draft.safety = safety
+      })
+      return
+    }
     if (ledger.tampered !== null) {
       // Everything in memory since launch was made live by this process; nothing from the file is.
       await ledger.reset({ ...emptyLedger(), ...ledger.data, safety }).catch(() => undefined)

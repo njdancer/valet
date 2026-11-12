@@ -70,7 +70,7 @@ const ROOT = resolve(APP_DIR, '..', '..')
 const PRODUCT = 'Valet'
 const APP_ID = 'me.dncr.valet'
 /** electron-builder.config.ts's NATIVE_EXECUTABLES: shipped in Contents/MacOS. */
-const NATIVE = ['valet-bridge', 'valet-keychain', 'valet-messages-helper']
+const NATIVE = ['valet-bridge', 'valet-keychain', 'valet-messages-helper', 'valet-approver']
 /** docs/release-and-updates.md: each refused launch exits within two seconds. */
 const REFUSE_WITHIN_MS = 2000
 

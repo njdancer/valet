@@ -54,7 +54,7 @@ export function emptyLedger(lockdown = false): LedgerData {
 }
 
 /** Why the ledger opened locked down, if it did. */
-export type LedgerTamper = Extract<AnchorCheck, 'interrupted' | 'mismatch'> | 'malformed'
+export type LedgerTamper = Extract<AnchorCheck, 'interrupted' | 'mismatch'> | 'malformed' | 'unreadable'
 
 export class TrustedLedger {
   private queue: Promise<unknown> = Promise.resolve()
@@ -67,7 +67,14 @@ export class TrustedLedger {
   ) {}
 
   static async open(file: AnchoredFile): Promise<TrustedLedger> {
-    const loaded = await file.load()
+    let loaded: Awaited<ReturnType<AnchoredFile['load']>>
+    try {
+      loaded = await file.load()
+    } catch {
+      // The Keychain or the disk couldn't be read: never a fresh start, which would clear lockdown
+      // and revocations. Locked down until the person resumes at the Mac.
+      return new TrustedLedger(file, emptyLedger(true), 'unreadable')
+    }
     if (loaded.check === 'fresh') return new TrustedLedger(file, emptyLedger(), null)
     if (loaded.check === 'mismatch') return new TrustedLedger(file, emptyLedger(true), 'mismatch')
     const parsed = parse(loaded.text)

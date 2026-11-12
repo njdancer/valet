@@ -1,11 +1,18 @@
 # Valet's native binaries (Swift)
 
-One package, three binaries for `Valet.app/Contents/MacOS`, signed with the app:
+One package, four binaries for `Valet.app/Contents/MacOS`, signed with the app:
 
 - **valet-bridge**, the stdio bridge (below).
 - **valet-keychain** (D6): Valet's own Keychain items through `SecItem`, so the ACL names a binary
   signed with Valet's Team ID. `read|info|write|delete <service> <account>`, secrets on stdin.
   See `packages/credentials/src/keychain-helper.ts`.
+- **valet-approver** (workstream D, [docs/approval-broker.md](../docs/approval-broker.md)): the Mac's
+  three device keys in the Secure Enclave (`keys`, `create`), and `sign-decision`, which signs an
+  approval only of exactly the request it is shown (request text and payload on stdin) after
+  Touch ID, with a prompt reason it writes itself. `keys` never creates. Debug builds take
+  `VALET_KEYCHAIN_PATH`, `VALET_APPROVER_SOFTWARE=1` (software keys) and
+  `VALET_APPROVER_PRESENT=0` (a cancelled prompt) for
+  `apps/desktop/test/main/approver-contract.test.ts`; release builds ignore all three.
 - **valet-messages-helper** (D8): the SMAppService launch agent that alone holds Full Disk Access
   (`serve <label>`, `register`, `unregister`, `status`). The plists are in
   `apps/desktop/build/launch-agents`. See `packages/credentials/src/messages-helper.ts`.

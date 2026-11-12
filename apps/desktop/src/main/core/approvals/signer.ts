@@ -7,7 +7,8 @@
 // asking anyone, so a release build must never construct one (see `allowSoftwareSigner`).
 
 import { generateKeyPairSync, type KeyObject, sign } from 'node:crypto'
-import { type SigningDomain, signingInput } from '@valet/core'
+import { type SerializedRequest, SIGNING_DOMAINS, type SigningDomain, signingInput } from '@valet/core'
+import { promptReason } from './prompts'
 
 export interface MacKeys {
   readonly approvalKey: string
@@ -19,11 +20,12 @@ export interface MacSigner {
   /** The Mac's public keys, created on first use. Never a private key. */
   keys(): Promise<MacKeys>
   /**
-   * Signs `payload` under `domain` with the approval key. In a release build this shows the OS's
-   * Touch ID prompt with `reason`, in the app's words. Resolves null if the person cancelled or
-   * failed the prompt; never throws for that.
+   * Signs `payload`, an approval of exactly `request`, with the approval key. In a release build
+   * the helper checks that, shows the OS's Touch ID prompt with a reason it writes itself from the
+   * request (prompts.ts's wording), and signs only once the person answers it. Resolves null if
+   * they cancelled or failed the prompt; never throws for that.
    */
-  sign(domain: SigningDomain, payload: string, reason: string): Promise<string | null>
+  signDecision(request: SerializedRequest, payload: string): Promise<string | null>
 }
 
 /** Release builds use only the Secure Enclave helper. */
@@ -62,6 +64,11 @@ export class SoftwareSigner implements MacSigner {
     }
   }
 
+  signDecision(request: SerializedRequest, payload: string): Promise<string | null> {
+    return this.sign(SIGNING_DOMAINS.approvalDecision, payload, promptReason(request))
+  }
+
+  /** Signs anything under any domain: tests use it for device records and forgeries. */
   async sign(domain: SigningDomain, payload: string, reason: string): Promise<string | null> {
     this.prompts.push(reason)
     if (!(await this.present(reason))) return null

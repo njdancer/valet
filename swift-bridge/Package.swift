@@ -6,6 +6,8 @@
 //   runs against both bridges.
 // - valet-keychain: reads and writes Valet's own Keychain items in process (SecItem), so the
 //   Keychain's ACL names a binary signed with Valet's Team ID instead of /usr/bin/security (D6).
+// - valet-approver: the Mac's Secure Enclave device keys; signs approvals after Touch ID (D,
+//   docs/approval-broker.md).
 // - valet-messages-helper: the launch agent that alone holds Full Disk Access and answers "the
 //   latest code from this sender since this time" (D8).
 
@@ -25,6 +27,12 @@ let package = Package(
       name: "valet-keychain",
       dependencies: ["ValetHelperKit"],
       path: "Sources/valet-keychain"
+    ),
+    .executableTarget(
+      name: "valet-approver",
+      dependencies: ["ValetHelperKit"],
+      path: "Sources/valet-approver",
+      linkerSettings: [.linkedFramework("LocalAuthentication")]
     ),
     .executableTarget(
       name: "valet-messages-helper",
