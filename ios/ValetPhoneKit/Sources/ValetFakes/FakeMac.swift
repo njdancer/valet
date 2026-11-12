@@ -99,7 +99,7 @@ public final class FakeMac {
     let nonce = Self.random(32)
     pairingCode = try? PairingCrypto.code(offer: offer, replyPlaintext: replyText, macNonce: nonce)
     relay?.toPairing(Self.frame("pairing-challenge", [("offerId", .string(offerId)), ("macNonce", .string(Base64URL.encode(nonce)))]))
-    let confirm = { [weak self] in self?.confirmPairing(reply: reply, offer: offer) }
+    let confirm: () -> Void = { [weak self] in self?.confirmPairing(reply: reply, offer: offer) }
     if autoConfirmPairing {
       if confirmDelay > 0 {
         DispatchQueue.main.asyncAfter(deadline: .now() + confirmDelay) { MainActor.assumeIsolated { confirm() } }
