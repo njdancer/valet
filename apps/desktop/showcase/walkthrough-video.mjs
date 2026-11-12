@@ -61,10 +61,17 @@ await png(
   false,
 )
 
-// Captions, each until the next.
+// Captions, each until the next. A caption stays up long enough to read (about 3 words a second,
+// 3 to 6 seconds), so when two steps come close together the second caption waits its turn.
+const readTime = (text) => Math.min(6, Math.max(3, text.split(/\s+/).length / 3))
+const starts = []
+for (const [i, c] of timeline.captions.entries()) {
+  const prev = i > 0 ? starts[i - 1] + readTime(timeline.captions[i - 1].text) : 0
+  starts.push(Math.min(duration, Math.max(at(c.at), prev)))
+}
 const captions = timeline.captions.map((c, i) => ({
-  start: at(c.at),
-  end: i + 1 < timeline.captions.length ? at(timeline.captions[i + 1].at) : duration,
+  start: starts[i],
+  end: i + 1 < starts.length ? starts[i + 1] : duration,
   text: c.text,
 }))
 for (const [i, c] of captions.entries())
@@ -158,7 +165,7 @@ const AFTER = 6
 const BEFORE = 10
 const events = [
   0,
-  ...timeline.captions.map((c) => at(c.at)),
+  ...captions.map((c) => c.start),
   ...timeline.marks.map((m) => at(m.at)),
   ...timeline.agent.map((a) => at(a.at)),
   duration,

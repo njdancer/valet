@@ -128,6 +128,8 @@ class Cues {
   }
 }
 
+let ticker: NodeJS.Timeout | null = null
+
 function run(command: string, args: string[]): Promise<string> {
   return new Promise((resolve) => {
     execFile(command, args, (_error, stdout, stderr) => resolve(`${stdout}${stderr}`))
@@ -253,6 +255,7 @@ const CASES = JSON.stringify({
 let launched: Launched | null = null
 
 test.afterAll(async () => {
+  if (ticker !== null) clearInterval(ticker)
   save()
   if (launched !== null) writeFileSync(join(OUT, 'mac.log'), launched.logs.join(''))
   for (const child of children.reverse()) child.kill('SIGINT')
@@ -338,6 +341,27 @@ test('pairing an iPhone, and approving an agent’s requests on it', async () =>
     /Recording started/,
   )
   timeline.phoneStartedAt = Date.now()
+  // simctl writes a frame only when the screen changes, and its clock runs short over long still
+  // stretches (the app launching took 100 s of real time and 39 s of video), so the phone drifted
+  // ahead of the Mac. Nudging the status bar's battery level each second keeps frames coming, so
+  // the video's times stay true.
+  let battery = 100
+  let nudging = false
+  ticker = setInterval(() => {
+    if (nudging) return
+    nudging = true
+    battery = battery === 100 ? 99 : 100
+    void run('xcrun', [
+      'simctl',
+      'status_bar',
+      SIMULATOR,
+      'override',
+      '--batteryLevel',
+      String(battery),
+    ]).finally(() => {
+      nudging = false
+    })
+  }, 1000)
   const xctestrun = process.env['XCTESTRUN']
   if (xctestrun === undefined) throw new Error('set XCTESTRUN')
   const phoneTest = spawn(
