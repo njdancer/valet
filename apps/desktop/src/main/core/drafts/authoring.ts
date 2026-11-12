@@ -72,6 +72,8 @@ export type SubmitOutcome =
       readonly ref: string
       readonly expiresAt: string
       readonly previousHash: string | null
+      /** The staged version wasn't stored before, so it may be dropped when the request closes. */
+      readonly stagedNew: boolean
     }
   | { readonly ok: false; readonly sentence: string }
 
@@ -465,6 +467,7 @@ export class DraftAuthoring implements Authoring {
           previousHash: asked.previousHash,
           at,
           by: clientKey(viewer),
+          stagedNew: asked.stagedNew,
           note: null,
         },
       }))

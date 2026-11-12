@@ -150,10 +150,13 @@ trial or a case, under the guards.
   `valet_get_draft`, `valet_read_draft_file`, `valet_diff_draft`) need See Valet only. Without
   Ask for changes: "Claude Desktop isn't allowed to ask for changes. The person can allow it in
   Valet, Connections, Claude Desktop." (IA section 5.)
-- **Remote agents** (through the relay or tunnel) get no authoring tools yet, like E's read tier.
-  J3 starts in the Claude iPhone app, which is a remote client, so this is the first gap to close
-  once B decides what a cloud agent may administer; nothing in this design depends on the client
-  being local except that gate. Raised with B (see [What this needs](#what-this-needs-from-other-streams)).
+- **Remote agents** (through the relay or tunnel) may author too (B, 2026-11-12), but **Ask for
+  changes** is off for them until the person grants it with a signature: on the remote-client
+  consent card (`capabilities: ['ask-for-changes']`) or later with a `setting` request. It is kept
+  in the trusted ledger, not `clients.json`. The same gates then apply, the install card is badged
+  "through the relay", critical lines stay Mac only, and signed-in trials stay local only until a
+  remote one has been red-teamed. PR 1 builds the local path; the remote listener gets the
+  authoring tools with the relay work (J3 starts in the Claude iPhone app, a remote client).
 - **A draft belongs to the client that created it** (`local:<id>`). Only it can write, check,
   browse, trial or submit through MCP. Other agents may read it with All agents' activity. This is
   hygiene between well-behaved agents, not a security boundary: an agent with a shell runs as the
@@ -296,7 +299,8 @@ this draft; valet_get_draft shows when it's done".
   before the expectation is compared, so a case can't pass with output a real call would refuse.
 - **Bounds:** at most 100 cases, 5 seconds each, one at a time, each in its own one-shot window;
   a case file over C's size limit is refused with the package.
-- **What the card says:** "14 cases the agent wrote pass (Valet ran them)", never with a tick,
+- **What the card says:** "14 cases the agent wrote pass (Valet ran them)", from
+  `display.agentTests`, never in Valet's checks, never with a tick,
   never above the fold (A's R22), and each fixture they use as "recorded by Valet" or "written by
   the agent".
 
@@ -323,7 +327,9 @@ site, which is why the card separates them.
      today), `unsandboxed` from the manifest, `references` from the agent (shown as a claim);
    - `requester`: the agent, by its credential;
    - `extras.agentNote`: the agent's note; `context: { kind: 'draft', draftId }` (or `repair`);
-     `display.checks`: Valet's check lines and the cases line; `display.domain` from `home`.
+     `display.checks`: Valet's check lines only; `display.agentTests: { passed, failed }` for the
+     agent's cases, B's own field, so they can't be mistaken for Valet's checks;
+     `display.domain` from `home`.
      B's fatigue limits apply as for any agent request. A refusal comes back as a sentence ("Not
      submitted: 3 of your requests are already waiting for the person").
      Before asking, an earlier waiting request **for this draft** (its request id in the draft
@@ -564,6 +570,12 @@ the none tier; this is the same call E made for reads, and is put to B.)
    built app.
 
 ## What this needs from other streams
+
+Answered on 2026-11-12. **B** (PR #86) agreed to every point and answered the first with remote
+authoring behind a signed capability; it added `display.agentTests`, so the cases line is not in
+`display.checks` after all. **D** owns `inheritsSession` from partitions and the one-step replace
+in its next PR; F owns the staged-draft precheck, apply, finish-at-launch and reference counting.
+What was asked:
 
 - **B:** remote agents and authoring (J3 starts on a phone); edits and checks not audited one by
   one; the cases line living in `display.checks` (no separate field for "tests the agent wrote");

@@ -115,6 +115,22 @@ export class PackageManager {
     await this.put(prepared.loaded, prepared.source, { activate: true }, state)
   }
 
+  /**
+   * Stores a prepared version without making it active: a draft submitted as an update waits here
+   * while the installed version keeps serving (docs/authoring-tools.md#submitting). Its approval's
+   * apply loads and activates it, as a rollback does. Not audited as installed until then.
+   */
+  async stage(prepared: PreparedInstall): Promise<void> {
+    const state = await this.options.store.state(prepared.loaded.manifest.id).catch(() => null)
+    if (state === null) throw new InstallError('A first install isn’t staged; it is installed and waits for approval.')
+    await this.put(prepared.loaded, prepared.source, { activate: false }, state)
+  }
+
+  /** Drops a staged version nobody needs any more (see AdapterStore.discard). */
+  discard(adapterId: string, hash: string): Promise<boolean> {
+    return this.options.store.discard(adapterId, hash)
+  }
+
   /** The adapter's history, or null. */
   versions(adapterId: string): Promise<StoredState | null> {
     return this.options.store.state(adapterId).catch(() => null)

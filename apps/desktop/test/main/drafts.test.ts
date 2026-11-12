@@ -109,6 +109,7 @@ async function harness(overrides: Partial<AuthoringDeps> = {}): Promise<Harness>
         ref: `R${n}AB`,
         expiresAt: '2026-11-13T00:00:00.000Z',
         previousHash: null,
+        stagedNew: false,
       }
     },
     withdraw: async (id) => void withdrawn.push(id),

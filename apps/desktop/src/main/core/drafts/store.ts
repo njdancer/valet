@@ -45,6 +45,8 @@ const submissionSchema = z
     previousHash: hash.nullable(),
     at: z.iso.datetime(),
     by: clientId,
+    /** The staged version wasn't stored before this submit, so closing the request may drop it. */
+    stagedNew: z.boolean().default(false),
     /** Set once the request is closed: the decline's note, for the agent only. */
     note: z.string().max(500).nullable().default(null),
   })
