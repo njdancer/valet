@@ -519,7 +519,7 @@
     desc: 'The same card parts in the same order as the phone, expanded. The v3 review (permissions, code) follows below the card.',
     html: shell(
       'sites',
-      `${K.header({ crumbs: ['Sites', 'Drafts', 'Yahoo Finance 1.0.0'], title: 'Install "Yahoo Finance" for yahoo.com', status: K.badge('Install 1.0.0 · approval 7B3F', 'info'), sub: `Asked by ${K.link('Claude app')} · 7:38 pm · through the relay` })}
+      `${K.header({ crumbs: ['Sites', 'Drafts', 'Yahoo Finance 1.0.0'], title: 'Install "Yahoo Finance" for yahoo.com', status: K.badge('Install 1.0.0 · approval 7B3F', 'info'), sub: `Site: <span class="mono">finance.yahoo.com</span> · asked by ${K.link('Claude app')} · 7:38 pm · through the relay` })}
       <div class="wf-scroll"><div class="col" style="max-width:760px">
         ${K.banner('idle', 'Reads only.', "Reads yahoo.com. No login. Can't change anything.")}
         ${K.card(

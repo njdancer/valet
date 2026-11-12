@@ -178,7 +178,10 @@ final class JourneyTests: XCTestCase {
     }
     try audit("Needs you")
     openCard("1D99")
-    overlayBands = (element("card.close").frame.maxY + 48, element("card.decline").frame.minY - 24)
+    // The action bar starts at its first control: the Mac-only reason, the code field, or Decline.
+    let barTop = ["card.macOnly", "card.code", "card.readTick", "card.state", "card.decline"]
+      .map { element($0) }.filter { $0.exists }.map { $0.frame.minY }.min() ?? app.frame.maxY
+    overlayBands = (element("card.close").frame.maxY + 48, barTop - 24)
     try audit("Card")
     overlayBands = nil
     waitFor("card.close").tap()
