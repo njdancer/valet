@@ -435,7 +435,15 @@ export const macToRelaySchema = z.discriminatedUnion('type', [
   /** Accept pairing replies for this offer until it expires. The relay never sees the secret. */
   z.object({ type: z.literal('pairing-open'), offerId: keyIdSchema, expiresAt: z.iso.datetime() }).strict(),
   /** After the first reply to an offer (later ones are refused): the nonce the code includes. */
-  z.object({ type: z.literal('pairing-challenge'), offerId: keyIdSchema, macNonce: macNonceSchema }).strict(),
+  z
+    .object({
+      type: z.literal('pairing-challenge'),
+      offerId: keyIdSchema,
+      macNonce: macNonceSchema,
+      /** Over `pairingChallengePayload`, by the Mac's approval key (H's CR-11). */
+      signature: p256SignatureSchema,
+    })
+    .strict(),
   z.object({ type: z.literal('pairing-result'), offerId: keyIdSchema, sealed: sealedSchema }).strict(),
   /** Lift a relay-side lock (G's request 4). Only the Mac can. */
   z.object({ type: z.literal('relay-unlock') }).strict(),
@@ -522,7 +530,15 @@ export const relayToPhoneSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('ready'), macOnline: z.boolean() }).strict(),
   z.object({ type: z.literal('envelope'), envelope: envelopeSchema }).strict(),
   z.object({ type: z.literal('mac-online'), online: z.boolean() }).strict(),
-  z.object({ type: z.literal('pairing-challenge'), offerId: keyIdSchema, macNonce: macNonceSchema }).strict(),
+  z
+    .object({
+      type: z.literal('pairing-challenge'),
+      offerId: keyIdSchema,
+      macNonce: macNonceSchema,
+      /** Over `pairingChallengePayload`, by the Mac's approval key (H's CR-11). */
+      signature: p256SignatureSchema,
+    })
+    .strict(),
   z.object({ type: z.literal('pairing-result'), offerId: keyIdSchema, sealed: sealedSchema }).strict(),
   z
     .object({
