@@ -20,7 +20,7 @@ import {
   type WriteOutcome,
   type WriteRefusal,
 } from '@valet/mcp-server'
-import type { Closed, RequestRefusal, RequestResult } from './approvals/broker'
+import type { Closed, RequestExtras, RequestRefusal, RequestResult } from './approvals/broker'
 
 /** Notify-only changes one agent may make in an hour (R57). */
 export const NOTIFY_PER_HOUR = 10
@@ -40,7 +40,7 @@ export interface AgentBroker {
     kind: K,
     subject: ApprovalSubject<K>,
     requester: Requester,
-    agentNote: string | null,
+    extras: string | null | RequestExtras,
   ): Promise<RequestResult>
   status(requestId: string, asker: Requester): { readonly state: 'pending' } | Closed | null
   withdraw(requestId: string, asker: Requester): Promise<boolean>
@@ -357,7 +357,15 @@ export class AdminWriterImpl implements AdminWriter {
     if (broker === null) return refused('unavailable')
     let result: RequestResult
     try {
-      result = await broker.request(kind, subject, this.requester(viewer, displayName(name)), note)
+      const label = displayName(name)
+      // The person's own name for the client goes on the card, so the phone shows it rather than
+      // the client's raw id when it isn't in the status's agent list yet.
+      result = await broker.request(kind, subject, this.requester(viewer, label), {
+        agentNote: note,
+        display: {
+          client: { label, badge: viewer.origin === 'local' ? ('local' as const) : ('remote' as const) },
+        },
+      })
     } catch {
       return refused('unavailable')
     }

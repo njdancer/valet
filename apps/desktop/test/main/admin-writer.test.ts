@@ -236,7 +236,8 @@ describe('AdminWriterImpl', () => {
       Array(3).fill([
         'setting',
         { kind: 'agent', clientId: 'local:c_me', clientName: 'Claude Code' },
-        'please',
+        // The person's name for the client rides on the card, so the phone never shows the raw id.
+        { agentNote: 'please', display: { client: { label: 'Claude Code', badge: 'local' } } },
       ]),
     )
   })
