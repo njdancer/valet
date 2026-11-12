@@ -29,11 +29,26 @@ export const SANDBOX_EXEC = '/usr/bin/sandbox-exec'
 /** A Seatbelt string literal. Paths come from the manifest and the home folder, so quote them. */
 const literal = (value: string): string => `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
 
+/** System places no declared program needs to read: keychains and account stores outside the home. */
+export const SYSTEM_READ_DENIED = [
+  '/Library/Keychains',
+  '/private/var/db/dslocal',
+  '/private/var/db/SystemPolicy',
+  '/Volumes',
+]
+
 /**
  * The Seatbelt profile a declared program runs under. `forbidden` is every never-grantable place,
- * absolute, in each form it may be reached by (as named, and resolved).
+ * absolute, in each form it may be reached by (as named, and resolved). With `home`, other users'
+ * folders are unreadable too: under /Users only the person's own home is. Seatbelt applies the last
+ * matching rule, so the forbidden places come last.
  */
-export function commandProfile(program: string, workdir: string, forbidden: readonly string[]): string {
+export function commandProfile(
+  program: string,
+  workdir: string,
+  forbidden: readonly string[],
+  home?: string,
+): string {
   const lines = [
     '(version 1)',
     '(allow default)',
@@ -45,6 +60,11 @@ export function commandProfile(program: string, workdir: string, forbidden: read
     `(allow file-write* (subpath ${literal(workdir)}) (literal "/dev/null") (literal "/dev/stdout") (literal "/dev/stderr"))`,
     '(deny mach-lookup (global-name "com.apple.coreservices.launchservicesd") (global-name "com.apple.coreservices.appleevents") (global-name-regex #"^com\\.apple\\.pasteboard"))',
   ]
+  lines.push(`(deny file-read* ${SYSTEM_READ_DENIED.map((f) => `(subpath ${literal(f)})`).join(' ')})`)
+  if (home !== undefined) {
+    lines.push('(deny file-read* (subpath "/Users"))')
+    lines.push(`(allow file-read* (literal "/Users") (subpath ${literal(home.replace(/\/+$/, ''))}))`)
+  }
   if (forbidden.length > 0)
     lines.push(`(deny file-read* file-write* ${forbidden.map((f) => `(subpath ${literal(f)})`).join(' ')})`)
   return lines.join('\n')
@@ -110,7 +130,17 @@ export function localRun(options: CommandOptions) {
     const cwd = await realpath(await mkdtemp(join(tmpdir(), 'valet-run-')))
     const file = seatbelt ? SANDBOX_EXEC : real
     const argv = seatbelt
-      ? ['-p', commandProfile(real, cwd, await forbiddenUnderHome(options.home)), real, ...args]
+      ? [
+          '-p',
+          commandProfile(
+            real,
+            cwd,
+            await forbiddenUnderHome(options.home),
+            await realpath(options.home).catch(() => options.home),
+          ),
+          real,
+          ...args,
+        ]
       : args
     try {
       return await new Promise<LocalRunResult>((resolve, reject) => {

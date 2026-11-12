@@ -8,6 +8,12 @@
 import type { QuickJSFactory } from './module'
 import { openQuickJSRun, type QuickJSLimits, type QuickJSRun } from './quickjs'
 
+/**
+ * The wire's cap on one message (MAX_MESSAGE_CHARS in the runtime's protocol, which this file can't
+ * import: it pulls in Node). A test keeps the two equal.
+ */
+export const MAX_POSTED_CHARS = 4_000_000
+
 /** A MessagePort's shape, as both Electron's renderer and the test channel provide it. */
 export interface RunPort {
   postMessage(message: unknown): void
@@ -32,6 +38,8 @@ export function serveRun(port: RunPort, newModule: QuickJSFactory, options: Serv
   const post = (text: string): void => {
     if (ended) return
     // Parsed here, outside QuickJS, so what reaches the port is plain data.
+    // Nothing longer than the wire allows is worth parsing: the host would refuse it anyway.
+    if (text.length > MAX_POSTED_CHARS) return
     let message: unknown
     try {
       message = JSON.parse(text)

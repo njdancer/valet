@@ -185,7 +185,9 @@ For every call:
    non-blocking (`O_NONBLOCK`, so a FIFO swapped in can't hang the open); then its device and inode
    are compared with an `lstat` of the real path, so a swap between 3 and 4 fails. A file with more
    than one hard link is refused: a second name is one the forbidden check never saw.
-5. **Caps:** 16 MB per read and per write, 1,000 entries per `list`. A write goes to a new temp file
+5. **Caps:** 16 MB per read and per write, 1,000 entries per `list`. In practice the message wire
+   between QuickJS and the host caps one call's arguments or answer at 4 million characters
+   (`MAX_MESSAGE_CHARS`), so a tool reads or writes about 4 MB at a time. A write goes to a new temp file
    in the same folder (mode 0600, `O_EXCL`), the folder's real path is checked again, then it's
    renamed over the target, so a crash never leaves a half-written file.
 6. `list` returns name, kind (`file`, `directory`, `other`), size and modified time for the entries
@@ -218,12 +220,17 @@ runs it as `sandbox-exec -p <profile> <program> <args>`, with this profile
 (deny mach-lookup (global-name "com.apple.coreservices.launchservicesd")
                   (global-name "com.apple.coreservices.appleevents")
                   (global-name-regex #"^com\.apple\.pasteboard"))
+(deny file-read* (subpath "/Library/Keychains") (subpath "/private/var/db/dslocal")
+                 (subpath "/private/var/db/SystemPolicy") (subpath "/Volumes"))
+(deny file-read* (subpath "/Users"))
+(allow file-read* (literal "/Users") (subpath "<the home, resolved>"))
 (deny file-read* file-write* (subpath "<each never-grantable place under the home, as named and resolved>"))
 ```
 
-So a declared program can read the person's ordinary files (the card says "which can read your
-files"), but not Valet's data, keychains, credential stores, browser profiles or shell startup
-files; it can write only in its own temp folder; it can't reach the network, send Apple Events,
+Seatbelt applies the last rule that matches, so the order matters. So a declared program can read
+the person's ordinary files (the card says "which can read your files"), but not Valet's data, the
+system or login keychains, other users' folders, other disks, credential stores, browser profiles
+or shell startup files; it can write only in its own temp folder; it can't reach the network, send Apple Events,
 open URLs, read the pasteboard or run anything else. `sandbox-exec` is deprecated but works on
 every current macOS; the macOS CI tests pin the profile's behaviour, and if Apple removes it,
 `command` becomes `unavailable` rather than running unconfined.
@@ -330,7 +337,35 @@ and what became of each:
 
 ## Red team
 
-To be filled in from the red-team pass on the code.
+A red-team pass on the built code (2026-11-12) attacked the sandbox from tool code through the whole
+stack (bootstrap, `runIsolated`, the dispatcher, the audited `ctx.local`, each capability). Its
+probes are in `packages/sandbox/test/redteam/` and run in CI. **It found no escape.**
+
+What it tried and what held:
+
+- **Files:** `..` and encoded climbing, Unicode and case tricks against the patterns, symlinks
+  and hard links to forbidden places, a FIFO, writes outside the pattern and through a linked
+  folder. Every one was refused as `not-granted` or `denied-path`, and no bytes leaked.
+- **Network:** loopback, private and metadata addresses in every spelling, including expanded
+  IPv4-mapped IPv6 (`0:0:0:0:0:ffff:7f00:1`), which Node normalises before the check. It also
+  tried DNS answers that mix public and private addresses, redirects to an undeclared host,
+  refused headers, and undeclared or Valet-owned local ports.
+- **QuickJS:** `eval` and `Function` by every route, the quickjs-ng extras, prototype pollution
+  across the boundary, and state left behind for the next run (each run gets a fresh wasm
+  instance, so nothing survives).
+- **Host:** a tool that replaced `JSON.stringify` to forge an oversized `done` message, floods
+  of calls, and hangs. The host's `isPlainJson` and size check refused the forged message, and
+  the watchdog ended the hang. `appleScript` is always refused.
+
+What it found, and what changed:
+
+| #   | Finding                                                                                                                                        | Severity                                            | Resolution                                                                                                                                                                                                                                                                        |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | The Seatbelt profile left the system keychains, other users' folders and `/Volumes` readable by a declared program                             | low (command is critical and Mac only)              | Denied in the profile (above); unit test on the profile, and a macOS test that `cat` reads the home but not `/Library/Keychains`.                                                                                                                                                 |
+| 2   | `local-service` refuses Valet's own ports only if a main-process server opened them; a loopback server in another process would not be tracked | medium (reasoned)                                   | Checked: every loopback listener Valet has (the MCP endpoint, the egress proxies, remote access, Chromium's debugging port) is opened in the main process, and the native helpers use Unix sockets. New loopback services must be opened in main or registered with `addOwnPort`. |
+| 3   | The renderer parsed QuickJS's output before any size check                                                                                     | low (bounded by the 128 MB heap; main checks again) | `serveRun` drops anything longer than the wire's cap before parsing.                                                                                                                                                                                                              |
+| 4   | A parent folder swapped for a symlink between the check and the open                                                                           | low (needs another process racing)                  | Unchanged; the residual under [files](#files-in-detail) above.                                                                                                                                                                                                                              |
+| 5   | The capability caps read 16 MB, but the wire allows about 4 MB                                                                                 | info                                                | Documented under the files caps.                                                                                                                                                                                                                                                  |
 
 ## Proving it
 

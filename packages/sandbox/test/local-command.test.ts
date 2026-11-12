@@ -101,6 +101,40 @@ describe('the Seatbelt profile', () => {
     expect(profile).toContain('(subpath "/Users/a \\"b")')
   })
 
+  it("denies the system keychains, external volumes and other users' folders, but not the home", () => {
+    const profile = commandProfile(
+      '/usr/bin/sips',
+      '/private/tmp/valet-run-1',
+      ['/Users/tess/.ssh'],
+      '/Users/tess/',
+    )
+    const lines = profile.split('\n')
+    expect(profile).toContain('(subpath "/Library/Keychains")')
+    expect(profile).toContain('(subpath "/Volumes")')
+    const usersDenied = lines.indexOf('(deny file-read* (subpath "/Users"))')
+    const homeAllowed = lines.indexOf('(allow file-read* (literal "/Users") (subpath "/Users/tess"))')
+    const forbiddenDenied = lines.findIndex((l) => l.includes('(subpath "/Users/tess/.ssh")'))
+    // Last match wins: the home's forbidden places stay denied after the home is allowed.
+    expect(usersDenied).toBeGreaterThan(-1)
+    expect(homeAllowed).toBeGreaterThan(usersDenied)
+    expect(forbiddenDenied).toBeGreaterThan(homeAllowed)
+    expect(commandProfile('/usr/bin/sips', '/w', [])).not.toContain('"/Users"')
+  })
+
+  it.runIf(mac)('reads the home but not the system keychains (macOS)', async () => {
+    const probe = join(home, '.valet-seatbelt-home-probe')
+    await writeFile(probe, 'home ok')
+    try {
+      const cat = localRun({ programs: ['/bin/cat'], home })
+      expect(await cat([probe])).toMatchObject({ exitCode: 0, stdout: 'home ok' })
+      const keychain = await cat(['/Library/Keychains/System.keychain'])
+      expect(keychain.exitCode).not.toBe(0)
+      expect(keychain.stdout).toBe('')
+    } finally {
+      await rm(probe, { force: true })
+    }
+  })
+
   it.runIf(mac)(
     'keeps a declared program out of the forbidden places and off the network (macOS)',
     async () => {
