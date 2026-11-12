@@ -381,6 +381,69 @@ describe('signed installs (docs/approval-broker.md)', () => {
     expect(third.presence.prompts).toEqual([])
   })
 
+  const loginGrant = (hash: string) => ({
+    adapterId: 'shop',
+    adapterHash: hash,
+    secret: 'login',
+    provider: 'fake' as const,
+    itemRef: 'demo-woolworths',
+    origins: ['https://login.shop.test'],
+  })
+  const signedFind = (s: { service: unknown }, hash: string) =>
+    (
+      s.service as { signedGrants: { find(a: string, h: string, x: string): Promise<unknown> } }
+    ).signedGrants.find('shop', hash, 'login')
+
+  it('makes a grant only with Touch ID, and hands out only grants the person signed', async () => {
+    const s = await approved()
+    s.presence.answer = false
+    await expect(s.api.grants.make(loginGrant(s.adapter.hash))).rejects.toEqual(
+      new ValetError('grant', 'not-granted'),
+    )
+    expect(await s.api.grants.list()).toEqual([])
+    s.presence.answer = true
+    await s.api.grants.make(loginGrant(s.adapter.hash))
+    expect(await signedFind(s, s.adapter.hash)).not.toBeNull()
+    // Widened by hand to another origin: no longer what was signed, so nothing is handed out.
+    await s.service.stop()
+    const stored = JSON.parse(readFileSync(s.paths.grants, 'utf8'))
+    const text = JSON.stringify(stored).replaceAll(
+      '"https://login.shop.test"',
+      '"https://login.shop.test","https://www.shop.test"',
+    )
+    writeFileSync(s.paths.grants, text)
+    const again = await setup({ dir: s.dir })
+    expect(await signedFind(again, again.adapter.hash)).toBeNull()
+    expect(await again.api.grants.list()).toEqual([])
+    // Revoked, its evidence goes too: a grant written back by hand hands out nothing.
+    await again.api.grants.make(loginGrant(again.adapter.hash))
+    await again.api.grants.revoke('shop', 'login')
+    await again.service.stop()
+    writeFileSync(s.paths.grants, text.replaceAll(',"https://www.shop.test"', ''))
+    const third = await setup({ dir: s.dir })
+    expect(await signedFind(third, third.adapter.hash)).toBeNull()
+  })
+
+  it('carries over today’s grants once, only for the origins the manifest declares', async () => {
+    const first = await approved()
+    await first.api.grants.make(loginGrant(first.adapter.hash))
+    await first.service.stop()
+    rmSync(first.paths.trusted, { force: true })
+    rmSync(join(first.dir, 'anchor.json'), { force: true })
+    const again = await setup({ dir: first.dir })
+    expect(await signedFind(again, again.adapter.hash)).not.toBeNull()
+    expect(again.presence.prompts).toEqual([])
+    // A legacy grant pointed at an origin the manifest never declared is not honoured (B).
+    await again.service.stop()
+    const text = readFileSync(first.paths.grants, 'utf8').replaceAll(
+      'https://login.shop.test',
+      'https://evil.test',
+    )
+    writeFileSync(first.paths.grants, text)
+    const third = await setup({ dir: first.dir })
+    expect(await signedFind(third, third.adapter.hash)).toBeNull()
+  })
+
   it('honours nothing from a ledger changed outside Valet', async () => {
     const s = await approved()
     await s.service.stop()
@@ -1652,6 +1715,33 @@ describe('endpoint, settings, audit and the app', () => {
     expect(existsSync(paths.legacyBridgeConfig)).toBe(false)
   })
 
+  it('asks for Touch ID for a setting that widens what Valet reaches or hides, not for its opposite', async () => {
+    const s = await approved()
+    s.presence.answer = false
+    await expect(s.api.settings.set({ messagesOtpEnabled: true })).rejects.toMatchObject({
+      errorClass: 'not-granted',
+    })
+    await expect(s.api.settings.set({ notifications: false })).rejects.toMatchObject({
+      errorClass: 'not-granted',
+    })
+    await expect(s.api.settings.set({ traceRetentionDays: 3 })).rejects.toMatchObject({
+      errorClass: 'not-granted',
+    })
+    expect(await s.api.settings.get()).toMatchObject({
+      messagesOtpEnabled: false,
+      notifications: true,
+      traceRetentionDays: 14,
+    })
+    // Longer retention is a click.
+    expect((await s.api.settings.set({ traceRetentionDays: 30 })).traceRetentionDays).toBe(30)
+    s.presence.answer = true
+    await s.api.settings.set({ messagesOtpEnabled: true, notifications: false })
+    expect(await s.api.settings.get()).toMatchObject({ messagesOtpEnabled: true, notifications: false })
+    await expect(s.api.settings.set({ traceRetentionDays: 0 })).rejects.toMatchObject({
+      errorClass: 'invalid',
+    })
+  })
+
   it('changes settings only through the patch and the main process’s own op dialog', async () => {
     const s = await approved()
     expect((await s.api.settings.set({ launchAtLogin: true })).launchAtLogin).toBe(true)
@@ -2031,6 +2121,36 @@ describe('remote access', () => {
       errorClass: 'not-found',
     })
     expect(await s.api.remote.setEnabled(false)).toMatchObject({ enabled: false, listening: false })
+  })
+
+  it('asks for Touch ID before anything widens remote access; narrowing is a click', async () => {
+    const s = await approved()
+    const prompts = () => s.presence.prompts.length
+    s.presence.answer = false
+    const before = prompts()
+    await expect(s.api.remote.setHosts([HOST])).rejects.toMatchObject({ errorClass: 'not-granted' })
+    await expect(s.api.remote.setEnabled(true)).rejects.toMatchObject({ errorClass: 'not-granted' })
+    expect(prompts()).toBe(before + 2)
+    expect(s.service.remote.status()).toMatchObject({ enabled: false, hosts: [] })
+    s.presence.answer = true
+    await s.api.remote.setHosts([HOST])
+    await s.api.remote.setEnabled(true)
+    s.presence.answer = false
+    await expect(s.api.remote.setTool('shop', 'echo', true)).rejects.toMatchObject({
+      errorClass: 'not-granted',
+    })
+    expect(s.service.remote.status().tools).toEqual([])
+    s.presence.answer = true
+    await s.api.remote.setTool('shop', 'echo', true)
+    expect(s.service.remote.status().tools).toEqual(['shop.echo'])
+    // Off, and fewer hosts, take no Touch ID.
+    s.presence.answer = false
+    const asked = prompts()
+    await s.api.remote.setTool('shop', 'echo', false)
+    await s.api.remote.setHosts([])
+    await s.api.remote.setEnabled(false)
+    expect(prompts()).toBe(asked)
+    expect(s.service.remote.status()).toMatchObject({ enabled: false, hosts: [], tools: [] })
   })
 
   it('serves only remote-enabled tools through the same runtime, audited as remote', async () => {

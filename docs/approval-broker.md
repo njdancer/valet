@@ -81,16 +81,20 @@ with fakes. **Built** in the first PR unless marked.
 interface MacSigner {
   /** Public keys, creating the device's keys on first use. Never a private key. */
   keys(): Promise<{
-    approvalKey: string
-    transportKey: string
-    agreementKey: string
-  }>
+    approvalKey: string;
+    transportKey: string;
+    agreementKey: string;
+  }>;
   /** Shows the OS prompt with `reason`; resolves the signature, or null if the person cancelled. */
-  sign(domain: SigningDomain, payload: string, reason: string): Promise<string | null>
+  sign(
+    domain: SigningDomain,
+    payload: string,
+    reason: string,
+  ): Promise<string | null>;
 }
 interface PhoneOutbox {
   /** Seals and sends one message to one phone (G and H). Absent until the relay exists. */
-  send(deviceId: string, message: MacToPhoneMessageBody): void
+  send(deviceId: string, message: MacToPhoneMessageBody): void;
 }
 ```
 
@@ -271,7 +275,7 @@ Revoking one of these removes its evidence from the ledger (a tightening, no sig
 
 ## Migration
 
-**Built** for installs (grants next). The first launch of a signed build records, once, a `legacy`
+**Built** for installs and grants. The first launch of a signed build records, once, a `legacy`
 list in the anchored ledger: the adapters approved in `approvals.json` whose active hash is the
 one this app ships, and the grants for those hashes. "Built in" is always the shipped hash, never
 the `source` tag in the store's `state.json`, which is a plain file anything can write. Each record
@@ -327,30 +331,30 @@ Each IPC path that widens what an adapter, a client or an agent can reach, mappe
 marked as a tightening (no signature) or as not widening. **Built** rows are in this PR; the rest
 are the next PRs of this workstream.
 
-| IPC path                                     | Becomes                                                                     | Status             |
-| -------------------------------------------- | --------------------------------------------------------------------------- | ------------------ |
-| `answerConfirmation(id, true)`               | `irreversible-call` (app-raised, never stored), Touch ID from its own panel | **Built**          |
-| `answerConfirmation(id, false)`              | Decline: tightening, any app window                                         | **Built**          |
-| `app.setLockedDown(false)`                   | `resume { from: 'lockdown' }`, Mac only                                     | **Built**          |
-| `app.setLockedDown(true)`                    | Tightening: app-state and the ledger                                        | **Built**          |
-| `app.setPaused(false)`                       | Not signed: Valet's own Pause is in memory and a restart lifts it anyway    | Decided            |
-| `approvals.approve(id, hash)`                | `adapter-install`; the install gate asks `honoured`, bound to sandbox mode  | **Built**          |
-| rollback (PR #77's `rollbackNow`)            | `adapter-install` with `source: 'rollback'`                                 | **Built**          |
-| `approvals.reject`                           | Tightening                                                                  | **Built**          |
-| `grants.make`                                | `secret-grant`; the grant gate asks `honoured`                              | Next               |
-| `grants.revoke`                              | Tightening: `broker.revoke('secret-grant', ...)` and the store              | Next               |
-| `grants.resync`                              | Not widening: the same item, origins and fields                             | Decided            |
-| `remote.setTool(…, true)`                    | `tool-enable { scope: 'remote', clientId: null }`                           | Next               |
-| `remote.setTool(…, false)`                   | Tightening                                                                  | Next               |
-| `remote.setEnabled(true)`, `remote.setHosts` | `setting { scope: 'valet' }`                                                | Next               |
-| `remote.approveConsent(code, tools)`         | `remote-client`, the code typed into the decision                           | Next               |
-| `settings.set({ messagesOtpEnabled: true })` | `setting { scope: 'valet' }`: Valet reads Messages for codes                | Next               |
-| other `settings.set` fields                  | Not widening                                                                | Decided            |
-| `adapters.setSetting` (a store)              | Not widening: a value the adapter declared (`setting.adapter-choice`)       | Decided            |
-| `adapters.setPaused(…, false)`               | Not signed for now: the person's own per-site stop. Moves into the ledger   | Next (ledger only) |
-| `clients.add`                                | Not signed: a local client the person configures at the Mac                 | Decided, told to B |
-| `endpoint.setListening(true)`                | Not signed: local only, the person's own switch                             | Decided, told to B |
-| `app.erase`                                  | The main process's own native dialog decides                                | Unchanged          |
+| IPC path                                     | Becomes                                                                                                                              | Status             |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------ |
+| `answerConfirmation(id, true)`               | `irreversible-call` (app-raised, never stored), Touch ID from its own panel                                                          | **Built**          |
+| `answerConfirmation(id, false)`              | Decline: tightening, any app window                                                                                                  | **Built**          |
+| `app.setLockedDown(false)`                   | `resume { from: 'lockdown' }`, Mac only                                                                                              | **Built**          |
+| `app.setLockedDown(true)`                    | Tightening: app-state and the ledger                                                                                                 | **Built**          |
+| `app.setPaused(false)`                       | Not signed: Valet's own Pause is in memory and a restart lifts it anyway                                                             | Decided            |
+| `approvals.approve(id, hash)`                | `adapter-install`; the install gate asks `honoured`, bound to sandbox mode                                                           | **Built**          |
+| rollback (PR #77's `rollbackNow`)            | `adapter-install` with `source: 'rollback'`                                                                                          | **Built**          |
+| `approvals.reject`                           | Tightening                                                                                                                           | **Built**          |
+| `grants.make`                                | `secret-grant` (Touch ID); the grant gate hands out only signed grants, or legacy ones within the manifest's origins                 | **Built**          |
+| `grants.revoke`                              | Tightening: the evidence, the legacy record and the store                                                                            | **Built**          |
+| `grants.resync`                              | Not widening: the same item, origins and fields                                                                                      | Decided            |
+| `remote.setTool(…, true)`                    | `tool-enable { scope: 'remote', clientId: null }` (Touch ID). An agent's own per-client enable is next                               | **Built**          |
+| `remote.setTool(…, false)`                   | Tightening                                                                                                                           | **Built**          |
+| `remote.setEnabled(true)`, `remote.setHosts` | `setting { scope: 'valet' }` (`remote_enabled`, `remote_hosts` adding a host); off and fewer hosts are clicks                        | **Built**          |
+| `remote.approveConsent(code, tools)`         | `remote-client`, app-raised, the typed code in the signed decision; a wrong code goes straight to the three tries                    | **Built**          |
+| `settings.set({ messagesOtpEnabled: true })` | `setting { scope: 'valet' }`: `messages_otp` on, `notifications` off, `trace_retention` shorter (A's R6); their opposites are clicks | **Built**          |
+| other `settings.set` fields                  | Not widening                                                                                                                         | Decided            |
+| `adapters.setSetting` (a store)              | Not widening: a value the adapter declared (`setting.adapter-choice`)                                                                | Decided            |
+| `adapters.setPaused(…, false)`               | Not signed for now: the person's own per-site stop. Moves into the ledger                                                            | Next (ledger only) |
+| `clients.add`                                | Not signed: a local client the person configures at the Mac                                                                          | Decided, told to B |
+| `endpoint.setListening(true)`                | Not signed: local only, the person's own switch                                                                                      | Decided, told to B |
+| `app.erase`                                  | The main process's own native dialog decides                                                                                         | Unchanged          |
 
 The confirmation panel keeps its short arm delay as a UI nicety, but the main process no longer
 counts a click: `answerConfirmation(id, true)` from the panel opened for `id` only calls
@@ -409,7 +413,7 @@ A fresh adversarial reviewer read this design, B's contracts, A's spec and the f
 | 2   | Tightening records outside the ledger (tool off, site paused, lockdown in app-state.json) | PR 3: every record whose removal would widen moves into the ledger; app-state's lockdown flag is retired (Valet is locked if either says so until then).                                                  |
 | 3   | Migration bypassable or laundering                                                        | PR 3: the migrated marker lives in the Keychain anchor; old files' hashes are recorded at first launch and only their records migrate; critical records one by one, Mac only.                             |
 | 4   | Lockdown incomplete and racy                                                              | Fixed: lockdown drops remote-client and authoring-session evidence; `answer` refuses all but `resume` while locked; both run in one queue.                                                                |
-| 5   | The Mac can't tell Face ID from the passcode                                              | Asked of B: a biometry-only approval key beside the user-presence one, chosen by the card's tone.                                                                                                         |
+| 5   | The Mac can't tell Face ID from the passcode                                              | Closed: Nick decided the phone passcode always stands in for Face ID (B, PR #86). One `.userPresence` key per phone; nothing in the broker is Face ID only.                                               |
 | 6   | Resume can be approved on a phone                                                         | Fixed: `resume` needs the Mac's signature. Asked B to drop `valet.resume` from the admin table.                                                                                                           |
 | 7   | Consent code shown rather than typed                                                      | Asked of B: the typed code inside the signed decision, the request carrying none; consent gets its own bucket and per-source limit outside `pendingTotal`.                                                |
 | 8   | A failed commit after the rename reports failure for a change that stands                 | Fixed in `AnchoredFile.write`, with a test.                                                                                                                                                               |
@@ -466,6 +470,7 @@ Sent to the security thread; the first PR builds without them.
 3. **Limits differ:** A says 5 pending across all agents and 20 a day per agent; B's constants say
    10 and no daily cap. Built to B's constants until B decides.
 4. **The ledger** in place of per-store evidence fields, as above.
-5. **Face ID only** (review 5): a second, biometry-current-set approval key per phone.
+5. **Face ID only** (review 5): dropped. Nick decided the passcode always stands in for Face ID, so
+   each phone has one `.userPresence` key. Mac-only kinds are unchanged.
 6. **Resume** (review 6): Mac only, and off the admin table.
 7. **Consent code** (review 7): typed into the signed decision, not shown in the request.

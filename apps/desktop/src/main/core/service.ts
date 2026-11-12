@@ -8,16 +8,21 @@ import { copyFile, mkdir, rm } from 'node:fs/promises'
 import { AdapterStore, type BuildRecord, type PackageRuntime } from '@valet/adapter-store'
 import {
   type AdapterManifest,
+  type ApprovalKind,
+  type ApprovalSubject,
   type AuditEvent,
   type AuditRecord,
   type AuditSink,
+  approvalDecisionSchema,
   type BlockedRequest,
   CredentialError,
   DEFAULT_SANDBOX,
   type Grant,
+  type GrantStore,
   isDisplayText,
   type LocalAccess,
   MESSAGES_SECRET,
+  messagesSourcesIn,
   type NeedsUserReason,
   needsYouTitle,
   type PackageFiles,
@@ -33,10 +38,13 @@ import { FileGrantStore } from '@valet/credentials'
 import {
   type AdminReader,
   type CallOutcome,
+  displayCode,
   type EndpointClient,
   identityLabel,
   type LiveSessions,
   type NeedsYouHint,
+  normaliseCode,
+  normaliseRemoteHost,
   type SessionReportingEndpoint,
   type ToolCall,
   type ToolCaller,
@@ -73,6 +81,7 @@ import type {
   RollbackPreview,
   SettingChoicesReply,
   Settings,
+  SettingsPatch,
   UpdateStatus,
 } from '../../shared/api'
 import { AdapterSettingsStore } from './adapter-settings'
@@ -84,14 +93,22 @@ import {
   ApprovalBroker,
   adapterSettingSubject,
   DeviceStore,
+  grantSubject,
   installSubject,
+  itemFingerprint,
   type KindHandlers,
   type MacApprovalKeys,
+  remoteClientSubject,
   requestRef,
   settingSubject,
+  settingValue,
   settingWidens,
+  subjectProvider,
   TRUSTED_STORE,
   TrustedLedger,
+  toolEnableSubject,
+  WIDENING_SETTINGS,
+  type WideningSetting,
 } from './approvals'
 import { MissedItems, sortAttention } from './attention'
 import {
@@ -129,7 +146,7 @@ import { addsPermissions, permissionDiff } from './permission-diff'
 import { type ApprovedSnapshot, type BuiltinAdapter, SnapshotStore } from './registry'
 import { RemoteAccess } from './remote'
 import { RunMemory } from './run-memory'
-import { DEFAULT_SETTINGS, SettingsStore } from './settings'
+import { DEFAULT_SETTINGS, SettingsStore, traceRetentionDaysSchema } from './settings'
 import { SetupStore } from './setup'
 import { type BridgeCommand, clientSnippets, snippetFor } from './snippets'
 import { disabledUpdates, type UpdatesHooks, type UpdatesPort, VersionStore } from './updates'
@@ -638,7 +655,7 @@ export class AppService {
       audit: this.audit,
       prompt: this.broker,
       authRunner: createAuthRunner({
-        grants: this.grants,
+        grants: this.signedGrants,
         credentials: this.deps.credentials,
         audit: this.audit,
         clock: () => new Date(this.deps.now()),
@@ -709,6 +726,12 @@ export class AppService {
    * ValetError('config', 'not-found') for a tool the adapter doesn't declare.
    */
   async setRemoteTool(adapterId: string, tool: string, enabled: boolean): Promise<void> {
+    const declaration = await this.remoteToolDeclaration(adapterId, tool, enabled)
+    await this.remote.setTool(adapterId, declaration, enabled)
+  }
+
+  /** The tool as remote access would turn it on or off, or not-found when it can't be. */
+  private async remoteToolDeclaration(adapterId: string, tool: string, enabled: boolean) {
     const adapter = this.adapter(adapterId)
     const declaration = adapter?.definition.manifest.tools.find((t) => t.name === tool)
     if (adapter === null || declaration === undefined) throw new ValetError('config', 'not-found')
@@ -718,7 +741,7 @@ export class AppService {
     // Turning on is for approved adapters only; turning off always works.
     if (enabled && !(await this.installGate.isApproved(adapterId, adapter.hash).catch(() => false)))
       throw new ValetError('config', 'not-found')
-    await this.remote.setTool(adapterId, declaration, enabled)
+    return declaration
   }
 
   /** Remote access as set up now: its state, names, and every tool of each approved adapter. */
@@ -1140,6 +1163,14 @@ export class AppService {
     }
   }
 
+  /**
+   * The kinds this app can act on once approved. Anything else an agent asks for isn't available
+   * yet (E's admin tools check this before filing a request).
+   */
+  wiredKinds(): ReadonlySet<ApprovalKind> {
+    return new Set(Object.keys(this.approvalHandlers()) as ApprovalKind[])
+  }
+
   /** What each approved kind does here. Kinds not listed aren't wired yet and do nothing. */
   private approvalHandlers(): KindHandlers {
     return {
@@ -1163,6 +1194,63 @@ export class AppService {
         // rollback's, until its swap has worked (rollbackNow), so a failed swap leaves the running
         // version approved.
         supersedes: (next, older) => next.source !== 'rollback' && next.adapterId === older.adapterId,
+      },
+      // The person's own grant (grants.make) stores the grant once signed; the gate then reads
+      // this evidence (grantSigned). Stale once the version it names isn't the one installed.
+      'secret-grant': {
+        precheck: (subject) => this.adapter(subject.adapterId)?.hash === subject.adapterHash,
+        // One grant per secret: a new one replaces the evidence of the last.
+        supersedes: (next, older) => next.adapterId === older.adapterId && next.secret === older.secret,
+      },
+      // Valet's own settings, or an adapter's setting picked on the card (E's admin tools ask;
+      // the person's own paths ask too, through changeValetSetting).
+      setting: {
+        precheck: (subject) => {
+          if (subject.scope === 'adapter') {
+            const adapter = subject.adapterId === null ? null : this.adapter(subject.adapterId)
+            return adapter !== null && Object.hasOwn(adapter.definition.manifest.settings, subject.setting)
+          }
+          if (!Object.hasOwn(WIDENING_SETTINGS, subject.setting)) return false
+          const name = subject.setting as WideningSetting
+          const to = settingValue(name, subject.to)
+          // Still the change it was asked as: from the value set now, to a value read back exactly.
+          return to !== null && settingSubject(name, this.valetSetting(name).get(), to).from === subject.from
+        },
+        apply: async (subject, evidence) => {
+          if (subject.scope === 'adapter') {
+            const choice = evidence === null ? undefined : decisionChoice(evidence.decision.payload)
+            if (subject.adapterId === null || choice === undefined) throw new ValetError('config', 'invalid')
+            await this.setSetting(subject.adapterId, subject.setting, choice)
+            return
+          }
+          const name = subject.setting as WideningSetting
+          const to = settingValue(name, subject.to)
+          if (to === null) throw new ValetError('config', 'invalid')
+          await this.valetSetting(name).set(to)
+        },
+        supersedes: (next, older) =>
+          next.scope === older.scope && next.adapterId === older.adapterId && next.setting === older.setting,
+      },
+      // A tool turned on for remote clients (all of them; one client's own list is consent's).
+      'tool-enable': {
+        precheck: (subject) =>
+          subject.scope === 'remote' &&
+          subject.clientId === null &&
+          this.adapter(subject.adapterId)?.hash === subject.adapterHash,
+        apply: (subject) => this.setRemoteTool(subject.adapterId, subject.tool, true),
+        supersedes: (next, older) =>
+          next.adapterId === older.adapterId && next.tool === older.tool && next.scope === older.scope,
+      },
+      // A remote client's consent, approved with the code the person typed from their browser.
+      'remote-client': {
+        precheck: (subject) =>
+          this.remote.consentView().requests.some((r) => `remote:${r.clientId}` === subject.clientId),
+        apply: async (subject, evidence) => {
+          const code = evidence === null ? undefined : decisionTypedCode(evidence.decision.payload)
+          if (code === undefined) throw new ValetError('config', 'invalid')
+          const answer = await this.remote.approveConsent(code, subject.tools)
+          if (answer !== 'approved') throw new ValetError('config', 'not-found')
+        },
       },
       resume: {
         precheck: (subject) =>
@@ -1490,18 +1578,171 @@ export class AppService {
       inheritsSession: previous !== null && grants.some((g) => g.adapterId === id),
       unsandboxed: this.runsUnsandboxed(adapter),
     })
-    const asked = await broker.request('adapter-install', subject, { kind: 'person' })
+    if (!(await this.approveHere('adapter-install', subject))) return false
+    // A rollback retires the others only once its swap has worked (rollbackNow).
+    if (source !== 'rollback') await this.retireOthers(id, adapter.hash)
+    return true
+  }
+
+  /**
+   * The person's own request, approved with Touch ID at this Mac: true once signed, false if they
+   * cancelled. Throws when nothing can be approved (no broker, locked down).
+   */
+  private async approveHere<K extends ApprovalKind>(
+    kind: K,
+    subject: ApprovalSubject<K>,
+    extras: ConsentExtras = {},
+  ): Promise<boolean> {
+    const broker = this.approvalBroker
+    if (broker === null) throw new ValetError('config', 'unavailable')
+    const asked = await broker.request(
+      kind,
+      subject,
+      // A consent is raised by the app for the client that asked; everything else is the person's.
+      kind === 'remote-client' ? { kind: 'app' } : { kind: 'person' },
+      extras.consentCode === undefined ? null : { consentCode: extras.consentCode },
+    )
     if (!asked.ok)
       throw new ValetError('config', asked.reason === 'locked-down' ? 'locked-down' : 'unavailable')
-    const answered = await broker.approveOnMac(asked.requestId)
-    if (answered.ok) {
-      // A rollback retires the others only once its swap has worked (rollbackNow).
-      if (source !== 'rollback') await this.retireOthers(id, adapter.hash)
-      return true
-    }
+    const answered = await broker.approveOnMac(
+      asked.requestId,
+      extras.typedCode === undefined ? {} : { typedCode: extras.typedCode },
+    )
+    if (answered.ok) return true
     if (answered.reason !== 'busy')
-      await broker.withdraw(asked.requestId, { kind: 'person' }).catch(() => false)
+      await broker
+        .withdraw(asked.requestId, kind === 'remote-client' ? { kind: 'app' } : { kind: 'person' })
+        .catch(() => false)
     return false
+  }
+
+  /** A widening change the person asked for: Touch ID first, then the kind's handler applies it. */
+  private async approveOrRefuse<K extends ApprovalKind>(
+    kind: K,
+    subject: ApprovalSubject<K>,
+    extras: ConsentExtras = {},
+  ): Promise<void> {
+    if (!(await this.approveHere(kind, subject, extras))) throw new ValetError('config', 'not-granted')
+  }
+
+  /** Valet's own widening settings: where each is read and written. */
+  private valetSetting(name: WideningSetting): {
+    get(): unknown
+    set(value: unknown): Promise<void>
+  } {
+    const settings = async (patch: SettingsPatch) => {
+      await this.afterSettings(await this.settings.set(patch))
+      this.emit('app-changed')
+    }
+    switch (name) {
+      case 'messages_otp':
+        return {
+          get: () => this.settingsNow.messagesOtpEnabled,
+          set: (v) => settings({ messagesOtpEnabled: v === true }),
+        }
+      case 'notifications':
+        return {
+          get: () => this.settingsNow.notifications,
+          set: (v) => settings({ notifications: v === true }),
+        }
+      case 'trace_retention':
+        return {
+          get: () => this.settingsNow.traceRetentionDays,
+          set: (v) => settings({ traceRetentionDays: Number(v) }),
+        }
+      case 'remote_enabled':
+        return { get: () => this.remote.status().enabled, set: (v) => this.remote.setEnabled(v === true) }
+      case 'remote_hosts':
+        return {
+          get: () => this.remote.status().hosts,
+          set: (v) => this.remote.setHosts(Array.isArray(v) ? (v as string[]) : []),
+        }
+    }
+  }
+
+  /**
+   * Changes one of Valet's own widening settings: with Touch ID when it widens (the handler then
+   * applies it), at once otherwise.
+   */
+  private async changeValetSetting(name: WideningSetting, value: unknown): Promise<void> {
+    // Checked before asking: a handler's failure after the approval can't reach the caller.
+    let to = value
+    if (name === 'trace_retention' && !traceRetentionDaysSchema.safeParse(value).success)
+      throw new ValetError('config', 'invalid')
+    if (name === 'remote_hosts') {
+      const hosts = (Array.isArray(value) ? value : []).map((h) => normaliseRemoteHost(String(h)))
+      if (!Array.isArray(value) || hosts.some((h) => h === null)) throw new ValetError('config', 'invalid')
+      to = [...new Set(hosts as string[])]
+    }
+    const setting = this.valetSetting(name)
+    const from = setting.get()
+    // Unchanged or narrower: set at once (setting remote access off again still closes it all).
+    if (!settingWidens(name, from, to)) return setting.set(to)
+    await this.approveOrRefuse('setting', settingSubject(name, from, to))
+  }
+
+  /**
+   * Whether a stored grant may hand out its secret: signed `secret-grant` evidence for exactly it
+   * (the item, the provider, origins within those signed), or the legacy record, honoured only
+   * for origins the version's own manifest declares (B's condition).
+   */
+  private grantSigned(grant: Grant): boolean {
+    const fingerprint = itemFingerprint(grant.itemRef)
+    const signed = this.approvalBroker?.honoured(
+      'secret-grant',
+      (s) =>
+        s.adapterId === grant.adapterId &&
+        s.adapterHash === grant.adapterHash &&
+        s.secret === grant.secret &&
+        s.provider === subjectProvider(grant.provider) &&
+        s.itemFingerprint === fingerprint &&
+        grant.origins.every((o) => s.origins.includes(o)),
+    )
+    if (signed !== null && signed !== undefined) return true
+    const legacy = (this.ledger?.data.legacy?.grants ?? []).some(
+      (l) =>
+        l.adapterId === grant.adapterId && l.adapterHash === grant.adapterHash && l.secret === grant.secret,
+    )
+    if (!legacy) return false
+    const adapter = this.adapter(grant.adapterId)
+    if (adapter === null || adapter.hash !== grant.adapterHash) return false
+    const manifest = adapter.definition.manifest
+    const declared =
+      grant.secret === MESSAGES_SECRET
+        ? messagesSourcesIn(manifest.auth.steps).some((m) => m.sender === grant.itemRef)
+          ? manifest.navigation
+          : []
+        : grant.provider !== 'messages' && Object.hasOwn(manifest.secrets, grant.secret)
+          ? (manifest.secrets[grant.secret]?.origins ?? [])
+          : []
+    return grant.origins.length > 0 && grant.origins.every((o) => declared.includes(o))
+  }
+
+  /** The grant store as everything that hands out secrets sees it: only grants the person signed. */
+  private readonly signedGrants: GrantStore = {
+    find: async (adapterId, adapterHash, secret) => {
+      const grant = await this.grants.find(adapterId, adapterHash, secret)
+      return grant !== null && this.grantSigned(grant) ? grant : null
+    },
+    list: async () => (await this.grants.list()).filter((g) => this.grantSigned(g)),
+    put: (grant) => this.grants.put(grant),
+    revoke: (adapterId, secret) => this.grants.revoke(adapterId, secret),
+  }
+
+  /** Takes a grant's evidence and legacy record away (a revoke). Only tightens. */
+  private async revokeGrantEvidence(adapterId: string, secret: string): Promise<void> {
+    await this.approvalBroker?.revoke('secret-grant', (s) => s.adapterId === adapterId && s.secret === secret)
+    await this.ledger
+      ?.commit(
+        (draft) => {
+          if (draft.legacy !== undefined)
+            draft.legacy.grants = draft.legacy.grants.filter(
+              (l) => !(l.adapterId === adapterId && l.secret === secret),
+            )
+        },
+        { tightening: true },
+      )
+      .catch(() => undefined)
   }
 
   /** Applies a signed install of the hash installed now: the applied mark, the snapshot, the tools. */
@@ -2134,7 +2375,7 @@ export class AppService {
         list: async () => {
           const records = await this.reader.records()
           const titles = await this.titles.read()
-          return (await this.grants.list()).map((g) => grantInfo(g, titles, lastUsed(records, g)))
+          return (await this.signedGrants.list()).map((g) => grantInfo(g, titles, lastUsed(records, g)))
         },
         providers: async () => {
           const grants = await this.grants.list().catch(() => [] as readonly Grant[])
@@ -2164,6 +2405,12 @@ export class AppService {
             now: () => new Date(deps.now()),
           })
           const { grant } = checked
+          // Touch ID at this Mac signs exactly this grant: the item, the fields, the origins.
+          const signed = await this.approveHere(
+            'secret-grant',
+            grantSubject(adapter.definition.manifest, grant, checked.title),
+          )
+          if (!signed) throw new ValetError('grant', 'not-granted')
           // D6: a Keychain copy is made now, with the person approving in 1Password; a grant whose
           // copy couldn't be made would only fail its first login.
           if (grant.provider === 'keychain-copy') {
@@ -2191,6 +2438,7 @@ export class AppService {
             throw new ValetError('grant', 'not-found')
           }
           const before = await this.grants.list()
+          await this.revokeGrantEvidence(adapterId, secret)
           await this.audit.append({ type: 'grant-revoked', adapterId, secret })
           await this.grants.revoke(adapterId, secret)
           // A copy no remaining grant uses goes too.
@@ -2389,7 +2637,15 @@ export class AppService {
       settings: {
         get: () => this.settings.get(),
         set: async (patch) => {
-          const settings = await this.settings.set(patch)
+          // What widens (codes from Messages on, notifications off, a shorter retention) is a
+          // signed setting request, applied by its handler once approved; the rest is a click.
+          const { messagesOtpEnabled, notifications, traceRetentionDays, ...rest } = patch
+          if (messagesOtpEnabled !== undefined)
+            await this.changeValetSetting('messages_otp', messagesOtpEnabled)
+          if (notifications !== undefined) await this.changeValetSetting('notifications', notifications)
+          if (traceRetentionDays !== undefined)
+            await this.changeValetSetting('trace_retention', traceRetentionDays)
+          const settings = await this.settings.set(rest)
           if (patch.launchAtLogin !== undefined) deps.ui.setLaunchAtLogin(settings.launchAtLogin)
           return this.afterSettings(settings)
         },
@@ -2442,7 +2698,21 @@ export class AppService {
             }),
           }
         },
-        approveConsent: (code, tools) => this.remote.approveConsent(code, tools),
+        approveConsent: async (code, tools) => {
+          const consent = this.remote.consentFor(code)
+          const typed = normaliseCode(code)
+          // A wrong code goes straight through, so it counts against the three tries.
+          if (consent === null || typed === null) return this.remote.approveConsent(code, tools)
+          const on = new Set(this.remote.status().tools)
+          if (tools.some((t) => !on.has(t))) throw new ValetError('config', 'invalid')
+          await this.approveOrRefuse('remote-client', remoteClientSubject(consent, tools), {
+            consentCode: displayCode(typed),
+            typedCode: displayCode(typed),
+          })
+          // Applied by the handler: the request is no longer waiting once it was.
+          if (this.remote.consentFor(code) !== null) throw new ValetError('config', 'not-found')
+          return 'approved'
+        },
         declineConsent: async (id) => {
           if (!this.remote.declineConsent(id)) throw new ValetError('config', 'not-found')
         },
@@ -2466,15 +2736,23 @@ export class AppService {
         revokeAllClients: () => this.remote.revokeAllClients(),
         setup: () => this.remoteSetup(),
         setEnabled: async (enabled) => {
-          await this.remote.setEnabled(enabled)
+          await this.changeValetSetting('remote_enabled', enabled)
           return this.remoteSetup()
         },
         setHosts: async (hosts) => {
-          await this.remote.setHosts(hosts)
+          await this.changeValetSetting('remote_hosts', [...hosts])
           return this.remoteSetup()
         },
         setTool: async (adapterId, tool, enabled) => {
-          await this.setRemoteTool(adapterId, tool, enabled)
+          const adapter = this.adapter(adapterId)
+          const on = this.remote.status().tools.includes(`${adapterId}.${tool}`)
+          if (!enabled || on || adapter === null) await this.setRemoteTool(adapterId, tool, enabled)
+          else {
+            await this.remoteToolDeclaration(adapterId, tool, true)
+            const subject = toolEnableSubject(adapter.definition.manifest, adapter.hash, tool, 'remote')
+            if (subject === null) throw new ValetError('config', 'not-found')
+            await this.approveOrRefuse('tool-enable', subject)
+          }
           return this.remoteSetup()
         },
       },
@@ -2611,4 +2889,28 @@ function confirmationPreview(item: ConfirmationItem): string[] {
     if (kept !== undefined) lines.push(kept)
   }
   return lines.slice(0, 20)
+}
+
+/** The value a signed decision picked on a card with choices, if any. */
+function decisionChoice(payload: string): string | undefined {
+  try {
+    return approvalDecisionSchema.parse(JSON.parse(payload)).choice
+  } catch {
+    return undefined
+  }
+}
+
+/** The consent code a signed decision carries, if any. */
+function decisionTypedCode(payload: string): string | undefined {
+  try {
+    return approvalDecisionSchema.parse(JSON.parse(payload)).typedCode
+  } catch {
+    return undefined
+  }
+}
+
+/** For a remote client's consent: the code the browser shows, and the code the person typed. */
+interface ConsentExtras {
+  readonly consentCode?: string
+  readonly typedCode?: string
 }
