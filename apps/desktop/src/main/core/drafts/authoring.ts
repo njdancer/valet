@@ -795,13 +795,23 @@ export class DraftAuthoring implements Authoring {
   private async refreshed(record: DraftRecord): Promise<DraftRecord> {
     if (record.status !== 'waiting' || record.submission === null) return record
     const state = this.deps.requestState(record.submission.requestId)
-    if (state.state === 'pending' || state.state === 'unknown') return record
-    const status = state.state
+    if (state.state === 'pending') return record
+    let status: Exclude<typeof state.state, 'pending' | 'unknown'>
+    if (state.state === 'unknown') {
+      // Ended while nobody read the draft, and Valet restarted since, which forgets how requests
+      // ended. The installed version says it was approved; anything else stays as it was.
+      const installed = await this.deps.installed(record.adapterId).catch(() => null)
+      if (installed?.hash !== record.submission.adapterHash) return record
+      status = 'approved'
+    } else status = state.state
     return this.deps.store
       .update(record.id, (r) => ({
         ...r,
         status,
-        submission: r.submission === null ? null : { ...r.submission, note: state.note },
+        submission:
+          r.submission === null
+            ? null
+            : { ...r.submission, note: state.state === 'unknown' ? null : state.note },
       }))
       .catch(() => record)
   }
@@ -1088,7 +1098,7 @@ export class DraftAuthoring implements Authoring {
     } finally {
       this.trialing.delete(draftId)
     }
-    const problem = trialProblem(result)
+    const problem = trialProblem(result, session !== null)
     const summary: TrialSummary = {
       tool,
       packageHash,
@@ -1271,8 +1281,15 @@ function trialLines(trials: readonly TrialSummary[], packageHash: string | null)
 }
 
 /** How a trial ended, for the agent and the card; null when it returned good output. */
-function trialProblem(result: TrialResult): string | null {
+/** In a signed-in trial, what a signed-out answer means: the lent session is, at the site. */
+const LENT_SIGNED_OUT =
+  'The site says the lent session is signed out (it may have ended there). A call of the installed ' +
+  'adapter’s tool signs it in again; then try the trial again.'
+
+export function trialProblem(result: TrialResult, signedIn = false): string | null {
   const o = result.outcome
+  if (signedIn && o.kind === 'needs-user' && o.reason === 'login-required') return LENT_SIGNED_OUT
+  if (signedIn && o.kind === 'error' && o.errorClass === 'not-logged-in') return LENT_SIGNED_OUT
   switch (o.kind) {
     case 'output':
       return null

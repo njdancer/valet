@@ -25,6 +25,7 @@ import {
   DraftAuthoring,
   type RequestState,
   type SubmitRequest,
+  trialProblem,
 } from '../../src/main/core/drafts/authoring'
 import { partialMismatch } from '../../src/main/core/drafts/cases'
 import { lint, siteDomain } from '../../src/main/core/drafts/checks'
@@ -414,6 +415,21 @@ describe('submit', () => {
     const detail = await h.authoring.getDraft(AGENT, false, draft.draftId)
     expect(detail.draft.status).toBe('declined')
     expect(detail.draft.submission?.note).toBe('Use the API instead')
+  }, 60_000)
+
+  it('reads a submission Valet forgot the answer to (a restart) as approved once it is installed', async () => {
+    const h = await harness()
+    const { draft } = await h.authoring.createDraft(AGENT, { adapterId: 'shop', from: 'blank' })
+    const asked = await h.authoring.submit(AGENT, draft.draftId, {
+      note: null,
+      references: [],
+      followOns: [],
+    })
+    h.states.delete(asked.requestId)
+    // The broker no longer knows the request, and nothing is installed: still waiting, as far as anyone knows.
+    expect((await h.authoring.getDraft(AGENT, false, draft.draftId)).draft.status).toBe('waiting')
+    h.installed.set('shop', { files: blankDraft('shop', 'Shop'), hash: asked.adapterHash })
+    expect((await h.authoring.getDraft(AGENT, false, draft.draftId)).draft.status).toBe('approved')
   }, 60_000)
 
   it('keeps the draft waiting on its earlier request when a resubmission is refused', async () => {
@@ -952,6 +968,16 @@ describe('live trials', () => {
       /no live trials/,
     )
   }, 60_000)
+})
+
+describe('trial problems', () => {
+  it('says a signed-in trial that met a signed-out site has a lent session that ended there', () => {
+    const notLoggedIn = {
+      outcome: { kind: 'error', stage: 'tool-run', errorClass: 'not-logged-in' },
+    } as unknown as Parameters<typeof trialProblem>[0]
+    expect(trialProblem(notLoggedIn, true)).toMatch(/lent session is signed out/)
+    expect(trialProblem(notLoggedIn, false)).toBe('Failed with tool-run/not-logged-in.')
+  })
 })
 
 describe('helpers', () => {
