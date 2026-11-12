@@ -28,6 +28,10 @@ Dispositions:
 
 Short forms: AC approval-cards.md, J journeys.md, IA information-architecture.md, ST story.md.
 
+**Update, 2026-11-12:** Nick answered open question 3: the passcode always works, on every
+approval. That reverses the biometrics-only part of findings 1, 2, 25 and 35 below by his choice;
+the Mac-only list and lost-phone removal stay.
+
 ## Must fix (24)
 
 | #   | Finding                                                                      | Disposition                                                                                                                                                                                                                                                                                                                                             |

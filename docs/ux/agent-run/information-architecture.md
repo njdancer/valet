@@ -51,7 +51,7 @@ Valet window
 │                                                        (turns itself off 10 min after Add an agent, R44)
 ├─ Secrets                   login pages show "asked for by Claude Code, approved on Nick's iPhone"
 └─ Settings
-    └─ Approvals (new, Mac only)  #/settings/approvals   devices that approve, passcode for neutral cards on the
+    └─ Approvals (new, Mac only)  #/settings/approvals   devices that approve, the passcode fallback (always on),
                                   phone, request limits (shown), an accessibility exception (B to decide)
 
 Setup                        #/setup/<step>   Welcome · 1Password · Messages · Pair your phone · Connect an agent · Done
@@ -217,8 +217,8 @@ New and not yet numbered in the plan; the coordinator can give them decision num
    the login partition. Recommended: not in the first iOS app.
 2. **Unlock only on the Mac** (J7). Recommended, so a stolen phone can't undo your own emergency stop.
    The cost: a lock down while travelling lasts until you're home.
-3. **The passcode as a fallback for Face ID**, for low-risk cards only (J4). Recommended. Everything
-   that widens access, connects an agent or spends money needs Face ID itself.
+3. **The passcode as a fallback for Face ID** (J4). **Answered by Nick, 2026-11-12:** the passcode
+   always works, on every approval, as normal iPhone behaviour; he accepts the risk.
 4. **The store as a card** (J8). The security model says agents can't pick a setting's value, so
    "change my store" becomes a card where you pick from Woolworths' own list. Recommended; the
    alternative is amending the security model so the agent can choose.
@@ -230,22 +230,20 @@ New and not yet numbered in the plan; the coordinator can give them decision num
 8. **A recovery code for a lost phone** (J1, J7). Saved in 1Password at pairing; on a web page it can
    only lock down and remove devices. Recommended; the alternative is that a lost phone can be removed
    only from the Mac.
-9. **Confirm for someone who can't use Face ID** (J4, R35). Confirm is Face ID only, with no passcode,
-   so a person who can't use Face ID can only confirm at the Mac. Recommended for now; B to propose a
-   per-person accessibility exception set at the Mac with the Mac password and recorded in the audit
-   log.
+9. **Confirm for someone who can't use Face ID** (J4, R35). Answered by question 3: the passcode works
+   on Confirm cards too.
 10. **Removing the only phone from the recovery page** (J7). It leaves the Mac as the only approver
     until you pair again at the Mac. Recommended: allowed, because a stolen phone is worse than none.
 
 ## 10. Proposed amendments to other docs
 
-| Doc                  | Today                                                              | Proposed                                                                                                              | Owner |
-| -------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- | ----- |
-| `docs/relay.md`      | "Consent happens on the Mac … needs the person at their Mac once." | Consent on the Mac or a paired phone, with Face ID only, a typed letters-only code, the redirect host shown in full.  | B, G  |
-| `security-model.md`  | Notifications: app wording plus adapter name or host, no actions.  | Unchanged, and now also covers phone notifications; the relay-visible push text is only "Valet needs you".            | B     |
-| `security-model.md`  | Approval gesture: Touch ID, else typing 8 characters of the hash.  | Touch ID or Face ID; else the Mac account password (system prompt); passcode only for neutral phone cards.            | B     |
-| `security-model.md`  | Adapter settings: the value comes from the person.                 | Unchanged; the phone's Setting card is one more place the person picks it.                                            | B     |
-| `authoring-agent.md` | The scratch browser drives the site's domain.                      | Scratch browser and live trials refuse private addresses (relay.md's fetch rules) without a Private network approval. | B, F  |
+| Doc                  | Today                                                              | Proposed                                                                                                                         | Owner |
+| -------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- | ----- |
+| `docs/relay.md`      | "Consent happens on the Mac … needs the person at their Mac once." | Consent on the Mac or a paired phone, with Face ID or the passcode, a typed letters-only code, the redirect host shown in full.  | B, G  |
+| `security-model.md`  | Notifications: app wording plus adapter name or host, no actions.  | Unchanged, and now also covers phone notifications; the relay-visible push text is only "Valet needs you".                       | B     |
+| `security-model.md`  | Approval gesture: Touch ID, else typing 8 characters of the hash.  | Touch ID or Face ID; else the Mac account password (system prompt); the phone's passcode on every phone card (Nick, 2026-11-12). | B     |
+| `security-model.md`  | Adapter settings: the value comes from the person.                 | Unchanged; the phone's Setting card is one more place the person picks it.                                                       | B     |
+| `authoring-agent.md` | The scratch browser drives the site's domain.                      | Scratch browser and live trials refuse private addresses (relay.md's fetch rules) without a Private network approval.            | B, F  |
 
 ## 11. Sign-off from the other workstreams
 
@@ -283,9 +281,8 @@ Contracts in `packages/core`, design in `docs/agent-run-security.md`.
 - **"Signed approvals expire 2 minutes after signing":** not so. The signer's clock isn't trusted,
   so a signature is good once, while its request is pending and unexpired, by the Mac's clock.
   Only an irreversible call's request lives 2 minutes.
-- **Passcode** (open question 3): Nick answered 2026-11-12, "Passcode always works". The phone's
-  approval key is `.userPresence`, so Face ID or the passcode approves every card a phone can;
-  "Face ID only" cards and the neutral-only passcode rule are gone (A to update the card spec).
+- **Passcode** (open question 3): Nick answered yes for every approval, 2026-11-12. B recorded the
+  key change in PR #86.
 
 ### G's sign-off (relay, 2026-11-12)
 

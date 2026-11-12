@@ -185,7 +185,7 @@
     size: 'phone',
     title: 'Connect card: type the code, name it, choose tools',
     personas: ['P8', 'P3', 'P5', 'X2'],
-    desc: 'Path B, steps 4 and 5, shown filled in. The title is the question; Face ID only. The code selects the request; nothing can be approved until it matches. Defaults are Use tools only and no tools: the person ticked the rest here.',
+    desc: 'Path B, steps 4 and 5, shown filled in. The title is the question; Face ID or passcode. The code selects the request; nothing can be approved until it matches. Defaults are Use tools only and no tools: the person ticked the rest here.',
     html: P.sheet(connectCard(), {
       title: 'Needs you',
       time: '8:31',
