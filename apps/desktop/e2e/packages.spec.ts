@@ -187,18 +187,25 @@ test('rolling back from the Sites page brings the approved built-in back, pinned
       }
     })
     .toEqual([builtinHash, true])
-  expect(
-    adapterEvents()
-      .filter((e) => e.adapterId === 'wikipedia')
-      .map((e) => e.type),
-  ).toEqual([
-    'adapter-installed',
-    'adapter-approved',
-    'adapter-installed',
-    'adapter-approved',
-    'adapter-approved',
-    'adapter-activated',
-  ])
+  // adapter-activated is appended after state.json is written, so wait for it the same way.
+  await expect
+    .poll(() => {
+      try {
+        return adapterEvents()
+          .filter((e) => e.adapterId === 'wikipedia')
+          .map((e) => e.type)
+      } catch {
+        return null // caught mid-append
+      }
+    })
+    .toEqual([
+      'adapter-installed',
+      'adapter-approved',
+      'adapter-installed',
+      'adapter-approved',
+      'adapter-approved',
+      'adapter-activated',
+    ])
 })
 
 test('a version tampered with on disk is refused at launch, and the built-in heals', async () => {
