@@ -25,6 +25,7 @@ export async function buildToolScript(entry: string): Promise<string> {
       contents: [
         `export { tools } from ${JSON.stringify(entry)}`,
         `export { NeedsUserError, ValetError } from '@valet/core'`,
+        `export { toJSONSchema } from 'zod'`,
       ].join('\n'),
       resolveDir: dirname(entry),
       loader: 'ts',
@@ -56,5 +57,41 @@ export async function buildToolScript(entry: string): Promise<string> {
   })
   const [output] = result.outputFiles
   if (output === undefined) throw new Error('the tool script build produced nothing')
+  return output.text
+}
+
+/** The global the library prelude defines: `{ zod, core }`. */
+export const TOOL_LIBRARY_GLOBAL = '__valetLib'
+
+/**
+ * Bundles the two libraries tool code may import, zod and core's tool-code subset, into the prelude
+ * the tool process evaluates before an adapter's script (docs/adapter-packages.md). An adapter
+ * compiled by Valet (packages/adapter-store) imports them from this global instead of carrying its
+ * own copies, so its script, like its hash, is only its own code. Built with the app.
+ */
+export async function buildToolLibrary(): Promise<string> {
+  const { build } = await import('esbuild')
+  const result = await build({
+    stdin: {
+      contents: [
+        `export * as zod from 'zod'`,
+        `export * as core from ${JSON.stringify(CORE_TOOL_CODE)}`,
+      ].join('\n'),
+      resolveDir: dirname(CORE_TOOL_CODE),
+      loader: 'ts',
+    },
+    bundle: true,
+    write: false,
+    format: 'iife',
+    globalName: TOOL_LIBRARY_GLOBAL,
+    platform: 'neutral',
+    target: 'es2023',
+    mainFields: ['module', 'main'],
+    conditions: ['import', 'default'],
+    legalComments: 'none',
+    logLevel: 'silent',
+  })
+  const [output] = result.outputFiles
+  if (output === undefined) throw new Error('the tool library build produced nothing')
   return output.text
 }

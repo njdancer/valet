@@ -5,6 +5,7 @@
 import {
   Badge,
   Button,
+  ConfirmDialog,
   HashChip,
   Inline,
   Stack,
@@ -17,7 +18,9 @@ import {
   THead,
   TR,
 } from '@valet/ui'
-import type { PendingReview } from '../../../shared/api'
+import { useState } from 'react'
+import type { PackageOrigin, PendingReview, RollbackPreview } from '../../../shared/api'
+import { useAction, useApi, useLoad } from '../../lib/api-context'
 import { formatClock, formatDay } from '../../lib/format'
 import { href } from '../../lib/router'
 import type { SiteData } from './SitePage'
@@ -151,10 +154,130 @@ export function SiteVersions({ data }: { readonly data: SiteData }) {
           ) : null}
         </TBody>
       </Table>
+      <StoredVersions adapterId={adapter.id} name={adapter.name} />
       <Text size="sm" tone="subtle">
-        Older versions aren’t kept in this build, so there is nothing to restore. Approvals and rejections
-        stay in the{' '}
+        Approvals, rejections and rollbacks stay in the{' '}
         <TextLink href={href.audit({ category: 'approvals-grants', site: adapter.id })}>Audit log</TextLink>.
+      </Text>
+    </Stack>
+  )
+}
+
+const FROM: Readonly<Record<PackageOrigin, string>> = {
+  builtin: 'Came with Valet',
+  folder: 'Installed from a folder',
+  draft: 'Written by your agent',
+}
+
+/**
+ * Every version Valet keeps for this site (docs/adapter-packages.md), newest first, with Roll back
+ * on each one approved before. The confirmation shows what the older version can reach that the
+ * one in use can't, and which logins come back with it, before the click that approves it.
+ */
+function StoredVersions({ adapterId, name }: { readonly adapterId: string; readonly name: string }) {
+  const api = useApi()
+  const versions = useLoad(
+    (a) => a.adapters.versions(adapterId),
+    [adapterId],
+    ['adapters-changed', 'approvals-changed'],
+  )
+  const [preview, setPreview] = useState<RollbackPreview | null>(null)
+  const action = useAction()
+  if (versions.status !== 'ready' || versions.data.versions.length < 2) return null
+  const open = (hash: string) =>
+    void action.run(async () => setPreview(await api.adapters.rollbackPreview(adapterId, hash)))
+  return (
+    <Stack gap={2}>
+      <Text weight="semibold">Kept versions</Text>
+      <Table aria-label={`${name} kept versions`}>
+        <THead>
+          <TR>
+            <TH>Version</TH>
+            <TH>Content hash</TH>
+            <TH>From</TH>
+            <TH>Installed</TH>
+            <TH>
+              <span className="sr-only">Actions</span>
+            </TH>
+          </TR>
+        </THead>
+        <TBody>
+          {versions.data.versions.map((v) => (
+            <TR key={v.hash}>
+              <TD>
+                <Inline gap={2} wrap={false}>
+                  <span className="font-semibold">{v.version}</span>
+                  {v.active ? <Badge tone="success">In use</Badge> : null}
+                  {v.active && versions.data.pinned ? <Badge>Kept by you</Badge> : null}
+                </Inline>
+              </TD>
+              <TD>
+                <HashChip value={v.hash} label={`Content hash of ${v.version}`} />
+              </TD>
+              <TD className="text-fg-muted">{FROM[v.source]}</TD>
+              <TD className="whitespace-nowrap text-fg-muted">
+                {formatDay(v.installedAt)} {formatClock(v.installedAt)}
+              </TD>
+              <TD>
+                {v.canRollBack ? (
+                  <Button size="sm" disabled={action.busy} onClick={() => open(v.hash)}>
+                    Roll back to {v.version}
+                  </Button>
+                ) : null}
+              </TD>
+            </TR>
+          ))}
+        </TBody>
+      </Table>
+      {action.failed ? <Text tone="danger">That didn’t work. The version in use hasn’t changed.</Text> : null}
+      {preview !== null ? (
+        <ConfirmDialog
+          open
+          onOpenChange={(isOpen) => (isOpen ? undefined : setPreview(null))}
+          title={`Roll back to ${preview.version}?`}
+          description={`Calls to ${name} will use ${preview.version} straight away. Rolling back approves it again.`}
+          confirmLabel={`Roll back to ${preview.version}`}
+          destructive={preview.widens}
+          onConfirm={() => {
+            const target = preview
+            setPreview(null)
+            void action.run(() => api.adapters.rollback(target.adapterId, target.hash))
+          }}
+        >
+          <RollbackChanges preview={preview} />
+        </ConfirmDialog>
+      ) : null}
+    </Stack>
+  )
+}
+
+function RollbackChanges({ preview }: { readonly preview: RollbackPreview }) {
+  const { changes } = preview
+  const added = [
+    ...changes.egress.added.map((host) => `Sends traffic to ${host}`),
+    ...changes.requests.added.map((r) => `${r.method} ${r.path} (${r.purpose})`),
+    ...changes.tools.added.map((t) => `Tool ${t.name} (${t.sideEffect})`),
+    ...changes.secrets.added.map((s) => `Asks for the login “${s.name}”`),
+    ...changes.cookieDomains.added.map((d) => `Copies cookies for ${d}`),
+  ]
+  return (
+    <Stack gap={2}>
+      {preview.widens ? (
+        <Stack gap={1}>
+          <Text weight="semibold">It can do more than the version in use:</Text>
+          <ul className="m-0 list-disc pl-5 text-fg-muted">
+            {(added.length > 0 ? added : ['Its login or limits are looser']).map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </Stack>
+      ) : (
+        <Text tone="muted">It can’t reach anything the version in use can’t.</Text>
+      )}
+      <Text tone="muted">
+        {preview.grants.length === 0
+          ? 'No login comes back with it.'
+          : `Your login for ${preview.grants.join(', ')} comes back with it, as you gave it to this version.`}
       </Text>
     </Stack>
   )

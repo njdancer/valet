@@ -21,6 +21,35 @@ export type AuditEvent =
       readonly adapterHash: string
       readonly version: string
     }
+  /** A version stored and made active (docs/adapter-packages.md). It starts unapproved. */
+  | {
+      readonly type: 'adapter-installed'
+      readonly adapterId: string
+      readonly adapterHash: string
+      readonly version: string
+      readonly source: 'builtin' | 'folder' | 'draft'
+      /** The active hash it replaces, or null for a first install. */
+      readonly previousHash: string | null
+      /** What the hash doesn't cover: the app, the library prelude and the compiler. */
+      readonly appVersion: string
+      readonly preludeHash: string
+      readonly compiler: string
+    }
+  /** The person rolled back to a stored version (it is approved by the same click). */
+  | {
+      readonly type: 'adapter-activated'
+      readonly adapterId: string
+      readonly adapterHash: string
+      readonly version: string
+      readonly previousHash: string | null
+    }
+  /** A stored version failed its checks at load and was not run. */
+  | {
+      readonly type: 'adapter-refused'
+      readonly adapterId: string
+      readonly adapterHash: string
+      readonly reason: string
+    }
   | {
       readonly type: 'grant-made'
       readonly adapterId: string

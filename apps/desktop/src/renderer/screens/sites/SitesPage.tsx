@@ -22,12 +22,42 @@ import {
   TextLink,
 } from '@valet/ui'
 import { Globe } from 'lucide-react'
-import type { AdapterSummary, RunSummary, SiteHealth } from '../../../shared/api'
-import { useAppStop, useLoad, useNow } from '../../lib/api-context'
+import { useState } from 'react'
+import type { AdapterSummary, InstallResult, RunSummary, SiteHealth } from '../../../shared/api'
+import { useAction, useApi, useAppStop, useLoad, useNow } from '../../lib/api-context'
 import { plural } from '../../lib/format'
-import { href } from '../../lib/router'
+import { href, navigate } from '../../lib/router'
 import { healthFor, siteStatus } from '../../lib/site-status'
 import { ActionError, callsToday, isPaused, SiteFixButton, usePauseSite } from './site-ui'
+
+/**
+ * Development builds only (docs/adapter-packages.md): installs an adapter package from a folder the
+ * person picks in a dialog of the main process. The new version waits for review like any other.
+ */
+function InstallFromFolder() {
+  const api = useApi()
+  const available = useLoad((a) => a.adapters.canInstallFromFolder(), [], [])
+  const [result, setResult] = useState<InstallResult | null>(null)
+  const action = useAction()
+  if (available.status !== 'ready' || !available.data) return null
+  return (
+    <Inline gap={2}>
+      {result !== null && !result.ok ? <Text tone="danger">{result.reason}</Text> : null}
+      <Button
+        disabled={action.busy}
+        onClick={() =>
+          void action.run(async () => {
+            const installed = await api.adapters.installFromFolder()
+            setResult(installed)
+            if (installed?.ok === true) navigate(href.review(installed.adapterId))
+          })
+        }
+      >
+        Install from folder…
+      </Button>
+    </Inline>
+  )
+}
 
 export function SitesPage() {
   const adapters = useLoad((api) => api.adapters.list(), [], ['adapters-changed', 'approvals-changed'])
@@ -43,6 +73,7 @@ export function SitesPage() {
         title="Sites"
         description="Each site lets your agents use one website as you, in Valet’s own browser on this Mac."
         status={adapters.status === 'ready' ? <Text tone="muted">{plural(list.length, 'site')}</Text> : null}
+        actions={<InstallFromFolder />}
       />
       <PageBody width="form">
         {adapters.status === 'loading' ? (

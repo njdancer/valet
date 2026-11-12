@@ -5,6 +5,8 @@ import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
+import toolLibrary from 'virtual:valet-tool-library'
+import { buildRecord, readPackageFolder } from '@valet/adapter-store'
 import {
   createElectronSessionDriver,
   hardenProcess,
@@ -15,7 +17,7 @@ import { messagesHelperSocketPath } from '@valet/credentials'
 import { startEndpoint } from '@valet/mcp-server'
 import { app, clipboard, dialog, protocol, session, shell } from 'electron'
 import { href } from '../../renderer/lib/routes'
-import { builtinAdapters } from '../adapters'
+import { builtinPackages } from '../adapters'
 import { APP_SCHEME, APP_SCHEME_PRIVILEGES, createAppSchemeHandler } from '../core/app-scheme'
 import { dataPaths, MCP_SERVER_NAME, nativeNames } from '../core/constants'
 import { checkOpBinary, defaultOpCheckDeps, realCredentials } from '../core/credentials'
@@ -239,9 +241,12 @@ async function main(): Promise<void> {
     if (__VALET_SHOWCASE_BUILD__) log(`showcase build (${SHOWCASE_BUILD_MARKER})`)
   }
   const demoSite = demo
-  const adapters = builtinAdapters(
+  // The demo's Woolworths is a built-in of its own, made for the fake site; demo mode has its own
+  // data folder (launch.ts), so it never meets the real one's versions or approvals.
+  const builtins = builtinPackages(
     demoSite === null ? {} : { origin: demoSite.site.origin, authOrigin: demoSite.site.authOrigin },
   )
+  const toolProcess = utilityToolProcess(join(import.meta.dirname, 'tool-process.js'))
   const driverOptions: ManifestOptions = demoSite === null ? {} : { egressPorts: [demoSite.site.port] }
   const opDeps = defaultOpCheckDeps()
   // The packaged app's name is "valet" for a release and "valet-dev" otherwise (electron-builder).
@@ -280,8 +285,31 @@ async function main(): Promise<void> {
       clearTimeout: (h) => clearTimeout(h as NodeJS.Timeout),
     },
     sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
-    adapters,
-    toolProcess: utilityToolProcess(join(import.meta.dirname, 'tool-process.js')),
+    adapters: [],
+    packages: {
+      builtins,
+      runtime: { prelude: toolLibrary, start: toolProcess },
+      build: buildRecord(app.getVersion(), toolLibrary),
+      // Development builds only: a packaged app installs from drafts once the sandbox exists.
+      ...(app.isPackaged
+        ? {}
+        : {
+            folders: {
+              pick: async () => {
+                // The e2e suite can't drive the native picker: it names the folder at launch instead.
+                const named = mode.e2e ? process.env['VALET_E2E_INSTALL_FOLDER'] : undefined
+                if (named !== undefined) return readPackageFolder(named)
+                const result = await dialog.showOpenDialog({
+                  title: 'Install an adapter from a folder',
+                  properties: ['openDirectory'],
+                })
+                const folder = result.canceled ? undefined : result.filePaths[0]
+                return folder === undefined ? null : readPackageFolder(folder)
+              },
+            },
+          }),
+    },
+    toolProcess,
     // Demo mode keeps only the shop on this machine: the other built-ins (no login, public data)
     // reach their real sites.
     createDriver: (manifest, reporters) =>
@@ -358,10 +386,8 @@ async function main(): Promise<void> {
         return true
       },
       clearBrowserData: async () => {
-        const sessions = adapters.flatMap((a) =>
-          (['auth', 'tool'] as const).map((role) =>
-            session.fromPartition(partitionName(role, a.definition.manifest.id)),
-          ),
+        const sessions = (service?.adapterIds() ?? []).flatMap((id) =>
+          (['auth', 'tool'] as const).map((role) => session.fromPartition(partitionName(role, id))),
         )
         for (const s of [...sessions, session.defaultSession]) {
           await s.clearStorageData().catch(() => undefined)

@@ -89,6 +89,8 @@ export const ASAR_ALLOWED = [
   /^out\/renderer\/assets\/[\w-]+\.(js|css|svg|png|woff2)$/,
   /^node_modules\/@1password\/sdk\/(package\.json|dist\/[\w]+\.js)$/,
   /^node_modules\/@1password\/sdk-core\/(package\.json|nodejs\/core\.js|nodejs\/core_bg\.wasm)$/,
+  // The adapter compiler (docs/adapter-packages.md): esbuild-wasm's browser build, run in a worker.
+  /^node_modules\/esbuild-wasm\/(package\.json|lib\/browser\.js|esbuild\.wasm)$/,
 ]
 
 /** Waits for Chromium's DevTools line on the child's stderr. */
@@ -316,6 +318,8 @@ export async function smokeRealApp({ work, arch, dist, home, expectEqual, expect
     'out/renderer/tray.html',
     'node_modules/@1password/sdk/dist/sdk.js',
     'node_modules/@1password/sdk-core/nodejs/core_bg.wasm',
+    'node_modules/esbuild-wasm/lib/browser.js',
+    'node_modules/esbuild-wasm/esbuild.wasm',
   ])
     expectEqual(`real: asar has ${needed}`, files.includes(needed), true)
   // A demo build's code and fixtures never ship.

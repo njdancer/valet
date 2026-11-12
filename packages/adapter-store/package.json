@@ -1,0 +1,21 @@
+{
+  "name": "@valet/adapter-store",
+  "version": "0.0.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@valet/core": "workspace:*",
+    "@valet/runtime": "workspace:*",
+    "esbuild-wasm": "0.28.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@valet/adapter-wikipedia": "workspace:*",
+    "@valet/adapter-woolworths": "workspace:*",
+    "@valet/adapter-yahoo-finance": "workspace:*"
+  }
+}
