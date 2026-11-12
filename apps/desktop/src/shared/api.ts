@@ -668,6 +668,11 @@ export interface ConfirmationItem {
   /** The validated tool input, redacted. */
   readonly input: readonly PreviewPart[]
   readonly adapterNote: string | null
+  /**
+   * The signed request's reference, as the Touch ID prompt names it ("request 7B3F"); null until
+   * the request is made, and Approve waits for it.
+   */
+  readonly ref: string | null
 }
 
 export interface ReviewItem {
@@ -1067,10 +1072,11 @@ export interface ValetApi {
     dismiss(id: string): Promise<void>
   }
   /**
-   * The main process refuses an approval that arrives within CONFIRM_ARM_MS of the confirmation
-   * window showing or regaining focus, as the renderer's own delay does.
+   * Declines at once. An approval is accepted only from the confirmation's own panel, and only
+   * raises the Touch ID prompt: it resolves true once the signed approval went through, false if
+   * the person cancelled the prompt (the confirmation still waits).
    */
-  answerConfirmation(confirmationId: string, approved: boolean): Promise<void>
+  answerConfirmation(confirmationId: string, approved: boolean): Promise<boolean>
   /**
    * Brings a waiting confirmation's own panel forward and focuses it, reopening it if it was
    * closed. Only that panel can approve, so nothing else ever shows a confirmation. Rejects for one

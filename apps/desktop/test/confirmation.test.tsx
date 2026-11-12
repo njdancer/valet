@@ -78,6 +78,7 @@ const CHECKOUT: ConfirmationItem = {
     { kind: 'text', text: ' }' },
   ],
   adapterNote: null,
+  ref: '7B3F',
 }
 
 /** The fake, with `items` as the attention list instead of its own. */
@@ -343,12 +344,39 @@ describe('the confirmation window', () => {
     expect(answers(fake)).toEqual([])
   })
 
+  it('names the Touch ID request, waits for it, and keeps waiting when Touch ID is cancelled', async () => {
+    const user = userEvent.setup()
+    const fake = createFakeApi({ now: NOW })
+    let asked = 0
+    const api: FakeApi = {
+      ...withAttention(fake, [CHECKOUT]),
+      answerConfirmation: async () => {
+        asked++
+        return false
+      },
+    }
+    renderWindow('cf_checkout', api)
+    expect(await screen.findByText(/asks for Touch ID, for request 7B3F/)).toBeTruthy()
+    await user.click(await armed('Approve Place order'))
+    expect(asked).toBe(1)
+    expect(await screen.findByText(/Touch ID was cancelled, so nothing was approved/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Approve Place order' })).toBeTruthy()
+  })
+
+  it('keeps Approve off until the signed request exists', async () => {
+    const fake = createFakeApi({ now: NOW })
+    renderWindow('cf_checkout', withAttention(fake, [{ ...CHECKOUT, ref: null }]))
+    const approve = await screen.findByRole('button', { name: 'Approve Place order' })
+    await new Promise((r) => setTimeout(r, 1000))
+    expect(isOff(approve)).toBe(true)
+  })
+
   it('says so when an allowed call then fails on the site', async () => {
     const user = userEvent.setup()
     const fake = createFakeApi({ now: NOW })
     const api: FakeApi = {
       ...withAttention(fake, [CHECKOUT]),
-      answerConfirmation: async () => undefined,
+      answerConfirmation: async () => true,
       runs: {
         ...fake.runs,
         trace: async () =>
@@ -367,7 +395,7 @@ describe('the confirmation window', () => {
     const fake = createFakeApi({ now: NOW })
     const api: FakeApi = {
       ...withAttention(fake, [CHECKOUT]),
-      answerConfirmation: async () => undefined,
+      answerConfirmation: async () => true,
       runs: {
         ...fake.runs,
         trace: async () =>

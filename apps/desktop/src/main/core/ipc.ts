@@ -44,7 +44,7 @@ export class IpcRefused extends Error {
 
 /** The service behind the channels: the API, plus who sent a confirmation answer. */
 export type MainApi = Omit<ValetApi, 'onEvent' | 'answerConfirmation'> & {
-  answerConfirmation(confirmationId: string, approved: boolean, from: AppWindow): Promise<void>
+  answerConfirmation(confirmationId: string, approved: boolean, from: AppWindow): Promise<boolean>
 }
 
 const MAX_TEXT = 10_000

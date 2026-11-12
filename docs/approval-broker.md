@@ -80,7 +80,11 @@ with fakes. **Built** in the first PR unless marked.
 ```ts
 interface MacSigner {
   /** Public keys, creating the device's keys on first use. Never a private key. */
-  keys(): Promise<{ approvalKey: string; transportKey: string; agreementKey: string }>
+  keys(): Promise<{
+    approvalKey: string
+    transportKey: string
+    agreementKey: string
+  }>
   /** Shows the OS prompt with `reason`; resolves the signature, or null if the person cancelled. */
   sign(domain: SigningDomain, payload: string, reason: string): Promise<string | null>
 }
@@ -188,7 +192,7 @@ that raised it is.
    installed; a tool's hash and side effect are unchanged; a consent's OAuth session is still
    open. A stale request is withdrawn (`stale`), never applied.
 5. One ledger write: remove the pending entry, append `Evidence { requestText, decision,
-   receivedAt: now }` (not for `NEVER_STORED` kinds). If the write fails, nothing was approved.
+receivedAt: now }` (not for `NEVER_STORED` kinds). If the write fails, nothing was approved.
 6. Audit `approval-answered` / `approved` with the device id; close the card everywhere
    (`approval-closed`); then run the kind's **apply**. If apply throws, the evidence stays (the
    person did approve) and the failure is shown as a Needs you item with a retry that re-runs apply
@@ -271,6 +275,59 @@ Today's `approvals.json` and grants have no evidence. On the first launch of the
 (**Designed**, PR 3), the Mac lists them on one screen and asks for Touch ID once; the Swift signer
 signs one decision per record under the same `LAContext`. Until then the old records keep working
 and the app says migration is waiting, so the Woolworths login is never interrupted (B).
+
+## Wiring into the app
+
+The broker opens in `AppService.start()`, right after `app-state.json`, so a ledger that doesn't
+match its anchor locks Valet down before the first call. Where its keys and anchor come from is
+`approvals/mac-keys.ts` (**Built**):
+
+| Build                                   | Signer                                                                                                                                                                     | Anchor                                                                     |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Packaged, not demo (a release)          | `valet-approver` only. Missing or failing: nothing can be approved                                                                                                         | Keychain, service `valet.anchor`. No Keychain helper: the ledger is locked |
+| Dev, helper built and reaching the SE   | `valet-approver`                                                                                                                                                           | Keychain, service `valet-dev.anchor`, or a file when there's no helper     |
+| Dev without a working helper, demo, e2e | Software keys kept in `dev-approval-keys.json` (0600), so a restart is the same Mac. A native dialog of the main process stands in for Touch ID; the e2e suite answers yes | A file in the data folder (`dev-anchor.json`): it only catches accidents   |
+
+A reset or uninstall removes the anchor too (erase step `approvals-anchor`), or the next launch's
+empty folder wouldn't match it.
+
+### Every loosening path, and what it becomes
+
+Each IPC path that widens what an adapter, a client or an agent can reach, mapped to a kind, or
+marked as a tightening (no signature) or as not widening. **Built** rows are in this PR; the rest
+are the next PRs of this workstream.
+
+| IPC path                                     | Becomes                                                                     | Status             |
+| -------------------------------------------- | --------------------------------------------------------------------------- | ------------------ |
+| `answerConfirmation(id, true)`               | `irreversible-call` (app-raised, never stored), Touch ID from its own panel | **Built**          |
+| `answerConfirmation(id, false)`              | Decline: tightening, any app window                                         | **Built**          |
+| `app.setLockedDown(false)`                   | `resume { from: 'lockdown' }`, Mac only                                     | **Built**          |
+| `app.setLockedDown(true)`                    | Tightening: app-state and the ledger                                        | **Built**          |
+| `app.setPaused(false)`                       | Not signed: Valet's own Pause is in memory and a restart lifts it anyway    | Decided            |
+| `approvals.approve(id, hash)`                | `adapter-install`; the install gate asks `honoured`, bound to sandbox mode  | Next, after PR #77 |
+| rollback (PR #77's `rollbackNow`)            | `adapter-install` with `source: 'rollback'`                                 | Next, after PR #77 |
+| `approvals.reject`                           | Tightening                                                                  | Next               |
+| `grants.make`                                | `secret-grant`; the grant gate asks `honoured`                              | Next               |
+| `grants.revoke`                              | Tightening: `broker.revoke('secret-grant', ...)` and the store              | Next               |
+| `grants.resync`                              | Not widening: the same item, origins and fields                             | Decided            |
+| `remote.setTool(…, true)`                    | `tool-enable { scope: 'remote', clientId: null }`                           | Next               |
+| `remote.setTool(…, false)`                   | Tightening                                                                  | Next               |
+| `remote.setEnabled(true)`, `remote.setHosts` | `setting { scope: 'valet' }`                                                | Next               |
+| `remote.approveConsent(code, tools)`         | `remote-client`, the code typed into the decision                           | Next               |
+| `settings.set({ messagesOtpEnabled: true })` | `setting { scope: 'valet' }`: Valet reads Messages for codes                | Next               |
+| other `settings.set` fields                  | Not widening                                                                | Decided            |
+| `adapters.setSetting` (a store)              | Not widening: a value the adapter declared (`setting.adapter-choice`)       | Decided            |
+| `adapters.setPaused(…, false)`               | Not signed for now: the person's own per-site stop. Moves into the ledger   | Next (ledger only) |
+| `clients.add`                                | Not signed: a local client the person configures at the Mac                 | Decided, told to B |
+| `endpoint.setListening(true)`                | Not signed: local only, the person's own switch                             | Decided, told to B |
+| `app.erase`                                  | The main process's own native dialog decides                                | Unchanged          |
+
+The confirmation panel keeps its short arm delay as a UI nicety, but the main process no longer
+counts a click: `answerConfirmation(id, true)` from the panel opened for `id` only calls
+`approveOnMac`, and resolves false if the person cancels Touch ID. The panel shows the request's
+ref (`ConfirmationItem.ref`), which the Touch ID prompt names. A paired phone may approve the same
+request; the broker's apply then lets the call go ahead. The confirmation request is app-raised,
+so it never counts against an agent's limits.
 
 ## Failure cases
 

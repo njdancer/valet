@@ -603,6 +603,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     },
     {
       kind: 'confirmation',
+      ref: '7B3F',
       id: 'cf_a40f3c',
       adapterId: 'woolworths',
       adapterName: 'Woolworths',
@@ -1376,6 +1377,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       ]
       emit({ type: 'attention-changed' })
       emit({ type: 'runs-changed' })
+      return true
     },
     async openLoginWindow(adapterId) {
       enter('openLoginWindow', adapterId)

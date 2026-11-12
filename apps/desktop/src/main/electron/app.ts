@@ -11,12 +11,13 @@ import {
   type ManifestOptions,
   partitionName,
 } from '@valet/browser-electron'
-import { messagesHelperSocketPath } from '@valet/credentials'
+import { KeychainHelper, messagesHelperSocketPath } from '@valet/credentials'
 import { startEndpoint } from '@valet/mcp-server'
 import { app, clipboard, dialog, protocol, session, shell } from 'electron'
 import { href } from '../../renderer/lib/routes'
 import { builtinAdapters } from '../adapters'
 import { APP_SCHEME, APP_SCHEME_PRIVILEGES, createAppSchemeHandler } from '../core/app-scheme'
+import { ANCHOR_SERVICE, macApprovalKeys } from '../core/approvals'
 import { dataPaths, MCP_SERVER_NAME, nativeNames } from '../core/constants'
 import { checkOpBinary, defaultOpCheckDeps, realCredentials } from '../core/credentials'
 import {
@@ -222,7 +223,6 @@ async function main(): Promise<void> {
     demo: mode.demo,
     e2e: mode.e2e,
     devTools: !app.isPackaged,
-    onConfirmationArmed: (id) => service?.confirmationArmed(id),
   })
   windows.lockDefaultSession()
 
@@ -260,6 +260,38 @@ async function main(): Promise<void> {
         ? null
         : { binary: messagesBinary, socketPath: messagesHelperSocketPath(names.messagesHelperLabel) },
   }
+  // The Mac's approval keys: the Secure Enclave helper and a Keychain anchor in a release build,
+  // nothing weaker. A build that carries demo mode is never a release (launch.ts).
+  const strictApprovals = app.isPackaged && !mode.demo
+  const keychainHelper = credentialDeps.keychainHelper
+  const approvalKeys = await macApprovalKeys({
+    packaged: strictApprovals,
+    approverPath: nativeHelper('valet-approver'),
+    // A demo launch keeps its anchor in its own data folder, never the Keychain.
+    keychain:
+      keychainHelper === null || mode.demo ? null : new KeychainHelper({ helperPath: keychainHelper }),
+    anchorService: app.isPackaged && app.getName() === 'valet' ? ANCHOR_SERVICE : 'valet-dev.anchor',
+    devKeysPath: paths.devApprovalKeys,
+    devAnchorPath: paths.devAnchor,
+    // A dev build signing in software asks in a native dialog of the main process, where the
+    // Touch ID prompt would be; the end-to-end suite answers yes.
+    devPresent: async (reason) => {
+      if (mode.e2e) return true
+      const { response } = await dialog.showMessageBox({
+        type: 'question',
+        message: `Valet is trying to ${reason}.`,
+        detail: 'Development build: this dialog stands in for Touch ID.',
+        buttons: ['Cancel', 'Approve'],
+        defaultId: 0,
+        cancelId: 0,
+      })
+      return response === 1
+    },
+    log,
+  })
+  log(
+    `approvals: signing with ${approvalKeys.kind === 'software' ? 'software keys (dev build)' : 'the Secure Enclave'}`,
+  )
   const signature = await bundleSignature()
   const notifications = systemNotifications((target) => {
     // A click only ever opens the window the notification was about, if it is still waiting.
@@ -289,6 +321,7 @@ async function main(): Promise<void> {
         ? createElectronSessionDriver(manifest, { ...driverOptions, ...reporters }, { dial: demoSite.dial })
         : createElectronSessionDriver(manifest, { ...reporters }),
     credentials: demoSite === null ? realCredentials(credentialDeps) : demoSite.credentials,
+    approvalKeys,
     startEndpoint: (caller, clients, onSessionsChanged, admin) =>
       startEndpoint({
         caller,

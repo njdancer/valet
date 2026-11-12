@@ -13,6 +13,7 @@ import {
   type BlockedRequest,
   CredentialError,
   type Grant,
+  isDisplayText,
   MESSAGES_SECRET,
   type NeedsUserReason,
   needsYouTitle,
@@ -58,6 +59,7 @@ import type {
   ClientSnippet,
   EndpointStatus,
   HashRoute,
+  PreviewPart,
   RemoteConsentItem,
   RemoteSetup,
   RemoteSetupTool,
@@ -69,6 +71,15 @@ import type {
 import { AdapterSettingsStore } from './adapter-settings'
 import { adminReader } from './admin'
 import { AppStateStore } from './app-state'
+import {
+  AnchoredFile,
+  ApprovalBroker,
+  DeviceStore,
+  type KindHandlers,
+  type MacApprovalKeys,
+  TRUSTED_STORE,
+  TrustedLedger,
+} from './approvals'
 import { MissedItems, sortAttention } from './attention'
 import {
   type AdapterLookup,
@@ -83,7 +94,7 @@ import { BlockedAudit, LoginSecrets } from './blocked'
 import { type AppRefusal, RuntimeToolCaller } from './caller'
 import { addToDesktopConfig } from './claude-desktop'
 import { ClientRegistry, shownTransport } from './clients'
-import { ConfirmationBroker, type Timers } from './confirmations'
+import { ConfirmationBroker, type ConfirmationSigning, type Timers } from './confirmations'
 import {
   AUTH_FLOW_TIMEOUT_MS,
   CONFIRMATION_TIMEOUT_MS,
@@ -94,7 +105,7 @@ import {
   TYPING_DELAY_MS,
 } from './constants'
 import type { Credentials } from './credentials'
-import { type EraseKind, type EraseReport, eraseEverything } from './erase'
+import { type EraseKind, type EraseReport, type EraseStep, eraseEverything } from './erase'
 import { ensurePrivateDir, JsonDocument } from './files'
 import { checkGrantRequest, grantInfo } from './grants'
 import type { AppWindow, MainApi } from './ipc'
@@ -165,6 +176,11 @@ export interface ServiceDeps {
   /** Builds an adapter's driver, with the reporters its refusals outside a run go to. */
   readonly createDriver: (manifest: AdapterManifest, reporters: DriverReporters) => Promise<SessionDriver>
   readonly credentials: Credentials
+  /**
+   * The Mac's approval keys and the trusted ledger's anchor (approvals/mac-keys.ts): the Secure
+   * Enclave and the Keychain in a packaged app.
+   */
+  readonly approvalKeys: MacApprovalKeys
   /**
    * Starts the MCP endpoint with a token for each of `clients`, written to its config file; it
    * reports its live sessions to `onSessionsChanged`. `admin` is Valet's own read-only tools, for
@@ -295,6 +311,11 @@ export class AppService {
   private readonly memory = new RunMemory()
   private readonly sessions: SessionTracker
   private readonly broker: ConfirmationBroker
+  /**
+   * Signed approvals (docs/approval-broker.md), from start() on. Null before, or if the Mac's keys
+   * couldn't be read: then nothing that needs an approval can be approved.
+   */
+  private approvalBroker: ApprovalBroker | null = null
   private readonly handoffs: Handoffs
   private readonly drivers = new Map<string, SessionDriver>()
   /** The runtime, from start() on. */
@@ -407,6 +428,7 @@ export class AppService {
           at: item.requestedAt,
         }),
       onChange: () => this.emit('attention-changed'),
+      signing: this.confirmationSigning(),
       now: deps.now,
       timeoutMs: CONFIRMATION_TIMEOUT_MS,
       timers: deps.timers,
@@ -500,6 +522,7 @@ export class AppService {
     await mkdir(paths.traces, { recursive: true, mode: 0o700 })
     // Before the endpoint starts: a lock down set before a restart refuses the first call too.
     await this.appState.load()
+    await this.openApprovals()
     await this.missed.load()
     this.scheduleMissedExpiry()
     await this.loadRepairs()
@@ -578,7 +601,7 @@ export class AppService {
     }
     this.caller = new RuntimeToolCaller(host, {
       paused: () => this.paused,
-      lockedDown: () => this.appState.lockedDown,
+      lockedDown: () => this.lockedDown,
       sitePaused: (adapterId) => this.appState.sitePaused(adapterId),
       explain: (call, outcome) => this.explain(call, outcome),
       started: (call) => {
@@ -658,6 +681,7 @@ export class AppService {
     // Calls still running are cancelled: each ends failed tool-run/aborted, its prompt declined.
     this.caller?.cancelAll()
     this.broker.declineAll()
+    this.approvalBroker?.stop()
     this.handoffs.closeAll()
     this.notifier.clear()
     if (this.missedTimer !== null) this.deps.timers.clearTimeout(this.missedTimer)
@@ -674,11 +698,6 @@ export class AppService {
     // Breaker and pacing state still on its way to disk: a quit must not cut the write short.
     await this.host?.flushed()
     this.loginSecrets.dispose()
-  }
-
-  /** For the Electron glue: the confirmation window was shown or focused. */
-  confirmationArmed(id: string): void {
-    this.broker.armed(id)
   }
 
   /** Whether a confirmation is still waiting (the glue closes windows for ones that aren't). */
@@ -959,20 +978,136 @@ export class AppService {
    */
   private async setLockedDown(locked: boolean): Promise<void> {
     if (!locked) {
-      // Audited first, like a grant: an unlock that can't be recorded isn't made.
-      await this.audit.append({ type: 'lock-down', locked, revokedClients: 0 })
-      await this.appState.setLockedDown(false)
+      // Unlocking needs the person at this Mac: a signed `resume`, Touch ID in a packaged app. A
+      // phone can lock down but never unlock, and neither can a click on its own. The handler
+      // (approvalHandlers) clears the switch once the decision is signed.
+      if (!this.lockedDown) return
+      const broker = this.approvalBroker
+      if (broker === null) throw new ValetError('config', 'unavailable')
+      const asked = await broker.request('resume', { from: 'lockdown' }, { kind: 'person' })
+      if (!asked.ok) throw new ValetError('config', 'unavailable')
+      const answered = await broker.approveOnMac(asked.requestId)
+      // Cancelled at the prompt: still locked, and the request is withdrawn rather than left waiting.
+      if (!answered.ok) await broker.withdraw(asked.requestId, { kind: 'person' }).catch(() => false)
       return
     }
     // In memory at once: no call gets through while the rest happens, even if a write fails.
     const saved = this.appState.setLockedDown(true)
+    const ledger = this.approvalBroker?.lockdown().catch(() => undefined)
     let revoked = 0
     if (locked) {
       this.broker.declineAll()
       revoked = await this.remote.revokeAllClients().catch(() => 0)
     }
+    await ledger
     await saved
     await this.audit.append({ type: 'lock-down', locked: true, revokedClients: revoked })
+  }
+
+  /**
+   * Locked down by the person's switch (app-state.json), or by the ledger: a phone's lockdown, or a
+   * ledger that didn't match its anchor at launch. Either keeps every call refused.
+   */
+  private get lockedDown(): boolean {
+    return this.appState.lockedDown || (this.approvalBroker?.isLockedDown() ?? false)
+  }
+
+  /** Opens the trusted ledger and the approval broker. A failure leaves approvals unavailable. */
+  private async openApprovals(): Promise<void> {
+    const keys = this.deps.approvalKeys
+    try {
+      const macKeys = await keys.signer.keys()
+      const ledger = await TrustedLedger.open(
+        new AnchoredFile(this.deps.paths.trusted, TRUSTED_STORE, keys.anchor),
+      )
+      const devices = new DeviceStore(ledger, macKeys)
+      this.approvalBroker = await ApprovalBroker.open({
+        ledger,
+        devices,
+        signer: keys.signer,
+        audit: this.audit,
+        handlers: this.approvalHandlers(),
+        now: this.deps.now,
+        timers: this.deps.timers,
+        onChange: () => {
+          this.emit('app-changed')
+          this.emit('attention-changed')
+        },
+      })
+      if (ledger.tampered !== null) this.deps.diagnostics?.({ type: `approvals-ledger-${ledger.tampered}` })
+    } catch {
+      this.approvalBroker = null
+      this.deps.diagnostics?.({ type: 'approvals-unavailable' })
+    }
+  }
+
+  /** What each approved kind does here. Kinds not listed aren't wired yet and do nothing. */
+  private approvalHandlers(): KindHandlers {
+    return {
+      'irreversible-call': {
+        precheck: (subject) => this.broker.hasCall(subject.callId),
+        apply: async (subject) => {
+          this.broker.approvedCall(subject.callId)
+        },
+      },
+      resume: {
+        precheck: (subject) =>
+          subject.from === 'lockdown' ? this.lockedDown : (this.approvalBroker?.isRemotePaused() ?? false),
+        supersedes: () => true,
+        apply: async (subject) => {
+          if (subject.from !== 'lockdown') return
+          await this.audit.append({ type: 'lock-down', locked: false, revokedClients: 0 })
+          await this.appState.setLockedDown(false)
+          this.emit('app-changed')
+        },
+      },
+    }
+  }
+
+  /** The approval broker's side of each confirmation the runtime asks for (confirmations.ts). */
+  private confirmationSigning(): ConfirmationSigning {
+    const app = { kind: 'app' } as const
+    return {
+      open: async (item) => {
+        const broker = this.approvalBroker
+        if (broker === null) return null
+        const siteName = shown(item.adapterName, 80)
+        const toolTitle = shown(item.toolTitle, 80)
+        const asked = await broker.request(
+          'irreversible-call',
+          {
+            adapterId: item.adapterId,
+            adapterHash: item.adapterHash,
+            tool: item.tool,
+            callId: item.callId,
+            preview: previewLines(item.input),
+          },
+          app,
+          {
+            display: {
+              ...(shown(item.client, 100) === undefined
+                ? {}
+                : { client: { label: shown(item.client, 100) as string, badge: 'local' as const } }),
+              fromAdapter: {
+                ...(siteName === undefined ? {} : { siteName }),
+                ...(toolTitle === undefined ? {} : { toolTitles: { [item.tool]: toolTitle } }),
+              },
+            },
+          },
+        )
+        return asked.ok ? { requestId: asked.requestId, ref: asked.ref } : null
+      },
+      approve: async (requestId) => {
+        const broker = this.approvalBroker
+        if (broker === null) return 'refused'
+        const answered = await broker.approveOnMac(requestId)
+        if (answered.ok) return 'approved'
+        return answered.reason === 'cancelled' ? 'cancelled' : 'refused'
+      },
+      withdraw: (requestId) => {
+        void this.approvalBroker?.withdraw(requestId, app).catch(() => false)
+      },
+    }
   }
 
   private async setSitePaused(adapterId: string, paused: boolean): Promise<void> {
@@ -1221,7 +1356,7 @@ export class AppService {
         const client = this.clients.get(clientId)
         return capabilities === null || client === null ? null : { ...capabilities, name: client.name }
       },
-      lockedDown: () => this.appState.lockedDown,
+      lockedDown: () => this.lockedDown,
       remoteTools: () => new Set(this.remote.status().tools),
       sensitive: (texts) => this.knownSecretIn(texts),
       // Which tool, never what matched.
@@ -1554,9 +1689,8 @@ export class AppService {
           if (!this.missed.dismiss(id)) throw new ValetError('config', 'not-found')
         },
       },
-      answerConfirmation: async (confirmationId: string, approved: boolean, from: AppWindow) => {
-        this.broker.answer(confirmationId, approved, from)
-      },
+      answerConfirmation: (confirmationId: string, approved: boolean, from: AppWindow) =>
+        this.broker.answer(confirmationId, approved, from),
       openConfirmation: async (confirmationId: string) => {
         if (!this.broker.has(confirmationId)) throw new ValetError('config', 'not-found')
         deps.ui.focusConfirmation(confirmationId)
@@ -1710,7 +1844,7 @@ export class AppService {
       app: {
         status: async () => ({
           paused: this.paused,
-          lockedDown: this.appState.lockedDown,
+          lockedDown: this.lockedDown,
           version: deps.version,
           demo: deps.demo,
         }),
@@ -1732,7 +1866,12 @@ export class AppService {
               dataDir: deps.paths.dir,
               leftovers: deps.leftovers ?? [],
               stop: () => this.stop(),
-              eraseCredentials: () => deps.credentials.erase(),
+              eraseCredentials: async () => {
+                const failed = [...(await deps.credentials.erase())] as EraseStep[]
+                // Without this, the next launch's empty ledger wouldn't match its anchor.
+                await deps.approvalKeys.forget().catch(() => failed.push('approvals-anchor'))
+                return failed
+              },
               setLaunchAtLogin: (enabled) => deps.ui.setLaunchAtLogin(enabled),
               clearBrowserData: () => deps.ui.clearBrowserData(),
             })
@@ -1807,4 +1946,22 @@ function lastUsed(records: readonly AuditRecord[], grant: Grant): string | null 
     }
   }
   return null
+}
+
+/** Text a signed request may carry for a card: cut to `max`, or left out if it isn't display text. */
+function shown(text: string, max: number): string | undefined {
+  const cut = [...text.replace(/\s+/g, ' ').trim()].slice(0, max).join('')
+  return cut !== '' && isDisplayText(cut) ? cut : undefined
+}
+
+/** A confirmation's input as the signed request's preview: at most 20 lines of 200 characters. */
+function previewLines(parts: readonly PreviewPart[]): string[] {
+  const text = parts.map((p) => (p.kind === 'text' ? p.text : `[${p.label}]`)).join('')
+  const lines: string[] = []
+  for (const line of text.split('\n')) {
+    const kept = shown(line, 200)
+    if (kept !== undefined) lines.push(kept)
+    if (lines.length === 20) break
+  }
+  return lines
 }

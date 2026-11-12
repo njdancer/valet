@@ -6,7 +6,7 @@
 // The software signer here is for tests and for dev builds without the helper. It signs without
 // asking anyone, so a release build must never construct one (see `allowSoftwareSigner`).
 
-import { generateKeyPairSync, type KeyObject, sign } from 'node:crypto'
+import { createPrivateKey, createPublicKey, generateKeyPairSync, type KeyObject, sign } from 'node:crypto'
 import { type SerializedRequest, SIGNING_DOMAINS, type SigningDomain, signingInput } from '@valet/core'
 import { promptReason } from './prompts'
 
@@ -43,18 +43,48 @@ function p256(): Pair {
   return { privateKey, spki: publicKey.export({ type: 'spki', format: 'der' }).toString('base64url') }
 }
 
+function fromPkcs8(pkcs8: string): Pair {
+  const privateKey = createPrivateKey({ key: Buffer.from(pkcs8, 'base64url'), format: 'der', type: 'pkcs8' })
+  const spki = createPublicKey(privateKey).export({ type: 'spki', format: 'der' }).toString('base64url')
+  return { privateKey, spki }
+}
+
+/** A software signer's three private keys, PKCS#8 DER in base64url, as a dev build keeps them. */
+export interface SoftwareKeys {
+  readonly approval: string
+  readonly transport: string
+  readonly agreement: string
+}
+
+/** New software keys, for a dev build's key file. */
+export function newSoftwareKeys(): SoftwareKeys {
+  const pkcs8 = () =>
+    generateKeyPairSync('ec', { namedCurve: 'P-256' })
+      .privateKey.export({ type: 'pkcs8', format: 'der' })
+      .toString('base64url')
+  return { approval: pkcs8(), transport: pkcs8(), agreement: pkcs8() }
+}
+
 /**
  * Keys in memory, and a `present` callback that stands in for the person's finger: it decides
  * whether each prompt is answered. Tests use it to show that nothing is signed without presence.
  */
 export class SoftwareSigner implements MacSigner {
-  private readonly approval = p256()
-  private readonly transport = p256()
-  private readonly agreement = p256()
+  private readonly approval: Pair
+  private readonly transport: Pair
+  private readonly agreement: Pair
   /** Every reason a prompt was shown with, in order. */
   readonly prompts: string[] = []
 
-  constructor(private readonly present: (reason: string) => boolean | Promise<boolean> = () => true) {}
+  /** `keys`: a dev build's kept keys, so its identity (and so its evidence) survives a restart. */
+  constructor(
+    private readonly present: (reason: string) => boolean | Promise<boolean> = () => true,
+    keys?: SoftwareKeys,
+  ) {
+    this.approval = keys === undefined ? p256() : fromPkcs8(keys.approval)
+    this.transport = keys === undefined ? p256() : fromPkcs8(keys.transport)
+    this.agreement = keys === undefined ? p256() : fromPkcs8(keys.agreement)
+  }
 
   async keys(): Promise<MacKeys> {
     return {
