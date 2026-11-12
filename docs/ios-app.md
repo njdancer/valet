@@ -8,7 +8,9 @@ native, iOS first). It builds to workstream A's journeys, card spec and wirefram
 an in-process fake Mac and relay that speak the same frames.
 
 Status marks follow the security model: **Built**, **Designed** (decided here, not built),
-**Proposed** (needs a contract change from B before it is final).
+**Proposed** (needs a contract change from B before it is final). B accepted H's change requests
+into contracts v2 (PR #76), so nothing here is Proposed any more except where marked; the phone is
+**Built** against v2 and checked against core with shared vectors.
 
 ## Contents
 
@@ -54,7 +56,7 @@ Status marks follow the security model: **Built**, **Designed** (decided here, n
 | Logic placement      | In the app target; in a Swift package the app depends on                   | **A Swift package, `ValetPhoneKit`.** Its unit tests run with `swift test` on the macOS runner in seconds, without a simulator. The app target is views only.                                                                                                 |
 | JSON                 | `Codable` with `JSONDecoder`; a strict parser                              | **A strict parser** that refuses duplicate keys, unknown keys, and anything but the schema's shape. `JSONDecoder` ignores unknown keys, and B requires them refused.                                                                                          |
 | Talking to a fake    | A Node fake relay over WebSocket in CI; an in-process fake Mac and relay   | **Both, in order.** The in-process fake (`FakeMac`) drives UI tests deterministically with no network. A WebSocket transport follows once G publishes a local Workers runtime the CI job can start.                                                           |
-| Key for approvals    | `.userPresence` (biometrics or passcode); `.biometryCurrentSet`; two keys  | **`.biometryCurrentSet` (Proposed, CR-1).** A's card spec needs "a thief who knows the passcode can't approve", which only a key that needs the current Face ID enrolment can enforce. See below.                                                             |
+| Key for approvals    | `.userPresence` (biometrics or passcode); `.biometryCurrentSet`; two keys  | **`.biometryCurrentSet` (CR-1, accepted).** A's card spec needs "a thief who knows the passcode can't approve", which only a key that needs the current Face ID enrolment can enforce. See below.                                                             |
 | Interop with the Mac | Port the zod schemas by hand; generate Swift from zod; shared test vectors | **Hand port plus shared vectors.** Generation from zod loses the refinements. A TypeScript script writes vectors (request texts, digests, Mac-signed device records); Swift checks them, and Swift's signed decisions go back through `verifyDecision` in CI. |
 
 ## Architecture
@@ -123,37 +125,36 @@ Three P-256 keys, as B's table says, made at pairing and never exported.
 
 ## Pairing
 
-B's flow ([Pairing](agent-run-security.md#pairing)) with the phone's half spelled out. The phone
-side is **Designed**; the reply's wire format and the confirmation code's derivation are
-**Proposed** (CR-2), because core doesn't define them yet.
+B's flow ([Pairing](agent-run-security.md#pairing)) and B's wire format (`packages/core/src/pairing.ts`,
+from H's CR-2). **Built** on the phone and in the fake Mac; the derivations are checked both ways
+against core by `packages/core/test/ios-interop.test.ts`.
 
 1. **Scan.** The QR holds `valet-pair:` followed by the base64url of the `PairingOffer` JSON. The
    phone parses it strictly, checks `macId == keyId(macApprovalKey)`, checks `expiresAt` against
    its own clock with 60 seconds of slack, and refuses an offer whose relay isn't `https`.
 2. **Make keys.** Approval, transport and agreement keys as above. The person names the device
-   (default: the iPhone's model name, "iPhone"; iOS no longer gives apps the user's device name).
-3. **Reply.** The phone builds a `PairingReply` `{ v, macId, name, platform: 'ios', approvalKey,
-   transportKey, agreementKey, nonce }` and seals it with AES-256-GCM under
-   `HKDF-SHA256(ikm: secret, salt: macId bytes, info: "valet/pairing/v1 reply")`, nonce random,
-   associated data `macId`. It sends the sealed reply to the relay on the unauthenticated pairing
-   path (`pairing-reply`, CR-2), addressed by `macId` and `offerId = HKDF(secret, info: "valet/pairing/v1 offer-id")` (16 bytes, hex), since the
-   phone can't authenticate to the relay until the Mac registers it.
-4. **Confirm.** After the Mac accepts the first reply for an offer (and refuses any later one), it
-   sends a fresh random 32-byte `macNonce` in a `pairing-challenge` frame. Only then do both sides
-   compute `HKDF-SHA256(ikm: secret, salt: macId as its 16 decoded bytes, info: "valet/pairing/v1
-   sas" || len‖offer text || len‖reply plaintext || len‖macNonce)`, lengths as 4-byte big-endian.
+   (default "iPhone"; iOS no longer gives apps the user's device name).
+3. **Reply.** The phone builds a `PairingReply` with its name and three public keys and seals it
+   with AES-256-GCM under `HKDF-SHA256(secret, salt: the macId string, info: "valet/pairing/v1
+   seal")`, a random 12-byte IV, and associated data `"valet/pairing/v1 reply <offerId>"`, where
+   `offerId` is the first 32 hex characters of `sha256("valet/pairing/v1 id\n" || secret)`. It
+   sends `pairing-reply` on the relay socket, addressed by `macId` and `offerId`, since it can't
+   authenticate to the relay until the Mac registers it.
+4. **Confirm.** The Mac accepts only the first reply for an offer, then sends a fresh random
+   32-byte `macNonce` in `pairing-challenge`. Only then do both sides compute
+   `HKDF-SHA256(secret, salt: macId, info: "valet/pairing/v1 sas\n" || "<len>:" offer text ||
+   "<len>:" reply plaintext || macNonce)`, 4 bytes, big-endian, mod 1,000,000, as six digits.
    Because `macNonce` comes after the reply is fixed, nobody holding the QR can search for a reply
-   whose code collides with the real one (review finding 1). The first 4 bytes, as a big-endian
-   integer mod 1,000,000, give six digits (B's `device-pair.confirmation`; the bias is under 2^-12).
-   A's four words (R39) would take 44 bits from a fixed 2,048-word list, if B extends the code
-   (CR-2). The phone shows the code and "Check your Mac shows the same", with **Cancel**.
-5. **Approved at the Mac.** The Mac registers the phone's transport key with the relay and sends
-   the signed device record in the first sealed envelope, as a new `device-record` message (CR-2). The phone checks it with the pinned Mac
-   approval key (`verifyDeviceRecord`): it must name this phone's keys exactly, this Mac, role
-   `phone`. Only then does the phone call itself paired and show the recovery-code screen.
-6. **Abandoned.** If no record arrives within the offer's life, or the Mac says the offer was
-   abandoned (wrong code three times), the phone deletes the three keys and says "Nothing was
-   paired."
+   whose code collides with the real one (review finding 1). The phone shows the six digits; the
+   Mac shows them among two decoy sets and the person picks the match (B's answer to A's four
+   words, R39). The phone has **Cancel**.
+5. **Result.** The Mac seals `pairing-result` the same way (associated data `"valet/pairing/v1
+   result <offerId>"`): `paired` with the phone's signed device record and the Mac's own, or
+   `declined`, `expired` or `too-many-attempts`. The phone checks both records with the pinned Mac
+   approval key (`verifyDeviceRecord`): the phone's must name this phone's keys exactly, this Mac,
+   role `phone`. Only then does it save, call itself paired and open the device channel.
+6. **Abandoned.** Anything else, or a result that doesn't open or check out, deletes the three keys
+   and says "Nothing was paired."
 
 The phone stores the Mac's id, approval key, agreement key, relay origin, its own device record (as
 signed text), and the last seq numbers. All in the Keychain, this device only.
@@ -304,8 +305,10 @@ into the pinned bar at accessibility sizes (A rule 6); VoiceOver order is A §2'
 
 ## Contract change requests
 
-Sent to B on 2026-11-12. None is built into core by H; the phone implements each behind the
-proposed shape and adapts to B's answer.
+Sent to B on 2026-11-12. B accepted all but CR-8 (later) and CR-1b (deferred) into contracts v2
+(PR #76), and added four of its own: the typed consent code is signed in the decision
+(`typedCode`), Resume is approved at the Mac only, a Private network kind, and six digits with
+decoys at the Mac instead of words. All of these are built in the phone.
 
 | CR    | Change                                                                                                                                                          | Why                                                                       |
 | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
@@ -325,16 +328,14 @@ proposed shape and adapts to B's answer.
 
 - No route for someone who can't use Face ID to approve on the phone (R35), until B's
   accessibility exception exists; they approve at the Mac.
-- Lock at the relay while the Mac is offline (J7 F1), the recovery code and its web page, Pause
-  this site, Secrets, Add an agent and A's separate control key wait for B and G's designs.
+- The recovery code and its web page, Pause this site, Secrets, Add an agent and A's separate
+  control key wait for B and G's designs. Lock at the relay (J7 F1) is built against the fake relay.
 - `valet://` links open a list or a card read-only; a link can never land on a card with Approve
   armed, since Approve always needs the card on screen for 1 s and a Face ID match.
-- Neutral cards also need Face ID (no passcode fallback) until CR-1b.
-- Pairing shows B's six digits until CR-2 settles A's four words; no typed 8-character code (it
-  can't carry the Mac's keys without the relay holding the offer).
-- No Undo, and no loosening from the phone, until CR-9.
-- Notification titles are B's fixed text until CR-8.
-- These go back to A's sign-off table (IA section 11) with H's sign-off.
+- Neutral cards also need Face ID (no "Use passcode instead") until CR-1b.
+- Pairing shows six digits, and the Mac shows them among two decoys (B), not A's four words.
+- Notification titles are B's fixed text until CR-8, and push waits for Nick's APNs key.
+- Undo is an `ask`: the phone asks the Mac to build the card, then approves it like any other.
 
 ## Testing
 
@@ -368,10 +369,11 @@ raised 23 findings (7 must fix). All are taken: the macNonce in the pairing code
 next-seq (2), no unpairing on a relay's word (3), a fresh `LAContext` per signature (4), the
 claims table and Mac-written Face ID reasons (5), tone from structured fields only (6), cross-
 language vectors (7), card swap and Markdown guards (8, 9), monotonic expiry (10), "checking" after
-an ack (11), reinstall wipe and data protection (13), the `device-record` message and offer-id
+an ack (11), reinstall wipe and data protection (13), the device record checked at pairing and the offer-id
 derivation (14), the extra departures and simulator limits (15, 16), and fakes out of release (18).
 Partly open: re-pairing after a Face ID change must revoke the old record first, which needs the Mac
-side (12); the definition of done counts against `FakeMac` until B accepts CR-2, CR-3 and CR-7 (17).
+side (12); the journeys run against `FakeMac`, which speaks core's v2 frames, until G's relay and D's
+broker exist (17).
 
 ## What needs Nick
 
