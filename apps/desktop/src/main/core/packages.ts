@@ -154,6 +154,14 @@ export class PackageManager {
   }
 
   /** Loads a stored version without activating it (a rollback's target). Throws InstallError. */
+  /**
+   * Every file of a stored version, its manifest, tests and fixtures as well as its code, for a
+   * draft that starts from it. Null when the store doesn't hold that version.
+   */
+  async files(adapterId: string, hash: string): Promise<PackageFiles | null> {
+    return (await this.options.store.read(adapterId, hash).catch(() => null))?.files ?? null
+  }
+
   async load(adapterId: string, hash: string): Promise<InstalledAdapter> {
     const state = await this.options.store.state(adapterId)
     const entry = state?.versions.find((v) => v.hash === hash)

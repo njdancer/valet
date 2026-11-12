@@ -3378,6 +3378,20 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
       return { ...s, v1, v2, viewer, authoring, draftId: draft.draftId }
     }
 
+    it('starts a draft update from the whole installed package, its manifest and tests too', async () => {
+      const s = await withPackages()
+      await s.api.approvals.approve('shop', s.hashOf(shopPackage('v1:')))
+      const viewer: ClientIdentity = {
+        origin: 'local',
+        clientId: (await s.api.clients.add('Claude Code')).id,
+      }
+      const authoring = s.endpoint.authoring as Authoring
+      const { draft } = await authoring.createDraft(viewer, { adapterId: 'shop', from: 'installed' })
+      const paths = draft.files.map((f) => f.path)
+      for (const path of Object.keys(shopPackage('v1:'))) expect(paths).toContain(path)
+      expect(paths).toContain('manifest.json')
+    })
+
     it('stages an update: the approved version serves until the person approves the agent’s own request', async () => {
       const s = await withDraft()
       const asked = await s.authoring.submit(s.viewer, s.draftId, NO_NOTE)

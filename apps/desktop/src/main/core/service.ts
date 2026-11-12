@@ -2167,9 +2167,10 @@ export class AppService {
       caseProcess: runtime.start,
       installed: async (adapterId) => {
         const adapter = this.adapter(adapterId)
-        return adapter === null
-          ? null
-          : { manifest: adapter.definition.manifest, hash: adapter.hash, files: adapter.files }
+        if (adapter === null) return null
+        // The whole package: an adapter's own `files` are its code only.
+        const files = (await this.packages?.files(adapterId, adapter.hash)) ?? adapter.files
+        return { manifest: adapter.definition.manifest, hash: adapter.hash, files }
       },
       approved: async (adapterId) => {
         const snapshot = await this.snapshots.get(adapterId)
