@@ -81,16 +81,20 @@ with fakes. **Built** in the first PR unless marked.
 interface MacSigner {
   /** Public keys, creating the device's keys on first use. Never a private key. */
   keys(): Promise<{
-    approvalKey: string
-    transportKey: string
-    agreementKey: string
-  }>
+    approvalKey: string;
+    transportKey: string;
+    agreementKey: string;
+  }>;
   /** Shows the OS prompt with `reason`; resolves the signature, or null if the person cancelled. */
-  sign(domain: SigningDomain, payload: string, reason: string): Promise<string | null>
+  sign(
+    domain: SigningDomain,
+    payload: string,
+    reason: string,
+  ): Promise<string | null>;
 }
 interface PhoneOutbox {
   /** Seals and sends one message to one phone (G and H). Absent until the relay exists. */
-  send(deviceId: string, message: MacToPhoneMessageBody): void
+  send(deviceId: string, message: MacToPhoneMessageBody): void;
 }
 ```
 
@@ -409,7 +413,7 @@ A fresh adversarial reviewer read this design, B's contracts, A's spec and the f
 | 2   | Tightening records outside the ledger (tool off, site paused, lockdown in app-state.json) | PR 3: every record whose removal would widen moves into the ledger; app-state's lockdown flag is retired (Valet is locked if either says so until then).                                                  |
 | 3   | Migration bypassable or laundering                                                        | PR 3: the migrated marker lives in the Keychain anchor; old files' hashes are recorded at first launch and only their records migrate; critical records one by one, Mac only.                             |
 | 4   | Lockdown incomplete and racy                                                              | Fixed: lockdown drops remote-client and authoring-session evidence; `answer` refuses all but `resume` while locked; both run in one queue.                                                                |
-| 5   | The Mac can't tell Face ID from the passcode                                              | Asked of B: a biometry-only approval key beside the user-presence one, chosen by the card's tone.                                                                                                         |
+| 5   | The Mac can't tell Face ID from the passcode                                              | Closed: Nick decided the phone passcode always stands in for Face ID (B, PR #86). One `.userPresence` key per phone; nothing in the broker is Face ID only.                                               |
 | 6   | Resume can be approved on a phone                                                         | Fixed: `resume` needs the Mac's signature. Asked B to drop `valet.resume` from the admin table.                                                                                                           |
 | 7   | Consent code shown rather than typed                                                      | Asked of B: the typed code inside the signed decision, the request carrying none; consent gets its own bucket and per-source limit outside `pendingTotal`.                                                |
 | 8   | A failed commit after the rename reports failure for a change that stands                 | Fixed in `AnchoredFile.write`, with a test.                                                                                                                                                               |
@@ -466,6 +470,7 @@ Sent to the security thread; the first PR builds without them.
 3. **Limits differ:** A says 5 pending across all agents and 20 a day per agent; B's constants say
    10 and no daily cap. Built to B's constants until B decides.
 4. **The ledger** in place of per-store evidence fields, as above.
-5. **Face ID only** (review 5): a second, biometry-current-set approval key per phone.
+5. **Face ID only** (review 5): dropped. Nick decided the passcode always stands in for Face ID, so
+   each phone has one `.userPresence` key. Mac-only kinds are unchanged.
 6. **Resume** (review 6): Mac only, and off the admin table.
 7. **Consent code** (review 7): typed into the signed decision, not shown in the request.
