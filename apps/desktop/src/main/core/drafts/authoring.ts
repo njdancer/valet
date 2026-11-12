@@ -893,6 +893,14 @@ export class DraftAuthoring implements Authoring {
     return view(await this.researching(() => browser.navigate(url)))
   }
 
+  async browserClose(viewer: ClientIdentity, draftId: string): Promise<{ readonly closed: boolean }> {
+    await this.own(viewer, draftId)
+    const research = this.deps.research
+    const open = research?.isOpen(draftId) ?? false
+    research?.close(draftId)
+    return { closed: open }
+  }
+
   async browserClick(viewer: ClientIdentity, draftId: string, target: BrowserTarget): Promise<BrowserView> {
     const browser = await this.scratch(viewer, draftId)
     return view(await this.researching(() => browser.click(target)))
