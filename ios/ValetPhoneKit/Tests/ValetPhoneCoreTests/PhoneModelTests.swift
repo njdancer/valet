@@ -353,15 +353,19 @@ final class PhoneModelTests: XCTestCase {
   func testDropsTamperedEnvelopes() {
     setUp(.quiet)
     world.relay.tamperToPhone = { text in
-      guard text.contains("\"envelope\"") else { return text }
-      return text.replacingOccurrences(of: "\"ct\":\"A", with: "\"ct\":\"B")
+      // Flip one character inside the ciphertext.
+      guard text.contains("\"envelope\""), let ct = text.range(of: "\"ct\":\"") else { return text }
+      var chars = Array(text)
+      let i = text.distance(from: text.startIndex, to: ct.upperBound) + 5
+      chars[i] = chars[i] == "A" ? "B" : "A"
+      return String(chars)
     }
     let before = model.dropped
     for i in 0..<10 { world.mac.alert(kind: .notify, title: "T\(i)", body: "B") }
     world.relay.drain()
     world.relay.tamperToPhone = nil
-    XCTAssertGreaterThan(model.dropped, before)
-    XCTAssertTrue(model.alerts.allSatisfy { $0.title.hasPrefix("T") })
+    XCTAssertEqual(model.dropped, before + 10)
+    XCTAssertTrue(model.alerts.isEmpty)
   }
 
   func testRefusesASecondTextForTheSameRequest() {
