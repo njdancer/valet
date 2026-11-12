@@ -55,6 +55,16 @@ export type NeedsYouHint =
   | { readonly kind: 'setting-missing'; readonly settingTitle: string }
   /** The site needs a login and the person hasn't given Valet one. */
   | { readonly kind: 'login-missing' }
+  /**
+   * A login failed recently, and Valet waits before it tries again on its own (D35's backoff):
+   * nothing is asking the person, and a call after `retryAt` (ISO time) logs in again.
+   */
+  | { readonly kind: 'login-waiting'; readonly retryAt: string }
+  /**
+   * Valet has stopped logging in to the site by itself until the person signs in or clears it in
+   * the app, and nothing in Needs you is asking them (no login window is open).
+   */
+  | { readonly kind: 'login-stopped' }
 
 /**
  * How a call ended: one variant per core RunOutcome. Nothing in it is free text but a NeedsYouHint's

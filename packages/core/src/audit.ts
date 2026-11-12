@@ -57,6 +57,8 @@ export type AuditEvent =
       readonly secret: string
       readonly provider: string
       readonly origins: readonly string[]
+      /** Kept from this version by an approved update that didn't widen it, not granted anew. */
+      readonly carriedFrom?: string
     }
   | { readonly type: 'grant-revoked'; readonly adapterId: string; readonly secret: string }
   /** A keychain-copy grant's fields copied (or re-synced) from 1Password into the Keychain (D6). */

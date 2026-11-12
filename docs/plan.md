@@ -2080,6 +2080,10 @@ review of 2026-11-10; Nick has answered all three.
   `grant-made` with the new hash. Never automatic: the point of hash-keyed grants is that the
   person looks.
 - Blocks: M4 (updates).
+- Built (2026-11-12): with agents installing updates, the re-bind rides on the update's own signed
+  install card (which says the new version takes over the session) instead of a separate unticked
+  box: a grant the update doesn't widen is kept, audited `grant-made` with `carriedFrom`; any
+  widening asks again. See [Grants across an update](approval-broker.md#grants-across-an-update).
 
 ### D48. Tool titles with the adapter name
 

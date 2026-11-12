@@ -50,6 +50,17 @@ export interface ApprovedSnapshot {
   readonly files: Readonly<Record<string, string>>
 }
 
+/**
+ * Whether a snapshot is what its hash says: the same formula as builtinAdapter. The snapshot file
+ * sits in the data folder, so anything that decides what a grant may keep checks it first.
+ */
+export function snapshotIntact(snapshot: ApprovedSnapshot): boolean {
+  if (Object.hasOwn(snapshot.files, MANIFEST_ENTRY)) return false
+  return (
+    bundleHash({ ...snapshot.files, [MANIFEST_ENTRY]: canonicalJson(snapshot.manifest) }) === snapshot.hash
+  )
+}
+
 const snapshotSchema = z
   .object({
     hash: z.string().regex(/^[0-9a-f]{64}$/),
