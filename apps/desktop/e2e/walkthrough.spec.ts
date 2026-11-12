@@ -282,7 +282,8 @@ test('pairing an iPhone, and approving an agent’s requests on it', async () =>
       VALET_MAC_NAME: 'Nick’s MacBook Pro',
     },
   })
-  const control = await windowWithTitle(launched.app, CONTROL)
+  // A cold macOS runner can take longer than the default to open the first window.
+  const control = await windowWithTitle(launched.app, CONTROL, 90_000)
   await launched.app.evaluate(({ BrowserWindow }) => {
     for (const w of BrowserWindow.getAllWindows())
       if (w.getTitle().includes('[control]')) {
