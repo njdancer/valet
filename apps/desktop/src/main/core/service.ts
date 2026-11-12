@@ -81,6 +81,7 @@ import {
   AnchoredFile,
   ApprovalBroker,
   DeviceStore,
+  installSubject,
   type KindHandlers,
   type MacApprovalKeys,
   TRUSTED_STORE,
@@ -356,6 +357,14 @@ export class AppService {
    * for tampering, hold even while the broker can't open.
    */
   private ledger: TrustedLedger | null = null
+  /**
+   * Whether an installed hash may run: approved in approvals.json (the applied mark) and backed by
+   * signed evidence, or by the one-time legacy record of what was approved before signatures.
+   */
+  private readonly installGate = {
+    isApproved: async (adapterId: string, adapterHash: string): Promise<boolean> =>
+      this.installSigned(adapterId, adapterHash) && (await this.approvals.isApproved(adapterId, adapterHash)),
+  }
   private readonly handoffs: Handoffs
   private readonly drivers = new Map<string, SessionDriver>()
   /** Per adapter, the install or rollback in progress: they run one at a time. */
@@ -607,7 +616,7 @@ export class AppService {
     await this.deps.credentials.configure(this.settingsNow)
     await this.clients.load()
     const host = new ToolHost({
-      approvals: this.approvals,
+      approvals: this.installGate,
       audit: this.audit,
       prompt: this.broker,
       authRunner: createAuthRunner({
@@ -642,6 +651,8 @@ export class AppService {
       await mkdir(paths.adapters, { recursive: true, mode: 0o700 })
       this.installed = await this.packages.boot(this.deps.packages.builtins)
     }
+    // Before anything is gated by signatures for the first time: what was approved until now.
+    await this.recordLegacy()
     for (const adapter of this.installed) {
       const driver = await this.driverFor(adapter)
       host.register(this.registration(adapter, driver))
@@ -664,6 +675,7 @@ export class AppService {
       refused: (call, refusal) => this.auditRefusal(call, refusal),
     })
     await this.caller.refresh()
+    await this.reapplyInstalls()
     // Reads approval times into the cache the confirmation panel uses.
     await this.states()
     await this.startListening().catch(() => undefined)
@@ -683,7 +695,7 @@ export class AppService {
     if (enabled && settingToolNames(adapter.definition.manifest).has(tool))
       throw new ValetError('config', 'not-found')
     // Turning on is for approved adapters only; turning off always works.
-    if (enabled && !(await this.approvals.isApproved(adapterId, adapter.hash).catch(() => false)))
+    if (enabled && !(await this.installGate.isApproved(adapterId, adapter.hash).catch(() => false)))
       throw new ValetError('config', 'not-found')
     await this.remote.setTool(adapterId, declaration, enabled)
   }
@@ -695,7 +707,7 @@ export class AppService {
     const tools: RemoteSetupTool[] = []
     for (const adapter of this.installed) {
       const { manifest } = adapter.definition
-      if (!(await this.approvals.isApproved(manifest.id, adapter.hash).catch(() => false))) continue
+      if (!(await this.installGate.isApproved(manifest.id, adapter.hash).catch(() => false))) continue
       // A setting's tools (the store's) run only for Valet itself; no client lists or calls them,
       // so a cloud agent can't be given them either.
       const internal = settingToolNames(manifest)
@@ -1109,17 +1121,26 @@ export class AppService {
   /** What each approved kind does here. Kinds not listed aren't wired yet and do nothing. */
   private approvalHandlers(): KindHandlers {
     return {
-      // The signed subject names the confirmation (and its preview shows it first), so an approval
-      // applies to the one question it was signed for, never another of the same call.
+      // The subject names its confirmation, so an approval applies to the one question it was
+      // signed for, never another of the same call.
       'irreversible-call': {
-        precheck: (subject) => {
-          const id = confirmationOf(subject)
-          return id !== null && this.broker.waiting(id)
-        },
+        precheck: (subject) => this.broker.waiting(subject.confirmationId),
         apply: async (subject) => {
-          const id = confirmationOf(subject)
-          if (id === null || !this.broker.approvedById(id)) throw new ValetError('config', 'not-found')
+          if (!this.broker.approvedById(subject.confirmationId)) throw new ValetError('config', 'not-found')
         },
+      },
+      'adapter-install': {
+        // A rollback is applied by rollbackNow itself, after the swap; anything else is the
+        // version installed now, and stale if that changed.
+        precheck: (subject) =>
+          subject.source === 'rollback' || this.adapter(subject.adapterId)?.hash === subject.adapterHash,
+        apply: async (subject) => {
+          if (subject.source !== 'rollback') await this.applyInstall(subject.adapterId, subject.adapterHash)
+        },
+        // One approved hash per adapter: a new approval replaces the evidence of the last. Not a
+        // rollback's, until its swap has worked (rollbackNow), so a failed swap leaves the running
+        // version approved.
+        supersedes: (next, older) => next.source !== 'rollback' && next.adapterId === older.adapterId,
       },
       resume: {
         precheck: (subject) =>
@@ -1347,7 +1368,17 @@ export class AppService {
   private async rollbackNow(adapterId: string, hash: string): Promise<void> {
     const target = await this.rollbackTarget(adapterId, hash)
     const active = this.requireAdapter(adapterId)
-    await this.swapIn(target)
+    // The person approves the rollback with Touch ID first; nothing is swapped without it.
+    if (!(await this.signInstall(target, 'rollback', active)))
+      throw new InstallError('Not rolled back: the approval was cancelled.')
+    try {
+      await this.swapIn(target)
+    } catch (error) {
+      await this.revokeInstall(adapterId, hash, { legacy: false })
+      throw error
+    }
+    // Swapped: the version it replaces loses its approval, as any signed install's would.
+    await this.retireOthers(adapterId, hash)
     const version = target.definition.manifest.version
     const already = (await this.approvals.approvedHashes(adapterId)).includes(hash)
     await this.approvals.approve(adapterId, hash, version)
@@ -1373,6 +1404,179 @@ export class AppService {
       previousHash: active.hash,
     })
     await this.refreshTools()
+  }
+
+  /**
+   * Whether this version would run without the sandbox here: its manifest says unsandboxed, or this
+   * build has no sandbox and it isn't one of the app's own built-ins (B). Built in means the hash
+   * this app ships, never a stored version's source tag, which anything can write.
+   */
+  private runsUnsandboxed(adapter: BuiltinAdapter): boolean {
+    if ((adapter.definition.manifest.sandbox ?? DEFAULT_SANDBOX).mode === 'unsandboxed') return true
+    if (this.deps.sandbox !== undefined) return false
+    return !this.isBuiltIn(adapter)
+  }
+
+  /** One of the app's own built-ins: the hash it ships (or, without a store, its own copy). */
+  private isBuiltIn(adapter: BuiltinAdapter): boolean {
+    if (this.packages === null) return adapter.source === undefined || adapter.source === 'builtin'
+    return this.packages.isShipped(adapter.definition.manifest.id, adapter.hash)
+  }
+
+  /** Signed evidence (or the legacy record) for this hash, in the mode it would run in now. */
+  private installSigned(adapterId: string, adapterHash: string): boolean {
+    const adapter = this.adapter(adapterId)
+    const unsandboxed = adapter?.hash === adapterHash ? this.runsUnsandboxed(adapter) : true
+    const signed = this.approvalBroker?.honoured(
+      'adapter-install',
+      (s) => s.adapterId === adapterId && s.adapterHash === adapterHash && s.unsandboxed === unsandboxed,
+    )
+    if (signed !== null && signed !== undefined) return true
+    return (this.ledger?.data.legacy?.installs ?? []).some(
+      (l) => l.adapterId === adapterId && l.adapterHash === adapterHash,
+    )
+  }
+
+  /**
+   * Asks the person to approve installing `adapter` (an update, a first install, a rollback), with
+   * Touch ID at this Mac. Resolves true once signed; false if they cancelled. The diff is against
+   * `against` (the active version, for a rollback) or the last approved snapshot.
+   */
+  private async signInstall(
+    adapter: BuiltinAdapter,
+    source: 'draft' | 'local-folder' | 'rollback' | 'builtin',
+    against?: BuiltinAdapter,
+  ): Promise<boolean> {
+    const broker = this.approvalBroker
+    if (broker === null) throw new ValetError('config', 'unavailable')
+    const id = adapter.definition.manifest.id
+    const snapshot = await this.snapshots.get(id)
+    const previous =
+      against !== undefined
+        ? { hash: against.hash, manifest: against.definition.manifest }
+        : snapshot !== null && snapshot.hash !== adapter.hash
+          ? { hash: snapshot.hash, manifest: snapshot.manifest }
+          : null
+    const grants = await this.grants.list().catch(() => [] as readonly Grant[])
+    const subject = installSubject({
+      manifest: adapter.definition.manifest,
+      hash: adapter.hash,
+      files: adapter.files,
+      previous,
+      source,
+      inheritsSession: previous !== null && grants.some((g) => g.adapterId === id),
+      unsandboxed: this.runsUnsandboxed(adapter),
+    })
+    const asked = await broker.request('adapter-install', subject, { kind: 'person' })
+    if (!asked.ok)
+      throw new ValetError('config', asked.reason === 'locked-down' ? 'locked-down' : 'unavailable')
+    const answered = await broker.approveOnMac(asked.requestId)
+    if (answered.ok) {
+      // A rollback retires the others only once its swap has worked (rollbackNow).
+      if (source !== 'rollback') await this.retireOthers(id, adapter.hash)
+      return true
+    }
+    if (answered.reason !== 'busy')
+      await broker.withdraw(asked.requestId, { kind: 'person' }).catch(() => false)
+    return false
+  }
+
+  /** Applies a signed install of the hash installed now: the applied mark, the snapshot, the tools. */
+  private async applyInstall(adapterId: string, adapterHash: string): Promise<void> {
+    const adapter = this.adapter(adapterId)
+    if (adapter === null || adapter.hash !== adapterHash) return
+    await this.approvals.approve(adapterId, adapterHash, adapter.definition.manifest.version)
+    const at = new Date(this.deps.now()).toISOString()
+    await this.snapshots.put(adapterId, adapter, at)
+    this.approvedAt.set(`${adapterId}:${adapterHash}`, at)
+    await this.refreshTools()
+  }
+
+  /**
+   * Once a version is approved with Touch ID, the adapter's other versions keep no approval: their
+   * signed evidence and their legacy records go, so a version can't be put back as active later
+   * without asking again (a downgrade). Only tightens.
+   */
+  private async retireOthers(adapterId: string, keep: string): Promise<void> {
+    await this.approvalBroker?.revoke(
+      'adapter-install',
+      (s) => s.adapterId === adapterId && s.adapterHash !== keep,
+    )
+    await this.ledger
+      ?.commit(
+        (draft) => {
+          if (draft.legacy !== undefined)
+            draft.legacy.installs = draft.legacy.installs.filter((l) => l.adapterId !== adapterId)
+        },
+        { tightening: true },
+      )
+      .catch(() => undefined)
+  }
+
+  /** Takes an install's evidence and legacy record away (a reject). Only tightens. */
+  private async revokeInstall(
+    adapterId: string,
+    adapterHash: string,
+    options: { readonly legacy: boolean } = { legacy: true },
+  ): Promise<void> {
+    await this.approvalBroker?.revoke(
+      'adapter-install',
+      (s) => s.adapterId === adapterId && s.adapterHash === adapterHash,
+    )
+    if (!options.legacy) return
+    await this.ledger
+      ?.commit(
+        (draft) => {
+          if (draft.legacy !== undefined)
+            draft.legacy.installs = draft.legacy.installs.filter(
+              (l) => !(l.adapterId === adapterId && l.adapterHash === adapterHash),
+            )
+        },
+        { tightening: true },
+      )
+      .catch(() => undefined)
+  }
+
+  /**
+   * At the first launch of a signed build: what was approved before, recorded once in the ledger
+   * (docs/approval-broker.md#migration). Only the built-ins' own hashes, so an approvals.json or a
+   * package planted in the data folder can't be carried over as approved.
+   */
+  private async recordLegacy(): Promise<void> {
+    const ledger = this.ledger
+    if (ledger === null || ledger.tampered !== null || ledger.data.legacy !== undefined) return
+    const builtin = this.installed.filter((a) => this.isBuiltIn(a))
+    const installs: { adapterId: string; adapterHash: string }[] = []
+    for (const adapter of builtin) {
+      const id = adapter.definition.manifest.id
+      if (await this.approvals.isApproved(id, adapter.hash).catch(() => false))
+        installs.push({ adapterId: id, adapterHash: adapter.hash })
+    }
+    const grants = (await this.grants.list().catch(() => [] as readonly Grant[]))
+      .filter((g) => installs.some((i) => i.adapterId === g.adapterId && i.adapterHash === g.adapterHash))
+      .map((g) => ({ adapterId: g.adapterId, adapterHash: g.adapterHash, secret: g.secret }))
+    await ledger
+      .commit((draft) => {
+        draft.legacy = { at: new Date(this.deps.now()).toISOString(), installs, grants }
+      })
+      .catch(() => undefined)
+  }
+
+  /**
+   * Signed installs whose apply didn't finish (a crash after the evidence was written): applied
+   * now, for the hash still installed, without asking again.
+   */
+  private async reapplyInstalls(): Promise<void> {
+    for (const adapter of this.installed) {
+      const id = adapter.definition.manifest.id
+      const signed = this.approvalBroker?.honoured(
+        'adapter-install',
+        (s) => s.adapterId === id && s.adapterHash === adapter.hash && s.source !== 'rollback',
+      )
+      if (signed === null || signed === undefined) continue
+      if (!(await this.approvals.isApproved(id, adapter.hash).catch(() => true)))
+        await this.applyInstall(id, adapter.hash).catch(() => undefined)
+    }
   }
 
   private async rollbackTarget(adapterId: string, hash: string): Promise<BuiltinAdapter> {
@@ -1417,7 +1621,7 @@ export class AppService {
     grants: readonly Grant[],
   ): Promise<AdapterState> {
     const manifest = adapter.definition.manifest
-    const approved = await this.approvals.isApproved(manifest.id, adapter.hash)
+    const approved = await this.installGate.isApproved(manifest.id, adapter.hash)
     const snapshot: ApprovedSnapshot | null = await this.snapshots.get(manifest.id)
     const decisions = records.filter(
       (r) =>
@@ -1768,15 +1972,20 @@ export class AppService {
           const adapter = this.requireAdapter(adapterId)
           // Only the bundle installed and waiting now; a stale review's hash is refused.
           if (adapter.hash !== hash) throw new ValetError('manifest', 'invalid')
-          await this.approvals.approve(adapterId, hash, adapter.definition.manifest.version)
-          const at = new Date(deps.now()).toISOString()
-          await this.snapshots.put(adapterId, adapter, at)
-          this.approvedAt.set(`${adapterId}:${hash}`, at)
-          await this.refreshTools()
+          // Touch ID at this Mac signs it; the handler applies it (approvalHandlers).
+          // A version this app ships is labelled built in; anything else by where it came from.
+          const source = this.isBuiltIn(adapter)
+            ? 'builtin'
+            : adapter.source === 'draft'
+              ? 'draft'
+              : 'local-folder'
+          await this.signInstall(adapter, source)
         },
         reject: async (adapterId, hash) => {
           const adapter = this.requireAdapter(adapterId)
           if (adapter.hash !== hash) throw new ValetError('manifest', 'invalid')
+          // Only tightens: the evidence goes first, so a failed store write still leaves it off.
+          await this.revokeInstall(adapterId, hash)
           await this.approvals.reject(adapterId, hash, adapter.definition.manifest.version)
           await this.refreshTools()
         },
@@ -1794,7 +2003,7 @@ export class AppService {
           const live = new Set<string>()
           for (const adapter of this.installed) {
             const id = adapter.definition.manifest.id
-            if (await this.approvals.isApproved(id, adapter.hash).catch(() => false))
+            if (await this.installGate.isApproved(id, adapter.hash).catch(() => false))
               live.add(`${id}:${adapter.hash}`)
           }
           return (await deps.credentials.status()).map((s) => ({
@@ -2242,15 +2451,12 @@ function shown(text: string, max: number): string | undefined {
   return cut !== '' && isDisplayText(cut) ? cut : undefined
 }
 
-const QUESTION = /^Question (cf_[A-Za-z0-9_-]{1,60})$/
-
 /**
- * What a confirmation's signed request shows, at most 20 lines of 200 characters: first its own id,
- * so two questions of one call never share a request; then what it asks (the requests it would
- * make, the adapter's note as the adapter's words); then the input.
+ * What a confirmation's signed request shows, at most 20 lines of 200 characters: what it asks (the
+ * requests it would make, the adapter's note as the adapter's words), then the input.
  */
 function confirmationPreview(item: ConfirmationItem): string[] {
-  const lines = [`Question ${item.id}`]
+  const lines: string[] = []
   for (const r of [...item.unlocks, ...item.requests]) {
     const kept = shown(`${r.method} ${r.path}`, 200)
     if (kept !== undefined) lines.push(kept)
@@ -2265,10 +2471,4 @@ function confirmationPreview(item: ConfirmationItem): string[] {
     if (kept !== undefined) lines.push(kept)
   }
   return lines.slice(0, 20)
-}
-
-/** The confirmation a signed request names, or null when its preview shows a different one. */
-function confirmationOf(subject: { confirmationId: string; preview: readonly string[] }): string | null {
-  const shownId = QUESTION.exec(subject.preview[0] ?? '')?.[1] ?? null
-  return shownId === subject.confirmationId ? shownId : null
 }
