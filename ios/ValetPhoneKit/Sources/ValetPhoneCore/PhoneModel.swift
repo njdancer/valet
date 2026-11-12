@@ -175,11 +175,9 @@ public final class PhoneModel {
       self.load = load
     }
 
-    public static func system(allowSoftware: Bool) -> Keys {
-      Keys(
-        make: { try DeviceKeyFactory.make(allowSoftware: allowSoftware) },
-        load: { try DeviceKeyFactory.load($0, allowSoftware: allowSoftware) }
-      )
+    /// Secure Enclave keys only.
+    public static var system: Keys {
+      Keys(make: { try DeviceKeyFactory.make() }, load: { try DeviceKeyFactory.load($0) })
     }
   }
 
@@ -190,16 +188,23 @@ public final class PhoneModel {
     self.store = store
     self.clock = clock
     self.keyFactory = keyFactory
-    if let saved = store.load(), saved.paired, let keys = try? keyFactory.load(saved.keys) {
-      persisted = saved
-      self.keys = keys
-      hardwareKeys = keys.hardwareBacked
-      phase = .paired
-      for text in saved.requests { accept(requestText: text) }
-    } else if store.load() != nil {
+    guard let saved = store.load() else { return }
+    guard saved.paired else {
       // A pairing that never finished: start again.
       store.wipe()
+      return
     }
+    guard let keys = try? keyFactory.load(saved.keys) else {
+      // Keep the pairing: a key that can't be read now (the phone just restarted, a Keychain
+      // hiccup) may be readable next launch. Pairing again replaces it (red team 8).
+      phase = .unpaired(notice: "Valet can\u{2019}t reach this iPhone\u{2019}s keys right now. Open it again in a moment, or pair again from your Mac.")
+      return
+    }
+    persisted = saved
+    self.keys = keys
+    hardwareKeys = keys.hardwareBacked
+    phase = .paired
+    for text in saved.requests { accept(requestText: text) }
   }
 
   // MARK: Identity
@@ -283,9 +288,15 @@ public final class PhoneModel {
     else { return }
     guard let frame = try? RelayToPhone.parse(text) else { return }
     switch frame {
-    case let .pairingChallenge(id, macNonce):
+    case let .pairingChallenge(id, macNonce, signature):
       // One challenge per offer: a second one could only come from a relay trying its luck.
       guard id == offerId, case .pairing(.sending) = phase else { return }
+      // The Mac signed the nonce over this phone's own reply (CR-11). Unsigned, a relay holding the
+      // QR's secret could pair its own reply at the Mac and grind a nonce that shows this phone the
+      // same six digits.
+      guard PairingCrypto.verifyChallenge(offer: offer, offerId: id, macNonce: macNonce, replyPlaintext: reply, signature: signature) else {
+        return fail(.abandoned)
+      }
       guard let nonce = Base64URL.decode(macNonce),
         let code = try? PairingCrypto.code(offer: offer, replyPlaintext: reply, macNonce: nonce)
       else { return fail(.abandoned) }
@@ -424,9 +435,10 @@ public final class PhoneModel {
       sendAck(seq)
       return
     case .gap:
+      // Not acked: the Mac keeps it until it is accepted in order, so a message dropped here (too
+      // many held, or the app restarted) is sent again rather than lost (red team 3).
       if held.count < Self.maxHeld { held[seq] = message }
       missingMessages = true
-      sendAck(seq)
       touch()
       return
     case .accept:
@@ -555,10 +567,14 @@ public final class PhoneModel {
       guard parsed.request.macId == persisted?.macId else { unreadable += 1; return }
       if let existing = cards.first(where: { $0.id == parsed.request.id }) {
         // The same request again is a resend; a different text under the same id is refused.
-        if existing.text != text { unreadable += 1 }
+        if Array(existing.text.utf8) != Array(text.utf8) { unreadable += 1 }
         return
       }
-      let lifetime = parsed.request.expiresAt.timeIntervalSince(parsed.request.createdAt)
+      // The request's own life, but never past its expiry by this phone's clock (with a minute of
+      // slack), so a card reloaded after a restart, or one that arrives late, can't come back to
+      // life with a fresh deadline (red team 7).
+      let wallLeft = parsed.request.expiresAt.timeIntervalSince(clock.now()) + 60
+      let lifetime = max(0, min(parsed.request.expiresAt.timeIntervalSince(parsed.request.createdAt), wallLeft))
       let entry = CardEntry(
         card: CardModel.card(for: parsed, status: status), text: text,
         state: status?.safety == .lockdown ? .lockedDown : .waiting, arrivedUptime: clock.uptime(), lifetime: lifetime,
@@ -734,7 +750,11 @@ public final class PhoneModel {
     let now = clock.uptime()
     for i in cards.indices {
       let entry = cards[i]
-      if entry.state == .waiting, remaining(entry) <= 0 { cards[i].state = .expired }
+      if entry.state == .waiting, remaining(entry) <= 0 {
+        cards[i].state = .expired
+        persisted?.requests.removeAll { $0 == entry.text }
+        save()
+      }
       if entry.state == .sending, let sentAt = entry.sentAt, now - sentAt >= Self.notConfirmedAfter {
         cards[i].state = .notConfirmed
       }

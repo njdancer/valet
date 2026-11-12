@@ -65,6 +65,23 @@ public enum ChannelSeal {
 
 /// `pairing.ts` in core: the offer id, the seal key, the sealed reply and result, and the code.
 public enum PairingCrypto {
+  /// `pairingChallengePayload` (CR-11): what the Mac signs when it accepts a reply, naming that reply
+  /// by its hash, so a challenge for someone else's reply doesn't verify on this phone.
+  public static func challengePayload(offerId: String, macNonce: String, replyPlaintext: String) -> String {
+    JSON.serialize(.object([
+      ("offerId", .string(offerId)), ("macNonce", .string(macNonce)),
+      ("reply", .string(Hex.encode(SHA256.hash(data: Data(replyPlaintext.utf8))))),
+    ]))
+  }
+
+  /// `verifyPairingChallenge`: signed by the QR's Mac approval key, over this phone's own reply.
+  public static func verifyChallenge(offer: PairingOffer, offerId: String, macNonce: String, replyPlaintext: String, signature: String) -> Bool {
+    Signing.verify(
+      publicKey: offer.macApprovalKey, domain: .pairingChallenge,
+      payload: challengePayload(offerId: offerId, macNonce: macNonce, replyPlaintext: replyPlaintext), signature: signature
+    )
+  }
+
   static let idInfo = "valet/pairing/v1 id"
   static let sealInfo = "valet/pairing/v1 seal"
   static let codeInfo = "valet/pairing/v1 sas"

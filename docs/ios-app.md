@@ -375,6 +375,35 @@ Partly open: re-pairing after a Face ID change must revoke the old record first,
 side (12); the journeys run against `FakeMac`, which speaks core's v2 frames, until G's relay and D's
 broker exist (17).
 
+## Code review and red team
+
+An adversarial review of the Swift package and the app (2026-11-12) raised 12 findings. All are
+fixed, each with a regression test where one fits:
+
+1. **Critical: the pairing challenge was unauthenticated.** A relay holding the QR's secret could
+   pair its own reply at the Mac and grind a nonce so this phone showed the same six digits. B
+   took CR-11: the Mac signs `{offerId, macNonce, reply: sha256(reply)}` with its approval key
+   (`valet/pairing/v1 challenge`), and the phone verifies it with the key the QR pinned. Checked
+   against core in the shared vectors.
+2. A frame with `-9223372036854775808` as a number crashed the parser (`abs` of `Int.min`).
+3. A message after a gap was acked, so a relay that withheld one message and sent 64 more could
+   jam the channel for good. Held messages are no longer acked; the Mac resends them.
+4. Card titles used the adapter's own tool titles. Titles use the tool's id; the adapter's title
+   is a detail marked as the adapter's.
+5. The risk line quoted manifest items. It now comes from the area alone; the items stay in rows.
+6. Agent and adapter text in rows and names is wrapped in Unicode isolates, so right-to-left text
+   can't reorder the words around it.
+7. A card reloaded after a restart got a fresh deadline. The deadline is capped by the request's
+   expiry on this phone's clock, and expired texts are dropped from storage.
+8. A key that couldn't be read at launch silently unpaired the phone. The pairing is now kept.
+9. Any unexpected signing error was reported as a Face ID change. It is reported as a failed
+   match; the launch-time enrolment check is still to do.
+10. The strict reader matched keys by Swift's canonical string equality. It compares UTF-16 code
+    units, as JavaScript does, and a second text for a request is compared byte for byte.
+11. Remove a device was one tap. It now asks to confirm, then for Face ID.
+12. Software keys were compiled into the shipping crypto module. They live in ValetFakes, and the
+    CI check that the shipping binary has no fakes looks for them too.
+
 ## What needs Nick
 
 Batched for the coordinator, asked once when H reaches it: an Apple Developer Program membership,

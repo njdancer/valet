@@ -56,11 +56,13 @@ public struct Fields {
 
   public init(_ value: JSONValue, path: String, required: [String], optional: [String] = []) throws {
     guard let object = value.object else { throw SchemaError(path, "expected an object") }
+    // Keys compare by UTF-16 code units, as JavaScript does: Swift's String == would take a
+    // canonically equivalent spelling (a Kelvin sign for K) as the same key (red team 10).
     var map: [String: JSONValue] = [:]
-    let allowed = Set(required).union(optional)
+    let allowed = Dictionary(uniqueKeysWithValues: (required + optional).map { (Array($0.utf16), $0) })
     for (key, item) in object {
-      guard allowed.contains(key) else { throw SchemaError(path, "unknown key \(key)") }
-      map[key] = item
+      guard let name = allowed[Array(key.utf16)] else { throw SchemaError(path, "unknown key \(key)") }
+      map[name] = item
     }
     for key in required where map[key] == nil { throw SchemaError(path, "missing \(key)") }
     self.path = path

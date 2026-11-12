@@ -40,7 +40,7 @@ public indirect enum JSONValue: Equatable, Sendable {
   public var int: Int? {
     guard case let .number(text) = self else { return nil }
     guard text.allSatisfy({ $0 == "-" || $0.isASCII && $0.isNumber }) else { return nil }
-    guard let value = Int(text), abs(value) <= 9_007_199_254_740_991 else { return nil }
+    guard let value = Int(text), value.magnitude <= 9_007_199_254_740_991 else { return nil }
     return value
   }
 }

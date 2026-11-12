@@ -50,6 +50,14 @@ final class JSONTests: XCTestCase {
     XCTAssertNil(try JSON.parse("4.2").int)
     XCTAssertNil(try JSON.parse("1e3").int)
     XCTAssertNil(try JSON.parse("9007199254740993").int)
+    // Int.min has no magnitude as an Int: abs() would trap (red team 2).
+    XCTAssertNil(try JSON.parse("-9223372036854775808").int)
+  }
+
+  func testKeysCompareByCodeUnitsInFields() throws {
+    // A Kelvin sign is canonically equivalent to K; JavaScript would call this an unknown key.
+    let value = try JSON.parse("{\"approval\u{212A}ey\":\"x\"}")
+    XCTAssertThrowsError(try Fields(value, path: "t", required: ["approvalKey"]))
   }
 
   func testBase64URL() {

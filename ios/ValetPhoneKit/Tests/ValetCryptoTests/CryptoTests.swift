@@ -2,6 +2,7 @@ import CryptoKit
 import XCTest
 
 @testable import ValetCrypto
+import ValetFakes
 @testable import ValetProtocol
 
 /// The vectors core wrote (packages/core/test/ios-interop.test.ts). If these fail, the phone and
@@ -21,6 +22,7 @@ final class CoreVectorTests: XCTestCase {
     struct Pairing: Decodable {
       let offerQr, offerId, reply, resultPlaintext, macNonce, code: String
       let sealedResult: SealedValue
+      let challenge: Signed
     }
     struct Info: Decodable { let from, to, info: String }
     struct Display: Decodable { let value: String; let valid: Bool }
@@ -92,6 +94,10 @@ final class CoreVectorTests: XCTestCase {
     XCTAssertNil(PairingCrypto.open(sealed, kind: "reply", offer: offer))
     XCTAssertEqual(try PairingResult.parse(p.resultPlaintext), .declined)
     XCTAssertNoThrow(try PairingReply.parse(p.reply))
+    // CR-11: the Mac's signed challenge verifies over this reply, and over no other.
+    XCTAssertEqual(PairingCrypto.challengePayload(offerId: p.offerId, macNonce: p.macNonce, replyPlaintext: p.reply), p.challenge.payload)
+    XCTAssertTrue(PairingCrypto.verifyChallenge(offer: offer, offerId: p.offerId, macNonce: p.macNonce, replyPlaintext: p.reply, signature: p.challenge.signature))
+    XCTAssertFalse(PairingCrypto.verifyChallenge(offer: offer, offerId: p.offerId, macNonce: p.macNonce, replyPlaintext: p.reply + " ", signature: p.challenge.signature))
   }
 
   func testEnvelopeInfoMatchesCore() throws {

@@ -177,6 +177,7 @@ struct ValetView: View {
   let model: PhoneModel
   @State private var confirmLockdown = false
   @State private var confirmUnpair = false
+  @State private var removing: MacStatus.Device?
 
   var body: some View {
     NavigationStack {
@@ -205,8 +206,9 @@ struct ValetView: View {
                 if device.deviceId == model.deviceId {
                   Text("This iPhone").font(.caption).foregroundStyle(.secondary)
                 } else if device.deviceId != model.macId {
-                  Button("Remove", role: .destructive) { model.send(command: .revokeDevice(device.deviceId)) }
+                  Button("Remove", role: .destructive) { removing = device }
                     .buttonStyle(.bordered)
+                    .accessibilityIdentifier("valet.removeDevice")
                 }
               }
             }
@@ -229,6 +231,22 @@ struct ValetView: View {
         .accessibilityIdentifier("valet.lockdown.confirm")
       } message: {
         Text("Every agent stops and everything waiting is declined.")
+      }
+      .confirmationDialog(
+        removing.map { "Remove \($0.name)?" } ?? "", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+        titleVisibility: .visible, presenting: removing
+      ) { device in
+        // A.6: removing a device needs Face ID, so a thief with the passcode can't cut the owner's
+        // other phone off (red team 11).
+        Button("Remove with Face ID", role: .destructive) {
+          Task {
+            if await Biometrics.confirm("Remove \(device.name) from Valet") {
+              model.send(command: .revokeDevice(device.deviceId))
+            }
+          }
+        }
+      } message: { _ in
+        Text("It can\u{2019}t approve anything or see Valet again until it\u{2019}s paired again.")
       }
       .confirmationDialog("Unpair this iPhone?", isPresented: $confirmUnpair, titleVisibility: .visible) {
         Button("Unpair", role: .destructive) { model.unpair() }.accessibilityIdentifier("valet.unpair.confirm")

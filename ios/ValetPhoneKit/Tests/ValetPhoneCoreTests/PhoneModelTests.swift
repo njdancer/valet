@@ -311,7 +311,8 @@ final class PhoneModelTests: XCTestCase {
   func testRemoteToolCardUsesTheMacsNames() throws {
     setUp(.admin)
     let tool = try XCTUnwrap(card("9D02"))
-    XCTAssertEqual(tool.card.title, "Turn on \u{201C}Search symbols\u{201D} for Claude app")
+    XCTAssertEqual(tool.card.title, "Turn on search_symbols for Claude app")
+    XCTAssertTrue(tool.card.details.contains { $0.isClaim && $0.value == "Search symbols" }, "the adapter's title is a claim")
     XCTAssertEqual(tool.card.tone, .caution)
   }
 
@@ -384,5 +385,70 @@ final class PhoneModelTests: XCTestCase {
     let again = PhoneModel(transport: world.relay, store: store, clock: time.clock, keys: PhoneModel.Keys(make: { keys }, load: { _ in keys }))
     XCTAssertEqual(again.phase, .paired)
     XCTAssertEqual(Set(again.cards.map(\.id)), ids)
+  }
+
+  // MARK: Red team regressions
+
+  func testAChallengeWithANonceTheMacDidntSignIsRefused() {
+    setUp(.quiet, pair: false)
+    world.mac.autoConfirmPairing = false
+    world.relay.tamperToPhone = { text in
+      guard text.contains("pairing-challenge"), let r = text.range(of: "\"macNonce\":\"") else { return text }
+      // A relay holding the QR's secret swaps in a nonce it ground for its own reply.
+      var chars = Array(text)
+      let i = text.distance(from: text.startIndex, to: r.upperBound) + 3
+      chars[i] = chars[i] == "A" ? "B" : "A"
+      return String(chars)
+    }
+    world.pair(model)
+    world.relay.drain()
+    XCTAssertEqual(model.phase, .pairing(.failed(.abandoned)))
+  }
+
+  func testAnUnsignedChallengeIsRefused() {
+    setUp(.quiet, pair: false)
+    world.mac.autoConfirmPairing = false
+    world.relay.tamperToPhone = { text in
+      guard text.contains("pairing-challenge"), let r = text.range(of: ",\"signature\":\"") else { return text }
+      return String(text[..<r.lowerBound]) + "}"
+    }
+    world.pair(model)
+    world.relay.drain()
+    XCTAssertEqual(model.phase, .pairing(.sending), "an unsigned challenge is not a challenge")
+  }
+
+  func testAMessageAfterAGapIsNotAcked() {
+    setUp(.quiet)
+    let acked = world.mac.ackedCount
+    let last = store.state!.lastInbound
+    model.receive(message: .alert(seq: last + 2, kind: .notify, title: "Second", body: "B", at: Date()))
+    world.relay.drain()
+    XCTAssertEqual(world.mac.ackedCount, acked, "the Mac must keep it until it is accepted in order")
+  }
+
+  func testAnExpiredCardDoesNotComeBackAfterARestart() {
+    setUp(.install)
+    time.advance(25 * 3600)
+    model.tick()
+    XCTAssertEqual(card("7B3F")?.state, .expired)
+    let keys = self.keys!
+    let again = PhoneModel(transport: world.relay, store: store, clock: time.clock, keys: PhoneModel.Keys(make: { keys }, load: { _ in keys }))
+    XCTAssertFalse(again.openCards.contains { $0.id.hasPrefix("7B3F") })
+  }
+
+  func testAKeyThatCantBeReadKeepsThePairing() {
+    setUp(.quiet)
+    struct Locked: Error {}
+    let again = PhoneModel(
+      transport: world.relay, store: store, clock: time.clock, keys: PhoneModel.Keys(make: { throw Locked() }, load: { _ in throw Locked() })
+    )
+    guard case .unpaired(notice: .some) = again.phase else { return XCTFail("expected a notice") }
+    XCTAssertNotNil(store.state, "the pairing is kept for the next launch")
+  }
+
+  func testAgentTextIsIsolatedInRows() throws {
+    setUp(.admin)
+    let store = try XCTUnwrap(card("3B77"))
+    XCTAssertTrue(store.card.rows.allSatisfy { !$0.isClaim || $0.text.contains("\u{2068}") })
   }
 }

@@ -12,6 +12,7 @@ public enum SigningDomain: String, Sendable {
   case deviceRecord = "valet/device-record/v1"
   case relayAuth = "valet/relay-auth/v1"
   case pairing = "valet/pairing/v1"
+  case pairingChallenge = "valet/pairing/v1 challenge"
 }
 
 public enum Signing {

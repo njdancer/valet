@@ -53,7 +53,7 @@ final class AppHost {
       world = nil
     #endif
     model = PhoneModel(
-      transport: WebSocketRelayTransport(), store: KeychainPhoneStore(), keys: .system(allowSoftware: false)
+      transport: WebSocketRelayTransport(), store: KeychainPhoneStore(), keys: .system
     )
     locksOnOpen = true
     model.connect()

@@ -6,8 +6,8 @@
 // - Transport: Secure Enclave, no user presence. Answers the relay's challenge.
 // - Agreement: a CryptoKit software P-256 key kept in the Keychain (B allows "or Keychain").
 //
-// The simulator has no Secure Enclave, so `SoftwareDeviceKeys` stands in there and in tests. A
-// release build refuses it (`DeviceKeyFactory`).
+// The simulator has no Secure Enclave, so `SoftwareDeviceKeys` (ValetFakes) stands in there and in
+// tests. The shipping app doesn't link ValetFakes, and `DeviceKeyFactory` refuses software keys.
 
 import CryptoKit
 import Foundation
@@ -61,61 +61,13 @@ public struct StoredKeys: Codable, Equatable, Sendable {
   public let approval: Data
   public let transport: Data
   public let agreement: Data
-}
 
-/// Software keys: the simulator and tests only.
-public final class SoftwareDeviceKeys: DeviceKeys, @unchecked Sendable {
-  private let approval: P256.Signing.PrivateKey
-  private let transport: P256.Signing.PrivateKey
-  private let agreement: P256.KeyAgreement.PrivateKey
-  /// A test hook standing in for Face ID: return false to simulate a failed or cancelled match.
-  public var presence: @Sendable (String) async -> Bool = { _ in true }
-  /// Every reason this key was asked to sign with, for tests.
-  public private(set) var reasons: [String] = []
-
-  public init() {
-    approval = P256.Signing.PrivateKey()
-    transport = P256.Signing.PrivateKey()
-    agreement = P256.KeyAgreement.PrivateKey()
+  public init(kind: Kind, approval: Data, transport: Data, agreement: Data) {
+    self.kind = kind
+    self.approval = approval
+    self.transport = transport
+    self.agreement = agreement
   }
-
-  public init(stored: StoredKeys) throws {
-    guard stored.kind == .software else { throw KeyError.corrupt }
-    do {
-      approval = try P256.Signing.PrivateKey(rawRepresentation: stored.approval)
-      transport = try P256.Signing.PrivateKey(rawRepresentation: stored.transport)
-      agreement = try P256.KeyAgreement.PrivateKey(rawRepresentation: stored.agreement)
-    } catch { throw KeyError.corrupt }
-  }
-
-  public var hardwareBacked: Bool { false }
-
-  public var publicKeys: DevicePublicKeys {
-    DevicePublicKeys(
-      approval: Signing.spki(approval.publicKey),
-      transport: Signing.spki(transport.publicKey),
-      agreement: Signing.spki(agreement.publicKey)
-    )
-  }
-
-  public var stored: StoredKeys {
-    StoredKeys(
-      kind: .software, approval: approval.rawRepresentation, transport: transport.rawRepresentation,
-      agreement: agreement.rawRepresentation
-    )
-  }
-
-  public func signApproval(_ input: Data, reason: String) async throws -> Data {
-    reasons.append(reason)
-    guard await presence(reason) else { throw KeyError.userCancelled }
-    return try approval.signature(for: input).rawRepresentation
-  }
-
-  public func signTransport(_ input: Data) throws -> Data {
-    try transport.signature(for: input).rawRepresentation
-  }
-
-  public func agreementKey() throws -> P256.KeyAgreement.PrivateKey { agreement }
 }
 
 #if canImport(LocalAuthentication)
@@ -199,13 +151,13 @@ public final class SoftwareDeviceKeys: DeviceKeys, @unchecked Sendable {
         do {
           let key = try SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: blob, authenticationContext: context)
           return try key.signature(for: input).rawRepresentation
-        } catch let error as LAError where error.code == .biometryLockout || error.code == .userCancel
-          || error.code == .authenticationFailed || error.code == .systemCancel || error.code == .appCancel
-        {
+        } catch is LAError {
           throw KeyError.userCancelled
         } catch {
-          // A key made with .biometryCurrentSet is invalidated when enrolment changes.
-          throw KeyError.biometryChanged
+          // Anything else is reported as a failed match, not as a Face ID change: telling the
+          // person to pair again on a guess would be worse (red team 9). A real enrolment change is
+          // left to a launch-time check (docs/ios-app.md, open items).
+          throw KeyError.userCancelled
         }
       }.value
     }
@@ -220,21 +172,19 @@ public final class SoftwareDeviceKeys: DeviceKeys, @unchecked Sendable {
 #endif
 
 public enum DeviceKeyFactory {
-  /// New keys for pairing: the Secure Enclave when there is one, software keys only where
-  /// `allowSoftware` (the simulator, fakes builds). Otherwise pairing is refused.
-  public static func make(allowSoftware: Bool) throws -> DeviceKeys {
+  /// New keys for pairing: the Secure Enclave, or pairing is refused. Software keys live in
+  /// ValetFakes, which the shipping app doesn't link (red team 12).
+  public static func make() throws -> DeviceKeys {
     #if canImport(LocalAuthentication)
       if SecureEnclaveDeviceKeys.isAvailable { return try SecureEnclaveDeviceKeys() }
     #endif
-    guard allowSoftware else { throw KeyError.unavailable }
-    return SoftwareDeviceKeys()
+    throw KeyError.unavailable
   }
 
-  public static func load(_ stored: StoredKeys, allowSoftware: Bool) throws -> DeviceKeys {
+  public static func load(_ stored: StoredKeys) throws -> DeviceKeys {
     switch stored.kind {
     case .software:
-      guard allowSoftware else { throw KeyError.unavailable }
-      return try SoftwareDeviceKeys(stored: stored)
+      throw KeyError.unavailable
     case .secureEnclave:
       #if canImport(LocalAuthentication)
         return try SecureEnclaveDeviceKeys(stored: stored)

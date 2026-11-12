@@ -23,6 +23,7 @@ import {
   keyId,
   openSealed,
   pairingAad,
+  pairingChallengePayload,
   pairingCode,
   pairingOfferId,
   pairingReplySchema,
@@ -35,6 +36,7 @@ import {
   signingInput,
   verifyDecision,
   verifyDeviceRecord,
+  verifyPairingChallenge,
 } from '../src'
 
 const VECTORS = fileURLToPath(
@@ -339,6 +341,11 @@ function writeVectors(path: string): void {
       resultPlaintext: '{"outcome":"declined"}',
       macNonce,
       code: pairingCode(secret, macId, offerText, reply, macNonce),
+      challenge: signText(
+        mac.approval,
+        SIGNING_DOMAINS.pairingChallenge,
+        pairingChallengePayload(offerId, macNonce, reply),
+      ),
     },
     envelopeInfo: { from: macId, to: phoneId, info: envelopeInfo(macId, phoneId).toString('hex') },
     displayText: DISPLAY_CASES.map((value) => ({ value, valid: isDisplayText(value) })),
@@ -365,6 +372,7 @@ interface Vectors {
     resultPlaintext: string
     macNonce: string
     code: string
+    challenge: SignedText
   }
   envelopeInfo: { from: string; to: string; info: string }
   displayText: { value: string; valid: boolean }[]
@@ -402,10 +410,14 @@ describe('iOS vectors', () => {
   it('has pairing values core computes', () => {
     const p = vectors.pairing
     const offerText = Buffer.from(p.offerQr.slice('valet-pair:'.length), 'base64url').toString('utf8')
-    const offer = JSON.parse(offerText) as { secret: string; macId: string }
+    const offer = JSON.parse(offerText) as { secret: string; macId: string; macApprovalKey: string }
     expect(pairingOfferId(offer.secret)).toBe(p.offerId)
     expect(pairingReplySchema.safeParse(JSON.parse(p.reply)).success).toBe(true)
     expect(pairingCode(offer.secret, offer.macId, offerText, p.reply, p.macNonce)).toBe(p.code)
+    expect(p.challenge.payload).toBe(pairingChallengePayload(p.offerId, p.macNonce, p.reply))
+    expect(
+      verifyPairingChallenge(offer.macApprovalKey, p.offerId, p.macNonce, p.reply, p.challenge.signature),
+    ).toBe(true)
     expect(
       openSealed(pairingSealKey(offer.secret, offer.macId), p.sealedResult, pairingAad('result', p.offerId)),
     ).toBe(p.resultPlaintext)
@@ -467,7 +479,7 @@ describe.runIf(swiftOut !== undefined && swiftOut !== '')('decisions the Swift c
     const offerText = Buffer.from(vectors.pairing.offerQr.slice('valet-pair:'.length), 'base64url').toString(
       'utf8',
     )
-    const offer = JSON.parse(offerText) as { secret: string; macId: string }
+    const offer = JSON.parse(offerText) as { secret: string; macId: string; macApprovalKey: string }
     const opened = openSealed(
       pairingSealKey(offer.secret, offer.macId),
       out.pairing.sealedReply,

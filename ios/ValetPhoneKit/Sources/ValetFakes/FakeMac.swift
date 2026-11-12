@@ -45,6 +45,8 @@ public final class FakeMac {
   public private(set) var events: [Event] = []
   /// The code the Mac shows for the pairing in progress.
   public private(set) var pairingCode: String?
+  /// How many acks from the phone arrived, for tests.
+  public private(set) var ackedCount = 0
 
   public var safety: MacStatus.Safety = .running
   public var sites: [Site] = []
@@ -98,7 +100,12 @@ public final class FakeMac {
     offerUsed = true
     let nonce = Self.random(32)
     pairingCode = try? PairingCrypto.code(offer: offer, replyPlaintext: replyText, macNonce: nonce)
-    relay?.toPairing(Self.frame("pairing-challenge", [("offerId", .string(offerId)), ("macNonce", .string(Base64URL.encode(nonce)))]))
+    let nonceText = Base64URL.encode(nonce)
+    let challenge = PairingCrypto.challengePayload(offerId: offerId, macNonce: nonceText, replyPlaintext: replyText)
+    let challengeSignature = try! approvalKey.signature(for: Signing.input(.pairingChallenge, challenge)).rawRepresentation
+    relay?.toPairing(Self.frame("pairing-challenge", [
+      ("offerId", .string(offerId)), ("macNonce", .string(nonceText)), ("signature", .string(Base64URL.encode(challengeSignature))),
+    ]))
     let confirm: () -> Void = { [weak self] in self?.confirmPairing(reply: reply, offer: offer) }
     if autoConfirmPairing {
       if confirmDelay > 0 {
@@ -292,6 +299,7 @@ public final class FakeMac {
     else { return }
     if case let .ack(_, ackSeq) = message {
       outbox.removeValue(forKey: ackSeq)
+      ackedCount += 1
       return
     }
     switch SeqVerdict.of(last: lastInbound, seq: message.seq) {

@@ -103,7 +103,14 @@ public enum CardModel {
     var choices: [ApprovalSubject.Choice]?
     let display = request.display
     let site = { (adapterId: String) in display.domain ?? adapterId }
-    let toolName = { (tool: String) in display.toolTitles[tool].map { "\u{201C}\($0)\u{201D}" } ?? tool }
+    // A tool is named by its id in titles: the adapter's own title for it is the author's text, shown
+    // only as a labelled detail (red team 4).
+    let toolName = { (tool: String) in tool }
+    func toolTitleDetail(_ tool: String) {
+      if let given = display.toolTitles[tool] {
+        details.append(CardDetail(label: "The adapter calls this tool", value: given, isClaim: true))
+      }
+    }
     let faceIDReason: String
 
     func row(_ marker: String, _ text: String, _ tone: Tone, claim: Bool = false) {
@@ -132,7 +139,7 @@ public enum CardModel {
       }
       for change in s.changes.sorted(by: { $0.risk > $1.risk }) {
         let tone = tone(for: change.risk)
-        row(marker(change.change), "\(areaLabel(change.area)): \(change.items.joined(separator: ", "))", tone)
+        row(marker(change.change), "\(areaLabel(change.area)): \(change.items.map(isolate).joined(separator: ", "))", tone, claim: true)
         switch (change.area, change.risk) {
         case (_, .critical), (_, .high):
           risks.append((.strong, riskLine(change)))
@@ -173,7 +180,7 @@ public enum CardModel {
       title = "Let \(site(s.adapterId)) use your login"
       faceIDReason = "Let \(s.adapterId) use a login"
       risks.append((.strong, "\(s.adapterId) can log in as you on \(s.origins.joined(separator: ", "))."))
-      row("Uses", "\(providerName(s.provider)) item \u{201C}\(s.itemTitle)\u{201D}", .strong)
+      row("Uses", "\(providerName(s.provider)) item \u{201C}\(isolate(s.itemTitle))\u{201D}", .strong, claim: true)
       row("Typed only on", s.origins.joined(separator: ", "), .strong)
       row("Fields", s.fields.joined(separator: ", "), .neutral)
       details.append(CardDetail(label: "Item fingerprint", value: s.itemFingerprint, isClaim: false))
@@ -189,6 +196,7 @@ public enum CardModel {
         title = "Turn on \(toolName(s.tool)) on this Mac"
       }
       faceIDReason = "Turn on \(tool)"
+      toolTitleDetail(s.tool)
       switch s.sideEffect {
       case "irreversible": risks.append((.strong, "It can't be undone. You'll still confirm each use."))
       case "write": risks.append((.caution, "Can change things on \(s.adapterId)."))
@@ -217,11 +225,11 @@ public enum CardModel {
         choices = offered
         title = s.adapterId.map { "Choose a \(site($0)) setting" } ?? "Choose a Valet setting"
         risks.append((.neutral, "You choose; the agent only asked."))
-        row("Now", "\(s.label): \(s.from)", .neutral, claim: s.scope == "adapter")
+        row("Now", "\(isolate(s.label)): \(isolate(s.from))", .neutral, claim: s.scope == "adapter")
       } else {
         title = s.adapterId.map { "Change a \(site($0)) setting" } ?? "Change a Valet setting"
         risks.append((.caution, "This loosens what Valet allows. Check the change below."))
-        row("Changes", "\(s.label): \(s.from) \u{2192} \(s.to)", .caution, claim: s.scope == "adapter")
+        row("Changes", "\(isolate(s.label)): \(isolate(s.from)) \u{2192} \(isolate(s.to))", .caution, claim: s.scope == "adapter")
       }
       details.append(CardDetail(label: "Setting", value: s.setting, isClaim: false))
     case let .authoringSession(s):
@@ -245,6 +253,7 @@ public enum CardModel {
       title = "Confirm: \(toolName(s.tool)) (\(site(s.adapterId)))"
       faceIDReason = "Confirm \(s.tool) on \(s.adapterId). This can't be undone."
       approveLabel = "Confirm with Face ID"
+      toolTitleDetail(s.tool)
       risks.append((.strong, "This can't be undone."))
       for line in s.preview { row("Sends", line, .strong, claim: true) }
       details.append(CardDetail(label: "Call", value: s.callId, isClaim: false))
@@ -332,7 +341,7 @@ public enum CardModel {
         return AgentLabel(name: given.label, askedBy: "Asked by \(given.label)", claim: nil)
       }
       // No name the person gave it: name it by its credential, and show its own name as a claim.
-      return AgentLabel(name: "an agent", askedBy: "Asked by \(clientId)", claim: "Calls itself \u{201C}\(clientName)\u{201D}")
+      return AgentLabel(name: "an agent", askedBy: "Asked by \(clientId)", claim: "Calls itself \u{201C}\(isolate(clientName))\u{201D}")
     case .person: return AgentLabel(name: "you", askedBy: "Asked by you", claim: nil)
     case .app: return AgentLabel(name: "Valet", askedBy: "Raised by Valet", claim: nil)
     }
@@ -380,18 +389,23 @@ public enum CardModel {
     }
   }
 
+  /// The headline risk for one change, from its area alone. The items (hosts, origins, tool names
+  /// from the manifest) stay in the change rows, where they are marked as the adapter's (red team 5).
   static func riskLine(_ change: PermissionChange) -> String {
-    let items = change.items.joined(separator: ", ")
     switch change.area {
     case "sandbox-mode": return "Runs without the sandbox: it can reach anything you can on this Mac."
-    case "sandbox-exception": return "Adds a sandbox exception: \(items)."
-    case "secret", "secret-origins", "auth-frames": return "Changes where your password is typed: \(items)."
-    case "side-effect": return "A tool can now do more: \(items)."
-    case "tool": return "Changes its tools: \(items)."
-    case "egress", "navigation": return "Reaches more of the web: \(items)."
-    default: return "\(areaLabel(change.area)) change: \(items)."
+    case "sandbox-exception": return "Adds a sandbox exception. See what changes below."
+    case "secret", "secret-origins", "auth-frames": return "Changes where your password is typed. See below."
+    case "side-effect": return "A tool can now do more than it could. See below."
+    case "tool": return "Changes its tools. See below."
+    case "egress", "navigation": return "Reaches more of the web. See below."
+    default: return "Changes \(areaLabel(change.area).lowercased()). See below."
     }
   }
+
+  /// Wraps text from outside the Mac in Unicode first-strong isolates, so a right-to-left value
+  /// can't reorder the words around it (red team 6).
+  static func isolate(_ text: String) -> String { "\u{2068}\(text)\u{2069}" }
 
   static func providerName(_ provider: String) -> String {
     switch provider {

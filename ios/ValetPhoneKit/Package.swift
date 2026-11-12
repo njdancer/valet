@@ -28,7 +28,7 @@ let package = Package(
     .testTarget(name: "ValetProtocolTests", dependencies: ["ValetProtocol"]),
     .testTarget(
       name: "ValetCryptoTests",
-      dependencies: ["ValetCrypto", "ValetProtocol"],
+      dependencies: ["ValetCrypto", "ValetProtocol", "ValetFakes"],
       resources: [.copy("Vectors")]
     ),
     .testTarget(

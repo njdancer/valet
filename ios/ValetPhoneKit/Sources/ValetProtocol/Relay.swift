@@ -81,7 +81,7 @@ public enum RelayToPhone: Equatable, Sendable {
   case envelope(Envelope)
   case macOnline(Bool)
   /// The Mac accepted this reply and sends the nonce the code is derived from.
-  case pairingChallenge(offerId: String, macNonce: String)
+  case pairingChallenge(offerId: String, macNonce: String, signature: String)
   /// The Mac's sealed answer: the signed records, or why not.
   case pairingResult(offerId: String, sealed: Sealed)
   /// The relay stopped (or resumed) forwarding remote traffic to the Mac.
@@ -105,10 +105,11 @@ public enum RelayToPhone: Equatable, Sendable {
       let f = try Fields(value, path: type, required: ["type", "online"])
       return .macOnline(try f.bool("online"))
     case "pairing-challenge":
-      let f = try Fields(value, path: type, required: ["type", "offerId", "macNonce"])
+      let f = try Fields(value, path: type, required: ["type", "offerId", "macNonce", "signature"])
       return .pairingChallenge(
         offerId: try f.string("offerId", pattern: Patterns.keyId),
-        macNonce: try f.string("macNonce", pattern: RelayProtocol.nonce)
+        macNonce: try f.string("macNonce", pattern: RelayProtocol.nonce),
+        signature: try f.string("signature", pattern: Patterns.base64url, max: 100)
       )
     case "pairing-result":
       let f = try Fields(value, path: type, required: ["type", "offerId", "sealed"])
