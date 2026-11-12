@@ -10,7 +10,7 @@ import { z } from 'zod'
 import { ClientRegistry, cleanClientName, shownTransport } from '../../src/main/core/clients'
 import { ensurePrivateDir, JsonDocument, readJsonFile, writeJsonFile } from '../../src/main/core/files'
 import { builtinAdapter, MANIFEST_ENTRY, SnapshotStore } from '../../src/main/core/registry'
-import { DEFAULT_SETTINGS, SettingsStore } from '../../src/main/core/settings'
+import { DEFAULT_SETTINGS, relayHostSchema, SettingsStore } from '../../src/main/core/settings'
 import { SHOP, SHOP_FILES, shopDefinition } from './fixtures'
 
 const dirs: string[] = []
@@ -76,6 +76,17 @@ describe('SettingsStore', () => {
       opPath: '/opt/homebrew/bin/op',
       launchAtLogin: true,
     })
+  })
+
+  it('keeps a relay host name, and nothing that isn’t one', async () => {
+    const path = join(dir(), 'settings.json')
+    const store = new SettingsStore(path)
+    expect((await store.get()).relayHost).toBeNull()
+    expect((await store.set({ relayHost: 'relay.example.com' })).relayHost).toBe('relay.example.com')
+    for (const bad of ['https://relay.example.com', 'relay.example.com:8443', 'localhost', 'Relay.Example.com'])
+      expect(relayHostSchema.safeParse(bad).success, bad).toBe(false)
+    writeFileSync(path, JSON.stringify({ ...DEFAULT_SETTINGS, relayHost: 'evil.example/x' }))
+    expect(await store.get()).toEqual(DEFAULT_SETTINGS)
   })
 
   it('reads an edited or broken file as the defaults', async () => {

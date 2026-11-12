@@ -7,6 +7,9 @@ import {
   Card,
   CardContent,
   Dialog,
+  Field,
+  Inline,
+  Input,
   List,
   ListRow,
   Section,
@@ -24,7 +27,7 @@ import { useAction, useApi, useLoad } from '../../lib/api-context'
 import { Failed } from '../connections/shared'
 
 const UNAVAILABLE: Record<NonNullable<PhonesStatus['unavailableReason']>, string> = {
-  'no-relay': 'Pairing a phone needs Valet’s relay, which isn’t set up on this Mac yet.',
+  'no-relay': 'Pairing a phone needs Valet’s relay. Enter its host name below.',
   'no-keys':
     'This build of Valet can’t pair a phone yet: its Secure Enclave keys don’t do the phone channel so far.',
   'approvals-unavailable': 'Valet can’t ask for approvals right now, so it can’t pair a phone.',
@@ -75,10 +78,78 @@ export function DevicesSection() {
             </Button>
           </div>
           {s !== null && s.available ? <RelayLine status={s} /> : null}
+          <RelaySetting paired={s?.phones.length ?? 0} />
         </CardContent>
       </Card>
       <PairSheet open={pairing} onOpenChange={setPairing} view={s?.pairing ?? { step: 'idle' }} />
     </Section>
+  )
+}
+
+/** A relay's host name, as Settings keeps it: lower case, no scheme, no port, no path. */
+export function relayHostFrom(typed: string): string | null {
+  const host = typed
+    .trim()
+    .toLowerCase()
+    .replace(/^https:\/\//, '')
+    .replace(/\/$/, '')
+  return /^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$/.test(host) &&
+    host.length <= 253
+    ? host
+    : null
+}
+
+/**
+ * The relay's host name. Phones dial the relay they were paired through, so after a change they
+ * need pairing again; the description says so when there are any.
+ */
+function RelaySetting({ paired }: { readonly paired: number }) {
+  const api = useApi()
+  const action = useAction()
+  const settings = useLoad((a) => a.settings.get(), [], ['settings-changed'])
+  const saved = settings.status === 'ready' ? settings.data.relayHost : null
+  const [draft, setDraft] = useState<string | null>(null)
+  const text = draft ?? saved ?? ''
+  const host = text.trim() === '' ? null : relayHostFrom(text)
+  const invalid = text.trim() !== '' && host === null
+  const changed = !invalid && host !== saved
+  if (settings.status !== 'ready') return null
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (changed)
+          void action.run(async () => {
+            await api.settings.set({ relayHost: host })
+            setDraft(null)
+          })
+      }}
+    >
+      <Field
+        label="Relay"
+        description={
+          paired > 0
+            ? 'The host name of your Valet relay. Phones paired now keep using the relay they were paired through, so after a change, pair them again.'
+            : 'The host name of your Valet relay, on Cloudflare. Phones and remote agents reach this Mac through it; it only passes on sealed messages.'
+        }
+        error={invalid ? 'Enter a host name, like relay.example.com' : undefined}
+      >
+        <Inline gap={2} wrap={false}>
+          <Input
+            aria-label="Relay host name"
+            placeholder="relay.example.com"
+            value={text}
+            className="flex-1"
+            spellCheck={false}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <Button type="submit" loading={action.busy} disabled={!changed} disabledReason="Nothing to save">
+            Save
+          </Button>
+        </Inline>
+      </Field>
+      <Failed failed={action.failed} what="save the relay" />
+    </form>
   )
 }
 

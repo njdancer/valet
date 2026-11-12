@@ -931,6 +931,11 @@ export interface Settings {
    * of the app's windows; nothing is approved from it.
    */
   readonly notifications: boolean
+  /**
+   * The host name of Valet's relay (relay.example.com), which phones and remote agents reach this
+   * Mac through. Null until the person sets it; phones can't pair without one.
+   */
+  readonly relayHost: string | null
 }
 
 /** What the renderer may change directly. The 1Password CLI path isn't among them. */

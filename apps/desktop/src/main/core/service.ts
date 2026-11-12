@@ -171,7 +171,7 @@ import { createAuthRunner, Handoffs, isBlockedPage, SessionTracker } from './log
 import { type AppNotification, attentionTitle, Notifier } from './notifications'
 import { type FolderInstall, InstallError, installReason, PackageManager, rollbackEligible } from './packages'
 import { addsPermissions, permissionDiff } from './permission-diff'
-import { Phones, type RelaySetup } from './phones'
+import { Phones, type RelaySetup, relayFromHost } from './phones'
 import { type ApprovedSnapshot, type BuiltinAdapter, SnapshotStore, snapshotIntact } from './registry'
 import { RemoteAccess } from './remote'
 import { RunMemory } from './run-memory'
@@ -1320,6 +1320,7 @@ export class AppService {
   /** Starts the relay connection and the phone channel, once the broker is open. */
   private async openPhones(broker: ApprovalBroker, devices: DeviceStore): Promise<void> {
     try {
+      await this.phones.setRelay(await this.relaySetup())
       await this.phones.open({
         broker,
         devices,
@@ -3373,6 +3374,15 @@ export class AppService {
     )
   }
 
+  /**
+   * The relay: the one a development build was started with (VALET_RELAY_ORIGIN), otherwise the
+   * host the person set in Settings › Devices.
+   */
+  private async relaySetup(): Promise<RelaySetup | null> {
+    if (this.deps.relay !== undefined && this.deps.relay !== null) return this.deps.relay
+    return relayFromHost((await this.settings.get()).relayHost)
+  }
+
   private async afterSettings(settings: Settings): Promise<Settings> {
     const shorter = settings.traceRetentionDays < this.settingsNow.traceRetentionDays
     this.settingsNow = settings
@@ -3772,6 +3782,7 @@ export class AppService {
             await this.changeValetSetting('trace_retention', traceRetentionDays)
           const settings = await this.settings.set(rest)
           if (patch.launchAtLogin !== undefined) deps.ui.setLaunchAtLogin(settings.launchAtLogin)
+          if (patch.relayHost !== undefined) await this.phones.setRelay(await this.relaySetup())
           return this.afterSettings(settings)
         },
         chooseOpPath: async () => {

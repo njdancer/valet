@@ -48,16 +48,33 @@ export class Phones implements PhoneOutbox {
   private online = new Set<string>()
   private devices: DeviceStore | null = null
   private unavailable: PhonesStatus['unavailableReason'] = 'approvals-unavailable'
+  private relay: RelaySetup | null
+  private parts: PhonesParts | null = null
 
   constructor(private readonly options: PhonesOptions) {
+    this.relay = options.relay
     if (options.relay === null) this.unavailable = 'no-relay'
+  }
+
+  /**
+   * A different relay (the person changed it in Settings › Devices): the channel restarts on it.
+   * Phones paired through the old one keep dialling it until they pair again.
+   */
+  async setRelay(relay: RelaySetup | null): Promise<void> {
+    if (relay?.origin === this.relay?.origin && relay?.connectUrl === this.relay?.connectUrl) return
+    this.relay = relay
+    if (this.parts !== null) await this.open(this.parts)
+    else if (relay === null) this.unavailable = 'no-relay'
+    this.options.emit()
   }
 
   /** Starts the channel once the broker is open. Safe to call again after a reopen. */
   async open(parts: PhonesParts): Promise<void> {
     this.stop()
+    this.parts = parts
     this.devices = parts.devices
-    const relay = this.options.relay
+    this.relayStatus = { state: 'stopped' }
+    const relay = this.relay
     if (relay === null) {
       this.unavailable = 'no-relay'
       return
@@ -145,7 +162,7 @@ export class Phones implements PhoneOutbox {
       available: this.unavailable === null,
       unavailableReason: this.unavailable,
       relay: this.relayStatus.state === 'replaced' ? 'refused' : this.relayStatus.state,
-      relayOrigin: this.options.relay?.origin ?? null,
+      relayOrigin: this.relay?.origin ?? null,
       phones: phones.map((p) => ({
         deviceId: p.deviceId,
         name: p.name,
@@ -217,6 +234,11 @@ export function relayFromEnv(env: NodeJS.ProcessEnv): RelaySetup | null {
   return connect !== undefined && /^https?:\/\/[a-z0-9.-]+(:\d+)?$/.test(connect)
     ? { origin, connectUrl: connect }
     : { origin }
+}
+
+/** The relay a host name in Settings names: always https, on the default port. */
+export function relayFromHost(host: string | null): RelaySetup | null {
+  return host === null ? null : { origin: `https://${host}` }
 }
 
 /** The Mac's name as a paired phone shows it. */

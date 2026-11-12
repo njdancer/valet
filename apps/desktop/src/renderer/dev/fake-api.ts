@@ -692,6 +692,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     onePasswordAccount: null,
     traceRetentionDays: 14,
     notifications: true,
+    relayHost: 'relay.example',
   }
 
   const updates: UpdateStatus = {
@@ -742,10 +743,10 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
   let pairing: PairingView = { step: 'idle' }
   let phones: PhonesStatus['phones'] = []
   const phonesStatus = (): PhonesStatus => ({
-    available: true,
-    unavailableReason: null,
-    relay: 'online',
-    relayOrigin: 'https://relay.example',
+    available: settings.relayHost !== null,
+    unavailableReason: settings.relayHost === null ? 'no-relay' : null,
+    relay: settings.relayHost === null ? 'stopped' : 'online',
+    relayOrigin: settings.relayHost === null ? null : `https://${settings.relayHost}`,
     phones,
     pairing,
   })

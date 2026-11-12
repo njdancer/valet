@@ -8,7 +8,7 @@ import { z } from 'zod'
 import { panelOnlyRoute, parseRoute } from '../../renderer/lib/routes'
 import type { HashRoute, ValetApi } from '../../shared/api'
 import { CHANNEL_PREFIX, INVOKE_METHODS, type InvokeMethod } from './channels'
-import { onePasswordAccountSchema, traceRetentionDaysSchema } from './settings'
+import { onePasswordAccountSchema, relayHostSchema, traceRetentionDaysSchema } from './settings'
 
 /** Which of the app's windows sent a request. The main process assigns it when it opens the window. */
 export type WindowRole = 'control' | 'tray' | 'confirmation' | 'needs-user'
@@ -119,6 +119,7 @@ const settingsPatch = z
     onePasswordAccount: onePasswordAccountSchema.nullable().optional(),
     traceRetentionDays: traceRetentionDaysSchema.optional(),
     notifications: z.boolean().optional(),
+    relayHost: relayHostSchema.nullable().optional(),
   })
   .strict()
 
