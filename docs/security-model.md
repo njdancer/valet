@@ -278,9 +278,11 @@ A manifest _requests_, for example "secret `login`, fields username and password
 `https://auth.woolworths.com.au`". The person _grants_ it by binding a credential item to the
 request, for one adapter content hash, narrowing the origins if they like but never widening
 them. A manifest can't name a 1Password item. If an adapter changes, it doesn't inherit a grant
-(**Enforced**, given a loader that hashes exactly the code it imports; see "Approval and audit").
-Whether an update may offer a one-click re-bind is
-[D47](plan.md#d47-grant-re-bind-on-update).
+by itself (**Enforced**, given a loader that hashes exactly the code it imports; see "Approval and
+audit"). The one exception is [D47](plan.md#d47-grant-re-bind-on-update)'s re-bind: an update the
+person approves with Touch ID, whose card says it takes over the session, keeps the grants it
+doesn't widen (the same item, the same or fewer fields and origins, nothing typed anywhere new).
+See [Grants across an update](approval-broker.md#grants-across-an-update).
 
 `grant-made` is audited with the adapter hash and the granted origins (**Contract**).
 

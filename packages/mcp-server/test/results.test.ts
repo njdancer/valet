@@ -38,6 +38,35 @@ describe('tool results in the app’s words (IA section 7)', () => {
     )
   })
 
+  it('never says the person was asked when a login hold has nothing open for them', () => {
+    const waiting = toolResult(
+      {
+        status: 'needsUser',
+        reason: 'login-required',
+        needsYou: { kind: 'login-waiting', retryAt: '2026-11-07T10:53:00Z' },
+      },
+      false,
+      context,
+    )
+    expect(waiting.isError).toBeUndefined()
+    expect(text(waiting)).toBe(
+      "Not done yet: Valet's last login to this site didn't work, so it is waiting before it tries again, " +
+        'and this call sent nothing (reason: login-required). Nobody has been asked to act. ' +
+        'Call this tool again after 9:53 pm.',
+    )
+    expect(text(waiting)).not.toContain('person has been asked')
+    const stopped = toolResult(
+      { status: 'needsUser', reason: 'captcha', needsYou: { kind: 'login-stopped' } },
+      true,
+    )
+    expect(stopped.isError).toBe(true)
+    expect(text(stopped)).toBe(
+      'Not done yet: Valet has stopped logging in to this site by itself until the person signs in from ' +
+        'the Valet app, and this call sent nothing (reason: captcha). Nothing in the app is asking them yet: ' +
+        'tell them, and call this tool again once they have.',
+    )
+  })
+
   it('names the login hand-off’s Needs you item and when its window closes', () => {
     const result = toolResult(
       { status: 'needsUser', reason: 'captcha', needsYou: { kind: 'login', until: '2026-11-07T11:03:00Z' } },

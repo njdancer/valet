@@ -5,6 +5,7 @@
 import { type ProviderKind, parseManifest, ValetError } from '@valet/core'
 import { describe, expect, it } from 'vitest'
 import {
+  carriesOver,
   checkGrantRequest,
   type GrantCheck,
   grantInfo,
@@ -13,6 +14,14 @@ import {
 } from '../../src/main/core/grants'
 import type { GrantRequest } from '../../src/shared/api'
 import { SHOP } from './fixtures'
+
+/** The shop's login request and steps, typed loosely for building variants. */
+const SHOP_LOGIN = {
+  description: 'Shop account',
+  fields: ['username', 'password'],
+  origins: ['https://login.shop.test'],
+}
+const SHOP_STEPS = (SHOP.auth?.steps ?? []) as unknown as { op: string; selector?: string }[]
 
 const HASH = 'b'.repeat(64)
 const NOW = new Date('2026-11-07T01:02:03.000Z')
@@ -232,5 +241,91 @@ describe('item references', () => {
     expect(JSON.stringify(info)).not.toContain('op://')
     expect(grantInfo(grant, {}, null).itemTitle).toBe('(item)')
     expect(grantInfo(grant, JSON.parse('{"__proto__": "x"}'), null).itemTitle).toBe('(item)')
+  })
+})
+
+describe('carriesOver: what an update may keep (D47)', () => {
+  const before = parseManifest(SHOP)
+  const vault = {
+    adapterId: 'shop',
+    adapterHash: HASH,
+    secret: 'login',
+    provider: 'onepassword-cli' as const,
+    itemRef: 'op://Valet/item1',
+    origins: ['https://login.shop.test'],
+    grantedAt: NOW.toISOString(),
+  }
+  const messages = {
+    ...vault,
+    secret: 'messages',
+    provider: 'messages' as const,
+    itemRef: 'ShopBank',
+    origins: ['https://login.shop.test'],
+  }
+  const withOtp = (source: Record<string, unknown>) =>
+    parseManifest({
+      ...SHOP,
+      auth: { steps: SHOP_STEPS.map((s) => (s.op === 'otp' ? { ...s, source: { messages: source } } : s)) },
+    } as typeof SHOP)
+
+  it('keeps a grant through an update that changes only code, or narrows the request', () => {
+    expect(carriesOver(vault, before, before)).toBe(true)
+    expect(carriesOver(messages, before, before)).toBe(true)
+    const narrower = parseManifest({
+      ...SHOP,
+      secrets: { login: { ...SHOP_LOGIN, fields: ['password'] } },
+      auth: { steps: SHOP_STEPS.filter((s) => s.selector !== '#user') },
+    } as typeof SHOP)
+    expect(carriesOver(vault, before, narrower)).toBe(true)
+  })
+
+  it('asks again when the secret is requested for more, typed somewhere new, or dropped', () => {
+    const more = (patch: Record<string, unknown>) =>
+      parseManifest({ ...SHOP, secrets: { login: { ...SHOP_LOGIN, ...patch } } } as typeof SHOP)
+    expect(carriesOver(vault, before, more({ fields: ['username', 'password', 'otp'] }))).toBe(false)
+    expect(
+      carriesOver(
+        vault,
+        before,
+        parseManifest({
+          ...SHOP,
+          navigation: [...SHOP.navigation, 'https://sso.shop.test'],
+          secrets: {
+            login: { ...SHOP_LOGIN, origins: ['https://login.shop.test', 'https://sso.shop.test'] },
+          },
+        } as typeof SHOP),
+      ),
+    ).toBe(false)
+    const moved = parseManifest({
+      ...SHOP,
+      auth: {
+        steps: SHOP_STEPS.map((s) => (s.selector === '#pass' ? { ...s, selector: '#password' } : s)),
+      },
+    } as typeof SHOP)
+    expect(carriesOver(vault, before, moved)).toBe(false)
+    const framed = parseManifest({
+      ...SHOP,
+      auth: { ...SHOP.auth, frameOrigins: ['https://login.shop.test'] },
+    } as typeof SHOP)
+    expect(carriesOver(vault, before, framed)).toBe(false)
+    expect(carriesOver({ ...vault, secret: 'other' }, before, before)).toBe(false)
+    expect(carriesOver({ ...vault, adapterId: 'elsewhere' }, before, before)).toBe(false)
+  })
+
+  it('asks again for a Messages grant whose sender is read differently, or that may be typed further', () => {
+    expect(
+      carriesOver(messages, before, withOtp({ sender: 'ShopBank', pattern: '(\\d+)', maxAgeSeconds: 300 })),
+    ).toBe(false)
+    expect(
+      carriesOver(messages, before, withOtp({ sender: 'ShopBank', pattern: '(\\d{6})', maxAgeSeconds: 900 })),
+    ).toBe(false)
+    expect(
+      carriesOver(messages, before, withOtp({ sender: 'Other', pattern: '(\\d{6})', maxAgeSeconds: 300 })),
+    ).toBe(false)
+    const wider = parseManifest({
+      ...SHOP,
+      navigation: [...SHOP.navigation, 'https://sso.shop.test'],
+    } as typeof SHOP)
+    expect(carriesOver(messages, before, wider)).toBe(false)
   })
 })

@@ -236,7 +236,8 @@ steps 1 to 3 at launch. Installs and rollbacks of one adapter run one at a time.
 
 The new hash starts unapproved, so its tools stay hidden until the person approves it on the
 existing approval screen, with the permission diff against the last approved snapshot. Secret
-grants don't carry to a new hash (security model). This is today's behaviour for a built-in that
+grants carry to the new hash only once it is approved, and only those it doesn't widen
+([Grants across an update](approval-broker.md#grants-across-an-update)). This is today's behaviour for a built-in that
 changes with an app update, kept as is; whether the old version should keep serving while an
 update waits is still Nick's open call from the redesign, and the store now makes either answer a
 small change.

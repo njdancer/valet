@@ -270,11 +270,34 @@ service's gates use it:
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | An adapter hash may run          | `adapter-install` with this `adapterId` and `adapterHash`, and no later install evidence for the same adapter      |
 | A grant may be used              | `secret-grant` with the grant's adapter, hash, secret, provider, `itemFingerprint` of its `itemRef`, and origins ⊇ |
+| A kept grant may be used         | a `carried` ledger record of exactly it, and the `adapter-install` that kept it (`inheritsSession`) still honoured |
 | A tool is on for a remote client | `tool-enable` with the adapter hash, tool, `scope: 'remote'`, and `clientId` null or this client                   |
 | A remote client may connect      | `remote-client` with its client id                                                                                 |
 | A loosened setting stands        | `setting` with the scope, adapter, setting and `to` value                                                          |
 
 Revoking one of these removes its evidence from the ledger (a tightening, no signature).
+
+### Grants across an update
+
+**Built** (2026-11-12), after the authoring evals found that the person granted the same login
+again after every install. A signed `adapter-install` whose subject says `inheritsSession` (the
+card already says the new version takes over the session and grants) keeps each of the replaced
+version's grants that the update doesn't widen, for the new hash. This is D47's re-bind, with the
+install's own Touch ID as the gesture instead of a separate tick box.
+
+- **Not widened** (`carriesOver` in `core/grants.ts`): the secret is still requested, for the same
+  or fewer fields and origins, and every origin the grant names is still among them; no new fill
+  step types it; the login loads no new frame origin. A Messages grant keeps its sender read with
+  the same pattern and age, and the navigation origins don't grow. Anything else stays behind and
+  the person grants it again, as before.
+- **Where it's recorded**: `carried` in the anchored ledger (adapter, from and to hashes, secret,
+  provider, item fingerprint, origins), written by the Mac straight after it applies the signed
+  install, then the grant itself in `grants.json` and a `grant-made` audit event with
+  `carriedFrom`. The gate honours a kept grant only while the install that kept it is honoured, so
+  rejecting or retiring that version takes its kept grants with it. Revoking the secret drops them.
+- **The old manifest is checked**: it comes from the approved snapshot, which sits in the data
+  folder, so nothing is kept unless the snapshot hashes to the approved hash (`snapshotIntact`).
+- **Not for a rollback**: the version rolled back to gets its own grants back, as before.
 
 ## Migration
 

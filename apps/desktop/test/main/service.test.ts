@@ -93,8 +93,17 @@ import {
   shopDefinition,
   storeShopDefinition,
 } from './fixtures'
+
 import { testCredentials } from './test-credentials'
 import { tunnelFetch } from './tunnel-fetch'
+
+/** The shop's login request and steps, typed loosely for building variants. */
+const SHOP_LOGIN = {
+  description: 'Shop account',
+  fields: ['username', 'password'],
+  origins: ['https://login.shop.test'],
+}
+const SHOP_STEPS = (SHOP.auth?.steps ?? []) as unknown as { op: string; selector?: string }[]
 
 const TOKEN = 't'.repeat(43)
 const dirs: string[] = []
@@ -571,7 +580,8 @@ describe('Add to Claude Desktop', () => {
 })
 
 describe('an update', () => {
-  it('needs a fresh approval and fresh grants, and is reviewed against the last approved bundle', async () => {
+  /** A shop with a Touch ID-signed login grant, restarted with `input` as its next version. */
+  async function updated(input: typeof SHOP, files: Record<string, string> = { 'src/index.ts': 'v2\n' }) {
     const first = await approved()
     await first.api.grants.make({
       adapterId: 'shop',
@@ -583,31 +593,127 @@ describe('an update', () => {
     })
     await first.service.stop()
     // The same data directory, a changed bundle.
-    const next = builtinAdapter(shopDefinition({ ...SHOP, version: '1.1.0' }), {
-      ...SHOP_FILES,
-      'src/index.ts': 'v2\n',
-    })
+    const next = builtinAdapter(shopDefinition(input), { ...SHOP_FILES, ...files })
     const restarted = new AppService({
       ...(first.service as unknown as { deps: ConstructorParameters<typeof AppService>[0] }).deps,
       adapters: [next],
     })
     services.push(restarted)
     await restarted.start()
+    return { first, next, restarted }
+  }
+
+  const grantEvents = async (s: AppService) =>
+    (await s.api.audit.page({ category: 'approvals-grants', limit: 20 })).records
+      .map((r) => r.event)
+      .filter((e) => e.type === 'grant-made')
+
+  it('needs a fresh approval, is reviewed against the last approved bundle, and keeps a login it does not widen', async () => {
+    const { first, next, restarted } = await updated({ ...SHOP, version: '1.1.0' })
     const [summary] = await restarted.api.adapters.list()
     expect(summary?.approval).toBe('unapproved')
     expect(summary?.pendingUpdate).toEqual({ version: '1.1.0', hash: next.hash })
+    // Nothing carries until the person approves the update.
     expect(summary?.secrets).toEqual([{ name: 'login', granted: false }])
     const [review] = await restarted.api.approvals.pending()
     expect(review?.from).toEqual({ version: '1.0.0', hash: first.adapter.hash })
     expect(review?.files).toEqual([{ path: 'src/index.ts', status: 'modified', added: 1, removed: 1 }])
     await restarted.api.approvals.approve('shop', next.hash)
-    const page = await restarted.api.audit.page({ category: 'approvals-grants', limit: 1 })
-    expect(page.records[0]?.event).toMatchObject({
-      type: 'adapter-approved',
-      previousHash: first.adapter.hash,
-      version: '1.1.0',
+    const page = await restarted.api.audit.page({ category: 'approvals-grants', limit: 5 })
+    expect(page.records.map((r) => r.event)).toContainEqual(
+      expect.objectContaining({
+        type: 'adapter-approved',
+        previousHash: first.adapter.hash,
+        version: '1.1.0',
+      }),
+    )
+    // The card said it inherits the session; the login is kept for the new hash, and audited so.
+    expect((await restarted.api.adapters.list())[0]?.secrets).toEqual([{ name: 'login', granted: true }])
+    expect(await grantEvents(restarted)).toContainEqual(
+      expect.objectContaining({
+        adapterHash: next.hash,
+        secret: 'login',
+        origins: ['https://login.shop.test'],
+        carriedFrom: first.adapter.hash,
+      }),
+    )
+    const [kept] = (await restarted.api.grants.list()).filter((g) => g.adapterHash === next.hash)
+    expect(kept).toMatchObject({
+      secret: 'login',
+      itemId: 'demo-woolworths',
+      origins: ['https://login.shop.test'],
     })
+  })
+
+  it('asks again for a login the update widens: a new origin, field or fill', async () => {
+    const widenings: (typeof SHOP)[] = [
+      {
+        ...SHOP,
+        version: '1.1.0',
+        navigation: [...SHOP.navigation, 'https://sso.shop.test'],
+        secrets: {
+          login: { ...SHOP_LOGIN, origins: ['https://login.shop.test', 'https://sso.shop.test'] },
+        } as typeof SHOP.secrets,
+      },
+      {
+        ...SHOP,
+        version: '1.1.0',
+        secrets: {
+          login: { ...SHOP_LOGIN, fields: ['username', 'password', 'otp'] },
+        } as typeof SHOP.secrets,
+      },
+      {
+        ...SHOP,
+        version: '1.1.0',
+        auth: {
+          steps: [
+            ...SHOP_STEPS.slice(0, 3),
+            { op: 'fill', selector: '#again', value: { secret: 'login', field: 'password' } },
+            ...SHOP_STEPS.slice(3),
+          ],
+        } as typeof SHOP.auth,
+      },
+    ]
+    for (const input of widenings) {
+      const { next, restarted } = await updated(input)
+      await restarted.api.approvals.approve('shop', next.hash)
+      expect((await restarted.api.adapters.list())[0]?.approval).toBe('approved')
+      expect((await restarted.api.adapters.list())[0]?.secrets).toEqual([{ name: 'login', granted: false }])
+      expect((await grantEvents(restarted)).some((e) => 'carriedFrom' in e)).toBe(false)
+    }
+  })
+
+  it('keeps nothing when the person cancels Touch ID, or once the update is rejected', async () => {
+    const { first, next, restarted } = await updated({ ...SHOP, version: '1.1.0' })
+    ;(first.presence as { answer: boolean }).answer = false
+    await restarted.api.approvals.approve('shop', next.hash)
     expect((await restarted.api.adapters.list())[0]?.secrets).toEqual([{ name: 'login', granted: false }])
+    ;(first.presence as { answer: boolean }).answer = true
+    await restarted.api.approvals.approve('shop', next.hash)
+    expect((await restarted.api.adapters.list())[0]?.secrets).toEqual([{ name: 'login', granted: true }])
+    // A rejected update takes the kept grant with it: the install's evidence is what backs it.
+    await restarted.api.approvals.reject('shop', next.hash)
+    expect((await restarted.api.adapters.list())[0]?.secrets).toEqual([{ name: 'login', granted: false }])
+  })
+
+  it('keeps nothing when the approved snapshot was edited to hide a widening', async () => {
+    const { first, next, restarted } = await updated({
+      ...SHOP,
+      version: '1.1.0',
+      secrets: {
+        login: { ...SHOP_LOGIN, fields: ['username', 'password', 'otp'] },
+      } as typeof SHOP.secrets,
+    })
+    // Something in the data folder rewrites the old snapshot's manifest to match the new one.
+    const snapshots = (restarted as unknown as { snapshots: { get(id: string): Promise<unknown> } }).snapshots
+    const original = snapshots.get.bind(snapshots)
+    snapshots.get = async (id: string) => {
+      const snap = (await original(id)) as { manifest: { secrets: Record<string, unknown> } } | null
+      return snap === null ? null : { ...snap, manifest: next.definition.manifest }
+    }
+    await restarted.api.approvals.approve('shop', next.hash)
+    expect((await restarted.api.adapters.list())[0]?.secrets).toEqual([{ name: 'login', granted: false }])
+    expect(first.adapter.hash).not.toBe(next.hash)
   })
 })
 
@@ -3012,9 +3118,68 @@ describe('what a tool result is told about Needs you', () => {
       reason: 'captcha',
       needsYou: { kind: 'gave-up' },
     })
-    expect(await s.call('cart', {})).toEqual({ status: 'needsUser', reason: 'captcha' })
+    // The hold waits for the person, and nothing in Needs you is asking them: the result says so.
+    expect(await s.call('cart', {})).toEqual({
+      status: 'needsUser',
+      reason: 'captcha',
+      needsYou: { kind: 'login-stopped' },
+    })
     // Giving up isn't missing it.
     expect((await s.api.attention.list()).map((i) => i.kind)).not.toContain('missed')
+  })
+
+  describe('a login hold with nothing in Needs you', () => {
+    const at = (iso: string) => Date.parse(iso)
+    async function held() {
+      const s = await setup({ definition: loggingIn() })
+      await s.api.approvals.approve('shop', s.adapter.hash)
+      await s.api.grants.make({
+        adapterId: 'shop',
+        adapterHash: s.adapter.hash,
+        secret: 'login',
+        provider: 'fake',
+        itemRef: 'demo-woolworths',
+        origins: ['https://login.shop.test'],
+      })
+      s.driver.toolCookies = []
+      const markers = new LoginAttemptMarker(s.paths.loginMarkers, {
+        now: () => at('2026-11-07T00:00:00.000Z'),
+      })
+      return { s, markers }
+    }
+
+    it('says a backoff is waiting for a time, and that nobody was asked', async () => {
+      const { s, markers } = await held()
+      await markers.hold('shop', 1, at('2026-11-07T00:05:00.000Z'), 'login-required')
+      expect(await s.call('cart', {})).toEqual({
+        status: 'needsUser',
+        reason: 'login-required',
+        needsYou: { kind: 'login-waiting', retryAt: '2026-11-07T00:05:00.000Z' },
+      })
+      expect((await s.api.attention.list()).map((i) => i.kind)).not.toContain('needs-user')
+    })
+
+    it('counts a login that stopped before typing as the same wait (D35)', async () => {
+      const { s, markers } = await held()
+      await markers.set('shop', null)
+      // Written as the runtime writes it: started now, nothing typed.
+      expect(await markers.read('shop')).toMatchObject({ kind: 'in-progress', attempted: false })
+      expect(await s.call('cart', {})).toEqual({
+        status: 'needsUser',
+        reason: 'login-required',
+        needsYou: { kind: 'login-waiting', retryAt: '2026-11-07T00:05:00.000Z' },
+      })
+    })
+
+    it('says a hold for the person has asked nobody yet', async () => {
+      const { s, markers } = await held()
+      await markers.hold('shop', 1, null, 'account-locked')
+      expect(await s.call('cart', {})).toEqual({
+        status: 'needsUser',
+        reason: 'account-locked',
+        needsYou: { kind: 'login-stopped' },
+      })
+    })
   })
 
   it('keeps a login window that ran out as missed', async () => {

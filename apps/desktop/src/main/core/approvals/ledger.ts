@@ -55,6 +55,34 @@ export const ledgerSchema = z
       })
       .strict()
       .optional(),
+    /**
+     * Grants an approved update kept from the version it replaced (docs/approval-broker.md#grants-
+     * across-an-update). Written by the Mac only, straight after it applies a signed
+     * `adapter-install` that inherits the session, for grants that update didn't widen. Each is
+     * honoured only while that install's evidence is (grantSigned).
+     */
+    carried: z
+      .array(
+        z
+          .object({
+            adapterId: ADAPTER_ID,
+            fromHash: HASH,
+            toHash: HASH,
+            secret: SECRET,
+            provider: z.enum([
+              'onepassword-desktop',
+              'onepassword-service-account',
+              'keychain-copy',
+              'messages',
+            ]),
+            itemFingerprint: z.string().regex(/^[0-9a-f]{16}$/),
+            origins: z.array(z.string().max(300)).min(1).max(50),
+            at: z.iso.datetime(),
+          })
+          .strict(),
+      )
+      .max(500)
+      .optional(),
   })
   .strict()
 export type LedgerData = z.infer<typeof ledgerSchema>

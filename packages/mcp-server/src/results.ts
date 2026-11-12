@@ -208,6 +208,22 @@ function needsYouText(
 ): string | null {
   if (hint === undefined) return null
   if (hint.kind === 'gave-up') return GAVE_UP_RESULT
+  // Neither of these has anything open for the person, so the text never says they were asked.
+  if (hint.kind === 'login-waiting') {
+    const at = Date.parse(hint.retryAt)
+    const when = Number.isFinite(at) ? clockTime(at, context.timeZone) : null
+    return (
+      `Not done yet: Valet's last login to this site didn't work, so it is waiting before it tries again, ` +
+      `and this call sent nothing (reason: ${needsUserCode(reason)}). Nobody has been asked to act. ` +
+      (when === null ? 'Call this tool again later.' : `Call this tool again after ${when}.`)
+    )
+  }
+  if (hint.kind === 'login-stopped')
+    return (
+      'Not done yet: Valet has stopped logging in to this site by itself until the person signs in from ' +
+      `the Valet app, and this call sent nothing (reason: ${needsUserCode(reason)}). Nothing in the app is ` +
+      'asking them yet: tell them, and call this tool again once they have.'
+    )
   const adapterName = context.adapterName
   if (adapterName === undefined) return null
   const code = needsUserCode(reason)
