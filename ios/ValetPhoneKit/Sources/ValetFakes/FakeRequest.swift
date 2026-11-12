@@ -155,7 +155,7 @@ public struct FakeRequest: Sendable {
   public static func confirm(id: String? = nil) -> FakeRequest {
     FakeRequest(id: id, kind: .irreversibleCall, subject: .object([
       ("adapterId", .string("woolworths")), ("adapterHash", .string(hashA)), ("tool", .string("checkout")),
-      ("callId", .string("call-6b3e")),
+      ("callId", .string("call-6b3e")), ("confirmationId", .string("cf_order")),
       ("preview", .array([.string("12 items, $84.20"), .string("Woolworths Bondi Junction, delivery 6 to 7 pm"), .string("Card ending 4421")])),
     ]), requester: agent(claudeApp, "Claude"), agentNote: nil, display: [
       client("Claude app", "remote"), ("domain", .string("woolworths.com.au")),

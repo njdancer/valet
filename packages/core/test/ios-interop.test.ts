@@ -199,6 +199,7 @@ function requests(macId: string): ApprovalRequest[] {
         adapterHash: HASH_A,
         tool: 'checkout',
         callId: 'call-6b3e',
+        confirmationId: 'cf_order',
         preview: ['12 items, $84.20', 'Card ending 4421'],
       },
     },

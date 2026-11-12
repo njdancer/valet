@@ -108,6 +108,8 @@ public enum ApprovalSubject: Equatable, Sendable {
   }
   public struct IrreversibleCall: Equatable, Sendable {
     public let adapterId, adapterHash, tool, callId: String
+    /// Which confirmation in the call this is: two in one call never share a request.
+    public let confirmationId: String
     public let preview: [String]
   }
   public struct DevicePair: Equatable, Sendable {
@@ -146,7 +148,7 @@ public enum ApprovalSubject: Equatable, Sendable {
         adapterHash: try f.string("adapterHash", pattern: Patterns.hash),
         packageHash: try f.string("packageHash", pattern: Patterns.hash),
         previousHash: try f.nullableString("previousHash", pattern: Patterns.hash),
-        source: try f.oneOf("source", ["draft", "local-folder", "rollback"]),
+        source: try f.oneOf("source", ["draft", "local-folder", "rollback", "builtin"]),
         inheritsSession: try f.bool("inheritsSession"),
         references: references,
         changes: changes,
@@ -230,12 +232,13 @@ public enum ApprovalSubject: Equatable, Sendable {
         minutes: try f.int("minutes", min: 1, max: 60)
       ))
     case .irreversibleCall:
-      let f = try Fields(value, path: path, required: ["adapterId", "adapterHash", "tool", "callId", "preview"])
+      let f = try Fields(value, path: path, required: ["adapterId", "adapterHash", "tool", "callId", "confirmationId", "preview"])
       return .irreversibleCall(IrreversibleCall(
         adapterId: try f.string("adapterId", pattern: Patterns.adapterId),
         adapterHash: try f.string("adapterHash", pattern: Patterns.hash),
         tool: try f.string("tool", pattern: Patterns.name),
         callId: try f.string("callId", pattern: "[A-Za-z0-9_-]{1,80}"),
+        confirmationId: try f.string("confirmationId", pattern: "cf_[A-Za-z0-9_-]{1,60}"),
         preview: try f.displays("preview", max: 20, itemMax: 200)
       ))
     case .resume:
