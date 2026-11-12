@@ -434,7 +434,9 @@ but doesn't fail on two kinds: "nearly passed" contrast, which is the system's o
 label colours on grouped backgrounds, and "partially unsupported" Dynamic Type, which is the
 deliberate cap on the action bar and the system's own toolbar button. Contrast issues the audit can't
 tie to an element are the system's scroll-edge fade under the tab bar, and are logged too. The
-card's scroll edges are hard on iOS 26, so its first and last lines aren't faded at rest.
+card's scroll edges are hard on iOS 26. On the card, contrast issues on text within a band under
+the toolbar or just above the action bar are logged too: that text is in the label colours, and
+the audit reads the system's glass over it, differently from run to run.
 
 ## What needs Nick
 

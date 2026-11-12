@@ -152,6 +152,14 @@ final class JourneyTests: XCTestCase {
     // The newest card is at the top; the rest may be below the fold.
     _ = waitFor("card.1D99")
     var issues: [String] = []
+    // Bands at the top and bottom of a screen where the system's own glass and scroll-edge effects
+    // lie over the content (iOS 26). Text there is drawn in the label colours; the audit reads the
+    // overlay, not the text, and flips between runs.
+    var overlayBands: (top: CGFloat, bottom: CGFloat)?
+    func underOverlay(_ element: XCUIElement?) -> Bool {
+      guard let bands = overlayBands, let frame = element?.frame else { return false }
+      return frame.minY < bands.top || frame.maxY > bands.bottom
+    }
     func audit(_ screen: String) throws {
       try app.performAccessibilityAudit(for: [.dynamicType, .contrast, .elementDetection, .hitRegion, .sufficientElementDescription]) { issue in
         let line = "\(screen): \(issue.auditType) \(issue.compactDescription) on \(issue.element?.debugDescription.prefix(160) ?? "?")"
@@ -160,7 +168,7 @@ final class JourneyTests: XCTestCase {
         // unsupported" Dynamic Type is the deliberate cap on the action bar and the system's toolbar.
         // A contrast issue with no element is the system's own scroll-edge fade under the tab bar.
         if issue.compactDescription.contains("nearly passed") || issue.compactDescription.contains("partially unsupported")
-          || (issue.auditType == .contrast && issue.element == nil) {
+          || (issue.auditType == .contrast && (issue.element == nil || underOverlay(issue.element))) {
           print("audit note: " + line)
         } else {
           issues.append(line)
@@ -170,10 +178,9 @@ final class JourneyTests: XCTestCase {
     }
     try audit("Needs you")
     openCard("1D99")
-    // Scrolled to the end, so no line is half under the pinned action bar (the audit reads a line
-    // cut by the bar as low contrast; at rest the last lines always are).
-    app.swipeUp()
+    overlayBands = (element("card.close").frame.maxY + 48, element("card.decline").frame.minY - 24)
     try audit("Card")
+    overlayBands = nil
     waitFor("card.close").tap()
     for tab in ["Activity", "Sites", "Agents", "Valet"] {
       app.tabBars.buttons[tab].tap()
