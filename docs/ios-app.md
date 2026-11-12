@@ -109,8 +109,8 @@ Three P-256 keys, as B's table says, made at pairing and never exported.
   enrolment no longer destroys it. Mac-only kinds stay Mac only.
 - **A fresh check for every signature.** Each approval builds a new `LAContext` with
   `touchIDAuthenticationAllowableReuseDuration = 0`, loads the key from its blob with that context,
-  signs, and drops both. Nothing caches a key or a context, and the "Face ID to open" context is
-  never reused (review finding 4).
+  signs, and drops both. Nothing caches a key or a context, so every approval is
+  its own gesture (review finding 4).
 - The Face ID reason string uses only Mac-written values: the kind and ids ("Approve installing an
   adapter for yahoo-finance"), never the agent's adapter name. On Face ID iPhones the system shows
   the reason only after a failed match, so the card itself must carry the meaning.
@@ -244,7 +244,7 @@ question for Nick), even though B's `approvableOn` would allow a `resume` card; 
 ## Push notifications
 
 - The relay's push carries only "Valet needs you" or "Something changed in Valet"
-  (`pushPayloadSchema`), no actions, no reply. A tap opens Valet, which asks for Face ID to open
+  (`pushPayloadSchema`), no actions, no reply. A tap opens Valet
   (on by default), then reconnects and shows whatever arrived.
 - A's richer titles ("Install an adapter for yahoo.com") need the content inside the push, which
   B's payload forbids. Choice: keep B's fixed text in the first version; a notification service
@@ -271,7 +271,7 @@ follow the system.
 | Valet     | The Mac's status, Pause Valet, Lock down…, Devices (Remove other devices), About, Unpair this iPhone                               |
 
 Also: Welcome, Scan, Check the code, Recovery code (once B designs it), Notifications prompt,
-Paired, Face ID to open, the app-switcher privacy cover, Unpaired.
+Paired, the app-switcher privacy cover, Unpaired. No Face ID to open (Nick's threat model, below).
 
 Accessibility: Dynamic Type to AX5 with rows that stack; the card's tone word and risk line move
 into the pinned bar at accessibility sizes (A rule 6); VoiceOver order is A §2's; hosts get the
@@ -368,6 +368,16 @@ Partly open: re-pairing after a Face ID change must revoke the old record first,
 side (12); the journeys run against `FakeMac`, which speaks core's v2 frames, until G's relay and D's
 broker exist (17).
 
+## Threat model
+
+Nick set the posture on 2026-11-12: approvals exist to limit what the models can do. The main
+adversary is an agent that overreaches or is steered by what it reads, not a phone thief or a
+hostile relay. So the phone keeps what stops an agent: the person's own gesture on every approval,
+the exact text signed, agent text never in titles, the typed consent code, the read tick on strong
+cards, the settle time, and Mac-only kinds. It drops friction aimed only at stronger attackers: no
+Face ID to open the app, the passcode always works, and removing a device needs a confirmation,
+not Face ID. The pairing and channel checks stay, since they cost the person nothing.
+
 ## Code review and red team
 
 An adversarial review of the Swift package and the app (2026-11-12) raised 12 findings. All are
@@ -393,7 +403,8 @@ fixed, each with a regression test where one fits:
    match. With the passcode now allowed, no enrolment check is needed.
 10. The strict reader matched keys by Swift's canonical string equality. It compares UTF-16 code
     units, as JavaScript does, and a second text for a request is compared byte for byte.
-11. Remove a device was one tap. It now asks to confirm, then for Face ID.
+11. Remove a device was one tap. It now asks to confirm. (A Face ID step was dropped under Nick's
+    threat model: it only stops a thief, and removing a device only tightens.)
 12. Software keys were compiled into the shipping crypto module. They live in ValetFakes, and the
     CI check that the shipping binary has no fakes looks for them too.
 

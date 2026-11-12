@@ -1,4 +1,3 @@
-import LocalAuthentication
 import SwiftUI
 import ValetPhoneCore
 
@@ -13,25 +12,22 @@ struct ValetPhoneApp: App {
   }
 }
 
-/// Face ID to open, a cover over the app switcher snapshot, and the one-second clock that moves
-/// deadlines along.
+/// A cover over the app switcher snapshot, and the one-second clock that moves deadlines along.
+/// No Face ID to open: approvals exist to limit what agents can do, and an agent can't open the
+/// phone (Nick, 2026-11-12). Each approval still asks for Face ID or the passcode.
 struct AppRoot: View {
   let host: AppHost
   @Environment(\.scenePhase) private var scenePhase
-  @State private var unlocked = false
-  @State private var unlockFailed = false
 
   var body: some View {
     ZStack {
       RootView(model: host.model, host: host)
-        .opacity(showsCover ? 0 : 1)
-        .accessibilityHidden(showsCover)
-      if showsCover {
-        LockCover(failed: unlockFailed, unlock: unlock)
+        .opacity(scenePhase == .active ? 1 : 0)
+      if scenePhase != .active {
+        Color(.systemBackground).ignoresSafeArea()
       }
     }
     .task {
-      if host.locksOnOpen { unlock() } else { unlocked = true }
       var seconds = 0
       while !Task.isCancelled {
         try? await Task.sleep(for: .seconds(1))
@@ -43,49 +39,11 @@ struct AppRoot: View {
     }
     .onChange(of: scenePhase) { _, phase in
       switch phase {
-      case .background:
-        if host.locksOnOpen { unlocked = false }
-        host.model.disconnect()
-      case .active:
-        host.model.connect()
-        if !unlocked { unlock() }
-      default:
-        break
+      case .background: host.model.disconnect()
+      case .active: host.model.connect()
+      default: break
       }
     }
-  }
-
-  private var showsCover: Bool { !unlocked || scenePhase != .active }
-
-  private func unlock() {
-    guard host.locksOnOpen else {
-      unlocked = true
-      return
-    }
-    let context = LAContext()
-    context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Open Valet") { ok, _ in
-      Task { @MainActor in
-        unlocked = ok
-        unlockFailed = !ok
-      }
-    }
-  }
-}
-
-struct LockCover: View {
-  let failed: Bool
-  let unlock: () -> Void
-
-  var body: some View {
-    VStack(spacing: 16) {
-      Image(systemName: "lock.fill").font(.largeTitle).accessibilityHidden(true)
-      Text("Valet is locked").font(.title2.bold())
-      if failed {
-        Button("Unlock with Face ID", action: unlock).buttonStyle(.borderedProminent)
-      }
-    }
-    .frame(maxWidth: .infinity, maxHeight: .infinity)
-    .background(Color(.systemBackground))
   }
 }
 

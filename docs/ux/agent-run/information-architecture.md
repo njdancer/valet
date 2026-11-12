@@ -347,9 +347,9 @@ The app is in `ios/`, its design in `docs/ios-app.md`.
 - **Notifications without actions:** yes. A notification only opens the app; Approve always needs
   the card on screen for a second and a Face ID match. Titles are B's fixed text until the Mac can
   seal them (CR-8), and push itself waits for Nick's Apple Developer account.
-- **Face ID to open:** yes, with a cover over the app switcher snapshot. Opening falls back to
-  the passcode, and so does approving: Nick decided (2026-11-12) that the passcode always works,
-  as in any iPhone app. Mac-only kinds stay Mac only.
+- **Face ID to open:** no, by Nick's threat model (2026-11-12): approvals limit what agents can
+  do, and an agent can't open the phone. The app covers itself in the app switcher, and every
+  approval still asks for Face ID or the passcode, which always works.
 - **Departures:** six digits instead of words (B), and no
   recovery code, Pause this site, Secrets or Add an agent on the phone until B and G design them.
   The full list is in `docs/ios-app.md`, "Where H departs from A's wireframes".

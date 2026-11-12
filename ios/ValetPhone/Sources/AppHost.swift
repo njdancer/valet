@@ -14,8 +14,6 @@ import ValetProtocol
 @MainActor
 final class AppHost {
   let model: PhoneModel
-  /// Whether opening the app asks for Face ID first (docs/ios-app.md, Screens).
-  let locksOnOpen: Bool
   #if VALET_FAKES
     let world: FakeWorld?
   #endif
@@ -40,7 +38,6 @@ final class AppHost {
         )
         self.world = world
         self.model = model
-        locksOnOpen = false
         if scenario == .pair {
           // The person confirms the code at the Mac: in the simulator, a button stands in for it.
           world.mac.autoConfirmPairing = false
@@ -55,7 +52,6 @@ final class AppHost {
     model = PhoneModel(
       transport: WebSocketRelayTransport(), store: KeychainPhoneStore(), keys: .system
     )
-    locksOnOpen = true
     model.connect()
   }
 
