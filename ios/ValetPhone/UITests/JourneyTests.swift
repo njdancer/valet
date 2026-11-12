@@ -173,4 +173,42 @@ final class JourneyTests: XCTestCase {
     shot.lifetime = .keepAlways
     add(shot)
   }
+
+  // MARK: Screens for review (persona QA reads these from the CI artifact)
+
+  func shot(_ name: String) {
+    let shot = XCTAttachment(screenshot: app.screenshot())
+    shot.name = name
+    shot.lifetime = .keepAlways
+    add(shot)
+  }
+
+  func testScreensForReview() {
+    launch("pair")
+    shot("01 pair start")
+    waitFor("pair.fake").tap()
+    _ = waitFor("pair.code")
+    shot("02 pair code")
+    launch("cards")
+    _ = waitFor("card.1D99")
+    shot("03 needs you")
+    for (ref, name) in [("7B3F", "04 install"), ("1D99", "05 unsandboxed install"), ("4C55", "06 connect"), ("8F20", "07 confirm")] {
+      openCard(ref)
+      shot(name)
+      app.swipeUp()
+      shot(name + " lower")
+      waitFor("card.close").tap()
+    }
+    launch("wrong")
+    openCard("6E11")
+    shot("08 signed-in session")
+    launch("admin")
+    openCard("3B77")
+    shot("09 store choice")
+    waitFor("card.close").tap()
+    for tab in ["Activity", "Sites", "Agents", "Valet"] {
+      app.tabBars.buttons[tab].tap()
+      shot("10 \(tab.lowercased())")
+    }
+  }
 }
