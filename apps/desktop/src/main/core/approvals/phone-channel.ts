@@ -120,7 +120,11 @@ const stateSchema = z
         .object({
           nextSeq: z.number().int().min(1),
           lastInbound: z.number().int().min(0),
-          outbox: z.array(z.object({ seq: z.number().int().min(1), text: z.string() }).strict()),
+          outbox: z.array(
+            z
+              .object({ seq: z.number().int().min(1), text: z.string(), rewritten: z.boolean().optional() })
+              .strict(),
+          ),
         })
         .strict(),
     ),
@@ -182,12 +186,23 @@ export class PhoneChannel implements PhoneOutbox {
   send(deviceId: string, message: MacToPhoneBody): void {
     if (!this.options.devices.isActivePhone(deviceId)) return
     const phone = this.phone(deviceId)
+    // A newer status takes the place of an older one still unacked, at the older one's seq: the
+    // phone shows only the last, and dropping a seq would leave a gap it waits on forever, holding
+    // every card behind it. If the phone had already taken the older one, it sees the newer as a
+    // duplicate; its ack then sends a fresh status (receiveFrom).
+    if (message.type === 'status') {
+      const older = phone.outbox.find((m) => m.text.startsWith('{"type":"status"'))
+      if (older !== undefined) {
+        older.text = JSON.stringify({ ...message, seq: older.seq })
+        older.rewritten = true
+        this.save()
+        void this.transmit(deviceId, older.text)
+        return
+      }
+    }
     const seq = phone.nextSeq
     phone.nextSeq += 1
     const text = JSON.stringify({ ...message, seq })
-    // A newer status replaces any older one still unacked: the phone shows only the last.
-    if (message.type === 'status')
-      phone.outbox = phone.outbox.filter((m) => !m.text.startsWith('{"type":"status"'))
     phone.outbox.push({ seq, text })
     if (phone.outbox.length > OUTBOX_MAX) phone.outbox.splice(0, phone.outbox.length - OUTBOX_MAX)
     this.save()
@@ -327,8 +342,10 @@ export class PhoneChannel implements PhoneOutbox {
     const phone = this.phone(from)
     if (message.type === 'ack') {
       if (typeof message.ackSeq === 'number') {
+        const acked = phone.outbox.find((m) => m.seq === message.ackSeq)
         phone.outbox = phone.outbox.filter((m) => m.seq !== message.ackSeq)
         this.save()
+        if (acked?.rewritten === true) this.sendStatus(from)
       }
       return
     }

@@ -309,6 +309,41 @@ describe('the phone channel', () => {
     expect(lastEnvelopes(t, p.deviceId).length).toBeGreaterThan(before)
   })
 
+  it('a newer status takes an unacked one’s seq, so the phone never waits on a gap', async () => {
+    const t = await setup()
+    const { p, code } = await pair(t)
+    await t.channel.confirmPairing(code)
+    const status = (at: string) =>
+      ({ type: 'status', at, safety: 'running', sites: [], agents: [], devices: [], recent: [] }) as never
+    t.setOnline(false)
+    t.channel.send(p.deviceId, status('2026-11-12T00:00:01.000Z'))
+    t.channel.send(p.deviceId, status('2026-11-12T00:00:02.000Z'))
+    const asked = await t.broker.request(
+      'tool-enable',
+      {
+        adapterId: 'gumleaf',
+        adapterHash: 'a'.repeat(64),
+        tool: 'x',
+        scope: 'local',
+        clientId: null,
+        sideEffect: 'read',
+      },
+      { kind: 'agent', clientId: 'local:c', clientName: 'C' },
+    )
+    if (!asked.ok) throw new Error('not asked')
+    t.setOnline(true)
+    const before = lastEnvelopes(t, p.deviceId).length
+    t.channel.handle({ type: 'device-online', deviceId: p.deviceId, online: true })
+    await tick()
+    const resent = (await openAll(t, p)).slice(before)
+    const seqs = resent.map((m) => m['seq'] as number)
+    // Every seq from 1, none missing, and the status the phone gets is the newer one.
+    expect(new Set(seqs)).toEqual(new Set(Array.from({ length: Math.max(...seqs) }, (_, i) => i + 1)))
+    const statuses = resent.filter((m) => m['type'] === 'status')
+    expect(statuses.map((m) => m['at'])).not.toContain('2026-11-12T00:00:01.000Z')
+    expect(resent.some((m) => m['type'] === 'approval-request')).toBe(true)
+  })
+
   it('ignores envelopes from phones that are not paired', async () => {
     const t = await setup()
     const stranger = phone()

@@ -32,6 +32,8 @@ export class Phone {
   readonly messages: Record<string, unknown>[] = []
   socket: WebSocket | null = null
   private seq = 0
+  private lastInbound = 0
+  private readonly held = new Map<number, Record<string, unknown>>()
   constructor(
     /** Where to dial: http://127.0.0.1:<port>. */
     private readonly url: string,
@@ -78,7 +80,22 @@ export class Phone {
       },
       this.agree,
     )
-    if (text !== null) this.messages.push(JSON.parse(text))
+    if (text === null) return
+    // In order, as the iPhone app takes them: a duplicate is ignored, a gap is held until it fills.
+    const message = JSON.parse(text) as Record<string, unknown>
+    const seq = message['seq']
+    if (message['type'] === 'ack' || typeof seq !== 'number') return void this.messages.push(message)
+    if (seq <= this.lastInbound) return
+    this.held.set(seq, message)
+    for (
+      let next = this.held.get(this.lastInbound + 1);
+      next !== undefined;
+      next = this.held.get(this.lastInbound + 1)
+    ) {
+      this.held.delete(this.lastInbound + 1)
+      this.lastInbound += 1
+      this.messages.push(next)
+    }
   }
 
   async send(message: Record<string, unknown>) {
