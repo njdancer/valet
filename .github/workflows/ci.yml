@@ -1,9 +1,25 @@
 name: CI
 
+# Two suites from one file, so a job is written once:
+#
+# - fast, on every pull request and push to main: pnpm check, the browser-electron end-to-end suite,
+#   the drift smoke dry run, and the desktop end-to-end suite without its two slow files (journey and
+#   update, about 17 of its 20 minutes, most of it the fake site's real pacing). The Swift and release
+#   dry-run jobs, and the iOS app job, run only when a file they build or test changed (the `changes`
+#   job below).
+# - full, nightly and on demand (Actions > CI > Run workflow): everything, with the desktop suite split
+#   across three runners. `pnpm release` refuses a real release unless a full run passed on the commit
+#   it is releasing (apps/desktop/scripts/release-lib.ts, fullSuiteVerdict), so this is also the
+#   pre-release gate.
+
 on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    # 16:30 UTC is 03:30 in Sydney (AEDT): overnight for Nick, and off the busy hours of the threads.
+    - cron: "30 16 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -15,13 +31,78 @@ permissions:
 # Pull requests from forks aren't accepted (CONTRIBUTING.md), and none of their code runs here: every
 # job below is skipped for one, and `ci` then fails, because a skipped job isn't a passed one.
 
+# A newer push to a pull request cancels the older run. On main, runs queue instead (GitHub keeps the
+# newest waiting one), so every merge isn't cut short by the next, and nightly runs have their own group.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  check:
+  changes:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    # What this run has to cover. Linux, so it never waits for one of the few macOS runners.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      suite: ${{ steps.pick.outputs.suite }}
+      code: ${{ steps.pick.outputs.code }}
+      swift: ${{ steps.pick.outputs.swift }}
+      release: ${{ steps.pick.outputs.release }}
+      ios: ${{ steps.pick.outputs.ios }}
+      e2e: ${{ steps.matrix.outputs.e2e }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          everything() {
+            echo "suite=$1" >> "$GITHUB_OUTPUT"
+            for name in code swift release ios; do echo "$name=true" >> "$GITHUB_OUTPUT"; done
+          }
+          case "$EVENT" in
+            pull_request) base="$PR_BASE" ;;
+            *) base="$BEFORE" ;;
+          esac
+          if [ "$EVENT" = schedule ] || [ "$EVENT" = workflow_dispatch ]; then
+            everything full
+          elif [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            # A new branch, or a force push past what was there: no base to compare with.
+            everything fast
+          else
+            echo "suite=fast" >> "$GITHUB_OUTPUT"
+            files=$(git diff --name-only "$(git merge-base "$base" HEAD)" HEAD)
+            echo "changed:"; echo "$files"
+            has() { echo "$files" | grep -qE "$1" && echo true || echo false; }
+            # Anything that installs, builds or runs: the shared jobs' own setup, and every package.
+            shared='^(\.github/workflows/ci\.yml|mise\.toml|package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$'
+            # Code is everything but prose; docs/ Markdown is still formatted and linted by pnpm check.
+            echo "code=$(echo "$files" | grep -vE '(\.md$|^docs/|^\.github/workflows/(app-tour|demo-video|live-sites|qa-screens)\.yml$)' | grep -q . && echo true || echo false)" >> "$GITHUB_OUTPUT"
+            # The native binaries and the TypeScript suites run against them.
+            echo "swift=$(has "$shared|^swift-bridge/|^packages/(mcp-server|credentials)/|^apps/desktop/src/main/core/approvals/|^apps/desktop/test/main/approver-contract")" >> "$GITHUB_OUTPUT"
+            # What the release command packages and signs.
+            echo "release=$(has "$shared|^swift-bridge/|^apps/desktop/(package\.json|electron-builder\.config\.ts|electron\.vite\.config\.ts|build/|scripts/)")" >> "$GITHUB_OUTPUT"
+            # The iOS app, and the core contracts its interop vectors are checked against.
+            echo "ios=$(has "$shared|^ios/|^packages/core/|^\.github/workflows/ios-screens\.yml$")" >> "$GITHUB_OUTPUT"
+          fi
+      - id: matrix
+        # The end-to-end runners. fast: one. full: the desktop suite's two slow files on runners of
+        # their own, beside everything else.
+        env:
+          SUITE: ${{ steps.pick.outputs.suite }}
+        run: |
+          if [ "$SUITE" = full ]; then
+            echo 'e2e=[{"part":"fast"},{"part":"journey"},{"part":"update"}]' >> "$GITHUB_OUTPUT"
+          else
+            echo 'e2e=[{"part":"fast"}]' >> "$GITHUB_OUTPUT"
+          fi
+
+  check:
+    needs: changes
     # macOS, because the updater tests use ditto and the app only ships for macOS.
     runs-on: macos-latest
     timeout-minutes: 30
@@ -32,26 +113,41 @@ jobs:
       - run: pnpm check
 
   e2e:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    name: e2e (${{ matrix.part }})
     runs-on: macos-latest
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.changes.outputs.e2e) }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2.4.4
       - run: pnpm install --frozen-lockfile
       - name: browser-electron end to end
+        if: matrix.part == 'fast'
         run: |
           pnpm --filter @valet/browser-electron typecheck:e2e
           pnpm --filter @valet/browser-electron test:e2e --trace off
-      - name: desktop end to end
+      - name: desktop end to end, without journey and update (apps/desktop/e2e/playwright.config.ts)
+        if: matrix.part == 'fast'
+        env:
+          VALET_E2E_SUITE: fast
         run: pnpm --filter @valet/desktop test:e2e --trace off
+      - name: desktop end to end, ${{ matrix.part }}.spec.ts
+        if: matrix.part != 'fast'
+        run: pnpm --filter @valet/desktop test:e2e --trace off ${{ matrix.part }}.spec.ts
       - name: drift smoke test, dry run against the fake (the live run skips without VALET_LIVE_SMOKE)
+        if: matrix.part == 'fast'
         run: |
           pnpm --filter @valet/adapter-woolworths typecheck:smoke
           pnpm --filter @valet/adapter-woolworths test:smoke --trace off
 
   swift-bridge:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: changes
+    if: needs.changes.outputs.swift == 'true'
     # The native binaries the packaged app ships: the stdio bridge (D60), run against the same suite
     # as the TypeScript bridge (packages/mcp-server/test/bridge-contract.ts), and the Keychain and
     # Messages helpers (D6, D8), run against the TypeScript contract suites in packages/credentials.
@@ -81,7 +177,8 @@ jobs:
           VALET_SWIFT_APPROVER: ${{ github.workspace }}/swift-bridge/.build/debug/valet-approver
 
   release-dry-run:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: changes
+    if: needs.changes.outputs.release == 'true'
     # AC18's one release command end to end, with nothing real in reach: an ad hoc signature, a
     # throwaway Ed25519 feed key made in the job, and notarisation, upload and tag as printed stubs
     # (apps/desktop/scripts/release.mjs). pnpm check runs in the check job, so it is skipped here.
@@ -107,7 +204,8 @@ jobs:
           retention-days: 7
 
   ios:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
     # The iOS companion app (docs/ios-app.md). Its Swift package is tested on the Mac, the shared
     # vectors are checked both ways against packages/core, and the app runs its journeys on the
     # simulator against the fake Mac and relay. Nothing is signed: simulator builds need no team.
@@ -181,21 +279,38 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+
   ci:
-    # The one check to require on main. It passes only when every job above passed, so the branch
-    # protection rule names this job alone and never needs editing when jobs are added or renamed.
-    # `if: always()` matters: without it a failed job would leave this one skipped, and GitHub counts
-    # a skipped required check as passed.
+    # The one check to require on main. It passes only when every job above passed, or was skipped
+    # because `changes` said this run doesn't need it, so the branch protection rule names this job
+    # alone and never needs editing when jobs are added or renamed. `if: always()` matters: without
+    # it a failed job would leave this one skipped, and GitHub counts a skipped required check as
+    # passed. A fork's pull request skips `changes`, and so fails here.
     if: always()
-    needs: [check, e2e, swift-bridge, release-dry-run, ios]
+    needs: [changes, check, e2e, swift-bridge, release-dry-run, ios]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: every job passed
+      - name: every job passed, or wasn't needed
         env:
-          RESULTS: ${{ join(needs.*.result, ' ') }}
+          CHANGES: ${{ needs.changes.result }}
+          CHECK: ${{ needs.check.result }}
+          E2E: ${{ needs.e2e.result }}
+          E2E_NEEDED: ${{ needs.changes.outputs.code }}
+          SWIFT: ${{ needs.swift-bridge.result }}
+          SWIFT_NEEDED: ${{ needs.changes.outputs.swift }}
+          RELEASE: ${{ needs.release-dry-run.result }}
+          RELEASE_NEEDED: ${{ needs.changes.outputs.release }}
+          IOS: ${{ needs.ios.result }}
+          IOS_NEEDED: ${{ needs.changes.outputs.ios }}
+          SUITE: ${{ needs.changes.outputs.suite }}
         run: |
-          echo "results: $RESULTS"
-          for result in $RESULTS; do
-            if [ "$result" != "success" ]; then exit 1; fi
-          done
+          echo "suite: $SUITE"
+          echo "changes=$CHANGES check=$CHECK e2e=$E2E swift-bridge=$SWIFT release-dry-run=$RELEASE ios=$IOS"
+          [ "$CHANGES" = success ] || exit 1
+          [ "$CHECK" = success ] || exit 1
+          ok() { [ "$1" = success ] || { [ "$1" = skipped ] && [ "$2" != true ]; }; }
+          ok "$E2E" "$E2E_NEEDED" || exit 1
+          ok "$SWIFT" "$SWIFT_NEEDED" || exit 1
+          ok "$RELEASE" "$RELEASE_NEEDED" || exit 1
+          ok "$IOS" "$IOS_NEEDED" || exit 1

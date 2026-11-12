@@ -51,7 +51,7 @@ Valet window
 │                                                        (turns itself off 10 min after Add an agent, R44)
 ├─ Secrets                   login pages show "asked for by Claude Code, approved on Nick's iPhone"
 └─ Settings
-    └─ Approvals (new, Mac only)  #/settings/approvals   devices that approve, passcode for neutral cards on the
+    └─ Approvals (new, Mac only)  #/settings/approvals   devices that approve, the passcode fallback (always on),
                                   phone, request limits (shown), an accessibility exception (B to decide)
 
 Setup                        #/setup/<step>   Welcome · 1Password · Messages · Pair your phone · Connect an agent · Done
@@ -217,8 +217,8 @@ New and not yet numbered in the plan; the coordinator can give them decision num
    the login partition. Recommended: not in the first iOS app.
 2. **Unlock only on the Mac** (J7). Recommended, so a stolen phone can't undo your own emergency stop.
    The cost: a lock down while travelling lasts until you're home.
-3. **The passcode as a fallback for Face ID**, for low-risk cards only (J4). Recommended. Everything
-   that widens access, connects an agent or spends money needs Face ID itself.
+3. **The passcode as a fallback for Face ID** (J4). **Answered by Nick, 2026-11-12:** the passcode
+   always works, on every approval, as normal iPhone behaviour; he accepts the risk.
 4. **The store as a card** (J8). The security model says agents can't pick a setting's value, so
    "change my store" becomes a card where you pick from Woolworths' own list. Recommended; the
    alternative is amending the security model so the agent can choose.
@@ -230,22 +230,20 @@ New and not yet numbered in the plan; the coordinator can give them decision num
 8. **A recovery code for a lost phone** (J1, J7). Saved in 1Password at pairing; on a web page it can
    only lock down and remove devices. Recommended; the alternative is that a lost phone can be removed
    only from the Mac.
-9. **Confirm for someone who can't use Face ID** (J4, R35). Confirm is Face ID only, with no passcode,
-   so a person who can't use Face ID can only confirm at the Mac. Recommended for now; B to propose a
-   per-person accessibility exception set at the Mac with the Mac password and recorded in the audit
-   log.
+9. **Confirm for someone who can't use Face ID** (J4, R35). Answered by question 3: the passcode works
+   on Confirm cards too.
 10. **Removing the only phone from the recovery page** (J7). It leaves the Mac as the only approver
     until you pair again at the Mac. Recommended: allowed, because a stolen phone is worse than none.
 
 ## 10. Proposed amendments to other docs
 
-| Doc                  | Today                                                              | Proposed                                                                                                              | Owner |
-| -------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- | ----- |
-| `docs/relay.md`      | "Consent happens on the Mac … needs the person at their Mac once." | Consent on the Mac or a paired phone, with Face ID only, a typed letters-only code, the redirect host shown in full.  | B, G  |
-| `security-model.md`  | Notifications: app wording plus adapter name or host, no actions.  | Unchanged, and now also covers phone notifications; the relay-visible push text is only "Valet needs you".            | B     |
-| `security-model.md`  | Approval gesture: Touch ID, else typing 8 characters of the hash.  | Touch ID or Face ID; else the Mac account password (system prompt); passcode only for neutral phone cards.            | B     |
-| `security-model.md`  | Adapter settings: the value comes from the person.                 | Unchanged; the phone's Setting card is one more place the person picks it.                                            | B     |
-| `authoring-agent.md` | The scratch browser drives the site's domain.                      | Scratch browser and live trials refuse private addresses (relay.md's fetch rules) without a Private network approval. | B, F  |
+| Doc                  | Today                                                              | Proposed                                                                                                                         | Owner |
+| -------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- | ----- |
+| `docs/relay.md`      | "Consent happens on the Mac … needs the person at their Mac once." | Consent on the Mac or a paired phone, with Face ID or the passcode, a typed letters-only code, the redirect host shown in full.  | B, G  |
+| `security-model.md`  | Notifications: app wording plus adapter name or host, no actions.  | Unchanged, and now also covers phone notifications; the relay-visible push text is only "Valet needs you".                       | B     |
+| `security-model.md`  | Approval gesture: Touch ID, else typing 8 characters of the hash.  | Touch ID or Face ID; else the Mac account password (system prompt); the phone's passcode on every phone card (Nick, 2026-11-12). | B     |
+| `security-model.md`  | Adapter settings: the value comes from the person.                 | Unchanged; the phone's Setting card is one more place the person picks it.                                                       | B     |
+| `authoring-agent.md` | The scratch browser drives the site's domain.                      | Scratch browser and live trials refuse private addresses (relay.md's fetch rules) without a Private network approval.            | B, F  |
 
 ## 11. Sign-off from the other workstreams
 
@@ -255,7 +253,7 @@ contracts. Recorded here as each signs:
 | Stream | What to check                                                                                              | Status                      |
 | ------ | ---------------------------------------------------------------------------------------------------------- | --------------------------- |
 | B      | Tiers, gestures, Mac-only list, nonce and expiry, pairing words, recovery code, signed lock, amendments    | signed (notes below)        |
-| D      | Card payload, Because, states, follow-ons, limits, "Not confirmed yet", "Changed before order"             | waiting                     |
+| D      | Card payload, Because, states, follow-ons, limits, "Not confirmed yet", "Changed before order"             | signed with changes (below) |
 | E      | Section 5's tool table and wording; scoping of See Valet                                                   | signed with changes (below) |
 | F      | Drafts frozen on submit, checks vs tests, reproduction check on Valet-recorded fixtures, private addresses | waiting                     |
 | G      | Consent through the relay, Accept new agents, offline behaviour, lock at the relay, recovery page          | signed                      |
@@ -283,9 +281,8 @@ Contracts in `packages/core`, design in `docs/agent-run-security.md`.
 - **"Signed approvals expire 2 minutes after signing":** not so. The signer's clock isn't trusted,
   so a signature is good once, while its request is pending and unexpired, by the Mac's clock.
   Only an irreversible call's request lives 2 minutes.
-- **Passcode for neutral cards** (open question 3): today the phone's key accepts Face ID only
-  (`.biometryCurrentSet`). If Nick says yes, the phone gets a second, passcode-capable key for
-  neutral kinds only; that is a contract addition, not a change.
+- **Passcode** (open question 3): Nick answered yes for every approval, 2026-11-12. B recorded the
+  key change in PR #86.
 
 ### G's sign-off (relay, 2026-11-12)
 
@@ -314,6 +311,43 @@ The relay in `apps/relay`, design in `docs/relay-worker.md`.
     design. The Mac stays, so it is never the last device.
   - It doesn't say "Your Mac is online", which would tell anyone holding the URL whether the Mac
     is up. Tries are limited to 10 an hour per Mac (the frame assumed 5).
+
+### D's sign-off (approval broker, 2026-11-12)
+
+Checked against what PRs #75, #81, #84, #89 and #93 built (`docs/approval-broker.md`).
+
+- **Card payload:** matches. The Mac builds every subject from its own facts: manifests, hashes,
+  the grant, the setting's current value. An agent supplies only its note and, for a draft, its
+  references, shown as claims. `display` (client and badge, domain, Valet's checks, the agent's
+  tests counted apart, the adapter's own words) is part of the request text, so the signature
+  covers it. Text a card can't print is written out as codes and never dropped. A list cut to fit
+  says how many more it left out.
+- **Because:** the request carries `context` (`draft`, `repair`, `follows`, `replaces`) for the
+  card to build its row from. Drafts fill it today. Two things are not built yet: the "First
+  request of this kind" line, and the "already holds" line (R19). Both are for the card, using
+  the broker's list and the grants.
+- **States:**
+  - Waiting, Declined (with the note, for the asking agent only), Expired, Replaced, Locked down
+    and Changed while open come from the broker. Expiry is 24 hours for adapter kinds, 2 minutes
+    for Confirm and 10 for Connect. Withdrawals carry `replaced` or `lockdown` as their reason.
+    Changed while open is a request whose facts changed by the time it is approved: it is
+    withdrawn as `stale`, never applied.
+  - **Not confirmed yet:** a resend of the same signed approval is one approval. The second copy
+    is refused as not pending, and the `approval-closed` message tells every phone the outcome.
+    So Already approved and Not used are both the closed outcome, not a second answer.
+  - Refused by the Mac is a wrong device, a bad signature or a locked Valet.
+  - Checking and Mac offline are the phone's (H, G).
+- **Changed before order:** not the broker's. An approved Confirm releases only its own call (the
+  `callId` and `confirmationId` are signed). Whether the trolley changed at run time is the
+  checkout tool's own check.
+- **Follow-ons:** not built. The contract has `follows` and `display.followOns`, and the kind a
+  follow-on would be, a remote tool for the asking agent only, is wired (#93). F refuses
+  follow-ons for now, so they don't count with their parent yet.
+- **Limits:** built as section 8 has them, with two differences:
+  - Confirm cards (raised by Valet for an agent's irreversible call) don't count towards an
+    agent's 3 waiting or 20 a day. They are refused while it is paused, though, and declining
+    one counts towards its pause.
+  - "Revoke Claude app?" after a second pause in a day is not built.
 
 ### E's sign-off (read tier, 2026-11-12)
 

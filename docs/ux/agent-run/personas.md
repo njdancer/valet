@@ -32,8 +32,8 @@ change they could cause still reaches the person as an honest approval card.
 - **P4 Alex** mostly stops typing adapter code. Their agent writes it; Alex reviews drafts, test
   runs and diffs, on the Mac for big changes and on the phone for repairs.
 - **P5 Jordan** uses VoiceOver on iOS as well as macOS. Cards must read in a sensible order with
-  rotor headings and Magic Tap. Face ID works with VoiceOver; there is no automatic passcode route,
-  since anyone can turn VoiceOver on (review R2).
+  rotor headings and Magic Tap. Face ID works with VoiceOver, and "Use passcode instead" is
+  on every card.
 - **P6 Claude (calling agent)** is now also P9. The calling side is unchanged; P9 covers the admin
   and authoring side.
 - **P7 Nick away** mostly becomes P8: the phone is where the approval happens, so walking back to

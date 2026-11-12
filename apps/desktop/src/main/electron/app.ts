@@ -11,6 +11,8 @@ import {
   createElectronSessionDriver,
   hardenProcess,
   type ManifestOptions,
+  openElectronFixtureBrowser,
+  openElectronScratchBrowser,
   partitionName,
   startEgressProxy,
 } from '@valet/browser-electron'
@@ -55,6 +57,7 @@ import type { DemoSite } from './demo'
 import { launchRefused } from './guard'
 import { broadcast, registerIpc } from './ipc'
 import { systemNotifications } from './notifications'
+import { publicOnlyDial } from './public-dial'
 import { SandboxPool } from './sandbox'
 import { utilityToolProcess } from './tool-process'
 import { type AppTray, createTray } from './tray'
@@ -266,6 +269,8 @@ async function main(): Promise<void> {
   // The adapter sandbox (docs/sandbox.md): anything that slips past a sandbox window's request
   // filter meets a proxy that refuses every host.
   const sandboxProxy = await startEgressProxy({ allow: () => false })
+  let scratchOpens = 0
+  let fixtureOpens = 0
   const sandboxes = new SandboxPool({
     preload: join(import.meta.dirname, '../preload/sandbox.cjs'),
     wasm: join(import.meta.dirname, '../preload/quickjs.wasm'),
@@ -393,13 +398,35 @@ async function main(): Promise<void> {
         : createElectronSessionDriver(manifest, { ...reporters }),
     credentials: demoSite === null ? realCredentials(credentialDeps) : demoSite.credentials,
     approvalKeys,
-    startEndpoint: (caller, clients, onSessionsChanged, admin) =>
+    // Each open its own in-memory partition, so nothing a page left behind is there the next time.
+    scratch: (draftId, rules) =>
+      openElectronScratchBrowser({
+        partition: `scratch:${draftId}:${++scratchOpens}`,
+        rules,
+        dial: publicOnlyDial(),
+      }),
+    // A live trial: the same driver a real call uses, in partitions of its own that live in memory,
+    // through the dial that refuses private addresses (docs/authoring-tools.md#live-trials).
+    // A case's pages: in memory, a new partition each case, nothing sent anywhere.
+    fixtureBrowser: async (pages, egress) => {
+      const browser = await openElectronFixtureBrowser({
+        partition: `fixture:${++fixtureOpens}`,
+        pages,
+        egress,
+      })
+      return { page: browser.page, close: () => browser.close() }
+    },
+    trialDriver: (manifest, label) =>
+      createElectronSessionDriver(manifest, { trialLabel: label }, { dial: publicOnlyDial() }),
+    startEndpoint: (caller, clients, onSessionsChanged, admin, authoring) =>
       startEndpoint({
         caller,
         clients,
         onSessionsChanged,
         // Valet's own read-only tools, for local clients (docs/admin-tools.md).
         admin,
+        // The draft tools agents write adapters with, for local clients (docs/authoring-tools.md).
+        ...(authoring === null ? {} : { authoring }),
         // D41, D42: the bridge for every client, each with its own token. The port is kept (each
         // bridge reads it from its client's file) and tokens are new at every launch, so one
         // collected by whatever held the saved port while the app was down stops working at the
@@ -414,6 +441,8 @@ async function main(): Promise<void> {
       openExternal: (url) => {
         if (new URL(url).protocol === 'https:') void shell.openExternal(url)
       },
+      // Only a draft's folder under Valet's own data (the service names it), never a path from a page.
+      showFolder: (path) => void shell.openPath(path),
       chooseSaveFile: async (defaultName) => {
         const result = await dialog.showSaveDialog({ defaultPath: defaultName })
         return result.canceled || result.filePath === undefined ? null : result.filePath

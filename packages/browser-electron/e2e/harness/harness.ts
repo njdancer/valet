@@ -22,7 +22,13 @@ import {
   ValetError,
 } from '@valet/core'
 import { app, BrowserWindow, type Cookie, session, type WebFrameMain } from 'electron'
-import { createElectronSessionDriver, hardenProcess, type ManifestOptions } from '../../src/index'
+import {
+  createElectronSessionDriver,
+  hardenProcess,
+  type ManifestOptions,
+  openElectronFixtureBrowser,
+  openElectronScratchBrowser,
+} from '../../src/index'
 import { startTestSite, type TestSite } from './server'
 
 if (process.env.E2E_NO_HARDENING === undefined) hardenProcess(app)
@@ -210,6 +216,8 @@ async function setup() {
     'persist:tool:e2e-keys',
     'persist:auth:e2e-probe',
     'e2e-control',
+    'scratch:e2e',
+    'scratch:e2e-hostile',
   ]) {
     session.fromPartition(partition).setCertificateVerifyProc((request, callback) => {
       callback(trusted(request.certificate.data) ? 0 : -2)
@@ -1130,6 +1138,125 @@ async function setup() {
       } finally {
         driver.watchSite({ refused: () => {}, held: () => false })
       }
+    },
+
+    fixture: async () => {
+      const before = site.requests.length
+      const page = 'https://site.test/fixture/quote'
+      const next = 'https://site.test/fixture/next'
+      const browser = await openElectronFixtureBrowser({
+        partition: 'fixture:e2e:1',
+        pages: {
+          [page]:
+            '<!doctype html><html><body><p class="price">1.50</p>' +
+            '<a id="next" href="/fixture/next">Next</a>' +
+            '<img src="https://evil.test/pixel.png">' +
+            '<script>document.body.dataset.ran = "yes"; fetch("https://evil.test/x")</script></body></html>',
+          [next]: '<!doctype html><html><body><p class="price">2.00</p></body></html>',
+        },
+        egress: ['site.test'],
+      })
+      const tool = browser.page
+      await tool.goto(page)
+      const price = await tool.extract('.price')
+      const ran = await tool.evaluate('document.body.dataset.ran ?? null')
+      await tool.click('#next')
+      await sleep(500)
+      const nextPrice = await tool.extract('.price')
+      const missing = await tool.goto('https://site.test/fixture/missing').then(
+        () => 'loaded',
+        (e: { stage?: string; errorClass?: string }) => `${e.stage}/${e.errorClass}`,
+      )
+      browser.close()
+      return {
+        price,
+        ran,
+        nextPrice,
+        url: tool.currentUrl(),
+        missing,
+        sent: site.requests.length - before,
+        evil: evilRequests().length,
+      }
+    },
+
+    scratch: async () => {
+      const paced: string[] = []
+      const browser = await openElectronScratchBrowser({
+        partition: 'scratch:e2e',
+        rules: {
+          mayNavigate: (url) => url.hostname === 'site.test',
+          mayRequest: (url) => !url.hostname.endsWith('login.test'),
+          pace: async (host) => void paced.push(host),
+          blocked: () => undefined,
+          mayType: () => true,
+        },
+        dial: local.dial,
+      })
+      const before = site.requests.length
+      const first = await browser.navigate(site.url('site.test', '/scratch'))
+      await until(() => (site.requests.slice(before).some((r) => r.path === '/echo') ? true : undefined))
+      await sleep(300)
+      const log = browser.entries()
+      const echo = log.find((e) => e.url.includes('/echo'))
+      const body = echo === undefined ? null : await browser.body(echo.seq)
+      const query = await browser.query('input')
+      const typed = await browser.type({ selector: '#q' }, 'MSFT').then(
+        () => 'typed',
+        (e: { detail?: string }) => e.detail ?? 'failed',
+      )
+      const password = await browser.type({ selector: '#pw' }, 'x').then(
+        () => 'typed',
+        (e: { detail?: string }) => e.detail ?? 'failed',
+      )
+      const awayRef = first.nodes.find((n) => n.text === 'Away')?.ref ?? ''
+      const away = await browser.click({ ref: awayRef }).then(
+        (s) => s.url,
+        (e: { detail?: string }) => e.detail ?? 'failed',
+      )
+      const postsBefore = site.posts.length
+      await browser.click({ selector: '#post' }).catch(() => undefined)
+      const posted = site.posts.length - postsBefore
+      // A refused form leaves Chromium's error page; the agent opens the page again.
+      await browser.navigate(site.url('site.test', '/scratch'))
+      const next = await browser.click({ selector: '#next' })
+      const html = await browser.document()
+      browser.close()
+      return {
+        title: first.title,
+        texts: first.nodes.map((n) => n.text),
+        snapshot: JSON.stringify(first),
+        log: log.map((e) => ({ method: e.method, type: e.resourceType, status: e.status, mime: e.mimeType })),
+        body: body?.text ?? null,
+        query,
+        typed,
+        password,
+        away,
+        posted,
+        nextUrl: next.url,
+        nextTexts: next.nodes.map((n) => n.text),
+        html: html.slice(0, 200),
+        paced,
+        evil: evilRequests().length,
+        closed: browser.isClosed(),
+      }
+    },
+
+    hostile: async () => {
+      const browser = await openElectronScratchBrowser({
+        partition: 'scratch:e2e-hostile',
+        rules: {
+          mayNavigate: (url) => url.hostname === 'site.test',
+          mayRequest: () => true,
+          pace: async () => undefined,
+          blocked: () => undefined,
+          mayType: () => true,
+        },
+        dial: local.dial,
+      })
+      const view = await browser.navigate(site.url('site.test', '/hostile'))
+      const query = await browser.query('p')
+      browser.close()
+      return { view, query }
     },
 
     close: async () => {

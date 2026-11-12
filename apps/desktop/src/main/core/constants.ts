@@ -103,6 +103,8 @@ export interface DataPaths {
   readonly devAnchor: string
   /** Installed adapter versions, by id and hash (@valet/adapter-store, docs/adapter-packages.md). */
   readonly adapters: string
+  /** Adapters agents are writing, one folder per draft (docs/authoring-tools.md#storage). */
+  readonly drafts: string
 }
 
 /** Every file the app keeps, under one owner-only directory (D45). */
@@ -134,5 +136,6 @@ export function dataPaths(dir: string): DataPaths {
     devApprovalKeys: join(dir, 'dev-approval-keys.json'),
     devAnchor: join(dir, 'dev-anchor.json'),
     adapters: join(dir, 'adapters'),
+    drafts: join(dir, 'drafts'),
   }
 }

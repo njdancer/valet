@@ -123,6 +123,12 @@ export interface PartitionSession {
    * the session's own fetch() and redirects included, as its headers arrive. The only listener.
    */
   watchResponses(listener: (response: ObservedResponse) => void): void
+  /**
+   * Answers every https request the partition makes from `answer`, in the main process, and nothing
+   * from the network: a case's fixture pages (docs/authoring-tools.md#the-agents-cases). A URL it
+   * has no answer for gets a 404.
+   */
+  serveOnly(answer: (url: string) => FixtureResponse | null): void
   /** Adds a response header to every response, e.g. to switch off DNS prefetch per document. */
   addResponseHeader(name: string, value: string): void
   getCookies(): Promise<readonly CookieRecord[]>
@@ -139,6 +145,13 @@ export interface PartitionSession {
    * old value when one is removed or overwritten, so that a value never goes unseen.
    */
   onCookieChanged(listener: (cookie: CookieRecord) => void): void
+}
+
+/** A fixture the partition serves in place of the site. */
+export interface FixtureResponse {
+  readonly status: number
+  readonly contentType: string
+  readonly body: string
 }
 
 /** One web-storage value a page held, as the DevTools protocol reports it. */
@@ -216,6 +229,17 @@ export interface PendingNavigation {
   readonly isMainFrame: boolean
 }
 
+/** A response the page's own target received, over the DevTools protocol, with an id to read its body. */
+export interface NetworkResponse {
+  readonly id: string
+  readonly url: string
+  readonly method: string
+  /** The protocol's resource type: Document, XHR, Fetch, Script, Image, and so on. */
+  readonly resourceType: string
+  readonly status: number
+  readonly mimeType: string | null
+}
+
 /** One hidden-but-headed window with its web contents. */
 export interface BrowserSurface {
   load(url: string): Promise<LoadResult>
@@ -247,6 +271,13 @@ export interface BrowserSurface {
   watchStorage(listener: (value: StorageValue) => void): Promise<void>
   /** Resolves once every storage write the page has made so far has reached watchStorage's listener. */
   storageSettled(): Promise<void>
+  /**
+   * Calls `listener` with every response the page's own target receives from now on, over the
+   * DevTools protocol (the scratch browser's network log). Must be called before the first load.
+   */
+  watchNetwork(listener: (response: NetworkResponse) => void): Promise<void>
+  /** The body of a response watchNetwork reported, while the browser still holds it; null if not. */
+  responseBody(id: string): Promise<{ readonly body: string; readonly base64: boolean } | null>
   /** Gives the web contents keyboard focus without showing the window. */
   focus(): void
   show(title: string): void
@@ -271,8 +302,15 @@ export interface BrowserPlatform {
   /** The same object for the same partition name. */
   session(partition: string): PartitionSession
   openSurface(partition: string): BrowserSurface
-  /** Starts a local proxy that allows a connection only when `allow` says so. */
-  startProxy(allow: ProxyPolicy): Promise<ProxyHandle>
+  /**
+   * Starts a local proxy that allows a connection only when `allow` says so. `dial` opens the
+   * upstream connection for this proxy alone (the scratch browser's, which refuses private
+   * addresses once resolved); the platform's own otherwise.
+   */
+  startProxy(
+    allow: ProxyPolicy,
+    dial?: (host: string, port: number) => import('node:net').Socket,
+  ): Promise<ProxyHandle>
   /**
    * Sets the process-wide UA for renderers that neither a session's UA nor a page's DevTools
    * override reaches before they run: a service worker's (app.userAgentFallback).

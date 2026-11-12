@@ -447,8 +447,8 @@ Two things protect approvals and grants, in every mode:
   gesture is the Secure Enclave key's own access control ([agent-run-security.md](agent-run-security.md#devices-and-keys)):
   Touch ID or Face ID; on a Mac without Touch ID, the Mac account password in the system's own
   prompt (`.userPresence`), which automation can't read from the screen. Typing characters of the
-  hash is gone. A passcode fallback on the phone, for neutral cards only, waits on Nick (A's open
-  question 3); until then the phone signs with Face ID only.
+  hash is gone. On the phone, Face ID, or the passcode when it fails (Nick's answer to A's open
+  question 3: the passcode always works).
 - **Integrity-protected stores.** In the MCP-inverted mode the agent may have filesystem access as
   the person. If approvals and grants are files the app trusts, the agent can approve its own
   change by writing one. So each record is MACed with a key held in the Keychain under the app's

@@ -52,9 +52,14 @@ export const EVENT_WORDS = {
   'site-paused': { label: 'Site paused', tone: 'warning' },
   'approval-requested': { label: 'Approval asked', tone: 'warning' },
   'approval-answered': { label: 'Approval answered', tone: 'neutral' },
+  'agent-change': { label: 'Agent change', tone: 'neutral' },
   'device-paired': { label: 'Phone paired', tone: 'brass' },
   'device-revoked': { label: 'Phone removed', tone: 'neutral' },
   'store-refused': { label: 'Saved approvals refused', tone: 'danger' },
+  'draft-created': { label: 'Draft started', tone: 'neutral' },
+  'draft-submitted': { label: 'Draft submitted', tone: 'warning' },
+  'draft-deleted': { label: 'Draft deleted', tone: 'neutral' },
+  'draft-trial': { label: 'Draft tried on the site', tone: 'neutral' },
 } as const satisfies Readonly<Record<EventType, { readonly label: string; readonly tone: DotTone }>>
 
 const OTHER = { label: 'Other event', tone: 'neutral' } as const
@@ -330,9 +335,31 @@ export function details(event: AuditEvent, now: number): ReactNode {
       return <Code>{event.kind}</Code>
     case 'approval-answered':
       return <Quiet>{event.answer}</Quiet>
+    case 'agent-change':
+      return (
+        <>
+          <Code>{event.target}</Code>{' '}
+          <Quiet>
+            {event.action === 'tool-off'
+              ? 'turned off for the agent'
+              : event.action === 'disconnect'
+                ? 'disconnected itself'
+                : `set to ${event.value ?? ''}`}
+          </Quiet>
+        </>
+      )
     case 'device-paired':
     case 'device-revoked':
       return <Code>{event.deviceId.slice(0, 8)}</Code>
+    case 'draft-created':
+    case 'draft-submitted':
+    case 'draft-deleted':
+    case 'draft-trial':
+      return (
+        <>
+          <Code>{event.adapterId}</Code> <Quiet>{event.draftId}</Quiet>
+        </>
+      )
     case 'store-refused':
       return (
         <>
@@ -414,9 +441,14 @@ export const EVENT_FIELDS = {
   'site-paused': ['type', 'adapterId', 'paused'],
   'approval-requested': ['type', 'requestId', 'kind', 'digest', 'clientId'],
   'approval-answered': ['type', 'requestId', 'answer', 'deviceId', 'reason'],
+  'agent-change': ['type', 'clientId', 'action', 'target', 'value'],
   'device-paired': ['type', 'deviceId', 'platform'],
   'device-revoked': ['type', 'deviceId', 'by'],
   'store-refused': ['type', 'store', 'reason', 'records'],
+  'draft-created': ['type', 'draftId', 'adapterId', 'clientId'],
+  'draft-submitted': ['type', 'draftId', 'adapterId', 'clientId', 'adapterHash', 'packageHash', 'requestId'],
+  'draft-deleted': ['type', 'draftId', 'adapterId', 'clientId'],
+  'draft-trial': ['type', 'draftId', 'adapterId', 'clientId', 'tool', 'host', 'packageHash', 'outcome'],
 } as const satisfies {
   readonly [K in EventType]: readonly (keyof Extract<AuditEvent, { readonly type: K }>)[]
 }

@@ -246,6 +246,61 @@ export type AuditEvent =
       readonly deviceId: string | null
       readonly reason?: string
     }
+  | {
+      /**
+       * An agent changed something through Valet's own tools, at the Notify-only tier: it only made
+       * Valet stricter (docs/admin-tools.md, "Write tier"). Loosening changes are approval requests
+       * and are audited as approval-requested and approval-answered instead.
+       */
+      readonly type: 'agent-change'
+      /** `local:<id>`, as tool-called records the client. */
+      readonly clientId: string
+      readonly action: 'tool-off' | 'setting' | 'disconnect'
+      /** What it was about: `<adapterId>.<tool>`, a Valet setting's name, or the client itself. */
+      readonly target: string
+      /** A setting's new value as Valet stores it; null for the others. */
+      readonly value: string | null
+    }
+  | {
+      /** An agent started a draft adapter (docs/authoring-tools.md). Notify tier. */
+      readonly type: 'draft-created'
+      readonly draftId: string
+      readonly adapterId: string
+      readonly clientId: string
+    }
+  | {
+      /**
+       * An agent submitted a draft for approval. The package hash fixes every file it held; edits
+       * before it aren't audited one by one (B, 2026-11-12).
+       */
+      readonly type: 'draft-submitted'
+      readonly draftId: string
+      readonly adapterId: string
+      readonly clientId: string
+      readonly adapterHash: string
+      readonly packageHash: string
+      readonly requestId: string
+    }
+  | {
+      readonly type: 'draft-deleted'
+      readonly draftId: string
+      readonly adapterId: string
+      readonly clientId: string
+    }
+  | {
+      /**
+       * An agent ran one of a draft's read tools against the real site, signed out
+       * (docs/authoring-tools.md#live-trials). Notify tier. The output itself isn't kept.
+       */
+      readonly type: 'draft-trial'
+      readonly draftId: string
+      readonly adapterId: string
+      readonly clientId: string
+      readonly tool: string
+      readonly host: string
+      readonly packageHash: string
+      readonly outcome: 'output' | 'invalid-output' | 'timeout' | 'needs-user' | 'site-resting' | 'error'
+    }
   | { readonly type: 'device-paired'; readonly deviceId: string; readonly platform: 'ios' | 'macos' }
   | { readonly type: 'device-revoked'; readonly deviceId: string; readonly by: string }
   | {

@@ -62,7 +62,12 @@ export function createTray(windows: AppWindows, api: MainApi, demo: boolean, rem
           : [
               {
                 label: state.menuItem.label,
-                click: () => void remote.setEnabled(state.menuItem?.enable ?? false).catch(() => undefined),
+                // Pausing is the kill switch, a click; resuming widens, so it asks for Touch ID
+                // through the same path as the control panel.
+                click: () =>
+                  void (
+                    state.menuItem?.enable === true ? api.remote.setEnabled(true) : remote.setEnabled(false)
+                  ).catch(() => undefined),
               },
             ]),
         ...(state.revokeAll

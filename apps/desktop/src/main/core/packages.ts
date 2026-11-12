@@ -58,6 +58,16 @@ export class InstallError extends Error {
 export class PackageManager {
   constructor(private readonly options: PackageManagerOptions) {}
 
+  private readonly shippedHashes = new Map<string, string>()
+
+  /**
+   * Whether this is the hash this app ships for the adapter: the only thing that makes an adapter
+   * built in. A stored version's source tag is a plain file anyone can write, so it never does.
+   */
+  isShipped(adapterId: string, adapterHash: string): boolean {
+    return this.shippedHashes.get(adapterId) === adapterHash
+  }
+
   /**
    * Seeds each built-in that isn't stored yet (active unless the person pinned another version),
    * then loads every stored adapter's active version. A version that fails its checks is audited
@@ -70,6 +80,7 @@ export class PackageManager {
     for (const files of builtins) {
       const checked = checkPackage(files)
       shipped.set(checked.manifest.id, checked)
+      this.shippedHashes.set(checked.manifest.id, checked.adapterHash)
       const state = await store.state(checked.manifest.id).catch(() => null)
       if (state?.versions.some((v) => v.hash === checked.adapterHash) === true) continue
       await this.put(checked, 'builtin', { activate: state === null || !state.pinned, pin: false }, state)
@@ -102,6 +113,11 @@ export class PackageManager {
     } catch (error) {
       throw new InstallError(describeFailure(error))
     }
+    return this.prepared(loaded, source)
+  }
+
+  /** A package already checked and described (a draft's check), ready to install or stage. */
+  prepared(loaded: LoadedPackage, source: PackageSource): PreparedInstall {
     // The contract refuses these too; a second line, until Apple Events are typed operations.
     const sandbox = loaded.manifest.sandbox
     if (sandbox?.mode === 'sandboxed' && sandbox.exceptions.some((e) => e.kind === 'app'))
@@ -113,6 +129,23 @@ export class PackageManager {
   async commit(prepared: PreparedInstall): Promise<void> {
     const state = await this.options.store.state(prepared.loaded.manifest.id).catch(() => null)
     await this.put(prepared.loaded, prepared.source, { activate: true }, state)
+  }
+
+  /**
+   * Stores a prepared version without making it active: a draft submitted as an update waits here
+   * while the installed version keeps serving (docs/authoring-tools.md#submitting). Its approval's
+   * apply loads and activates it, as a rollback does. Not audited as installed until then.
+   */
+  async stage(prepared: PreparedInstall): Promise<void> {
+    const state = await this.options.store.state(prepared.loaded.manifest.id).catch(() => null)
+    if (state === null)
+      throw new InstallError('A first install isn’t staged; it is installed and waits for approval.')
+    await this.put(prepared.loaded, prepared.source, { activate: false }, state)
+  }
+
+  /** Drops a staged version nobody needs any more (see AdapterStore.discard). */
+  discard(adapterId: string, hash: string): Promise<boolean> {
+    return this.options.store.discard(adapterId, hash)
   }
 
   /** The adapter's history, or null. */

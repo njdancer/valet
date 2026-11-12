@@ -16,10 +16,12 @@ import type {
   BrowserSurface,
   CookieRecord,
   CookieSetDetails,
+  FixtureResponse,
   FrameHandle,
   KeyEvents,
   LoadResult,
   NavigationEvent,
+  NetworkResponse,
   ObservedResponse,
   OutgoingRequest,
   PartitionSession,
@@ -53,7 +55,10 @@ export function electronPlatform(options: ElectronPlatformOptions = {}): Browser
     os: process.platform,
     systemVersion: process.getSystemVersion(),
     arch: process.arch,
-    startProxy: (allow) => startEgressProxy({ allow, ...(options.dial ? { dial: options.dial } : {}) }),
+    startProxy: (allow, dial) => {
+      const chosen = dial ?? options.dial
+      return startEgressProxy({ allow, ...(chosen === undefined ? {} : { dial: chosen }) })
+    },
     session(partition) {
       let wrapped = sessions.get(partition)
       if (wrapped === undefined) {
@@ -120,6 +125,20 @@ class ElectronPartition implements PartitionSession {
     // the proxy too, and is refused there like any other undeclared host.
     await this.ses.setProxy({ mode: 'fixed_servers', proxyRules: proxy.url, proxyBypassRules: '<-loopback>' })
     await this.ses.closeAllConnections()
+  }
+
+  serveOnly(answer: (url: string) => FixtureResponse | null): void {
+    this.ses.protocol.handle('https', (request) => {
+      const found = answer(request.url)
+      return new Response(found?.body ?? 'Not in this case.', {
+        status: found?.status ?? 404,
+        headers: {
+          'content-type': found?.contentType ?? 'text/plain',
+          // The fixture's own scripts never run: tool code reads the page as the site sent it.
+          'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; img-src data:",
+        },
+      })
+    })
   }
 
   addResponseHeader(name: string, value: string): void {
@@ -446,6 +465,56 @@ class ElectronSurface implements BrowserSurface {
     // storage event the page sent before it has been delivered.
     if (this.contents.isDestroyed() || !this.contents.debugger.isAttached()) return
     await this.contents.debugger.sendCommand('DOMStorage.enable')
+  }
+
+  async watchNetwork(listener: (response: NetworkResponse) => void): Promise<void> {
+    const devtools = await this.devtools()
+    const methods = new Map<string, string>()
+    devtools.on('message', (_event, method: string, params: unknown, sessionId?: string) => {
+      if (sessionId !== undefined && sessionId !== '') return
+      const p = (params ?? {}) as {
+        requestId?: unknown
+        type?: unknown
+        request?: { method?: unknown }
+        response?: { url?: unknown; status?: unknown; mimeType?: unknown }
+      }
+      const id = typeof p.requestId === 'string' ? p.requestId : null
+      if (id === null) return
+      if (method === 'Network.requestWillBeSent') {
+        if (typeof p.request?.method === 'string') methods.set(id, p.request.method)
+        if (methods.size > 5000) methods.delete(methods.keys().next().value as string)
+        return
+      }
+      if (method !== 'Network.responseReceived') return
+      const response = p.response
+      if (typeof response?.url !== 'string' || typeof response.status !== 'number') return
+      listener({
+        id,
+        url: response.url,
+        method: methods.get(id) ?? 'GET',
+        resourceType: typeof p.type === 'string' ? p.type : 'Other',
+        status: response.status,
+        mimeType: typeof response.mimeType === 'string' ? response.mimeType : null,
+      })
+    })
+    await devtools.sendCommand('Network.enable', {
+      maxTotalBufferSize: 20_000_000,
+      maxResourceBufferSize: 2_000_000,
+    })
+  }
+
+  async responseBody(id: string): Promise<{ readonly body: string; readonly base64: boolean } | null> {
+    if (this.contents.isDestroyed() || !this.contents.debugger.isAttached()) return null
+    try {
+      const answer = (await this.contents.debugger.sendCommand('Network.getResponseBody', {
+        requestId: id,
+      })) as { body?: unknown; base64Encoded?: unknown }
+      return typeof answer.body === 'string'
+        ? { body: answer.body, base64: answer.base64Encoded === true }
+        : null
+    } catch {
+      return null
+    }
   }
 
   focus(): void {

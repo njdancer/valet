@@ -6,6 +6,7 @@
 import { generateKeyPairSync, type KeyObject, sign } from 'node:crypto'
 import {
   type AnchorState,
+  APPROVAL_LIMITS,
   type ApprovalSubject,
   type AuditEvent,
   type AuditRecord,
@@ -304,6 +305,66 @@ describe('asking', () => {
     })
     // The person isn't limited.
     expect(await t.broker.request('tool-enable', tool({ tool: 'get_z' }), person)).toMatchObject({ ok: true })
+  })
+
+  it('replaces the asker’s own earlier request in one step, only once the new one is made', async () => {
+    const t = await setup()
+    for (const name of ['get_a', 'get_b']) await requested(t, tool({ tool: name }))
+    const earlier = await requested(t, tool({ tool: 'get_c' }))
+    // At the limit of 3 waiting, a replacement still goes through: the one it replaces doesn't count.
+    const next = await t.broker.request('tool-enable', tool({ tool: 'get_d' }), agent(), {
+      replaces: earlier,
+    })
+    expect(next).toMatchObject({ ok: true, reused: false })
+    expect(t.broker.list().map((p) => p.request.subject)).not.toContainEqual(tool({ tool: 'get_c' }))
+    expect(answered(t.events).at(-1)).toMatchObject({
+      requestId: earlier,
+      answer: 'withdrawn',
+      reason: 'replaced',
+    })
+  })
+
+  it('keeps an earlier request when the replacement is refused, and never replaces another asker’s', async () => {
+    const t = await setup()
+    const theirs = await requested(t, tool({ tool: 'get_a' }), agent('other'))
+    const mine = await requested(t, tool({ tool: 'get_b' }))
+    await t.broker.request('tool-enable', tool({ tool: 'get_c' }), agent(), { replaces: theirs })
+    expect(t.broker.list().map((p) => p.request.id)).toContain(theirs)
+
+    // Cooling down after a decline: refused, and the earlier request is left waiting.
+    const declined = await requested(t, tool({ tool: 'get_d' }))
+    await t.broker.decline(declined, { via: 'mac' }, { stopAsking: true })
+    expect(
+      await t.broker.request('tool-enable', tool({ tool: 'get_e' }), agent(), { replaces: mine }),
+    ).toMatchObject({ ok: false, reason: 'cooling-down' })
+    expect(t.broker.list().map((p) => p.request.id)).toContain(mine)
+  })
+
+  it('counts declined confirmations against the agent whose call raised them', async () => {
+    const t = await setup()
+    const call = (n: number) =>
+      t.broker.request(
+        'irreversible-call',
+        {
+          adapterId: 'woolworths',
+          adapterHash: HASH_A,
+          tool: 'checkout',
+          callId: `c${n}`,
+          confirmationId: `cf_${n}`,
+          preview: [],
+        },
+        app,
+        { onBehalfOf: 'local:claude' },
+      )
+    for (let n = 0; n < APPROVAL_LIMITS.declinesBeforeCooldown; n++) {
+      const asked = await call(n)
+      if (!asked.ok) throw new Error(asked.reason)
+      expect(await t.broker.decline(asked.requestId, { via: 'mac' })).toBe(true)
+    }
+    expect(await call(99)).toMatchObject({ ok: false, reason: 'cooling-down' })
+    // The same agent asking for anything else is cooling down too; another agent isn't.
+    expect(await t.broker.request('tool-enable', tool(), agent())).toMatchObject({ reason: 'cooling-down' })
+    expect(await t.broker.request('tool-enable', tool(), agent('other'))).toMatchObject({ ok: true })
   })
 
   it('caps the requests an agent makes in a day, withdrawn ones included', async () => {

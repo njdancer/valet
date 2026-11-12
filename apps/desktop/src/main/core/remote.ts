@@ -219,6 +219,33 @@ export class RemoteAccess {
     return this.clients.get(clientId)?.grant?.tools.includes(`${adapter}.${declaration.name}`) ?? false
   }
 
+  /**
+   * Whether `allowForClient` would turn this tool on for `clientId` (no `remote:` prefix): it is on
+   * for remote clients at its side effect now, and the client holds a grant without it.
+   */
+  canAllowForClient(adapter: string, declaration: ToolDeclaration, clientId: string): boolean {
+    const grant = this.clients.get(clientId)?.grant
+    return (
+      this.allows(adapter, declaration) &&
+      grant != null &&
+      !grant.tools.includes(`${adapter}.${declaration.name}`)
+    )
+  }
+
+  /**
+   * Adds a tool that is already on for remote clients to one client's grant (an agent's own
+   * approved request). Never turns a tool on for remote clients: that stays the person's.
+   */
+  allowForClient(adapter: string, declaration: ToolDeclaration, clientId: string): Promise<boolean> {
+    return this.serially(async () => {
+      if (!this.canAllowForClient(adapter, declaration, clientId)) return false
+      if (!this.clients.addTools(clientId, [`${adapter}.${declaration.name}`])) return false
+      this.refresh()
+      this.deps.changed()
+      return true
+    })
+  }
+
   /** What the consent window shows. */
   consentView(): ConsentView {
     return { requests: this.consents.prompts(), tools: this.enabledTools() }
@@ -235,6 +262,11 @@ export class RemoteAccess {
     if (!result.ok) return result.reason
     await this.auditConsent(result.request)
     return 'approved'
+  }
+
+  /** The pending consent a typed code names, or null; nothing is approved or counted. */
+  consentFor(code: string): ConsentPrompt | null {
+    return this.consents.matching(code)
   }
 
   declineConsent(id: string): boolean {

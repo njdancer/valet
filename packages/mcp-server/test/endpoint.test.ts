@@ -424,4 +424,16 @@ describe('addClient and removeClient', () => {
     expect(endpoint.clientIds()).toEqual(['desktop'])
     await expect(endpoint.resetClient('code')).rejects.toEqual(new ValetError('config', 'not-found'))
   })
+
+  it('refuses a client’s token at once without closing its sessions, for removeClient to finish', async () => {
+    const endpoint = await launch({ clients: BOTH(), generateToken: tokens(TOKEN_A, TOKEN_B) })
+    await statusWith(endpoint.url, TOKEN_A)
+    endpoint.refuseClient('code')
+    expect(await statusWith(endpoint.url, TOKEN_A)).toBe(401)
+    expect(await statusWith(endpoint.url, TOKEN_B)).toBe(200)
+    expect(endpoint.sessions().sessions.map((s) => s.identity.clientId)).toContain('code')
+    await endpoint.removeClient('code')
+    expect(endpoint.sessions().sessions.map((s) => s.identity.clientId)).toEqual(['desktop'])
+    await expect(stat(configPath)).rejects.toThrow()
+  })
 })

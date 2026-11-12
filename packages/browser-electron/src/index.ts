@@ -1,12 +1,16 @@
 import type { AdapterManifest } from '@valet/core'
 import { ElectronSessionDriver, type ManifestOptions } from './driver'
 import type { Dial } from './egress-proxy'
+import { FixtureBrowser, type FixtureBrowserOptions } from './fixture-browser'
+
+import { ScratchBrowser, type ScratchOptions } from './scratch'
 
 export { type AuthPageOptions, SurfaceAuthPage } from './auth-page'
 export { cookieHost, cookieSetDetails, cookiesForDomains } from './cookies'
 export type { AuthPageRequest, DriverOptions, ManifestOptions } from './driver'
 export { ElectronSessionDriver } from './driver'
 export { type Dial, parseAuthority, startEgressProxy } from './egress-proxy'
+export { FIXTURE_LIMITS, FixtureBrowser, type FixtureBrowserOptions } from './fixture-browser'
 export {
   apiRoots,
   authBlock,
@@ -22,9 +26,19 @@ export {
   underApiRoot,
 } from './guards'
 export { needsUserTitle } from './needs-user'
-export { partitionName } from './partitions'
+export { partitionName, trialPartitionName } from './partitions'
 export type * from './platform'
 export { CHROMIUM_SWITCHES, hardenProcess } from './process-hardening'
+export {
+  type LogEntry,
+  SCRATCH_LIMITS,
+  ScratchBrowser,
+  ScratchError,
+  type ScratchOptions,
+  type ScratchRules,
+  type ScratchSnapshot,
+  type Target as ScratchTarget,
+} from './scratch'
 export {
   type ChainState,
   hopHeaders,
@@ -63,4 +77,27 @@ export async function createElectronSessionDriver(
 ): Promise<ElectronSessionDriver> {
   const { electronPlatform } = await import('./electron/platform')
   return ElectronSessionDriver.forManifest(electronPlatform(platform), manifest, options)
+}
+
+/**
+ * A scratch browser over real Electron (docs/authoring-tools.md#the-scratch-browser-pr-2). Call from
+ * the main process after app ready. Give each open its own partition name, so nothing one left
+ * behind is there the next time.
+ */
+export async function openElectronScratchBrowser(
+  options: Omit<ScratchOptions, 'platform'>,
+): Promise<ScratchBrowser> {
+  const { electronPlatform } = await import('./electron/platform')
+  return ScratchBrowser.open({ ...options, platform: electronPlatform() })
+}
+
+/**
+ * A fixture browser over real Electron, for a case's pages (docs/authoring-tools.md#the-agents-cases).
+ * Call from the main process after app ready, with a new partition name for each case.
+ */
+export async function openElectronFixtureBrowser(
+  options: Omit<FixtureBrowserOptions, 'platform'>,
+): Promise<FixtureBrowser> {
+  const { electronPlatform } = await import('./electron/platform')
+  return FixtureBrowser.open({ ...options, platform: electronPlatform() })
 }

@@ -148,6 +148,26 @@ export class ConsentRequests {
   }
 
   /**
+   * The pending request a typed code names, as the Mac shows it (no code, no handle), without
+   * approving it or counting a wrong code: what the Touch ID prompt for the approval describes.
+   */
+  matching(typed: string): ConsentPrompt | null {
+    this.sweep()
+    const code = normaliseCode(typed)
+    const match = code === null ? undefined : this.pending().find((r) => codesEqual(r.code, code))
+    if (match === undefined) return null
+    return {
+      id: match.id,
+      clientId: match.clientId,
+      clientHost: match.clientHost,
+      clientName: match.clientName,
+      source: match.source,
+      requestedAt: match.requestedAt,
+      expiresAt: match.expiresAt,
+    }
+  }
+
+  /**
    * The person typed a code and ticked tools. Only the request the code belongs to is approved.
    * A wrong code counts; the third cancels every pending request.
    */

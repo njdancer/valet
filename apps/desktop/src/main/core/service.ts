@@ -6,36 +6,51 @@
 import { randomBytes } from 'node:crypto'
 import { copyFile, mkdir, rm } from 'node:fs/promises'
 import { AdapterStore, type BuildRecord, type PackageRuntime } from '@valet/adapter-store'
+import type { ScratchRules } from '@valet/browser-electron'
 import {
   type AdapterManifest,
+  type ApprovalKind,
+  type ApprovalSubject,
   type AuditEvent,
   type AuditRecord,
   type AuditSink,
+  approvalDecisionSchema,
   type BlockedRequest,
+  bundleHash,
   CredentialError,
   DEFAULT_SANDBOX,
   type Grant,
-  isDisplayText,
+  type GrantStore,
   type LocalAccess,
   MESSAGES_SECRET,
+  messagesSourcesIn,
   type NeedsUserReason,
   needsYouTitle,
   type PackageFiles,
   type ProviderKind,
+  parseManifest,
+  plainName,
+  type Requester,
   type SecretField,
   type SessionDriver,
   type SettingChoice,
   settingToolNames,
+  sha256Hex,
+  type ToolDeclaration,
   ValetError,
 } from '@valet/core'
 import { FileGrantStore } from '@valet/credentials'
 import {
   type AdminReader,
+  type Authoring,
   type CallOutcome,
+  displayCode,
   type EndpointClient,
   identityLabel,
   type LiveSessions,
   type NeedsYouHint,
+  normaliseCode,
+  normaliseRemoteHost,
   type SessionReportingEndpoint,
   type ToolCall,
   type ToolCaller,
@@ -63,8 +78,11 @@ import type {
   ClientInfo,
   ClientSnippet,
   ConfirmationItem,
+  DraftOverview,
+  DraftPage,
   EndpointStatus,
   HashRoute,
+  PendingReview,
   RemoteConsentItem,
   RemoteSetup,
   RemoteSetupTool,
@@ -72,19 +90,36 @@ import type {
   RollbackPreview,
   SettingChoicesReply,
   Settings,
+  SettingsPatch,
   UpdateStatus,
 } from '../../shared/api'
 import { AdapterSettingsStore } from './adapter-settings'
 import { adminReader } from './admin'
+import { AdminWriterImpl, type AgentSettingValues, type WriterSource } from './admin-writer'
 import { AppStateStore } from './app-state'
 import {
   AnchoredFile,
   ApprovalBroker,
+  adapterSettingSubject,
   DeviceStore,
+  grantSubject,
+  installSubject,
+  itemFingerprint,
   type KindHandlers,
   type MacApprovalKeys,
+  permissionChanges,
+  remoteClientSubject,
+  requestRef,
+  settingSubject,
+  settingValue,
+  settingWidens,
+  showable,
+  subjectProvider,
   TRUSTED_STORE,
   TrustedLedger,
+  toolEnableSubject,
+  WIDENING_SETTINGS,
+  type WideningSetting,
 } from './approvals'
 import { MissedItems, sortAttention } from './attention'
 import {
@@ -111,6 +146,10 @@ import {
   TYPING_DELAY_MS,
 } from './constants'
 import type { Credentials } from './credentials'
+import { DraftAuthoring, type RequestState, type SubmitOutcome, type SubmitRequest } from './drafts/authoring'
+import type { CaseBrowser } from './drafts/cases'
+import { draftDomains, type ScratchHandle, ScratchSessions } from './drafts/research'
+import { type DraftRecord, DraftStore } from './drafts/store'
 import { type EraseKind, type EraseReport, type EraseStep, eraseEverything } from './erase'
 import { ensurePrivateDir, JsonDocument } from './files'
 import { checkGrantRequest, grantInfo } from './grants'
@@ -122,7 +161,7 @@ import { addsPermissions, permissionDiff } from './permission-diff'
 import { type ApprovedSnapshot, type BuiltinAdapter, SnapshotStore } from './registry'
 import { RemoteAccess } from './remote'
 import { RunMemory } from './run-memory'
-import { DEFAULT_SETTINGS, SettingsStore } from './settings'
+import { DEFAULT_SETTINGS, SettingsStore, traceRetentionDaysSchema } from './settings'
 import { SetupStore } from './setup'
 import { type BridgeCommand, clientSnippets, snippetFor } from './snippets'
 import { disabledUpdates, type UpdatesHooks, type UpdatesPort, VersionStore } from './updates'
@@ -141,6 +180,8 @@ export interface UiPort {
   writeClipboard(text: string): void
   /** Opens an https page in the person's default browser. */
   openExternal(url: string): void
+  /** Shows a folder of Valet's own (a draft's) in Finder. */
+  showFolder(path: string): void
   /** A native save dialog. Null when cancelled. */
   chooseSaveFile(defaultName: string): Promise<string | null>
   /** A native open dialog for the 1Password CLI. Null when cancelled. */
@@ -216,14 +257,36 @@ export interface ServiceDeps {
   /**
    * Starts the MCP endpoint with a token for each of `clients`, written to its config file; it
    * reports its live sessions to `onSessionsChanged`. `admin` is Valet's own read-only tools, for
-   * local clients' sessions (docs/admin-tools.md).
+   * local clients' sessions (docs/admin-tools.md); `authoring`, the tools agents write adapters
+   * with (docs/authoring-tools.md), when this build can install adapters.
    */
   readonly startEndpoint: (
     caller: ToolCaller,
     clients: readonly EndpointClient[],
     onSessionsChanged: (sessions: LiveSessions) => void,
     admin: AdminReader,
+    authoring: Authoring | null,
   ) => Promise<SessionReportingEndpoint>
+  /**
+   * Opens a draft's scratch browser (docs/authoring-tools.md#the-scratch-browser-pr-2): signed
+   * out, in memory, through a proxy that refuses private addresses once resolved. None in tests
+   * that don't drive a browser, and then the research tools say so.
+   */
+  readonly scratch?: (draftId: string, rules: ScratchRules) => Promise<ScratchHandle>
+  /**
+   * A session driver for a draft's live trial (docs/authoring-tools.md#live-trials): partitions in
+   * memory named by `label`, through the same public-only dial. None in tests that don't drive a
+   * browser, and then valet_live_trial says so.
+   */
+  readonly trialDriver?: (manifest: AdapterManifest, label: string) => Promise<SessionDriver>
+  /**
+   * The fixture browser for a case's pages (docs/authoring-tools.md#the-agents-cases): served from
+   * memory, scripts off, nothing sent. None in tests that don't drive a browser.
+   */
+  readonly fixtureBrowser?: (
+    pages: Readonly<Record<string, string>>,
+    egress: readonly string[],
+  ) => Promise<CaseBrowser>
   readonly ui: UiPort
   readonly emit: (event: AppEvent) => void
   /** The stdio bridge's command line for a client's config file, for snippets; null when it can't be launched. */
@@ -298,6 +361,13 @@ const EVENTS_FOR: Readonly<Partial<Record<AuditEvent['type'], readonly AppEvent[
   'site-paused': ['adapters-changed', 'health-changed'],
 }
 
+/** The write tools' setting names, as the signed `setting` subject names them (approvals/subjects.ts). */
+const SETTING_SUBJECT_NAMES = {
+  messagesOtpEnabled: 'messages_otp',
+  notifications: 'notifications',
+  traceRetentionDays: 'trace_retention',
+} as const
+
 /** Error classes only an adapter update fixes: the site's last call raises a repair item. */
 const NEEDS_REPAIR: ReadonlySet<string> = new Set(['site-changed'])
 
@@ -333,6 +403,10 @@ export class AppService {
   private readonly newId: () => string
   /** The settings as last read or written: the updater reads them synchronously at every check. */
   private settingsNow: Settings = DEFAULT_SETTINGS
+  /** Paired devices, once the approval broker is open: whether a phone was told too. */
+  private deviceStore: DeviceStore | null = null
+  /** The write tools' side (admin-writer.ts): one for the app's life, so it remembers requests. */
+  private writer: AdminWriterImpl | null = null
   private readonly versions: VersionStore
   private readonly setup: SetupStore
   private updates: UpdatesPort | null = null
@@ -351,11 +425,21 @@ export class AppService {
    * couldn't be read: then nothing that needs an approval can be approved.
    */
   private approvalBroker: ApprovalBroker | null = null
+  /** Each running call's client, by its token's identity, as the broker names agents. */
+  private readonly callers = new Map<string, string>()
   /**
    * The trusted ledger, opened at start whatever happens to the keys: its lockdown, and a lockdown
    * for tampering, hold even while the broker can't open.
    */
   private ledger: TrustedLedger | null = null
+  /**
+   * Whether an installed hash may run: approved in approvals.json (the applied mark) and backed by
+   * signed evidence, or by the one-time legacy record of what was approved before signatures.
+   */
+  private readonly installGate = {
+    isApproved: async (adapterId: string, adapterHash: string): Promise<boolean> =>
+      this.installSigned(adapterId, adapterHash) && (await this.approvals.isApproved(adapterId, adapterHash)),
+  }
   private readonly handoffs: Handoffs
   private readonly drivers = new Map<string, SessionDriver>()
   /** Per adapter, the install or rollback in progress: they run one at a time. */
@@ -390,6 +474,15 @@ export class AppService {
     string,
     { readonly callId: string; readonly errorClass: string; readonly at: string }
   >()
+  /** Drafts agents are writing (docs/authoring-tools.md), and the tools over them once started. */
+  private readonly drafts: DraftStore
+  private authoring: DraftAuthoring | null = null
+  /** Who asked each draft's approval request, for the broker's asker-only status. */
+  private readonly draftAskers = new Map<string, Requester>()
+  /** Staged draft versions loaded once at submit (or on first view), by `adapterId:hash`. */
+  private readonly stagedAdapters = new Map<string, BuiltinAdapter>()
+  /** Staged drafts' swaps and tidying, one after another, outside the broker's lock. */
+  private staging: Promise<unknown> = Promise.resolve()
   /** Adapters whose last call-started login the person closed without finishing, not yet told to a call. */
   private readonly gaveUp = new Set<string>()
 
@@ -423,6 +516,7 @@ export class AppService {
     this.versions = new VersionStore(paths.versions)
     this.setup = new SetupStore(paths.setup, deps.now)
     this.snapshots = new SnapshotStore(paths.manifests)
+    this.drafts = new DraftStore(paths.drafts, date, () => this.emit('drafts-changed'))
     this.installed = [...deps.adapters]
     this.packages =
       deps.packages === undefined
@@ -607,11 +701,11 @@ export class AppService {
     await this.deps.credentials.configure(this.settingsNow)
     await this.clients.load()
     const host = new ToolHost({
-      approvals: this.approvals,
+      approvals: this.installGate,
       audit: this.audit,
       prompt: this.broker,
       authRunner: createAuthRunner({
-        grants: this.grants,
+        grants: this.signedGrants,
         credentials: this.deps.credentials,
         audit: this.audit,
         clock: () => new Date(this.deps.now()),
@@ -642,6 +736,8 @@ export class AppService {
       await mkdir(paths.adapters, { recursive: true, mode: 0o700 })
       this.installed = await this.packages.boot(this.deps.packages.builtins)
     }
+    // Before anything is gated by signatures for the first time: what was approved until now.
+    await this.recordLegacy()
     for (const adapter of this.installed) {
       const driver = await this.driverFor(adapter)
       host.register(this.registration(adapter, driver))
@@ -651,19 +747,27 @@ export class AppService {
       paused: () => this.paused,
       lockedDown: () => this.lockedDown,
       sitePaused: (adapterId) => this.appState.sitePaused(adapterId),
+      // What a local app turned off for itself with valet_turn_off_tool.
+      toolsOff: (identity) =>
+        identity.origin === 'local' ? this.clients.toolsOff(identity.clientId) : new Set(),
       explain: (call, outcome) => this.explain(call, outcome),
       started: (call) => {
         this.memory.started(call.callId, call.tool, call.client, call.input)
+        if (call.identity !== undefined) this.callers.set(call.callId, identityLabel(call.identity))
         // The token named the client; the transport is the endpoint's label for the session.
         const id = call.identity?.origin === 'local' ? call.identity.clientId : null
         if (id !== null && this.clients.seen(id, call.client, shownTransport(call.transport)))
           this.emit('clients-changed')
       },
-      finished: (call, result) =>
-        this.memory.finished(call.callId, result.status === 'ok' ? result.output : undefined),
+      finished: (call, result) => {
+        this.callers.delete(call.callId)
+        this.memory.finished(call.callId, result.status === 'ok' ? result.output : undefined)
+      },
       refused: (call, refusal) => this.auditRefusal(call, refusal),
     })
     await this.caller.refresh()
+    await this.reapplyInstalls()
+    this.authoring = await this.startAuthoring()
     // Reads approval times into the cache the confirmation panel uses.
     await this.states()
     await this.startListening().catch(() => undefined)
@@ -676,6 +780,20 @@ export class AppService {
    * ValetError('config', 'not-found') for a tool the adapter doesn't declare.
    */
   async setRemoteTool(adapterId: string, tool: string, enabled: boolean): Promise<void> {
+    const declaration = await this.remoteToolDeclaration(adapterId, tool, enabled)
+    await this.remote.setTool(adapterId, declaration, enabled)
+  }
+
+  /** The tool's declaration in the adapter in use, unless it is one of its setting tools. */
+  private remoteDeclared(adapterId: string, tool: string): ToolDeclaration | null {
+    const adapter = this.adapter(adapterId)
+    const declaration = adapter?.definition.manifest.tools.find((t) => t.name === tool)
+    if (adapter === null || declaration === undefined) return null
+    return settingToolNames(adapter.definition.manifest).has(tool) ? null : declaration
+  }
+
+  /** The tool as remote access would turn it on or off, or not-found when it can't be. */
+  private async remoteToolDeclaration(adapterId: string, tool: string, enabled: boolean) {
     const adapter = this.adapter(adapterId)
     const declaration = adapter?.definition.manifest.tools.find((t) => t.name === tool)
     if (adapter === null || declaration === undefined) throw new ValetError('config', 'not-found')
@@ -683,9 +801,9 @@ export class AppService {
     if (enabled && settingToolNames(adapter.definition.manifest).has(tool))
       throw new ValetError('config', 'not-found')
     // Turning on is for approved adapters only; turning off always works.
-    if (enabled && !(await this.approvals.isApproved(adapterId, adapter.hash).catch(() => false)))
+    if (enabled && !(await this.installGate.isApproved(adapterId, adapter.hash).catch(() => false)))
       throw new ValetError('config', 'not-found')
-    await this.remote.setTool(adapterId, declaration, enabled)
+    return declaration
   }
 
   /** Remote access as set up now: its state, names, and every tool of each approved adapter. */
@@ -695,7 +813,7 @@ export class AppService {
     const tools: RemoteSetupTool[] = []
     for (const adapter of this.installed) {
       const { manifest } = adapter.definition
-      if (!(await this.approvals.isApproved(manifest.id, adapter.hash).catch(() => false))) continue
+      if (!(await this.installGate.isApproved(manifest.id, adapter.hash).catch(() => false))) continue
       // A setting's tools (the store's) run only for Valet itself; no client lists or calls them,
       // so a cloud agent can't be given them either.
       const internal = settingToolNames(manifest)
@@ -1002,7 +1120,7 @@ export class AppService {
     if (adapter === null) return false
     const declared = Object.keys(adapter.definition.manifest.secrets)
     if (declared.length === 0) return false
-    const grants = await this.grants.list().catch(() => null)
+    const grants = await this.signedGrants.list().catch(() => null)
     if (grants === null) return false
     return declared.some(
       (secret) =>
@@ -1051,6 +1169,7 @@ export class AppService {
     }
     // In memory at once: no call gets through while the rest happens, even if a write fails.
     const saved = this.appState.setLockedDown(true)
+    this.authoring?.closeBrowsers()
     const ledger = this.approvalBroker?.lockdown().catch(() => undefined)
     let revoked = 0
     if (locked) {
@@ -1087,6 +1206,7 @@ export class AppService {
     const ledger = this.ledger
     try {
       const devices = new DeviceStore(ledger, await keys.signer.keys())
+      this.deviceStore = devices
       this.approvalBroker = await ApprovalBroker.open({
         ledger,
         devices,
@@ -1098,6 +1218,8 @@ export class AppService {
         onChange: () => {
           this.emit('app-changed')
           this.emit('attention-changed')
+          this.emit('approvals-changed')
+          this.tidyDraftsSoon()
         },
       })
     } catch {
@@ -1106,19 +1228,163 @@ export class AppService {
     }
   }
 
+  /**
+   * The kinds this app can act on once approved. Anything else an agent asks for isn't available
+   * yet (E's admin tools check this before filing a request).
+   */
+  wiredKinds(): ReadonlySet<ApprovalKind> {
+    return new Set(Object.keys(this.approvalHandlers()) as ApprovalKind[])
+  }
+
   /** What each approved kind does here. Kinds not listed aren't wired yet and do nothing. */
   private approvalHandlers(): KindHandlers {
     return {
-      // The signed subject names the confirmation (and its preview shows it first), so an approval
-      // applies to the one question it was signed for, never another of the same call.
+      // The subject names its confirmation, so an approval applies to the one question it was
+      // signed for, never another of the same call.
       'irreversible-call': {
-        precheck: (subject) => {
-          const id = confirmationOf(subject)
-          return id !== null && this.broker.waiting(id)
+        precheck: (subject) => this.broker.waiting(subject.confirmationId),
+        apply: async (subject) => {
+          if (!this.broker.approvedById(subject.confirmationId)) throw new ValetError('config', 'not-found')
+        },
+      },
+      'adapter-install': {
+        // A rollback is applied by rollbackNow itself, after the swap. A staged draft (an update
+        // an agent submitted while the approved version keeps serving) is fresh while it is still
+        // stored and the version it replaces is still the one active. Anything else is the
+        // version installed now, and stale if that changed.
+        precheck: async (subject) => {
+          // A card that said the session stays behind is stale once there is one to inherit.
+          if (
+            subject.previousHash !== null &&
+            !subject.inheritsSession &&
+            (await this.inheritsSession(subject.adapterId))
+          )
+            return false
+          if (subject.source === 'rollback') return true
+          const active = this.adapter(subject.adapterId)
+          if (active?.hash === subject.adapterHash) return true
+          return (
+            subject.source === 'draft' &&
+            active !== null &&
+            active.hash === subject.previousHash &&
+            (await this.isStored(subject.adapterId, subject.adapterHash))
+          )
         },
         apply: async (subject) => {
-          const id = confirmationOf(subject)
-          if (id === null || !this.broker.approvedById(id)) throw new ValetError('config', 'not-found')
+          if (subject.source === 'rollback') return
+          if (this.adapter(subject.adapterId)?.hash === subject.adapterHash) {
+            await this.applyInstall(subject.adapterId, subject.adapterHash)
+            // An agent's request has no signInstall around it to retire the others; that revokes
+            // through the broker, so after its lock is let go.
+            if (subject.source === 'draft') {
+              const { adapterId, adapterHash } = subject
+              this.staging = this.staging
+                .then(() => this.retireOthers(adapterId, adapterHash))
+                .catch(() => undefined)
+            }
+          } else if (subject.source === 'draft') this.finishStagedSoon(subject.adapterId, subject.adapterHash)
+        },
+        // One approved hash per adapter: a new approval replaces the evidence of the last. Not a
+        // rollback's or a staged draft's, until its swap has worked (rollbackNow, finishStaged), so
+        // a failed swap leaves the running version approved.
+        supersedes: (next, older) =>
+          next.source !== 'rollback' &&
+          next.adapterId === older.adapterId &&
+          this.adapter(next.adapterId)?.hash === next.adapterHash,
+      },
+      // The person's own grant (grants.make) stores the grant once signed; the gate then reads
+      // this evidence (grantSigned). Stale once the version it names isn't the one installed.
+      'secret-grant': {
+        precheck: (subject) => this.adapter(subject.adapterId)?.hash === subject.adapterHash,
+        // One grant per secret: a new one replaces the evidence of the last.
+        // Per version (a rollback brings the old version's grants back), and per sender for Messages.
+        supersedes: (next, older) =>
+          next.adapterId === older.adapterId &&
+          next.adapterHash === older.adapterHash &&
+          next.secret === older.secret &&
+          (next.secret !== MESSAGES_SECRET || next.itemFingerprint === older.itemFingerprint),
+      },
+      // Valet's own settings, or an adapter's setting picked on the card (E's admin tools ask;
+      // the person's own paths ask too, through changeValetSetting).
+      setting: {
+        precheck: (subject) => {
+          if (subject.scope === 'adapter') {
+            const adapter = subject.adapterId === null ? null : this.adapter(subject.adapterId)
+            return adapter !== null && Object.hasOwn(adapter.definition.manifest.settings, subject.setting)
+          }
+          if (!Object.hasOwn(WIDENING_SETTINGS, subject.setting)) return false
+          const name = subject.setting as WideningSetting
+          const to = settingValue(name, subject.to)
+          // Still the change it was asked as: from the value set now, to a value read back exactly.
+          return to !== null && settingSubject(name, this.valetSetting(name).get(), to).from === subject.from
+        },
+        apply: async (subject, evidence) => {
+          if (subject.scope === 'adapter') {
+            const value = evidence === null ? undefined : decisionChoice(evidence.decision.payload)
+            // From the signed card's own list (the decision was checked against it), not the
+            // picker's latest lookup, which another search or a restart may have replaced.
+            const picked = subject.choices?.find((c) => c.value === value)
+            if (subject.adapterId === null || picked === undefined) throw new ValetError('config', 'invalid')
+            await this.storeSetting(subject.adapterId, subject.setting, {
+              value: picked.value,
+              label: picked.label,
+            })
+            return
+          }
+          const name = subject.setting as WideningSetting
+          const to = settingValue(name, subject.to)
+          if (to === null) throw new ValetError('config', 'invalid')
+          if (name === 'remote_hosts') {
+            const hosts = this.remote.status().hosts
+            if (!hosts.includes(String(to))) await this.remote.setHosts([...hosts, String(to)])
+            return
+          }
+          await this.valetSetting(name).set(to)
+        },
+        supersedes: (next, older) =>
+          next.scope === older.scope && next.adapterId === older.adapterId && next.setting === older.setting,
+      },
+      // A tool turned on for remote clients (all of them; one client's own list is consent's).
+      'tool-enable': {
+        precheck: (subject) => {
+          if (subject.scope !== 'remote' || this.adapter(subject.adapterId)?.hash !== subject.adapterHash)
+            return false
+          if (subject.clientId === null) return true
+          // One client's own: only a tool already on for remote clients, added to its grant.
+          const client = remoteClientKey(subject.clientId)
+          const declaration = this.remoteDeclared(subject.adapterId, subject.tool)
+          return (
+            client !== null &&
+            declaration !== null &&
+            this.remote.canAllowForClient(subject.adapterId, declaration, client)
+          )
+        },
+        apply: async (subject) => {
+          if (subject.clientId === null) return this.setRemoteTool(subject.adapterId, subject.tool, true)
+          const client = remoteClientKey(subject.clientId)
+          const declaration = this.remoteDeclared(subject.adapterId, subject.tool)
+          if (
+            client === null ||
+            declaration === null ||
+            !(await this.remote.allowForClient(subject.adapterId, declaration, client))
+          )
+            throw new ValetError('config', 'not-found')
+        },
+        supersedes: (next, older) =>
+          next.adapterId === older.adapterId &&
+          next.tool === older.tool &&
+          next.scope === older.scope &&
+          next.clientId === older.clientId,
+      },
+      // A remote client's consent, approved with the code the person typed from their browser.
+      'remote-client': {
+        precheck: (subject) =>
+          this.remote.consentView().requests.some((r) => `remote:${r.clientId}` === subject.clientId),
+        apply: async (subject, evidence) => {
+          const code = evidence === null ? undefined : decisionTypedCode(evidence.decision.payload)
+          if (code === undefined) throw new ValetError('config', 'invalid')
+          const answer = await this.remote.approveConsent(code, subject.tools)
+          if (answer !== 'approved') throw new ValetError('config', 'not-found')
         },
       },
       resume: {
@@ -1156,6 +1422,8 @@ export class AppService {
           },
           app,
           {
+            // The calling agent's: refused while it is cooling down, and a decline counts against it.
+            ...(this.callers.has(item.callId) ? { onBehalfOf: this.callers.get(item.callId) as string } : {}),
             display: {
               ...(shown(item.client, 100) === undefined
                 ? {}
@@ -1225,6 +1493,8 @@ export class AppService {
     const keep = new Set<string>(await this.approvals.approvedHashes(adapterId).catch(() => []))
     for (const grant of await this.grants.list().catch(() => [] as readonly Grant[]))
       if (grant.adapterId === adapterId) keep.add(grant.adapterHash)
+    // A draft waiting for the person, staged or installed: its version must still be there.
+    for (const request of this.draftRequests(adapterId)) keep.add(request.subject.adapterHash)
     return keep
   }
 
@@ -1347,7 +1617,15 @@ export class AppService {
   private async rollbackNow(adapterId: string, hash: string): Promise<void> {
     const target = await this.rollbackTarget(adapterId, hash)
     const active = this.requireAdapter(adapterId)
-    await this.swapIn(target)
+    // The person approves the rollback with Touch ID first; nothing is swapped without it.
+    if (!(await this.signInstall(target, 'rollback', active)))
+      throw new InstallError('Not rolled back: the approval was cancelled.')
+    try {
+      await this.swapIn(target)
+    } catch (error) {
+      await this.revokeInstall(adapterId, hash, { legacy: false })
+      throw error
+    }
     const version = target.definition.manifest.version
     const already = (await this.approvals.approvedHashes(adapterId)).includes(hash)
     await this.approvals.approve(adapterId, hash, version)
@@ -1372,7 +1650,795 @@ export class AppService {
       version,
       previousHash: active.hash,
     })
+    // Swapped and applied: the version it replaces loses its approval, as any signed install's
+    // would. Last, so the rolled-back version reads as approved as soon as it is in use.
+    await this.retireOthers(adapterId, hash)
     await this.refreshTools()
+  }
+
+  /**
+   * Whether a new version of the adapter would inherit a signed-in session: it has grants, or its
+   * tool partition holds any cookie on the cookie domains of the version in use. Fails closed: a
+   * partition that can't be read counts as holding one.
+   */
+  private async inheritsSession(adapterId: string): Promise<boolean> {
+    const grants = await this.grants.list().catch(() => [] as readonly Grant[])
+    return grants.some((g) => g.adapterId === adapterId) || (await this.holdsSession(adapterId))
+  }
+
+  /** The partition half of inheritsSession. */
+  private async holdsSession(adapterId: string): Promise<boolean> {
+    const driver = this.drivers.get(adapterId)
+    const adapter = this.adapter(adapterId)
+    if (driver === undefined || adapter === null) return false
+    const { cookieDomains } = adapter.definition.manifest.session
+    if (cookieDomains.length === 0) return false
+    try {
+      return (await driver.cookieNames(cookieDomains)).length > 0
+    } catch {
+      return true
+    }
+  }
+
+  /**
+   * Whether this version would run without the sandbox here: its manifest says unsandboxed, or this
+   * build has no sandbox and it isn't one of the app's own built-ins (B). Built in means the hash
+   * this app ships, never a stored version's source tag, which anything can write.
+   */
+  private runsUnsandboxed(adapter: BuiltinAdapter): boolean {
+    if ((adapter.definition.manifest.sandbox ?? DEFAULT_SANDBOX).mode === 'unsandboxed') return true
+    if (this.deps.sandbox !== undefined) return false
+    return !this.isBuiltIn(adapter)
+  }
+
+  /** One of the app's own built-ins: the hash it ships (or, without a store, its own copy). */
+  private isBuiltIn(adapter: BuiltinAdapter): boolean {
+    if (this.packages === null) return adapter.source === undefined || adapter.source === 'builtin'
+    return this.packages.isShipped(adapter.definition.manifest.id, adapter.hash)
+  }
+
+  /** Signed evidence (or the legacy record) for this hash, in the mode it would run in now. */
+  private installSigned(adapterId: string, adapterHash: string): boolean {
+    const adapter = this.adapter(adapterId)
+    const unsandboxed = adapter?.hash === adapterHash ? this.runsUnsandboxed(adapter) : true
+    const signed = this.approvalBroker?.honoured(
+      'adapter-install',
+      (s) => s.adapterId === adapterId && s.adapterHash === adapterHash && s.unsandboxed === unsandboxed,
+    )
+    if (signed !== null && signed !== undefined) return true
+    return (this.ledger?.data.legacy?.installs ?? []).some(
+      (l) => l.adapterId === adapterId && l.adapterHash === adapterHash,
+    )
+  }
+
+  /**
+   * Asks the person to approve installing `adapter` (an update, a first install, a rollback), with
+   * Touch ID at this Mac. Resolves true once signed; false if they cancelled. The diff is against
+   * `against` (the active version, for a rollback) or the last approved snapshot.
+   */
+  private async signInstall(
+    adapter: BuiltinAdapter,
+    source: 'draft' | 'local-folder' | 'rollback' | 'builtin',
+    against?: BuiltinAdapter,
+  ): Promise<boolean> {
+    const broker = this.approvalBroker
+    if (broker === null) throw new ValetError('config', 'unavailable')
+    const id = adapter.definition.manifest.id
+    const snapshot = await this.snapshots.get(id)
+    const previous =
+      against !== undefined
+        ? { hash: against.hash, manifest: against.definition.manifest }
+        : snapshot !== null && snapshot.hash !== adapter.hash
+          ? { hash: snapshot.hash, manifest: snapshot.manifest }
+          : null
+    const subject = installSubject({
+      manifest: adapter.definition.manifest,
+      hash: adapter.hash,
+      files: adapter.files,
+      previous,
+      source,
+      inheritsSession: previous !== null && (await this.inheritsSession(id)),
+      unsandboxed: this.runsUnsandboxed(adapter),
+    })
+    if (!(await this.approveHere('adapter-install', subject))) return false
+    // A rollback retires the others only once its swap has worked (rollbackNow).
+    if (source !== 'rollback') await this.retireOthers(id, adapter.hash)
+    return true
+  }
+
+  /**
+   * The person's own request, approved with Touch ID at this Mac: true once signed, false if they
+   * cancelled. Throws when nothing can be approved (no broker, locked down).
+   */
+  private async approveHere<K extends ApprovalKind>(
+    kind: K,
+    subject: ApprovalSubject<K>,
+    extras: ConsentExtras = {},
+  ): Promise<boolean> {
+    const broker = this.approvalBroker
+    if (broker === null) throw new ValetError('config', 'unavailable')
+    const asked = await broker.request(
+      kind,
+      subject,
+      // A consent is raised by the app for the client that asked; everything else is the person's.
+      kind === 'remote-client' ? { kind: 'app' } : { kind: 'person' },
+      extras.consentCode === undefined ? null : { consentCode: extras.consentCode },
+    )
+    if (!asked.ok)
+      throw new ValetError('config', asked.reason === 'locked-down' ? 'locked-down' : 'unavailable')
+    const answered = await broker.approveOnMac(
+      asked.requestId,
+      extras.typedCode === undefined ? {} : { typedCode: extras.typedCode },
+    )
+    if (answered.ok) return true
+    // Busy: another prompt is up and this one may still be answered, unless it's a consent,
+    // which is never reused and would only pile up.
+    if (answered.reason !== 'busy' || kind === 'remote-client')
+      await broker
+        .withdraw(asked.requestId, kind === 'remote-client' ? { kind: 'app' } : { kind: 'person' })
+        .catch(() => false)
+    return false
+  }
+
+  /** A widening change the person asked for: Touch ID first, then the kind's handler applies it. */
+  private async approveOrRefuse<K extends ApprovalKind>(
+    kind: K,
+    subject: ApprovalSubject<K>,
+    extras: ConsentExtras = {},
+  ): Promise<void> {
+    if (!(await this.approveHere(kind, subject, extras))) throw new ValetError('config', 'not-granted')
+  }
+
+  /** Valet's own widening settings: where each is read and written. */
+  private valetSetting(name: WideningSetting): {
+    get(): unknown
+    set(value: unknown): Promise<void>
+  } {
+    const settings = async (patch: SettingsPatch) => {
+      await this.afterSettings(await this.settings.set(patch))
+      this.emit('app-changed')
+    }
+    switch (name) {
+      case 'messages_otp':
+        return {
+          get: () => this.settingsNow.messagesOtpEnabled,
+          set: (v) => settings({ messagesOtpEnabled: v === true }),
+        }
+      case 'notifications':
+        return {
+          get: () => this.settingsNow.notifications,
+          set: (v) => settings({ notifications: v === true }),
+        }
+      case 'trace_retention':
+        return {
+          get: () => this.settingsNow.traceRetentionDays,
+          set: (v) => settings({ traceRetentionDays: Number(v) }),
+        }
+      case 'remote_enabled':
+        return { get: () => this.remote.status().enabled, set: (v) => this.remote.setEnabled(v === true) }
+      case 'remote_hosts':
+        return {
+          get: () => this.remote.status().hosts,
+          set: (v) => this.remote.setHosts(Array.isArray(v) ? (v as string[]) : []),
+        }
+    }
+  }
+
+  /**
+   * Changes one of Valet's own widening settings: with Touch ID when it widens (the handler then
+   * applies it), at once otherwise.
+   */
+  private async changeValetSetting(name: WideningSetting, value: unknown): Promise<void> {
+    // Checked before asking: a handler's failure after the approval can't reach the caller.
+    const to = value
+    if (name === 'trace_retention' && !traceRetentionDaysSchema.safeParse(value).success)
+      throw new ValetError('config', 'invalid')
+    if (name === 'remote_hosts') return this.changeRemoteHosts(value)
+    const setting = this.valetSetting(name)
+    const from = setting.get()
+    // Unchanged or narrower: set at once (setting remote access off again still closes it all).
+    if (!settingWidens(name, from, to)) return setting.set(to)
+    await this.approveOrRefuse('setting', settingSubject(name, from, to))
+    // Applied by the handler, which can't report a failure: read it back.
+    if (JSON.stringify(setting.get()) !== JSON.stringify(to)) throw new ValetError('config', 'unavailable')
+  }
+
+  /** Hosts removed at once; each host added is its own signed request, so it fits on the card. */
+  private async changeRemoteHosts(value: unknown): Promise<void> {
+    const normalised = (Array.isArray(value) ? value : []).map((h) => normaliseRemoteHost(String(h)))
+    if (!Array.isArray(value) || normalised.some((h) => h === null)) throw new ValetError('config', 'invalid')
+    const wanted = [...new Set(normalised as string[])]
+    const from = this.remote.status().hosts
+    const added = wanted.filter((h) => !from.includes(h))
+    if (wanted.length > MAX_REMOTE_HOSTS || added.some((h) => settingValue('remote_hosts', h) === null))
+      throw new ValetError('config', 'invalid')
+    const kept = from.filter((h) => wanted.includes(h))
+    if (kept.length !== from.length) await this.remote.setHosts(kept)
+    for (const host of added) {
+      await this.approveOrRefuse('setting', settingSubject('remote_hosts', this.remote.status().hosts, host))
+      if (!this.remote.status().hosts.includes(host)) throw new ValetError('config', 'unavailable')
+    }
+  }
+
+  /**
+   * Whether a stored grant may hand out its secret: signed `secret-grant` evidence for exactly it
+   * (the item, the provider, origins within those signed), or the legacy record, honoured only
+   * for origins the version's own manifest declares (B's condition).
+   */
+  private grantSigned(grant: Grant): boolean {
+    const fingerprint = itemFingerprint(grant.itemRef)
+    const signed = this.approvalBroker?.honoured(
+      'secret-grant',
+      (s) =>
+        s.adapterId === grant.adapterId &&
+        s.adapterHash === grant.adapterHash &&
+        s.secret === grant.secret &&
+        s.provider === subjectProvider(grant.provider) &&
+        s.itemFingerprint === fingerprint &&
+        grant.origins.every((o) => s.origins.includes(o)),
+    )
+    if (signed !== null && signed !== undefined) return true
+    const legacy = (this.ledger?.data.legacy?.grants ?? []).some(
+      (l) =>
+        l.adapterId === grant.adapterId && l.adapterHash === grant.adapterHash && l.secret === grant.secret,
+    )
+    if (!legacy) return false
+    const adapter = this.adapter(grant.adapterId)
+    if (adapter === null || adapter.hash !== grant.adapterHash) return false
+    const manifest = adapter.definition.manifest
+    const declared =
+      grant.secret === MESSAGES_SECRET
+        ? messagesSourcesIn(manifest.auth.steps).some((m) => m.sender === grant.itemRef)
+          ? manifest.navigation
+          : []
+        : grant.provider !== 'messages' && Object.hasOwn(manifest.secrets, grant.secret)
+          ? (manifest.secrets[grant.secret]?.origins ?? [])
+          : []
+    return grant.origins.length > 0 && grant.origins.every((o) => declared.includes(o))
+  }
+
+  /** The grant store as everything that hands out secrets sees it: only grants the person signed. */
+  private readonly signedGrants: GrantStore = {
+    find: async (adapterId, adapterHash, secret) => {
+      const grant = await this.grants.find(adapterId, adapterHash, secret)
+      return grant !== null && this.grantSigned(grant) ? grant : null
+    },
+    list: async () => (await this.grants.list()).filter((g) => this.grantSigned(g)),
+    put: (grant) => this.grants.put(grant),
+    revoke: (adapterId, secret) => this.grants.revoke(adapterId, secret),
+  }
+
+  /** Takes a grant's evidence and legacy record away (a revoke). Only tightens. */
+  private async revokeGrantEvidence(adapterId: string, secret: string): Promise<void> {
+    await this.approvalBroker?.revoke('secret-grant', (s) => s.adapterId === adapterId && s.secret === secret)
+    await this.ledger
+      ?.commit(
+        (draft) => {
+          if (draft.legacy !== undefined)
+            draft.legacy.grants = draft.legacy.grants.filter(
+              (l) => !(l.adapterId === adapterId && l.secret === secret),
+            )
+        },
+        { tightening: true },
+      )
+      .catch(() => undefined)
+  }
+
+  /** Applies a signed install of the hash installed now: the applied mark, the snapshot, the tools. */
+  private async applyInstall(adapterId: string, adapterHash: string): Promise<void> {
+    const adapter = this.adapter(adapterId)
+    if (adapter === null || adapter.hash !== adapterHash) return
+    await this.approvals.approve(adapterId, adapterHash, adapter.definition.manifest.version)
+    const at = new Date(this.deps.now()).toISOString()
+    await this.snapshots.put(adapterId, adapter, at)
+    this.approvedAt.set(`${adapterId}:${adapterHash}`, at)
+    await this.refreshTools()
+  }
+
+  /**
+   * Once a version is approved with Touch ID, the adapter's other versions keep no approval: their
+   * signed evidence and their legacy records go, so a version can't be put back as active later
+   * without asking again (a downgrade). Only tightens.
+   */
+  private async retireOthers(adapterId: string, keep: string): Promise<void> {
+    await this.approvalBroker?.revoke(
+      'adapter-install',
+      (s) => s.adapterId === adapterId && s.adapterHash !== keep,
+    )
+    await this.ledger
+      ?.commit(
+        (draft) => {
+          if (draft.legacy !== undefined)
+            draft.legacy.installs = draft.legacy.installs.filter((l) => l.adapterId !== adapterId)
+        },
+        { tightening: true },
+      )
+      .catch(() => undefined)
+  }
+
+  /** Takes an install's evidence and legacy record away (a reject). Only tightens. */
+  private async revokeInstall(
+    adapterId: string,
+    adapterHash: string,
+    options: { readonly legacy: boolean } = { legacy: true },
+  ): Promise<void> {
+    await this.approvalBroker?.revoke(
+      'adapter-install',
+      (s) => s.adapterId === adapterId && s.adapterHash === adapterHash,
+    )
+    if (!options.legacy) return
+    await this.ledger
+      ?.commit(
+        (draft) => {
+          if (draft.legacy !== undefined)
+            draft.legacy.installs = draft.legacy.installs.filter(
+              (l) => !(l.adapterId === adapterId && l.adapterHash === adapterHash),
+            )
+        },
+        { tightening: true },
+      )
+      .catch(() => undefined)
+  }
+
+  /**
+   * At the first launch of a signed build: what was approved before, recorded once in the ledger
+   * (docs/approval-broker.md#migration). Only the built-ins' own hashes, so an approvals.json or a
+   * package planted in the data folder can't be carried over as approved.
+   */
+  private async recordLegacy(): Promise<void> {
+    const ledger = this.ledger
+    if (ledger === null || ledger.tampered !== null || ledger.data.legacy !== undefined) return
+    const builtin = this.installed.filter((a) => this.isBuiltIn(a))
+    const installs: { adapterId: string; adapterHash: string }[] = []
+    for (const adapter of builtin) {
+      const id = adapter.definition.manifest.id
+      if (await this.approvals.isApproved(id, adapter.hash).catch(() => false))
+        installs.push({ adapterId: id, adapterHash: adapter.hash })
+    }
+    const grants = (await this.grants.list().catch(() => [] as readonly Grant[]))
+      .filter((g) => installs.some((i) => i.adapterId === g.adapterId && i.adapterHash === g.adapterHash))
+      .map((g) => ({ adapterId: g.adapterId, adapterHash: g.adapterHash, secret: g.secret }))
+    await ledger
+      .commit((draft) => {
+        draft.legacy = { at: new Date(this.deps.now()).toISOString(), installs, grants }
+      })
+      .catch(() => undefined)
+  }
+
+  /**
+   * Signed installs whose apply didn't finish (a crash after the evidence was written): applied
+   * now, for the hash still installed, without asking again.
+   */
+  private async reapplyInstalls(): Promise<void> {
+    for (const adapter of this.installed) {
+      const id = adapter.definition.manifest.id
+      const signed = this.approvalBroker?.honoured(
+        'adapter-install',
+        (s) => s.adapterId === id && s.adapterHash === adapter.hash && s.source !== 'rollback',
+      )
+      if (signed === null || signed === undefined) continue
+      if (!(await this.approvals.isApproved(id, adapter.hash).catch(() => true)))
+        await this.applyInstall(id, adapter.hash).catch(() => undefined)
+    }
+    // A staged draft approved before a crash, or whose swap was busy: finished now.
+    for (const adapter of [...this.installed]) {
+      const id = adapter.definition.manifest.id
+      let hash: string | null = null
+      const staged = this.approvalBroker?.honoured('adapter-install', (s) => {
+        const match =
+          s.adapterId === id &&
+          s.source === 'draft' &&
+          s.adapterHash !== adapter.hash &&
+          s.previousHash === adapter.hash
+        if (match) hash = s.adapterHash
+        return match
+      })
+      if (staged === null || staged === undefined || hash === null) continue
+      if (await this.isStored(id, hash)) await this.finishStaged(id, hash).catch(() => undefined)
+    }
+  }
+
+  // ---------- Drafts (docs/authoring-tools.md) ----------
+
+  /** The authoring tools over the draft store, when this build can install adapters. */
+  private async startAuthoring(): Promise<DraftAuthoring | null> {
+    const packages = this.packages
+    const runtime = this.deps.packages?.runtime
+    if (packages === null || runtime === undefined) return null
+    for (const record of await this.drafts.list().catch(() => [])) {
+      if (record.submission === null) continue
+      this.draftAskers.set(record.submission.requestId, {
+        kind: 'agent',
+        clientId: record.submission.by,
+        clientName: record.createdByName,
+      })
+    }
+    this.tidyDraftsSoon()
+    return new DraftAuthoring({
+      store: this.drafts,
+      prepare: async (files) => (await packages.prepare(files, 'draft')).loaded,
+      // Each case in a fresh one-shot sandbox window, as describing a package runs (docs/sandbox.md).
+      caseProcess: runtime.start,
+      installed: async (adapterId) => {
+        const adapter = this.adapter(adapterId)
+        return adapter === null
+          ? null
+          : { manifest: adapter.definition.manifest, hash: adapter.hash, files: adapter.files }
+      },
+      approved: async (adapterId) => {
+        const snapshot = await this.snapshots.get(adapterId)
+        return snapshot === null ? null : { manifest: snapshot.manifest, hash: snapshot.hash }
+      },
+      sites: () =>
+        this.installed.map((a) => ({ id: a.definition.manifest.id, name: a.definition.manifest.name })),
+      permissionLines: (before, after) =>
+        permissionChanges(
+          before,
+          after,
+          (after.sandbox ?? DEFAULT_SANDBOX).mode === 'unsandboxed' || this.deps.sandbox === undefined,
+        ),
+      submit: (request) => this.submitDraft(request),
+      withdraw: async (requestId) => {
+        const asker = this.draftAskers.get(requestId)
+        if (asker !== undefined) await this.approvalBroker?.withdraw(requestId, asker).catch(() => false)
+      },
+      requestState: (requestId) => this.draftRequestState(requestId),
+      clientName: (viewer) =>
+        viewer.origin === 'local' ? (this.clients.get(viewer.clientId)?.name ?? 'An app') : 'A cloud agent',
+      audit: async (event) => {
+        await this.audit.append(event)
+      },
+      notify: (text) => this.notifier.draftActivity(text),
+      now: this.deps.now,
+      ...(this.deps.scratch === undefined ? {} : { research: this.scratchSessions(this.deps.scratch) }),
+      ...(this.deps.fixtureBrowser === undefined ? {} : { caseBrowser: this.deps.fixtureBrowser }),
+      ...(this.deps.trialDriver === undefined
+        ? {}
+        : {
+            trials: {
+              // A fresh one-shot sandbox window for the call, as for a case.
+              start: runtime.start,
+              driver: this.deps.trialDriver,
+              // The installed adapters' own budget and breaker for the host.
+              guards: (host: string) => this.runtime().siteGuards(host),
+              signedIn: () => this.signedInDomains(),
+            },
+          }),
+    })
+  }
+
+  /**
+   * The registrable domains of installed adapters with a grant or a signed-in (or expired)
+   * session, by adapter id: scratch browsers and live trials don't reach them but for their own.
+   */
+  private async signedInDomains(): Promise<ReadonlyMap<string, readonly string[]>> {
+    const grants = await this.grants.list().catch(() => [] as readonly Grant[])
+    const out = new Map<string, readonly string[]>()
+    for (const adapter of this.installed) {
+      const id = adapter.definition.manifest.id
+      const session = this.sessions.get(id).state
+      if (grants.some((g) => g.adapterId === id) || session === 'logged-in' || session === 'expired')
+        out.set(id, draftDomains(adapter.definition.manifest))
+    }
+    return out
+  }
+
+  /** Sites' Drafts section: open drafts, and closed ones from the last week, newest first. */
+  private async draftOverviews(): Promise<DraftOverview[]> {
+    const weekAgo = this.deps.now() - 7 * 24 * 3600_000
+    const records = (await this.drafts.list().catch(() => [] as DraftRecord[]))
+      .filter((r) => r.status === 'editing' || r.status === 'waiting' || Date.parse(r.updatedAt) >= weekAgo)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    const out: DraftOverview[] = []
+    for (const record of records) {
+      const files = await this.drafts.files(record.id).catch(() => null)
+      if (files !== null) out.push(this.draftOverview(record, files))
+    }
+    return out
+  }
+
+  private async draftPage(draftId: string): Promise<DraftPage | null> {
+    const record = await this.drafts.record(draftId).catch(() => null)
+    if (record === null) return null
+    const files = await this.drafts.files(draftId).catch(() => null)
+    if (files === null) return null
+    return {
+      ...this.draftOverview(record, files),
+      createdAt: record.createdAt,
+      files: Object.entries(files)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([path, text]) => ({
+          path,
+          bytes: Buffer.byteLength(text, 'utf8'),
+          recordedByValet: record.recorded[path] === sha256Hex(text),
+        })),
+    }
+  }
+
+  /** What Valet ran and recorded, bound to the files as they are now; nothing the agent claims. */
+  private draftOverview(record: DraftRecord, files: PackageFiles): DraftOverview {
+    let name = record.adapterId
+    let version: string | null = null
+    try {
+      const manifest = parseManifest(JSON.parse(files['manifest.json'] ?? 'null'))
+      name = manifest.name
+      version = manifest.version
+    } catch {
+      // A manifest that doesn't parse yet: the draft is still named by its id.
+    }
+    const packageHash = bundleHash(files)
+    const latest = new Map<string, DraftRecord['trials'][number]>()
+    for (const t of record.trials) if (t.packageHash === packageHash) latest.set(t.tool, t)
+    const check = record.lastCheck
+    return {
+      draftId: record.id,
+      adapterId: record.adapterId,
+      name,
+      version,
+      writtenBy: record.createdByName,
+      status: record.status,
+      updatedAt: record.updatedAt,
+      check:
+        check === null || check.packageHash !== packageHash
+          ? null
+          : { at: check.at, ok: check.ok, cases: check.cases, passed: check.passed, problem: check.problem },
+      trials: [...latest.values()].map((t) => ({ tool: t.tool, at: t.at, ok: t.ok, problem: t.problem })),
+      submission:
+        record.submission === null
+          ? null
+          : { ref: record.submission.ref, at: record.submission.at, note: record.submission.note },
+      update: record.basedOn !== null,
+    }
+  }
+
+  /** The scratch browsers' rules from what is installed and signed in now. */
+  private scratchSessions(open: NonNullable<ServiceDeps['scratch']>): ScratchSessions {
+    return new ScratchSessions({
+      open,
+      signedIn: () => this.signedInDomains(),
+      secretIn: (text) => this.knownSecretIn([text]),
+      blocked: (host) => {
+        this.deps.diagnostics?.({ type: 'scratch-blocked' })
+        this.notifier.draftActivity(`${host} refused an agent’s signed-out browser, so Valet closed it.`)
+      },
+      notify: (text) => this.notifier.draftActivity(text),
+      now: this.deps.now,
+      timers: this.deps.timers,
+    })
+  }
+
+  /**
+   * A draft the person is asked to approve (docs/authoring-tools.md#submitting). A first install,
+   * or an update to a version that isn't approved, is installed and waits, its tools hidden, as a
+   * folder install does. An update to an approved version is staged: stored, not active, so the
+   * approved one keeps serving, and the approval's apply swaps it in. Either way the request is
+   * the agent's, so its status and a decline's note go back to it.
+   */
+  private async submitDraft(request: SubmitRequest): Promise<SubmitOutcome> {
+    const broker = this.approvalBroker
+    const packages = this.packages
+    if (broker === null || packages === null)
+      return { ok: false, sentence: 'Not submitted: Valet can’t ask for approvals right now.' }
+    if (this.lockedDown) return { ok: false, sentence: 'Not submitted: Valet is locked down.' }
+    const requester: Requester = {
+      kind: 'agent',
+      clientId: request.requester.clientId,
+      clientName: request.requester.clientName,
+    }
+    let prepared: ReturnType<PackageManager['prepared']>
+    try {
+      prepared = packages.prepared(request.loaded, 'draft')
+    } catch (error) {
+      return { ok: false, sentence: `Not submitted: ${installReason(error)}` }
+    }
+    const { adapter } = prepared
+    const id = adapter.definition.manifest.id
+    let staged = false
+    let stagedNew = false
+    try {
+      // Only the store and the swap under the adapter's lock: the broker's own lock is taken after,
+      // never inside it (an approval's apply takes the adapter's lock under the broker's).
+      await this.oneAtATime(id, async () => {
+        const active = this.adapter(id)
+        if (active !== null && active.hash === adapter.hash)
+          throw new InstallError('That version is the one installed now.')
+        if (active !== null && (await this.installGate.isApproved(id, active.hash))) {
+          stagedNew = !(await this.isStored(id, adapter.hash))
+          await packages.stage(prepared)
+          staged = true
+        } else {
+          await this.swapIn(adapter)
+          await packages.commit(prepared)
+        }
+      })
+    } catch (error) {
+      return { ok: false, sentence: `Not submitted: ${installReason(error)}` }
+    }
+    if (staged) this.stagedAdapters.set(`${id}:${adapter.hash}`, adapter)
+    const snapshot = await this.snapshots.get(id)
+    const previous = snapshot !== null && snapshot.hash !== adapter.hash ? snapshot : null
+    const subject = {
+      ...installSubject({
+        manifest: adapter.definition.manifest,
+        hash: adapter.hash,
+        files: adapter.files,
+        previous: previous === null ? null : { hash: previous.hash, manifest: previous.manifest },
+        source: 'draft',
+        inheritsSession: previous !== null && (await this.inheritsSession(id)),
+        unsandboxed: this.runsUnsandboxed(adapter),
+      }),
+      references: request.references.filter((r) => /^https:\/\/\S{1,490}$/.test(r)).slice(0, 10),
+    }
+    const asked = await broker.request('adapter-install', subject, requester, {
+      agentNote: request.agentNote === null ? null : request.agentNote.slice(0, 280),
+      context: { kind: 'draft', draftId: request.draftId },
+      // The draft's earlier request, withdrawn as replaced only once this one is made, so the
+      // person never sees two of one draft and a refused resubmission leaves the earlier one.
+      ...(request.replaces === null ? {} : { replaces: request.replaces }),
+      display: {
+        client: {
+          label: request.requester.clientName,
+          badge: request.requester.clientId.startsWith('remote:') ? 'remote' : 'local',
+        },
+        ...(/^[a-z0-9.-]{1,253}$/.test(request.domain) ? { domain: request.domain } : {}),
+        checks: request.checks.slice(0, 20).map((line) => line.slice(0, 200)),
+        // The agent's own cases, in B's field apart from Valet's checks, so they can't pass for them.
+        agentTests: {
+          passed: Math.min(request.agentTests.passed, 10_000),
+          failed: Math.min(request.agentTests.failed, 10_000),
+        },
+      },
+    })
+    if (!asked.ok) {
+      if (staged && stagedNew) await this.discardStaged(id, adapter.hash)
+      return { ok: false, sentence: submitRefusal(asked.reason, asked.until) }
+    }
+    this.draftAskers.set(asked.requestId, requester)
+    this.emit('approvals-changed')
+    this.emit('attention-changed')
+    return {
+      ok: true,
+      requestId: asked.requestId,
+      ref: asked.ref,
+      expiresAt: asked.expiresAt,
+      previousHash: subject.previousHash,
+      stagedNew,
+    }
+  }
+
+  private draftRequestState(requestId: string): RequestState {
+    const asker = this.draftAskers.get(requestId)
+    const status = asker === undefined ? null : (this.approvalBroker?.status(requestId, asker) ?? null)
+    if (status === null) return { state: 'unknown', note: null }
+    if (!('outcome' in status)) return { state: 'pending', note: null }
+    return { state: status.outcome, note: status.note ?? null }
+  }
+
+  /** The agents' draft install requests waiting now, for one adapter or all. */
+  private draftRequests(adapterId?: string) {
+    return (this.approvalBroker?.list() ?? []).flatMap((p) => {
+      const r = p.request
+      if (r.kind !== 'adapter-install' || r.requester.kind !== 'agent' || r.context?.kind !== 'draft')
+        return []
+      if (adapterId !== undefined && r.subject.adapterId !== adapterId) return []
+      return [r]
+    })
+  }
+
+  private draftRequestFor(adapterId: string, hash: string) {
+    return this.draftRequests(adapterId).find((r) => r.subject.adapterHash === hash) ?? null
+  }
+
+  private async isStored(adapterId: string, hash: string): Promise<boolean> {
+    const state = await this.packages?.versions(adapterId)
+    return state?.versions.some((v) => v.hash === hash) ?? false
+  }
+
+  /** A staged version, loaded once (a compile and a describe in the sandbox). */
+  private async stagedAdapter(adapterId: string, hash: string): Promise<BuiltinAdapter | null> {
+    const key = `${adapterId}:${hash}`
+    const cached = this.stagedAdapters.get(key)
+    if (cached !== undefined) return cached
+    const loaded = await this.packages?.load(adapterId, hash).catch(() => null)
+    if (loaded === null || loaded === undefined) return null
+    this.stagedAdapters.set(key, loaded)
+    return loaded
+  }
+
+  /**
+   * An approved staged draft, swapped in after the broker's lock is let go: then activated,
+   * approved and the others retired, as a rollback is. A swap that fails takes the approval away
+   * again, so the version still running keeps its own (docs/authoring-tools.md#submitting).
+   */
+  private finishStagedSoon(adapterId: string, hash: string): void {
+    this.staging = this.staging
+      .then(() => this.finishStaged(adapterId, hash))
+      .catch(() => this.deps.diagnostics?.({ type: 'draft-apply-failed', adapterId }))
+  }
+
+  private finishStaged(adapterId: string, hash: string): Promise<void> {
+    return this.oneAtATime(adapterId, async () => {
+      const packages = this.packages
+      const active = this.adapter(adapterId)
+      if (packages === null || active === null) return
+      if (active.hash === hash) {
+        await this.applyInstall(adapterId, hash)
+        return
+      }
+      try {
+        const target = await packages.load(adapterId, hash)
+        await this.swapIn(target)
+      } catch (error) {
+        await this.revokeInstall(adapterId, hash, { legacy: false })
+        throw error
+      }
+      await packages.activate(adapterId, hash)
+      const now = this.adapter(adapterId)
+      const build = this.deps.packages?.build
+      if (now !== null && build !== undefined)
+        await this.audit.append({
+          type: 'adapter-installed',
+          adapterId,
+          adapterHash: hash,
+          version: now.definition.manifest.version,
+          source: 'draft',
+          previousHash: active.hash,
+          ...build,
+        })
+      await this.applyInstall(adapterId, hash)
+      await this.retireOthers(adapterId, hash)
+      this.stagedAdapters.delete(`${adapterId}:${hash}`)
+      this.emit('approvals-changed')
+    })
+  }
+
+  private tidyDraftsSoon(): void {
+    this.staging = this.staging.then(() => this.tidyDrafts()).catch(() => undefined)
+  }
+
+  /**
+   * Once a draft's request is closed without approval, a version that was stored only for it is
+   * dropped, unless it is active, kept for another reason, or another draft still names it.
+   */
+  private async tidyDrafts(): Promise<void> {
+    for (const record of await this.drafts.list().catch(() => [])) {
+      const submission = record.submission
+      if (submission === null || !submission.stagedNew) continue
+      const state = this.draftRequestState(submission.requestId).state
+      if (state === 'pending' || state === 'approved') continue
+      await this.discardStaged(record.adapterId, submission.adapterHash)
+      await this.drafts
+        .update(record.id, (r) =>
+          r.submission === null ? r : { ...r, submission: { ...r.submission, stagedNew: false } },
+        )
+        .catch(() => undefined)
+    }
+  }
+
+  private async discardStaged(adapterId: string, hash: string): Promise<void> {
+    if (this.adapter(adapterId)?.hash === hash) return
+    if ((await this.keepHashes(adapterId)).has(hash)) return
+    await this.packages?.discard(adapterId, hash).catch(() => false)
+    this.stagedAdapters.delete(`${adapterId}:${hash}`)
+  }
+
+  /** The Mac's review of each staged draft, against the approved version it would replace. */
+  private async stagedReviews(states: readonly AdapterState[]): Promise<PendingReview[]> {
+    const out: PendingReview[] = []
+    for (const request of this.draftRequests()) {
+      const { adapterId, adapterHash } = request.subject
+      const state = states.find((s) => s.adapter.definition.manifest.id === adapterId)
+      if (state === undefined || state.adapter.hash === adapterHash) continue
+      const staged = await this.stagedAdapter(adapterId, adapterHash)
+      if (staged === null) continue
+      const snapshot = await this.snapshots.get(adapterId)
+      const review = pendingReview(
+        { ...state, adapter: staged, approved: false, rejected: false, previous: snapshot },
+        request.createdAt,
+      )
+      if (review !== null) out.push(review)
+    }
+    return out
   }
 
   private async rollbackTarget(adapterId: string, hash: string): Promise<BuiltinAdapter> {
@@ -1417,7 +2483,7 @@ export class AppService {
     grants: readonly Grant[],
   ): Promise<AdapterState> {
     const manifest = adapter.definition.manifest
-    const approved = await this.approvals.isApproved(manifest.id, adapter.hash)
+    const approved = await this.installGate.isApproved(manifest.id, adapter.hash)
     const snapshot: ApprovedSnapshot | null = await this.snapshots.get(manifest.id)
     const decisions = records.filter(
       (r) =>
@@ -1454,7 +2520,7 @@ export class AppService {
 
   private async states(): Promise<AdapterState[]> {
     const records = await this.reader.records()
-    const grants = await this.grants.list().catch(() => [] as readonly Grant[])
+    const grants = await this.signedGrants.list().catch(() => [] as readonly Grant[])
     return Promise.all(this.installed.map((a) => this.state(a, records, grants)))
   }
 
@@ -1578,6 +2644,12 @@ export class AppService {
     this.requireSetting(adapterId, setting)
     const choice = this.offered.get(`${adapterId}/${setting}`)?.find((c) => c.value === value)
     if (choice === undefined) throw new ValetError('config', 'invalid')
+    await this.storeSetting(adapterId, setting, choice)
+  }
+
+  /** Stores a choice already checked: one offered now, or one picked on a signed card. */
+  private async storeSetting(adapterId: string, setting: string, choice: SettingChoice): Promise<void> {
+    this.requireSetting(adapterId, setting)
     // Audited first: a choice that can't be recorded isn't made.
     await this.audit.append({ type: 'setting-changed', adapterId, setting, cleared: false })
     await this.adapterSettings.set(adapterId, setting, choice, new Date(this.deps.now()).toISOString())
@@ -1608,6 +2680,7 @@ export class AppService {
       this.clients.active(),
       () => this.emit('endpoint-changed'),
       this.adminReader(),
+      this.authoring,
     )
     this.endpoint.refresh()
     this.emit('endpoint-changed')
@@ -1634,7 +2707,133 @@ export class AppService {
       sensitive: (texts) => this.knownSecretIn(texts),
       // Which tool, never what matched.
       withheld: () => this.deps.diagnostics?.({ type: 'admin-result-withheld' }),
+      writer: this.adminWriter(),
     })
+  }
+
+  private adminWriter(): AdminWriterImpl {
+    this.writer ??= new AdminWriterImpl(this.writerSource())
+    return this.writer
+  }
+
+  /**
+   * What the write tools may do here (docs/admin-tools.md, "Write tier"). Every widening goes
+   * through the broker with D's subject builders; this only makes changes that tighten.
+   */
+  private writerSource(): WriterSource {
+    return {
+      now: () => this.deps.now(),
+      lockedDown: () => this.lockedDown,
+      client: (viewer) => {
+        if (viewer.origin !== 'local' || !this.clients.isActive(viewer.clientId)) return null
+        const client = this.clients.get(viewer.clientId)
+        return client === null ? null : { name: client.name }
+      },
+      broker: () => {
+        const broker = this.approvalBroker
+        if (broker === null) return null
+        return {
+          macId: broker.macId,
+          request: (kind, subject, requester, note) => broker.request(kind, subject, requester, note),
+          status: (id, asker) => broker.status(id, asker),
+          withdraw: (id, asker) => broker.withdraw(id, asker),
+          waiting: () =>
+            broker.list().map((p) => ({
+              requestId: p.request.id,
+              ref: requestRef(p),
+              kind: p.request.kind,
+              requester: p.request.requester,
+              createdAt: p.request.createdAt,
+              expiresAt: p.request.expiresAt,
+            })),
+        }
+      },
+      wiredKinds: () => this.wiredKinds(),
+      phonePaired: () => (this.deviceStore?.activePhones().length ?? 0) > 0,
+      settings: () => this.agentSettings(),
+      widens: (name, from, to) => settingWidens(SETTING_SUBJECT_NAMES[name], from, to),
+      settingSubject: (name, from, to) => settingSubject(SETTING_SUBJECT_NAMES[name], from, to),
+      applySetting: async (name, from, value) => {
+        // Never through the person's own path, which would ask on their behalf: only what still
+        // starts from `from` and doesn't widen is written; anything else changes nothing.
+        const subjectName = SETTING_SUBJECT_NAMES[name]
+        const setting = this.valetSetting(subjectName)
+        if (setting.get() !== from || settingWidens(subjectName, from, value))
+          throw new ValetError('config', 'not-granted')
+        try {
+          await setting.set(value)
+        } catch (error) {
+          // Stored, and only what follows a store failed: the change is made.
+          if (setting.get() !== value) throw error
+        }
+      },
+      adapterSetting: async (adapterId, setting, query) => {
+        const adapter = this.adapter(adapterId)
+        const manifest = adapter?.definition.manifest
+        const declared = manifest === undefined ? undefined : manifest.settings[setting]
+        if (adapter === null || manifest === undefined || declared === undefined)
+          return { ok: false, reason: 'not-found' }
+        if (!(await this.installGate.isApproved(adapterId, adapter.hash).catch(() => false)))
+          return { ok: false, reason: 'not-found' }
+        const reply = await this.settingChoices(adapterId, setting, query ?? '')
+        if (reply.status === 'blocked') return { ok: false, reason: 'unavailable' }
+        if (reply.status !== 'ok') return { ok: false, reason: 'no-choices' }
+        const chosen = (await this.adapterSettings.chosen(adapterId).catch(() => null))?.[setting]
+        const subject = adapterSettingSubject(manifest, setting, chosen?.label ?? null, reply.choices)
+        if (subject === null) return { ok: false, reason: 'no-choices' }
+        return { ok: true, subject, title: `Choose ${subject.label} for ${plainName(manifest.name)}` }
+      },
+      tool: (adapterId, tool) => {
+        const listed = this.caller
+          ?.listTools()
+          .find((t) => t.adapterId === adapterId && t.declaration.name === tool)
+        return listed === undefined
+          ? null
+          : { adapterName: listed.adapterName, title: listed.declaration.title }
+      },
+      toolOff: (clientId, qualified) => this.clients.toolsOff(clientId).has(qualified),
+      turnOffTool: async (clientId, qualified) => {
+        const done = await this.clients.turnOffTool(clientId, qualified)
+        if (done === 'done') {
+          try {
+            this.endpoint?.refresh()
+          } catch {
+            // Stored: the caller refuses the tool anyway, and the next refresh drops it.
+          }
+          this.emit('clients-changed')
+        }
+        return done
+      },
+      disconnect: async (clientId) => {
+        if (!this.clients.isActive(clientId)) return false
+        await this.clients.revoke(clientId)
+        await this.approvalBroker?.withdrawClient(`local:${clientId}`).catch(() => 0)
+        await rm(this.clients.configPath(clientId), { force: true }).catch(() => undefined)
+        // The token is refused from the next request on; the session itself ends just after, so
+        // this call's own result still reaches the agent.
+        this.endpoint?.refuseClient(clientId)
+        const timer = setTimeout(() => {
+          void this.endpoint?.removeClient(clientId)
+          this.emit('clients-changed')
+          this.emit('endpoint-changed')
+        }, 1000)
+        timer.unref?.()
+        return true
+      },
+      audit: async (event) => {
+        await this.audit.append({ type: 'agent-change', ...event })
+      },
+      told: (clientId, name, count) => this.notifier.agentChanges(clientId, name, count),
+    }
+  }
+
+  /** Valet's own settings as the write tools name them. */
+  private agentSettings(): AgentSettingValues {
+    return {
+      messagesOtpEnabled: this.settingsNow.messagesOtpEnabled,
+      notifications: this.settingsNow.notifications,
+      traceRetentionDays: this.settingsNow.traceRetentionDays,
+    }
   }
 
   /**
@@ -1758,25 +2957,59 @@ export class AppService {
           }
         },
       },
+      drafts: {
+        list: () => this.draftOverviews(),
+        get: (draftId) => this.draftPage(draftId),
+        openFolder: async (draftId) => {
+          const record = await this.drafts.record(draftId).catch(() => null)
+          if (record === null) throw new ValetError('config', 'not-found')
+          deps.ui.showFolder(this.drafts.filesFolder(draftId))
+        },
+      },
       approvals: {
-        pending: async () =>
-          (await this.states()).flatMap((s) => {
-            const review = pendingReview(s, this.startedAt)
-            return review === null ? [] : [review]
-          }),
+        pending: async () => {
+          const states = await this.states()
+          return [
+            ...states.flatMap((s) => {
+              const review = pendingReview(s, this.startedAt)
+              return review === null ? [] : [review]
+            }),
+            ...(await this.stagedReviews(states)),
+          ]
+        },
         approve: async (adapterId, hash) => {
           const adapter = this.requireAdapter(adapterId)
+          // An agent's draft: the person approves the agent's own request, so the agent learns
+          // the outcome and the card it was shown is the one signed (docs/authoring-tools.md).
+          const draft = this.draftRequestFor(adapterId, hash)
+          if (draft !== null) {
+            const broker = this.approvalBroker
+            if (broker === null) throw new ValetError('config', 'unavailable')
+            const answered = await broker.approveOnMac(draft.id)
+            if (!answered.ok && answered.reason !== 'cancelled' && answered.reason !== 'busy')
+              throw new ValetError('manifest', 'invalid')
+            return
+          }
           // Only the bundle installed and waiting now; a stale review's hash is refused.
           if (adapter.hash !== hash) throw new ValetError('manifest', 'invalid')
-          await this.approvals.approve(adapterId, hash, adapter.definition.manifest.version)
-          const at = new Date(deps.now()).toISOString()
-          await this.snapshots.put(adapterId, adapter, at)
-          this.approvedAt.set(`${adapterId}:${hash}`, at)
-          await this.refreshTools()
+          // Touch ID at this Mac signs it; the handler applies it (approvalHandlers).
+          // A version this app ships is labelled built in; anything else by where it came from.
+          const source = this.isBuiltIn(adapter)
+            ? 'builtin'
+            : adapter.source === 'draft'
+              ? 'draft'
+              : 'local-folder'
+          await this.signInstall(adapter, source)
         },
         reject: async (adapterId, hash) => {
           const adapter = this.requireAdapter(adapterId)
+          // An agent's draft is declined, so the agent hears it; a staged one never ran.
+          const draft = this.draftRequestFor(adapterId, hash)
+          if (draft !== null) await this.approvalBroker?.decline(draft.id, { via: 'mac' }).catch(() => false)
+          if (draft !== null && adapter.hash !== hash) return
           if (adapter.hash !== hash) throw new ValetError('manifest', 'invalid')
+          // Only tightens: the evidence goes first, so a failed store write still leaves it off.
+          await this.revokeInstall(adapterId, hash)
           await this.approvals.reject(adapterId, hash, adapter.definition.manifest.version)
           await this.refreshTools()
         },
@@ -1785,16 +3018,16 @@ export class AppService {
         list: async () => {
           const records = await this.reader.records()
           const titles = await this.titles.read()
-          return (await this.grants.list()).map((g) => grantInfo(g, titles, lastUsed(records, g)))
+          return (await this.signedGrants.list()).map((g) => grantInfo(g, titles, lastUsed(records, g)))
         },
         providers: async () => {
-          const grants = await this.grants.list().catch(() => [] as readonly Grant[])
+          const grants = await this.signedGrants.list().catch(() => [] as readonly Grant[])
           // Only grants for an adapter's installed hash, while that hash is approved: a grant for an
           // older bundle (or one waiting for review) can't be used, so it isn't counted as live.
           const live = new Set<string>()
           for (const adapter of this.installed) {
             const id = adapter.definition.manifest.id
-            if (await this.approvals.isApproved(id, adapter.hash).catch(() => false))
+            if (await this.installGate.isApproved(id, adapter.hash).catch(() => false))
               live.add(`${id}:${adapter.hash}`)
           }
           return (await deps.credentials.status()).map((s) => ({
@@ -1815,6 +3048,12 @@ export class AppService {
             now: () => new Date(deps.now()),
           })
           const { grant } = checked
+          // Touch ID at this Mac signs exactly this grant: the item, the fields, the origins.
+          const signed = await this.approveHere(
+            'secret-grant',
+            grantSubject(adapter.definition.manifest, grant, checked.title),
+          )
+          if (!signed) throw new ValetError('grant', 'not-granted')
           // D6: a Keychain copy is made now, with the person approving in 1Password; a grant whose
           // copy couldn't be made would only fail its first login.
           if (grant.provider === 'keychain-copy') {
@@ -1842,6 +3081,7 @@ export class AppService {
             throw new ValetError('grant', 'not-found')
           }
           const before = await this.grants.list()
+          await this.revokeGrantEvidence(adapterId, secret)
           await this.audit.append({ type: 'grant-revoked', adapterId, secret })
           await this.grants.revoke(adapterId, secret)
           // A copy no remaining grant uses goes too.
@@ -1855,7 +3095,7 @@ export class AppService {
         },
         resync: async (adapterId, secret) => {
           const adapter = this.requireAdapter(adapterId)
-          const grant = await this.grants.find(adapterId, adapter.hash, secret)
+          const grant = await this.signedGrants.find(adapterId, adapter.hash, secret)
           if (grant === null || grant.provider !== 'keychain-copy') throw new ValetError('grant', 'not-found')
           await this.copyGrantItem(grant, adapter.definition.manifest)
           await this.releaseLoginHold(adapterId)
@@ -1959,10 +3199,13 @@ export class AppService {
       attention: {
         list: async (): Promise<AttentionItem[]> => {
           const states = await this.states()
-          const reviews = states.flatMap((s) => {
-            const review = pendingReview(s, this.startedAt)
-            return review === null ? [] : [reviewItem(review)]
-          })
+          const reviews = [
+            ...states.flatMap((s) => {
+              const review = pendingReview(s, this.startedAt)
+              return review === null ? [] : [review]
+            }),
+            ...(await this.stagedReviews(states)),
+          ].map(reviewItem)
           return sortAttention([
             ...this.handoffs.list(),
             ...this.broker.list(),
@@ -2040,7 +3283,15 @@ export class AppService {
       settings: {
         get: () => this.settings.get(),
         set: async (patch) => {
-          const settings = await this.settings.set(patch)
+          // What widens (codes from Messages on, notifications off, a shorter retention) is a
+          // signed setting request, applied by its handler once approved; the rest is a click.
+          const { messagesOtpEnabled, notifications, traceRetentionDays, ...rest } = patch
+          if (messagesOtpEnabled !== undefined)
+            await this.changeValetSetting('messages_otp', messagesOtpEnabled)
+          if (notifications !== undefined) await this.changeValetSetting('notifications', notifications)
+          if (traceRetentionDays !== undefined)
+            await this.changeValetSetting('trace_retention', traceRetentionDays)
+          const settings = await this.settings.set(rest)
           if (patch.launchAtLogin !== undefined) deps.ui.setLaunchAtLogin(settings.launchAtLogin)
           return this.afterSettings(settings)
         },
@@ -2093,7 +3344,21 @@ export class AppService {
             }),
           }
         },
-        approveConsent: (code, tools) => this.remote.approveConsent(code, tools),
+        approveConsent: async (code, tools) => {
+          const consent = this.remote.consentFor(code)
+          const typed = normaliseCode(code)
+          // A wrong code goes straight through, so it counts against the three tries.
+          if (consent === null || typed === null) return this.remote.approveConsent(code, tools)
+          const on = new Set(this.remote.status().tools)
+          if (tools.some((t) => !on.has(t))) throw new ValetError('config', 'invalid')
+          await this.approveOrRefuse('remote-client', remoteClientSubject(consent, tools), {
+            consentCode: displayCode(typed),
+            typedCode: displayCode(typed),
+          })
+          // Applied by the handler: the request is no longer waiting once it was.
+          if (this.remote.consentFor(code) !== null) throw new ValetError('config', 'not-found')
+          return 'approved'
+        },
         declineConsent: async (id) => {
           if (!this.remote.declineConsent(id)) throw new ValetError('config', 'not-found')
         },
@@ -2117,15 +3382,26 @@ export class AppService {
         revokeAllClients: () => this.remote.revokeAllClients(),
         setup: () => this.remoteSetup(),
         setEnabled: async (enabled) => {
-          await this.remote.setEnabled(enabled)
+          await this.changeValetSetting('remote_enabled', enabled)
           return this.remoteSetup()
         },
         setHosts: async (hosts) => {
-          await this.remote.setHosts(hosts)
+          await this.changeValetSetting('remote_hosts', [...hosts])
           return this.remoteSetup()
         },
         setTool: async (adapterId, tool, enabled) => {
-          await this.setRemoteTool(adapterId, tool, enabled)
+          const adapter = this.adapter(adapterId)
+          const declaration = adapter?.definition.manifest.tools.find((t) => t.name === tool)
+          // On only at a side effect at least the one declared now: an update that raised it needs
+          // turning on again, with Touch ID.
+          const on = declaration !== undefined && this.remote.allows(adapterId, declaration)
+          if (!enabled || on || adapter === null) await this.setRemoteTool(adapterId, tool, enabled)
+          else {
+            await this.remoteToolDeclaration(adapterId, tool, true)
+            const subject = toolEnableSubject(adapter.definition.manifest, adapter.hash, tool, 'remote')
+            if (subject === null) throw new ValetError('config', 'not-found')
+            await this.approveOrRefuse('tool-enable', subject)
+          }
           return this.remoteSetup()
         },
       },
@@ -2138,6 +3414,7 @@ export class AppService {
         }),
         setPaused: async (paused) => {
           this.paused = paused
+          if (paused) this.authoring?.closeBrowsers()
           this.emit('app-changed')
         },
         setLockedDown: (locked) => this.setLockedDown(locked),
@@ -2237,20 +3514,29 @@ function lastUsed(records: readonly AuditRecord[], grant: Grant): string | null 
 }
 
 /** Text a signed request may carry for a card: cut to `max`, or left out if it isn't display text. */
+/**
+ * One line of a signed preview: invisible and unprintable characters written out as codes (never
+ * dropped, so nothing in it can hide), at most `max` characters with "…" where it was cut.
+ */
 function shown(text: string, max: number): string | undefined {
-  const cut = [...text.replace(/\s+/g, ' ').trim()].slice(0, max).join('')
-  return cut !== '' && isDisplayText(cut) ? cut : undefined
+  const line = showable(text)
+  if (line === '(blank)' || line === '') return undefined
+  const chars = [...line]
+  return chars.length <= max
+    ? line
+    : `${chars
+        .slice(0, max - 1)
+        .join('')
+        .trimEnd()}…`
 }
 
-const QUESTION = /^Question (cf_[A-Za-z0-9_-]{1,60})$/
-
 /**
- * What a confirmation's signed request shows, at most 20 lines of 200 characters: first its own id,
- * so two questions of one call never share a request; then what it asks (the requests it would
- * make, the adapter's note as the adapter's words); then the input.
+ * What a confirmation's signed request shows, at most 20 lines of 200 characters: what it asks (the
+ * requests it would make, the adapter's note as the adapter's words), then the input. Past 20
+ * lines, the last one says how many more there are, so a card never looks complete when it isn't.
  */
 function confirmationPreview(item: ConfirmationItem): string[] {
-  const lines = [`Question ${item.id}`]
+  const lines: string[] = []
   for (const r of [...item.unlocks, ...item.requests]) {
     const kept = shown(`${r.method} ${r.path}`, 200)
     if (kept !== undefined) lines.push(kept)
@@ -2264,11 +3550,59 @@ function confirmationPreview(item: ConfirmationItem): string[] {
     const kept = shown(line, 200)
     if (kept !== undefined) lines.push(kept)
   }
-  return lines.slice(0, 20)
+  if (lines.length <= 20) return lines
+  return [...lines.slice(0, 19), `and ${lines.length - 19} more lines not shown`]
 }
 
-/** The confirmation a signed request names, or null when its preview shows a different one. */
-function confirmationOf(subject: { confirmationId: string; preview: readonly string[] }): string | null {
-  const shownId = QUESTION.exec(subject.preview[0] ?? '')?.[1] ?? null
-  return shownId === subject.confirmationId ? shownId : null
+/** A remote client's registration id from its `remote:<id>` name, or null for any other. */
+function remoteClientKey(clientId: string): string | null {
+  return clientId.startsWith('remote:') && clientId.length > 7 ? clientId.slice(7) : null
+}
+
+/** The value a signed decision picked on a card with choices, if any. */
+function decisionChoice(payload: string): string | undefined {
+  try {
+    return approvalDecisionSchema.parse(JSON.parse(payload)).choice
+  } catch {
+    return undefined
+  }
+}
+
+/** The consent code a signed decision carries, if any. */
+function decisionTypedCode(payload: string): string | undefined {
+  try {
+    return approvalDecisionSchema.parse(JSON.parse(payload)).typedCode
+  } catch {
+    return undefined
+  }
+}
+
+/** For a remote client's consent: the code the browser shows, and the code the person typed. */
+interface ConsentExtras {
+  readonly consentCode?: string
+  readonly typedCode?: string
+}
+
+/** As remote.ts keeps them: more is refused whole. */
+const MAX_REMOTE_HOSTS = 8
+
+/** A broker refusal of a draft's request, in words for the agent. */
+function submitRefusal(reason: string, until?: string): string {
+  const when = until === undefined ? '' : ` until ${until}`
+  switch (reason) {
+    case 'locked-down':
+      return 'Not submitted: Valet is locked down.'
+    case 'cooling-down':
+      return `Not submitted: the person declined your last request and asked for a pause${when}.`
+    case 'daily-limit':
+      return `Not submitted: you have asked for as many approvals as Valet allows in a day${when}.`
+    case 'too-many-waiting':
+      return 'Not submitted: you have as many requests waiting as Valet allows. Withdraw one first.'
+    case 'too-many-total':
+      return 'Not submitted: the person has as many requests waiting as Valet shows. Try later.'
+    case 'not-allowed':
+      return 'Not submitted: Valet doesn’t take this request from an agent.'
+    default:
+      return 'Not submitted: Valet can’t ask for approvals right now.'
+  }
 }

@@ -34,8 +34,8 @@ answered: "not everything needs approval"); B finalises them. Revised after the 
    request of a kind from an agent says "First request of this kind from Claude Code". A request for
    something the agent already holds names what it holds and why: "Claude Code already has a
    signed-in Woolworths session, for Repair R-4E1C, until 8:15 pm" (R19).
-5. **One gesture, on a trusted device.** Approve needs Face ID or Touch ID. The passcode or Mac
-   password is allowed only where section 6 says so. A tap alone never approves; a notification
+5. **One gesture, on a trusted device.** Approve needs Face ID or the phone's passcode on the
+   iPhone, and Touch ID or the Mac password on the Mac (section 6). A tap alone never approves; a notification
    never approves and has no action buttons (security model, Notifications, Enforced; R7, R37).
 6. **First line first.** The tone word (strong and caution cards), title, who asked, the risk line
    and the buttons sit above the fold on a 393 x 852 iPhone at the default text size. At
@@ -183,19 +183,20 @@ and local enablement of that tool turns off and the Update card says so (R24).
 
 ## 6. The approving gesture
 
-| Card                                                                                                                     | iPhone                               | Mac with Touch ID | Mac without Touch ID |
-| ------------------------------------------------------------------------------------------------------------------------ | ------------------------------------ | ----------------- | -------------------- |
-| Neutral cards (Remote read tool, Update with no new permissions, Restore that widens nothing, Setting choice)            | Face ID, or **Use passcode instead** | Touch ID          | Mac account password |
-| Install, Update or Restore that widens, Login, Signed-in session, Connect, Private network, every caution or strong card | Face ID only                         | Touch ID          | Mac account password |
-| Confirm                                                                                                                  | Face ID only                         | Touch ID          | Mac account password |
-| Remove a device                                                                                                          | Face ID only                         | Touch ID          | Mac account password |
-| Pair, Unlock, Reset, approval policy (Settings, Approvals)                                                               | Not on the phone                     | Touch ID          | Mac account password |
+| Card                                                                                                                                                   | iPhone                               | Mac with Touch ID | Mac without Touch ID |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------ | ----------------- | -------------------- |
+| Every card the phone can answer (Install, Update, Restore, Login, Remote or Local tool, Setting, Signed-in session, Connect, Private network, Confirm) | Face ID, or **Use passcode instead** | Touch ID          | Mac account password |
+| Remove a device                                                                                                                                        | Face ID, or **Use passcode instead** | Touch ID          | Mac account password |
+| Pair, Unlock, Reset, approval policy (Settings, Approvals)                                                                                             | Not on the phone                     | Touch ID          | Mac account password |
 
-- Face ID only uses biometrics with the current enrolment, so a thief who knows the passcode can't
-  approve (R1). It respects iOS Stolen Device Protection.
-- "Use passcode instead" is an explicit button for everyone, on neutral cards only. There is no
-  automatic route for VoiceOver users: Face ID works with VoiceOver (R2). An accessibility exception
-  for someone who can't use Face ID is a question for B (R35).
+- **The passcode always works** (Nick, 2026-11-12, recorded by B in PR #86). On every card the phone
+  can answer, the phone's passcode can stand in for Face ID, as it does everywhere else on an
+  iPhone. Nick accepts the risk that a thief who has watched the passcode can approve; the defences
+  left are the Mac-only list below, removing a lost phone (J7 F2) and iOS Stolen Device Protection,
+  which iOS applies on its own terms.
+- "Use passcode instead" is an explicit button on every card, for everyone, and the approval
+  records which gesture was used (`iphone:faceid` or `iphone:passcode`). This also answers the
+  accessibility question (R35): someone who can't use Face ID approves with the passcode.
 - On a Mac without Touch ID, the system password prompt replaces the old typed-fingerprint
   fallback; secure input can't be synthesised by a process with Accessibility permission (R14).
 - The approve button names its gesture: **Approve with Face ID**; Confirm cards name the tool:
@@ -286,13 +287,13 @@ Mac" without a phone (R36). They never contain the person's name or site text.
 
 ## 12. Where each card can be answered
 
-| Card                                                                                                                        | iPhone                                    | Mac |
-| --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- | --- |
-| Install, Update, Restore, Login, Remote and Local tool, Setting                                                             | Yes                                       | Yes |
-| Signed-in session, Private network, Connect                                                                                 | Yes (Face ID only)                        | Yes |
-| Confirm                                                                                                                     | Yes (Face ID only)                        | Yes |
-| Remove another device                                                                                                       | Yes (Face ID only; never the last device) | Yes |
-| Pair a new device, Unlock after Lock down, Reset Valet, change the 1Password account, approval policy (Settings, Approvals) | No                                        | Yes |
+| Card                                                                                                                        | iPhone                      | Mac |
+| --------------------------------------------------------------------------------------------------------------------------- | --------------------------- | --- |
+| Install, Update, Restore, Login, Remote and Local tool, Setting                                                             | Yes                         | Yes |
+| Signed-in session, Private network, Connect                                                                                 | Yes                         | Yes |
+| Confirm                                                                                                                     | Yes                         | Yes |
+| Remove another device                                                                                                       | Yes (never the last device) | Yes |
+| Pair a new device, Unlock after Lock down, Reset Valet, change the 1Password account, approval policy (Settings, Approvals) | No                          | Yes |
 
 **A lost phone, away from the Mac** (R1): at pairing, Valet shows a recovery code to save in
 1Password. On the relay's web page, the code can do two things only: lock down at the relay, and

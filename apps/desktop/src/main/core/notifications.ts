@@ -259,6 +259,35 @@ export class Notifier {
     })
   }
 
+  /**
+   * An agent changed something at the Notify-only tier (docs/admin-tools.md, "Write tier"): one
+   * quiet notification per agent per hour, replaced as the count grows. `name` is the person's own
+   * name for the app, never what the app reports. It opens the audit log's approvals and changes.
+   */
+  agentChanges(clientId: string, name: string, count: number): void {
+    const hour = Math.floor(this.options.now() / 3600_000)
+    const who = plainName(name)
+    this.put({
+      key: `agent-changes:${clientId}:${hour}`,
+      title: count === 1 ? `${who} made a change` : `${who} made ${count} changes`,
+      body: 'Each only made Valet stricter. See them in Activity.',
+      target: { kind: 'panel', route: href.audit({ category: 'approvals-grants' }) },
+    })
+  }
+
+  /**
+   * An agent started or submitted a draft adapter (the Notify tier, docs/authoring-tools.md). The
+   * text is the app's own fixed wording with the client's name; nothing the agent wrote.
+   */
+  draftActivity(text: string): void {
+    this.put({
+      key: 'draft',
+      title: 'An agent is writing an adapter',
+      body: text,
+      target: { kind: 'panel', route: href.audit() },
+    })
+  }
+
   /** Takes everything down, when the app stops. */
   clear(): void {
     this.attention_.clear()

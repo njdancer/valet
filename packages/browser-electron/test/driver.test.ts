@@ -117,6 +117,20 @@ describe('ElectronSessionDriver.forManifest', () => {
       ValetError,
     )
   })
+
+  it('opens a trial in its own in-memory partitions, never the adapter’s', async () => {
+    const { platform } = browserLike()
+    const driver = new ElectronSessionDriver(platform, { ...OPTIONS, trialLabel: 'dr-aaaaaaaaaa-1' })
+    await driver.toolPage()
+    await driver.openAuthPage()
+    expect(platform.surfaces.map((s) => s.partition)).toEqual([
+      'trial:tool:dr-aaaaaaaaaa-1',
+      'trial:auth:dr-aaaaaaaaaa-1',
+    ])
+    expect(() => new ElectronSessionDriver(platform, { ...OPTIONS, trialLabel: 'persist:x' })).toThrow(
+      ValetError,
+    )
+  })
 })
 
 describe('partition set-up', () => {

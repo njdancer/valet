@@ -169,25 +169,43 @@ test('rolling back from the Sites page brings the approved built-in back, pinned
   const dialog = control.getByRole('alertdialog')
   await expect(dialog).toContainText('It can’t reach anything the version in use can’t.')
   await dialog.getByRole('button', { name: 'Roll back to 0.1.0' }).click()
+  // The swap comes first and the approval right after it, so wait for both.
   await expect
-    .poll(async () => (await control.evaluate(() => window.valet?.adapters.get('wikipedia')))?.hash)
-    .toBe(builtinHash)
-  expect((await control.evaluate(() => window.valet?.adapters.get('wikipedia')))?.approval).toBe('approved')
-  const state = storedState('wikipedia')
-  expect(state.active).toBe(builtinHash)
-  expect(state.pinned).toBe(true)
-  expect(
-    adapterEvents()
-      .filter((e) => e.adapterId === 'wikipedia')
-      .map((e) => e.type),
-  ).toEqual([
-    'adapter-installed',
-    'adapter-approved',
-    'adapter-installed',
-    'adapter-approved',
-    'adapter-approved',
-    'adapter-activated',
-  ])
+    .poll(async () => {
+      const adapter = await control.evaluate(() => window.valet?.adapters.get('wikipedia'))
+      return [adapter?.hash, adapter?.approval]
+    })
+    .toEqual([builtinHash, 'approved'])
+  // The state file is written after the in-memory swap, so wait for it too rather than reading it once.
+  await expect
+    .poll(() => {
+      try {
+        const state = storedState('wikipedia')
+        return [state.active, state.pinned]
+      } catch {
+        return null // caught mid-write
+      }
+    })
+    .toEqual([builtinHash, true])
+  // adapter-activated is appended after state.json is written, so wait for it the same way.
+  await expect
+    .poll(() => {
+      try {
+        return adapterEvents()
+          .filter((e) => e.adapterId === 'wikipedia')
+          .map((e) => e.type)
+      } catch {
+        return null // caught mid-append
+      }
+    })
+    .toEqual([
+      'adapter-installed',
+      'adapter-approved',
+      'adapter-installed',
+      'adapter-approved',
+      'adapter-approved',
+      'adapter-activated',
+    ])
 })
 
 test('a version tampered with on disk is refused at launch, and the built-in heals', async () => {

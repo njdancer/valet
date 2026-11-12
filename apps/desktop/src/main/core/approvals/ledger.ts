@@ -18,6 +18,10 @@ import {
 import { z } from 'zod'
 import type { AnchoredFile } from './anchored-file'
 
+const ADAPTER_ID = z.string().regex(/^[a-z][a-z0-9-]{1,63}$/)
+const HASH = z.string().regex(/^[0-9a-f]{64}$/)
+const SECRET = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)
+
 /** Generous caps: a bigger file is refused as malformed rather than read. */
 const MAX_PENDING = 100
 const MAX_EVIDENCE = 10_000
@@ -36,6 +40,21 @@ export const ledgerSchema = z
     declines: z.array(z.object({ clientId: clientIdSchema, at: z.iso.datetime() }).strict()).max(1000),
     /** Requests agents made in the last day, whatever became of them (the daily cap). */
     asks: z.array(z.object({ clientId: clientIdSchema, at: z.iso.datetime() }).strict()).max(5000),
+    /**
+     * What the person approved before approvals were signed, recorded once, at the first launch of
+     * a signed build (docs/approval-broker.md#migration). Honoured until the person confirms each
+     * with Touch ID, or it is revoked. Absent: not recorded yet. Only ever shrinks.
+     */
+    legacy: z
+      .object({
+        at: z.iso.datetime(),
+        installs: z.array(z.object({ adapterId: ADAPTER_ID, adapterHash: HASH }).strict()).max(500),
+        grants: z
+          .array(z.object({ adapterId: ADAPTER_ID, adapterHash: HASH, secret: SECRET }).strict())
+          .max(500),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
 export type LedgerData = z.infer<typeof ledgerSchema>

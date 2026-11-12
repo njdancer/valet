@@ -30,7 +30,7 @@ import {
   siteRefusal,
 } from './guards'
 import { isRecord, type PageTiming } from './page-core'
-import { partitionName } from './partitions'
+import { partitionName, trialPartitionName } from './partitions'
 import type {
   BrowserPlatform,
   BrowserSurface,
@@ -131,6 +131,12 @@ export interface DriverOptions {
    */
   readonly onAuthReportsDropped?: () => void
   readonly timers?: Timers
+  /**
+   * A draft's live trial (docs/authoring-tools.md#live-trials): both partitions in memory, named by
+   * this label, in place of the adapter's persistent ones, so nothing the trial does reaches or
+   * outlives the installed adapter's session. Each trial its own label.
+   */
+  readonly trialLabel?: string
 }
 
 /** What openAuthPage() may be given: core's AuthPageOptions, with the driver's reporting rules. */
@@ -236,10 +242,13 @@ export class ElectronSessionDriver implements SessionDriver {
     private readonly platform: BrowserPlatform,
     private readonly options: DriverOptions,
   ) {
-    this.partitions = {
-      auth: partitionName('auth', options.adapterId),
-      tool: partitionName('tool', options.adapterId),
-    }
+    this.partitions =
+      options.trialLabel === undefined
+        ? { auth: partitionName('auth', options.adapterId), tool: partitionName('tool', options.adapterId) }
+        : {
+            auth: trialPartitionName('auth', options.trialLabel),
+            tool: trialPartitionName('tool', options.trialLabel),
+          }
     this.timing = {
       timers: options.timers ?? realTimers,
       stepTimeoutMs: options.stepTimeoutMs ?? DEFAULT_STEP_TIMEOUT_MS,
