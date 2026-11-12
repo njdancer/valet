@@ -75,6 +75,14 @@ export const deviceRevocationSchema = z
   .strict()
 export type DeviceRevocation = z.infer<typeof deviceRevocationSchema>
 
+/**
+ * Whether a device may be revoked by anyone: never the Mac itself, from any channel or tool, or
+ * the Mac's own approvals would fail and a stolen phone would be the only approver left.
+ */
+export function canRevokeDevice(deviceId: string, macId: string): boolean {
+  return deviceId !== macId
+}
+
 /** What approval and evidence checks need from the device store. */
 export interface DeviceLookup {
   /** The verified record, or null if no such device was ever paired with this Mac. */

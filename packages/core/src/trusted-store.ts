@@ -16,6 +16,7 @@ import {
   type ApprovalRequest,
   type DecisionCheck,
   type DecisionContext,
+  NEVER_STORED,
   parseRequestText,
   verifyDecision,
 } from './approvals'
@@ -30,6 +31,11 @@ export const evidenceSchema = z
       .min(2)
       .max(64 * 1024),
     decision: signedTextSchema,
+    /**
+     * The Mac's receipt: when it accepted the decision live, by its own clock. It lives inside
+     * the anchored file, so nobody can backdate it without breaking the anchor.
+     */
+    receivedAt: z.iso.datetime(),
   })
   .strict()
 export type Evidence = z.infer<typeof evidenceSchema>
@@ -47,12 +53,16 @@ export function verifyEvidence<K extends ApprovalKind>(
   evidence: Evidence,
   kind: K,
   matches: (request: Extract<ApprovalRequest, { kind: K }>) => boolean,
-  context: Omit<DecisionContext, 'mode' | 'isPending'>,
+  context: Omit<DecisionContext, 'mode' | 'isPending' | 'receivedAt'>,
 ): EvidenceCheck {
   const request = parseRequestText(evidence.requestText)
   if (request === null) return { ok: false, reason: 'malformed' }
-  if (request.request.kind !== kind) return { ok: false, reason: 'wrong-kind' }
-  const check = verifyDecision(evidence.decision, request, { ...context, mode: 'stored' })
+  if (request.request.kind !== kind || NEVER_STORED.includes(kind)) return { ok: false, reason: 'wrong-kind' }
+  const check = verifyDecision(evidence.decision, request, {
+    ...context,
+    mode: 'stored',
+    receivedAt: evidence.receivedAt,
+  })
   if (!check.ok) return check
   if (!matches(request.request as Extract<ApprovalRequest, { kind: K }>))
     return { ok: false, reason: 'subject-mismatch' }
@@ -103,10 +113,23 @@ export function checkAnchor(file: Uint8Array | string | null, state: AnchorState
   return 'mismatch'
 }
 
-/** Phase one: record the hash of the file about to be written, before writing it. */
+/**
+ * Phase one: record the hash of the file about to be written, before writing it. Throws while an
+ * earlier write is uncommitted: the caller must finish (commit) or fail closed first, or the
+ * previous committed file would stay acceptable and a revocation could be rolled back.
+ */
 export function beginWrite(state: AnchorState | null, nextFile: Uint8Array | string): AnchorState {
+  if (state !== null && state.next !== null) throw new Error('an earlier store write is not committed')
   const next = sha256Hex(nextFile)
   return { ...(state ?? { generation: 0, sha256: EMPTY_STORE_SHA256 }), next }
+}
+
+/**
+ * After a load found the file at the committed hash (`ok`) while `next` was set: the write never
+ * happened, so forget it before the next one.
+ */
+export function abandonWrite(state: AnchorState): AnchorState {
+  return { ...state, next: null }
 }
 
 /** Phase two, after the file is written and synced: the new file becomes the current one. */

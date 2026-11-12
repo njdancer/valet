@@ -111,3 +111,32 @@ will type Nick's real password in the first live login.
   is the password, and a code is single-use.
 - **Not tried yet:** the driver's own typing loop (`packages/browser-electron/src/auth-page.ts`)
   against focus theft between keystrokes, beyond what its e2e suite covers.
+
+### 2026-11-12: agent-run design and contracts (hostile agent, page, relay, phone, local process, adapter)
+
+A fresh agent reviewed `docs/agent-run-security.md` and its core contracts before anything was
+built on them, and ran tests for most findings. All were fixed in the same PR (#71), each with a
+test:
+
+- **High.** The forbidden-path check missed absolute and resolved home paths (`/Users/<name>/.ssh`)
+  and Unicode case folding. Fixed: `~` expansion, `/Users` and `/Volumes` rules, NFKC, and more
+  forbidden places.
+- **High.** `command` exceptions for a shell, and Apple Events to Terminal, were phone-approvable.
+  Fixed: shells, interpreters and script-running apps are refused, and any critical line is Mac
+  only.
+- **High (design).** A store mismatch read as "empty" could loosen tightening records. Fixed:
+  mismatch means lockdown, and settings and safety state are anchored too.
+- **Medium.**
+  - Stored evidence trusted the signer's `decidedAt`. Fixed: the Mac's own receipt.
+  - A comma in a path hid a widening.
+  - Agent-authored card fields were not called out, and some ids had no character rules.
+  - The Mac could be revoked.
+  - An uncommitted anchor write kept the old file valid.
+  - Which permissions draft code runs with was unstated.
+- **Low.**
+  - Remote enablement wasn't per version.
+  - Never-stored kinds were accepted as evidence.
+  - There was no item fingerprint on grants.
+  - There were no acknowledgements for phone commands.
+  - The channel schema had no direction.
+  - Rollback had no source of its own.

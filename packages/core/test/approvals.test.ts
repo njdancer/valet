@@ -8,13 +8,16 @@ import {
   adminTier,
   approvableOn,
   approvalRequestSchema,
+  canRevokeDevice,
   type DeviceLookup,
   type DeviceRecord,
   decisionPayload,
   domainDigest,
+  isDisplayText,
   KIND_TIER,
   keyId,
   NEVER_OVER_MCP,
+  type PermissionChange,
   parseRequestText,
   SIGNING_DOMAINS,
   type SignedText,
@@ -98,6 +101,7 @@ function grantRequest(overrides: Partial<ApprovalRequest> = {}): ApprovalRequest
       fields: ['username', 'password'],
       provider: 'onepassword-service-account',
       itemTitle: 'Woolworths',
+      itemFingerprint: '0123456789abcdef',
       origins: ['https://auth.woolworths.com.au'],
     },
     ...overrides,
@@ -220,8 +224,11 @@ describe('approval requests', () => {
     for (const kind of APPROVAL_KINDS) expect(KIND_TIER[kind]).toMatch(/^approve/)
     expect(KIND_TIER['irreversible-call']).toBe('approve-each-use')
     expect(approvableOn('device-pair', {} as never)).toEqual(['mac'])
-    expect(approvableOn('adapter-install', { unsandboxed: true } as never)).toEqual(['mac'])
-    expect(approvableOn('adapter-install', { unsandboxed: false } as never)).toEqual(['mac', 'phone'])
+    expect(approvableOn('adapter-install', { unsandboxed: true, changes: [] } as never)).toEqual(['mac'])
+    expect(approvableOn('adapter-install', { unsandboxed: false, changes: [] } as never)).toEqual([
+      'mac',
+      'phone',
+    ])
     expect(approvalRequestSchema).toBeDefined()
   })
 })
@@ -310,23 +317,87 @@ describe('signed decisions', () => {
     })
   })
 
-  it('checks stored evidence by when it was decided, not by now', () => {
-    const stored = {
+  it('checks stored evidence by the Mac’s receipt, never the signer’s own clock', () => {
+    const stored = (receivedAt: string, revoked: Record<string, string> = {}) => ({
       macId,
-      devices: lookup(),
+      devices: lookup(revoked),
       mode: 'stored' as const,
+      receivedAt,
       now: new Date('2027-01-01T00:00:00.000Z'),
-    }
-    expect(verifyDecision(decide(phone.approval, phoneId, request), request, stored).ok).toBe(true)
-    const afterExpiry = decide(phone.approval, phoneId, request, { decidedAt: expiresAt })
-    expect(verifyDecision(afterExpiry, request, stored)).toEqual({ ok: false, reason: 'expired' })
-    const revokedLater = { ...stored, devices: lookup({ [phoneId]: '2026-11-13T00:00:00.000Z' }) }
-    expect(verifyDecision(decide(phone.approval, phoneId, request), request, revokedLater).ok).toBe(true)
-    const revokedBefore = { ...stored, devices: lookup({ [phoneId]: '2026-11-12T01:01:00.000Z' }) }
-    expect(verifyDecision(decide(phone.approval, phoneId, request), request, revokedBefore)).toEqual({
-      ok: false,
-      reason: 'device-revoked',
     })
+    const signed = decide(phone.approval, phoneId, request)
+    expect(verifyDecision(signed, request, stored('2026-11-12T01:04:00.000Z')).ok).toBe(true)
+    expect(verifyDecision(signed, request, stored(expiresAt))).toEqual({ ok: false, reason: 'expired' })
+    expect(verifyDecision(signed, request, { ...stored('x'), receivedAt: undefined })).toEqual({
+      ok: false,
+      reason: 'malformed',
+    })
+    // Revoked after the Mac received it: still valid. Revoked before: refused, whatever decidedAt says.
+    expect(
+      verifyDecision(
+        signed,
+        request,
+        stored('2026-11-12T01:04:00.000Z', { [phoneId]: '2026-11-13T00:00:00.000Z' }),
+      ).ok,
+    ).toBe(true)
+    const backdated = decide(phone.approval, phoneId, request, { decidedAt: '2026-11-12T01:00:30.000Z' })
+    expect(
+      verifyDecision(
+        backdated,
+        request,
+        stored('2026-11-12T01:06:00.000Z', { [phoneId]: '2026-11-12T01:05:00.000Z' }),
+      ),
+    ).toEqual({ ok: false, reason: 'device-revoked' })
+  })
+
+  it('accepts a live approval from a device whose clock is wrong, since stored checks use the receipt', () => {
+    const skewed = decide(phone.approval, phoneId, request, { decidedAt: '2026-11-12T00:50:00.000Z' })
+    expect(verifyDecision(skewed, request, live()).ok).toBe(true)
+  })
+
+  it('makes any critical install line Mac only, and refuses an install that hides being unsandboxed', () => {
+    const install = (changes: PermissionChange[], unsandboxed: boolean) => ({
+      adapterId: 'example',
+      adapterName: 'Example',
+      version: '1.0.0',
+      adapterHash: 'a'.repeat(64),
+      packageHash: 'b'.repeat(64),
+      previousHash: null,
+      source: 'draft' as const,
+      inheritsSession: false,
+      references: [],
+      changes,
+      unsandboxed,
+    })
+    const command: PermissionChange = {
+      area: 'sandbox-exception',
+      change: 'added',
+      items: ['/opt/tool/run'],
+      risk: 'critical',
+    }
+    expect(approvableOn('adapter-install', install([command], false))).toEqual(['mac'])
+    const mode: PermissionChange = {
+      area: 'sandbox-mode',
+      change: 'widened',
+      items: ['Runs unsandboxed'],
+      risk: 'critical',
+    }
+    const base = { ...grantRequest(), kind: 'adapter-install', tier: 'approve' }
+    expect(() => serializeRequest({ ...base, subject: install([mode], false) } as ApprovalRequest)).toThrow()
+    expect(() => serializeRequest({ ...base, subject: install([], true) } as ApprovalRequest)).toThrow()
+    expect(
+      serializeRequest({ ...base, subject: install([mode], true) } as ApprovalRequest).request.kind,
+    ).toBe('adapter-install')
+  })
+
+  it('refuses ids with direction or control characters', () => {
+    expect(() =>
+      serializeRequest(
+        grantRequest({
+          requester: { kind: 'agent', clientId: 'remote:\u202Eevil\u0000\n', clientName: 'x' },
+        }),
+      ),
+    ).toThrow()
   })
 
   it('refuses malformed payloads without throwing', () => {
@@ -356,7 +427,11 @@ describe('admin action tiers', () => {
 
 describe('stored evidence', () => {
   const request = serializeRequest(grantRequest())
-  const evidence = { requestText: request.text, decision: decide(phone.approval, phoneId, request) }
+  const evidence = {
+    requestText: request.text,
+    decision: decide(phone.approval, phoneId, request),
+    receivedAt: '2026-11-12T01:04:01.000Z',
+  }
   const context = { macId, devices: lookup() }
   const grantFor = (adapterHash: string) => (r: Extract<ApprovalRequest, { kind: 'secret-grant' }>) =>
     r.subject.adapterId === 'woolworths' && r.subject.adapterHash === adapterHash
@@ -376,6 +451,30 @@ describe('stored evidence', () => {
     })
   })
 
+  it('refuses kinds that are never remembered', () => {
+    const call = serializeRequest({
+      ...grantRequest(),
+      kind: 'irreversible-call',
+      tier: 'approve-each-use',
+      subject: {
+        adapterId: 'woolworths',
+        adapterHash: 'a'.repeat(64),
+        tool: 'checkout',
+        callId: 'c1',
+        preview: ['Place order'],
+      },
+    } as ApprovalRequest)
+    const e = {
+      requestText: call.text,
+      decision: decide(phone.approval, phoneId, call),
+      receivedAt: '2026-11-12T01:04:01.000Z',
+    }
+    expect(verifyEvidence(e, 'irreversible-call', () => true, context)).toEqual({
+      ok: false,
+      reason: 'wrong-kind',
+    })
+  })
+
   it('refuses request text edited after the device signed it', () => {
     const edited = {
       ...evidence,
@@ -389,5 +488,20 @@ describe('stored evidence', () => {
       ok: false,
       reason: 'malformed',
     })
+  })
+})
+
+describe('display text and revocation', () => {
+  it('refuses invisible letters and piles of combining marks', () => {
+    expect(isDisplayText('Woolworths')).toBe(true)
+    expect(isDisplayText('Café')).toBe(true)
+    expect(isDisplayText('\u3164\u3164')).toBe(false)
+    expect(isDisplayText(`a${'\u0336'.repeat(270)}`)).toBe(false)
+    expect(isDisplayText('   ')).toBe(false)
+  })
+
+  it('never lets anyone revoke the Mac itself', () => {
+    expect(canRevokeDevice(macId, macId)).toBe(false)
+    expect(canRevokeDevice(phoneId, macId)).toBe(true)
   })
 })

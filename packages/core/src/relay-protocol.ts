@@ -12,7 +12,7 @@
 // The relay is never an authority: it holds no tokens, no grants and no approvals.
 
 import { z } from 'zod'
-import { requestIdSchema } from './approvals'
+import { clientIdSchema, requestIdSchema } from './approvals'
 import { keyIdSchema } from './devices'
 import { displayText } from './display-text'
 import { p256PublicKeySchema, p256SignatureSchema, signedTextSchema } from './signing'
@@ -118,65 +118,70 @@ export const envelopeSchema = z
   .strict()
 export type Envelope = z.infer<typeof envelopeSchema>
 
+const seq = z.number().int().min(1)
+/** A receiver's acknowledgement of a sender's message by its seq, so a dropped one shows. */
+const ackMessage = z.object({ type: z.literal('ack'), seq, ackSeq: z.number().int().min(1) }).strict()
+
 /**
- * What an envelope holds once opened. `seq` rises by one per message from each sender, so the
- * relay can't replay or reorder; a receiver drops anything not above the last it accepted.
+ * What an envelope from the Mac holds once opened. `seq` rises by one per message from each
+ * sender, so the relay can't replay or reorder; a receiver drops anything not above the last it
+ * accepted. Requests aren't signed (that would need Touch ID each time); they are authenticated
+ * by the HPKE auth-mode seal from the Mac's agreement key, pinned at pairing.
  */
-export const channelMessageSchema = z.discriminatedUnion('type', [
-  /** Mac to phone: the request exactly as serialised; the phone renders from and signs this. */
-  z
-    .object({
-      type: z.literal('approval-request'),
-      seq: z.number().int().min(1),
-      requestText: z.string().max(64 * 1024),
-    })
-    .strict(),
-  /** Phone to Mac: a signed approval. */
-  z
-    .object({
-      type: z.literal('approval-decision'),
-      seq: z.number().int().min(1),
-      decision: signedTextSchema,
-    })
-    .strict(),
-  /** Phone to Mac: no. Needs no signature. */
-  z
-    .object({ type: z.literal('approval-decline'), seq: z.number().int().min(1), requestId: requestIdSchema })
-    .strict(),
-  /** Mac to phone: answered elsewhere, expired or withdrawn; take the card down. */
+export const macToPhoneMessageSchema = z.discriminatedUnion('type', [
+  /** The request exactly as serialised; the phone renders from and signs this. */
+  z.object({ type: z.literal('approval-request'), seq, requestText: z.string().max(64 * 1024) }).strict(),
+  /** Answered elsewhere, expired or withdrawn; take the card down. */
   z
     .object({
       type: z.literal('approval-closed'),
-      seq: z.number().int().min(1),
+      seq,
       requestId: requestIdSchema,
       outcome: z.enum(['approved', 'declined', 'expired', 'withdrawn']),
     })
     .strict(),
-  /** Mac to phone: something the person should know. Fixed kinds; text in the app's words. */
+  /** Something the person should know. Fixed kinds; text in the app's words. */
   z
     .object({
       type: z.literal('alert'),
-      seq: z.number().int().min(1),
+      seq,
       kind: z.enum(['needs-you', 'login-handed-over', 'breaker-opened', 'repair', 'notify', 'store-refused']),
       title: displayText(80),
       body: displayText(300),
       at: z.iso.datetime(),
     })
     .strict(),
-  /** Phone to Mac: a tightening command. Undoing any of them is a `resume` approval. */
+  ackMessage,
+])
+export type MacToPhoneMessage = z.infer<typeof macToPhoneMessageSchema>
+
+/**
+ * What an envelope from a phone holds once opened. Commands only tighten, and the phone shows each
+ * as "not confirmed" until the Mac's ack arrives, so a relay that drops one can't hide it.
+ */
+export const phoneToMacMessageSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('approval-decision'), seq, decision: signedTextSchema }).strict(),
+  /** No. Needs no signature. */
+  z.object({ type: z.literal('approval-decline'), seq, requestId: requestIdSchema }).strict(),
+  /** A tightening command. Undoing any of them is a `resume` approval. The Mac's own id can't be revoked. */
   z
     .object({
       type: z.literal('command'),
-      seq: z.number().int().min(1),
+      seq,
       command: z.discriminatedUnion('kind', [
         z.object({ kind: z.literal('pause-remote') }).strict(),
         z.object({ kind: z.literal('lockdown') }).strict(),
-        z.object({ kind: z.literal('revoke-client'), clientId: z.string().max(80) }).strict(),
+        z.object({ kind: z.literal('revoke-client'), clientId: clientIdSchema }).strict(),
         z.object({ kind: z.literal('revoke-device'), deviceId: keyIdSchema }).strict(),
       ]),
     })
     .strict(),
+  ackMessage,
 ])
+export type PhoneToMacMessage = z.infer<typeof phoneToMacMessageSchema>
+
+/** Either direction; a receiver parses with its own direction's schema. */
+export const channelMessageSchema = z.union([macToPhoneMessageSchema, phoneToMacMessageSchema])
 export type ChannelMessage = z.infer<typeof channelMessageSchema>
 
 export const macToRelaySchema = z.discriminatedUnion('type', [

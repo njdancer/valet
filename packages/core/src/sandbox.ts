@@ -34,26 +34,43 @@ export function isPathPattern(value: string): boolean {
 
 /**
  * Places no exception may reach, whatever the person approves: Valet's own data and Keychain,
- * other credential stores, and the system. Matched after resolving symlinks, case-insensitively
- * (APFS is case-insensitive by default). Messages' database is reached only through the OTP
- * provider, never as a file.
+ * other credential stores and browser profiles, things that run code at login or in a shell, and
+ * the system. Messages' database is reached only through the OTP provider, never as a file.
+ * Compared after expanding `~`, resolving symlinks (the runtime does that), NFKC and case folding.
  */
 export const FORBIDDEN_PATHS = [
   '~/Library/Application Support/Valet',
   '~/Library/Application Support/Valet Dev',
+  '~/Library/Application Support/Valet Demo',
   '~/Library/Keychains',
   '~/Library/Messages',
   '~/Library/Group Containers/2BUA8C4S2C.com.1password',
   '~/Library/Containers/com.1password.1password',
   '~/Library/Cookies',
-  '~/Library/Application Support/Google/Chrome',
+  '~/Library/HTTPStorages',
+  '~/Library/Application Support/Google',
+  '~/Library/Application Support/BraveSoftware',
+  '~/Library/Application Support/Microsoft Edge',
+  '~/Library/Application Support/Arc',
+  '~/Library/Application Support/Firefox',
   '~/Library/Safari',
+  '~/Library/Containers/com.apple.Safari',
   '~/Library/Mail',
+  '~/Library/Containers/com.apple.mail',
   '~/Library/LaunchAgents',
+  '~/Library/Preferences',
   '~/.ssh',
   '~/.gnupg',
   '~/.aws',
-  '~/.config/op',
+  '~/.config',
+  '~/.zshrc',
+  '~/.zprofile',
+  '~/.zshenv',
+  '~/.zlogin',
+  '~/.bashrc',
+  '~/.bash_profile',
+  '~/.profile',
+  '~/.local/bin',
   '/System',
   '/Library',
   '/private',
@@ -61,6 +78,7 @@ export const FORBIDDEN_PATHS = [
   '/usr',
   '/bin',
   '/sbin',
+  '/opt',
   '/Applications',
 ] as const
 
@@ -69,13 +87,53 @@ export function patternRoot(pattern: string): string {
   return pattern.replace(/\/\*\*?$/, '')
 }
 
-/** True if a path pattern (or a resolved path) is inside or above a forbidden place. */
-export function touchesForbiddenPath(path: string): boolean {
-  const root = patternRoot(path).toLowerCase()
+/** Folds a path for comparison the way APFS would see it as the same: NFKC, then case. */
+function fold(path: string): string {
+  return path.normalize('NFKC').toLowerCase()
+}
+
+/**
+ * True if a path pattern (or a resolved path) is inside or above a forbidden place, or names
+ * another person's home or a whole volume. `home` is the person's home folder: `~/x` and
+ * `<home>/x` are the same place. A pattern must name the person's own home as `~/`, never as
+ * `/Users/<name>`, so an absolute path under /Users (or a volume's Users folder) is refused.
+ */
+export function touchesForbiddenPath(path: string, home?: string): boolean {
+  const homeFolded = home === undefined ? null : fold(home.replace(/\/+$/, ''))
+  let root = fold(patternRoot(path))
+  if (homeFolded !== null && (root === homeFolded || root.startsWith(`${homeFolded}/`))) {
+    root = `~${root.slice(homeFolded.length)}`
+  }
+  if (root === '~') return true
+  if (root === '/users' || root.startsWith('/users/')) return true
+  if (root === '/volumes' || /^\/volumes\/[^/]+(\/users(\/|$)|$)/.test(root)) return true
   return FORBIDDEN_PATHS.some((forbidden) => {
-    const f = forbidden.toLowerCase()
+    const f = fold(forbidden)
     return root === f || root.startsWith(`${f}/`) || f.startsWith(`${root}/`)
   })
+}
+
+/**
+ * Programs and apps that would give tool code everything unsandboxed mode gives it: shells,
+ * interpreters, and anything that runs scripts. Refused as `command` and `app` exceptions.
+ */
+const FORBIDDEN_COMMAND =
+  /\/(?:[a-z]*sh|env|osascript|osacompile|python[0-9.]*|perl[0-9.]*|ruby|node|php|tclsh|expect|awk|sudo|su|open|launchctl|xargs|find|script|login|security|sqlite3|curl|wget|nc|ssh|scp|git)$/i
+export const FORBIDDEN_APPS = [
+  'com.apple.terminal',
+  'com.googlecode.iterm2',
+  'com.apple.systemevents',
+  'com.apple.scripteditor2',
+  'com.apple.finder',
+  'com.apple.automator',
+  'com.apple.shortcuts',
+  'com.apple.systempreferences',
+  'com.apple.keychainaccess',
+  'com.1password.1password',
+] as const
+
+export function isForbiddenCommand(path: string): boolean {
+  return FORBIDDEN_COMMAND.test(path.normalize('NFKC'))
 }
 
 const pathPattern = z
@@ -99,6 +157,10 @@ export const sandboxExceptionSchema = z.discriminatedUnion('kind', [
       kind: z.literal('app'),
       bundleId: z
         .string()
+        .refine(
+          (id) => !(FORBIDDEN_APPS as readonly string[]).includes(id.toLowerCase()),
+          'that app can run anything',
+        )
         .regex(/^[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/)
         .max(155),
       purpose,
@@ -124,7 +186,15 @@ export const sandboxExceptionSchema = z.discriminatedUnion('kind', [
         .string()
         .regex(/^\/[^\p{Cc}\p{Cf}*]+$/u)
         .max(300)
-        .refine((p) => !p.includes('/../') && !p.endsWith('/..')),
+        .refine(
+          (p) =>
+            p
+              .split('/')
+              .slice(1)
+              .every((seg) => seg !== '' && seg !== '.' && seg !== '..'),
+          'no empty, . or .. segments',
+        )
+        .refine((p) => !isForbiddenCommand(p), 'shells, interpreters and script runners are never allowed'),
       purpose,
     })
     .strict(),
@@ -174,13 +244,13 @@ export function sandboxRisk(declaration: SandboxDeclaration): Risk {
 export function exceptionKey(exception: SandboxException): string {
   switch (exception.kind) {
     case 'files':
-      return `files:${exception.access}:${[...exception.paths].sort().join(',')}`
+      return `files:${exception.access}:${JSON.stringify([...exception.paths].sort())}`
     case 'app':
       return `app:${exception.bundleId}`
     case 'local-service':
       return `local-service:${exception.port}`
     case 'network':
-      return `network:${[...exception.hosts].sort().join(',')}`
+      return `network:${JSON.stringify([...exception.hosts].sort())}`
     case 'command':
       return `command:${exception.path}`
   }

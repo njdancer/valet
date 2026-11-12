@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  abandonWrite,
   beginWrite,
   channelMessageSchema,
   checkAnchor,
@@ -8,8 +9,10 @@ import {
   envelopeSchema,
   exceptionRisk,
   isPathPattern,
+  macToPhoneMessageSchema,
   macToRelaySchema,
   manifestSchema,
+  phoneToMacMessageSchema,
   RELAY_FORWARDED_PATHS,
   relayToMacSchema,
   type SandboxDeclaration,
@@ -36,6 +39,13 @@ describe('store anchors', () => {
     const begun = beginWrite(one, 'two')
     expect(checkAnchor('one', begun)).toBe('ok')
     expect(checkAnchor('two', begun)).toBe('advance')
+  })
+
+  it('refuses to start a write while another is uncommitted, so an older file cannot stay valid', () => {
+    const one = commitWrite(beginWrite(null, 'one'))
+    const begun = beginWrite(one, 'two')
+    expect(() => beginWrite(begun, 'three')).toThrow()
+    expect(beginWrite(abandonWrite(begun), 'three').next).not.toBeNull()
   })
 
   it('refuses a rolled-back, edited or deleted file', () => {
@@ -80,6 +90,65 @@ describe('sandbox declarations', () => {
       exceptions: [{ kind: 'files', access: 'read', paths: ['~/Library/*'], purpose: 'x' }],
     })
     expect(parsed.success).toBe(false)
+  })
+
+  it('compares real and absolute home paths, case- and compatibility-folded', () => {
+    const home = '/Users/nick'
+    expect(touchesForbiddenPath('/Users/nick/.ssh/id_ed25519', home)).toBe(true)
+    expect(touchesForbiddenPath('/users/NICK/Library/Keychains/login.keychain-db', home)).toBe(true)
+    expect(touchesForbiddenPath('/Users/nick/Documents/Receipts/a.pdf', home)).toBe(false)
+    expect(touchesForbiddenPath('~/.\u017F\u017Fh/*')).toBe(true)
+    expect(touchesForbiddenPath('~/.zshrc')).toBe(true)
+    for (const p of [
+      '/Users/nick/.ssh/**',
+      '/Users/**',
+      '/Volumes/Macintosh HD/Users/nick/.ssh/*',
+      '/Volumes/**',
+    ]) {
+      expect(isPathPattern(p) && !touchesForbiddenPath(p), p).toBe(false)
+    }
+    expect(touchesForbiddenPath('/Volumes/Backup/exports/*')).toBe(false)
+  })
+
+  it('refuses shells, interpreters and script-running apps as exceptions', () => {
+    for (const path of [
+      '/bin/sh',
+      '/bin/zsh',
+      '/usr/bin/./osascript',
+      '/usr/bin/env',
+      '/opt/homebrew/bin/python3',
+    ]) {
+      const parsed = sandboxDeclarationSchema.safeParse({
+        mode: 'sandboxed',
+        exceptions: [{ kind: 'command', path, purpose: 'x' }],
+      })
+      expect(parsed.success, path).toBe(false)
+    }
+    for (const bundleId of ['com.apple.Terminal', 'com.apple.systemevents']) {
+      const parsed = sandboxDeclarationSchema.safeParse({
+        mode: 'sandboxed',
+        exceptions: [{ kind: 'app', bundleId, purpose: 'x' }],
+      })
+      expect(parsed.success, bundleId).toBe(false)
+    }
+    expect(
+      sandboxDeclarationSchema.safeParse({
+        mode: 'sandboxed',
+        exceptions: [{ kind: 'app', bundleId: 'com.apple.iCal', purpose: 'x' }],
+      }).success,
+    ).toBe(true)
+  })
+
+  it('sees a widening hidden by a comma in a path', () => {
+    const v1: SandboxDeclaration = {
+      mode: 'sandboxed',
+      exceptions: [{ kind: 'files', access: 'read', paths: ['~/Desktop,~/Documents/**'], purpose: 'x' }],
+    }
+    const v2: SandboxDeclaration = {
+      mode: 'sandboxed',
+      exceptions: [{ kind: 'files', access: 'read', paths: ['~/Desktop', '~/Documents/**'], purpose: 'x' }],
+    }
+    expect(sandboxWidening(v1, v2).added).toHaveLength(1)
   })
 
   it('rates exceptions and finds what an update adds', () => {
@@ -170,10 +239,20 @@ describe('relay frames', () => {
 describe('channel messages', () => {
   it('lets a phone send tightening commands and nothing that loosens', () => {
     expect(
-      channelMessageSchema.safeParse({ type: 'command', seq: 1, command: { kind: 'lockdown' } }).success,
+      phoneToMacMessageSchema.safeParse({ type: 'command', seq: 1, command: { kind: 'lockdown' } }).success,
     ).toBe(true)
     expect(
-      channelMessageSchema.safeParse({ type: 'command', seq: 1, command: { kind: 'resume' } }).success,
+      phoneToMacMessageSchema.safeParse({ type: 'command', seq: 1, command: { kind: 'resume' } }).success,
+    ).toBe(false)
+    expect(channelMessageSchema.safeParse({ type: 'ack', seq: 2, ackSeq: 1 }).success).toBe(true)
+  })
+
+  it('keeps each direction to its own messages', () => {
+    expect(
+      macToPhoneMessageSchema.safeParse({ type: 'command', seq: 1, command: { kind: 'lockdown' } }).success,
+    ).toBe(false)
+    expect(
+      phoneToMacMessageSchema.safeParse({ type: 'approval-request', seq: 1, requestText: '{}' }).success,
     ).toBe(false)
   })
 })

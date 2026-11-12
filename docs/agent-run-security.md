@@ -110,14 +110,22 @@ Every card is rendered from the request's fields by a fixed template on each dev
 request carries:
 
 - **Kind and subject:** structured fields only (`approvalRequestSchema`). Text fields refuse
-  control, format and line-separator characters, rather than cleaning them, because the Mac fills
-  them in and must have cleaned them already.
+  control, format and line-separator characters, invisible letters and piles of combining marks
+  (`isDisplayText`), rather than cleaning them, because the Mac fills them in and must have
+  cleaned them already. Ids (clients, calls, tools, addresses) have strict patterns.
+- **Which fields someone else wrote.** The card's headline and every label are the app's own
+  wording. Some values come from the adapter's manifest, which the agent wrote: the adapter's
+  name, each exception's `purpose`, the unsandboxed `reason`, and setting labels and values. The
+  card shows those under "The adapter says", never as a headline. A remote client's host and
+  source address, and a phone's name, are claims too, and are shown as claims.
 - **Requester:** the client the credential names (`local:<id>` or `remote:<id>`), with its
   self-reported name as a label.
 - **The agent says:** at most 280 characters, shown as a quote under its own heading.
 - **For an install:** the Mac's permission diff (`PermissionChange[]`, each with a risk), the
-  source (draft or local folder), whether it replaces an existing adapter, the references the
-  agent says it read, and whether it runs unsandboxed.
+  source (draft, local folder or rollback), whether it replaces an adapter and inherits its
+  signed-in session (`inheritsSession`), the references the agent says it read, and whether it
+  runs unsandboxed. The schema refuses an install whose `unsandboxed` flag disagrees with its
+  diff. Any critical line (unsandboxed, a `command` exception) makes the whole card Mac only.
 - The system's own Face ID or Touch ID prompt names the action in the app's words, so the last
   thing the person sees before signing is drawn by the OS.
 
@@ -164,7 +172,9 @@ holds on both Mac and iPhone.
    The person checks they match and approves on the Mac with Touch ID (`device-pair`, Mac only).
 4. The Mac signs the phone's record, registers the phone's transport key with the relay
    (`device-register`) and sends the signed record back over the new channel. The phone pins the
-   Mac's approval key from the QR and checks every record and request against it from then on.
+   Mac's approval and agreement keys from the QR. It checks device records against the approval
+   key. Requests aren't signed, because that would need Touch ID for every one; they're
+   authenticated by the HPKE auth-mode seal from the pinned agreement key.
 5. Three wrong confirmations, or the 5 minutes passing, abandon the offer; a new QR is needed.
 
 At most 5 phones per Mac.
@@ -198,20 +208,30 @@ single use: answering removes it.
 ## Trusted stores
 
 **Contract** in `trusted-store.ts`; built by D. Applies to the approvals, grants, remote-tool
-policy and device stores. Not to the adapter store (C), whose versions are self-verifying by hash
+policy, device, settings and safety-state (pause and lockdown) stores, and to the pending
+requests. Not to the adapter store (C), whose versions are self-verifying by hash
 and whose `state.json` decides nothing: what runs is what the approvals store approved.
 
-- **Evidence.** Every record that widens anything carries `Evidence`: the request text and the
-  device's signed decision. On every load, `verifyEvidence` checks it in `stored` mode (the
-  decision was made before the request expired, and before any revocation of that device) and that
-  the request's subject is exactly this record (`matches`). A record whose evidence fails is
+- **Evidence.** Every record that widens anything carries `Evidence`: the request text, the
+  device's signed decision, and the Mac's own receipt (`receivedAt`, the Mac's clock when it
+  accepted the decision live). On every load, `verifyEvidence` checks it in `stored` mode: the
+  receipt is within the request's life and before any revocation of that device, and the
+  request's subject is exactly this record (`matches`). The signer's own `decidedAt` is never
+  trusted for timing, so a device can't backdate a decision past its revocation, and a phone with
+  a wrong clock can't make an approval that passes live and fails later. Irreversible calls and
+  pairings are never stored evidence. A record whose evidence fails is
   ignored and audited (`store-refused`). Records that only tighten (a revocation, a tool turned
   off) need no evidence.
 - **Anchor.** Each store's SHA-256 and a generation number live in a Keychain item under the app's
   designated requirement (`StoreAnchor`). A write is two-phase: write the next hash into the
   anchor (`beginWrite`), write and sync the file, then move the anchor (`commitWrite`). On load,
   `checkAnchor` says `ok`, `advance` (a crash between the two phases), `fresh`, or `mismatch`. On a
-  mismatch, the store is treated as empty, the person is told, and it's audited. That stops a
+  mismatch, Valet goes into lockdown, treats that store as empty (so everything it would have
+  allowed is off), tells the person, and audits it. Lockdown rather than "empty" alone because
+  some stores also hold tightening records without evidence (a tool turned off); emptying those
+  would loosen. A write may not begin while another is uncommitted (`beginWrite` throws; a load
+  that finds the old file uses `abandonWrite`), and a failed commit is fatal for that change: the
+  person is told a revocation is done only after its commit. That stops a
   rolled-back file from bringing a revoked grant back, which evidence alone can't, because the old
   grant's evidence is still valid.
 - **Migration.** Today's `approvals.json` and `grants.json` have no evidence. On the first launch
@@ -236,12 +256,19 @@ How workstreams E and F stay inside guarantee 3. **Designed**.
   checks. Running its tests, describing its schemas, or a live trial executes adapter code. Before
   the sandbox exists, the only place that runs is a full Node process with Valet's own access, so
   F's test and trial tools, and C's describe step for the `draft` source, stay off until I lands.
-  C has a guard for this.
+  C has a guard for this. Once they run, draft code runs with none of its declared exceptions and
+  with egress limited to the scratch partition's, whatever its manifest asks for: nobody has
+  approved those yet.
 - **Submitting** a draft is an `adapter-install` approval with the Mac's diff against the
   installed version (or against nothing). A draft that takes an existing adapter's id replaces it,
   and inherits its signed-in session, because partitions are named by adapter id. That's what
   repair (J5) needs, so the diff says it in a high-risk line: "This code will use your signed-in
-  session for <site>".
+  session for <site>". Removing an adapter clears its partitions, so a later draft under the same
+  id can't quietly inherit a session the diff (against nothing) wouldn't mention. Whether that
+  line appears is decided from whether the partition holds a session, not from the version
+  history.
+- **Remote enablement is per version.** `tool-enable` names the adapter hash, so an update starts
+  with its tools off for remote clients again.
 - **References** (D75): the agent fetches others' adapters as text and may copy from them. Valet
   never installs one directly. The card lists what the agent says it consulted, as a claim.
 - **Signed-in authoring sessions** (D81): off by default; `authoring-session` approval per session,
@@ -263,12 +290,20 @@ How workstreams E and F stay inside guarantee 3. **Designed**.
   one bundle id), `local-service` (127.0.0.1 on one port above 1023), `network` (HTTPS from tool
   code to named hosts, outside the browser), `command` (one program by absolute path).
 - **Paths** are absolute or under `~/`, with no `.` or `..` and at most one trailing `*` or `**`
-  (`isPathPattern`). `~/*` and `/**` are refused. They're matched after resolving symlinks, and an
-  opened file is re-checked by its real path, so a symlink placed later can't escape.
-- **Never grantable** (`FORBIDDEN_PATHS`, matched case-insensitively, by ancestor too): Valet's own
-  data, Keychains, Messages (one-time codes come only through the provider), 1Password's data,
-  browser cookies and profiles, Mail, LaunchAgents, `~/.ssh`, `~/.gnupg`, `~/.aws`, and the system
-  folders.
+  (`isPathPattern`). `~/*` and `/**` are refused. The person's home is named as `~/`: an absolute
+  path under `/Users` or a volume's `Users` folder is refused, as are `/Volumes` itself and a whole
+  volume. At run time, the runtime resolves each path with `realpath`, checks it with
+  `touchesForbiddenPath(path, home)` (which maps `<home>/x` back to `~/x`), and re-checks an opened
+  file by its real path, so a symlink placed later can't escape.
+- **Never grantable** (`FORBIDDEN_PATHS`, matched after NFKC and case folding, by ancestor too):
+  Valet's own data (every product name), Keychains, Messages (one-time codes come only through the
+  provider), 1Password's data, every browser's cookies and profiles, Mail, LaunchAgents and
+  Preferences, `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.config`, shell startup files, `~/.local/bin`,
+  and the system folders.
+- **Never as an exception:** a shell, interpreter or script runner as a `command` (`sh`, `zsh`,
+  `env`, `osascript`, `python`, `node` and the like), and Apple Events to apps that run anything
+  (Terminal, iTerm, System Events, Script Editor, Finder, Shortcuts, Automator, System Settings,
+  Keychain Access, 1Password). Each would be unsandboxed mode under another name.
 - **Risk** (`exceptionRisk`): reading files is medium; writing, or a `**` pattern, is high; Apple
   Events and network are high; a local service is medium; a command is critical.
 - **The diff** lists each new exception (`sandboxWidening`). Any change to one counts as new.
@@ -304,9 +339,11 @@ remote MCP client ─HTTPS─▶ relay Worker ─▶ Durable Object per Mac ◀�
   AES-256-GCM, with `info` set to the sender and recipient ids. Auth mode means a phone accepts
   only what the Mac's key sealed, and the reverse. Inside, a per-sender sequence number stops the
   relay replaying or reordering alerts. Approvals inside are signed as well, so a broken seal
-  still can't approve. What goes inside is `channelMessageSchema`: request text, signed
-  decisions, declines, withdrawals, alerts, and the tightening commands below. H and D may add
-  kinds; each is a contract change.
+  still can't approve. What goes inside is one schema per direction: `macToPhoneMessageSchema` (request text,
+  closings, alerts) and `phoneToMacMessageSchema` (signed decisions, declines, the tightening
+  commands below). Each side acknowledges what it received (`ack`), so a phone shows a command as
+  "not confirmed" until the Mac's ack arrives, and a relay that drops one can't hide it. H and D
+  may add kinds; each is a contract change.
 - **Phone commands without Face ID.** A phone can send tightening commands, which are pause, lockdown, revoke a client and
   revoke a device, over the authenticated channel without a signature. Speed matters for J7, and
   the worst a stolen unlocked phone can do with them is lock things down. Undoing any of them is
@@ -326,6 +363,9 @@ phone channel's contents, or approvals.
 
 - **Lockdown** (J7) from the Mac or a phone: every call is refused, every remote client revoked,
   every pending request withdrawn, and authoring sessions end. Undoing it is a `resume` approval.
+- **The Mac can't be revoked**, from any channel or tool (`canRevokeDevice`). Otherwise an
+  unlocked phone, or an agent at notify tier, could revoke the Mac and leave the stolen phone as
+  the only approver.
 - **Revoking a device** removes its record from use at once: its future signatures fail as
   `device-revoked`, the relay drops its registration, and the device store keeps the revocation
   forever. The approvals it signed while paired stay valid, because a stolen phone's earlier

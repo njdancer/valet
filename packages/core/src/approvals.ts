@@ -20,6 +20,12 @@ const hash = z.string().regex(/^[0-9a-f]{64}$/)
 const adapterId = z.string().regex(/^[a-z][a-z0-9-]{1,63}$/)
 const name = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)
 const origin = z.string().regex(/^https:\/\/[a-z0-9.-]+(?::\d{1,5})?$/)
+/** A client's id as its credential names it: `local:<id>` or `remote:<id>`. */
+export const clientIdSchema = z.string().regex(/^(?:local|remote):[A-Za-z0-9_-]{1,64}$/)
+/** A tool as `<adapterId>.<tool>`. */
+const qualifiedTool = z.string().regex(/^[a-z][a-z0-9-]{1,63}\.[a-z][a-z0-9_]{0,63}$/)
+/** An IPv4 or IPv6 address as the relay or tunnel reported it. */
+const address = z.string().regex(/^[0-9A-Fa-f:.]{2,45}$/)
 /** A random 128-bit id, base64url. */
 export const requestIdSchema = z.string().regex(/^[A-Za-z0-9_-]{22}$/)
 
@@ -31,7 +37,11 @@ export const APPROVAL_TIERS = ['none', 'notify', 'approve', 'approve-each-use'] 
 export type ApprovalTier = (typeof APPROVAL_TIERS)[number]
 
 const subjects = {
-  /** Install a new adapter, or update one, from a draft or a local folder. Shows the diff. */
+  /**
+   * Install a new adapter, update one, or roll one back. Shows the diff against what is active.
+   * `adapterName`, every exception `purpose` and the unsandboxed reason come from the adapter's
+   * manifest, which the agent wrote: cards show them as "the adapter says", never as a headline.
+   */
   'adapter-install': z
     .object({
       adapterId,
@@ -41,7 +51,9 @@ const subjects = {
       packageHash: hash,
       /** The approved hash this replaces; null for a first install. */
       previousHash: hash.nullable(),
-      source: z.enum(['draft', 'local-folder']),
+      source: z.enum(['draft', 'local-folder', 'rollback']),
+      /** True if this replaces an adapter that has a signed-in session or grants (it inherits it). */
+      inheritsSession: z.boolean(),
       /** Reference adapters the agent says it read. A claim, shown as one. */
       references: z.array(z.url({ protocol: /^https$/ }).max(500)).max(10),
       /** Computed by the Mac from the two manifests, never written by the agent. */
@@ -49,7 +61,11 @@ const subjects = {
       /** True if the code runs without the sandbox (D73); shown as critical, Mac only. */
       unsandboxed: z.boolean(),
     })
-    .strict(),
+    .strict()
+    .refine(
+      (s) => s.unsandboxed === s.changes.some((c) => c.area === 'sandbox-mode' && c.risk === 'critical'),
+      'unsandboxed must agree with a critical sandbox-mode line',
+    ),
   /** Let an adapter's login use a secret, typed only into these origins. */
   'secret-grant': z
     .object({
@@ -63,6 +79,8 @@ const subjects = {
       provider: z.enum(['keychain-copy', 'onepassword-service-account', 'onepassword-desktop', 'messages']),
       /** The item's title as the provider shows it; never its reference or contents. */
       itemTitle: displayText(120),
+      /** First 16 hex of SHA-256 of the item reference: tells two items with one title apart. */
+      itemFingerprint: z.string().regex(/^[0-9a-f]{16}$/),
       origins: z.array(origin).min(1).max(10),
     })
     .strict(),
@@ -73,21 +91,25 @@ const subjects = {
   'tool-enable': z
     .object({
       adapterId,
+      /** The version enabled. An update starts with the tool off again for remote clients. */
+      adapterHash: hash,
       tool: name,
       scope: z.enum(['local', 'remote']),
-      clientId: z.string().max(80).nullable(),
+      clientId: clientIdSchema.nullable(),
       sideEffect: z.enum(['read', 'write', 'irreversible']),
     })
     .strict(),
   /** A remote MCP client asking to connect (D80): the host, the address, the tools it will see. */
   'remote-client': z
     .object({
-      clientId: z.string().max(80),
-      host: displayText(253),
-      sourceAddress: z.string().max(64).nullable(),
+      clientId: clientIdSchema,
+      /** The redirect URI's host: a claim by the client. */
+      host: z.string().regex(/^[a-z0-9.-]{1,253}$/),
+      /** As the relay or tunnel reported it: a claim, shown as one. */
+      sourceAddress: address.nullable(),
       /** The code the browser that started the flow shows; the person checks it matches. */
       code: z.string().regex(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/),
-      tools: z.array(z.string().max(130)).max(200),
+      tools: z.array(qualifiedTool).max(200),
     })
     .strict(),
   /** A setting that loosens something. Values are shown, never secrets (settings hold none). */
@@ -116,7 +138,7 @@ const subjects = {
       adapterId,
       adapterHash: hash,
       tool: name,
-      callId: z.string().max(80),
+      callId: z.string().regex(/^[A-Za-z0-9_-]{1,80}$/),
       /** The input as the runtime rendered it, one line per part. */
       preview: z.array(displayText(200)).max(20),
     })
@@ -145,10 +167,16 @@ export type ApprovalSubject<K extends ApprovalKind = ApprovalKind> = z.infer<(ty
  */
 export function approvableOn(kind: ApprovalKind, subject: ApprovalSubject): readonly DeviceRole[] {
   if (kind === 'device-pair') return ['mac']
-  if (kind === 'adapter-install' && (subject as ApprovalSubject<'adapter-install'>).unsandboxed)
-    return ['mac']
+  if (kind === 'adapter-install') {
+    const install = subject as ApprovalSubject<'adapter-install'>
+    // Anything critical (unsandboxed, a command exception) is as good as unsandboxed: Mac only.
+    if (install.unsandboxed || install.changes.some((c) => c.risk === 'critical')) return ['mac']
+  }
   return ['mac', 'phone']
 }
+
+/** Kinds that are never remembered, so never valid as stored evidence. */
+export const NEVER_STORED: readonly ApprovalKind[] = ['irreversible-call', 'device-pair']
 
 /** The tier each kind is approved at. */
 export const KIND_TIER: Readonly<Record<ApprovalKind, 'approve' | 'approve-each-use'>> = {
@@ -188,7 +216,7 @@ export const APPROVAL_LIMITS = {
 
 /** Who asked. An agent is named by its credential; its self-reported name is only a label. */
 export const requesterSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('agent'), clientId: z.string().max(80), clientName: displayText(100) }).strict(),
+  z.object({ kind: z.literal('agent'), clientId: clientIdSchema, clientName: displayText(100) }).strict(),
   z.object({ kind: z.literal('person') }).strict(),
   z.object({ kind: z.literal('app') }).strict(),
 ])
@@ -297,10 +325,13 @@ export interface DecisionContext {
    * `live`: a decision arriving now, for a request the Mac holds as pending. It must be pending
    * and unexpired, and the device unrevoked.
    * `stored`: evidence kept beside a record in a trusted store, checked again on every load. The
-   * request has long expired, so the decision must have been made before it did; a device revoked
-   * later doesn't void what it approved while paired (see the lockdown section).
+   * request has long expired, so the Mac must have received the decision before it did; a device
+   * revoked later doesn't void what it approved while paired (see the lockdown section). Times are
+   * the Mac's `receivedAt` receipt, never the signer's `decidedAt`, which the device chooses.
    */
   readonly mode: 'live' | 'stored'
+  /** Stored only: when the Mac accepted the decision live, by its own clock (the receipt). */
+  readonly receivedAt?: string
   /** Live only: whether the Mac still holds this request id as pending, unanswered. */
   readonly isPending?: (requestId: string) => boolean
   readonly now?: Date
@@ -341,7 +372,6 @@ export function verifyDecision(
     return { ok: false, reason: 'not-allowed-on-device' }
   }
   const revokedAt = context.devices.revokedAt(deviceId)
-  const decidedAt = Date.parse(decision.decidedAt)
   const expiresAt = Date.parse(request.request.expiresAt)
   if (context.mode === 'live') {
     if (revokedAt !== null) return { ok: false, reason: 'device-revoked' }
@@ -349,10 +379,12 @@ export function verifyDecision(
     const now = (context.now ?? new Date()).getTime()
     if (now >= expiresAt) return { ok: false, reason: 'expired' }
   } else {
-    if (decidedAt >= expiresAt || decidedAt < Date.parse(request.request.createdAt)) {
+    const receivedAt = context.receivedAt === undefined ? Number.NaN : Date.parse(context.receivedAt)
+    if (Number.isNaN(receivedAt)) return { ok: false, reason: 'malformed' }
+    if (receivedAt >= expiresAt || receivedAt < Date.parse(request.request.createdAt)) {
       return { ok: false, reason: 'expired' }
     }
-    if (revokedAt !== null && Date.parse(revokedAt) <= decidedAt)
+    if (revokedAt !== null && Date.parse(revokedAt) <= receivedAt)
       return { ok: false, reason: 'device-revoked' }
   }
   return { ok: true, decision, role: device.role }
