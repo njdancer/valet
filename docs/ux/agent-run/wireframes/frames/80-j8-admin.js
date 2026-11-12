@@ -43,11 +43,7 @@
       { title: 'Needs you', actions: P.approveBar('Approve with Face ID') },
     ),
     notes: [
-      [
-        30,
-        250,
-        'Neutral: a choice from a list the adapter declares widens nothing. Face ID, or passcode after two failures.',
-      ],
+      [30, 250, 'Neutral: a choice from a list the adapter declares widens nothing. Face ID or passcode.'],
       [
         30,
         330,

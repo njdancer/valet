@@ -2495,7 +2495,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
     size: 'phone',
     title: 'Connect card: type the code, name it, choose tools',
     personas: ['P8', 'P3', 'P5', 'X2'],
-    desc: 'Path B, steps 4 and 5, shown filled in. The title is the question; Face ID only. The code selects the request; nothing can be approved until it matches. Defaults are Use tools only and no tools: the person ticked the rest here.',
+    desc: 'Path B, steps 4 and 5, shown filled in. The title is the question; Face ID or passcode. The code selects the request; nothing can be approved until it matches. Defaults are Use tools only and no tools: the person ticked the rest here.',
     html: P.sheet(connectCard(), {
       title: 'Needs you',
       time: '8:31',
@@ -2818,7 +2818,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
       [
         200,
         470,
-        'Install cards need Face ID itself: no passcode route, not even with VoiceOver on (Face ID works with VoiceOver). Two failures say "Try again, or approve on your Mac." (approval-cards.md section 6)',
+        'Face ID, or "Use passcode instead" on every card (Nick, 2026-11-12). (approval-cards.md section 6)',
       ],
     ],
   })
@@ -3477,7 +3477,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
     id: 'ph-card-login',
     title: 'Login card: choose the 1Password item on the card',
     personas: ['P8', 'P2', 'P3'],
-    desc: 'Another moment (8:10 pm): Woolworths 0.3.2 changed its login and needs the login given again. The picker is part of the payload: the approval signs the item chosen. Face ID only.',
+    desc: 'Another moment (8:10 pm): Woolworths 0.3.2 changed its login and needs the login given again. The picker is part of the payload: the approval signs the item chosen. Face ID or passcode.',
     html: P.sheet(loginCard(false), { title: 'Needs you', actions: bar() }),
     notes: [
       [30, 260, 'Caution: a password is involved. Strong only if it is typed on a new or moved origin.'],
@@ -3517,7 +3517,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
       [
         30,
         260,
-        'A read tool: Face ID or "Use passcode instead". A write tool needs Face ID itself; an irreversible tool adds "Each use will still need a Confirm on your phone or Mac." Agents can only ask for their own tools.',
+        'Face ID or "Use passcode instead"; an irreversible tool adds "Each use will still need a Confirm on your phone or Mac." Agents can only ask for their own tools.',
       ],
     ],
   })
@@ -3600,7 +3600,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
     id: 'ph-card-confirm',
     title: 'Confirm card: an irreversible checkout',
     personas: ['P8', 'P2', 'P5', 'X2'],
-    desc: 'Another moment (story.md, J4). Approve each use (D46). Face ID only. The cart, store, total and payment are part of the signed payload; Valet re-reads them just before ordering and refuses if anything changed (R20).',
+    desc: 'Another moment (story.md, J4). Approve each use (D46). Face ID or passcode. The cart, store, total and payment are part of the signed payload; Valet re-reads them just before ordering and refuses if anything changed (R20).',
     html: P.sheet(
       P.card({
         kind: 'Confirm',
@@ -3635,7 +3635,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
         260,
         'The site\'s own text (items) appears only under "From the site", never in the title or risk line.',
       ],
-      [200, 745, 'Button names the tool ("Check out"), as on the Mac\'s confirmation window. Face ID only.'],
+      [200, 745, 'Button names the tool ("Check out"), as on the Mac\'s confirmation window. Face ID or passcode.'],
     ],
   })
 
@@ -3798,7 +3798,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
       [
         30,
         260,
-        'Strong tone, Face ID only. The address is shown in full, never as a device name the agent supplied.',
+        'Strong tone. Face ID or passcode. The address is shown in full, never as a device name the agent supplied.',
       ],
       [
         30,
@@ -3811,20 +3811,20 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
 
   push({
     id: 'ph-card-passcode',
-    title: 'Face ID failed twice: passcode',
+    title: 'Use passcode instead',
     personas: ['P8', 'P5'],
-    desc: 'F1. On a neutral card only (this update adds no permissions), "Use passcode instead" is offered after Face ID fails. Recorded as iphone:passcode. Never on cards that widen access, connect, or spend.',
+    desc: 'F1. "Use passcode instead" works on every card, as anywhere on an iPhone (Nick, 2026-11-12). Recorded as iphone:passcode.',
     html: P.sheet(updateCard(), {
       title: 'Needs you',
       actions: P.approveBar('Use passcode instead', {
-        note: "Face ID didn't recognise you twice. This card adds no permissions, so your passcode works.",
+        note: "Face ID didn't recognise you. Your passcode works too.",
       }),
     }),
     notes: [
       [
         200,
         725,
-        'The button is available to everyone on neutral cards; there is no automatic VoiceOver route, since anyone can turn VoiceOver on (R2). Elsewhere: "Face ID didn\'t work. Try again, or approve on your Mac."',
+        'The button is there for everyone on every card, including people who can\'t use Face ID.',
       ],
     ],
   })
@@ -3973,14 +3973,14 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
               ["Nick's MacBook Pro (this Mac)", 'Touch ID', ''],
               [
                 K.link("Nick's iPhone"),
-                'Face ID · passcode on neutral cards only',
+                'Face ID · or the passcode (always)',
                 K.btn('Manage in Connections'),
               ],
             ],
             { cols: '1.4fr 1.4fr auto' },
           ),
         )}
-        ${K.card('Fallbacks', `<div class="col">${K.check('On iPhone, offer "Use passcode instead" on neutral cards', true)}<span class="faint">Cards that widen access, connect an agent or spend money always need Face ID or Touch ID. On a Mac without Touch ID, the Mac account password. An accessibility exception for someone who can't use Face ID is for B to decide.</span></div>`)}
+        ${K.card('Fallbacks', `<div class="col">${K.check('On iPhone, the passcode can stand in for Face ID on every card', true)}<span class="faint">Always on (Nick, 2026-11-12). On a Mac without Touch ID, the Mac account password.</span></div>`)}
         ${K.card(
           'Request limits',
           K.kv([
@@ -4931,7 +4931,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
     size: 'phone',
     title: 'Remove a lost device from the phone',
     personas: ['P8', 'P3', 'X2'],
-    desc: 'F2. Says what ends; Face ID only, because it changes who can approve. Every other device is told.',
+    desc: 'F2. Says what ends; Face ID or passcode, because it changes who can approve. Every other device is told.',
     html: P.screen('', {
       tab: 'Valet',
       title: 'Devices',
@@ -4951,7 +4951,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
       [
         350,
         300,
-        "Face ID only, no passcode: someone holding an unlocked phone shouldn't be able to cut the owner's other device off. The Mac does the same with Touch ID (mac-device-remove).",
+        "Face ID or passcode; never the last device. The Mac uses Touch ID (mac-device-remove).",
       ],
     ],
   })
@@ -5046,7 +5046,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
       [
         30,
         250,
-        'Neutral: a choice from a list the adapter declares widens nothing. Face ID, or passcode after two failures.',
+        'Neutral: a choice from a list the adapter declares widens nothing. Face ID or passcode.',
       ],
       [
         30,

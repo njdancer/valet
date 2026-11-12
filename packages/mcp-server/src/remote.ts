@@ -16,7 +16,7 @@ import type { SkippedTool } from './tool-names'
 
 export interface RemoteListenerOptions
   // No `admin`: Valet's own tools are for local clients only (docs/admin-tools.md).
-  extends Omit<HttpServerOptions, 'authenticate' | 'host' | 'caller' | 'admin'>,
+  extends Omit<HttpServerOptions, 'authenticate' | 'host' | 'caller' | 'admin' | 'authoring'>,
     RemotePolicyOptions {
   /** The caller the local endpoint uses. The listener wraps it in the remote policy. */
   readonly caller: ToolCaller
@@ -48,7 +48,11 @@ export interface RunningRemoteListener {
 export async function startRemoteListener(options: RemoteListenerOptions): Promise<RunningRemoteListener> {
   // `admin` is left out of the type too; taken out here as well, so nothing untyped can pass it on.
   const { caller, policy, tokens, hosts, authorization, callsPerHour, now, refused, ...rest } = options
-  const { admin: _admin, ...http } = rest as typeof rest & { readonly admin?: unknown }
+  const {
+    admin: _admin,
+    authoring: _authoring,
+    ...http
+  } = rest as typeof rest & { readonly admin?: unknown; readonly authoring?: unknown }
   const remote = new RemotePolicyCaller(caller, policy, {
     ...(callsPerHour === undefined ? {} : { callsPerHour }),
     ...(now === undefined ? {} : { now }),

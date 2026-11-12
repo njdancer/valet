@@ -259,6 +259,19 @@ export class Notifier {
     })
   }
 
+  /**
+   * An agent started or submitted a draft adapter (the Notify tier, docs/authoring-tools.md). The
+   * text is the app's own fixed wording with the client's name; nothing the agent wrote.
+   */
+  draftActivity(text: string): void {
+    this.put({
+      key: 'draft',
+      title: 'An agent is writing an adapter',
+      body: text,
+      target: { kind: 'panel', route: href.audit() },
+    })
+  }
+
   /** Takes everything down, when the app stops. */
   clear(): void {
     this.attention_.clear()

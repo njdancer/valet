@@ -113,6 +113,11 @@ export class PackageManager {
     } catch (error) {
       throw new InstallError(describeFailure(error))
     }
+    return this.prepared(loaded, source)
+  }
+
+  /** A package already checked and described (a draft's check), ready to install or stage. */
+  prepared(loaded: LoadedPackage, source: PackageSource): PreparedInstall {
     // The contract refuses these too; a second line, until Apple Events are typed operations.
     const sandbox = loaded.manifest.sandbox
     if (sandbox?.mode === 'sandboxed' && sandbox.exceptions.some((e) => e.kind === 'app'))
@@ -124,6 +129,23 @@ export class PackageManager {
   async commit(prepared: PreparedInstall): Promise<void> {
     const state = await this.options.store.state(prepared.loaded.manifest.id).catch(() => null)
     await this.put(prepared.loaded, prepared.source, { activate: true }, state)
+  }
+
+  /**
+   * Stores a prepared version without making it active: a draft submitted as an update waits here
+   * while the installed version keeps serving (docs/authoring-tools.md#submitting). Its approval's
+   * apply loads and activates it, as a rollback does. Not audited as installed until then.
+   */
+  async stage(prepared: PreparedInstall): Promise<void> {
+    const state = await this.options.store.state(prepared.loaded.manifest.id).catch(() => null)
+    if (state === null)
+      throw new InstallError('A first install isn’t staged; it is installed and waits for approval.')
+    await this.put(prepared.loaded, prepared.source, { activate: false }, state)
+  }
+
+  /** Drops a staged version nobody needs any more (see AdapterStore.discard). */
+  discard(adapterId: string, hash: string): Promise<boolean> {
+    return this.options.store.discard(adapterId, hash)
   }
 
   /** The adapter's history, or null. */
