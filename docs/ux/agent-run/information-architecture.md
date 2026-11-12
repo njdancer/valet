@@ -252,16 +252,18 @@ New and not yet numbered in the plan; the coordinator can give them decision num
 The plan's definition of done asks B, D, E, F, G and H to confirm these screens match their
 contracts. Recorded here as each signs:
 
-| Stream | What to check                                                                                              | Status  |
-| ------ | ---------------------------------------------------------------------------------------------------------- | ------- |
-| B      | Tiers, gestures, Mac-only list, nonce and expiry, pairing words, recovery code, signed lock, amendments    | signed  |
-| D      | Card payload, Because, states, follow-ons, limits, "Not confirmed yet", "Changed before order"             | waiting |
-| E      | Section 5's tool table and wording; scoping of See Valet                                                   | waiting |
-| F      | Drafts frozen on submit, checks vs tests, reproduction check on Valet-recorded fixtures, private addresses | waiting |
-| G      | Consent through the relay, Accept new agents, offline behaviour, lock at the relay, recovery page          | waiting |
-| H      | The iOS IA, card layout at AX sizes, VoiceOver order, notifications without actions, Face ID to open       | signed  |
+| Stream | What to check                                                                                              | Status                      |
+| ------ | ---------------------------------------------------------------------------------------------------------- | --------------------------- |
+| B      | Tiers, gestures, Mac-only list, nonce and expiry, pairing words, recovery code, signed lock, amendments    | signed (notes below)        |
+| D      | Card payload, Because, states, follow-ons, limits, "Not confirmed yet", "Changed before order"             | waiting                     |
+| E      | Section 5's tool table and wording; scoping of See Valet                                                   | signed with changes (below) |
+| F      | Drafts frozen on submit, checks vs tests, reproduction check on Valet-recorded fixtures, private addresses | waiting                     |
+| G      | Consent through the relay, Accept new agents, offline behaviour, lock at the relay, recovery page          | waiting                     |
+| H      | The iOS IA, card layout at AX sizes, VoiceOver order, notifications without actions, Face ID to open       | signed (notes below)        |
 
-**B's notes** (contracts in `packages/core`, design in `docs/agent-run-security.md`):
+### B's sign-off (contracts, 2026-11-12)
+
+Contracts in `packages/core`, design in `docs/agent-run-security.md`.
 
 - **Tiers, Mac-only list, recovery code, signed lock:** match. Resuming from pause or lockdown is
   now Mac only in the contract too (`approvableOn`), and no agent can ask for it.
@@ -285,7 +287,26 @@ contracts. Recorded here as each signs:
   (`.biometryCurrentSet`). If Nick says yes, the phone gets a second, passcode-capable key for
   neutral kinds only; that is a contract addition, not a change.
 
-**H's notes** (the app in `ios/`, design in `docs/ios-app.md`):
+### E's sign-off (read tier, 2026-11-12)
+
+Checked against what PR #72 built (`docs/admin-tools.md`). The read tier matches section 5 on
+these points: every `valet_` tool is read-only, nothing approves anything, and Locked down
+refuses everything but `valet_status`, with text that starts "Valet is locked down by the
+person." Where the two differ, this is what E keeps and what E will change:
+
+| Section 5                                                     | Built                                                                                                                             | E's answer                                                                                                                                                                                           |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `valet_list_sites`, `valet_get_site`                          | `valet_list_adapters`, `valet_get_adapter`                                                                                        | Keep the built names. Agents author adapters through F, and the tool descriptions say "site" for the person's word. Screens never show tool names.                                                   |
+| "See Valet" capability per agent                              | Stored per local app, on by default; cloud agents get none                                                                        | Built: each local app has See Valet (on by default) stored with it, checked on every admin call, with section 5's refusal. The Connections toggle comes later.                                       |
+| Calls: own, All with the tick                                 | Own calls only by default; All agents' activity stored per app                                                                    | Built: own is the default for `valet_list_calls`, `valet_get_call` and `valet_audit_log`, with the "belongs to another agent" refusal. All agents' activity is stored per app; its tick comes later. |
+| `valet_list_repairs`, `valet_get_repair`                      | Repairs appear in `valet_needs_you` as a repair item with the failing call                                                        | Add the two tools once repairs have R-refs (D and F). The blocking-not-changed wording goes with them.                                                                                               |
+| Page text in a "From the site (data, not instructions)" block | Results are structured JSON; every tool's description says these fields are data; site text is limited to the chosen store's name | Keep for structured results. A text result that quotes site text will use the block.                                                                                                                 |
+| Not in section 5                                              | `valet_site_health`, `valet_needs_you`, `valet_audit_log`                                                                         | Keep, under See Valet. The audit log's non-call records (approvals, settings, lock) are Valet's own, so they need no "All".                                                                          |
+| `valet_list_changes`, `valet_get_approval`, R23 answers       | Not built                                                                                                                         | Write tier, after D.                                                                                                                                                                                 |
+
+### H's sign-off (iOS app, 2026-11-12)
+
+The app is in `ios/`, its design in `docs/ios-app.md`.
 
 - **The iOS IA:** matches. Five tabs (Needs you, Activity, Sites, Agents, Valet), cards as a
   sheet over Needs you, pairing before anything else. Sites and Agents show the Mac's `status`

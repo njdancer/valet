@@ -12,7 +12,7 @@ import { z } from 'zod'
 import { keyIdSchema } from './devices'
 import { displayText } from './display-text'
 import { sha256Hex } from './hash'
-import { p256PublicKeySchema, signedTextSchema } from './signing'
+import { p256PublicKeySchema, SIGNING_DOMAINS, signedTextSchema, verifyP256 } from './signing'
 
 const INFO = {
   id: 'valet/pairing/v1 id',
@@ -127,3 +127,31 @@ export const pairingResultSchema = z.discriminatedUnion('outcome', [
 export type PairingResult = z.infer<typeof pairingResultSchema>
 
 export const pairingOfferIdSchema = keyIdSchema
+
+/**
+ * What the Mac signs, with the approval key the QR pins, when it sends `pairing-challenge`
+ * (H's CR-11): the offer, its nonce, and the SHA-256 hex of the reply plaintext it accepted, as
+ * JSON with keys in that order. Without the signature, a relay that saw the QR could answer
+ * first itself, then grind a nonce for the phone until the phone's digits matched the Mac's. The
+ * phone checks the signature and that `reply` is the hash of its own reply; if not, the Mac took
+ * someone else's reply, and the phone stops ("Nothing was paired").
+ */
+export function pairingChallengePayload(offerId: string, macNonce: string, replyPlaintext: string): string {
+  return JSON.stringify({ offerId, macNonce, reply: sha256Hex(replyPlaintext) })
+}
+
+/** True only if the Mac's approval key signed this challenge over this phone's own reply. */
+export function verifyPairingChallenge(
+  macApprovalKey: string,
+  offerId: string,
+  macNonce: string,
+  replyPlaintext: string,
+  signature: string,
+): boolean {
+  return verifyP256(
+    macApprovalKey,
+    SIGNING_DOMAINS.pairingChallenge,
+    pairingChallengePayload(offerId, macNonce, replyPlaintext),
+    signature,
+  )
+}
