@@ -154,9 +154,13 @@ Refused, with a reason the tool result can say (A's section 11), when:
 - Valet is locked down, unless the kind is `resume`;
 - an agent asks for `device-pair` or `irreversible-call` (only the app raises those), or for
   `resume` (only the person);
-- the agent has `pendingPerClient` (3) waiting, or all agents `pendingTotal` (10);
+- the agent has `pendingPerClient` (3) waiting, or all agents `pendingTotal` (5);
 - the agent has `declinesBeforeCooldown` (3) declines within `declineWindowMs`; it is refused
   until `cooldownMs` after the last of them;
+- an app-raised confirmation is made `onBehalfOf` an agent that is cooling down. The confirmation
+  of an irreversible call is raised by the app, but declining it counts as declining the agent
+  whose call raised it, so an agent can't keep raising cards the person keeps saying no to. It
+  still doesn't count towards the agent's waiting or daily limits;
 - the agent has made 20 requests in the last day, whatever became of them, so withdrawing and
   asking again can't push cards to a phone without end (A's number, pending B);
 - an agent asks to turn a tool on remotely for anyone but itself, or names a client on a local
@@ -211,7 +215,10 @@ the requester's cooldown, and the card closes everywhere.
 
 A timer at the next `expiresAt` expires due requests; load also expires anything already past.
 The asker may withdraw its own request; a newer draft submission withdraws the asker's own older
-one for the same adapter (`replaced`), never another agent's (A's R41: both cards stand). Lockdown
+one for the same adapter (`replaced`), never another agent's (A's R41: both cards stand). A
+request may name the asker's own waiting request it `replaces`: in one step of the broker's
+queue, the new one is made and the old one withdrawn as `replaced`, and the old one doesn't count
+against the asker's limits. Refused (cooling down, locked down, a limit), the old one stays. Lockdown
 (from the Mac or a phone command) withdraws every pending request, removes all `remote-client`
 and `authoring-session` evidence (B: lockdown revokes remote clients and ends sessions, and resume
 brings none back), then sets `safety.lockdown`. It runs in the broker's one queue, so an approval
@@ -327,30 +334,31 @@ Each IPC path that widens what an adapter, a client or an agent can reach, mappe
 marked as a tightening (no signature) or as not widening. **Built** rows are in this PR; the rest
 are the next PRs of this workstream.
 
-| IPC path                                     | Becomes                                                                                                                              | Status             |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------ |
-| `answerConfirmation(id, true)`               | `irreversible-call` (app-raised, never stored), Touch ID from its own panel                                                          | **Built**          |
-| `answerConfirmation(id, false)`              | Decline: tightening, any app window                                                                                                  | **Built**          |
-| `app.setLockedDown(false)`                   | `resume { from: 'lockdown' }`, Mac only                                                                                              | **Built**          |
-| `app.setLockedDown(true)`                    | Tightening: app-state and the ledger                                                                                                 | **Built**          |
-| `app.setPaused(false)`                       | Not signed: Valet's own Pause is in memory and a restart lifts it anyway                                                             | Decided            |
-| `approvals.approve(id, hash)`                | `adapter-install`; the install gate asks `honoured`, bound to sandbox mode                                                           | **Built**          |
-| rollback (PR #77's `rollbackNow`)            | `adapter-install` with `source: 'rollback'`                                                                                          | **Built**          |
-| `approvals.reject`                           | Tightening                                                                                                                           | **Built**          |
-| `grants.make`                                | `secret-grant` (Touch ID); the grant gate hands out only signed grants, or legacy ones within the manifest's origins                 | **Built**          |
-| `grants.revoke`                              | Tightening: the evidence, the legacy record and the store                                                                            | **Built**          |
-| `grants.resync`                              | Not widening: the same item, origins and fields                                                                                      | Decided            |
-| `remote.setTool(…, true)`                    | `tool-enable { scope: 'remote', clientId: null }` (Touch ID). An agent's own per-client enable is next                               | **Built**          |
-| `remote.setTool(…, false)`                   | Tightening                                                                                                                           | **Built**          |
-| `remote.setEnabled(true)`, `remote.setHosts` | `setting { scope: 'valet' }` (`remote_enabled`, `remote_hosts` adding a host); off and fewer hosts are clicks                        | **Built**          |
-| `remote.approveConsent(code, tools)`         | `remote-client`, app-raised, the typed code in the signed decision; a wrong code goes straight to the three tries                    | **Built**          |
-| `settings.set({ messagesOtpEnabled: true })` | `setting { scope: 'valet' }`: `messages_otp` on, `notifications` off, `trace_retention` shorter (A's R6); their opposites are clicks | **Built**          |
-| other `settings.set` fields                  | Not widening                                                                                                                         | Decided            |
-| `adapters.setSetting` (a store)              | Not widening: a value the adapter declared (`setting.adapter-choice`)                                                                | Decided            |
-| `adapters.setPaused(…, false)`               | Not signed for now: the person's own per-site stop. Moves into the ledger                                                            | Next (ledger only) |
-| `clients.add`                                | Not signed: a local client the person configures at the Mac                                                                          | Decided, told to B |
-| `endpoint.setListening(true)`                | Not signed: local only, the person's own switch                                                                                      | Decided, told to B |
-| `app.erase`                                  | The main process's own native dialog decides                                                                                         | Unchanged          |
+| IPC path                                     | Becomes                                                                                                                                                                              | Status             |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------ |
+| `answerConfirmation(id, true)`               | `irreversible-call` (app-raised, never stored), Touch ID from its own panel                                                                                                          | **Built**          |
+| `answerConfirmation(id, false)`              | Decline: tightening, any app window                                                                                                                                                  | **Built**          |
+| `app.setLockedDown(false)`                   | `resume { from: 'lockdown' }`, Mac only                                                                                                                                              | **Built**          |
+| `app.setLockedDown(true)`                    | Tightening: app-state and the ledger                                                                                                                                                 | **Built**          |
+| `app.setPaused(false)`                       | Not signed: Valet's own Pause is in memory and a restart lifts it anyway                                                                                                             | Decided            |
+| `approvals.approve(id, hash)`                | `adapter-install`; the install gate asks `honoured`, bound to sandbox mode                                                                                                           | **Built**          |
+| rollback (PR #77's `rollbackNow`)            | `adapter-install` with `source: 'rollback'`                                                                                                                                          | **Built**          |
+| `approvals.reject`                           | Tightening                                                                                                                                                                           | **Built**          |
+| `grants.make`                                | `secret-grant` (Touch ID); the grant gate hands out only signed grants, or legacy ones within the manifest's origins                                                                 | **Built**          |
+| `grants.revoke`                              | Tightening: the evidence, the legacy record and the store                                                                                                                            | **Built**          |
+| `grants.resync`                              | Not widening: the same item, origins and fields                                                                                                                                      | Decided            |
+| `remote.setTool(…, true)`                    | `tool-enable { scope: 'remote', clientId: null }` (Touch ID)                                                                                                                         | **Built**          |
+| an agent's own remote tool                   | `tool-enable { scope: 'remote', clientId: 'remote:<its id>' }`: a tool already on for remote clients, added to that client's grant only. It never turns a tool on for remote clients | **Built**          |
+| `remote.setTool(…, false)`                   | Tightening                                                                                                                                                                           | **Built**          |
+| `remote.setEnabled(true)`, `remote.setHosts` | `setting { scope: 'valet' }` (`remote_enabled`, `remote_hosts` adding a host); off and fewer hosts are clicks                                                                        | **Built**          |
+| `remote.approveConsent(code, tools)`         | `remote-client`, app-raised, the typed code in the signed decision; a wrong code goes straight to the three tries                                                                    | **Built**          |
+| `settings.set({ messagesOtpEnabled: true })` | `setting { scope: 'valet' }`: `messages_otp` on, `notifications` off, `trace_retention` shorter (A's R6); their opposites are clicks                                                 | **Built**          |
+| other `settings.set` fields                  | Not widening                                                                                                                                                                         | Decided            |
+| `adapters.setSetting` (a store)              | Not widening: a value the adapter declared (`setting.adapter-choice`)                                                                                                                | Decided            |
+| `adapters.setPaused(…, false)`               | Not signed for now: the person's own per-site stop. Moves into the ledger                                                                                                            | Next (ledger only) |
+| `clients.add`                                | Not signed: a local client the person configures at the Mac                                                                                                                          | Decided, told to B |
+| `endpoint.setListening(true)`                | Not signed: local only, the person's own switch                                                                                                                                      | Decided, told to B |
+| `app.erase`                                  | The main process's own native dialog decides                                                                                                                                         | Unchanged          |
 
 Known gaps, next in this workstream:
 

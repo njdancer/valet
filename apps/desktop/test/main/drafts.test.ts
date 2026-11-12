@@ -19,7 +19,12 @@ import type { SiteGuards } from '@valet/runtime'
 import { buildToolLibrary } from '@valet/runtime/tool-script'
 import { inProcessQuickJS, nodeQuickJS } from '@valet/sandbox'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
-import { type AuthoringDeps, DraftAuthoring, type SubmitRequest } from '../../src/main/core/drafts/authoring'
+import {
+  type AuthoringDeps,
+  DraftAuthoring,
+  type RequestState,
+  type SubmitRequest,
+} from '../../src/main/core/drafts/authoring'
 import { partialMismatch } from '../../src/main/core/drafts/cases'
 import { lint, siteDomain } from '../../src/main/core/drafts/checks'
 import { ScratchSessions } from '../../src/main/core/drafts/research'
@@ -408,6 +413,45 @@ describe('submit', () => {
     const detail = await h.authoring.getDraft(AGENT, false, draft.draftId)
     expect(detail.draft.status).toBe('declined')
     expect(detail.draft.submission?.note).toBe('Use the API instead')
+  }, 60_000)
+
+  it('keeps the draft waiting on its earlier request when a resubmission is refused', async () => {
+    let refuse = false
+    const states = new Map<string, RequestState>()
+    const h = await harness({
+      submit: async () => {
+        if (refuse) return { ok: false, sentence: 'Valet is locked down.' }
+        states.set('req1000000000000000000', { state: 'pending', note: null })
+        return {
+          ok: true,
+          requestId: 'req1000000000000000000',
+          ref: 'R1AB',
+          expiresAt: '2026-11-13T00:00:00.000Z',
+          previousHash: null,
+          stagedNew: false,
+        }
+      },
+      requestState: (id) => states.get(id) ?? { state: 'unknown', note: null },
+    })
+    const { draft } = await h.authoring.createDraft(AGENT, { adapterId: 'shop', from: 'blank' })
+    const first = await h.authoring.submit(AGENT, draft.draftId, {
+      note: null,
+      references: [],
+      followOns: [],
+    })
+    refuse = true
+    await expect(
+      h.authoring.submit(AGENT, draft.draftId, { note: null, references: [], followOns: [] }),
+    ).rejects.toThrow(/Not submitted/)
+    const detail = await h.authoring.getDraft(AGENT, false, draft.draftId)
+    expect(detail.draft.status).toBe('waiting')
+    expect(detail.draft.submission?.ref).toBe('R1AB')
+    // Gone by the time it was refused, the draft says so.
+    states.set(first.requestId, { state: 'withdrawn', note: null })
+    await expect(
+      h.authoring.submit(AGENT, draft.draftId, { note: null, references: [], followOns: [] }),
+    ).rejects.toThrow(/Not submitted/)
+    expect((await h.authoring.getDraft(AGENT, false, draft.draftId)).draft.status).not.toBe('waiting')
   }, 60_000)
 
   it('refuses follow-ons until they exist, and withdraws the waiting request when a draft is deleted', async () => {
