@@ -169,10 +169,13 @@ test('rolling back from the Sites page brings the approved built-in back, pinned
   const dialog = control.getByRole('alertdialog')
   await expect(dialog).toContainText('It can’t reach anything the version in use can’t.')
   await dialog.getByRole('button', { name: 'Roll back to 0.1.0' }).click()
+  // The swap comes first and the approval right after it, so wait for both.
   await expect
-    .poll(async () => (await control.evaluate(() => window.valet?.adapters.get('wikipedia')))?.hash)
-    .toBe(builtinHash)
-  expect((await control.evaluate(() => window.valet?.adapters.get('wikipedia')))?.approval).toBe('approved')
+    .poll(async () => {
+      const adapter = await control.evaluate(() => window.valet?.adapters.get('wikipedia'))
+      return [adapter?.hash, adapter?.approval]
+    })
+    .toEqual([builtinHash, 'approved'])
   const state = storedState('wikipedia')
   expect(state.active).toBe(builtinHash)
   expect(state.pinned).toBe(true)
