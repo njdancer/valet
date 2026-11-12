@@ -287,6 +287,32 @@ Contracts in `packages/core`, design in `docs/agent-run-security.md`.
   (`.biometryCurrentSet`). If Nick says yes, the phone gets a second, passcode-capable key for
   neutral kinds only; that is a contract addition, not a change.
 
+### B's sign-off (contracts, 2026-11-12)
+
+Contracts in `packages/core`, design in `docs/agent-run-security.md`.
+
+- **Tiers, Mac-only list, recovery code, signed lock:** match. Resuming from pause or lockdown is
+  now Mac only in the contract too (`approvableOn`), and no agent can ask for it.
+- **Section 10:** all five amendments made: `relay.md` (consent on the Mac or a paired phone),
+  `security-model.md` (phone notifications), `authoring-agent.md` (the gesture fallback lives
+  there, not in `security-model.md`; and private addresses, now the `private-network` approval
+  kind for the Private network card).
+- **Consent code:** letters only (`consentCodeSchema`), typed on the device, and signed inside the
+  approval (`typedCode`). The card never has the code to show.
+- **Pairing words:** the contract derives **six digits** (`pairingCode`), not four words. Keep
+  the pick-from-three: the Mac shows the real six digits among two random decoy sets and the
+  person taps the one their phone shows. That keeps the comparison compulsory with no word list
+  to keep in step between Swift and TypeScript.
+- **Two keys, presence and control:** the "control key" is the phone's agreement key. A stricter
+  change travels in an HPKE auth-mode envelope, which proves which phone sent it, so it needs no
+  extra signature.
+- **"Signed approvals expire 2 minutes after signing":** not so. The signer's clock isn't trusted,
+  so a signature is good once, while its request is pending and unexpired, by the Mac's clock.
+  Only an irreversible call's request lives 2 minutes.
+- **Passcode for neutral cards** (open question 3): today the phone's key accepts Face ID only
+  (`.biometryCurrentSet`). If Nick says yes, the phone gets a second, passcode-capable key for
+  neutral kinds only; that is a contract addition, not a change.
+
 ### E's sign-off (read tier, 2026-11-12)
 
 Checked against what PR #72 built (`docs/admin-tools.md`). The read tier matches section 5 on
