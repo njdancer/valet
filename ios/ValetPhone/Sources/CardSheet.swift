@@ -105,7 +105,7 @@ struct CardSheet: View {
               } label: {
                 HStack {
                   Image(systemName: choice == option.value ? "largecircle.fill.circle" : "circle")
-                  Text(verbatim: option.label).foregroundStyle(.primary)
+                  Text(verbatim: option.label).foregroundStyle(Color.primary)
                   Spacer()
                 }
               }

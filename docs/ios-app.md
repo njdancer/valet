@@ -408,6 +408,32 @@ fixed, each with a regression test where one fits:
 12. Software keys were compiled into the shipping crypto module. They live in ValetFakes, and the
     CI check that the shipping binary has no fakes looks for them too.
 
+## Persona QA (screens)
+
+The `ios-screens` label on the PR runs `testScreensForReview` and pushes every screen to a branch
+`ios-screens/<run>` (the cloud container can't download Actions artifacts). Reviewed 2026-11-12
+as Nick, glancing at a lock-screen alert, opening the app and deciding in seconds:
+
+- Fixed: list rows and section headers drew in the button tint (blue), and the headers failed
+  contrast. The labels now use the label colours outright (`Color.primary`, not the hierarchical
+  `.primary`, which a button resolves to its tint). The store choice options had the same bug.
+- Fixed: at the largest text size the action bar took half the screen and broke "Decline" and
+  "Approve" across lines. At accessibility sizes the buttons stack, Approve on top, and the bar is
+  capped at the second accessibility size; the card's strip stacks instead of wrapping.
+- Fixed: "1 tools" on the connect card.
+- Fixed: the card strip and Revoke failed the audit's contrast check (thin monospaced strokes,
+  red on a red tint). The strip uses the text face with tabular digits; Revoke uses the strong red.
+- Seen and fine: the tone word leads each title; Mac-only cards show the reason and Decline only;
+  the connect card asks for the typed code and the read tick before Approve lights; an expired
+  card says nothing changed; the agent's own words are quoted and labelled as theirs.
+- Left as is: "your signed-in woolworths" uses the adapter's id as Mac sends it; a friendlier site
+  name is the Mac's to send. "Approve with Face ID" stays the label: the passcode works behind it.
+
+**Accessibility audit.** `testAccessibilityAuditOnEveryTab` fails on every hard failure. It logs
+but doesn't fail on two kinds: "nearly passed" contrast, which is the system's own secondary
+label colours on grouped backgrounds, and "partially unsupported" Dynamic Type, which is the
+deliberate cap on the action bar and the system's own toolbar button.
+
 ## What needs Nick
 
 Batched for the coordinator, asked once when H reaches it: an Apple Developer Program membership,

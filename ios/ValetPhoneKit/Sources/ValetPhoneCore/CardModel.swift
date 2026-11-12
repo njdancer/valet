@@ -211,7 +211,7 @@ public enum CardModel {
       faceIDReason = "Connect an agent to Valet"
       needsTypedCode = true
       risks.append((.strong, "Only approve if you started this. Type the code the page shows you."))
-      row("Sees", s.tools.isEmpty ? "no tools yet" : "\(s.tools.count) tools: \(s.tools.joined(separator: ", "))", .caution)
+      row("Sees", s.tools.isEmpty ? "no tools yet" : "\(s.tools.count) \(s.tools.count == 1 ? "tool" : "tools"): \(s.tools.joined(separator: ", "))", .caution)
       details.append(CardDetail(label: "Returns to (the agent says)", value: s.host, isClaim: true))
       if let address = s.sourceAddress {
         details.append(CardDetail(label: "From address (as reported)", value: address, isClaim: true))
