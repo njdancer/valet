@@ -282,6 +282,23 @@ How workstreams E and F stay inside guarantee 3. **Designed**.
   at most 60 minutes, listed origins only, ended by the person at any time, every action audited.
   During one, the agent drives the tool partition through the same capability API adapter code
   uses, so it still never sees a secret, and egress is still the adapter's manifest.
+- **F's design** (docs/authoring-tools.md), agreed 2026-11-12:
+  - Narrower than the line above: no agent drives a signed-in session. Signed-in work is only
+    trials of **read** tools (GET only), judged against the **installed** manifest's surface and
+    purposes, in an in-memory partition the session is copied into one way.
+  - The scratch browser refuses an installed signed-in adapter's domain unless the draft updates
+    that adapter, and then shares its breaker and rate budget.
+  - Draft edits and checks aren't audited one by one; creating, submitting, deleting and trials
+    are, and the submit record carries the package hash.
+  - Fixtures count as "recorded by Valet" only from an anchored provenance store (the ledger's
+    two-phase write), with the source URL, and only from the adapter's own origins.
+  - The agent's own tests go on the card as `display.agentTests`, apart from Valet's `checks`.
+  - **Remote agents may author** (J3 starts in the Claude iPhone app). "Ask for changes" is on by
+    default for local apps and **off** for remote clients. For a remote client it is turned on
+    only by a signed approval (the consent request's `capabilities`, or a later `setting`), and kept in the trusted ledger, not
+    `clients.json`. Turned on, a remote agent gets the same tools under the same gates: no code
+    runs before approval, the install card is badged "through the relay", and critical lines stay
+    Mac only. Signed-in trials stay local-only until a remote one has been red-teamed.
 - **Repair** (J5): the repair ticket the agent reads through E is the runtime's structured
   failure (stage, class, the failing request's path), never page text a hostile site wrote.
 
