@@ -1,0 +1,79 @@
+{
+  "macStartedAt": 1794485393333,
+  "phoneStartedAt": 1794485432748,
+  "captions": [
+    {
+      "at": 1794485442300,
+      "text": "Valet on the Mac, and the iPhone app in the Simulator. Both talk through Valet’s relay, running locally here."
+    },
+    {
+      "at": 1794485559218,
+      "text": "To pair, open Settings › Devices on the Mac and choose Pair an iPhone."
+    },
+    {
+      "at": 1794485563216,
+      "text": "The Mac shows a one-time QR code. The Simulator has no camera, so this test build reads the same code over a local link."
+    },
+    {
+      "at": 1794485654831,
+      "text": "The phone shows six digits. The Mac shows three codes, and you pick the one that matches the phone."
+    },
+    {
+      "at": 1794485660962,
+      "text": "Picking it asks for Touch ID on the Mac (this test build answers that itself). The phone is paired."
+    },
+    {
+      "at": 1794485674151,
+      "text": "Now an agent, connected to Valet over MCP, writes an adapter for a made-up library site."
+    }
+  ],
+  "agent": [
+    {
+      "at": 1794485674209,
+      "who": "agent",
+      "text": "valet_create_draft({\"adapterId\":\"leafline-library\",\"from\":\"blank\",\"name\":\"Leafline Library\"})"
+    },
+    {
+      "at": 1794485674492,
+      "who": "valet",
+      "text": "{\"draft\":{\"draftId\":\"dr-bzija6qj67\",\"adapterId\":\"leafline-library\",\"status\":\"editing\",\"createdBy\":\"Claude Code\",\"updatedAt\":\"2026-11-12T12:14:34.261Z\",\"lastCheck\":null,\"basedOn\":null,\"repairId\":null,\"files\":[{\"path\":\"fixtures/item-abc-1.json\",\"bytes\":63,\"sha256\":\"8b366307d84cb1b0\",\"recordedByValet\":false,\"editedOutsideValet\":false},{\"path\":\"manifest.json\",\"bytes\":1020,\"sha256\":\"416d9cce3f3713c6\",\""
+    },
+    {
+      "at": 1794485674509,
+      "who": "agent",
+      "text": "valet_write_draft_file(src/tools.ts, a test case, a fixture page)"
+    },
+    {
+      "at": 1794485677592,
+      "who": "valet",
+      "text": "valet_check_draft: {\"ok\":false,\"packageHash\":\"9c1bf35324ec1bf807ee520b7ebd5ba2b3cfd9beacb260fd3faf067ada1ded0b\",\"adapterHash\":null,\"steps\":[{\"step\":\"build\",\"ok\":false}],\"findings\":[{\"level\":\"error\",\"check\":\"build\",\"text"
+    },
+    {
+      "at": 1794485677592,
+      "who": "agent",
+      "text": "valet_submit_draft({\"draftId\":\"dr-bzija6qj67\",\"note\":\"Looks up one book’s title and whether it is on the shelf.\"})"
+    },
+    {
+      "at": 1794485678450,
+      "who": "valet",
+      "text": "Not submitted: The package did not load (schema): get_book is implemented but not declared"
+    }
+  ],
+  "marks": [
+    {
+      "at": 1794485555113,
+      "name": "launched",
+      "value": ""
+    },
+    {
+      "at": 1794485654803,
+      "name": "code",
+      "value": "847564"
+    },
+    {
+      "at": 1794485668584,
+      "name": "paired",
+      "value": ""
+    }
+  ]
+}
