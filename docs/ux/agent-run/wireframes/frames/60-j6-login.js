@@ -118,7 +118,7 @@
       {
         title: '',
         back: 'Needs you',
-        actions: `<div class="row">${P.btn('Not now')}${P.btn('Remind me', 'primary')}</div><small>Not now ends the login. Calls that need it fail until you\'re back.</small>`,
+        actions: `<div class="row">${P.btn('Not now')}${P.btn('Remind me', 'primary')}</div><small>Not now ends the login. Calls that need it fail until you're back.</small>`,
       },
     ),
     notes: [

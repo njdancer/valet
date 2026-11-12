@@ -254,7 +254,7 @@ contracts. Recorded here as each signs:
 
 | Stream | What to check                                                                                              | Status  |
 | ------ | ---------------------------------------------------------------------------------------------------------- | ------- |
-| B      | Tiers, gestures, Mac-only list, nonce and expiry, pairing words, recovery code, signed lock, amendments    | signed, with notes below (2026-11-12) |
+| B      | Tiers, gestures, Mac-only list, nonce and expiry, pairing words, recovery code, signed lock, amendments    | signed  |
 | D      | Card payload, Because, states, follow-ons, limits, "Not confirmed yet", "Changed before order"             | waiting |
 | E      | Section 5's tool table and wording; scoping of See Valet                                                   | waiting |
 | F      | Drafts frozen on submit, checks vs tests, reproduction check on Valet-recorded fixtures, private addresses | waiting |
