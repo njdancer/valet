@@ -90,7 +90,19 @@ function beforeReady(): void {
   recordOwnPorts()
   const debugging = Number(app.commandLine.getSwitchValue('remote-debugging-port'))
   if (debugging > 0) addOwnPort(debugging)
-  if (mode.demo) app.commandLine.appendSwitch('host-resolver-rules', demoResolverRules(mode))
+  if (mode.demo) {
+    // The evals' own sites (eval/README.md) on this machine's port 443, for the windows that
+    // resolve names themselves (the sign-in window); the proxied partitions use VALET_E2E_SITES.
+    const evalHosts =
+      __VALET_DEMO_BUILD__ && mode.e2e
+        ? (process.env['VALET_E2E_SITES'] ?? '')
+            .split(',')
+            .map((pair) => /^([a-z0-9.-]+\.test)=127\.0\.0\.1:443$/.exec(pair.trim())?.[1])
+            .filter((host): host is string => host !== undefined)
+        : []
+    const rules = [demoResolverRules(mode), ...evalHosts.map((host) => `MAP ${host} 127.0.0.1`)]
+    app.commandLine.appendSwitch('host-resolver-rules', rules.join(', '))
+  }
   protocol.registerSchemesAsPrivileged([{ scheme: APP_SCHEME, privileges: APP_SCHEME_PRIVILEGES }])
 }
 

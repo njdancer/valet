@@ -54,7 +54,7 @@ function page(title: string, body: string, signedIn: boolean): string {
   }</nav></header><main>${body}</main></body></html>`
 }
 
-export async function startLibrarySite(tls: { key: string; cert: string }): Promise<LibrarySite> {
+export async function startLibrarySite(tls: { key: string; cert: string }, port = 443): Promise<LibrarySite> {
   const sessions = new Set<string>()
   const requests: LibrarySite['requests'] = []
   let redesigned = false
@@ -209,7 +209,7 @@ export async function startLibrarySite(tls: { key: string; cert: string }): Prom
       ).join('')}</div>`
     }
   })
-  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+  await new Promise<void>((done) => server.listen(port, '127.0.0.1', done))
   return {
     port: (server.address() as AddressInfo).port,
     requests,

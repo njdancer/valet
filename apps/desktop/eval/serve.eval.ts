@@ -96,7 +96,8 @@ test('hold the app open for an eval', async () => {
   const userData = kept === undefined || kept === '' ? tempDir('eval') : kept
   // The library: its certificate trusted for this user's Chromium (NSS) while the eval runs.
   const tls = await generateTestCertificate([LIBRARY_HOST])
-  const library = await startLibrarySite(tls)
+  // On 443, as a real site is: the sign-in window resolves the name itself, to 127.0.0.1:443.
+  const library = await startLibrarySite(tls, Number(process.env['EVAL_LIBRARY_PORT'] ?? 443))
   const certFile = join(userData, 'library-cert.pem')
   writeFileSync(certFile, tls.cert)
   const nss = `sql:${join(homedir(), '.pki/nssdb')}`
