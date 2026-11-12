@@ -1038,6 +1038,42 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         enter('adapters.openCart', adapterId)
         if (adapters.get(adapterId)?.cartUrl == null) throw new Error('refused')
       },
+      async versions(adapterId) {
+        enter('adapters.versions', adapterId)
+        const base = adapters.get(adapterId)
+        if (base === undefined) throw new Error('refused')
+        return {
+          adapterId,
+          pinned: false,
+          versions: [
+            {
+              hash: base.hash,
+              version: base.version,
+              source: 'builtin' as const,
+              installedAt: '2026-11-12T00:00:00.000Z',
+              appVersion: '0.1.0',
+              active: true,
+              canRollBack: false,
+            },
+          ],
+        }
+      },
+      async rollbackPreview(adapterId, hash) {
+        enter('adapters.rollbackPreview', adapterId, hash)
+        throw new Error('refused')
+      },
+      async rollback(adapterId, hash) {
+        enter('adapters.rollback', adapterId, hash)
+        throw new Error('refused')
+      },
+      async canInstallFromFolder() {
+        enter('adapters.canInstallFromFolder')
+        return false
+      },
+      async installFromFolder() {
+        enter('adapters.installFromFolder')
+        return null
+      },
       async setPaused(adapterId, paused) {
         enter('adapters.setPaused', adapterId, paused)
         const base = adapters.get(adapterId)
@@ -1707,6 +1743,9 @@ const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent['type']
   'approvals-grants': [
     'adapter-approved',
     'adapter-rejected',
+    'adapter-installed',
+    'adapter-activated',
+    'adapter-refused',
     'grant-made',
     'grant-revoked',
     'grant-copied',

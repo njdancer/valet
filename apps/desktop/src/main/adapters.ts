@@ -1,14 +1,14 @@
 /// <reference types="vite/client" />
-// The built-in adapters and the source files their hashes cover. The sources are embedded by the
-// bundler when it compiles the main process, from the same files it compiles the adapter from, so
-// the hash is over exactly the code this build runs: in a packaged build and under `electron-vite
-// dev` (which rebuilds on change) alike. Transitive imports (core, zod) are not covered (D11).
+// The built-in adapters, as packages (docs/adapter-packages.md): every .ts file under each
+// adapter's src/, embedded by the bundler when it compiles the main process, plus the manifest the
+// adapter's own code makes for this build (the real site, or the fake one in demo mode). The app
+// seeds them into its adapter store at launch and runs them exactly as any other installed
+// package: compiled by Valet, from these sources, so the hash covers what runs.
 
-import toolScripts from 'virtual:valet-tool-scripts'
-import { createAdapter as createWikipedia } from '@valet/adapter-wikipedia'
-import { createAdapter, type ManifestOptions } from '@valet/adapter-woolworths'
-import { createAdapter as createYahooFinance } from '@valet/adapter-yahoo-finance'
-import { type BuiltinAdapter, builtinAdapter } from './core/registry'
+import { createManifest as wikipedia } from '@valet/adapter-wikipedia'
+import { type ManifestOptions, createManifest as woolworths } from '@valet/adapter-woolworths'
+import { createManifest as yahooFinance } from '@valet/adapter-yahoo-finance'
+import { type PackageFiles, packageOf } from '@valet/core'
 
 const WOOLWORTHS_SOURCES = import.meta.glob<string>('../../../../adapters/woolworths/src/**/*.ts', {
   query: '?raw',
@@ -46,23 +46,12 @@ export function relativeSources(
   return files
 }
 
-export function builtinAdapters(woolworths: ManifestOptions = {}): BuiltinAdapter[] {
+/** The built-ins this build ships, Woolworths first. */
+export function builtinPackages(woolworthsOptions: ManifestOptions = {}): PackageFiles[] {
   return [
-    builtinAdapter(
-      createAdapter(woolworths),
-      relativeSources(WOOLWORTHS_SOURCES),
-      toolScripts['woolworths'] ?? null,
-    ),
+    packageOf(woolworths(woolworthsOptions), relativeSources(WOOLWORTHS_SOURCES)),
     // No login: public data, from the real sites in every build, demo mode included.
-    builtinAdapter(
-      createYahooFinance(),
-      relativeSources(YAHOO_FINANCE_SOURCES, 'yahoo-finance'),
-      toolScripts['yahoo-finance'] ?? null,
-    ),
-    builtinAdapter(
-      createWikipedia(),
-      relativeSources(WIKIPEDIA_SOURCES, 'wikipedia'),
-      toolScripts['wikipedia'] ?? null,
-    ),
+    packageOf(yahooFinance(), relativeSources(YAHOO_FINANCE_SOURCES, 'yahoo-finance')),
+    packageOf(wikipedia(), relativeSources(WIKIPEDIA_SOURCES, 'wikipedia')),
   ]
 }

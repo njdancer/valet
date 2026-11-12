@@ -20,6 +20,8 @@
   },
   "dependencies": {
     "@1password/sdk": "^0.5.0",
+    "esbuild-wasm": "0.28.2",
+    "@valet/adapter-store": "workspace:*",
     "@valet/adapter-wikipedia": "workspace:*",
     "@valet/adapter-woolworths": "workspace:*",
     "@valet/adapter-yahoo-finance": "workspace:*",

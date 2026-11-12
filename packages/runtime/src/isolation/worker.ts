@@ -26,7 +26,12 @@ const PRELUDE = `'use strict'; delete globalThis.SharedArrayBuffer; delete globa
  * Inside the context. `send` is the only host function it ever holds, kept in this closure and
  * called with strings; what it throws is never rethrown. It returns `deliver`, which the host calls
  * with JSON text. The tool script must define `__valetTools` (its IIFE's global) with `tools`,
- * `ValetError` and `NeedsUserError`.
+ * `ValetError` and `NeedsUserError`, and for `describe`, zod's `toJSONSchema`.
+ *
+ * The tool's own zod schemas parse its input before `run` and its output after, here inside the
+ * context, so a transform, default or refinement behaves exactly as written without adapter code
+ * running in the main process. The main process checks both again against JSON Schemas derived
+ * from the same zod (docs/adapter-packages.md#schemas-without-adapter-code-in-the-main-process).
  */
 const BOOTSTRAP = `(function (send) {
   'use strict'
@@ -42,7 +47,7 @@ const BOOTSTRAP = `(function (send) {
   // A var the script declared, so it can't be deleted; emptied instead.
   globalThis.__valetTools = undefined
   if (!lib || typeof lib !== 'object') { post({ t: 'done', ok: false, error: { kind: 'other' } }); return () => {} }
-  const { tools, ValetError, NeedsUserError } = lib
+  const { tools, ValetError, NeedsUserError, toJSONSchema } = lib
   let url = ''
   let next = 1
   const pending = new Map()
@@ -95,13 +100,43 @@ const BOOTSTRAP = `(function (send) {
     if (m.t === 'run') {
       const impl = Object.prototype.hasOwnProperty.call(tools, m.tool) ? tools[m.tool] : undefined
       if (!impl || typeof impl.run !== 'function') { post({ t: 'done', ok: false, error: { kind: 'valet', stage: 'manifest', errorClass: 'not-found' } }); return }
+      const parse = (schema, value, stage) => {
+        if (!schema || typeof schema.safeParseAsync !== 'function') return Promise.resolve(value)
+        return schema.safeParseAsync(value).then((r) => {
+          if (r && r.success === true) return r.data
+          throw new ValetError(stage, 'invalid')
+        })
+      }
       Promise.resolve()
-        .then(() => impl.run(ctx, m.input))
+        .then(() => parse(impl.input, m.input, 'tool-input'))
+        .then((input) => impl.run(ctx, input))
+        .then((raw) => parse(impl.output, raw, 'tool-output'))
         .then(
           (value) => value === undefined ? post({ t: 'done', ok: true }) : post({ t: 'done', ok: true, value }),
           (error) => post({ t: 'done', ok: false, error: toWire(error) }),
         )
         .then((sent) => { if (!sent) post({ t: 'done', ok: false, error: { kind: 'valet', stage: 'tool-output', errorClass: 'invalid' } }) })
+    } else if (m.t === 'check') {
+      // The tool's own input schema, before anything about the call has happened (settings, a
+      // confirmation): a refinement that refuses the input refuses the call while nothing is sent.
+      const impl = Object.prototype.hasOwnProperty.call(tools, m.tool) ? tools[m.tool] : undefined
+      if (!impl || !impl.input || typeof impl.input.safeParseAsync !== 'function') { post({ t: 'checked', ok: false }); return }
+      Promise.resolve()
+        .then(() => impl.input.safeParseAsync(m.input))
+        .then((r) => post({ t: 'checked', ok: !!(r && r.success === true) }), () => post({ t: 'checked', ok: false }))
+    } else if (m.t === 'describe') {
+      // Each tool's schemas as JSON Schema, or null where one can't be represented; the host
+      // bounds and checks what comes back before it uses any of it.
+      const described = {}
+      const convert = (schema, io) => {
+        try { return toJSONSchema(schema, { io, target: 'draft-7' }) } catch { return null }
+      }
+      for (const name of Object.keys(tools || {})) {
+        const impl = tools[name]
+        if (!impl || typeof impl !== 'object' || typeof toJSONSchema !== 'function') { described[name] = null; continue }
+        described[name] = { input: convert(impl.input, 'input'), output: convert(impl.output, 'output') }
+      }
+      if (!post({ t: 'described', tools: described })) post({ t: 'described', tools: null })
     } else if (m.t === 'reply') {
       const waiting = pending.get(m.id)
       if (!waiting) return

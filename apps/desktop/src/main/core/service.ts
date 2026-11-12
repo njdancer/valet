@@ -5,6 +5,7 @@
 
 import { randomBytes } from 'node:crypto'
 import { copyFile, mkdir, rm } from 'node:fs/promises'
+import { AdapterStore, type BuildRecord, type PackageRuntime } from '@valet/adapter-store'
 import {
   type AdapterManifest,
   type AuditEvent,
@@ -17,6 +18,7 @@ import {
   MESSAGES_SECRET,
   type NeedsUserReason,
   needsYouTitle,
+  type PackageFiles,
   type ProviderKind,
   type SecretField,
   type SessionDriver,
@@ -52,6 +54,7 @@ import {
 import { z } from 'zod'
 import { href } from '../../renderer/lib/routes'
 import type {
+  AdapterVersions,
   AppEvent,
   AttentionItem,
   ChainStatus,
@@ -64,6 +67,7 @@ import type {
   RemoteSetup,
   RemoteSetupTool,
   RepairItem,
+  RollbackPreview,
   SettingChoicesReply,
   Settings,
   UpdateStatus,
@@ -111,6 +115,8 @@ import { checkGrantRequest, grantInfo } from './grants'
 import type { AppWindow, MainApi } from './ipc'
 import { createAuthRunner, Handoffs, isBlockedPage, SessionTracker } from './login'
 import { type AppNotification, attentionTitle, Notifier } from './notifications'
+import { type FolderInstall, InstallError, installReason, PackageManager, rollbackEligible } from './packages'
+import { addsPermissions, permissionDiff } from './permission-diff'
 import { type ApprovedSnapshot, type BuiltinAdapter, SnapshotStore } from './registry'
 import { RemoteAccess } from './remote'
 import { RunMemory } from './run-memory'
@@ -167,7 +173,22 @@ export interface ServiceDeps {
   readonly now: () => number
   readonly timers: Timers
   readonly sleep: (ms: number) => Promise<void>
+  /**
+   * Adapters already loaded, for tests. With `packages`, the service loads its own from the adapter
+   * store at start, and these are ignored.
+   */
   readonly adapters: readonly BuiltinAdapter[]
+  /**
+   * Adapter packages (docs/adapter-packages.md): the built-ins this build ships, seeded into the
+   * store; how to compile and describe them; and what the hash doesn't cover, for the history.
+   */
+  readonly packages?: {
+    readonly builtins: readonly PackageFiles[]
+    readonly runtime: PackageRuntime
+    readonly build: BuildRecord
+    /** Development builds only: installing a package from a folder (docs/adapter-packages.md). */
+    readonly folders?: FolderInstall
+  }
   /**
    * Starts a tool process for one call. With it, an adapter that has a tool script runs its tool
    * code there; without it (unit tests), in this process.
@@ -243,6 +264,9 @@ class ObservedAudit implements AuditSink {
 const EVENTS_FOR: Readonly<Partial<Record<AuditEvent['type'], readonly AppEvent['type'][]>>> = {
   'adapter-approved': ['approvals-changed', 'adapters-changed', 'attention-changed'],
   'adapter-rejected': ['approvals-changed', 'adapters-changed', 'attention-changed'],
+  'adapter-installed': ['approvals-changed', 'adapters-changed', 'attention-changed'],
+  'adapter-activated': ['approvals-changed', 'adapters-changed', 'attention-changed'],
+  'adapter-refused': ['adapters-changed', 'health-changed', 'attention-changed'],
   // A grant or a setting can make a "Give Valet your login" or "Choose your store" item come or go.
   'grant-made': ['grants-changed', 'adapters-changed', 'attention-changed'],
   'grant-revoked': ['grants-changed', 'adapters-changed', 'attention-changed'],
@@ -323,6 +347,11 @@ export class AppService {
   private ledger: TrustedLedger | null = null
   private readonly handoffs: Handoffs
   private readonly drivers = new Map<string, SessionDriver>()
+  /** Per adapter, the install or rollback in progress: they run one at a time. */
+  private readonly changing = new Map<string, Promise<unknown>>()
+  /** The adapter versions registered now: deps.adapters, or what the store loaded at start. */
+  private installed: BuiltinAdapter[]
+  private readonly packages: PackageManager | null
   /** The runtime, from start() on. */
   private host: ToolHost | null = null
   private readonly loginSecrets = new LoginSecrets()
@@ -383,6 +412,18 @@ export class AppService {
     this.versions = new VersionStore(paths.versions)
     this.setup = new SetupStore(paths.setup, deps.now)
     this.snapshots = new SnapshotStore(paths.manifests)
+    this.installed = [...deps.adapters]
+    this.packages =
+      deps.packages === undefined
+        ? null
+        : new PackageManager({
+            store: new AdapterStore(paths.adapters),
+            runtime: deps.packages.runtime,
+            build: deps.packages.build,
+            audit: this.audit,
+            now: date,
+            keep: (id) => this.keepHashes(id),
+          })
     this.clients = new ClientRegistry(paths.clients, paths.clientConfigs, date)
     this.titles = new JsonDocument(paths.grantItems, titlesSchema, () => ({}), true)
     this.reader = new AuditReader(paths.audit)
@@ -586,23 +627,14 @@ export class AppService {
       diagnostics: (d) => this.deps.diagnostics?.(d),
     })
     this.host = host
-    for (const adapter of this.deps.adapters) {
-      const id = adapter.definition.manifest.id
-      const driver = await this.deps.createDriver(adapter.definition.manifest, {
-        onBlocked: this.blocked.betweenRuns(id),
-        onAuthBlocked: this.blocked.authPartition(id),
-        onAuthReportsDropped: () => this.deps.diagnostics?.({ type: 'auth-reports-dropped', adapterId: id }),
-      })
-      this.drivers.set(id, driver)
-      const start = this.deps.toolProcess
-      host.register({
-        definition: adapter.definition,
-        bundleHash: adapter.hash,
-        driver,
-        ...(start === undefined || adapter.toolScript === null
-          ? {}
-          : { isolation: { script: adapter.toolScript, start } }),
-      })
+    if (this.packages !== null && this.deps.packages !== undefined) {
+      await mkdir(paths.adapters, { recursive: true, mode: 0o700 })
+      this.installed = await this.packages.boot(this.deps.packages.builtins)
+    }
+    for (const adapter of this.installed) {
+      const driver = await this.driverFor(adapter)
+      host.register(this.registration(adapter, driver))
+      this.drivers.set(adapter.definition.manifest.id, driver)
     }
     this.caller = new RuntimeToolCaller(host, {
       paused: () => this.paused,
@@ -650,7 +682,7 @@ export class AppService {
     const status = this.remote.status()
     const on = new Set(status.tools)
     const tools: RemoteSetupTool[] = []
-    for (const adapter of this.deps.adapters) {
+    for (const adapter of this.installed) {
       const { manifest } = adapter.definition
       if (!(await this.approvals.isApproved(manifest.id, adapter.hash).catch(() => false))) continue
       // A setting's tools (the store's) run only for Valet itself; no client lists or calls them,
@@ -710,6 +742,11 @@ export class AppService {
     return this.broker.has(id)
   }
 
+  /** The ids of the adapters registered now. */
+  adapterIds(): string[] {
+    return this.installed.map((a) => a.definition.manifest.id)
+  }
+
   hasHandoff(adapterId: string): boolean {
     return this.handoffs.has(adapterId)
   }
@@ -764,7 +801,7 @@ export class AppService {
     const host = this.host
     if (host === null) return
     await Promise.all(
-      this.deps.adapters.map(async (a) => {
+      this.installed.map(async (a) => {
         try {
           await host.runLoginStep(a.definition.manifest.id, async () => {}, { waitMs: LOGIN_WAIT_MS })
         } catch (error) {
@@ -810,7 +847,7 @@ export class AppService {
 
   /** The name of the one adapter on a host, for a notification; null when none or several. */
   private siteName(host: string): string | undefined {
-    const on = this.deps.adapters.filter((a) => {
+    const on = this.installed.filter((a) => {
       const { manifest } = a.definition
       return manifest.navigation.some((origin) => {
         try {
@@ -1139,8 +1176,198 @@ export class AppService {
     await this.audit.append({ type: 'site-paused', adapterId, paused })
   }
 
+  private async driverFor(adapter: BuiltinAdapter): Promise<SessionDriver> {
+    const id = adapter.definition.manifest.id
+    return this.deps.createDriver(adapter.definition.manifest, {
+      onBlocked: this.blocked.betweenRuns(id),
+      onAuthBlocked: this.blocked.authPartition(id),
+      onAuthReportsDropped: () => this.deps.diagnostics?.({ type: 'auth-reports-dropped', adapterId: id }),
+    })
+  }
+
+  private registration(adapter: BuiltinAdapter, driver: SessionDriver) {
+    const start = this.deps.toolProcess
+    return {
+      definition: adapter.definition,
+      bundleHash: adapter.hash,
+      driver,
+      ...(start === undefined || adapter.toolScript === null
+        ? {}
+        : { isolation: { script: adapter.toolScript, start } }),
+    }
+  }
+
+  /** The hashes the store must keep for an adapter: the approved one and any a grant names. */
+  private async keepHashes(adapterId: string): Promise<ReadonlySet<string>> {
+    const keep = new Set<string>(await this.approvals.approvedHashes(adapterId).catch(() => []))
+    for (const grant of await this.grants.list().catch(() => [] as readonly Grant[]))
+      if (grant.adapterId === adapterId) keep.add(grant.adapterHash)
+    return keep
+  }
+
+  /**
+   * Swaps `next` in for whatever version of its adapter is registered now: the runtime takes the
+   * adapter's lock (running calls finish first, queued ones are told to retry), then the old
+   * driver closes. Refused while the person is in the middle of a login for it, since the login
+   * window belongs to the old driver.
+   */
+  private async swapIn(next: BuiltinAdapter): Promise<void> {
+    const host = this.runtime()
+    const id = next.definition.manifest.id
+    if (this.handoffs.has(id)) throw new InstallError('Finish or cancel the login for this site first.')
+    const previous = this.drivers.get(id)
+    const driver = await this.driverFor(next)
+    try {
+      await host.replace(this.registration(next, driver))
+    } catch (error) {
+      await driver.close().catch(() => undefined)
+      throw error instanceof ValetError && error.errorClass === 'busy'
+        ? new InstallError('The site is busy with calls; try again in a minute.')
+        : error
+    }
+    // Only now: until the swap is done, a login window or a blocked report finds the old driver.
+    this.drivers.set(id, driver)
+    await previous?.close().catch(() => undefined)
+    const at = this.installed.findIndex((a) => a.definition.manifest.id === id)
+    if (at === -1) this.installed.push(next)
+    else this.installed[at] = next
+    await this.refreshTools()
+    this.emit('adapters-changed')
+  }
+
+  /**
+   * Installs a package (docs/adapter-packages.md#install-update-and-rollback). The new version
+   * starts unapproved, so its tools stay hidden until the person approves it with the permission
+   * diff. Throws InstallError.
+   */
+  async installPackage(
+    files: PackageFiles,
+    source: 'folder' | 'draft',
+  ): Promise<{ adapterId: string; hash: string }> {
+    const packages = this.packages
+    if (packages === null) throw new InstallError('This build cannot install adapters.')
+    const prepared = await packages.prepare(files, source)
+    const { adapter } = prepared
+    const id = adapter.definition.manifest.id
+    await this.oneAtATime(id, async () => {
+      // Stored and audited only once it is the version running, so a refused swap changes nothing.
+      await this.swapIn(adapter)
+      await packages.commit(prepared)
+    })
+    return { adapterId: id, hash: adapter.hash }
+  }
+
+  /** Runs `change` after any other install or rollback of the same adapter has finished. */
+  private oneAtATime<T>(adapterId: string, change: () => Promise<T>): Promise<T> {
+    const before = this.changing.get(adapterId) ?? Promise.resolve()
+    const run = before.catch(() => undefined).then(change)
+    const settled = run.catch(() => undefined)
+    this.changing.set(adapterId, settled)
+    void settled.then(() => {
+      if (this.changing.get(adapterId) === settled) this.changing.delete(adapterId)
+    })
+    return run
+  }
+
+  /**
+   * The stored versions of one adapter, newest first, each with whether a rollback to it is
+   * offered: a version the person approved and never rejected afterwards, by the audit chain,
+   * that isn't the one active now.
+   */
+  async adapterVersions(adapterId: string): Promise<AdapterVersions> {
+    const active = this.requireAdapter(adapterId)
+    const state = this.packages === null ? null : await this.packages.versions(adapterId)
+    const records = await this.reader.records()
+    const eligible = rollbackEligible(records, adapterId)
+    const versions = [...(state?.versions ?? [])].reverse().map((v) => ({
+      hash: v.hash,
+      version: v.version,
+      source: v.source,
+      installedAt: v.installedAt,
+      appVersion: v.build.appVersion,
+      active: v.hash === active.hash,
+      canRollBack: v.hash !== active.hash && eligible.has(v.hash),
+    }))
+    return { adapterId, pinned: state?.pinned ?? false, versions }
+  }
+
+  /**
+   * What a rollback to `hash` would change, against the version active now (B's review, point 3):
+   * the permission diff, and the grants that come back with it.
+   */
+  async rollbackPreview(adapterId: string, hash: string): Promise<RollbackPreview> {
+    const target = await this.rollbackTarget(adapterId, hash)
+    const active = this.requireAdapter(adapterId)
+    const grants = (await this.grants.list().catch(() => [] as readonly Grant[])).filter(
+      (g) => g.adapterId === adapterId && g.adapterHash === hash,
+    )
+    const changes = permissionDiff(active.definition.manifest, target.definition.manifest)
+    return {
+      adapterId,
+      hash,
+      version: target.definition.manifest.version,
+      changes,
+      widens: addsPermissions(changes),
+      grants: grants.map((g) => g.secret),
+    }
+  }
+
+  /**
+   * Rolls back to a stored version the person approved before. The click in the app is the
+   * approval: audited as adapter-approved (with the hash it replaces) and adapter-activated. Its
+   * grants come back exactly as the grant store still holds them; a revoked one stays revoked.
+   */
+  rollback(adapterId: string, hash: string): Promise<void> {
+    return this.oneAtATime(adapterId, () => this.rollbackNow(adapterId, hash))
+  }
+
+  private async rollbackNow(adapterId: string, hash: string): Promise<void> {
+    const target = await this.rollbackTarget(adapterId, hash)
+    const active = this.requireAdapter(adapterId)
+    await this.swapIn(target)
+    const version = target.definition.manifest.version
+    const already = (await this.approvals.approvedHashes(adapterId)).includes(hash)
+    await this.approvals.approve(adapterId, hash, version)
+    // The click is the decision even when the hash was still the approved one (an update installed
+    // but never approved), so it is audited either way.
+    if (already)
+      await this.audit.append({
+        type: 'adapter-approved',
+        adapterId,
+        adapterHash: hash,
+        version,
+        previousHash: hash,
+      })
+    const at = new Date(this.deps.now()).toISOString()
+    await this.snapshots.put(adapterId, target, at)
+    this.approvedAt.set(`${adapterId}:${hash}`, at)
+    await this.packages?.activate(adapterId, hash)
+    await this.audit.append({
+      type: 'adapter-activated',
+      adapterId,
+      adapterHash: hash,
+      version,
+      previousHash: active.hash,
+    })
+    await this.refreshTools()
+  }
+
+  private async rollbackTarget(adapterId: string, hash: string): Promise<BuiltinAdapter> {
+    if (this.packages === null) throw new InstallError('This build cannot roll back adapters.')
+    const active = this.requireAdapter(adapterId)
+    if (hash === active.hash) throw new InstallError('That version is already active.')
+    // Eligibility comes from the audit log, so only from one whose chain checks out: a line added
+    // by hand doesn't make a version look approved.
+    if ((await this.reader.verify(new Date(this.deps.now()))).state !== 'intact')
+      throw new InstallError('The activity log doesn’t verify, so Valet can’t tell what you approved.')
+    const eligible = rollbackEligible(await this.reader.records(), adapterId)
+    if (!eligible.has(hash))
+      throw new InstallError('Only a version you approved before can be rolled back to.')
+    return this.packages.load(adapterId, hash)
+  }
+
   private adapter(adapterId: string): BuiltinAdapter | null {
-    return this.deps.adapters.find((a) => a.definition.manifest.id === adapterId) ?? null
+    return this.installed.find((a) => a.definition.manifest.id === adapterId) ?? null
   }
 
   private requireAdapter(adapterId: string): BuiltinAdapter {
@@ -1205,7 +1432,7 @@ export class AppService {
   private async states(): Promise<AdapterState[]> {
     const records = await this.reader.records()
     const grants = await this.grants.list().catch(() => [] as readonly Grant[])
-    return Promise.all(this.deps.adapters.map((a) => this.state(a, records, grants)))
+    return Promise.all(this.installed.map((a) => this.state(a, records, grants)))
   }
 
   /**
@@ -1492,6 +1719,21 @@ export class AppService {
           deps.ui.openExternal(url)
         },
         setPaused: (adapterId, paused) => this.setSitePaused(adapterId, paused),
+        versions: (adapterId) => this.adapterVersions(adapterId),
+        rollbackPreview: (adapterId, hash) => this.rollbackPreview(adapterId, hash),
+        rollback: (adapterId, hash) => this.rollback(adapterId, hash),
+        canInstallFromFolder: async () => this.packages !== null && deps.packages?.folders !== undefined,
+        installFromFolder: async () => {
+          const folders = deps.packages?.folders
+          if (this.packages === null || folders === undefined) throw new ValetError('config', 'unavailable')
+          try {
+            const files = await folders.pick()
+            if (files === null) return null
+            return { ok: true, ...(await this.installPackage(files, 'folder')) }
+          } catch (error) {
+            return { ok: false, reason: installReason(error) }
+          }
+        },
       },
       approvals: {
         pending: async () =>
@@ -1527,7 +1769,7 @@ export class AppService {
           // Only grants for an adapter's installed hash, while that hash is approved: a grant for an
           // older bundle (or one waiting for review) can't be used, so it isn't counted as live.
           const live = new Set<string>()
-          for (const adapter of deps.adapters) {
+          for (const adapter of this.installed) {
             const id = adapter.definition.manifest.id
             if (await this.approvals.isApproved(id, adapter.hash).catch(() => false))
               live.add(`${id}:${adapter.hash}`)

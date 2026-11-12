@@ -165,6 +165,15 @@ const HANDLERS: Readonly<
   'adapters.setPaused': entry(z.tuple([ADAPTER_ID, z.boolean()]), (api, [id, paused]) =>
     api.adapters.setPaused(id, paused),
   ),
+  'adapters.versions': entry(z.tuple([ADAPTER_ID]), (api, [id]) => api.adapters.versions(id)),
+  'adapters.rollbackPreview': entry(z.tuple([ADAPTER_ID, HASH]), (api, [id, hash]) =>
+    api.adapters.rollbackPreview(id, hash),
+  ),
+  'adapters.rollback': entry(z.tuple([ADAPTER_ID, HASH]), (api, [id, hash]) =>
+    api.adapters.rollback(id, hash),
+  ),
+  'adapters.canInstallFromFolder': entry(none, (api) => api.adapters.canInstallFromFolder()),
+  'adapters.installFromFolder': entry(none, (api) => api.adapters.installFromFolder()),
   'approvals.pending': entry(none, (api) => api.approvals.pending()),
   'approvals.approve': entry(z.tuple([ADAPTER_ID, HASH]), (api, [id, hash]) =>
     api.approvals.approve(id, hash),

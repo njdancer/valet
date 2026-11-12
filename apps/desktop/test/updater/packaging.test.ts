@@ -164,6 +164,9 @@ describe('a release build', () => {
       '!node_modules/**/*',
       'node_modules/@1password/sdk/**/*',
       'node_modules/@1password/sdk-core/**/*',
+      'node_modules/esbuild-wasm/package.json',
+      'node_modules/esbuild-wasm/lib/browser.js',
+      'node_modules/esbuild-wasm/esbuild.wasm',
     ])
     expect(c.asar).toBe(true)
     expect(c.directories).toEqual({ output: 'dist', buildResources: 'build' })

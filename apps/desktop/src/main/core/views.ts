@@ -6,6 +6,7 @@ import {
   type AdapterManifest,
   type AuditRecord,
   type Grant,
+  hasLogin,
   MESSAGES_SECRET,
   messagesSourcesIn,
   type Purpose,
@@ -225,6 +226,8 @@ export function pendingReview(state: AdapterState, submittedAt: string): Pending
     diff: permissionDiff(before?.manifest ?? null, manifest),
     manifestDiff: lineDiff(before === null ? [] : manifestText(before.manifest), manifestText(manifest)),
     files: fileChanges(before?.files ?? null, state.adapter.files),
+    origin: state.adapter.source ?? 'builtin',
+    takesSession: (state.adapter.source ?? 'builtin') !== 'builtin' && hasLogin(manifest),
   }
 }
 

@@ -18,6 +18,7 @@ import {
   ActionBar,
   ApprovalSeal,
   Badge,
+  Banner,
   Breadcrumb,
   Button,
   Card,
@@ -320,6 +321,20 @@ function Review({
         exits={exits}
       />
       <PageBody>
+        {review.takesSession === true || (review.origin !== undefined && review.origin !== 'builtin') ? (
+          <Banner
+            tone="danger"
+            title={
+              review.takesSession === true
+                ? `This code will use your signed-in session for ${review.site}`
+                : 'This version didn’t come with Valet'
+            }
+          >
+            {review.origin === 'draft' ? 'Your agent wrote it' : 'It was installed from a folder'}
+            {review.from === null ? '' : ', and replaces the version in use'}. It runs without a sandbox, so
+            approve it only if you trust whoever wrote it.
+          </Banner>
+        ) : null}
         <Card>
           <CardHeader className="flex-wrap items-center gap-y-2">
             <Stack gap={0.5} className="flex-1">

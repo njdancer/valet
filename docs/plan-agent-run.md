@@ -27,6 +27,20 @@ each person's agent writes their own, and you always approve the final adapter.
 | D82 | A chat built into Valet (answers D13) | **No.** Agents work through MCP tools. No built-in agent, no bring-your-own-key agent.                                                                                                                                                   |
 | D83 | Marketplace or registry (M10)         | **Dropped**, by D75.                                                                                                                                                                                                                     |
 
+Later the same day Nick answered **D79, accounts**. When the service needs accounts, it uses an
+ordinary account login with 2FA. A QR code is a shortcut for signing in, like Discord's (a
+signed-in device scans it and the new one is signed in), not an extra step. There is no
+separate device-approval step on top of the login. Pairing a phone to the Mac stays as built
+until the service has accounts. His reasoning: Valet doesn't hold Signal's bar, and account plus
+2FA still needs the person's details and a device.
+
+Proposed by A with that answer, **not confirmed by Nick**:
+
+- 2FA by passkey or authenticator app, never SMS.
+- "New device signed in" alerts to the person's other devices and the Mac.
+- A 24-hour cooling-off before a newly signed-in device can approve, unless a device the person
+  already has says yes, and the same after a recovery that resets 2FA.
+
 Also from the same message: adapters must be installable after the app is built (resolves D11:
 needed now), and a web view of auditing and monitoring would be nice but raises data concerns
 (D78, open).
@@ -183,7 +197,8 @@ Ten workstreams. Each starts with the design steps in [How every workstream runs
 - **Scope:** a Worker with a Durable Object per Mac; the Mac's outbound WebSocket; remote MCP
   clients reach the Mac through it, with the Mac's existing OAuth server and consent (consent now
   also on the phone); the end-to-end Mac-to-phone channel; APNs push; per-source limits; no stored
-  bodies. Identity by device keys, no accounts (D79, recommended).
+  bodies. Identity by device keys from pairing for now; account login with 2FA once the service
+  has accounts (D79, answered).
 - **Done when:** a remote client completes OAuth and calls a tool through the relay against a
   local Workers runtime in CI; abuse limits tested; deployed to staging on Nick's Cloudflare account
   (needs Nick).
@@ -261,7 +276,6 @@ it:
 | D76 | Keep Cloudflare Tunnel once the relay ships | Remove it, for one code path, unless Nick wants self-hosting.                          |
 | D77 | What end-to-end encryption covers           | Mac to phone only; MCP traffic is plaintext at the relay in transit, never stored.     |
 | D78 | Web audit and monitoring                    | Later, as a paired browser that decrypts locally; no audit data stored by the service. |
-| D79 | Accounts in the relay                       | None; device keys from pairing.                                                        |
 | D80 | Who authorises remote MCP clients           | The Mac's existing OAuth server, through the relay, with consent on Mac or phone.      |
 | D81 | Agent driving your signed-in session        | Off by default; approved per session.                                                  |
 | D16 | Pricing                                     | Still not asked until after the MVP; the relay makes it real.                          |

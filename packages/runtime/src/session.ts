@@ -145,6 +145,19 @@ export class SessionGate {
       outcome === null || outcome.status === 'ok' ? null : { outcome, at: this.options.clock.now() }
   }
 
+  /**
+   * Takes over `previous`'s login secrets when a new version of the same adapter replaces it
+   * (ToolHost.replace): the session it logged in is still the browser's, so what the person typed
+   * must still be redacted from output. Nothing else carries over, so the next call probes.
+   */
+  inherit(previous: SessionGate): void {
+    if (previous === this) return
+    this.session.dispose()
+    this.session = previous.session
+    previous.session = new SecretRedactionSet()
+    previous.session.dispose()
+  }
+
   /** Forgets the last "logged in" answer, so the next ensure() probes. */
   distrust(): void {
     this.confirmedAt = null

@@ -307,6 +307,19 @@ function stepEntry(step: TraceStep): AdminTraceStep {
 const EVENT_FIELDS: Readonly<Record<AuditEvent['type'], readonly string[]>> = {
   'adapter-approved': ['adapterId', 'adapterHash', 'version', 'previousHash'],
   'adapter-rejected': ['adapterId', 'adapterHash', 'version'],
+  // Adapter packages (docs/adapter-packages.md).
+  'adapter-installed': [
+    'adapterId',
+    'adapterHash',
+    'version',
+    'source',
+    'previousHash',
+    'appVersion',
+    'preludeHash',
+    'compiler',
+  ],
+  'adapter-activated': ['adapterId', 'adapterHash', 'version', 'previousHash'],
+  'adapter-refused': ['adapterId', 'adapterHash', 'reason'],
   'grant-made': ['adapterId', 'adapterHash', 'secret', 'provider', 'origins'],
   'grant-revoked': ['adapterId', 'secret'],
   'grant-copied': ['adapterId', 'secret', 'fields'],
