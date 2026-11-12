@@ -34,7 +34,14 @@ import {
   leftoverPaths,
   sweepCommand,
 } from '../core/erase'
-import { DEV_DATA_NAME, demoResolverRules, launchMode, rendererBase, userDataDir } from '../core/launch'
+import {
+  DEV_DATA_NAME,
+  demoResolverRules,
+  launchMode,
+  RELEASE_DATA_NAME,
+  rendererBase,
+  userDataDir,
+} from '../core/launch'
 import { AppService } from '../core/service'
 import { SHOWCASE_BUILD_MARKER } from '../core/showcase'
 import type { BridgeCommand } from '../core/snippets'
@@ -244,15 +251,17 @@ async function main(): Promise<void> {
   )
   const driverOptions: ManifestOptions = demoSite === null ? {} : { egressPorts: [demoSite.site.port] }
   const opDeps = defaultOpCheckDeps()
-  // The packaged app's name is "valet" for a release and "valet-dev" otherwise (electron-builder).
-  const names = nativeNames(app.isPackaged && app.getName() === 'valet')
+  // The packaged app's name is "Valet" for a release and "Valet Dev" otherwise (electron-builder's
+  // productName, which app.getName() returns; launch.ts names the data folder by it too).
+  const release = app.isPackaged && app.getName() === RELEASE_DATA_NAME
+  const names = nativeNames(release)
   const messagesBinary = app.isPackaged ? nativeHelper('valet-messages-helper') : null
   const credentialDeps = {
     ...opDeps,
     keychainHelper: nativeHelper('valet-keychain'),
     copyService: names.copyService,
     // The token's Keychain item is shared by every build, so only the release app's erase removes it.
-    ownsToken: app.isPackaged && app.getName() === 'valet',
+    ownsToken: release,
     // Only a packaged app has the launch agent's plist for SMAppService; a dev build reads Messages
     // in process, with Full Disk Access on the app that runs it.
     messagesHelper:
@@ -270,7 +279,7 @@ async function main(): Promise<void> {
     // A demo launch keeps its anchor in its own data folder, never the Keychain.
     keychain:
       keychainHelper === null || mode.demo ? null : new KeychainHelper({ helperPath: keychainHelper }),
-    anchorService: app.isPackaged && app.getName() === 'valet' ? ANCHOR_SERVICE : 'valet-dev.anchor',
+    anchorService: release ? ANCHOR_SERVICE : 'valet-dev.anchor',
     devKeysPath: paths.devApprovalKeys,
     devAnchorPath: paths.devAnchor,
     // A dev build signing in software asks in a native dialog of the main process, where the

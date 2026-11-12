@@ -9,7 +9,7 @@
 //   end-to-end tests), so a dev build's identity and evidence survive a restart.
 
 import { randomBytes } from 'node:crypto'
-import { mkdir, open, readFile, rename, rm } from 'node:fs/promises'
+import { chmod, mkdir, open, readFile, rename, rm } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { type AnchorState, anchorStateSchema, type StoreAnchor } from '@valet/core'
 import type { KeychainStore } from '@valet/credentials'
@@ -76,10 +76,27 @@ const softwareKeysSchema = z
 
 /** A dev build's software keys: read from `path`, or made and written there (mode 0600) on first use. */
 export async function softwareKeysAt(path: string): Promise<SoftwareKeys> {
+  let text: string | null = null
   try {
-    return softwareKeysSchema.parse(JSON.parse(await readFile(path, 'utf8')))
+    text = await readFile(path, 'utf8')
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+  }
+  if (text !== null) {
+    // Never made again over a damaged file: new keys would be a new Mac, and every approval void.
+    const parsed = softwareKeysSchema.safeParse(
+      (() => {
+        try {
+          return JSON.parse(text)
+        } catch {
+          return null
+        }
+      })(),
+    )
+    if (!parsed.success)
+      throw new Error(`the dev build's approval keys in ${path} are damaged; delete the file to start again`)
+    await chmod(path, 0o600)
+    return parsed.data
   }
   const keys = newSoftwareKeys()
   await mkdir(dirname(path), { recursive: true, mode: 0o700 })

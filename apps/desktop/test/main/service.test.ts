@@ -2323,6 +2323,33 @@ describe('lock down (IA 2.10)', () => {
     expect((await third.api.app.status()).lockedDown).toBe(false)
   })
 
+  it('keeps the ledger’s lockdown when the Mac’s keys can’t be read, and asks the keys again to unlock', async () => {
+    const s = await approved()
+    await s.api.app.setLockedDown(true)
+    await s.service.stop()
+    // Only the ledger says locked (a phone's lockdown would be just that).
+    writeFileSync(s.paths.appState, JSON.stringify({ lockedDown: false, pausedSites: [] }))
+    const signer = new SoftwareSigner(() => true, await softwareKeysAt(join(s.dir, 'approval-keys.json')))
+    let keysWork = false
+    const again = await setup({
+      dir: s.dir,
+      approvalKeys: {
+        signer: {
+          keys: () => (keysWork ? signer.keys() : Promise.reject(new Error('helper timed out'))),
+          signDecision: (request, payload) => signer.signDecision(request, payload),
+        },
+        anchor: new FileAnchor(join(s.dir, 'anchor.json')),
+        kind: 'software',
+        forget: async () => {},
+      },
+    })
+    expect((await again.api.app.status()).lockedDown).toBe(true)
+    expect((await again.call('echo', { text: 'x' })).status).toBe('failed')
+    keysWork = true
+    await again.api.app.setLockedDown(false)
+    expect((await again.api.app.status()).lockedDown).toBe(false)
+  })
+
   it('reads a damaged state file as locked down', async () => {
     const s = await approved()
     await s.service.stop()

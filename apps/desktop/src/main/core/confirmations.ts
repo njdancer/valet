@@ -61,6 +61,8 @@ interface Pending {
   readonly resolve: (answer: ConfirmationAnswer) => void
   /** The broker's request, once made. Approve is refused until then. */
   requestId: string | null
+  /** How it ended, once it did: what the panel is told after a Touch ID prompt. */
+  answer: ConfirmationAnswer | null
   readonly timer: unknown
 }
 
@@ -122,6 +124,7 @@ export class ConfirmationBroker implements ConfirmationPrompt {
         const entry = this.pending.get(id)
         if (entry === undefined) return
         this.pending.delete(id)
+        entry.answer = answer
         this.options.timers.clearTimeout(entry.timer)
         if (entry.requestId !== null && answer !== 'approved') this.options.signing.withdraw(entry.requestId)
         signal.removeEventListener('abort', onAbort)
@@ -140,7 +143,7 @@ export class ConfirmationBroker implements ConfirmationPrompt {
       }
       const onAbort = () => settle('timed-out')
       const timer = this.options.timers.setTimeout(() => settle('timed-out'), this.options.timeoutMs)
-      this.pending.set(id, { item, resolve: settle, requestId: null, timer })
+      this.pending.set(id, { item, resolve: settle, requestId: null, answer: null, timer })
       signal.addEventListener('abort', onAbort, { once: true })
       this.options.onChange()
       this.options.show(id)
@@ -166,18 +169,18 @@ export class ConfirmationBroker implements ConfirmationPrompt {
     return this.pending.has(id)
   }
 
-  /** Whether a confirmation for this call is waiting: an approval for it may still be applied. */
-  hasCall(callId: string): boolean {
-    return [...this.pending.values()].some((p) => p.item.callId === callId && p.requestId !== null)
+  /** Whether this confirmation still waits, with its signed request made: an approval may apply. */
+  waiting(id: string): boolean {
+    return (this.pending.get(id)?.requestId ?? null) !== null
   }
 
   /**
-   * A signed approval of this call's confirmation was applied: the call goes ahead. A run asks one
-   * confirmation at a time, so the call names it.
+   * A signed approval of this confirmation's own request was applied: the call goes ahead. False if
+   * it no longer waits (it timed out between the check and now).
    */
-  approvedCall(callId: string): boolean {
-    const entry = [...this.pending.values()].find((p) => p.item.callId === callId && p.requestId !== null)
-    if (entry === undefined) return false
+  approvedById(id: string): boolean {
+    const entry = this.pending.get(id)
+    if (entry === undefined || entry.requestId === null) return false
     entry.resolve('approved')
     return true
   }
@@ -204,7 +207,10 @@ export class ConfirmationBroker implements ConfirmationPrompt {
     if (entry.requestId === null) throw new ConfirmationRefused()
     const outcome = await this.options.signing.approve(entry.requestId)
     if (outcome === 'refused') throw new ConfirmationRefused()
-    return outcome === 'approved'
+    if (outcome === 'cancelled') return false
+    // Signed, but it may have run out while the prompt was open: then the call was not approved.
+    if (entry.answer !== 'approved') throw new ConfirmationRefused()
+    return true
   }
 
   /** Declines everything still waiting, e.g. on quit. */

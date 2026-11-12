@@ -327,7 +327,16 @@ counts a click: `answerConfirmation(id, true)` from the panel opened for `id` on
 `approveOnMac`, and resolves false if the person cancels Touch ID. The panel shows the request's
 ref (`ConfirmationItem.ref`), which the Touch ID prompt names. A paired phone may approve the same
 request; the broker's apply then lets the call go ahead. The confirmation request is app-raised,
-so it never counts against an agent's limits.
+so it never counts against an agent's limits. Its preview's first line is the confirmation's own id
+(`Question cf_…`), then the requests it would make and the adapter's note, so two questions of one
+call never share a request and an approval applies only to the one it was signed for. (Asked of B:
+a `confirmationId` field in the `irreversible-call` subject, in place of that line.)
+
+An adversarial review of this wiring found that sharing, a release build using the dev build's
+anchor (`app.getName()` is "Valet", not "valet"; the same bug made release builds use the dev
+Keychain-copy service and token ownership, fixed with it), the ledger's lockdown lost when the
+keys can't be read at launch (the ledger now opens first and on its own), a double Unlock click
+withdrawing the first prompt, and a timed-out confirmation reported as approved. All fixed.
 
 ## Failure cases
 

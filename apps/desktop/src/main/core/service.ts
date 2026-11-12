@@ -57,9 +57,9 @@ import type {
   ChainStatus,
   ClientInfo,
   ClientSnippet,
+  ConfirmationItem,
   EndpointStatus,
   HashRoute,
-  PreviewPart,
   RemoteConsentItem,
   RemoteSetup,
   RemoteSetupTool,
@@ -316,6 +316,11 @@ export class AppService {
    * couldn't be read: then nothing that needs an approval can be approved.
    */
   private approvalBroker: ApprovalBroker | null = null
+  /**
+   * The trusted ledger, opened at start whatever happens to the keys: its lockdown, and a lockdown
+   * for tampering, hold even while the broker can't open.
+   */
+  private ledger: TrustedLedger | null = null
   private readonly handoffs: Handoffs
   private readonly drivers = new Map<string, SessionDriver>()
   /** The runtime, from start() on. */
@@ -982,13 +987,18 @@ export class AppService {
       // phone can lock down but never unlock, and neither can a click on its own. The handler
       // (approvalHandlers) clears the switch once the decision is signed.
       if (!this.lockedDown) return
+      // The helper may have been slow at launch: try again before refusing.
+      if (this.approvalBroker === null) await this.openApprovals()
       const broker = this.approvalBroker
       if (broker === null) throw new ValetError('config', 'unavailable')
       const asked = await broker.request('resume', { from: 'lockdown' }, { kind: 'person' })
       if (!asked.ok) throw new ValetError('config', 'unavailable')
       const answered = await broker.approveOnMac(asked.requestId)
-      // Cancelled at the prompt: still locked, and the request is withdrawn rather than left waiting.
-      if (!answered.ok) await broker.withdraw(asked.requestId, { kind: 'person' }).catch(() => false)
+      // Cancelled at the prompt: still locked, and the request is withdrawn rather than left
+      // waiting. A second click while the first prompt is open leaves that prompt alone.
+      if (!answered.ok && answered.reason !== 'busy') {
+        await broker.withdraw(asked.requestId, { kind: 'person' }).catch(() => false)
+      }
       return
     }
     // In memory at once: no call gets through while the rest happens, even if a write fails.
@@ -1009,18 +1019,26 @@ export class AppService {
    * ledger that didn't match its anchor at launch. Either keeps every call refused.
    */
   private get lockedDown(): boolean {
-    return this.appState.lockedDown || (this.approvalBroker?.isLockedDown() ?? false)
+    // No ledger at all (it couldn't be opened): locked, so nothing it might have held is lost.
+    return this.appState.lockedDown || (this.ledger?.data.safety.lockdown ?? true)
   }
 
-  /** Opens the trusted ledger and the approval broker. A failure leaves approvals unavailable. */
+  /**
+   * Opens the trusted ledger, then the approval broker. The ledger opens first and on its own: a
+   * failure to read the Mac's keys leaves approvals unavailable, never the ledger's lockdown lifted.
+   */
   private async openApprovals(): Promise<void> {
     const keys = this.deps.approvalKeys
-    try {
-      const macKeys = await keys.signer.keys()
-      const ledger = await TrustedLedger.open(
+    if (this.ledger === null) {
+      this.ledger = await TrustedLedger.open(
         new AnchoredFile(this.deps.paths.trusted, TRUSTED_STORE, keys.anchor),
       )
-      const devices = new DeviceStore(ledger, macKeys)
+      if (this.ledger.tampered !== null)
+        this.deps.diagnostics?.({ type: `approvals-ledger-${this.ledger.tampered}` })
+    }
+    const ledger = this.ledger
+    try {
+      const devices = new DeviceStore(ledger, await keys.signer.keys())
       this.approvalBroker = await ApprovalBroker.open({
         ledger,
         devices,
@@ -1034,7 +1052,6 @@ export class AppService {
           this.emit('attention-changed')
         },
       })
-      if (ledger.tampered !== null) this.deps.diagnostics?.({ type: `approvals-ledger-${ledger.tampered}` })
     } catch {
       this.approvalBroker = null
       this.deps.diagnostics?.({ type: 'approvals-unavailable' })
@@ -1044,10 +1061,16 @@ export class AppService {
   /** What each approved kind does here. Kinds not listed aren't wired yet and do nothing. */
   private approvalHandlers(): KindHandlers {
     return {
+      // The confirmation's own id is the preview's first line (confirmationPreview), so an approval
+      // applies to the one question it was signed for, never another of the same call.
       'irreversible-call': {
-        precheck: (subject) => this.broker.hasCall(subject.callId),
+        precheck: (subject) => {
+          const id = confirmationOf(subject.preview)
+          return id !== null && this.broker.waiting(id)
+        },
         apply: async (subject) => {
-          this.broker.approvedCall(subject.callId)
+          const id = confirmationOf(subject.preview)
+          if (id === null || !this.broker.approvedById(id)) throw new ValetError('config', 'not-found')
         },
       },
       resume: {
@@ -1080,7 +1103,7 @@ export class AppService {
             adapterHash: item.adapterHash,
             tool: item.tool,
             callId: item.callId,
-            preview: previewLines(item.input),
+            preview: confirmationPreview(item),
           },
           app,
           {
@@ -1954,14 +1977,32 @@ function shown(text: string, max: number): string | undefined {
   return cut !== '' && isDisplayText(cut) ? cut : undefined
 }
 
-/** A confirmation's input as the signed request's preview: at most 20 lines of 200 characters. */
-function previewLines(parts: readonly PreviewPart[]): string[] {
-  const text = parts.map((p) => (p.kind === 'text' ? p.text : `[${p.label}]`)).join('')
-  const lines: string[] = []
+const QUESTION = /^Question (cf_[A-Za-z0-9_-]{1,60})$/
+
+/**
+ * What a confirmation's signed request shows, at most 20 lines of 200 characters: first its own id,
+ * so two questions of one call never share a request; then what it asks (the requests it would
+ * make, the adapter's note as the adapter's words); then the input.
+ */
+function confirmationPreview(item: ConfirmationItem): string[] {
+  const lines = [`Question ${item.id}`]
+  for (const r of [...item.unlocks, ...item.requests]) {
+    const kept = shown(`${r.method} ${r.path}`, 200)
+    if (kept !== undefined) lines.push(kept)
+  }
+  if (item.adapterNote !== null) {
+    const note = shown(`The adapter says: ${item.adapterNote}`, 200)
+    if (note !== undefined) lines.push(note)
+  }
+  const text = item.input.map((p) => (p.kind === 'text' ? p.text : `[${p.label}]`)).join('')
   for (const line of text.split('\n')) {
     const kept = shown(line, 200)
     if (kept !== undefined) lines.push(kept)
-    if (lines.length === 20) break
   }
-  return lines
+  return lines.slice(0, 20)
+}
+
+/** The confirmation a signed request's preview names, or null. */
+function confirmationOf(preview: readonly string[]): string | null {
+  return QUESTION.exec(preview[0] ?? '')?.[1] ?? null
 }

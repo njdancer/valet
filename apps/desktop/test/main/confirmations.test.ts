@@ -58,7 +58,7 @@ function setup(
         signing.prompts.push(requestId)
         if (signing.prompt === 'approved') {
           const item = broker.list().find((i) => `rq_${i.id}` === requestId)
-          if (item !== undefined) broker.approvedCall(item.callId)
+          if (item !== undefined) broker.approvedById(item.id)
         }
         return signing.prompt
       },
@@ -249,16 +249,36 @@ describe('ConfirmationBroker', () => {
     await expect(answer).resolves.toBe('declined')
   })
 
-  it('applies a signed approval from elsewhere (a phone) only to a call still waiting', async () => {
-    const { broker } = setup()
-    const answer = broker.ask(toolRequest, new AbortController().signal)
-    expect(broker.hasCall('call1')).toBe(false)
+  it('applies a signed approval only to the question it was signed for, never another of the same call', async () => {
+    const { broker } = setup(['cf_a', 'cf_b'])
+    const a = broker.ask(toolRequest, new AbortController().signal)
+    const b = broker.ask(toolRequest, new AbortController().signal)
+    expect(broker.waiting('cf_b')).toBe(false)
     await settle()
-    expect(broker.hasCall('call1')).toBe(true)
-    expect(broker.approvedCall('call9')).toBe(false)
-    expect(broker.approvedCall('call1')).toBe(true)
-    await expect(answer).resolves.toBe('approved')
-    expect(broker.approvedCall('call1')).toBe(false)
+    expect(broker.waiting('cf_b')).toBe(true)
+    expect(broker.approvedById('cf_nope')).toBe(false)
+    expect(broker.approvedById('cf_b')).toBe(true)
+    await expect(b).resolves.toBe('approved')
+    expect(broker.has('cf_a')).toBe(true)
+    expect(broker.approvedById('cf_b')).toBe(false)
+    await broker.answer('cf_a', false, { role: 'tray', shows: null })
+    await expect(a).resolves.toBe('declined')
+  })
+
+  it('tells the panel it wasn’t approved when it ran out while Touch ID was open', async () => {
+    const { broker, signing, advance, timers } = setup()
+    const answer = broker.ask(toolRequest, new AbortController().signal)
+    await settle()
+    signing.prompt = 'approved'
+    // The prompt is signed, but the confirmation timed out first: nothing applies it.
+    const original = broker.approvedById.bind(broker)
+    broker.approvedById = () => false
+    const pending = broker.answer('cf_1', true, { role: 'confirmation', shows: 'cf_1' })
+    advance(TIMEOUT)
+    timers.fire()
+    await expect(pending).rejects.toThrow(ConfirmationRefused)
+    await expect(answer).resolves.toBe('timed-out')
+    broker.approvedById = original
   })
 
   it('refuses an id that was answered or never existed', async () => {
