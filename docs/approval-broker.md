@@ -331,30 +331,30 @@ Each IPC path that widens what an adapter, a client or an agent can reach, mappe
 marked as a tightening (no signature) or as not widening. **Built** rows are in this PR; the rest
 are the next PRs of this workstream.
 
-| IPC path                                     | Becomes                                                                                                              | Status             |
-| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ------------------ |
-| `answerConfirmation(id, true)`               | `irreversible-call` (app-raised, never stored), Touch ID from its own panel                                          | **Built**          |
-| `answerConfirmation(id, false)`              | Decline: tightening, any app window                                                                                  | **Built**          |
-| `app.setLockedDown(false)`                   | `resume { from: 'lockdown' }`, Mac only                                                                              | **Built**          |
-| `app.setLockedDown(true)`                    | Tightening: app-state and the ledger                                                                                 | **Built**          |
-| `app.setPaused(false)`                       | Not signed: Valet's own Pause is in memory and a restart lifts it anyway                                             | Decided            |
-| `approvals.approve(id, hash)`                | `adapter-install`; the install gate asks `honoured`, bound to sandbox mode                                           | **Built**          |
-| rollback (PR #77's `rollbackNow`)            | `adapter-install` with `source: 'rollback'`                                                                          | **Built**          |
-| `approvals.reject`                           | Tightening                                                                                                           | **Built**          |
-| `grants.make`                                | `secret-grant` (Touch ID); the grant gate hands out only signed grants, or legacy ones within the manifest's origins | **Built**          |
-| `grants.revoke`                              | Tightening: the evidence, the legacy record and the store                                                            | **Built**          |
-| `grants.resync`                              | Not widening: the same item, origins and fields                                                                      | Decided            |
-| `remote.setTool(…, true)`                    | `tool-enable { scope: 'remote', clientId: null }`                                                                    | Next               |
-| `remote.setTool(…, false)`                   | Tightening                                                                                                           | Next               |
-| `remote.setEnabled(true)`, `remote.setHosts` | `setting { scope: 'valet' }`                                                                                         | Next               |
-| `remote.approveConsent(code, tools)`         | `remote-client`, the code typed into the decision                                                                    | Next               |
-| `settings.set({ messagesOtpEnabled: true })` | `setting { scope: 'valet' }`: Valet reads Messages for codes                                                         | Next               |
-| other `settings.set` fields                  | Not widening                                                                                                         | Decided            |
-| `adapters.setSetting` (a store)              | Not widening: a value the adapter declared (`setting.adapter-choice`)                                                | Decided            |
-| `adapters.setPaused(…, false)`               | Not signed for now: the person's own per-site stop. Moves into the ledger                                            | Next (ledger only) |
-| `clients.add`                                | Not signed: a local client the person configures at the Mac                                                          | Decided, told to B |
-| `endpoint.setListening(true)`                | Not signed: local only, the person's own switch                                                                      | Decided, told to B |
-| `app.erase`                                  | The main process's own native dialog decides                                                                         | Unchanged          |
+| IPC path                                     | Becomes                                                                                                                              | Status             |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------ |
+| `answerConfirmation(id, true)`               | `irreversible-call` (app-raised, never stored), Touch ID from its own panel                                                          | **Built**          |
+| `answerConfirmation(id, false)`              | Decline: tightening, any app window                                                                                                  | **Built**          |
+| `app.setLockedDown(false)`                   | `resume { from: 'lockdown' }`, Mac only                                                                                              | **Built**          |
+| `app.setLockedDown(true)`                    | Tightening: app-state and the ledger                                                                                                 | **Built**          |
+| `app.setPaused(false)`                       | Not signed: Valet's own Pause is in memory and a restart lifts it anyway                                                             | Decided            |
+| `approvals.approve(id, hash)`                | `adapter-install`; the install gate asks `honoured`, bound to sandbox mode                                                           | **Built**          |
+| rollback (PR #77's `rollbackNow`)            | `adapter-install` with `source: 'rollback'`                                                                                          | **Built**          |
+| `approvals.reject`                           | Tightening                                                                                                                           | **Built**          |
+| `grants.make`                                | `secret-grant` (Touch ID); the grant gate hands out only signed grants, or legacy ones within the manifest's origins                 | **Built**          |
+| `grants.revoke`                              | Tightening: the evidence, the legacy record and the store                                                                            | **Built**          |
+| `grants.resync`                              | Not widening: the same item, origins and fields                                                                                      | Decided            |
+| `remote.setTool(…, true)`                    | `tool-enable { scope: 'remote', clientId: null }` (Touch ID). An agent's own per-client enable is next                               | **Built**          |
+| `remote.setTool(…, false)`                   | Tightening                                                                                                                           | **Built**          |
+| `remote.setEnabled(true)`, `remote.setHosts` | `setting { scope: 'valet' }` (`remote_enabled`, `remote_hosts` adding a host); off and fewer hosts are clicks                        | **Built**          |
+| `remote.approveConsent(code, tools)`         | `remote-client`, app-raised, the typed code in the signed decision; a wrong code goes straight to the three tries                    | **Built**          |
+| `settings.set({ messagesOtpEnabled: true })` | `setting { scope: 'valet' }`: `messages_otp` on, `notifications` off, `trace_retention` shorter (A's R6); their opposites are clicks | **Built**          |
+| other `settings.set` fields                  | Not widening                                                                                                                         | Decided            |
+| `adapters.setSetting` (a store)              | Not widening: a value the adapter declared (`setting.adapter-choice`)                                                                | Decided            |
+| `adapters.setPaused(…, false)`               | Not signed for now: the person's own per-site stop. Moves into the ledger                                                            | Next (ledger only) |
+| `clients.add`                                | Not signed: a local client the person configures at the Mac                                                                          | Decided, told to B |
+| `endpoint.setListening(true)`                | Not signed: local only, the person's own switch                                                                                      | Decided, told to B |
+| `app.erase`                                  | The main process's own native dialog decides                                                                                         | Unchanged          |
 
 The confirmation panel keeps its short arm delay as a UI nicety, but the main process no longer
 counts a click: `answerConfirmation(id, true)` from the panel opened for `id` only calls

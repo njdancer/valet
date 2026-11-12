@@ -113,6 +113,8 @@ export type WideningSetting = keyof typeof WIDENING_SETTINGS
 
 /** Whether changing `setting` from `from` to `to` widens, and so needs a signed request. */
 export function settingWidens(setting: WideningSetting, from: unknown, to: unknown): boolean {
+  // Setting a value to what it already is changes nothing, whichever value it is.
+  if (JSON.stringify(from) === JSON.stringify(to)) return false
   return WIDENING_SETTINGS[setting].widens(to, from)
 }
 
@@ -166,5 +168,33 @@ export function adapterSettingSubject(
     from: label(current ?? 'Not set', 120, 'Not set'),
     to: 'Chosen on this card',
     choices: offered,
+  }
+}
+
+/**
+ * The value a `setting` subject for one of Valet's own settings sets, read back from its `to`.
+ * Null when `to` doesn't read back to exactly that text (a host list cut to fit, say): such a
+ * request is never applied.
+ */
+export function settingValue(setting: WideningSetting, to: string): boolean | number | string[] | null {
+  let value: boolean | number | string[] | null
+  if (setting === 'trace_retention') value = /^[0-9]{1,3}$/.test(to) ? Number(to) : null
+  else if (setting === 'remote_hosts') value = to === 'None' ? [] : to.split(', ')
+  else value = to === 'On' ? true : to === 'Off' ? false : null
+  if (value === null) return null
+  return label(shownValue(value), 120, '(blank)') === to ? value : null
+}
+
+/** The `remote-client` subject for a pending consent: the client's claims, shown as claims. */
+export function remoteClientSubject(
+  consent: { readonly clientId: string; readonly clientHost: string; readonly source: string | null },
+  tools: readonly string[],
+): ApprovalSubject<'remote-client'> {
+  return {
+    clientId: `remote:${consent.clientId}`,
+    host: consent.clientHost.toLowerCase(),
+    sourceAddress:
+      consent.source !== null && /^[0-9A-Fa-f:.]{2,45}$/.test(consent.source) ? consent.source : null,
+    tools: [...tools],
   }
 }

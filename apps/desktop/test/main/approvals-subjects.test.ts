@@ -55,6 +55,7 @@ describe('subject builders', () => {
   it('classifies which way a setting widens', () => {
     expect(settingWidens('messages_otp', false, true)).toBe(true)
     expect(settingWidens('messages_otp', true, false)).toBe(false)
+    expect(settingWidens('messages_otp', true, true)).toBe(false)
     expect(settingWidens('notifications', true, false)).toBe(true)
     expect(settingWidens('trace_retention', 14, 3)).toBe(true)
     expect(settingWidens('trace_retention', 14, 30)).toBe(false)

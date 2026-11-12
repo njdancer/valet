@@ -1710,6 +1710,33 @@ describe('endpoint, settings, audit and the app', () => {
     expect(existsSync(paths.legacyBridgeConfig)).toBe(false)
   })
 
+  it('asks for Touch ID for a setting that widens what Valet reaches or hides, not for its opposite', async () => {
+    const s = await approved()
+    s.presence.answer = false
+    await expect(s.api.settings.set({ messagesOtpEnabled: true })).rejects.toMatchObject({
+      errorClass: 'not-granted',
+    })
+    await expect(s.api.settings.set({ notifications: false })).rejects.toMatchObject({
+      errorClass: 'not-granted',
+    })
+    await expect(s.api.settings.set({ traceRetentionDays: 3 })).rejects.toMatchObject({
+      errorClass: 'not-granted',
+    })
+    expect(await s.api.settings.get()).toMatchObject({
+      messagesOtpEnabled: false,
+      notifications: true,
+      traceRetentionDays: 14,
+    })
+    // Longer retention is a click.
+    expect((await s.api.settings.set({ traceRetentionDays: 30 })).traceRetentionDays).toBe(30)
+    s.presence.answer = true
+    await s.api.settings.set({ messagesOtpEnabled: true, notifications: false })
+    expect(await s.api.settings.get()).toMatchObject({ messagesOtpEnabled: true, notifications: false })
+    await expect(s.api.settings.set({ traceRetentionDays: 0 })).rejects.toMatchObject({
+      errorClass: 'invalid',
+    })
+  })
+
   it('changes settings only through the patch and the main process’s own op dialog', async () => {
     const s = await approved()
     expect((await s.api.settings.set({ launchAtLogin: true })).launchAtLogin).toBe(true)
@@ -2089,6 +2116,36 @@ describe('remote access', () => {
       errorClass: 'not-found',
     })
     expect(await s.api.remote.setEnabled(false)).toMatchObject({ enabled: false, listening: false })
+  })
+
+  it('asks for Touch ID before anything widens remote access; narrowing is a click', async () => {
+    const s = await approved()
+    const prompts = () => s.presence.prompts.length
+    s.presence.answer = false
+    const before = prompts()
+    await expect(s.api.remote.setHosts([HOST])).rejects.toMatchObject({ errorClass: 'not-granted' })
+    await expect(s.api.remote.setEnabled(true)).rejects.toMatchObject({ errorClass: 'not-granted' })
+    expect(prompts()).toBe(before + 2)
+    expect(s.service.remote.status()).toMatchObject({ enabled: false, hosts: [] })
+    s.presence.answer = true
+    await s.api.remote.setHosts([HOST])
+    await s.api.remote.setEnabled(true)
+    s.presence.answer = false
+    await expect(s.api.remote.setTool('shop', 'echo', true)).rejects.toMatchObject({
+      errorClass: 'not-granted',
+    })
+    expect(s.service.remote.status().tools).toEqual([])
+    s.presence.answer = true
+    await s.api.remote.setTool('shop', 'echo', true)
+    expect(s.service.remote.status().tools).toEqual(['shop.echo'])
+    // Off, and fewer hosts, take no Touch ID.
+    s.presence.answer = false
+    const asked = prompts()
+    await s.api.remote.setTool('shop', 'echo', false)
+    await s.api.remote.setHosts([])
+    await s.api.remote.setEnabled(false)
+    expect(prompts()).toBe(asked)
+    expect(s.service.remote.status()).toMatchObject({ enabled: false, hosts: [], tools: [] })
   })
 
   it('serves only remote-enabled tools through the same runtime, audited as remote', async () => {

@@ -237,6 +237,11 @@ export class RemoteAccess {
     return 'approved'
   }
 
+  /** The pending consent a typed code names, or null; nothing is approved or counted. */
+  consentFor(code: string): ConsentPrompt | null {
+    return this.consents.matching(code)
+  }
+
   declineConsent(id: string): boolean {
     return this.consents.decline(id)
   }
