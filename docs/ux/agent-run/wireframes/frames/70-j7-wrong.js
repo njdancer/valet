@@ -482,7 +482,7 @@
     size: 'phone',
     title: 'Remove a lost device from the phone',
     personas: ['P8', 'P3', 'X2'],
-    desc: 'F2. Says what ends; Face ID only, because it changes who can approve. Every other device is told.',
+    desc: 'F2. Says what ends; Face ID or passcode, because it changes who can approve. Every other device is told.',
     html: P.screen('', {
       tab: 'Valet',
       title: 'Devices',
@@ -499,11 +499,7 @@
       ),
     }),
     notes: [
-      [
-        350,
-        300,
-        "Face ID only, no passcode: someone holding an unlocked phone shouldn't be able to cut the owner's other device off. The Mac does the same with Touch ID (mac-device-remove).",
-      ],
+      [350, 300, 'Face ID or passcode; never the last device. The Mac uses Touch ID (mac-device-remove).'],
     ],
   })
 
