@@ -121,7 +121,7 @@ ID or Touch ID (R17). No agent can change its own or another agent's capabilitie
    that can be turned on now, all unticked: Wikipedia's 3 tools and Woolworths' Search products and
    Get cart (R43, R60). Write tools are asked for later, one card each.
 5. The person types the code, names it "Claude app", ticks See Valet, Ask for changes and four read
-   tools, and **Approve with Face ID** (Face ID only, R1).
+   tools, and **Approve with Face ID** (or the passcode).
 6. **Browser** continues to Claude; **Chat** shows the connector.
 7. **iPhone**: "Connected Claude app at 8:31 pm" (`ph-card-connect-done`). "Accept new agents" turns
    off.
@@ -223,21 +223,21 @@ price history on for Claude app, and the agent answers with a quote.
 **Actors:** P8, P5 (VoiceOver, large text), P3, X2, a thief with the phone. **Starts:** any approval
 request. **Ends:** answered on one device, shown as answered everywhere.
 
-| Kind              | Phone frame                        | Mac frame                   | Gesture on the phone (approval-cards.md §6) |
-| ----------------- | ---------------------------------- | --------------------------- | ------------------------------------------- |
-| Install           | `ph-card-install`                  | `mac-review-install-agent`  | Face ID only                                |
-| Update (repair)   | `ph-card-update`                   | `mac-review-update-agent`   | Face ID or passcode (no new permissions)    |
-| Restore           | `ph-card-restore`                  | (Review, restore mode, v3)  | Face ID or passcode if it widens nothing    |
-| Login             | `ph-card-login`                    | `mac-card-sheet-login`      | Face ID only                                |
-| Remote tool       | `ph-card-remote-tool`              | `mac-card-sheet-remote`     | read: either; write: Face ID only           |
-| Setting           | `ph-card-setting`, `ph-card-store` | `mac-card-sheet-setting`    | caution: Face ID only; a choice: either     |
-| Signed-in session | `ph-card-session`                  | (sheet, same parts)         | Face ID only                                |
-| Private network   | `ph-card-private-network`          | (sheet, same parts)         | Face ID only                                |
-| Connect           | `ph-card-connect`                  | (sheet, as v3's code sheet) | Face ID only                                |
-| Confirm           | `ph-card-confirm`                  | (confirmation window, v3)   | Face ID only                                |
-| A strong card     | `ph-card-strong`                   | —                           | Face ID only, after "I've read" (R31)       |
-| Pair              | —                                  | `mac-setup-pair-words`      | Mac only                                    |
-| Login needs you   | `ph-login-code`                    | (v3 login hand-off)         | none (J6)                                   |
+| Kind              | Phone frame                        | Mac frame                   | Gesture on the phone (approval-cards.md §6)  |
+| ----------------- | ---------------------------------- | --------------------------- | -------------------------------------------- |
+| Install           | `ph-card-install`                  | `mac-review-install-agent`  | Face ID or passcode                          |
+| Update (repair)   | `ph-card-update`                   | `mac-review-update-agent`   | Face ID or passcode                          |
+| Restore           | `ph-card-restore`                  | (Review, restore mode, v3)  | Face ID or passcode                          |
+| Login             | `ph-card-login`                    | `mac-card-sheet-login`      | Face ID or passcode                          |
+| Remote tool       | `ph-card-remote-tool`              | `mac-card-sheet-remote`     | Face ID or passcode                          |
+| Setting           | `ph-card-setting`, `ph-card-store` | `mac-card-sheet-setting`    | Face ID or passcode                          |
+| Signed-in session | `ph-card-session`                  | (sheet, same parts)         | Face ID or passcode                          |
+| Private network   | `ph-card-private-network`          | (sheet, same parts)         | Face ID or passcode                          |
+| Connect           | `ph-card-connect`                  | (sheet, as v3's code sheet) | Face ID or passcode                          |
+| Confirm           | `ph-card-confirm`                  | (confirmation window, v3)   | Face ID or passcode                          |
+| A strong card     | `ph-card-strong`                   | —                           | Face ID or passcode, after "I've read" (R31) |
+| Pair              | —                                  | `mac-setup-pair-words`      | Mac only                                     |
+| Login needs you   | `ph-login-code`                    | (v3 login hand-off)         | none (J6)                                    |
 
 ### Happy path (any kind)
 
@@ -250,8 +250,8 @@ request. **Ends:** answered on one device, shown as answered everywhere.
 
 ### Failures
 
-- **F1. Face ID fails twice.** On a neutral card, **Use passcode instead** (`ph-card-passcode`). On
-  every other card, "Face ID didn't work. Try again, or approve on your Mac." (R1, R2)
+- **F1. Face ID fails.** **Use passcode instead** (`ph-card-passcode`), on every card; the button is
+  there from the start too (Nick, 2026-11-12).
 - **F2. Answered on the Mac first** (`ph-card-answered-elsewhere`); both at once: the Mac's first
   answer wins and the phone says "Your approval wasn't used" (`ph-card-not-used`, R29).
 - **F3. The phone is offline.** "No connection. Nothing was sent." The card stays (noted on
@@ -267,8 +267,8 @@ request. **Ends:** answered on one device, shown as answered everywhere.
   notes this state; R28).
 - **F9. A follow-on of another kind.** Tool result only: "Not asked: only remote tools of this adapter
   can follow on. Ask for the Login separately." (R5)
-- **F10. A thief with the phone and its passcode.** Valet won't open without Face ID; every card that
-  matters needs Face ID with the current enrolment; approval policy is Mac only. The owner removes
+- **F10. A thief with the phone and its passcode.** They can approve cards: Nick accepted this risk
+  (2026-11-12). Pairing, Unlock, Reset and approval policy stay Mac only. The owner removes
   the phone from the Mac, from another device, or with the recovery code (J7 F2).
 
 ### Dead ends
@@ -337,7 +337,7 @@ the agent both know when and where it can.
 | A code Valet can read (1Password TOTP, Messages on this Mac) | Nothing. Valet finishes by itself.                                                                                                                                                                |
 | A code sent to the phone or email that Valet can't read      | **Type the code** (`ph-login-code`). iOS suggests it from Messages. Valet types it on the Mac, only into the field the flow declared, on the flow's own origin. No Face ID: it isn't an approval. |
 | A "resend code" step the flow declares                       | **Send a new code**.                                                                                                                                                                              |
-| The password stopped working                                 | **Re-sync your Woolworths password from 1Password**: a Login card, Face ID only (`ph-card-login-resync`).                                                                                         |
+| The password stopped working                                 | **Re-sync your Woolworths password from 1Password**: a Login card, Face ID or passcode (`ph-card-login-resync`).                                                                                  |
 | A verification check (CAPTCHA, press and hold, device check) | **Can't be done on the phone.** **Remind me at…** (in 1 hour, tonight 8 pm, tomorrow 8 am, when I'm next at my Mac) or **Not now** (`ph-login-check`).                                            |
 | The site locked the account                                  | "Woolworths has locked your account. Sort it out with Woolworths, then tell Claude to try again."                                                                                                 |
 
@@ -434,7 +434,7 @@ chosen, or none (R75).
    for another agent) → Remote tool card **Turn on "Search symbols" for Claude app**
    (`ph-card-remote-tool`, 9D02, 8:02 pm), caution "Claude app could use it from anywhere." Face ID
    or passcode (a read tool).
-2. A write tool: caution "Can change things on {Site}", Face ID only. Irreversible: each use still
+2. A write tool: caution "Can change things on {Site}", Face ID or passcode. Irreversible: each use still
    needs a Confirm.
 
 ### b. "Change my Woolworths store to Bondi Junction"

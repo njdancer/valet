@@ -181,7 +181,7 @@
       [
         200,
         470,
-        'Install cards need Face ID itself: no passcode route, not even with VoiceOver on (Face ID works with VoiceOver). Two failures say "Try again, or approve on your Mac." (approval-cards.md section 6)',
+        'Face ID, or "Use passcode instead" on every card (Nick, 2026-11-12). (approval-cards.md section 6)',
       ],
     ],
   })
