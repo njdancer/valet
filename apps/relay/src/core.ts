@@ -327,6 +327,15 @@ export class RelayCore {
       return socket.close(CLOSE.authFailed, 'refused')
     // The socket may have closed, or been replaced by its own challenge timeout, while verifying.
     if (socket.state()?.phase !== 'challenged') return
+    // Other frames run during that await: the Mac may have revoked this phone or given it a new
+    // key, or rotated its own. Check again against what's stored now, with no await before ready.
+    const now = await this.state()
+    if (hello.role === 'phone') {
+      if (now?.devices.find((d) => d.deviceId === hello.id)?.transportKey !== key)
+        return socket.close(CLOSE.authFailed, 'refused')
+    } else if (hello.transportKey === undefined && now?.macTransportKey !== key) {
+      return socket.close(CLOSE.authFailed, 'refused')
+    }
 
     if (hello.role === 'mac') {
       const nowIso = new Date(this.now()).toISOString()
@@ -390,12 +399,14 @@ export class RelayCore {
     const reply = parsed.data
     const mac = this.macSocket()
     if (reply.macId !== this.options.macId || mac === null) return socket.close(CLOSE.authFailed, 'refused')
-    if (!this.pairingReplies.take('all')) return socket.close(CLOSE.tooMany, 'too many')
     const macState = mac.state()
     if (macState?.phase !== 'ready') return socket.close(CLOSE.authFailed, 'refused')
     const now = this.now()
     const offer = (macState.offers ?? []).find((o) => o.offerId === reply.offerId && o.expiresAt > now)
     if (offer === undefined || offer.answered) return socket.close(CLOSE.authFailed, 'refused')
+    // Counted only once it names a real open offer, so strangers sending junk can't use it up and
+    // block the person's own phone.
+    if (!this.pairingReplies.take('all')) return socket.close(CLOSE.tooMany, 'too many')
     mac.setState({
       ...macState,
       offers: (macState.offers ?? []).map((o) =>
@@ -419,8 +430,10 @@ export class RelayCore {
     const now = this.now()
     const at = Math.min(Date.parse(expiresAt), now + RELAY_CAPS.maxOfferMs)
     if (!(at > now)) return
+    // Opening an offer again can't reopen one already answered: once per offer, whatever the Mac sends.
+    const answered = (state.offers ?? []).some((o) => o.offerId === offerId && o.answered)
     const offers = (state.offers ?? []).filter((o) => o.expiresAt > now && o.offerId !== offerId)
-    offers.push({ offerId, expiresAt: at, answered: false })
+    offers.push({ offerId, expiresAt: at, answered })
     socket.setState({ ...state, offers: offers.slice(-RELAY_CAPS.maxOffers) })
   }
 
@@ -526,9 +539,11 @@ export class RelayCore {
   async recover(code: string, unregisterPhones: boolean): Promise<RecoverResult> {
     const stored = await this.state()
     if (stored?.recoveryCodeHash == null) return 'unset'
-    if (!this.recoveries.take('all')) return 'too-many'
+    // The right code always works: only wrong tries spend the budget, so nobody can use it up to
+    // stop the owner locking down. The code is 128 bits; the budget is against noise.
     const hash = await recoveryCodeHash(code)
-    if (hash === null || !constantTimeEqual(hash, stored.recoveryCodeHash)) return 'wrong'
+    if (hash === null || !constantTimeEqual(hash, stored.recoveryCodeHash))
+      return this.recoveries.take('all') ? 'wrong' : 'too-many'
     if (unregisterPhones) {
       const latest = (await this.state()) as RelayStoredState
       await this.save({ ...latest, devices: [] })
@@ -601,6 +616,10 @@ export class RelayCore {
     frame: Exclude<PhoneToRelay, { type: 'hello' | 'pairing-reply' }>,
     text: string,
   ) {
+    // A phone's other frames share its envelope budget: each lock tells every device, and each
+    // token is a write.
+    if (frame.type !== 'envelope' && !this.envelopes.take(deviceId))
+      return socket.close(CLOSE.tooMany, 'too many frames')
     if (frame.type === 'relay-lock') return this.setLocked(true, 'phone', false)
     if (frame.type === 'push-token') {
       const stored = await this.state()
@@ -850,6 +869,10 @@ export function responseHeaders(mac: Readonly<Record<string, string>>): Headers 
   if (type !== null) {
     const base = type.split(';')[0]?.trim().toLowerCase()
     if (base !== 'application/json' && base !== 'text/event-stream') return null
+  } else {
+    // An answer with no type (a 202 to a notification, say) is labelled JSON, never left for a
+    // browser to sniff into a page on the relay's domain.
+    headers.set('content-type', 'application/json')
   }
   if (!headers.has('cache-control')) headers.set('cache-control', 'no-store')
   headers.set('x-content-type-options', 'nosniff')

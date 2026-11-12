@@ -105,6 +105,8 @@ export async function frontDoor(request: Request, door: FrontDoor): Promise<Resp
   if (body === null) return Response.json({ error: 'body_too_large' }, { status: 413 })
   if (method === 'POST' && url.pathname === '/mcp' && !isJsonRpc(body))
     return Response.json({ error: 'not_json_rpc' }, { status: 400 })
+  // GET and DELETE carry nothing: the relay is not a general tunnel.
+  if (method !== 'POST' && body !== '') return Response.json({ error: 'unexpected_body' }, { status: 400 })
 
   return door.mac(macId).forward(
     {
@@ -195,11 +197,14 @@ function render(answer: ConsentAnswer, token: string, redirect: string): Respons
     case 'waiting':
       return waitingPage(answer.code, token)
     case 'approved':
-    case 'declined':
-      // Only ever back to the redirect URI the client named: a Mac can't make this an open redirect.
+      // Only ever back to the redirect URI the client named. A "Mac" is any program with a key,
+      // and could name any URI for itself, so only an approval redirects: errors get the relay's
+      // own page, and a stranger's client can't bounce people through a real Mac's host.
       if (answer.redirect !== undefined && sameTarget(answer.redirect, redirect))
         return redirectResponse(answer.redirect)
       return problemPage('cant-go-on', 400)
+    case 'declined':
+      return answer.redirect === undefined ? problemPage('cant-go-on', 400) : problemPage('declined', 403)
     case 'expired':
       return problemPage('ended', 404)
     case 'offline':

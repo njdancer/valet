@@ -82,6 +82,8 @@ export interface RelayClientOptions {
  */
 const CHUNK_CHARS = Math.min(RELAY_LIMITS.maxResponseChunkBytes, 64 * 1024)
 /** WebSocket.OPEN. */
+/** What Node accepts in a header value: tab, printable ASCII and Latin-1, no CR or LF. */
+const HEADER_VALUE = /^[\t\x20-\x7e\x80-\xff]*$/
 const OPEN = 1
 const CLOSE_AUTH_FAILED = 4401
 const CLOSE_REPLACED = 4409
@@ -239,18 +241,16 @@ export class RelayClient {
   }
 
   private forward(socket: WebSocket, frame: Extract<RelayToMac, { type: 'http-request' }>): void {
-    const listener = this.options.listener()
-    if (listener === null) {
-      // Paused: the same answer the listener would give if it weren't there.
-      this.sendOn(socket, {
-        type: 'http-response-start',
-        id: frame.id,
-        status: 503,
-        headers: { 'retry-after': '60' },
-      })
+    const answer = (status: number, headers: Record<string, string> = {}) => {
+      this.sendOn(socket, { type: 'http-response-start', id: frame.id, status, headers })
       this.sendOn(socket, { type: 'http-response-end', id: frame.id })
-      return
     }
+    const listener = this.options.listener()
+    // Paused: the same answer the listener would give if it weren't there.
+    if (listener === null) return answer(503, { 'retry-after': '60' })
+    // The relay is not trusted to send only what Node will put in a header.
+    if (![frame.source, ...Object.values(frame.headers)].every((v) => HEADER_VALUE.test(v)))
+      return answer(400)
     const target = new URL(frame.path + (frame.query === '' ? '' : `?${frame.query}`), listener)
     const headers: Record<string, string> = { ...frame.headers, host: this.publicHost }
     if (frame.source !== '') headers['cf-connecting-ip'] = frame.source
@@ -262,46 +262,51 @@ export class RelayClient {
       finished = true
       this.inFlight.delete(frame.id)
     }
-    const req = httpRequest(target, { method: frame.method, headers }, (res: IncomingMessage) => {
-      if (finished) return res.destroy()
-      this.sendOn(socket, {
-        type: 'http-response-start',
-        id: frame.id,
-        status: res.statusCode ?? 502,
-        headers: responseHeaders(res),
-      })
-      const decoder = new StringDecoder('utf8')
-      let buffered = ''
-      let timer: ReturnType<typeof setTimeout> | null = null
-      const flush = () => {
-        if (timer !== null) clearTimeout(timer)
-        timer = null
-        while (buffered.length > 0) {
-          const part = takeChunk(buffered, CHUNK_CHARS)
-          buffered = buffered.slice(part.length)
-          this.sendOn(socket, { type: 'http-response-chunk', id: frame.id, data: part })
+    let req: ReturnType<typeof httpRequest>
+    try {
+      req = httpRequest(target, { method: frame.method, headers }, (res: IncomingMessage) => {
+        if (finished) return res.destroy()
+        this.sendOn(socket, {
+          type: 'http-response-start',
+          id: frame.id,
+          status: res.statusCode ?? 502,
+          headers: responseHeaders(res),
+        })
+        const decoder = new StringDecoder('utf8')
+        let buffered = ''
+        let timer: ReturnType<typeof setTimeout> | null = null
+        const flush = () => {
+          if (timer !== null) clearTimeout(timer)
+          timer = null
+          while (buffered.length > 0) {
+            const part = takeChunk(buffered, CHUNK_CHARS)
+            buffered = buffered.slice(part.length)
+            this.sendOn(socket, { type: 'http-response-chunk', id: frame.id, data: part })
+          }
         }
-      }
-      res.on('data', (chunk: Buffer) => {
-        if (finished) return
-        buffered += decoder.write(chunk)
-        if (buffered.length >= CHUNK_CHARS) flush()
-        else timer ??= setTimeout(flush, coalesceMs)
+        res.on('data', (chunk: Buffer) => {
+          if (finished) return
+          buffered += decoder.write(chunk)
+          if (buffered.length >= CHUNK_CHARS) flush()
+          else timer ??= setTimeout(flush, coalesceMs)
+        })
+        res.on('end', () => {
+          if (finished) return
+          buffered += decoder.end()
+          flush()
+          this.sendOn(socket, { type: 'http-response-end', id: frame.id })
+          finish()
+        })
+        res.on('error', () => {
+          if (finished) return
+          if (timer !== null) clearTimeout(timer)
+          this.sendOn(socket, { type: 'http-response-end', id: frame.id })
+          finish()
+        })
       })
-      res.on('end', () => {
-        if (finished) return
-        buffered += decoder.end()
-        flush()
-        this.sendOn(socket, { type: 'http-response-end', id: frame.id })
-        finish()
-      })
-      res.on('error', () => {
-        if (finished) return
-        if (timer !== null) clearTimeout(timer)
-        this.sendOn(socket, { type: 'http-response-end', id: frame.id })
-        finish()
-      })
-    })
+    } catch {
+      return answer(502)
+    }
     req.on('error', () => {
       if (finished) return
       this.sendOn(socket, { type: 'http-response-start', id: frame.id, status: 502, headers: {} })

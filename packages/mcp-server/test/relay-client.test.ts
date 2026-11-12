@@ -426,3 +426,26 @@ describe('consent', () => {
     expect(declined.state).toBe('declined')
   })
 })
+
+describe('red-team regressions', () => {
+  it('answers 400 to a header Node would refuse, instead of throwing and leaving the relay waiting', async () => {
+    let hits = 0
+    const url = await listener((_req, res) => {
+      hits++
+      res.end('{}')
+    })
+    const { relay } = client({ listener: () => url })
+    relay.start()
+    const socket = FakeSocket.last as FakeSocket
+    await online(socket)
+    socket.deliver(request('r1', { headers: { authorization: 'Bearer t\r\nx-injected: 1' } }))
+    socket.deliver(request('r2', { source: 'a\nb' }))
+    socket.deliver(request('r3', { headers: { authorization: 'Bearer  ' } }))
+    await vi.waitFor(() => expect(socket.frames().filter((f) => f['type'] === 'http-response-end')).toHaveLength(3))
+    for (const id of ['r1', 'r2', 'r3'])
+      expect(socket.frames().find((f) => f['id'] === id && f['type'] === 'http-response-start')).toMatchObject({
+        status: 400,
+      })
+    expect(hits).toBe(0)
+  })
+})

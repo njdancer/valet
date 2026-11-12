@@ -102,8 +102,13 @@ export class MacRelay extends DurableObject<Env> {
   }
 
   override async alarm(): Promise<void> {
+    // With no sockets left (the case forgetting is for), the Mac's id comes from storage.
     const first = this.ctx.getWebSockets()[0]
-    if (first !== undefined) await this.relayFor(first).alarm()
+    const macId =
+      first !== undefined
+        ? ((first.deserializeAttachment() as Attached | null)?.macId ?? '')
+        : ((await this.ctx.storage.get<RelayStoredState>('state'))?.macId ?? '')
+    if (macId !== '') await this.relay(macId).alarm()
   }
 
   /** After hibernation the object is new; the Mac's id travels in each socket's attachment. */

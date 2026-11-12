@@ -709,7 +709,7 @@ describe('pairing', () => {
     expect(world.stored?.devices).toEqual([])
   })
 
-  it('refuses replies to another Mac, an expired offer, an offline Mac, and floods', async () => {
+  it('refuses replies to another Mac, an expired offer, a reopened offer and an offline Mac, and ignores junk', async () => {
     const world = new World(MAC_ID)
     const mac = await macOnline(world, testKey())
     await send(world, mac, { type: 'pairing-open', offerId: OFFER, expiresAt: inSixMinutes(world) })
@@ -727,13 +727,23 @@ describe('pairing', () => {
     await send(world, late, reply('f'.repeat(32)))
     expect(late.closedWith?.code).toBe(CLOSE.authFailed)
 
-    for (let i = 0; i < RELAY_CAPS.pairingRepliesPerMinute; i++) {
+    // Strangers' junk replies don't use up the Mac's budget: the real phone still gets through.
+    const fresh = '1'.repeat(32)
+    await send(world, mac, { type: 'pairing-open', offerId: fresh, expiresAt: inSixMinutes(world) })
+    for (let i = 0; i < RELAY_CAPS.pairingRepliesPerMinute + 2; i++) {
       const s = world.open('phone')
       await send(world, s, reply('0'.repeat(32)))
+      expect(s.closedWith?.code).toBe(CLOSE.authFailed)
     }
-    const flood = world.open('phone')
-    await send(world, flood, reply())
-    expect(flood.closedWith?.code).toBe(CLOSE.tooMany)
+    const real = world.open('phone')
+    await send(world, real, reply(fresh))
+    expect(real.closedWith).toBeNull()
+    expect(mac.frames('pairing-reply')).toHaveLength(1)
+    // Opening the same offer again doesn't reopen it.
+    await send(world, mac, { type: 'pairing-open', offerId: fresh, expiresAt: inSixMinutes(world) })
+    const again = world.open('phone')
+    await send(world, again, reply(fresh))
+    expect(again.closedWith?.code).toBe(CLOSE.authFailed)
 
     mac.close(1001, 'gone')
     const nobody = world.open('phone')
@@ -827,9 +837,9 @@ describe('lock and recovery', () => {
       phonesUnregistered: true,
     })
 
-    for (let i = 2; i < RELAY_CAPS.recoveryPerHour; i++)
+    for (let i = 1; i < RELAY_CAPS.recoveryPerHour; i++)
       await world.core.recover('nope-nope-nope-nope', false)
-    expect(await world.core.recover(code, false)).toBe('too-many')
+    expect(await world.core.recover('nope-nope-nope-nope', false)).toBe('too-many')
   })
 
   it('forgets a Mac that hasn’t connected in 180 days, and not one that has', async () => {
@@ -855,5 +865,70 @@ describe('consent states', () => {
       await send(world, mac, { type: 'consent-view', id: 'id', state })
       expect(await pending).toEqual({ state })
     }
+  })
+})
+
+describe('red-team regressions', () => {
+  it('refuses a phone revoked while its hello was being verified', async () => {
+    for (const change of ['unregister', 'new key'] as const) {
+      const world = new World(MAC_ID)
+      const mac = await macOnline(world, testKey())
+      const phoneKey = testKey()
+      await send(world, mac, { type: 'device-register', deviceId: PHONE_ID, transportKey: phoneKey.publicKey })
+      const phone = world.open('phone')
+      const pending = hello(world, phone, phoneKey, { role: 'phone', id: PHONE_ID, transportKey: null })
+      await send(
+        world,
+        mac,
+        change === 'unregister'
+          ? { type: 'device-unregister', deviceId: PHONE_ID }
+          : { type: 'device-register', deviceId: PHONE_ID, transportKey: testKey().publicKey },
+      )
+      await pending
+      expect(phone.closedWith?.code).toBe(CLOSE.authFailed)
+      await send(world, phone, { type: 'relay-lock' })
+      expect(world.stored?.locked).toBe(false)
+    }
+  })
+
+  it('labels an untyped answer JSON, so a "Mac" can’t serve a page', async () => {
+    const world = new World(MAC_ID)
+    const mac = await macOnline(world, testKey())
+    const pending = world.core.forward({
+      method: 'GET',
+      path: '/.well-known/oauth-authorization-server',
+      query: '',
+      headers: {},
+      body: '',
+      source: '203.0.113.9',
+      stream: false,
+    })
+    const { id } = mac.last<{ id: string }>()
+    await send(world, mac, { type: 'http-response-start', id, status: 200, headers: {} })
+    const response = await pending
+    expect(response.headers.get('content-type')).toBe('application/json')
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff')
+  })
+
+  it('lets the right recovery code through however many wrong ones came first', async () => {
+    const world = new World(MAC_ID)
+    const mac = await macOnline(world, testKey())
+    const code = 'ABCD-EFGH-JKMN-PQRS'
+    await send(world, mac, { type: 'recovery-register', codeHash: (await recoveryCodeHash(code)) as string })
+    for (let i = 0; i < RELAY_CAPS.recoveryPerHour + 3; i++) await world.core.recover('x', false)
+    expect(await world.core.recover('x', false)).toBe('too-many')
+    expect(await world.core.recover(code, false)).toBe('done')
+    expect(world.stored?.locked).toBe(true)
+  })
+
+  it('holds a phone’s other frames to its budget', async () => {
+    const world = new World(MAC_ID)
+    const mac = await macOnline(world, testKey())
+    const phone = await phoneOnline(world, mac, testKey(), PHONE_ID)
+    for (let i = 0; i < 60; i++) await send(world, phone, { type: 'push-token', token: (i % 2 ? 'ab' : 'cd').repeat(32) })
+    expect(phone.closedWith).toBeNull()
+    await send(world, phone, { type: 'relay-lock' })
+    expect(phone.closedWith?.code).toBe(CLOSE.tooMany)
+    expect(world.stored?.locked).toBe(false)
   })
 })

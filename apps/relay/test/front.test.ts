@@ -257,11 +257,17 @@ describe('consent', () => {
       'https://claude.example/other?code=1',
       'http://claude.example/api/mcp/auth_callback',
     ]) {
-      h.answer = { state: 'declined', redirect: evil }
+      h.answer = { state: 'approved', redirect: evil }
       const refused = await frontDoor(req(`https://${HOST}${next}`), h.door)
       expect(refused.status).toBe(400)
       expect(refused.headers.get('location')).toBeNull()
     }
+    // A decline never redirects, even to the named URI: errors get the relay's own page.
+    h.answer = { state: 'declined', redirect: `${REDIRECT}?error=access_denied&state=s` }
+    const declined = await frontDoor(req(`https://${HOST}${next}`), h.door)
+    expect(declined.status).toBe(403)
+    expect(declined.headers.get('location')).toBeNull()
+    expect(await declined.text()).toContain('declined')
     h.answer = { state: 'declined' }
     expect((await frontDoor(req(`https://${HOST}${next}`), h.door)).status).toBe(400)
   })
@@ -413,5 +419,15 @@ describe('the recovery page', () => {
     expect((await frontDoor(post('code=x'), h.door)).status).toBe(429)
     expect(h.limits.signIn.keys.at(-1)).toBe(`recover:${MAC}:203.0.113.5`)
     expect(h.recoveries).toEqual([])
+  })
+})
+
+describe('red-team regressions', () => {
+  it('refuses a body on DELETE /mcp (fetch itself refuses one on GET)', async () => {
+    const h = await harness()
+    const smuggled = req(`https://${HOST}/mcp`, { method: 'DELETE', body: 'GET /admin HTTP/1.1' })
+    expect((await frontDoor(smuggled, h.door)).status).toBe(400)
+    expect(h.forwarded).toEqual([])
+    expect((await frontDoor(req(`https://${HOST}/mcp`, { method: 'DELETE' }), h.door)).status).toBe(200)
   })
 })

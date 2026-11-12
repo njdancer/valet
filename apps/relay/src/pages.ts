@@ -24,6 +24,7 @@ export type RelayPageProblem =
   | 'closed'
   | 'locked'
   | 'not-found'
+  | 'declined'
 
 const PROBLEM_TEXT: Readonly<Record<RelayPageProblem, string>> = {
   'mac-offline':
@@ -36,6 +37,7 @@ const PROBLEM_TEXT: Readonly<Record<RelayPageProblem, string>> = {
     'This Mac doesn’t accept new agents right now. Nothing was connected. Its owner can choose Add an agent in Valet, then you can start again.',
   locked: 'This Valet is locked down. Nothing was sent to it.',
   'not-found': 'Nothing here.',
+  declined: 'This sign-in was declined in Valet. Nothing was connected. You can close this page.',
 }
 
 const STYLE = `
