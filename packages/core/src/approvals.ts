@@ -176,6 +176,11 @@ const subjects = {
       adapterHash: hash,
       tool: name,
       callId: z.string().regex(/^[A-Za-z0-9_-]{1,80}$/),
+      /**
+       * Which `ctx.confirm` question in the call this is (D's review): two questions in one call
+       * must never share a request, or approving one could answer the other.
+       */
+      confirmationId: z.string().regex(/^cf_[A-Za-z0-9_-]{1,60}$/),
       /** The input as the runtime rendered it, one line per part. */
       preview: z.array(displayText(200)).max(20),
     })

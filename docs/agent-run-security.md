@@ -311,13 +311,28 @@ How workstreams E and F stay inside guarantee 3. **Designed**.
   configs, an MCP client's config), so `read-write` paths must be under `~/Documents`,
   `~/Downloads`, `~/Desktop`, `~/Pictures`, `~/Movies`, `~/Music` or another disk
   (`WRITABLE_ROOTS`).
-- **Apple Events are allow-listed** (`ALLOWED_APPS`): Calendar, Reminders, Notes, Contacts, Music,
-  Photos and Numbers, which hold the person's data and can't run code or send anything. Browsers,
-  Mail, Messages, terminals and editors are egress or code execution under another name.
+- **Apple Events are refused for now** (`ALLOWED_APPS` is empty, after I's review). The first
+  list (Calendar, Reminders, Notes, Contacts, Music, Photos, Numbers) rested on a false premise:
+  AppleScript's `run script` and scripting additions run in the caller and read any file and
+  the clipboard, and each of those apps can still send or run something (an alarm that mails or
+  opens a file; Notes, Numbers and Photos export anywhere). App data comes back later as a typed
+  set of operations per app, likely EventKit and Contacts through a Swift helper.
 - **Commands** are critical and Mac only whatever they name. Shells, interpreters and script
   runners are refused outright, as is any program in a folder the person can write to (`/Users`,
   `/Volumes`, `/tmp`, Homebrew), since anything running as them could swap it. The runtime checks
-  the program's real path again before each run.
+  the program's real path again before each run. A command is a grant as broad as its program
+  (`/bin/cp` reads `~/.ssh`), so it runs under Seatbelt: no network, nothing in `FORBIDDEN_PATHS`
+  or Valet's data, writes only in a fresh temporary folder, exec of that program only. It is
+  refused off macOS, and its card says it can read your files.
+- **A local service is never Valet's own.** The runtime refuses, when connecting, any port Valet
+  listens on (the MCP endpoint, the egress proxy, the helpers, a debugging port); they're chosen
+  at run time, so the schema can't hold the list.
+- **Inside the sandbox** (I's design, docs/sandbox.md): tool code runs in QuickJS-ng (wasm) in a
+  sandboxed hidden renderer, with `eval` and `Function` off; exceptions are main-process
+  capabilities under `ctx.local`, and an undeclared kind is refused (`not-granted`). Real `Date`
+  and `Math.random` stay, superseding registry-and-sandbox.md's injected clock: determinism was
+  never a security property. Unsandboxed adapters keep the utility process with only the hard
+  limits; their one diff line is the critical sandbox-mode line.
 - **Risk** (`exceptionRisk`): reading files is medium; writing, or a `**` pattern, is high; Apple
   Events and network are high; a local service is medium; a command is critical.
 - **The diff** lists each new exception (`sandboxWidening`). Any change to one counts as new.
@@ -496,6 +511,14 @@ Asked for by D, G and H while building, 2026-11-12. Accepted unless marked other
    the Mac refuses a mismatch (`wrong-code`, given the issued code through `consentCode`).
    Consents have their own bucket (`consentPending`, `consentPerSourcePerHour`) outside
    `pendingTotal`.
+8. **`confirmationId` on an irreversible call** (`cf_…`), so two `ctx.confirm` questions in one
+   call are two requests.
+9. **Loosening paths outside `ADMIN_ACTION_TIERS`** (approval-broker.md, "Every loosening
+   path"), agreed: lifting Valet's in-memory Pause and a site's breaker pause are clicks;
+   `grants.resync` keeps the same item, origins and fields, so it doesn't widen; Messages OTP,
+   remote on and remote hosts become `setting` requests. One condition: adding a local client is
+   unsigned but notifies on the Mac and phone like any Notify action, so a client that appears
+   without the person is seen.
 
 **From A (screens), signing off section 10 of the information architecture:**
 

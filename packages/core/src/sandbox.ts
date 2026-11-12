@@ -146,20 +146,15 @@ const FORBIDDEN_COMMAND =
   /\/(?:[a-z]*sh|env|osascript|osacompile|python|perl|ruby|node|bun|deno|php|tclsh|wish|expect|awk|sudo|su|open|launchctl|xargs|find|script|login|security|sqlite3|curl|wget|nc|ssh|scp|git|swift|swiftc|arch|nohup|time|caffeinate|sandbox-exec|xcrun|xcodebuild|make|vim?|nvim|emacs|lldb|gdb|java|jshell|automator|shortcuts|defaults|plutil|tccutil|codesign|spctl|dscl|crontab|at|batch|screen|tmux)[0-9.]*$/i
 
 /**
- * The apps an `app` exception may send Apple Events to: ones that hold the person's own data and
- * can neither run code nor send anything anywhere. Browsers, Mail, Messages, terminals, editors
- * and script runners are all egress or code execution under another name, so this is a list of
- * what is allowed, not of what isn't. Adding one is a contract change.
+ * The apps an `app` exception may send Apple Events to. Empty, so every `app` exception is refused
+ * at install (I's review): no app was safe to send raw Apple Events to. AppleScript's `run
+ * script` and scripting additions run inside the caller, reading any file and the clipboard, and
+ * each data app could still exfiltrate or run code (Calendar alarms that mail or open files;
+ * Notes, Numbers and Photos save and export anywhere). Access to an app's data comes back as a
+ * typed set of operations per app (likely EventKit and Contacts through a Swift helper), never
+ * as Apple Events. Adding to this list is a contract change and needs a security review.
  */
-export const ALLOWED_APPS = [
-  'com.apple.ical',
-  'com.apple.reminders',
-  'com.apple.notes',
-  'com.apple.addressbook',
-  'com.apple.music',
-  'com.apple.photos',
-  'com.apple.iwork.numbers',
-] as const
+export const ALLOWED_APPS: readonly string[] = []
 
 /** Folders a program may not be in, because anything running as the person could replace it. */
 const USER_WRITABLE_PROGRAM = /^\/(users|volumes|tmp|private|var|opt\/homebrew)\//
@@ -222,7 +217,12 @@ export const sandboxExceptionSchema = z.discriminatedUnion('kind', [
       purpose,
     })
     .strict(),
-  /** Talk to a service on this Mac, on 127.0.0.1 and this port only. */
+  /**
+   * Talk to a service on this Mac, on 127.0.0.1 and this port only. Never one of Valet's own: the
+   * runtime refuses, at connect time, any port Valet itself listens on (the MCP endpoint, the
+   * egress proxy, the helpers, any debugging port). Those ports are chosen at run time, so the
+   * check can't live in this schema (I's review).
+   */
   z
     .object({ kind: z.literal('local-service'), port: z.number().int().min(1024).max(65535), purpose })
     .strict(),
@@ -234,7 +234,12 @@ export const sandboxExceptionSchema = z.discriminatedUnion('kind', [
       purpose,
     })
     .strict(),
-  /** Run one program, by absolute path, with arguments the tool chooses. */
+  /**
+   * Run one program, by absolute path, with arguments the tool chooses. It is a grant as broad as
+   * the program: `/bin/cp` can read `~/.ssh`. So it runs under Seatbelt (no network; nothing in
+   * FORBIDDEN_PATHS or Valet's data; writes only in a fresh temporary folder; exec of this program
+   * only), is refused off macOS, and its card says it can read your files (I's review).
+   */
   z
     .object({
       kind: z.literal('command'),
