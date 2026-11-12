@@ -92,6 +92,10 @@ struct CardSheet: View {
             ForEach(card.checks, id: \.self) { Text(verbatim: $0).font(.subheadline) }
           }
         }
+        if let agentTests = card.agentTests {
+          Text(verbatim: agentTests).font(.subheadline).foregroundStyle(.secondary)
+            .accessibilityIdentifier("card.agentTests")
+        }
         if !card.followOns.isEmpty {
           VStack(alignment: .leading, spacing: 4) {
             Text("Asked for next").font(.headline)

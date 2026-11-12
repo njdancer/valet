@@ -53,6 +53,9 @@ final class CoreVectorTests: XCTestCase {
       XCTAssertEqual(Signing.digest(.approvalRequest, r.text), r.digest, r.kind)
       // The Swift serialiser writes exactly what canonicalJson wrote.
       XCTAssertEqual(JSON.canonical(value), r.text, r.kind)
+      if r.kind == "setting" {
+        XCTAssertEqual(request.display.agentTests, RequestDisplay.AgentTests(passed: 3, failed: 1))
+      }
     }
   }
 

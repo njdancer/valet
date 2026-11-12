@@ -30,6 +30,7 @@ import {
   pairingSealKey,
   parseRequestText,
   relayAuthPayload,
+  requestDisplaySchema,
   SIGNING_DOMAINS,
   type SignedText,
   serializeRequest,
@@ -164,6 +165,7 @@ function requests(macId: string): ApprovalRequest[] {
         domain: 'woolworths.com.au',
         followOns: ['Turn on "Search products" for Claude app'],
         checks: ['Valet read the store list from woolworths.com.au'],
+        agentTests: { passed: 3, failed: 1 },
         fromAdapter: { siteName: 'Woolworths', toolTitles: { search_products: 'Search products' } },
       },
     },
@@ -390,6 +392,13 @@ describe('iOS vectors', () => {
       expect(parsed?.digest).toBe(domainDigest(SIGNING_DOMAINS.approvalRequest, r.text))
       expect(canonicalJson(JSON.parse(r.text))).toBe(r.text)
     }
+  })
+
+  it('uses every display field core can send, so the phone is tested on each one', () => {
+    // A field core adds but the phone's strict parser doesn't know makes the whole card
+    // unreadable on the phone, so every key must appear in at least one vector.
+    const used = new Set(vectors.requests.flatMap((r) => Object.keys(JSON.parse(r.text).display ?? {})))
+    for (const key of Object.keys(requestDisplaySchema.shape)) expect(used, key).toContain(key)
   })
 
   it('has invalid requests that core refuses', () => {
