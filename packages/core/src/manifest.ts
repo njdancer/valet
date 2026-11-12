@@ -169,7 +169,11 @@ export const probeSchema = z.discriminatedUnion('kind', [
       kind: z.literal('fetch'),
       path: sitePath(300),
       expectStatus: z.number().int().min(100).max(599),
-      /** Statuses that mean "logged out" rather than "something is wrong". Anything else unexpected is an error. */
+      /**
+       * Statuses that mean "logged out" rather than "something is wrong". Anything else unexpected
+       * is an error. The probe follows redirects; listing a redirect status (302, say) means a
+       * redirect anywhere on the way, to a sign-in page usually, is logged out.
+       */
       loggedOutStatuses: z.array(z.number().int().min(100).max(599)).min(1).max(5).default([401]),
       /** Dot path into the JSON body, e.g. "IsLoggedIn" or "shopper.id". */
       jsonPath: z.string().min(1).max(200).optional(),

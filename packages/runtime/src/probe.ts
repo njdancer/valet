@@ -13,6 +13,7 @@ import {
   type AdapterManifest,
   hostAllowed,
   type RequestDeclaration,
+  redirectedLoggedOut,
   type SessionDriver,
   type ToolPage,
   ValetError,
@@ -76,6 +77,9 @@ export async function probeLoggedIn(options: ProbeOptions): Promise<boolean> {
     throw siteRefusal(cause)
   }
   site.breaker.recordSuccess(admitted)
+  // The probe follows redirects (each hop on the navigation origins), so a signed-out page that
+  // sends the visitor to sign in answers 200 from there: the manifest's redirect status says so.
+  if (redirectedLoggedOut(result, probe.loggedOutStatuses)) return false
   if (result.status !== probe.expectStatus) {
     // Only an answer that says "not logged in" may start a login. An outage, a rate limit or a
     // moved endpoint turning every tool call into a full login is how accounts get locked.

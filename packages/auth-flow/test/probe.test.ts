@@ -100,6 +100,31 @@ describe('a fetch probe', () => {
     })
   })
 
+  it('reads a redirect as logged out when the manifest lists a redirect status', async () => {
+    const w = world()
+    // Sent on to the sign-in page, which answers 200: logged out, since the manifest says a 303 is.
+    w.probe.respond = () => ({ status: 200, contentType: 'text/html', body: '<form>', redirected: true })
+    w.input.manifest = withProbe({
+      kind: 'fetch',
+      path: '/account',
+      expectStatus: 200,
+      loggedOutStatuses: [303],
+    })
+    expect(await runAuthFlow(w.input)).toEqual({
+      status: 'failed',
+      stage: 'probe',
+      errorClass: 'not-logged-in',
+    })
+    // Without a redirect status in the list, a redirect changes nothing: the page answered 200.
+    w.input.manifest = withProbe({
+      kind: 'fetch',
+      path: '/account',
+      expectStatus: 200,
+      loggedOutStatuses: [401],
+    })
+    expect(await runAuthFlow(w.input)).toMatchObject({ status: 'ok' })
+  })
+
   it('reads any other unexpected status as probe: unavailable, and never retries it', async () => {
     // A 403 that isn't an HTML page is an endpoint refusing, not bot protection.
     for (const status of [500, 503, 302, 404, 403]) {

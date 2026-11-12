@@ -106,6 +106,7 @@ export async function sessionProbe(
   const initiator = page?.origin ?? current.origin
   const redirects = new ProbeRedirects(request.navigation)
   const chain: ChainState = { crossed: false, tainted: false }
+  let redirected = false
   for (;;) {
     if (current.origin !== initiator) chain.crossed = true
     const response = await session.fetch({
@@ -116,7 +117,10 @@ export async function sessionProbe(
       maxBytes: request.maxBytes,
       signal: request.signal,
     })
-    if (response.kind === 'response') return probeResult(response)
+    if (response.kind === 'response') {
+      const result = probeResult(response)
+      return redirected ? { ...result, redirected: true } : result
+    }
     if (response.kind === 'failed') throw probeFailure(response.failure)
     if (!redirects.allow(response.location)) {
       throw new ValetError('probe', redirects.refusal ?? 'host-not-allowed')
@@ -127,6 +131,7 @@ export async function sessionProbe(
     // The fetch spec's tainted origin: a redirect to another origin from one that isn't the page's.
     if (next.origin !== current.origin && current.origin !== initiator) chain.tainted = true
     current = next
+    redirected = true
   }
 }
 

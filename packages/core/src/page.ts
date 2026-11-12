@@ -84,6 +84,19 @@ export interface FetchResult {
   readonly body: unknown
   /** Present when the runtime answered from the session's read cache and sent nothing. */
   readonly fromCache?: true
+  /** Present when the site redirected the request to get here (to a sign-in page, often). */
+  readonly redirected?: true
+}
+
+/** HTTP's redirect statuses. A probe that lists one in loggedOutStatuses means "a redirect". */
+export const REDIRECT_STATUSES: readonly number[] = [301, 302, 303, 307, 308]
+
+/**
+ * A fetch probe's answer was "logged out" because it was redirected (to a sign-in page, usually),
+ * and its manifest counts a redirect as logged out by listing a redirect status.
+ */
+export function redirectedLoggedOut(result: FetchResult, loggedOutStatuses: readonly number[]): boolean {
+  return result.redirected === true && loggedOutStatuses.some((s) => REDIRECT_STATUSES.includes(s))
 }
 
 /** The tool partition's page, as tool code sees it through the capability API. */

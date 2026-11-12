@@ -364,7 +364,12 @@ describe('fetchScript', () => {
         json: { items: [{ stockcode: 1, quantity: 2 }] },
       }),
     )
-    expect(result).toEqual({ status: 200, contentType: 'application/json', body: { TrolleyItemCount: 3 } })
+    expect(result).toEqual({
+      status: 200,
+      contentType: 'application/json',
+      body: { TrolleyItemCount: 3 },
+      redirected: false,
+    })
     expect(requests).toEqual([
       [
         'https://www.example.com/api/v3/ui/trolley/update',
@@ -376,6 +381,33 @@ describe('fetchScript', () => {
         },
       ],
     ])
+  })
+
+  it('says when the answer came after a redirect, as a page sent on to sign in gets', async () => {
+    const window = new FakeWindow({
+      fetch: async () => ({
+        status: 200,
+        redirected: true,
+        headers: { get: () => 'text/html' },
+        text: async () => '<form>',
+      }),
+    })
+    expect(
+      await window.run(
+        fetchScript({
+          url: 'https://www.example.com/account',
+          method: 'GET',
+          headers: {},
+          hasJson: false,
+          json: null,
+        }),
+      ),
+    ).toEqual({
+      status: 200,
+      contentType: 'text/html',
+      body: '<form>',
+      redirected: true,
+    })
   })
 
   it('keeps a content type the caller set, in any case', async () => {
@@ -419,7 +451,12 @@ describe('fetchScript', () => {
         json: null,
       }),
     )
-    expect(result).toEqual({ status: 403, contentType: 'text/html', body: '<h1>Access Denied</h1>' })
+    expect(result).toEqual({
+      status: 403,
+      contentType: 'text/html',
+      body: '<h1>Access Denied</h1>',
+      redirected: false,
+    })
     expect(seen).toEqual({ method: 'GET', headers: {}, credentials: 'same-origin' })
   })
 
