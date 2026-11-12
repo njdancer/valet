@@ -6,6 +6,7 @@ import type {
   BrowserSurface,
   CookieRecord,
   CookieSetDetails,
+  FixtureResponse,
   FrameHandle,
   KeyEvents,
   LoadResult,
@@ -326,6 +327,13 @@ export class FakeSession implements PartitionSession {
   /** A response's headers arriving, as webRequest's onHeadersReceived would report them. */
   respond(response: Partial<ObservedResponse> & { readonly url: string; readonly status: number }): void {
     this.responses?.({ method: 'GET', resourceType: 'mainFrame', contentType: 'text/html', ...response })
+  }
+
+  /** What serveOnly() was given: the fixtures this partition answers with. */
+  served: ((url: string) => FixtureResponse | null) | null = null
+
+  serveOnly(answer: (url: string) => FixtureResponse | null): void {
+    this.served = answer
   }
 
   addResponseHeader(name: string, value: string): void {

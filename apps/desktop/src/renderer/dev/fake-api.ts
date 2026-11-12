@@ -21,6 +21,7 @@ import type {
   ClientInfo,
   ClientSnippet,
   ConfirmationItem,
+  DraftPage,
   EndpointStatus,
   GrantInfo,
   GrantRequest,
@@ -74,6 +75,8 @@ export interface FakeControls {
   breakChainAt(seq: number): void
   /** Replaces one pending review, e.g. to test a review that only removes things. */
   setPendingReview(review: PendingReview): void
+  /** Adds an agent's draft (J3's Yahoo Finance draft waiting for the person, unless given one). */
+  addDraft(draft?: DraftPage): void
   /**
    * Makes the next call to `method` (e.g. "grants.make") reject, or the next `times` calls: pass
    * Infinity when several parts of the window load the same thing and every one should fail.
@@ -1000,6 +1003,29 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       return ageOf(a) - ageOf(b)
     })
 
+  // An agent's draft waiting for the person, as J3 step 5 shows it (mac-sites-drafts).
+  const drafts: DraftPage[] = []
+  const sampleDraft: DraftPage = {
+    draftId: 'dr-yahoofina2',
+    adapterId: 'yahoo-finance',
+    name: 'Yahoo Finance',
+    version: '1.0.0',
+    writtenBy: 'Claude Code',
+    status: 'waiting',
+    createdAt: new Date(now - 14 * 60_000).toISOString(),
+    updatedAt: new Date(now - 60_000).toISOString(),
+    check: { at: new Date(now - 2 * 60_000).toISOString(), ok: true, cases: 14, passed: 14, problem: null },
+    trials: [{ tool: 'get_quote', at: new Date(now - 3 * 60_000).toISOString(), ok: true, problem: null }],
+    submission: { ref: '7B3F', at: new Date(now - 60_000).toISOString(), note: null },
+    update: false,
+    files: [
+      { path: 'fixtures/quote-aapl.json', bytes: 2140, recordedByValet: true },
+      { path: 'manifest.json', bytes: 1890, recordedByValet: false },
+      { path: 'src/tools.ts', bytes: 5210, recordedByValet: false },
+      { path: 'test/quote.json', bytes: 940, recordedByValet: false },
+    ],
+  }
+
   // ---------- The API ----------
 
   const api: FakeApi = {
@@ -1129,6 +1155,19 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         emit({ type: 'approvals-changed' })
         emit({ type: 'adapters-changed' })
         emit({ type: 'attention-changed' })
+      },
+    },
+    drafts: {
+      async list() {
+        enter('drafts.list')
+        return clone(drafts.map(({ createdAt: _c, files: _f, ...overview }) => overview))
+      },
+      async get(draftId) {
+        enter('drafts.get', draftId)
+        return clone(drafts.find((d) => d.draftId === draftId) ?? null)
+      },
+      async openFolder(draftId) {
+        enter('drafts.openFolder', draftId)
       },
     },
     grants: {
@@ -1654,6 +1693,10 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       emit,
       breakChainAt(seq) {
         brokenAt = seq
+      },
+      addDraft(draft = sampleDraft) {
+        drafts.push(clone(draft))
+        emit({ type: 'drafts-changed' })
       },
       setPendingReview(review) {
         reviews = [...reviews.filter((r) => r.adapterId !== review.adapterId), review]

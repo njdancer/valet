@@ -516,6 +516,18 @@ export class ToolHost {
     })
   }
 
+  /**
+   * The rate budget and breaker for `host`: the ones its installed adapters use, so a draft's live
+   * trial (docs/authoring-tools.md#live-trials) waits its turn behind them and a site that refuses a
+   * trial holds them back too. A draft's own limits never widen them (they would slow the installed
+   * adapter); a host no adapter has gets the manifest defaults.
+   */
+  siteGuards(host: string): SiteGuards {
+    const key = host.toLowerCase()
+    for (const entry of this.adapters.values()) if (entry.host === key) return entry.site
+    return this.protection.forSite(key, TRIAL_LIMITS)
+  }
+
   call(request: ToolCallRequest): Promise<ToolCallResult> {
     return this.dispatch(request, false)
   }
@@ -1339,6 +1351,9 @@ const VIOLATION_WHOEVER_ASKED: ReadonlySet<BlockedRequest['reason']> = new Set<B
  * others stay in the request surface, still matched and still refused: taking them out would let a
  * wider declaration further down the list match the same request.
  */
+/** manifestSchema's default limits, for a trial on a host no installed adapter has. */
+const TRIAL_LIMITS = { minGapMs: 2000, cooldownSeconds: 600, maxCooldownSeconds: 7200 } as const
+
 function runPolicy(manifest: AdapterManifest, declaration: ToolDeclaration): ToolRunPolicy {
   return {
     egress: manifest.egress,

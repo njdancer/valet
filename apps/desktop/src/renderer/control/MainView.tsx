@@ -13,6 +13,7 @@ import { NeedsYouPage } from '../screens/needs-you/NeedsYouPage'
 import { LoginPage } from '../screens/secrets/LoginPage'
 import { SecretsPage } from '../screens/secrets/SecretsPage'
 import { SettingsPage } from '../screens/settings/SettingsPage'
+import { DraftPage } from '../screens/sites/DraftPage'
 import { GrantSheet } from '../screens/sites/GrantSheet'
 import { ReviewPage } from '../screens/sites/ReviewPage'
 import { SettingSheet } from '../screens/sites/SettingSheet'
@@ -28,6 +29,8 @@ export function MainView({ route }: { readonly route: Route }): ReactNode {
       return <SitesPage />
     case 'site':
       return <SitePage adapterId={route.adapterId} tab={route.tab} />
+    case 'draft':
+      return <DraftPage draftId={route.draftId} />
     case 'review':
       return <ReviewPage adapterId={route.adapterId} />
     case 'grant':

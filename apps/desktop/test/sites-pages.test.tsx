@@ -406,6 +406,47 @@ describe('a site’s Overview', () => {
   })
 })
 
+describe('drafts by agents', () => {
+  it('lists drafts above the sites only when there are any, with Valet’s checks and a Review button', async () => {
+    const api = createFakeApi({ now: NOW })
+    renderAt('#/sites', api)
+    await screen.findByRole('link', { name: 'Woolworths' })
+    expect(screen.queryByRole('heading', { name: 'Drafts by your agents' })).toBeNull()
+    api.fake.addDraft()
+    const drafts = within(await screen.findByRole('list', { name: 'Drafts by your agents' }))
+    expect(drafts.getByRole('link', { name: 'Yahoo Finance 1.0.0' }).getAttribute('href')).toBe(
+      '#/sites/drafts/dr-yahoofina2',
+    )
+    expect(drafts.getByText('Waiting for you')).toBeTruthy()
+    expect(drafts.getByText('checks pass · 14 agent tests pass · live trial ok')).toBeTruthy()
+    expect(drafts.getByRole('link', { name: 'Review' }).getAttribute('href')).toBe(
+      '#/sites/yahoo-finance/versions/review',
+    )
+  })
+
+  it('shows a draft’s checks, live trial and files, and opens its folder', async () => {
+    const api = createFakeApi({ now: NOW })
+    api.fake.addDraft()
+    renderAt('#/sites/drafts/dr-yahoofina2', api)
+    expect(await screen.findByRole('heading', { level: 1, name: 'Yahoo Finance 1.0.0' })).toBeTruthy()
+    expect(screen.getByText(/A new site by Claude Code/)).toBeTruthy()
+    expect(screen.getByText('14 of 14 tests pass, in Valet’s sandbox')).toBeTruthy()
+    expect(screen.getByText(/returned output that fits its schema/)).toBeTruthy()
+    expect(screen.getByText(/recorded by Valet from the site/)).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Review' }).getAttribute('href')).toBe(
+      '#/sites/yahoo-finance/versions/review',
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Open draft folder' }))
+    expect(called(api, 'drafts.openFolder')).toEqual([['dr-yahoofina2']])
+  })
+
+  it('says a draft is gone, with a way back', async () => {
+    renderAt('#/sites/drafts/dr-goneaaaaa2', createFakeApi({ now: NOW }))
+    expect(await screen.findByRole('heading', { level: 1, name: 'No such draft' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: 'Go to Sites' }).getAttribute('href')).toBe('#/sites')
+  })
+})
+
 describe('a site’s other tabs', () => {
   it('Tools: each tool’s title links to its calls, with its name, effect and the manifest’s words', async () => {
     renderAt('#/sites/woolworths/tools', createFakeApi({ now: NOW }))

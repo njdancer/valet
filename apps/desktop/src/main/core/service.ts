@@ -16,6 +16,7 @@ import {
   type AuditSink,
   approvalDecisionSchema,
   type BlockedRequest,
+  bundleHash,
   CredentialError,
   DEFAULT_SANDBOX,
   type Grant,
@@ -27,12 +28,14 @@ import {
   needsYouTitle,
   type PackageFiles,
   type ProviderKind,
+  parseManifest,
   plainName,
   type Requester,
   type SecretField,
   type SessionDriver,
   type SettingChoice,
   settingToolNames,
+  sha256Hex,
   type ToolDeclaration,
   ValetError,
 } from '@valet/core'
@@ -75,6 +78,8 @@ import type {
   ClientInfo,
   ClientSnippet,
   ConfirmationItem,
+  DraftOverview,
+  DraftPage,
   EndpointStatus,
   HashRoute,
   PendingReview,
@@ -142,8 +147,9 @@ import {
 } from './constants'
 import type { Credentials } from './credentials'
 import { DraftAuthoring, type RequestState, type SubmitOutcome, type SubmitRequest } from './drafts/authoring'
+import type { CaseBrowser } from './drafts/cases'
 import { draftDomains, type ScratchHandle, ScratchSessions } from './drafts/research'
-import { DraftStore } from './drafts/store'
+import { type DraftRecord, DraftStore } from './drafts/store'
 import { type EraseKind, type EraseReport, type EraseStep, eraseEverything } from './erase'
 import { ensurePrivateDir, JsonDocument } from './files'
 import { checkGrantRequest, grantInfo } from './grants'
@@ -174,6 +180,8 @@ export interface UiPort {
   writeClipboard(text: string): void
   /** Opens an https page in the person's default browser. */
   openExternal(url: string): void
+  /** Shows a folder of Valet's own (a draft's) in Finder. */
+  showFolder(path: string): void
   /** A native save dialog. Null when cancelled. */
   chooseSaveFile(defaultName: string): Promise<string | null>
   /** A native open dialog for the 1Password CLI. Null when cancelled. */
@@ -265,6 +273,20 @@ export interface ServiceDeps {
    * that don't drive a browser, and then the research tools say so.
    */
   readonly scratch?: (draftId: string, rules: ScratchRules) => Promise<ScratchHandle>
+  /**
+   * A session driver for a draft's live trial (docs/authoring-tools.md#live-trials): partitions in
+   * memory named by `label`, through the same public-only dial. None in tests that don't drive a
+   * browser, and then valet_live_trial says so.
+   */
+  readonly trialDriver?: (manifest: AdapterManifest, label: string) => Promise<SessionDriver>
+  /**
+   * The fixture browser for a case's pages (docs/authoring-tools.md#the-agents-cases): served from
+   * memory, scripts off, nothing sent. None in tests that don't drive a browser.
+   */
+  readonly fixtureBrowser?: (
+    pages: Readonly<Record<string, string>>,
+    egress: readonly string[],
+  ) => Promise<CaseBrowser>
   readonly ui: UiPort
   readonly emit: (event: AppEvent) => void
   /** The stdio bridge's command line for a client's config file, for snippets; null when it can't be launched. */
@@ -494,7 +516,7 @@ export class AppService {
     this.versions = new VersionStore(paths.versions)
     this.setup = new SetupStore(paths.setup, deps.now)
     this.snapshots = new SnapshotStore(paths.manifests)
-    this.drafts = new DraftStore(paths.drafts, date)
+    this.drafts = new DraftStore(paths.drafts, date, () => this.emit('drafts-changed'))
     this.installed = [...deps.adapters]
     this.packages =
       deps.packages === undefined
@@ -2069,24 +2091,111 @@ export class AppService {
       notify: (text) => this.notifier.draftActivity(text),
       now: this.deps.now,
       ...(this.deps.scratch === undefined ? {} : { research: this.scratchSessions(this.deps.scratch) }),
+      ...(this.deps.fixtureBrowser === undefined ? {} : { caseBrowser: this.deps.fixtureBrowser }),
+      ...(this.deps.trialDriver === undefined
+        ? {}
+        : {
+            trials: {
+              // A fresh one-shot sandbox window for the call, as for a case.
+              start: runtime.start,
+              driver: this.deps.trialDriver,
+              // The installed adapters' own budget and breaker for the host.
+              guards: (host: string) => this.runtime().siteGuards(host),
+              signedIn: () => this.signedInDomains(),
+            },
+          }),
     })
+  }
+
+  /**
+   * The registrable domains of installed adapters with a grant or a signed-in (or expired)
+   * session, by adapter id: scratch browsers and live trials don't reach them but for their own.
+   */
+  private async signedInDomains(): Promise<ReadonlyMap<string, readonly string[]>> {
+    const grants = await this.grants.list().catch(() => [] as readonly Grant[])
+    const out = new Map<string, readonly string[]>()
+    for (const adapter of this.installed) {
+      const id = adapter.definition.manifest.id
+      const session = this.sessions.get(id).state
+      if (grants.some((g) => g.adapterId === id) || session === 'logged-in' || session === 'expired')
+        out.set(id, draftDomains(adapter.definition.manifest))
+    }
+    return out
+  }
+
+  /** Sites' Drafts section: open drafts, and closed ones from the last week, newest first. */
+  private async draftOverviews(): Promise<DraftOverview[]> {
+    const weekAgo = this.deps.now() - 7 * 24 * 3600_000
+    const records = (await this.drafts.list().catch(() => [] as DraftRecord[]))
+      .filter((r) => r.status === 'editing' || r.status === 'waiting' || Date.parse(r.updatedAt) >= weekAgo)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    const out: DraftOverview[] = []
+    for (const record of records) {
+      const files = await this.drafts.files(record.id).catch(() => null)
+      if (files !== null) out.push(this.draftOverview(record, files))
+    }
+    return out
+  }
+
+  private async draftPage(draftId: string): Promise<DraftPage | null> {
+    const record = await this.drafts.record(draftId).catch(() => null)
+    if (record === null) return null
+    const files = await this.drafts.files(draftId).catch(() => null)
+    if (files === null) return null
+    return {
+      ...this.draftOverview(record, files),
+      createdAt: record.createdAt,
+      files: Object.entries(files)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([path, text]) => ({
+          path,
+          bytes: Buffer.byteLength(text, 'utf8'),
+          recordedByValet: record.recorded[path] === sha256Hex(text),
+        })),
+    }
+  }
+
+  /** What Valet ran and recorded, bound to the files as they are now; nothing the agent claims. */
+  private draftOverview(record: DraftRecord, files: PackageFiles): DraftOverview {
+    let name = record.adapterId
+    let version: string | null = null
+    try {
+      const manifest = parseManifest(JSON.parse(files['manifest.json'] ?? 'null'))
+      name = manifest.name
+      version = manifest.version
+    } catch {
+      // A manifest that doesn't parse yet: the draft is still named by its id.
+    }
+    const packageHash = bundleHash(files)
+    const latest = new Map<string, DraftRecord['trials'][number]>()
+    for (const t of record.trials) if (t.packageHash === packageHash) latest.set(t.tool, t)
+    const check = record.lastCheck
+    return {
+      draftId: record.id,
+      adapterId: record.adapterId,
+      name,
+      version,
+      writtenBy: record.createdByName,
+      status: record.status,
+      updatedAt: record.updatedAt,
+      check:
+        check === null || check.packageHash !== packageHash
+          ? null
+          : { at: check.at, ok: check.ok, cases: check.cases, passed: check.passed, problem: check.problem },
+      trials: [...latest.values()].map((t) => ({ tool: t.tool, at: t.at, ok: t.ok, problem: t.problem })),
+      submission:
+        record.submission === null
+          ? null
+          : { ref: record.submission.ref, at: record.submission.at, note: record.submission.note },
+      update: record.basedOn !== null,
+    }
   }
 
   /** The scratch browsers' rules from what is installed and signed in now. */
   private scratchSessions(open: NonNullable<ServiceDeps['scratch']>): ScratchSessions {
     return new ScratchSessions({
       open,
-      signedIn: async () => {
-        const grants = await this.grants.list().catch(() => [] as readonly Grant[])
-        const out = new Map<string, readonly string[]>()
-        for (const adapter of this.installed) {
-          const id = adapter.definition.manifest.id
-          const session = this.sessions.get(id).state
-          if (grants.some((g) => g.adapterId === id) || session === 'logged-in' || session === 'expired')
-            out.set(id, draftDomains(adapter.definition.manifest))
-        }
-        return out
-      },
+      signedIn: () => this.signedInDomains(),
       secretIn: (text) => this.knownSecretIn([text]),
       blocked: (host) => {
         this.deps.diagnostics?.({ type: 'scratch-blocked' })
@@ -2173,6 +2282,11 @@ export class AppService {
         },
         ...(/^[a-z0-9.-]{1,253}$/.test(request.domain) ? { domain: request.domain } : {}),
         checks: request.checks.slice(0, 20).map((line) => line.slice(0, 200)),
+        // The agent's own cases, in B's field apart from Valet's checks, so they can't pass for them.
+        agentTests: {
+          passed: Math.min(request.agentTests.passed, 10_000),
+          failed: Math.min(request.agentTests.failed, 10_000),
+        },
       },
     })
     if (!asked.ok) {
@@ -2841,6 +2955,15 @@ export class AppService {
           } catch (error) {
             return { ok: false, reason: installReason(error) }
           }
+        },
+      },
+      drafts: {
+        list: () => this.draftOverviews(),
+        get: (draftId) => this.draftPage(draftId),
+        openFolder: async (draftId) => {
+          const record = await this.drafts.record(draftId).catch(() => null)
+          if (record === null) throw new ValetError('config', 'not-found')
+          deps.ui.showFolder(this.drafts.filesFolder(draftId))
         },
       },
       approvals: {

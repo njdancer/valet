@@ -36,6 +36,19 @@ const checkSummarySchema = z
   })
   .strict()
 
+/** One live trial (docs/authoring-tools.md#live-trials): what it ran against and how it ended. */
+const trialSummarySchema = z
+  .object({
+    tool: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
+    packageHash: hash,
+    at: z.iso.datetime(),
+    /** Returned output that matches the tool's output schema. */
+    ok: z.boolean(),
+    /** How it ended otherwise, in Valet's words. */
+    problem: z.string().max(200).nullable(),
+  })
+  .strict()
+
 const submissionSchema = z
   .object({
     requestId: z.string().regex(/^[A-Za-z0-9_-]{22}$/),
@@ -71,6 +84,8 @@ export const draftRecordSchema = z
     lastCheck: checkSummarySchema.nullable(),
     /** Fixtures Valet recorded (PR 2): path → sha-256 of what it wrote. */
     recorded: z.record(z.string().max(200), hash).default({}),
+    /** The latest live trials, newest last (PR 2b). */
+    trials: z.array(trialSummarySchema).max(20).default([]),
     submission: submissionSchema.nullable(),
   })
   .strict()
@@ -78,6 +93,7 @@ export const draftRecordSchema = z
 export type DraftRecord = z.output<typeof draftRecordSchema>
 export type CheckSummary = z.output<typeof checkSummarySchema>
 export type Submission = z.output<typeof submissionSchema>
+export type TrialSummary = z.output<typeof trialSummarySchema>
 
 /** Why a draft operation was refused, in words for the agent. Never file contents. */
 export class DraftError extends Error {
@@ -100,6 +116,8 @@ export class DraftStore {
   constructor(
     private readonly root: string,
     private readonly now: () => Date = () => new Date(),
+    /** Called after each change to a draft (the Mac's Drafts section refreshes on it). Must not throw. */
+    private readonly changed: () => void = () => {},
   ) {}
 
   folder(id: string): string {
@@ -160,6 +178,7 @@ export class DraftStore {
       status: 'editing',
       lastCheck: null,
       recorded: {},
+      trials: [],
       submission: null,
     })
     await ensurePrivateDir(this.root)
@@ -167,6 +186,7 @@ export class DraftStore {
     await mkdir(this.filesFolder(id), { mode: 0o700 })
     for (const [path, text] of Object.entries(files)) await this.writeUnder(id, path, text)
     await writeJsonFile(join(this.folder(id), 'draft.json'), record)
+    this.changed()
     return record
   }
 
@@ -278,7 +298,13 @@ export class DraftStore {
 
   private queued<T>(id: string, run: () => Promise<T>): Promise<T> {
     const before = this.queues.get(id) ?? Promise.resolve()
-    const next = before.catch(() => undefined).then(run)
+    const next = before
+      .catch(() => undefined)
+      .then(run)
+      .then((value) => {
+        this.changed()
+        return value
+      })
     const settled = next.catch(() => undefined)
     this.queues.set(id, settled)
     void settled.then(() => {

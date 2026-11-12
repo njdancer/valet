@@ -6,8 +6,9 @@
 // fixtures. So a case can't pass by serving a response the real guard would cancel, and the output
 // is held to the tool's own output schema before the expectation is compared.
 //
-// Electron-free. Cases whose tool code needs a DOM (extract, evaluate, click, fill) fail here with a
-// clear reason until the fixture browser exists (PR 2).
+// Electron-free. A case with `pages` runs its DOM calls (goto, extract, evaluate, click, fill) in the
+// fixture browser the app gives it: the case's pages served from memory, their scripts off, nothing
+// sent. A case without pages that calls the DOM fails with a reason saying to add them.
 
 import {
   type AdapterManifest,
@@ -125,6 +126,20 @@ export interface CaseRunOptions {
   /** No case starts after this time (ms, by `now`); the rest fail as not reached. */
   readonly deadline?: number
   readonly now?: () => number
+  /**
+   * Opens the fixture browser for a case's pages (absolute URL → HTML). Without it, a case with
+   * pages fails, saying this build can't run them.
+   */
+  readonly browser?: (
+    pages: Readonly<Record<string, string>>,
+    egress: readonly string[],
+  ) => Promise<CaseBrowser>
+}
+
+/** A case's own fixture browser: its tool page, and closing it. */
+export interface CaseBrowser {
+  readonly page: ToolPage
+  close(): void
 }
 
 /** Reads every case file in the draft. A file that doesn't parse is a problem, not a crash. */
@@ -224,7 +239,25 @@ export async function runCase(
     controller.signal,
     () => new SecretRedactionSet(),
   )
-  const page = new FixturePage(draft.manifest, c, files, used)
+  const fixtures = new FixturePage(draft.manifest, c, files, used)
+  const urls = Object.keys(c.pages)
+  let browser: CaseBrowser | null = null
+  if (urls.length > 0) {
+    if (options.browser === undefined) return fail('This build of Valet can’t run cases with pages.')
+    const html: Record<string, string> = {}
+    for (const url of urls) {
+      const path = c.pages[url] ?? ''
+      if (!Object.hasOwn(files, path)) return fail(`No fixture ${clip(path)} in the draft.`)
+      used.add(path)
+      html[url] = files[path] ?? ''
+    }
+    try {
+      browser = await options.browser(html, draft.manifest.egress)
+    } catch {
+      return fail('Valet couldn’t open the fixture browser for this case’s pages.')
+    }
+  }
+  const page: ToolPage = browser === null ? fixtures : withPages(fixtures, browser.page, c)
   const guarded = new GuardedToolPage({
     adapterId: draft.manifest.id,
     manifest: draft.manifest,
@@ -238,7 +271,7 @@ export async function runCase(
   })
   const domUse = { name: null as string | null }
   const ctx: ToolContext = {
-    page: watchDom(guarded, domUse),
+    page: browser === null ? watchDom(guarded, domUse) : guarded,
     session: { ensure: async (): Promise<EnsureResult> => sessionResult(c.session) },
     confirm: async () => false,
     signal: controller.signal,
@@ -264,11 +297,14 @@ export async function runCase(
   } finally {
     clearTimeout(timer)
     controller.abort()
+    browser?.close()
   }
   if (outcome === 'timeout') return fail(`Ran over ${Math.round(timeoutMs / 1000)} seconds.`)
-  if (page.problem !== null) return fail(page.problem)
+  if (fixtures.problem !== null) return fail(fixtures.problem)
   if (domUse.name !== null)
-    return fail(`The tool calls page.${domUse.name}, which needs a page; Valet can't run that in a case yet.`)
+    return fail(
+      `The tool calls page.${domUse.name}, which needs a page: give the case one under "pages" (its URL and a fixture).`,
+    )
 
   const expected = c.expect
   if (outcome.ok) {
@@ -345,12 +381,12 @@ function describeExpect(expected: DraftCase['expect']): string {
   return 'output'
 }
 
-type Described =
+export type Described =
   | { kind: 'error'; stage: string; errorClass: string; text: string }
   | { kind: 'needs-user'; reason: string; text: string }
   | { kind: 'other'; text: string }
 
-function describeError(error: unknown): Described {
+export function describeError(error: unknown): Described {
   if (error instanceof ValetError) {
     return {
       kind: 'error',
@@ -420,6 +456,25 @@ function watchDom(page: ToolPage, use: { name: string | null }): ToolPage {
 }
 
 /**
+ * The fixture browser for the DOM, the case's own responses for fetch. goto() is held to the case's
+ * pages first, so a page the case lacks fails the case in words rather than loading a 404.
+ */
+function withPages(fixtures: FixturePage, browser: ToolPage, c: DraftCase): ToolPage {
+  return {
+    goto: async (url) => {
+      if (c.pages[url] === undefined) await fixtures.goto(url)
+      await browser.goto(url)
+    },
+    currentUrl: () => browser.currentUrl(),
+    fetch: (url, init) => fixtures.fetch(url, init),
+    click: (selector) => browser.click(selector),
+    fill: (selector, text) => browser.fill(selector, text),
+    extract: (selector, options) => browser.extract(selector, options),
+    evaluate: (source, args) => browser.evaluate(source, args),
+  }
+}
+
+/**
  * The inner page: what the guarded page asks once a request has passed every guard. It answers
  * only from the case. Its own checks are about the case, not the site: a request the case didn't
  * list fails the case with a reason the agent can act on.
@@ -445,7 +500,8 @@ class FixturePage implements ToolPage {
 
   async goto(url: string): Promise<void> {
     const page = this.c.pages[url]
-    if (page === undefined) throw this.miss(`No page for ${clip(url)} in the case.`)
+    if (page === undefined)
+      throw this.miss(`No page for ${clip(url)} in the case: add it under "pages" with a fixture.`)
     this.read(page)
     this.url = url
   }

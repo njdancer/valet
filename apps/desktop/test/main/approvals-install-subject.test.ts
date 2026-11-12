@@ -34,6 +34,24 @@ describe('permissionChanges', () => {
     expect(permissionChanges(before, before, false)).toEqual([])
   })
 
+  it('shows a removed stop step and a changed probe as high, where the login now runs further on its own', () => {
+    const looser = parseManifest({
+      ...SHOP,
+      auth: { ...before.auth, steps: before.auth.steps.filter((s) => s.op !== 'assertLoggedIn') },
+      session: { ...SHOP.session, probe: { kind: 'cookie', name: 'other' } },
+    })
+    const lines = permissionChanges(before, looser, false)
+    expect(lines).toContainEqual(
+      expect.objectContaining({ area: 'auth-steps', change: 'removed', risk: 'high' }),
+    )
+    expect(lines).toContainEqual({
+      area: 'probe',
+      change: 'widened',
+      items: ['cookie sid → cookie other'],
+      risk: 'high',
+    })
+  })
+
   it('builds a subject with the Mac’s facts, never the adapter’s claims', () => {
     const subject = installSubject({
       manifest: after,

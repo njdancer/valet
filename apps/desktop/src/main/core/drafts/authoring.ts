@@ -28,10 +28,11 @@ import {
   type NetworkBody,
   type NetworkLog,
   type SubmitReport,
+  type TrialReport,
 } from '@valet/mcp-server'
 import type { ToolProcessFactory } from '@valet/runtime'
 import { NO_LOCAL_ACCESS } from '@valet/sandbox'
-import { type CaseRun, runCases } from './cases'
+import { type CaseBrowser, type CaseRun, runCases } from './cases'
 import {
   caseFindings,
   checkNames,
@@ -42,15 +43,18 @@ import {
   siteDomain,
 } from './checks'
 import {
+  draftDomains,
   fixtureFits,
+  type ResearchDeps,
   ResearchRefusal,
   type ScratchHandle,
   type ScratchSessions,
   scrubBody,
   scrubUrl,
 } from './research'
-import { DRAFT_LIMITS, DraftError, type DraftRecord, type DraftStore } from './store'
+import { DRAFT_LIMITS, DraftError, type DraftRecord, type DraftStore, type TrialSummary } from './store'
 import { blankDraft } from './template'
+import { runTrial, TRIAL_LIMITS, type TrialDeps, type TrialResult } from './trial'
 
 /** A whole check's time, so a submit answers inside an MCP client's usual timeout. */
 export const CHECK_BUDGET_MS = 45_000
@@ -126,6 +130,13 @@ export interface AuthoringDeps {
   readonly checkBudgetMs?: number
   /** The scratch browsers (PR 2); without them the research tools say this build has none. */
   readonly research?: ScratchSessions
+  /** The fixture browser for cases with pages; without it those cases fail, saying so. */
+  readonly caseBrowser?: (
+    pages: Readonly<Record<string, string>>,
+    egress: readonly string[],
+  ) => Promise<CaseBrowser>
+  /** Live trials (PR 2b); without them valet_live_trial says this build has none. */
+  readonly trials?: TrialDeps & { readonly signedIn: ResearchDeps['signedIn'] }
 }
 
 interface CheckOutcome {
@@ -144,6 +155,10 @@ export class DraftAuthoring implements Authoring {
   private readonly submitting = new Set<string>()
   /** Per draft and path, the hash of the last write through these tools (edited outside Valet). */
   private readonly written = new Map<string, string>()
+  /** Per draft, the times of its trials this hour. */
+  private readonly trialTimes = new Map<string, number[]>()
+  private readonly trialing = new Set<string>()
+  private trialCount = 0
 
   constructor(private readonly deps: AuthoringDeps) {}
 
@@ -389,6 +404,7 @@ export class DraftAuthoring implements Authoring {
       start: this.deps.caseProcess,
       local: NO_LOCAL_ACCESS,
       ...(tool === undefined ? {} : { tool }),
+      ...(this.deps.caseBrowser === undefined ? {} : { browser: this.deps.caseBrowser }),
       deadline: started + budget,
       now: this.deps.now,
       timeoutMs: Math.min(5_000, Math.max(1, left)),
@@ -451,7 +467,7 @@ export class DraftAuthoring implements Authoring {
       const provenance = fixtureProvenance(outcome.run, outcome.files, current.recorded)
       const passed = outcome.run.results.filter((r) => r.passed).length
       const failed = outcome.run.results.length - passed
-      const checks = checkLines(outcome.report, provenance)
+      const checks = checkLines(outcome.report, provenance, current.trials)
       const domain = siteDomain(new URL(loaded.manifest.home).hostname)
       const asked = await this.deps.submit({
         draftId,
@@ -717,6 +733,108 @@ export class DraftAuthoring implements Authoring {
     return { path, bytes: Buffer.byteLength(text, 'utf8'), recordedByValet: true }
   }
 
+  // ---------- Live trials (PR 2b) ----------
+
+  async liveTrial(
+    viewer: ClientIdentity,
+    draftId: string,
+    tool: string,
+    input: unknown,
+  ): Promise<TrialReport> {
+    const record = await this.own(viewer, draftId)
+    const trials = this.deps.trials
+    if (trials === undefined) throw new AuthoringRefusal('This build of Valet has no live trials.')
+    if (this.trialing.has(draftId))
+      throw new AuthoringRefusal('One trial at a time: this draft’s last one is still running.')
+    const files = await this.wrap(() => this.deps.store.files(draftId))
+    let loaded: LoadedPackage
+    try {
+      loaded = await this.deps.prepare(files)
+    } catch (error) {
+      throw new AuthoringRefusal(`Not tried: the draft doesn’t build. ${sentenceOf(error)}`)
+    }
+    const manifest = loaded.manifest
+    if (manifest.id !== record.adapterId)
+      throw new AuthoringRefusal(`Not tried: the manifest’s id must be ${record.adapterId}, the draft’s.`)
+    const declared = manifest.tools.find((t) => t.name === tool)
+    const schemas = loaded.definition.tools[tool]
+    if (declared === undefined || schemas === undefined)
+      throw new AuthoringRefusal(`Not tried: no tool ${tool} in the manifest.`)
+    if (declared.sideEffect !== 'read')
+      throw new AuthoringRefusal(
+        `Not tried: ${tool} is a ${declared.sideEffect} tool. Only read tools can be tried live; test the others with cases.`,
+      )
+    const parsed = schemas.input.safeParse(input)
+    if (!parsed.success)
+      throw new AuthoringRefusal(`Not tried: the input doesn’t match ${tool}’s input schema.`)
+    // Never a site the person is signed in to, except this draft's own adapter's, as for the
+    // scratch browser.
+    const domains = draftDomains(manifest)
+    const signedIn = await trials.signedIn().catch(() => null)
+    if (signedIn === null)
+      throw new AuthoringRefusal('Not tried: Valet can’t tell which sites are signed in.')
+    for (const [id, list] of signedIn) {
+      if (id === record.adapterId) continue
+      const shared = list.find((d) => domains.includes(d))
+      if (shared !== undefined)
+        throw new AuthoringRefusal(`Not tried: the person is signed in to ${shared} with another adapter.`)
+    }
+    if (!take(this.trialTimes, draftId, TRIAL_LIMITS.perDraftPerHour, this.deps.now()))
+      throw new AuthoringRefusal(
+        `Not tried: ${TRIAL_LIMITS.perDraftPerHour} trials an hour per draft is the most. Try again later.`,
+      )
+    const host = new URL(manifest.home).hostname
+    const packageHash = bundleHash(files)
+    this.trialing.add(draftId)
+    let result: TrialResult
+    try {
+      result = await runTrial(
+        { manifest, script: loaded.script, tools: loaded.definition.tools },
+        tool,
+        parsed.data,
+        `${draftId.toLowerCase()}-${++this.trialCount}`,
+        trials,
+        this.deps.now,
+      )
+    } catch {
+      throw new AuthoringRefusal('Not tried: Valet couldn’t open a browser for the trial.')
+    } finally {
+      this.trialing.delete(draftId)
+    }
+    const problem = trialProblem(result)
+    const summary: TrialSummary = {
+      tool,
+      packageHash,
+      at: new Date(this.deps.now()).toISOString(),
+      ok: problem === null,
+      problem: problem === null ? null : clip(problem, 200),
+    }
+    await this.deps.store
+      .update(draftId, (r) => ({ ...r, trials: [...r.trials, summary].slice(-20) }))
+      .catch(() => undefined)
+    await this.deps.audit({
+      type: 'draft-trial',
+      draftId,
+      adapterId: record.adapterId,
+      clientId: clientKey(viewer),
+      tool,
+      host,
+      packageHash,
+      outcome: result.outcome.kind,
+    })
+    // The tool's name, never its agent-written title.
+    this.deps.notify(`${this.deps.clientName(viewer)} tried ${tool} on ${siteDomain(host)}.`)
+    return {
+      tool,
+      packageHash,
+      ok: problem === null,
+      output: result.outcome.kind === 'output' ? { fromSite: result.outcome.output } : null,
+      problem,
+      blocked: result.blocked.map((b) => ({ ...b })),
+      ms: Math.max(0, Math.round(result.ms)),
+    }
+  }
+
   /** On lockdown or pause: every scratch browser closes. */
   closeBrowsers(): void {
     this.deps.research?.closeAll()
@@ -824,6 +942,7 @@ function lines(changes: readonly PermissionChange[]): CheckReport['changes'] {
 export function checkLines(
   report: CheckReport,
   provenance: { readonly recordedByValet: number; readonly writtenByAgent: number },
+  trials: readonly TrialSummary[] = [],
 ): string[] {
   const out = [
     'Package and manifest: pass',
@@ -836,8 +955,48 @@ export function checkLines(
   out.push(
     `Fixtures: ${provenance.recordedByValet} recorded by Valet, ${provenance.writtenByAgent} written by the agent`,
   )
-  out.push('Live trial: not run')
+  out.push(...trialLines(trials, report.packageHash))
   return out.slice(0, 20)
+}
+
+/** The card's trial lines: only trials of exactly the files submitted count. */
+function trialLines(trials: readonly TrialSummary[], packageHash: string | null): string[] {
+  const these = trials.filter((t) => t.packageHash === packageHash)
+  if (these.length === 0) return ['Live trial: not run on this version']
+  const byTool = new Map<string, TrialSummary>()
+  for (const t of these) byTool.set(t.tool, t)
+  return [...byTool.values()]
+    .slice(0, 4)
+    .map((t) =>
+      t.ok
+        ? `Live trial of ${t.tool}, signed out: returned output that fits its schema`
+        : `Live trial of ${t.tool}, signed out: ${clip(t.problem ?? 'failed', 120)}`,
+    )
+}
+
+/** How a trial ended, for the agent and the card; null when it returned good output. */
+function trialProblem(result: TrialResult): string | null {
+  const o = result.outcome
+  switch (o.kind) {
+    case 'output':
+      return null
+    case 'invalid-output':
+      return 'The output doesn’t match the tool’s output schema.'
+    case 'timeout':
+      return `Ran over ${Math.round(TRIAL_LIMITS.timeoutMs / 1000)} seconds.`
+    case 'needs-user':
+      return o.reason === 'login-required'
+        ? 'The tool asked for a session; trials are signed out.'
+        : `The tool stopped for the person: ${o.reason}.`
+    case 'site-resting':
+      return `Nothing sent: the site is resting for about ${Math.max(1, Math.ceil(o.retryAfterMs / 60_000))} minutes.`
+    case 'error':
+      if (o.stage === 'tool-input' && o.errorClass === 'invalid')
+        return 'The input doesn’t match the tool’s input schema.'
+      if (o.stage === 'tool-output' && o.errorClass === 'invalid')
+        return 'The output doesn’t match the tool’s output schema.'
+      return `Failed with ${o.stage}/${o.errorClass}.`
+  }
 }
 
 function sentenceOf(error: unknown): string {

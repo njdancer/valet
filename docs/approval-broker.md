@@ -362,9 +362,6 @@ are the next PRs of this workstream.
 
 Known gaps, next in this workstream:
 
-- Install cards have no lines for changes to an adapter's login steps or session probe, though
-  `addsPermissions` counts both as widening (a removed `needsUser` step, say). Asked of B, since
-  it needs new permission areas.
 - Settings, remote access and remote clients are gated where they change, not where they are read.
   An agent that can write `settings.json`, `remote.json` or the remote client file directly isn't
   stopped yet. Grants and installs are already checked against evidence when used. The plan is to

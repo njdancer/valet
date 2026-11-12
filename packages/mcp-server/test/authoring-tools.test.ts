@@ -107,6 +107,15 @@ function authoring(overrides: Partial<Authoring> = {}): Authoring & { writes: st
       truncated: false,
     }),
     captureFixture: async (_v, _d, _s, path) => ({ path, bytes: 1, recordedByValet: true }),
+    liveTrial: async (_v, _d, tool) => ({
+      tool,
+      packageHash: 'a'.repeat(64),
+      ok: true,
+      output: { fromSite: { price: 1 } },
+      problem: null,
+      blocked: [],
+      ms: 5,
+    }),
     ...overrides,
   }
 }
@@ -147,6 +156,25 @@ describe('authoring tools', () => {
     expect(a.writes).toEqual([])
     const read = await runAuthoringTool(tool('valet_get_draft'), r, a, { draftId: DRAFT }, LOCAL)
     expect(read.isError).toBeUndefined()
+  })
+
+  it('tries a read tool live only with Ask for changes, and hands the output back as the site’s', async () => {
+    const off = reader({
+      access: () => ({ seeValet: true, allActivity: false, askForChanges: false, name: 'Claude Desktop' }),
+    })
+    const args = { draftId: DRAFT, tool: 'get_quote', input: { symbol: 'AAPL' } }
+    expect((await runAuthoringTool(tool('valet_live_trial'), off, authoring(), args, LOCAL)).isError).toBe(
+      true,
+    )
+    const on = await runAuthoringTool(tool('valet_live_trial'), reader(), authoring(), args, LOCAL)
+    expect(JSON.parse(text(on))).toMatchObject({
+      tool: 'get_quote',
+      ok: true,
+      output: { fromSite: { price: 1 } },
+    })
+    expect(tool('valet_live_trial').input.parse({ draftId: DRAFT, tool: 'get_quote' })).toMatchObject({
+      input: {},
+    })
   })
 
   it('treats a missing Ask for changes as off', async () => {

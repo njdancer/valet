@@ -16,6 +16,7 @@ import type {
   BrowserSurface,
   CookieRecord,
   CookieSetDetails,
+  FixtureResponse,
   FrameHandle,
   KeyEvents,
   LoadResult,
@@ -124,6 +125,20 @@ class ElectronPartition implements PartitionSession {
     // the proxy too, and is refused there like any other undeclared host.
     await this.ses.setProxy({ mode: 'fixed_servers', proxyRules: proxy.url, proxyBypassRules: '<-loopback>' })
     await this.ses.closeAllConnections()
+  }
+
+  serveOnly(answer: (url: string) => FixtureResponse | null): void {
+    this.ses.protocol.handle('https', (request) => {
+      const found = answer(request.url)
+      return new Response(found?.body ?? 'Not in this case.', {
+        status: found?.status ?? 404,
+        headers: {
+          'content-type': found?.contentType ?? 'text/plain',
+          // The fixture's own scripts never run: tool code reads the page as the site sent it.
+          'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; img-src data:",
+        },
+      })
+    })
   }
 
   addResponseHeader(name: string, value: string): void {

@@ -27,6 +27,12 @@ describe('parseRoute', () => {
       page: 'review',
       adapterId: 'woolworths',
     })
+    expect(parseRoute('#/sites/drafts/dr-yahoofina2')).toEqual({ page: 'draft', draftId: 'dr-yahoofina2' })
+    expect(href.draft('dr-yahoofina2')).toBe('#/sites/drafts/dr-yahoofina2')
+    expect(canonicalHref(parseRoute('#/sites/drafts/dr-yahoofina2'))).toBe('#/sites/drafts/dr-yahoofina2')
+    // A site called "drafts" keeps its tabs; only a draft id is a draft.
+    expect(parseRoute('#/sites/drafts/tools')).toEqual({ page: 'site', adapterId: 'drafts', tab: 'tools' })
+    expect(parseRoute('#/sites/drafts/dr-NOPE')).toEqual(parseRoute('#/sites/a/b'))
     expect(parseRoute('#/sites/woolworths/login/login')).toEqual({
       page: 'grant',
       adapterId: 'woolworths',

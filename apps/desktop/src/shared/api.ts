@@ -376,6 +376,50 @@ export interface PendingReview {
 
 export type PackageOrigin = 'builtin' | 'folder' | 'draft'
 
+/**
+ * A draft adapter an agent is writing over MCP (docs/authoring-tools.md), as Sites lists it
+ * (wireframe `mac-sites-drafts`). Only what Valet ran or recorded: nothing the agent claims.
+ */
+export interface DraftOverview {
+  readonly draftId: string
+  readonly adapterId: string
+  /** From the draft's manifest as it is now; the adapter id when it doesn't parse. */
+  readonly name: string
+  readonly version: string | null
+  readonly writtenBy: string
+  readonly status: 'editing' | 'waiting' | 'approved' | 'declined' | 'expired' | 'withdrawn'
+  readonly updatedAt: IsoTime
+  /** Valet's last check of the draft as it is now, or null when none ran on these files. */
+  readonly check: {
+    readonly at: IsoTime
+    readonly ok: boolean
+    readonly cases: number
+    readonly passed: number
+    readonly problem: string | null
+  } | null
+  /** The latest live trial of each tool on these files. */
+  readonly trials: readonly {
+    readonly tool: string
+    readonly at: IsoTime
+    readonly ok: boolean
+    readonly problem: string | null
+  }[]
+  /** The approval it waits on or was answered with. */
+  readonly submission: { readonly ref: string; readonly at: IsoTime; readonly note: string | null } | null
+  /** An update of an installed site, not a first install. */
+  readonly update: boolean
+}
+
+export interface DraftPage extends DraftOverview {
+  readonly createdAt: IsoTime
+  readonly files: readonly {
+    readonly path: string
+    readonly bytes: number
+    /** Valet captured it from the scratch browser, and it is unchanged since. */
+    readonly recordedByValet: boolean
+  }[]
+}
+
 export type InstallResult =
   | { readonly ok: true; readonly adapterId: string; readonly hash: string }
   /** Why, in words: a package rule, a compile error's first line. Never file contents beyond that. */
@@ -1039,6 +1083,8 @@ export type AppEvent =
   | { readonly type: 'endpoint-changed' }
   | { readonly type: 'clients-changed' }
   | { readonly type: 'attention-changed' }
+  /** A draft was created, changed, checked, tried, submitted or deleted. */
+  | { readonly type: 'drafts-changed' }
   | { readonly type: 'settings-changed' }
   | { readonly type: 'health-changed' }
   | { readonly type: 'app-changed' }
@@ -1093,6 +1139,14 @@ export interface ValetApi {
      * version waits for approval. Null if the person cancelled.
      */
     installFromFolder(): Promise<InstallResult | null>
+  }
+  readonly drafts: {
+    /** Drafts by agents, newest first: those still editing or waiting, and the rest from the last week. */
+    list(): Promise<readonly DraftOverview[]>
+    /** Null when no draft has that id. */
+    get(draftId: string): Promise<DraftPage | null>
+    /** Shows the draft's folder in Finder, for a person who wants to edit it (R53). */
+    openFolder(draftId: string): Promise<void>
   }
   readonly approvals: {
     pending(): Promise<readonly PendingReview[]>
