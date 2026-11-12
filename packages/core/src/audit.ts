@@ -247,6 +247,21 @@ export type AuditEvent =
       readonly reason?: string
     }
   | {
+      /**
+       * An agent changed something through Valet's own tools, at the Notify-only tier: it only made
+       * Valet stricter (docs/admin-tools.md, "Write tier"). Loosening changes are approval requests
+       * and are audited as approval-requested and approval-answered instead.
+       */
+      readonly type: 'agent-change'
+      /** `local:<id>`, as tool-called records the client. */
+      readonly clientId: string
+      readonly action: 'tool-off' | 'setting' | 'disconnect'
+      /** What it was about: `<adapterId>.<tool>`, a Valet setting's name, or the client itself. */
+      readonly target: string
+      /** A setting's new value as Valet stores it; null for the others. */
+      readonly value: string | null
+    }
+  | {
       /** An agent started a draft adapter (docs/authoring-tools.md). Notify tier. */
       readonly type: 'draft-created'
       readonly draftId: string

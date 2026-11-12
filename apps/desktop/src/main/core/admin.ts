@@ -25,6 +25,7 @@ import {
   type AdminScope,
   type AdminStatus,
   type AdminTraceStep,
+  type AdminWriter,
   identityLabel,
   matchCalls,
   mcpToolName,
@@ -68,6 +69,8 @@ export interface AdminSource {
   /** True when any of the texts holds a login secret or session value the app knows of now. */
   readonly sensitive: (texts: readonly string[]) => Promise<boolean>
   readonly withheld: (tool: string) => void
+  /** The write tier (admin-writer.ts); absent, the read tools only. */
+  readonly writer?: AdminWriter
 }
 
 export function adminReader(source: AdminSource): AdminReader {
@@ -82,6 +85,7 @@ export function adminReader(source: AdminSource): AdminReader {
         askForChanges: false,
         name: 'This app',
       },
+    ...(source.writer === undefined ? {} : { writer: source.writer }),
     sensitive: (texts) => source.sensitive(texts),
     withheld: (tool) => source.withheld(tool),
 
@@ -351,6 +355,7 @@ const EVENT_FIELDS: Readonly<Record<AuditEvent['type'], readonly string[]>> = {
   // The approval broker's (D). The request's digest names its text, which isn't here.
   'approval-requested': ['requestId', 'kind', 'digest', 'clientId'],
   'approval-answered': ['requestId', 'answer', 'deviceId', 'reason'],
+  'agent-change': ['clientId', 'action', 'target', 'value'],
   'device-paired': ['deviceId', 'platform'],
   'device-revoked': ['deviceId', 'by'],
   'store-refused': ['store', 'reason', 'records'],
