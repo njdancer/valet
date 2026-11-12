@@ -83,8 +83,11 @@ export interface WriterSource {
   widens(name: AgentSetting, from: boolean | number, to: boolean | number): boolean
   /** The signed subject for a widening change (approvals/subjects.ts settingSubject). */
   settingSubject(name: AgentSetting, from: boolean | number, to: boolean | number): ApprovalSubject<'setting'>
-  /** Makes a change that doesn't widen. */
-  applySetting(name: AgentSetting, value: boolean | number): Promise<void>
+  /**
+   * Makes a change that doesn't widen, from `from`. Throws, changing nothing, if the value is no
+   * longer `from` or the change would now widen.
+   */
+  applySetting(name: AgentSetting, from: boolean | number, value: boolean | number): Promise<void>
   /** Fetches the adapter's own choices and builds the request (adapterSettingSubject). */
   adapterSetting(adapterId: string, setting: string, query: string | null): Promise<AdapterSettingAsk>
   /**
@@ -92,6 +95,8 @@ export interface WriterSource {
    * null for anything else (an unknown tool, a setting's own tool, an unapproved adapter).
    */
   tool(adapterId: string, tool: string): { readonly adapterName: string; readonly title: string } | null
+  /** Whether this client already turned the tool off. */
+  toolOff(clientId: string, qualified: string): boolean
   turnOffTool(clientId: string, qualified: string): Promise<'done' | 'already' | 'not-found'>
   /** Revokes the client (its token stops working) and withdraws its requests. */
   disconnect(clientId: string): Promise<boolean>
@@ -133,115 +138,134 @@ export class AdminWriterImpl implements AdminWriter {
   private readonly asked = new Map<string, Asked[]>()
   private readonly notifyTimes = new Map<string, number[]>()
   private readonly changeLog: Change[] = []
+  private queue: Promise<unknown> = Promise.resolve()
 
   constructor(private readonly source: WriterSource) {}
 
-  async setSetting(
+  setSetting(
     viewer: ClientIdentity,
     setting: AgentSetting,
     value: boolean | number,
     note: string | null,
   ): Promise<WriteOutcome> {
-    const gate = this.gate(viewer)
-    if (gate.refused !== undefined) return gate.refused
-    const from = this.source.settings()[setting]
-    if (typeof from !== typeof value) return refused('not-found')
-    const label = AGENT_SETTING_LABELS[setting]
-    if (from === value)
-      return { kind: 'unchanged', current: `${label} is already ${SETTING_VALUE_WORDS(setting, from)}` }
-    if (this.source.widens(setting, from, value)) {
-      return this.ask(
-        viewer,
-        gate.name,
-        'setting',
-        this.source.settingSubject(setting, from, value),
-        note,
-        `Change a setting: ${label}`,
-      )
-    }
-    const limited = this.notifyLimit(viewer)
-    if (limited !== null) return limited
-    const what = `${label} set to ${SETTING_VALUE_WORDS(setting, value)}`
-    try {
-      await this.source.audit({
-        clientId: identityLabel(viewer),
-        action: 'setting',
-        target: setting,
-        value: String(value),
-      })
-      await this.source.applySetting(setting, value)
-    } catch {
-      return refused('unavailable')
-    }
-    this.notified(viewer, gate.name, what)
-    return { kind: 'done', what }
+    // One change at a time: each reads the value it changes, and the hourly count, afresh.
+    return this.exclusive(async () => {
+      const gate = this.gate(viewer)
+      if (gate.refused !== undefined) return gate.refused
+      const from = this.source.settings()[setting]
+      if (typeof from !== typeof value) return refused('not-found')
+      const label = AGENT_SETTING_LABELS[setting]
+      if (from === value)
+        return { kind: 'unchanged', current: `${label} is already ${SETTING_VALUE_WORDS(setting, from)}` }
+      if (this.source.widens(setting, from, value)) {
+        return this.ask(
+          viewer,
+          gate.name,
+          'setting',
+          this.source.settingSubject(setting, from, value),
+          note,
+          `Change a setting: ${label}`,
+        )
+      }
+      const limited = this.takeSlot(viewer)
+      if (limited !== null) return limited
+      const what = `${label} set to ${SETTING_VALUE_WORDS(setting, value)}`
+      try {
+        await this.source.audit({
+          clientId: identityLabel(viewer),
+          action: 'setting',
+          target: setting,
+          value: String(value),
+        })
+        // The app checks again, against the value it holds, that this doesn't widen, and refuses
+        // rather than ask: only this writer files an agent's requests.
+        await this.source.applySetting(setting, from, value)
+      } catch {
+        return refused('unavailable')
+      }
+      this.notified(viewer, gate.name, what)
+      return { kind: 'done', what }
+    })
   }
 
-  async requestSetting(
+  requestSetting(
     viewer: ClientIdentity,
     adapterId: string,
     setting: string,
     query: string | null,
     note: string | null,
   ): Promise<WriteOutcome> {
-    const gate = this.gate(viewer)
-    if (gate.refused !== undefined) return gate.refused
-    if (!this.source.wiredKinds().has('setting')) return refused('not-available')
-    let built: AdapterSettingAsk
-    try {
-      built = await this.source.adapterSetting(adapterId, setting, query)
-    } catch {
-      return refused('unavailable')
-    }
-    if (!built.ok) return refused(built.reason)
-    return this.ask(viewer, gate.name, 'setting', built.subject, note, built.title)
+    return this.exclusive(async () => {
+      const gate = this.gate(viewer)
+      if (gate.refused !== undefined) return gate.refused
+      if (!this.source.wiredKinds().has('setting')) return refused('not-available')
+      // The lookup runs on the site in the person's session, so it counts against the hourly
+      // limit: an agent the broker has stopped can't keep Valet searching.
+      const limited = this.takeSlot(viewer)
+      if (limited !== null) return limited
+      let built: AdapterSettingAsk
+      try {
+        built = await this.source.adapterSetting(adapterId, setting, query)
+      } catch {
+        return refused('unavailable')
+      }
+      if (!built.ok) return refused(built.reason)
+      return this.ask(viewer, gate.name, 'setting', built.subject, note, built.title)
+    })
   }
 
-  async turnOffTool(viewer: ClientIdentity, adapterId: string, tool: string): Promise<WriteOutcome> {
-    const gate = this.gate(viewer)
-    if (gate.refused !== undefined) return gate.refused
-    const found = this.source.tool(adapterId, tool)
-    if (found === null) return refused('not-found')
-    const qualified = `${adapterId}.${tool}`
-    const what = `"${found.title}" (${found.adapterName}) turned off for you`
-    const limited = this.notifyLimit(viewer)
-    if (limited !== null) return limited
-    let result: 'done' | 'already' | 'not-found'
-    try {
-      await this.source.audit({
-        clientId: identityLabel(viewer),
-        action: 'tool-off',
-        target: qualified,
-        value: null,
-      })
-      result = await this.source.turnOffTool(viewer.clientId, qualified)
-    } catch {
-      return refused('unavailable')
-    }
-    if (result === 'not-found') return refused('not-found')
-    if (result === 'already') return { kind: 'unchanged', current: `"${found.title}" is already off for you` }
-    this.notified(viewer, gate.name, what)
-    return { kind: 'done', what }
+  turnOffTool(viewer: ClientIdentity, adapterId: string, tool: string): Promise<WriteOutcome> {
+    return this.exclusive(async () => {
+      const gate = this.gate(viewer)
+      if (gate.refused !== undefined) return gate.refused
+      const found = this.source.tool(adapterId, tool)
+      if (found === null) return refused('not-found')
+      const qualified = `${adapterId}.${tool}`
+      // Checked before anything is audited: a repeat writes no record.
+      if (this.source.toolOff(viewer.clientId, qualified))
+        return { kind: 'unchanged', current: `"${found.title}" is already off for you` }
+      const what = `"${found.title}" (${found.adapterName}) turned off for you`
+      const limited = this.takeSlot(viewer)
+      if (limited !== null) return limited
+      let result: 'done' | 'already' | 'not-found'
+      try {
+        await this.source.audit({
+          clientId: identityLabel(viewer),
+          action: 'tool-off',
+          target: qualified,
+          value: null,
+        })
+        result = await this.source.turnOffTool(viewer.clientId, qualified)
+      } catch {
+        return refused('unavailable')
+      }
+      if (result === 'not-found') return refused('not-found')
+      if (result === 'already')
+        return { kind: 'unchanged', current: `"${found.title}" is already off for you` }
+      this.notified(viewer, gate.name, what)
+      return { kind: 'done', what }
+    })
   }
 
-  async disconnect(viewer: ClientIdentity): Promise<WriteOutcome> {
-    const gate = this.gate(viewer)
-    if (gate.refused !== undefined) return gate.refused
-    // Not counted against the hourly limit: an agent leaving must always be able to.
-    try {
-      await this.source.audit({
-        clientId: identityLabel(viewer),
-        action: 'disconnect',
-        target: identityLabel(viewer),
-        value: null,
-      })
-      if (!(await this.source.disconnect(viewer.clientId))) return refused('not-found')
-    } catch {
-      return refused('unavailable')
-    }
-    this.record(viewer, 'Disconnected itself', 'notify', null)
-    this.source.told(identityLabel(viewer), gate.name, this.recentNotify(viewer).length + 1)
-    return { kind: 'done', what: 'you are disconnected from Valet. Your token stops working in a moment' }
+  disconnect(viewer: ClientIdentity): Promise<WriteOutcome> {
+    return this.exclusive(async () => {
+      const gate = this.gate(viewer)
+      if (gate.refused !== undefined) return gate.refused
+      // Not counted against the hourly limit: an agent leaving must always be able to.
+      try {
+        await this.source.audit({
+          clientId: identityLabel(viewer),
+          action: 'disconnect',
+          target: identityLabel(viewer),
+          value: null,
+        })
+        if (!(await this.source.disconnect(viewer.clientId))) return refused('not-found')
+      } catch {
+        return refused('unavailable')
+      }
+      this.notified(viewer, gate.name, 'Disconnected itself')
+      return { kind: 'done', what: 'you are disconnected from Valet. Your token no longer works' }
+    })
   }
 
   async approvals(viewer: ClientIdentity, ref: string | null): Promise<readonly RequestView[]> {
@@ -441,22 +465,43 @@ export class AdminWriterImpl implements AdminWriter {
     return times
   }
 
-  private notifyLimit(viewer: ClientIdentity): WriteOutcome | null {
+  /**
+   * Takes one of the hour's slots before anything is audited or fetched, or refuses. A slot taken
+   * stays taken whatever happens next: an attempt costs as much as a change.
+   */
+  private takeSlot(viewer: ClientIdentity): WriteOutcome | null {
     const times = this.recentNotify(viewer)
-    if (times.length < NOTIFY_PER_HOUR) return null
-    const until = new Date((times[0] ?? this.source.now()) + HOUR_MS).toISOString()
-    return { kind: 'refused', reason: 'too-many-changes', until }
+    if (times.length >= NOTIFY_PER_HOUR) {
+      const until = new Date((times[0] ?? this.source.now()) + HOUR_MS).toISOString()
+      return { kind: 'refused', reason: 'too-many-changes', until }
+    }
+    times.push(this.source.now())
+    return null
   }
 
+  /** A change was made: listed, and told to the person. Never fails the change itself. */
   private notified(viewer: ClientIdentity, name: string, what: string): void {
-    const times = this.recentNotify(viewer)
-    times.push(this.source.now())
     this.record(viewer, what, 'notify', null)
+    // The notification is per clock hour, so its count is too.
+    const hour = Math.floor(this.source.now() / HOUR_MS)
+    const count = this.changeLog.filter(
+      (c) =>
+        c.clientId === identityLabel(viewer) &&
+        c.tier === 'notify' &&
+        Math.floor(Date.parse(c.at) / HOUR_MS) === hour,
+    ).length
     try {
-      this.source.told(identityLabel(viewer), name, times.length)
+      this.source.told(identityLabel(viewer), name, Math.max(1, count))
     } catch {
       // Telling is best effort: the change is made and audited.
     }
+  }
+
+  /** Runs one change after the last has finished. */
+  private exclusive<T>(run: () => Promise<T>): Promise<T> {
+    const next = this.queue.then(run, run)
+    this.queue = next.catch(() => undefined)
+    return next
   }
 
   private record(

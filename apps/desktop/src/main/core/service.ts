@@ -327,7 +327,6 @@ const SETTING_SUBJECT_NAMES = {
   messagesOtpEnabled: 'messages_otp',
   notifications: 'notifications',
   traceRetentionDays: 'trace_retention',
-  remoteAccess: 'remote_enabled',
 } as const
 
 /** Error classes only an adapter update fixes: the site's last call raises a repair item. */
@@ -2148,15 +2147,19 @@ export class AppService {
       settings: () => this.agentSettings(),
       widens: (name, from, to) => settingWidens(SETTING_SUBJECT_NAMES[name], from, to),
       settingSubject: (name, from, to) => settingSubject(SETTING_SUBJECT_NAMES[name], from, to),
-      applySetting: async (name, value) => {
-        // Only changes that tighten reach here; the writer asks the broker for the rest.
-        if (name === 'remoteAccess') {
-          if (value !== false) throw new ValetError('config', 'invalid')
-          await this.remote.setEnabled(false)
-          this.emit('endpoint-changed')
-          return
+      applySetting: async (name, from, value) => {
+        // Never through the person's own path, which would ask on their behalf: only what still
+        // starts from `from` and doesn't widen is written; anything else changes nothing.
+        const subjectName = SETTING_SUBJECT_NAMES[name]
+        const setting = this.valetSetting(subjectName)
+        if (setting.get() !== from || settingWidens(subjectName, from, value))
+          throw new ValetError('config', 'not-granted')
+        try {
+          await setting.set(value)
+        } catch (error) {
+          // Stored, and only what follows a store failed: the change is made.
+          if (setting.get() !== value) throw error
         }
-        await this.api.settings.set({ [name]: value })
       },
       adapterSetting: async (adapterId, setting, query) => {
         const adapter = this.adapter(adapterId)
@@ -2182,10 +2185,15 @@ export class AppService {
           ? null
           : { adapterName: listed.adapterName, title: listed.declaration.title }
       },
+      toolOff: (clientId, qualified) => this.clients.toolsOff(clientId).has(qualified),
       turnOffTool: async (clientId, qualified) => {
         const done = await this.clients.turnOffTool(clientId, qualified)
         if (done === 'done') {
-          this.endpoint?.refresh()
+          try {
+            this.endpoint?.refresh()
+          } catch {
+            // Stored: the caller refuses the tool anyway, and the next refresh drops it.
+          }
           this.emit('clients-changed')
         }
         return done
@@ -2195,8 +2203,9 @@ export class AppService {
         await this.clients.revoke(clientId)
         await this.approvalBroker?.withdrawClient(`local:${clientId}`).catch(() => 0)
         await rm(this.clients.configPath(clientId), { force: true }).catch(() => undefined)
-        // The token stops working now (the registry says revoked); the session itself ends just
-        // after, so this call's own result still reaches the agent.
+        // The token is refused from the next request on; the session itself ends just after, so
+        // this call's own result still reaches the agent.
+        this.endpoint?.refuseClient(clientId)
         const timer = setTimeout(() => {
           void this.endpoint?.removeClient(clientId)
           this.emit('clients-changed')
@@ -2218,7 +2227,6 @@ export class AppService {
       messagesOtpEnabled: this.settingsNow.messagesOtpEnabled,
       notifications: this.settingsNow.notifications,
       traceRetentionDays: this.settingsNow.traceRetentionDays,
-      remoteAccess: this.remote.status().enabled,
     }
   }
 

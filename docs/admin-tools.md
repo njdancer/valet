@@ -211,15 +211,15 @@ unlocks, pairs, or changes what an agent may do. Following Nick's threat model (
 against first"), every gate is aimed at the agent: what would let an agent widen its own reach, hide
 what it did, or approve its own request. Nothing here adds friction for the person.
 
-| Tool                      | Needs           | Tier                                                   | What happens                                                                                                                                                              |
-| ------------------------- | --------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `valet_set_setting`       | Ask for changes | Notify only if stricter and deletes nothing; else asks | One of four Valet settings. The app classifies the change (`settingWidens`, D's table): Messages codes on, remote access on, notifications off and shorter retention ask. |
-| `valet_request_setting`   | Ask for changes | Approve (Setting)                                      | An adapter's setting, such as the store. The Mac fetches the adapter's own choices (an optional `query` narrows them) and the person picks on the card. Never a value.    |
-| `valet_turn_off_tool`     | Ask for changes | Notify only, for itself                                | Stored on the asking app's record (`clients.json` `toolsOff`). The caller leaves it out of that app's listing and refuses a call to it.                                   |
-| `valet_disconnect`        | any             | Notify only, for itself                                | Revokes the asking app's token and withdraws its requests.                                                                                                                |
-| `valet_get_approval`      | Ask for changes | none                                                   | The app's own requests, one by ref or all it remembers.                                                                                                                   |
-| `valet_withdraw_approval` | Ask for changes | none                                                   | One of its own waiting requests.                                                                                                                                          |
-| `valet_list_changes`      | See Valet       | none                                                   | Changes and requests: its own, or every agent's with All agents' activity.                                                                                                |
+| Tool                      | Needs           | Tier                                                   | What happens                                                                                                                                                                                                                                                                                                                       |
+| ------------------------- | --------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `valet_set_setting`       | Ask for changes | Notify only if stricter and deletes nothing; else asks | One of three Valet settings: Messages codes, notifications, call-detail retention. The app classifies the change (`settingWidens`, D's table): Messages codes on, notifications off and shorter retention ask. Remote access isn't offered: turning it off revokes every cloud agent, which is changing other agents' connections. |
+| `valet_request_setting`   | Ask for changes | Approve (Setting)                                      | An adapter's setting, such as the store. The Mac fetches the adapter's own choices (an optional `query` narrows them) and the person picks on the card. Never a value.                                                                                                                                                             |
+| `valet_turn_off_tool`     | Ask for changes | Notify only, for itself                                | Stored on the asking app's record (`clients.json` `toolsOff`). The caller leaves it out of that app's listing and refuses a call to it.                                                                                                                                                                                            |
+| `valet_disconnect`        | any             | Notify only, for itself                                | Revokes the asking app's token and withdraws its requests.                                                                                                                                                                                                                                                                         |
+| `valet_get_approval`      | Ask for changes | none                                                   | The app's own requests, one by ref or all it remembers.                                                                                                                                                                                                                                                                            |
+| `valet_withdraw_approval` | Ask for changes | none                                                   | One of its own waiting requests.                                                                                                                                                                                                                                                                                                   |
+| `valet_list_changes`      | See Valet       | none                                                   | Changes and requests: its own, or every agent's with All agents' activity.                                                                                                                                                                                                                                                         |
 
 Every `valet_` result, read or write, also carries the answers to the app's own requests that ended
 since it was last told (R23), each once, scanned for secrets like everything else.
@@ -227,16 +227,20 @@ since it was last told (R23), each once, scanned for secrets like everything els
 ### Decisions taken here
 
 - **Ask for changes** is a third stored capability per local app, on by default as A's journeys
-  say for an agent on the Mac; files from before it read as on. Without it, every write tool but
+  say for an agent on the Mac; files from before it read as on, unless See Valet was taken away. Without it, every write tool but
   `valet_disconnect` refuses with A's sentence.
 - **The store is a request, not a Notify-only change.** B's table has `setting.adapter-choice`
   at notify; A's R8 says an agent never supplies a setting's value. A's rule is the stricter and
   costs the person nothing (they would pick the store anyway), so E follows it and never uses
   `setting.adapter-choice`.
-- **Notify only means: audited first, then done, then told.** A change that can't be audited isn't
-  made. The person gets one quiet Mac notification per agent per hour ("Claude Code made 3
-  changes"), which opens Activity. At most 10 Notify-only changes per agent per hour (R57); leaving
-  (`valet_disconnect`) is never limited.
+- **Notify only means: checked, audited, then done, then told.** Repeats and unknown targets are
+  answered before anything is audited. A change that can't be audited isn't made. Changes from the
+  writer run one at a time and re-read what they change, and the app writes a setting only if it
+  still starts from the value the writer read and still doesn't widen (never through the person's
+  own path, which would ask on their behalf). The person gets one quiet Mac notification per agent per hour ("Claude Code made 3
+  changes"), which opens Activity. At most 10 Notify-only changes per agent per hour (R57), counting
+  attempts and store lookups (a lookup runs on the site); leaving (`valet_disconnect`) is never
+  limited, and refuses the agent's token from its next request on.
 - **The agent's note** goes into the request's `agentNote`, which the card shows under "The agent
   says". It is never put into a tool result, so a note can't be used to word a result for another
   agent.

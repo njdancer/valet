@@ -216,6 +216,11 @@ describe('ClientRegistry', () => {
     const again = new ClientRegistry(path, '/configs', () => new Date())
     await again.load()
     expect(again.capabilities(id)?.askForChanges).toBe(true)
+    file.clients[0].capabilities = { seeValet: false, allActivity: false }
+    writeFileSync(path, JSON.stringify(file))
+    const hidden = new ClientRegistry(path, '/configs', () => new Date())
+    await hidden.load()
+    expect(hidden.capabilities(id)?.askForChanges).toBe(false)
     expect(await again.turnOffTool(id, 'shop.echo')).toBe('done')
     expect(await again.turnOffTool(id, 'shop.echo')).toBe('already')
     const third = new ClientRegistry(path, '/configs', () => new Date())

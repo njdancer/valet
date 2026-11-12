@@ -234,6 +234,10 @@ async function setup(
           endpoint.ops.push(`remove ${id}`)
           endpoint.clients.delete(id)
         },
+        refuseClient: (id) => {
+          endpoint.ops.push(`refuse ${id}`)
+          endpoint.clients.delete(id)
+        },
         clientIds: () => [...endpoint.clients.keys()],
         close: async () => {
           endpoint.closes++
@@ -3441,7 +3445,7 @@ describe('admin write tools (docs/admin-tools.md, "Write tier")', () => {
     for (const [name, args] of hostile) results.push(text(await write(s.admin, name, args, s.C1)))
     // Another agent's requests and its tools are beyond reach.
     const theirs = text(
-      await write(s.admin, 'valet_set_setting', { setting: 'remoteAccess', value: true }, s.C2),
+      await write(s.admin, 'valet_set_setting', { setting: 'messagesOtpEnabled', value: true }, s.C2),
     )
     const ref = /approval ([0-9A-F]{4})/.exec(theirs)?.[1] ?? 'ZZZZ'
     results.push(text(await write(s.admin, 'valet_withdraw_approval', { approval: ref }, s.C1)))
@@ -3475,7 +3479,7 @@ describe('admin write tools (docs/admin-tools.md, "Write tier")', () => {
     // Needs the setting handler (D's next PR): until then there is nothing to answer.
     if (!s.service.wiredKinds().has('setting')) return
     const asked = text(
-      await write(s.admin, 'valet_set_setting', { setting: 'remoteAccess', value: true }, s.C1),
+      await write(s.admin, 'valet_set_setting', { setting: 'messagesOtpEnabled', value: true }, s.C1),
     )
     const ref = /approval ([0-9A-F]{4})/.exec(asked)?.[1]
     expect(ref).toBeDefined()

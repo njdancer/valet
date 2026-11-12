@@ -21,13 +21,12 @@ const ADAPTER_ID = /^[a-z][a-z0-9-]{1,63}$/
 const TOOL_NAME = /^[a-z][a-z0-9_]{0,63}$/
 const SETTING_NAME = /^[a-z][a-zA-Z0-9_-]{0,63}$/
 
-/** Valet's own settings an agent may change or ask to change. Anything else is the person's. */
-export const AGENT_SETTINGS = [
-  'messagesOtpEnabled',
-  'notifications',
-  'traceRetentionDays',
-  'remoteAccess',
-] as const
+/**
+ * Valet's own settings an agent may change or ask to change. Anything else is the person's. Not
+ * remote access: turning it off revokes every cloud agent's tokens, which changes other agents'
+ * connections, and an agent never does that (IA section 5).
+ */
+export const AGENT_SETTINGS = ['messagesOtpEnabled', 'notifications', 'traceRetentionDays'] as const
 export type AgentSetting = (typeof AGENT_SETTINGS)[number]
 
 /** The person's words for each, as Settings shows them. */
@@ -35,7 +34,6 @@ export const AGENT_SETTING_LABELS: Readonly<Record<AgentSetting, string>> = {
   messagesOtpEnabled: 'Read login codes from Messages',
   notifications: 'Notifications',
   traceRetentionDays: 'Keep call details for',
-  remoteAccess: 'Remote access',
 }
 
 /** Why a change or a request was refused. Codes only; the sentences are below. */
@@ -214,7 +212,7 @@ export function requestText(request: RequestView, wording: WriteWording): string
     case 'waiting':
       return `Still waiting: ${ref} ("${request.title}"), asked ${agoText(request.askedAt, wording.now())} ago. The person was notified ${whereText(request.where)}.`
     case 'approved':
-      return `Approved by the person at ${clock(request.at, wording)}: ${ref} ("${request.title}"). The change is made.`
+      return `Approved by the person at ${clock(request.at, wording)}: ${ref} ("${request.title}"). Valet makes the approved change; read it back before relying on it.`
     case 'declined':
       return request.note === null
         ? `Declined by the person at ${clock(request.at, wording)}: ${ref} ("${request.title}"). Nothing changed.`
@@ -308,7 +306,7 @@ export const writeInputs = {
       .enum(AGENT_SETTINGS)
       .describe(
         'messagesOtpEnabled (read login codes from Messages), notifications (Valet’s system notifications), ' +
-          'traceRetentionDays (days call details are kept, 1 to 365), remoteAccess (cloud agents can reach Valet).',
+          'traceRetentionDays (days call details are kept, 1 to 365).',
       ),
     value: z
       .union([z.boolean(), z.number().int().min(1).max(365)])
@@ -488,7 +486,7 @@ export const WRITE_TOOLS: readonly WriteTool[] = [
     name: 'valet_disconnect',
     title: 'Disconnect from Valet',
     description:
-      'Removes your own connection to Valet: your token stops working within a second and your waiting ' +
+      'Removes your own connection to Valet: your token stops working at once and your waiting ' +
       'requests are withdrawn. The person is told. Only the person can connect you again.',
     input: writeInputs.disconnect,
     needs: 'any',

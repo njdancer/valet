@@ -177,7 +177,10 @@ export class ClientRegistry {
   capabilities(id: string): ClientCapabilities | null {
     const client = this.get(id)
     if (client === null || client.revokedAt !== null) return null
-    return { ...DEFAULT_CAPABILITIES, ...client.capabilities }
+    const stored = client.capabilities
+    // A file from before Ask for changes: on, unless the person had taken See Valet away.
+    const ask = stored?.askForChanges ?? stored?.seeValet ?? DEFAULT_CAPABILITIES.askForChanges
+    return { ...DEFAULT_CAPABILITIES, ...stored, askForChanges: ask }
   }
 
   /** Changes what a client may see. False for an unknown or revoked client. */

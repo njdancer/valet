@@ -104,7 +104,6 @@ function setup(overrides: Partial<WriterSource> = {}) {
     messagesOtpEnabled: false,
     notifications: true,
     traceRetentionDays: 14,
-    remoteAccess: false,
   }
   const audited: unknown[] = []
   const told: [string, string, number][] = []
@@ -141,7 +140,8 @@ function setup(overrides: Partial<WriterSource> = {}) {
       from: String(from),
       to: String(to),
     }),
-    applySetting: async (name, value) => {
+    applySetting: async (name, from, value) => {
+      if (values[name] !== from) throw new Error('changed')
       values[name] = value
     },
     adapterSetting: async (adapterId, setting) =>
@@ -167,6 +167,7 @@ function setup(overrides: Partial<WriterSource> = {}) {
       adapterId === 'woolworths' && tool === 'search_products'
         ? { adapterName: 'Woolworths', title: 'Search products' }
         : null,
+    toolOff: (clientId, qualified) => off.get(clientId)?.has(qualified) === true,
     turnOffTool: async (clientId, qualified) => {
       const set = off.get(clientId) ?? new Set()
       if (set.has(qualified)) return 'already'
@@ -221,7 +222,6 @@ describe('AdminWriterImpl', () => {
       ['messagesOtpEnabled', true],
       ['notifications', false],
       ['traceRetentionDays', 1],
-      ['remoteAccess', true],
     ] as const) {
       const outcome = await writer.setSetting(ME, name, value, 'please')
       expect(outcome.kind).toBe('asked')
@@ -230,11 +230,10 @@ describe('AdminWriterImpl', () => {
       messagesOtpEnabled: false,
       notifications: true,
       traceRetentionDays: 14,
-      remoteAccess: false,
     })
     expect(audited).toEqual([])
     expect(broker.requests.map((r) => [r.kind, r.requester, r.note])).toEqual(
-      Array(4).fill([
+      Array(3).fill([
         'setting',
         { kind: 'agent', clientId: 'local:c_me', clientName: 'Claude Code' },
         'please',
@@ -244,7 +243,7 @@ describe('AdminWriterImpl', () => {
 
   it('says a request kind is not available until the app wires it', async () => {
     const { writer, broker } = setup({ wiredKinds: () => new Set() })
-    expect(await writer.setSetting(ME, 'remoteAccess', true, null)).toEqual({
+    expect(await writer.setSetting(ME, 'messagesOtpEnabled', true, null)).toEqual({
       kind: 'refused',
       reason: 'not-available',
     })
@@ -268,8 +267,8 @@ describe('AdminWriterImpl', () => {
 
   it('passes on the broker’s limits and reuse', async () => {
     const { writer, broker } = setup()
-    const first = await writer.setSetting(ME, 'remoteAccess', true, null)
-    const again = await writer.setSetting(ME, 'remoteAccess', true, null)
+    const first = await writer.setSetting(ME, 'messagesOtpEnabled', true, null)
+    const again = await writer.setSetting(ME, 'messagesOtpEnabled', true, null)
     expect(first.kind === 'asked' && !first.reused).toBe(true)
     expect(again.kind === 'asked' && again.reused).toBe(true)
     broker.refuse = { ok: false, reason: 'cooling-down', until: '2026-11-12T09:00:00.000Z' }
@@ -355,7 +354,7 @@ describe('AdminWriterImpl', () => {
 
   it('shows and withdraws only the asker’s own requests', async () => {
     const { writer, broker } = setup()
-    const mine = await writer.setSetting(ME, 'remoteAccess', true, null)
+    const mine = await writer.setSetting(ME, 'messagesOtpEnabled', true, null)
     const theirs = await writer.setSetting(OTHER, 'messagesOtpEnabled', true, null)
     if (mine.kind !== 'asked' || theirs.kind !== 'asked') throw new Error('not asked')
     expect((await writer.approvals(ME, null)).map((r) => r.ref)).toEqual([mine.request.ref])
@@ -368,7 +367,7 @@ describe('AdminWriterImpl', () => {
 
   it('reports each ended request once, on any later call', async () => {
     const { writer, broker } = setup()
-    const asked = await writer.setSetting(ME, 'remoteAccess', true, null)
+    const asked = await writer.setSetting(ME, 'messagesOtpEnabled', true, null)
     if (asked.kind !== 'asked') throw new Error('not asked')
     expect(await writer.answers(ME)).toEqual([])
     broker.close(broker.requests[0]?.id as string, 'declined', { deviceId: 'phone1', note: 'Not now' })
@@ -382,7 +381,7 @@ describe('AdminWriterImpl', () => {
 
   it('finds a request still waiting from before a restart', async () => {
     const first = setup()
-    await first.writer.setSetting(ME, 'remoteAccess', true, null)
+    await first.writer.setSetting(ME, 'messagesOtpEnabled', true, null)
     const restarted = new AdminWriterImpl({ ...first.source, phonePaired: () => true })
     const views = await restarted.approvals(ME, null)
     expect(views).toEqual([expect.objectContaining({ state: 'waiting', where: 'mac-and-phone' })])
@@ -391,7 +390,7 @@ describe('AdminWriterImpl', () => {
   it('lists the asker’s own changes, and everyone’s only with All agents’ activity', async () => {
     const { writer } = setup()
     await writer.turnOffTool(ME, 'woolworths', 'search_products')
-    await writer.setSetting(OTHER, 'remoteAccess', true, null)
+    await writer.setSetting(OTHER, 'messagesOtpEnabled', true, null)
     expect((await writer.changes(ME, false, 20)).map((c) => c.what)).toEqual([
       '"Search products" (Woolworths) turned off for you',
     ])
@@ -400,5 +399,50 @@ describe('AdminWriterImpl', () => {
       ['Other agent', false, 'approve', 'waiting'],
       ['Claude Code', true, 'notify', null],
     ])
+  })
+
+  it('holds the hourly limit against calls made in parallel', async () => {
+    const { writer } = setup({
+      audit: () => new Promise((resolve) => setTimeout(resolve, 2)),
+      toolOff: () => false,
+      turnOffTool: async () => 'done',
+    })
+    const outcomes = await Promise.all(
+      Array.from({ length: 30 }, () => writer.turnOffTool(ME, 'woolworths', 'search_products')),
+    )
+    expect(outcomes.filter((o) => o.kind === 'done')).toHaveLength(NOTIFY_PER_HOUR)
+  })
+
+  it('re-reads the value for each of two changes made in parallel, so the second is a request', async () => {
+    const { writer, values, broker } = setup({
+      audit: () => new Promise((resolve) => setTimeout(resolve, 2)),
+    })
+    const [first, second] = await Promise.all([
+      writer.setSetting(ME, 'traceRetentionDays', 60, null),
+      writer.setSetting(ME, 'traceRetentionDays', 40, null),
+    ])
+    expect(first.kind).toBe('done')
+    // 60 to 40 shortens: an agent's request, never a change made or a prompt on the person's behalf.
+    expect(second.kind).toBe('asked')
+    expect(values['traceRetentionDays']).toBe(60)
+    expect(broker.requests[0]?.requester).toMatchObject({ kind: 'agent', clientId: 'local:c_me' })
+  })
+
+  it('writes no record for a tool already off, an unknown tool, or a refused change', async () => {
+    const { writer, audited } = setup()
+    await writer.turnOffTool(ME, 'woolworths', 'search_products')
+    for (let i = 0; i < 20; i++) await writer.turnOffTool(ME, 'woolworths', 'search_products')
+    await writer.turnOffTool(ME, 'woolworths', 'nope')
+    expect(audited).toHaveLength(1)
+  })
+
+  it('counts store lookups against the hourly limit', async () => {
+    const { writer } = setup()
+    for (let i = 0; i < NOTIFY_PER_HOUR; i++)
+      await writer.requestSetting(ME, 'woolworths', 'nope', null, null)
+    expect(await writer.requestSetting(ME, 'woolworths', 'store', null, null)).toMatchObject({
+      kind: 'refused',
+      reason: 'too-many-changes',
+    })
   })
 })
