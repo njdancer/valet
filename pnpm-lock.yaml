@@ -86,6 +86,9 @@ importers:
       '@1password/sdk':
         specifier: ^0.5.0
         version: 0.5.0
+      '@valet/adapter-store':
+        specifier: workspace:*
+        version: link:../../packages/adapter-store
       '@valet/adapter-wikipedia':
         specifier: workspace:*
         version: link:../../adapters/wikipedia
@@ -116,6 +119,9 @@ importers:
       electron-updater:
         specifier: ^6.8.11
         version: 6.8.11
+      esbuild-wasm:
+        specifier: 0.28.2
+        version: 0.28.2
       zod:
         specifier: ^4.6.7
         version: 4.6.7
@@ -193,6 +199,31 @@ importers:
   fakes/onepassword: {}
 
   fakes/woolworths-site: {}
+
+  packages/adapter-store:
+    dependencies:
+      '@valet/core':
+        specifier: workspace:*
+        version: link:../core
+      '@valet/runtime':
+        specifier: workspace:*
+        version: link:../runtime
+      esbuild-wasm:
+        specifier: 0.28.2
+        version: 0.28.2
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+    devDependencies:
+      '@valet/adapter-wikipedia':
+        specifier: workspace:*
+        version: link:../../adapters/wikipedia
+      '@valet/adapter-woolworths':
+        specifier: workspace:*
+        version: link:../../adapters/woolworths
+      '@valet/adapter-yahoo-finance':
+        specifier: workspace:*
+        version: link:../../adapters/yahoo-finance
 
   packages/auth-flow:
     dependencies:
@@ -2428,6 +2459,11 @@ packages:
 
   es6-error@4.1.1:
     resolution: {integrity: sha512-Um/+FxMr9CISWh0bi5Zv0iOD+4cFh5qLeks1qhAopKVAJw3drgKbKySikp7wGhDL0HPeaja0P5ULZrxLkniUVg==}
+
+  esbuild-wasm@0.28.2:
+    resolution: {integrity: sha512-GccVwhv3mmOUVQHCQm2Ox/rby8n/EqUwvZxE6Pjfikrq/lWw9g9WX/u9EykWnpot3Ko6j426DgQdea2xWKIAQA==}
+    engines: {node: '>=18'}
+    hasBin: true
 
   esbuild@0.28.2:
     resolution: {integrity: sha512-HKVLS8dvII+xoKW9kmqxbRKrnWEXfJJr/FZhhJmiqIB0e053QNYFqOBouTMO/k5sID4MvCiUCvv8b9M4h32wIA==}
@@ -5761,6 +5797,8 @@ snapshots:
 
   es6-error@4.1.1:
     optional: true
+
+  esbuild-wasm@0.28.2: {}
 
   esbuild@0.28.2:
     optionalDependencies:

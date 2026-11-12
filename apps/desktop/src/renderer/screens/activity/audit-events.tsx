@@ -23,6 +23,9 @@ type EventType = AuditEvent['type']
 export const EVENT_WORDS = {
   'adapter-approved': { label: 'Version approved', tone: 'success' },
   'adapter-rejected': { label: 'Version rejected', tone: 'neutral' },
+  'adapter-installed': { label: 'Version installed', tone: 'neutral' },
+  'adapter-activated': { label: 'Rolled back', tone: 'warning' },
+  'adapter-refused': { label: 'Version refused', tone: 'danger' },
   'grant-made': { label: 'Login given', tone: 'brass' },
   'grant-revoked': { label: 'Login taken back', tone: 'neutral' },
   'grant-copied': { label: 'Login copied', tone: 'brass' },
@@ -132,6 +135,27 @@ export function details(event: AuditEvent, now: number): ReactNode {
         <>
           {event.adapterId} {event.version} <HashChip value={event.adapterHash} label="adapter hash" />{' '}
           <Badge>rejected</Badge>
+        </>
+      )
+    case 'adapter-installed':
+      return (
+        <>
+          {event.adapterId} {event.version} <HashChip value={event.adapterHash} label="adapter hash" />{' '}
+          <Quiet>from {event.source === 'builtin' ? 'the app' : event.source}, waiting for approval</Quiet>
+        </>
+      )
+    case 'adapter-activated':
+      return (
+        <>
+          {event.adapterId} back to {event.version}{' '}
+          <HashChip value={event.adapterHash} label="adapter hash" />
+        </>
+      )
+    case 'adapter-refused':
+      return (
+        <>
+          {event.adapterId} <HashChip value={event.adapterHash} label="adapter hash" />{' '}
+          <Quiet>failed its checks ({event.reason}) and did not run</Quiet>
         </>
       )
     case 'grant-made':
@@ -311,6 +335,19 @@ export function callOf(event: AuditEvent): string | null {
 export const EVENT_FIELDS = {
   'adapter-approved': ['type', 'adapterId', 'adapterHash', 'version', 'previousHash'],
   'adapter-rejected': ['type', 'adapterId', 'adapterHash', 'version'],
+  'adapter-installed': [
+    'type',
+    'adapterId',
+    'adapterHash',
+    'version',
+    'source',
+    'previousHash',
+    'appVersion',
+    'preludeHash',
+    'compiler',
+  ],
+  'adapter-activated': ['type', 'adapterId', 'adapterHash', 'version', 'previousHash'],
+  'adapter-refused': ['type', 'adapterId', 'adapterHash', 'reason'],
   'grant-made': ['type', 'adapterId', 'adapterHash', 'secret', 'provider', 'origins'],
   'grant-revoked': ['type', 'adapterId', 'secret'],
   'grant-copied': ['type', 'adapterId', 'secret', 'fields'],

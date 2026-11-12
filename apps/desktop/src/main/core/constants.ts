@@ -95,6 +95,8 @@ export interface DataPaths {
   readonly appState: string
   /** Needs you items nobody answered, kept 24 hours (attention.ts). */
   readonly missed: string
+  /** Installed adapter versions, by id and hash (@valet/adapter-store, docs/adapter-packages.md). */
+  readonly adapters: string
 }
 
 /** Every file the app keeps, under one owner-only directory (D45). */
@@ -122,5 +124,6 @@ export function dataPaths(dir: string): DataPaths {
     diagnosticsLog: join(dir, 'logs', 'valet.log'),
     appState: join(dir, 'app-state.json'),
     missed: join(dir, 'missed.json'),
+    adapters: join(dir, 'adapters'),
   }
 }

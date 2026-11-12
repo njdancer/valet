@@ -78,7 +78,7 @@ import {
   PURPOSE_RANK,
   plainMethod,
 } from './guarded-page'
-import { runIsolated, type ToolProcessFactory } from './isolation/host'
+import { checkInputIsolated, runIsolated, type ToolProcessFactory } from './isolation/host'
 import type { LoginMarkerStore } from './login-marker'
 import { KeyedMutex } from './mutex'
 import { probeDeclaration } from './probe'
@@ -324,6 +324,39 @@ export class ToolHost {
     })
   }
 
+  /**
+   * Swaps in another version of a registered adapter (docs/adapter-packages.md#install-update-and-rollback),
+   * or registers it if its id is new. It takes the adapter's lock like a call, so running calls
+   * finish first; a call that was queued behind it finds a different entry when its turn comes and
+   * is answered "busy" without starting. The site's guards are the host's and carry over, as do
+   * the login's secrets for redaction; the login markers are keyed by id and persist anyway.
+   * Rejects with ValetError('config', 'busy') if the lock isn't free within `waitMs`. The caller
+   * closes the old driver once this resolves.
+   */
+  async replace(adapter: RegisteredAdapter, waitMs: number = this.queueWaitMs): Promise<void> {
+    const id = manifestSchema.parse(adapter.definition.manifest).id
+    const previous = this.adapters.get(id)
+    if (previous === undefined) {
+      this.register(adapter)
+      return
+    }
+    const lock = await this.acquireLock(id, boundOf(waitMs, this.queueWaitMs), undefined)
+    if (typeof lock !== 'function') throw new ValetError('config', 'busy')
+    try {
+      const current = this.adapters.get(id)
+      this.adapters.delete(id)
+      try {
+        this.register(adapter)
+      } catch (error) {
+        if (current !== undefined) this.adapters.set(id, current)
+        throw error
+      }
+      if (current !== undefined) this.adapters.get(id)?.gate.inherit(current.gate)
+    } finally {
+      lock()
+    }
+  }
+
   /** The tools of every adapter whose registered hash is approved. */
   async listTools(): Promise<ListedTool[]> {
     const listed: ListedTool[] = []
@@ -387,6 +420,7 @@ export class ToolHost {
     external?.addEventListener('abort', stop, { once: true })
     let unsettled: Promise<unknown> | null = null
     try {
+      if (this.adapters.get(adapterId) !== entry) throw new ValetError('login', 'busy')
       if (!(await this.isApproved(entry))) throw new ValetError('manifest', 'not-granted')
       // The person is logging in or out: nothing remembered about the old session holds.
       forget(entry)
@@ -561,6 +595,18 @@ export class ToolHost {
     if (settingToolNames(manifest).has(declaration.name) !== internal) return failed('manifest', 'not-found')
     const input = await this.validate(implementation.input, request.input, 'tool-input')
     if (input.status !== 'ok') return input
+    // Code that runs in the tool process has its own schemas there; they decide too, now, before the
+    // queue, any setting's apply tool or a confirmation, so a call they refuse sends nothing.
+    const isolation = entry.isolation
+    if (isolation !== undefined && !internal) {
+      const accepted = await checkInputIsolated(
+        isolation.start,
+        isolation.script,
+        declaration.name,
+        input.output,
+      )
+      if (!accepted) return failed('tool-input', 'invalid')
+    }
 
     // One lock per adapter, for reads and writes alike: the driver holds one run policy at a time,
     // so two calls on one session can't safely overlap.
@@ -591,6 +637,9 @@ export class ToolHost {
     let handedOn = false
     try {
       if (external?.aborted) return failed('tool-run', 'aborted')
+      // Another version was swapped in while this call waited (replace): nothing was started, and
+      // the call may be made again against the version now installed.
+      if (this.adapters.get(manifest.id) !== entry) return busy(entry.site, 0)
       // Again, because a revocation can land while this call waits for the lock.
       if (!(await this.isApproved(entry))) return failed('manifest', 'not-granted')
       if (entry.site.breaker.isOpen()) return blocked(entry.site)

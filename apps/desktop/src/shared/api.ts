@@ -341,6 +341,56 @@ export interface PendingReview {
   readonly diff: PermissionDiff
   readonly manifestDiff: readonly ManifestDiffLine[]
   readonly files: readonly FileChange[]
+  /**
+   * Where this version's package came from (docs/adapter-packages.md). Anything but `builtin` runs
+   * unsandboxed until the sandbox exists, and is shown so.
+   */
+  readonly origin?: PackageOrigin
+  /**
+   * The adapter logs in, and this version isn't the app's own: once approved it uses the person's
+   * signed-in session for the site (B's review, point 4). The review leads with that.
+   */
+  readonly takesSession?: boolean
+}
+
+export type PackageOrigin = 'builtin' | 'folder' | 'draft'
+
+export type InstallResult =
+  | { readonly ok: true; readonly adapterId: string; readonly hash: string }
+  /** Why, in words: a package rule, a compile error's first line. Never file contents beyond that. */
+  | { readonly ok: false; readonly reason: string }
+
+/** One stored version of an adapter (docs/adapter-packages.md#storage). */
+export interface AdapterVersionInfo {
+  readonly hash: string
+  readonly version: string
+  readonly source: PackageOrigin
+  readonly installedAt: IsoTime
+  /** The app version that installed it: what the hash doesn't cover. */
+  readonly appVersion: string
+  readonly active: boolean
+  /** Approved before and never rejected since, by the audit log, and not the active one. */
+  readonly canRollBack: boolean
+}
+
+export interface AdapterVersions {
+  readonly adapterId: string
+  /** The person chose this version: a newer built-in doesn't replace it. */
+  readonly pinned: boolean
+  /** Newest first. */
+  readonly versions: readonly AdapterVersionInfo[]
+}
+
+/** What a rollback would change, against the active version, before the person confirms it. */
+export interface RollbackPreview {
+  readonly adapterId: string
+  readonly hash: string
+  readonly version: string
+  readonly changes: PermissionDiff
+  /** It can reach or do something the active version can't (addsPermissions). */
+  readonly widens: boolean
+  /** The secrets whose grants come back with it: exactly those still in the grant store. */
+  readonly grants: readonly string[]
 }
 
 // ---------- Grants ----------
@@ -1001,6 +1051,22 @@ export interface ValetApi {
      * (config: site-paused). Audited, and kept across restarts.
      */
     setPaused(adapterId: string, paused: boolean): Promise<void>
+    /** The stored versions of an adapter (docs/adapter-packages.md). */
+    versions(adapterId: string): Promise<AdapterVersions>
+    /** What rolling back to `hash` would change against the active version. */
+    rollbackPreview(adapterId: string, hash: string): Promise<RollbackPreview>
+    /**
+     * Rolls back to a version the person approved before; the click is the approval. Rejects for
+     * a version that isn't offered.
+     */
+    rollback(adapterId: string, hash: string): Promise<void>
+    /** Whether this build installs from a folder (development builds only). */
+    canInstallFromFolder(): Promise<boolean>
+    /**
+     * Asks for a folder in a picker of the main process and installs the package in it. The new
+     * version waits for approval. Null if the person cancelled.
+     */
+    installFromFolder(): Promise<InstallResult | null>
   }
   readonly approvals: {
     pending(): Promise<readonly PendingReview[]>

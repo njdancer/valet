@@ -71,6 +71,18 @@ export const ELECTRON_FUSES = {
 export const PACKAGED_NODE_MODULES = ['@1password/sdk', '@1password/sdk-core'] as const
 
 /**
+ * esbuild-wasm is never imported: the adapter compiler reads its browser build and WebAssembly
+ * module as files (Electron's fs reads them inside app.asar) and runs them in a worker thread
+ * (packages/adapter-store/src/compile.ts). Only what the compiler reads is packaged, and the
+ * package.json that resolves them.
+ */
+export const PACKAGED_COMPILER_FILES = [
+  'node_modules/esbuild-wasm/package.json',
+  'node_modules/esbuild-wasm/lib/browser.js',
+  'node_modules/esbuild-wasm/esbuild.wasm',
+] as const
+
+/**
  * The Swift stdio bridge (D60, swift-bridge/), built universal for both architectures:
  * `swift build -c release --arch arm64 --arch x86_64 --package-path swift-bridge`. It ships beside
  * the app's own executable, so the app's signature covers it and client snippets can name its path.
@@ -409,6 +421,7 @@ export function createBuilderConfig(env: BuildEnv, deps: ConfigDeps): Configurat
       '!**/*.map',
       '!node_modules/**/*',
       ...PACKAGED_NODE_MODULES.map((name) => `node_modules/${name}/**/*`),
+      ...PACKAGED_COMPILER_FILES,
     ],
     // The packaged package.json names the app, which sets userData, the cookie-encryption Keychain
     // item, the single-instance lock and electron-updater's cache directory: dev and release must

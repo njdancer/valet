@@ -5,8 +5,9 @@
 // Not used by the app.
 
 import { NeedsUserError, type ToolContext, ValetError } from '@valet/core'
+import type { ToolProcessFactory } from './host'
 import type { HostMessage, ProcessMessage, WireError } from './protocol'
-import { evaluateToolScript } from './worker'
+import { evaluateToolScript, serveToolRuns } from './worker'
 
 /** What the tool threw, as the host would see it: `other` is anything but a ValetError or NeedsUserError. */
 export class ToolThrew extends Error {
@@ -82,4 +83,49 @@ export function runInToolContext(
     })
     send({ t: 'run', tool, input, url: ctx.page.currentUrl() })
   })
+}
+
+/**
+ * A ToolProcessFactory whose "process" is the worker running in this process, with messages cloned
+ * and delivered on later turns as a port would. For tests and tools that need a tool process
+ * without Electron; `kill` stops delivery both ways, as a dead process would.
+ */
+export function inMemoryToolProcess(): ToolProcessFactory {
+  return () => {
+    let alive = true
+    const toHost: ((message: unknown) => void)[] = []
+    const exits: (() => void)[] = []
+    let toProcess: ((event: { data: unknown }) => void) | null = null
+    serveToolRuns({
+      postMessage: (message) => {
+        const copy = structuredClone(message)
+        setImmediate(() => {
+          if (alive) for (const listener of toHost) listener(copy)
+        })
+      },
+      on: (_event, listener) => {
+        toProcess = listener
+      },
+    })
+    return {
+      send: (message) => {
+        const copy = structuredClone(message)
+        setImmediate(() => {
+          if (alive) toProcess?.({ data: copy })
+        })
+      },
+      onMessage: (listener) => {
+        toHost.push(listener)
+      },
+      onExit: (listener) => {
+        if (alive) exits.push(listener)
+        else listener()
+      },
+      kill: () => {
+        if (!alive) return
+        alive = false
+        for (const exit of exits.splice(0)) exit()
+      },
+    }
+  }
 }

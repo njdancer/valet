@@ -18,16 +18,23 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
+import { buildRecord } from '@valet/adapter-store'
 import {
   type AdapterDefinition,
   CredentialError,
+  checkPackage,
   defineAdapter,
+  type ManifestInput,
   NeedsUserError,
+  type PackageFiles,
+  packageOf,
   parseManifest,
   ValetError,
 } from '@valet/core'
 import type { LiveSessions, SessionReportingEndpoint, ToolCall, ToolCaller } from '@valet/mcp-server'
-import { LoginAttemptMarker } from '@valet/runtime'
+import { LoginAttemptMarker, type ToolProcessFactory } from '@valet/runtime'
+import { inMemoryToolProcess } from '@valet/runtime/in-context'
+import { buildToolLibrary } from '@valet/runtime/tool-script'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import { dataPaths } from '../../src/main/core/constants'
@@ -37,7 +44,7 @@ import type { EraseKind, EraseReport } from '../../src/main/core/erase'
 import type { AppNotification } from '../../src/main/core/notifications'
 import { builtinAdapter } from '../../src/main/core/registry'
 import type { RemoteAccess } from '../../src/main/core/remote'
-import { AppService, fillSelector } from '../../src/main/core/service'
+import { AppService, fillSelector, type ServiceDeps } from '../../src/main/core/service'
 import { disabledUpdates, type UpdatesHooks, type UpdatesPort } from '../../src/main/core/updates'
 import type { AppEvent, ConfirmationItem, HashRoute } from '../../src/shared/api'
 import { CONFIRM_ARM_MS } from '../../src/shared/api'
@@ -79,6 +86,9 @@ async function setup(
     leftovers?: readonly string[]
     /** Timers the test fires by hand; real ones by default. */
     timers?: ManualTimers
+    /** Adapter packages in place of `definition` (docs/adapter-packages.md). */
+    packages?: ServiceDeps['packages']
+    toolProcess?: ToolProcessFactory
   } = {},
 ) {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'sa-service-'))
@@ -138,6 +148,8 @@ async function setup(
     timeZone: 'UTC',
     sleep: async () => {},
     adapters: [adapter],
+    ...(options.packages === undefined ? {} : { packages: options.packages }),
+    ...(options.toolProcess === undefined ? {} : { toolProcess: options.toolProcess }),
     createDriver: async (_manifest, reporters) => {
       driver.reporters = reporters
       return driver
@@ -2532,3 +2544,165 @@ describe('what a tool result is told about Needs you', () => {
     expect(s.ui.notifications.at(-1)).toMatchObject({ title: 'Missed: Log in to Shop (verification check)' })
   })
 })
+
+describe('adapter packages (docs/adapter-packages.md)', () => {
+  const echoTools = (reply: string) =>
+    [
+      "import { z } from 'zod'",
+      'export const tools = {',
+      `  echo: { input: z.object({ text: z.string() }), output: z.object({ text: z.string() }), run: async (_ctx, a) => ({ text: '${reply}' + a.text }) },`,
+      '  add: { input: z.object({ item: z.string() }), output: z.object({ added: z.boolean() }), run: async () => ({ added: false }) },',
+      '}',
+    ].join('\n')
+  const shopPackage = (reply: string, input: ManifestInput = SHOP) =>
+    packageOf(parseManifest(input), { 'src/tools.ts': echoTools(reply) })
+
+  async function withPackages(folder: PackageFiles | null = null, dir?: string) {
+    const start = inMemoryToolProcess()
+    const prelude = await buildToolLibrary()
+    const picked = { next: folder }
+    const s = await setup({
+      ...(dir === undefined ? {} : { dir }),
+      packages: {
+        builtins: [shopPackage('v1:')],
+        runtime: { prelude, start },
+        build: buildRecord('0.1.0', prelude),
+        folders: { pick: async () => picked.next },
+      },
+      toolProcess: start,
+    })
+    const hashOf = (files: PackageFiles) => checkPackage(files).adapterHash
+    return { ...s, picked, hashOf }
+  }
+
+  it('seeds the built-in, runs it from its compiled package, and keeps it across a restart', async () => {
+    const s = await withPackages()
+    const builtin = s.hashOf(shopPackage('v1:'))
+    const [review] = await s.api.approvals.pending()
+    expect(review?.to.hash).toBe(builtin)
+    expect(review?.origin).toBe('builtin')
+    expect(review?.takesSession).toBe(false)
+    await s.api.approvals.approve('shop', builtin)
+    expect(await s.call('echo', { text: 'hi' })).toMatchObject({ status: 'ok', output: { text: 'v1:hi' } })
+    const versions = await s.api.adapters.versions('shop')
+    expect(versions.versions).toEqual([
+      expect.objectContaining({ hash: builtin, source: 'builtin', active: true }),
+    ])
+    const events = readAudit(s.paths.audit).map((e) => e.type)
+    expect(events).toContain('adapter-installed')
+    await s.service.stop()
+    const again = await withPackages(null, s.dir)
+    expect((await again.api.adapters.list()).map((a) => a.approval)).toEqual(['approved'])
+    expect(readAudit(again.paths.audit).filter((e) => e.type === 'adapter-installed')).toHaveLength(1)
+  })
+
+  it('installs from a folder: the new version waits for approval, says it takes the session, and can be rolled back', async () => {
+    const s = await withPackages(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
+    const v1 = s.hashOf(shopPackage('v1:'))
+    const v2 = s.hashOf(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
+    await s.api.approvals.approve('shop', v1)
+    expect(await s.api.adapters.canInstallFromFolder()).toBe(true)
+    expect(await s.api.adapters.installFromFolder()).toEqual({ ok: true, adapterId: 'shop', hash: v2 })
+    // Unapproved: no tools, and the review leads with the session it inherits.
+    expect(s.endpoint.caller?.listTools()).toEqual([])
+    const [review] = await s.api.approvals.pending()
+    expect(review).toMatchObject({
+      from: { hash: v1 },
+      to: { hash: v2 },
+      origin: 'folder',
+      takesSession: true,
+    })
+    await s.api.approvals.approve('shop', v2)
+    expect(await s.call('echo', { text: 'hi' })).toMatchObject({ output: { text: 'v2:hi' } })
+    // Back to v1, which the person approved before.
+    const versions = await s.api.adapters.versions('shop')
+    expect(versions.versions.map((v) => [v.version, v.active, v.canRollBack])).toEqual([
+      ['2.0.0', true, false],
+      ['1.0.0', false, true],
+    ])
+    const preview = await s.api.adapters.rollbackPreview('shop', v1)
+    expect(preview).toMatchObject({ version: '1.0.0', grants: [] })
+    await s.api.adapters.rollback('shop', v1)
+    expect(await s.call('echo', { text: 'hi' })).toMatchObject({ output: { text: 'v1:hi' } })
+    expect((await s.api.adapters.versions('shop')).pinned).toBe(true)
+    const types = readAudit(s.paths.audit)
+      .map((e) => e.type)
+      .filter((t) => t.startsWith('adapter-'))
+    expect(types.slice(-2)).toEqual(['adapter-approved', 'adapter-activated'])
+  })
+
+  it('never offers a rollback to a version the person never approved, or rejected', async () => {
+    const s = await withPackages(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
+    const v1 = s.hashOf(shopPackage('v1:'))
+    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true })
+    await expect(s.api.adapters.rollback('shop', v1)).rejects.toThrow()
+    expect((await s.api.adapters.versions('shop')).versions.every((v) => !v.canRollBack)).toBe(true)
+    // Approved, then rejected: not offered either.
+    s.picked.next = shopPackage('v3:', { ...SHOP, version: '3.0.0' })
+    const v2 = s.hashOf(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
+    await s.api.approvals.approve('shop', v2)
+    await s.api.approvals.reject('shop', v2)
+    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true })
+    expect((await s.api.adapters.versions('shop')).versions.every((v) => !v.canRollBack)).toBe(true)
+  })
+
+  it('refuses a package that breaks a rule, and says why', async () => {
+    const s = await withPackages({ ...shopPackage('v2:'), 'src/evil.js': '' })
+    expect(await s.api.adapters.installFromFolder()).toEqual({
+      ok: false,
+      reason: expect.stringContaining('placement'),
+    })
+    s.picked.next = {
+      ...shopPackage('v2:'),
+      'src/tools.ts': "import { readFileSync } from 'node:fs'\nexport const tools = { readFileSync }",
+    }
+    expect(await s.api.adapters.installFromFolder()).toEqual({
+      ok: false,
+      reason: expect.stringContaining('compile'),
+    })
+    s.picked.next = null
+    expect(await s.api.adapters.installFromFolder()).toBeNull()
+    expect((await s.api.adapters.versions('shop')).versions).toHaveLength(1)
+  })
+
+  it('refuses a stored version changed on disk, audits it, and heals the built-in from the app', async () => {
+    const s = await withPackages()
+    const builtin = s.hashOf(shopPackage('v1:'))
+    await s.api.approvals.approve('shop', builtin)
+    await s.service.stop()
+    const file = join(s.paths.adapters, 'shop', `${builtin}.json`)
+    const stored = JSON.parse(readFileSync(file, 'utf8'))
+    stored.files['src/tools.ts'] = echoTools('evil:')
+    writeFileSync(file, JSON.stringify(stored))
+    const again = await withPackages(null, s.dir)
+    const refused = readAudit(again.paths.audit).find((e) => e.type === 'adapter-refused')
+    expect(refused).toMatchObject({ adapterId: 'shop', adapterHash: builtin, reason: 'hash-mismatch' })
+    expect(await again.call('echo', { text: 'hi' })).toMatchObject({ output: { text: 'v1:hi' } })
+  })
+
+  it('pointing state.json at an unapproved version gets nothing: its tools stay hidden', async () => {
+    const s = await withPackages(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
+    const v1 = s.hashOf(shopPackage('v1:'))
+    const v2 = s.hashOf(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
+    await s.api.approvals.approve('shop', v1)
+    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true })
+    await s.api.adapters.rollback('shop', v1)
+    await s.service.stop()
+    const statePath = join(s.paths.adapters, 'shop', 'state.json')
+    const state = JSON.parse(readFileSync(statePath, 'utf8'))
+    writeFileSync(statePath, JSON.stringify({ ...state, active: v2 }))
+    const again = await withPackages(null, s.dir)
+    expect(again.endpoint.caller?.listTools()).toEqual([])
+    expect(await again.call('echo', { text: 'hi' })).toMatchObject({
+      status: 'failed',
+      errorClass: 'not-granted',
+    })
+  })
+})
+
+function readAudit(path: string): { type: string; [key: string]: unknown }[] {
+  return readFileSync(path, 'utf8')
+    .split('\n')
+    .filter((line) => line.trim() !== '')
+    .map((line) => (JSON.parse(line) as { event: { type: string } }).event)
+}
