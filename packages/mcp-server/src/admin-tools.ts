@@ -318,6 +318,8 @@ export interface AdminAccess {
   readonly seeValet: boolean
   /** "All agents' activity": other agents' calls, their inputs and their audit records too. */
   readonly allActivity: boolean
+  /** "Ask for changes": the authoring tools (docs/authoring-tools.md). Read as false when absent. */
+  readonly askForChanges?: boolean
   /** The person's name for the app, for the refusal sentence. */
   readonly name: string
 }

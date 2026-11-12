@@ -11,12 +11,12 @@
 
 import {
   type AdapterManifest,
+  checkPackagePath,
   type EnsureResult,
   type FetchInit,
   type FetchResult,
-  checkPackagePath,
-  NeedsUserError,
   type LocalAccess,
+  NeedsUserError,
   type PackageFiles,
   type ToolContext,
   type ToolPage,
@@ -90,6 +90,10 @@ export interface CaseResult {
   readonly reason: string | null
   /** The fixtures it served. */
   readonly fixtures: readonly string[]
+  /** It expects output with at least one value in it (not `{}` or an error). */
+  readonly checksOutput: boolean
+  /** It expects output but checks no value in it. */
+  readonly emptyExpectation: boolean
 }
 
 export interface CaseFileProblem {
@@ -118,6 +122,9 @@ export interface CaseRunOptions {
   readonly timeoutMs?: number
   /** Run only this tool's cases. */
   readonly tool?: string
+  /** No case starts after this time (ms, by `now`); the rest fail as not reached. */
+  readonly deadline?: number
+  readonly now?: () => number
 }
 
 /** Reads every case file in the draft. A file that doesn't parse is a problem, not a crash. */
@@ -140,7 +147,10 @@ export function readCases(files: PackageFiles): {
     if (!parsed.success) {
       const issue = parsed.error.issues[0]
       const where = issue === undefined ? '' : issue.path.join('.')
-      problems.push({ file, problem: `not a case file: ${where === '' ? '' : `${where}: `}${issue?.message ?? ''}` })
+      problems.push({
+        file,
+        problem: `not a case file: ${where === '' ? '' : `${where}: `}${issue?.message ?? ''}`,
+      })
       continue
     }
     for (const c of parsed.data.cases) cases.push({ file, case: c })
@@ -153,12 +163,31 @@ export function readCases(files: PackageFiles): {
 }
 
 /** Runs every case, one at a time, each in a fresh process. */
-export async function runCases(draft: RunnableDraft, files: PackageFiles, options: CaseRunOptions): Promise<CaseRun> {
+export async function runCases(
+  draft: RunnableDraft,
+  files: PackageFiles,
+  options: CaseRunOptions,
+): Promise<CaseRun> {
   const { cases, problems } = readCases(files)
   const results: CaseResult[] = []
+  const now = options.now ?? Date.now
   for (const { file, case: c } of cases) {
     if (options.tool !== undefined && c.tool !== options.tool) continue
-    results.push(await runCase(draft, files, file, c, options))
+    const left = options.deadline === undefined ? Number.POSITIVE_INFINITY : options.deadline - now()
+    if (left <= 0) {
+      results.push({
+        file,
+        name: c.name,
+        tool: c.tool,
+        passed: false,
+        reason: 'Not reached: the check ran out of time (about 30 cases is the most one check can run).',
+        fixtures: [],
+        ...expectationKind(c),
+      })
+      continue
+    }
+    const timeoutMs = Math.min(options.timeoutMs ?? CASE_TIMEOUT_MS, left)
+    results.push(await runCase(draft, files, file, c, { ...options, timeoutMs }))
   }
   return { results, problems }
 }
@@ -181,6 +210,7 @@ export async function runCase(
     passed: false,
     reason,
     fixtures: [...used],
+    ...expectationKind(c),
   })
   const declared = draft.manifest.tools.find((t) => t.name === c.tool)
   const schemas = draft.tools[c.tool]
@@ -189,7 +219,11 @@ export async function runCase(
   if (!input.success) return fail(`The input doesn't match ${c.tool}'s input schema.`)
 
   const controller = new AbortController()
-  const state = new CallState(`case-${Math.random().toString(36).slice(2, 10)}`, controller.signal, () => new SecretRedactionSet())
+  const state = new CallState(
+    `case-${Math.random().toString(36).slice(2, 10)}`,
+    controller.signal,
+    () => new SecretRedactionSet(),
+  )
   const page = new FixturePage(draft.manifest, c, files, used)
   const guarded = new GuardedToolPage({
     adapterId: draft.manifest.id,
@@ -248,7 +282,8 @@ export async function runCase(
         ? pass(file, c, used)
         : fail(`The output doesn't match ${c.tool}'s output schema.`)
     }
-    if (!('output' in expected)) return fail(`Expected ${describeExpect(expected)}, but the tool returned output.`)
+    if (!('output' in expected))
+      return fail(`Expected ${describeExpect(expected)}, but the tool returned output.`)
     const mismatch = partialMismatch(expected.output, output.data, '$')
     return mismatch === null ? pass(file, c, used) : fail(`Output differs at ${mismatch}.`)
   }
@@ -270,7 +305,9 @@ function compareError(
       : fail(`Expected needs-user ${expected.needsUser}, got ${got.text}.`)
   }
   if ('error' in expected) {
-    return got.kind === 'error' && got.stage === expected.error.stage && got.errorClass === expected.error.errorClass
+    return got.kind === 'error' &&
+      got.stage === expected.error.stage &&
+      got.errorClass === expected.error.errorClass
       ? pass(file, c, used)
       : fail(`Expected ${expected.error.stage}/${expected.error.errorClass}, got ${got.text}.`)
   }
@@ -278,7 +315,28 @@ function compareError(
 }
 
 function pass(file: string, c: DraftCase, used: Set<string>): CaseResult {
-  return { file, name: c.name, tool: c.tool, passed: true, reason: null, fixtures: [...used] }
+  return {
+    file,
+    name: c.name,
+    tool: c.tool,
+    passed: true,
+    reason: null,
+    fixtures: [...used],
+    ...expectationKind(c),
+  }
+}
+
+function expectationKind(c: DraftCase): { checksOutput: boolean; emptyExpectation: boolean } {
+  if (!('output' in c.expect)) return { checksOutput: false, emptyExpectation: false }
+  const leaf = hasLeaf(c.expect.output)
+  return { checksOutput: leaf, emptyExpectation: !leaf }
+}
+
+/** True if the value holds at least one non-container value (a string, number, boolean or null). */
+export function hasLeaf(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(hasLeaf)
+  if (value !== null && typeof value === 'object') return Object.values(value).some(hasLeaf)
+  return value !== undefined
 }
 
 function describeExpect(expected: DraftCase['expect']): string {
@@ -294,7 +352,12 @@ type Described =
 
 function describeError(error: unknown): Described {
   if (error instanceof ValetError) {
-    return { kind: 'error', stage: error.stage, errorClass: error.errorClass, text: `${error.stage}/${error.errorClass}` }
+    return {
+      kind: 'error',
+      stage: error.stage,
+      errorClass: error.errorClass,
+      text: `${error.stage}/${error.errorClass}`,
+    }
   }
   if (error instanceof NeedsUserError) {
     return { kind: 'needs-user', reason: error.reason, text: `needs-user ${error.reason}` }
@@ -390,8 +453,11 @@ class FixturePage implements ToolPage {
   async fetch(url: string, init?: FetchInit): Promise<FetchResult> {
     const method = (init?.method ?? 'GET').toUpperCase()
     const target = new URL(url)
-    const index = this.remaining.findIndex((entry) => entry.method.toUpperCase() === method && this.matches(entry.url, target))
-    if (index === -1) throw this.miss(`No response for ${method} ${clip(target.pathname + target.search)} in the case.`)
+    const index = this.remaining.findIndex(
+      (entry) => entry.method.toUpperCase() === method && this.matches(entry.url, target),
+    )
+    if (index === -1)
+      throw this.miss(`No response for ${method} ${clip(target.pathname + target.search)} in the case.`)
     const [entry] = this.remaining.splice(index, 1)
     if (entry === undefined) throw this.miss('No response in the case.')
     return { status: entry.status, contentType: entry.contentType, body: this.body(entry) }
@@ -423,7 +489,8 @@ class FixturePage implements ToolPage {
     }
     if (want.origin !== target.origin || want.pathname !== target.pathname) return false
     // Listed query parameters must all be present with those values; others may be present too.
-    for (const [key, value] of want.searchParams) if (!target.searchParams.getAll(key).includes(value)) return false
+    for (const [key, value] of want.searchParams)
+      if (!target.searchParams.getAll(key).includes(value)) return false
     return true
   }
 
@@ -444,7 +511,8 @@ class FixturePage implements ToolPage {
   }
 
   private read(path: string): string {
-    if (!pathOk(path) || !Object.hasOwn(this.files, path)) throw this.miss(`No fixture ${clip(path)} in the draft.`)
+    if (!pathOk(path) || !Object.hasOwn(this.files, path))
+      throw this.miss(`No fixture ${clip(path)} in the draft.`)
     this.used.add(path)
     return this.files[path] ?? ''
   }

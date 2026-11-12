@@ -10,6 +10,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { toReportable, ValetError } from '@valet/core'
 import type { AdminReader } from './admin-tools'
 import { type Authenticate, type AuthResult, type ClientIdentity, identityLabel, sameIdentity } from './auth'
+import type { Authoring } from './authoring-tools'
 import { clientLabel, createMcpServer, type ServerInfo, type ValetMcpServer } from './server'
 import type { ClientTransport, ToolCaller } from './tool-caller'
 import { planTools, type SkippedTool, type ToolPlan } from './tool-names'
@@ -37,6 +38,8 @@ export interface HttpServerOptions {
    * listener never passes one.
    */
   readonly admin?: AdminReader
+  /** The authoring tools, for local clients' sessions with `admin` (docs/authoring-tools.md). */
+  readonly authoring?: Authoring
   readonly newCallId?: () => string
   readonly newSessionId?: () => string
   /** How often a running call reports progress to a client that asked. See ServerOptions. */
@@ -167,6 +170,9 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
       // Only a local client's session: a remote credential names a cloud agent, whose grant covers
       // site tools alone.
       ...(options.admin === undefined || identity.origin !== 'local' ? {} : { admin: options.admin }),
+      ...(options.admin === undefined || options.authoring === undefined || identity.origin !== 'local'
+        ? {}
+        : { authoring: options.authoring }),
       transport: via,
       identity,
     })

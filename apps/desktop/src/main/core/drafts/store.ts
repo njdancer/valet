@@ -129,7 +129,8 @@ export class DraftStore {
   /** The record, or null if there is no such draft. Throws if it exists but doesn't parse. */
   async record(id: string): Promise<DraftRecord | null> {
     const record = await readJsonFile(join(this.folder(id), 'draft.json'), draftRecordSchema)
-    if (record !== null && record.id !== id) throw new DraftError('The draft’s record doesn’t match its folder.')
+    if (record !== null && record.id !== id)
+      throw new DraftError('The draft’s record doesn’t match its folder.')
     return record
   }
 
@@ -173,10 +174,12 @@ export class DraftStore {
       return await readPackageFolder(this.filesFolder(id))
     } catch (error) {
       if (error instanceof PackageError) {
-        if (/symlink/.test(error.detail)) throw new DraftError('The draft folder has a link in it; remove it first.')
+        if (/symlink/.test(error.detail))
+          throw new DraftError('The draft folder has a link in it; remove it first.')
         throw new DraftError(`The draft folder breaks a package rule (${error.rule}): ${error.detail}.`)
       }
-      if (isErrno(error, 'ENOENT')) throw new DraftError('No draft has that id. valet_list_drafts lists them.')
+      if (isErrno(error, 'ENOENT'))
+        throw new DraftError('No draft has that id. valet_list_drafts lists them.')
       throw error
     }
   }
@@ -226,7 +229,10 @@ export class DraftStore {
   private touch(id: string): Promise<unknown> {
     return (async () => {
       const current = await this.require(id)
-      await writeJsonFile(join(this.folder(id), 'draft.json'), { ...current, updatedAt: this.now().toISOString() })
+      await writeJsonFile(join(this.folder(id), 'draft.json'), {
+        ...current,
+        updatedAt: this.now().toISOString(),
+      })
     })()
   }
 
@@ -296,7 +302,8 @@ function checkPath(path: string): void {
 
 function checkSize(files: PackageFiles): void {
   const paths = Object.keys(files)
-  if (paths.length > PACKAGE_LIMITS.files) throw new DraftError(`Not written: the draft would be over ${PACKAGE_LIMITS.files} files.`)
+  if (paths.length > PACKAGE_LIMITS.files)
+    throw new DraftError(`Not written: the draft would be over ${PACKAGE_LIMITS.files} files.`)
   let total = 0
   for (const text of Object.values(files)) {
     const bytes = Buffer.byteLength(text, 'utf8')
