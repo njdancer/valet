@@ -493,11 +493,22 @@ export class PhoneChannel implements PhoneOutbox {
       agreementKey: this.options.keys.agreementKey,
     })
     const reason = `pair ${reply.deviceName}`
-    const phoneSig = await this.options.channel.signApproval(SIGNING_DOMAINS.deviceRecord, phoneText, reason)
-    const macSig =
-      phoneSig === null
+    // Both records under one prompt where the keys can (the Secure Enclave helper).
+    const channel = this.options.channel
+    const both =
+      channel.signApprovals === undefined
         ? null
-        : await this.options.channel.signApproval(SIGNING_DOMAINS.deviceRecord, macText, reason)
+        : await channel.signApprovals(SIGNING_DOMAINS.deviceRecord, [phoneText, macText], reason)
+    const phoneSig =
+      channel.signApprovals === undefined
+        ? await channel.signApproval(SIGNING_DOMAINS.deviceRecord, phoneText, reason)
+        : (both?.[0] ?? null)
+    const macSig =
+      channel.signApprovals === undefined
+        ? phoneSig === null
+          ? null
+          : await channel.signApproval(SIGNING_DOMAINS.deviceRecord, macText, reason)
+        : (both?.[1] ?? null)
     if (phoneSig === null || macSig === null) return this.failPairing(offer, 'unavailable')
     const deviceRecord: SignedText = { payload: phoneText, signature: phoneSig }
     let added: DeviceRecord

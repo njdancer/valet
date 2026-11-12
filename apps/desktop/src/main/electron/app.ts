@@ -311,9 +311,8 @@ async function main(): Promise<void> {
   // nothing weaker. A build that carries demo mode is never a release (launch.ts).
   const strictApprovals = app.isPackaged && !mode.demo
   const keychainHelper = credentialDeps.keychainHelper
-  // A relay for paired phones (docs/phone-channel.md). Until the relay is deployed and the app has
-  // a setting for it, only a dev build reads one, from the environment, and then signs in software:
-  // the Secure Enclave helper can't do the channel's key operations yet.
+  // A relay for paired phones (docs/phone-channel.md): the one in Settings › Devices. A dev build
+  // can name a local one in the environment instead, and then signs in software.
   const devRelay = strictApprovals ? null : relayFromEnv(process.env)
   const approvalKeys = await macApprovalKeys({
     packaged: strictApprovals,

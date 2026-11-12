@@ -29,7 +29,7 @@ import { Failed } from '../connections/shared'
 const UNAVAILABLE: Record<NonNullable<PhonesStatus['unavailableReason']>, string> = {
   'no-relay': 'Pairing a phone needs Valet’s relay. Enter its host name below.',
   'no-keys':
-    'This build of Valet can’t pair a phone yet: its Secure Enclave keys don’t do the phone channel so far.',
+    'Valet needs Touch ID once to connect this Mac to the relay, and didn’t get it. Quit and reopen Valet to be asked again.',
   'approvals-unavailable': 'Valet can’t ask for approvals right now, so it can’t pair a phone.',
 }
 

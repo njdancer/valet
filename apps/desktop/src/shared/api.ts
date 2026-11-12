@@ -1136,8 +1136,8 @@ export type PairingView =
 
 export interface PhonesStatus {
   /**
-   * Whether this Mac can pair phones: `no-relay`, none is set up; `no-keys`, this build's keys
-   * can't seal or sign for the channel yet (the Secure Enclave helper, docs/phone-channel.md).
+   * Whether this Mac can pair phones: `no-relay`, none is set up; `no-keys`, this Mac's keys
+   * couldn't sign its relay binding (Touch ID cancelled, or no Secure Enclave).
    */
   readonly available: boolean
   readonly unavailableReason: 'no-relay' | 'no-keys' | 'approvals-unavailable' | null

@@ -4,6 +4,10 @@
 //   valet-approver keys            the public keys, as JSON; 44 if there are none yet
 //   valet-approver create          makes the three keys; 73 if any already exist
 //   valet-approver sign-decision   stdin {"requestText","payload"}: the approval signature
+//   valet-approver sign-transport  stdin a relay sign-in payload: the transport key's signature
+//   valet-approver agree           stdin a peer's P-256 public key (base64url SPKI): the ECDH secret
+//   valet-approver sign-approval   stdin {"domain","payloads"}: approval-key signatures, as a JSON
+//                                  array, for the phone channel's records (one prompt for all)
 //
 // Every key is a P-256 key in the Secure Enclave. The approval key needs user presence (Touch ID,
 // or the Mac's password), so each signature is the person's gesture; the transport and agreement
@@ -131,9 +135,37 @@ func storedBlobs() -> [String: Data] {
   return found
 }
 
+let usage = "usage: valet-approver keys|create|sign-decision|sign-transport|agree|sign-approval"
 let args = Array(CommandLine.arguments.dropFirst())
 guard args.count == 1, let command = args.first else {
-  fail(Code.usage, "usage: valet-approver keys|create|sign-decision")
+  fail(Code.usage, usage)
+}
+
+/// stdin, at most `limit` bytes.
+func readInput(_ limit: Int) -> Data {
+  guard let input = try? FileHandle.standardInput.readToEnd(), input.count <= limit else {
+    fail(Code.usage, "invalid input")
+  }
+  return input
+}
+
+/// All three stored keys and this Mac's own public keys.
+func ownKeys() -> (blobs: [String: Data], own: OwnKeys) {
+  let found = storedBlobs()
+  if found.isEmpty { fail(Code.noKeys, "no keys") }
+  if found.count != names.count { fail(Code.other, "incomplete keys") }
+  var spki: [String: Data] = [:]
+  for name in names {
+    guard let data = found[name], let der = try? publicKey(name, data) else { fail(Code.other, "unreadable key") }
+    spki[name] = der
+  }
+  guard let approval = spki["approval"], let transport = spki["transport"], let agreement = spki["agreement"] else {
+    fail(Code.other, "unreadable key")
+  }
+  let own = OwnKeys(
+    macId: keyId(spki: approval), approvalKey: base64url(approval), transportKey: base64url(transport),
+    agreementKey: base64url(agreement))
+  return (found, own)
 }
 
 switch command {
@@ -207,7 +239,96 @@ case "sign-decision":
   }
   output(base64url(signature))
 
+case "sign-transport":
+  // A relay sign-in as this Mac: no prompt, the transport key needs no presence.
+  let payload = String(decoding: readInput(1024), as: UTF8.self)
+  let (blobs, own) = ownKeys()
+  guard let input = relayAuthToSign(payload: payload, macId: own.macId), let transport = blobs["transport"] else {
+    fail(Code.usage, "payload refused")
+  }
+  let signed: Data
+  if software {
+    guard let key = try? P256.Signing.PrivateKey(rawRepresentation: transport),
+      let signature = try? key.signature(for: input)
+    else { fail(Code.other, "sign failed") }
+    signed = signature.rawRepresentation
+  } else {
+    guard let key = try? SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: transport),
+      let signature = try? key.signature(for: input)
+    else { fail(Code.other, "sign failed") }
+    signed = signature.rawRepresentation
+  }
+  output(base64url(signed))
+
+case "agree":
+  // The agreement key's half of an ECDH with a phone's agreement key: the shared x coordinate,
+  // which the channel's HPKE turns into keys. The private key stays here.
+  let text = String(decoding: readInput(512), as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+  guard let der = fromBase64url(text), let peer = try? P256.KeyAgreement.PublicKey(derRepresentation: der) else {
+    fail(Code.usage, "invalid key")
+  }
+  let (blobs, _) = ownKeys()
+  guard let agreement = blobs["agreement"] else { fail(Code.other, "unreadable key") }
+  let secret: SharedSecret
+  if software {
+    guard let key = try? P256.KeyAgreement.PrivateKey(rawRepresentation: agreement),
+      let shared = try? key.sharedSecretFromKeyAgreement(with: peer)
+    else { fail(Code.other, "agree failed") }
+    secret = shared
+  } else {
+    guard let key = try? SecureEnclave.P256.KeyAgreement.PrivateKey(dataRepresentation: agreement),
+      let shared = try? key.sharedSecretFromKeyAgreement(with: peer)
+    else { fail(Code.other, "agree failed") }
+    secret = shared
+  }
+  output(base64url(secret.withUnsafeBytes { Data($0) }))
+
+case "sign-approval":
+  guard
+    let body = (try? JSONSerialization.jsonObject(with: readInput(32 * 1024))) as? [String: Any],
+    let domain = body["domain"] as? String,
+    let payloads = body["payloads"] as? [String]
+  else { fail(Code.usage, "invalid input") }
+  let (blobs, own) = ownKeys()
+  guard let toSign = channelApprovalToSign(domain: domain, payloads: payloads, own: own),
+    let approval = blobs["approval"]
+  else { fail(Code.usage, "payload refused") }
+  var signatures: [String] = []
+  if software {
+    #if DEBUG
+      FileHandle.standardError.write(Data("valet-approver: reason: \(toSign.reason)\n".utf8))
+    #endif
+    if !present { fail(Code.cancelled, "cancelled") }
+    guard let key = try? P256.Signing.PrivateKey(rawRepresentation: approval) else { fail(Code.other, "sign failed") }
+    for input in toSign.inputs {
+      guard let signed = try? key.signature(for: input) else { fail(Code.other, "sign failed") }
+      signatures.append(base64url(signed.rawRepresentation))
+    }
+  } else {
+    // One prompt for every payload: the context is evaluated once, then signs them all.
+    let context = LAContext()
+    context.touchIDAuthenticationAllowableReuseDuration = 0
+    let done = DispatchSemaphore(value: 0)
+    var allowed = false
+    context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: toSign.reason) { ok, _ in
+      allowed = ok
+      done.signal()
+    }
+    done.wait()
+    if !allowed { fail(Code.cancelled, "not signed") }
+    guard
+      let key = try? SecureEnclave.P256.Signing.PrivateKey(
+        dataRepresentation: approval, authenticationContext: context)
+    else { fail(Code.other, "unreadable key") }
+    for input in toSign.inputs {
+      guard let signed = try? key.signature(for: input) else { fail(Code.cancelled, "not signed") }
+      signatures.append(base64url(signed.rawRepresentation))
+    }
+  }
+  guard let json = try? JSONSerialization.data(withJSONObject: signatures) else { fail(Code.other, "encode") }
+  output(String(decoding: json, as: UTF8.self))
+
 default:
-  fail(Code.usage, "usage: valet-approver keys|create|sign-decision")
+  fail(Code.usage, usage)
 }
 exit(Code.ok)

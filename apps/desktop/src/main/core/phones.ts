@@ -1,7 +1,6 @@
 // Paired phones, as the app runs them (docs/phone-channel.md): the relay connection, which only
-// dials out, and the phone channel over it. Off unless a relay is set up. A build whose keys
-// can't do the channel's operations (the Secure Enclave helper, so far) says so instead of
-// pairing in some weaker way.
+// dials out, and the phone channel over it. Off unless a relay is set up. Keys that can't do the
+// channel's operations say so instead of pairing in some weaker way.
 
 import { readFile, rename, writeFile } from 'node:fs/promises'
 import { hostname } from 'node:os'
@@ -61,7 +60,9 @@ export class Phones implements PhoneOutbox {
    * Phones paired through the old one keep dialling it until they pair again.
    */
   async setRelay(relay: RelaySetup | null): Promise<void> {
-    if (relay?.origin === this.relay?.origin && relay?.connectUrl === this.relay?.connectUrl) return
+    const same = relay?.origin === this.relay?.origin && relay?.connectUrl === this.relay?.connectUrl
+    // The same relay again restarts only after a cancelled Touch ID, so the person is asked again.
+    if (same && this.unavailable !== 'no-keys') return
     this.relay = relay
     if (this.parts !== null) await this.open(this.parts)
     else if (relay === null) this.unavailable = 'no-relay'

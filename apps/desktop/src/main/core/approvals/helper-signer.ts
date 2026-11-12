@@ -4,9 +4,10 @@
 // shown and writes the prompt's reason itself, so this side can't put words in front of the
 // person's finger. Private keys never leave the helper; only public keys and signatures come back.
 
-import type { SerializedRequest } from '@valet/core'
+import type { KeyObject } from 'node:crypto'
+import type { SerializedRequest, SigningDomain } from '@valet/core'
 import { nodeSpawner, nodeTimers, runProcess, type Spawner, type Timers } from '@valet/credentials'
-import type { MacKeys, MacSigner } from './signer'
+import type { ChannelKeys, MacKeys, MacSigner } from './signer'
 
 /** The helper's exit codes (valet-approver/main.swift). */
 export const APPROVER_EXIT = {
@@ -38,11 +39,60 @@ const KEYS_TIMEOUT_MS = 20_000
 const PROMPT_TIMEOUT_MS = 120_000
 const KEY = /^[A-Za-z0-9_-]{1,200}$/
 const SIGNATURE = /^[A-Za-z0-9_-]{86}$/
+const SECRET = /^[A-Za-z0-9_-]{43}$/
+const CHANNEL_TIMEOUT_MS = 20_000
 
 export class HelperSigner implements MacSigner {
   private cached: MacKeys | null = null
 
+  /**
+   * The phone channel's operations, in the helper: relay sign-ins with the transport key, ECDH
+   * with the agreement key, and approval-key signatures over the relay binding, the pairing
+   * challenge and device records. The helper checks each payload and writes the Touch ID reason
+   * itself; the `reason` passed here is never shown.
+   */
+  readonly channel: ChannelKeys = {
+    signTransport: async (payload) => {
+      const outcome = await this.run(['sign-transport'], CHANNEL_TIMEOUT_MS, Buffer.from(payload, 'utf8'))
+      const signature = outcome.stdout.trim()
+      if (outcome.code !== APPROVER_EXIT.ok || !SIGNATURE.test(signature)) throw new ApproverError('failed')
+      return signature
+    },
+    agree: async (peer: KeyObject) => {
+      const spki = peer.export({ type: 'spki', format: 'der' }).toString('base64url')
+      const outcome = await this.run(['agree'], CHANNEL_TIMEOUT_MS, Buffer.from(spki, 'utf8'))
+      const secret = outcome.stdout.trim()
+      if (outcome.code !== APPROVER_EXIT.ok || !SECRET.test(secret)) throw new ApproverError('failed')
+      return Buffer.from(secret, 'base64url')
+    },
+    signApproval: async (domain, payload) => (await this.signApprovals(domain, [payload]))?.[0] ?? null,
+    signApprovals: (domain, payloads) => this.signApprovals(domain, payloads),
+  }
+
   constructor(private readonly options: HelperSignerOptions) {}
+
+  /** One Touch ID prompt for every payload; null if the person cancelled or the helper refused. */
+  private async signApprovals(domain: SigningDomain, payloads: readonly string[]): Promise<string[] | null> {
+    const input = Buffer.from(JSON.stringify({ domain, payloads }), 'utf8')
+    const outcome = await this.run(
+      ['sign-approval'],
+      this.options.promptTimeoutMs ?? PROMPT_TIMEOUT_MS,
+      input,
+    )
+    if (outcome.code !== APPROVER_EXIT.ok) return null
+    try {
+      const parsed: unknown = JSON.parse(outcome.stdout)
+      if (
+        Array.isArray(parsed) &&
+        parsed.length === payloads.length &&
+        parsed.every((s) => typeof s === 'string' && SIGNATURE.test(s))
+      )
+        return parsed as string[]
+    } catch {
+      // Not the helper's output.
+    }
+    return null
+  }
 
   /**
    * The Mac's public keys. Creates them only when the helper says there are none at all: a key

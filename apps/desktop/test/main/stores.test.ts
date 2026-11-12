@@ -83,7 +83,12 @@ describe('SettingsStore', () => {
     const store = new SettingsStore(path)
     expect((await store.get()).relayHost).toBeNull()
     expect((await store.set({ relayHost: 'relay.example.com' })).relayHost).toBe('relay.example.com')
-    for (const bad of ['https://relay.example.com', 'relay.example.com:8443', 'localhost', 'Relay.Example.com'])
+    for (const bad of [
+      'https://relay.example.com',
+      'relay.example.com:8443',
+      'localhost',
+      'Relay.Example.com',
+    ])
       expect(relayHostSchema.safeParse(bad).success, bad).toBe(false)
     writeFileSync(path, JSON.stringify({ ...DEFAULT_SETTINGS, relayHost: 'evil.example/x' }))
     expect(await store.get()).toEqual(DEFAULT_SETTINGS)

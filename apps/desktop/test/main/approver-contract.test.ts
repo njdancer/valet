@@ -7,6 +7,7 @@
 // (prompts.ts), signatures core's verifyDecision accepts, and a broker approving through it.
 
 import { spawn, spawnSync } from 'node:child_process'
+import { createPublicKey, diffieHellman, generateKeyPairSync } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -15,6 +16,8 @@ import {
   type AuditRecord,
   decisionPayload,
   keyId,
+  pairingChallengePayload,
+  relayAuthPayload,
   SIGNING_DOMAINS,
   serializeRequest,
   verifyP256,
@@ -204,6 +207,106 @@ describe.skipIf(HELPER === undefined || HELPER === '')('valet-approver with soft
     expect(
       await signer().signDecision(shown, decisionPayload({ ...decision, requestDigest: shown.digest })),
     ).toBeNull()
+    present = '1'
+  })
+
+  it('does the phone channel’s key operations, and only those', async () => {
+    const keys = await signer().keys()
+    const macId = keyId(keys.approvalKey)
+    const channel = signer().channel
+    // Relay sign-ins as this Mac, with the transport key, and nothing else.
+    const auth = relayAuthPayload({
+      nonce: 'n'.repeat(43),
+      relay: 'https://relay.example.com',
+      role: 'mac',
+      id: macId,
+    })
+    const transportSig = await channel.signTransport(auth)
+    expect(verifyP256(keys.transportKey, SIGNING_DOMAINS.relayAuth, auth, transportSig)).toBe(true)
+    await expect(
+      channel.signTransport(
+        relayAuthPayload({ nonce: 'n', relay: 'https://r.example', role: 'phone', id: macId }),
+      ),
+    ).rejects.toThrow()
+    // ECDH: the same secret the phone works out from its side.
+    const phone = generateKeyPairSync('ec', { namedCurve: 'P-256' })
+    const macAgreement = createPublicKey({
+      key: Buffer.from(keys.agreementKey, 'base64url'),
+      format: 'der',
+      type: 'spki',
+    })
+    expect(
+      (await channel.agree(phone.publicKey)).equals(
+        diffieHellman({ privateKey: phone.privateKey, publicKey: macAgreement }),
+      ),
+    ).toBe(true)
+    // The relay binding: the approval key vouching for its own transport key only.
+    reasons = []
+    const binding = await channel.signApproval(SIGNING_DOMAINS.relayBinding, keys.transportKey, 'ignored')
+    expect(
+      verifyP256(keys.approvalKey, SIGNING_DOMAINS.relayBinding, keys.transportKey, binding as string),
+    ).toBe(true)
+    expect(reasons).toEqual(["connect to Valet's relay"])
+    expect(await channel.signApproval(SIGNING_DOMAINS.relayBinding, keys.approvalKey, 'x')).toBeNull()
+    // The pairing challenge, and both device records under one prompt.
+    const challenge = pairingChallengePayload('offer1', 'nonce1', '{"reply":1}')
+    expect(await channel.signApproval(SIGNING_DOMAINS.pairingChallenge, challenge, 'x')).not.toBeNull()
+    const phoneKey = () =>
+      generateKeyPairSync('ec', { namedCurve: 'P-256' })
+        .publicKey.export({ type: 'spki', format: 'der' })
+        .toString('base64url')
+    const phoneApproval = phoneKey()
+    const pairedAt = '2026-11-12T03:00:00.000Z'
+    const phoneRecord = JSON.stringify({
+      v: 1,
+      deviceId: keyId(phoneApproval),
+      macId,
+      role: 'phone',
+      platform: 'ios',
+      name: 'Nick’s iPhone',
+      approvalKey: phoneApproval,
+      transportKey: phoneKey(),
+      agreementKey: phoneKey(),
+      pairedAt,
+    })
+    const macRecord = JSON.stringify({
+      v: 1,
+      deviceId: macId,
+      macId,
+      role: 'mac',
+      platform: 'macos',
+      name: 'Mac',
+      approvalKey: keys.approvalKey,
+      transportKey: keys.transportKey,
+      agreementKey: keys.agreementKey,
+      pairedAt,
+    })
+    reasons = []
+    const both = await channel.signApprovals?.(SIGNING_DOMAINS.deviceRecord, [phoneRecord, macRecord], 'x')
+    expect(both).toHaveLength(2)
+    expect(
+      verifyP256(
+        keys.approvalKey,
+        SIGNING_DOMAINS.deviceRecord,
+        phoneRecord,
+        (both as string[])[0] as string,
+      ),
+    ).toBe(true)
+    expect(
+      verifyP256(keys.approvalKey, SIGNING_DOMAINS.deviceRecord, macRecord, (both as string[])[1] as string),
+    ).toBe(true)
+    expect(reasons).toEqual(['pair a new iPhone'])
+    // Never a decision, and never a record for another Mac.
+    expect(await channel.signApproval(SIGNING_DOMAINS.approvalDecision, '{}', 'x')).toBeNull()
+    expect(
+      await channel.signApproval(
+        SIGNING_DOMAINS.deviceRecord,
+        phoneRecord.replace(macId, 'f'.repeat(32)),
+        'x',
+      ),
+    ).toBeNull()
+    present = '0'
+    expect(await channel.signApproval(SIGNING_DOMAINS.relayBinding, keys.transportKey, 'x')).toBeNull()
     present = '1'
   })
 

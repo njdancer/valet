@@ -35,8 +35,7 @@ export interface MacSigner {
   signDecision(request: SerializedRequest, payload: string): Promise<string | null>
   /**
    * The phone channel's key operations (docs/relay-worker.md), or undefined where this signer
-   * can't do them yet: the Secure Enclave helper has no transport signing, agreement or record
-   * signing commands so far, so a release build can't pair a phone until it does.
+   * can't do them.
    */
   readonly channel?: ChannelKeys
 }
@@ -53,6 +52,8 @@ export interface ChannelKeys {
    * binding. Null if the prompt was cancelled.
    */
   signApproval(domain: SigningDomain, payload: string, reason: string): Promise<string | null>
+  /** Several payloads under one prompt (a pairing's two device records). Null if cancelled. */
+  signApprovals?(domain: SigningDomain, payloads: readonly string[], reason: string): Promise<string[] | null>
 }
 
 /** Release builds use only the Secure Enclave helper. */
