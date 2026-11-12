@@ -1425,8 +1425,6 @@ export class AppService {
       await this.revokeInstall(adapterId, hash, { legacy: false })
       throw error
     }
-    // Swapped: the version it replaces loses its approval, as any signed install's would.
-    await this.retireOthers(adapterId, hash)
     const version = target.definition.manifest.version
     const already = (await this.approvals.approvedHashes(adapterId)).includes(hash)
     await this.approvals.approve(adapterId, hash, version)
@@ -1451,6 +1449,9 @@ export class AppService {
       version,
       previousHash: active.hash,
     })
+    // Swapped and applied: the version it replaces loses its approval, as any signed install's
+    // would. Last, so the rolled-back version reads as approved as soon as it is in use.
+    await this.retireOthers(adapterId, hash)
     await this.refreshTools()
   }
 
