@@ -12,6 +12,10 @@ import { defineConfig } from '@playwright/test'
 export default defineConfig({
   testDir: '.',
   testMatch: '*.spec.ts',
+  // VALET_E2E_SUITE=fast, as pull requests run it (.github/workflows/ci.yml): without the two slow
+  // files, journey and update, which pace real logins on the fake and take most of the suite's time.
+  // The nightly full run and the pre-release gate run them on runners of their own.
+  testIgnore: process.env['VALET_E2E_SUITE'] === 'fast' ? ['journey.spec.ts', 'update.spec.ts'] : [],
   // A login on the fake takes about 15 s (the adapter's settle pauses), and the breaker test waits
   // for the site's own block. The site's pacing is real here: at most four requests a minute
   // (D28), so a login and the call after it can take three to four minutes between them.

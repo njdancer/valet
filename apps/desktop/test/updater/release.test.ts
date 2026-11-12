@@ -10,6 +10,8 @@ import {
   checkStart,
   DRY_RUN_FEED_URL,
   dryRunRefusedEnv,
+  FULL_SUITE_HINT,
+  fullSuiteVerdict,
   normaliseRequirement,
   REAL_RELEASE_ENV,
   refusalLaunches,
@@ -43,7 +45,47 @@ const DRY: StartState = {
   noPublish: false,
 }
 
-const REAL: StartState = { ...DRY, dryRun: false, env: REAL_ENV, noPublish: true }
+const REAL: StartState = {
+  ...DRY,
+  dryRun: false,
+  env: REAL_ENV,
+  noPublish: true,
+  fullSuite: { passed: true, reason: '' },
+}
+
+describe('fullSuiteVerdict', () => {
+  const SHA = 'abc123'
+  const run = (event: string, conclusion: string | null, status = 'completed', head_sha = SHA) => ({
+    head_sha,
+    event,
+    status,
+    conclusion,
+  })
+
+  it('passes only on a successful nightly or by-hand run of that very commit', () => {
+    expect(fullSuiteVerdict(SHA, [run('schedule', 'success')]).passed).toBe(true)
+    expect(
+      fullSuiteVerdict(SHA, [run('workflow_dispatch', 'failure'), run('workflow_dispatch', 'success')])
+        .passed,
+    ).toBe(true)
+    expect(fullSuiteVerdict(SHA, [run('pull_request', 'success'), run('push', 'success')])).toEqual({
+      passed: false,
+      reason: 'the full suite has not run on abc123',
+    })
+    expect(fullSuiteVerdict(SHA, [run('schedule', 'success', 'completed', 'other')]).passed).toBe(false)
+  })
+
+  it('says whether the full suite failed, is still running, or GitHub gave nothing', () => {
+    expect(fullSuiteVerdict(SHA, [run('schedule', 'failure')]).reason).toBe('the full suite failed on abc123')
+    expect(fullSuiteVerdict(SHA, [run('workflow_dispatch', null, 'in_progress')]).reason).toBe(
+      'the full suite is still running on abc123',
+    )
+    expect(fullSuiteVerdict(SHA, undefined)).toEqual({
+      passed: false,
+      reason: 'GitHub gave no CI runs for abc123',
+    })
+  })
+})
 
 describe('checkStart', () => {
   it('lets a dry run start anywhere a clean macOS checkout is, noting what a release would refuse', () => {
@@ -96,6 +138,16 @@ describe('checkStart', () => {
     expect(checkStart({ ...REAL, branch: 'feature' }).refusals).toEqual(['not on main (on feature)'])
     expect(checkStart({ ...REAL, tagExists: true }).refusals).toEqual(['the tag v0.1.0 exists already'])
     expect(checkStart({ ...REAL, skipCheck: true }).refusals[0]).toMatch(/runs pnpm check/)
+    // The pre-release gate: a real release waits for the full suite on its commit; a dry run doesn't.
+    const notRun = checkStart({
+      ...REAL,
+      fullSuite: { passed: false, reason: 'the full suite has not run on abc' },
+    })
+    expect(notRun.refusals).toEqual([`the full suite has not run on abc: ${FULL_SUITE_HINT}`])
+    expect(checkStart({ ...REAL, fullSuite: undefined }).refusals[0]).toMatch(
+      /^the full suite was not checked/,
+    )
+    expect(checkStart({ ...DRY, fullSuite: { passed: false, reason: 'x' } }).refusals).toEqual([])
     for (const name of REAL_RELEASE_ENV) {
       const verdict = checkStart({ ...REAL, env: { ...REAL_ENV, [name]: '' } })
       expect(verdict.refusals, name).toEqual([`a release needs ${name}`])

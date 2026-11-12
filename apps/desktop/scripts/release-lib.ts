@@ -46,6 +46,11 @@ export interface StartState {
   readonly allowDirty: boolean
   /** A real release that stops before uploading and tagging. Required until D23 is answered. */
   readonly noPublish: boolean
+  /**
+   * The full CI suite on the commit being released (fullSuiteVerdict). Pull requests run only the
+   * fast suite, so a real release waits for a full run; a dry run doesn't ask.
+   */
+  readonly fullSuite?: FullSuiteVerdict
 }
 
 export interface StartVerdict {
@@ -92,6 +97,8 @@ export function checkStart(state: StartState): StartVerdict {
   } else {
     if (state.skipCheck) refusals.push('--skip-check is for dry runs only: a release runs pnpm check')
     if (state.allowDirty) refusals.push('--allow-dirty is for dry runs only')
+    const full = state.fullSuite ?? { passed: false, reason: 'the full suite was not checked' }
+    if (!full.passed) refusals.push(`${full.reason}: ${FULL_SUITE_HINT}`)
     const missing = REAL_RELEASE_ENV.filter((name) => (state.env[name] ?? '') === '')
     if (missing.length > 0) refusals.push(`a release needs ${missing.join(', ')}`)
     if (!state.noPublish) {
@@ -101,6 +108,47 @@ export function checkStart(state: StartState): StartVerdict {
     }
   }
   return { refusals, notes }
+}
+
+/** How to get the full suite run on the commit at HEAD, said with each refusal for its lack. */
+export const FULL_SUITE_HINT =
+  'run the full suite on it (Actions > CI > Run workflow on main, or `gh workflow run ci.yml --ref main`), wait for it to pass, then release again'
+
+/** The repository whose CI runs gate a release. Public, so its runs can be read without a token. */
+export const CI_RUNS_URL = 'https://api.github.com/repos/njdancer/valet/actions/workflows/ci.yml/runs'
+
+export interface FullSuiteVerdict {
+  readonly passed: boolean
+  /** Why not, in words, when it didn't. */
+  readonly reason: string
+}
+
+/** One workflow run, as GitHub's list of a workflow's runs gives it. */
+export interface CiRun {
+  readonly head_sha: string
+  readonly event: string
+  readonly status: string
+  readonly conclusion: string | null
+}
+
+/**
+ * Whether the full suite passed on `sha`: a CI run on that commit that ran the full suite (nightly or
+ * started by hand, never a pull request's or a push's fast one) and succeeded. `runs` is GitHub's
+ * `workflow_runs` for `?head_sha=<sha>`, or anything else it answered.
+ */
+export function fullSuiteVerdict(sha: string, runs: unknown): FullSuiteVerdict {
+  if (!Array.isArray(runs)) return { passed: false, reason: `GitHub gave no CI runs for ${sha}` }
+  const full = (runs as CiRun[]).filter(
+    (run) => run.head_sha === sha && (run.event === 'schedule' || run.event === 'workflow_dispatch'),
+  )
+  if (full.some((run) => run.status === 'completed' && run.conclusion === 'success')) {
+    return { passed: true, reason: '' }
+  }
+  if (full.some((run) => run.status !== 'completed')) {
+    return { passed: false, reason: `the full suite is still running on ${sha}` }
+  }
+  if (full.length > 0) return { passed: false, reason: `the full suite failed on ${sha}` }
+  return { passed: false, reason: `the full suite has not run on ${sha}` }
 }
 
 /**
