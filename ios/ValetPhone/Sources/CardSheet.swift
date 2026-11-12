@@ -14,6 +14,7 @@ struct CardSheet: View {
   @State private var choice: String?
   @State private var problem: String?
   @State private var declining = false
+  @Environment(\.dynamicTypeSize) private var typeSize
 
   private var entry: CardEntry? { model.cards.first { $0.id == requestId } }
 
@@ -39,10 +40,17 @@ struct CardSheet: View {
     let card = entry.card
     ScrollView {
       VStack(alignment: .leading, spacing: 16) {
-        HStack {
-          Text(verbatim: "\(card.kindWord) \u{00b7} \(card.ref)").font(.caption.monospaced())
-          Spacer()
-          Text(verbatim: Deadline.text(model.remaining(entry))).font(.caption).foregroundStyle(.secondary)
+        ViewThatFits(in: .horizontal) {
+          HStack {
+            Text(verbatim: "\(card.kindWord) \u{00b7} \(card.ref)").font(.caption.monospaced())
+            Spacer()
+            Text(verbatim: Deadline.text(model.remaining(entry))).font(.caption).foregroundStyle(Color.secondary)
+          }
+          VStack(alignment: .leading, spacing: 2) {
+            Text(verbatim: card.kindWord).font(.caption.monospaced())
+            Text(verbatim: card.ref).font(.caption.monospaced())
+            Text(verbatim: Deadline.text(model.remaining(entry))).font(.caption).foregroundStyle(Color.secondary)
+          }
         }
         .accessibilityElement(children: .combine)
         TitleText(card: card).font(.title2.bold()).accessibilityAddTraits(.isHeader)
@@ -194,24 +202,38 @@ struct CardSheet: View {
         if let problem {
           Text(verbatim: problem).font(.footnote).foregroundStyle(Palette.strong).accessibilityIdentifier("card.problem")
         }
-        HStack {
-          Button("Decline") { declining = true }
-            .buttonStyle(.bordered).controlSize(.large)
-            .accessibilityIdentifier("card.decline")
+        // At the accessibility text sizes the two buttons stack, Approve on top, so neither word
+        // breaks across lines and the bar stays a sensible share of the screen.
+        let layout = typeSize.isAccessibilitySize
+          ? AnyLayout(VStackLayout(spacing: 8)) : AnyLayout(HStackLayout())
+        layout {
+          if typeSize.isAccessibilitySize { approveButton(entry, card: card) }
           Button {
-            approve(entry)
+            declining = true
           } label: {
-            Text(verbatim: card.approveLabel).frame(maxWidth: .infinity)
+            Text("Decline").lineLimit(1).frame(maxWidth: typeSize.isAccessibilitySize ? .infinity : nil)
           }
-          .buttonStyle(.borderedProminent).controlSize(.large)
-          .disabled(!canApprove)
-          .accessibilityIdentifier("card.approve")
+          .buttonStyle(.bordered).controlSize(.large)
+          .accessibilityIdentifier("card.decline")
+          if !typeSize.isAccessibilitySize { approveButton(entry, card: card) }
         }
       }
     }
+    .dynamicTypeSize(...DynamicTypeSize.accessibility2)
     .padding()
     .frame(maxWidth: .infinity)
     .background(.bar)
+  }
+
+  private func approveButton(_ entry: CardEntry, card: Card) -> some View {
+    Button {
+      approve(entry)
+    } label: {
+      Text(verbatim: card.approveLabel).lineLimit(2).minimumScaleFactor(0.8).frame(maxWidth: .infinity)
+    }
+    .buttonStyle(.borderedProminent).controlSize(.large)
+    .disabled(!canApprove)
+    .accessibilityIdentifier("card.approve")
   }
 
   private var canApprove: Bool {

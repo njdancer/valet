@@ -59,9 +59,9 @@ struct NeedsYouView: View {
                 selected = entry.id
               } label: {
                 VStack(alignment: .leading, spacing: 4) {
-                  Text(verbatim: entry.card.title).foregroundStyle(.primary)
+                  Text(verbatim: entry.card.title).foregroundStyle(Color.primary)
                   Text(verbatim: CardStateText.short(entry.state, macName: model.macName)).font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.secondary)
                 }
               }
               .accessibilityIdentifier("answered.\(entry.card.ref)")
@@ -74,7 +74,7 @@ struct NeedsYouView: View {
               VStack(alignment: .leading, spacing: 4) {
                 Text(verbatim: alert.title).font(.headline)
                 Text(verbatim: alert.body).font(.subheadline)
-                Text(alert.at, style: .time).font(.caption).foregroundStyle(.secondary)
+                Text(alert.at, style: .time).font(.caption).foregroundStyle(Color.secondary)
               }
               .accessibilityElement(children: .combine)
             }
@@ -109,12 +109,12 @@ struct CardRowView: View {
       HStack {
         Text(verbatim: "\(entry.card.kindWord) \u{00b7} \(entry.card.ref)").font(.caption.monospaced())
         Spacer()
-        Text(verbatim: Deadline.text(remaining)).font(.caption).foregroundStyle(.secondary)
+        Text(verbatim: Deadline.text(remaining)).font(.caption).foregroundStyle(Color.secondary)
       }
       TitleText(card: entry.card).font(.headline)
-      Text(verbatim: entry.card.askedBy).font(.subheadline).foregroundStyle(.secondary)
+      Text(verbatim: entry.card.askedBy).font(.subheadline).foregroundStyle(Color.secondary)
     }
-    .foregroundStyle(.primary)
+    .foregroundStyle(Color.primary)
     .accessibilityElement(children: .combine)
   }
 }
@@ -153,7 +153,7 @@ struct HandoffRow: View {
     VStack(alignment: .leading, spacing: 8) {
       Text(verbatim: "\(entry.handoff.domain) wants a sign-in code").font(.headline)
       if entry.sentSeq != nil {
-        Text(entry.confirmed ? "Sent to your Mac." : "Sending to your Mac\u{2026}").foregroundStyle(.secondary)
+        Text(entry.confirmed ? "Sent to your Mac." : "Sending to your Mac\u{2026}").foregroundStyle(Color.secondary)
           .accessibilityIdentifier("handoff.sent")
       } else {
         Text("Type the code the site sent you. It goes only into this login on your Mac.")

@@ -25,7 +25,7 @@ struct SectionHeader: View {
   let text: String
   init(_ text: String) { self.text = text }
   var body: some View {
-    Text(verbatim: text).font(.subheadline.weight(.semibold)).foregroundStyle(.primary).textCase(nil)
+    Text(verbatim: text).font(.subheadline.weight(.semibold)).foregroundStyle(Color.primary).textCase(nil)
       .accessibilityAddTraits(.isHeader)
   }
 }

@@ -25,9 +25,11 @@ final class JourneyTests: XCTestCase {
 
   func openCard(_ ref: String) {
     // Cards further down the list may not exist until scrolled to.
+    // The list keeps its scroll position between cards, so look further down first, then back up.
     var tries = 0
-    while !element("card.\(ref)").waitForExistence(timeout: 3) && tries < 4 {
-      app.swipeUp()
+    let row = element("card.\(ref)")
+    while !(row.waitForExistence(timeout: 2) && row.isHittable) && tries < 10 {
+      if tries < 4 { app.swipeUp() } else { app.swipeDown() }
       tries += 1
     }
     waitFor("card.\(ref)").tap()
