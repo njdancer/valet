@@ -1,0 +1,86 @@
+# XcodeGen spec for the iPhone app (docs/ios-app.md). Generate with `xcodegen` in this folder; the
+# .xcodeproj is not committed.
+#
+# Two app targets from the same views:
+# - ValetPhone: what would ship. No fakes linked at all, so no fake Mac can be in it.
+# - ValetPhoneDev: the same app with ValetFakes and VALET_FAKES, for the simulator and UI tests.
+# Neither is signed here: the simulator needs no team, and signing waits for Nick.
+name: ValetPhone
+options:
+  bundleIdPrefix: me.dncr
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+packages:
+  ValetPhoneKit:
+    path: ValetPhoneKit
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    CODE_SIGNING_ALLOWED: "NO"
+    CODE_SIGN_IDENTITY: ""
+    DEVELOPMENT_TEAM: ""
+    TARGETED_DEVICE_FAMILY: "1"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targetTemplates:
+  App:
+    type: application
+    platform: iOS
+    sources:
+      - path: ValetPhone/Sources
+    info:
+      path: ValetPhone/Generated/Info-${target_name}.plist
+      properties:
+        CFBundleDisplayName: Valet
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        NSCameraUsageDescription: Valet uses the camera to scan the pairing code your Mac shows.
+        NSFaceIDUsageDescription: Valet uses Face ID to open the app and to approve what agents ask for.
+        ITSAppUsesNonExemptEncryption: false
+    dependencies:
+      - package: ValetPhoneKit
+        product: ValetProtocol
+      - package: ValetPhoneKit
+        product: ValetCrypto
+      - package: ValetPhoneKit
+        product: ValetPhoneCore
+targets:
+  ValetPhone:
+    templates: [App]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: me.dncr.valet
+  ValetPhoneDev:
+    templates: [App]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: me.dncr.valet.dev
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) VALET_FAKES"
+    dependencies:
+      - package: ValetPhoneKit
+        product: ValetFakes
+  ValetPhoneUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: ValetPhone/UITests
+    dependencies:
+      - target: ValetPhoneDev
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: me.dncr.valet.uitests
+        TEST_TARGET_NAME: ValetPhoneDev
+        GENERATE_INFOPLIST_FILE: "YES"
+schemes:
+  ValetPhone:
+    build:
+      targets:
+        ValetPhone: all
+  ValetPhoneDev:
+    build:
+      targets:
+        ValetPhoneDev: all
+        ValetPhoneUITests: [test]
+    test:
+      targets: [ValetPhoneUITests]

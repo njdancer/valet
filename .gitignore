@@ -6,3 +6,7 @@ out/
 .claude/worktrees/
 docs/review/artifact/
 swift-bridge/.build/
+
+# The iPhone app's generated Xcode project (ios/project.yml)
+ios/ValetPhone.xcodeproj/
+ios/ValetPhone/Generated/
