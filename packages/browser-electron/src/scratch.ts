@@ -104,6 +104,8 @@ export class ScratchBrowser {
   private readonly cookieValues = new Set<string>()
   /** Why the last top-level navigation was refused, for the agent. */
   private refusal: string | null = null
+  /** Main-frame requests seen, so settle() can tell an input started a navigation. */
+  private mainFrames = 0
 
   private constructor(
     private readonly options: ScratchOptions,
@@ -264,8 +266,9 @@ export class ScratchBrowser {
     if (point.error === 'invalid-selector') throw new ScratchError('That isn’t a valid selector.')
     if (point.error !== undefined || typeof point.x !== 'number' || typeof point.y !== 'number')
       throw new ScratchError('That element isn’t visible, so it can’t be clicked.')
+    const frames = this.mainFrames
     this.surface.click(point.x, point.y)
-    await this.settle()
+    await this.settle(frames)
     return this.snapshot()
   }
 
@@ -292,8 +295,9 @@ export class ScratchBrowser {
       throw new ScratchError('The scratch browser doesn’t type into password or code fields.')
     const focused = (await this.run(focusScript(selector))) as { focused?: boolean } | null
     if (focused?.focused !== true) throw new ScratchError('That field couldn’t take the keyboard.')
+    const frames = this.mainFrames
     for (const char of text) this.surface.sendChar(char, 'full')
-    await this.settle()
+    await this.settle(frames)
     return this.snapshot()
   }
 
@@ -351,7 +355,10 @@ export class ScratchBrowser {
       if (page === null || page.hostname !== url.hostname) return false
     }
     this.requests++
-    if (request.resourceType === 'mainFrame') this.loadRequests = 0
+    if (request.resourceType === 'mainFrame') {
+      this.loadRequests = 0
+      this.mainFrames++
+    }
     this.loadRequests++
     if (this.requests > SCRATCH_LIMITS.requests || this.loadRequests > SCRATCH_LIMITS.requestsPerLoad) {
       this.close()
@@ -407,10 +414,19 @@ export class ScratchBrowser {
     }
   }
 
-  /** Waits for a navigation the last input started, if any, and a moment for the page to settle. */
-  private async settle(): Promise<void> {
+  /**
+   * Waits for a navigation the last input started, if any, and a moment for the page to settle. A
+   * click's navigation can start a while after the click (later on a busy Mac), so this watches for
+   * one for up to settleMs rather than looking once.
+   */
+  private async settle(framesBefore: number): Promise<void> {
     const timers = this.options.timers ?? realTimers
-    await new Promise<void>((resolve) => timers.setTimeout(resolve, 300))
+    const sleep = (ms: number) => new Promise<void>((resolve) => timers.setTimeout(resolve, ms))
+    await sleep(300)
+    for (let waited = 300; waited < SCRATCH_LIMITS.settleMs; waited += 100) {
+      if (this.closed || this.mainFrames !== framesBefore || this.surface.isLoading()) break
+      await sleep(100)
+    }
     if (this.surface.isLoading()) await this.withTimeout(this.surface.nextStopLoading())
     if (this.closed) throw new ScratchError('The site refused the scratch browser, so it closed.')
   }
