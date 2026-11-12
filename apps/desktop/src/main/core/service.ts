@@ -8,6 +8,8 @@ import { copyFile, mkdir, rm } from 'node:fs/promises'
 import { AdapterStore, type BuildRecord, type PackageRuntime } from '@valet/adapter-store'
 import {
   type AdapterManifest,
+  type ApprovalKind,
+  type ApprovalSubject,
   type AuditEvent,
   type AuditRecord,
   type AuditSink,
@@ -15,9 +17,11 @@ import {
   CredentialError,
   DEFAULT_SANDBOX,
   type Grant,
+  type GrantStore,
   isDisplayText,
   type LocalAccess,
   MESSAGES_SECRET,
+  messagesSourcesIn,
   type NeedsUserReason,
   needsYouTitle,
   type PackageFiles,
@@ -81,9 +85,12 @@ import {
   AnchoredFile,
   ApprovalBroker,
   DeviceStore,
+  grantSubject,
   installSubject,
+  itemFingerprint,
   type KindHandlers,
   type MacApprovalKeys,
+  subjectProvider,
   TRUSTED_STORE,
   TrustedLedger,
 } from './approvals'
@@ -620,7 +627,7 @@ export class AppService {
       audit: this.audit,
       prompt: this.broker,
       authRunner: createAuthRunner({
-        grants: this.grants,
+        grants: this.signedGrants,
         credentials: this.deps.credentials,
         audit: this.audit,
         clock: () => new Date(this.deps.now()),
@@ -1118,6 +1125,14 @@ export class AppService {
     }
   }
 
+  /**
+   * The kinds this app can act on once approved. Anything else an agent asks for isn't available
+   * yet (E's admin tools check this before filing a request).
+   */
+  wiredKinds(): ReadonlySet<ApprovalKind> {
+    return new Set(Object.keys(this.approvalHandlers()) as ApprovalKind[])
+  }
+
   /** What each approved kind does here. Kinds not listed aren't wired yet and do nothing. */
   private approvalHandlers(): KindHandlers {
     return {
@@ -1141,6 +1156,13 @@ export class AppService {
         // rollback's, until its swap has worked (rollbackNow), so a failed swap leaves the running
         // version approved.
         supersedes: (next, older) => next.source !== 'rollback' && next.adapterId === older.adapterId,
+      },
+      // The person's own grant (grants.make) stores the grant once signed; the gate then reads
+      // this evidence (grantSigned). Stale once the version it names isn't the one installed.
+      'secret-grant': {
+        precheck: (subject) => this.adapter(subject.adapterId)?.hash === subject.adapterHash,
+        // One grant per secret: a new one replaces the evidence of the last.
+        supersedes: (next, older) => next.adapterId === older.adapterId && next.secret === older.secret,
       },
       resume: {
         precheck: (subject) =>
@@ -1468,18 +1490,91 @@ export class AppService {
       inheritsSession: previous !== null && grants.some((g) => g.adapterId === id),
       unsandboxed: this.runsUnsandboxed(adapter),
     })
-    const asked = await broker.request('adapter-install', subject, { kind: 'person' })
+    if (!(await this.approveHere('adapter-install', subject))) return false
+    // A rollback retires the others only once its swap has worked (rollbackNow).
+    if (source !== 'rollback') await this.retireOthers(id, adapter.hash)
+    return true
+  }
+
+  /**
+   * The person's own request, approved with Touch ID at this Mac: true once signed, false if they
+   * cancelled. Throws when nothing can be approved (no broker, locked down).
+   */
+  private async approveHere<K extends ApprovalKind>(kind: K, subject: ApprovalSubject<K>): Promise<boolean> {
+    const broker = this.approvalBroker
+    if (broker === null) throw new ValetError('config', 'unavailable')
+    const asked = await broker.request(kind, subject, { kind: 'person' })
     if (!asked.ok)
       throw new ValetError('config', asked.reason === 'locked-down' ? 'locked-down' : 'unavailable')
     const answered = await broker.approveOnMac(asked.requestId)
-    if (answered.ok) {
-      // A rollback retires the others only once its swap has worked (rollbackNow).
-      if (source !== 'rollback') await this.retireOthers(id, adapter.hash)
-      return true
-    }
+    if (answered.ok) return true
     if (answered.reason !== 'busy')
       await broker.withdraw(asked.requestId, { kind: 'person' }).catch(() => false)
     return false
+  }
+
+  /**
+   * Whether a stored grant may hand out its secret: signed `secret-grant` evidence for exactly it
+   * (the item, the provider, origins within those signed), or the legacy record, honoured only
+   * for origins the version's own manifest declares (B's condition).
+   */
+  private grantSigned(grant: Grant): boolean {
+    const fingerprint = itemFingerprint(grant.itemRef)
+    const signed = this.approvalBroker?.honoured(
+      'secret-grant',
+      (s) =>
+        s.adapterId === grant.adapterId &&
+        s.adapterHash === grant.adapterHash &&
+        s.secret === grant.secret &&
+        s.provider === subjectProvider(grant.provider) &&
+        s.itemFingerprint === fingerprint &&
+        grant.origins.every((o) => s.origins.includes(o)),
+    )
+    if (signed !== null && signed !== undefined) return true
+    const legacy = (this.ledger?.data.legacy?.grants ?? []).some(
+      (l) =>
+        l.adapterId === grant.adapterId && l.adapterHash === grant.adapterHash && l.secret === grant.secret,
+    )
+    if (!legacy) return false
+    const adapter = this.adapter(grant.adapterId)
+    if (adapter === null || adapter.hash !== grant.adapterHash) return false
+    const manifest = adapter.definition.manifest
+    const declared =
+      grant.secret === MESSAGES_SECRET
+        ? messagesSourcesIn(manifest.auth.steps).some((m) => m.sender === grant.itemRef)
+          ? manifest.navigation
+          : []
+        : grant.provider !== 'messages' && Object.hasOwn(manifest.secrets, grant.secret)
+          ? (manifest.secrets[grant.secret]?.origins ?? [])
+          : []
+    return grant.origins.length > 0 && grant.origins.every((o) => declared.includes(o))
+  }
+
+  /** The grant store as everything that hands out secrets sees it: only grants the person signed. */
+  private readonly signedGrants: GrantStore = {
+    find: async (adapterId, adapterHash, secret) => {
+      const grant = await this.grants.find(adapterId, adapterHash, secret)
+      return grant !== null && this.grantSigned(grant) ? grant : null
+    },
+    list: async () => (await this.grants.list()).filter((g) => this.grantSigned(g)),
+    put: (grant) => this.grants.put(grant),
+    revoke: (adapterId, secret) => this.grants.revoke(adapterId, secret),
+  }
+
+  /** Takes a grant's evidence and legacy record away (a revoke). Only tightens. */
+  private async revokeGrantEvidence(adapterId: string, secret: string): Promise<void> {
+    await this.approvalBroker?.revoke('secret-grant', (s) => s.adapterId === adapterId && s.secret === secret)
+    await this.ledger
+      ?.commit(
+        (draft) => {
+          if (draft.legacy !== undefined)
+            draft.legacy.grants = draft.legacy.grants.filter(
+              (l) => !(l.adapterId === adapterId && l.secret === secret),
+            )
+        },
+        { tightening: true },
+      )
+      .catch(() => undefined)
   }
 
   /** Applies a signed install of the hash installed now: the applied mark, the snapshot, the tools. */
@@ -1995,7 +2090,7 @@ export class AppService {
         list: async () => {
           const records = await this.reader.records()
           const titles = await this.titles.read()
-          return (await this.grants.list()).map((g) => grantInfo(g, titles, lastUsed(records, g)))
+          return (await this.signedGrants.list()).map((g) => grantInfo(g, titles, lastUsed(records, g)))
         },
         providers: async () => {
           const grants = await this.grants.list().catch(() => [] as readonly Grant[])
@@ -2025,6 +2120,12 @@ export class AppService {
             now: () => new Date(deps.now()),
           })
           const { grant } = checked
+          // Touch ID at this Mac signs exactly this grant: the item, the fields, the origins.
+          const signed = await this.approveHere(
+            'secret-grant',
+            grantSubject(adapter.definition.manifest, grant, checked.title),
+          )
+          if (!signed) throw new ValetError('grant', 'not-granted')
           // D6: a Keychain copy is made now, with the person approving in 1Password; a grant whose
           // copy couldn't be made would only fail its first login.
           if (grant.provider === 'keychain-copy') {
@@ -2052,6 +2153,7 @@ export class AppService {
             throw new ValetError('grant', 'not-found')
           }
           const before = await this.grants.list()
+          await this.revokeGrantEvidence(adapterId, secret)
           await this.audit.append({ type: 'grant-revoked', adapterId, secret })
           await this.grants.revoke(adapterId, secret)
           // A copy no remaining grant uses goes too.
