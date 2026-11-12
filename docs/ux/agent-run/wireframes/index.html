@@ -3156,7 +3156,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
     desc: 'The same card parts in the same order as the phone, expanded. The v3 review (permissions, code) follows below the card.',
     html: shell(
       'sites',
-      `${K.header({ crumbs: ['Sites', 'Drafts', 'Yahoo Finance 1.0.0'], title: 'Install "Yahoo Finance" for yahoo.com', status: K.badge('Install 1.0.0 · approval 7B3F', 'info'), sub: `Asked by ${K.link('Claude app')} · 7:38 pm · through the relay` })}
+      `${K.header({ crumbs: ['Sites', 'Drafts', 'Yahoo Finance 1.0.0'], title: 'Install "Yahoo Finance" for yahoo.com', status: K.badge('Install 1.0.0 · approval 7B3F', 'info'), sub: `Site: <span class="mono">finance.yahoo.com</span> · asked by ${K.link('Claude app')} · 7:38 pm · through the relay` })}
       <div class="wf-scroll"><div class="col" style="max-width:760px">
         ${K.banner('idle', 'Reads only.', "Reads yahoo.com. No login. Can't change anything.")}
         ${K.card(
@@ -3635,7 +3635,11 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
         260,
         'The site\'s own text (items) appears only under "From the site", never in the title or risk line.',
       ],
-      [200, 745, 'Button names the tool ("Check out"), as on the Mac\'s confirmation window. Face ID or passcode.'],
+      [
+        200,
+        745,
+        'Button names the tool ("Check out"), as on the Mac\'s confirmation window. Face ID or passcode.',
+      ],
     ],
   })
 
@@ -3821,11 +3825,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
       }),
     }),
     notes: [
-      [
-        200,
-        725,
-        'The button is there for everyone on every card, including people who can\'t use Face ID.',
-      ],
+      [200, 725, "The button is there for everyone on every card, including people who can't use Face ID."],
     ],
   })
 
@@ -3971,11 +3971,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
             ['Device', 'Gesture', ''],
             [
               ["Nick's MacBook Pro (this Mac)", 'Touch ID', ''],
-              [
-                K.link("Nick's iPhone"),
-                'Face ID · or the passcode (always)',
-                K.btn('Manage in Connections'),
-              ],
+              [K.link("Nick's iPhone"), 'Face ID · or the passcode (always)', K.btn('Manage in Connections')],
             ],
             { cols: '1.4fr 1.4fr auto' },
           ),
@@ -4948,11 +4944,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
       ),
     }),
     notes: [
-      [
-        350,
-        300,
-        "Face ID or passcode; never the last device. The Mac uses Touch ID (mac-device-remove).",
-      ],
+      [350, 300, 'Face ID or passcode; never the last device. The Mac uses Touch ID (mac-device-remove).'],
     ],
   })
 
@@ -5043,11 +5035,7 @@ window.WF = { K, n, esc, shell, sheet, dialog, FRAMES: [] }
       { title: 'Needs you', actions: P.approveBar('Approve with Face ID') },
     ),
     notes: [
-      [
-        30,
-        250,
-        'Neutral: a choice from a list the adapter declares widens nothing. Face ID or passcode.',
-      ],
+      [30, 250, 'Neutral: a choice from a list the adapter declares widens nothing. Face ID or passcode.'],
       [
         30,
         330,

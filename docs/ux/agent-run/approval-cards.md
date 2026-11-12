@@ -59,21 +59,21 @@ answered: "not everything needs approval"); B finalises them. Revised after the 
 In reading order. This is also the VoiceOver order: the heading group (items 1 to 3), then the risk
 line, what changes and Because, then the actions, which Magic Tap and the rotor also reach (R33).
 
-| #   | Part                  | Content and source                                                                                                                                                            | Limits (iPhone, default text)                 |
-| --- | --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| 1   | Kind strip            | Kind word and version for adapter kinds ("Install · 1.0.0"), approval ref (`7B3F`), deadline or age. When the Mac is offline: "Mac last seen 7:39 pm" (R28).                  | One line.                                     |
-| 2   | Title                 | Template per kind (section 3), from the diff. Tone word first on strong and caution cards ("Can't be undone."). Connect's title is the question (R32).                        | 60 characters; wraps, never truncates.        |
-| 3   | Asked by              | "Asked by {name} · {time}" with the agent's monogram and badge, or "Raised by Valet · {time}".                                                                                | One line.                                     |
-| 4   | Risk line             | One sentence from section 4, computed over the parent and every ticked follow-on, with tone; "and 2 more risks" when more apply.                                              | 100 characters.                               |
-| 5   | What changes          | Change rows (section 5): expansions first, reductions, then relevant unchanged rows. Five shown, then "Show 3 more".                                                          | Each row up to 60 characters before it wraps. |
-| 6   | Because               | Rule 4.                                                                                                                                                                       | One line.                                     |
-| 7   | Checks Valet ran      | Valet's own runs only: build, manifest, lint, sandbox, live trial, reproduction check (only on fixtures Valet recorded).                                                      | One line each.                                |
-| 8   | Tests the agent wrote | "14 tests the agent wrote pass (Valet ran them)", in plain text, never with a tick and never above the fold (R22). Fixtures say "recorded by Valet" or "edited by the agent". | One line.                                     |
-| 9   | Follow-ons            | Remote-tool requests for this adapter's tools, unticked (section 8).                                                                                                          | Up to 5.                                      |
-| 10  | In {agent}'s words    | The agent's reason, quoted, plain text only, "Show more" after 280 characters.                                                                                                | 2,000 characters stored.                      |
-| 11  | Details               | Code changes, references the agent read (URLs only), payload fingerprint, the agent's self-description, redirect host, the call ref.                                          | Collapsed.                                    |
-| 12  | Actions               | **Decline** and the approve button (section 6). Pinned at the bottom.                                                                                                         | Always visible.                               |
-| 13  | Footer                | "Expires {day, time} if nobody answers." "Only you can approve this. Claude can't approve its own requests."                                                                  | Two lines.                                    |
+| #   | Part                  | Content and source                                                                                                                                                                                                                 | Limits (iPhone, default text)                 |
+| --- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| 1   | Kind strip            | Kind word and version for adapter kinds ("Install · 1.0.0"), approval ref (`7B3F`), deadline or age. When the Mac is offline: "Mac last seen 7:39 pm" (R28).                                                                       | One line.                                     |
+| 2   | Title                 | Template per kind (section 3), from the diff. Tone word first on strong and caution cards ("Can't be undone."). Connect's title is the question (R32).                                                                             | 60 characters; wraps, never truncates.        |
+| 3   | Asked by              | "Asked by {name} · {time}" with the agent's monogram and badge, or "Raised by Valet · {time}".                                                                                                                                     | One line.                                     |
+| 4   | Risk line             | One sentence from section 4, computed over the parent and every ticked follow-on, with tone; "and 2 more risks" when more apply.                                                                                                   | 100 characters.                               |
+| 5   | What changes          | Change rows (section 5): expansions first, reductions, then relevant unchanged rows. Five shown, then "Show 3 more".                                                                                                               | Each row up to 60 characters before it wraps. |
+| 6   | Because               | Rule 4.                                                                                                                                                                                                                            | One line.                                     |
+| 7   | Checks Valet ran      | Valet's own runs only: build, manifest, lint, sandbox, live trial (signed out, or signed in where F's trial tier allows), reproduction check (on fixtures Valet recorded, or a signed-in live trial for pages behind the sign-in). | One line each.                                |
+| 8   | Tests the agent wrote | "14 tests the agent wrote pass (Valet ran them)", in plain text, never with a tick and never above the fold (R22). Fixtures say "recorded by Valet" or "edited by the agent".                                                      | One line.                                     |
+| 9   | Follow-ons            | Remote-tool requests for this adapter's tools, unticked (section 8).                                                                                                                                                               | Up to 5.                                      |
+| 10  | In {agent}'s words    | The agent's reason, quoted, plain text only, "Show more" after 280 characters.                                                                                                                                                     | 2,000 characters stored.                      |
+| 11  | Details               | Code changes, references the agent read (URLs only), payload fingerprint, the agent's self-description, redirect host, the call ref.                                                                                               | Collapsed.                                    |
+| 12  | Actions               | **Decline** and the approve button (section 6). Pinned at the bottom.                                                                                                                                                              | Always visible.                               |
+| 13  | Footer                | "Expires {day, time} if nobody answers." "Only you can approve this. Claude can't approve its own requests."                                                                                                                       | Two lines.                                    |
 
 On the Mac the card is the top of the Review page (`#/sites/<id>/versions/<hash>/review`) for
 adapter kinds, and a sheet over Needs you for the others, with the same parts in the same order.
@@ -130,9 +130,21 @@ gesture. Undo is off while Locked down (R7).
 
 **No approval, no notification:** reads (scoped to the agent's own activity unless it has "All
 agents' activity", R27), scratch-browser authoring, offline test runs, paced live trials of a
-draft's read tools on its declared hosts. The scratch browser and live trials never reach loopback,
+draft's read tools on its declared hosts. Live trials are their own tier (F): they need Ask for
+changes, run signed out by default, and are paced with the site's own adapters; a trial of the
+submitted files is listed on the card under Checks Valet ran. The scratch browser and live trials never reach loopback,
 private, link-local, CGNAT or tailnet addresses, or `.local` names (the rules in `docs/relay.md`);
 that takes a Private network card (R21).
+
+**Repairs behind the sign-in.** When the page that broke is only reachable signed in, the
+reproduction check may run as a signed-in live trial instead of on recorded fixtures. The check
+line then reads: "Repair R-4E1C: in a signed-in trial, the installed version fails as it did, and
+this one works."
+
+**The site's host beside an install title.** The title names the registrable domain ("for
+yahoo.com"). On the Mac's Review page and the phone card's Details, the site's own host sits next to
+it ("Site: finance.yahoo.com"), because agents in F's evals found the domain alone confusing
+("for example.test").
 
 ## 4. Risk line templates
 
