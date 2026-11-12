@@ -59,6 +59,7 @@ export const EVENT_WORDS = {
   'draft-created': { label: 'Draft started', tone: 'neutral' },
   'draft-submitted': { label: 'Draft submitted', tone: 'warning' },
   'draft-deleted': { label: 'Draft deleted', tone: 'neutral' },
+  'draft-trial': { label: 'Draft tried on the site', tone: 'neutral' },
 } as const satisfies Readonly<Record<EventType, { readonly label: string; readonly tone: DotTone }>>
 
 const OTHER = { label: 'Other event', tone: 'neutral' } as const
@@ -353,6 +354,7 @@ export function details(event: AuditEvent, now: number): ReactNode {
     case 'draft-created':
     case 'draft-submitted':
     case 'draft-deleted':
+    case 'draft-trial':
       return (
         <>
           <Code>{event.adapterId}</Code> <Quiet>{event.draftId}</Quiet>
@@ -446,6 +448,7 @@ export const EVENT_FIELDS = {
   'draft-created': ['type', 'draftId', 'adapterId', 'clientId'],
   'draft-submitted': ['type', 'draftId', 'adapterId', 'clientId', 'adapterHash', 'packageHash', 'requestId'],
   'draft-deleted': ['type', 'draftId', 'adapterId', 'clientId'],
+  'draft-trial': ['type', 'draftId', 'adapterId', 'clientId', 'tool', 'host', 'packageHash', 'outcome'],
 } as const satisfies {
   readonly [K in EventType]: readonly (keyof Extract<AuditEvent, { readonly type: K }>)[]
 }

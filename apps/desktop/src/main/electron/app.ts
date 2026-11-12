@@ -403,6 +403,10 @@ async function main(): Promise<void> {
         rules,
         dial: publicOnlyDial(),
       }),
+    // A live trial: the same driver a real call uses, in partitions of its own that live in memory,
+    // through the dial that refuses private addresses (docs/authoring-tools.md#live-trials).
+    trialDriver: (manifest, label) =>
+      createElectronSessionDriver(manifest, { trialLabel: label }, { dial: publicOnlyDial() }),
     startEndpoint: (caller, clients, onSessionsChanged, admin, authoring) =>
       startEndpoint({
         caller,
@@ -426,6 +430,8 @@ async function main(): Promise<void> {
       openExternal: (url) => {
         if (new URL(url).protocol === 'https:') void shell.openExternal(url)
       },
+      // Only a draft's folder under Valet's own data (the service names it), never a path from a page.
+      showFolder: (path) => void shell.openPath(path),
       chooseSaveFile: async (defaultName) => {
         const result = await dialog.showSaveDialog({ defaultPath: defaultName })
         return result.canceled || result.filePath === undefined ? null : result.filePath

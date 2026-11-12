@@ -14,6 +14,7 @@ import {
   Page,
   PageBody,
   PageHeader,
+  Section,
   SiteAvatar,
   Skeleton,
   Spacer,
@@ -23,11 +24,18 @@ import {
 } from '@valet/ui'
 import { Globe } from 'lucide-react'
 import { useState } from 'react'
-import type { AdapterSummary, InstallResult, RunSummary, SiteHealth } from '../../../shared/api'
+import type {
+  AdapterSummary,
+  DraftOverview,
+  InstallResult,
+  RunSummary,
+  SiteHealth,
+} from '../../../shared/api'
 import { useAction, useApi, useAppStop, useLoad, useNow } from '../../lib/api-context'
 import { plural } from '../../lib/format'
 import { href, navigate } from '../../lib/router'
 import { healthFor, siteStatus } from '../../lib/site-status'
+import { checksSummary, DraftStatus, draftTitle } from './draft-ui'
 import { ActionError, callsToday, isPaused, SiteFixButton, usePauseSite } from './site-ui'
 
 /**
@@ -63,6 +71,7 @@ export function SitesPage() {
   const adapters = useLoad((api) => api.adapters.list(), [], ['adapters-changed', 'approvals-changed'])
   const sites = useLoad((api) => api.health.sites(), [], ['health-changed'])
   const runs = useLoad((api) => api.runs.list({ limit: 500 }), [], ['runs-changed'])
+  const drafts = useLoad((api) => api.drafts.list(), [], ['drafts-changed', 'approvals-changed'])
   const now = useNow(60_000)
   const list = adapters.status === 'ready' ? adapters.data : []
   const health = sites.status === 'ready' ? sites.data : []
@@ -76,6 +85,7 @@ export function SitesPage() {
         actions={<InstallFromFolder />}
       />
       <PageBody width="form">
+        {drafts.status === 'ready' && drafts.data.length > 0 ? <Drafts drafts={drafts.data} /> : null}
         {adapters.status === 'loading' ? (
           <Stack gap={2} aria-hidden="true">
             <Skeleton className="h-16" />
@@ -118,6 +128,37 @@ export function SitesPage() {
         )}
       </PageBody>
     </Page>
+  )
+}
+
+/** Drafts by agents, above the sites and only when there are any (wireframe `mac-sites-drafts`). */
+function Drafts({ drafts }: { readonly drafts: readonly DraftOverview[] }) {
+  return (
+    <Section
+      title="Drafts by your agents"
+      description="Adapters your agents are writing. Only checks Valet ran are shown."
+    >
+      <List label="Drafts by your agents">
+        {drafts.map((d) => (
+          <li key={d.draftId} className="m-0 flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-3">
+            <ObjectLink href={href.draft(d.draftId)}>{draftTitle(d)}</ObjectLink>
+            <Text tone="muted" size="sm">
+              by {d.writtenBy}
+            </Text>
+            <DraftStatus status={d.status} />
+            <Spacer />
+            <Text tone="subtle" size="sm">
+              {checksSummary(d)}
+            </Text>
+            {d.status === 'waiting' ? (
+              <Button size="sm" variant="secondary" asChild>
+                <a href={href.review(d.adapterId)}>{d.update ? 'Review update' : 'Review'}</a>
+              </Button>
+            ) : null}
+          </li>
+        ))}
+      </List>
+    </Section>
   )
 }
 

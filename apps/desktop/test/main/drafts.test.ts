@@ -7,8 +7,15 @@ import { mkdtempSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AdapterStore, buildRecord } from '@valet/adapter-store'
-import { type AuditEvent, type AuditSink, type PackageFiles, parseManifest } from '@valet/core'
+import {
+  type AuditEvent,
+  type AuditSink,
+  type PackageFiles,
+  parseManifest,
+  type SessionDriver,
+} from '@valet/core'
 import { AuthoringRefusal, type ClientIdentity } from '@valet/mcp-server'
+import type { SiteGuards } from '@valet/runtime'
 import { buildToolLibrary } from '@valet/runtime/tool-script'
 import { inProcessQuickJS, nodeQuickJS } from '@valet/sandbox'
 import { afterEach, beforeAll, describe, expect, it } from 'vitest'
@@ -524,6 +531,188 @@ describe('the scratch browser through the tools', () => {
       /no scratch browser/,
     )
   })
+})
+
+describe('live trials', () => {
+  interface FakeDriver {
+    labels: string[]
+    policies: { maxPurpose: string; requests: readonly { method: string }[] }[]
+    closed: number
+    fetched: string[]
+  }
+
+  function trialDriver(answer: (url: string) => { status: number; body: unknown }) {
+    const fake: FakeDriver = { labels: [], policies: [], closed: 0, fetched: [] }
+    const driver = async (_manifest: unknown, label: string) => {
+      fake.labels.push(label)
+      return {
+        beginRun: (policy: FakeDriver['policies'][number]) => void fake.policies.push(policy),
+        endRun: () => undefined,
+        close: async () => {
+          fake.closed++
+        },
+        toolPage: async () => ({
+          goto: async () => undefined,
+          currentUrl: () => 'https://www.example.com/',
+          click: async () => undefined,
+          fill: async () => undefined,
+          extract: async () => null,
+          evaluate: async () => null,
+          fetch: async (url: string) => {
+            fake.fetched.push(url)
+            const { status, body } = answer(url)
+            return { status, contentType: 'application/json', body }
+          },
+        }),
+      } as unknown as SessionDriver
+    }
+    return { fake, driver }
+  }
+
+  function guards(open = false) {
+    const acquired: number[] = []
+    return {
+      acquired,
+      site: {
+        budget: {
+          acquire: async () => void acquired.push(1),
+          spentForMs: () => 0,
+        },
+        breaker: {
+          isOpen: () => open,
+          admit: () => 0,
+          recordSuccess: () => undefined,
+          trip: () => undefined,
+          status: () => ({ retryAfterMs: open ? 300_000 : 0 }),
+        },
+      } as unknown as SiteGuards,
+    }
+  }
+
+  async function trialHarness(
+    answer: (url: string) => { status: number; body: unknown },
+    options: { open?: boolean; signedIn?: Map<string, readonly string[]> } = {},
+  ) {
+    const { fake, driver } = trialDriver(answer)
+    const g = guards(options.open)
+    const h = await harness({
+      trials: {
+        start: sandbox,
+        driver,
+        guards: () => g.site,
+        signedIn: async () => options.signedIn ?? new Map(),
+      },
+    })
+    const { draft } = await h.authoring.createDraft(AGENT, { adapterId: 'shop', from: 'blank', name: 'Shop' })
+    return { ...h, fake, guards: g, draftId: draft.draftId }
+  }
+
+  const item = () => ({ status: 200, body: { id: 'abc-1', title: 'Live item', price: 2.25 } })
+
+  it('runs a read tool signed out under read-only rules, hands the output back as the site’s, and puts it on the card', async () => {
+    const { authoring, fake, guards: g, draftId, audit, notices, store, submits } = await trialHarness(item)
+    const report = await authoring.liveTrial(AGENT, draftId, 'get_item', { id: 'abc-1' })
+    expect(report).toMatchObject({
+      tool: 'get_item',
+      ok: true,
+      output: { fromSite: { id: 'abc-1', name: 'Live item', price: 2.25 } },
+      problem: null,
+      blocked: [],
+    })
+    expect(fake.fetched).toEqual(['https://www.example.com/api/items/abc-1'])
+    // Its own in-memory partitions, read declarations only, the site's own budget, closed after.
+    expect(fake.labels).toEqual([`${draftId.toLowerCase()}-1`])
+    expect(fake.policies[0]?.maxPurpose).toBe('read')
+    expect(g.acquired.length).toBeGreaterThan(0)
+    expect(fake.closed).toBe(1)
+    expect(audit.at(-1)).toMatchObject({
+      type: 'draft-trial',
+      draftId,
+      tool: 'get_item',
+      host: 'www.example.com',
+      outcome: 'output',
+    })
+    expect(notices.at(-1)).toBe('Claude Code tried get_item on example.com.')
+    expect((await store.require(draftId)).trials).toMatchObject([{ tool: 'get_item', ok: true }])
+    await authoring.submit(AGENT, draftId, { note: null, references: [], followOns: [] })
+    expect(submits[0]?.checks).toContain(
+      'Live trial of get_item, signed out: returned output that fits its schema',
+    )
+    // An edit makes it another version: the trial no longer counts for it.
+    await authoring.writeFile(AGENT, draftId, 'README.md', 'changed')
+    await authoring.submit(AGENT, draftId, { note: null, references: [], followOns: [] })
+    expect(submits[1]?.checks).toContain('Live trial: not run on this version')
+  }, 60_000)
+
+  it('reports a guard the site’s answer or the code broke, and output that breaks the schema', async () => {
+    const { authoring, draftId } = await trialHarness(() => ({ status: 200, body: { id: 5, title: 7 } }))
+    // The blank draft coerces; make it return the raw body instead.
+    const tools = (await authoring.readFile(AGENT, false, draftId, 'src/tools.ts')).content
+    await authoring.writeFile(
+      AGENT,
+      draftId,
+      'src/tools.ts',
+      tools.replace(/return \{\n\s+id: String[\s\S]*?\n {6}\}/, 'return body as never'),
+    )
+    expect(await authoring.liveTrial(AGENT, draftId, 'get_item', { id: 'abc-1' })).toMatchObject({
+      ok: false,
+      output: null,
+      problem: 'The output doesn’t match the tool’s output schema.',
+    })
+    await authoring.writeFile(AGENT, draftId, 'src/tools.ts', tools.replace('/api/items/', '/api/secret/'))
+    expect((await authoring.liveTrial(AGENT, draftId, 'get_item', { id: 'abc-1' })).problem).toBe(
+      'Failed with request-surface/undeclared-request.',
+    )
+  }, 60_000)
+
+  it('refuses write tools, bad input, other agents, signed-in sites, and more than six an hour', async () => {
+    const { authoring, draftId, fake } = await trialHarness(item, {
+      signedIn: new Map([['woolworths', ['shop.test']]]),
+    })
+    // The sandbox holds the input to the tool's own schema, as for an installed call.
+    expect((await authoring.liveTrial(AGENT, draftId, 'get_item', { id: 'no spaces' })).problem).toBe(
+      'The input doesn’t match the tool’s input schema.',
+    )
+    await expect(authoring.liveTrial(AGENT, draftId, 'nope', {})).rejects.toThrow(/no tool nope/)
+    await expect(authoring.liveTrial(OTHER, draftId, 'get_item', { id: 'abc-1' })).rejects.toThrow(
+      /another agent/,
+    )
+    const manifest = JSON.parse((await authoring.readFile(AGENT, false, draftId, 'manifest.json')).content)
+    manifest.tools[0].sideEffect = 'write'
+    manifest.requests[0].purpose = 'write'
+    await authoring.writeFile(AGENT, draftId, 'manifest.json', JSON.stringify(manifest))
+    await expect(authoring.liveTrial(AGENT, draftId, 'get_item', { id: 'abc-1' })).rejects.toThrow(
+      /Only read tools/,
+    )
+    // Only the bad-input trial opened a browser.
+    expect(fake.labels).toHaveLength(1)
+
+    const signed = await trialHarness(item, { signedIn: new Map([['woolworths', ['example.com']]]) })
+    await expect(
+      signed.authoring.liveTrial(AGENT, signed.draftId, 'get_item', { id: 'abc-1' }),
+    ).rejects.toThrow(/signed in to example.com/)
+
+    const busy = await trialHarness(item)
+    for (let i = 0; i < 6; i++)
+      await busy.authoring.liveTrial(AGENT, busy.draftId, 'get_item', { id: 'abc-1' })
+    await expect(busy.authoring.liveTrial(AGENT, busy.draftId, 'get_item', { id: 'abc-1' })).rejects.toThrow(
+      /6 trials an hour/,
+    )
+  }, 60_000)
+
+  it('sends nothing while the site is resting, and says so when this build has no trials', async () => {
+    const { authoring, draftId, fake } = await trialHarness(item, { open: true })
+    expect(await authoring.liveTrial(AGENT, draftId, 'get_item', { id: 'abc-1' })).toMatchObject({
+      ok: false,
+      problem: 'Nothing sent: the site is resting for about 5 minutes.',
+    })
+    expect(fake.labels).toEqual([])
+    const plain = await harness()
+    const { draft } = await plain.authoring.createDraft(AGENT, { adapterId: 'shop', from: 'blank' })
+    await expect(plain.authoring.liveTrial(AGENT, draft.draftId, 'get_item', {})).rejects.toThrow(
+      /no live trials/,
+    )
+  }, 60_000)
 })
 
 describe('helpers', () => {
