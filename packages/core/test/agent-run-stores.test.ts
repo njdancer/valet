@@ -136,7 +136,7 @@ describe('sandbox declarations', () => {
         mode: 'sandboxed',
         exceptions: [{ kind: 'app', bundleId: 'com.apple.iCal', purpose: 'x' }],
       }).success,
-    ).toBe(true)
+    ).toBe(false)
   })
 
   it('allows writing only in document folders and on other disks, and Apple Events only to data apps', () => {
@@ -172,7 +172,8 @@ describe('sandbox declarations', () => {
         mode: 'sandboxed',
         exceptions: [{ kind: 'app', bundleId, purpose: 'x' }],
       }).success
-    expect(app('com.apple.reminders')).toBe(true)
+    // No app is allowed until a typed operation set replaces raw Apple Events (I's review).
+    expect(app('com.apple.reminders')).toBe(false)
     for (const id of [
       'com.apple.Safari',
       'com.google.Chrome',

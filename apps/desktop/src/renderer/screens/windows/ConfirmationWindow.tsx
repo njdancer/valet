@@ -160,14 +160,24 @@ function Confirm({
   const expired = answered === null && until <= now
   const irreversible = item.sideEffect === 'irreversible'
   const allowLabel = irreversible ? `Approve ${item.toolTitle}` : item.toolTitle
-  const canApprove = armed && !action.busy && !expired && answered === null
+  // Approve waits for the signed request the Touch ID prompt will name.
+  const canApprove = armed && item.ref !== null && !action.busy && !expired && answered === null
   const ref = callRef(item.callId)
+  const [cancelled, setCancelled] = useState(false)
 
   const answer = async (approved: boolean) => {
     // The button is off too; this also stops a click queued before the render that turned it off.
     if (approved && !canApprove) return
     if (action.busy || expired || answered !== null) return
-    if (await action.run(() => api.answerConfirmation(item.id, approved))) onAnswered(approved)
+    let went = false
+    const send = async () => {
+      went = await api.answerConfirmation(item.id, approved)
+    }
+    if (await action.run(send)) {
+      // Approve only raised Touch ID: cancelled there, the confirmation still waits.
+      setCancelled(approved && !went)
+      if (went) onAnswered(approved)
+    }
   }
 
   // Escape declines wherever the focus is (the panel handles it when the focus is inside it).
@@ -218,7 +228,11 @@ function Confirm({
       allowLabel={allowLabel}
       declineLabel="Decline"
       state={state}
-      armingReason="Ready in a moment, so a key press meant for another app can’t answer this."
+      armingReason={
+        item.ref === null
+          ? 'Getting the Touch ID request ready.'
+          : 'Ready in a moment, so a key press meant for another app can’t answer this.'
+      }
       until={until}
       now={now}
       queue={done ? undefined : queue}
@@ -302,10 +316,17 @@ function Confirm({
           </Disclosure>
           {done ? null : (
             <Text size="sm" tone="muted">
-              If nobody answers by {formatClock(until)}, nothing is done and the app is told it timed out. The
-              AI app can’t answer this for you.
+              {allowLabel} asks for Touch ID
+              {item.ref === null ? '' : `, for request ${item.ref}`}. If nobody answers by{' '}
+              {formatClock(until)}, nothing is done and the app is told it timed out. The AI app can’t answer
+              this for you.
             </Text>
           )}
+          {cancelled && !done ? (
+            <Text role="status" size="sm" tone="muted">
+              Touch ID was cancelled, so nothing was approved. {allowLabel} to try again.
+            </Text>
+          ) : null}
           {action.failed ? (
             <Text role="alert" size="sm" tone="danger" weight="medium">
               Couldn’t send your answer. Try again.

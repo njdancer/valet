@@ -20,8 +20,6 @@ export interface WindowsOptions {
   readonly demo: boolean
   readonly e2e: boolean
   readonly devTools: boolean
-  /** The confirmation window was shown or regained focus (it re-arms the approve delay). */
-  readonly onConfirmationArmed: (id: string) => void
 }
 
 const CONFIRMATION_SIZE = { width: 460, height: 620 }
@@ -166,7 +164,6 @@ export class AppWindows {
     const existing = this.confirmations.get(id)
     if (existing !== undefined && !existing.isDestroyed()) {
       existing.showInactive()
-      this.options.onConfirmationArmed(id)
       return
     }
     const display = screen.getPrimaryDisplay()
@@ -189,12 +186,7 @@ export class AppWindows {
     )
     window.setAlwaysOnTop(true, 'floating')
     window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-    window.once('ready-to-show', () => {
-      window.showInactive()
-      this.options.onConfirmationArmed(id)
-    })
-    window.on('show', () => this.options.onConfirmationArmed(id))
-    window.on('focus', () => this.options.onConfirmationArmed(id))
+    window.once('ready-to-show', () => window.showInactive())
     window.on('closed', () => this.confirmations.delete(id))
     this.confirmations.set(id, window)
   }

@@ -265,7 +265,14 @@ describe('asking', () => {
     expect(
       await t.broker.request(
         'irreversible-call',
-        { adapterId: 'woolworths', adapterHash: HASH_A, tool: 'checkout', callId: 'c1', preview: [] },
+        {
+          adapterId: 'woolworths',
+          adapterHash: HASH_A,
+          tool: 'checkout',
+          callId: 'c1',
+          confirmationId: 'cf_1',
+          preview: [],
+        },
         agent(),
       ),
     ).toEqual({ ok: false, reason: 'not-allowed' })
@@ -868,6 +875,7 @@ describe('the rest of a request’s life', () => {
         adapterHash: HASH_A,
         tool: 'checkout',
         callId: 'call_1',
+        confirmationId: 'cf_1',
         preview: ['3 items'],
       },
       app,
