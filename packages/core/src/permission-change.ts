@@ -25,7 +25,18 @@ export const PERMISSION_AREAS = [
   'limits',
   'sandbox-mode',
   'sandbox-exception',
+  /**
+   * The login flow's steps (D's red team): `added` and `removed` lines name the steps. Removing
+   * a step that stops for the person or fails (`needsUser`, `fail`, `assertLoggedIn`) lets the
+   * flow run further without them, so it is at least `high`.
+   */
+  'auth-steps',
+  /** The session probe that decides "signed in": a `widened` line naming the old and new probe. */
+  'probe',
 ] as const
+
+/** Login steps whose removal is at least high risk: each one stops the flow for the person. */
+export const STOP_STEPS = ['needsUser', 'fail', 'assertLoggedIn'] as const
 export type PermissionArea = (typeof PERMISSION_AREAS)[number]
 
 export const manifestPermissionChangeSchema = z
