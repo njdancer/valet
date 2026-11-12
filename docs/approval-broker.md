@@ -157,6 +157,10 @@ Refused, with a reason the tool result can say (A's section 11), when:
 - the agent has `pendingPerClient` (3) waiting, or all agents `pendingTotal` (10);
 - the agent has `declinesBeforeCooldown` (3) declines within `declineWindowMs`; it is refused
   until `cooldownMs` after the last of them;
+- an app-raised confirmation is made `onBehalfOf` an agent that is cooling down. The confirmation
+  of an irreversible call is raised by the app, but declining it counts as declining the agent
+  whose call raised it, so an agent can't keep raising cards the person keeps saying no to. It
+  still doesn't count towards the agent's waiting or daily limits;
 - the agent has made 20 requests in the last day, whatever became of them, so withdrawing and
   asking again can't push cards to a phone without end (A's number, pending B);
 - an agent asks to turn a tool on remotely for anyone but itself, or names a client on a local
@@ -358,6 +362,9 @@ are the next PRs of this workstream.
 
 Known gaps, next in this workstream:
 
+- Install cards have no lines for changes to an adapter's login steps or session probe, though
+  `addsPermissions` counts both as widening (a removed `needsUser` step, say). Asked of B, since
+  it needs new permission areas.
 - Settings, remote access and remote clients are gated where they change, not where they are read.
   An agent that can write `settings.json`, `remote.json` or the remote client file directly isn't
   stopped yet. Grants and installs are already checked against evidence when used. The plan is to

@@ -109,6 +109,7 @@ import {
   settingSubject,
   settingValue,
   settingWidens,
+  showable,
   subjectProvider,
   TRUSTED_STORE,
   TrustedLedger,
@@ -403,6 +404,8 @@ export class AppService {
    * couldn't be read: then nothing that needs an approval can be approved.
    */
   private approvalBroker: ApprovalBroker | null = null
+  /** Each running call's client, by its token's identity, as the broker names agents. */
+  private readonly callers = new Map<string, string>()
   /**
    * The trusted ledger, opened at start whatever happens to the keys: its lockdown, and a lockdown
    * for tampering, hold even while the broker can't open.
@@ -729,13 +732,16 @@ export class AppService {
       explain: (call, outcome) => this.explain(call, outcome),
       started: (call) => {
         this.memory.started(call.callId, call.tool, call.client, call.input)
+        if (call.identity !== undefined) this.callers.set(call.callId, identityLabel(call.identity))
         // The token named the client; the transport is the endpoint's label for the session.
         const id = call.identity?.origin === 'local' ? call.identity.clientId : null
         if (id !== null && this.clients.seen(id, call.client, shownTransport(call.transport)))
           this.emit('clients-changed')
       },
-      finished: (call, result) =>
-        this.memory.finished(call.callId, result.status === 'ok' ? result.output : undefined),
+      finished: (call, result) => {
+        this.callers.delete(call.callId)
+        this.memory.finished(call.callId, result.status === 'ok' ? result.output : undefined)
+      },
       refused: (call, refusal) => this.auditRefusal(call, refusal),
     })
     await this.caller.refresh()
@@ -1226,6 +1232,13 @@ export class AppService {
         // stored and the version it replaces is still the one active. Anything else is the
         // version installed now, and stale if that changed.
         precheck: async (subject) => {
+          // A card that said the session stays behind is stale once there is one to inherit.
+          if (
+            subject.previousHash !== null &&
+            !subject.inheritsSession &&
+            (await this.inheritsSession(subject.adapterId))
+          )
+            return false
           if (subject.source === 'rollback') return true
           const active = this.adapter(subject.adapterId)
           if (active?.hash === subject.adapterHash) return true
@@ -1388,6 +1401,8 @@ export class AppService {
           },
           app,
           {
+            // The calling agent's: refused while it is cooling down, and a decline counts against it.
+            ...(this.callers.has(item.callId) ? { onBehalfOf: this.callers.get(item.callId) as string } : {}),
             display: {
               ...(shown(item.client, 100) === undefined
                 ? {}
@@ -1621,10 +1636,16 @@ export class AppService {
   }
 
   /**
-   * Whether the adapter's tool partition holds a session a new version would inherit: any cookie
-   * on the cookie domains of the version in use. Fails closed: a partition that can't be read
-   * counts as holding one.
+   * Whether a new version of the adapter would inherit a signed-in session: it has grants, or its
+   * tool partition holds any cookie on the cookie domains of the version in use. Fails closed: a
+   * partition that can't be read counts as holding one.
    */
+  private async inheritsSession(adapterId: string): Promise<boolean> {
+    const grants = await this.grants.list().catch(() => [] as readonly Grant[])
+    return grants.some((g) => g.adapterId === adapterId) || (await this.holdsSession(adapterId))
+  }
+
+  /** The partition half of inheritsSession. */
   private async holdsSession(adapterId: string): Promise<boolean> {
     const driver = this.drivers.get(adapterId)
     const adapter = this.adapter(adapterId)
@@ -1689,15 +1710,13 @@ export class AppService {
         : snapshot !== null && snapshot.hash !== adapter.hash
           ? { hash: snapshot.hash, manifest: snapshot.manifest }
           : null
-    const grants = await this.grants.list().catch(() => [] as readonly Grant[])
     const subject = installSubject({
       manifest: adapter.definition.manifest,
       hash: adapter.hash,
       files: adapter.files,
       previous,
       source,
-      inheritsSession:
-        previous !== null && (grants.some((g) => g.adapterId === id) || (await this.holdsSession(id))),
+      inheritsSession: previous !== null && (await this.inheritsSession(id)),
       unsandboxed: this.runsUnsandboxed(adapter),
     })
     if (!(await this.approveHere('adapter-install', subject))) return false
@@ -2130,7 +2149,6 @@ export class AppService {
     if (staged) this.stagedAdapters.set(`${id}:${adapter.hash}`, adapter)
     const snapshot = await this.snapshots.get(id)
     const previous = snapshot !== null && snapshot.hash !== adapter.hash ? snapshot : null
-    const grants = await this.grants.list().catch(() => [] as readonly Grant[])
     const subject = {
       ...installSubject({
         manifest: adapter.definition.manifest,
@@ -2138,8 +2156,7 @@ export class AppService {
         files: adapter.files,
         previous: previous === null ? null : { hash: previous.hash, manifest: previous.manifest },
         source: 'draft',
-        inheritsSession:
-          previous !== null && (grants.some((g) => g.adapterId === id) || (await this.holdsSession(id))),
+        inheritsSession: previous !== null && (await this.inheritsSession(id)),
         unsandboxed: this.runsUnsandboxed(adapter),
       }),
       references: request.references.filter((r) => /^https:\/\/\S{1,490}$/.test(r)).slice(0, 10),
@@ -3375,14 +3392,26 @@ function lastUsed(records: readonly AuditRecord[], grant: Grant): string | null 
 }
 
 /** Text a signed request may carry for a card: cut to `max`, or left out if it isn't display text. */
+/**
+ * One line of a signed preview: invisible and unprintable characters written out as codes (never
+ * dropped, so nothing in it can hide), at most `max` characters with "…" where it was cut.
+ */
 function shown(text: string, max: number): string | undefined {
-  const cut = [...text.replace(/\s+/g, ' ').trim()].slice(0, max).join('')
-  return cut !== '' && isDisplayText(cut) ? cut : undefined
+  const line = showable(text)
+  if (line === '(blank)' || line === '') return undefined
+  const chars = [...line]
+  return chars.length <= max
+    ? line
+    : `${chars
+        .slice(0, max - 1)
+        .join('')
+        .trimEnd()}…`
 }
 
 /**
  * What a confirmation's signed request shows, at most 20 lines of 200 characters: what it asks (the
- * requests it would make, the adapter's note as the adapter's words), then the input.
+ * requests it would make, the adapter's note as the adapter's words), then the input. Past 20
+ * lines, the last one says how many more there are, so a card never looks complete when it isn't.
  */
 function confirmationPreview(item: ConfirmationItem): string[] {
   const lines: string[] = []
@@ -3399,7 +3428,8 @@ function confirmationPreview(item: ConfirmationItem): string[] {
     const kept = shown(line, 200)
     if (kept !== undefined) lines.push(kept)
   }
-  return lines.slice(0, 20)
+  if (lines.length <= 20) return lines
+  return [...lines.slice(0, 19), `and ${lines.length - 19} more lines not shown`]
 }
 
 /** A remote client's registration id from its `remote:<id>` name, or null for any other. */

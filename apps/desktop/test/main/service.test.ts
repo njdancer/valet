@@ -607,9 +607,17 @@ describe('an update', () => {
 })
 
 describe('an update and the signed-in session', () => {
-  async function update(cookies: string[]) {
+  async function update(cookies: string[], signInDuringPrompt = false) {
     const first = await approved()
     first.driver.toolCookies = cookies
+    if (signInDuringPrompt)
+      // The person signs in while the card waits: by the time they approve, there is a session.
+      Object.defineProperty(first.presence, 'answer', {
+        get: () => {
+          first.driver.toolCookies = ['sid']
+          return true
+        },
+      })
     await first.service.stop()
     const next = builtinAdapter(shopDefinition({ ...SHOP, version: '1.1.0' }), {
       ...SHOP_FILES,
@@ -635,6 +643,12 @@ describe('an update and the signed-in session', () => {
   it('says nothing is inherited when the partition holds no cookie and there are no grants', async () => {
     const signed = await update([])
     expect(signed(false)).not.toBeNull()
+  })
+
+  it('withdraws a card that said nothing is inherited once there is a session to inherit', async () => {
+    const signed = await update([], true)
+    expect(signed(false)).toBeNull()
+    expect(signed(true)).toBeNull()
   })
 })
 
@@ -1032,6 +1046,18 @@ describe('tool calls', () => {
     )
     expect(JSON.stringify(events)).not.toContain('bad id!')
     expect(JSON.stringify(events)).not.toContain('call_nope')
+  })
+
+  it('writes out invisible characters in the signed preview, so no input line can hide from the phone', async () => {
+    const s = await approved()
+    void s.call('add', { item: 'attacker\u200b' }, 'Claude Code', 'call_hide', { transport: 'stdio-bridge' })
+    const broker = (s.service as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
+    const preview = async () =>
+      broker.list().find((p) => p.request.kind === 'irreversible-call')?.request.subject as
+        | { preview: string[] }
+        | undefined
+    await expect.poll(async () => (await preview())?.preview.length ?? 0).toBeGreaterThan(0)
+    expect((await preview())?.preview.join('\n')).toContain('attacker\\u{200B}')
   })
 
   it('asks the person in the confirmation panel, and only Touch ID raised from that panel approves', async () => {

@@ -128,6 +128,13 @@ export interface RequestExtras {
    * the earlier one stays as it was. Another asker's request, or one no longer waiting, is ignored.
    */
   readonly replaces?: string
+  /**
+   * An app-raised request made because of an agent's call (an irreversible call's confirmation):
+   * that agent's client id. Kept beside the request, in memory. While the agent is cooling down
+   * the request is refused, and declining it counts as declining the agent, so an agent can't
+   * keep raising cards the person keeps saying no to.
+   */
+  readonly onBehalfOf?: string
 }
 
 /** What the person entered on the Mac's card, signed into the decision. */
@@ -216,6 +223,8 @@ export class ApprovalBroker {
   private readonly waiters = new Map<string, ((closed: Closed) => void)[]>()
   /** Each pending consent's code, never written anywhere: a restart withdraws the consent. */
   private readonly consentCodes = new Map<string, string>()
+  /** The agent an app-raised request was made for (`RequestExtras.onBehalfOf`). */
+  private readonly onBehalfOf = new Map<string, string>()
   private wrongCodes = 0
   /** Stored evidence checks, by signature; cleared when the devices or revocations change. */
   private readonly evidenceChecks = new Map<string, EvidenceCheck>()
@@ -308,6 +317,7 @@ export class ApprovalBroker {
       display,
       consentCode,
       replaces,
+      onBehalfOf,
     } = typeof extras === 'string' || extras === null ? { agentNote: extras } : extras
     return this.exclusive(async () => {
       const earlier = replaces === undefined ? undefined : this.pending.get(replaces)
@@ -315,6 +325,11 @@ export class ApprovalBroker {
         earlier !== undefined && sameAsker(earlier.request.requester, requester) ? earlier : undefined
       const refusal = this.refusal(kind, subject, requester, replacing?.request.id)
       if (refusal !== null) return refusal
+      const forAgent = requester.kind === 'app' ? onBehalfOf : undefined
+      if (forAgent !== undefined) {
+        const until = cooldownUntil(this.options.ledger.data.declines, forAgent, this.now())
+        if (until !== null) return { ok: false, reason: 'cooling-down', until: new Date(until).toISOString() }
+      }
       if (kind === 'remote-client') {
         if (consentCode === undefined || !consentCodeSchema.safeParse(consentCode).success) {
           return { ok: false, reason: 'not-allowed' }
@@ -381,6 +396,7 @@ export class ApprovalBroker {
       }
       this.pending.set(id, serialized)
       if (kind === 'remote-client' && consentCode !== undefined) this.consentCodes.set(id, consentCode)
+      if (forAgent !== undefined) this.onBehalfOf.set(id, forAgent)
       if (replacing !== undefined) await this.close(replacing, 'withdrawn', null, 'replaced')
       if (approvableOn(kind, subject).includes('phone')) {
         for (const phone of this.options.devices.activePhones()) {
@@ -539,6 +555,7 @@ export class ApprovalBroker {
       if (from.via === 'phone' && !this.options.devices.isActivePhone(from.deviceId)) return false
       const deviceId = from.via === 'mac' ? this.macId : from.deviceId
       const requester = request.request.requester
+      const agent = requester.kind === 'agent' ? requester.clientId : this.onBehalfOf.get(requestId)
       const note =
         extras.note !== undefined && isDisplayText(extras.note) ? extras.note.slice(0, 280) : undefined
       await this.close(
@@ -547,7 +564,7 @@ export class ApprovalBroker {
         deviceId,
         undefined,
         (draft) => {
-          if (requester.kind !== 'agent') return
+          if (agent === undefined) return
           // A decline with a note is the person explaining, not refusing to be asked (A section 8),
           // unless they also said to stop asking, which starts the cooldown at once.
           if (note !== undefined && extras.stopAsking !== true) return
@@ -555,7 +572,7 @@ export class ApprovalBroker {
           const at = new Date(this.now()).toISOString()
           draft.declines = draft.declines.filter((d) => Date.parse(d.at) > keepAfter)
           const count = extras.stopAsking === true ? APPROVAL_LIMITS.declinesBeforeCooldown : 1
-          for (let n = 0; n < count; n++) draft.declines.push({ clientId: requester.clientId, at })
+          for (let n = 0; n < count; n++) draft.declines.push({ clientId: agent, at })
         },
         note,
       )
@@ -885,6 +902,7 @@ export class ApprovalBroker {
     const id = request.request.id
     this.pending.delete(id)
     this.consentCodes.delete(id)
+    this.onBehalfOf.delete(id)
     const closed: Closed = {
       requestId: id,
       ref: requestRef(request),

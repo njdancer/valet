@@ -6,6 +6,7 @@
 import { generateKeyPairSync, type KeyObject, sign } from 'node:crypto'
 import {
   type AnchorState,
+  APPROVAL_LIMITS,
   type ApprovalSubject,
   type AuditEvent,
   type AuditRecord,
@@ -337,6 +338,33 @@ describe('asking', () => {
       await t.broker.request('tool-enable', tool({ tool: 'get_e' }), agent(), { replaces: mine }),
     ).toMatchObject({ ok: false, reason: 'cooling-down' })
     expect(t.broker.list().map((p) => p.request.id)).toContain(mine)
+  })
+
+  it('counts declined confirmations against the agent whose call raised them', async () => {
+    const t = await setup()
+    const call = (n: number) =>
+      t.broker.request(
+        'irreversible-call',
+        {
+          adapterId: 'woolworths',
+          adapterHash: HASH_A,
+          tool: 'checkout',
+          callId: `c${n}`,
+          confirmationId: `cf_${n}`,
+          preview: [],
+        },
+        app,
+        { onBehalfOf: 'local:claude' },
+      )
+    for (let n = 0; n < APPROVAL_LIMITS.declinesBeforeCooldown; n++) {
+      const asked = await call(n)
+      if (!asked.ok) throw new Error(asked.reason)
+      expect(await t.broker.decline(asked.requestId, { via: 'mac' })).toBe(true)
+    }
+    expect(await call(99)).toMatchObject({ ok: false, reason: 'cooling-down' })
+    // The same agent asking for anything else is cooling down too; another agent isn't.
+    expect(await t.broker.request('tool-enable', tool(), agent())).toMatchObject({ reason: 'cooling-down' })
+    expect(await t.broker.request('tool-enable', tool(), agent('other'))).toMatchObject({ ok: true })
   })
 
   it('caps the requests an agent makes in a day, withdrawn ones included', async () => {
