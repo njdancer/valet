@@ -29,6 +29,7 @@ import {
   renderedText,
   secretsIn,
   sitePickupStores,
+  siteTools,
   siteTrolley,
   tempDir,
   windowWithTitle,
@@ -95,7 +96,9 @@ test('first launch: Woolworths waits for review, and no MCP client sees or can c
 
   client = await connectMcp(control, userData)
   const tools = await client.listTools()
-  expect(tools.tools.map((t) => t.name)).toEqual([])
+  expect(siteTools(tools.tools).map((t) => t.name)).toEqual([])
+  // Valet's own read-only tools are there from the start, before any site is approved.
+  expect(tools.tools.map((t) => t.name)).toContain('valet_status')
   const refused = await callTool(client, 'woolworths_search_products', { query: 'milk' })
   results.push(refused.raw)
   expect(refused.isError).toBe(true)
@@ -114,7 +117,11 @@ test('approve in the review screen; the tools appear to MCP clients', async () =
   await control.getByRole('button', { name: /^Approve (Woolworths|0\.4\.0)$/ }).click()
 
   await expect
-    .poll(async () => (await client.listTools()).tools.map((t) => t.name).sort())
+    .poll(async () =>
+      siteTools((await client.listTools()).tools)
+        .map((t) => t.name)
+        .sort(),
+    )
     .toEqual([
       'woolworths_add_to_cart',
       'woolworths_get_cart',

@@ -26,7 +26,22 @@ import {
   parseManifest,
   ValetError,
 } from '@valet/core'
-import type { LiveSessions, SessionReportingEndpoint, ToolCall, ToolCaller } from '@valet/mcp-server'
+import {
+  ADMIN_LOCKED_DOWN_RESULT,
+  ADMIN_TOOLS,
+  ADMIN_WITHHELD_RESULT,
+  type AdminAdapterDetail,
+  type AdminAdapterList,
+  type AdminArgs,
+  type AdminCallTrace,
+  type AdminReader,
+  type ClientIdentity,
+  type LiveSessions,
+  runAdminTool,
+  type SessionReportingEndpoint,
+  type ToolCall,
+  type ToolCaller,
+} from '@valet/mcp-server'
 import { LoginAttemptMarker } from '@valet/runtime'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
@@ -116,6 +131,7 @@ async function setup(
   }
   const endpoint = {
     caller: null as ToolCaller | null,
+    admin: null as AdminReader | null,
     refreshes: 0,
     resets: 0,
     closes: 0,
@@ -143,8 +159,9 @@ async function setup(
       return driver
     },
     credentials: options.credentials ?? testCredentials(disabledOtpReader),
-    startEndpoint: async (caller, clients, onSessionsChanged): Promise<SessionReportingEndpoint> => {
+    startEndpoint: async (caller, clients, onSessionsChanged, admin): Promise<SessionReportingEndpoint> => {
       endpoint.caller = caller
+      endpoint.admin = admin
       endpoint.sessionsChanged = onSessionsChanged
       endpoint.starts++
       const issue = (id: string, configPath: string) => {
@@ -2530,5 +2547,103 @@ describe('what a tool result is told about Needs you', () => {
         callId: '9a71bbbb',
       })
     expect(s.ui.notifications.at(-1)).toMatchObject({ title: 'Missed: Log in to Shop (verification check)' })
+  })
+})
+
+describe('admin tools (docs/admin-tools.md)', () => {
+  const C1 = { origin: 'local', clientId: 'c1' } as const
+  const C2 = { origin: 'local', clientId: 'c2' } as const
+
+  async function withLogin() {
+    const s = await approved()
+    await s.api.grants.make({
+      adapterId: 'shop',
+      adapterHash: s.adapter.hash,
+      secret: 'login',
+      provider: 'fake',
+      itemRef: 'demo-woolworths',
+      origins: ['https://login.shop.test'],
+    })
+    s.driver.sessionValues = ['session-cookie-canary-0001']
+    await s.call('echo', { text: 'milk' }, 'Claude Code', 'c_7f2a01', { transport: 'http', identity: C1 })
+    await s.api.openLoginWindow('shop')
+    return { ...s, admin: s.endpoint.admin as AdminReader }
+  }
+
+  const run = (admin: AdminReader, name: string, args: AdminArgs = {}, viewer: ClientIdentity | null = C1) =>
+    runAdminTool(
+      ADMIN_TOOLS.find((t) => t.name === name) as (typeof ADMIN_TOOLS)[number],
+      admin,
+      args,
+      viewer,
+    )
+
+  it('answers every admin tool, and no answer carries a password, the token, a session value or a 1Password item', async () => {
+    const s = await withLogin()
+    const results = await Promise.all(
+      ADMIN_TOOLS.map((t) => run(s.admin, t.name, { adapterId: 'shop', call: 'c_7f2a01', limit: 100 })),
+    )
+    for (const [i, result] of results.entries()) {
+      expect(result.isError, ADMIN_TOOLS[i]?.name).toBeUndefined()
+      expect(result.structuredContent).toBeDefined()
+    }
+    const text = JSON.stringify(results)
+    for (const canary of [
+      DEMO_ACCOUNT.password,
+      DEMO_ACCOUNT.username,
+      TOKEN,
+      'op://',
+      'demo-woolworths',
+      'session-cookie-canary-0001',
+      'itemTitle',
+      'itemId',
+    ]) {
+      expect(text).not.toContain(canary)
+    }
+  })
+
+  it('describes the site, its tools by the names clients call them, and the logins without their items', async () => {
+    const s = await withLogin()
+    const list = (await run(s.admin, 'valet_list_adapters')).structuredContent as AdminAdapterList
+    const shop = list.adapters.find((a) => a.id === 'shop')
+    expect(shop?.approval).toBe('approved')
+    expect(shop?.tools.find((t) => t.name === 'echo')).toMatchObject({ mcpName: 'shop_echo', remote: false })
+    const detail = (await run(s.admin, 'valet_get_adapter', { adapterId: 'shop' }))
+      .structuredContent as AdminAdapterDetail
+    expect(detail.adapter?.loginDetails.find((l) => l.name === 'login')?.given).toMatchObject({
+      provider: 'fake',
+    })
+  })
+
+  it('shows a call’s input only to the client that made it', async () => {
+    const s = await withLogin()
+    const own = (await run(s.admin, 'valet_get_call', { call: '7F2A' }, C1))
+      .structuredContent as AdminCallTrace
+    expect(own.call?.input).toContain('milk')
+    const other = (await run(s.admin, 'valet_get_call', { call: '7F2A' }, C2))
+      .structuredContent as AdminCallTrace
+    expect(other.call?.summary.callId).toBe('c_7f2a01')
+    expect(other.call?.input).toBeNull()
+  })
+
+  it('withholds a result that would carry a session value, whatever field it sits in', async () => {
+    const s = await withLogin()
+    // A client that names itself after the session cookie gets its name into the log.
+    await s.call('echo', { text: 'x' }, 'session-cookie-canary-0001')
+    const calls = await run(s.admin, 'valet_list_calls')
+    expect(calls).toEqual({ content: [{ type: 'text', text: ADMIN_WITHHELD_RESULT }], isError: true })
+    expect(await s.admin.sensitive(['ok', 'x session-cookie-canary-0001 y'])).toBe(true)
+    expect(await s.admin.sensitive(['nothing here'])).toBe(false)
+  })
+
+  it('answers only valet_status while Valet is locked down', async () => {
+    const s = await withLogin()
+    await s.api.app.setLockedDown(true)
+    const status = (await run(s.admin, 'valet_status')).structuredContent as { lockedDown: boolean }
+    expect(status.lockedDown).toBe(true)
+    expect(await run(s.admin, 'valet_audit_log')).toEqual({
+      content: [{ type: 'text', text: ADMIN_LOCKED_DOWN_RESULT }],
+      isError: true,
+    })
   })
 })

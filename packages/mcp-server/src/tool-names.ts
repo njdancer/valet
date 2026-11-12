@@ -3,12 +3,19 @@
 // to is withheld entirely: an adapter must never be able to shadow another adapter's tool.
 
 import { z } from 'zod'
+import { ADMIN_PREFIX } from './admin-tools'
 import type { ListedTool } from './tool-caller'
 
 /** The longest tool name the MCP specification allows. */
 export const MAX_TOOL_NAME_LENGTH = 128
 
-export type SkipReason = 'name-collision' | 'name-too-long' | 'input-not-object' | 'schema-not-json'
+export type SkipReason =
+  | 'name-collision'
+  | 'name-too-long'
+  | 'input-not-object'
+  | 'schema-not-json'
+  /** The name starts with Valet's own prefix, `valet_`, which only Valet's admin tools may use. */
+  | 'reserved-name'
 
 export interface ExposedTool {
   readonly name: string
@@ -37,7 +44,10 @@ export function planTools(listed: readonly ListedTool[]): ToolPlan {
   for (const tool of listed) {
     const name = mcpToolName(tool.adapterId, tool.declaration.name)
     // MCP tool arguments are always a JSON object.
-    if (!(tool.input instanceof z.ZodObject)) {
+    if (name.startsWith(ADMIN_PREFIX)) {
+      // An adapter must never be able to stand in for, or sit beside, Valet's own tools.
+      skipped.push({ adapterId: tool.adapterId, tool: tool.declaration.name, reason: 'reserved-name' })
+    } else if (!(tool.input instanceof z.ZodObject)) {
       skipped.push({ adapterId: tool.adapterId, tool: tool.declaration.name, reason: 'input-not-object' })
     } else if (name.length > MAX_TOOL_NAME_LENGTH) {
       skipped.push({ adapterId: tool.adapterId, tool: tool.declaration.name, reason: 'name-too-long' })
