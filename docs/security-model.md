@@ -740,6 +740,32 @@ trusts `/usr/bin/security`; the helper's first read of it prompts once, naming t
 closes only for a signed build: an unsigned dev helper is trusted by its code hash, and any process
 running as the person can run it.
 
+## Agent-run Valet
+
+From 2026-11-12, the person's own agents set Valet up and write its adapters over MCP, approvals
+reach a paired phone, and remote traffic moves to a relay ([plan-agent-run.md](plan-agent-run.md)).
+The design is in [agent-run-security.md](agent-run-security.md); its contracts are in
+`packages/core` (**Contract**). In short:
+
+- Guarantees 1 and 2 above stay. Four more join them: nothing widens without a user-presence
+  gesture on a paired device; the person approves exactly the request their device rendered; the
+  relay is a pipe that can't approve or read the phone channel; a lost phone is recoverable.
+- Every action an agent can take has a tier in one table (`ADMIN_ACTION_TIERS`): reads and
+  tightening run, widening waits. No MCP tool can pair a device, answer an approval or read a
+  secret.
+- An approval is a P-256 signature from a device's Secure Enclave key, which works only after
+  Face ID or Touch ID, over the exact request the Mac built. The Mac accepts it once, while the
+  request is pending and unexpired.
+- Approvals, grants and remote-tool policy become trusted stores: each record keeps the signed
+  approval that allowed it, and each file's hash is anchored in the Keychain against rollback.
+- The sandbox is on by default with declared exceptions (D73); unsandboxed code is critical and
+  approvable only at the Mac. Until the sandbox ships, adapters that aren't built in count as
+  unsandboxed, and no draft code runs before approval.
+
+This supersedes two statements above once D lands: "Confirmations stay on the Mac" under Remote
+access (a paired phone can approve, by signature), and the approval file being plain JSON under
+Approval and audit.
+
 ## Personal Chrome profile mode (later)
 
 This mode attaches to the person's real Chrome through a companion extension. Chrome 136 and

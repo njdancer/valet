@@ -1,5 +1,10 @@
 # Remote access and the relay
 
+> **2026-11-12:** the relay is now planned as the default transport (D76, leaning), with the
+> phone channel and signed approvals that the last open question below asked for. The current
+> protocol and threat model are in [agent-run-security.md](agent-run-security.md#the-relay-protocol);
+> this document stays as the background and the options considered.
+
 Draft. This covers how MCP clients that can't reach `127.0.0.1` (claude.ai on the web and phone,
 cloud agents, a laptop away from home) could call tools on the person's Mac. It answers
 [D14](plan.md#d14-relay) and shapes [M9](plan.md#m9-relay-beta-optional) and
