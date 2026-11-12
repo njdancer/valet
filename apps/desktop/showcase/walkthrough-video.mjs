@@ -34,9 +34,9 @@ const duration = at(lastEvent) + 5
 const parts = join(out, 'parts')
 mkdirSync(parts, { recursive: true })
 const esc = (text) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-const font = `font-family: -apple-system, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;`
+const font = `font-family: -apple-system, 'SF Pro Text', 'Helvetica Neue', Helvetica, Arial, sans-serif;`
 
-const browser = await chromium.launch()
+const browser = await chromium.launch(process.env['CHROME'] ? { executablePath: process.env['CHROME'] } : {})
 const page = await browser.newPage({ viewport: { width: W, height: H }, deviceScaleFactor: 1 })
 async function png(path, html, width, height, transparent = true) {
   await page.setViewportSize({ width, height })
@@ -146,11 +146,68 @@ const args = [
   'yuv420p',
   '-movflags',
   '+faststart',
-  join(out, 'valet-pairing-walkthrough.mp4'),
+  join(parts, 'full.mp4'),
 ]
 writeFileSync(join(parts, 'ffmpeg-args.json'), JSON.stringify(args, null, 1))
 const result = spawnSync('ffmpeg', args, { stdio: 'inherit' })
 if (result.status !== 0) process.exit(result.status ?? 1)
+
+// Cut the waiting: the Simulator can stall for a minute on a tap. Between two events, a long gap
+// keeps its first AFTER seconds and its last BEFORE, so every step is seen arriving and settling.
+const AFTER = 6
+const BEFORE = 10
+const events = [
+  0,
+  ...timeline.captions.map((c) => at(c.at)),
+  ...timeline.marks.map((m) => at(m.at)),
+  ...timeline.agent.map((a) => at(a.at)),
+  duration,
+]
+  .filter((t) => t >= 0 && t <= duration)
+  .sort((a, b) => a - b)
+const keep = []
+const add = (start, end) => {
+  const last = keep[keep.length - 1]
+  if (last !== undefined && start <= last[1] + 0.05) last[1] = Math.max(last[1], end)
+  else keep.push([start, end])
+}
+for (let i = 0; i + 1 < events.length; i++) {
+  const [a, b] = [events[i], events[i + 1]]
+  if (b - a <= AFTER + BEFORE + 2) add(a, b)
+  else {
+    add(a, a + AFTER)
+    add(b - BEFORE, b)
+  }
+}
+/** Where a moment of the full recording lands in the cut one. */
+const cut = (t) => keep.reduce((sum, [s, e]) => sum + Math.max(0, Math.min(t, e) - s), 0)
+const select = keep.map(([s, e]) => `between(t,${s.toFixed(3)},${e.toFixed(3)})`).join('+')
+const trim = spawnSync(
+  'ffmpeg',
+  [
+    '-hide_banner',
+    '-y',
+    '-i',
+    join(parts, 'full.mp4'),
+    '-vf',
+    `select='${select}',setpts=N/30/TB`,
+    '-r',
+    '30',
+    '-c:v',
+    'libx264',
+    '-preset',
+    'medium',
+    '-crf',
+    '22',
+    '-pix_fmt',
+    'yuv420p',
+    '-movflags',
+    '+faststart',
+    join(out, 'valet-pairing-walkthrough.mp4'),
+  ],
+  { stdio: 'inherit' },
+)
+if (trim.status !== 0) process.exit(trim.status ?? 1)
 
 const stamp = (s) => {
   const ms = Math.round(s * 1000)
@@ -159,6 +216,8 @@ const stamp = (s) => {
 }
 writeFileSync(
   join(out, 'valet-pairing-walkthrough.srt'),
-  captions.map((c, i) => `${i + 1}\n${stamp(c.start)} --> ${stamp(c.end)}\n${c.text}\n`).join('\n'),
+  captions.map((c, i) => `${i + 1}\n${stamp(cut(c.start))} --> ${stamp(cut(c.end))}\n${c.text}\n`).join('\n'),
 )
-console.log(`video: ${join(out, 'valet-pairing-walkthrough.mp4')} (${duration.toFixed(0)} s)`)
+console.log(
+  `video: ${join(out, 'valet-pairing-walkthrough.mp4')} (${cut(duration).toFixed(0)} s of ${duration.toFixed(0)})`,
+)

@@ -85,11 +85,17 @@ export class Phones implements PhoneOutbox {
       consent: () => ({ state: 'declined' }),
       ...(relay.connectUrl === undefined ? {} : { connectUrl: relay.connectUrl }),
       onStatus: (status) => {
+        // A local relay (VALET_RELAY_CONNECT, dev builds only): say what it does, for the walkthrough.
+        if (relay.connectUrl !== undefined) console.log(`[relay] ${status.state}`)
         this.relayStatus = status
         if (status.state !== 'online') this.online.clear()
         this.options.emit()
       },
       onEvent: (event) => {
+        if (relay.connectUrl !== undefined)
+          console.log(
+            `[relay] ${event.type}${event.type === 'device-online' ? ` ${event.deviceId} ${event.online}` : ''}`,
+          )
         if (event.type === 'device-online') {
           if (event.online) this.online.add(event.deviceId)
           else this.online.delete(event.deviceId)

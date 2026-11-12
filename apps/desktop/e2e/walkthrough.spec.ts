@@ -254,6 +254,7 @@ let launched: Launched | null = null
 
 test.afterAll(async () => {
   save()
+  if (launched !== null) writeFileSync(join(OUT, 'mac.log'), launched.logs.join(''))
   for (const child of children.reverse()) child.kill('SIGINT')
   await sleep(4000)
   await launched?.close()
@@ -387,6 +388,12 @@ test('pairing an iPhone, and approving an agent’s requests on it', async () =>
     'Picking it asks for Touch ID on the Mac (this test build answers that itself). The phone is paired.',
   )
   await cues.mark('paired')
+  void sleep(8000).then(async () =>
+    console.log(
+      'mac phones 8 s after pairing:',
+      JSON.stringify(await control.evaluate(() => window.valet?.phones.status())),
+    ),
+  )
   await sleep(3500)
   await dialog
     .getByRole('button', { name: 'Done' })
