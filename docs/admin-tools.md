@@ -33,7 +33,7 @@ and the same JSON as text.
 | `valet_site_health`   | none                                                                                             | Per host: the circuit breaker (closed or open, until when, why), the cool-down the next block would start, and calls running or waiting there now.                                                                                                                                                                         |
 | `valet_needs_you`     | none                                                                                             | What is waiting on the person, soonest deadline first, each with its kind, its title as the app shows it, the site, the call that raised it and its deadline.                                                                                                                                                              |
 | `valet_list_calls`    | `adapterId?`, `limit?` (1 to 100, 20 by default)                                                 | Recent calls, newest first: call id and short ref, site, tool, side effect, client, when, how long, outcome, and the stage and error class of a failure.                                                                                                                                                                   |
-| `valet_get_call`      | `call`: a call id or its 4-character ref                                                         | One call's trace: its summary, adapter version, the logins it used (names and fields only), request counts, every step, and the input only when the asking client made the call. A ref that matches several calls returns their ids to choose from.                                                                        |
+| `valet_get_call`      | `call`: a call id or its 4-character ref                                                         | One call's trace: its summary, adapter version, the logins it used (names and fields only), request counts, every step and the input. Only the app's own calls, unless it has All agents' activity. A ref that matches several calls returns their ids to choose from.                                                     |
 | `valet_audit_log`     | `category?`, `adapterId?`, `since?`, `search?`, `beforeSeq?`, `limit?` (1 to 100, 50 by default) | A page of audit records, newest first, with the total and the `beforeSeq` for the next page, and the chain's last check.                                                                                                                                                                                                   |
 
 Not in this tier: running a chain verify (it re-reads the whole log, so it stays the person's
@@ -59,12 +59,23 @@ client's token (D42). A session with no identity gets none either. The remote li
 the reader (it is left out of its options' type and dropped at runtime), so cloud agents see no
 admin tools until workstream B decides what a cloud agent may read and D can gate it.
 
-This is new reach, and it is deliberate. A local client could already call every approved tool,
-but it couldn't see what other clients did. With these tools it can see every client's calls: when,
-which tool and how each ended, and the audit log. What it can't see is what another client sent:
-`valet_get_call` returns a call's input only to the client whose credential made the call
-(compared by `local:<id>` from the call's `tool-called` record), and `null` to anyone else. Inputs
-are the client's own words and can be personal (a delivery note, a search).
+**What each app may see** (the agent-run IA, section 5: "Use tools · See Valet · Ask for
+changes"). Each local app the person added has two stored capabilities in its Connections record
+(`clients.json`): See Valet, on by default, and All agents' activity, off by default. They are read
+on every admin call, so a change applies at once, and a revoked or unknown app has neither.
+
+- Without See Valet, every admin tool, `valet_status` too, answers "Claude Desktop isn't allowed to
+  see Valet's settings. The person can allow it in Valet, Connections, Claude Desktop."
+- Without All agents' activity, `valet_list_calls` lists only the app's own calls (matched by the
+  `local:<id>` its credential put on each call's `tool-called` record). `valet_get_call` matches ids
+  and refs among its own calls only, so a ref can't reveal another agent's call ids, and a call that
+  is another agent's answers "That call belongs to another agent. The person can allow All agents'
+  activity in Valet, Connections." `valet_audit_log` leaves out records about another agent's calls
+  and the approvals it asked for, and its total and paging count only what is left. Valet's own
+  records (approvals, settings, lock down, breakers) stay.
+- With All agents' activity, an app sees every call, inputs included.
+
+There is no screen for these yet: the Connections toggles come with E's write tier or J.
 
 **Auditing reads.** Admin reads are not written to the audit log. The log records what touched a
 site, a secret or a permission; status reads touch none, and logging them would bury the records
