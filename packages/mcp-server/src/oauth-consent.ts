@@ -148,10 +148,6 @@ export class ConsentRequests {
   }
 
   /**
-   * The person typed a code and ticked tools. Only the request the code belongs to is approved.
-   * A wrong code counts; the third cancels every pending request.
-   */
-  /**
    * The pending request a typed code names, as the Mac shows it (no code, no handle), without
    * approving it or counting a wrong code: what the Touch ID prompt for the approval describes.
    */
@@ -171,6 +167,10 @@ export class ConsentRequests {
     }
   }
 
+  /**
+   * The person typed a code and ticked tools. Only the request the code belongs to is approved.
+   * A wrong code counts; the third cancels every pending request.
+   */
   approve(typed: string, tools: readonly string[]): ApproveResult {
     this.sweep()
     const code = normaliseCode(typed)

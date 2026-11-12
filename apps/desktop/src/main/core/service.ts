@@ -1057,7 +1057,7 @@ export class AppService {
     if (adapter === null) return false
     const declared = Object.keys(adapter.definition.manifest.secrets)
     if (declared.length === 0) return false
-    const grants = await this.grants.list().catch(() => null)
+    const grants = await this.signedGrants.list().catch(() => null)
     if (grants === null) return false
     return declared.some(
       (secret) =>
@@ -1199,7 +1199,12 @@ export class AppService {
       'secret-grant': {
         precheck: (subject) => this.adapter(subject.adapterId)?.hash === subject.adapterHash,
         // One grant per secret: a new one replaces the evidence of the last.
-        supersedes: (next, older) => next.adapterId === older.adapterId && next.secret === older.secret,
+        // Per version (a rollback brings the old version's grants back), and per sender for Messages.
+        supersedes: (next, older) =>
+          next.adapterId === older.adapterId &&
+          next.adapterHash === older.adapterHash &&
+          next.secret === older.secret &&
+          (next.secret !== MESSAGES_SECRET || next.itemFingerprint === older.itemFingerprint),
       },
       // Valet's own settings, or an adapter's setting picked on the card (E's admin tools ask;
       // the person's own paths ask too, through changeValetSetting).
@@ -1225,6 +1230,11 @@ export class AppService {
           const name = subject.setting as WideningSetting
           const to = settingValue(name, subject.to)
           if (to === null) throw new ValetError('config', 'invalid')
+          if (name === 'remote_hosts') {
+            const hosts = this.remote.status().hosts
+            if (!hosts.includes(String(to))) await this.remote.setHosts([...hosts, String(to)])
+            return
+          }
           await this.valetSetting(name).set(to)
         },
         supersedes: (next, older) =>
@@ -1608,7 +1618,9 @@ export class AppService {
       extras.typedCode === undefined ? {} : { typedCode: extras.typedCode },
     )
     if (answered.ok) return true
-    if (answered.reason !== 'busy')
+    // Busy: another prompt is up and this one may still be answered, unless it's a consent,
+    // which is never reused and would only pile up.
+    if (answered.reason !== 'busy' || kind === 'remote-client')
       await broker
         .withdraw(asked.requestId, kind === 'remote-client' ? { kind: 'app' } : { kind: 'person' })
         .catch(() => false)
@@ -1665,19 +1677,34 @@ export class AppService {
    */
   private async changeValetSetting(name: WideningSetting, value: unknown): Promise<void> {
     // Checked before asking: a handler's failure after the approval can't reach the caller.
-    let to = value
+    const to = value
     if (name === 'trace_retention' && !traceRetentionDaysSchema.safeParse(value).success)
       throw new ValetError('config', 'invalid')
-    if (name === 'remote_hosts') {
-      const hosts = (Array.isArray(value) ? value : []).map((h) => normaliseRemoteHost(String(h)))
-      if (!Array.isArray(value) || hosts.some((h) => h === null)) throw new ValetError('config', 'invalid')
-      to = [...new Set(hosts as string[])]
-    }
+    if (name === 'remote_hosts') return this.changeRemoteHosts(value)
     const setting = this.valetSetting(name)
     const from = setting.get()
     // Unchanged or narrower: set at once (setting remote access off again still closes it all).
     if (!settingWidens(name, from, to)) return setting.set(to)
     await this.approveOrRefuse('setting', settingSubject(name, from, to))
+    // Applied by the handler, which can't report a failure: read it back.
+    if (JSON.stringify(setting.get()) !== JSON.stringify(to)) throw new ValetError('config', 'unavailable')
+  }
+
+  /** Hosts removed at once; each host added is its own signed request, so it fits on the card. */
+  private async changeRemoteHosts(value: unknown): Promise<void> {
+    const normalised = (Array.isArray(value) ? value : []).map((h) => normaliseRemoteHost(String(h)))
+    if (!Array.isArray(value) || normalised.some((h) => h === null)) throw new ValetError('config', 'invalid')
+    const wanted = [...new Set(normalised as string[])]
+    const from = this.remote.status().hosts
+    const added = wanted.filter((h) => !from.includes(h))
+    if (wanted.length > MAX_REMOTE_HOSTS || added.some((h) => settingValue('remote_hosts', h) === null))
+      throw new ValetError('config', 'invalid')
+    const kept = from.filter((h) => wanted.includes(h))
+    if (kept.length !== from.length) await this.remote.setHosts(kept)
+    for (const host of added) {
+      await this.approveOrRefuse('setting', settingSubject('remote_hosts', this.remote.status().hosts, host))
+      if (!this.remote.status().hosts.includes(host)) throw new ValetError('config', 'unavailable')
+    }
   }
 
   /**
@@ -1921,7 +1948,7 @@ export class AppService {
 
   private async states(): Promise<AdapterState[]> {
     const records = await this.reader.records()
-    const grants = await this.grants.list().catch(() => [] as readonly Grant[])
+    const grants = await this.signedGrants.list().catch(() => [] as readonly Grant[])
     return Promise.all(this.installed.map((a) => this.state(a, records, grants)))
   }
 
@@ -2386,7 +2413,7 @@ export class AppService {
           return (await this.signedGrants.list()).map((g) => grantInfo(g, titles, lastUsed(records, g)))
         },
         providers: async () => {
-          const grants = await this.grants.list().catch(() => [] as readonly Grant[])
+          const grants = await this.signedGrants.list().catch(() => [] as readonly Grant[])
           // Only grants for an adapter's installed hash, while that hash is approved: a grant for an
           // older bundle (or one waiting for review) can't be used, so it isn't counted as live.
           const live = new Set<string>()
@@ -2460,7 +2487,7 @@ export class AppService {
         },
         resync: async (adapterId, secret) => {
           const adapter = this.requireAdapter(adapterId)
-          const grant = await this.grants.find(adapterId, adapter.hash, secret)
+          const grant = await this.signedGrants.find(adapterId, adapter.hash, secret)
           if (grant === null || grant.provider !== 'keychain-copy') throw new ValetError('grant', 'not-found')
           await this.copyGrantItem(grant, adapter.definition.manifest)
           await this.releaseLoginHold(adapterId)
@@ -2753,7 +2780,10 @@ export class AppService {
         },
         setTool: async (adapterId, tool, enabled) => {
           const adapter = this.adapter(adapterId)
-          const on = this.remote.status().tools.includes(`${adapterId}.${tool}`)
+          const declaration = adapter?.definition.manifest.tools.find((t) => t.name === tool)
+          // On only at a side effect at least the one declared now: an update that raised it needs
+          // turning on again, with Touch ID.
+          const on = declaration !== undefined && this.remote.allows(adapterId, declaration)
           if (!enabled || on || adapter === null) await this.setRemoteTool(adapterId, tool, enabled)
           else {
             await this.remoteToolDeclaration(adapterId, tool, true)
@@ -2922,3 +2952,6 @@ interface ConsentExtras {
   readonly consentCode?: string
   readonly typedCode?: string
 }
+
+/** As remote.ts keeps them: more is refused whole. */
+const MAX_REMOTE_HOSTS = 8

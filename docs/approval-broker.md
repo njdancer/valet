@@ -352,6 +352,17 @@ are the next PRs of this workstream.
 | `endpoint.setListening(true)`                | Not signed: local only, the person's own switch                                                                                      | Decided, told to B |
 | `app.erase`                                  | The main process's own native dialog decides                                                                                         | Unchanged          |
 
+Known gaps, next in this workstream:
+
+- Settings, remote access and remote clients are gated where they change, not where they are read.
+  An agent that can write `settings.json`, `remote.json` or the remote client file directly isn't
+  stopped yet. Grants and installs are already checked against evidence when used. The plan is to
+  check the stored widening values against `setting` and `tool-enable` evidence at launch, and to
+  fall back to the narrow value when nothing matches.
+- A legacy grant record names the adapter, the hash and the secret, but not the item or the
+  provider. A hand-edited `itemRef` in an old grant would still be honoured within the manifest's
+  origins until the person grants it again.
+
 The confirmation panel keeps its short arm delay as a UI nicety, but the main process no longer
 counts a click: `answerConfirmation(id, true)` from the panel opened for `id` only calls
 `approveOnMac`, and resolves false if the person cancels Touch ID. The panel shows the request's

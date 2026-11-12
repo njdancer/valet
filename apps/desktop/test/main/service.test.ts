@@ -2147,6 +2147,12 @@ describe('remote access', () => {
     s.presence.answer = true
     await s.api.remote.setTool('shop', 'echo', true)
     expect(s.service.remote.status().tools).toEqual(['shop.echo'])
+    // Each host added is its own request, so a long list still fits on the card.
+    const long = ['b', 'c', 'd', 'e'].map((c) => `${c.repeat(50)}.example`)
+    const counted = prompts()
+    await s.api.remote.setHosts([HOST, ...long])
+    expect(prompts()).toBe(counted + 4)
+    expect(s.service.remote.status().hosts).toEqual([HOST, ...long])
     // Off, and fewer hosts, take no Touch ID.
     s.presence.answer = false
     const asked = prompts()

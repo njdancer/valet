@@ -101,11 +101,18 @@ export const WIDENING_SETTINGS = {
     label: 'Keep run traces (days)',
     widens: (to: unknown, from: unknown) => typeof to === 'number' && typeof from === 'number' && to < from,
   },
-  /** A host remote clients may connect through. */
+  /**
+   * A host remote clients may connect through. One request per host added: `to` is that host,
+   * so a long list never has to fit on the card.
+   */
   remote_hosts: {
-    label: 'Remote hosts',
-    widens: (to: unknown, from: unknown) =>
-      Array.isArray(to) && to.some((h) => !(Array.isArray(from) && from.includes(h))),
+    label: 'Add a remote host',
+    widens: (to: unknown, from: unknown) => {
+      const known = Array.isArray(from) ? from : []
+      return Array.isArray(to)
+        ? to.some((h) => !known.includes(h))
+        : typeof to === 'string' && !known.includes(to)
+    },
   },
 } as const
 
@@ -176,10 +183,10 @@ export function adapterSettingSubject(
  * Null when `to` doesn't read back to exactly that text (a host list cut to fit, say): such a
  * request is never applied.
  */
-export function settingValue(setting: WideningSetting, to: string): boolean | number | string[] | null {
-  let value: boolean | number | string[] | null
+export function settingValue(setting: WideningSetting, to: string): boolean | number | string | null {
+  let value: boolean | number | string | null
   if (setting === 'trace_retention') value = /^[0-9]{1,3}$/.test(to) ? Number(to) : null
-  else if (setting === 'remote_hosts') value = to === 'None' ? [] : to.split(', ')
+  else if (setting === 'remote_hosts') value = /^[a-z0-9.-]{1,120}$/.test(to) ? to : null
   else value = to === 'On' ? true : to === 'Off' ? false : null
   if (value === null) return null
   return label(shownValue(value), 120, '(blank)') === to ? value : null
