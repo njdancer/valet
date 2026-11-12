@@ -1,0 +1,5 @@
+Query chain:
+ →Find: Target Application 'me.dncr.valet.dev'
+  ↪︎Find: Descendants matching type Any
+    ↪︎Find: Elements matching predicate '"card.8F20" IN identifiers'
+      ↪︎Find: First Match
