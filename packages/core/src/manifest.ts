@@ -6,6 +6,7 @@ import { MESSAGES_SECRET } from './credentials'
 import { type ERROR_CLASSES, NEEDS_USER_REASONS, type NeedsUserReason } from './errors'
 import { isBareOrigin, isHostPattern } from './origins'
 import { isScreenedPattern } from './regex-screen'
+import { sandboxDeclarationSchema } from './sandbox'
 
 const name = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, 'lower snake_case, at most 64 characters')
 const origin = z.string().refine(isBareOrigin, 'must be a bare https origin, e.g. https://www.example.com')
@@ -388,6 +389,12 @@ export const manifestSchema = z
       })
       .strict()
       .default({ requestsPerRun: 50, minGapMs: 2000, cooldownSeconds: 600, maxCooldownSeconds: 7200 }),
+    /**
+     * The sandbox and its exceptions (D73). Left out means sandboxed with no exceptions. Optional
+     * with no default, so manifests without it hash exactly as before. Not enforced until the
+     * sandbox ships (workstream I); until then the permission diff and approval card show it.
+     */
+    sandbox: sandboxDeclarationSchema.optional(),
   })
   .strict()
   .superRefine((manifest, ctx) => {

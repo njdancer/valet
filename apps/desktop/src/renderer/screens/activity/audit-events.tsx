@@ -46,6 +46,11 @@ export const EVENT_WORDS = {
   confirmation: { label: 'Confirmation answered', tone: 'warning' },
   'lock-down': { label: 'Lock down', tone: 'danger' },
   'site-paused': { label: 'Site paused', tone: 'warning' },
+  'approval-requested': { label: 'Approval asked', tone: 'warning' },
+  'approval-answered': { label: 'Approval answered', tone: 'neutral' },
+  'device-paired': { label: 'Phone paired', tone: 'brass' },
+  'device-revoked': { label: 'Phone removed', tone: 'neutral' },
+  'store-refused': { label: 'Saved approvals refused', tone: 'danger' },
 } as const satisfies Readonly<Record<EventType, { readonly label: string; readonly tone: DotTone }>>
 
 const OTHER = { label: 'Other event', tone: 'neutral' } as const
@@ -289,6 +294,24 @@ export function details(event: AuditEvent, now: number): ReactNode {
           {event.adapterId} <Quiet>{event.paused ? 'paused' : 'resumed'}</Quiet>
         </>
       )
+    case 'approval-requested':
+      return <Code>{event.kind}</Code>
+    case 'approval-answered':
+      return <Quiet>{event.answer}</Quiet>
+    case 'device-paired':
+    case 'device-revoked':
+      return <Code>{event.deviceId.slice(0, 8)}</Code>
+    case 'store-refused':
+      return (
+        <>
+          <Code>{event.store}</Code>{' '}
+          <Quiet>
+            {event.reason === 'anchor-mismatch'
+              ? 'changed outside Valet'
+              : `${event.records} without a valid approval`}
+          </Quiet>
+        </>
+      )
     default:
       return null
   }
@@ -343,6 +366,11 @@ export const EVENT_FIELDS = {
   confirmation: ['type', 'adapterId', 'tool', 'client', 'callId', 'answer'],
   'lock-down': ['type', 'locked', 'revokedClients'],
   'site-paused': ['type', 'adapterId', 'paused'],
+  'approval-requested': ['type', 'requestId', 'kind', 'digest', 'clientId'],
+  'approval-answered': ['type', 'requestId', 'answer', 'deviceId', 'reason'],
+  'device-paired': ['type', 'deviceId', 'platform'],
+  'device-revoked': ['type', 'deviceId', 'by'],
+  'store-refused': ['type', 'store', 'reason', 'records'],
 } as const satisfies {
   readonly [K in EventType]: readonly (keyof Extract<AuditEvent, { readonly type: K }>)[]
 }

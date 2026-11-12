@@ -30,14 +30,17 @@ write it.
 
 Each pass plays one role, against the fake site and the test doubles only.
 
-| Role                  | Starts with                                    | Tries to                                                                                       |
-| --------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| Hostile adapter       | A manifest and tool code the person approved   | Read a canary secret; send a request to an undeclared host; get free text to the client or log |
-| Hostile page          | Control of what the fake site serves           | Get a secret typed into the wrong field or origin; get instructions or a secret into a result  |
-| Hostile MCP client    | One valid client token                         | Use or disturb another client's session; skip a confirmation; exhaust the site's rate budget   |
-| Hostile local process | The person's user account, no token            | Read a token or secret from disk; talk to the endpoint; forge an audit entry                   |
-| Hostile update feed   | Control of the feed's bytes                    | Get an unsigned or older build installed                                                       |
-| Hostile remote client | A remote credential (once remote mode has one) | Reach a tool the person didn't enable remotely; outlive the kill switch                        |
+| Role                  | Starts with                                     | Tries to                                                                                                          |
+| --------------------- | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Hostile adapter       | A manifest and tool code the person approved    | Read a canary secret; send a request to an undeclared host; get free text to the client or log                    |
+| Hostile page          | Control of what the fake site serves            | Get a secret typed into the wrong field or origin; get instructions or a secret into a result                     |
+| Hostile MCP client    | One valid client token                          | Use or disturb another client's session; skip a confirmation; exhaust the site's rate budget                      |
+| Hostile local process | The person's user account, no token             | Read a token or secret from disk; talk to the endpoint; forge an audit entry                                      |
+| Hostile update feed   | Control of the feed's bytes                     | Get an unsigned or older build installed                                                                          |
+| Hostile remote client | A remote credential (once remote mode has one)  | Reach a tool the person didn't enable remotely; outlive the kill switch                                           |
+| Hostile agent         | Admin and authoring MCP tools (agent-run Valet) | Widen anything without a device's signature; get draft code run before approval; launder a widening past the diff |
+| Hostile relay         | The relay's position and storage                | Approve, or forge or read a Mac-to-phone message; replay an old approval; keep call data                          |
+| Stolen phone          | A paired phone, locked                          | Approve anything, pair another device, or keep access after it's revoked                                          |
 
 ## Rules
 

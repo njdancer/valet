@@ -1,0 +1,364 @@
+// Approval requests and signed decisions (docs/agent-run-security.md#approvals).
+//
+// The Mac builds every request: its kind, its tier and its subject come from the Mac's own
+// knowledge, never from what an agent asked for. The Mac serialises the request once
+// (`requestText`); each device renders its card by parsing that exact text and signs over its
+// digest, so what the person saw and what the Mac checks are the same bytes.
+//
+// An approval counts only if a paired, unrevoked device's approval key (Secure Enclave, unlocked
+// by Face ID or Touch ID) signed it, for this Mac, for this pending request, before it expired.
+// A decline needs no signature: any authenticated surface may decline.
+
+import { z } from 'zod'
+import { type DeviceLookup, type DeviceRole, keyIdSchema } from './devices'
+import { displayText } from './display-text'
+import { canonicalJson } from './hash'
+import { manifestPermissionChangeSchema } from './permission-change'
+import { domainDigest, SIGNING_DOMAINS, type SignedText, signedTextSchema, verifyP256 } from './signing'
+
+const hash = z.string().regex(/^[0-9a-f]{64}$/)
+const adapterId = z.string().regex(/^[a-z][a-z0-9-]{1,63}$/)
+const name = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)
+const origin = z.string().regex(/^https:\/\/[a-z0-9.-]+(?::\d{1,5})?$/)
+/** A random 128-bit id, base64url. */
+export const requestIdSchema = z.string().regex(/^[A-Za-z0-9_-]{22}$/)
+
+/**
+ * The four tiers (D74). Only the last two ever produce an ApprovalRequest; `none` and `notify`
+ * are listed so every action has a tier in one table (admin-actions.ts).
+ */
+export const APPROVAL_TIERS = ['none', 'notify', 'approve', 'approve-each-use'] as const
+export type ApprovalTier = (typeof APPROVAL_TIERS)[number]
+
+const subjects = {
+  /** Install a new adapter, or update one, from a draft or a local folder. Shows the diff. */
+  'adapter-install': z
+    .object({
+      adapterId,
+      adapterName: displayText(80),
+      version: z.string().regex(/^\d+\.\d+\.\d+$/),
+      adapterHash: hash,
+      packageHash: hash,
+      /** The approved hash this replaces; null for a first install. */
+      previousHash: hash.nullable(),
+      source: z.enum(['draft', 'local-folder']),
+      /** Reference adapters the agent says it read. A claim, shown as one. */
+      references: z.array(z.url({ protocol: /^https$/ }).max(500)).max(10),
+      /** Computed by the Mac from the two manifests, never written by the agent. */
+      changes: z.array(manifestPermissionChangeSchema).max(200),
+      /** True if the code runs without the sandbox (D73); shown as critical, Mac only. */
+      unsandboxed: z.boolean(),
+    })
+    .strict(),
+  /** Let an adapter's login use a secret, typed only into these origins. */
+  'secret-grant': z
+    .object({
+      adapterId,
+      adapterHash: hash,
+      secret: name,
+      fields: z
+        .array(z.enum(['username', 'password', 'otp']))
+        .min(1)
+        .max(3),
+      provider: z.enum(['keychain-copy', 'onepassword-service-account', 'onepassword-desktop', 'messages']),
+      /** The item's title as the provider shows it; never its reference or contents. */
+      itemTitle: displayText(120),
+      origins: z.array(origin).min(1).max(10),
+    })
+    .strict(),
+  /**
+   * Turn a tool on: locally (after someone turned it off), or for remote clients, all of them or
+   * one (`clientId`).
+   */
+  'tool-enable': z
+    .object({
+      adapterId,
+      tool: name,
+      scope: z.enum(['local', 'remote']),
+      clientId: z.string().max(80).nullable(),
+      sideEffect: z.enum(['read', 'write', 'irreversible']),
+    })
+    .strict(),
+  /** A remote MCP client asking to connect (D80): the host, the address, the tools it will see. */
+  'remote-client': z
+    .object({
+      clientId: z.string().max(80),
+      host: displayText(253),
+      sourceAddress: z.string().max(64).nullable(),
+      /** The code the browser that started the flow shows; the person checks it matches. */
+      code: z.string().regex(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/),
+      tools: z.array(z.string().max(130)).max(200),
+    })
+    .strict(),
+  /** A setting that loosens something. Values are shown, never secrets (settings hold none). */
+  setting: z
+    .object({
+      scope: z.enum(['valet', 'adapter']),
+      adapterId: adapterId.nullable(),
+      setting: name,
+      label: displayText(80),
+      from: displayText(120),
+      to: displayText(120),
+    })
+    .strict(),
+  /** An agent driving a signed-in session for authoring or repair (D81), for at most this long. */
+  'authoring-session': z
+    .object({
+      adapterId,
+      draftId: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/),
+      origins: z.array(origin).min(1).max(10),
+      minutes: z.number().int().min(1).max(60),
+    })
+    .strict(),
+  /** One run of an irreversible tool, such as placing an order (D46). Never cached. */
+  'irreversible-call': z
+    .object({
+      adapterId,
+      adapterHash: hash,
+      tool: name,
+      callId: z.string().max(80),
+      /** The input as the runtime rendered it, one line per part. */
+      preview: z.array(displayText(200)).max(20),
+    })
+    .strict(),
+  /** Take Valet out of pause or lockdown. */
+  resume: z.object({ from: z.enum(['paused', 'lockdown']) }).strict(),
+  /** Pair a new phone. Mac only: a phone can never add a device. */
+  'device-pair': z
+    .object({
+      deviceId: keyIdSchema,
+      deviceName: displayText(60),
+      platform: z.enum(['ios', 'macos']),
+      /** Six digits both screens show, from the pairing transcript. */
+      confirmation: z.string().regex(/^\d{6}$/),
+    })
+    .strict(),
+} as const
+
+export const APPROVAL_KINDS = Object.keys(subjects) as readonly (keyof typeof subjects)[]
+export type ApprovalKind = keyof typeof subjects
+export type ApprovalSubject<K extends ApprovalKind = ApprovalKind> = z.infer<(typeof subjects)[K]>
+
+/**
+ * Where each kind may be approved. The phone can approve everything except adding a device and
+ * running unsandboxed code, which defeats every other guarantee; those need the person at the Mac.
+ */
+export function approvableOn(kind: ApprovalKind, subject: ApprovalSubject): readonly DeviceRole[] {
+  if (kind === 'device-pair') return ['mac']
+  if (kind === 'adapter-install' && (subject as ApprovalSubject<'adapter-install'>).unsandboxed)
+    return ['mac']
+  return ['mac', 'phone']
+}
+
+/** The tier each kind is approved at. */
+export const KIND_TIER: Readonly<Record<ApprovalKind, 'approve' | 'approve-each-use'>> = {
+  'adapter-install': 'approve',
+  'secret-grant': 'approve',
+  'tool-enable': 'approve',
+  'remote-client': 'approve',
+  setting: 'approve',
+  'authoring-session': 'approve',
+  'irreversible-call': 'approve-each-use',
+  resume: 'approve',
+  'device-pair': 'approve',
+}
+
+/** How long a request stays answerable. An irreversible call keeps the confirmation's own limit. */
+export const APPROVAL_TTL_MS: Readonly<Record<ApprovalKind, number>> = {
+  'adapter-install': 24 * 3600_000,
+  'secret-grant': 24 * 3600_000,
+  'tool-enable': 24 * 3600_000,
+  'remote-client': 10 * 60_000,
+  setting: 24 * 3600_000,
+  'authoring-session': 30 * 60_000,
+  'irreversible-call': 2 * 60_000,
+  resume: 10 * 60_000,
+  'device-pair': 5 * 60_000,
+}
+
+/** Limits against approval fatigue (docs/agent-run-security.md#approval-tiers). */
+export const APPROVAL_LIMITS = {
+  pendingPerClient: 3,
+  pendingTotal: 10,
+  /** Declines from one client, within the window, after which its requests are refused. */
+  declinesBeforeCooldown: 3,
+  declineWindowMs: 3600_000,
+  cooldownMs: 3600_000,
+} as const
+
+/** Who asked. An agent is named by its credential; its self-reported name is only a label. */
+export const requesterSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('agent'), clientId: z.string().max(80), clientName: displayText(100) }).strict(),
+  z.object({ kind: z.literal('person') }).strict(),
+  z.object({ kind: z.literal('app') }).strict(),
+])
+export type Requester = z.infer<typeof requesterSchema>
+
+const requestBase = {
+  v: z.literal(1),
+  id: requestIdSchema,
+  macId: keyIdSchema,
+  requester: requesterSchema,
+  /**
+   * The agent's own words about why, if it gave any: shown under "The agent says", never as the
+   * card's headline, and never trusted.
+   */
+  agentNote: displayText(280).nullable(),
+  createdAt: z.iso.datetime(),
+  expiresAt: z.iso.datetime(),
+}
+
+const requestOf = <K extends ApprovalKind>(kind: K) =>
+  z
+    .object({
+      ...requestBase,
+      kind: z.literal(kind),
+      tier: z.literal(KIND_TIER[kind]),
+      subject: subjects[kind],
+    })
+    .strict()
+
+export const approvalRequestSchema = z
+  .discriminatedUnion('kind', [
+    requestOf('adapter-install'),
+    requestOf('secret-grant'),
+    requestOf('tool-enable'),
+    requestOf('remote-client'),
+    requestOf('setting'),
+    requestOf('authoring-session'),
+    requestOf('irreversible-call'),
+    requestOf('resume'),
+    requestOf('device-pair'),
+  ])
+  .refine((r) => Date.parse(r.expiresAt) > Date.parse(r.createdAt), 'expires before created')
+export type ApprovalRequest = z.infer<typeof approvalRequestSchema>
+
+/** The request as the Mac sends and stores it: its exact text, and that text's digest. */
+export interface SerializedRequest {
+  readonly request: ApprovalRequest
+  readonly text: string
+  readonly digest: string
+}
+
+/** Validates and serialises a request the Mac built. Throws if the request is malformed. */
+export function serializeRequest(request: ApprovalRequest): SerializedRequest {
+  const parsed = approvalRequestSchema.parse(request)
+  const text = canonicalJson(parsed)
+  return { request: parsed, text, digest: domainDigest(SIGNING_DOMAINS.approvalRequest, text) }
+}
+
+/** Parses request text received from the Mac, as a device does before rendering a card. */
+export function parseRequestText(text: string): SerializedRequest | null {
+  let raw: unknown
+  try {
+    raw = JSON.parse(text)
+  } catch {
+    return null
+  }
+  const result = approvalRequestSchema.safeParse(raw)
+  if (!result.success) return null
+  return { request: result.data, text, digest: domainDigest(SIGNING_DOMAINS.approvalRequest, text) }
+}
+
+/** What a device signs to approve. Only approvals are signed; see the file comment. */
+export const approvalDecisionSchema = z
+  .object({
+    v: z.literal(1),
+    decision: z.literal('approve'),
+    macId: keyIdSchema,
+    requestId: requestIdSchema,
+    requestDigest: hash,
+    deviceId: keyIdSchema,
+    decidedAt: z.iso.datetime(),
+  })
+  .strict()
+export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>
+export { signedTextSchema as signedDecisionSchema }
+
+export type DecisionRefusal =
+  | 'malformed'
+  | 'unknown-device'
+  | 'device-revoked'
+  | 'bad-signature'
+  | 'wrong-mac'
+  | 'wrong-request'
+  | 'not-pending'
+  | 'expired'
+  | 'not-allowed-on-device'
+
+export type DecisionCheck =
+  | { readonly ok: true; readonly decision: ApprovalDecision; readonly role: DeviceRole }
+  | { readonly ok: false; readonly reason: DecisionRefusal }
+
+export interface DecisionContext {
+  readonly macId: string
+  readonly devices: DeviceLookup
+  /**
+   * `live`: a decision arriving now, for a request the Mac holds as pending. It must be pending
+   * and unexpired, and the device unrevoked.
+   * `stored`: evidence kept beside a record in a trusted store, checked again on every load. The
+   * request has long expired, so the decision must have been made before it did; a device revoked
+   * later doesn't void what it approved while paired (see the lockdown section).
+   */
+  readonly mode: 'live' | 'stored'
+  /** Live only: whether the Mac still holds this request id as pending, unanswered. */
+  readonly isPending?: (requestId: string) => boolean
+  readonly now?: Date
+}
+
+/**
+ * Checks a signed approval against the request it names. The order matters: the signature is
+ * checked before the payload is trusted for anything but finding the device.
+ */
+export function verifyDecision(
+  signed: SignedText,
+  request: SerializedRequest,
+  context: DecisionContext,
+): DecisionCheck {
+  if (!signedTextSchema.safeParse(signed).success) return { ok: false, reason: 'malformed' }
+  let raw: unknown
+  try {
+    raw = JSON.parse(signed.payload)
+  } catch {
+    return { ok: false, reason: 'malformed' }
+  }
+  const deviceId = (raw as { deviceId?: unknown } | null)?.deviceId
+  if (typeof deviceId !== 'string') return { ok: false, reason: 'malformed' }
+  const device = context.devices.device(deviceId)
+  if (device === null || device.macId !== context.macId) return { ok: false, reason: 'unknown-device' }
+  if (!verifyP256(device.approvalKey, SIGNING_DOMAINS.approvalDecision, signed.payload, signed.signature)) {
+    return { ok: false, reason: 'bad-signature' }
+  }
+  const parsed = approvalDecisionSchema.safeParse(raw)
+  if (!parsed.success) return { ok: false, reason: 'malformed' }
+  const decision = parsed.data
+  if (decision.macId !== context.macId || request.request.macId !== context.macId)
+    return { ok: false, reason: 'wrong-mac' }
+  if (decision.requestId !== request.request.id || decision.requestDigest !== request.digest) {
+    return { ok: false, reason: 'wrong-request' }
+  }
+  if (!approvableOn(request.request.kind, request.request.subject).includes(device.role)) {
+    return { ok: false, reason: 'not-allowed-on-device' }
+  }
+  const revokedAt = context.devices.revokedAt(deviceId)
+  const decidedAt = Date.parse(decision.decidedAt)
+  const expiresAt = Date.parse(request.request.expiresAt)
+  if (context.mode === 'live') {
+    if (revokedAt !== null) return { ok: false, reason: 'device-revoked' }
+    if (!(context.isPending?.(request.request.id) ?? false)) return { ok: false, reason: 'not-pending' }
+    const now = (context.now ?? new Date()).getTime()
+    if (now >= expiresAt) return { ok: false, reason: 'expired' }
+  } else {
+    if (decidedAt >= expiresAt || decidedAt < Date.parse(request.request.createdAt)) {
+      return { ok: false, reason: 'expired' }
+    }
+    if (revokedAt !== null && Date.parse(revokedAt) <= decidedAt)
+      return { ok: false, reason: 'device-revoked' }
+  }
+  return { ok: true, decision, role: device.role }
+}
+
+/** The payload text a device signs for an approval: the same canonical form the Mac uses. */
+export function decisionPayload(decision: ApprovalDecision): string {
+  return canonicalJson(approvalDecisionSchema.parse(decision))
+}
