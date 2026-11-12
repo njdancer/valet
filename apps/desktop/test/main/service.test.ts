@@ -3291,6 +3291,8 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
       expect(types.filter((t) => t === 'adapter-installed')).toHaveLength(2)
       // The agent's request was the one signed: its subject names the draft as the source.
       expect(readFileSync(s.paths.trusted, 'utf8')).toMatch(/source\\*":\\*"draft/)
+      // The agent's two cases are counted in their own field, apart from Valet's checks.
+      expect(readFileSync(s.paths.trusted, 'utf8')).toMatch(/agentTests\\*":\{\\*"failed\\*":0,\\*"passed\\*":2\}/)
     })
 
     it('a decline reaches the agent, and a version stored only for the draft goes', async () => {

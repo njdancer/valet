@@ -2214,6 +2214,11 @@ export class AppService {
         },
         ...(/^[a-z0-9.-]{1,253}$/.test(request.domain) ? { domain: request.domain } : {}),
         checks: request.checks.slice(0, 20).map((line) => line.slice(0, 200)),
+        // The agent's own cases, in B's field apart from Valet's checks, so they can't pass for them.
+        agentTests: {
+          passed: Math.min(request.agentTests.passed, 10_000),
+          failed: Math.min(request.agentTests.failed, 10_000),
+        },
       },
     })
     if (!asked.ok) {
