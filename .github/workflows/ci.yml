@@ -5,7 +5,8 @@ name: CI
 # - fast, on every pull request and push to main: pnpm check, the browser-electron end-to-end suite,
 #   the drift smoke dry run, and the desktop end-to-end suite without its two slow files (journey and
 #   update, about 17 of its 20 minutes, most of it the fake site's real pacing). The Swift and release
-#   dry-run jobs run only when a file they build or test changed (the `changes` job below).
+#   dry-run jobs, and the iOS app job, run only when a file they build or test changed (the `changes`
+#   job below).
 # - full, nightly and on demand (Actions > CI > Run workflow): everything, with the desktop suite split
 #   across three runners. `pnpm release` refuses a real release unless a full run passed on the commit
 #   it is releasing (apps/desktop/scripts/release-lib.ts, fullSuiteVerdict), so this is also the
@@ -47,6 +48,7 @@ jobs:
       code: ${{ steps.pick.outputs.code }}
       swift: ${{ steps.pick.outputs.swift }}
       release: ${{ steps.pick.outputs.release }}
+      ios: ${{ steps.pick.outputs.ios }}
       e2e: ${{ steps.matrix.outputs.e2e }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -60,7 +62,7 @@ jobs:
         run: |
           everything() {
             echo "suite=$1" >> "$GITHUB_OUTPUT"
-            for name in code swift release; do echo "$name=true" >> "$GITHUB_OUTPUT"; done
+            for name in code swift release ios; do echo "$name=true" >> "$GITHUB_OUTPUT"; done
           }
           case "$EVENT" in
             pull_request) base="$PR_BASE" ;;
@@ -84,6 +86,8 @@ jobs:
             echo "swift=$(has "$shared|^swift-bridge/|^packages/(mcp-server|credentials)/|^apps/desktop/src/main/core/approvals/|^apps/desktop/test/main/approver-contract")" >> "$GITHUB_OUTPUT"
             # What the release command packages and signs.
             echo "release=$(has "$shared|^swift-bridge/|^apps/desktop/(package\.json|electron-builder\.config\.ts|electron\.vite\.config\.ts|build/|scripts/)")" >> "$GITHUB_OUTPUT"
+            # The iOS app, and the core contracts its interop vectors are checked against.
+            echo "ios=$(has "$shared|^ios/|^packages/core/|^\.github/workflows/ios-screens\.yml$")" >> "$GITHUB_OUTPUT"
           fi
       - id: matrix
         # The end-to-end runners. fast: one. full: the desktop suite's two slow files on runners of
@@ -199,6 +203,82 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  ios:
+    needs: changes
+    if: needs.changes.outputs.ios == 'true'
+    # The iOS companion app (docs/ios-app.md). Its Swift package is tested on the Mac, the shared
+    # vectors are checked both ways against packages/core, and the app runs its journeys on the
+    # simulator against the fake Mac and relay. Nothing is signed: simulator builds need no team.
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: jdx/mise-action@c37c93293d6b742fc901e1406b8f764f6fb19dac # v2.4.4
+      - run: pnpm install --frozen-lockfile
+      - name: Swift package tests
+        run: swift test --package-path ios/ValetPhoneKit
+        env:
+          VALET_IOS_SWIFT_OUT: ${{ runner.temp }}/ios-swift-out
+      - name: core checks what Swift signed and sealed
+        run: pnpm exec vitest run --project core test/ios-interop
+        env:
+          VALET_IOS_SWIFT_OUT: ${{ runner.temp }}/ios-swift-out
+      - name: generate the Xcode project
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen
+      - name: pick a simulator
+        run: |
+          id=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          ios = sorted((k for k in devices if "iOS" in k), reverse=True)
+          print(next(d["udid"] for k in ios for d in devices[k] if d["name"].startswith("iPhone")))')
+          echo "SIMULATOR=$id" >> "$GITHUB_ENV"
+          xcrun simctl list devices | grep "$id"
+      - name: journeys on the simulator (fakes build)
+        run: |
+          xcodebuild test -project ios/ValetPhone.xcodeproj -scheme ValetPhoneDev \
+            -destination "id=$SIMULATOR" -resultBundlePath "$RUNNER_TEMP/ios-ui.xcresult" \
+            CODE_SIGNING_ALLOWED=NO > "$RUNNER_TEMP/ios-ui.log" 2>&1 || status=$?
+          grep -E "error:|Test Case .*(passed|failed)|\*\* TEST" "$RUNNER_TEMP/ios-ui.log" | tail -150
+          if [ "${status:-0}" != 0 ]; then
+            # What each failing test said, and the accessibility audit's issues.
+            xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/ios-ui.xcresult" || tail -100 "$RUNNER_TEMP/ios-ui.log"
+            exit 1
+          fi
+      - name: the shipping build has no fakes in it
+        run: |
+          xcodebuild build -project ios/ValetPhone.xcodeproj -scheme ValetPhone -configuration Release \
+            -destination "generic/platform=iOS Simulator" -derivedDataPath "$RUNNER_TEMP/ios-release" \
+            CODE_SIGNING_ALLOWED=NO | tail -50
+          test "${PIPESTATUS[0]}" = 0
+          binary=$(find "$RUNNER_TEMP/ios-release" -path '*Release-iphonesimulator/ValetPhone.app/ValetPhone' | head -1)
+          test -n "$binary"
+          if nm "$binary" | grep -E 'Fake(Mac|Relay|World)|SoftwareDeviceKeys'; then echo "fakes in the shipping build"; exit 1; fi
+          if strings "$binary" | grep -E -- '-valet-fake'; then echo "fake launch argument in the shipping build"; exit 1; fi
+      - name: export the screenshots
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/ios-shots"
+          if [ -d "$RUNNER_TEMP/ios-ui.xcresult" ]; then
+            xcrun xcresulttool export attachments --path "$RUNNER_TEMP/ios-ui.xcresult" --output-path "$RUNNER_TEMP/ios-shots" || true
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: ios-screens
+          path: ${{ runner.temp }}/ios-shots
+          if-no-files-found: ignore
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: ios-ui-results
+          path: ${{ runner.temp }}/ios-ui.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
+
   ci:
     # The one check to require on main. It passes only when every job above passed, or was skipped
     # because `changes` said this run doesn't need it, so the branch protection rule names this job
@@ -206,7 +286,7 @@ jobs:
     # it a failed job would leave this one skipped, and GitHub counts a skipped required check as
     # passed. A fork's pull request skips `changes`, and so fails here.
     if: always()
-    needs: [changes, check, e2e, swift-bridge, release-dry-run]
+    needs: [changes, check, e2e, swift-bridge, release-dry-run, ios]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -220,13 +300,16 @@ jobs:
           SWIFT_NEEDED: ${{ needs.changes.outputs.swift }}
           RELEASE: ${{ needs.release-dry-run.result }}
           RELEASE_NEEDED: ${{ needs.changes.outputs.release }}
+          IOS: ${{ needs.ios.result }}
+          IOS_NEEDED: ${{ needs.changes.outputs.ios }}
           SUITE: ${{ needs.changes.outputs.suite }}
         run: |
           echo "suite: $SUITE"
-          echo "changes=$CHANGES check=$CHECK e2e=$E2E swift-bridge=$SWIFT release-dry-run=$RELEASE"
+          echo "changes=$CHANGES check=$CHECK e2e=$E2E swift-bridge=$SWIFT release-dry-run=$RELEASE ios=$IOS"
           [ "$CHANGES" = success ] || exit 1
           [ "$CHECK" = success ] || exit 1
           ok() { [ "$1" = success ] || { [ "$1" = skipped ] && [ "$2" != true ]; }; }
           ok "$E2E" "$E2E_NEEDED" || exit 1
           ok "$SWIFT" "$SWIFT_NEEDED" || exit 1
           ok "$RELEASE" "$RELEASE_NEEDED" || exit 1
+          ok "$IOS" "$IOS_NEEDED" || exit 1
