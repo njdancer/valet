@@ -7,8 +7,14 @@ import {
   type AuthStep,
   type Condition,
   canonicalJson,
+  DEFAULT_SANDBOX,
+  describeException,
+  exceptionKey,
+  exceptionRisk,
   messagesSourcesIn,
   type OtpSource,
+  type SandboxDeclaration,
+  type SandboxException,
   settingToolNames,
   toolHints,
   unlockedBy,
@@ -21,6 +27,8 @@ import type {
   ManifestDiffLine,
   PermissionDiff,
   ProbeInfo,
+  SandboxDiff,
+  SandboxExceptionLine,
   SecretDiffEntry,
   SecretFillEntry,
   SettingDiffEntry,
@@ -235,6 +243,34 @@ export function permissionDiff(before: AdapterManifest | null, after: AdapterMan
     settings: pick(settings),
     limits: before === null ? null : { before: limitsInfo(before), after: limitsInfo(after) },
     probe: before === null ? null : { before: probeInfo(before), after: probeInfo(after) },
+    sandbox: sandboxDiff(before, after),
+  }
+}
+
+/** What the new version can reach on this Mac, against what the approved one could. */
+export function sandboxDiff(before: AdapterManifest | null, after: AdapterManifest): SandboxDiff {
+  const was = before === null ? null : (before.sandbox ?? DEFAULT_SANDBOX)
+  const now = after.sandbox ?? DEFAULT_SANDBOX
+  const exceptions = (d: SandboxDeclaration | null) =>
+    d !== null && d.mode === 'sandboxed' ? d.exceptions : []
+  const had = new Set(exceptions(was).map(exceptionKey))
+  const has = new Set(exceptions(now).map(exceptionKey))
+  const line = (e: SandboxException, change: SandboxExceptionLine['change']): SandboxExceptionLine => ({
+    change,
+    text: describeException(e),
+    purpose: e.purpose,
+    risk: change === 'removed' ? 'low' : exceptionRisk(e),
+  })
+  return {
+    unsandboxed: now.mode === 'unsandboxed',
+    becameUnsandboxed: now.mode === 'unsandboxed' && was?.mode !== 'unsandboxed',
+    reason: now.mode === 'unsandboxed' ? now.reason : null,
+    exceptions: [
+      ...exceptions(now).map((e) => line(e, had.has(exceptionKey(e)) ? 'same' : 'added')),
+      ...exceptions(was)
+        .filter((e) => !has.has(exceptionKey(e)))
+        .map((e) => line(e, 'removed')),
+    ],
   }
 }
 
@@ -259,6 +295,7 @@ export function addsPermissions(diff: PermissionDiff): boolean {
     diff.settings,
   ]
   if (lists.some((list) => list.added.length > 0)) return true
+  if (diff.sandbox.becameUnsandboxed || diff.sandbox.exceptions.some((e) => e.change === 'added')) return true
   // A removed needsUser, fail or assertLoggedIn takes a stop out of the login.
   if (diff.authSteps.removed.some((s) => ['needsUser', 'fail', 'assertLoggedIn'].includes(s.op))) return true
   if (diff.limits !== null) {

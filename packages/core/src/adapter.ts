@@ -2,6 +2,7 @@
 
 import { z } from 'zod'
 import type { ErrorClass, NeedsUserReason, Stage } from './errors'
+import type { LocalAccess } from './local-access'
 import type { AdapterManifest } from './manifest'
 import type { ToolPage } from './page'
 
@@ -60,6 +61,12 @@ export interface ToolContext {
    */
   confirm(action: ConfirmAction): Promise<boolean>
   readonly signal: AbortSignal
+  /**
+   * Local data through the manifest's declared sandbox exceptions (docs/sandbox.md). Every call
+   * for a kind the manifest doesn't declare rejects with `tool-run/not-granted`. Optional for the
+   * runtime's own contexts and older tests; tool code in the tool process always has it.
+   */
+  readonly local?: LocalAccess
 }
 
 export interface ToolImplementation<

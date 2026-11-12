@@ -10,6 +10,7 @@
 // process. A process that exits before saying it is done ends the run as `tool-run/internal`.
 
 import { type ToolContext, ValetError } from '@valet/core'
+import { dispatchLocal } from './local-dispatch'
 import {
   type Capability,
   decodeError,
@@ -130,6 +131,7 @@ export function runIsolated(
 
 /** Calls the guarded capability. Its own checks (types, the request surface, C4) apply as in process. */
 function dispatch(ctx: ToolContext, capability: Capability, args: readonly unknown[]): Promise<unknown> {
+  if (capability.startsWith('local.')) return dispatchLocal(ctx.local, capability, args)
   // Strings where the capability takes a selector, a URL or source text; the guards check the rest.
   const takesString = capability.startsWith('page.')
   if (takesString && typeof args[0] !== 'string') return Promise.reject(new ValetError('tool-run', 'invalid'))
@@ -154,6 +156,8 @@ function dispatch(ctx: ToolContext, capability: Capability, args: readonly unkno
       return ctx.session.ensure()
     case 'confirm':
       return ctx.confirm(a)
+    default:
+      return Promise.reject(new ValetError('tool-run', 'invalid'))
   }
 }
 

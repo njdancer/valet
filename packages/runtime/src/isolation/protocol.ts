@@ -28,6 +28,16 @@ export const CAPABILITIES = [
   'page.fetch',
   'session.ensure',
   'confirm',
+  // Sandbox exceptions (docs/sandbox.md): each answered only if the manifest declares its kind.
+  'local.files.list',
+  'local.files.stat',
+  'local.files.read',
+  'local.files.write',
+  'local.files.mkdir',
+  'local.fetch',
+  'local.service',
+  'local.run',
+  'local.appleScript',
 ] as const
 export type Capability = (typeof CAPABILITIES)[number]
 

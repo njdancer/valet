@@ -39,13 +39,7 @@ export interface AdapterState {
   readonly versions: readonly StoredVersion[]
 }
 
-export type StoreProblem =
-  | 'unreadable'
-  | 'missing'
-  | 'hash-mismatch'
-  | 'id-mismatch'
-  | 'invalid'
-  | 'draft-unsandboxed'
+export type StoreProblem = 'unreadable' | 'missing' | 'hash-mismatch' | 'id-mismatch' | 'invalid'
 
 export class StoreError extends Error {
   constructor(
@@ -170,14 +164,10 @@ export class AdapterStore {
 
   /**
    * Stores a checked package (if its hash isn't stored already) and records it in the history.
-   * Refuses the draft source until the sandbox exists (B's review, point 1): describing a draft runs
-   * code nobody has approved in a full Node process. Returns the new state.
+   * Drafts are stored like any source: the sandbox (docs/sandbox.md) is what keeps unapproved code
+   * from running anywhere that matters. Returns the new state.
    */
   put(checked: CheckedPackage, options: PutOptions): Promise<AdapterState> {
-    if (options.source === 'draft')
-      return Promise.reject(
-        new StoreError('draft-unsandboxed', 'drafts install only once the sandbox exists'),
-      )
     return this.serial(async () => {
       const id = checked.manifest.id
       checkId(id)

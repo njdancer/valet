@@ -13,7 +13,9 @@ import {
   type AuditSink,
   type BlockedRequest,
   CredentialError,
+  DEFAULT_SANDBOX,
   type Grant,
+  type LocalAccess,
   MESSAGES_SECRET,
   type NeedsUserReason,
   needsYouTitle,
@@ -183,6 +185,15 @@ export interface ServiceDeps {
    * code there; without it (unit tests), in this process.
    */
   readonly toolProcess?: ToolProcessFactory
+  /**
+   * The adapter sandbox (docs/sandbox.md). With it, a sandboxed adapter's tool code runs in a
+   * sandbox renderer for its version, and an unsandboxed one in `toolProcess`; each gets `local`,
+   * the capabilities its declared exceptions allow. Without it, every adapter runs in `toolProcess`.
+   */
+  readonly sandbox?: {
+    forAdapter(adapterHash: string): ToolProcessFactory
+    local(manifest: AdapterManifest): LocalAccess
+  }
   /** Builds an adapter's driver, with the reporters its refusals outside a run go to. */
   readonly createDriver: (manifest: AdapterManifest, reporters: DriverReporters) => Promise<SessionDriver>
   readonly credentials: Credentials
@@ -1028,14 +1039,25 @@ export class AppService {
   }
 
   private registration(adapter: BuiltinAdapter, driver: SessionDriver) {
-    const start = this.deps.toolProcess
+    const manifest = adapter.definition.manifest
+    const sandbox = this.deps.sandbox
+    // Unsandboxed only when the manifest says so, and then it was approved as such (docs/sandbox.md).
+    const sandboxed = (manifest.sandbox ?? DEFAULT_SANDBOX).mode === 'sandboxed'
+    const start =
+      sandbox !== undefined && sandboxed ? sandbox.forAdapter(adapter.hash) : this.deps.toolProcess
     return {
       definition: adapter.definition,
       bundleHash: adapter.hash,
       driver,
       ...(start === undefined || adapter.toolScript === null
         ? {}
-        : { isolation: { script: adapter.toolScript, start } }),
+        : {
+            isolation: {
+              script: adapter.toolScript,
+              start,
+              ...(sandbox === undefined ? {} : { local: sandbox.local(manifest) }),
+            },
+          }),
     }
   }
 

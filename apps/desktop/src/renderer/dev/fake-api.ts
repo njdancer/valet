@@ -487,6 +487,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         settings: { added: [], removed: [], unchanged: [] },
         limits: { before: WOOLWORTHS_LIMITS, after: WOOLWORTHS_LIMITS },
         probe: { before: WOOLWORTHS_PROBE, after: WOOLWORTHS_PROBE },
+        sandbox: { unsandboxed: false, becameUnsandboxed: false, reason: null, exceptions: [] },
       },
       manifestDiff: [
         { kind: 'hunk', oldLine: null, newLine: null, text: '@@ "version" @@' },
@@ -874,6 +875,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
           settings: all([]),
           limits: null,
           probe: null,
+          sandbox: { unsandboxed: false, becameUnsandboxed: false, reason: null, exceptions: [] },
         },
         manifestDiff: [],
         files: [],

@@ -48,6 +48,7 @@ import {
   defineAdapter,
   type EnsureResult,
   type ErrorClass,
+  type LocalAccess,
   manifestSchema,
   NeedsUserError,
   type RequestDeclaration,
@@ -167,6 +168,11 @@ export interface RegisteredAdapter {
 export interface ToolIsolation {
   readonly script: string
   readonly start: ToolProcessFactory
+  /**
+   * What tool code reaches through `ctx.local` (docs/sandbox.md): the adapter's declared sandbox
+   * exceptions, enforced by the implementation. Without it every local call is not-granted.
+   */
+  readonly local?: LocalAccess
 }
 
 export interface ToolHostOptions {
@@ -946,6 +952,9 @@ export class ToolHost {
         return (await state.track(asking)) === 'approved'
       },
       signal: controller.signal,
+      ...(entry.isolation?.local === undefined
+        ? {}
+        : { local: this.liveLocal(entry.isolation.local, manifest.id, state) }),
     }
 
     const isolation = entry.isolation
@@ -1256,6 +1265,41 @@ export class ToolHost {
     return this.options.approvals
       .isApproved(entry.definition.manifest.id, entry.bundleHash)
       .catch(() => false)
+  }
+
+  /**
+   * `local` for one call: each capability refused once the call is over, tracked like a capability
+   * call so the call waits for it, and audited with its outcome (never its path or body).
+   */
+  private liveLocal(local: LocalAccess, adapterId: string, state: CallState): LocalAccess {
+    const wrap =
+      <A extends unknown[], R>(capability: string, fn: (...args: A) => Promise<R>) =>
+      async (...args: A): Promise<R> => {
+        state.assertLive()
+        let errorClass: ErrorClass | null = null
+        try {
+          return await state.track(fn(...args))
+        } catch (error) {
+          errorClass = error instanceof ValetError ? error.errorClass : 'internal'
+          throw error instanceof ValetError ? error : new ValetError('tool-run', 'internal')
+        } finally {
+          await this.record({ type: 'local-access', adapterId, callId: state.callId, capability, errorClass })
+        }
+      }
+    const files = local.files
+    return {
+      files: {
+        list: wrap('files.list', (d) => files.list(d)),
+        stat: wrap('files.stat', (p) => files.stat(p)),
+        read: wrap('files.read', (p, o) => files.read(p, o)),
+        write: wrap('files.write', (p, c, o) => files.write(p, c, o)),
+        mkdir: wrap('files.mkdir', (d) => files.mkdir(d)),
+      },
+      fetch: wrap('fetch', (u, i) => local.fetch(u, i)),
+      service: wrap('service', (port, p, i) => local.service(port, p, i)),
+      run: wrap('run', (a, o) => local.run(a, o)),
+      appleScript: wrap('appleScript', (id, source) => local.appleScript(id, source)),
+    }
   }
 
   private async record(event: AuditEvent): Promise<void> {
