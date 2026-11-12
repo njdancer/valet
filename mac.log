@@ -1,0 +1,8 @@
+valet: demo: fake Woolworths at https://www.woolworths.test:50753, signing in at https://auth.woolworths.test:50754
+valet: demo: fake 1Password (Keyhold) at http://127.0.0.1:50755/
+valet: approvals: signing with software keys (dev build)
+[relay] connecting
+[console] [relay] connecting[relay] online
+[relay] ready
+[console] [relay] online[console] [relay] ready[7913:1112/150118.492927:ERROR:base/process/process_mac.cc:53] task_policy_set TASK_CATEGORY_POLICY: (os/kern) invalid argument (4)
+[7913:1112/150118.493065:ERROR:base/process/process_mac.cc:98] task_policy_set TASK_SUPPRESSION_POLICY: (os/kern) invalid argument (4)
