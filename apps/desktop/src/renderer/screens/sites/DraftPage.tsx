@@ -23,7 +23,7 @@ import {
 } from '@valet/ui'
 import type { DraftPage as DraftData } from '../../../shared/api'
 import { useAction, useApi, useLoad, useNow } from '../../lib/api-context'
-import { formatAgo, plural } from '../../lib/format'
+import { formatAgo, formatClock, plural } from '../../lib/format'
 import { href } from '../../lib/router'
 import { DraftStatus, draftTitle } from './draft-ui'
 import { ActionError } from './site-ui'
@@ -77,6 +77,7 @@ function DraftView({ draft }: { readonly draft: DraftData }) {
   const api = useApi()
   const now = useNow(60_000)
   const open = useAction()
+  const end = useAction()
   const title = draftTitle(draft)
   const submitted =
     draft.submission === null
@@ -110,6 +111,31 @@ function DraftView({ draft }: { readonly draft: DraftData }) {
       <PageBody width="form">
         <Stack gap={4}>
           <ActionError failed={open.failed} what="open the draft’s folder" />
+          {draft.session === null ? null : (
+            <Card>
+              <CardHeader>
+                <CardTitle>Using your {draft.name} session</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Stack gap={3}>
+                  <Text>
+                    {draft.writtenBy}’s live trials of this draft run signed in until{' '}
+                    {formatClock(draft.session.until)}. It never sees the session itself, and only the reads
+                    the installed version makes reach it.
+                  </Text>
+                  <div>
+                    <Button
+                      variant="secondary"
+                      onClick={() => void end.run(() => api.drafts.endSession(draft.draftId))}
+                    >
+                      End now
+                    </Button>
+                  </div>
+                  <ActionError failed={end.failed} what="end the session" />
+                </Stack>
+              </CardContent>
+            </Card>
+          )}
           {draft.submission?.note ? (
             <Text tone="muted">
               Your note when you declined: <q>{draft.submission.note}</q>

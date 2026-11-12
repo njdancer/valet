@@ -416,10 +416,10 @@ async function main(): Promise<void> {
       })
       return { page: browser.page, close: () => browser.close() }
     },
-    trialDriver: (manifest, label, allowPrivate) =>
+    trialDriver: (manifest, label, allowPrivate, session) =>
       createElectronSessionDriver(
         manifest,
-        { trialLabel: label },
+        { trialLabel: label, ...(session === null ? {} : { trialSession: session }) },
         { dial: publicOnlyDial(undefined, allowPrivate) },
       ),
     startEndpoint: (caller, clients, onSessionsChanged, admin, authoring) =>

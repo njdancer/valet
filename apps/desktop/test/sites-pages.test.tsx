@@ -440,6 +440,16 @@ describe('drafts by agents', () => {
     expect(called(api, 'drafts.openFolder')).toEqual([['dr-yahoofina2']])
   })
 
+  it('shows a lent signed-in session with End now', async () => {
+    const api = createFakeApi({ now: NOW })
+    api.fake.addDraft({ session: { until: new Date(NOW + 20 * 60_000).toISOString() } })
+    renderAt('#/sites/drafts/dr-yahoofina2', api)
+    expect(await screen.findByRole('heading', { name: 'Using your Yahoo Finance session' })).toBeTruthy()
+    expect(screen.getByText(/never sees the session itself/)).toBeTruthy()
+    await userEvent.click(screen.getByRole('button', { name: 'End now' }))
+    expect(called(api, 'drafts.endSession')).toEqual([['dr-yahoofina2']])
+  })
+
   it('says a draft is gone, with a way back', async () => {
     renderAt('#/sites/drafts/dr-goneaaaaa2', createFakeApi({ now: NOW }))
     expect(await screen.findByRole('heading', { level: 1, name: 'No such draft' })).toBeTruthy()

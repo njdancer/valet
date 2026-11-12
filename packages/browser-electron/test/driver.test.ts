@@ -131,6 +131,25 @@ describe('ElectronSessionDriver.forManifest', () => {
       ValetError,
     )
   })
+
+  it('signs a trial in by copying the live tool partition’s cookies one way, never back', async () => {
+    const { platform } = browserLike()
+    platform.session(TOOL).cookies = [
+      tokenCookie,
+      { ...tokenCookie, name: 'ads', value: 'tracker', domain: '.ads.test', hostOnly: false },
+    ]
+    const driver = new ElectronSessionDriver(platform, {
+      ...OPTIONS,
+      trialLabel: 'dr-aaaaaaaaaa-2',
+      trialSession: { adapterId: 'example', cookieDomains: ['www.example.com'] },
+    })
+    await driver.toolPage()
+    const trial = platform.session('trial:tool:dr-aaaaaaaaaa-2')
+    expect(trial.setCalls.map((c) => c.name)).toEqual(['wow-auth-token'])
+    expect(platform.session(TOOL).setCalls).toEqual([])
+    // The copied value is one tool output must never carry.
+    expect(await driver.sessionSecrets(['www.example.com'], [])).toContain('session-token-value')
+  })
 })
 
 describe('partition set-up', () => {

@@ -60,7 +60,7 @@ import {
 import { siteInputType, siteMethod, siteMime, siteRole, siteTag } from './site-text'
 import { DRAFT_LIMITS, DraftError, type DraftRecord, type DraftStore, type TrialSummary } from './store'
 import { blankDraft } from './template'
-import { runTrial, TRIAL_LIMITS, type TrialDeps, type TrialResult } from './trial'
+import { runTrial, type SignedInTrial, TRIAL_LIMITS, type TrialDeps, type TrialResult } from './trial'
 
 /** A whole check's time, so a submit answers inside an MCP client's usual timeout. */
 export const CHECK_BUDGET_MS = 45_000
@@ -111,6 +111,15 @@ export interface PrivateNetworkRequest {
   readonly requester: { readonly clientId: string; readonly clientName: string }
 }
 
+export interface SessionRequest {
+  readonly draftId: string
+  readonly adapterId: string
+  /** The installed adapter's https origins, as the card lists them. */
+  readonly origins: readonly string[]
+  readonly minutes: number
+  readonly requester: { readonly clientId: string; readonly clientName: string }
+}
+
 export type AskOutcome =
   | { readonly ok: true; readonly requestId: string; readonly ref: string; readonly expiresAt: string }
   | { readonly ok: false; readonly sentence: string }
@@ -149,6 +158,13 @@ export interface AuthoringDeps {
    * (B's private-network kind, R21). The broker's own refusals come back as a sentence.
    */
   readonly askPrivateNetwork?: (request: PrivateNetworkRequest) => Promise<AskOutcome>
+  /**
+   * Asks the person to let the draft's live trials use the installed adapter's session for a while
+   * (B's authoring-session kind, D81).
+   */
+  readonly askSession?: (request: SessionRequest) => Promise<AskOutcome>
+  /** The draft's approved signed-in session, while it lasts; null for none. */
+  readonly sessionFor?: (draftId: string) => { readonly adapterId: string; readonly until: number } | null
   readonly requestState: (requestId: string) => RequestState
   /** The person's name for a client, for the draft record. */
   readonly clientName: (viewer: ClientIdentity) => string
@@ -303,6 +319,55 @@ export class DraftAuthoring implements Authoring {
       tellThePerson: `I’ve asked Valet to let my draft reach ${request.address}${
         request.port === null ? '' : ` port ${request.port}`
       } on your network for ${request.minutes} minutes. Approve it on your phone or Mac (${asked.ref}).`,
+    }
+  }
+
+  // ---------- Signed-in sessions ----------
+
+  async requestSession(viewer: ClientIdentity, draftId: string, minutes: number): Promise<AskReport> {
+    const record = await this.own(viewer, draftId)
+    const ask = this.deps.askSession
+    const trials = this.deps.trials
+    if (ask === undefined || trials === undefined)
+      throw new AuthoringRefusal('This build of Valet can’t lend a signed-in session.')
+    const installed = record.basedOn === null ? null : await this.deps.installed(record.adapterId)
+    if (installed === null)
+      throw new AuthoringRefusal(
+        'A signed-in session is for updating or repairing an installed adapter: start the draft from "installed".',
+      )
+    const signedIn = await trials.signedIn().catch(() => new Map<string, readonly string[]>())
+    if (!signedIn.has(record.adapterId))
+      throw new AuthoringRefusal(`The person isn’t signed in to ${installed.manifest.name} in Valet.`)
+    const origins = [
+      ...new Set(
+        [installed.manifest.home, ...installed.manifest.navigation]
+          .map((o) => {
+            try {
+              const url = new URL(o)
+              return url.protocol === 'https:' ? url.origin : null
+            } catch {
+              return null
+            }
+          })
+          .filter((o): o is string => o !== null),
+      ),
+    ].slice(0, 10)
+    const span = Math.min(60, Math.max(1, Math.round(minutes)))
+    const asked = await ask({
+      draftId,
+      adapterId: record.adapterId,
+      origins,
+      minutes: span,
+      requester: { clientId: clientKey(viewer), clientName: this.deps.clientName(viewer).slice(0, 100) },
+    })
+    if (!asked.ok) throw new AuthoringRefusal(`Not asked: ${asked.sentence}`)
+    return {
+      requestId: asked.requestId,
+      ref: asked.ref,
+      expiresAt: asked.expiresAt,
+      tellThePerson:
+        `I’ve asked Valet to let my live trials of the ${installed.manifest.name} draft use your signed-in ` +
+        `session for ${span} minutes. I never see the session itself. Approve it on your phone or Mac (${asked.ref}).`,
     }
   }
 
@@ -938,6 +1003,7 @@ export class DraftAuthoring implements Authoring {
     draftId: string,
     tool: string,
     input: unknown,
+    signedIn = false,
   ): Promise<TrialReport> {
     const record = await this.own(viewer, draftId)
     const trials = this.deps.trials
@@ -968,14 +1034,24 @@ export class DraftAuthoring implements Authoring {
     // Never a site the person is signed in to, except this draft's own adapter's, as for the
     // scratch browser.
     const domains = draftDomains(manifest)
-    const signedIn = await trials.signedIn().catch(() => null)
-    if (signedIn === null)
+    const signedInSites = await trials.signedIn().catch(() => null)
+    if (signedInSites === null)
       throw new AuthoringRefusal('Not tried: Valet can’t tell which sites are signed in.')
-    for (const [id, list] of signedIn) {
+    for (const [id, list] of signedInSites) {
       if (id === record.adapterId) continue
       const shared = list.find((d) => domains.includes(d))
       if (shared !== undefined)
         throw new AuthoringRefusal(`Not tried: the person is signed in to ${shared} with another adapter.`)
+    }
+    let session: SignedInTrial | null = null
+    if (signedIn) {
+      const lent = this.deps.sessionFor?.(draftId) ?? null
+      const installed = record.basedOn === null ? null : await this.deps.installed(record.adapterId)
+      if (lent === null || lent.until <= this.deps.now() || installed === null)
+        throw new AuthoringRefusal(
+          'Not tried: no signed-in session is running for this draft. valet_request_session asks the person for one.',
+        )
+      session = { adapterId: record.adapterId, installed: installed.manifest }
     }
     if (!take(this.trialTimes, draftId, TRIAL_LIMITS.perDraftPerHour, this.deps.now()))
       throw new AuthoringRefusal(
@@ -993,6 +1069,7 @@ export class DraftAuthoring implements Authoring {
         `${draftId.toLowerCase()}-${++this.trialCount}`,
         trials,
         this.deps.now,
+        session,
       )
     } catch {
       throw new AuthoringRefusal('Not tried: Valet couldn’t open a browser for the trial.')
@@ -1006,6 +1083,7 @@ export class DraftAuthoring implements Authoring {
       at: new Date(this.deps.now()).toISOString(),
       ok: problem === null,
       problem: problem === null ? null : clip(problem, 200),
+      signedIn: session !== null,
     }
     await this.deps.store
       .update(draftId, (r) => ({ ...r, trials: [...r.trials, summary].slice(-20) }))
@@ -1019,9 +1097,12 @@ export class DraftAuthoring implements Authoring {
       host,
       packageHash,
       outcome: result.outcome.kind,
+      ...(session === null ? {} : { signedIn: true }),
     })
     // The tool's name, never its agent-written title.
-    this.deps.notify(`${this.deps.clientName(viewer)} tried ${tool} on ${siteDomain(host)}.`)
+    this.deps.notify(
+      `${this.deps.clientName(viewer)} tried ${tool} on ${siteDomain(host)}${session === null ? '' : ', signed in'}.`,
+    )
     return {
       tool,
       packageHash,
@@ -1167,13 +1248,13 @@ function trialLines(trials: readonly TrialSummary[], packageHash: string | null)
   const these = trials.filter((t) => t.packageHash === packageHash)
   if (these.length === 0) return ['Live trial: not run on this version']
   const byTool = new Map<string, TrialSummary>()
-  for (const t of these) byTool.set(t.tool, t)
+  for (const t of these) byTool.set(`${t.tool}:${t.signedIn}`, t)
   return [...byTool.values()]
     .slice(0, 4)
     .map((t) =>
       t.ok
-        ? `Live trial of ${t.tool}, signed out: returned output that fits its schema`
-        : `Live trial of ${t.tool}, signed out: ${clip(t.problem ?? 'failed', 120)}`,
+        ? `Live trial of ${t.tool}, ${t.signedIn ? 'signed in' : 'signed out'}: returned output that fits its schema`
+        : `Live trial of ${t.tool}, ${t.signedIn ? 'signed in' : 'signed out'}: ${clip(t.problem ?? 'failed', 120)}`,
     )
 }
 
@@ -1185,6 +1266,8 @@ function trialProblem(result: TrialResult): string | null {
       return null
     case 'invalid-output':
       return 'The output doesn’t match the tool’s output schema.'
+    case 'session-value':
+      return 'The output held a value of the person’s session, so Valet withheld it.'
     case 'timeout':
       return `Ran over ${Math.round(TRIAL_LIMITS.timeoutMs / 1000)} seconds.`
     case 'needs-user':

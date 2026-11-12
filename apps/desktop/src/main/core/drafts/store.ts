@@ -46,6 +46,8 @@ const trialSummarySchema = z
     ok: z.boolean(),
     /** How it ended otherwise, in Valet's words. */
     problem: z.string().max(200).nullable(),
+    /** Run with the adapter's session, under an authoring-session approval (PR 3). */
+    signedIn: z.boolean().default(false),
   })
   .strict()
 

@@ -3417,6 +3417,35 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
       })
     })
 
+    it('lends a draft’s trials the session once approved, shows it on the Mac, and ends it there', async () => {
+      const s = await withDraft()
+      const broker = (s.service as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
+      const asked = await broker.request(
+        'authoring-session',
+        { adapterId: 'shop', draftId: s.draftId, origins: ['https://shop.test'], minutes: 20 },
+        { kind: 'agent', clientId: `local:${s.viewer.clientId}`, clientName: 'Claude Code' },
+        { agentNote: null, context: { kind: 'draft', draftId: s.draftId } },
+      )
+      if (!asked.ok) throw new Error(asked.reason)
+      expect((await s.api.drafts.get(s.draftId))?.session).toBeNull()
+      expect(await broker.approveOnMac(asked.requestId)).toEqual({ ok: true })
+      expect((await s.api.drafts.get(s.draftId))?.session).not.toBeNull()
+      // It lapses on its own.
+      s.advance(21 * 60_000)
+      expect((await s.api.drafts.get(s.draftId))?.session).toBeNull()
+      const again = await broker.request(
+        'authoring-session',
+        { adapterId: 'shop', draftId: s.draftId, origins: ['https://shop.test'], minutes: 20 },
+        { kind: 'agent', clientId: `local:${s.viewer.clientId}`, clientName: 'Claude Code' },
+        { agentNote: null, context: { kind: 'draft', draftId: s.draftId } },
+      )
+      if (!again.ok) throw new Error(again.reason)
+      await broker.approveOnMac(again.requestId)
+      expect((await s.api.drafts.get(s.draftId))?.session).not.toBeNull()
+      await s.api.drafts.endSession(s.draftId)
+      expect((await s.api.drafts.get(s.draftId))?.session).toBeNull()
+    })
+
     it('lets a draft reach one private address once the person approves, on that port, for a while', async () => {
       let allow: ((address: string, port: number) => boolean) | null = null
       const trialDriver: NonNullable<ServiceDeps['trialDriver']> = async (

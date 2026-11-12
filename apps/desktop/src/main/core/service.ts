@@ -150,6 +150,7 @@ import {
   DraftAuthoring,
   type PrivateNetworkRequest,
   type RequestState,
+  type SessionRequest,
   type SubmitOutcome,
   type SubmitRequest,
 } from './drafts/authoring'
@@ -157,6 +158,7 @@ import type { CaseBrowser } from './drafts/cases'
 import { RepairTickets } from './drafts/repairs'
 import { draftDomains, type ScratchHandle, ScratchSessions } from './drafts/research'
 import { type DraftRecord, DraftStore } from './drafts/store'
+import type { SignedInTrial } from './drafts/trial'
 import { type EraseKind, type EraseReport, type EraseStep, eraseEverything } from './erase'
 import { ensurePrivateDir, JsonDocument } from './files'
 import { checkGrantRequest, grantInfo } from './grants'
@@ -294,6 +296,8 @@ export interface ServiceDeps {
     manifest: AdapterManifest,
     label: string,
     allowPrivate: (address: string, port: number) => boolean,
+    /** A signed-in trial: the installed adapter whose tool-partition cookies are copied in, one way. */
+    session: { readonly adapterId: string; readonly cookieDomains: readonly string[] } | null,
   ) => Promise<SessionDriver>
   /**
    * The fixture browser for a case's pages (docs/authoring-tools.md#the-agents-cases): served from
@@ -492,6 +496,11 @@ export class AppService {
   private readonly privateNetwork = new Map<
     string,
     { readonly address: string; readonly port: number | null; readonly until: number }[]
+  >()
+  /** Signed-in authoring sessions the person lent a draft's live trials (D81), by draft id. */
+  private readonly authoringSessions = new Map<
+    string,
+    { readonly adapterId: string; readonly until: number }
   >()
   /** Repair tickets for installed adapters (docs/authoring-tools.md#repairs-pr-3), from the audit log. */
   private readonly repairTickets = new RepairTickets()
@@ -1189,6 +1198,9 @@ export class AppService {
     // In memory at once: no call gets through while the rest happens, even if a write fails.
     const saved = this.appState.setLockedDown(true)
     this.authoring?.closeBrowsers()
+    // Lockdown ends every lent session and private address (B).
+    this.authoringSessions.clear()
+    this.privateNetwork.clear()
     const ledger = this.approvalBroker?.lockdown().catch(() => undefined)
     let revoked = 0
     if (locked) {
@@ -1375,6 +1387,28 @@ export class AppService {
           if (code === undefined) throw new ValetError('config', 'invalid')
           const answer = await this.remote.approveConsent(code, subject.tools)
           if (answer !== 'approved') throw new ValetError('config', 'not-found')
+        },
+      },
+      // A draft's live trials may use the adapter's signed-in session for a while (D81).
+      'authoring-session': {
+        precheck: async (subject) => {
+          const record = await this.drafts.record(subject.draftId).catch(() => null)
+          return (
+            record !== null &&
+            record.adapterId === subject.adapterId &&
+            this.adapter(subject.adapterId) !== null
+          )
+        },
+        apply: async (subject) => {
+          this.authoringSessions.set(subject.draftId, {
+            adapterId: subject.adapterId,
+            until: this.deps.now() + subject.minutes * 60_000,
+          })
+          const name = this.adapter(subject.adapterId)?.definition.manifest.name ?? subject.adapterId
+          this.notifier.draftActivity(
+            `An agent’s draft may try ${name} with your session for ${subject.minutes} minutes. End it from the draft’s page.`,
+          )
+          this.emit('drafts-changed')
         },
       },
       // A draft's scratch browser and live trials may reach one private address for a while (R21).
@@ -2059,6 +2093,11 @@ export class AppService {
         ),
       submit: (request) => this.submitDraft(request),
       askPrivateNetwork: (request) => this.askPrivateNetwork(request),
+      askSession: (request) => this.askSession(request),
+      sessionFor: (draftId) => {
+        const lent = this.authoringSessions.get(draftId)
+        return lent === undefined || lent.until <= this.deps.now() ? null : lent
+      },
       withdraw: async (requestId) => {
         const asker = this.draftAskers.get(requestId)
         if (asker !== undefined) await this.approvalBroker?.withdraw(requestId, asker).catch(() => false)
@@ -2079,11 +2118,17 @@ export class AppService {
             trials: {
               // A fresh one-shot sandbox window for the call, as for a case.
               start: runtime.start,
-              driver: (manifest: AdapterManifest, label: string) =>
+              driver: (manifest: AdapterManifest, label: string, signedIn: SignedInTrial | null) =>
                 (this.deps.trialDriver as NonNullable<ServiceDeps['trialDriver']>)(
                   manifest,
                   label,
                   this.privateAllowance(/^(dr-[a-z2-7]{10})-/.exec(label)?.[1] ?? ''),
+                  signedIn === null
+                    ? null
+                    : {
+                        adapterId: signedIn.adapterId,
+                        cookieDomains: signedIn.installed.session.cookieDomains,
+                      },
                 ),
               // The installed adapters' own budget and breaker for the host.
               guards: (host: string) => this.runtime().siteGuards(host),
@@ -2174,6 +2219,7 @@ export class AppService {
           ? null
           : { ref: record.submission.ref, at: record.submission.at, note: record.submission.note },
       update: record.basedOn !== null,
+      session: this.lentSession(record.id),
     }
   }
 
@@ -2187,6 +2233,55 @@ export class AppService {
         (g) => g.until > now && g.address === plain && (g.port === null || g.port === port),
       )
     }
+  }
+
+  /** An agent asks to try its draft with the adapter's session (docs/authoring-tools.md, D81). */
+  private async askSession(request: SessionRequest): Promise<AskOutcome> {
+    const broker = this.approvalBroker
+    if (broker === null) return { ok: false, sentence: 'Valet can’t ask for approvals right now.' }
+    if (this.lockedDown) return { ok: false, sentence: 'Valet is locked down.' }
+    const requester: Requester = {
+      kind: 'agent',
+      clientId: request.requester.clientId,
+      clientName: request.requester.clientName,
+    }
+    const asked = await broker.request(
+      'authoring-session',
+      {
+        adapterId: request.adapterId,
+        draftId: request.draftId,
+        origins: [...request.origins],
+        minutes: request.minutes,
+      },
+      requester,
+      {
+        agentNote: null,
+        context: { kind: 'draft', draftId: request.draftId },
+        display: {
+          client: {
+            label: request.requester.clientName,
+            badge: request.requester.clientId.startsWith('remote:') ? 'remote' : 'local',
+          },
+        },
+      },
+    )
+    if (!asked.ok)
+      return { ok: false, sentence: submitRefusal(asked.reason, asked.until).replace(/^Not submitted: /, '') }
+    this.emit('approvals-changed')
+    this.emit('attention-changed')
+    return { ok: true, requestId: asked.requestId, ref: asked.ref, expiresAt: asked.expiresAt }
+  }
+
+  /** The draft's lent session for the Mac, while it runs. */
+  private lentSession(draftId: string): { readonly until: string } | null {
+    const lent = this.authoringSessions.get(draftId)
+    if (lent === undefined || lent.until <= this.deps.now()) return null
+    return { until: new Date(lent.until).toISOString() }
+  }
+
+  /** The person ends a draft's signed-in session early, from the draft's page. */
+  endAuthoringSession(draftId: string): void {
+    if (this.authoringSessions.delete(draftId)) this.emit('drafts-changed')
   }
 
   /** An agent asks for one private address for its draft (docs/authoring-tools.md, R21). */
@@ -3000,6 +3095,7 @@ export class AppService {
           if (record === null) throw new ValetError('config', 'not-found')
           deps.ui.showFolder(this.drafts.filesFolder(draftId))
         },
+        endSession: async (draftId) => this.endAuthoringSession(draftId),
       },
       approvals: {
         pending: async () => {

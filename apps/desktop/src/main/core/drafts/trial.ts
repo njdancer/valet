@@ -39,11 +39,28 @@ export const TRIAL_LIMITS = {
 export interface TrialDeps {
   /** A fresh sandbox process for the call (SandboxPool.oneShot()). */
   readonly start: ToolProcessFactory
-  /** A driver for the manifest whose partitions are in memory and new: the label names them. */
-  readonly driver: (manifest: AdapterManifest, label: string) => Promise<SessionDriver>
+  /**
+   * A driver for the manifest whose partitions are in memory and new: the label names them. For a
+   * signed-in trial, the installed adapter's session is copied into them one way.
+   */
+  readonly driver: (
+    manifest: AdapterManifest,
+    label: string,
+    signedIn: SignedInTrial | null,
+  ) => Promise<SessionDriver>
   /** The installed adapters' guards for the host (ToolHost.siteGuards). */
   readonly guards: (host: string) => SiteGuards
   readonly timeoutMs?: number
+}
+
+/**
+ * A signed-in trial (docs/authoring-tools.md#signed-in-authoring-sessions-pr-3), while the person's
+ * authoring-session approval lasts: the installed manifest, which the person approved, bounds what
+ * reaches the session.
+ */
+export interface SignedInTrial {
+  readonly adapterId: string
+  readonly installed: AdapterManifest
 }
 
 export type TrialOutcome =
@@ -51,6 +68,8 @@ export type TrialOutcome =
   | { readonly kind: 'error'; readonly stage: string; readonly errorClass: string }
   | { readonly kind: 'needs-user'; readonly reason: string }
   | { readonly kind: 'invalid-output' }
+  /** A signed-in trial's output held a value of the session: withheld. */
+  | { readonly kind: 'session-value' }
   | { readonly kind: 'timeout' }
   /** The site's breaker is open, or its hourly cap is spent: nothing was sent. */
   | { readonly kind: 'site-resting'; readonly retryAfterMs: number }
@@ -70,6 +89,7 @@ export async function runTrial(
   label: string,
   deps: TrialDeps,
   now: () => number = Date.now,
+  signedIn: SignedInTrial | null = null,
 ): Promise<TrialResult> {
   const started = now()
   const manifest = draft.manifest
@@ -86,7 +106,8 @@ export async function runTrial(
   const spentForMs = site.budget.spentForMs()
   if (spentForMs > 0) return done({ kind: 'site-resting', retryAfterMs: spentForMs })
 
-  const driver = await deps.driver(manifest, label)
+  const policy = trialPolicy(manifest, signedIn)
+  const driver = await deps.driver(manifest, label, signedIn)
   const controller = new AbortController()
   let timer: ReturnType<typeof setTimeout> | undefined
   try {
@@ -103,13 +124,7 @@ export async function runTrial(
         blocked.push({ method: b.method, url: scrubUrl(b.target), reason: b.reason })
     }
     driver.beginRun(
-      {
-        egress: manifest.egress,
-        requests: manifest.requests.filter((r) => r.purpose === 'read'),
-        unlocks: [],
-        maxPurpose: 'read',
-        ceiling: manifest.limits.requestsPerRun,
-      },
+      { ...policy, unlocks: [], maxPurpose: 'read', ceiling: manifest.limits.requestsPerRun },
       record,
     )
     const state = new CallState(`trial-${label}`, controller.signal, () => new SecretRedactionSet())
@@ -134,7 +149,10 @@ export async function runTrial(
       })
       const ctx: ToolContext = {
         page,
-        session: { ensure: async (): Promise<EnsureResult> => signedOut(manifest) },
+        session: {
+          ensure: async (): Promise<EnsureResult> =>
+            signedIn === null ? signedOut(manifest) : { status: 'ok' },
+        },
         // A read tool never asks; a trial would answer no.
         confirm: async () => false,
         signal: controller.signal,
@@ -161,6 +179,16 @@ export async function runTrial(
     }
     const output = await schemas.output.safeParseAsync(settled.ok ? settled.value : undefined)
     if (!output.success) return done({ kind: 'invalid-output' })
+    if (signedIn !== null) {
+      // The agent never sees a cookie: output holding one is withheld whole.
+      const text = JSON.stringify(output.data) ?? ''
+      const secrets = await driver.sessionSecrets(
+        signedIn.installed.session.cookieDomains,
+        signedIn.installed.session.storage,
+      )
+      if (secrets.some((value) => value.length >= 6 && text.includes(value)))
+        return done({ kind: 'session-value' })
+    }
     return done({ kind: 'output', output: clipOutput(output.data) })
   } finally {
     clearTimeout(timer)
@@ -171,6 +199,25 @@ export async function runTrial(
       // Closing below stops everything anyway.
     }
     await driver.close().catch(() => undefined)
+  }
+}
+
+/**
+ * What the trial may send. Signed out: the draft's own egress and read declarations. Signed in:
+ * only what the installed manifest also allows, and only GETs it declares read, so nothing the
+ * agent wrote widens what reaches the person's session.
+ */
+function trialPolicy(
+  manifest: AdapterManifest,
+  signedIn: SignedInTrial | null,
+): { readonly egress: readonly string[]; readonly requests: AdapterManifest['requests'] } {
+  const reads = manifest.requests.filter((r) => r.purpose === 'read')
+  if (signedIn === null) return { egress: manifest.egress, requests: reads }
+  const installed = signedIn.installed
+  const allowedReads = installed.requests.filter((r) => r.purpose === 'read' && r.method === 'GET')
+  return {
+    egress: manifest.egress.filter((host) => installed.egress.includes(host)),
+    requests: reads.filter((r) => allowedReads.some((a) => a.method === r.method && a.path === r.path)),
   }
 }
 

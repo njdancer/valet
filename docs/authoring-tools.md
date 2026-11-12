@@ -520,6 +520,22 @@ id, the adapter's origins, at most 60 minutes, 30-minute expiry to answer). Whil
 - Every trial is audited; the Mac shows a running banner with **End now**; the phone shows
   `ph-session-running`.
 
+**Built (PR 3).** `valet_request_session` (a draft started from `installed`, for an adapter the
+person is signed in to, at most 60 minutes) asks for `authoring-session` with the installed
+manifest's https origins. Once approved, `valet_live_trial` with `signedIn: true` runs with:
+
+- the driver's `trialSession`: the live tool partition's cookies on the installed manifest's
+  cookie domains, copied into the trial's in-memory tool partition when it is set up, and never
+  back. Storage keys aren't copied yet;
+- the policy narrowed to the draft's egress hosts that the installed manifest also lists, and the
+  draft's read declarations that the installed manifest declares as `GET` reads;
+- output checked against the driver's session values. Output holding one is withheld whole
+  (`session-value`: "The output held a value of the person's session, so Valet withheld it.").
+
+Each trial is audited with `signedIn: true`, and the card's trial line says "signed in". The
+draft's page on the Mac shows "Using your <site> session" until the time ends, with **End now**
+(`api.drafts.endSession`). Lockdown ends every session and private address.
+
 ## The private network (PR 3)
 
 Built: `valet_request_private_network` asks for B's `private-network` kind for one IP address,

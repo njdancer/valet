@@ -76,7 +76,7 @@ export interface FakeControls {
   /** Replaces one pending review, e.g. to test a review that only removes things. */
   setPendingReview(review: PendingReview): void
   /** Adds an agent's draft (J3's Yahoo Finance draft waiting for the person, unless given one). */
-  addDraft(draft?: DraftPage): void
+  addDraft(draft?: Partial<DraftPage>): void
   /**
    * Makes the next call to `method` (e.g. "grants.make") reject, or the next `times` calls: pass
    * Infinity when several parts of the window load the same thing and every one should fail.
@@ -1019,6 +1019,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     trials: [{ tool: 'get_quote', at: new Date(now - 3 * 60_000).toISOString(), ok: true, problem: null }],
     submission: { ref: '7B3F', at: new Date(now - 60_000).toISOString(), note: null },
     update: false,
+    session: null,
     files: [
       { path: 'fixtures/quote-aapl.json', bytes: 2140, recordedByValet: true },
       { path: 'manifest.json', bytes: 1890, recordedByValet: false },
@@ -1169,6 +1170,11 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       },
       async openFolder(draftId) {
         enter('drafts.openFolder', draftId)
+      },
+      async endSession(draftId) {
+        enter('drafts.endSession', draftId)
+        const draft = drafts.find((d) => d.draftId === draftId)
+        if (draft !== undefined) Object.assign(draft, { session: null })
       },
     },
     grants: {
@@ -1695,8 +1701,8 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       breakChainAt(seq) {
         brokenAt = seq
       },
-      addDraft(draft = sampleDraft) {
-        drafts.push(clone(draft))
+      addDraft(draft = {}) {
+        drafts.push(clone({ ...sampleDraft, ...draft }))
         emit({ type: 'drafts-changed' })
       },
       setPendingReview(review) {

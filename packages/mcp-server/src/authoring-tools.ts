@@ -348,7 +348,14 @@ export interface Authoring {
     path: string,
   ): Promise<Captured>
   // Live trials (PR 2b): one call of a read tool against the real site, signed out.
-  liveTrial(viewer: ClientIdentity, draftId: string, tool: string, input: unknown): Promise<TrialReport>
+  liveTrial(
+    viewer: ClientIdentity,
+    draftId: string,
+    tool: string,
+    input: unknown,
+    signedIn?: boolean,
+  ): Promise<TrialReport>
+  requestSession(viewer: ClientIdentity, draftId: string, minutes: number): Promise<AskReport>
 }
 
 // ---------- Tools ----------
@@ -783,17 +790,46 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
       'Valet’s sandbox, held to the manifest’s egress and read requests, but signed out and in a browser that ' +
       'forgets everything after. Write tools can’t be tried; test them with cases. Calls are paced with the ' +
       'site’s installed adapters, so a trial can take a while, and a few an hour per draft is the most. The ' +
-      'output is the site’s data. A trial of the files you submit shows on the person’s card.',
+      'output is the site’s data. A trial of the files you submit shows on the person’s card. With signedIn, ' +
+      'during a session the person approved (valet_request_session), it runs with the installed adapter’s ' +
+      'session, and only the GET reads the installed version declares reach it.',
     input: z.object({
       draftId: draftIdInput,
       tool: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),
       input: z.record(z.string(), z.unknown()).default({}),
+      signedIn: z.boolean().default(false),
     }),
     output: trialReportSchema,
     needs: 'ask',
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     run: (a, args, s) =>
-      a.liveTrial(s.viewer, args['draftId'] as string, args['tool'] as string, args['input'] ?? {}),
+      a.liveTrial(
+        s.viewer,
+        args['draftId'] as string,
+        args['tool'] as string,
+        args['input'] ?? {},
+        args['signedIn'] === true,
+      ),
+  },
+  {
+    name: 'valet_request_session',
+    title: 'Ask to try a draft signed in',
+    description:
+      'Asks the person to let your draft’s live trials use the installed adapter’s signed-in session for up ' +
+      'to 60 minutes, to update or repair an adapter for a site that needs a login. You never see the session: ' +
+      'its cookies are copied one way into each trial’s own browser, only the GET reads the installed version ' +
+      'declares reach it, and output holding a session value is withheld. The scratch browser stays signed ' +
+      'out. Tell the person the sentence in tellThePerson.',
+    input: z.object({ draftId: draftIdInput, minutes: z.number().int().min(1).max(60).default(30) }),
+    output: askReportSchema,
+    needs: 'ask',
+    annotations: { ...EDITS, idempotentHint: false },
+    run: (a, args, s) =>
+      a.requestSession(
+        s.viewer,
+        args['draftId'] as string,
+        typeof args['minutes'] === 'number' ? args['minutes'] : 30,
+      ),
   },
 ]
 

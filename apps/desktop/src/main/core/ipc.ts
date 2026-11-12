@@ -177,6 +177,7 @@ const HANDLERS: Readonly<
   'drafts.list': entry(none, (api) => api.drafts.list()),
   'drafts.get': entry(z.tuple([DRAFT]), (api, [id]) => api.drafts.get(id)),
   'drafts.openFolder': entry(z.tuple([DRAFT]), (api, [id]) => api.drafts.openFolder(id)),
+  'drafts.endSession': entry(z.tuple([DRAFT]), (api, [id]) => api.drafts.endSession(id)),
   'adapters.installFromFolder': entry(none, (api) => api.adapters.installFromFolder()),
   'approvals.pending': entry(none, (api) => api.approvals.pending()),
   'approvals.approve': entry(z.tuple([ADAPTER_ID, HASH]), (api, [id, hash]) =>

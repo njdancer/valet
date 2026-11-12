@@ -631,13 +631,16 @@ describe('live trials', () => {
     policies: { maxPurpose: string; requests: readonly { method: string }[] }[]
     closed: number
     fetched: string[]
+    sessions: unknown[]
   }
 
   function trialDriver(answer: (url: string) => { status: number; body: unknown }) {
-    const fake: FakeDriver = { labels: [], policies: [], closed: 0, fetched: [] }
-    const driver = async (_manifest: unknown, label: string) => {
+    const fake: FakeDriver = { labels: [], policies: [], closed: 0, fetched: [], sessions: [] }
+    const driver = async (_manifest: unknown, label: string, signedIn: unknown) => {
       fake.labels.push(label)
+      fake.sessions.push(signedIn)
       return {
+        sessionSecrets: async () => ['secret-cookie-value'],
         beginRun: (policy: FakeDriver['policies'][number]) => void fake.policies.push(policy),
         endRun: () => undefined,
         close: async () => {
@@ -683,11 +686,17 @@ describe('live trials', () => {
 
   async function trialHarness(
     answer: (url: string) => { status: number; body: unknown },
-    options: { open?: boolean; signedIn?: Map<string, readonly string[]> } = {},
+    options: {
+      open?: boolean
+      signedIn?: Map<string, readonly string[]>
+      deps?: Partial<AuthoringDeps>
+      installed?: PackageFiles
+    } = {},
   ) {
     const { fake, driver } = trialDriver(answer)
     const g = guards(options.open)
     const h = await harness({
+      ...options.deps,
       trials: {
         start: sandbox,
         driver,
@@ -695,7 +704,13 @@ describe('live trials', () => {
         signedIn: async () => options.signedIn ?? new Map(),
       },
     })
-    const { draft } = await h.authoring.createDraft(AGENT, { adapterId: 'shop', from: 'blank', name: 'Shop' })
+    if (options.installed !== undefined)
+      h.installed.set('shop', { files: options.installed, hash: 'a'.repeat(64) })
+    const { draft } = await h.authoring.createDraft(AGENT, {
+      adapterId: 'shop',
+      from: options.installed === undefined ? 'blank' : 'installed',
+      name: 'Shop',
+    })
     return { ...h, fake, guards: g, draftId: draft.draftId }
   }
 
@@ -735,6 +750,94 @@ describe('live trials', () => {
     await authoring.submit(AGENT, draftId, { note: null, references: [], followOns: [] })
     expect(submits[1]?.checks).toContain('Live trial: not run on this version')
   }, 60_000)
+
+  describe('signed in (docs/authoring-tools.md#signed-in-authoring-sessions-pr-3)', () => {
+    const INSTALLED = blankDraft('shop', 'Shop')
+    const lent = { until: Number.POSITIVE_INFINITY }
+    const asked: unknown[] = []
+    const deps: Partial<AuthoringDeps> = {
+      sessionFor: () => (lent.until > Date.now() ? { adapterId: 'shop', until: lent.until } : null),
+      askSession: async (request) => {
+        asked.push(request)
+        return { ok: true, requestId: 'r'.repeat(22), ref: 'R7XY', expiresAt: '2026-11-13T00:00:00.000Z' }
+      },
+    }
+    /** The draft asks for more than the installed version reads: another read, and another host. */
+    async function widened(h: Awaited<ReturnType<typeof trialHarness>>) {
+      const manifest = JSON.parse(INSTALLED['manifest.json'] ?? '{}')
+      manifest.version = '0.1.1'
+      manifest.egress = [...manifest.egress, 'cdn.example.com']
+      manifest.requests = [...manifest.requests, { method: 'GET', path: '/api/account', purpose: 'read' }]
+      await h.authoring.writeFile(AGENT, h.draftId, 'manifest.json', JSON.stringify(manifest))
+    }
+
+    it('asks for the session only for an installed adapter the person is signed in to', async () => {
+      const out = await trialHarness(item, { deps, installed: INSTALLED })
+      await expect(out.authoring.requestSession(AGENT, out.draftId, 30)).rejects.toThrow(
+        /isn’t signed in to Shop/,
+      )
+      const h = await trialHarness(item, {
+        deps,
+        installed: INSTALLED,
+        signedIn: new Map([['shop', ['example.com']]]),
+      })
+      const report = await h.authoring.requestSession(AGENT, h.draftId, 90)
+      expect(report.tellThePerson).toMatch(
+        /use your signed-in session for 60 minutes\. I never see the session/,
+      )
+      expect(asked.at(-1)).toMatchObject({
+        adapterId: 'shop',
+        origins: ['https://www.example.com'],
+        minutes: 60,
+      })
+      const blank = await trialHarness(item, { deps })
+      await expect(blank.authoring.requestSession(AGENT, blank.draftId, 30)).rejects.toThrow(
+        /from "installed"/,
+      )
+    }, 60_000)
+
+    it('runs only under a lent session, limited to the installed version’s GET reads and hosts', async () => {
+      const h = await trialHarness(item, {
+        deps,
+        installed: INSTALLED,
+        signedIn: new Map([['shop', ['example.com']]]),
+      })
+      await widened(h)
+      lent.until = Date.now() - 1
+      await expect(
+        h.authoring.liveTrial(AGENT, h.draftId, 'get_item', { id: 'abc-1' }, true),
+      ).rejects.toThrow(/no signed-in session is running/)
+      lent.until = Number.POSITIVE_INFINITY
+      const report = await h.authoring.liveTrial(AGENT, h.draftId, 'get_item', { id: 'abc-1' }, true)
+      expect(report.ok).toBe(true)
+      expect(h.fake.sessions.at(-1)).toMatchObject({ adapterId: 'shop', installed: { id: 'shop' } })
+      const policy = h.fake.policies.at(-1) as unknown as { egress: string[]; requests: { path: string }[] }
+      expect(policy.requests.map((r) => r.path)).toEqual(['/api/items/:id'])
+      expect(policy.egress).not.toContain('cdn.example.com')
+      expect(h.audit.at(-1)).toMatchObject({ type: 'draft-trial', outcome: 'output', signedIn: true })
+      expect(h.notices.at(-1)).toBe('Claude Code tried get_item on example.com, signed in.')
+      await h.authoring.submit(AGENT, h.draftId, { note: null, references: [], followOns: [] })
+      expect(h.submits[0]?.checks).toContain(
+        'Live trial of get_item, signed in: returned output that fits its schema',
+      )
+    }, 60_000)
+
+    it('withholds output that holds a value of the session', async () => {
+      const leaky = () => ({
+        status: 200,
+        body: { id: 'abc-1', title: 'token secret-cookie-value', price: 1 },
+      })
+      const h = await trialHarness(leaky, {
+        deps,
+        installed: INSTALLED,
+        signedIn: new Map([['shop', ['example.com']]]),
+      })
+      await widened(h)
+      const report = await h.authoring.liveTrial(AGENT, h.draftId, 'get_item', { id: 'abc-1' }, true)
+      expect(report).toMatchObject({ ok: false, output: null, problem: expect.stringMatching(/withheld/) })
+      expect(JSON.stringify(report)).not.toContain('secret-cookie-value')
+    }, 60_000)
+  })
 
   it('reports a guard the site’s answer or the code broke, and output that breaks the schema', async () => {
     const { authoring, draftId } = await trialHarness(() => ({ status: 200, body: { id: 5, title: 7 } }))

@@ -299,7 +299,17 @@ export type AuditEvent =
       readonly tool: string
       readonly host: string
       readonly packageHash: string
-      readonly outcome: 'output' | 'invalid-output' | 'timeout' | 'needs-user' | 'site-resting' | 'error'
+      readonly outcome:
+        | 'output'
+        | 'invalid-output'
+        | 'timeout'
+        | 'needs-user'
+        | 'site-resting'
+        | 'error'
+        /** A signed-in trial's output held a session value, so Valet withheld it. */
+        | 'session-value'
+      /** Run with the adapter's session, under an authoring-session approval (PR 3). */
+      readonly signedIn?: boolean
     }
   | { readonly type: 'device-paired'; readonly deviceId: string; readonly platform: 'ios' | 'macos' }
   | { readonly type: 'device-revoked'; readonly deviceId: string; readonly by: string }
