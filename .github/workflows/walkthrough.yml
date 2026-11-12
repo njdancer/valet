@@ -79,6 +79,8 @@ jobs:
             cat "$RUNNER_TEMP/walkthrough/phone-summary.json" | head -100
           fi
           cp apps/desktop/test-results -R "$RUNNER_TEMP/walkthrough/playwright" 2>/dev/null || true
+          # Where the phone app's main thread was a few seconds after pairing.
+          [ -f "$RUNNER_TEMP/walkthrough/phone-sample.txt" ] && grep -A60 "com.apple.main-thread" "$RUNNER_TEMP/walkthrough/phone-sample.txt" | head -80
           # A crash of the phone app: its report, and what the app logged.
           mkdir -p "$RUNNER_TEMP/walkthrough/crashes"
           find ~/Library/Logs/DiagnosticReports -newer "$RUNNER_TEMP/ios-build.log" -type f -exec cp {} "$RUNNER_TEMP/walkthrough/crashes/" \; 2>/dev/null || true

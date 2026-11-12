@@ -388,6 +388,13 @@ test('pairing an iPhone, and approving an agent’s requests on it', async () =>
     'Picking it asks for Touch ID on the Mac (this test build answers that itself). The phone is paired.',
   )
   await cues.mark('paired')
+  // Where the phone app's threads are a few seconds after pairing (macOS `sample`; Simulator apps
+  // are host processes), for diagnosing a stall.
+  void sleep(6000).then(() =>
+    run('sample', ['ValetPhoneDev', '3', '-mayDie', '-file', join(OUT, 'phone-sample.txt')]).catch(
+      () => undefined,
+    ),
+  )
   void sleep(8000).then(async () =>
     console.log(
       'mac phones 8 s after pairing:',
