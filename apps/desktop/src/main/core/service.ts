@@ -1216,6 +1216,11 @@ export class AppService {
             ? [{ callId: r.event.callId, startedAt: r.at, clientId: r.event.clientId ?? null }]
             : [],
         ),
+      access: (clientId) => {
+        const capabilities = this.clients.capabilities(clientId)
+        const client = this.clients.get(clientId)
+        return capabilities === null || client === null ? null : { ...capabilities, name: client.name }
+      },
       lockedDown: () => this.appState.lockedDown,
       remoteTools: () => new Set(this.remote.status().tools),
       sensitive: (texts) => this.knownSecretIn(texts),

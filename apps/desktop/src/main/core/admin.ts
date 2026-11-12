@@ -4,7 +4,14 @@
 // detail line and its output preview (both site text), the auth partition's name. The tools then
 // parse every result against their schemas and scan it for the app's known secrets.
 
-import { type AuditEvent, callRef, ERROR_CLASSES, NEEDS_USER_REASONS, STAGES } from '@valet/core'
+import {
+  type AuditEvent,
+  type AuditRecord,
+  callRef,
+  ERROR_CLASSES,
+  NEEDS_USER_REASONS,
+  STAGES,
+} from '@valet/core'
 import {
   type AdminAdapterDetail,
   type AdminAdapterList,
@@ -15,6 +22,7 @@ import {
   type AdminHealth,
   type AdminNeedsYou,
   type AdminReader,
+  type AdminScope,
   type AdminStatus,
   type AdminTraceStep,
   identityLabel,
@@ -47,6 +55,10 @@ export interface AdminSource {
   readonly callIndex: () => Promise<
     readonly { readonly callId: string; readonly startedAt: string; readonly clientId: string | null }[]
   >
+  /** What a local app may see (its stored capabilities); null for one the app doesn't know. */
+  readonly access: (
+    clientId: string,
+  ) => { readonly seeValet: boolean; readonly allActivity: boolean; readonly name: string } | null
   readonly lockedDown: () => boolean
   /** The tools on for cloud agents now, as `<adapterId>.<tool>`. */
   readonly remoteTools: () => ReadonlySet<string>
@@ -59,6 +71,13 @@ export function adminReader(source: AdminSource): AdminReader {
   const { api } = source
   return {
     lockedDown: () => source.lockedDown(),
+    // A local app the person added, by its stored capabilities. Anything else sees nothing.
+    access: (viewer) =>
+      (viewer.origin === 'local' ? source.access(viewer.clientId) : null) ?? {
+        seeValet: false,
+        allActivity: false,
+        name: 'This app',
+      },
     sensitive: (texts) => source.sensitive(texts),
     withheld: (tool) => source.withheld(tool),
 
@@ -131,19 +150,33 @@ export function adminReader(source: AdminSource): AdminReader {
       return { items: (await api.attention.list()).map(needsYouItem) }
     },
 
-    async calls(query): Promise<AdminCallList> {
-      const runs = await api.runs.list({
-        ...(query.adapterId === undefined ? {} : { adapterId: query.adapterId }),
-        limit: query.limit,
-      })
-      return { calls: runs.map(callEntry) }
+    async calls(query, scope): Promise<AdminCallList> {
+      const adapterId = query.adapterId === undefined ? {} : { adapterId: query.adapterId }
+      if (scope.all)
+        return { calls: (await api.runs.list({ ...adapterId, limit: query.limit })).map(callEntry) }
+      const own = ownCalls(await source.callIndex(), scope)
+      const runs = await api.runs.list({ ...adapterId, limit: ALL })
+      return {
+        calls: runs
+          .filter((run) => own.has(run.callId))
+          .slice(0, query.limit)
+          .map(callEntry),
+      }
     },
 
-    async call(idOrRef, viewer): Promise<AdminCallTrace> {
+    async call(idOrRef, scope): Promise<AdminCallTrace> {
       // Newest first, as the app lists them.
-      const matches = matchCalls([...(await source.callIndex())].reverse(), idOrRef)
+      const index = [...(await source.callIndex())].reverse()
+      const mine = identityLabel(scope.viewer)
+      // Without All, only the app's own calls are matched, so a short ref can't list another
+      // agent's call ids.
+      const visible = scope.all ? index : index.filter((c) => c.clientId === mine)
+      const matches = matchCalls(visible, idOrRef)
       const [only] = matches
-      if (only === undefined) return { call: null, matches: [] }
+      if (only === undefined) {
+        const elsewhere = !scope.all && matchCalls(index, idOrRef).length > 0
+        return { call: null, matches: [], otherAgent: elsewhere }
+      }
       if (matches.length > 1) {
         return {
           call: null,
@@ -152,11 +185,11 @@ export function adminReader(source: AdminSource): AdminReader {
             callRef: callRef(m.callId),
             startedAt: m.startedAt,
           })),
+          otherAgent: false,
         }
       }
       const trace = await api.runs.trace(only.callId)
-      if (trace === null) return { call: null, matches: [] }
-      const own = viewer !== null && only.clientId === identityLabel(viewer)
+      if (trace === null) return { call: null, matches: [], otherAgent: false }
       return {
         call: {
           summary: callEntry(trace.summary),
@@ -167,32 +200,54 @@ export function adminReader(source: AdminSource): AdminReader {
             probes: trace.requests.probes,
             blocked: trace.requests.blocked,
           },
-          // What another app or a cloud agent sent is theirs: only the caller's own calls show it.
-          input: own ? previewText(trace.input) : null,
+          // Visible only as the app's own call, or with All agents' activity.
+          input: previewText(trace.input),
           steps: trace.steps.map(stepEntry),
         },
         matches: [],
+        otherAgent: false,
       }
     },
 
-    async audit(query: AdminAuditQuery): Promise<AdminAuditPage> {
-      const [page, chain] = await Promise.all([
-        api.audit.page({
-          ...(query.category === undefined ? {} : { category: query.category }),
-          ...(query.adapterId === undefined ? {} : { adapterId: query.adapterId }),
-          ...(query.since === undefined ? {} : { since: query.since }),
-          ...(query.search === undefined ? {} : { search: query.search }),
+    async audit(query: AdminAuditQuery, scope): Promise<AdminAuditPage> {
+      const filters = {
+        ...(query.category === undefined ? {} : { category: query.category }),
+        ...(query.adapterId === undefined ? {} : { adapterId: query.adapterId }),
+        ...(query.since === undefined ? {} : { since: query.since }),
+        ...(query.search === undefined ? {} : { search: query.search }),
+      }
+      const chain = chainOf(await api.audit.chainStatus())
+      const entry = (r: AuditRecord) => ({ seq: r.seq, at: r.at, event: eventEntry(r.event) })
+      if (scope.all) {
+        const page = await api.audit.page({
+          ...filters,
           ...(query.beforeSeq === undefined ? {} : { beforeSeq: query.beforeSeq }),
           limit: query.limit,
-        }),
-        api.audit.chainStatus(),
-      ])
-      return {
+        })
         // Each event as the log has it: fixed vocabularies, no values (packages/core/src/audit.ts).
-        records: page.records.map((r) => ({ seq: r.seq, at: r.at, event: eventEntry(r.event) })),
-        total: page.total,
-        nextBeforeSeq: page.nextBeforeSeq,
-        chain: chainOf(chain),
+        return {
+          records: page.records.map(entry),
+          total: page.total,
+          nextBeforeSeq: page.nextBeforeSeq,
+          chain,
+        }
+      }
+      // Without All: every record but those about another agent's calls, paged here so the total
+      // and the next page count only what this app may see.
+      const others = otherCalls(await source.callIndex(), scope)
+      const mine = identityLabel(scope.viewer)
+      const visible = (await api.audit.page({ ...filters, limit: ALL })).records.filter(
+        (r) => !aboutOtherAgent(r.event, others, mine),
+      )
+      const before = query.beforeSeq
+      const page = before === undefined ? visible : visible.filter((r) => r.seq < before)
+      const shown = page.slice(0, query.limit)
+      const last = shown.at(-1)
+      return {
+        records: shown.map(entry),
+        total: visible.length,
+        nextBeforeSeq: page.length > shown.length && last !== undefined ? last.seq : null,
+        chain,
       }
     },
   }
@@ -275,11 +330,40 @@ const EVENT_FIELDS: Readonly<Record<AuditEvent['type'], readonly string[]>> = {
   'site-paused': ['adapterId', 'paused'],
   'call-waited': ['adapterId', 'callId', 'reason', 'waitedMs', 'ahead'],
   confirmation: ['adapterId', 'tool', 'client', 'callId', 'answer'],
+  // The approval broker's (D). The request's digest names its text, which isn't here.
+  'approval-requested': ['requestId', 'kind', 'digest', 'clientId'],
+  'approval-answered': ['requestId', 'answer', 'deviceId', 'reason'],
+  'device-paired': ['deviceId', 'platform'],
+  'device-revoked': ['deviceId', 'by'],
+  'store-refused': ['store', 'reason', 'records'],
 }
 
 function eventEntry(event: AuditEvent): AdminAuditPage['records'][number]['event'] {
   // A type this build doesn't know (a newer log): its type alone.
   return { ...pick(event, EVENT_FIELDS[event.type] ?? []), type: event.type }
+}
+
+/** Every call, for filtering by whose it is. */
+const ALL = Number.MAX_SAFE_INTEGER
+
+type CallIndex = Awaited<ReturnType<AdminSource['callIndex']>>
+
+function ownCalls(index: CallIndex, scope: AdminScope): Set<string> {
+  const mine = identityLabel(scope.viewer)
+  return new Set(index.filter((c) => c.clientId === mine).map((c) => c.callId))
+}
+
+/** Calls another credential made, or one the log doesn't name (older records): not this app's. */
+function otherCalls(index: CallIndex, scope: AdminScope): Set<string> {
+  const mine = identityLabel(scope.viewer)
+  return new Set(index.filter((c) => c.clientId !== mine).map((c) => c.callId))
+}
+
+/** A record of another agent's: about one of its calls, or an approval it asked for. */
+function aboutOtherAgent(event: AuditEvent, others: ReadonlySet<string>, mine: string): boolean {
+  if (event.type === 'approval-requested') return event.clientId !== null && event.clientId !== mine
+  const callId = 'callId' in event ? event.callId : null
+  return typeof callId === 'string' && others.has(callId)
 }
 
 function chainOf(chain: ChainStatus): AdminStatus['auditChain'] {
