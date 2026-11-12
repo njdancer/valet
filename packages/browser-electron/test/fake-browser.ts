@@ -10,6 +10,7 @@ import type {
   KeyEvents,
   LoadResult,
   NavigationEvent,
+  NetworkResponse,
   ObservedResponse,
   OutgoingRequest,
   PartitionSession,
@@ -177,6 +178,24 @@ export class FakeSurface implements BrowserSurface {
   async storageSettled(): Promise<void> {
     await this.onStorageSettled()
     for (const value of this.pendingStorage.splice(0)) this.emitStorage(value)
+  }
+
+  readonly networkListeners: ((response: NetworkResponse) => void)[] = []
+  /** Bodies responseBody() answers with, by response id. */
+  readonly bodies = new Map<string, { body: string; base64: boolean }>()
+
+  async watchNetwork(listener: (response: NetworkResponse) => void): Promise<void> {
+    this.networkListeners.push(listener)
+  }
+
+  async responseBody(id: string): Promise<{ readonly body: string; readonly base64: boolean } | null> {
+    return this.bodies.get(id) ?? null
+  }
+
+  /** Reports a response to the network watchers, with its body, as the DevTools protocol would. */
+  respond(response: NetworkResponse, body?: string): void {
+    if (body !== undefined) this.bodies.set(response.id, { body, base64: false })
+    for (const listener of this.networkListeners) listener(response)
   }
 
   /** Reports a storage write to the watchers, as a DevTools DOMStorage event would. */
@@ -377,7 +396,11 @@ export class FakePlatform implements BrowserPlatform {
     return entry.handle
   }
 
-  startProxy(policy: ProxyPolicy): Promise<ProxyHandle> {
+  /** The dials passed to startProxy, in order (undefined: the platform's own). */
+  readonly dials: unknown[] = []
+
+  startProxy(policy: ProxyPolicy, dial?: unknown): Promise<ProxyHandle> {
+    this.dials.push(dial)
     return this.onStartProxy(policy)
   }
 

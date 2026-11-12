@@ -26,6 +26,16 @@ export { partitionName } from './partitions'
 export type * from './platform'
 export { CHROMIUM_SWITCHES, hardenProcess } from './process-hardening'
 export {
+  type LogEntry,
+  SCRATCH_LIMITS,
+  ScratchBrowser,
+  ScratchError,
+  type ScratchOptions,
+  type ScratchRules,
+  type ScratchSnapshot,
+  type Target as ScratchTarget,
+} from './scratch'
+export {
   type ChainState,
   hopHeaders,
   MAX_PROBE_BYTES,
