@@ -283,6 +283,10 @@ importers:
       zod:
         specifier: ^4.6.7
         version: 4.6.7
+    devDependencies:
+      '@hpke/core':
+        specifier: ^1.10.1
+        version: 1.10.1
 
   packages/credentials:
     dependencies:
@@ -940,6 +944,14 @@ packages:
     engines: {node: '>=20'}
     peerDependencies:
       hono: ^4 || ^5.0.0-0
+
+  '@hpke/common@1.13.0':
+    resolution: {integrity: sha512-PqaJR89RWJQmt/WOGuBLrcrtXtEMbWu91XIbxDjKDTDgKvqvhlxOzQ9BAf9a0Q+yqqbTtQ0pK6KUyVi2WMehbA==}
+    engines: {node: '>=16.0.0'}
+
+  '@hpke/core@1.10.1':
+    resolution: {integrity: sha512-VZOk0rHC4vPsbW/fIRz7Q2IviSl0+9dRhP9yi/PmkKVKjj4vZDs1ufkN47twBFLZmiw37YFtTqBrxKAI7dlOrg==}
+    engines: {node: '>=16.0.0'}
 
   '@img/colour@1.1.0':
     resolution: {integrity: sha512-Td76q7j57o/tLVdgS746cYARfSyxk8iEfRxewL9h4OMzYhbW4TAcppl0mT4eyqXddh6L/jwoM75mo7ixa/pCeQ==}
@@ -4762,6 +4774,12 @@ snapshots:
   '@hono/node-server@2.1.6(hono@4.13.16)':
     dependencies:
       hono: 4.13.16
+
+  '@hpke/common@1.13.0': {}
+
+  '@hpke/core@1.10.1':
+    dependencies:
+      '@hpke/common': 1.13.0
 
   '@img/colour@1.1.0': {}
 
