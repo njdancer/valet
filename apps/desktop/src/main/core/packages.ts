@@ -113,6 +113,11 @@ export class PackageManager {
     } catch (error) {
       throw new InstallError(describeFailure(error))
     }
+    return this.prepared(loaded, source)
+  }
+
+  /** A package already checked and described (a draft's check), ready to install or stage. */
+  prepared(loaded: LoadedPackage, source: PackageSource): PreparedInstall {
     // The contract refuses these too; a second line, until Apple Events are typed operations.
     const sandbox = loaded.manifest.sandbox
     if (sandbox?.mode === 'sandboxed' && sandbox.exceptions.some((e) => e.kind === 'app'))
@@ -133,7 +138,8 @@ export class PackageManager {
    */
   async stage(prepared: PreparedInstall): Promise<void> {
     const state = await this.options.store.state(prepared.loaded.manifest.id).catch(() => null)
-    if (state === null) throw new InstallError('A first install isn’t staged; it is installed and waits for approval.')
+    if (state === null)
+      throw new InstallError('A first install isn’t staged; it is installed and waits for approval.')
     await this.put(prepared.loaded, prepared.source, { activate: false }, state)
   }
 

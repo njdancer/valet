@@ -559,9 +559,14 @@ the none tier; this is the same call E made for reads, and is put to B.)
 1. **PR 1 (this one):** this document; core's audit events and the `askForChanges` capability; the
    draft store; Valet's checks 1 to 6 with fetch-only cases; staging in `PackageManager`; the draft
    tools in `@valet/mcp-server` behind an `Authoring` port, and the app's implementation; submit
-   through the broker with D's handler extended for `source: 'draft'` (after D's PR #84 merges);
-   unit tests on the port and the store, service tests through the real broker, an e2e that drives
-   the tools over MCP against the built app to a waiting install card.
+   through the broker with D's handler extended for `source: 'draft'`. A first install (or an
+   update to a version that isn't approved) is installed and waits, tools hidden; an update to an
+   approved version is staged, shown on the Mac as a review, and swapped in by the approval's
+   apply outside the broker's lock (`finishStaged`), finished at launch if a crash cut it short.
+   The Mac's Approve and Reject answer the agent's own request. Unit tests on the port and the
+   store, and service tests through the real broker. Moved to PR 2: the e2e over MCP against the
+   built app, and `display.agentTests` once B's PR #86 lands (until then the card shows Valet's
+   checks only, never the agent's cases).
 2. **PR 2:** the scratch browser, network log, fixture capture, the fixture browser (cases with
    pages), live trials; the Drafts page on the Mac (`mac-sites-drafts`, `mac-draft-page`).
 3. **PR 3:** repair tickets and the reproduction check; signed-in sessions; private network; the
