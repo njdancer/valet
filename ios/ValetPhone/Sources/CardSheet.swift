@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import ValetPhoneCore
 import ValetProtocol
 
@@ -52,6 +53,8 @@ struct CardSheet: View {
             Text(verbatim: Deadline.text(model.remaining(entry))).font(.caption).foregroundStyle(Color.secondary)
           }
         }
+        .padding(.top, 8)
+        .background(Color(uiColor: .systemBackground))
         .accessibilityElement(children: .combine)
         TitleText(card: card).font(.title2.bold()).accessibilityAddTraits(.isHeader)
           .accessibilityIdentifier("card.title")
