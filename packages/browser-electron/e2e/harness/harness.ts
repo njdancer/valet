@@ -26,6 +26,7 @@ import {
   createElectronSessionDriver,
   hardenProcess,
   type ManifestOptions,
+  openElectronFixtureBrowser,
   openElectronScratchBrowser,
 } from '../../src/index'
 import { startTestSite, type TestSite } from './server'
@@ -1135,6 +1136,45 @@ async function setup() {
         return { afterGoto, paced: paced.length, url: page.currentUrl(), burst, reached }
       } finally {
         driver.watchSite({ refused: () => {}, held: () => false })
+      }
+    },
+
+    fixture: async () => {
+      const before = site.requests.length
+      const page = 'https://site.test/fixture/quote'
+      const next = 'https://site.test/fixture/next'
+      const browser = await openElectronFixtureBrowser({
+        partition: 'fixture:e2e:1',
+        pages: {
+          [page]:
+            '<!doctype html><html><body><p class="price">1.50</p>' +
+            '<a id="next" href="/fixture/next">Next</a>' +
+            '<img src="https://evil.test/pixel.png">' +
+            '<script>document.body.dataset.ran = "yes"; fetch("https://evil.test/x")</script></body></html>',
+          [next]: '<!doctype html><html><body><p class="price">2.00</p></body></html>',
+        },
+        egress: ['site.test'],
+      })
+      const tool = browser.page
+      await tool.goto(page)
+      const price = await tool.extract('.price')
+      const ran = await tool.evaluate('document.body.dataset.ran ?? null')
+      await tool.click('#next')
+      await sleep(500)
+      const nextPrice = await tool.extract('.price')
+      const missing = await tool.goto('https://site.test/fixture/missing').then(
+        () => 'loaded',
+        (e: { stage?: string; errorClass?: string }) => `${e.stage}/${e.errorClass}`,
+      )
+      browser.close()
+      return {
+        price,
+        ran,
+        nextPrice,
+        url: tool.currentUrl(),
+        missing,
+        sent: site.requests.length - before,
+        evil: evilRequests().length,
       }
     },
 

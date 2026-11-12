@@ -259,7 +259,7 @@ this draft; valet_get_draft shows when it's done".
       "name": "quote for AAPL",
       "tool": "get_quote",
       "input": { "symbol": "AAPL" },
-      // Pages the case serves for page.goto, by URL (PR 2: needs the fixture browser).
+      // Pages the case serves for page.goto, by URL, in the fixture browser.
       "pages": { "https://finance.yahoo.com/quote/AAPL/": "fixtures/quote-aapl.html" },
       // Responses for page.fetch, matched in order by method and URL or path.
       "fetch": [
@@ -290,10 +290,15 @@ this draft; valet_get_draft shows when it's done".
   first (a case can't pass by serving a response the real guard would cancel), then answered from
   the case's `fetch` list. A request with no matching entry fails the case: "No response for GET
   /v8/finance/chart/MSFT in the case". `page.goto` must be within navigation and egress and is
-  answered from `pages`. In PR 1 the case page has no DOM, so `extract`, `evaluate`, `click` and
-  `fill` fail the case with "This case needs a page; Valet can run those from PR 2". PR 2 runs those
-  cases in the fixture browser: an offline in-memory Electron partition whose every request is
-  served from the case's files or refused, with the same `SurfaceToolPage` adapters run on.
+  answered from `pages`. A case with `pages` runs its DOM calls (`goto`, `extract`, `evaluate`,
+  `click`, `fill`) in the **fixture browser** (`FixtureBrowser` in `@valet/browser-electron`, built
+  in 2b): a new in-memory partition per case that answers https from the case's pages in the main
+  process (`protocol.handle`), runs none of the fixtures' own scripts (a CSP on every answer),
+  loads a page the case lacks as a 404, cancels any other request that isn't a fixture, and sends
+  nothing to the network (a proxy that refuses every host), with the same `SurfaceToolPage`
+  adapters run on. `fetch` is still answered from the case's `fetch` list. A `goto` to a URL the case
+  doesn't list fails the case: "No page for … in the case: add it under "pages" with a fixture." A
+  case without pages that calls the DOM fails, saying to give it a page.
 - **Output** is parsed against the tool's output schema (as `checkedOutput` does for real calls)
   before the expectation is compared, so a case can't pass with output a real call would refuse.
 - **Bounds:** at most 100 cases, 5 seconds each, one at a time, each in its own one-shot window;
@@ -588,9 +593,9 @@ the none tier; this is the same call E made for reads, and is put to B.)
    the card's trial lines) and drafts on the Mac (built: a Drafts section on Sites, shown only when
    there are drafts, and a draft's page at `#/sites/drafts/<id>` with Valet's checks of the files as
    they are now, the live trials, the files with Valet-recorded fixtures marked, Review when it
-   waits, and Open draft folder; `mac-sites-drafts`, `mac-draft-page`); still to come in 2b: the
-   fixture browser (cases with pages), `display.agentTests`, and the e2e over MCP against the built
-   app.
+   waits, and Open draft folder; `mac-sites-drafts`, `mac-draft-page`) and the fixture browser
+   (cases with pages); still to come in 2b: `display.agentTests` and the e2e over MCP against the
+   built app.
 3. **PR 3:** repair tickets and the reproduction check; signed-in sessions; private network; the
    hostile-page suite; the eval (an agent from a clean chat builds Yahoo Finance and a fake-login
    site's adapter, and repairs a broken one), run by a model through the MCP endpoint against the

@@ -123,6 +123,12 @@ export interface PartitionSession {
    * the session's own fetch() and redirects included, as its headers arrive. The only listener.
    */
   watchResponses(listener: (response: ObservedResponse) => void): void
+  /**
+   * Answers every https request the partition makes from `answer`, in the main process, and nothing
+   * from the network: a case's fixture pages (docs/authoring-tools.md#the-agents-cases). A URL it
+   * has no answer for gets a 404.
+   */
+  serveOnly(answer: (url: string) => FixtureResponse | null): void
   /** Adds a response header to every response, e.g. to switch off DNS prefetch per document. */
   addResponseHeader(name: string, value: string): void
   getCookies(): Promise<readonly CookieRecord[]>
@@ -139,6 +145,13 @@ export interface PartitionSession {
    * old value when one is removed or overwritten, so that a value never goes unseen.
    */
   onCookieChanged(listener: (cookie: CookieRecord) => void): void
+}
+
+/** A fixture the partition serves in place of the site. */
+export interface FixtureResponse {
+  readonly status: number
+  readonly contentType: string
+  readonly body: string
 }
 
 /** One web-storage value a page held, as the DevTools protocol reports it. */

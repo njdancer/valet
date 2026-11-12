@@ -32,7 +32,7 @@ import {
 } from '@valet/mcp-server'
 import type { ToolProcessFactory } from '@valet/runtime'
 import { NO_LOCAL_ACCESS } from '@valet/sandbox'
-import { type CaseRun, runCases } from './cases'
+import { type CaseBrowser, type CaseRun, runCases } from './cases'
 import {
   caseFindings,
   checkNames,
@@ -130,6 +130,11 @@ export interface AuthoringDeps {
   readonly checkBudgetMs?: number
   /** The scratch browsers (PR 2); without them the research tools say this build has none. */
   readonly research?: ScratchSessions
+  /** The fixture browser for cases with pages; without it those cases fail, saying so. */
+  readonly caseBrowser?: (
+    pages: Readonly<Record<string, string>>,
+    egress: readonly string[],
+  ) => Promise<CaseBrowser>
   /** Live trials (PR 2b); without them valet_live_trial says this build has none. */
   readonly trials?: TrialDeps & { readonly signedIn: ResearchDeps['signedIn'] }
 }
@@ -399,6 +404,7 @@ export class DraftAuthoring implements Authoring {
       start: this.deps.caseProcess,
       local: NO_LOCAL_ACCESS,
       ...(tool === undefined ? {} : { tool }),
+      ...(this.deps.caseBrowser === undefined ? {} : { browser: this.deps.caseBrowser }),
       deadline: started + budget,
       now: this.deps.now,
       timeoutMs: Math.min(5_000, Math.max(1, left)),

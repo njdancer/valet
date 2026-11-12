@@ -146,6 +146,7 @@ import {
 } from './constants'
 import type { Credentials } from './credentials'
 import { DraftAuthoring, type RequestState, type SubmitOutcome, type SubmitRequest } from './drafts/authoring'
+import type { CaseBrowser } from './drafts/cases'
 import { draftDomains, type ScratchHandle, ScratchSessions } from './drafts/research'
 import { type DraftRecord, DraftStore } from './drafts/store'
 import { type EraseKind, type EraseReport, type EraseStep, eraseEverything } from './erase'
@@ -277,6 +278,14 @@ export interface ServiceDeps {
    * browser, and then valet_live_trial says so.
    */
   readonly trialDriver?: (manifest: AdapterManifest, label: string) => Promise<SessionDriver>
+  /**
+   * The fixture browser for a case's pages (docs/authoring-tools.md#the-agents-cases): served from
+   * memory, scripts off, nothing sent. None in tests that don't drive a browser.
+   */
+  readonly fixtureBrowser?: (
+    pages: Readonly<Record<string, string>>,
+    egress: readonly string[],
+  ) => Promise<CaseBrowser>
   readonly ui: UiPort
   readonly emit: (event: AppEvent) => void
   /** The stdio bridge's command line for a client's config file, for snippets; null when it can't be launched. */
@@ -2014,6 +2023,7 @@ export class AppService {
       notify: (text) => this.notifier.draftActivity(text),
       now: this.deps.now,
       ...(this.deps.scratch === undefined ? {} : { research: this.scratchSessions(this.deps.scratch) }),
+      ...(this.deps.fixtureBrowser === undefined ? {} : { caseBrowser: this.deps.fixtureBrowser }),
       ...(this.deps.trialDriver === undefined
         ? {}
         : {
