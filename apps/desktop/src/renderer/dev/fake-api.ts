@@ -27,7 +27,9 @@ import type {
   GrantRequest,
   LoginMissingItem,
   MissedItem,
+  PairingView,
   PendingReview,
+  PhonesStatus,
   PreviewPart,
   ProbeInfo,
   ProviderStatus,
@@ -737,6 +739,16 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
   ]
   /** The code the fake browser shows for the one waiting remote sign-in. */
   const remoteCode = 'ABCDEFGH'
+  let pairing: PairingView = { step: 'idle' }
+  let phones: PhonesStatus['phones'] = []
+  const phonesStatus = (): PhonesStatus => ({
+    available: true,
+    unavailableReason: null,
+    relay: 'online',
+    relayOrigin: 'https://relay.example',
+    phones,
+    pairing,
+  })
   let remoteRequests: RemoteConsentRequest[] = [
     {
       id: 'cs_demo',
@@ -1564,6 +1576,67 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         if (setup.completedAt === null) setup = { completedAt: new Date(now).toISOString() }
         emit({ type: 'app-changed' })
         return clone(setup)
+      },
+    },
+    phones: {
+      async status() {
+        enter('phones.status')
+        return clone(phonesStatus())
+      },
+      async startPairing() {
+        enter('phones.startPairing')
+        pairing = {
+          step: 'scan',
+          qr: 'valet-pair:eyJ2IjoxLCJkZW1vIjp0cnVlfQ',
+          expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+        }
+        // A phone scans the code a moment later.
+        setTimeout(() => {
+          if (pairing.step !== 'scan') return
+          pairing = {
+            step: 'confirm',
+            deviceName: 'Nick’s iPhone',
+            codes: ['204 816', '731 562', '958 340'].map((c) => c.replace(' ', '')),
+            attemptsLeft: 3,
+            expiresAt: pairing.expiresAt,
+          }
+          emit({ type: 'phones-changed' })
+        }, 2500)
+        emit({ type: 'phones-changed' })
+        return clone(pairing)
+      },
+      async confirmPairing(code) {
+        enter('phones.confirmPairing')
+        if (pairing.step !== 'confirm') return clone(pairing)
+        if (code === null) pairing = { step: 'failed', why: 'declined' }
+        else if (code !== '731562')
+          pairing =
+            pairing.attemptsLeft <= 1
+              ? { step: 'failed', why: 'too-many-attempts' }
+              : { ...pairing, attemptsLeft: pairing.attemptsLeft - 1 }
+        else {
+          pairing = { step: 'paired', deviceId: 'f'.repeat(32), deviceName: 'Nick’s iPhone' }
+          phones = [
+            {
+              deviceId: 'f'.repeat(32),
+              name: 'Nick’s iPhone',
+              pairedAt: new Date().toISOString(),
+              online: true,
+            },
+          ]
+        }
+        emit({ type: 'phones-changed' })
+        return clone(pairing)
+      },
+      async cancelPairing() {
+        enter('phones.cancelPairing')
+        pairing = { step: 'idle' }
+        emit({ type: 'phones-changed' })
+      },
+      async remove(deviceId) {
+        enter('phones.remove')
+        phones = phones.filter((p) => p.deviceId !== deviceId)
+        emit({ type: 'phones-changed' })
       },
     },
     remote: {

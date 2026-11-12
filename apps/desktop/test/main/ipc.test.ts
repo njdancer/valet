@@ -305,6 +305,11 @@ describe('lock down', () => {
 describe('every channel', () => {
   const HASH64 = 'a'.repeat(64)
   const valid: Record<(typeof INVOKE_METHODS)[number], unknown[]> = {
+    'phones.status': [],
+    'phones.startPairing': [],
+    'phones.confirmPairing': ['123456'],
+    'phones.cancelPairing': [],
+    'phones.remove': ['0123456789abcdef0123456789abcdef'],
     'adapters.list': [],
     'adapters.get': ['woolworths'],
     'adapters.settingChoices': ['woolworths', 'store', '2000'],

@@ -244,7 +244,10 @@ describe('the phone channel', () => {
     if (!asked.ok) throw new Error(asked.reason)
     await tick()
     const messages = await openAll(t, p)
-    const card = messages.find((m) => m.type === 'approval-request') as { requestText: string; seq: number }
+    const card = messages.find((m) => m['type'] === 'approval-request') as {
+      requestText: string
+      seq: number
+    }
     expect(card).toBeDefined()
     expect(t.frames).toContainEqual({ type: 'push', deviceId: p.deviceId, kind: 'needs-you' })
     const request = t.broker.get(asked.requestId)

@@ -1097,6 +1097,8 @@ export type AppEvent =
   | { readonly type: 'app-changed' }
   /** Remote consent requests or remote clients changed. */
   | { readonly type: 'remote-changed' }
+  /** Paired phones, the relay connection, or a pairing in progress changed. */
+  | { readonly type: 'phones-changed' }
   /**
    * Sent to a login hand-off banner window only: the person pressed ⇧⌘B (Ctrl+Shift+B) in the
    * site's login window, which brought the banner forward; the banner moves focus to its region.
@@ -1105,9 +1107,59 @@ export type AppEvent =
 
 export type AppEventType = AppEvent['type']
 
+// ---------- Phones (docs/phone-channel.md) ----------
+
+/** What the Pair an iPhone sheet shows, step by step. */
+export type PairingView =
+  | { readonly step: 'idle' }
+  /** The QR code, as the text the phone's scanner reads. */
+  | { readonly step: 'scan'; readonly qr: string; readonly expiresAt: string }
+  /** A phone answered: pick the code it shows. */
+  | {
+      readonly step: 'confirm'
+      readonly deviceName: string
+      readonly codes: readonly string[]
+      readonly attemptsLeft: number
+      readonly expiresAt: string
+    }
+  | { readonly step: 'approving'; readonly deviceName: string }
+  | { readonly step: 'paired'; readonly deviceId: string; readonly deviceName: string }
+  | {
+      readonly step: 'failed'
+      readonly why: 'expired' | 'declined' | 'too-many-attempts' | 'cancelled' | 'not-sent' | 'unavailable'
+    }
+
+export interface PhonesStatus {
+  /**
+   * Whether this Mac can pair phones: `no-relay`, none is set up; `no-keys`, this build's keys
+   * can't seal or sign for the channel yet (the Secure Enclave helper, docs/phone-channel.md).
+   */
+  readonly available: boolean
+  readonly unavailableReason: 'no-relay' | 'no-keys' | 'approvals-unavailable' | null
+  readonly relay: 'online' | 'connecting' | 'offline' | 'refused' | 'stopped'
+  readonly relayOrigin: string | null
+  readonly phones: readonly {
+    readonly deviceId: string
+    readonly name: string
+    readonly pairedAt: string
+    readonly online: boolean
+  }[]
+  readonly pairing: PairingView
+}
+
 // ---------- The API ----------
 
 export interface ValetApi {
+  readonly phones: {
+    status(): Promise<PhonesStatus>
+    /** Shows a new QR code (abandons any pairing in progress). */
+    startPairing(): Promise<PairingView>
+    /** The code the person picked, or null for "None of these". The right one asks for Touch ID. */
+    confirmPairing(code: string | null): Promise<PairingView>
+    cancelPairing(): Promise<void>
+    /** Removes a phone: it is told, and the relay stops letting it in. */
+    remove(deviceId: string): Promise<void>
+  }
   readonly adapters: {
     list(): Promise<readonly AdapterSummary[]>
     /** Null when no adapter has that id. */

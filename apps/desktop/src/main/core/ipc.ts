@@ -265,6 +265,29 @@ const HANDLERS: Readonly<
   ),
   'app.copyText': entry(z.tuple([z.string().max(MAX_TEXT)]), (api, [text]) => api.app.copyText(text)),
   'app.quit': entry(none, (api) => api.app.quit()),
+  // Pairing shows a code to scan and asks for Touch ID: the control panel only, like Settings.
+  'phones.status': entry(none, (api) => api.phones.status()),
+  'phones.startPairing': entry(none, (api, _args, sender) => {
+    if (sender.role !== 'control') throw new IpcRefused()
+    return api.phones.startPairing()
+  }),
+  'phones.confirmPairing': entry(
+    z.tuple([
+      z
+        .string()
+        .regex(/^\d{6}$/)
+        .nullable(),
+    ]),
+    (api, [code], sender) => {
+      if (sender.role !== 'control') throw new IpcRefused()
+      return api.phones.confirmPairing(code)
+    },
+  ),
+  'phones.cancelPairing': entry(none, (api) => api.phones.cancelPairing()),
+  'phones.remove': entry(z.tuple([z.string().regex(/^[0-9a-f]{32}$/)]), (api, [deviceId], sender) => {
+    if (sender.role !== 'control') throw new IpcRefused()
+    return api.phones.remove(deviceId)
+  }),
   // Settings lives in the control panel, and nowhere else may ask: a confirmation panel or a
   // hand-off banner shows adapter text. The main process's own dialog still decides.
   'app.erase': entry(z.tuple([z.enum(['reset', 'uninstall'])]), (api, [kind], sender) => {

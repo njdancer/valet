@@ -50,6 +50,7 @@ import {
   userDataDir,
 } from '../core/launch'
 import { addOwnPort, ownPorts, recordOwnPorts } from '../core/own-ports'
+import { macName, relayFromEnv } from '../core/phones'
 import { AppService } from '../core/service'
 import { SHOWCASE_BUILD_MARKER } from '../core/showcase'
 import type { BridgeCommand } from '../core/snippets'
@@ -310,9 +311,13 @@ async function main(): Promise<void> {
   // nothing weaker. A build that carries demo mode is never a release (launch.ts).
   const strictApprovals = app.isPackaged && !mode.demo
   const keychainHelper = credentialDeps.keychainHelper
+  // A relay for paired phones (docs/phone-channel.md). Until the relay is deployed and the app has
+  // a setting for it, only a dev build reads one, from the environment, and then signs in software:
+  // the Secure Enclave helper can't do the channel's key operations yet.
+  const devRelay = strictApprovals ? null : relayFromEnv(process.env)
   const approvalKeys = await macApprovalKeys({
     packaged: strictApprovals,
-    approverPath: nativeHelper('valet-approver'),
+    approverPath: devRelay === null ? nativeHelper('valet-approver') : null,
     // A demo launch keeps its anchor in its own data folder, never the Keychain.
     keychain:
       keychainHelper === null || mode.demo ? null : new KeychainHelper({ helperPath: keychainHelper }),
@@ -398,6 +403,8 @@ async function main(): Promise<void> {
         : createElectronSessionDriver(manifest, { ...reporters }),
     credentials: demoSite === null ? realCredentials(credentialDeps) : demoSite.credentials,
     approvalKeys,
+    relay: devRelay,
+    macName: macName(process.env),
     // Each open its own in-memory partition, so nothing a page left behind is there the next time.
     scratch: (draftId, rules, allowPrivate) =>
       openElectronScratchBrowser({

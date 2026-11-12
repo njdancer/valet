@@ -104,7 +104,7 @@ export interface PhoneChannelOptions {
   /** The Mac's own name, shown on the phone. */
   readonly macName: string
   /** The status message the phone's tabs show, built fresh each time. */
-  readonly status?: () => Omit<Extract<MacToPhoneMessage, { type: 'status' }>, 'type' | 'seq'>
+  readonly status?: () => Omit<Extract<MacToPhoneMessage, { type: 'status' }>, 'type' | 'seq'> | undefined
   readonly statePath: string
   readonly now?: () => number
   readonly onChange?: () => void

@@ -5,6 +5,7 @@
 
 import { randomBytes } from 'node:crypto'
 import { copyFile, mkdir, rm } from 'node:fs/promises'
+import { join } from 'node:path'
 import { AdapterStore, type BuildRecord, type PackageRuntime } from '@valet/adapter-store'
 import type { ScratchRules } from '@valet/browser-electron'
 import {
@@ -22,6 +23,7 @@ import {
   type Grant,
   type GrantStore,
   type LocalAccess,
+  type MacToPhoneMessage,
   MESSAGES_SECRET,
   messagesSourcesIn,
   type NeedsUserReason,
@@ -168,6 +170,7 @@ import { createAuthRunner, Handoffs, isBlockedPage, SessionTracker } from './log
 import { type AppNotification, attentionTitle, Notifier } from './notifications'
 import { type FolderInstall, InstallError, installReason, PackageManager, rollbackEligible } from './packages'
 import { addsPermissions, permissionDiff } from './permission-diff'
+import { Phones, type RelaySetup } from './phones'
 import { type ApprovedSnapshot, type BuiltinAdapter, SnapshotStore } from './registry'
 import { RemoteAccess } from './remote'
 import { RunMemory } from './run-memory'
@@ -264,6 +267,10 @@ export interface ServiceDeps {
    * Enclave and the Keychain in a packaged app.
    */
   readonly approvalKeys: MacApprovalKeys
+  /** The relay paired phones reach this Mac through (docs/phone-channel.md); none, no phones. */
+  readonly relay?: RelaySetup | null
+  /** This Mac's name, as a paired phone shows it. */
+  readonly macName?: string
   /**
    * Starts the MCP endpoint with a token for each of `clients`, written to its config file; it
    * reports its live sessions to `onSessionsChanged`. `admin` is Valet's own read-only tools, for
@@ -382,6 +389,9 @@ const EVENTS_FOR: Readonly<Partial<Record<AuditEvent['type'], readonly AppEvent[
   'site-paused': ['adapters-changed', 'health-changed'],
 }
 
+/** What a phone's tabs show (relay-protocol's `status`), before the channel numbers it. */
+type PhoneStatusBody = Omit<Extract<MacToPhoneMessage, { type: 'status' }>, 'type' | 'seq'>
+
 /** The write tools' setting names, as the signed `setting` subject names them (approvals/subjects.ts). */
 const SETTING_SUBJECT_NAMES = {
   messagesOtpEnabled: 'messages_otp',
@@ -426,6 +436,9 @@ export class AppService {
   private settingsNow: Settings = DEFAULT_SETTINGS
   /** Paired devices, once the approval broker is open: whether a phone was told too. */
   private deviceStore: DeviceStore | null = null
+  /** Paired phones and the relay connection they use (phones.ts). */
+  private readonly phones: Phones
+  private phoneStatus: PhoneStatusBody | null = null
   /** The write tools' side (admin-writer.ts): one for the app's life, so it remembers requests. */
   private writer: AdminWriterImpl | null = null
   private readonly versions: VersionStore
@@ -520,6 +533,14 @@ export class AppService {
   private readonly gaveUp = new Set<string>()
 
   constructor(private readonly deps: ServiceDeps) {
+    this.phones = new Phones({
+      relay: deps.relay ?? null,
+      macName: deps.macName ?? 'This Mac',
+      statePath: join(deps.paths.dir, 'phone-channel.json'),
+      bindingPath: join(deps.paths.dir, 'relay-binding.json'),
+      emit: () => this.emit('phones-changed'),
+      log: (line) => deps.diagnostics?.({ type: line }),
+    })
     const { paths } = deps
     const clock = { now: deps.now }
     const date = () => new Date(deps.now())
@@ -875,6 +896,7 @@ export class AppService {
 
   async stop(): Promise<void> {
     this.updates?.stop()
+    this.phones.stop()
     if (this.pruneTimer !== null) clearInterval(this.pruneTimer)
     this.pruneTimer = null
     // Calls still running are cancelled: each ends failed tool-run/aborted, its prompt declined.
@@ -1258,6 +1280,7 @@ export class AppService {
         signer: keys.signer,
         audit: this.audit,
         handlers: this.approvalHandlers(),
+        outbox: this.phones,
         now: this.deps.now,
         timers: this.deps.timers,
         onChange: () => {
@@ -1267,10 +1290,79 @@ export class AppService {
           this.tidyDraftsSoon()
         },
       })
+      await this.openPhones(this.approvalBroker, devices)
     } catch {
       this.approvalBroker = null
       this.deps.diagnostics?.({ type: 'approvals-unavailable' })
     }
+  }
+
+  /** Starts the relay connection and the phone channel, once the broker is open. */
+  private async openPhones(broker: ApprovalBroker, devices: DeviceStore): Promise<void> {
+    try {
+      await this.phones.open({
+        broker,
+        devices,
+        signer: this.deps.approvalKeys.signer,
+        safety: {
+          pauseRemote: async () => {
+            await broker.pauseRemote()
+            this.emit('app-changed')
+          },
+          lockdown: () => this.setLockedDown(true),
+          revokeClient: async (clientId) => void (await this.remote.revokeClient(clientId)),
+          revokeDevice: async (deviceId, by) => {
+            if (await devices.revoke(deviceId, by, new Date(this.deps.now()).toISOString())) {
+              this.phones.unpair(deviceId)
+              await this.audit.append({ type: 'device-revoked', deviceId, by })
+            }
+          },
+        },
+        approvePairing: async (pair) => {
+          const asked = await broker.request('device-pair', { ...pair, platform: 'ios' }, { kind: 'person' })
+          if (!asked.ok) return false
+          const answered = await broker.approveOnMac(asked.requestId)
+          if (!answered.ok && answered.reason !== 'busy')
+            await broker.withdraw(asked.requestId, { kind: 'person' }).catch(() => false)
+          return answered.ok
+        },
+        paired: async (record) => {
+          await this.audit.append({ type: 'device-paired', deviceId: record.deviceId, platform: 'ios' })
+          await this.refreshPhoneStatus()
+        },
+        status: () => this.phoneStatus ?? undefined,
+      })
+      await this.refreshPhoneStatus()
+    } catch {
+      this.deps.diagnostics?.({ type: 'phones-unavailable' })
+    }
+  }
+
+  /** What the phone's tabs show: the sites, the agents, the devices. */
+  private async refreshPhoneStatus(): Promise<void> {
+    const sites = await this.api.adapters.list().catch(() => [])
+    const devices = this.deviceStore
+    this.phoneStatus = {
+      at: new Date(this.deps.now()).toISOString(),
+      safety: this.lockedDown ? 'lockdown' : this.paused ? 'paused' : 'running',
+      sites: sites.slice(0, 50).map((a) => ({
+        adapterId: a.id,
+        name: a.name.slice(0, 80),
+        health: a.paused ? 'paused' : a.approval === 'approved' ? 'ok' : 'needs-you',
+      })),
+      agents: [],
+      devices:
+        devices === null
+          ? []
+          : [devices.mac, ...devices.activePhones()].slice(0, 10).map((d) => ({
+              deviceId: d.deviceId,
+              name: d.deviceId === devices.macId ? (this.deps.macName ?? 'This Mac') : d.name,
+              platform: d.platform,
+              lastSeenAt: null,
+            })),
+      recent: [],
+    }
+    this.phones.statusChanged()
   }
 
   /**
@@ -1284,6 +1376,13 @@ export class AppService {
   /** What each approved kind does here. Kinds not listed aren't wired yet and do nothing. */
   private approvalHandlers(): KindHandlers {
     return {
+      // Pairing: the phone channel signs the records once the person approved (phone-channel.ts).
+      'device-pair': {
+        precheck: (subject) => {
+          const pairing = this.phones.status().pairing
+          return pairing.step === 'approving' && pairing.deviceName === subject.deviceName
+        },
+      },
       // The subject names its confirmation, so an approval applies to the one question it was
       // signed for, never another of the same call.
       'irreversible-call': {
@@ -3122,6 +3221,22 @@ export class AppService {
   private buildApi(): MainApi {
     const deps = this.deps
     return {
+      phones: {
+        status: async () => this.phones.status(),
+        startPairing: async () => this.phones.startPairing(),
+        confirmPairing: (code) => this.phones.confirmPairing(code),
+        cancelPairing: async () => this.phones.cancelPairing(),
+        remove: async (deviceId) => {
+          const devices = this.deviceStore
+          if (devices === null || !devices.isActivePhone(deviceId))
+            throw new ValetError('config', 'not-found')
+          this.phones.unpair(deviceId)
+          await devices.revoke(deviceId, 'mac-ui', new Date(this.deps.now()).toISOString())
+          await this.audit.append({ type: 'device-revoked', deviceId, by: 'mac-ui' })
+          this.emit('phones-changed')
+          await this.refreshPhoneStatus()
+        },
+      },
       adapters: {
         list: async () => (await this.states()).map(adapterSummary),
         get: async (adapterId) => {
