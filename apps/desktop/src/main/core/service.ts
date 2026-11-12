@@ -1126,8 +1126,10 @@ export class AppService {
         apply: async (subject) => {
           if (subject.source !== 'rollback') await this.applyInstall(subject.adapterId, subject.adapterHash)
         },
-        // One approved hash per adapter: a new approval replaces the evidence of the last.
-        supersedes: (next, older) => next.adapterId === older.adapterId,
+        // One approved hash per adapter: a new approval replaces the evidence of the last. Not a
+        // rollback's, until its swap has worked (rollbackNow), so a failed swap leaves the running
+        // version approved.
+        supersedes: (next, older) => next.source !== 'rollback' && next.adapterId === older.adapterId,
       },
       resume: {
         precheck: (subject) =>
@@ -1347,7 +1349,14 @@ export class AppService {
     // The person approves the rollback with Touch ID first; nothing is swapped without it.
     if (!(await this.signInstall(target, 'rollback', active)))
       throw new InstallError('Not rolled back: the approval was cancelled.')
-    await this.swapIn(target)
+    try {
+      await this.swapIn(target)
+    } catch (error) {
+      await this.revokeInstall(adapterId, hash, { legacy: false })
+      throw error
+    }
+    // Swapped: the version it replaces loses its approval, as any signed install's would.
+    await this.retireOthers(adapterId, hash)
     const version = target.definition.manifest.version
     const already = (await this.approvals.approvedHashes(adapterId)).includes(hash)
     await this.approvals.approve(adapterId, hash, version)
@@ -1375,9 +1384,13 @@ export class AppService {
     await this.refreshTools()
   }
 
-  /** An adapter not built into this app runs without the sandbox until it exists (B). */
+  /**
+   * An adapter not built into this app runs without the sandbox until it exists (B). Built in means
+   * the hash this app ships, never a stored version's source tag, which anything can write.
+   */
   private runsUnsandboxed(adapter: BuiltinAdapter): boolean {
-    return adapter.source !== undefined && adapter.source !== 'builtin'
+    if (this.packages === null) return adapter.source !== undefined && adapter.source !== 'builtin'
+    return !this.packages.isShipped(adapter.definition.manifest.id, adapter.hash)
   }
 
   /** Signed evidence (or the legacy record) for this hash, in the mode it would run in now. */
@@ -1428,7 +1441,11 @@ export class AppService {
     if (!asked.ok)
       throw new ValetError('config', asked.reason === 'locked-down' ? 'locked-down' : 'unavailable')
     const answered = await broker.approveOnMac(asked.requestId)
-    if (answered.ok) return true
+    if (answered.ok) {
+      // A rollback retires the others only once its swap has worked (rollbackNow).
+      if (source !== 'rollback') await this.retireOthers(id, adapter.hash)
+      return true
+    }
     if (answered.reason !== 'busy')
       await broker.withdraw(asked.requestId, { kind: 'person' }).catch(() => false)
     return false
@@ -1445,12 +1462,38 @@ export class AppService {
     await this.refreshTools()
   }
 
+  /**
+   * Once a version is approved with Touch ID, the adapter's other versions keep no approval: their
+   * signed evidence and their legacy records go, so a version can't be put back as active later
+   * without asking again (a downgrade). Only tightens.
+   */
+  private async retireOthers(adapterId: string, keep: string): Promise<void> {
+    await this.approvalBroker?.revoke(
+      'adapter-install',
+      (s) => s.adapterId === adapterId && s.adapterHash !== keep,
+    )
+    await this.ledger
+      ?.commit(
+        (draft) => {
+          if (draft.legacy !== undefined)
+            draft.legacy.installs = draft.legacy.installs.filter((l) => l.adapterId !== adapterId)
+        },
+        { tightening: true },
+      )
+      .catch(() => undefined)
+  }
+
   /** Takes an install's evidence and legacy record away (a reject). Only tightens. */
-  private async revokeInstall(adapterId: string, adapterHash: string): Promise<void> {
+  private async revokeInstall(
+    adapterId: string,
+    adapterHash: string,
+    options: { readonly legacy: boolean } = { legacy: true },
+  ): Promise<void> {
     await this.approvalBroker?.revoke(
       'adapter-install',
       (s) => s.adapterId === adapterId && s.adapterHash === adapterHash,
     )
+    if (!options.legacy) return
     await this.ledger
       ?.commit(
         (draft) => {

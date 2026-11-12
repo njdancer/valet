@@ -272,22 +272,36 @@ Revoking one of these removes its evidence from the ledger (a tightening, no sig
 ## Migration
 
 **Built** for installs (grants next). The first launch of a signed build records, once, a `legacy`
-list in the anchored ledger: the adapters approved in `approvals.json` whose hash is one of this
-app's own built-ins, and the grants for those hashes. Each is honoured until the person confirms
-it with Touch ID or it is revoked or rejected, and the list only ever shrinks. Restricting it to
-the built-ins' own hashes means an `approvals.json` or a package planted in the data folder before
-that launch can't be carried over as approved. A later hand-written `approvals.json` approves
-nothing: the install gate needs the applied mark there _and_ signed evidence (or the legacy
-record). B's condition for grants: a legacy grant is honoured only for the origins and fields the
-built-in's own manifest declares. The migration screen (one Touch ID per record) comes with the
-grants PR; until then nothing interrupts the Woolworths login.
+list in the anchored ledger: the adapters approved in `approvals.json` whose active hash is the
+one this app ships, and the grants for those hashes. "Built in" is always the shipped hash, never
+the `source` tag in the store's `state.json`, which is a plain file anything can write. Each record
+is honoured until the person confirms it with Touch ID or it is revoked or rejected, and the list
+only ever shrinks: once any version of an adapter is approved with Touch ID, that adapter's legacy
+records and its other versions' evidence go, so an old version put back as active by hand needs
+Touch ID again. A later hand-written `approvals.json` approves nothing: the install gate needs the
+applied mark there _and_ signed evidence (or the legacy record).
+
+The migration never runs again. A ledger reset after a tamper (the person resuming at the Mac)
+writes an empty `legacy`, so what `approvals.json` and the store hold after a tamper is never
+carried over; the person approves each adapter again with Touch ID. B's condition for grants: a
+legacy grant is honoured only for the origins and fields the built-in's own manifest declares.
+The migration screen (one Touch ID per record) comes with the grants PR.
+
+Accepted: a built-in update that ships with the first signed release (a new hash the store makes
+active on launch) is not carried over, because nobody approved that hash. It asks for Touch ID
+like any update.
 
 Installs, updates and rollbacks are signed `adapter-install` requests at the Mac. The subject's
 permission lines are the Mac's own diff in B's areas (`approvals/install-subject.ts`), and an
-adapter that isn't built in carries the critical sandbox-mode line, so it is Mac only. The gate
-binds the sandbox mode: evidence counts only if its `unsandboxed` matches how the hash would run
-now. A rollback asks for Touch ID before anything is swapped. A signed install whose apply didn't
-finish (a crash after the evidence was written) is applied at the next launch without asking again.
+adapter that isn't built in carries the critical sandbox-mode line, so it is Mac only. A line never
+loses an item it can't print: hidden or control characters are written out as their codes, the
+purpose of a request or tool is kept outside the cut, a secret's line says which origins it may be
+typed into, and past 50 items the last one says how many were left out. The gate binds the sandbox
+mode: evidence counts only if its `unsandboxed` matches how the hash would run now. A rollback asks
+for Touch ID before anything is swapped, and the version it replaces keeps its approval until the
+swap has worked, so a failed swap leaves the running version approved. A signed install whose apply
+didn't finish (a crash after the evidence was written) is applied at the next launch without asking
+again.
 
 ## Wiring into the app
 

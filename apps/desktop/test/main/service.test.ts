@@ -357,6 +357,22 @@ describe('signed installs (docs/approval-broker.md)', () => {
     expect(await third.call('echo', { text: 'hi' })).toMatchObject({ status: 'failed' })
   })
 
+  it('never carries approvals over again after a ledger tamper and a resume', async () => {
+    const s = await approved()
+    await s.service.stop()
+    const text = readFileSync(s.paths.trusted, 'utf8')
+    writeFileSync(s.paths.trusted, `${text} `)
+    const again = await setup({ dir: s.dir })
+    await again.api.app.setLockedDown(false)
+    expect((await again.api.app.status()).lockedDown).toBe(false)
+    await again.service.stop()
+    // approvals.json still lists the hash, but nothing the person signed survives the tamper.
+    const third = await setup({ dir: s.dir })
+    expect((await third.api.app.status()).lockedDown).toBe(false)
+    expect((await third.api.adapters.list())[0]?.approval).not.toBe('approved')
+    expect(third.presence.prompts).toEqual([])
+  })
+
   it('honours nothing from a ledger changed outside Valet', async () => {
     const s = await approved()
     await s.service.stop()
@@ -2828,6 +2844,56 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
       .map((e) => e.type)
       .filter((t) => t.startsWith('adapter-'))
     expect(types.slice(-2)).toEqual(['adapter-approved', 'adapter-activated'])
+  })
+
+  it('never carries over a stored version that only claims to be built in', async () => {
+    const v2files = shopPackage('v2:', { ...SHOP, version: '2.0.0' })
+    const s = await withPackages(v2files)
+    const v2 = s.hashOf(v2files)
+    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true })
+    await s.service.stop()
+    // Planted before the first signed launch: the store says v2 shipped with the app and is
+    // pinned, approvals.json says it was approved, and there is no ledger yet.
+    const statePath = join(s.paths.adapters, 'shop', 'state.json')
+    const state = JSON.parse(readFileSync(statePath, 'utf8'))
+    state.active = v2
+    state.pinned = true
+    for (const v of state.versions) v.source = 'builtin'
+    writeFileSync(statePath, JSON.stringify(state))
+    writeFileSync(s.paths.approvals, JSON.stringify({ version: 1, approved: { shop: [v2] } }))
+    rmSync(s.paths.trusted, { force: true })
+    rmSync(join(s.dir, 'anchor.json'), { force: true })
+    const again = await withPackages(null, s.dir)
+    expect((await again.api.adapters.versions('shop')).versions.find((v) => v.active)?.hash).toBe(v2)
+    expect((await again.api.adapters.list())[0]?.approval).not.toBe('approved')
+    expect(await again.call('echo', { text: 'hi' })).toMatchObject({ status: 'failed' })
+  })
+
+  it('drops the carried-over approval once a newer version is approved, so it can’t be put back', async () => {
+    const v2files = shopPackage('v2:', { ...SHOP, version: '2.0.0' })
+    const s = await withPackages(v2files)
+    const v1 = s.hashOf(shopPackage('v1:'))
+    const v2 = s.hashOf(v2files)
+    await s.api.approvals.approve('shop', v1)
+    await s.service.stop()
+    // From before signed approvals: v1 is carried over without Touch ID.
+    rmSync(s.paths.trusted, { force: true })
+    rmSync(join(s.dir, 'anchor.json'), { force: true })
+    const second = await withPackages(v2files, s.dir)
+    expect((await second.api.adapters.list())[0]?.approval).toBe('approved')
+    expect(await second.api.adapters.installFromFolder()).toMatchObject({ ok: true })
+    await second.api.approvals.approve('shop', v2)
+    await second.service.stop()
+    // v1 put back as active by hand: it needs Touch ID again.
+    const statePath = join(s.paths.adapters, 'shop', 'state.json')
+    const state = JSON.parse(readFileSync(statePath, 'utf8'))
+    state.active = v1
+    state.pinned = true
+    writeFileSync(statePath, JSON.stringify(state))
+    writeFileSync(s.paths.approvals, JSON.stringify({ version: 1, approved: { shop: [v1, v2] } }))
+    const third = await withPackages(null, s.dir)
+    expect((await third.api.adapters.versions('shop')).versions.find((v) => v.active)?.hash).toBe(v1)
+    expect((await third.api.adapters.list())[0]?.approval).not.toBe('approved')
   })
 
   it('never offers a rollback to a version the person never approved, or rejected', async () => {
