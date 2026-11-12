@@ -57,6 +57,11 @@ export interface RunningEndpoint {
   resetClient(clientId: string): Promise<void>
   /** Withdraws the client's token, closes its sessions and deletes its file. Unknown ids are ignored. */
   removeClient(clientId: string): Promise<void>
+  /**
+   * Refuses the client's token from the next request on, at once, and leaves its sessions be: a
+   * response already being written still reaches it (valet_disconnect). removeClient finishes it.
+   */
+  refuseClient(clientId: string): void
   /** The clients holding a token now. */
   clientIds(): readonly string[]
   close(): Promise<void>
@@ -186,6 +191,9 @@ export async function startEndpoint(options: EndpointOptions): Promise<SessionRe
         await endFor(clientId)
         await rm(path, { force: true }).catch(() => {})
       }),
+    refuseClient: (clientId) => {
+      tokens.delete(clientId)
+    },
     clientIds: () => tokens.ids(),
     sessions: () => running.sessions(),
     close: () => running.close(),

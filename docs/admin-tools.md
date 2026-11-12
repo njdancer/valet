@@ -194,5 +194,76 @@ In the app, `apps/desktop/src/main/core/admin.ts` implements `AdminReader` over 
   doesn't check out", "Finish setup"). `valet_needs_you` reads the same list as the app, so it
   gains them when the app does. `valet_status` already reports the login providers and the audit
   chain, which is what those items are about.
-- The write tier, and the prompt-injection pass on it, wait on the approval broker (D).
+- The write tier is below. Its prompt-injection pass is in `apps/desktop/test/main/service.test.ts`
+  ("admin write tools").
 - Whether cloud agents get any admin tools is for workstream B.
+
+## Write tier
+
+Status: **Built** for the tools below. The approve-tier ones answer "this Valet can't take that
+request yet" until the approval broker has a handler for their kind (`service.wiredKinds()`).
+
+### What an agent can do
+
+The rule is B's (`ADMIN_ACTION_TIERS`) in A's words (IA section 5): an agent may make a change that
+only makes Valet stricter, and may **ask** for anything else. Nothing here approves, undoes,
+unlocks, pairs, or changes what an agent may do. Following Nick's threat model ("Who this guards
+against first"), every gate is aimed at the agent: what would let an agent widen its own reach, hide
+what it did, or approve its own request. Nothing here adds friction for the person.
+
+| Tool                      | Needs           | Tier                                                   | What happens                                                                                                                                                                                                                                                                                                                       |
+| ------------------------- | --------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `valet_set_setting`       | Ask for changes | Notify only if stricter and deletes nothing; else asks | One of three Valet settings: Messages codes, notifications, call-detail retention. The app classifies the change (`settingWidens`, D's table): Messages codes on, notifications off and shorter retention ask. Remote access isn't offered: turning it off revokes every cloud agent, which is changing other agents' connections. |
+| `valet_request_setting`   | Ask for changes | Approve (Setting)                                      | An adapter's setting, such as the store. The Mac fetches the adapter's own choices (an optional `query` narrows them) and the person picks on the card. Never a value.                                                                                                                                                             |
+| `valet_turn_off_tool`     | Ask for changes | Notify only, for itself                                | Stored on the asking app's record (`clients.json` `toolsOff`). The caller leaves it out of that app's listing and refuses a call to it.                                                                                                                                                                                            |
+| `valet_disconnect`        | any             | Notify only, for itself                                | Revokes the asking app's token and withdraws its requests.                                                                                                                                                                                                                                                                         |
+| `valet_get_approval`      | Ask for changes | none                                                   | The app's own requests, one by ref or all it remembers.                                                                                                                                                                                                                                                                            |
+| `valet_withdraw_approval` | Ask for changes | none                                                   | One of its own waiting requests.                                                                                                                                                                                                                                                                                                   |
+| `valet_list_changes`      | See Valet       | none                                                   | Changes and requests: its own, or every agent's with All agents' activity.                                                                                                                                                                                                                                                         |
+
+Every `valet_` result, read or write, also carries the answers to the app's own requests that ended
+since it was last told (R23), each once, scanned for secrets like everything else.
+
+### Decisions taken here
+
+- **Ask for changes** is a third stored capability per local app, on by default as A's journeys
+  say for an agent on the Mac; files from before it read as on, unless See Valet was taken away. Without it, every write tool but
+  `valet_disconnect` refuses with A's sentence.
+- **The store is a request, not a Notify-only change.** B's table has `setting.adapter-choice`
+  at notify; A's R8 says an agent never supplies a setting's value. A's rule is the stricter and
+  costs the person nothing (they would pick the store anyway), so E follows it and never uses
+  `setting.adapter-choice`.
+- **Notify only means: checked, audited, then done, then told.** Repeats and unknown targets are
+  answered before anything is audited. A change that can't be audited isn't made. Changes from the
+  writer run one at a time and re-read what they change, and the app writes a setting only if it
+  still starts from the value the writer read and still doesn't widen (never through the person's
+  own path, which would ask on their behalf). The person gets one quiet Mac notification per agent per hour ("Claude Code made 3
+  changes"), which opens Activity. At most 10 Notify-only changes per agent per hour (R57), counting
+  attempts and store lookups (a lookup runs on the site); leaving (`valet_disconnect`) is never
+  limited, and refuses the agent's token from its next request on.
+- **The agent's note** goes into the request's `agentNote`, which the card shows under "The agent
+  says". It is never put into a tool result, so a note can't be used to word a result for another
+  agent.
+- **Requests are remembered in memory** (for 24 hours after they end, 50 per agent), as are the
+  changes listed by `valet_list_changes` (the last 200). After a restart, waiting requests are found
+  again from the broker; ended ones are in the audit log (`approval-requested`, `approval-answered`,
+  `agent-change`).
+- **New audit event `agent-change`** (`clientId`, `action`: tool-off, setting or disconnect,
+  `target`, `value`). Loosening changes are audited by the broker as approval records instead.
+- **Left out for now:** restore (rollback) and login (grant) requests, which need D's handlers and a
+  decision on how the item is picked; a local tool turned back on, which has no store yet (the person
+  can't turn one off locally today); remote tools, which only matter once cloud agents get admin
+  tools (B); uninstall, which doesn't exist; drafts and the scratch browser, which are F's.
+
+### Prompt injection
+
+The threat is an agent steered by text it read (a page, a store name, a reference adapter) into
+widening something. What stops it:
+
+1. The tier comes from the app's table, never the call. `valet_set_setting` takes a value, and the
+   app decides whether it tightens.
+2. Every widening is a broker request built by the broker's own subject builders. The broker has no
+   MCP path that answers one (`NEVER_OVER_MCP`); only a device's signature does.
+3. An agent sees and withdraws only its own requests and changes only its own tools.
+4. The test drives every write tool with hostile arguments, as an agent obeying injected text would,
+   and checks that nothing widened, nothing was approved, and the ledger holds no new evidence.
