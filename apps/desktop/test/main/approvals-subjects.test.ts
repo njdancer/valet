@@ -9,6 +9,7 @@ import {
   grantSubject,
   itemFingerprint,
   settingSubject,
+  settingValue,
   settingWidens,
   toolEnableSubject,
 } from '../../src/main/core/approvals'
@@ -61,6 +62,10 @@ describe('subject builders', () => {
     expect(settingWidens('trace_retention', 14, 30)).toBe(false)
     expect(settingWidens('remote_hosts', ['a.example'], ['a.example', 'b.example'])).toBe(true)
     expect(settingWidens('remote_hosts', ['a.example', 'b.example'], ['a.example'])).toBe(false)
+    expect(settingWidens('remote_hosts', ['a.example'], 'b.example')).toBe(true)
+    expect(settingValue('remote_hosts', settingSubject('remote_hosts', ['a.example'], 'b.example').to)).toBe(
+      'b.example',
+    )
     expect(settingSubject('remote_enabled', false, true)).toMatchObject({
       from: 'Off',
       to: 'On',
