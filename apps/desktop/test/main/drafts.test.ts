@@ -533,6 +533,95 @@ describe('the scratch browser through the tools', () => {
   })
 })
 
+describe('cases with pages', () => {
+  const TOOLS = `import { tool } from '@valet/core'
+import { z } from 'zod'
+
+export const tools = {
+  get_item: tool({
+    input: z.object({ id: z.string() }),
+    output: z.object({ id: z.string(), name: z.string().max(200), price: z.number().nullable() }),
+    async run(ctx, input) {
+      await ctx.page.goto('https://www.example.com/items/' + input.id)
+      const name = await ctx.page.extract('h1')
+      return { id: input.id, name: String(name), price: null }
+    },
+  }),
+}
+`
+  const CASE = JSON.stringify({
+    cases: [
+      {
+        name: 'reads the page',
+        tool: 'get_item',
+        input: { id: 'abc-1' },
+        pages: { 'https://www.example.com/items/abc-1': 'fixtures/item.html' },
+        expect: { output: { id: 'abc-1', name: 'Example item' } },
+      },
+    ],
+  })
+
+  async function pageDraft(overrides: Partial<AuthoringDeps> = {}) {
+    const h = await harness(overrides)
+    const { draft } = await h.authoring.createDraft(AGENT, { adapterId: 'shop', from: 'blank', name: 'Shop' })
+    await h.authoring.writeFile(AGENT, draft.draftId, 'src/tools.ts', TOOLS)
+    await h.authoring.writeFile(AGENT, draft.draftId, 'test/example.json', CASE)
+    await h.authoring.writeFile(AGENT, draft.draftId, 'fixtures/item.html', '<h1>Example item</h1>')
+    return { ...h, draftId: draft.draftId }
+  }
+
+  it('runs a case’s DOM calls in the fixture browser, on the case’s own pages', async () => {
+    const opened: { pages: Readonly<Record<string, string>>; egress: readonly string[] }[] = []
+    let closed = 0
+    let at = 'about:blank'
+    const caseBrowser = async (pages: Readonly<Record<string, string>>, egress: readonly string[]) => {
+      opened.push({ pages, egress })
+      return {
+        page: {
+          goto: async (url: string) => {
+            at = url
+          },
+          currentUrl: () => at,
+          click: async () => undefined,
+          fill: async () => undefined,
+          extract: async (selector: string) =>
+            selector === 'h1' ? (/<h1>(.*)<\/h1>/.exec(pages[at] ?? '')?.[1] ?? null) : null,
+          evaluate: async () => false,
+          fetch: async () => {
+            throw new Error('fetch goes to the case, never the browser')
+          },
+        },
+        close: () => {
+          closed++
+        },
+      }
+    }
+    const { authoring, draftId } = await pageDraft({ caseBrowser })
+    const report = await authoring.check(AGENT, draftId)
+    expect(report.cases).toMatchObject([{ name: 'reads the page', passed: true }])
+    expect(opened).toEqual([
+      {
+        pages: { 'https://www.example.com/items/abc-1': '<h1>Example item</h1>' },
+        egress: ['www.example.com'],
+      },
+    ])
+    expect(closed).toBe(1)
+  }, 60_000)
+
+  it('says so when the build has no fixture browser, and asks for pages when a case has none', async () => {
+    const { authoring, draftId } = await pageDraft()
+    expect((await authoring.check(AGENT, draftId)).cases[0]?.reason).toBe(
+      'This build of Valet can’t run cases with pages.',
+    )
+    const noPages = JSON.parse(CASE)
+    noPages.cases[0].pages = {}
+    await authoring.writeFile(AGENT, draftId, 'test/example.json', JSON.stringify(noPages))
+    expect((await authoring.check(AGENT, draftId)).cases[0]?.reason).toMatch(
+      /No page for https:\/\/www.example.com\/items\/abc-1 in the case: add it under "pages"/,
+    )
+  }, 60_000)
+})
+
 describe('live trials', () => {
   interface FakeDriver {
     labels: string[]
