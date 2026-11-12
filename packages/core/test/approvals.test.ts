@@ -226,6 +226,7 @@ describe('approval requests', () => {
     for (const kind of APPROVAL_KINDS) expect(KIND_TIER[kind]).toMatch(/^approve/)
     expect(KIND_TIER['irreversible-call']).toBe('approve-each-use')
     expect(approvableOn('device-pair', {} as never)).toEqual(['mac'])
+    expect(approvableOn('resume', { from: 'lockdown' } as never)).toEqual(['mac'])
     expect(approvableOn('adapter-install', { unsandboxed: true, changes: [] } as never)).toEqual(['mac'])
     expect(approvableOn('adapter-install', { unsandboxed: false, changes: [] } as never)).toEqual([
       'mac',
@@ -419,7 +420,7 @@ describe('admin action tiers', () => {
     expect(adminTier('tool.disable')).toEqual({ tier: 'notify' })
     expect(adminTier('draft.submit')).toEqual({ tier: 'approve', kind: 'adapter-install' })
     expect(adminTier('secret.request-grant')).toEqual({ tier: 'approve', kind: 'secret-grant' })
-    expect(adminTier('valet.resume')).toEqual({ tier: 'approve', kind: 'resume' })
+    expect(adminTier('valet.resume')).toBeNull()
   })
 
   it('knows nothing it was not told, and never offers pairing or answering approvals', () => {

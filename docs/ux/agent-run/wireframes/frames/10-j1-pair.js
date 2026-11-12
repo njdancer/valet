@@ -285,9 +285,9 @@
     html: P.screen(
       `<div class="col" style="gap:14px;margin-top:20px;text-align:center">
         <h2 style="font:700 24px/1.2 var(--f-head);margin:0">Save your recovery code</h2>
-        <div class="muted" style="font-size:15px">If you lose this iPhone and can\'t get to your Mac, this code lets you lock Valet down and remove the phone from the web.</div>
+        <div class="muted" style="font-size:15px">If you lose this iPhone and can't get to your Mac, this code lets you lock Valet down and remove the phone from the web.</div>
         <div class="ph-code" style="font-size:20px;letter-spacing:3px;background:var(--wf-paper);border-radius:10px;padding:12px">RKQ4-7MXT-PW9C-3HJD</div>
-        <div class="muted" style="font-size:14px">It can\'t approve anything. Shown once.</div></div>
+        <div class="muted" style="font-size:14px">It can't approve anything. Shown once.</div></div>
         <div class="grow"></div>
         <div class="col" style="gap:8px">${P.btn('Save to 1Password', 'primary')}${P.btn("I've saved it", '')}</div>`,
       { tab: false, title: 'Recovery code', large: false, time: '8:08' },

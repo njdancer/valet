@@ -43,6 +43,7 @@ export const ADMIN_ACTION_TIERS = {
   'draft.delete': none,
   'draft.submit': approve('adapter-install'),
   'authoring.signed-in-session': approve('authoring-session'),
+  'authoring.private-network': approve('private-network'),
   // Adapters and tools.
   'adapter.rollback': approve('adapter-install'),
   'adapter.remove': notify,
@@ -62,7 +63,6 @@ export const ADMIN_ACTION_TIERS = {
   'client.revoke': notify,
   'remote.pause': notify,
   'valet.lockdown': notify,
-  'valet.resume': approve('resume'),
   'device.revoke': notify,
 } as const satisfies Record<string, AdminTier>
 
@@ -70,9 +70,10 @@ export type AdminAction = keyof typeof ADMIN_ACTION_TIERS
 
 /**
  * Actions no MCP tool may offer at all, at any tier: pairing a device (the person scans a QR
- * code at the Mac), answering an approval, and anything that reads a secret's value.
+ * code at the Mac), answering an approval, anything that reads a secret's value, and lifting a
+ * pause or lockdown (only the person at the Mac, J7; an agent never even asks).
  */
-export const NEVER_OVER_MCP = ['device.pair', 'approval.answer', 'secret.read'] as const
+export const NEVER_OVER_MCP = ['device.pair', 'approval.answer', 'secret.read', 'valet.resume'] as const
 
 export function adminTier(action: string): AdminTier | null {
   return Object.hasOwn(ADMIN_ACTION_TIERS, action) ? ADMIN_ACTION_TIERS[action as AdminAction] : null

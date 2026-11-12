@@ -528,7 +528,7 @@
             '<span class="ph-btn plain" style="flex:none;color:var(--wf-bad)">Remove</span>',
           ),
         ])}
-        <div class="muted" style="font-size:13px">This page can\'t approve anything, unlock Valet or pair a device. Using the code is sent to your Mac and every paired device. Pair again at your Mac afterwards; it makes a new code.</div></div>`,
+        <div class="muted" style="font-size:13px">This page can't approve anything, unlock Valet or pair a device. Using the code is sent to your Mac and every paired device. Pair again at your Mac afterwards; it makes a new code.</div></div>`,
       { tab: false, large: false, time: '10:05' },
     ),
     notes: [
