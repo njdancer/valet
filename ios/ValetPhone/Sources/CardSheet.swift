@@ -42,13 +42,13 @@ struct CardSheet: View {
       VStack(alignment: .leading, spacing: 16) {
         ViewThatFits(in: .horizontal) {
           HStack {
-            Text(verbatim: "\(card.kindWord) \u{00b7} \(card.ref)").font(.caption.monospaced())
+            Text(verbatim: "\(card.kindWord) \u{00b7} \(card.ref)").font(.footnote.monospaced())
             Spacer()
             Text(verbatim: Deadline.text(model.remaining(entry))).font(.caption).foregroundStyle(Color.secondary)
           }
           VStack(alignment: .leading, spacing: 2) {
-            Text(verbatim: card.kindWord).font(.caption.monospaced())
-            Text(verbatim: card.ref).font(.caption.monospaced())
+            Text(verbatim: card.kindWord).font(.footnote.monospaced())
+            Text(verbatim: card.ref).font(.footnote.monospaced())
             Text(verbatim: Deadline.text(model.remaining(entry))).font(.caption).foregroundStyle(Color.secondary)
           }
         }

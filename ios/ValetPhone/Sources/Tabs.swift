@@ -118,7 +118,7 @@ struct AgentsView: View {
               }
               Spacer()
               Button("Revoke", role: .destructive) { revoking = agent }
-                .buttonStyle(.bordered)
+                .buttonStyle(.bordered).tint(Palette.strong)
                 .accessibilityIdentifier("agent.revoke.\(agent.label)")
             }
           }

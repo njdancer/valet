@@ -107,7 +107,7 @@ struct CardRowView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 6) {
       HStack {
-        Text(verbatim: "\(entry.card.kindWord) \u{00b7} \(entry.card.ref)").font(.caption.monospaced())
+        Text(verbatim: "\(entry.card.kindWord) \u{00b7} \(entry.card.ref)").font(.footnote.monospaced())
         Spacer()
         Text(verbatim: Deadline.text(remaining)).font(.caption).foregroundStyle(Color.secondary)
       }

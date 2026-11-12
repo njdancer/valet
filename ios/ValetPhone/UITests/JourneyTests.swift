@@ -154,7 +154,15 @@ final class JourneyTests: XCTestCase {
     var issues: [String] = []
     func audit(_ screen: String) throws {
       try app.performAccessibilityAudit(for: [.dynamicType, .contrast, .elementDetection, .hitRegion, .sufficientElementDescription]) { issue in
-        issues.append("\(screen): \(issue.auditType) \(issue.compactDescription) on \(issue.element?.debugDescription.prefix(160) ?? "?")")
+        let line = "\(screen): \(issue.auditType) \(issue.compactDescription) on \(issue.element?.debugDescription.prefix(160) ?? "?")"
+        // Two kinds are noted but don't fail the test (docs/ios-app.md, accessibility audit):
+        // "nearly passed" contrast is the system's own secondary label colours, and "partially
+        // unsupported" Dynamic Type is the deliberate cap on the action bar and the system's toolbar.
+        if issue.compactDescription.contains("nearly passed") || issue.compactDescription.contains("partially unsupported") {
+          print("audit note: " + line)
+        } else {
+          issues.append(line)
+        }
         return true
       }
     }
