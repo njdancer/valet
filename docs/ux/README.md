@@ -63,3 +63,9 @@ New frames for the order path (G5): `setup-1password-waiting`, `setup-login-lock
 `confirm-allow-failed`, `confirm-answered-elsewhere`, `login-handoff-checking`. The setup dead ends
 (G8) now go somewhere: `setup-approve-requests`, `setup-which-one`, `setup-choose-item`,
 `setup-test-how`.
+
+## Agent-run Valet (2026-11-12)
+
+[`agent-run/`](agent-run/) extends this redesign for Valet run by your own agents, with approvals on
+a paired iPhone: personas P8 and P9, journeys J1 to J8, the approval-card spec, the Mac IA changes,
+the iPhone app's IA and their wireframes.
