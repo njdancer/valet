@@ -314,13 +314,27 @@ public struct RequestDisplay: Equatable, Sendable {
   public var checks: [String]
   public var siteName: String?
   public var toolTitles: [String: String]
+  /// The tests the agent wrote, as Valet ran them. Counted apart from `checks`, which are Valet's
+  /// own, so an agent's passing tests never read as Valet's checks.
+  public var agentTests: AgentTests?
+
+  public struct AgentTests: Equatable, Sendable {
+    public let passed: Int
+    public let failed: Int
+
+    public init(passed: Int, failed: Int) {
+      self.passed = passed
+      self.failed = failed
+    }
+  }
 
   public static let empty = RequestDisplay(
-    because: nil, clientLabel: nil, clientBadge: nil, domain: nil, followOns: [], checks: [], siteName: nil, toolTitles: [:]
+    because: nil, clientLabel: nil, clientBadge: nil, domain: nil, followOns: [], checks: [], siteName: nil, toolTitles: [:],
+    agentTests: nil
   )
 
   static func parse(_ value: JSONValue, _ path: String) throws -> RequestDisplay {
-    let f = try Fields(value, path: path, required: [], optional: ["because", "client", "domain", "followOns", "checks", "fromAdapter"])
+    let f = try Fields(value, path: path, required: [], optional: ["because", "client", "domain", "followOns", "checks", "agentTests", "fromAdapter"])
     var d = RequestDisplay.empty
     if f.has("because") { d.because = try f.display("because", max: 200) }
     if f.has("client") {
@@ -331,6 +345,10 @@ public struct RequestDisplay: Equatable, Sendable {
     if f.has("domain") { d.domain = try f.string("domain", pattern: "[a-z0-9.-]{1,253}") }
     if f.has("followOns") { d.followOns = try f.displays("followOns", max: 10, itemMax: 120) }
     if f.has("checks") { d.checks = try f.displays("checks", max: 20, itemMax: 200) }
+    if f.has("agentTests") {
+      let t = try Fields(try f.raw("agentTests"), path: "\(path).agentTests", required: ["passed", "failed"])
+      d.agentTests = AgentTests(passed: try t.int("passed", min: 0, max: 10_000), failed: try t.int("failed", min: 0, max: 10_000))
+    }
     if f.has("fromAdapter") {
       let a = try Fields(try f.raw("fromAdapter"), path: "\(path).fromAdapter", required: [], optional: ["siteName", "toolTitles"])
       if a.has("siteName") { d.siteName = try a.display("siteName", max: 80) }

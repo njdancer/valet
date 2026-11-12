@@ -154,3 +154,60 @@ final class ApprovalTests: XCTestCase {
     XCTAssertNil(hostOf("http://example.com"))
   }
 }
+
+final class ChannelSigningTests: XCTestCase {
+  let own = OwnKeys(
+    macId: String(repeating: "a", count: 32), approvalKey: "MAC-APPROVAL", transportKey: "MAC-TRANSPORT",
+    agreementKey: "MAC-AGREEMENT")
+
+  func record(_ fields: [String: Any]) -> String {
+    var base: [String: Any] = [
+      "v": 1, "deviceId": String(repeating: "b", count: 32), "macId": own.macId, "role": "phone", "platform": "ios",
+      "name": "Nick’s iPhone", "approvalKey": "P-A", "transportKey": "P-T", "agreementKey": "P-G",
+      "pairedAt": "2026-11-12T03:00:00.000Z",
+    ]
+    for (k, v) in fields { base[k] = v }
+    return String(decoding: try! JSONSerialization.data(withJSONObject: base, options: [.sortedKeys]), as: UTF8.self)
+  }
+
+  func testRelayBindingIsOnlyTheMacsOwnTransportKey() {
+    XCTAssertEqual(
+      channelApprovalToSign(domain: relayBindingDomain, payloads: ["MAC-TRANSPORT"], own: own)?.reason,
+      "connect to Valet's relay")
+    XCTAssertNil(channelApprovalToSign(domain: relayBindingDomain, payloads: ["SOMEONE-ELSE"], own: own))
+  }
+
+  func testDeviceRecordsSignedTogether() {
+    let mac = record([
+      "deviceId": own.macId, "role": "mac", "platform": "macos", "approvalKey": "MAC-APPROVAL",
+      "transportKey": "MAC-TRANSPORT", "agreementKey": "MAC-AGREEMENT",
+    ])
+    let both = channelApprovalToSign(domain: deviceRecordDomain, payloads: [record([:]), mac], own: own)
+    XCTAssertEqual(both?.inputs.count, 2)
+    XCTAssertEqual(both?.reason, "pair a new iPhone")
+    // A record for another Mac, a phone claiming the Mac's id, two phones, or the wrong keys: refused.
+    XCTAssertNil(channelApprovalToSign(domain: deviceRecordDomain, payloads: [record(["macId": "c"])], own: own))
+    XCTAssertNil(
+      channelApprovalToSign(domain: deviceRecordDomain, payloads: [record(["deviceId": own.macId])], own: own))
+    XCTAssertNil(channelApprovalToSign(domain: deviceRecordDomain, payloads: [record([:]), record([:])], own: own))
+    XCTAssertNil(
+      channelApprovalToSign(
+        domain: deviceRecordDomain,
+        payloads: [record(["deviceId": own.macId, "role": "mac", "platform": "macos"])], own: own))
+    XCTAssertNil(channelApprovalToSign(domain: deviceRecordDomain, payloads: [record(["extra": 1])], own: own))
+  }
+
+  func testPairingChallengeShape() {
+    let ok = #"{"offerId":"abc","macNonce":"def","reply":"\#(String(repeating: "0", count: 64))"}"#
+    XCTAssertEqual(channelApprovalToSign(domain: pairingChallengeDomain, payloads: [ok], own: own)?.reason, "pair a new iPhone")
+    XCTAssertNil(channelApprovalToSign(domain: pairingChallengeDomain, payloads: ["{}"], own: own))
+    XCTAssertNil(channelApprovalToSign(domain: "valet/approval-decision/v1", payloads: [ok], own: own))
+  }
+
+  func testTransportSignsOnlyThisMacsSignIn() {
+    let payload = #"{"nonce":"n0","relay":"https://relay.example.com","role":"mac","id":"\#(own.macId)"}"#
+    XCTAssertNotNil(relayAuthToSign(payload: payload, macId: own.macId))
+    XCTAssertNil(relayAuthToSign(payload: payload.replacingOccurrences(of: "\"mac\"", with: "\"phone\""), macId: own.macId))
+    XCTAssertNil(relayAuthToSign(payload: payload, macId: String(repeating: "c", count: 32)))
+  }
+}

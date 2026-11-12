@@ -4,6 +4,11 @@
 
 /** Every invoke method, as its dotted path in ValetApi. */
 export const INVOKE_METHODS = [
+  'phones.status',
+  'phones.startPairing',
+  'phones.confirmPairing',
+  'phones.cancelPairing',
+  'phones.remove',
   'adapters.list',
   'adapters.get',
   'adapters.settingChoices',
@@ -109,5 +114,6 @@ export const APP_EVENT_TYPES = [
   'health-changed',
   'app-changed',
   'remote-changed',
+  'phones-changed',
   'focus-banner',
 ] as const

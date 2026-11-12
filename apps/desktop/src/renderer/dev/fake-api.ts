@@ -27,7 +27,9 @@ import type {
   GrantRequest,
   LoginMissingItem,
   MissedItem,
+  PairingView,
   PendingReview,
+  PhonesStatus,
   PreviewPart,
   ProbeInfo,
   ProviderStatus,
@@ -82,6 +84,8 @@ export interface FakeControls {
    * Infinity when several parts of the window load the same thing and every one should fail.
    */
   failNext(method: string, times?: number): void
+  /** The connector URL through the relay, as the Mac reports it once the relay client runs. */
+  setRelayUrl(url: string | null): void
   /** Appends a record to the audit log, as the runtime would, and emits audit-appended. */
   appendAudit(event: AuditEvent): AuditRecord
   /** What the next settings.chooseOpPath() dialog picks; null is a cancelled dialog. */
@@ -690,6 +694,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     onePasswordAccount: null,
     traceRetentionDays: 14,
     notifications: true,
+    relayHost: 'relay.example',
   }
 
   const updates: UpdateStatus = {
@@ -737,6 +742,16 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
   ]
   /** The code the fake browser shows for the one waiting remote sign-in. */
   const remoteCode = 'ABCDEFGH'
+  let pairing: PairingView = { step: 'idle' }
+  let phones: PhonesStatus['phones'] = []
+  const phonesStatus = (): PhonesStatus => ({
+    available: settings.relayHost !== null,
+    unavailableReason: settings.relayHost === null ? 'no-relay' : null,
+    relay: settings.relayHost === null ? 'stopped' : 'online',
+    relayOrigin: settings.relayHost === null ? null : `https://${settings.relayHost}`,
+    phones,
+    pairing,
+  })
   let remoteRequests: RemoteConsentRequest[] = [
     {
       id: 'cs_demo',
@@ -773,6 +788,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     listening: false,
     url: null,
     hosts: [],
+    relayUrl: null,
     tools: [
       ...remoteTools.map((t) => ({ ...t, enabled: false })),
       {
@@ -1566,6 +1582,67 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         return clone(setup)
       },
     },
+    phones: {
+      async status() {
+        enter('phones.status')
+        return clone(phonesStatus())
+      },
+      async startPairing() {
+        enter('phones.startPairing')
+        pairing = {
+          step: 'scan',
+          qr: 'valet-pair:eyJ2IjoxLCJkZW1vIjp0cnVlfQ',
+          expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+        }
+        // A phone scans the code a moment later.
+        setTimeout(() => {
+          if (pairing.step !== 'scan') return
+          pairing = {
+            step: 'confirm',
+            deviceName: 'Nick’s iPhone',
+            codes: ['204 816', '731 562', '958 340'].map((c) => c.replace(' ', '')),
+            attemptsLeft: 3,
+            expiresAt: pairing.expiresAt,
+          }
+          emit({ type: 'phones-changed' })
+        }, 2500)
+        emit({ type: 'phones-changed' })
+        return clone(pairing)
+      },
+      async confirmPairing(code) {
+        enter('phones.confirmPairing')
+        if (pairing.step !== 'confirm') return clone(pairing)
+        if (code === null) pairing = { step: 'failed', why: 'declined' }
+        else if (code !== '731562')
+          pairing =
+            pairing.attemptsLeft <= 1
+              ? { step: 'failed', why: 'too-many-attempts' }
+              : { ...pairing, attemptsLeft: pairing.attemptsLeft - 1 }
+        else {
+          pairing = { step: 'paired', deviceId: 'f'.repeat(32), deviceName: 'Nick’s iPhone' }
+          phones = [
+            {
+              deviceId: 'f'.repeat(32),
+              name: 'Nick’s iPhone',
+              pairedAt: new Date().toISOString(),
+              online: true,
+            },
+          ]
+        }
+        emit({ type: 'phones-changed' })
+        return clone(pairing)
+      },
+      async cancelPairing() {
+        enter('phones.cancelPairing')
+        pairing = { step: 'idle' }
+        emit({ type: 'phones-changed' })
+      },
+      async remove(deviceId) {
+        enter('phones.remove')
+        phones = phones.filter((p) => p.deviceId !== deviceId)
+        emit({ type: 'phones-changed' })
+      },
+    },
     remote: {
       async consents() {
         enter('remote.consents')
@@ -1708,6 +1785,9 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       setPendingReview(review) {
         reviews = [...reviews.filter((r) => r.adapterId !== review.adapterId), review]
         emit({ type: 'approvals-changed' })
+      },
+      setRelayUrl(url) {
+        remoteSetupChanged({ ...remoteSetup, relayUrl: url })
       },
       failNext(method, times = 1) {
         failing.set(method, times)

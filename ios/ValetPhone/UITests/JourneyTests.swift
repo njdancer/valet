@@ -176,7 +176,11 @@ final class JourneyTests: XCTestCase {
         return true
       }
     }
+    // On the tabs, the tab bar's glass and the scroll-edge fade above it lie over the last rows.
+    let tabBand = { (top: CGFloat(0), bottom: self.app.tabBars.firstMatch.frame.minY - 24) }
+    overlayBands = tabBand()
     try audit("Needs you")
+    overlayBands = nil
     openCard("1D99")
     // The action bar starts at its first control: the Mac-only reason, the code field, or Decline.
     let barTop = ["card.macOnly", "card.code", "card.readTick", "card.state", "card.decline"]
@@ -187,8 +191,10 @@ final class JourneyTests: XCTestCase {
     waitFor("card.close").tap()
     for tab in ["Activity", "Sites", "Agents", "Valet"] {
       app.tabBars.buttons[tab].tap()
+      overlayBands = tabBand()
       try audit(tab)
     }
+    overlayBands = nil
     XCTAssertTrue(issues.isEmpty, issues.joined(separator: "\n"))
   }
 

@@ -22,7 +22,17 @@ export const DEFAULT_SETTINGS: Settings = {
   onePasswordAccount: null,
   traceRetentionDays: DEFAULT_TRACE_RETENTION_DAYS,
   notifications: true,
+  relayHost: null,
 }
+
+/**
+ * A relay's host name: lower-case DNS labels, at least two, no port, no scheme. The relay is
+ * always reached over https on the default port.
+ */
+export const relayHostSchema = z
+  .string()
+  .max(253)
+  .regex(/^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$/)
 
 /** What DesktopAuth takes: an account name or UUID, trimmed, without control characters. */
 export const onePasswordAccountSchema = z.string().refine(isOnePasswordAccount)
@@ -50,6 +60,7 @@ const settingsSchema = z
     traceRetentionDays: traceRetentionDaysSchema.default(DEFAULT_TRACE_RETENTION_DAYS),
     // On unless the person turns it off: a notification only opens one of the app's own windows.
     notifications: z.boolean().default(true),
+    relayHost: relayHostSchema.nullable().default(null),
   })
   .strict()
 
@@ -74,6 +85,7 @@ export class SettingsStore {
       ...(patch.onePasswordAccount === undefined ? {} : { onePasswordAccount: patch.onePasswordAccount }),
       ...(patch.traceRetentionDays === undefined ? {} : { traceRetentionDays: patch.traceRetentionDays }),
       ...(patch.notifications === undefined ? {} : { notifications: patch.notifications }),
+      ...(patch.relayHost === undefined ? {} : { relayHost: patch.relayHost }),
     }
     return this.document.update((current) => ({ ...current, ...known }))
   }

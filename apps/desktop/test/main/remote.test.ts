@@ -102,6 +102,23 @@ describe('the remote policy', () => {
     await remote.setEnabled(true)
     expect(starts[0]).not.toHaveProperty('host')
   })
+
+  it('answers for the relay’s name beside the tunnel’s while the relay runs, and only while on', async () => {
+    const { remote, caller, starts } = make()
+    await remote.start(caller)
+    expect(remote.relayListener()).toBeNull()
+    remote.setRelayHost('m1.relay.example')
+    expect(remote.status().relayUrl).toBe('https://m1.relay.example/mcp')
+    expect(remote.relayConsent('c1', '', null)).toEqual({ state: 'expired' })
+    await remote.setEnabled(true)
+    expect(remote.relayListener()).toBe('http://127.0.0.1:41234/mcp')
+    expect([...(starts[0]?.hosts() ?? [])]).toEqual(['m1.relay.example'])
+    remote.setRelayHost(null)
+    expect(remote.status().relayUrl).toBeNull()
+    expect([...(starts[0]?.hosts() ?? [])]).toEqual([])
+    await remote.setEnabled(false)
+    expect(remote.relayListener()).toBeNull()
+  })
 })
 
 describe('the tray', () => {
@@ -110,6 +127,7 @@ describe('the tray', () => {
     listening: false,
     url: null,
     hosts: [],
+    relayUrl: null,
     clients: 0,
     pendingConsents: 0,
     sessions: 0,

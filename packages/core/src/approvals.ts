@@ -284,6 +284,39 @@ export const requesterSchema = z.discriminatedUnion('kind', [
 ])
 export type Requester = z.infer<typeof requesterSchema>
 
+/** What the card shows besides the subject (see `display` below). Every key here must also parse on the phone. */
+export const requestDisplaySchema = z
+  .object({
+    because: displayText(200).optional(),
+    client: z
+      .object({ label: displayText(100), badge: z.enum(['local', 'remote', 'app', 'person']) })
+      .strict()
+      .optional(),
+    /** The site's registrable domain, from the manifest's origins by the Mac. */
+    domain: z
+      .string()
+      .regex(/^[a-z0-9.-]{1,253}$/)
+      .optional(),
+    followOns: z.array(displayText(120)).max(10).optional(),
+    checks: z.array(displayText(200)).max(20).optional(),
+    /**
+     * The tests the agent wrote, as Valet ran them (F's ask): counted apart from `checks`,
+     * which are Valet's own, so the card can't let an agent's tests pass for Valet's checks.
+     */
+    agentTests: z
+      .object({ passed: z.number().int().min(0).max(10_000), failed: z.number().int().min(0).max(10_000) })
+      .strict()
+      .optional(),
+    fromAdapter: z
+      .object({
+        siteName: displayText(80).optional(),
+        toolTitles: z.record(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/), displayText(80)).optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+
 const requestBase = {
   v: z.literal(1),
   id: requestIdSchema,
@@ -311,38 +344,7 @@ const requestBase = {
    * text, so the signature covers it. `fromAdapter` is text the adapter's author wrote: cards show
    * it as "the adapter says", never as a headline.
    */
-  display: z
-    .object({
-      because: displayText(200).optional(),
-      client: z
-        .object({ label: displayText(100), badge: z.enum(['local', 'remote', 'app', 'person']) })
-        .strict()
-        .optional(),
-      /** The site's registrable domain, from the manifest's origins by the Mac. */
-      domain: z
-        .string()
-        .regex(/^[a-z0-9.-]{1,253}$/)
-        .optional(),
-      followOns: z.array(displayText(120)).max(10).optional(),
-      checks: z.array(displayText(200)).max(20).optional(),
-      /**
-       * The tests the agent wrote, as Valet ran them (F's ask): counted apart from `checks`,
-       * which are Valet's own, so the card can't let an agent's tests pass for Valet's checks.
-       */
-      agentTests: z
-        .object({ passed: z.number().int().min(0).max(10_000), failed: z.number().int().min(0).max(10_000) })
-        .strict()
-        .optional(),
-      fromAdapter: z
-        .object({
-          siteName: displayText(80).optional(),
-          toolTitles: z.record(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/), displayText(80)).optional(),
-        })
-        .strict()
-        .optional(),
-    })
-    .strict()
-    .optional(),
+  display: requestDisplaySchema.optional(),
 }
 
 const requestOf = <K extends ApprovalKind>(kind: K) =>

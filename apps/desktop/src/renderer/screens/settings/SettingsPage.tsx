@@ -31,12 +31,14 @@ import { formatTime } from '../../lib/format'
 import { href, type SettingsSection } from '../../lib/router'
 import { updatesOffWording } from '../../lib/wording'
 import { Failed } from '../connections/shared'
+import { DevicesSection } from './DevicesSection'
 
 const SECTIONS: readonly { readonly id: SettingsSection; readonly label: string }[] = [
   { id: 'general', label: 'General' },
   { id: 'notifications', label: 'Notifications' },
   { id: 'data', label: 'Data and privacy' },
   { id: 'updates', label: 'Updates' },
+  { id: 'devices', label: 'Devices' },
   { id: 'reset', label: 'Reset and uninstall' },
 ]
 
@@ -65,6 +67,7 @@ export function SettingsPage({ section }: { readonly section: SettingsSection })
         {section === 'notifications' && s !== null ? <Notifications settings={s} set={set} /> : null}
         {section === 'data' && s !== null ? <Data settings={s} set={set} /> : null}
         {section === 'updates' ? <Updates settings={s} set={set} /> : null}
+        {section === 'devices' ? <DevicesSection /> : null}
         {section === 'reset' ? <Reset /> : null}
       </PageBody>
     </Page>

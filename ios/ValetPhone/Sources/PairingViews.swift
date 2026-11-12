@@ -42,6 +42,17 @@ struct PairStartView: View {
             Text("This iPhone can't scan codes.").foregroundStyle(.secondary)
           }
           #if VALET_FAKES
+            if host.pairFrom != nil {
+              // The simulator has no camera: the test build reads the code the Mac shows.
+              Button {
+                Task { if let qr = await host.pairingTextFromMac() { model.pair(qr: qr, name: name) } }
+              } label: {
+                Label("Use the code on the Mac (Simulator)", systemImage: "desktopcomputer").frame(maxWidth: .infinity)
+              }
+              .buttonStyle(.bordered)
+              .controlSize(.large)
+              .accessibilityIdentifier("pair.fromMac")
+            }
             if host.world != nil {
               Button("Use the test Mac\u{2019}s code") {
                 if let qr = host.fakeQR { model.pair(qr: qr, name: name) }
@@ -84,11 +95,13 @@ struct PairingView: View {
         Text("If none of them match, choose None of these on your Mac. Someone else may be trying to pair.")
           .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
         #if VALET_FAKES
-          HStack {
-            Button("Mac: matches") { host.confirmAtFakeMac() }.accessibilityIdentifier("fake.mac.confirm")
-            Button("Mac: none of these") { host.rejectAtFakeMac() }.accessibilityIdentifier("fake.mac.reject")
+          if host.world != nil {
+            HStack {
+              Button("Mac: matches") { host.confirmAtFakeMac() }.accessibilityIdentifier("fake.mac.confirm")
+              Button("Mac: none of these") { host.rejectAtFakeMac() }.accessibilityIdentifier("fake.mac.reject")
+            }
+            .buttonStyle(.bordered)
           }
-          .buttonStyle(.bordered)
         #endif
       case let .failed(failure):
         Image(systemName: "xmark.octagon").font(.largeTitle).accessibilityHidden(true)

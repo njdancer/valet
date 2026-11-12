@@ -24,6 +24,11 @@ struct NeedsYouView: View {
           Section {
             Text("Your Mac sent something this version of Valet doesn\u{2019}t understand. Update the app, then look on your Mac.")
           }
+        } else if model.unreadable > 0 {
+          Section {
+            Text("Your Mac sent a request this phone couldn\u{2019}t read. Answer it on your Mac.")
+              .accessibilityIdentifier("needs.unreadable")
+          }
         }
         if !model.handoffs.isEmpty {
           Section(header: SectionHeader("Logins")) {

@@ -41,6 +41,20 @@ describe('settings', () => {
     expect(screen.getByRole('link', { name: 'Open Secrets' }).getAttribute('href')).toBe('#/secrets')
   })
 
+  it('sets the relay by host name, and refuses what isn’t one', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    renderPage(api, <SettingsPage section="devices" />)
+    const field = await screen.findByRole('textbox', { name: 'Relay host name' })
+    await user.clear(field)
+    await user.type(field, 'not a host')
+    expect(screen.getByText('Enter a host name, like relay.example.com')).toBeTruthy()
+    await user.clear(field)
+    await user.type(field, 'https://Relay.Valet.Example/')
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(called(api, 'settings.set')).toEqual([[{ relayHost: 'relay.valet.example' }]])
+  })
+
   it('turns notifications off', async () => {
     const user = userEvent.setup()
     const api = createFakeApi({ now: NOW })

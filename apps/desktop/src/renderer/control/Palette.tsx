@@ -16,6 +16,7 @@ const SECTION_LABEL: Record<SettingsSection, string> = {
   notifications: 'Notifications',
   data: 'Data and privacy',
   updates: 'Updates',
+  devices: 'Devices',
   reset: 'Reset and uninstall',
 }
 

@@ -6,7 +6,14 @@
 // The software signer here is for tests and for dev builds without the helper. It signs without
 // asking anyone, so a release build must never construct one (see `allowSoftwareSigner`).
 
-import { createPrivateKey, createPublicKey, generateKeyPairSync, type KeyObject, sign } from 'node:crypto'
+import {
+  createPrivateKey,
+  createPublicKey,
+  diffieHellman,
+  generateKeyPairSync,
+  type KeyObject,
+  sign,
+} from 'node:crypto'
 import { type SerializedRequest, SIGNING_DOMAINS, type SigningDomain, signingInput } from '@valet/core'
 import { promptReason } from './prompts'
 
@@ -26,6 +33,27 @@ export interface MacSigner {
    * they cancelled or failed the prompt; never throws for that.
    */
   signDecision(request: SerializedRequest, payload: string): Promise<string | null>
+  /**
+   * The phone channel's key operations (docs/relay-worker.md), or undefined where this signer
+   * can't do them.
+   */
+  readonly channel?: ChannelKeys
+}
+
+/** What the phone channel needs from the Mac's keys. No private key ever leaves them. */
+export interface ChannelKeys {
+  /** The transport key's raw signature over `valet/relay-auth/v1\n<payload>`. No presence needed. */
+  signTransport(payload: string): Promise<string>
+  /** The agreement key's half of an ECDH with `peer`: the shared point's x coordinate. */
+  agree(peer: KeyObject): Promise<Buffer>
+  /**
+   * The approval key's signature over `<domain>\n<payload>` for things the person already
+   * approved: device records after a `device-pair` approval, the pairing challenge, the relay
+   * binding. Null if the prompt was cancelled.
+   */
+  signApproval(domain: SigningDomain, payload: string, reason: string): Promise<string | null>
+  /** Several payloads under one prompt (a pairing's two device records). Null if cancelled. */
+  signApprovals?(domain: SigningDomain, payloads: readonly string[], reason: string): Promise<string[] | null>
 }
 
 /** Release builds use only the Secure Enclave helper. */
@@ -75,6 +103,7 @@ export class SoftwareSigner implements MacSigner {
   private readonly agreement: Pair
   /** Every reason a prompt was shown with, in order. */
   readonly prompts: string[] = []
+  readonly channel: ChannelKeys
 
   /** `keys`: a dev build's kept keys, so its identity (and so its evidence) survives a restart. */
   constructor(
@@ -84,6 +113,15 @@ export class SoftwareSigner implements MacSigner {
     this.approval = keys === undefined ? p256() : fromPkcs8(keys.approval)
     this.transport = keys === undefined ? p256() : fromPkcs8(keys.transport)
     this.agreement = keys === undefined ? p256() : fromPkcs8(keys.agreement)
+    this.channel = {
+      signTransport: async (payload) =>
+        sign('sha256', signingInput(SIGNING_DOMAINS.relayAuth, payload), {
+          key: this.transport.privateKey,
+          dsaEncoding: 'ieee-p1363',
+        }).toString('base64url'),
+      agree: async (peer) => diffieHellman({ privateKey: this.agreement.privateKey, publicKey: peer }),
+      signApproval: (domain, payload, reason) => this.sign(domain, payload, reason),
+    }
   }
 
   async keys(): Promise<MacKeys> {

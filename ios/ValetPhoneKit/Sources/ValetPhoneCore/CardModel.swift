@@ -78,6 +78,8 @@ public struct Card: Equatable, Sendable {
   public let becauseIsCaution: Bool
   /// Checks Valet ran, and follow-on requests, from the Mac's display block.
   public let checks: [String]
+  /// The agent's own tests, as Valet ran them ("The agent’s 3 tests passed"). Never shown as a check.
+  public let agentTests: String?
   public let followOns: [String]
   /// What the Face ID prompt says. Mac-written words only.
   public let faceIDReason: String
@@ -321,11 +323,19 @@ public enum CardModel {
       because: because,
       becauseIsCaution: becauseIsCaution,
       checks: display.checks,
+      agentTests: display.agentTests.map(agentTestsLine),
       followOns: display.followOns,
       faceIDReason: faceIDReason,
       createdAt: request.createdAt,
       expiresAt: request.expiresAt
     )
+  }
+
+  static func agentTestsLine(_ t: RequestDisplay.AgentTests) -> String {
+    let total = t.passed + t.failed
+    let noun = total == 1 ? "test" : "tests"
+    if t.failed == 0 { return "The agent\u{2019}s \(total) \(noun) passed when Valet ran them" }
+    return "The agent\u{2019}s \(noun): \(t.passed) passed, \(t.failed) failed when Valet ran them"
   }
 
   struct AgentLabel {

@@ -171,7 +171,12 @@ export function tempDir(prefix: string): string {
 export async function launch(
   userData: string,
   appPath = appDir,
-  options: { readonly setup?: boolean; readonly installFolder?: string } = {},
+  options: {
+    readonly setup?: boolean
+    readonly installFolder?: string
+    /** More environment for the app, such as a relay to pair phones through (walkthrough.spec.ts). */
+    readonly env?: Readonly<Record<string, string>>
+  } = {},
 ): Promise<Launched> {
   const env: Record<string, string> = {}
   for (const [key, value] of Object.entries(process.env)) {
@@ -187,6 +192,7 @@ export async function launch(
       VALET_USER_DATA: userData,
       ...(options.setup === true ? { VALET_E2E_SETUP: '1' } : {}),
       ...(options.installFolder === undefined ? {} : { VALET_E2E_INSTALL_FOLDER: options.installFolder }),
+      ...options.env,
     },
   })
   const logs: string[] = []
