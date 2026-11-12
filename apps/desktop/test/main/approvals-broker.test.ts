@@ -306,6 +306,39 @@ describe('asking', () => {
     expect(await t.broker.request('tool-enable', tool({ tool: 'get_z' }), person)).toMatchObject({ ok: true })
   })
 
+  it('replaces the asker’s own earlier request in one step, only once the new one is made', async () => {
+    const t = await setup()
+    for (const name of ['get_a', 'get_b']) await requested(t, tool({ tool: name }))
+    const earlier = await requested(t, tool({ tool: 'get_c' }))
+    // At the limit of 3 waiting, a replacement still goes through: the one it replaces doesn't count.
+    const next = await t.broker.request('tool-enable', tool({ tool: 'get_d' }), agent(), {
+      replaces: earlier,
+    })
+    expect(next).toMatchObject({ ok: true, reused: false })
+    expect(t.broker.list().map((p) => p.request.subject)).not.toContainEqual(tool({ tool: 'get_c' }))
+    expect(answered(t.events).at(-1)).toMatchObject({
+      requestId: earlier,
+      answer: 'withdrawn',
+      reason: 'replaced',
+    })
+  })
+
+  it('keeps an earlier request when the replacement is refused, and never replaces another asker’s', async () => {
+    const t = await setup()
+    const theirs = await requested(t, tool({ tool: 'get_a' }), agent('other'))
+    const mine = await requested(t, tool({ tool: 'get_b' }))
+    await t.broker.request('tool-enable', tool({ tool: 'get_c' }), agent(), { replaces: theirs })
+    expect(t.broker.list().map((p) => p.request.id)).toContain(theirs)
+
+    // Cooling down after a decline: refused, and the earlier request is left waiting.
+    const declined = await requested(t, tool({ tool: 'get_d' }))
+    await t.broker.decline(declined, { via: 'mac' }, { stopAsking: true })
+    expect(
+      await t.broker.request('tool-enable', tool({ tool: 'get_e' }), agent(), { replaces: mine }),
+    ).toMatchObject({ ok: false, reason: 'cooling-down' })
+    expect(t.broker.list().map((p) => p.request.id)).toContain(mine)
+  })
+
   it('caps the requests an agent makes in a day, withdrawn ones included', async () => {
     const t = await setup()
     for (let n = 0; n < 20; n++) {

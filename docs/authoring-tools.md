@@ -322,8 +322,8 @@ site, which is why the card separates them.
    - `subject` from D's `installSubject`: `source: 'draft'`, the hashes, `previousHash` and
      `changes` against the last **approved** snapshot (as D does for every install, so an
      unapproved folder version in between can't hide a widening), `inheritsSession` from whether
-     the adapter's partitions hold a session or it has grants (B; D's code checks only grants
-     today), `unsandboxed` from the manifest, `references` from the agent (shown as a claim);
+     the adapter's tool partition holds a cookie on its cookie domains (failing closed) or it has
+     grants (B), `unsandboxed` from the manifest, `references` from the agent (shown as a claim);
    - `requester`: the agent, by its credential;
    - `extras.agentNote`: the agent's note; `context: { kind: 'draft', draftId }` (or `repair`);
      `display.checks`: Valet's check lines only; `display.agentTests: { passed, failed }` for the

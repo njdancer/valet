@@ -122,6 +122,12 @@ export interface RequestExtras {
    * the pending request, in memory, never in the request itself: the person must type it.
    */
   readonly consentCode?: string
+  /**
+   * The asker's own waiting request this one replaces (a draft submitted again). It is withdrawn,
+   * as replaced, only once this one is made, and doesn't count against the asker's limits; refused,
+   * the earlier one stays as it was. Another asker's request, or one no longer waiting, is ignored.
+   */
+  readonly replaces?: string
 }
 
 /** What the person entered on the Mac's card, signed into the decision. */
@@ -301,9 +307,13 @@ export class ApprovalBroker {
       context,
       display,
       consentCode,
+      replaces,
     } = typeof extras === 'string' || extras === null ? { agentNote: extras } : extras
     return this.exclusive(async () => {
-      const refusal = this.refusal(kind, subject, requester)
+      const earlier = replaces === undefined ? undefined : this.pending.get(replaces)
+      const replacing =
+        earlier !== undefined && sameAsker(earlier.request.requester, requester) ? earlier : undefined
+      const refusal = this.refusal(kind, subject, requester, replacing?.request.id)
       if (refusal !== null) return refusal
       if (kind === 'remote-client') {
         if (consentCode === undefined || !consentCodeSchema.safeParse(consentCode).success) {
@@ -320,6 +330,8 @@ export class ApprovalBroker {
           canonicalJson(p.request.subject) === canonicalJson(subject),
       )
       if (existing !== undefined && kind !== 'remote-client') {
+        if (replacing !== undefined && replacing.request.id !== existing.request.id)
+          await this.close(replacing, 'withdrawn', null, 'replaced')
         return {
           ok: true,
           requestId: existing.request.id,
@@ -369,6 +381,7 @@ export class ApprovalBroker {
       }
       this.pending.set(id, serialized)
       if (kind === 'remote-client' && consentCode !== undefined) this.consentCodes.set(id, consentCode)
+      if (replacing !== undefined) await this.close(replacing, 'withdrawn', null, 'replaced')
       if (approvableOn(kind, subject).includes('phone')) {
         for (const phone of this.options.devices.activePhones()) {
           this.options.outbox?.send(phone.deviceId, {
@@ -765,7 +778,12 @@ export class ApprovalBroker {
     await this.expireDue()
   }
 
-  private refusal(kind: ApprovalKind, subject: ApprovalSubject, requester: Requester): RequestResult | null {
+  private refusal(
+    kind: ApprovalKind,
+    subject: ApprovalSubject,
+    requester: Requester,
+    replacing?: string,
+  ): RequestResult | null {
     const refuse = (reason: RequestRefusal, until?: number): RequestResult =>
       until === undefined
         ? { ok: false, reason }
@@ -786,7 +804,9 @@ export class ApprovalBroker {
     const now = this.now()
     const until = cooldownUntil(this.options.ledger.data.declines, requester.clientId, now)
     if (until !== null) return refuse('cooling-down', until)
-    const fromAgents = this.list().filter((p) => p.request.requester.kind === 'agent')
+    const fromAgents = this.list().filter(
+      (p) => p.request.requester.kind === 'agent' && p.request.id !== replacing,
+    )
     const sameSubject = (p: SerializedRequest) =>
       p.request.kind === kind &&
       sameAsker(p.request.requester, requester) &&

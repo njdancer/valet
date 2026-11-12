@@ -34,6 +34,7 @@ import {
   type SessionDriver,
   type SettingChoice,
   settingToolNames,
+  type ToolDeclaration,
   ValetError,
 } from '@valet/core'
 import { FileGrantStore } from '@valet/credentials'
@@ -756,6 +757,14 @@ export class AppService {
     await this.remote.setTool(adapterId, declaration, enabled)
   }
 
+  /** The tool's declaration in the adapter in use, unless it is one of its setting tools. */
+  private remoteDeclared(adapterId: string, tool: string): ToolDeclaration | null {
+    const adapter = this.adapter(adapterId)
+    const declaration = adapter?.definition.manifest.tools.find((t) => t.name === tool)
+    if (adapter === null || declaration === undefined) return null
+    return settingToolNames(adapter.definition.manifest).has(tool) ? null : declaration
+  }
+
   /** The tool as remote access would turn it on or off, or not-found when it can't be. */
   private async remoteToolDeclaration(adapterId: string, tool: string, enabled: boolean) {
     const adapter = this.adapter(adapterId)
@@ -1303,13 +1312,35 @@ export class AppService {
       },
       // A tool turned on for remote clients (all of them; one client's own list is consent's).
       'tool-enable': {
-        precheck: (subject) =>
-          subject.scope === 'remote' &&
-          subject.clientId === null &&
-          this.adapter(subject.adapterId)?.hash === subject.adapterHash,
-        apply: (subject) => this.setRemoteTool(subject.adapterId, subject.tool, true),
+        precheck: (subject) => {
+          if (subject.scope !== 'remote' || this.adapter(subject.adapterId)?.hash !== subject.adapterHash)
+            return false
+          if (subject.clientId === null) return true
+          // One client's own: only a tool already on for remote clients, added to its grant.
+          const client = remoteClientKey(subject.clientId)
+          const declaration = this.remoteDeclared(subject.adapterId, subject.tool)
+          return (
+            client !== null &&
+            declaration !== null &&
+            this.remote.canAllowForClient(subject.adapterId, declaration, client)
+          )
+        },
+        apply: async (subject) => {
+          if (subject.clientId === null) return this.setRemoteTool(subject.adapterId, subject.tool, true)
+          const client = remoteClientKey(subject.clientId)
+          const declaration = this.remoteDeclared(subject.adapterId, subject.tool)
+          if (
+            client === null ||
+            declaration === null ||
+            !(await this.remote.allowForClient(subject.adapterId, declaration, client))
+          )
+            throw new ValetError('config', 'not-found')
+        },
         supersedes: (next, older) =>
-          next.adapterId === older.adapterId && next.tool === older.tool && next.scope === older.scope,
+          next.adapterId === older.adapterId &&
+          next.tool === older.tool &&
+          next.scope === older.scope &&
+          next.clientId === older.clientId,
       },
       // A remote client's consent, approved with the code the person typed from their browser.
       'remote-client': {
@@ -1590,6 +1621,24 @@ export class AppService {
   }
 
   /**
+   * Whether the adapter's tool partition holds a session a new version would inherit: any cookie
+   * on the cookie domains of the version in use. Fails closed: a partition that can't be read
+   * counts as holding one.
+   */
+  private async holdsSession(adapterId: string): Promise<boolean> {
+    const driver = this.drivers.get(adapterId)
+    const adapter = this.adapter(adapterId)
+    if (driver === undefined || adapter === null) return false
+    const { cookieDomains } = adapter.definition.manifest.session
+    if (cookieDomains.length === 0) return false
+    try {
+      return (await driver.cookieNames(cookieDomains)).length > 0
+    } catch {
+      return true
+    }
+  }
+
+  /**
    * Whether this version would run without the sandbox here: its manifest says unsandboxed, or this
    * build has no sandbox and it isn't one of the app's own built-ins (B). Built in means the hash
    * this app ships, never a stored version's source tag, which anything can write.
@@ -1647,7 +1696,8 @@ export class AppService {
       files: adapter.files,
       previous,
       source,
-      inheritsSession: previous !== null && grants.some((g) => g.adapterId === id),
+      inheritsSession:
+        previous !== null && (grants.some((g) => g.adapterId === id) || (await this.holdsSession(id))),
       unsandboxed: this.runsUnsandboxed(adapter),
     })
     if (!(await this.approveHere('adapter-install', subject))) return false
@@ -2056,8 +2106,6 @@ export class AppService {
     }
     const { adapter } = prepared
     const id = adapter.definition.manifest.id
-    // The draft's earlier request goes first, so the person never sees two of one draft.
-    if (request.replaces !== null) await broker.withdraw(request.replaces, requester).catch(() => false)
     let staged = false
     let stagedNew = false
     try {
@@ -2090,7 +2138,8 @@ export class AppService {
         files: adapter.files,
         previous: previous === null ? null : { hash: previous.hash, manifest: previous.manifest },
         source: 'draft',
-        inheritsSession: previous !== null && grants.some((g) => g.adapterId === id),
+        inheritsSession:
+          previous !== null && (grants.some((g) => g.adapterId === id) || (await this.holdsSession(id))),
         unsandboxed: this.runsUnsandboxed(adapter),
       }),
       references: request.references.filter((r) => /^https:\/\/\S{1,490}$/.test(r)).slice(0, 10),
@@ -2098,6 +2147,9 @@ export class AppService {
     const asked = await broker.request('adapter-install', subject, requester, {
       agentNote: request.agentNote === null ? null : request.agentNote.slice(0, 280),
       context: { kind: 'draft', draftId: request.draftId },
+      // The draft's earlier request, withdrawn as replaced only once this one is made, so the
+      // person never sees two of one draft and a refused resubmission leaves the earlier one.
+      ...(request.replaces === null ? {} : { replaces: request.replaces }),
       display: {
         client: {
           label: request.requester.clientName,
@@ -3348,6 +3400,11 @@ function confirmationPreview(item: ConfirmationItem): string[] {
     if (kept !== undefined) lines.push(kept)
   }
   return lines.slice(0, 20)
+}
+
+/** A remote client's registration id from its `remote:<id>` name, or null for any other. */
+function remoteClientKey(clientId: string): string | null {
+  return clientId.startsWith('remote:') && clientId.length > 7 ? clientId.slice(7) : null
 }
 
 /** The value a signed decision picked on a card with choices, if any. */

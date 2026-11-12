@@ -848,6 +848,21 @@ describe('pieces', () => {
     expect(clients.remove('rcnobodynobodynobody')).toBe(false)
   })
 
+  it('adds tools to a grant it already holds, keeping its refresh token, and never makes a grant', () => {
+    const clients = new RemoteClients()
+    const { registration } = clients.register(
+      { redirectUris: [REDIRECT], clientName: null, authMethod: 'none' },
+      null,
+    )
+    expect(clients.addTools(registration.id, ['woolworths.view_cart'])).toBe(false)
+    expect(clients.get(registration.id)?.grant).toBeNull()
+    const refresh = clients.grant(registration.id, ['woolworths.view_cart'], RESOURCE)
+    expect(clients.addTools(registration.id, ['woolworths.search', 'woolworths.view_cart'])).toBe(true)
+    expect(clients.get(registration.id)?.grant?.tools).toEqual(['woolworths.search', 'woolworths.view_cart'])
+    expect(clients.addTools(registration.id, ['Not A Tool'])).toBe(false)
+    expect(clients.refresh(registration.id, refresh)).toMatchObject({ ok: true })
+  })
+
   it('counts wrong codes afresh once nothing is pending', () => {
     let now = 0
     const consents = new ConsentRequests({ now: () => now })

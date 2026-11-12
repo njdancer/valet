@@ -68,6 +68,7 @@ import {
   type MacApprovalKeys,
   SoftwareSigner,
   softwareKeysAt,
+  toolEnableSubject,
 } from '../../src/main/core/approvals'
 import type { ClientRegistry } from '../../src/main/core/clients'
 import { dataPaths } from '../../src/main/core/constants'
@@ -602,6 +603,38 @@ describe('an update', () => {
       version: '1.1.0',
     })
     expect((await restarted.api.adapters.list())[0]?.secrets).toEqual([{ name: 'login', granted: false }])
+  })
+})
+
+describe('an update and the signed-in session', () => {
+  async function update(cookies: string[]) {
+    const first = await approved()
+    first.driver.toolCookies = cookies
+    await first.service.stop()
+    const next = builtinAdapter(shopDefinition({ ...SHOP, version: '1.1.0' }), {
+      ...SHOP_FILES,
+      'src/index.ts': 'v2\n',
+    })
+    const restarted = new AppService({
+      ...(first.service as unknown as { deps: ConstructorParameters<typeof AppService>[0] }).deps,
+      adapters: [next],
+    })
+    services.push(restarted)
+    await restarted.start()
+    await restarted.api.approvals.approve('shop', next.hash)
+    const broker = (restarted as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
+    return (inherits: boolean) =>
+      broker.honoured('adapter-install', (s) => s.adapterHash === next.hash && s.inheritsSession === inherits)
+  }
+
+  it('tells the card a new version inherits the session its tool partition holds, with no grants', async () => {
+    const signed = await update(['sid'])
+    expect(signed(true)).not.toBeNull()
+  })
+
+  it('says nothing is inherited when the partition holds no cookie and there are no grants', async () => {
+    const signed = await update([])
+    expect(signed(false)).not.toBeNull()
   })
 })
 
@@ -2239,6 +2272,49 @@ describe('remote access', () => {
       sessions: 1,
       tools: ['shop.echo'],
     })
+  })
+
+  it('adds a tool already on for remote clients to an agent’s own grant, with Touch ID, and nothing more', async () => {
+    const s = await approved()
+    await s.service.setRemoteTool('shop', 'echo', true)
+    await s.service.setRemoteTool('shop', 'add', true)
+    const mine = approvedClient(s, ['shop.echo'])
+    const theirs = approvedClient(s, ['shop.echo'])
+    const broker = (s.service as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
+    const declared = (name: string) => {
+      const found = s.adapter.definition.manifest.tools.find((t) => t.name === name)
+      if (found === undefined) throw new Error(name)
+      return found
+    }
+    const ask = async (tool: string) => {
+      const subject = toolEnableSubject(
+        s.adapter.definition.manifest,
+        s.adapter.hash,
+        tool,
+        'remote',
+        `remote:${mine.id}`,
+      )
+      if (subject === null) throw new Error(tool)
+      const asked = await broker.request('tool-enable', subject, {
+        kind: 'agent',
+        clientId: `remote:${mine.id}`,
+        clientName: 'claude.ai',
+      })
+      if (!asked.ok) throw new Error(asked.reason)
+      return asked.requestId
+    }
+
+    expect(await broker.approveOnMac(await ask('add'))).toEqual({ ok: true })
+    expect(s.service.remote.allows('shop', declared('add'), mine.id)).toBe(true)
+    expect(s.service.remote.allows('shop', declared('add'), theirs.id)).toBe(false)
+
+    // A tool that isn't on for remote clients stays off: the request is stale, never applied.
+    await s.service.setRemoteTool('shop', 'echo', false)
+    s.service.remote.clients.grant(mine.id, ['shop.add'], REMOTE_RESOURCE)
+    const stale = await ask('echo')
+    expect(await broker.approveOnMac(stale)).toMatchObject({ ok: false })
+    expect(s.service.remote.allows('shop', declared('echo'))).toBe(false)
+    expect(s.service.remote.clients.get(mine.id)?.grant?.tools).toEqual(['shop.add'])
   })
 
   it('refuses and audits a call to a tool turned off since the client listed it', async () => {
