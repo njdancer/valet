@@ -259,7 +259,7 @@ contracts. Recorded here as each signs:
 | E      | Section 5's tool table and wording; scoping of See Valet                                                   | waiting |
 | F      | Drafts frozen on submit, checks vs tests, reproduction check on Valet-recorded fixtures, private addresses | waiting |
 | G      | Consent through the relay, Accept new agents, offline behaviour, lock at the relay, recovery page          | waiting |
-| H      | The iOS IA, card layout at AX sizes, VoiceOver order, notifications without actions, Face ID to open       | waiting |
+| H      | The iOS IA, card layout at AX sizes, VoiceOver order, notifications without actions, Face ID to open       | signed  |
 
 **B's notes** (contracts in `packages/core`, design in `docs/agent-run-security.md`):
 
@@ -284,3 +284,22 @@ contracts. Recorded here as each signs:
 - **Passcode for neutral cards** (open question 3): today the phone's key accepts Face ID only
   (`.biometryCurrentSet`). If Nick says yes, the phone gets a second, passcode-capable key for
   neutral kinds only; that is a contract addition, not a change.
+
+**H's notes** (the app in `ios/`, design in `docs/ios-app.md`):
+
+- **The iOS IA:** matches. Five tabs (Needs you, Activity, Sites, Agents, Valet), cards as a
+  sheet over Needs you, pairing before anything else. Sites and Agents show the Mac's `status`
+  message; anything that loosens is an `ask`, and the Mac builds the card.
+- **Card layout at AX sizes:** the parts are in section 2's order with the actions pinned at the
+  bottom, so Approve stays reachable at the largest size. A simulator test opens a card at the
+  largest accessibility size in dark mode and keeps the screenshot.
+- **VoiceOver order:** the heading group, risk line, what changes and Because, then the actions,
+  with each part combined into one element. Every tab passes Xcode's accessibility audit in CI.
+- **Notifications without actions:** yes. A notification only opens the app; Approve always needs
+  the card on screen for a second and a Face ID match. Titles are B's fixed text until the Mac can
+  seal them (CR-8), and push itself waits for Nick's Apple Developer account.
+- **Face ID to open:** yes, with a cover over the app switcher snapshot. Opening falls back to
+  the passcode; approving never does (B's note above).
+- **Departures:** six digits instead of words (B), no passcode on neutral cards yet, and no
+  recovery code, Pause this site, Secrets or Add an agent on the phone until B and G design them.
+  The full list is in `docs/ios-app.md`, "Where H departs from A's wireframes".
