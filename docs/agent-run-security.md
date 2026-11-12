@@ -496,6 +496,14 @@ Asked for by D, G and H while building, 2026-11-12. Accepted unless marked other
    the Mac refuses a mismatch (`wrong-code`, given the issued code through `consentCode`).
    Consents have their own bucket (`consentPending`, `consentPerSourcePerHour`) outside
    `pendingTotal`.
+8. **`confirmationId` on an irreversible call** (`cf_…`), so two `ctx.confirm` questions in one
+   call are two requests.
+9. **Loosening paths outside `ADMIN_ACTION_TIERS`** (approval-broker.md, "Every loosening
+   path"), agreed: lifting Valet's in-memory Pause and a site's breaker pause are clicks;
+   `grants.resync` keeps the same item, origins and fields, so it doesn't widen; Messages OTP,
+   remote on and remote hosts become `setting` requests. One condition: adding a local client is
+   unsigned but notifies on the Mac and phone like any Notify action, so a client that appears
+   without the person is seen.
 
 **From A (screens), signing off section 10 of the information architecture:**
 

@@ -466,6 +466,7 @@ describe('stored evidence', () => {
         adapterHash: 'a'.repeat(64),
         tool: 'checkout',
         callId: 'c1',
+        confirmationId: 'cf_1',
         preview: ['Place order'],
       },
     } as ApprovalRequest)
