@@ -41,6 +41,10 @@ Proposed by A with that answer, **not confirmed by Nick**:
 - A 24-hour cooling-off before a newly signed-in device can approve, unless a device the person
   already has says yes, and the same after a recovery that resets 2FA.
 
+Nick also answered **the phone passcode** (A's open question 3): the passcode always works in
+place of Face ID for approvals, as on any iPhone. He accepted that someone with the phone and
+its passcode could approve what a phone can; Mac-only approvals stay Mac only.
+
 Also from the same message: adapters must be installable after the app is built (resolves D11:
 needed now), and a web view of auditing and monitoring would be nice but raises data concerns
 (D78, open).

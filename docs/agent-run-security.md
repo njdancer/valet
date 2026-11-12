@@ -10,6 +10,21 @@ The types this document names are in `packages/core` (`signing.ts`, `devices.ts`
 Status marks are the security model's: **Contract** means the types and checks are in core with
 tests but nothing uses them yet; **Designed** means decided here and not built.
 
+## Who this guards against first
+
+Nick, 2026-11-12: "I don't think our threat model is that strict. These approvals are to limit
+what we expose to the models." So the main adversary is **the agent**: a model that overreaches,
+or one steered by a page or a reference adapter it read. Everything aimed at that stays: the
+tiers, signed approvals (an agent with access to the Mac could otherwise fake a click), the
+sandbox and its exceptions, agents never seeing secrets, and the Mac building every card.
+
+Stronger attackers (a thief with the phone and its passcode, a compromised relay or service, a
+breach of the person's accounts) come second. What is built against them stays where it is
+cheap, but it isn't extended, and any of it that gets in the person's way is removed rather than
+defended: the recovery page, the relay-side lock, a new-device cooling-off, Face ID-only cards
+(already dropped for "Passcode always works"). The test for any new rule is whether it stops an
+agent.
+
 ## Summary
 
 - **Agents can do anything that only reads or tightens. Anything that widens what an adapter, a
@@ -282,6 +297,23 @@ How workstreams E and F stay inside guarantee 3. **Designed**.
   at most 60 minutes, listed origins only, ended by the person at any time, every action audited.
   During one, the agent drives the tool partition through the same capability API adapter code
   uses, so it still never sees a secret, and egress is still the adapter's manifest.
+- **F's design** (docs/authoring-tools.md), agreed 2026-11-12:
+  - Narrower than the line above: no agent drives a signed-in session. Signed-in work is only
+    trials of **read** tools (GET only), judged against the **installed** manifest's surface and
+    purposes, in an in-memory partition the session is copied into one way.
+  - The scratch browser refuses an installed signed-in adapter's domain unless the draft updates
+    that adapter, and then shares its breaker and rate budget.
+  - Draft edits and checks aren't audited one by one; creating, submitting, deleting and trials
+    are, and the submit record carries the package hash.
+  - Fixtures count as "recorded by Valet" only from an anchored provenance store (the ledger's
+    two-phase write), with the source URL, and only from the adapter's own origins.
+  - The agent's own tests go on the card as `display.agentTests`, apart from Valet's `checks`.
+  - **Remote agents may author** (J3 starts in the Claude iPhone app). "Ask for changes" is on by
+    default for local apps and **off** for remote clients. For a remote client it is turned on
+    only by a signed approval (the consent request's `capabilities`, or a later `setting`), and kept in the trusted ledger, not
+    `clients.json`. Turned on, a remote agent gets the same tools under the same gates: no code
+    runs before approval, the install card is badged "through the relay", and critical lines stay
+    Mac only. Signed-in trials stay local-only until a remote one has been red-teamed.
 - **Repair** (J5): the repair ticket the agent reads through E is the runtime's structured
   failure (stage, class, the failing request's path), never page text a hostile site wrote.
 
@@ -439,10 +471,12 @@ Asked for by D, G and H while building, 2026-11-12. Accepted unless marked other
 
 **From H (iPhone):**
 
-1. **The iPhone's approval key uses `.biometryCurrentSet`,** not `.userPresence`, so a thief who
-   knows the passcode still can't approve. A Face ID enrolment change kills the key and the phone
-   re-pairs. The Mac keeps `.userPresence`, since a Mac may have no Touch ID. A second,
-   passcode-capable key for neutral cards waits for a separate decision.
+1. **The iPhone's approval key uses `.userPresence`** (Face ID, or the passcode when Face ID
+   fails), like the Mac's. H proposed `.biometryCurrentSet`, so a thief who had watched the
+   passcode couldn't approve; Nick chose standard iPhone behaviour instead (2026-11-12, "Passcode
+   always works"). The accepted risk: someone holding the phone and its passcode can approve
+   anything a phone can. Mac-only kinds stay Mac only, and a lost phone is still revoked from
+   the Mac or the recovery page.
 2. **Pairing wire format** (`pairing.ts`):
    - The Mac opens an offer at the relay by id only (`pairing-open`). `pairingOfferId` is a hash
      of the secret.
@@ -500,10 +534,8 @@ Asked for by D, G and H while building, 2026-11-12. Accepted unless marked other
    - One rule with it: any tightening record that supersedes evidence must be in the ledger too.
      That covers a tool turned off after it was enabled, and a grant revoked. Otherwise an edit to
      an unanchored store would bring the old evidence back into force.
-5. **Face ID only on the phone:** already so since H's 1 (`.biometryCurrentSet`); there is no
-   passcode-capable key to tell apart. If Nick takes A's passcode fallback for neutral cards, the
-   phone gets a second, `.userPresence` key in its device record, and the Mac picks from its own
-   request which key a decision must be signed with.
+5. **Face ID only on the phone:** overtaken by Nick's answer (H's 1): one `.userPresence` key,
+   so the passcode always works, and no second key.
 6. **Resume at the Mac only:** `approvableOn('resume')` is `['mac']`, and `valet.resume` left
    `ADMIN_ACTION_TIERS` for `NEVER_OVER_MCP`.
 7. **Consent code typed, not compared:** the remote-client request carries no code; the phone
