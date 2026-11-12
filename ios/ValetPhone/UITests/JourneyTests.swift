@@ -58,6 +58,9 @@ final class JourneyTests: XCTestCase {
     // The tone word may come first ("Check this."); the title itself follows.
     XCTAssertTrue(element("card.title").label.hasSuffix("Install an adapter for yahoo.com"), element("card.title").label)
     waitFor("card.approve").tap()
+    if element("card.problem").waitForExistence(timeout: 2) {
+      XCTFail("approve refused: \(element("card.problem").label)")
+    }
     XCTAssertTrue(waitFor("card.state").label.contains("Approved with Face ID"))
   }
 
@@ -138,7 +141,8 @@ final class JourneyTests: XCTestCase {
 
   func testAccessibilityAuditOnEveryTab() throws {
     launch("cards")
-    _ = waitFor("card.7B3F")
+    // The newest card is at the top; the rest may be below the fold.
+    _ = waitFor("card.1D99")
     try app.performAccessibilityAudit(for: [.dynamicType, .contrast, .elementDetection, .hitRegion, .sufficientElementDescription])
     for tab in ["Activity", "Sites", "Agents", "Valet"] {
       app.tabBars.buttons[tab].tap()

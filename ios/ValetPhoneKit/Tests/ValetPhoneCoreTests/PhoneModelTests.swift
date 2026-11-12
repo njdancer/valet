@@ -228,12 +228,19 @@ final class PhoneModelTests: XCTestCase {
     XCTAssertEqual(card("7B3F")?.state, .waiting)
   }
 
-  func testApproveWaitsAMomentAfterTheScreenChanged() throws {
-    setUp(.install)
-    world.mac.alert(kind: .notify, title: "Claude Code started a draft", body: "For yahoo.com")
+  func testApproveWaitsAMomentAfterTheCardChanged() throws {
+    setUp(.install, pair: false)
+    world.pair(model)
     world.relay.drain()
+    world.post()
+    world.relay.drain()
+    // Just arrived: too soon.
     XCTAssertEqual(model.approveBlocker(try XCTUnwrap(card("7B3F")).id, readTicked: false, typedCode: nil), .tooSoon)
     time.advance(1.5)
+    XCTAssertNil(model.approveBlocker(try XCTUnwrap(card("7B3F")).id, readTicked: false, typedCode: nil))
+    // Something elsewhere changing doesn't make the person wait again.
+    world.mac.alert(kind: .notify, title: "Claude Code started a draft", body: "For yahoo.com")
+    world.relay.drain()
     XCTAssertNil(model.approveBlocker(try XCTUnwrap(card("7B3F")).id, readTicked: false, typedCode: nil))
   }
 

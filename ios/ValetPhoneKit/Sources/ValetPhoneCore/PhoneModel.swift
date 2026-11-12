@@ -75,6 +75,9 @@ public struct CardEntry: Identifiable, Equatable, Sendable {
   public var state: CardState
   /// Monotonic time the card arrived, and how long it lives from then.
   public let arrivedUptime: TimeInterval
+  /// When what this card shows last changed (arrival, or the Mac's names changing it). Approve
+  /// waits a moment after it, so a card can't change under a tap.
+  public var shownSince: TimeInterval
   public let lifetime: TimeInterval
   /// What this phone sent for it, if anything.
   public var sentSeq: Int?
@@ -577,7 +580,7 @@ public final class PhoneModel {
       let lifetime = max(0, min(parsed.request.expiresAt.timeIntervalSince(parsed.request.createdAt), wallLeft))
       let entry = CardEntry(
         card: CardModel.card(for: parsed, status: status), text: text,
-        state: status?.safety == .lockdown ? .lockedDown : .waiting, arrivedUptime: clock.uptime(), lifetime: lifetime,
+        state: status?.safety == .lockdown ? .lockedDown : .waiting, arrivedUptime: clock.uptime(), shownSince: clock.uptime(), lifetime: lifetime,
         sentSeq: nil, sentApproval: false, sentAt: nil, signedDecision: nil, answeredBy: nil
       )
       cards.insert(entry, at: 0)
@@ -588,7 +591,11 @@ public final class PhoneModel {
   private func refreshCards() {
     for i in cards.indices {
       if case let .success(parsed) = Requests.parse(cards[i].text) {
-        cards[i].card = CardModel.card(for: parsed, status: status)
+        let card = CardModel.card(for: parsed, status: status)
+        if card != cards[i].card {
+          cards[i].card = card
+          cards[i].shownSince = clock.uptime()
+        }
       }
     }
   }
@@ -628,7 +635,9 @@ public final class PhoneModel {
     if entry.card.needsReadTick && !readTicked { return .needsReadTick }
     if entry.card.needsTypedCode, Self.normaliseCode(typedCode) == nil { return .wrongCode }
     if let choices = entry.card.choices, !choices.contains(where: { $0.value == choice }) { return .needsChoice }
-    if clock.uptime() - lastChange < Self.settleTime { return .tooSoon }
+    // Only a change to this card counts: a status update about something else, or an ack, doesn't
+    // make the person wait.
+    if clock.uptime() - entry.shownSince < Self.settleTime { return .tooSoon }
     return nil
   }
 
