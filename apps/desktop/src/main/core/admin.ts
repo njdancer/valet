@@ -1,0 +1,458 @@
+// The admin tools' reader (docs/admin-tools.md): the control panel's own views, mapped field by
+// field to what @valet/mcp-server's valet_ tools return. What an agent doesn't need is left out
+// here, by not being copied: a login's 1Password item (its id and title), manifest notes, a call's
+// detail line and its output preview (both site text), the auth partition's name. The tools then
+// parse every result against their schemas and scan it for the app's known secrets.
+
+import { type AuditEvent, callRef } from '@valet/core'
+import {
+  type AdminAdapterDetail,
+  type AdminAdapterList,
+  type AdminAuditPage,
+  type AdminAuditQuery,
+  type AdminCallList,
+  type AdminCallTrace,
+  type AdminHealth,
+  type AdminNeedsYou,
+  type AdminReader,
+  type AdminStatus,
+  type AdminTraceStep,
+  identityLabel,
+  matchCalls,
+  mcpToolName,
+} from '@valet/mcp-server'
+import {
+  type AdapterDetail,
+  type AdapterSummary,
+  type AttentionItem,
+  type ChainStatus,
+  MISSED_KEEP_MS,
+  type PreviewPart,
+  type RunSummary,
+  type ToolInfo,
+  type TraceStep,
+} from '../../shared/api'
+import type { MainApi } from './ipc'
+import { attentionTitle } from './notifications'
+
+/** What the reader needs from the app besides its API. */
+export interface AdminSource {
+  readonly api: Pick<
+    MainApi,
+    'adapters' | 'runs' | 'audit' | 'attention' | 'health' | 'updates' | 'app' | 'remote' | 'grants'
+  >
+  readonly lockedDown: () => boolean
+  /** The tools on for cloud agents now, as `<adapterId>.<tool>`. */
+  readonly remoteTools: () => ReadonlySet<string>
+  /** True when the text holds a login secret or session value the app knows of now. */
+  readonly sensitive: (text: string) => Promise<boolean>
+  readonly withheld: (tool: string) => void
+}
+
+/** Every call, for matching a short ref. */
+const ALL = Number.MAX_SAFE_INTEGER
+
+export function adminReader(source: AdminSource): AdminReader {
+  const { api } = source
+  return {
+    lockedDown: () => source.lockedDown(),
+    sensitive: (text) => source.sensitive(text),
+    withheld: (tool) => source.withheld(tool),
+
+    async status(): Promise<AdminStatus> {
+      const [app, updates, chain, attention, today, adapters, remote, providers] = await Promise.all([
+        api.app.status(),
+        api.updates.status(),
+        api.audit.chainStatus(),
+        api.attention.list(),
+        api.runs.statsToday(),
+        api.adapters.list(),
+        api.remote.setup(),
+        api.grants.providers(),
+      ])
+      return {
+        version: app.version,
+        demo: app.demo,
+        paused: app.paused,
+        lockedDown: app.lockedDown,
+        updates: { state: updates.state, available: updates.available, checkedAt: updates.checkedAt },
+        auditChain: chainOf(chain),
+        needsYou: attention.length,
+        sites: {
+          installed: adapters.length,
+          approved: adapters.filter((a) => a.approval === 'approved').length,
+          paused: adapters.filter((a) => a.paused).length,
+        },
+        today: {
+          toolCalls: today.toolCalls,
+          logins: today.logins,
+          loginsFailed: today.loginsFailed,
+          blockedRequests: today.blockedRequests,
+        },
+        remoteAccess: { enabled: remote.enabled, listening: remote.listening },
+        loginProviders: providers.map((p) => ({
+          kind: p.kind,
+          available: p.available,
+          unavailableReason: p.unavailableReason,
+        })),
+      }
+    },
+
+    async adapters(): Promise<AdminAdapterList> {
+      const summaries = await api.adapters.list()
+      // The summary has no tools; the detail does, and nothing else of it is used here.
+      const details = await Promise.all(summaries.map((s) => api.adapters.get(s.id)))
+      const remote = source.remoteTools()
+      return {
+        adapters: summaries.map((summary, i) => adapterEntry(summary, details[i]?.tools ?? [], remote)),
+      }
+    },
+
+    async adapter(adapterId): Promise<AdminAdapterDetail> {
+      const detail = await api.adapters.get(adapterId)
+      if (detail === null) return { adapter: null }
+      return { adapter: adapterDetail(detail, source.remoteTools()) }
+    },
+
+    async health(): Promise<AdminHealth> {
+      return {
+        sites: (await api.health.sites()).map((site) => ({
+          host: site.host,
+          adapterIds: [...site.adapterIds],
+          breaker: site.breaker,
+          retryAt: site.retryAt,
+          cause: site.cause,
+          lastOpenedAt: site.lastOpenedAt,
+          nextCooldownSeconds: site.nextCooldownSeconds,
+          calls: site.calls,
+        })),
+      }
+    },
+
+    async needsYou(): Promise<AdminNeedsYou> {
+      return { items: (await api.attention.list()).map(needsYouItem) }
+    },
+
+    async calls(query): Promise<AdminCallList> {
+      const runs = await api.runs.list({
+        ...(query.adapterId === undefined ? {} : { adapterId: query.adapterId }),
+        limit: query.limit,
+      })
+      return { calls: runs.map(callEntry) }
+    },
+
+    async call(idOrRef, viewer): Promise<AdminCallTrace> {
+      const matches = matchCalls(await api.runs.list({ limit: ALL }), idOrRef)
+      const [only] = matches
+      if (only === undefined) return { call: null, matches: [] }
+      if (matches.length > 1) {
+        return {
+          call: null,
+          matches: matches.map((m) => ({
+            callId: m.callId,
+            callRef: callRef(m.callId),
+            startedAt: m.startedAt,
+          })),
+        }
+      }
+      const trace = await api.runs.trace(only.callId)
+      if (trace === null) return { call: null, matches: [] }
+      const own = viewer !== null && (await callerOf(api, only.callId)) === identityLabel(viewer)
+      return {
+        call: {
+          summary: callEntry(trace.summary),
+          adapterVersion: trace.adapterVersion,
+          loginsUsed: trace.secretsUsed.map((s) => ({ secret: s.secret, field: s.field })),
+          requests: {
+            sent: trace.requests.sent,
+            probes: trace.requests.probes,
+            blocked: trace.requests.blocked,
+          },
+          // What another app or a cloud agent sent is theirs: only the caller's own calls show it.
+          input: own ? previewText(trace.input) : null,
+          steps: trace.steps.map(stepEntry),
+        },
+        matches: [],
+      }
+    },
+
+    async audit(query: AdminAuditQuery): Promise<AdminAuditPage> {
+      const [page, chain] = await Promise.all([
+        api.audit.page({
+          ...(query.category === undefined ? {} : { category: query.category }),
+          ...(query.adapterId === undefined ? {} : { adapterId: query.adapterId }),
+          ...(query.since === undefined ? {} : { since: query.since }),
+          ...(query.search === undefined ? {} : { search: query.search }),
+          ...(query.beforeSeq === undefined ? {} : { beforeSeq: query.beforeSeq }),
+          limit: query.limit,
+        }),
+        api.audit.chainStatus(),
+      ])
+      return {
+        // Each event as the log has it: fixed vocabularies, no values (packages/core/src/audit.ts).
+        records: page.records.map((r) => ({ seq: r.seq, at: r.at, event: eventEntry(r.event) })),
+        total: page.total,
+        nextBeforeSeq: page.nextBeforeSeq,
+        chain: chainOf(chain),
+      }
+    },
+  }
+}
+
+/** The credential behind a call (`local:<id>`, `remote:<id>`), from its tool-called record. */
+async function callerOf(api: AdminSource['api'], callId: string): Promise<string | null> {
+  const page = await api.audit.page({ category: 'tool-calls', search: callId, limit: ALL })
+  for (const record of page.records) {
+    const event = record.event
+    if (event.type === 'tool-called' && event.callId === callId) return event.clientId ?? null
+  }
+  return null
+}
+
+type Flat = string | number | boolean | null | readonly string[]
+
+/** Copies only the named keys, and only flat values: a list of strings at most. */
+function pick(from: object, keys: readonly string[]): Record<string, Flat> {
+  const out: Record<string, Flat> = {}
+  for (const key of keys) {
+    const value: unknown = (from as Record<string, unknown>)[key]
+    if (value === undefined) continue
+    if (
+      value === null ||
+      typeof value === 'string' ||
+      typeof value === 'number' ||
+      typeof value === 'boolean' ||
+      (Array.isArray(value) && value.every((item) => typeof item === 'string'))
+    )
+      out[key] = value as Flat
+  }
+  return out
+}
+
+/** Each trace step's fields, by its type. A type not listed keeps its common fields only. */
+const STEP_FIELDS: Readonly<Record<TraceStep['type'], readonly string[]>> = {
+  called: ['client', 'sideEffect'],
+  probe: ['partition', 'path', 'status', 'loggedIn', 'afterHandoff'],
+  'login-started': [],
+  'auth-step': ['op', 'detail', 'skipped'],
+  'secret-fill': ['selector', 'secret', 'field', 'origin', 'checks'],
+  handoff: ['cookies', 'storageKeys', 'cookieDomains'],
+  'tool-code': [],
+  waited: ['reason', 'waitedMs', 'ahead'],
+  request: ['method', 'target', 'initiator', 'decision', 'purpose', 'status', 'blockedReason'],
+  confirmation: ['answer'],
+  'needs-user': ['reason'],
+  failed: ['errorClass'],
+  output: ['redactions', 'bytes'],
+}
+
+function stepEntry(step: TraceStep): AdminTraceStep {
+  return {
+    ...pick(step, STEP_FIELDS[step.type] ?? []),
+    type: step.type,
+    atMs: step.atMs,
+    durationMs: step.durationMs,
+    stage: step.stage,
+  }
+}
+
+/**
+ * Each audit event's fields, by its type (packages/core/src/audit.ts). Left out: a connection
+ * request's `source`, the address the tunnel reported, which is the cloud agent's and not needed.
+ */
+const EVENT_FIELDS: Readonly<Record<AuditEvent['type'], readonly string[]>> = {
+  'adapter-approved': ['adapterId', 'adapterHash', 'version', 'previousHash'],
+  'adapter-rejected': ['adapterId', 'adapterHash', 'version'],
+  'grant-made': ['adapterId', 'adapterHash', 'secret', 'provider', 'origins'],
+  'grant-revoked': ['adapterId', 'secret'],
+  'grant-copied': ['adapterId', 'secret', 'fields'],
+  'tool-called': ['adapterId', 'adapterHash', 'tool', 'client', 'clientId', 'callId'],
+  'tool-finished': ['adapterId', 'callId', 'outcome', 'needsUser', 'stage', 'errorClass', 'durationMs'],
+  'login-started': ['adapterId', 'callId'],
+  'login-finished': ['adapterId', 'outcome', 'needsUser', 'stage', 'errorClass'],
+  'secret-used': ['adapterId', 'adapterHash', 'secret', 'field', 'origin', 'callId'],
+  'request-blocked': ['adapterId', 'method', 'target', 'reason', 'initiator', 'partition', 'callId'],
+  'breaker-opened': ['host', 'cause', 'retryAt', 'callId'],
+  'breaker-closed': ['host'],
+  'update-downloaded': ['from', 'to'],
+  'update-installed': ['from', 'to'],
+  'remote-state': ['state', 'revokedTokens'],
+  'remote-tool': ['adapterId', 'tool', 'enabled', 'sideEffect'],
+  'setting-changed': ['adapterId', 'setting', 'cleared'],
+  'remote-consent': ['clientId', 'clientHost', 'tools', 'answer'],
+  'remote-revoked': ['clientId', 'clients'],
+  'remote-token-reuse': ['clientId', 'token'],
+  'lock-down': ['locked', 'revokedClients'],
+  'site-paused': ['adapterId', 'paused'],
+  'call-waited': ['adapterId', 'callId', 'reason', 'waitedMs', 'ahead'],
+  confirmation: ['adapterId', 'tool', 'client', 'callId', 'answer'],
+}
+
+function eventEntry(event: AuditEvent): AdminAuditPage['records'][number]['event'] {
+  // A type this build doesn't know (a newer log): its type alone.
+  return { ...pick(event, EVENT_FIELDS[event.type] ?? []), type: event.type }
+}
+
+function chainOf(chain: ChainStatus): AdminStatus['auditChain'] {
+  switch (chain.state) {
+    case 'unverified':
+      return { state: 'unverified', records: null, firstBadSeq: null, verifiedAt: null }
+    case 'intact':
+      return { state: 'intact', records: chain.records, firstBadSeq: null, verifiedAt: chain.verifiedAt }
+    case 'broken':
+      return {
+        state: 'broken',
+        records: chain.records,
+        firstBadSeq: chain.firstBadSeq,
+        verifiedAt: chain.verifiedAt,
+      }
+  }
+}
+
+type AdapterEntry = AdminAdapterList['adapters'][number]
+
+function adapterEntry(
+  summary: AdapterSummary,
+  tools: readonly ToolInfo[],
+  remote: ReadonlySet<string>,
+): AdapterEntry {
+  const approved = summary.approval === 'approved'
+  return {
+    id: summary.id,
+    name: summary.name,
+    site: summary.site,
+    version: summary.version,
+    approval: summary.approval,
+    updateWaiting: summary.pendingUpdate?.version ?? null,
+    paused: summary.paused,
+    session: { state: summary.session.state, checkedAt: summary.session.checkedAt },
+    settingsNeeded: [...summary.settingsNeeded],
+    logins: summary.secrets.map((s) => ({ name: s.name, given: s.granted })),
+    calls7d: summary.calls7d,
+    tools: tools.map((tool) => ({
+      name: tool.name,
+      mcpName: approved && !tool.internal ? mcpToolName(summary.id, tool.name) : null,
+      title: tool.title,
+      sideEffect: tool.sideEffect,
+      calls7d: tool.calls7d,
+      remote: remote.has(`${summary.id}.${tool.name}`),
+      internal: tool.internal,
+    })),
+  }
+}
+
+function adapterDetail(
+  detail: AdapterDetail,
+  remote: ReadonlySet<string>,
+): NonNullable<AdminAdapterDetail['adapter']> {
+  return {
+    ...adapterEntry(detail, detail.tools, remote),
+    description: detail.description,
+    approvedAt: detail.approvedAt,
+    navigation: [...detail.navigation],
+    limits: {
+      requestsPerRun: detail.limits.requestsPerRun,
+      minGapMs: detail.limits.minGapMs,
+      cooldownSeconds: detail.limits.cooldownSeconds,
+      maxCooldownSeconds: detail.limits.maxCooldownSeconds,
+    },
+    settings: detail.settings.map((setting) => ({
+      name: setting.name,
+      title: setting.title,
+      required: setting.required,
+      chosen:
+        setting.chosen === null
+          ? null
+          : { label: setting.chosen.label, detail: setting.chosen.detail, chosenAt: setting.chosen.chosenAt },
+    })),
+    // Never the grant's item: which 1Password item it is (id and title) is the person's business.
+    loginDetails: detail.secretRequests.map((request) => ({
+      name: request.name,
+      fields: [...request.fields],
+      origins: [...request.origins],
+      given:
+        request.grant === null
+          ? null
+          : {
+              provider: request.grant.provider,
+              origins: [...request.grant.origins],
+              givenAt: request.grant.grantedAt,
+              lastUsedAt: request.grant.lastUsedAt,
+            },
+    })),
+    oneTimeCodes: detail.messagesSources.map((source) => ({ sender: source.sender, given: source.granted })),
+  }
+}
+
+function needsYouItem(item: AttentionItem): AdminNeedsYou['items'][number] {
+  const adapterId = 'adapterId' in item ? item.adapterId : null
+  const adapterName = 'adapterName' in item ? item.adapterName : null
+  const callId = 'callId' in item ? item.callId : null
+  return {
+    kind: item.kind,
+    id: item.id,
+    title: attentionTitle(item),
+    adapterId,
+    adapterName,
+    callId,
+    callRef: callId === null ? null : callRef(callId),
+    tool: item.kind === 'confirmation' || item.kind === 'needs-user' ? item.tool : null,
+    at: atOf(item),
+    deadline: deadlineOf(item),
+  }
+}
+
+function atOf(item: AttentionItem): string | null {
+  switch (item.kind) {
+    case 'confirmation':
+    case 'remote-consent':
+      return item.requestedAt
+    case 'needs-user':
+    case 'repair':
+    case 'missed':
+      return item.at
+    // The view has no time for these: they last as long as their cause does.
+    case 'review':
+    case 'setting-missing':
+    case 'login-missing':
+      return null
+  }
+}
+
+function deadlineOf(item: AttentionItem): string | null {
+  switch (item.kind) {
+    case 'confirmation':
+    case 'remote-consent':
+      return item.expiresAt
+    case 'needs-user':
+      return item.closesAt
+    case 'missed':
+      return new Date(Date.parse(item.missedAt) + MISSED_KEEP_MS).toISOString()
+    default:
+      return null
+  }
+}
+
+function callEntry(run: RunSummary): AdminCallList['calls'][number] {
+  return {
+    callId: run.callId,
+    callRef: callRef(run.callId),
+    adapterId: run.adapterId,
+    adapterName: run.adapterName,
+    tool: run.tool,
+    sideEffect: run.sideEffect,
+    client: run.client,
+    startedAt: run.startedAt,
+    durationMs: run.durationMs,
+    outcome: run.outcome,
+    needsUser: run.needsUser,
+    stage: run.stage,
+    errorClass: run.errorClass,
+    blockedRequests: run.blockedRequests,
+  }
+}
+
+/** A redacted preview as one string, each redaction as [redacted]. */
+export function previewText(parts: readonly PreviewPart[]): string {
+  return parts.map((part) => (part.kind === 'text' ? part.text : '[redacted]')).join('')
+}

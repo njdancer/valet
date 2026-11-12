@@ -8,6 +8,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
 import { toReportable, ValetError } from '@valet/core'
+import type { AdminReader } from './admin-tools'
 import { type Authenticate, type AuthResult, type ClientIdentity, identityLabel, sameIdentity } from './auth'
 import { clientLabel, createMcpServer, type ServerInfo, type ValetMcpServer } from './server'
 import type { ClientTransport, ToolCaller } from './tool-caller'
@@ -31,6 +32,11 @@ export interface HttpServerOptions {
    */
   readonly port?: number
   readonly info?: ServerInfo
+  /**
+   * Valet's own read-only tools, for local clients' sessions (docs/admin-tools.md). The remote
+   * listener never passes one.
+   */
+  readonly admin?: AdminReader
   readonly newCallId?: () => string
   readonly newSessionId?: () => string
   /** How often a running call reports progress to a client that asked. See ServerOptions. */
@@ -158,6 +164,9 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
     const endpoint = createMcpServer(options.caller, info, {
       ...(options.newCallId === undefined ? {} : { newCallId: options.newCallId }),
       ...(options.progressIntervalMs === undefined ? {} : { progressIntervalMs: options.progressIntervalMs }),
+      // Only a local client's session: a remote credential names a cloud agent, whose grant covers
+      // site tools alone.
+      ...(options.admin === undefined || identity.origin !== 'local' ? {} : { admin: options.admin }),
       transport: via,
       identity,
     })

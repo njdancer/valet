@@ -5,6 +5,7 @@ import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/typ
 import { ValetError } from '@valet/core'
 import { afterEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
+import type { AdminReader } from '../src/admin-tools'
 import { type RunningHttpServer, startHttpServer } from '../src/http'
 import { bearerToken, hostAllowed, originAllowed } from '../src/http-guards'
 import { ClientTokens, localAuthenticator } from '../src/local-auth'
@@ -678,5 +679,38 @@ describe('bearerToken', () => {
   it('reads nothing from a missing, empty or malformed header', () => {
     for (const header of [undefined, '', 'Bearer', 'Bearer ', TOKEN, ` Bearer ${TOKEN}`, `Bearer ${TOKEN} x`])
       expect(bearerToken(header)).toBeNull()
+  })
+})
+
+describe('admin tools over HTTP', () => {
+  const admin = {
+    lockedDown: () => false,
+    sensitive: () => false,
+  } as unknown as AdminReader
+
+  it('lists the valet_ tools for a local client’s session', async () => {
+    const running = await startHttpServer({
+      caller: new FakeCaller([viewCart]),
+      authenticate: tokenAuth(TOKEN),
+      admin,
+    })
+    cleanup.push(() => running.close())
+    const client = await connectClient(running.url)
+    const names = (await client.listTools()).tools.map((t) => t.name)
+    expect(names).toContain('valet_status')
+    expect(names).toContain('woolworths_view_cart')
+  })
+
+  it('never lists them for a session a remote credential opened, even when given a reader', async () => {
+    const running = await startHttpServer({
+      caller: new FakeCaller([viewCart]),
+      authenticate: () => ({ ok: true, identity: { origin: 'remote', clientId: 'r1' } }),
+      admin,
+    })
+    cleanup.push(() => running.close())
+    const client = await connectClient(running.url)
+    const names = (await client.listTools()).tools.map((t) => t.name)
+    expect(names.filter((n) => n.startsWith('valet_'))).toEqual([])
+    expect(names).toContain('woolworths_view_cart')
   })
 })

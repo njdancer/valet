@@ -289,11 +289,13 @@ async function main(): Promise<void> {
         ? createElectronSessionDriver(manifest, { ...driverOptions, ...reporters }, { dial: demoSite.dial })
         : createElectronSessionDriver(manifest, { ...reporters }),
     credentials: demoSite === null ? realCredentials(credentialDeps) : demoSite.credentials,
-    startEndpoint: (caller, clients, onSessionsChanged) =>
+    startEndpoint: (caller, clients, onSessionsChanged, admin) =>
       startEndpoint({
         caller,
         clients,
         onSessionsChanged,
+        // Valet's own read-only tools, for local clients (docs/admin-tools.md).
+        admin,
         // D41, D42: the bridge for every client, each with its own token. The port is kept (each
         // bridge reads it from its client's file) and tokens are new at every launch, so one
         // collected by whatever held the saved port while the app was down stops working at the
