@@ -1,18 +1,19 @@
 name: iOS screens
 
 # Screens of the iPhone app for review (persona QA), from the fakes build on the simulator. Run it
-# by pushing any commit to a branch named ios-screens-request/<anything>. The cloud container can't
-# download Actions artifacts, so the PNGs are pushed to the branch ios-screens/<run id>.
+# by adding the label ios-screens to a pull request. The cloud container can't download Actions
+# artifacts, so the PNGs are pushed to the branch ios-screens/<run id>.
 
 on:
-  push:
-    branches: ['ios-screens-request/**']
+  pull_request:
+    types: [labeled]
 
 permissions:
   contents: write
 
 jobs:
   screens:
+    if: github.event.label.name == 'ios-screens' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: macos-latest
     timeout-minutes: 40
     steps:
