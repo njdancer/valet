@@ -73,7 +73,7 @@ struct CardSheet: View {
         } icon: {
           Image(systemName: card.becauseIsCaution ? "exclamationmark.triangle" : "link")
         }
-        .foregroundStyle(card.becauseIsCaution ? Color.orange : Color.primary)
+        .foregroundStyle(card.becauseIsCaution ? Palette.caution : Color.primary)
         .accessibilityIdentifier("card.because")
         if !card.checks.isEmpty {
           VStack(alignment: .leading, spacing: 4) {
@@ -192,7 +192,7 @@ struct CardSheet: View {
             .accessibilityIdentifier("card.readTick")
         }
         if let problem {
-          Text(verbatim: problem).font(.footnote).foregroundStyle(.red).accessibilityIdentifier("card.problem")
+          Text(verbatim: problem).font(.footnote).foregroundStyle(Palette.strong).accessibilityIdentifier("card.problem")
         }
         HStack {
           Button("Decline") { declining = true }
@@ -237,8 +237,8 @@ struct CardSheet: View {
   private func color(_ tone: Tone) -> Color {
     switch tone {
     case .neutral: return .primary
-    case .caution: return .orange
-    case .strong: return .red
+    case .caution: return Palette.caution
+    case .strong: return Palette.strong
     }
   }
 }

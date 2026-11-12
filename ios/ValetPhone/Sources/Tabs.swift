@@ -95,9 +95,9 @@ struct SitesView: View {
 
   private func healthColor(_ h: MacStatus.Health) -> Color {
     switch h {
-    case .ok: return .green
+    case .ok: return Palette.ok
     case .off, .paused: return .secondary
-    default: return .orange
+    default: return Palette.caution
     }
   }
 }

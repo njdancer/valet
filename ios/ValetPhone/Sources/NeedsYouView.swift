@@ -126,7 +126,7 @@ struct TitleText: View {
 
   var body: some View {
     if let word = card.tone.word {
-      (Text(verbatim: word + " ").foregroundStyle(card.tone == .strong ? Color.red : Color.orange) + Text(verbatim: card.title))
+      (Text(verbatim: word + " ").foregroundStyle(card.tone == .strong ? Palette.strong : Palette.caution) + Text(verbatim: card.title))
     } else {
       Text(verbatim: card.title)
     }
@@ -170,7 +170,7 @@ struct HandoffRow: View {
             .buttonStyle(.borderedProminent)
             .accessibilityIdentifier("handoff.send")
         }
-        if refused { Text("That doesn\u{2019}t look like a code.").font(.footnote).foregroundStyle(.red) }
+        if refused { Text("That doesn\u{2019}t look like a code.").font(.footnote).foregroundStyle(Palette.strong) }
       }
     }
   }

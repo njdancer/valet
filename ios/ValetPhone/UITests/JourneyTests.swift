@@ -143,11 +143,22 @@ final class JourneyTests: XCTestCase {
     launch("cards")
     // The newest card is at the top; the rest may be below the fold.
     _ = waitFor("card.1D99")
-    try app.performAccessibilityAudit(for: [.dynamicType, .contrast, .elementDetection, .hitRegion, .sufficientElementDescription])
+    var issues: [String] = []
+    func audit(_ screen: String) throws {
+      try app.performAccessibilityAudit(for: [.dynamicType, .contrast, .elementDetection, .hitRegion, .sufficientElementDescription]) { issue in
+        issues.append("\(screen): \(issue.auditType) \(issue.compactDescription) on \(issue.element?.debugDescription.prefix(160) ?? "?")")
+        return true
+      }
+    }
+    try audit("Needs you")
+    openCard("1D99")
+    try audit("Card")
+    waitFor("card.close").tap()
     for tab in ["Activity", "Sites", "Agents", "Valet"] {
       app.tabBars.buttons[tab].tap()
-      try app.performAccessibilityAudit(for: [.dynamicType, .contrast, .elementDetection, .sufficientElementDescription])
+      try audit(tab)
     }
+    XCTAssertTrue(issues.isEmpty, issues.joined(separator: "\n"))
   }
 
   func testCardAtTheLargestTextSizeInDarkMode() {
