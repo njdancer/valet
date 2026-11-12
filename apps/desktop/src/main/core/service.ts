@@ -873,6 +873,30 @@ export class AppService {
     }
   }
 
+  /**
+   * What the phone would be shown and answer, for the e2e suite and the evals in demo builds only
+   * (app.ts exposes it under VALET_E2E): the requests waiting, and the person's approval or decline
+   * of one as the Mac window gives it.
+   */
+  e2eRequests(): {
+    list(): readonly { readonly requestId: string; readonly kind: string; readonly text: string }[]
+    approve(requestId: string): Promise<boolean>
+    decline(requestId: string): Promise<boolean>
+  } {
+    const broker = () => {
+      if (this.approvalBroker === null) throw new ValetError('config', 'unavailable')
+      return this.approvalBroker
+    }
+    return {
+      list: () =>
+        broker()
+          .list()
+          .map((p) => ({ requestId: p.request.id, kind: p.request.kind, text: p.text })),
+      approve: async (requestId) => (await broker().approveOnMac(requestId)).ok,
+      decline: (requestId) => broker().decline(requestId, { via: 'mac' }),
+    }
+  }
+
   async stop(): Promise<void> {
     this.updates?.stop()
     if (this.pruneTimer !== null) clearInterval(this.pruneTimer)
