@@ -13,8 +13,10 @@ import {
   type AuditSink,
   type BlockedRequest,
   CredentialError,
+  DEFAULT_SANDBOX,
   type Grant,
   isDisplayText,
+  type LocalAccess,
   MESSAGES_SECRET,
   type NeedsUserReason,
   needsYouTitle,
@@ -194,6 +196,15 @@ export interface ServiceDeps {
    * code there; without it (unit tests), in this process.
    */
   readonly toolProcess?: ToolProcessFactory
+  /**
+   * The adapter sandbox (docs/sandbox.md). With it, a sandboxed adapter's tool code runs in a
+   * sandbox renderer for its version, and an unsandboxed one in `toolProcess`; each gets `local`,
+   * the capabilities its declared exceptions allow. Without it, every adapter runs in `toolProcess`.
+   */
+  readonly sandbox?: {
+    forAdapter(adapterHash: string): ToolProcessFactory
+    local(manifest: AdapterManifest): LocalAccess
+  }
   /** Builds an adapter's driver, with the reporters its refusals outside a run go to. */
   readonly createDriver: (manifest: AdapterManifest, reporters: DriverReporters) => Promise<SessionDriver>
   readonly credentials: Credentials
@@ -1098,15 +1109,15 @@ export class AppService {
   /** What each approved kind does here. Kinds not listed aren't wired yet and do nothing. */
   private approvalHandlers(): KindHandlers {
     return {
-      // The confirmation's own id is the preview's first line (confirmationPreview), so an approval
+      // The signed subject names the confirmation (and its preview shows it first), so an approval
       // applies to the one question it was signed for, never another of the same call.
       'irreversible-call': {
         precheck: (subject) => {
-          const id = confirmationOf(subject.preview)
+          const id = confirmationOf(subject)
           return id !== null && this.broker.waiting(id)
         },
         apply: async (subject) => {
-          const id = confirmationOf(subject.preview)
+          const id = confirmationOf(subject)
           if (id === null || !this.broker.approvedById(id)) throw new ValetError('config', 'not-found')
         },
       },
@@ -1187,14 +1198,25 @@ export class AppService {
   }
 
   private registration(adapter: BuiltinAdapter, driver: SessionDriver) {
-    const start = this.deps.toolProcess
+    const manifest = adapter.definition.manifest
+    const sandbox = this.deps.sandbox
+    // Unsandboxed only when the manifest says so, and then it was approved as such (docs/sandbox.md).
+    const sandboxed = (manifest.sandbox ?? DEFAULT_SANDBOX).mode === 'sandboxed'
+    const start =
+      sandbox !== undefined && sandboxed ? sandbox.forAdapter(adapter.hash) : this.deps.toolProcess
     return {
       definition: adapter.definition,
       bundleHash: adapter.hash,
       driver,
       ...(start === undefined || adapter.toolScript === null
         ? {}
-        : { isolation: { script: adapter.toolScript, start } }),
+        : {
+            isolation: {
+              script: adapter.toolScript,
+              start,
+              ...(sandbox === undefined ? {} : { local: sandbox.local(manifest) }),
+            },
+          }),
     }
   }
 
@@ -2245,7 +2267,8 @@ function confirmationPreview(item: ConfirmationItem): string[] {
   return lines.slice(0, 20)
 }
 
-/** The confirmation a signed request's preview names, or null. */
-function confirmationOf(preview: readonly string[]): string | null {
-  return QUESTION.exec(preview[0] ?? '')?.[1] ?? null
+/** The confirmation a signed request names, or null when its preview shows a different one. */
+function confirmationOf(subject: { confirmationId: string; preview: readonly string[] }): string | null {
+  const shownId = QUESTION.exec(subject.preview[0] ?? '')?.[1] ?? null
+  return shownId === subject.confirmationId ? shownId : null
 }

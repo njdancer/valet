@@ -85,6 +85,8 @@ export const ASAR_ALLOWED = [
   /^out\/main\/tool-process\.js$/,
   /^out\/main\/chunks\/[\w-]+\.js$/,
   /^out\/preload\/index\.cjs$/,
+  // The sandbox renderer's preload and QuickJS (docs/sandbox.md).
+  /^out\/preload\/(sandbox\.cjs|quickjs\.wasm)$/,
   /^out\/renderer\/(index|tray)\.html$/,
   /^out\/renderer\/assets\/[\w-]+\.(js|css|svg|png|woff2)$/,
   /^node_modules\/@1password\/sdk\/(package\.json|dist\/[\w]+\.js)$/,
@@ -314,6 +316,8 @@ export async function smokeRealApp({ work, arch, dist, home, expectEqual, expect
   for (const needed of [
     'out/main/index.js',
     'out/preload/index.cjs',
+    'out/preload/sandbox.cjs',
+    'out/preload/quickjs.wasm',
     'out/renderer/index.html',
     'out/renderer/tray.html',
     'node_modules/@1password/sdk/dist/sdk.js',

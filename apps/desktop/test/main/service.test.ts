@@ -52,6 +52,7 @@ import {
 import { LoginAttemptMarker, type ToolProcessFactory } from '@valet/runtime'
 import { inMemoryToolProcess } from '@valet/runtime/in-context'
 import { buildToolLibrary } from '@valet/runtime/tool-script'
+import { NO_LOCAL_ACCESS } from '@valet/sandbox'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
 import {
@@ -114,6 +115,7 @@ async function setup(
     /** Adapter packages in place of `definition` (docs/adapter-packages.md). */
     packages?: ServiceDeps['packages']
     toolProcess?: ToolProcessFactory
+    sandbox?: ServiceDeps['sandbox']
   } = {},
 ) {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'sa-service-'))
@@ -186,6 +188,7 @@ async function setup(
     adapters: [adapter],
     ...(options.packages === undefined ? {} : { packages: options.packages }),
     ...(options.toolProcess === undefined ? {} : { toolProcess: options.toolProcess }),
+    ...(options.sandbox === undefined ? {} : { sandbox: options.sandbox }),
     createDriver: async (_manifest, reporters) => {
       driver.reporters = reporters
       return driver
@@ -2679,6 +2682,7 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
     folder: PackageFiles | null = null,
     dir?: string,
     describe: 'answers' | 'hangs' = 'answers',
+    sandbox?: ServiceDeps['sandbox'],
   ) {
     const start = inMemoryToolProcess()
     const prelude = await buildToolLibrary()
@@ -2695,6 +2699,7 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
         folders: { pick: async () => picked.next },
       },
       toolProcess: start,
+      ...(sandbox === undefined ? {} : { sandbox }),
     })
     const hashOf = (files: PackageFiles) => checkPackage(files).adapterHash
     return { ...s, picked, hashOf }
@@ -2719,6 +2724,47 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
     const again = await withPackages(null, s.dir)
     expect((await again.api.adapters.list()).map((a) => a.approval)).toEqual(['approved'])
     expect(readAudit(again.paths.audit).filter((e) => e.type === 'adapter-installed')).toHaveLength(1)
+  })
+
+  it('runs a sandboxed adapter in its version’s sandbox, with its exceptions, and an unsandboxed one in the tool process', async () => {
+    const quick = inMemoryToolProcess()
+    const sandboxed: string[] = []
+    const locals: string[] = []
+    const sandbox: ServiceDeps['sandbox'] = {
+      forAdapter: (hash) => () => {
+        sandboxed.push(hash)
+        return quick()
+      },
+      local: (manifest) => {
+        locals.push(manifest.sandbox?.mode ?? 'default')
+        return NO_LOCAL_ACCESS
+      },
+    }
+    const unsandboxed = {
+      ...SHOP,
+      version: '2.0.0',
+      sandbox: { mode: 'unsandboxed' as const, reason: 'Needs it' },
+    }
+    const s = await withPackages(shopPackage('v2:', unsandboxed), undefined, 'answers', sandbox)
+    const v1 = s.hashOf(shopPackage('v1:'))
+    await s.api.approvals.approve('shop', v1)
+    expect(await s.call('echo', { text: 'hi' })).toMatchObject({ status: 'ok', output: { text: 'v1:hi' } })
+    expect(sandboxed.length).toBeGreaterThan(0)
+    expect(new Set(sandboxed)).toEqual(new Set([v1]))
+    expect(locals).toContain('default')
+    // The unsandboxed version says so in its review, and runs outside the sandbox once approved.
+    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true })
+    const review = (await s.api.approvals.pending()).find((r) => r.to.hash !== v1)
+    expect(review?.diff.sandbox).toEqual({
+      unsandboxed: true,
+      becameUnsandboxed: true,
+      reason: 'Needs it',
+      exceptions: [],
+    })
+    const before = sandboxed.length
+    await s.api.approvals.approve('shop', review?.to.hash ?? '')
+    expect(await s.call('echo', { text: 'hi' })).toMatchObject({ status: 'ok', output: { text: 'v2:hi' } })
+    expect(sandboxed.length).toBe(before)
   })
 
   it('installs from a folder: the new version waits for approval, says it takes the session, and can be rolled back', async () => {

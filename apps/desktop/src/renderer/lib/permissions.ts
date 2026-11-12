@@ -82,7 +82,9 @@ export function addsPermissions(diff: PermissionDiff): boolean {
     diff.messagesSources.added.length > 0 ||
     diff.settings.added.length > 0 ||
     (diff.limits !== null && limitsLoosened(diff.limits.before, diff.limits.after)) ||
-    probeChanged(diff)
+    probeChanged(diff) ||
+    diff.sandbox.becameUnsandboxed ||
+    diff.sandbox.exceptions.some((e) => e.change === 'added')
   )
 }
 
@@ -184,6 +186,15 @@ export function additionBadges(diff: PermissionDiff): AdditionBadge[] {
   const requests = diff.requests.added
   const secrets = secretChanges(diff)
   return [
+    ...(diff.sandbox.becameUnsandboxed
+      ? [{ label: 'runs without the sandbox', tone: 'write' as const }]
+      : []),
+    ...badge(
+      diff.sandbox.exceptions.filter((e) => e.change === 'added').length,
+      'access on this Mac',
+      'accesses on this Mac',
+      'write',
+    ),
     ...badge(diff.egress.added.length, 'host', 'hosts', 'write'),
     ...badge(diff.navigation.added.length, 'login origin', 'login origins', 'write'),
     ...badge(diff.frameOrigins.added.length, 'frame origin', 'frame origins', 'write'),

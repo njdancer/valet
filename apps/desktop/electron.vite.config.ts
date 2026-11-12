@@ -26,6 +26,7 @@ import { resolve } from 'node:path'
 import tailwind from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'electron-vite'
+import { sandboxPreload } from './sandbox-preload'
 import { feedDefines } from './src/main/core/feed-defines'
 import { toolLibrary } from './tool-library'
 import { contentSecurityPolicy } from './vite.config'
@@ -64,6 +65,8 @@ export default defineConfig(({ command, mode }) => {
       },
     },
     preload: {
+      // The sandbox renderer's preload, beside this one (docs/sandbox.md).
+      plugins: [sandboxPreload(resolve(here, 'out/preload'))],
       build: {
         outDir: resolve(here, 'out/preload'),
         emptyOutDir: true,

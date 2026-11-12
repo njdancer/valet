@@ -93,6 +93,7 @@ const REMOVALS_ONLY: PendingReview = {
     settings: { added: [], removed: [], unchanged: [] },
     limits: { before: LIMITS, after: { ...LIMITS, requestsPerRun: 4 } },
     probe: { before: PROBE, after: PROBE },
+    sandbox: { unsandboxed: false, becameUnsandboxed: false, reason: null, exceptions: [] },
   },
   manifestDiff: [],
   files: [],
@@ -381,6 +382,7 @@ describe('reviewing an update', () => {
         },
         limits: null,
         probe: null,
+        sandbox: { unsandboxed: false, becameUnsandboxed: false, reason: null, exceptions: [] },
       },
       manifestDiff: [
         { kind: 'hunk', oldLine: null, newLine: null, text: '@@ "tools" @@' },
@@ -523,6 +525,7 @@ describe('reviewing an update', () => {
         egress: { added: [], removed: [], unchanged: ['www.woolworths.com.au'] },
         tools: { added: [], removed: [], unchanged: [] },
         probe: { before: PROBE, after: { ...PROBE, loggedOutStatuses: [401, 403], equals: null } },
+        sandbox: { unsandboxed: false, becameUnsandboxed: false, reason: null, exceptions: [] },
       },
     })
     renderAt(REVIEW, api)

@@ -6,8 +6,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AdapterStore, buildRecord, LoadError, StoreError } from '@valet/adapter-store'
 import { type AuditRecord, type AuditSink, PackageError, packageOf, parseManifest } from '@valet/core'
+import type { ToolProcessFactory } from '@valet/runtime'
 import { inMemoryToolProcess } from '@valet/runtime/in-context'
 import { buildToolLibrary } from '@valet/runtime/tool-script'
+import { inProcessQuickJS, nodeQuickJS } from '@valet/sandbox'
 import { afterEach, describe, expect, it } from 'vitest'
 import { InstallError, installReason, PackageManager, rollbackEligible } from '../../src/main/core/packages'
 
@@ -33,7 +35,7 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true })
 })
 
-async function manager() {
+async function manager(start: ToolProcessFactory = inMemoryToolProcess()) {
   const dir = mkdtempSync(join(tmpdir(), 'valet-packages-'))
   dirs.push(dir)
   const prelude = await buildToolLibrary()
@@ -43,7 +45,7 @@ async function manager() {
   } as unknown as AuditSink
   const packages = new PackageManager({
     store: new AdapterStore(dir),
-    runtime: { prelude, start: inMemoryToolProcess() },
+    runtime: { prelude, start },
     build: buildRecord('0.1.0', prelude),
     audit,
     now: () => new Date('2026-11-12T00:00:00Z'),
@@ -53,12 +55,31 @@ async function manager() {
 }
 
 describe('PackageManager', () => {
-  it('refuses a draft until the sandbox exists, and stores nothing', async () => {
+  it('describes a draft in the sandbox it is given, and installs it', async () => {
+    const sandbox = inProcessQuickJS(await nodeQuickJS())
+    let started = 0
+    const { packages } = await manager(() => {
+      started++
+      return sandbox()
+    })
+    const prepared = await packages.prepare(packageOf(MANIFEST, { 'src/tools.ts': TOOLS }), 'draft')
+    expect(started).toBe(1)
+    await packages.commit(prepared)
+    expect((await packages.versions('shop'))?.versions.map((v) => v.source)).toEqual(['draft'])
+  })
+
+  it('refuses an Apple Events exception, which nothing can enforce yet', async () => {
     const { packages } = await manager()
-    await expect(packages.prepare(packageOf(MANIFEST, { 'src/tools.ts': TOOLS }), 'draft')).rejects.toThrow(
+    const manifest = {
+      ...MANIFEST,
+      sandbox: {
+        mode: 'sandboxed' as const,
+        exceptions: [{ kind: 'app' as const, bundleId: 'com.apple.reminders', purpose: 'Your lists' }],
+      },
+    }
+    await expect(packages.prepare(packageOf(manifest, { 'src/tools.ts': TOOLS }), 'folder')).rejects.toThrow(
       InstallError,
     )
-    expect(await packages.versions('shop')).toBeNull()
   })
 
   it('stores a prepared version only when it is committed', async () => {

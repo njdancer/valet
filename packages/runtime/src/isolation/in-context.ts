@@ -6,6 +6,7 @@
 
 import { NeedsUserError, type ToolContext, ValetError } from '@valet/core'
 import type { ToolProcessFactory } from './host'
+import { dispatchLocal } from './local-dispatch'
 import type { HostMessage, ProcessMessage, WireError } from './protocol'
 import { evaluateToolScript, serveToolRuns } from './worker'
 
@@ -42,6 +43,7 @@ async function answer(ctx: ToolContext, capability: string, args: readonly unkno
     case 'confirm':
       return ctx.confirm(a[0])
     default:
+      if (capability.startsWith('local.')) return dispatchLocal(ctx.local, capability, args)
       throw new ValetError('tool-run', 'invalid')
   }
 }
