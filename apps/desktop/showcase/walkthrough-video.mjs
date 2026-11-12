@@ -106,7 +106,7 @@ await browser.close()
 
 // ffmpeg: backdrop, the two recordings (trimmed to a shared start), then every overlay in time.
 const inputs = [
-  ['-loop', '1', '-t', String(duration), '-i', join(parts, 'backdrop.png')],
+  ['-framerate', '30', '-loop', '1', '-t', String(duration), '-i', join(parts, 'backdrop.png')],
   ['-ss', String((t0 - timeline.macStartedAt) / 1000), '-i', join(out, 'mac.mp4')],
   ['-ss', String((t0 - timeline.phoneStartedAt) / 1000), '-i', join(out, 'phone.mp4')],
 ]
