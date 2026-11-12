@@ -1,5 +1,7 @@
 # Development plan
 
+> **2026-11-12:** everything after the MVP is replaced by [the revised plan for agent-run Valet](plan-agent-run.md): agents administer Valet and author adapters over MCP, approvals reach a native phone app, and a Workers relay connects them. The MVP below is unchanged.
+
 Draft, 2026-11-07, updated after round 4. Covers the work from here to a v1 open-source release. Nick reviews it and
 answers the [decisions](#decisions). It sits on top of [security-model.md](security-model.md) and
 [architecture.md](architecture.md), and doesn't repeat them. Where this plan finds a gap in either,
