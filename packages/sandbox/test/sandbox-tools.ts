@@ -50,8 +50,10 @@ export const tools = {
     input: z.object({}),
     output: z.unknown(),
     run: async () => {
-      const hoard: number[][] = []
-      for (let i = 0; ; i++) hoard.push(new Array(1 << 16).fill(i))
+      // One array that only grows: it reaches the heap limit fast. (Filling `new Array(n)` is slow in
+      // QuickJS, since it starts sparse, and many small arrays make each GC slower.)
+      const hoard: number[] = []
+      for (let i = 0; ; i++) hoard.push(i)
     },
   }),
   stack_bomb: tool({
