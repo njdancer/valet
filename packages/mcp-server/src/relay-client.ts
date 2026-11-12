@@ -37,14 +37,29 @@ export type RelayClientStatus =
   | { readonly state: 'replaced' }
   | { readonly state: 'stopped' }
 
-/** Frames for the app's phone channel: envelopes and which phones are online. */
-export type RelayEvent = Extract<RelayToMac, { type: 'envelope' | 'device-online' | 'ready' }>
+/**
+ * The approval key vouching for the transport key (verifyRelayBinding): signed once, with Touch
+ * ID, when the transport key is made, and kept by the app. Sent on every hello, so a new
+ * transport key replaces the old one at the relay, and nobody who only knows the Mac's id can
+ * register as it.
+ */
+export interface RelayBinding {
+  readonly approvalKey: string
+  readonly signature: string
+}
+
+/** Frames for the app: the phone channel, pairing replies, and the relay-side lock. */
+export type RelayEvent = Extract<
+  RelayToMac,
+  { type: 'envelope' | 'device-online' | 'ready' | 'pairing-reply' | 'relay-locked' }
+>
 
 export interface RelayClientOptions {
   /** The relay's origin, e.g. https://relay.example. The challenge must name exactly this. */
   readonly relay: string
   readonly macId: string
   readonly signer: TransportSigner
+  readonly binding: RelayBinding
   /** The remote listener's loopback URL, or null while remote access is paused. */
   readonly listener: () => string | null
   /** RemoteAuthorization.relayConsent, bound to this Mac's public host. */
@@ -66,6 +81,8 @@ export interface RelayClientOptions {
  * to six times its length a frame stays within the relay's frame limit.
  */
 const CHUNK_CHARS = Math.min(RELAY_LIMITS.maxResponseChunkBytes, 64 * 1024)
+/** WebSocket.OPEN. */
+const OPEN = 1
 const CLOSE_AUTH_FAILED = 4401
 const CLOSE_REPLACED = 4409
 
@@ -118,7 +135,7 @@ export class RelayClient {
     return true
   }
 
-  private open(): void {
+  private open() {
     this.setStatus({ state: 'connecting' })
     const Impl = this.options.WebSocket ?? WebSocket
     const base = this.options.connectUrl ?? this.options.relay
@@ -167,7 +184,12 @@ export class RelayClient {
       case 'challenge': {
         // A challenge for another relay would sign us in there with this signature: refuse it.
         if (parsed.relay !== this.options.relay) return socket.close(1008, 'wrong relay')
-        const payload = relayAuthPayload({ nonce: parsed.nonce, relay: parsed.relay, role: 'mac', id: this.options.macId })
+        const payload = relayAuthPayload({
+          nonce: parsed.nonce,
+          relay: parsed.relay,
+          role: 'mac',
+          id: this.options.macId,
+        })
         let signature: string
         try {
           signature = await this.options.signer.sign(payload)
@@ -181,6 +203,7 @@ export class RelayClient {
             role: 'mac',
             id: this.options.macId,
             transportKey: this.options.signer.publicKey,
+            binding: this.options.binding,
             signature,
           } satisfies MacToRelay),
         )
@@ -209,6 +232,8 @@ export class RelayClient {
       }
       case 'envelope':
       case 'device-online':
+      case 'pairing-reply':
+      case 'relay-locked':
         return this.emit(parsed)
     }
   }
@@ -217,7 +242,12 @@ export class RelayClient {
     const listener = this.options.listener()
     if (listener === null) {
       // Paused: the same answer the listener would give if it weren't there.
-      this.sendOn(socket, { type: 'http-response-start', id: frame.id, status: 503, headers: { 'retry-after': '60' } })
+      this.sendOn(socket, {
+        type: 'http-response-start',
+        id: frame.id,
+        status: 503,
+        headers: { 'retry-after': '60' },
+      })
       this.sendOn(socket, { type: 'http-response-end', id: frame.id })
       return
     }
@@ -288,7 +318,7 @@ export class RelayClient {
   }
 
   private sendOn(socket: WebSocket, frame: Exclude<MacToRelay, { type: 'hello' }>): void {
-    if (this.socket !== socket || socket.readyState !== socket.OPEN) return
+    if (this.socket !== socket || socket.readyState !== OPEN) return
     socket.send(JSON.stringify(frame))
   }
 
@@ -303,7 +333,7 @@ export class RelayClient {
   private startPing(socket: WebSocket): void {
     if (this.ping !== null) clearInterval(this.ping)
     this.ping = setInterval(() => {
-      if (this.socket === socket && socket.readyState === socket.OPEN) socket.send('ping')
+      if (this.socket === socket && socket.readyState === OPEN) socket.send('ping')
     }, this.options.pingMs ?? 30_000)
   }
 

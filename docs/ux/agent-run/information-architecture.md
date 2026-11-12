@@ -258,7 +258,7 @@ contracts. Recorded here as each signs:
 | D      | Card payload, Because, states, follow-ons, limits, "Not confirmed yet", "Changed before order"             | waiting |
 | E      | Section 5's tool table and wording; scoping of See Valet                                                   | waiting |
 | F      | Drafts frozen on submit, checks vs tests, reproduction check on Valet-recorded fixtures, private addresses | waiting |
-| G      | Consent through the relay, Accept new agents, offline behaviour, lock at the relay, recovery page          | waiting |
+| G      | Consent through the relay, Accept new agents, offline behaviour, lock at the relay, recovery page          | signed  |
 | H      | The iOS IA, card layout at AX sizes, VoiceOver order, notifications without actions, Face ID to open       | waiting |
 
 **B's notes** (contracts in `packages/core`, design in `docs/agent-run-security.md`):
@@ -284,3 +284,28 @@ contracts. Recorded here as each signs:
 - **Passcode for neutral cards** (open question 3): today the phone's key accepts Face ID only
   (`.biometryCurrentSet`). If Nick says yes, the phone gets a second, passcode-capable key for
   neutral kinds only; that is a contract addition, not a change.
+
+**G's notes** (the relay in `apps/relay`, design in `docs/relay-worker.md`):
+
+- **Consent through the relay** (`br-consent-code`): matches. The relay's page shows the Mac's
+  letters-only code, "Type this code into Valet on your Mac or iPhone", "Valet never sends this
+  code by text message", the close-this-page warning, and moves on by itself. Two differences:
+  - The heading doesn't name the agent ("Connect Claude to Valet"). The client's name comes from
+    its own registration, so the relay page doesn't repeat it; the card on the device shows where
+    the sign-in goes back to.
+  - No "Ends at" time: `consent-view` carries no expiry. Small contract addition if wanted.
+- **Accept new agents** (`br-consent-mac-asleep`, F5): the Mac answers `closed`, and the page says
+  "This Mac doesn't accept new agents right now. Nothing was connected."
+- **Offline** (F3): the page says the Mac isn't connected, or didn't answer, and nothing waits for
+  later. A tool call to an offline Mac gets a tool error; nothing is queued.
+- **Lock at the relay:** the tool result is section 5's wording exactly. The lock holds while the
+  Mac is offline, and only the Mac lifts it.
+- **Recovery page** (`br-recovery`): it locks and can remove phones; it never approves, unlocks or
+  pairs. Three differences from the frame:
+  - The page is the Mac's own relay address plus `/recover`, not one shared page, so the code
+    needs no lookup. **For H:** the saved recovery note (`ph-pair-recovery`) must include that
+    address.
+  - It removes every paired phone, not one chosen from a list: the relay keeps no device names, by
+    design. The Mac stays, so it is never the last device.
+  - It doesn't say "Your Mac is online", which would tell anyone holding the URL whether the Mac
+    is up. Tries are limited to 10 an hour per Mac (the frame assumed 5).

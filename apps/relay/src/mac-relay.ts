@@ -4,7 +4,14 @@
 
 import { DurableObject } from 'cloudflare:workers'
 import type { RelayStoredState } from '@valet/core/relay-protocol'
-import { type ConsentAnswer, type ForwardRequest, type RelaySocket, RelayCore, type Role, type SocketState } from './core'
+import {
+  type ConsentAnswer,
+  type ForwardRequest,
+  RelayCore,
+  type RelaySocket,
+  type Role,
+  type SocketState,
+} from './core'
 import type { Env } from './env'
 import type { PushKind, PushResult } from './push'
 
@@ -32,6 +39,10 @@ export class MacRelay extends DurableObject<Env> {
         save: async (state) => {
           // Exactly RelayStoredState, under one key. Nothing else is ever written.
           await ctx.storage.put(STATE_KEY, state)
+        },
+        erase: async () => {
+          await ctx.storage.deleteAlarm()
+          await ctx.storage.deleteAll()
         },
         wakeAt: (at) => {
           void ctx.storage.getAlarm().then((current) => {
@@ -66,6 +77,13 @@ export class MacRelay extends DurableObject<Env> {
         const { id, query, source } = (await request.json()) as { id: string; query: string; source: string }
         return Response.json(await core.consent(id, query, source))
       }
+      case '/recover': {
+        const { code, unregisterPhones } = (await request.json()) as {
+          code: string
+          unregisterPhones: boolean
+        }
+        return Response.json(await core.recover(code, unregisterPhones === true))
+      }
       default:
         return new Response('Not found', { status: 404 })
     }
@@ -85,7 +103,7 @@ export class MacRelay extends DurableObject<Env> {
 
   override async alarm(): Promise<void> {
     const first = this.ctx.getWebSockets()[0]
-    if (first !== undefined) this.relayFor(first).alarm()
+    if (first !== undefined) await this.relayFor(first).alarm()
   }
 
   /** After hibernation the object is new; the Mac's id travels in each socket's attachment. */

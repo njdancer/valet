@@ -271,12 +271,14 @@ export class RemoteAuthorization {
     let outcome: AuthorizeOutcome
     if (query === '') {
       const handle = this.relayHandles.get(relayId) ?? null
-      outcome = handle === null ? { kind: 'page', status: 404, problem: 'ended' } : this.waitOutcome(handle, host)
+      outcome =
+        handle === null ? { kind: 'page', status: 404, problem: 'ended' } : this.waitOutcome(handle, host)
       if (outcome.kind !== 'waiting') this.relayHandles.delete(relayId)
     } else {
       outcome = this.authorizeOutcome(new URLSearchParams(query), host, source)
       if (outcome.kind === 'waiting') {
-        if (this.relayHandles.size >= MAX_PENDING_CODES) this.relayHandles.delete(this.relayHandles.keys().next().value as string)
+        if (this.relayHandles.size >= MAX_PENDING_CODES)
+          this.relayHandles.delete(this.relayHandles.keys().next().value as string)
         this.relayHandles.set(relayId, outcome.handle)
       }
     }
@@ -286,7 +288,17 @@ export class RemoteAuthorization {
       case 'redirect':
         return { state: outcome.approved ? 'approved' : 'declined', redirect: outcome.location }
       case 'page':
-        return { state: outcome.problem === 'ended' ? 'expired' : 'declined' }
+        switch (outcome.problem) {
+          case 'ended':
+            return { state: 'expired' }
+          // Five already waiting: "try later", and nobody is notified (relay.md).
+          case 'busy':
+            return { state: query === '' ? 'busy' : 'too-many' }
+          case 'too-many':
+            return { state: 'too-many' }
+          default:
+            return { state: 'declined' }
+        }
     }
   }
 
@@ -624,7 +636,7 @@ type AuthorizeOutcome =
 export type RelayConsentView =
   | { readonly state: 'waiting'; readonly code: string }
   | { readonly state: 'approved' | 'declined'; readonly redirect: string }
-  | { readonly state: 'declined' | 'expired' }
+  | { readonly state: 'declined' | 'expired' | 'busy' | 'too-many' }
 
 function redirectTo(
   redirectUri: string,
@@ -639,7 +651,7 @@ function redirectTo(
   return { kind: 'redirect', location: target.toString(), approved: params['code'] !== undefined }
 }
 
-function sendOutcome(res: ServerResponse, outcome: AuthorizeOutcome): void {
+function sendOutcome(res: ServerResponse, outcome: AuthorizeOutcome) {
   switch (outcome.kind) {
     case 'page':
       return sendPage(res, outcome.status, problemPage(outcome.problem))

@@ -24,7 +24,8 @@ export function testKey(): TestKey {
 }
 
 function signWith(key: KeyObject, domain: string, payload: string): string {
-  return sign('sha256', Buffer.from(`${domain}\n${payload}`, 'utf8'), { key, dsaEncoding: 'ieee-p1363' }).toString(
-    'base64url',
-  )
+  return sign('sha256', Buffer.from(`${domain}\n${payload}`, 'utf8'), {
+    key,
+    dsaEncoding: 'ieee-p1363',
+  }).toString('base64url')
 }

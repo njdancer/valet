@@ -9,9 +9,12 @@ import {
   RELAY_FORWARDED_PATHS,
   RELAY_LIMITS,
 } from '@valet/core/relay-protocol'
-import { byteLength, type ConsentAnswer, type ForwardRequest } from './core'
+import { byteLength, type ConsentAnswer, type ForwardRequest, type RecoverResult } from './core'
 import { fromBase64url, randomToken, toBase64url } from './encoding'
-import { problemPage, redirectResponse, waitingPage } from './pages'
+import { problemPage, recoveryPage, redirectResponse, waitingPage } from './pages'
+
+/** WebCrypto's key type, named so it reads the same under Node's and Workers' type definitions. */
+type ImportedKey = Awaited<ReturnType<typeof crypto.subtle.importKey>>
 
 export interface RateLimiter {
   limit(options: { key: string }): Promise<{ success: boolean }>
@@ -22,13 +25,14 @@ export interface MacRelayStub {
   connect(request: Request, role: 'mac' | 'phone'): Promise<Response>
   forward(request: ForwardRequest, signal: AbortSignal): Promise<Response>
   consent(id: string, query: string, source: string): Promise<ConsentAnswer>
+  recover(code: string, unregisterPhones: boolean): Promise<RecoverResult>
 }
 
 export interface FrontDoor {
   /** The bare relay host, e.g. relay.example. Each Mac is `<macId>.<host>`. */
   readonly host: string
   /** HMAC key for wait tokens, raw bytes. */
-  readonly waitKey: CryptoKey
+  readonly waitKey: ImportedKey
   readonly mac: (macId: string) => MacRelayStub
   readonly limits: {
     /** Device connections, per source. */
@@ -48,6 +52,9 @@ const FORWARDED = new Set<string>(RELAY_FORWARDED_PATHS)
 const SIGN_IN_PATHS = new Set(['/register', '/token'])
 const MAX_HEADER_VALUE = 8192
 const WAIT_TOKEN_TTL_MS = 6 * 60_000
+/** The recovery page, on the Mac's own host so the code needs no lookup. Never forwarded. */
+export const RECOVERY_PATH = '/recover'
+const MAX_RECOVERY_BODY = 1024
 
 export async function frontDoor(request: Request, door: FrontDoor): Promise<Response> {
   const url = new URL(request.url)
@@ -59,7 +66,11 @@ export async function frontDoor(request: Request, door: FrontDoor): Promise<Resp
   if (macId === null || !KEY_ID.test(macId)) {
     // Device connections. On any host but a Mac's: only the relay's own names are routed here.
     const match = DEVICE_PATH.exec(url.pathname)
-    if (match === null || request.headers.get('upgrade')?.toLowerCase() !== 'websocket' || request.method !== 'GET')
+    if (
+      match === null ||
+      request.headers.get('upgrade')?.toLowerCase() !== 'websocket' ||
+      request.method !== 'GET'
+    )
       return notFound()
     if (!(await allowed(door.limits.connect, `connect:${sourceKey(source)}`))) return tooMany()
     return door.mac(match[2] as string).connect(request, match[1] as 'mac' | 'phone')
@@ -67,10 +78,14 @@ export async function frontDoor(request: Request, door: FrontDoor): Promise<Resp
   const key = `${macId}:${sourceKey(source)}`
 
   if (url.pathname === RELAY_CONSENT_PATH) return consent(request, url, door, macId, key, source)
+  if (url.pathname === RECOVERY_PATH) return recover(request, url, door, macId, key)
   if (!FORWARDED.has(url.pathname)) return notFound()
   const method = request.method
   if (method !== 'GET' && method !== 'POST' && method !== 'DELETE')
-    return Response.json({ error: 'method_not_allowed' }, { status: 405, headers: { allow: 'GET, POST, DELETE' } })
+    return Response.json(
+      { error: 'method_not_allowed' },
+      { status: 405, headers: { allow: 'GET, POST, DELETE' } },
+    )
   // The relay drops Origin with every other header it doesn't forward, so it refuses what the
   // Mac's own Origin guard would have refused (remote-auth.ts, remoteRequestHost).
   if (request.headers.has('origin')) return Response.json({ error: 'forbidden' }, { status: 403 })
@@ -103,6 +118,38 @@ export async function frontDoor(request: Request, door: FrontDoor): Promise<Resp
     },
     request.signal,
   )
+}
+
+// ---------- Recovery ----------
+
+async function recover(
+  request: Request,
+  url: URL,
+  door: FrontDoor,
+  macId: string,
+  key: string,
+): Promise<Response> {
+  // The code only ever travels in a POST body, never a URL, so it stays out of logs and history.
+  if (url.search !== '') return recoveryPage('form', 400)
+  if (request.method === 'GET') return recoveryPage('form', 200)
+  if (request.method !== 'POST') return recoveryPage('form', 405)
+  // The form posts from this page only (form-action 'self'); a page elsewhere can't post for you.
+  if (request.headers.get('origin') !== `https://${macId}.${door.host}`) return recoveryPage('form', 403)
+  if (!(await allowed(door.limits.signIn, `recover:${key}`))) return recoveryPage('too-many', 429)
+  if (!request.headers.get('content-type')?.startsWith('application/x-www-form-urlencoded'))
+    return recoveryPage('form', 415)
+  const length = Number(request.headers.get('content-length') ?? '0')
+  if (!Number.isFinite(length) || length > MAX_RECOVERY_BODY) return recoveryPage('form', 413)
+  const text = await request.text()
+  if (byteLength(text) > MAX_RECOVERY_BODY) return recoveryPage('form', 413)
+  const form = new URLSearchParams(text)
+  const code = form.get('code') ?? ''
+  const phones = form.get('phones') === 'remove'
+  const result = await door.mac(macId).recover(code, phones)
+  // A Mac with no code set reads as a wrong code, so the page says nothing about which Macs have one.
+  if (result === 'done') return recoveryPage(phones ? 'done-phones' : 'done', 200)
+  if (result === 'too-many') return recoveryPage('too-many', 429)
+  return recoveryPage('wrong', 403)
 }
 
 // ---------- Consent ----------
@@ -150,7 +197,8 @@ function render(answer: ConsentAnswer, token: string, redirect: string): Respons
     case 'approved':
     case 'declined':
       // Only ever back to the redirect URI the client named: a Mac can't make this an open redirect.
-      if (answer.redirect !== undefined && sameTarget(answer.redirect, redirect)) return redirectResponse(answer.redirect)
+      if (answer.redirect !== undefined && sameTarget(answer.redirect, redirect))
+        return redirectResponse(answer.redirect)
       return problemPage('cant-go-on', 400)
     case 'expired':
       return problemPage('ended', 404)
@@ -158,6 +206,13 @@ function render(answer: ConsentAnswer, token: string, redirect: string): Respons
       return problemPage('mac-offline', 503)
     case 'no-answer':
       return problemPage('no-answer', 504)
+    case 'closed':
+      return problemPage('closed', 403)
+    case 'busy':
+    case 'too-many':
+      return problemPage('too-many', 429)
+    case 'locked':
+      return problemPage('locked', 503)
   }
 }
 
@@ -187,13 +242,18 @@ interface WaitToken {
 }
 
 /** `<payload>.<mac>`, both base64url; the payload is the JSON of a WaitToken. */
-export async function sealWaitToken(key: CryptoKey, token: WaitToken): Promise<string> {
+export async function sealWaitToken(key: ImportedKey, token: WaitToken): Promise<string> {
   const payload = toBase64url(new TextEncoder().encode(JSON.stringify(token)))
   const mac = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(payload))
   return `${payload}.${toBase64url(new Uint8Array(mac))}`
 }
 
-export async function openWaitToken(key: CryptoKey, text: string, macId: string, now: number): Promise<WaitToken | null> {
+export async function openWaitToken(
+  key: ImportedKey,
+  text: string,
+  macId: string,
+  now: number,
+): Promise<WaitToken | null> {
   if (text.length > 1200) return null
   const [payload, mac, extra] = text.split('.')
   if (payload === undefined || mac === undefined || extra !== undefined) return null
@@ -213,10 +273,13 @@ export async function openWaitToken(key: CryptoKey, text: string, macId: string,
   }
 }
 
-export async function waitKey(secret: string | undefined): Promise<CryptoKey> {
+export async function waitKey(secret: string | undefined): Promise<ImportedKey> {
   // Without a configured secret (local development), a fresh key per isolate: polls that land on
   // another isolate end, which is harmless.
-  const raw = secret === undefined || secret === '' ? crypto.getRandomValues(new Uint8Array(32)) : new TextEncoder().encode(secret)
+  const raw =
+    secret === undefined || secret === ''
+      ? crypto.getRandomValues(new Uint8Array(32))
+      : new TextEncoder().encode(secret)
   return crypto.subtle.importKey('raw', raw, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify'])
 }
 
@@ -258,7 +321,8 @@ export function isJsonRpc(body: string): boolean {
   } catch {
     return false
   }
-  const one = (m: unknown) => typeof m === 'object' && m !== null && !Array.isArray(m) && (m as { jsonrpc?: unknown }).jsonrpc === '2.0'
+  const one = (m: unknown) =>
+    typeof m === 'object' && m !== null && !Array.isArray(m) && (m as { jsonrpc?: unknown }).jsonrpc === '2.0'
   if (Array.isArray(value)) return value.length > 0 && value.length <= 100 && value.every(one)
   return one(value)
 }
@@ -273,7 +337,9 @@ export function sourceKey(address: string): string {
   const [head = '', tail = ''] = value.split('::')
   const left = head === '' ? [] : head.split(':')
   const right = tail === '' ? [] : tail.split(':')
-  const groups = value.includes('::') ? [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill('0'), ...right] : left
+  const groups = value.includes('::')
+    ? [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill('0'), ...right]
+    : left
   return `${groups
     .slice(0, 4)
     .map((g) => g.replace(/^0+(?=.)/, ''))
@@ -290,7 +356,10 @@ async function allowed(limiter: RateLimiter, key: string): Promise<boolean> {
 }
 
 function notFound(): Response {
-  return new Response('Not found', { status: 404, headers: { 'content-type': 'text/plain', 'cache-control': 'no-store' } })
+  return new Response('Not found', {
+    status: 404,
+    headers: { 'content-type': 'text/plain', 'cache-control': 'no-store' },
+  })
 }
 
 function tooMany(): Response {

@@ -4,14 +4,16 @@
 // Enclave keys are fakes.
 
 import { createHash } from 'node:crypto'
+import { setTimeout as delay } from 'node:timers/promises'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
-import type { ToolDeclaration } from '@valet/core'
+import { SIGNING_DOMAINS, type ToolDeclaration } from '@valet/core'
 import {
   ConsentRequests,
   type ListedTool,
-  type RelayClientStatus,
   RelayClient,
+  type RelayClientStatus,
+  type RelayEvent,
   RemoteAccessTokens,
   RemoteAuthorization,
   RemoteClients,
@@ -55,6 +57,7 @@ interface Mac {
   readonly consents: ConsentRequests
   readonly calls: ToolCall[]
   readonly statuses: RelayClientStatus[]
+  readonly events: RelayEvent[]
   online(): Promise<void>
 }
 
@@ -83,14 +86,20 @@ async function startMac(relay: Runtime): Promise<Mac> {
   })
   cleanup.push(() => listener.close())
   const statuses: RelayClientStatus[] = []
+  const events: RelayEvent[] = []
   const waiters: Array<() => void> = []
   const client = new RelayClient({
     relay: RELAY_ORIGIN,
     connectUrl: relay.url,
     macId,
     signer: transport,
+    binding: {
+      approvalKey: approval.publicKey,
+      signature: approval.signDomain(SIGNING_DOMAINS.relayBinding, transport.publicKey),
+    },
     listener: () => listener.url,
     consent: (id, query, source) => authorization.relayConsent(id, query, source, host),
+    onEvent: (event) => events.push(event),
     onStatus: (status) => {
       statuses.push(status)
       if (status.state === 'online') for (const w of waiters.splice(0)) w()
@@ -105,8 +114,11 @@ async function startMac(relay: Runtime): Promise<Mac> {
     consents,
     calls,
     statuses,
+    events,
     online: () =>
-      client.status.state === 'online' ? Promise.resolve() : new Promise<void>((resolve) => waiters.push(resolve)),
+      client.status.state === 'online'
+        ? Promise.resolve()
+        : new Promise<void>((resolve) => waiters.push(resolve)),
   }
 }
 
@@ -137,8 +149,12 @@ describe('through the relay', () => {
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }),
     })
     expect(unauthorised.status).toBe(401)
-    expect(unauthorised.headers.get('www-authenticate')).toContain(`https://${mac.host}/.well-known/oauth-protected-resource/mcp`)
-    const metadata = (await (await relay.fetch(`https://${mac.host}/.well-known/oauth-authorization-server`)).json()) as {
+    expect(unauthorised.headers.get('www-authenticate')).toContain(
+      `https://${mac.host}/.well-known/oauth-protected-resource/mcp`,
+    )
+    const metadata = (await (
+      await relay.fetch(`https://${mac.host}/.well-known/oauth-authorization-server`)
+    ).json()) as {
       issuer: string
     }
     expect(metadata.issuer).toBe(`https://${mac.host}`)
@@ -147,7 +163,11 @@ describe('through the relay', () => {
     const registered = await relay.fetch(`https://${mac.host}/register`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ redirect_uris: [REDIRECT], token_endpoint_auth_method: 'none', client_name: 'Claude' }),
+      body: JSON.stringify({
+        redirect_uris: [REDIRECT],
+        token_endpoint_auth_method: 'none',
+        client_name: 'Claude',
+      }),
     })
     expect(registered.status).toBe(201)
     const { client_id: clientId } = (await registered.json()) as { client_id: string }
@@ -157,9 +177,9 @@ describe('through the relay', () => {
     expect(waiting.status).toBe(200)
     expect(waiting.headers.get('content-security-policy')).toContain("default-src 'none'")
     const page = await waiting.text()
-    const code = /<div class="code">([A-Z0-9-]+)<\/div>/.exec(page)?.[1] as string
-    const next = (/url=([^"]+)"/.exec(page)?.[1] as string).replace(/&amp;/g, '&')
-    expect(code).toMatch(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/)
+    const code = /<div class="code">([A-Z-]+)<\/div>/.exec(page)?.[1] as string
+    const next = (/url=([^"]+)"/.exec(page)?.[1] ?? '').replace(/&amp;/g, '&')
+    expect(code).toMatch(/^[A-HJ-NP-Z]{4}-[A-HJ-NP-Z]{4}$/)
     expect(next).toMatch(/^\/authorize\?wait=/)
     expect(mac.consents.prompts()).toHaveLength(1)
 
@@ -211,9 +231,18 @@ describe('through the relay', () => {
     expect(stored).toHaveLength(1)
     expect(Object.keys(stored[0] as object)).toEqual(['state'])
     const state = (stored[0] as { state: Record<string, unknown> }).state
-    expect(Object.keys(state).sort()).toEqual(['createdAt', 'devices', 'macId', 'macTransportKey'])
+    expect(Object.keys(state).sort()).toEqual([
+      'createdAt',
+      'devices',
+      'lastSeenAt',
+      'locked',
+      'macId',
+      'macTransportKey',
+      'recoveryCodeHash',
+    ])
     const dump = JSON.stringify(stored)
-    for (const secret of [accessToken, authCode, clientId, code, 'view_cart', 'claude.example']) expect(dump).not.toContain(secret)
+    for (const secret of [accessToken, authCode, clientId, code, 'view_cart', 'claude.example'])
+      expect(dump).not.toContain(secret)
   })
 
   it('answers a tool call with a tool error, and anything else with a 503, while the Mac is offline', async () => {
@@ -226,7 +255,10 @@ describe('through the relay', () => {
       body: JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/call', params: { name: 'x' } }),
     })
     expect(call.status).toBe(200)
-    const body = (await call.json()) as { id: number; result: { isError: boolean; content: { text: string }[] } }
+    const body = (await call.json()) as {
+      id: number
+      result: { isError: boolean; content: { text: string }[] }
+    }
     expect(body.id).toBe(7)
     expect(body.result.isError).toBe(true)
     expect(body.result.content[0]?.text).toContain("isn't connected")
@@ -245,12 +277,18 @@ describe('through the relay', () => {
     const mac = await startMac(relay)
     await mac.online()
 
-    // Someone else claims the same Mac id with their own key.
+    // Someone else claims the same Mac id with their own keys.
+    const otherTransport = testKey()
+    const otherApproval = testKey()
     const impostor = new RelayClient({
       relay: RELAY_ORIGIN,
       connectUrl: relay.url,
       macId: mac.host.split('.')[0] as string,
-      signer: testKey(),
+      signer: otherTransport,
+      binding: {
+        approvalKey: otherApproval.publicKey,
+        signature: otherApproval.signDomain(SIGNING_DOMAINS.relayBinding, otherTransport.publicKey),
+      },
       listener: () => null,
       consent: () => ({ state: 'declined' }),
       backoff: { minMs: 10_000, maxMs: 10_000 },
@@ -268,5 +306,43 @@ describe('through the relay', () => {
     expect((await refused).state).toBe('refused')
     // The real Mac is still the one connected.
     expect(mac.client.status.state).toBe('online')
+  })
+
+  it('locks down at the relay with the recovery code from a borrowed browser, until the Mac unlocks', async () => {
+    const relay = await startRelay()
+    cleanup.push(() => relay.close())
+    const mac = await startMac(relay)
+    await mac.online()
+    const code = 'RKQ4-7MXT-PW9C-3HJD-WN2F'
+    const codeHash = createHash('sha256').update(code.replace(/-/g, '')).digest('hex')
+    expect(mac.client.send({ type: 'recovery-register', codeHash })).toBe(true)
+    const origin = `https://${mac.host}`
+    const post = (body: string) =>
+      relay.fetch(`${origin}/recover`, {
+        method: 'POST',
+        headers: { origin, 'content-type': 'application/x-www-form-urlencoded' },
+        body,
+      })
+    // The register frame and the post race; the post may arrive first and read as wrong.
+    let page = await post(new URLSearchParams({ code }).toString())
+    for (let i = 0; i < 20 && page.status === 403; i++) {
+      await delay(50)
+      page = await post(new URLSearchParams({ code }).toString())
+    }
+    expect(page.status).toBe(200)
+    expect(await page.text()).toContain('locked down at the relay')
+    await expect.poll(() => mac.events.some((e) => e.type === 'relay-locked')).toBe(true)
+
+    const call = await relay.fetch(`${origin}/mcp`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'x' } }),
+    })
+    expect(JSON.stringify(await call.json())).toContain('locked it down')
+    expect(mac.calls).toHaveLength(0)
+    expect((relay.stored()[0] as { state: { locked: boolean } }).state.locked).toBe(true)
+
+    expect(mac.client.send({ type: 'relay-unlock' })).toBe(true)
+    await expect.poll(() => (relay.stored()[0] as { state: { locked: boolean } }).state.locked).toBe(false)
   })
 })

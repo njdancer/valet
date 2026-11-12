@@ -5,7 +5,17 @@
 import type { RelayStoredState } from '@valet/core'
 import { relayAuthPayload, SIGNING_DOMAINS } from '@valet/core'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { CLOSE, type ForwardRequest, offline, RELAY_CAPS, RelayCore, type RelaySocket, responseHeaders, type SocketState } from '../src/core'
+import {
+  CLOSE,
+  type ForwardRequest,
+  offline,
+  RELAY_CAPS,
+  RelayCore,
+  type RelaySocket,
+  recoveryCodeHash,
+  responseHeaders,
+  type SocketState,
+} from '../src/core'
 import type { PushKind, PushResult } from '../src/push'
 import { type TestKey, testKey } from './keys'
 
@@ -44,6 +54,7 @@ class World {
   sockets: FakeSocket[] = []
   stored: RelayStoredState | null = null
   saves = 0
+  erased = 0
   alarms: number[] = []
   pushes: { token: string; kind: PushKind }[] = []
   pushResult: PushResult = 'sent'
@@ -65,7 +76,13 @@ class World {
           this.saves++
           this.stored = JSON.parse(JSON.stringify(state))
         },
-        wakeAt: (at) => this.alarms.push(at),
+        erase: async () => {
+          this.stored = null
+          this.erased++
+        },
+        wakeAt: (at) => {
+          this.alarms.push(at)
+        },
         push: async (token, kind) => {
           this.pushes.push({ token, kind })
           return this.pushResult
@@ -89,17 +106,37 @@ async function hello(
   world: World,
   socket: FakeSocket,
   key: TestKey,
-  fields: { role: 'mac' | 'phone'; id: string; transportKey?: string | null; signatureOver?: string },
+  fields: {
+    role: 'mac' | 'phone'
+    id: string
+    transportKey?: string | null
+    signatureOver?: string
+    /** Signs the binding instead of the approval key: a forgery. */
+    bindingSigner?: TestKey
+    /** The approval key that binds the transport key; a Mac's hello with a key carries this. */
+    approval?: TestKey
+  },
 ): Promise<void> {
   const { nonce } = challengeOf(socket)
-  const payload = fields.signatureOver ?? relayAuthPayload({ nonce, relay: ORIGIN, role: fields.role, id: fields.id })
+  const payload =
+    fields.signatureOver ?? relayAuthPayload({ nonce, relay: ORIGIN, role: fields.role, id: fields.id })
   const frame: Record<string, unknown> = {
     type: 'hello',
     role: fields.role,
     id: fields.id,
     signature: key.signDomain(SIGNING_DOMAINS.relayAuth, payload),
   }
-  if (fields.transportKey !== null) frame['transportKey'] = fields.transportKey ?? key.publicKey
+  if (fields.transportKey !== null) {
+    const transportKey = fields.transportKey ?? key.publicKey
+    frame['transportKey'] = transportKey
+    if (fields.role === 'mac') {
+      const approval = fields.approval ?? APPROVAL
+      frame['binding'] = {
+        approvalKey: approval.publicKey,
+        signature: (fields.bindingSigner ?? approval).signDomain(SIGNING_DOMAINS.relayBinding, transportKey),
+      }
+    }
+  }
   await world.core.message(socket, JSON.stringify(frame))
 }
 
@@ -114,7 +151,12 @@ async function send(world: World, socket: FakeSocket, frame: unknown): Promise<v
   await world.core.message(socket, JSON.stringify(frame))
 }
 
-async function phoneOnline(world: World, mac: FakeSocket, key: TestKey, deviceId: string): Promise<FakeSocket> {
+async function phoneOnline(
+  world: World,
+  mac: FakeSocket,
+  key: TestKey,
+  deviceId: string,
+): Promise<FakeSocket> {
   await send(world, mac, { type: 'device-register', deviceId, transportKey: key.publicKey })
   const phone = world.open('phone')
   await hello(world, phone, key, { role: 'phone', id: deviceId, transportKey: null })
@@ -122,7 +164,9 @@ async function phoneOnline(world: World, mac: FakeSocket, key: TestKey, deviceId
   return phone
 }
 
-const MAC_ID = 'a'.repeat(32)
+/** The Mac's approval key: its id is the Mac's id. */
+const APPROVAL = testKey()
+const MAC_ID = APPROVAL.id
 const PHONE_ID = 'b'.repeat(32)
 const OTHER_PHONE = 'c'.repeat(32)
 
@@ -143,7 +187,15 @@ describe('connections', () => {
     expect(world.alarms).toHaveLength(1)
     await hello(world, socket, key, { role: 'mac', id: MAC_ID })
     expect(socket.last()).toEqual({ type: 'ready', devices: [] })
-    expect(world.stored).toEqual({ macId: MAC_ID, macTransportKey: key.publicKey, devices: [], createdAt: '2026-11-12T03:00:00.000Z' })
+    expect(world.stored).toEqual({
+      macId: MAC_ID,
+      macTransportKey: key.publicKey,
+      devices: [],
+      recoveryCodeHash: null,
+      locked: false,
+      createdAt: '2026-11-12T03:00:00.000Z',
+      lastSeenAt: '2026-11-12T03:00:00.000Z',
+    })
     expect(world.core.macOnline()).toBe(true)
   })
 
@@ -156,21 +208,32 @@ describe('connections', () => {
     ]) {
       const world = new World(MAC_ID)
       const socket = world.open('mac')
-      const payload = over.includes('"nonce":""') ? over.replace('""', `"${challengeOf(socket).nonce}"`) : over
+      const payload = over.includes('"nonce":""')
+        ? over.replace('""', `"${challengeOf(socket).nonce}"`)
+        : over
       await hello(world, socket, key, { role: 'mac', id: MAC_ID, signatureOver: payload })
       expect(socket.closedWith?.code).toBe(CLOSE.authFailed)
       expect(world.stored).toBeNull()
     }
   })
 
-  it('refuses another key for a known Mac, a wrong id, a wrong role, and a first hello without a key', async () => {
+  it('refuses a key not bound by the Mac’s approval key, a wrong id, a wrong role, and a first hello without a key', async () => {
     const world = new World(MAC_ID)
     const key = testKey()
     await macOnline(world, key)
 
+    // Another approval key: its id isn't this Mac's id.
     const impostor = world.open('mac')
-    await hello(world, impostor, testKey(), { role: 'mac', id: MAC_ID })
+    await hello(world, impostor, testKey(), { role: 'mac', id: MAC_ID, approval: testKey() })
     expect(impostor.closedWith?.code).toBe(CLOSE.authFailed)
+    // This Mac's approval key, but a binding someone else signed.
+    const forged = world.open('mac')
+    await hello(world, forged, testKey(), { role: 'mac', id: MAC_ID, bindingSigner: testKey() })
+    expect(forged.closedWith?.code).toBe(CLOSE.authFailed)
+    // A real binding replayed by someone without that transport key's private half.
+    const replayed = world.open('mac')
+    await hello(world, replayed, testKey(), { role: 'mac', id: MAC_ID, transportKey: key.publicKey })
+    expect(replayed.closedWith?.code).toBe(CLOSE.authFailed)
     const noKey = world.open('mac')
     await hello(world, noKey, testKey(), { role: 'mac', id: MAC_ID, transportKey: null })
     expect(noKey.closedWith?.code).toBe(CLOSE.authFailed)
@@ -186,6 +249,19 @@ describe('connections', () => {
     await hello(fresh, first, key, { role: 'mac', id: MAC_ID, transportKey: null })
     expect(first.closedWith?.code).toBe(CLOSE.authFailed)
     expect(world.stored?.macTransportKey).toBe(key.publicKey)
+  })
+
+  it('takes a new transport key the approval key binds, and then refuses the old one', async () => {
+    const world = new World(MAC_ID)
+    const old = testKey()
+    await macOnline(world, old)
+    const rotated = testKey()
+    const next = await macOnline(world, rotated)
+    expect(world.stored?.macTransportKey).toBe(rotated.publicKey)
+    const stale = world.open('mac')
+    await hello(world, stale, old, { role: 'mac', id: MAC_ID, transportKey: null })
+    expect(stale.closedWith?.code).toBe(CLOSE.authFailed)
+    expect(next.closedWith).toBeNull()
   })
 
   it('lets a known Mac reconnect without sending its key, and replaces the older socket', async () => {
@@ -206,7 +282,7 @@ describe('connections', () => {
     world.clock.now += 5000
     const fresh = world.open('phone')
     world.clock.now += 6000
-    world.core.alarm()
+    await world.core.alarm()
     expect(slow.closedWith?.code).toBe(CLOSE.challengeTimeout)
     expect(fresh.closedWith).toBeNull()
     expect(world.alarms.at(-1)).toBe(world.clock.now - 6000 + 10_000)
@@ -227,7 +303,12 @@ describe('connections', () => {
     await send(world, mac, { type: 'hello', role: 'mac', id: MAC_ID, signature: 'A'.repeat(86) })
     expect(mac.closedWith?.code).toBe(CLOSE.badFrame)
 
-    for (const data of [new ArrayBuffer(4), 'not json', 'x'.repeat(RELAY_CAPS.maxFrameBytes + 1), '{"type":"nope"}']) {
+    for (const data of [
+      new ArrayBuffer(4),
+      'not json',
+      'x'.repeat(RELAY_CAPS.maxFrameBytes + 1),
+      '{"type":"nope"}',
+    ]) {
       const w = new World(MAC_ID)
       const s = await macOnline(w, key)
       await w.core.message(s, data)
@@ -241,7 +322,8 @@ describe('connections', () => {
   it('closes a Mac that floods frames beyond its burst', async () => {
     const world = new World(MAC_ID)
     const mac = await macOnline(world, testKey())
-    for (let i = 0; i < RELAY_CAPS.frameBurst; i++) await send(world, mac, { type: 'http-response-end', id: 'nope' })
+    for (let i = 0; i < RELAY_CAPS.frameBurst; i++)
+      await send(world, mac, { type: 'http-response-end', id: 'nope' })
     expect(mac.closedWith).toBeNull()
     await send(world, mac, { type: 'http-response-end', id: 'nope' })
     expect(mac.closedWith?.code).toBe(CLOSE.tooMany)
@@ -255,7 +337,8 @@ describe('phones', () => {
     const phoneKey = testKey()
     const early = world.open('phone')
     await hello(world, early, phoneKey, { role: 'phone', id: PHONE_ID, transportKey: null })
-    expect(early.closedWith?.code).toBe(CLOSE.unregistered)
+    // Refused the same way as a wrong key, so a stranger can't tell which phone ids exist.
+    expect(early.closedWith?.code).toBe(CLOSE.authFailed)
 
     const phone = await phoneOnline(world, mac, phoneKey, PHONE_ID)
     expect(mac.last()).toEqual({ type: 'device-online', deviceId: PHONE_ID, online: true })
@@ -275,10 +358,20 @@ describe('phones', () => {
     await send(world, mac, { type: 'device-register', deviceId: MAC_ID, transportKey: testKey().publicKey })
     expect(world.stored?.devices).toEqual([])
     for (let i = 0; i < 6; i++)
-      await send(world, mac, { type: 'device-register', deviceId: String(i).repeat(32), transportKey: testKey().publicKey })
-    expect(world.stored?.devices.map((d) => d.deviceId)).toEqual(['0', '1', '2', '3', '4'].map((c) => c.repeat(32)))
+      await send(world, mac, {
+        type: 'device-register',
+        deviceId: String(i).repeat(32),
+        transportKey: testKey().publicKey,
+      })
+    expect(world.stored?.devices.map((d) => d.deviceId)).toEqual(
+      ['0', '1', '2', '3', '4'].map((c) => c.repeat(32)),
+    )
     const before = world.saves
-    await send(world, mac, { type: 'device-register', deviceId: '0'.repeat(32), transportKey: world.stored?.devices[0]?.transportKey })
+    await send(world, mac, {
+      type: 'device-register',
+      deviceId: '0'.repeat(32),
+      transportKey: world.stored?.devices[0]?.transportKey,
+    })
     expect(world.saves).toBe(before)
   })
 
@@ -315,7 +408,8 @@ describe('phones', () => {
     expect(phone.closedWith?.code).toBe(CLOSE.badFrame)
 
     const again = await phoneOnline(world, mac, key, PHONE_ID)
-    for (let i = 0; i < 60; i++) await send(world, again, { type: 'envelope', envelope: envelope(PHONE_ID, MAC_ID) })
+    for (let i = 0; i < 60; i++)
+      await send(world, again, { type: 'envelope', envelope: envelope(PHONE_ID, MAC_ID) })
     expect(again.closedWith).toBeNull()
     await send(world, again, { type: 'envelope', envelope: envelope(PHONE_ID, MAC_ID) })
     expect(again.closedWith?.code).toBe(CLOSE.tooMany)
@@ -383,7 +477,11 @@ describe('forwarded HTTP', () => {
     method: 'POST',
     path: '/mcp',
     query: '',
-    headers: { 'content-type': 'application/json', authorization: 'Bearer t', origin: 'https://evil.test' } as Record<string, string>,
+    headers: {
+      'content-type': 'application/json',
+      authorization: 'Bearer t',
+      origin: 'https://evil.test',
+    } as Record<string, string>,
     body: '{"jsonrpc":"2.0","id":1,"method":"ping"}',
     source: '203.0.113.9',
     stream: false,
@@ -428,7 +526,9 @@ describe('forwarded HTTP', () => {
       expect((await pending).status).toBe(502)
       expect(mac.last()).toEqual({ type: 'http-cancel', id })
     }
-    expect(responseHeaders({ 'content-type': 'application/json; charset=utf-8' })?.get('cache-control')).toBe('no-store')
+    expect(responseHeaders({ 'content-type': 'application/json; charset=utf-8' })?.get('cache-control')).toBe(
+      'no-store',
+    )
   })
 
   it('caps a response, ends a stream after its lifetime, and times out a Mac that never answers', async () => {
@@ -448,12 +548,18 @@ describe('forwarded HTTP', () => {
     const bigResponse = await big
     const reading = bigResponse.text().catch((e: Error) => e.message)
     const chunk = 'x'.repeat(256 * 1024)
-    for (let i = 0; i < 33; i++) await send(world, mac, { type: 'http-response-chunk', id: bigId, data: chunk })
+    for (let i = 0; i < 33; i++)
+      await send(world, mac, { type: 'http-response-chunk', id: bigId, data: chunk })
     expect(await reading).toBe('response too large')
 
     const stream = world.core.forward({ ...request, method: 'GET', stream: true, body: '' })
     const streamId = mac.last<{ id: string }>().id
-    await send(world, mac, { type: 'http-response-start', id: streamId, status: 200, headers: { 'content-type': 'text/event-stream' } })
+    await send(world, mac, {
+      type: 'http-response-start',
+      id: streamId,
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    })
     const streamResponse = await stream
     vi.advanceTimersByTime(5000)
     expect(await streamResponse.text()).toBe('')
@@ -463,7 +569,12 @@ describe('forwarded HTTP', () => {
     const world = new World(MAC_ID)
     const mac = await macOnline(world, testKey())
     const pending = world.core.forward(request)
-    await send(world, mac, { type: 'http-response-start', id: mac.last<{ id: string }>().id, status: 204, headers: {} })
+    await send(world, mac, {
+      type: 'http-response-start',
+      id: mac.last<{ id: string }>().id,
+      status: 204,
+      headers: {},
+    })
     const response = await pending
     expect(response.status).toBe(204)
     expect(response.body).toBeNull()
@@ -494,7 +605,9 @@ describe('forwarded HTTP', () => {
   it('limits concurrent requests and open streams per Mac', async () => {
     const world = new World(MAC_ID)
     await macOnline(world, testKey())
-    const streams = Array.from({ length: 4 }, () => world.core.forward({ ...request, method: 'GET', stream: true }))
+    const streams = Array.from({ length: 4 }, () =>
+      world.core.forward({ ...request, method: 'GET', stream: true }),
+    )
     expect((await world.core.forward({ ...request, method: 'GET', stream: true })).status).toBe(429)
     const rest = Array.from({ length: 12 }, () => world.core.forward(request))
     expect((await world.core.forward(request)).status).toBe(429)
@@ -503,11 +616,16 @@ describe('forwarded HTTP', () => {
 
   it('answers for an offline Mac at once and queues nothing', async () => {
     const world = new World(MAC_ID)
-    const call = await world.core.forward({ ...request, body: '{"jsonrpc":"2.0","id":"x","method":"tools/call"}' })
+    const call = await world.core.forward({
+      ...request,
+      body: '{"jsonrpc":"2.0","id":"x","method":"tools/call"}',
+    })
     expect(((await call.json()) as { id: string; result: { isError: boolean } }).result.isError).toBe(true)
     expect((await world.core.forward(request)).status).toBe(503)
     expect(offline({ path: '/mcp', method: 'POST', body: 'nope' }).status).toBe(503)
-    expect(offline({ path: '/mcp', method: 'POST', body: '{"method":"tools/call","id":{}}' }).status).toBe(503)
+    expect(offline({ path: '/mcp', method: 'POST', body: '{"method":"tools/call","id":{}}' }).status).toBe(
+      503,
+    )
   })
 })
 
@@ -517,16 +635,24 @@ describe('consent', () => {
     const world = new World(MAC_ID, { consentMs: 1000 })
     const mac = await macOnline(world, testKey())
     const answer = world.core.consent('id-1', 'client_id=x', '198.51.100.1')
-    expect(mac.last()).toEqual({ type: 'consent-open', id: 'id-1', query: 'client_id=x', source: '198.51.100.1' })
-    expect(await world.core.consent('id-1', '', '')).toEqual({ state: 'no-answer' })
-    await send(world, mac, { type: 'consent-view', id: 'id-1', state: 'waiting', code: 'ABCD-1234' })
-    expect(await answer).toEqual({ state: 'waiting', code: 'ABCD-1234' })
+    expect(mac.last()).toEqual({
+      type: 'consent-open',
+      id: 'id-1',
+      query: 'client_id=x',
+      source: '198.51.100.1',
+    })
+    expect(await world.core.consent('id-1', '', '')).toEqual({ state: 'busy' })
+    await send(world, mac, { type: 'consent-view', id: 'id-1', state: 'waiting', code: 'ABCD-EFGH' })
+    expect(await answer).toEqual({ state: 'waiting', code: 'ABCD-EFGH' })
 
     const views = [
       [{ state: 'waiting' }, { state: 'no-answer' }],
       [{ state: 'expired' }, { state: 'expired' }],
       [{ state: 'declined' }, { state: 'declined' }],
-      [{ state: 'approved', redirect: 'https://c.test/cb?code=1' }, { state: 'approved', redirect: 'https://c.test/cb?code=1' }],
+      [
+        { state: 'approved', redirect: 'https://c.test/cb?code=1' },
+        { state: 'approved', redirect: 'https://c.test/cb?code=1' },
+      ],
     ] as const
     for (const [view, expected] of views) {
       const pending = world.core.consent('id-2', '', '')
@@ -539,5 +665,195 @@ describe('consent', () => {
     vi.advanceTimersByTime(1000)
     expect(await slow).toEqual({ state: 'no-answer' })
     expect(await new World(MAC_ID).core.consent('id', 'q', '')).toEqual({ state: 'offline' })
+  })
+})
+
+describe('pairing', () => {
+  const OFFER = 'e'.repeat(32)
+  const sealed = { iv: 'I'.repeat(16), ct: 'c2VhbGVk' }
+  const reply = (offerId = OFFER, macId = MAC_ID) => ({ type: 'pairing-reply', macId, offerId, sealed })
+  const inSixMinutes = (world: World) => new Date(world.clock.now + 6 * 60_000).toISOString()
+
+  it('passes one sealed reply per open offer to the Mac, and the Mac’s answers back to that phone only', async () => {
+    const world = new World(MAC_ID)
+    const mac = await macOnline(world, testKey())
+    // No offer yet: refused.
+    const early = world.open('phone')
+    await send(world, early, reply())
+    expect(early.closedWith?.code).toBe(CLOSE.authFailed)
+
+    await send(world, mac, { type: 'pairing-open', offerId: OFFER, expiresAt: inSixMinutes(world) })
+    const phone = world.open('phone')
+    await send(world, phone, reply())
+    expect(phone.closedWith).toBeNull()
+    expect(mac.last()).toEqual({ type: 'pairing-reply', offerId: OFFER, sealed })
+    // A second phone answering the same offer is refused: one reply per offer.
+    const second = world.open('phone')
+    await send(world, second, reply())
+    expect(second.closedWith?.code).toBe(CLOSE.authFailed)
+    expect(mac.frames('pairing-reply')).toHaveLength(1)
+    // The waiting phone may not say anything else.
+    const chatty = world.open('phone')
+    await send(world, mac, { type: 'pairing-open', offerId: 'f'.repeat(32), expiresAt: inSixMinutes(world) })
+    await send(world, chatty, reply('f'.repeat(32)))
+    await send(world, chatty, { type: 'relay-lock' })
+    expect(chatty.closedWith?.code).toBe(CLOSE.badFrame)
+
+    const macNonce = 'N'.repeat(43)
+    await send(world, mac, { type: 'pairing-challenge', offerId: OFFER, macNonce })
+    expect(phone.last()).toEqual({ type: 'pairing-challenge', offerId: OFFER, macNonce })
+    await send(world, mac, { type: 'pairing-result', offerId: OFFER, sealed })
+    expect(phone.frames('pairing-result')).toEqual([{ type: 'pairing-result', offerId: OFFER, sealed }])
+    expect(phone.closedWith?.code).toBe(1000)
+    // Pairing registers nothing at the relay: that's the Mac's device-register.
+    expect(world.stored?.devices).toEqual([])
+  })
+
+  it('refuses replies to another Mac, an expired offer, an offline Mac, and floods', async () => {
+    const world = new World(MAC_ID)
+    const mac = await macOnline(world, testKey())
+    await send(world, mac, { type: 'pairing-open', offerId: OFFER, expiresAt: inSixMinutes(world) })
+    const other = world.open('phone')
+    await send(world, other, reply(OFFER, 'd'.repeat(32)))
+    expect(other.closedWith?.code).toBe(CLOSE.authFailed)
+    // An offer can't outlive the relay's cap, whatever expiry the Mac asks for.
+    await send(world, mac, {
+      type: 'pairing-open',
+      offerId: 'f'.repeat(32),
+      expiresAt: '2099-01-01T00:00:00.000Z',
+    })
+    world.clock.now += RELAY_CAPS.maxOfferMs + 1
+    const late = world.open('phone')
+    await send(world, late, reply('f'.repeat(32)))
+    expect(late.closedWith?.code).toBe(CLOSE.authFailed)
+
+    for (let i = 0; i < RELAY_CAPS.pairingRepliesPerMinute; i++) {
+      const s = world.open('phone')
+      await send(world, s, reply('0'.repeat(32)))
+    }
+    const flood = world.open('phone')
+    await send(world, flood, reply())
+    expect(flood.closedWith?.code).toBe(CLOSE.tooMany)
+
+    mac.close(1001, 'gone')
+    const nobody = world.open('phone')
+    await send(world, nobody, reply())
+    expect(nobody.closedWith?.code).toBe(CLOSE.authFailed)
+  })
+
+  it('times out a phone left waiting past its offer', async () => {
+    const world = new World(MAC_ID)
+    const mac = await macOnline(world, testKey())
+    await send(world, mac, { type: 'pairing-open', offerId: OFFER, expiresAt: inSixMinutes(world) })
+    const phone = world.open('phone')
+    await send(world, phone, reply())
+    world.clock.now += 6 * 60_000
+    await world.core.alarm()
+    expect(phone.closedWith?.code).toBe(CLOSE.challengeTimeout)
+  })
+})
+
+describe('lock and recovery', () => {
+  const request: ForwardRequest = {
+    method: 'POST',
+    path: '/mcp',
+    query: '',
+    headers: {},
+    body: '{"jsonrpc":"2.0","id":1,"method":"tools/call"}',
+    source: '203.0.113.9',
+    stream: false,
+  }
+
+  it('locks on a phone’s word, refuses everything while locked, and only the Mac unlocks', async () => {
+    const world = new World(MAC_ID)
+    const macKey = testKey()
+    const mac = await macOnline(world, macKey)
+    const phone = await phoneOnline(world, mac, testKey(), PHONE_ID)
+    const inFlight = world.core.forward(request)
+    await send(world, phone, { type: 'relay-lock' })
+    expect(world.stored?.locked).toBe(true)
+    expect((await inFlight).status).toBe(502)
+    expect(mac.last()).toEqual({ type: 'relay-locked', locked: true, by: 'phone', phonesUnregistered: false })
+    expect(phone.last()).toEqual({ type: 'relay-locked', locked: true, by: 'phone' })
+
+    const call = await world.core.forward(request)
+    expect(call.status).toBe(200)
+    expect(JSON.stringify(await call.json())).toContain('locked it down')
+    expect((await world.core.forward({ ...request, body: '{}' })).status).toBe(503)
+    expect(await world.core.consent('c', 'q', '')).toEqual({ state: 'locked' })
+
+    // The Mac reconnecting is told at once.
+    const back = world.open('mac')
+    await hello(world, back, macKey, { role: 'mac', id: MAC_ID, transportKey: null })
+    expect(back.frames('relay-locked')).toHaveLength(1)
+
+    await send(world, back, { type: 'relay-unlock' })
+    expect(world.stored?.locked).toBe(false)
+    expect(phone.last()).toEqual({ type: 'relay-locked', locked: false, by: 'mac' })
+    const pending = world.core.forward(request)
+    expect(back.last()).toMatchObject({ type: 'http-request' })
+    await send(world, back, {
+      type: 'http-response-start',
+      id: back.last<{ id: string }>().id,
+      status: 204,
+      headers: {},
+    })
+    expect((await pending).status).toBe(204)
+  })
+
+  it('locks with the recovery code, optionally unregistering every phone, within limits', async () => {
+    const world = new World(MAC_ID)
+    const mac = await macOnline(world, testKey())
+    const phone = await phoneOnline(world, mac, testKey(), PHONE_ID)
+    expect(await world.core.recover('ABCD-EFGH-JKLM-NPQR', false)).toBe('unset')
+    const code = 'abcd efgh-jkmn pqrs'
+    const codeHash = (await recoveryCodeHash(code)) as string
+    expect(codeHash).toMatch(/^[0-9a-f]{64}$/)
+    expect(await recoveryCodeHash('ABCDEFGHJKMNPQRS')).toBe(codeHash)
+    expect(await recoveryCodeHash('short')).toBeNull()
+    await send(world, mac, { type: 'recovery-register', codeHash })
+    expect(world.stored?.recoveryCodeHash).toBe(codeHash)
+
+    expect(await world.core.recover('ABCD-EFGH-JKMN-PQRT', true)).toBe('wrong')
+    expect(world.stored?.locked).toBe(false)
+    expect(await world.core.recover(code, true)).toBe('done')
+    expect(world.stored?.locked).toBe(true)
+    expect(world.stored?.devices).toEqual([])
+    expect(phone.closedWith?.code).toBe(CLOSE.unregistered)
+    expect(mac.last()).toEqual({
+      type: 'relay-locked',
+      locked: true,
+      by: 'recovery',
+      phonesUnregistered: true,
+    })
+
+    for (let i = 2; i < RELAY_CAPS.recoveryPerHour; i++)
+      await world.core.recover('nope-nope-nope-nope', false)
+    expect(await world.core.recover(code, false)).toBe('too-many')
+  })
+
+  it('forgets a Mac that hasn’t connected in 180 days, and not one that has', async () => {
+    const world = new World(MAC_ID)
+    const mac = await macOnline(world, testKey())
+    expect(world.alarms.at(-1)).toBe(world.clock.now + RELAY_CAPS.forgetAfterMs)
+    world.clock.now += RELAY_CAPS.forgetAfterMs
+    await world.core.alarm()
+    expect(world.erased).toBe(0)
+    mac.close(1001, 'gone')
+    await world.core.alarm()
+    expect(world.erased).toBe(1)
+    expect(world.stored).toBeNull()
+  })
+})
+
+describe('consent states', () => {
+  it('passes closed, busy and too-many through from the Mac', async () => {
+    const world = new World(MAC_ID)
+    const mac = await macOnline(world, testKey())
+    for (const state of ['closed', 'busy', 'too-many'] as const) {
+      const pending = world.core.consent('id', '', '')
+      await send(world, mac, { type: 'consent-view', id: 'id', state })
+      expect(await pending).toEqual({ state })
+    }
   })
 })

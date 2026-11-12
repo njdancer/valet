@@ -18,7 +18,17 @@ function stub(env: Env, macId: string): MacRelayStub {
     forward: (request: ForwardRequest, signal) =>
       object.fetch(at('/forward'), { method: 'POST', body: JSON.stringify(request), signal }),
     consent: async (id, query, source) => {
-      const response = await object.fetch(at('/consent'), { method: 'POST', body: JSON.stringify({ id, query, source }) })
+      const response = await object.fetch(at('/consent'), {
+        method: 'POST',
+        body: JSON.stringify({ id, query, source }),
+      })
+      return response.json()
+    },
+    recover: async (code, unregisterPhones) => {
+      const response = await object.fetch(at('/recover'), {
+        method: 'POST',
+        body: JSON.stringify({ code, unregisterPhones }),
+      })
       return response.json()
     },
   }
@@ -26,7 +36,8 @@ function stub(env: Env, macId: string): MacRelayStub {
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    if (key === null || key.secret !== env.WAIT_SECRET) key = { secret: env.WAIT_SECRET, key: waitKey(env.WAIT_SECRET) }
+    if (key === null || key.secret !== env.WAIT_SECRET)
+      key = { secret: env.WAIT_SECRET, key: waitKey(env.WAIT_SECRET) }
     const door: FrontDoor = {
       host: env.RELAY_HOST,
       waitKey: await key.key,

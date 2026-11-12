@@ -2,8 +2,8 @@
 
 import { mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
+import { fileURLToPath } from 'node:url'
 import { deserialize } from 'node:v8'
 import { Miniflare } from 'miniflare'
 // @ts-expect-error: a plain .mjs build script
@@ -13,7 +13,7 @@ export const RELAY_HOST = 'relay.test'
 export const RELAY_ORIGIN = `https://${RELAY_HOST}`
 
 // Under the package: workerd won't load a module from outside its starting directory.
-const SCRATCH = fileURLToPath(new URL('../.test-runtime/', import.meta.url))
+const SCRATCH = join(fileURLToPath(import.meta.url), '../../.test-runtime')
 let built: Promise<string> | null = null
 
 export interface Runtime {
@@ -27,7 +27,9 @@ export interface Runtime {
 }
 
 export async function startRelay(
-  options: { limits?: Partial<Record<'CONNECT_LIMIT' | 'FORWARD_LIMIT' | 'SIGN_IN_LIMIT' | 'POLL_LIMIT', number>> } = {},
+  options: {
+    limits?: Partial<Record<'CONNECT_LIMIT' | 'FORWARD_LIMIT' | 'SIGN_IN_LIMIT' | 'POLL_LIMIT', number>>
+  } = {},
 ): Promise<Runtime> {
   mkdirSync(SCRATCH, { recursive: true })
   built ??= buildWorker(join(mkdtempSync(join(SCRATCH, 'build-')), 'worker.js'))
@@ -69,7 +71,10 @@ export async function startRelay(
         if (!file.endsWith('.sqlite')) continue
         const db = new DatabaseSync(file, { readOnly: true })
         try {
-          const rows = db.prepare('SELECT key, value FROM _cf_KV').all() as { key: string; value: Uint8Array }[]
+          const rows = db.prepare('SELECT key, value FROM _cf_KV').all() as {
+            key: string
+            value: Uint8Array
+          }[]
           const entry: Record<string, unknown> = {}
           for (const row of rows) entry[row.key] = deserialize(Buffer.from(row.value))
           if (rows.length > 0) out.push(entry)

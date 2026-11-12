@@ -7,6 +7,9 @@
 import { pushPayloadSchema } from '@valet/core/relay-protocol'
 import { toBase64url } from './encoding'
 
+/** WebCrypto's key type, named so it reads the same under Node's and Workers' type definitions. */
+type ImportedKey = Awaited<ReturnType<typeof crypto.subtle.importKey>>
+
 export type PushKind = 'needs-you' | 'alert'
 /** `gone`: Apple says the token is no longer valid; forget it. */
 export type PushResult = 'sent' | 'gone' | 'failed' | 'off'
@@ -20,7 +23,10 @@ export const NO_PUSH: PushSender = { send: async () => 'off' }
 export function pushPayload(kind: PushKind): string {
   const payload = {
     aps: {
-      alert: { title: 'Valet', body: kind === 'needs-you' ? 'Valet needs you' : 'Something changed in Valet' },
+      alert: {
+        title: 'Valet',
+        body: kind === 'needs-you' ? 'Valet needs you' : 'Something changed in Valet',
+      },
     },
   }
   return JSON.stringify(pushPayloadSchema.parse(payload))
@@ -41,7 +47,7 @@ const JWT_REUSE_MS = 50 * 60_000
 
 export class ApnsPushSender implements PushSender {
   private jwt: { readonly token: string; readonly at: number } | null = null
-  private key: CryptoKey | null = null
+  private key: ImportedKey | null = null
 
   constructor(
     private readonly settings: ApnsSettings,
@@ -91,7 +97,7 @@ export class ApnsPushSender implements PushSender {
   }
 }
 
-async function importP8(pem: string): Promise<CryptoKey> {
+async function importP8(pem: string): Promise<ImportedKey> {
   const body = pem.replace(/-----(BEGIN|END) PRIVATE KEY-----/g, '').replace(/\s+/g, '')
   const binary = atob(body)
   const der = new Uint8Array(binary.length)

@@ -809,10 +809,13 @@ describe('pieces', () => {
   })
 
   it('makes codes from the unambiguous alphabet and reads them back forgivingly', () => {
-    expect(generateCode(() => Buffer.from([0, 31, 32, 63, 255, 1, 2, 3]))).toBe('0Z0ZZ123')
-    expect(normaliseCode('0zzz-z123')).toBe('0ZZZZ123')
-    expect(normaliseCode('OIL0 ABCD')).toBe('0110ABCD')
-    expect(normaliseCode('ABCDEFGU')).toBeNull()
+    // 240 and above are drawn again, so every letter is equally likely.
+    const draws = [Buffer.from([0, 23, 24, 239, 240, 255, 1, 2]), Buffer.from([3, 4, 5, 6, 7, 8, 9, 10])]
+    expect(generateCode(() => draws.shift() as Buffer)).toBe('AZAZBCDE')
+    expect(normaliseCode('azaz-bcde')).toBe('AZAZBCDE')
+    expect(normaliseCode('ABCD EFGH')).toBe('ABCDEFGH')
+    expect(normaliseCode('ABCDEFGO')).toBeNull()
+    expect(normaliseCode('ABCDEFG1')).toBeNull()
     expect(normaliseCode('ABC')).toBeNull()
   })
 

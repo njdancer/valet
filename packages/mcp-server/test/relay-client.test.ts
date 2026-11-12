@@ -7,11 +7,16 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net'
 import { keyId, relayAuthPayload, SIGNING_DOMAINS, verifyP256 } from '@valet/core'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { RemoteClients } from '../src/oauth-clients'
 import { ConsentRequests } from '../src/oauth-consent'
 import { RemoteAuthorization } from '../src/oauth-server'
-import { RemoteClients } from '../src/oauth-clients'
+import {
+  RelayClient,
+  type RelayClientOptions,
+  type RelayClientStatus,
+  type RelayEvent,
+} from '../src/relay-client'
 import { RemoteAccessTokens } from '../src/remote-auth'
-import { type RelayClientOptions, type RelayClientStatus, RelayClient, type RelayEvent } from '../src/relay-client'
 
 const RELAY = 'https://relay.test'
 const { publicKey, privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' })
@@ -20,9 +25,18 @@ const MAC_ID = keyId(SPKI)
 const signer = {
   publicKey: SPKI,
   sign: async (payload: string) =>
-    sign('sha256', Buffer.from(`${SIGNING_DOMAINS.relayAuth}\n${payload}`), { key: privateKey, dsaEncoding: 'ieee-p1363' }).toString(
-      'base64url',
-    ),
+    sign('sha256', Buffer.from(`${SIGNING_DOMAINS.relayAuth}\n${payload}`), {
+      key: privateKey,
+      dsaEncoding: 'ieee-p1363',
+    }).toString('base64url'),
+}
+// The Mac id is the approval key's id; here the one key plays both parts.
+const binding = {
+  approvalKey: SPKI,
+  signature: sign('sha256', Buffer.from(`${SIGNING_DOMAINS.relayBinding}\n${SPKI}`), {
+    key: privateKey,
+    dsaEncoding: 'ieee-p1363',
+  }).toString('base64url'),
 }
 
 class FakeSocket extends EventTarget {
@@ -46,7 +60,11 @@ class FakeSocket extends EventTarget {
   }
   /** The relay says something. */
   deliver(frame: unknown) {
-    this.dispatchEvent(Object.assign(new Event('message'), { data: typeof frame === 'string' ? frame : JSON.stringify(frame) }))
+    this.dispatchEvent(
+      Object.assign(new Event('message'), {
+        data: typeof frame === 'string' ? frame : JSON.stringify(frame),
+      }),
+    )
   }
   /** The relay hangs up. */
   hangUp(code: number) {
@@ -72,6 +90,7 @@ function client(options: Partial<RelayClientOptions> = {}) {
     relay: RELAY,
     macId: MAC_ID,
     signer,
+    binding,
     listener: () => null,
     consent: () => ({ state: 'expired' }),
     WebSocket: FakeSocket as unknown as typeof WebSocket,
@@ -153,7 +172,9 @@ describe('connecting', () => {
   })
 
   it('closes when the key can’t sign', async () => {
-    const { relay } = client({ signer: { publicKey: SPKI, sign: async () => Promise.reject(new Error('locked')) } })
+    const { relay } = client({
+      signer: { publicKey: SPKI, sign: async () => Promise.reject(new Error('locked')) },
+    })
     relay.start()
     const socket = FakeSocket.last as FakeSocket
     socket.deliver({ type: 'challenge', v: 1, nonce: 'n'.repeat(43), relay: RELAY })
@@ -201,9 +222,9 @@ describe('connecting', () => {
   })
 
   it('treats a socket that can’t be made as a dropped connection', () => {
-    const Throwing = function () {
+    const Throwing = (() => {
       throw new Error('no network')
-    } as unknown as typeof WebSocket
+    }) as unknown as typeof WebSocket
     const { relay } = client({ WebSocket: Throwing })
     relay.start()
     expect(relay.status.state).toBe('offline')
@@ -224,7 +245,12 @@ describe('forwarding', () => {
           body,
           method: req.method,
         })
-        res.writeHead(200, { 'content-type': 'text/event-stream', 'mcp-session-id': 's1', 'set-cookie': 'a=b', server: 'x' })
+        res.writeHead(200, {
+          'content-type': 'text/event-stream',
+          'mcp-session-id': 's1',
+          'set-cookie': 'a=b',
+          server: 'x',
+        })
         // A multi-byte character split across writes must arrive whole.
         const euro = Buffer.from('€')
         res.write(Buffer.concat([Buffer.from('data: '), euro.subarray(0, 1)]))
@@ -241,7 +267,13 @@ describe('forwarding', () => {
     socket.deliver(request('r1'))
     await vi.waitFor(() => expect(socket.frames().at(-1)).toEqual({ type: 'http-response-end', id: 'r1' }))
     expect(seen).toEqual([
-      { host: `${MAC_ID}.relay.test`, source: '203.0.113.4', url: '/mcp?a=1', body: request('r1').body, method: 'POST' },
+      {
+        host: `${MAC_ID}.relay.test`,
+        source: '203.0.113.4',
+        url: '/mcp?a=1',
+        body: request('r1').body,
+        method: 'POST',
+      },
     ])
     const frames = socket.frames().slice(1)
     expect(frames[0]).toEqual({
@@ -269,7 +301,9 @@ describe('forwarding', () => {
     const socket = FakeSocket.last as FakeSocket
     await online(socket)
     socket.deliver(request('r2', { method: 'GET', body: '', query: '' }))
-    await vi.waitFor(() => expect(socket.frames().some((f) => f['type'] === 'http-response-chunk')).toBe(true))
+    await vi.waitFor(() =>
+      expect(socket.frames().some((f) => f['type'] === 'http-response-chunk')).toBe(true),
+    )
     socket.deliver({ type: 'http-cancel', id: 'r2' })
     await vi.waitFor(() => expect(closed).toBe(true))
     expect(socket.frames().some((f) => f['type'] === 'http-response-end')).toBe(false)
@@ -310,7 +344,9 @@ describe('forwarding', () => {
     const socket = FakeSocket.last as FakeSocket
     await online(socket)
     socket.deliver(request('d1', { method: 'GET', body: '' }))
-    await vi.waitFor(() => expect(socket.frames().some((f) => f['type'] === 'http-response-chunk')).toBe(true))
+    await vi.waitFor(() =>
+      expect(socket.frames().some((f) => f['type'] === 'http-response-chunk')).toBe(true),
+    )
     socket.hangUp(1006)
     await vi.waitFor(() => expect(closed).toBe(true))
   })
@@ -347,7 +383,10 @@ describe('consent', () => {
     const authorization = new RemoteAuthorization({ tokens: new RemoteAccessTokens(), clients, consents })
     const host = `${MAC_ID}.relay.test`
     const redirect = 'https://claude.example/cb'
-    const { registration } = clients.register({ redirectUris: [redirect], authMethod: 'none', clientName: null }, null)
+    const { registration } = clients.register(
+      { redirectUris: [redirect], authMethod: 'none', clientName: null },
+      null,
+    )
     const query = (extra: Record<string, string> = {}) =>
       new URLSearchParams({
         response_type: 'code',
@@ -362,7 +401,9 @@ describe('consent', () => {
     expect(authorization.relayConsent('u1', 'client_id=nobody', null, host)).toEqual({ state: 'declined' })
     const badMethod = authorization.relayConsent('u2', query({ code_challenge_method: 'plain' }), null, host)
     expect(badMethod.state).toBe('declined')
-    expect('redirect' in badMethod && new URL(badMethod.redirect).searchParams.get('error')).toBe('invalid_request')
+    expect('redirect' in badMethod && new URL(badMethod.redirect).searchParams.get('error')).toBe(
+      'invalid_request',
+    )
     expect(authorization.relayConsent('unknown', '', null, host)).toEqual({ state: 'expired' })
 
     const waiting = authorization.relayConsent('w1', query(), '203.0.113.1', host)

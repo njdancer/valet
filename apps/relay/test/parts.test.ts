@@ -2,27 +2,29 @@
 
 import { generateKeyPairSync, verify } from 'node:crypto'
 import { readdirSync, readFileSync } from 'node:fs'
-import { pushPayloadSchema, relayAuthPayload, SIGNING_DOMAINS } from '@valet/core'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { keyId, pushPayloadSchema, relayAuthPayload, SIGNING_DOMAINS, verifyRelayBinding } from '@valet/core'
 import { describe, expect, it, vi } from 'vitest'
 import { fromBase64url, randomToken, toBase64url } from '../src/encoding'
 import { logFailure } from '../src/log'
 import { escapeHtml, problemPage, redirectResponse, waitingPage } from '../src/pages'
 import { ApnsPushSender, NO_PUSH, pushPayload } from '../src/push'
-import { verifyRelayAuth } from '../src/verify'
+import { keyIdOf, verifyBinding, verifyRelayAuth } from '../src/verify'
 import { WindowCounter } from '../src/window'
 import { testKey } from './keys'
 
 describe('pages', () => {
   it('serve fixed text with a locked-down policy and escape what they show', async () => {
-    const page = waitingPage('ABCD-1234', 'tok.en')
+    const page = waitingPage('ABCD-EFGH', 'tok.en')
     expect(page.headers.get('content-security-policy')).toContain("default-src 'none'")
     expect(page.headers.get('x-frame-options')).toBe('DENY')
     const text = await page.text()
-    expect(text).toContain('ABCD-1234')
+    expect(text).toContain('ABCD-EFGH')
     expect(text).toContain('/authorize?wait=tok.en')
     expect(text).not.toContain('<script')
-    expect(waitingPage('ABCD-1234', 'bad id"').status).toBe(502)
-    expect((await problemPage('ended', 404).text())).toContain('has ended')
+    expect(waitingPage('ABCD-EFGH', 'bad id"').status).toBe(502)
+    expect(await problemPage('ended', 404).text()).toContain('has ended')
     expect(redirectResponse('https://c.test/').headers.get('location')).toBe('https://c.test/')
     expect(escapeHtml(`<a href="x">'&`)).toBe('&lt;a href=&quot;x&quot;&gt;&#39;&amp;')
   })
@@ -41,7 +43,13 @@ describe('push', () => {
     const statuses = [200, 410, 403, 500]
     let clock = 1_000_000
     const sender = new ApnsPushSender(
-      { key: pem, keyId: 'KEY123', teamId: 'TEAM45', topic: 'me.dncr.valet', host: 'api.sandbox.push.apple.com' },
+      {
+        key: pem,
+        keyId: 'KEY123',
+        teamId: 'TEAM45',
+        topic: 'me.dncr.valet',
+        host: 'api.sandbox.push.apple.com',
+      },
       (async (url: string, init: RequestInit) => {
         seen.push({ url, init })
         return new Response(null, { status: statuses.shift() ?? 200 })
@@ -58,16 +66,28 @@ describe('push', () => {
     expect(seen[0]?.url).toBe(`https://api.sandbox.push.apple.com/3/device/${token}`)
     const headers = seen[0]?.init.headers as Record<string, string>
     expect(headers['apns-topic']).toBe('me.dncr.valet')
-    const jwt = headers.authorization?.replace('bearer ', '') as string
+    const jwt = headers['authorization']?.replace('bearer ', '') as string
     const [h, c, s] = jwt.split('.')
-    expect(JSON.parse(Buffer.from(h as string, 'base64url').toString())).toEqual({ alg: 'ES256', kid: 'KEY123' })
+    expect(JSON.parse(Buffer.from(h as string, 'base64url').toString())).toEqual({
+      alg: 'ES256',
+      kid: 'KEY123',
+    })
     expect(JSON.parse(Buffer.from(c as string, 'base64url').toString())).toEqual({ iss: 'TEAM45', iat: 1000 })
     expect(
-      verify('sha256', Buffer.from(`${h}.${c}`), { key: publicKey, dsaEncoding: 'ieee-p1363' }, Buffer.from(s as string, 'base64url')),
+      verify(
+        'sha256',
+        Buffer.from(`${h}.${c}`),
+        { key: publicKey, dsaEncoding: 'ieee-p1363' },
+        Buffer.from(s as string, 'base64url'),
+      ),
     ).toBe(true)
     // Reused until Apple refused it (403), then minted again.
-    expect((seen[1]?.init.headers as Record<string, string>).authorization).toBe(headers.authorization)
-    expect((seen[3]?.init.headers as Record<string, string>).authorization).not.toBe(headers.authorization)
+    expect((seen[1]?.init.headers as Record<string, string> | undefined)?.['authorization']).toBe(
+      headers['authorization'],
+    )
+    expect((seen[3]?.init.headers as Record<string, string> | undefined)?.['authorization']).not.toBe(
+      headers['authorization'],
+    )
     expect(seen[0]?.init.body).toBe(pushPayload('needs-you'))
 
     const failing = new ApnsPushSender(
@@ -84,8 +104,15 @@ describe('push', () => {
 describe('signatures and encodings', () => {
   it('verifies a transport key’s relay-auth signature and nothing else', async () => {
     const key = testKey()
-    const payload = relayAuthPayload({ nonce: 'n'.repeat(43), relay: 'https://r.test', role: 'mac', id: 'a'.repeat(32) })
-    expect(payload).toBe(`{"nonce":"${'n'.repeat(43)}","relay":"https://r.test","role":"mac","id":"${'a'.repeat(32)}"}`)
+    const payload = relayAuthPayload({
+      nonce: 'n'.repeat(43),
+      relay: 'https://r.test',
+      role: 'mac',
+      id: 'a'.repeat(32),
+    })
+    expect(payload).toBe(
+      `{"nonce":"${'n'.repeat(43)}","relay":"https://r.test","role":"mac","id":"${'a'.repeat(32)}"}`,
+    )
     const signature = await key.sign(payload)
     expect(await verifyRelayAuth(key.publicKey, payload, signature)).toBe(true)
     expect(await verifyRelayAuth(key.publicKey, `${payload} `, signature)).toBe(false)
@@ -123,15 +150,59 @@ describe('logging', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
     logFailure('forward', new TypeError('Bearer secret-token'))
     logFailure('forward', 'text')
-    expect(spy.mock.calls).toEqual([['relay: forward failed (TypeError)'], ['relay: forward failed (string)']])
+    expect(spy.mock.calls).toEqual([
+      ['relay: forward failed (TypeError)'],
+      ['relay: forward failed (string)'],
+    ])
     spy.mockRestore()
   })
 
   it('uses console nowhere but log.ts', () => {
-    const dir = new URL('../src/', import.meta.url)
+    const dir = fileURLToPath(new URL('../src/', import.meta.url))
     for (const file of readdirSync(dir)) {
       if (file === 'log.ts') continue
-      expect(readFileSync(new URL(file, dir), 'utf8'), file).not.toMatch(/\bconsole\./)
+      expect(readFileSync(join(dir, file), 'utf8'), file).not.toMatch(/\bconsole\./)
     }
+  })
+})
+
+describe('the binding check', () => {
+  it('agrees with core’s node:crypto version on ids, good bindings and forgeries', async () => {
+    const approval = testKey()
+    const transport = testKey()
+    const other = testKey()
+    expect(await keyIdOf(approval.publicKey)).toBe(keyId(approval.publicKey))
+    expect(await keyIdOf('not base64url!')).toBeNull()
+    const cases = [
+      { id: approval.id, approvalKey: approval.publicKey, signer: approval, key: transport.publicKey },
+      { id: approval.id, approvalKey: approval.publicKey, signer: other, key: transport.publicKey },
+      { id: other.id, approvalKey: approval.publicKey, signer: approval, key: transport.publicKey },
+      {
+        id: approval.id,
+        approvalKey: approval.publicKey,
+        signer: approval,
+        key: other.publicKey,
+        signedKey: transport.publicKey,
+      },
+    ]
+    const verdicts: boolean[] = []
+    for (const c of cases) {
+      const binding = {
+        approvalKey: c.approvalKey,
+        signature: c.signer.signDomain(SIGNING_DOMAINS.relayBinding, c.signedKey ?? c.key),
+      }
+      const ours = await verifyBinding(c.id, c.key, binding)
+      const core = verifyRelayBinding({
+        type: 'hello',
+        role: 'mac',
+        id: c.id,
+        signature: 'A'.repeat(86),
+        transportKey: c.key,
+        binding,
+      })
+      expect(ours).toBe(core)
+      verdicts.push(ours)
+    }
+    expect(verdicts).toEqual([true, false, false, false])
   })
 })

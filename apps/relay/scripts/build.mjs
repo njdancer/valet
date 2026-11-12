@@ -1,7 +1,8 @@
 // Bundles the Worker for tests and for `wrangler deploy --no-bundle`-free checks. Wrangler bundles
 // the same entry itself on deploy; this build is what the miniflare suite loads.
-import { build } from 'esbuild'
+
 import { fileURLToPath } from 'node:url'
+import { build } from 'esbuild'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 

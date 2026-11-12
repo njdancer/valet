@@ -15,7 +15,15 @@ const PAGE_HEADERS: Readonly<Record<string, string>> = {
   'cache-control': 'no-store',
 }
 
-export type RelayPageProblem = 'mac-offline' | 'no-answer' | 'cant-go-on' | 'ended' | 'too-many' | 'not-found'
+export type RelayPageProblem =
+  | 'mac-offline'
+  | 'no-answer'
+  | 'cant-go-on'
+  | 'ended'
+  | 'too-many'
+  | 'closed'
+  | 'locked'
+  | 'not-found'
 
 const PROBLEM_TEXT: Readonly<Record<RelayPageProblem, string>> = {
   'mac-offline':
@@ -23,7 +31,10 @@ const PROBLEM_TEXT: Readonly<Record<RelayPageProblem, string>> = {
   'no-answer': 'Valet on your Mac didn’t answer. Start again from the app you were connecting.',
   'cant-go-on': 'Valet can’t go on with this sign-in. Remove the connector and add it again.',
   ended: 'This sign-in has ended. Start again from the app you were connecting.',
-  'too-many': 'Too many sign-in attempts. Try again later.',
+  'too-many': 'Valet has too many sign-ins waiting. Try again in a few minutes.',
+  closed:
+    'This Mac doesn’t accept new agents right now. Nothing was connected. Its owner can choose Add an agent in Valet, then you can start again.',
+  locked: 'This Valet is locked down. Nothing was sent to it.',
   'not-found': 'Nothing here.',
 }
 
@@ -35,6 +46,9 @@ const STYLE = `
   .code { font: 600 32px/1.2 ui-monospace, Menlo, monospace; letter-spacing: 0.08em;
           text-align: center; padding: 16px; border-radius: 8px; background: #f0f0f3; margin: 16px 0; }
   .warn { color: #8a3b00; }
+  input:not([type]), button { font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid #c7c7cc; }
+  input:not([type]) { width: 100%; box-sizing: border-box; font-family: ui-monospace, Menlo, monospace; }
+  button { background: #b00020; color: #fff; border: 0; }
   @media (prefers-color-scheme: dark) {
     body { color: #f5f5f7; background: #000; }
     main { background: #1c1c1e; }
@@ -51,7 +65,7 @@ function page(title: string, body: string, head = ''): string {
 `
 }
 
-const CODE = /^[A-Z0-9]{4}-[A-Z0-9]{4}$/
+const CODE = /^[A-HJ-NP-Z]{4}-[A-HJ-NP-Z]{4}$/
 const ID = /^[A-Za-z0-9_.-]{1,1200}$/
 
 /** The page a browser waits on. `code` is checked against the contract's shape again here. */
@@ -61,10 +75,11 @@ export function waitingPage(code: string, id: string): Response {
   return html(
     200,
     page(
-      'Approve on your Mac',
-      `<h1>Type this code into Valet on your Mac</h1>
-<p>Valet is showing a sign-in request on your Mac. Type this code there to approve it.</p>
+      'Approve in Valet',
+      `<h1>Type this code into Valet on your Mac or iPhone</h1>
+<p>Valet is showing a sign-in request on your Mac and your iPhone. Type this code into either to approve it.</p>
 <div class="code">${escapeHtml(code)}</div>
+<p>Valet never sends this code by text message.</p>
 <p class="warn"><strong>If you didn’t just add a connector, close this page.</strong> Someone else started this sign-in.</p>
 <p>This page moves on by itself once you answer on the Mac.</p>`,
       `<meta http-equiv="refresh" content="${WAIT_REFRESH_SECONDS};url=${escapeHtml(next)}">`,
@@ -84,8 +99,59 @@ export function redirectResponse(location: string): Response {
   })
 }
 
-function html(status: number, body: string): Response {
-  return new Response(body, { status, headers: PAGE_HEADERS })
+function html(
+  status: number,
+  body: string,
+  headers: Readonly<Record<string, string>> = PAGE_HEADERS,
+): Response {
+  return new Response(body, { status, headers })
+}
+
+/** The recovery page's one form posts back to itself; nothing else is allowed. */
+const RECOVERY_HEADERS: Readonly<Record<string, string>> = {
+  ...PAGE_HEADERS,
+  'content-security-policy':
+    "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+}
+
+export type RecoveryOutcome = 'form' | 'wrong' | 'too-many' | 'done' | 'done-phones'
+
+const RECOVERY_TEXT: Readonly<Record<Exclude<RecoveryOutcome, 'form'>, string>> = {
+  wrong: 'That code isn’t right. Check it against the one you saved and try again.',
+  'too-many': 'Too many tries. Wait an hour, then try again.',
+  done: 'Valet is locked down at the relay. Nothing from the internet reaches your Mac until you unlock it there.',
+  'done-phones':
+    'Valet is locked down at the relay, and every paired phone was removed. Nothing from the internet reaches your Mac until you unlock it there. Pair your phone again at your Mac.',
+}
+
+/**
+ * The recovery page (J7 F2, br-recovery): the code saved at pairing locks Valet down at the relay
+ * and can remove every paired phone. It can never approve, unlock or pair. The relay keeps no
+ * device names, so it removes all phones rather than offering a list.
+ */
+export function recoveryPage(outcome: RecoveryOutcome, status: number): Response {
+  const done = outcome === 'done' || outcome === 'done-phones'
+  const message =
+    outcome === 'form' ? '' : `<p${done ? '' : ' class="warn"'}>${escapeHtml(RECOVERY_TEXT[outcome])}</p>`
+  const form = done
+    ? ''
+    : `<form method="post" action="/recover">
+<p><label for="code">Recovery code</label><br>
+<input id="code" name="code" required autocomplete="off" autocapitalize="characters" spellcheck="false" maxlength="80"></p>
+<p><label><input type="checkbox" name="phones" value="remove"> Also remove every paired phone</label></p>
+<p><button type="submit">Lock down Valet</button></p>
+</form>`
+  return html(
+    status,
+    page(
+      'Lost a device?',
+      `<h1>Lost a device?</h1>
+<p>Type the recovery code you saved when you paired your phone.</p>
+${message}${form}
+<p>This page can’t approve anything, unlock Valet or pair a device. Your Mac and every phone still paired are told.</p>`,
+    ),
+    RECOVERY_HEADERS,
+  )
 }
 
 export function escapeHtml(text: string): string {
