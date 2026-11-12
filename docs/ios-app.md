@@ -436,7 +436,8 @@ deliberate cap on the action bar and the system's own toolbar button. Contrast i
 tie to an element are the system's scroll-edge fade under the tab bar, and are logged too. The
 card's scroll edges are hard on iOS 26. On the card, contrast issues on text within a band under
 the toolbar or just above the action bar are logged too: that text is in the label colours, and
-the audit reads the system's glass over it, differently from run to run.
+the audit reads the system's glass over it, differently from run to run. The same goes on each
+tab for rows within 24 points of the tab bar, where the scroll-edge fade lies over the last rows.
 
 ## What needs Nick
 
