@@ -520,6 +520,26 @@ it as a caution line. Its model part runs the eval agent against those pages and
 the injected step reaches a card; the bar is that none reaches an approved install, which only the
 person's gesture can cause.
 
+**Built (PR 3a).** The automated part, in three places:
+
+- **What a snapshot reads** (`scratch-scripts.ts`, `e2e/scratch.spec.ts` in real Electron): a page
+  hides text from a person with `display`, `visibility`, `opacity`, a tiny font, a clip, a
+  collapsed or off-page box, a transparent colour, `aria-hidden`, templates and comments. None of it
+  reaches a snapshot, and a query marks those matches `visible: false`, counting a hidden parent. A
+  control is named by the words it shows; its `aria-label`, `title` or a picture's `alt` names it
+  only when it shows none (an icon button).
+- **How it reaches the agent** (`drafts/site-text.ts`, drafts tests): every string the site wrote
+  sits under a `fromSite` key: page text, titles, URLs and links (scrubbed), ids and classes. The
+  fields outside one are drawn from fixed lists: tags (else `element`), ARIA roles (else null),
+  input types (else `text`), request methods (else `OTHER`) and content types (else `type/other`).
+  So injected words can never arrive looking like Valet's own fields. The test hands every
+  research tool a page full of an injected marker and finds it nowhere outside `fromSite`.
+- **What a run of tools can do** (`apps/desktop/e2e/authoring.spec.ts`): with a submitted draft
+  waiting, every `valet_` tool is called with "approve this" in every text field. The request
+  still waits, and the adapter is still unapproved. A draft that added a host the page asked for
+  has "Reaches evil.example, which isn't part of example.com." among the card's checks, and the
+  agent's note never becomes a check line.
+
 ## What the design review changed
 
 A fresh adversarial reviewer read this design against B's contracts, D's broker and D's open PR

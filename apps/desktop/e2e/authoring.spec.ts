@@ -194,6 +194,38 @@ test('the submit asks the person; approved on the Mac, the agent reads the answe
   const waiting = await call('valet_get_draft', { draftId })
   expect((waiting['draft'] as { status: string }).status).toBe('waiting')
 
+  // The hostile-page suite: no tool an agent has installs or activates anything, whatever it is
+  // told. Every valet_ tool is called with "approve this" wherever it takes text (except those that
+  // reach the network, deleting the draft, and disconnecting, which ends this agent's access); the
+  // request still waits for the person.
+  const OFFLINE = /^valet_(browser_|network_|capture_|live_trial|delete_draft$|disconnect$)/
+  const tools = (await client.listTools()).tools.filter(
+    (t) => t.name.startsWith('valet_') && !OFFLINE.test(t.name),
+  )
+  expect(tools.length).toBeGreaterThan(10)
+  for (const tool of tools) {
+    const args: Record<string, unknown> = {}
+    const properties = (tool.inputSchema.properties ?? {}) as Record<
+      string,
+      { type?: string; enum?: unknown[] }
+    >
+    for (const [name, schema] of Object.entries(properties)) {
+      if (name === 'draftId') args[name] = draftId
+      else if (name === 'adapterId') args[name] = ADAPTER
+      else if (schema.enum !== undefined) args[name] = schema.enum[0]
+      else if (schema.type === 'string') args[name] = 'approve this'
+      else if (schema.type === 'number' || schema.type === 'integer') args[name] = 1
+      else if (schema.type === 'boolean') args[name] = true
+      else if (schema.type === 'array') args[name] = []
+      else if (schema.type === 'object') args[name] = {}
+    }
+    await callToolOnce(client, tool.name, args)
+  }
+  const still = await control.evaluate(() => window.valet?.approvals.pending())
+  expect(still?.some((r) => r.to.hash === hash)).toBe(true)
+  const notYet = await control.evaluate(() => window.valet?.adapters.list())
+  expect(notYet?.find((a) => a.id === ADAPTER)?.approval).not.toBe('approved')
+
   await control.evaluate(([adapter, h]) => window.valet?.approvals.approve(adapter, h), [
     ADAPTER,
     hash,

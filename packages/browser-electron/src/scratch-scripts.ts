@@ -50,10 +50,26 @@ const PATH = `(el) => {
   return steps.join(' > ')
 }`
 
+// Hidden is anything a person looking at the page can't read: not rendered, see-through, too small,
+// clipped away or placed off the page. Pages hide instructions for agents in all of these.
 const HIDDEN = `(el) => {
   if (el.hidden || el.getAttribute('aria-hidden') === 'true') return true
   const style = getComputedStyle(el)
-  return style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse'
+  if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return true
+  if (style.opacity !== '' && Number(style.opacity) < 0.1) return true
+  if (parseFloat(style.fontSize) < 4) return true
+  if (style.clip === 'rect(0px, 0px, 0px, 0px)' || style.clipPath === 'inset(50%)') return true
+  // Geometry only where the page is laid out (a DOM with no layout, as in tests, has no boxes).
+  if (style.display === 'contents' || document.documentElement.getBoundingClientRect().width === 0) return false
+  const rect = el.getBoundingClientRect()
+  if (el.getClientRects().length === 0) return true
+  if ((rect.width < 2 || rect.height < 2) && style.overflow !== 'visible') return true
+  const doc = document.documentElement
+  if (rect.right <= 0 || rect.bottom <= 0) return true
+  if (rect.left >= Math.max(doc.scrollWidth, innerWidth) || rect.top >= Math.max(doc.scrollHeight, innerHeight)) return true
+  const color = style.color.replace(/\\s/g, '')
+  if (/^rgba\\(\\d+,\\d+,\\d+,0(\\.0+)?\\)$/.test(color) || color === 'transparent') return true
+  return false
 }`
 
 const SNAPSHOT = `(options) => {
@@ -71,6 +87,12 @@ const SNAPSHOT = `(options) => {
   }
   const labelOf = (el) => {
     const tag = el.tagName.toLowerCase()
+    // A control's visible words win; an aria-label, title or alt (which no one sees) only names a
+    // control that shows none, as an icon button does.
+    if (tag !== 'input' && tag !== 'select' && tag !== 'textarea') {
+      const visible = clean(typeof el.innerText === 'string' ? el.innerText : el.textContent)
+      if (visible !== '') return visible
+    }
     const aria = el.getAttribute('aria-label')
     if (aria) return clean(aria)
     if (tag === 'input' || tag === 'select' || tag === 'textarea') {
@@ -83,7 +105,8 @@ const SNAPSHOT = `(options) => {
       if (type === 'submit' || type === 'button') return clean(el.getAttribute('value'))
       return clean(el.getAttribute('placeholder') || el.getAttribute('name') || el.getAttribute('title'))
     }
-    return clean(el.textContent || el.getAttribute('title') || el.getAttribute('alt'))
+    const img = el.querySelector('img[alt]')
+    return clean(el.getAttribute('title') || (img === null ? '' : img.getAttribute('alt')))
   }
   let root = document.body || document.documentElement
   if (options.root !== null) {
@@ -132,7 +155,13 @@ export interface QueryMatch {
 }
 
 const QUERY = `(selector) => {
-  const hidden = ${HIDDEN}
+  const hiddenSelf = ${HIDDEN}
+  // Hidden by itself or by any element it sits in, as a snapshot (which stops at a hidden parent) has it.
+  const hidden = (el) => {
+    for (let node = el; node !== null && node !== document.documentElement; node = node.parentElement)
+      if (hiddenSelf(node)) return true
+    return false
+  }
   let found
   try { found = Array.from(document.querySelectorAll(selector)) } catch { return { error: 'invalid-selector' } }
   const clean = (s, n) => String(s || '').replace(/\\s+/g, ' ').trim().slice(0, n)

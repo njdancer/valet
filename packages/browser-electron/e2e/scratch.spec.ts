@@ -42,3 +42,27 @@ test('reads a page, logs its API call with the body, and keeps to its rules', as
   expect((result.paced as string[]).length).toBeGreaterThanOrEqual(2)
   expect(result.closed).toBe(true)
 })
+
+// The hostile-page suite's browser part: a snapshot carries what a person can read on the page and
+// nothing a page hides for an agent, wherever it hides it.
+test('a snapshot leaves out every kind of hidden text a page aims at an agent', async () => {
+  const { view, query } = (await scenario(app, 'hostile')) as {
+    view: { nodes: { kind: string; tag: string; role: string | null; text: string }[] }
+    query: { matches: { text: string; visible: boolean }[] }
+  }
+  const json = JSON.stringify(view)
+  expect(json).toContain('VISIBLE-1')
+  expect(json).toContain('VISIBLE-2')
+  expect(json.match(/HIDDEN-[a-z]+/g) ?? []).toEqual([])
+  // Controls are named by what they show; an icon link by its picture's alt.
+  expect(view.nodes.filter((n) => n.kind === 'interactive').map((n) => n.text)).toEqual([
+    'Buy',
+    'Next',
+    'Cart',
+  ])
+  // A query says which matches are hidden, so an agent writing selectors isn't misled by them.
+  const hidden = query.matches.filter((m) => m.text.startsWith('HIDDEN-'))
+  expect(hidden.length).toBeGreaterThan(0)
+  expect(hidden.every((m) => !m.visible)).toBe(true)
+  expect(query.matches.find((m) => m.text.startsWith('VISIBLE-1'))?.visible).toBe(true)
+})

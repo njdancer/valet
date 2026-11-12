@@ -217,6 +217,7 @@ async function setup() {
     'persist:auth:e2e-probe',
     'e2e-control',
     'scratch:e2e',
+    'scratch:e2e-hostile',
   ]) {
     session.fromPartition(partition).setCertificateVerifyProc((request, callback) => {
       callback(trusted(request.certificate.data) ? 0 : -2)
@@ -1238,6 +1239,24 @@ async function setup() {
         evil: evilRequests().length,
         closed: browser.isClosed(),
       }
+    },
+
+    hostile: async () => {
+      const browser = await openElectronScratchBrowser({
+        partition: 'scratch:e2e-hostile',
+        rules: {
+          mayNavigate: (url) => url.hostname === 'site.test',
+          mayRequest: () => true,
+          pace: async () => undefined,
+          blocked: () => undefined,
+          mayType: () => true,
+        },
+        dial: local.dial,
+      })
+      const view = await browser.navigate(site.url('site.test', '/hostile'))
+      const query = await browser.query('p')
+      browser.close()
+      return { view, query }
     },
 
     close: async () => {

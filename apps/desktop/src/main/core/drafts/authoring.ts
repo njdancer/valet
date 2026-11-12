@@ -52,6 +52,7 @@ import {
   scrubBody,
   scrubUrl,
 } from './research'
+import { siteInputType, siteMethod, siteMime, siteRole, siteTag } from './site-text'
 import { DRAFT_LIMITS, DraftError, type DraftRecord, type DraftStore, type TrialSummary } from './store'
 import { blankDraft } from './template'
 import { runTrial, TRIAL_LIMITS, type TrialDeps, type TrialResult } from './trial'
@@ -663,9 +664,9 @@ export class DraftAuthoring implements Authoring {
     return {
       count: found.count,
       matches: found.matches.map((m) => ({
-        tag: m.tag,
-        id: m.id,
-        classes: m.classes,
+        tag: siteTag(m.tag),
+        id: m.id === null ? null : { fromSite: m.id },
+        classes: { fromSite: m.classes },
         fromSite: m.text,
         visible: m.visible,
       })),
@@ -679,7 +680,14 @@ export class DraftAuthoring implements Authoring {
   ): Promise<NetworkLog> {
     const browser = await this.scratch(viewer, draftId)
     return {
-      entries: browser.entries(filter).map((e) => ({ ...e, url: scrubUrl(e.url) })),
+      entries: browser.entries(filter).map((e) => ({
+        seq: e.seq,
+        method: siteMethod(e.method),
+        url: { fromSite: scrubUrl(e.url) },
+        resourceType: e.resourceType,
+        status: e.status,
+        mimeType: siteMime(e.mimeType),
+      })),
     }
   }
 
@@ -692,8 +700,8 @@ export class DraftAuthoring implements Authoring {
     if ('refused' in scrubbed) throw new AuthoringRefusal(scrubbed.refused)
     return {
       seq,
-      url: scrubUrl(found.entry.url),
-      mimeType: found.entry.mimeType,
+      url: { fromSite: scrubUrl(found.entry.url) },
+      mimeType: siteMime(found.entry.mimeType),
       fromSite: scrubbed.value,
       truncated: scrubbed.truncated,
     }
@@ -899,16 +907,16 @@ function view(snapshot: {
   readonly cut: boolean
 }): BrowserView {
   return {
-    url: scrubUrl(snapshot.url),
+    url: { fromSite: scrubUrl(snapshot.url) },
     title: { fromSite: snapshot.title },
     nodes: snapshot.nodes.map((n) => ({
       ref: n.ref,
       kind: n.kind,
-      tag: n.tag,
-      role: n.role,
+      tag: siteTag(n.tag),
+      role: siteRole(n.role),
       fromSite: n.text,
-      href: n.href,
-      inputType: n.inputType,
+      href: n.href === null ? null : { fromSite: n.href },
+      inputType: siteInputType(n.inputType),
     })),
     cut: snapshot.cut,
   }

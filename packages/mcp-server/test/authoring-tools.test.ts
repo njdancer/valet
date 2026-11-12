@@ -37,7 +37,7 @@ const DETAIL: DraftDetail = {
 }
 
 const VIEW = {
-  url: 'https://finance.example.com/',
+  url: { fromSite: 'https://finance.example.com/' },
   title: { fromSite: 'Quotes' },
   nodes: [],
   cut: false,
@@ -101,7 +101,7 @@ function authoring(overrides: Partial<Authoring> = {}): Authoring & { writes: st
     networkLog: async () => ({ entries: [] }),
     networkBody: async () => ({
       seq: 1,
-      url: 'https://x.test/',
+      url: { fromSite: 'https://x.test/' },
       mimeType: null,
       fromSite: null,
       truncated: false,
