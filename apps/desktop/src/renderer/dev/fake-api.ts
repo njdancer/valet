@@ -730,7 +730,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     },
   ]
   /** The code the fake browser shows for the one waiting remote sign-in. */
-  const remoteCode = 'ABCD2345'
+  const remoteCode = 'ABCDEFGH'
   let remoteRequests: RemoteConsentRequest[] = [
     {
       id: 'cs_demo',

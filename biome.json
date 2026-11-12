@@ -7,6 +7,8 @@
       "!**/dist",
       "!**/out",
       "!**/coverage",
+      "!**/.test-runtime",
+      "!**/.wrangler",
       "!swift-bridge/.build",
       "!spikes/*/results",
       "!docs/mockups/vendor",

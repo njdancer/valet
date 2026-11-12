@@ -2463,9 +2463,9 @@ describe('Needs you items', () => {
       clientName: 'Claude (claude.ai)',
       source: '203.0.113.24',
       requestedAt: '2026-11-07T00:00:00.000Z',
-      expiresAt: '2026-11-07T00:05:00.000Z',
+      expiresAt: '2026-11-07T00:10:00.000Z',
     })
-    s.advance(5 * 60_000)
+    s.advance(10 * 60_000)
     const after = await s.api.attention.list()
     expect(after.map((i) => i.kind)).not.toContain('remote-consent')
     expect(after.find((i) => i.kind === 'missed')).toMatchObject({

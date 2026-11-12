@@ -364,7 +364,7 @@ describe('every channel', () => {
     'setup.status': [],
     'setup.finish': [],
     'remote.consents': [],
-    'remote.approveConsent': ['ABCD-2345', ['woolworths.view_cart']],
+    'remote.approveConsent': ['ABCD-EFGH', ['woolworths.view_cart']],
     'remote.declineConsent': ['cs_1'],
     'remote.declineAllConsents': [],
     'remote.clients': [],

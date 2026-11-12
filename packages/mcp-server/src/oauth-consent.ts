@@ -12,14 +12,19 @@
 //   so the browser's waiting page can take the person on to the client (or tell them it ended).
 
 import { randomBytes, timingSafeEqual } from 'node:crypto'
+import { CONSENT_CODE_ALPHABET } from '@valet/core'
 import { generateToken } from './token'
 
 export const MAX_PENDING_CONSENTS = 5
-export const CONSENT_TTL_MS = 5 * 60_000
+/** Ten minutes, as long as an approval waits (APPROVAL_TTL_MS): time to reach a phone. */
+export const CONSENT_TTL_MS = 10 * 60_000
 export const MAX_WRONG_CODES = 3
 
-/** Crockford's base32: no I, L, O or U, so a code read off a phone is typed without guessing. */
-export const CODE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+/**
+ * Letters only, without I or O (core's CONSENT_CODE_ALPHABET), so a phone keyboard needs no
+ * switching and nothing is misread.
+ */
+export const CODE_ALPHABET = CONSENT_CODE_ALPHABET
 export const CODE_LENGTH = 8
 
 export type ConsentStatus = 'pending' | 'approved' | 'declined' | 'expired' | 'cancelled'
@@ -223,16 +228,22 @@ export class ConsentRequests {
   }
 }
 
-/** Eight symbols from CODE_ALPHABET, without modulo bias (32 divides 256). */
+/** Eight letters from CODE_ALPHABET, without modulo bias: bytes of 240 and above are drawn again. */
 export function generateCode(random: (size: number) => Buffer = randomBytes): string {
+  const limit = 256 - (256 % CODE_ALPHABET.length)
   let out = ''
-  for (const byte of random(CODE_LENGTH)) out += CODE_ALPHABET[byte & 31]
+  while (out.length < CODE_LENGTH) {
+    for (const byte of random(CODE_LENGTH)) {
+      if (byte >= limit || out.length === CODE_LENGTH) continue
+      out += CODE_ALPHABET[byte % CODE_ALPHABET.length]
+    }
+  }
   return out
 }
 
-/** A code as the person typed it: case, spaces and dashes ignored, O read as 0 and I or L as 1. */
+/** A code as the person typed it: case, spaces and dashes ignored. */
 export function normaliseCode(typed: string): string | null {
-  const code = typed.toUpperCase().replace(/[\s-]/g, '').replace(/O/g, '0').replace(/[IL]/g, '1')
+  const code = typed.toUpperCase().replace(/[\s-]/g, '')
   if (code.length !== CODE_LENGTH) return null
   for (const ch of code) if (!CODE_ALPHABET.includes(ch)) return null
   return code
