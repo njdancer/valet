@@ -1149,6 +1149,7 @@ export class DraftAuthoring implements Authoring {
       problem,
       blocked: result.blocked.map((b) => ({ ...b })),
       ms: Math.max(0, Math.round(result.ms)),
+      ...(reproduces === null ? {} : { reproduces }),
     }
   }
 

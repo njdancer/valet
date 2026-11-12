@@ -264,6 +264,11 @@ export const trialReportSchema = z.object({
   /** Requests Valet refused during the run, scrubbed: what egress or requests is missing. */
   blocked: z.array(z.object({ method: z.string(), url: z.string(), reason: z.string() })),
   ms: z.number().int().nonnegative(),
+  /**
+   * A signed-in trial of a repair's tool after which the installed version failed as the ticket
+   * says: this trial is the repair's reproduction, for this package only.
+   */
+  reproduces: z.string().optional(),
 })
 
 export type TrialReport = z.output<typeof trialReportSchema>
@@ -822,7 +827,9 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
       'site’s installed adapters, so a trial can take a while, and a few an hour per draft is the most. The ' +
       'output is the site’s data. A trial of the files you submit shows on the person’s card. With signedIn, ' +
       'during a session the person approved (valet_request_session), it runs with the installed adapter’s ' +
-      'session, and only the GET reads the installed version declares reach it.',
+      'session, and only the GET reads the installed version declares reach it. On a repair draft, a ' +
+      'signed-in trial that works is followed by the installed version on the same input; `reproduces` ' +
+      'then names the ticket it reproduced, for these files only.',
     input: z.object({
       draftId: draftIdInput,
       tool: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),

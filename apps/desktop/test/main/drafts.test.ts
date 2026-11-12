@@ -872,6 +872,7 @@ describe('live trials', () => {
       lent.until = Number.POSITIVE_INFINITY
       const report = await h.authoring.liveTrial(AGENT, h.draftId, 'get_item', { id: 'abc-1' }, true)
       expect(report.ok).toBe(true)
+      expect(report.reproduces).toBeUndefined()
       expect(h.fake.sessions.at(-1)).toMatchObject({ adapterId: 'shop', installed: { id: 'shop' } })
       const policy = h.fake.policies.at(-1) as unknown as { egress: string[]; requests: { path: string }[] }
       expect(policy.requests.map((r) => r.path)).toEqual(['/api/items/:id'])
@@ -948,7 +949,7 @@ export const tools = {
         /signed-in valet_live_trial/,
       )
       const report = await h.authoring.liveTrial(AGENT, h.draftId, 'get_item', { id: 'abc-1' }, true)
-      expect(report.ok).toBe(true)
+      expect(report).toMatchObject({ ok: true, reproduces: 'R-WXYZ' })
       // The draft, then the installed version on the same session.
       expect(h.fake.sessions).toHaveLength(2)
       const after = await h.authoring.check(AGENT, h.draftId)
