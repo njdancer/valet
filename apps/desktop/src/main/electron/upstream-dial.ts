@@ -68,6 +68,9 @@ export function upstreamProxyDial(
         if (rest.length > 0) socket.unshift(rest)
         tunnelled = true
         emit('connect')
+        // Paused above so nothing is read before the caller listens; a listener it added in its
+        // connect handler gets the stream going again (pipe does that itself).
+        if (socket.listenerCount('data') > 0) socket.resume()
       }
       socket.on('data', onData)
       const authority = `${host}:${port}`
