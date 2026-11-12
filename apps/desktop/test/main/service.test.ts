@@ -28,6 +28,7 @@ import {
 } from '@valet/core'
 import {
   ADMIN_LOCKED_DOWN_RESULT,
+  ADMIN_OTHER_AGENT_RESULT,
   ADMIN_TOOLS,
   ADMIN_WITHHELD_RESULT,
   type AdminAdapterDetail,
@@ -35,6 +36,7 @@ import {
   type AdminArgs,
   type AdminCallTrace,
   type AdminReader,
+  adminNotAllowedResult,
   type ClientIdentity,
   type LiveSessions,
   runAdminTool,
@@ -45,6 +47,7 @@ import {
 import { LoginAttemptMarker } from '@valet/runtime'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
+import type { ClientRegistry } from '../../src/main/core/clients'
 import { dataPaths } from '../../src/main/core/constants'
 import { type Credentials, disabledOtpReader } from '../../src/main/core/credentials'
 import { DEMO_ACCOUNT } from '../../src/main/core/demo'
@@ -2551,11 +2554,11 @@ describe('what a tool result is told about Needs you', () => {
 })
 
 describe('admin tools (docs/admin-tools.md)', () => {
-  const C1 = { origin: 'local', clientId: 'c1' } as const
-  const C2 = { origin: 'local', clientId: 'c2' } as const
-
   async function withLogin() {
     const s = await approved()
+    const C1: ClientIdentity = { origin: 'local', clientId: (await s.api.clients.add('Claude Code')).id }
+    const C2: ClientIdentity = { origin: 'local', clientId: (await s.api.clients.add('Claude Desktop')).id }
+    const registry = (s.service as unknown as { clients: ClientRegistry }).clients
     await s.api.grants.make({
       adapterId: 'shop',
       adapterHash: s.adapter.hash,
@@ -2567,10 +2570,17 @@ describe('admin tools (docs/admin-tools.md)', () => {
     s.driver.sessionValues = ['session-cookie-canary-0001']
     await s.call('echo', { text: 'milk' }, 'Claude Code', 'c_7f2a01', { transport: 'http', identity: C1 })
     await s.api.openLoginWindow('shop')
-    return { ...s, admin: s.endpoint.admin as AdminReader }
+    return { ...s, C1, C2, registry, admin: s.endpoint.admin as AdminReader }
   }
 
-  const run = (admin: AdminReader, name: string, args: AdminArgs = {}, viewer: ClientIdentity | null = C1) =>
+  const text = (result: { content: unknown }) => (result.content as { text: string }[])[0]?.text
+
+  const run = (
+    admin: AdminReader,
+    name: string,
+    args: AdminArgs = {},
+    viewer: ClientIdentity | null = null,
+  ) =>
     runAdminTool(
       ADMIN_TOOLS.find((t) => t.name === name) as (typeof ADMIN_TOOLS)[number],
       admin,
@@ -2581,7 +2591,7 @@ describe('admin tools (docs/admin-tools.md)', () => {
   it('answers every admin tool, and no answer carries a password, the token, a session value or a 1Password item', async () => {
     const s = await withLogin()
     const results = await Promise.all(
-      ADMIN_TOOLS.map((t) => run(s.admin, t.name, { adapterId: 'shop', call: 'c_7f2a01', limit: 100 })),
+      ADMIN_TOOLS.map((t) => run(s.admin, t.name, { adapterId: 'shop', call: 'c_7f2a01', limit: 100 }, s.C1)),
     )
     for (const [i, result] of results.entries()) {
       expect(result.isError, ADMIN_TOOLS[i]?.name).toBeUndefined()
@@ -2604,11 +2614,11 @@ describe('admin tools (docs/admin-tools.md)', () => {
 
   it('describes the site, its tools by the names clients call them, and the logins without their items', async () => {
     const s = await withLogin()
-    const list = (await run(s.admin, 'valet_list_adapters')).structuredContent as AdminAdapterList
+    const list = (await run(s.admin, 'valet_list_adapters', {}, s.C1)).structuredContent as AdminAdapterList
     const shop = list.adapters.find((a) => a.id === 'shop')
     expect(shop?.approval).toBe('approved')
     expect(shop?.tools.find((t) => t.name === 'echo')).toMatchObject({ mcpName: 'shop_echo', remote: false })
-    const detail = (await run(s.admin, 'valet_get_adapter', { adapterId: 'shop' }))
+    const detail = (await run(s.admin, 'valet_get_adapter', { adapterId: 'shop' }, s.C1))
       .structuredContent as AdminAdapterDetail
     expect(detail.adapter?.loginDetails.find((l) => l.name === 'login')?.given).toMatchObject({
       provider: 'fake',
@@ -2617,20 +2627,73 @@ describe('admin tools (docs/admin-tools.md)', () => {
 
   it('shows a call’s input only to the client that made it', async () => {
     const s = await withLogin()
-    const own = (await run(s.admin, 'valet_get_call', { call: '7F2A' }, C1))
+    const own = (await run(s.admin, 'valet_get_call', { call: '7F2A' }, s.C1))
       .structuredContent as AdminCallTrace
     expect(own.call?.input).toContain('milk')
-    const other = (await run(s.admin, 'valet_get_call', { call: '7F2A' }, C2))
+    expect(await run(s.admin, 'valet_get_call', { call: '7F2A' }, s.C2)).toEqual({
+      content: [{ type: 'text', text: ADMIN_OTHER_AGENT_RESULT }],
+      isError: true,
+    })
+    // With All agents' activity, the other app sees it, input and all.
+    await s.registry.setCapabilities(s.C2.clientId, { allActivity: true })
+    const all = (await run(s.admin, 'valet_get_call', { call: '7F2A' }, s.C2))
       .structuredContent as AdminCallTrace
-    expect(other.call?.summary.callId).toBe('c_7f2a01')
-    expect(other.call?.input).toBeNull()
+    expect(all.call?.input).toContain('milk')
+  })
+
+  it('lists only the app’s own calls and their audit records, unless it may see all', async () => {
+    const s = await withLogin()
+    await s.call('echo', { text: 'bread' }, 'Claude Desktop', 'c_9b01aa', {
+      transport: 'http',
+      identity: s.C2,
+    })
+    const ids = async (viewer: ClientIdentity) =>
+      (
+        (await run(s.admin, 'valet_list_calls', {}, viewer)).structuredContent as {
+          calls: { callId: string }[]
+        }
+      ).calls.map((c) => c.callId)
+    expect(await ids(s.C1)).toEqual(['c_7f2a01'])
+    expect(await ids(s.C2)).toEqual(['c_9b01aa'])
+    const callIds = async (viewer: ClientIdentity) => {
+      const page = (await run(s.admin, 'valet_audit_log', { limit: 100 }, viewer)).structuredContent as {
+        records: { event: { callId?: string } }[]
+        total: number
+      }
+      return new Set(page.records.flatMap((r) => (r.event.callId === undefined ? [] : [r.event.callId])))
+    }
+    expect(await callIds(s.C1)).toEqual(new Set(['c_7f2a01']))
+    await s.registry.setCapabilities(s.C1.clientId, { allActivity: true })
+    expect(await ids(s.C1)).toEqual(['c_9b01aa', 'c_7f2a01'])
+    expect(await callIds(s.C1)).toEqual(new Set(['c_7f2a01', 'c_9b01aa']))
+  })
+
+  it('refuses an app the person hasn’t let see Valet, and one it doesn’t know', async () => {
+    const s = await withLogin()
+    await s.registry.setCapabilities(s.C2.clientId, { seeValet: false })
+    expect(await run(s.admin, 'valet_status', {}, s.C2)).toEqual({
+      content: [{ type: 'text', text: adminNotAllowedResult('Claude Desktop') }],
+      isError: true,
+    })
+    expect(
+      text(await run(s.admin, 'valet_status', {}, { origin: 'local', clientId: 'c_0000000000000000' })),
+    ).toBe(adminNotAllowedResult('This app'))
+    expect(text(await run(s.admin, 'valet_status', {}, { origin: 'remote', clientId: 'r1' }))).toBe(
+      adminNotAllowedResult('This app'),
+    )
+    // Revoking the app takes its access with it.
+    await s.api.clients.revoke(s.C1.clientId)
+    expect(text(await run(s.admin, 'valet_status', {}, s.C1))).toBe(adminNotAllowedResult('This app'))
   })
 
   it('withholds a result that would carry a session value, whatever field it sits in', async () => {
     const s = await withLogin()
     // A client that names itself after the session cookie gets its name into the log.
-    await s.call('echo', { text: 'x' }, 'session-cookie-canary-0001')
-    const calls = await run(s.admin, 'valet_list_calls')
+    await s.call('echo', { text: 'x' }, 'session-cookie-canary-0001', 'c_5e55aa', {
+      transport: 'http',
+      identity: s.C1,
+    })
+    const calls = await run(s.admin, 'valet_list_calls', {}, s.C1)
     expect(calls).toEqual({ content: [{ type: 'text', text: ADMIN_WITHHELD_RESULT }], isError: true })
     expect(await s.admin.sensitive(['ok', 'x session-cookie-canary-0001 y'])).toBe(true)
     expect(await s.admin.sensitive(['nothing here'])).toBe(false)
@@ -2639,9 +2702,9 @@ describe('admin tools (docs/admin-tools.md)', () => {
   it('answers only valet_status while Valet is locked down', async () => {
     const s = await withLogin()
     await s.api.app.setLockedDown(true)
-    const status = (await run(s.admin, 'valet_status')).structuredContent as { lockedDown: boolean }
+    const status = (await run(s.admin, 'valet_status', {}, s.C1)).structuredContent as { lockedDown: boolean }
     expect(status.lockedDown).toBe(true)
-    expect(await run(s.admin, 'valet_audit_log')).toEqual({
+    expect(await run(s.admin, 'valet_audit_log', {}, s.C1)).toEqual({
       content: [{ type: 'text', text: ADMIN_LOCKED_DOWN_RESULT }],
       isError: true,
     })
