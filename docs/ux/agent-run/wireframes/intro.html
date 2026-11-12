@@ -1,0 +1,22 @@
+<h2 class="sec" id="about">How to read these</h2>
+<div class="prose">
+  <p>Each group is one journey from <code>docs/ux/agent-run/journeys.md</code>, plus a group of approval cards (J4) drawn for every kind in <code>approval-cards.md</code>. Within a group: the happy path first, then failures, then dead ends. Every frame shows the world in <code>story.md</code>: Thursday 19 November 2026, 7:40 pm; Nick at a café with his iPhone; his MacBook Pro at home. Notes say when a frame shows another moment.</p>
+  <p>Phone frames use native iOS structures (tab bar, navigation bar, inset grouped lists, page sheets, alerts, the system Face ID sheet) so the iOS app can map each to a SwiftUI component. Mac frames use the v3 kit and only draw what changes; anything not drawn is as in the v3 wireframes.</p>
+</div>
+<h2 class="sec" id="ia">The iPhone app</h2>
+<pre class="tree">Tab bar: Needs you (badge) · Activity · Sites · Agents · Valet
+
+Needs you     the same inbox and titles as the Mac · a card opens as a page sheet · Pause and Lock down in its menu
+Activity      Changes (first: what agents changed, who approved, Undo) · Calls (redacted steps)
+Sites         health, tools with remote on/off per agent, versions (written by / approved on), drafts (read only)
+Agents        capabilities (Use tools · See Valet · Ask for changes), remote tools, waiting requests, Revoke · Add an agent
+Valet         the Mac's status · Pause Valet · Lock down · Devices · Secrets (read, remove) · Notifications · Unpair</pre>
+<h2 class="sec" id="tiers">Approval tiers (recommended defaults, D74)</h2>
+<div class="tablewrap"><table class="t">
+<thead><tr><th>Tier</th><th>Examples</th><th>What the person sees</th></tr></thead>
+<tbody>
+<tr><td>No approval</td><td>Every read, scratch-browser authoring, offline tests, live trials of read tools</td><td>Nothing; it's in Activity, Calls</td></tr>
+<tr><td>Notify only</td><td>Draft started, tool turned off, stricter setting, store changed</td><td>One grouped notification with Undo; Activity, Changes</td></tr>
+<tr><td>Approve</td><td>Install, update, restore, login, remote tool, loosening setting, signed-in session, connect</td><td>A card on the iPhone and the Mac; Face ID or Touch ID</td></tr>
+<tr><td>Approve each use</td><td>Irreversible tools (checkout)</td><td>A Confirm card every time; biometrics only</td></tr>
+</tbody></table></div>

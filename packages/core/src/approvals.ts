@@ -21,6 +21,16 @@ const adapterId = z.string().regex(/^[a-z][a-z0-9-]{1,63}$/)
 const name = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/)
 const origin = z.string().regex(/^https:\/\/[a-z0-9.-]+(?::\d{1,5})?$/)
 /** A client's id as its credential names it: `local:<id>` or `remote:<id>`. */
+
+/**
+ * The consent code: eight letters from 24 (no I or O), shown only in the browser that started a
+ * remote client's flow and typed by the person on the Mac or a paired phone. Letters only, so a
+ * phone keyboard needs no switching (A's IA section 10); about 36.7 bits, and three wrong codes
+ * cancel every pending consent. Typed input is upper-cased and the hyphen added before checking.
+ */
+export const CONSENT_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ'
+export const consentCodeSchema = z.string().regex(/^[A-HJ-NP-Z]{4}-[A-HJ-NP-Z]{4}$/)
+
 export const clientIdSchema = z.string().regex(/^(?:local|remote):[A-Za-z0-9_-]{1,64}$/)
 /** A tool as `<adapterId>.<tool>`. */
 const qualifiedTool = z.string().regex(/^[a-z][a-z0-9-]{1,63}\.[a-z][a-z0-9_]{0,63}$/)
@@ -110,8 +120,9 @@ const subjects = {
       host: z.string().regex(/^[a-z0-9.-]{1,253}$/),
       /** As the relay or tunnel reported it: a claim, shown as one. */
       sourceAddress: address.nullable(),
-      /** The code the browser that started the flow shows; the person checks it matches. */
-      code: z.string().regex(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/),
+      // No code here: the request is what the device renders, and the person must type the code
+      // from the browser that started the flow, never compare it (relay.md, "Consent happens on
+      // the Mac or a paired phone"). The Mac keeps the code beside the pending request.
       tools: z.array(qualifiedTool).max(200),
     })
     .strict(),
@@ -124,6 +135,15 @@ const subjects = {
       label: displayText(80),
       from: displayText(120),
       to: displayText(120),
+      /**
+       * When the person picks the value on the card (a store, J8b): the values offered. The
+       * signed decision then names the one picked (`choice`), and `to` is ignored.
+       */
+      choices: z
+        .array(z.object({ value: z.string().min(1).max(200), label: displayText(120) }).strict())
+        .min(2)
+        .max(50)
+        .optional(),
     })
     .strict(),
   /** An agent driving a signed-in session for authoring or repair (D81), for at most this long. */
@@ -132,6 +152,20 @@ const subjects = {
       adapterId,
       draftId: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/),
       origins: z.array(origin).min(1).max(10),
+      minutes: z.number().int().min(1).max(60),
+    })
+    .strict(),
+  /**
+   * A draft's scratch browser or live trial reaching one private address (A's Private network
+   * card, R21). Without it both refuse every private, loopback, link-local and tailnet address,
+   * by relay.md's fetch rules. Lasts for one authoring session's length at most.
+   */
+  'private-network': z
+    .object({
+      adapterId,
+      draftId: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/),
+      address,
+      port: z.number().int().min(1).max(65535).nullable(),
       minutes: z.number().int().min(1).max(60),
     })
     .strict(),
@@ -169,7 +203,8 @@ export type ApprovalSubject<K extends ApprovalKind = ApprovalKind> = z.infer<(ty
  * running unsandboxed code, which defeats every other guarantee; those need the person at the Mac.
  */
 export function approvableOn(kind: ApprovalKind, subject: ApprovalSubject): readonly DeviceRole[] {
-  if (kind === 'device-pair') return ['mac']
+  // Pairing, and lifting a pause or lockdown: a stolen phone must not undo the person's own stop.
+  if (kind === 'device-pair' || kind === 'resume') return ['mac']
   if (kind === 'adapter-install') {
     const install = subject as ApprovalSubject<'adapter-install'>
     // Anything critical (unsandboxed, a command exception) is as good as unsandboxed: Mac only.
@@ -189,6 +224,7 @@ export const KIND_TIER: Readonly<Record<ApprovalKind, 'approve' | 'approve-each-
   'remote-client': 'approve',
   setting: 'approve',
   'authoring-session': 'approve',
+  'private-network': 'approve',
   'irreversible-call': 'approve-each-use',
   resume: 'approve',
   'device-pair': 'approve',
@@ -202,6 +238,7 @@ export const APPROVAL_TTL_MS: Readonly<Record<ApprovalKind, number>> = {
   'remote-client': 10 * 60_000,
   setting: 24 * 3600_000,
   'authoring-session': 30 * 60_000,
+  'private-network': 30 * 60_000,
   'irreversible-call': 2 * 60_000,
   resume: 10 * 60_000,
   'device-pair': 5 * 60_000,
@@ -210,7 +247,14 @@ export const APPROVAL_TTL_MS: Readonly<Record<ApprovalKind, number>> = {
 /** Limits against approval fatigue (docs/agent-run-security.md#approval-tiers). */
 export const APPROVAL_LIMITS = {
   pendingPerClient: 3,
-  pendingTotal: 10,
+  /** Across all agents (A's card spec). Remote-client consents don't count here. */
+  pendingTotal: 5,
+  /** Remote-client consents waiting at once, in their own bucket (relay.md, D's ask 7). */
+  consentPending: 5,
+  /** `/authorize` opens from one source address in an hour, before any card is made. */
+  consentPerSourcePerHour: 10,
+  /** Requests one client may make in a day, answered or not. */
+  perClientPerDay: 20,
   /** Declines from one client, within the window, after which its requests are refused. */
   declinesBeforeCooldown: 3,
   declineWindowMs: 3600_000,
@@ -237,6 +281,45 @@ const requestBase = {
   agentNote: displayText(280).nullable(),
   createdAt: z.iso.datetime(),
   expiresAt: z.iso.datetime(),
+  /** Why this request exists, in the Mac's terms: the card's "Because" row (D). */
+  context: z
+    .discriminatedUnion('kind', [
+      z.object({ kind: z.literal('repair'), repairId: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/) }).strict(),
+      z.object({ kind: z.literal('draft'), draftId: z.string().regex(/^[A-Za-z0-9_-]{1,40}$/) }).strict(),
+      /** A follow-on (A section 8): its own request, signed on its own, after this one. */
+      z.object({ kind: z.literal('follows'), requestId: requestIdSchema }).strict(),
+      z.object({ kind: z.literal('replaces'), requestId: requestIdSchema }).strict(),
+    ])
+    .optional(),
+  /**
+   * What the card shows besides the subject, written by the Mac (H's CR-4). Part of the request
+   * text, so the signature covers it. `fromAdapter` is text the adapter's author wrote: cards show
+   * it as "the adapter says", never as a headline.
+   */
+  display: z
+    .object({
+      because: displayText(200).optional(),
+      client: z
+        .object({ label: displayText(100), badge: z.enum(['local', 'remote', 'app', 'person']) })
+        .strict()
+        .optional(),
+      /** The site's registrable domain, from the manifest's origins by the Mac. */
+      domain: z
+        .string()
+        .regex(/^[a-z0-9.-]{1,253}$/)
+        .optional(),
+      followOns: z.array(displayText(120)).max(10).optional(),
+      checks: z.array(displayText(200)).max(20).optional(),
+      fromAdapter: z
+        .object({
+          siteName: displayText(80).optional(),
+          toolTitles: z.record(z.string().regex(/^[a-z][a-z0-9_]{0,63}$/), displayText(80)).optional(),
+        })
+        .strict()
+        .optional(),
+    })
+    .strict()
+    .optional(),
 }
 
 const requestOf = <K extends ApprovalKind>(kind: K) =>
@@ -257,6 +340,7 @@ export const approvalRequestSchema = z
     requestOf('remote-client'),
     requestOf('setting'),
     requestOf('authoring-session'),
+    requestOf('private-network'),
     requestOf('irreversible-call'),
     requestOf('resume'),
     requestOf('device-pair'),
@@ -301,21 +385,29 @@ export const approvalDecisionSchema = z
     requestDigest: hash,
     deviceId: keyIdSchema,
     decidedAt: z.iso.datetime(),
+    /** The value picked on a card that offers `choices` (H's CR-7). Signed with the rest. */
+    choice: z.string().min(1).max(200).optional(),
+    /** A remote client's consent only: the code the person typed from their browser. */
+    typedCode: consentCodeSchema.optional(),
   })
   .strict()
 export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>
 export { signedTextSchema as signedDecisionSchema }
 
-export type DecisionRefusal =
-  | 'malformed'
-  | 'unknown-device'
-  | 'device-revoked'
-  | 'bad-signature'
-  | 'wrong-mac'
-  | 'wrong-request'
-  | 'not-pending'
-  | 'expired'
-  | 'not-allowed-on-device'
+export const DECISION_REFUSALS = [
+  'malformed',
+  'unknown-device',
+  'device-revoked',
+  'bad-signature',
+  'wrong-mac',
+  'wrong-request',
+  'not-pending',
+  'expired',
+  'not-allowed-on-device',
+  'bad-choice',
+  'wrong-code',
+] as const
+export type DecisionRefusal = (typeof DECISION_REFUSALS)[number]
 
 export type DecisionCheck =
   | { readonly ok: true; readonly decision: ApprovalDecision; readonly role: DeviceRole }
@@ -337,6 +429,8 @@ export interface DecisionContext {
   readonly receivedAt?: string
   /** Live only: whether the Mac still holds this request id as pending, unanswered. */
   readonly isPending?: (requestId: string) => boolean
+  /** Live only, for a remote client's consent: the code the Mac issued for this request. */
+  readonly consentCode?: (requestId: string) => string | null
   readonly now?: Date
 }
 
@@ -389,6 +483,21 @@ export function verifyDecision(
     }
     if (revokedAt !== null && Date.parse(revokedAt) <= receivedAt)
       return { ok: false, reason: 'device-revoked' }
+  }
+  const choices = request.request.kind === 'setting' ? request.request.subject.choices : undefined
+  if (
+    choices === undefined ? decision.choice !== undefined : !choices.some((c) => c.value === decision.choice)
+  ) {
+    return { ok: false, reason: 'bad-choice' }
+  }
+  if (request.request.kind === 'remote-client') {
+    // Stored evidence was matched when it arrived; the receipt says so. Live, it must match now.
+    if (decision.typedCode === undefined) return { ok: false, reason: 'wrong-code' }
+    if (context.mode === 'live' && decision.typedCode !== context.consentCode?.(request.request.id)) {
+      return { ok: false, reason: 'wrong-code' }
+    }
+  } else if (decision.typedCode !== undefined) {
+    return { ok: false, reason: 'wrong-code' }
   }
   return { ok: true, decision, role: device.role }
 }

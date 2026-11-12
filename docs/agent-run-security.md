@@ -83,7 +83,7 @@ Final for D74, as `ADMIN_ACTION_TIERS` and `KIND_TIER` in core (**Contract**).
 | ---------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | None             | Done at once and audited                                       | Every read (status, adapters, tools, health, repairs, calls, redacted traces, audit, settings, devices). Scratch browsing. Editing, building and testing a draft (tests run sandboxed only, below). Deleting a draft.                                      |
 | Notify           | Done at once, audited, and the person is told on Mac and phone | Creating a draft; a paced live trial of a read tool in the scratch partition; turning a tool off; removing an adapter; revoking a secret, a client or a device; a setting that only tightens; choosing an adapter setting (the store); pause and lockdown. |
-| Approve          | Nothing happens until a device signs                           | Installing, updating or rolling back an adapter; a secret grant; turning a tool on, locally or remotely; a setting that loosens; a signed-in authoring session; resuming from pause or lockdown; a remote client's consent.                                |
+| Approve          | Nothing happens until a device signs                           | Installing, updating or rolling back an adapter; a secret grant; turning a tool on, locally or remotely; a setting that loosens; a signed-in authoring session; resuming from pause or lockdown (at the Mac only); a remote client's consent.              |
 | Approve each use | As Approve, never remembered                                   | An irreversible tool call (D46).                                                                                                                                                                                                                           |
 
 Rules that go with it:
@@ -91,10 +91,12 @@ Rules that go with it:
 - **The Mac classifies, never the caller.** An admin tool names an action; the Mac decides whether
   a setting change tightens or loosens from its own table of settings, not from the agent's claim.
   An action not in the table is refused.
-- **Never over MCP, at any tier:** pairing a device, answering an approval, reading a secret's value.
-- **Where each kind may be approved:** everywhere except pairing a device and installing
-  unsandboxed code, which need the person at the Mac (`approvableOn`). Both defeat every other
-  guarantee if a stolen phone could do them.
+- **Never over MCP, at any tier:** pairing a device, answering an approval, reading a secret's
+  value, resuming from pause or lockdown.
+- **Where each kind may be approved:** everywhere except pairing a device, installing
+  unsandboxed code and resuming, which need the person at the Mac (`approvableOn`). The first two
+  defeat every other guarantee if a stolen phone could do them; lockdown is what the person
+  reaches for when the phone is lost, so the phone can't lift it.
 - **Expiry:** an irreversible call keeps the confirmation's short life (2 minutes); a remote
   client's consent and a resume 10 minutes; an authoring session 30; the rest 24 hours, so an
   install can wait for the person to be back (`APPROVAL_TTL_MS`).
@@ -349,8 +351,8 @@ remote MCP client ─HTTPS─▶ relay Worker ─▶ Durable Object per Mac ◀�
 - **The phone channel.** `envelope` frames carry HPKE (RFC 9180) auth-mode ciphertext between the
   sender's and recipient's agreement keys, suite DHKEM(P-256, HKDF-SHA256), HKDF-SHA256,
   AES-256-GCM, with `info` set to the sender and recipient ids. Auth mode means a phone accepts
-  only what the Mac's key sealed, and the reverse. Inside, a per-sender sequence number stops the
-  relay replaying or reordering alerts. Approvals inside are signed as well, so a broken seal
+  only what the Mac's key sealed, and the reverse. Inside, a per-sender sequence number, accepted only in order (`seqVerdict`), stops the
+  relay replaying, reordering or silently dropping messages. Approvals inside are signed as well, so a broken seal
   still can't approve. What goes inside is one schema per direction: `macToPhoneMessageSchema` (request text,
   closings, alerts) and `phoneToMacMessageSchema` (signed decisions, declines, the tightening
   commands below). The Mac parses a phone's messages only with `parsePhoneToMac`. Each side acknowledges what it received (`ack`), so a phone shows a command as
@@ -415,6 +417,121 @@ library prelude are app code. The rules B asked for:
 - **H:** keys as in the table; render from the exact text, never re-serialise; Face ID prompt
   text in the app's words; pushes carry nothing.
 - **I:** exceptions as capabilities; forbidden paths after `realpath`; the unsandboxed wording.
+
+## Contract changes after the first merge
+
+Asked for by D, G and H while building, 2026-11-12. Accepted unless marked otherwise.
+
+**From H (iPhone):**
+
+1. **The iPhone's approval key uses `.biometryCurrentSet`,** not `.userPresence`, so a thief who
+   knows the passcode still can't approve. A Face ID enrolment change kills the key and the phone
+   re-pairs. The Mac keeps `.userPresence`, since a Mac may have no Touch ID. A second,
+   passcode-capable key for neutral cards waits for a separate decision.
+2. **Pairing wire format** (`pairing.ts`):
+   - The Mac opens an offer at the relay by id only (`pairing-open`). `pairingOfferId` is a hash
+     of the secret.
+   - The phone sends `pairing-reply` without a hello, sealed with AES-256-GCM under
+     `pairingSealKey`.
+   - The Mac answers with `pairing-result`, sealed the same way.
+   - `pairingCode` gives the six digits: HKDF over the secret, salted with the Mac id, with the
+     offer text, the reply and a fresh Mac nonce in the info. The Mac accepts only the first
+     reply to an offer, then sends the nonce (`pairing-challenge`). Without it, someone who saw
+     the QR and controls the relay could open the reply and grind substitutes until the digits
+     matched (H's review).
+   - The reply travels on the phone's ordinary relay socket, as the one frame allowed before a
+     hello, for an offer the Mac opened. That's G's rendezvous, without a second endpoint.
+   - Six digits (20 bits) is enough because the QR is single use, the reply is sealed, and three
+     wrong confirmations end the offer. A's four words would also do if the card spec wants them.
+3. **`status`**, Mac to phone, for the phone's tabs, and **`unpaired`**: a sealed notice that
+   tells a revoked phone to delete its keys, since the relay refuses its hello without saying why.
+   - **Sequence numbers:** accept only the next one, re-ack a duplicate without acting, and hold a
+     gap (`seqVerdict`). The first design's "drop anything not above the last" let a relay hold
+     back a lockdown and make every resend look old.
+   - **HPKE `info`** is pinned as `envelopeInfo`: the sender's then the recipient's key id bytes.
+4. **`display`** on requests: the Mac's own words for the card ("Because", client badge, the
+   registrable domain, follow-ons, checks), plus `fromAdapter` (site name and tool titles), which
+   cards show as the adapter's words. It's inside the request text, so the signature covers it.
+5. **A note on declines,** and D's `stopAsking`.
+6. **`approval-closed` with `refused`**, the reason and the device that answered.
+7. **`choice`** on a signed decision, checked against the setting's offered `choices` (the store,
+   J8b).
+8. A sealed notification title is for later, with a Notification Service Extension; no contract
+   yet.
+9. **`ask`**, phone to Mac, limited to `PHONE_ASKS`. The Mac builds the request itself, as it
+   does for an agent. Pairing and resume are never asked from a phone. H not offering Unlock on
+   the phone is fine: `approvableOn` allows it, but the UI needn't.
+10. **J6:**
+    - `handoff` tells the phone a login needs it.
+    - `login-code` carries a one-time code the person typed on the phone. The Mac treats it as a
+      secret: used only for that hand-off's OTP step, never logged, and audited as a secret use.
+
+**From D (broker):**
+
+1. **`context`** on requests: repair, draft, follows, replaces.
+   - A follow-on is its own request and signed on its own.
+   - One Face ID (one `LAContext`) may sign several requests only when the phone showed them
+     together as one list, and never a critical one.
+2. **Decline note and "stop asking"**, as H's 5.
+3. **Limits** follow A's card spec: 5 pending across agents, 3 per agent, 20 requests per agent
+   per day.
+4. **One anchored ledger** (`trusted.json`) for pending requests, evidence, devices, revocations
+   and safety state, instead of evidence beside each store.
+   - Accepted. It has one anchor and no crash window across files.
+   - One rule with it: any tightening record that supersedes evidence must be in the ledger too.
+     That covers a tool turned off after it was enabled, and a grant revoked. Otherwise an edit to
+     an unanchored store would bring the old evidence back into force.
+5. **Face ID only on the phone:** already so since H's 1 (`.biometryCurrentSet`); there is no
+   passcode-capable key to tell apart. If Nick takes A's passcode fallback for neutral cards, the
+   phone gets a second, `.userPresence` key in its device record, and the Mac picks from its own
+   request which key a decision must be signed with.
+6. **Resume at the Mac only:** `approvableOn('resume')` is `['mac']`, and `valet.resume` left
+   `ADMIN_ACTION_TIERS` for `NEVER_OVER_MCP`.
+7. **Consent code typed, not compared:** the remote-client request carries no code; the phone
+   puts the typed code in the signed decision (`typedCode`, letters only, `consentCodeSchema`) and
+   the Mac refuses a mismatch (`wrong-code`, given the issued code through `consentCode`).
+   Consents have their own bucket (`consentPending`, `consentPerSourcePerHour`) outside
+   `pendingTotal`.
+
+**From A (screens), signing off section 10 of the information architecture:**
+
+- `relay.md` now has consent on the Mac or a paired phone, the letters-only typed code, the
+  redirect host in full, and a ten-minute consent life to match `APPROVAL_TTL_MS`.
+- The approval gesture fallback lives in `authoring-agent.md`, not `security-model.md`: on a Mac
+  without Touch ID it is now the Mac account password through the system prompt
+  (`.userPresence`), not typing characters of the hash.
+- Phone notifications follow the Mac's rules, and the relay-visible push text is fixed
+  (`security-model.md`, Notifications).
+
+**From G (relay):**
+
+1. **`relayAuthPayload`**: the hello signs `JSON.stringify` of `{nonce, relay, role, id}` in
+   that order.
+2. **Consent polling.** The waiting page polls through `consent-open` with the same id and an
+   empty query. The Mac treats a known id as a poll and an unknown one as expired.
+3. **No `Origin` header.** The relay refuses forwarded requests that carry one (except GET
+   `/authorize`), and `/mcp` POST bodies must be JSON-RPC.
+4. **Relay-side lock and recovery code.**
+   - A phone can ask the relay to stop forwarding remote traffic to its Mac (`relay-lock`). Only
+     the Mac lifts it (`relay-unlock`).
+   - A 128-bit recovery code, shown once, whose hash the Mac registers. The code's page can only
+     lock and unregister phones.
+5. **More consent states:** `closed` ("not accepting new agents"), and `busy` and `too-many`
+   for load.
+6. **No trust on first use.** A Mac's first hello carries `binding`: its approval key, whose key
+   id is the Mac id, signing the transport key once with Touch ID (`verifyRelayBinding`). A relay
+   that lost its storage can't be claimed by someone who only knows the Mac id. The same binding
+   lets a Mac rotate its transport key. With it, the relay may delete Macs unseen for a long
+   time (`lastSeenAt`), since re-registering needs the binding.
+7. `/revoke` is no longer forwarded: the Mac's OAuth server has no RFC 7009 endpoint.
+8. The envelope's byte cap applies to the whole frame.
+9. A phone's lockdown sent while the Mac is offline is lost, but the relay-side lock (4) holds
+   at the relay, so a stolen token's calls can't land first when the Mac reconnects.
+10. G's own choices, no contract change:
+    - Consent polls carry an HMAC'd wait token bound to the original `redirect_uri`, and the
+      relay redirects only there.
+    - Forwarded responses are limited to `application/json` and `text/event-stream`, with a CSP
+      sandbox.
 
 ## Open questions
 

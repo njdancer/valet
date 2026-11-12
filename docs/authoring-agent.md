@@ -29,7 +29,11 @@ read.
 ### Can
 
 - **Drive an anonymous browser partition.** It navigates within the site's domain, clicks, fills
-  non-secret fields and reads the DOM, but only in `scratch:<site>` (below). Never in
+  non-secret fields and reads the DOM, but only in `scratch:<site>` (below). The scratch browser
+  and live trials refuse private addresses (loopback, private, link-local, CGNAT and tailnet, by
+  [relay.md's fetch rules](relay.md#before-consent-fetching-and-limits)), checked on the resolved
+  address of every request and redirect, unless the person approved a Private network card for
+  that one address (the `private-network` approval kind, for an authoring session's length). Never in
   `auth:<site>`, never in `record:<site>`, and never in the live `tool:<site>` partition that
   serves MCP calls. Driving the person's logged-in session (`author:<site>`) is off by default;
   see [Where the agent's browser runs](#where-the-agents-browser-runs).
@@ -439,10 +443,12 @@ Two things protect approvals and grants, in every mode:
 
 - **A user-presence gesture.** Approving a hash, and making a grant, need Touch ID (through
   `LocalAuthentication`) in the app's renderer. A synthetic click on Approve, from UI automation
-  (`osascript`, the accessibility API) or a page, doesn't produce one. On a Mac without Touch ID
-  the fallback is typing eight characters of the hash shown on the approval screen. That's
-  weaker: accessibility automation can read and type it, though only from an app the person
-  has given Accessibility permission. The app says which one is in use.
+  (`osascript`, the accessibility API) or a page, doesn't produce one. With agent-run Valet the
+  gesture is the Secure Enclave key's own access control ([agent-run-security.md](agent-run-security.md#devices-and-keys)):
+  Touch ID or Face ID; on a Mac without Touch ID, the Mac account password in the system's own
+  prompt (`.userPresence`), which automation can't read from the screen. Typing characters of the
+  hash is gone. A passcode fallback on the phone, for neutral cards only, waits on Nick (A's open
+  question 3); until then the phone signs with Face ID only.
 - **Integrity-protected stores.** In the MCP-inverted mode the agent may have filesystem access as
   the person. If approvals and grants are files the app trusts, the agent can approve its own
   change by writing one. So each record is MACed with a key held in the Keychain under the app's
