@@ -1,0 +1,5 @@
+Query chain:
+ →Find: Target Application 'me.dncr.valet.dev'
+  ↪︎Find: Descendants matching type TabBar
+    ↪︎Find: Descendants matching type Button
+      ↪︎Find: Elements matching predicate '"Needs you" IN identifiers'

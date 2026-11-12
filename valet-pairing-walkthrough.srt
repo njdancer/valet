@@ -1,0 +1,31 @@
+1
+00:00:00,428 --> 00:00:20,532
+Valet on the Mac, and the iPhone app in the Simulator. Both talk through Valet’s relay, running locally here.
+
+2
+00:00:20,532 --> 00:00:26,077
+To pair, open Settings › Devices on the Mac and choose Pair an iPhone.
+
+3
+00:00:26,077 --> 00:00:42,080
+The Mac shows a one-time QR code. The Simulator has no camera, so this test build reads the same code over a local link.
+
+4
+00:00:42,080 --> 00:00:50,941
+The phone shows six digits. The Mac shows three codes, and you pick the one that matches the phone.
+
+5
+00:00:50,941 --> 00:01:01,878
+Picking it asks for Touch ID on the Mac (this test build answers that itself). The phone is paired.
+
+6
+00:01:01,878 --> 00:01:11,250
+Now an agent, connected to Valet over MCP, writes an adapter for a made-up library site.
+
+7
+00:01:11,250 --> 00:01:21,490
+Installing it needs your approval. The request is sealed to the phone and sent through the relay.
+
+8
+00:01:21,490 --> 00:01:33,666
+The card on the phone says what the adapter can reach and who asked. Approve asks for Face ID.

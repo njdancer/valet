@@ -1,0 +1,97 @@
+{
+  "macStartedAt": 1794496451236,
+  "phoneStartedAt": 1794496460355,
+  "captions": [
+    {
+      "at": 1794496460783,
+      "text": "Valet on the Mac, and the iPhone app in the Simulator. Both talk through Valet’s relay, running locally here."
+    },
+    {
+      "at": 1794496616804,
+      "text": "To pair, open Settings › Devices on the Mac and choose Pair an iPhone."
+    },
+    {
+      "at": 1794496622349,
+      "text": "The Mac shows a one-time QR code. The Simulator has no camera, so this test build reads the same code over a local link."
+    },
+    {
+      "at": 1794496665046,
+      "text": "The phone shows six digits. The Mac shows three codes, and you pick the one that matches the phone."
+    },
+    {
+      "at": 1794496673907,
+      "text": "Picking it asks for Touch ID on the Mac (this test build answers that itself). The phone is paired."
+    },
+    {
+      "at": 1794496684844,
+      "text": "Now an agent, connected to Valet over MCP, writes an adapter for a made-up library site."
+    },
+    {
+      "at": 1794496694216,
+      "text": "Installing it needs your approval. The request is sealed to the phone and sent through the relay."
+    },
+    {
+      "at": 1794496704456,
+      "text": "The card on the phone says what the adapter can reach and who asked. Approve asks for Face ID."
+    }
+  ],
+  "agent": [
+    {
+      "at": 1794496685231,
+      "who": "agent",
+      "text": "valet_create_draft({\"adapterId\":\"leafline-library\",\"from\":\"blank\",\"name\":\"Leafline Library\"})"
+    },
+    {
+      "at": 1794496685769,
+      "who": "valet",
+      "text": "{\"draft\":{\"draftId\":\"dr-ot3zcd4mtg\",\"adapterId\":\"leafline-library\",\"status\":\"editing\",\"createdBy\":\"Claude Code\",\"updatedAt\":\"2026-11-12T15:18:05.471Z\",\"lastCheck\":null,\"basedOn\":null,\"repairId\":null,\"files\":[{\"path\":\"fixtures/item-abc-1.json\",\"bytes\":63,\"sha256\":\"8b366307d84cb1b0\",\"recordedByValet\":false,\"editedOutsideValet\":false},{\"path\":\"manifest.json\",\"bytes\":1020,\"sha256\":\"416d9cce3f3713c6\",\""
+    },
+    {
+      "at": 1794496686219,
+      "who": "agent",
+      "text": "valet_write_draft_file(src/tools.ts, a test case, a fixture page)"
+    },
+    {
+      "at": 1794496691588,
+      "who": "valet",
+      "text": "valet_check_draft: all cases pass"
+    },
+    {
+      "at": 1794496691599,
+      "who": "agent",
+      "text": "valet_submit_draft({\"draftId\":\"dr-ot3zcd4mtg\",\"note\":\"Looks up one book’s title and whether it is on the shelf.\"})"
+    },
+    {
+      "at": 1794496694216,
+      "who": "valet",
+      "text": "{\"ref\":\"11BC\",\"requestId\":\"6Uosfa_4gyckmKtv2m592g\",\"expiresAt\":\"2026-11-13T15:18:13.892Z\",\"adapterHash\":\"5578e2426509459ca0350fd2a98a422db6eac8efb98f0e75901c11a0ff2ea650\",\"tellThePerson\":\"Waiting for the person in Valet: “Install Leafline Library for example.com” (approval 11BC). They can approve it on their phone or Mac.\"}"
+    }
+  ],
+  "marks": [
+    {
+      "at": 1794496612700,
+      "name": "launched",
+      "value": ""
+    },
+    {
+      "at": 1794496665043,
+      "name": "code",
+      "value": "172744"
+    },
+    {
+      "at": 1794496676882,
+      "name": "paired",
+      "value": ""
+    },
+    {
+      "at": 1794496704453,
+      "name": "card-open",
+      "value": "Check this. Install an adapter for example.com"
+    },
+    {
+      "at": 1794496711632,
+      "name": "faceid",
+      "value": ""
+    }
+  ]
+}

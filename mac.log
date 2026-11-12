@@ -1,0 +1,17 @@
+valet: demo: fake Woolworths at https://www.woolworths.test:51865, signing in at https://auth.woolworths.test:51866
+valet: demo: fake 1Password (Keyhold) at http://127.0.0.1:51867/
+valet: approvals: signing with software keys (dev build)
+[relay] connecting
+[console] [relay] connecting[console] [relay] online[relay] online
+[console] [relay] ready[relay] ready
+[relay] pairing-reply
+[console] [relay] pairing-reply[relay] device-online 36561520be9c7630b037dd0037f8746c true
+[relay] envelope
+[console] [relay] device-online 36561520be9c7630b037dd0037f8746c true[console] [relay] envelope[relay] envelope
+[console] [relay] envelope[relay] envelope
+[console] [relay] envelope[10765:1112/151812.272796:ERROR:base/process/process_mac.cc:53] task_policy_set TASK_CATEGORY_POLICY: (os/kern) invalid argument (4)
+[10765:1112/151812.272912:ERROR:base/process/process_mac.cc:98] task_policy_set TASK_SUPPRESSION_POLICY: (os/kern) invalid argument (4)
+[relay] envelope
+[console] [relay] envelope[relay] envelope
+[console] [relay] envelope[relay] envelope
+[console] [relay] envelope
