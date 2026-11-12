@@ -20,7 +20,6 @@ import {
   DEFAULT_SANDBOX,
   type Grant,
   type GrantStore,
-  isDisplayText,
   type LocalAccess,
   MESSAGES_SECRET,
   messagesSourcesIn,
