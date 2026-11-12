@@ -80,9 +80,15 @@ export const SWIFT_BRIDGE_BUILD = `${SWIFT_BUILD_DIR}/valet-bridge`
 export const BRIDGE_EXECUTABLE = 'valet-bridge'
 /**
  * Every native binary, from the same universal build, into Contents/MacOS beside the app's own
- * executable: the bridge (D60), the Keychain helper (D6) and the Messages helper (D8).
+ * executable: the bridge (D60), the Keychain helper (D6), the Messages helper (D8) and the
+ * approval signer (workstream D).
  */
-export const NATIVE_EXECUTABLES = [BRIDGE_EXECUTABLE, 'valet-keychain', 'valet-messages-helper'] as const
+export const NATIVE_EXECUTABLES = [
+  BRIDGE_EXECUTABLE,
+  'valet-keychain',
+  'valet-messages-helper',
+  'valet-approver',
+] as const
 /**
  * The Messages helper's launch agent, one plist per bundle ID (build/launch-agents), installed as
  * Contents/Library/LaunchAgents/messages-helper.plist, the name SMAppService.agent(plistName:) asks for.
