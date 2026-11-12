@@ -24,6 +24,12 @@ final class JourneyTests: XCTestCase {
   }
 
   func openCard(_ ref: String) {
+    // Cards further down the list may not exist until scrolled to.
+    var tries = 0
+    while !element("card.\(ref)").waitForExistence(timeout: 3) && tries < 4 {
+      app.swipeUp()
+      tries += 1
+    }
     waitFor("card.\(ref)").tap()
     _ = waitFor("card.title")
     // Valet won't take an approval in the first second after a card changes (the settle time).
