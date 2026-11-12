@@ -1140,6 +1140,7 @@ export class AppService {
             adapterHash: item.adapterHash,
             tool: item.tool,
             callId: item.callId,
+            confirmationId: item.id,
             preview: confirmationPreview(item),
           },
           app,

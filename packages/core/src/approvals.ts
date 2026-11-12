@@ -61,7 +61,8 @@ const subjects = {
       packageHash: hash,
       /** The approved hash this replaces; null for a first install. */
       previousHash: hash.nullable(),
-      source: z.enum(['draft', 'local-folder', 'rollback']),
+      /** `builtin`: a built-in adapter's new version, shipped with a new app version (D's ask). */
+      source: z.enum(['draft', 'local-folder', 'rollback', 'builtin']),
       /** True if this replaces an adapter that has a signed-in session or grants (it inherits it). */
       inheritsSession: z.boolean(),
       /** Reference adapters the agent says it read. A claim, shown as one. */
