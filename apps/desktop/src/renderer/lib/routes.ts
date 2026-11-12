@@ -24,7 +24,7 @@ const DRAFT_ID = /^dr-[a-z2-7]{10}$/
 export const SITE_TABS = ['overview', 'tools', 'permissions', 'versions'] as const
 export type SiteTab = (typeof SITE_TABS)[number]
 
-export const SETTINGS_SECTIONS = ['general', 'notifications', 'data', 'updates', 'reset'] as const
+export const SETTINGS_SECTIONS = ['general', 'notifications', 'data', 'updates', 'devices', 'reset'] as const
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]
 
 export const CALL_OUTCOMES = ['ok', 'failed', 'blocked', 'needs-you', 'declined', 'running'] as const
