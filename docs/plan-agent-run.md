@@ -17,15 +17,15 @@ each person's agent writes their own, and you always approve the final adapter.
 
 ## What Nick decided on 2026-11-12
 
-| #   | Decision                                             | Answer                                                                                                                                                                                                                                       |
-| --- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D72 | Companion app on the phone                           | **A native app.** Every alert and approval reaches the phone as well as the Mac. iOS first (Android open, D85).                                                                                                                              |
-| D73 | Sandbox for adapter code                             | **Good to add, not mandatory.** Adapters may expose local data, so the sandbox needs a flexible, declared exceptions system rather than one fixed boundary.                                                                                    |
-| D74 | What needs approval                                  | **Not everything.** Reads and harmless actions run without asking; the tiers are in [Approval tiers](#approval-tiers).                                                                                                                       |
-| D75 | Sharing adapters                                     | **No way to install someone else's adapter directly.** Adapters others publish are references. Your agent finds, compares and writes its own, and you approve the final adapter even when it copied one. Users accept the residual risk. |
-| D76 | Remote transport: tunnel or relay                    | **Leaning to a Cloudflare Workers relay**, because the Mac only dials out and accepts no inbound connections. Pros and cons still to weigh (below).                                                                                          |
-| D82 | A chat built into Valet (answers D13)                | **No.** Agents work through MCP tools. No built-in agent, no bring-your-own-key agent.                                                                                                                                                       |
-| D83 | Marketplace or registry (M10)                        | **Dropped**, by D75.                                                                                                                                                                                                                         |
+| #   | Decision                              | Answer                                                                                                                                                                                                                                   |
+| --- | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D72 | Companion app on the phone            | **A native app.** Every alert and approval reaches the phone as well as the Mac. iOS first (Android open, D85).                                                                                                                          |
+| D73 | Sandbox for adapter code              | **Good to add, not mandatory.** Adapters may expose local data, so the sandbox needs a flexible, declared exceptions system rather than one fixed boundary.                                                                              |
+| D74 | What needs approval                   | **Not everything.** Reads and harmless actions run without asking; the tiers are in [Approval tiers](#approval-tiers).                                                                                                                   |
+| D75 | Sharing adapters                      | **No way to install someone else's adapter directly.** Adapters others publish are references. Your agent finds, compares and writes its own, and you approve the final adapter even when it copied one. Users accept the residual risk. |
+| D76 | Remote transport: tunnel or relay     | **Leaning to a Cloudflare Workers relay**, because the Mac only dials out and accepts no inbound connections. Pros and cons still to weigh (below).                                                                                      |
+| D82 | A chat built into Valet (answers D13) | **No.** Agents work through MCP tools. No built-in agent, no bring-your-own-key agent.                                                                                                                                                   |
+| D83 | Marketplace or registry (M10)         | **Dropped**, by D75.                                                                                                                                                                                                                     |
 
 Also from the same message: adapters must be installable after the app is built (resolves D11:
 needed now), and a web view of auditing and monitoring would be nice but raises data concerns
@@ -33,15 +33,15 @@ needed now), and a web view of auditing and monitoring would be nice but raises 
 
 ## What this replaces in plan.md
 
-| Old                                             | Now                                                                                                                      |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Old                                             | Now                                                                                                                     |
+| ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
 | M5 IDE and recorder                             | Workstream F: authoring tools over MCP. No IDE window; the agent is the IDE's user. The Mac app shows drafts and diffs. |
-| M6 authoring agent (built-in, D13)              | Dropped (D82). The person's own agent authors through F.                                                                  |
-| M7 sandbox and packages                         | Split: C (packages, now) and I (sandbox with exceptions, optional per D73).                                                |
-| M9 relay beta                                   | G (relay) and H (iOS app), pulled forward.                                                                                |
-| M10 registry                                    | Dropped (D83).                                                                                                            |
-| D11, D12, D13                                   | Answered by C, D73 and D82.                                                                                               |
-| Cloudflare Tunnel as the remote transport (D14) | Kept until the relay ships; whether it stays as a self-host option is D76.                                               |
+| M6 authoring agent (built-in, D13)              | Dropped (D82). The person's own agent authors through F.                                                                |
+| M7 sandbox and packages                         | Split: C (packages, now) and I (sandbox with exceptions, optional per D73).                                             |
+| M9 relay beta                                   | G (relay) and H (iOS app), pulled forward.                                                                              |
+| M10 registry                                    | Dropped (D83).                                                                                                          |
+| D11, D12, D13                                   | Answered by C, D73 and D82.                                                                                             |
+| Cloudflare Tunnel as the remote transport (D14) | Kept until the relay ships; whether it stays as a self-host option is D76.                                              |
 
 M4 (hardening) and M8 (open-source release) stay, after this.
 
@@ -71,12 +71,12 @@ the acceptance tests for the whole plan.
 Recommended defaults (D74; B finalises them and the Mac and phone render the same structured
 card for each):
 
-| Tier             | Examples                                                                                                                                                                          |
-| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tier             | Examples                                                                                                                                                                        |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | No approval      | Read Valet's status, adapters, tools, health, repair items, recent calls, redacted traces, the audit log. Author in the anonymous scratch browser. Run a draft's tests offline. |
-| Notify only      | A draft adapter saved; a tool turned off; a setting that only makes things stricter.                                                                                             |
-| Approve          | Install or update an adapter (the permission diff). Grant a secret. Turn a tool on for remote clients. Change a setting that loosens anything. A logged-in authoring session.    |
-| Approve each use | An irreversible tool (checkout), with Face ID or Touch ID every time (D46).                                                                                                       |
+| Notify only      | A draft adapter saved; a tool turned off; a setting that only makes things stricter.                                                                                            |
+| Approve          | Install or update an adapter (the permission diff). Grant a secret. Turn a tool on for remote clients. Change a setting that loosens anything. A logged-in authoring session.   |
+| Approve each use | An irreversible tool (checkout), with Face ID or Touch ID every time (D46).                                                                                                     |
 
 No MCP tool can approve anything, and approvals are never inferred from a click alone: each needs a
 user-presence gesture on a device the Mac trusts.
@@ -99,13 +99,13 @@ calls and results. That's true of the tunnel already. What we can do:
 
 Tunnel versus relay (D76), for the record:
 
-| | Cloudflare Tunnel (today) | Workers relay |
-| --- | --- | --- |
-| Inbound connections to the Mac | Through `cloudflared`, which the person installs and runs | None; the Mac dials out over a WebSocket |
-| Setup for the person | A Cloudflare account, a domain, `cloudflared` | Pair the phone; nothing else |
-| Who sees MCP traffic | Cloudflare | Cloudflare (our Worker) |
-| Phone channel | Needs a separate service anyway | Same service |
-| Cost to us | None | Running a service, abuse limits, D16 pricing |
+|                                | Cloudflare Tunnel (today)                                 | Workers relay                                |
+| ------------------------------ | --------------------------------------------------------- | -------------------------------------------- |
+| Inbound connections to the Mac | Through `cloudflared`, which the person installs and runs | None; the Mac dials out over a WebSocket     |
+| Setup for the person           | A Cloudflare account, a domain, `cloudflared`             | Pair the phone; nothing else                 |
+| Who sees MCP traffic           | Cloudflare                                                | Cloudflare (our Worker)                      |
+| Phone channel                  | Needs a separate service anyway                           | Same service                                 |
+| Cost to us                     | None                                                      | Running a service, abuse limits, D16 pricing |
 
 Recommendation: the relay is the default for everyone; the tunnel path is removed once the relay
 ships, to keep one code path, unless Nick wants it as a self-host option.
@@ -256,13 +256,13 @@ it:
 
 ## Open decisions
 
-| #   | Decision                                   | Recommendation                                                                                       |
-| --- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| D76 | Keep Cloudflare Tunnel once the relay ships | Remove it, for one code path, unless Nick wants self-hosting.                                        |
-| D77 | What end-to-end encryption covers          | Mac to phone only; MCP traffic is plaintext at the relay in transit, never stored.                   |
-| D78 | Web audit and monitoring                   | Later, as a paired browser that decrypts locally; no audit data stored by the service.                |
-| D79 | Accounts in the relay                      | None; device keys from pairing.                                                                       |
-| D80 | Who authorises remote MCP clients          | The Mac's existing OAuth server, through the relay, with consent on Mac or phone.                     |
-| D81 | Agent driving your signed-in session       | Off by default; approved per session.                                                                 |
-| D16 | Pricing                                    | Still not asked until after the MVP; the relay makes it real.                                         |
-| D85 | Android                                    | After iOS.                                                                                            |
+| #   | Decision                                    | Recommendation                                                                         |
+| --- | ------------------------------------------- | -------------------------------------------------------------------------------------- |
+| D76 | Keep Cloudflare Tunnel once the relay ships | Remove it, for one code path, unless Nick wants self-hosting.                          |
+| D77 | What end-to-end encryption covers           | Mac to phone only; MCP traffic is plaintext at the relay in transit, never stored.     |
+| D78 | Web audit and monitoring                    | Later, as a paired browser that decrypts locally; no audit data stored by the service. |
+| D79 | Accounts in the relay                       | None; device keys from pairing.                                                        |
+| D80 | Who authorises remote MCP clients           | The Mac's existing OAuth server, through the relay, with consent on Mac or phone.      |
+| D81 | Agent driving your signed-in session        | Off by default; approved per session.                                                  |
+| D16 | Pricing                                     | Still not asked until after the MVP; the relay makes it real.                          |
+| D85 | Android                                     | After iOS.                                                                             |
