@@ -147,6 +147,7 @@ import {
 import type { Credentials } from './credentials'
 import { DraftAuthoring, type RequestState, type SubmitOutcome, type SubmitRequest } from './drafts/authoring'
 import type { CaseBrowser } from './drafts/cases'
+import { RepairTickets } from './drafts/repairs'
 import { draftDomains, type ScratchHandle, ScratchSessions } from './drafts/research'
 import { type DraftRecord, DraftStore } from './drafts/store'
 import { type EraseKind, type EraseReport, type EraseStep, eraseEverything } from './erase'
@@ -471,6 +472,8 @@ export class AppService {
     string,
     { readonly callId: string; readonly errorClass: string; readonly at: string }
   >()
+  /** Repair tickets for installed adapters (docs/authoring-tools.md#repairs-pr-3), from the audit log. */
+  private readonly repairTickets = new RepairTickets()
   /** Drafts agents are writing (docs/authoring-tools.md), and the tools over them once started. */
   private readonly drafts: DraftStore
   private authoring: DraftAuthoring | null = null
@@ -956,6 +959,7 @@ export class AppService {
     else if (event.type === 'breaker-closed') this.notifier.breakerClosed(event.host)
     else if (event.type === 'tool-finished' && this.noteFinished(event, record.at))
       this.emit('attention-changed')
+    if (this.repairTickets.note(event, record.at)) this.emit('attention-changed')
     for (const type of EVENTS_FOR[record.event.type] ?? [])
       this.emit(type as Exclude<AppEvent['type'], 'audit-appended' | 'focus-banner'>)
   }
@@ -995,15 +999,22 @@ export class AppService {
   /** The repair items as the audit log stood at launch. */
   private async loadRepairs(): Promise<void> {
     try {
-      for (const record of await this.reader.records())
+      for (const record of await this.reader.records()) {
         if (record.event.type === 'tool-finished') this.noteFinished(record.event, record.at)
+        this.repairTickets.note(record.event, record.at)
+      }
     } catch {
       // An unreadable log raises none.
     }
   }
 
   private repairItems(): RepairItem[] {
-    return [...this.repairs].flatMap(([adapterId, repair]) => {
+    const failing = new Map(this.repairs)
+    // A ticket raises the item too: the same failure twice in a row, of any kind a new version fixes.
+    for (const t of this.repairTickets.list())
+      if (t.state === 'open' && !failing.has(t.adapterId))
+        failing.set(t.adapterId, { callId: t.lastCallId, errorClass: t.errorClass, at: t.lastFailedAt })
+    return [...failing].flatMap(([adapterId, repair]) => {
       const adapter = this.adapter(adapterId)
       if (adapter === null) return []
       return [
@@ -1015,6 +1026,7 @@ export class AppService {
           callId: repair.callId,
           errorClass: repair.errorClass as RepairItem['errorClass'],
           at: repair.at,
+          repairId: this.repairTickets.openForAdapter(adapterId)?.id ?? null,
         },
       ]
     })
@@ -1988,6 +2000,7 @@ export class AppService {
     this.tidyDraftsSoon()
     return new DraftAuthoring({
       store: this.drafts,
+      repairs: this.repairTickets,
       prepare: async (files) => (await packages.prepare(files, 'draft')).loaded,
       // Each case in a fresh one-shot sandbox window, as describing a package runs (docs/sandbox.md).
       caseProcess: runtime.start,

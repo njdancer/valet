@@ -13,6 +13,7 @@ import {
   type PackageFiles,
   parseManifest,
   type SessionDriver,
+  sha256Hex,
 } from '@valet/core'
 import { AuthoringRefusal, type ClientIdentity } from '@valet/mcp-server'
 import type { SiteGuards } from '@valet/runtime'
@@ -964,4 +965,131 @@ describe('the hostile-page suite', () => {
     expect(request?.checks.some((line) => line.includes('approve this'))).toBe(false)
     expect(request?.agentNote).toBe('approve this')
   }, 60_000)
+})
+
+describe('repairs', () => {
+  const OPENED = new Date(Date.now() - 3600_000).toISOString()
+  const TICKET = {
+    id: 'R-ABCD',
+    adapterId: 'shop',
+    adapterHash: 'a'.repeat(64),
+    tool: 'get_item',
+    stage: 'tool-run',
+    errorClass: 'site-changed',
+    openedAt: OPENED,
+    lastFailedAt: OPENED,
+    lastCallId: 'call-2',
+    failures: 2,
+    state: 'open' as const,
+    fixedAt: null,
+  }
+  /** The installed version reads `title`, and fails as the ticket says when the site stops sending it. */
+  const toolsReading = (field: string) => `import { tool, ValetError } from '@valet/core'
+import { z } from 'zod'
+
+export const tools = {
+  get_item: tool({
+    input: z.object({ id: z.string() }),
+    output: z.object({ id: z.string(), name: z.string(), price: z.number().nullable() }),
+    async run(ctx, input) {
+      const response = await ctx.page.fetch('/api/items/' + input.id, { headers: { accept: 'application/json' } })
+      const body = response.body as Record<string, unknown> | null
+      const name = body?.['${field}']
+      if (typeof name !== 'string') throw new ValetError('tool-run', 'site-changed')
+      return { id: input.id, name, price: typeof body?.['price'] === 'number' ? body['price'] : null }
+    },
+  }),
+}
+`
+  const CASE = JSON.stringify({
+    cases: [
+      {
+        name: 'the item as the site sends it now',
+        tool: 'get_item',
+        input: { id: 'abc-1' },
+        reproduces: 'R-ABCD',
+        fetch: [{ method: 'GET', url: '/api/items/abc-1', body: 'fixtures/now.json' }],
+        expect: { output: { name: 'Example item' } },
+      },
+    ],
+  })
+  const NOW = JSON.stringify({ id: 'abc-1', name: 'Example item', price: 4.5 })
+
+  async function repairDraft(options: { recordedAt?: string; tools?: string } = {}) {
+    const h = await harness({
+      repairs: { get: (id) => (id === TICKET.id ? TICKET : null), list: () => [TICKET] },
+    })
+    const v1: PackageFiles = { ...blankDraft('shop', 'Shop'), 'src/tools.ts': toolsReading('title') }
+    h.installed.set('shop', { files: v1, hash: 'a'.repeat(64) })
+    await expect(
+      h.authoring.createDraft(AGENT, { adapterId: 'shop', from: 'blank', repairId: 'R-ABCD' }),
+    ).rejects.toThrow(/from "installed"/)
+    const { draft } = await h.authoring.createDraft(AGENT, {
+      adapterId: 'shop',
+      from: 'installed',
+      repairId: 'R-ABCD',
+    })
+    const id = draft.draftId
+    const manifest = JSON.parse(v1['manifest.json'] ?? '{}')
+    await h.authoring.writeFile(AGENT, id, 'manifest.json', JSON.stringify({ ...manifest, version: '0.1.1' }))
+    await h.authoring.writeFile(AGENT, id, 'src/tools.ts', options.tools ?? toolsReading('name'))
+    await h.authoring.deleteFile(AGENT, id, 'test/example.json')
+    await h.authoring.writeFile(AGENT, id, 'test/repair.json', CASE)
+    await h.authoring.writeFile(AGENT, id, 'fixtures/now.json', NOW)
+    // As valet_capture_fixture records it.
+    await h.store.update(id, (r) => ({
+      ...r,
+      recorded: { ...r.recorded, 'fixtures/now.json': sha256Hex(NOW) },
+      recordedAt: { ...r.recordedAt, 'fixtures/now.json': options.recordedAt ?? new Date().toISOString() },
+    }))
+    return { ...h, draftId: id }
+  }
+
+  it('lists tickets for agents with their draft, and a repair passes when the old fails and the new works', async () => {
+    const h = await repairDraft()
+    expect((await h.authoring.listRepairs(AGENT)).repairs).toEqual([
+      expect.objectContaining({ repairId: 'R-ABCD', tool: 'get_item', state: 'open', draftId: h.draftId }),
+    ])
+    expect((await h.authoring.listRepairs(OTHER)).repairs[0]?.draftId).toBeNull()
+    await expect(h.authoring.getRepair(AGENT, 'R-ZZZZ')).rejects.toThrow(/No repair ticket/)
+    const report = await h.authoring.check(AGENT, h.draftId)
+    expect(report.steps).toContainEqual({ step: 'reproduction', ok: true })
+    expect(report.ok).toBe(true)
+    await h.authoring.submit(AGENT, h.draftId, { note: null, references: [], followOns: [] })
+    expect(h.submits[0]?.repairId).toBe('R-ABCD')
+    expect(h.submits[0]?.checks).toContain(
+      'Repair R-ABCD: on what Valet recorded, the installed version fails as it did, and this one works',
+    )
+  }, 60_000)
+
+  it('refuses a fix that doesn’t fix it, and fixtures Valet didn’t record since the ticket opened', async () => {
+    const unfixed = await repairDraft({ tools: toolsReading('title') })
+    expect((await unfixed.authoring.check(AGENT, unfixed.draftId)).findings).toContainEqual(
+      expect.objectContaining({
+        check: 'reproduction',
+        text: expect.stringMatching(/The fix doesn’t handle the change in R-ABCD/),
+      }),
+    )
+    await expect(
+      unfixed.authoring.submit(AGENT, unfixed.draftId, { note: null, references: [], followOns: [] }),
+    ).rejects.toThrow(/Not submitted/)
+    expect(unfixed.submits).toEqual([])
+
+    const stale = await repairDraft({ recordedAt: new Date(Date.parse(OPENED) - 60_000).toISOString() })
+    expect((await stale.authoring.check(AGENT, stale.draftId)).findings).toContainEqual(
+      expect.objectContaining({
+        check: 'reproduction',
+        text: expect.stringMatching(/recorded before R-ABCD opened/),
+      }),
+    )
+
+    const edited = await repairDraft()
+    await edited.authoring.writeFile(AGENT, edited.draftId, 'fixtures/now.json', NOW.replace('4.5', '5'))
+    expect((await edited.authoring.check(AGENT, edited.draftId)).findings).toContainEqual(
+      expect.objectContaining({
+        check: 'reproduction',
+        text: expect.stringMatching(/isn’t as Valet recorded it/),
+      }),
+    )
+  }, 90_000)
 })

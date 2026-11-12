@@ -108,7 +108,7 @@ export const removedSchema = z.object({ path: z.string(), removed: z.boolean() }
 
 const finding = z.object({
   level: z.enum(['error', 'caution']),
-  check: z.enum(['package', 'build', 'names', 'lint', 'cases']),
+  check: z.enum(['package', 'build', 'names', 'lint', 'cases', 'reproduction']),
   text: z.string(),
 })
 
@@ -148,6 +148,29 @@ export const submitReportSchema = z.object({
 })
 
 export const deletedSchema = z.object({ draftId: z.string(), deleted: z.boolean() })
+
+/**
+ * A repair ticket (PR 3): structured data only. No page text, no exception messages, no values;
+ * the failing responses stay in Valet.
+ */
+export const repairSchema = z.object({
+  repairId: z.string(),
+  adapterId: z.string(),
+  /** The version that failed. */
+  adapterHash: hash,
+  tool: z.string(),
+  stage: z.string(),
+  errorClass: z.string(),
+  openedAt: z.string(),
+  lastFailedAt: z.string(),
+  failures: z.number().int().nonnegative(),
+  state: z.enum(['open', 'fixed']),
+  /** Your draft repairing it, if you started one. */
+  draftId: z.string().nullable(),
+})
+export const repairListSchema = z.object({ repairs: z.array(repairSchema) })
+export type Repair = z.output<typeof repairSchema>
+export type RepairList = z.output<typeof repairListSchema>
 
 /** A string the site wrote: data for the agent, never instructions. */
 const fromSite = z.object({ fromSite: z.string() })
@@ -254,6 +277,9 @@ export interface Authoring {
     request: { readonly adapterId: string; readonly from: 'blank' | 'installed'; readonly name?: string },
   ): Promise<DraftDetail>
   listDrafts(viewer: ClientIdentity, all: boolean): Promise<DraftList>
+  // Repairs (PR 3).
+  listRepairs(viewer: ClientIdentity): Promise<RepairList>
+  getRepair(viewer: ClientIdentity, repairId: string): Promise<Repair>
   getDraft(viewer: ClientIdentity, all: boolean, draftId: string): Promise<DraftDetail>
   readFile(
     viewer: ClientIdentity,
@@ -376,6 +402,11 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
         .max(80)
         .optional()
         .describe('The site’s name, for a blank draft, e.g. "Yahoo Finance".'),
+      repairId: z
+        .string()
+        .regex(/^R-[A-Z2-7]{4}$/)
+        .optional()
+        .describe('The repair ticket this draft fixes (from "installed"), from valet_list_repairs.'),
     }),
     output: draftDetailSchema,
     needs: 'ask',
@@ -385,7 +416,33 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
         adapterId: args['adapterId'] as string,
         from: (args['from'] as 'blank' | 'installed' | undefined) ?? 'blank',
         ...(typeof args['name'] === 'string' ? { name: args['name'] } : {}),
+        ...(typeof args['repairId'] === 'string' ? { repairId: args['repairId'] } : {}),
       }),
+  },
+  {
+    name: 'valet_list_repairs',
+    title: 'List repair tickets',
+    description:
+      'Installed adapters whose tools fail the same way twice in a row, in a way only a new version fixes ' +
+      '(the site changed). Each ticket names the tool, the version, the stage and the error class. To fix one, ' +
+      'start a draft from "installed" with its repairId, capture fixtures of the site as it is now with ' +
+      'valet_capture_fixture, and add a case with "reproduces": "<repairId>" on those fixtures that expects ' +
+      'the right output: Valet checks the installed version fails it as the ticket says, and your draft passes.',
+    input: z.object({}),
+    output: repairListSchema,
+    needs: 'see',
+    annotations: READS,
+    run: (a, _args, s) => a.listRepairs(s.viewer),
+  },
+  {
+    name: 'valet_get_repair',
+    title: 'Get a repair ticket',
+    description: 'One repair ticket, as valet_list_repairs describes them.',
+    input: z.object({ repairId: z.string().regex(/^R-[A-Z2-7]{4}$/) }),
+    output: repairSchema,
+    needs: 'see',
+    annotations: READS,
+    run: (a, args, s) => a.getRepair(s.viewer, args['repairId'] as string),
   },
   {
     name: 'valet_list_drafts',

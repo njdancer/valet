@@ -74,6 +74,14 @@ export const caseSchema = z
     pages: z.record(z.string().max(2000), fixturePath).default({}),
     fetch: z.array(fetchEntrySchema).max(50).default([]),
     session: z.enum(['ok', 'needs-user', 'failed']).default('ok'),
+    /**
+     * A repair's reproduction (docs/authoring-tools.md#repairs-pr-3): the ticket this case
+     * reproduces. Valet also runs it on the installed version, which must fail as the ticket says.
+     */
+    reproduces: z
+      .string()
+      .regex(/^R-[A-Z2-7]{4}$/)
+      .optional(),
     expect: expectSchema,
   })
   .strict()

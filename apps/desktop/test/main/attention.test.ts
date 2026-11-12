@@ -45,6 +45,7 @@ const repair: AttentionItem = {
   callId: '6b3e',
   errorClass: 'site-changed',
   at: T(5),
+  repairId: null,
 }
 const missingLogin: AttentionItem = {
   kind: 'login-missing',

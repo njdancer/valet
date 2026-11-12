@@ -80,7 +80,7 @@ import { builtinAdapter } from '../../src/main/core/registry'
 import type { RemoteAccess } from '../../src/main/core/remote'
 import { AppService, fillSelector, type ServiceDeps } from '../../src/main/core/service'
 import { disabledUpdates, type UpdatesHooks, type UpdatesPort } from '../../src/main/core/updates'
-import type { AppEvent, ConfirmationItem, HashRoute } from '../../src/shared/api'
+import type { AppEvent, ConfirmationItem, HashRoute, RepairItem } from '../../src/shared/api'
 import {
   FakeAuthPage,
   FakeDriver,
@@ -2730,10 +2730,18 @@ describe('Needs you items', () => {
         errorClass: 'site-changed',
       })
     expect(s.ui.notifications.map((n) => n.title)).toContain('Shop changed: the adapter needs an update')
+    const repairOf = async (api: typeof s.api) =>
+      (await api.attention.list()).find((i): i is RepairItem => i.kind === 'repair')?.repairId
+    expect(await repairOf(s.api)).toBeNull()
+    // The same failure again opens a ticket an agent can fix (docs/authoring-tools.md#repairs-pr-3).
+    await s.call('echo', { text: 'broken' }, 'Claude Code', '6b3e0002')
+    await expect.poll(() => repairOf(s.api)).toMatch(/^R-[A-Z2-7]{4}$/)
+    const ticket = await repairOf(s.api)
     await s.service.stop()
-    // Read back from the audit log at the next launch.
+    // Read back from the audit log at the next launch, the ticket with the same id.
     const again = await setup({ dir: s.dir, definition })
     expect((await again.api.attention.list()).map((i) => i.kind)).toContain('repair')
+    expect(await repairOf(again.api)).toBe(ticket)
     await again.call('echo', { text: 'fine' })
     await expect
       .poll(async () => (await again.api.attention.list()).map((i) => i.kind))

@@ -27,12 +27,14 @@ import {
   type DraftList,
   type NetworkBody,
   type NetworkLog,
+  type Repair,
+  type RepairList,
   type SubmitReport,
   type TrialReport,
 } from '@valet/mcp-server'
 import type { ToolProcessFactory } from '@valet/runtime'
 import { NO_LOCAL_ACCESS } from '@valet/sandbox'
-import { type CaseBrowser, type CaseRun, runCases } from './cases'
+import { type CaseBrowser, type CaseRun, readCases, runCase, runCases } from './cases'
 import {
   caseFindings,
   checkNames,
@@ -42,6 +44,7 @@ import {
   lint,
   siteDomain,
 } from './checks'
+import type { RepairTicket } from './repairs'
 import {
   draftDomains,
   fixtureFits,
@@ -109,6 +112,11 @@ export interface AuthoringDeps {
   /** A fresh sandbox process per case (SandboxPool.oneShot()). */
   readonly caseProcess: ToolProcessFactory
   readonly installed: (adapterId: string) => Promise<InstalledVersion | null>
+  /** Repair tickets (PR 3), from the audit log. Without them no draft can be a repair. */
+  readonly repairs?: {
+    get(id: string): RepairTicket | null
+    list(): readonly RepairTicket[]
+  }
   /** The version the person last approved, which the card diffs against; null for none. */
   readonly approved: (
     adapterId: string,
@@ -167,7 +175,12 @@ export class DraftAuthoring implements Authoring {
 
   async createDraft(
     viewer: ClientIdentity,
-    request: { readonly adapterId: string; readonly from: 'blank' | 'installed'; readonly name?: string },
+    request: {
+      readonly adapterId: string
+      readonly from: 'blank' | 'installed'
+      readonly name?: string
+      readonly repairId?: string
+    },
   ): Promise<DraftDetail> {
     const client = clientKey(viewer)
     const all = await this.deps.store.list()
@@ -178,6 +191,17 @@ export class DraftAuthoring implements Authoring {
         'Not started: Valet holds as many drafts as it keeps. Ask the person to delete some.',
       )
     const installed = await this.deps.installed(request.adapterId)
+    if (request.repairId !== undefined) {
+      const ticket = this.deps.repairs?.get(request.repairId) ?? null
+      if (ticket === null || ticket.adapterId !== request.adapterId)
+        throw new AuthoringRefusal(
+          `No repair ticket ${request.repairId} for ${request.adapterId}. valet_list_repairs lists them.`,
+        )
+      if (ticket.state !== 'open')
+        throw new AuthoringRefusal(`${ticket.id} is closed: a later call of ${ticket.tool} worked.`)
+      if (request.from !== 'installed')
+        throw new AuthoringRefusal('A repair starts from the installed adapter: from "installed".')
+    }
     let files: PackageFiles
     let basedOn: string | null = null
     if (request.from === 'installed') {
@@ -200,7 +224,7 @@ export class DraftAuthoring implements Authoring {
           createdBy: client,
           createdByName: this.deps.clientName(viewer).slice(0, 100),
           basedOn,
-          repairId: null,
+          repairId: request.repairId ?? null,
         },
         files,
       ),
@@ -227,6 +251,39 @@ export class DraftAuthoring implements Authoring {
       .filter((d) => all || d.createdBy === client)
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     return { drafts: await Promise.all(drafts.map(async (d) => this.summary(await this.refreshed(d)))) }
+  }
+
+  // ---------- Repairs ----------
+
+  async listRepairs(viewer: ClientIdentity): Promise<RepairList> {
+    const tickets = this.deps.repairs?.list() ?? []
+    const drafts = await this.deps.store.list()
+    return { repairs: tickets.map((t) => this.repairView(viewer, t, drafts)) }
+  }
+
+  async getRepair(viewer: ClientIdentity, repairId: string): Promise<Repair> {
+    const ticket = this.deps.repairs?.get(repairId) ?? null
+    if (ticket === null)
+      throw new AuthoringRefusal('No repair ticket has that id. valet_list_repairs lists them.')
+    return this.repairView(viewer, ticket, await this.deps.store.list())
+  }
+
+  private repairView(viewer: ClientIdentity, t: RepairTicket, drafts: readonly DraftRecord[]): Repair {
+    const client = clientKey(viewer)
+    const mine = drafts.find((d) => d.repairId === t.id && d.createdBy === client)
+    return {
+      repairId: t.id,
+      adapterId: t.adapterId,
+      adapterHash: t.adapterHash,
+      tool: t.tool,
+      stage: t.stage,
+      errorClass: t.errorClass,
+      openedAt: t.openedAt,
+      lastFailedAt: t.lastFailedAt,
+      failures: t.failures,
+      state: t.state,
+      draftId: mine?.id ?? null,
+    }
   }
 
   async getDraft(viewer: ClientIdentity, all: boolean, draftId: string): Promise<DraftDetail> {
@@ -413,7 +470,87 @@ export class DraftAuthoring implements Authoring {
     const caseErrors = caseFindings(manifest, run, tool)
     findings.push(...caseErrors)
     steps.push({ step: 'cases', ok: !caseErrors.some((f) => f.level === 'error') })
+    // 7, a repair's only: the ticket's failure, reproduced on what Valet recorded.
+    if (record.repairId !== null && tool === undefined) {
+      const problem = await this.reproduce(record, files, run, installed, started + budget)
+      steps.push({ step: 'reproduction', ok: problem === null })
+      if (problem !== null) findings.push({ level: 'error', check: 'reproduction', text: problem })
+    }
     return this.saved(record, report(loaded, run, changes))
+  }
+
+  /**
+   * A repair's reproduction check (docs/authoring-tools.md#repairs-pr-3): each case that names the
+   * ticket uses only fixtures Valet recorded after it opened, fails on the installed version with
+   * the ticket's stage and class, and passes on the draft. Null when it holds; else why not.
+   */
+  private async reproduce(
+    record: DraftRecord,
+    files: PackageFiles,
+    run: CaseRun,
+    installed: InstalledVersion | null,
+    deadline: number,
+  ): Promise<string | null> {
+    const id = record.repairId ?? ''
+    const ticket = this.deps.repairs?.get(id) ?? null
+    if (ticket === null) return `Valet no longer has repair ticket ${id}.`
+    if (installed === null) return `${record.adapterId} isn’t installed now, so there’s nothing to repair.`
+    const mine = readCases(files).cases.filter((c) => c.case.reproduces === id)
+    if (mine.length === 0)
+      return (
+        `A repair needs a case with "reproduces": "${id}" that calls ${ticket.tool} on fixtures Valet ` +
+        `recorded after ${id} opened (valet_capture_fixture).`
+      )
+    const current = await this.deps.store.require(record.id)
+    let old: LoadedPackage
+    try {
+      old = await this.deps.prepare(installed.files)
+    } catch {
+      return 'Valet couldn’t load the installed version to compare with.'
+    }
+    for (const { file, case: c } of mine) {
+      const named = `"${clip(c.name, 80)}"`
+      if (c.tool !== ticket.tool)
+        return `The case ${named} reproduces ${id}, which is about ${ticket.tool}, not ${c.tool}.`
+      if (!('output' in c.expect)) return `The case ${named} must expect output: it shows the fix works.`
+      const paths = [...Object.values(c.pages)]
+      for (const f of c.fetch) {
+        if (f.body !== undefined && typeof f.body !== 'string')
+          return `The case ${named} has an inline body; a reproduction uses only what Valet recorded.`
+        if (typeof f.body === 'string') paths.push(f.body)
+      }
+      if (paths.length === 0) return `The case ${named} uses no fixtures Valet recorded.`
+      for (const path of paths) {
+        const text = files[path]
+        if (text === undefined || current.recorded[path] !== sha256Hex(text))
+          return `The case ${named} uses ${path}, which isn’t as Valet recorded it: capture it again.`
+        const at = current.recordedAt[path]
+        if (at === undefined || Date.parse(at) < Date.parse(ticket.openedAt))
+          return `The case ${named} uses ${path}, recorded before ${id} opened: capture it again.`
+      }
+      const mineNow = run.results.find((r) => r.file === file && r.name === c.name)
+      if (mineNow?.passed !== true)
+        return `The fix doesn’t handle the change in ${id}: ${named} fails on the draft.`
+      const before = await runCase(
+        { manifest: old.manifest, script: old.script, tools: old.definition.tools },
+        files,
+        file,
+        { ...c, expect: { error: { stage: ticket.stage, errorClass: ticket.errorClass } } },
+        {
+          start: this.deps.caseProcess,
+          local: NO_LOCAL_ACCESS,
+          ...(this.deps.caseBrowser === undefined ? {} : { browser: this.deps.caseBrowser }),
+          now: this.deps.now,
+          timeoutMs: Math.min(5_000, Math.max(1, deadline - this.deps.now())),
+        },
+      )
+      if (!before.passed)
+        return (
+          `The installed version doesn’t fail ${named} with ${ticket.stage}/${ticket.errorClass} as ${id} ` +
+          'did, so the case doesn’t reproduce the change.'
+        )
+    }
+    return null
   }
 
   /** Records the check on the draft (bound to its package hash) and returns it. */
@@ -468,7 +605,7 @@ export class DraftAuthoring implements Authoring {
       const provenance = fixtureProvenance(outcome.run, outcome.files, current.recorded)
       const passed = outcome.run.results.filter((r) => r.passed).length
       const failed = outcome.run.results.length - passed
-      const checks = checkLines(outcome.report, provenance, current.trials)
+      const checks = checkLines(outcome.report, provenance, current.trials, record.repairId)
       const domain = siteDomain(new URL(loaded.manifest.home).hostname)
       const asked = await this.deps.submit({
         draftId,
@@ -732,7 +869,11 @@ export class DraftAuthoring implements Authoring {
     const digest = sha256Hex(text)
     this.written.set(`${draftId}:${path}`, digest)
     await this.wrap(() =>
-      this.deps.store.update(draftId, (r) => ({ ...r, recorded: { ...r.recorded, [path]: digest } })),
+      this.deps.store.update(draftId, (r) => ({
+        ...r,
+        recorded: { ...r.recorded, [path]: digest },
+        recordedAt: { ...r.recordedAt, [path]: new Date(this.deps.now()).toISOString() },
+      })),
     )
     return { path, bytes: Buffer.byteLength(text, 'utf8'), recordedByValet: true }
   }
@@ -947,6 +1088,7 @@ export function checkLines(
   report: CheckReport,
   provenance: { readonly recordedByValet: number; readonly writtenByAgent: number },
   trials: readonly TrialSummary[] = [],
+  repairId: string | null = null,
 ): string[] {
   const out = [
     'Package and manifest: pass',
@@ -960,6 +1102,10 @@ export function checkLines(
     `Fixtures: ${provenance.recordedByValet} recorded by Valet, ${provenance.writtenByAgent} written by the agent`,
   )
   out.push(...trialLines(trials, report.packageHash))
+  if (repairId !== null)
+    out.push(
+      `Repair ${repairId}: on what Valet recorded, the installed version fails as it did, and this one works`,
+    )
   return out.slice(0, 20)
 }
 

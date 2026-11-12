@@ -161,7 +161,10 @@ export function needsYouView(
       return {
         ...base,
         title: needsYouTitle({ kind: 'repair', adapterName: item.adapterName }),
-        description: `Its last call failed because the site no longer looks the way the adapter expects.`,
+        description:
+          item.repairId === null
+            ? 'Its last call failed because the site no longer looks the way the adapter expects.'
+            : `Its calls fail because the site no longer looks the way the adapter expects. Ask your agent to fix repair ${item.repairId} in Valet: it writes the update, and you approve it.`,
         adapterId: item.adapterId,
         adapterName: item.adapterName,
         callId: item.callId,

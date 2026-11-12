@@ -854,6 +854,11 @@ export interface RepairItem {
   readonly callId: string
   readonly errorClass: ErrorClass
   readonly at: IsoTime
+  /**
+   * The repair ticket an agent can fix (docs/authoring-tools.md#repairs-pr-3), once the same failure
+   * came twice in a row; null before that.
+   */
+  readonly repairId: string | null
 }
 
 /** What a missed item was before nobody answered it. */

@@ -82,6 +82,7 @@ const repair: RepairItem = {
   callId: '6b3e01',
   errorClass: 'site-changed',
   at: '2026-11-10T00:00:00.000Z',
+  repairId: null,
 }
 
 const missed: MissedItem = {

@@ -732,6 +732,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       callId: 'c_6b3e44',
       errorClass: 'site-changed',
       at: ago(103),
+      repairId: 'R-4E1C',
     },
   ]
   /** The code the fake browser shows for the one waiting remote sign-in. */

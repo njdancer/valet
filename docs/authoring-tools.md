@@ -474,6 +474,30 @@ As authoring-agent.md's repair loop, with the IDE replaced by MCP:
   fix doesn't handle the change in R-4E1C."
 - A second agent's fix is a second card, each naming the other (A's J5 F4).
 
+**Built (PR 3b).** `drafts/repairs.ts` keeps the tickets, rebuilt from the audit log's
+`tool-called` and `tool-finished` records at launch, so they need no file. A ticket opens on the
+second failure in a row of one tool with one stage and class from `tool-output/invalid`,
+`tool-output/site-changed`, `tool-run/site-changed`, `tool-run/element-missing`,
+`tool-run/unexpected-shape` and `request-surface/undeclared-request`. Its id is `R-` and four
+characters derived from the first failing call, so it survives a relaunch, and the next good call
+of that tool closes it. Tickets show on the Needs you item ("Ask your agent to fix repair R-…").
+Agents read them with `valet_list_repairs` and `valet_get_repair`, and start a fix with
+`valet_create_draft` from `installed` with the `repairId`. The reproduction check is check step 7,
+a repair's only. Every case marked `"reproduces": "R-…"` must:
+
+- call the ticket's tool;
+- expect output;
+- use only fixtures (pages and fetch bodies, no inline ones) that Valet recorded after the ticket
+  opened and that are unchanged since (`recordedAt`, new in the draft record);
+- pass on the draft, and fail on the installed version with the ticket's stage and class.
+
+The card then carries "Repair R-…: on what Valet recorded, the installed version fails as it did,
+and this one works".
+
+Not built yet: the runtime keeping the failing response as evidence (for signed-in sites, where the
+scratch browser can't record the page), and the ticket's shape diff. Until then, a signed-in
+site's repair can't pass the reproduction check.
+
 ## Signed-in authoring sessions (PR 3)
 
 Off by default. `valet_request_session` asks for `authoring-session` (B's kind: adapter id, draft
