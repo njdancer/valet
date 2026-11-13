@@ -33,6 +33,7 @@ import {
 import {
   type AdapterDetail,
   type AdapterSummary,
+  type AgentRequestItem,
   type AttentionItem,
   type ChainStatus,
   MISSED_KEEP_MS,
@@ -168,7 +169,12 @@ export function adminReader(source: AdminSource): AdminReader {
     },
 
     async needsYou(): Promise<AdminNeedsYou> {
-      return { items: (await api.attention.list()).map(needsYouItem) }
+      // An agent sees its own requests with valet_get_approval, never another agent's.
+      return {
+        items: (await api.attention.list())
+          .filter((item): item is Exclude<AttentionItem, AgentRequestItem> => item.kind !== 'agent-request')
+          .map(needsYouItem),
+      }
     },
 
     async calls(query, scope): Promise<AdminCallList> {
@@ -341,6 +347,7 @@ const EVENT_FIELDS: Readonly<Record<AuditEvent['type'], readonly string[]>> = {
   ],
   'adapter-activated': ['adapterId', 'adapterHash', 'version', 'previousHash'],
   'adapter-refused': ['adapterId', 'adapterHash', 'reason'],
+  'adapter-removed': ['adapterId', 'adapterHash', 'version', 'clientId'],
   'grant-made': ['adapterId', 'adapterHash', 'secret', 'provider', 'origins', 'carriedFrom'],
   'grant-revoked': ['adapterId', 'secret'],
   'grant-copied': ['adapterId', 'secret', 'fields'],
@@ -497,7 +504,7 @@ function adapterDetail(
   }
 }
 
-function needsYouItem(item: AttentionItem): AdminNeedsYou['items'][number] {
+function needsYouItem(item: Exclude<AttentionItem, AgentRequestItem>): AdminNeedsYou['items'][number] {
   const adapterId = 'adapterId' in item ? item.adapterId : null
   const adapterName = 'adapterName' in item ? item.adapterName : null
   const callId = 'callId' in item ? item.callId : null
@@ -515,7 +522,7 @@ function needsYouItem(item: AttentionItem): AdminNeedsYou['items'][number] {
   }
 }
 
-function atOf(item: AttentionItem): string | null {
+function atOf(item: Exclude<AttentionItem, AgentRequestItem>): string | null {
   switch (item.kind) {
     case 'confirmation':
     case 'remote-consent':

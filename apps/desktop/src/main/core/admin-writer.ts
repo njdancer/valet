@@ -53,6 +53,14 @@ export interface AgentBroker {
     readonly createdAt: string
     readonly expiresAt: string
   }[]
+  /** Requests that ended and are still remembered: an agent's asked elsewhere (a draft's) too. */
+  ended(): readonly {
+    readonly requestId: string
+    readonly ref: string
+    readonly kind: ApprovalKind
+    readonly requester: Requester
+    readonly at: string
+  }[]
   /** The Mac's own device id: an approval signed by it was made at the Mac. */
   readonly macId: string
 }
@@ -113,6 +121,20 @@ export interface WriterSource {
   /** Whether this client already turned the tool off. */
   toolOff(clientId: string, qualified: string): boolean
   turnOffTool(clientId: string, qualified: string): Promise<'done' | 'already' | 'not-found'>
+  /**
+   * Files an agent's ask to remove a site (shown in Needs you; service.requestRemoval). The site's
+   * name, or why not: no such site, or a built-in one.
+   */
+  requestRemoval(
+    clientId: string,
+    clientName: string,
+    adapterId: string,
+    note: string | null,
+  ): Promise<
+    | { readonly kind: 'removal-asked' | 'removal-already'; readonly siteName: string }
+    | 'not-found'
+    | 'built-in'
+  >
   /** Revokes the client (its token stops working) and withdraws its requests. */
   disconnect(viewer: ClientIdentity): Promise<boolean>
   /** Audits a Notify-only change. A change that can't be audited isn't made. */
@@ -290,6 +312,30 @@ export class AdminWriterImpl implements AdminWriter {
     })
   }
 
+  requestRemoval(
+    viewer: ClientIdentity,
+    adapterId: string,
+    note: string | null,
+  ): Promise<
+    { readonly kind: 'removal-asked' | 'removal-already'; readonly siteName: string } | WriteOutcome
+  > {
+    return this.exclusive(async () => {
+      const gate = this.gate(viewer)
+      if (gate.refused !== undefined) return gate.refused
+      const limited = this.takeSlot(viewer)
+      if (limited !== null) return limited
+      let result: Awaited<ReturnType<WriterSource['requestRemoval']>>
+      try {
+        result = await this.source.requestRemoval(viewer.clientId, gate.name, adapterId, note)
+      } catch {
+        return refused('unavailable')
+      }
+      if (result === 'not-found') return refused('not-found')
+      if (result === 'built-in') return refused('not-allowed')
+      return result
+    })
+  }
+
   disconnect(viewer: ClientIdentity): Promise<WriteOutcome> {
     return this.exclusive(async () => {
       const gate = this.gate(viewer)
@@ -456,6 +502,21 @@ export class AdminWriterImpl implements AdminWriter {
           expiresAt: w.expiresAt,
           told: false,
           closedAt: null,
+        })
+      }
+      // Ended before this agent asked after it: one a draft's tools made, say (an install, a
+      // signed-in session), which never went through this writer.
+      for (const c of broker.ended()) {
+        if (c.requester.kind !== 'agent' || c.requester.clientId !== key) continue
+        if (list.some((a) => a.requestId === c.requestId)) continue
+        list.push({
+          requestId: c.requestId,
+          ref: c.ref,
+          title: TITLE_BY_KIND[c.kind],
+          askedAt: c.at,
+          expiresAt: c.at,
+          told: false,
+          closedAt: Date.parse(c.at),
         })
       }
       this.asked.set(key, list)

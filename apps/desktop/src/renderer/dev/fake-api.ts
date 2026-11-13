@@ -11,6 +11,7 @@ import { missedTitle, needsYouTitle } from '@valet/core/vocabulary'
 import type {
   AdapterDetail,
   AdapterSummary,
+  AgentRequestItem,
   AppEvent,
   AppStatus,
   AttentionItem,
@@ -18,6 +19,7 @@ import type {
   AuditQuery,
   AuthStepEntry,
   ChainStatus,
+  ClientAccess,
   ClientInfo,
   ClientSnippet,
   ConfirmationItem,
@@ -587,6 +589,8 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     ),
   ]
 
+  // Agents' requests only the person answers; none in the fake world until a test adds one.
+  let agentRequests: AgentRequestItem[] = []
   let attention: AttentionItem[] = [
     {
       kind: 'needs-user',
@@ -643,6 +647,15 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     },
   ]
 
+  // Every app starts with the defaults; the first one has turned a tool off for itself.
+  const access = new Map<string, ClientAccess>()
+  const accessOf = (clientId: string): ClientAccess =>
+    access.get(clientId) ?? {
+      seeValet: true,
+      allActivity: false,
+      askForChanges: true,
+      toolsOff: clientId === clients[0]?.id ? ['woolworths.remove_from_cart'] : [],
+    }
   let clients: ClientInfo[] = [
     {
       id: 'c_c7d2a1b2c3d4e5f6',
@@ -1113,6 +1126,14 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         enter('adapters.rollback', adapterId, hash)
         throw new Error('refused')
       },
+      async canRemove(adapterId) {
+        enter('adapters.canRemove', adapterId)
+        return false
+      },
+      async remove(adapterId) {
+        enter('adapters.remove', adapterId)
+        throw new Error('refused')
+      },
       async canInstallFromFolder() {
         enter('adapters.canInstallFromFolder')
         return false
@@ -1420,6 +1441,24 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
           replaced: false,
         }
       },
+      async access(clientId) {
+        enter('clients.access', clientId)
+        if (!clients.some((c) => c.id === clientId && c.revokedAt === null)) throw new Error('not-found')
+        return clone(accessOf(clientId))
+      },
+      async setAccess(clientId, patch) {
+        enter('clients.setAccess', clientId, patch)
+        if (!clients.some((c) => c.id === clientId && c.revokedAt === null)) throw new Error('not-found')
+        access.set(clientId, { ...accessOf(clientId), ...patch })
+        emit({ type: 'clients-changed' })
+      },
+      async turnToolOn(clientId, qualified) {
+        enter('clients.turnToolOn', clientId, qualified)
+        const current = accessOf(clientId)
+        if (!current.toolsOff.includes(qualified)) throw new Error('not-found')
+        access.set(clientId, { ...current, toolsOff: current.toolsOff.filter((t) => t !== qualified) })
+        emit({ type: 'clients-changed' })
+      },
       async revoke(clientId) {
         enter('clients.revoke', clientId)
         clients = clients.map((c) =>
@@ -1441,13 +1480,27 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
           expiresAt: r.expiresAt,
         }))
         const missing = [...adapters.values()].flatMap((a) => missingOf(detailOf(a)))
-        return clone(sorted([...attention, ...consents, ...missing, ...repairs, ...missed]))
+        return clone(sorted([...attention, ...consents, ...agentRequests, ...missing, ...repairs, ...missed]))
       },
       async dismiss(id) {
         enter('attention.dismiss', id)
         if (!missed.some((m) => m.id === id)) throw new Error('refused')
         missed = missed.filter((m) => m.id !== id)
         emit({ type: 'attention-changed' })
+      },
+      async approveRequest(id, choice) {
+        enter('attention.approveRequest', id, choice)
+        if (!agentRequests.some((r) => r.id === id)) throw new Error('not-found')
+        agentRequests = agentRequests.filter((r) => r.id !== id)
+        emit({ type: 'attention-changed' })
+        return true
+      },
+      async declineRequest(id) {
+        enter('attention.declineRequest', id)
+        const had = agentRequests.some((r) => r.id === id)
+        agentRequests = agentRequests.filter((r) => r.id !== id)
+        if (had) emit({ type: 'attention-changed' })
+        return had
       },
     },
     async openConfirmation(confirmationId) {
@@ -1890,6 +1943,7 @@ const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent['type']
     'adapter-installed',
     'adapter-activated',
     'adapter-refused',
+    'adapter-removed',
     'grant-made',
     'grant-revoked',
     'grant-copied',

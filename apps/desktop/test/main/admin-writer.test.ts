@@ -66,6 +66,17 @@ class FakeBroker implements AgentBroker {
     return true
   }
 
+  ended() {
+    return [...this.closed.values()]
+  }
+
+  /** A request made elsewhere (a draft's install, say), as the broker would hold it. */
+  addOther(kind: ApprovalKind, requester: Requester): string {
+    const id = `oth${++this.n}`.padEnd(22, 'x')
+    this.requests.push({ id, kind, subject: {}, requester, note: null })
+    return id
+  }
+
   waiting() {
     return this.requests
       .filter((r) => !this.closed.has(r.id))
@@ -144,6 +155,7 @@ function setup(overrides: Partial<WriterSource> = {}) {
       }
     },
     broker: () => broker,
+    requestRemoval: async () => 'not-found',
     wiredKinds: () => new Set<ApprovalKind>(['setting', 'tool-enable']),
     phonePaired: () => false,
     settings: () => values as unknown as AgentSettingValues,
@@ -449,6 +461,18 @@ describe('AdminWriterImpl', () => {
     ])
     expect(await writer.answers(ME)).toEqual([])
     expect(await writer.answers(OTHER)).toEqual([])
+  })
+
+  it('finds the agent’s own request that ended without passing through here, a draft’s say', async () => {
+    const { writer, broker } = setup()
+    const me = { kind: 'agent' as const, clientId: 'local:c_me', clientName: 'Claude Code' }
+    const id = broker.addOther('authoring-session', me)
+    broker.close(id, 'approved')
+    broker.close(broker.addOther('authoring-session', { ...me, clientId: 'local:c_other' }), 'approved')
+    expect(await writer.approvals(ME, ref(id))).toEqual([
+      expect.objectContaining({ ref: ref(id), state: 'approved' }),
+    ])
+    expect((await writer.approvals(ME, null)).map((r) => r.ref)).toEqual([ref(id)])
   })
 
   it('finds a request still waiting from before a restart', async () => {

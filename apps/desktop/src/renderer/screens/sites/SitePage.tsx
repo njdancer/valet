@@ -8,6 +8,7 @@ import {
   Breadcrumb,
   Button,
   Code,
+  ConfirmDialog,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -23,9 +24,22 @@ import {
   SiteAvatar,
   Skeleton,
   Stack,
+  Text,
+  toast,
   Value,
 } from '@valet/ui'
-import { Activity, Copy, Ellipsis, Pause, Play, ScrollText, ShieldCheck, ShoppingCart } from 'lucide-react'
+import {
+  Activity,
+  Copy,
+  Ellipsis,
+  Pause,
+  Play,
+  ScrollText,
+  ShieldCheck,
+  ShoppingCart,
+  Trash2,
+} from 'lucide-react'
+import { useState } from 'react'
 import type { AdapterDetail, ClientInfo, PendingReview, RunSummary, SiteHealth } from '../../../shared/api'
 import { useAction, useApi, useAppStop, useLoad } from '../../lib/api-context'
 import { formatClock, formatDay } from '../../lib/format'
@@ -228,6 +242,15 @@ function SiteActions({ data }: { readonly data: SiteData }) {
   const paused = isPaused(adapter)
   const approved = adapter.approval === 'approved'
   const canPause = pause.run !== null && approved
+  const removable = useLoad((a) => a.adapters.canRemove(adapter.id), [adapter.id], ['adapters-changed'])
+  const remove = useAction()
+  const [asking, setAsking] = useState(false)
+  const onRemove = async () => {
+    if (await remove.run(() => api.adapters.remove(adapter.id))) {
+      toast(`${adapter.name} removed`)
+      navigate(href.sites())
+    }
+  }
   return (
     <>
       {adapter.pendingUpdate !== null && approved ? (
@@ -279,8 +302,31 @@ function SiteActions({ data }: { readonly data: SiteData }) {
               </DropdownMenuItem>
             </>
           ) : null}
+          {removable.status === 'ready' && removable.data ? (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem icon={<Trash2 />} onSelect={() => setAsking(true)}>
+                Remove {adapter.name}…
+              </DropdownMenuItem>
+            </>
+          ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
+      <ConfirmDialog
+        open={asking}
+        onOpenChange={setAsking}
+        destructive
+        title={`Remove ${adapter.name}?`}
+        description={`Its tools go from every app and agent at once. Valet deletes every version it kept, its approvals, the logins you gave it, its settings and its browser data, including any signed-in session.`}
+        confirmLabel={`Remove ${adapter.name}`}
+        onConfirm={() => void onRemove()}
+      >
+        <Text size="sm" tone="muted">
+          Its calls stay in Activity and the audit log. To use it again, an agent builds or installs it again
+          and you approve it as new.
+        </Text>
+      </ConfirmDialog>
+      <ActionError failed={remove.failed} what={`remove ${adapter.name}`} />
       <ActionError failed={cart.failed} what="open your trolley" />
       <ActionError failed={pause.failed} what={paused ? `resume ${adapter.name}` : `pause ${adapter.name}`} />
       <ActionError failed={copy.failed} what="copy the adapter id" />

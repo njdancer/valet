@@ -15,6 +15,7 @@ export function attentionDeadline(item: AttentionItem): number | null {
   switch (item.kind) {
     case 'confirmation':
     case 'remote-consent':
+    case 'agent-request':
       return Date.parse(item.expiresAt)
     case 'needs-user':
       return item.closesAt === null ? null : Date.parse(item.closesAt)
@@ -30,6 +31,7 @@ function raisedAt(item: AttentionItem): number {
   switch (item.kind) {
     case 'confirmation':
     case 'remote-consent':
+    case 'agent-request':
       return Date.parse(item.requestedAt)
     case 'needs-user':
     case 'repair':

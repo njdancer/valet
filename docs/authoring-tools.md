@@ -518,9 +518,16 @@ a repair's only. Every case marked `"reproduces": "R-…"` must:
 The card then carries "Repair R-…: on what Valet recorded, the installed version fails as it did,
 and this one works".
 
-Not built yet: the runtime keeping the failing response as evidence (for signed-in sites, where the
-scratch browser can't record the page), and the ticket's shape diff. Until then, a signed-in
-site's repair can't pass the reproduction check.
+**Signed in (built in the eval PR).** For a page behind the sign-in, which the scratch browser
+can't record, a signed-in `valet_live_trial` of the ticket's tool on the repair draft is the
+reproduction instead. When that trial succeeds, Valet runs the installed version straight after with
+the same session and input; if it fails with the ticket's stage and class, the trial is kept with
+`reproduces: "R-…"` and the draft's current package hash. Step 7 accepts such a trial, made after the
+ticket opened, on the exact package being submitted, in place of a marked case. The card then
+carries "Repair R-…: in a signed-in trial, the installed version fails as it did, and this one
+works". Nothing from the signed-in pages is saved.
+
+Not built yet: the runtime keeping the failing response as evidence, and the ticket's shape diff.
 
 ## Signed-in authoring sessions (PR 3)
 

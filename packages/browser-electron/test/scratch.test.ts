@@ -137,6 +137,20 @@ describe('the scratch browser', () => {
     expect(await filter({ url: 'data:text/plain,hi', method: 'GET', resourceType: 'image' })).toBe(true)
   })
 
+  it('paces a page once, however many server redirects it takes to load', async () => {
+    const { session, rules: r } = await open()
+    const filter = session.filter as NonNullable<typeof session.filter>
+    const hop = (path: string, id: number) =>
+      filter({ url: `https://finance.example.com${path}`, method: 'GET', resourceType: 'mainFrame', id })
+    // A signed-out visitor sent on to the sign-in page: one load, one pace.
+    expect(await hop('/account', 7)).toBe(true)
+    expect(await hop('/signin?next=/account', 7)).toBe(true)
+    expect(r.paced).toEqual(['finance.example.com'])
+    // The next page the agent opens is a new request, paced again.
+    expect(await hop('/search', 8)).toBe(true)
+    expect(r.paced).toEqual(['finance.example.com', 'finance.example.com'])
+  })
+
   it('a pace that refuses says why', async () => {
     const platform = new FakePlatform()
     const frame = jsdomFrame(PAGE)

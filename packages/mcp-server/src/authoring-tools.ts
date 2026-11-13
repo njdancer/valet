@@ -21,6 +21,7 @@ import {
   adminNotAllowedResult,
 } from './admin-tools'
 import type { ClientIdentity } from './auth'
+import { AUTHORING_GUIDE, manifestJsonSchema } from './authoring-guide'
 
 /** Ends every authoring tool's description. */
 export const AUTHORING_DATA_NOTE =
@@ -263,6 +264,11 @@ export const trialReportSchema = z.object({
   /** Requests Valet refused during the run, scrubbed: what egress or requests is missing. */
   blocked: z.array(z.object({ method: z.string(), url: z.string(), reason: z.string() })),
   ms: z.number().int().nonnegative(),
+  /**
+   * A signed-in trial of a repair's tool after which the installed version failed as the ticket
+   * says: this trial is the repair's reproduction, for this package only.
+   */
+  reproduces: z.string().optional(),
 })
 
 export type TrialReport = z.output<typeof trialReportSchema>
@@ -323,6 +329,7 @@ export interface Authoring {
   // The scratch browser (PR 2): signed out, in memory, one per draft.
   browserOpen(viewer: ClientIdentity, draftId: string, url: string): Promise<BrowserView>
   browserClick(viewer: ClientIdentity, draftId: string, target: BrowserTarget): Promise<BrowserView>
+  browserClose(viewer: ClientIdentity, draftId: string): Promise<{ readonly closed: boolean }>
   browserType(
     viewer: ClientIdentity,
     draftId: string,
@@ -405,13 +412,27 @@ const EDITS: Omit<ToolAnnotations, 'title'> = {
 
 export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
   {
+    name: 'valet_authoring_guide',
+    title: 'How to write an adapter',
+    description:
+      'The reference for writing a draft: the manifest (sites, requests, secrets, sign-in steps and the ' +
+      'session probe), what tool code can call, and the case format, with the manifest’s JSON Schema. Read ' +
+      'it before writing your first draft.',
+    input: z.object({}),
+    output: z.object({ guide: z.string(), manifestSchema: z.record(z.string(), z.unknown()) }),
+    needs: 'see',
+    annotations: READS,
+    run: async () => ({ guide: AUTHORING_GUIDE, manifestSchema: manifestJsonSchema() }),
+  },
+  {
     name: 'valet_create_draft',
     title: 'Start an adapter draft',
     description:
       'Starts a draft adapter for one site. from "blank" writes a starter package to edit (manifest.json, ' +
       'src/tools.ts, test/example.json); from "installed" copies the installed adapter with that id, to update ' +
       'or repair it. The person is told a draft was started. Then write files with valet_write_draft_file, run ' +
-      'valet_check_draft until it passes, and valet_submit_draft to ask the person to install it. Look at other ' +
+      'valet_check_draft until it passes, and valet_submit_draft to ask the person to install it. ' +
+      'valet_authoring_guide has the manifest, sign-in, tool code and case formats. Look at other ' +
       'people’s adapters on the web for reference if you like, but write your own: Valet never installs anyone ' +
       'else’s.',
     input: z.object({
@@ -474,7 +495,9 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
       '(the site changed). Each ticket names the tool, the version, the stage and the error class. To fix one, ' +
       'start a draft from "installed" with its repairId, capture fixtures of the site as it is now with ' +
       'valet_capture_fixture, and add a case with "reproduces": "<repairId>" on those fixtures that expects ' +
-      'the right output: Valet checks the installed version fails it as the ticket says, and your draft passes.',
+      'the right output: Valet checks the installed version fails it as the ticket says, and your draft passes. ' +
+      'For a page behind the sign-in, which Valet can’t record, a signed-in valet_live_trial of the ticket’s tool ' +
+      'on your draft is the reproduction: Valet runs the installed version straight after on the same input.',
     input: z.object({}),
     output: repairListSchema,
     needs: 'see',
@@ -652,6 +675,18 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
     run: (a, args, s) => a.browserOpen(s.viewer, args['draftId'] as string, args['url'] as string),
   },
   {
+    name: 'valet_browser_close',
+    title: 'Close the scratch browser',
+    description:
+      'Closes your draft’s scratch browser, so another of your drafts can open one. It closes by itself ' +
+      'after a while unused.',
+    input: z.object({ draftId: draftIdInput }),
+    output: z.object({ closed: z.boolean() }),
+    needs: 'ask',
+    annotations: EDITS,
+    run: (a, args, s) => a.browserClose(s.viewer, args['draftId'] as string),
+  },
+  {
     name: 'valet_browser_click',
     title: 'Click in the scratch browser',
     description:
@@ -792,7 +827,9 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
       'site’s installed adapters, so a trial can take a while, and a few an hour per draft is the most. The ' +
       'output is the site’s data. A trial of the files you submit shows on the person’s card. With signedIn, ' +
       'during a session the person approved (valet_request_session), it runs with the installed adapter’s ' +
-      'session, and only the GET reads the installed version declares reach it.',
+      'session, and only the GET reads the installed version declares reach it. On a repair draft, a ' +
+      'signed-in trial that works is followed by the installed version on the same input; `reproduces` ' +
+      'then names the ticket it reproduced, for these files only.',
     input: z.object({
       draftId: draftIdInput,
       tool: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),

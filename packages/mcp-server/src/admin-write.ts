@@ -151,6 +151,16 @@ export interface AdminWriter {
   ): Promise<WriteOutcome>
   /** Turns one tool off for this agent only (Notify only). */
   turnOffTool(viewer: ClientIdentity, adapterId: string, tool: string): Promise<WriteOutcome>
+  /**
+   * Asks the person to remove a site that isn't built in. Nothing is removed until they say yes in
+   * Valet; it only ever narrows, so nothing is signed. `asked` once filed, `already` if this agent's
+   * ask is waiting, `built-in` for a site the app ships.
+   */
+  requestRemoval(
+    viewer: ClientIdentity,
+    adapterId: string,
+    note: string | null,
+  ): Promise<{ readonly kind: 'removal-asked' | 'removal-already'; readonly siteName: string } | WriteOutcome>
   /** Removes this agent's own connection (Notify only). Its token stops working. */
   disconnect(viewer: ClientIdentity): Promise<WriteOutcome>
   /** One of this agent's requests by ref, or all of them still remembered (newest first). */
@@ -365,6 +375,13 @@ export const writeInputs = {
       .regex(TOOL_NAME)
       .describe('The tool’s name within the adapter, as valet_get_adapter lists it.'),
   }),
+  requestRemoval: z.object({
+    adapterId: z
+      .string()
+      .regex(ADAPTER_ID)
+      .describe('The site’s adapter id, as valet_list_adapters gives it.'),
+    note: noteInput,
+  }),
   disconnect: z.object({}),
   getApproval: z.object({
     approval: z
@@ -523,6 +540,29 @@ export const WRITE_TOOLS: readonly WriteTool[] = [
       kind: 'outcome',
       outcome: await writer.turnOffTool(viewer, str(args.adapterId), str(args.tool)),
     }),
+  },
+  {
+    name: 'valet_uninstall_site',
+    title: 'Ask the person to remove a site',
+    description:
+      'Asks the person to remove a site that isn’t built into Valet, such as an adapter you built ' +
+      'to try something out. If they say yes in Valet, its tools go for every agent, and Valet ' +
+      'deletes its versions, approvals, the logins given to it, its settings and its browser data. ' +
+      'Nothing is removed until they do. Built-in sites can’t be removed.',
+    input: writeInputs.requestRemoval,
+    needs: 'ask',
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
+    run: async (writer, args, viewer) => {
+      const result = await writer.requestRemoval(viewer, str(args.adapterId), note(args))
+      if (result.kind === 'removal-asked' || result.kind === 'removal-already')
+        return {
+          kind: 'text',
+          text:
+            `${result.kind === 'removal-asked' ? 'Asked' : 'Already asked'}: the person will see “Remove ${result.siteName}” ` +
+            'in Valet’s Needs you. Nothing is removed until they say yes. Check valet_list_adapters to see if it is gone.',
+        }
+      return { kind: 'outcome', outcome: result as WriteOutcome }
+    },
   },
   {
     name: 'valet_disconnect',

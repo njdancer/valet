@@ -62,6 +62,7 @@ import { buildToolLibrary } from '@valet/runtime/tool-script'
 import { NO_LOCAL_ACCESS } from '@valet/sandbox'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
+import type { WriterSource } from '../../src/main/core/admin-writer'
 import {
   type ApprovalBroker,
   adapterSettingSubject,
@@ -2142,6 +2143,67 @@ describe('an adapter setting (D69)', () => {
     expect(detail?.settings[0]?.chosen).toMatchObject({ id: '12', label: 'Shop <b>North</b>' })
   })
 
+  it('shows an agent’s setting request in Needs you, answered there with the pick', async () => {
+    const s = await storeShop()
+    const broker = (s.service as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
+    const subject = adapterSettingSubject(
+      s.adapter.definition.manifest,
+      'store',
+      null,
+      SHOP_STORES.map((c) => ({ id: c.value, label: c.label })),
+    )
+    if (subject === null) throw new Error('no subject')
+    const asked = await broker.request(
+      'setting',
+      subject,
+      { kind: 'agent', clientId: 'local:c_1', clientName: 'Claude Code' },
+      { agentNote: 'Pick the one near home' },
+    )
+    if (!asked.ok) throw new Error(asked.reason)
+    const item = (await s.api.attention.list()).find((i) => i.id === asked.requestId)
+    expect(item).toMatchObject({
+      kind: 'agent-request',
+      requestKind: 'setting',
+      agentName: 'Claude Code',
+      agentNote: 'Pick the one near home',
+      adapterId: 'shop',
+    })
+    if (item?.kind !== 'agent-request') throw new Error('no item')
+    expect(item.choices?.map((c) => c.value)).toContain('12')
+    expect(item.ref).toMatch(/^[0-9A-F]{4}$/)
+    expect(await s.api.attention.approveRequest(asked.requestId, '12')).toBe(true)
+    expect((await s.api.attention.list()).some((i) => i.id === asked.requestId)).toBe(false)
+    expect((await s.api.adapters.get('shop'))?.settings[0]?.chosen).toMatchObject({ id: '12' })
+    // Once answered, it's gone: neither answer works again.
+    await expect(s.api.attention.approveRequest(asked.requestId, '12')).rejects.toThrow()
+    expect(await s.api.attention.declineRequest(asked.requestId)).toBe(false)
+  })
+
+  it('declines an agent’s request from Needs you, and leaves the person’s own requests to their own surfaces', async () => {
+    const s = await storeShop()
+    const broker = (s.service as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
+    const subject = adapterSettingSubject(
+      s.adapter.definition.manifest,
+      'store',
+      null,
+      SHOP_STORES.map((c) => ({ id: c.value, label: c.label })),
+    )
+    if (subject === null) throw new Error('no subject')
+    const mine = await broker.request('setting', subject, { kind: 'person' })
+    if (!mine.ok) throw new Error(mine.reason)
+    expect((await s.api.attention.list()).some((i) => i.id === mine.requestId)).toBe(false)
+    await expect(s.api.attention.approveRequest(mine.requestId, '12')).rejects.toThrow()
+    expect(await s.api.attention.declineRequest(mine.requestId)).toBe(false)
+    const asked = await broker.request('setting', subject, {
+      kind: 'agent',
+      clientId: 'local:c_1',
+      clientName: 'Claude Code',
+    })
+    if (!asked.ok) throw new Error(asked.reason)
+    expect(await s.api.attention.declineRequest(asked.requestId)).toBe(true)
+    expect((await s.api.attention.list()).some((i) => i.id === asked.requestId)).toBe(false)
+  })
+
   it('keeps the choice across a restart, in an owner-only file', async () => {
     const s = await storeShop()
     await s.api.adapters.settingChoices('shop', 'store', '2000')
@@ -3471,6 +3533,55 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
     expect((await third.api.adapters.list())[0]?.approval).not.toBe('approved')
   })
 
+  it('removes a site that isn’t built in, with everything it had, and never a built-in one', async () => {
+    const library = shopPackage('l1:', { ...SHOP, id: 'library', name: 'Library' })
+    const s = await withPackages(library)
+    const v1 = s.hashOf(shopPackage('v1:'))
+    await s.api.approvals.approve('shop', v1)
+    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true, adapterId: 'library' })
+    await s.api.approvals.approve('library', s.hashOf(library))
+    expect(await s.api.adapters.canRemove('shop')).toBe(false)
+    expect(await s.api.adapters.canRemove('library')).toBe(true)
+    await expect(s.api.adapters.remove('shop')).rejects.toThrow(/built-in/)
+
+    // An agent asks: it waits in Needs you until the person says yes there.
+    const source = (s.service as unknown as { writerSource(): WriterSource }).writerSource()
+    expect(await source.requestRemoval('c_1', 'Claude Code', 'library', 'Done testing')).toEqual({
+      kind: 'removal-asked',
+      siteName: 'Library',
+    })
+    expect(await source.requestRemoval('c_1', 'Claude Code', 'library', null)).toMatchObject({
+      kind: 'removal-already',
+    })
+    expect(await source.requestRemoval('c_1', 'Claude Code', 'shop', null)).toBe('built-in')
+    expect(await source.requestRemoval('c_1', 'Claude Code', 'nope', null)).toBe('not-found')
+    const ask = (await s.api.attention.list()).find(
+      (i) => i.kind === 'agent-request' && i.requestKind === 'uninstall',
+    )
+    expect(ask).toMatchObject({
+      title: 'Remove Library',
+      agentName: 'Claude Code',
+      agentNote: 'Done testing',
+    })
+    expect((await s.api.adapters.list()).map((a) => a.id).sort()).toEqual(['library', 'shop'])
+    expect(await s.api.attention.approveRequest(ask?.id ?? '', null)).toBe(true)
+
+    expect((await s.api.adapters.list()).map((a) => a.id)).toEqual(['shop'])
+    expect(existsSync(join(s.paths.adapters, 'library'))).toBe(false)
+    expect((await s.api.attention.list()).some((i) => i.kind === 'agent-request')).toBe(false)
+    const removed = readAudit(s.paths.audit).filter((e) => e.type === 'adapter-removed')
+    expect(removed).toEqual([
+      expect.objectContaining({ adapterId: 'library', clientId: 'local:c_1', version: SHOP.version }),
+    ])
+    expect(await s.call('echo', { text: 'hi' })).toMatchObject({ status: 'ok' })
+    // Gone after a restart too, and installing it again is a first install.
+    await s.service.stop()
+    const again = await withPackages(library, s.dir)
+    expect((await again.api.adapters.list()).map((a) => a.id)).toEqual(['shop'])
+    expect(await again.api.adapters.installFromFolder()).toMatchObject({ ok: true, adapterId: 'library' })
+    expect((await again.api.adapters.list()).find((a) => a.id === 'library')?.approval).not.toBe('approved')
+  })
+
   it('never offers a rollback to a version the person never approved, or rejected', async () => {
     const s = await withPackages(shopPackage('v2:', { ...SHOP, version: '2.0.0' }))
     const v1 = s.hashOf(shopPackage('v1:'))
@@ -3617,6 +3728,20 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
       const v2 = s.hashOf(update)
       return { ...s, v1, v2, viewer, authoring, draftId: draft.draftId }
     }
+
+    it('starts a draft update from the whole installed package, its manifest and tests too', async () => {
+      const s = await withPackages()
+      await s.api.approvals.approve('shop', s.hashOf(shopPackage('v1:')))
+      const viewer: ClientIdentity = {
+        origin: 'local',
+        clientId: (await s.api.clients.add('Claude Code')).id,
+      }
+      const authoring = s.endpoint.authoring as Authoring
+      const { draft } = await authoring.createDraft(viewer, { adapterId: 'shop', from: 'installed' })
+      const paths = draft.files.map((f) => f.path)
+      for (const path of Object.keys(shopPackage('v1:'))) expect(paths).toContain(path)
+      expect(paths).toContain('manifest.json')
+    })
 
     it('stages an update: the approved version serves until the person approves the agent’s own request', async () => {
       const s = await withDraft()
@@ -4049,6 +4174,34 @@ describe('admin write tools (docs/admin-tools.md, "Write tier")', () => {
       value: null,
     })
     expect(s.ui.notifications.at(-1)).toMatchObject({ title: 'Claude Code made a change' })
+  })
+
+  it('lets the person turn a tool back on and change what the app may do, on its Connections page', async () => {
+    const s = await agents()
+    await write(s.admin, 'valet_turn_off_tool', { adapterId: 'shop', tool: 'echo' }, s.C1)
+    expect(await s.api.clients.access(s.C1.clientId)).toEqual({
+      seeValet: true,
+      allActivity: false,
+      askForChanges: true,
+      toolsOff: ['shop.echo'],
+    })
+    await s.api.clients.turnToolOn(s.C1.clientId, 'shop.echo')
+    const caller = s.endpoint.caller as ToolCaller
+    expect(caller.listTools(s.C1).map((t) => t.declaration.name)).toContain('echo')
+    expect((await s.api.clients.access(s.C1.clientId)).toolsOff).toEqual([])
+    await expect(s.api.clients.turnToolOn(s.C1.clientId, 'shop.echo')).rejects.toThrow()
+
+    await s.api.clients.setAccess(s.C1.clientId, { askForChanges: false })
+    expect(await s.api.clients.access(s.C1.clientId)).toMatchObject({ seeValet: true, askForChanges: false })
+    const refused = await write(s.admin, 'valet_turn_off_tool', { adapterId: 'shop', tool: 'echo' }, s.C1)
+    expect(text(refused)).toMatch(/isn't allowed to ask for changes/)
+    await s.api.clients.setAccess(s.C1.clientId, { askForChanges: true })
+    expect(
+      text(await write(s.admin, 'valet_turn_off_tool', { adapterId: 'shop', tool: 'echo' }, s.C1)),
+    ).toMatch(/^Done:/)
+    await s.api.clients.revoke(s.C2.clientId)
+    await expect(s.api.clients.access(s.C2.clientId)).rejects.toThrow()
+    await expect(s.api.clients.setAccess(s.C2.clientId, { seeValet: true })).rejects.toThrow()
   })
 
   it('makes a stricter setting change at once and asks for a looser one', async () => {

@@ -72,6 +72,7 @@ export function attentionTitle(item: AttentionItem): string {
     case 'repair':
       return needsYouTitle({ kind: 'repair', adapterName: item.adapterName })
     case 'missed':
+    case 'agent-request':
       return item.title
   }
 }
@@ -94,6 +95,7 @@ export function attentionTarget(item: AttentionItem): NotificationTarget {
     case 'repair':
       return { kind: 'panel', route: href.call(item.callId) }
     case 'missed':
+    case 'agent-request':
       return { kind: 'panel', route: href.needsYou(item.id) }
   }
 }
@@ -110,6 +112,8 @@ function keyOf(item: AttentionItem): string | null {
       return `needs-user:${item.adapterId}:${item.at}`
     case 'repair':
       return `repair:${item.adapterId}:${item.callId}`
+    case 'agent-request':
+      return `agent-request:${item.id}`
     case 'missed':
       if (item.of === 'confirmation') return `confirmation:${item.originalId}`
       if (item.of === 'needs-user') return `needs-user:${item.adapterId ?? ''}:${item.at}`
@@ -151,6 +155,13 @@ export function attentionNotification(item: AttentionItem, timeZone?: string): A
       }
     case 'repair':
       return { key, title, body: `${plainName(item.adapterName)} · see what broke`, target }
+    case 'agent-request':
+      return {
+        key,
+        title,
+        body: `${plainName(item.agentName)} asks · answer by ${clockTime(item.expiresAt, timeZone)}`,
+        target,
+      }
     case 'missed':
       return {
         key,

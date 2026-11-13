@@ -327,6 +327,19 @@ describe('sessionProbe', () => {
     )
   })
 
+  it('says when it was redirected to get its answer, so a sign-in redirect can mean logged out', async () => {
+    const fake = session([
+      redirect('https://www.example.com/signin?next=/account'),
+      ok('text/html', '<form>'),
+    ])
+    expect(await sessionProbe(fake, 'https://www.example.com/account', request())).toEqual({
+      status: 200,
+      contentType: 'text/html',
+      body: '<form>',
+      redirected: true,
+    })
+  })
+
   it('probes another navigation origin as a cross-origin fetch from the page', async () => {
     const fake = session([ok(null, '')])
     await sessionProbe(fake, 'https://login.example.com/me', request())

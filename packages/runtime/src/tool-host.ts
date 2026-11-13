@@ -365,6 +365,23 @@ export class ToolHost {
     }
   }
 
+  /**
+   * Takes a registered adapter away (the person removed the site). Like replace, it takes the
+   * adapter's lock first, so running calls finish; queued ones find it gone. Rejects with
+   * ValetError('config', 'busy') if the lock isn't free within `waitMs`. The caller closes the
+   * driver once this resolves. False if it wasn't registered.
+   */
+  async remove(adapterId: string, waitMs: number = this.queueWaitMs): Promise<boolean> {
+    if (!this.adapters.has(adapterId)) return false
+    const lock = await this.acquireLock(adapterId, boundOf(waitMs, this.queueWaitMs), undefined)
+    if (typeof lock !== 'function') throw new ValetError('config', 'busy')
+    try {
+      return this.adapters.delete(adapterId)
+    } finally {
+      lock()
+    }
+  }
+
   /** The tools of every adapter whose registered hash is approved. */
   async listTools(): Promise<ListedTool[]> {
     const listed: ListedTool[] = []

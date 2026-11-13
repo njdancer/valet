@@ -174,7 +174,7 @@ export async function launch(
   options: {
     readonly setup?: boolean
     readonly installFolder?: string
-    /** More environment for the app, such as a relay to pair phones through (walkthrough.spec.ts). */
+    /** More environment for the app: a relay to pair phones through (walkthrough.spec.ts), or the evals' VALET_E2E_UPSTREAM_PROXY. */
     readonly env?: Readonly<Record<string, string>>
   } = {},
 ): Promise<Launched> {

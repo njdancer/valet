@@ -131,6 +131,7 @@ export class SurfaceToolPage implements ToolPage {
         status: raw['status'],
         contentType: typeof contentType === 'string' ? contentType : null,
         body: raw['body'] ?? null,
+        ...(raw['redirected'] === true ? { redirected: true as const } : {}),
       }
     })
   }

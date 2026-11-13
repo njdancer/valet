@@ -289,6 +289,29 @@ open the review.
 **Demo mode** keeps its own data folder (`valet-demo`), so its Woolworths built-in, whose manifest
 names the fake shop's origins and so has a different hash, never meets the real one's store.
 
+## Removing a site
+
+**Built** (2026-11-13). A site that isn't built in can be removed: from its page's menu
+(**Remove <site>…**), or when an agent asks with `valet_uninstall_site` and the person says yes
+to its **Remove <site>** item in Needs you. A built-in site can't be removed (it would come back
+at the next launch); it can be paused.
+
+Removing only narrows, so nothing is signed. The tool host drops the adapter under its lock
+(running calls finish first), then the driver closes. Then these go:
+
+- waiting requests about the site, and its install evidence and approvals;
+- the logins given to it, with a Keychain copy nothing else uses;
+- its settings;
+- every stored version;
+- its auth and tool partitions.
+
+The removal is audited as `adapter-removed`, naming the agent that asked, if one did. Installing
+the site again is a first install.
+
+An agent's ask is kept in memory for 24 hours or until the person answers it. A restart drops
+it, and the agent can ask again. The IA's "Restore for 24 h" isn't built: the person said yes to
+the removal on the Mac, so nothing is held back for a restore.
+
 ## Failure cases
 
 | Case                                                  | What happens                                                                 |

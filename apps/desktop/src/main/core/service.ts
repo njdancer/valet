@@ -75,6 +75,7 @@ import { z } from 'zod'
 import { href } from '../../renderer/lib/routes'
 import type {
   AdapterVersions,
+  AgentRequestItem,
   AppEvent,
   AttentionItem,
   ChainStatus,
@@ -99,6 +100,7 @@ import type {
 import { AdapterSettingsStore } from './adapter-settings'
 import { adminReader } from './admin'
 import { AdminWriterImpl, type AgentSettingValues, type WriterSource } from './admin-writer'
+import { agentRequestItem } from './agent-requests'
 import { AppStateStore } from './app-state'
 import {
   AnchoredFile,
@@ -221,6 +223,8 @@ export interface UiPort {
    * click there says yes: the renderer that asked for it never answers it.
    */
   confirmErase(kind: EraseKind): Promise<boolean>
+  /** Clears one site's auth and tool partitions (the site was removed). */
+  clearSiteData?(adapterId: string): Promise<void>
   /** Clears what the browser sessions hold, before their files are removed. */
   clearBrowserData(): Promise<void>
   /** After an erase: restart as new (reset), or move the app to the Trash and quit (uninstall). */
@@ -374,6 +378,7 @@ const EVENTS_FOR: Readonly<Partial<Record<AuditEvent['type'], readonly AppEvent[
   'adapter-installed': ['approvals-changed', 'adapters-changed', 'attention-changed'],
   'adapter-activated': ['approvals-changed', 'adapters-changed', 'attention-changed'],
   'adapter-refused': ['adapters-changed', 'health-changed', 'attention-changed'],
+  'adapter-removed': ['adapters-changed', 'approvals-changed', 'attention-changed'],
   // A grant or a setting can make a "Give Valet your login" or "Choose your store" item come or go.
   'grant-made': ['grants-changed', 'adapters-changed', 'attention-changed'],
   'grant-revoked': ['grants-changed', 'adapters-changed', 'attention-changed'],
@@ -446,6 +451,8 @@ export class AppService {
   private phoneStatus: PhoneStatusBody | null = null
   /** The write tools' side (admin-writer.ts): one for the app's life, so it remembers requests. */
   private writer: AdminWriterImpl | null = null
+  /** Agents' asks to remove a site, by id, until the person answers or Valet restarts. */
+  private readonly removalAsks = new Map<string, AgentRequestItem & { readonly asker: string }>()
   private readonly versions: VersionStore
   private readonly setup: SetupStore
   private updates: UpdatesPort | null = null
@@ -918,6 +925,30 @@ export class AppService {
     }
   }
 
+  /**
+   * What the phone would be shown and answer, for the e2e suite and the evals in demo builds only
+   * (app.ts exposes it under VALET_E2E): the requests waiting, and the person's approval or decline
+   * of one as the Mac window gives it.
+   */
+  e2eRequests(): {
+    list(): readonly { readonly requestId: string; readonly kind: string; readonly text: string }[]
+    approve(requestId: string): Promise<boolean>
+    decline(requestId: string): Promise<boolean>
+  } {
+    const broker = () => {
+      if (this.approvalBroker === null) throw new ValetError('config', 'unavailable')
+      return this.approvalBroker
+    }
+    return {
+      list: () =>
+        broker()
+          .list()
+          .map((p) => ({ requestId: p.request.id, kind: p.request.kind, text: p.text })),
+      approve: async (requestId) => (await broker().approveOnMac(requestId)).ok,
+      decline: (requestId) => broker().decline(requestId, { via: 'mac' }),
+    }
+  }
+
   async stop(): Promise<void> {
     this.updates?.stop()
     this.phones.stop()
@@ -1120,6 +1151,22 @@ export class AppService {
         },
       ]
     })
+  }
+
+  /** Agents' requests that only the person can answer and no other item shows (agent-requests.ts). */
+  private agentRequestItems(): AgentRequestItem[] {
+    const now = this.deps.now()
+    for (const [id, ask] of this.removalAsks)
+      if (Date.parse(ask.expiresAt) <= now || this.adapter(ask.adapterId ?? '') === null)
+        this.removalAsks.delete(id)
+    const removals = [...this.removalAsks.values()].map(({ asker: _asker, ...item }) => item)
+    return [
+      ...removals,
+      ...(this.approvalBroker?.list() ?? []).flatMap((r) => {
+        const item = agentRequestItem(r)
+        return item === null ? [] : [item]
+      }),
+    ]
   }
 
   private consentItems(): RemoteConsentItem[] {
@@ -1798,6 +1845,78 @@ export class AppService {
       if (this.changing.get(adapterId) === settled) this.changing.delete(adapterId)
     })
     return run
+  }
+
+  /** Whether the person can remove this site: one that isn't built in, in a build with a store. */
+  canRemove(adapterId: string): boolean {
+    return this.packages !== null && this.adapter(adapterId) !== null && !this.packages.isBuiltinId(adapterId)
+  }
+
+  /**
+   * Removes a site that isn't built in (docs/adapter-packages.md, "Removing a site"): its tools go
+   * from every listing, then its stored versions, approvals and their evidence, logins, settings and
+   * browser data. Only tightens, so the person's click (or their yes to an agent's ask) is enough;
+   * nothing is signed. Throws InstallError.
+   */
+  removeAdapter(adapterId: string, clientId: string | null = null): Promise<void> {
+    return this.oneAtATime(adapterId, async () => {
+      const adapter = this.requireAdapter(adapterId)
+      const packages = this.packages
+      if (packages === null || packages.isBuiltinId(adapterId))
+        throw new InstallError('A built-in site can’t be removed. Pause it instead.')
+      if (this.handoffs.has(adapterId))
+        throw new InstallError('Finish or cancel the login for this site first.')
+      try {
+        await this.runtime().remove(adapterId)
+      } catch (error) {
+        throw error instanceof ValetError && error.errorClass === 'busy'
+          ? new InstallError('The site is busy with calls; try again in a minute.')
+          : error
+      }
+      const driver = this.drivers.get(adapterId)
+      this.drivers.delete(adapterId)
+      this.installed = this.installed.filter((a) => a.definition.manifest.id !== adapterId)
+      await driver?.close().catch(() => undefined)
+      await this.refreshTools()
+      // Waiting requests about it end; its approvals and their evidence go.
+      await this.approvalBroker?.withdrawAdapter(adapterId).catch(() => 0)
+      await this.approvalBroker?.revoke('adapter-install', (s) => s.adapterId === adapterId).catch(() => 0)
+      await this.ledger
+        ?.commit(
+          (draft) => {
+            if (draft.legacy !== undefined)
+              draft.legacy.installs = draft.legacy.installs.filter((l) => l.adapterId !== adapterId)
+          },
+          { tightening: true },
+        )
+        .catch(() => undefined)
+      await this.approvals.forget(adapterId).catch(() => undefined)
+      // Its logins: the grants, their evidence, and a Keychain copy nothing else uses.
+      const before = await this.grants.list().catch(() => [] as readonly Grant[])
+      for (const secret of new Set(before.filter((g) => g.adapterId === adapterId).map((g) => g.secret))) {
+        await this.revokeGrantEvidence(adapterId, secret).catch(() => undefined)
+        await this.grants.revoke(adapterId, secret).catch(() => undefined)
+      }
+      const after = await this.grants.list().catch(() => [] as readonly Grant[])
+      for (const gone of before.filter((g) => g.adapterId === adapterId && g.provider === 'keychain-copy')) {
+        if (!after.some((g) => g.provider === 'keychain-copy' && g.itemRef === gone.itemRef))
+          await this.deps.credentials.forgetCopy(gone.itemRef).catch(() => {})
+      }
+      for (const setting of Object.keys(await this.adapterSettings.chosen(adapterId).catch(() => ({}))))
+        await this.adapterSettings.clear(adapterId, setting).catch(() => undefined)
+      await packages.remove(adapterId)
+      await this.deps.ui.clearSiteData?.(adapterId).catch(() => undefined)
+      await this.audit.append({
+        type: 'adapter-removed',
+        adapterId,
+        adapterHash: adapter.hash,
+        version: adapter.definition.manifest.version,
+        clientId,
+      })
+      this.emit('adapters-changed')
+      this.emit('grants-changed')
+      this.emit('attention-changed')
+    })
   }
 
   /**
@@ -2507,9 +2626,10 @@ export class AppService {
       caseProcess: runtime.start,
       installed: async (adapterId) => {
         const adapter = this.adapter(adapterId)
-        return adapter === null
-          ? null
-          : { manifest: adapter.definition.manifest, hash: adapter.hash, files: adapter.files }
+        if (adapter === null) return null
+        // The whole package: an adapter's own `files` are its code only.
+        const files = (await this.packages?.files(adapterId, adapter.hash)) ?? adapter.files
+        return { manifest: adapter.definition.manifest, hash: adapter.hash, files }
       },
       approved: async (adapterId) => {
         const snapshot = await this.snapshots.get(adapterId)
@@ -3334,6 +3454,7 @@ export class AppService {
           request: (kind, subject, requester, note) => broker.request(kind, subject, requester, note),
           status: (id, asker) => broker.status(id, asker),
           withdraw: (id, asker) => broker.withdraw(id, asker),
+          ended: () => broker.ended(),
           waiting: () =>
             broker.list().map((p) => ({
               requestId: p.request.id,
@@ -3389,6 +3510,37 @@ export class AppService {
           : { adapterName: listed.adapterName, title: listed.declaration.title }
       },
       toolOff: (clientId, qualified) => this.clients.toolsOff(clientId).has(qualified),
+      requestRemoval: async (clientId, clientName, adapterId, note) => {
+        const adapter = this.adapter(adapterId)
+        if (adapter === null) return 'not-found'
+        if (!this.canRemove(adapterId)) return 'built-in'
+        const siteName = adapter.definition.manifest.name
+        const asker = `local:${clientId}`
+        for (const ask of this.removalAsks.values())
+          if (ask.adapterId === adapterId && ask.asker === asker) return { kind: 'removal-already', siteName }
+        const id = `rm${randomBytes(15).toString('base64url')}`
+        const at = this.deps.now()
+        this.removalAsks.set(id, {
+          kind: 'agent-request',
+          id,
+          requestKind: 'uninstall',
+          ref: id.slice(2, 6).toUpperCase(),
+          title: `Remove ${siteName}`,
+          details: [
+            `Its tools go for every app and agent.`,
+            `Valet deletes its versions, approvals, the logins you gave it, its settings and its browser data.`,
+          ],
+          adapterId,
+          agentName: clientName,
+          agentNote: note,
+          choices: null,
+          requestedAt: new Date(at).toISOString(),
+          expiresAt: new Date(at + 24 * 60 * 60_000).toISOString(),
+          asker,
+        })
+        this.emit('attention-changed')
+        return { kind: 'removal-asked', siteName }
+      },
       turnOffTool: async (clientId, qualified) => {
         const done = await this.clients.turnOffTool(clientId, qualified)
         if (done === 'done') {
@@ -3478,6 +3630,15 @@ export class AppService {
   }
 
   /** The client as the screens show it, with its calls over the last seven days. */
+  /** Tells connected clients their tool lists changed; a failure only delays it to the next refresh. */
+  private refreshEndpoint(): void {
+    try {
+      this.endpoint?.refresh()
+    } catch {
+      // The caller checks access on every call anyway.
+    }
+  }
+
   private async clientInfos(): Promise<ClientInfo[]> {
     const records = await this.reader.records()
     const since = this.deps.now() - 7 * 24 * 60 * 60_000
@@ -3578,6 +3739,8 @@ export class AppService {
         versions: (adapterId) => this.adapterVersions(adapterId),
         rollbackPreview: (adapterId, hash) => this.rollbackPreview(adapterId, hash),
         rollback: (adapterId, hash) => this.rollback(adapterId, hash),
+        canRemove: async (adapterId) => this.canRemove(adapterId),
+        remove: (adapterId) => this.removeAdapter(adapterId),
         canInstallFromFolder: async () => this.packages !== null && deps.packages?.folders !== undefined,
         installFromFolder: async () => {
           const folders = deps.packages?.folders
@@ -3830,6 +3993,23 @@ export class AppService {
           const result = await addToDesktopConfig(path, this.serverName(), bridge, deps.now())
           return { path, ...result }
         },
+        access: async (clientId) => {
+          const capabilities = this.clients.capabilities(clientId)
+          if (capabilities === null) throw new ValetError('config', 'not-found')
+          return { ...capabilities, toolsOff: [...this.clients.toolsOff(clientId)].sort() }
+        },
+        setAccess: async (clientId, patch) => {
+          if (!(await this.clients.setCapabilities(clientId, patch)))
+            throw new ValetError('config', 'not-found')
+          this.refreshEndpoint()
+          this.emit('clients-changed')
+        },
+        turnToolOn: async (clientId, qualified) => {
+          if (!(await this.clients.turnOnTool(clientId, qualified)))
+            throw new ValetError('config', 'not-found')
+          this.refreshEndpoint()
+          this.emit('clients-changed')
+        },
       },
       attention: {
         list: async (): Promise<AttentionItem[]> => {
@@ -3845,6 +4025,7 @@ export class AppService {
             ...this.handoffs.list(),
             ...this.broker.list(),
             ...this.consentItems(),
+            ...this.agentRequestItems(),
             ...reviews,
             ...states.flatMap(missingItems),
             ...this.repairItems(),
@@ -3853,6 +4034,30 @@ export class AppService {
         },
         dismiss: async (id) => {
           if (!this.missed.dismiss(id)) throw new ValetError('config', 'not-found')
+        },
+        approveRequest: async (id, choice) => {
+          const removal = this.removalAsks.get(id)
+          if (removal !== undefined) {
+            this.removalAsks.delete(id)
+            await this.removeAdapter(removal.adapterId ?? '', removal.asker)
+            return true
+          }
+          const broker = this.approvalBroker
+          const pending = broker?.get(id) ?? null
+          if (broker === null || pending === null || agentRequestItem(pending) === null)
+            throw new ValetError('config', 'not-found')
+          const result = await broker.approveOnMac(id, choice === null ? {} : { choice })
+          return result.ok
+        },
+        declineRequest: async (id) => {
+          if (this.removalAsks.delete(id)) {
+            this.emit('attention-changed')
+            return true
+          }
+          const broker = this.approvalBroker
+          const pending = broker?.get(id) ?? null
+          if (broker === null || pending === null || agentRequestItem(pending) === null) return false
+          return broker.decline(id, { via: 'mac' })
         },
       },
       answerConfirmation: (confirmationId: string, approved: boolean, from: AppWindow) =>

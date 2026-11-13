@@ -991,6 +991,13 @@ describe('probe answers', () => {
     })
   })
 
+  it('is logged out on a redirect when the probe lists a redirect status, not otherwise', async () => {
+    const signIn = { ...json({ shopper: { loggedIn: true } }), redirected: true as const }
+    const probe = { ...manifest.session.probe, loggedOutStatuses: [401, 302] }
+    expect(await probeOutcome(signIn, probe)).toMatchObject({ errorClass: 'not-logged-in' })
+    expect(await probeOutcome(signIn)).not.toMatchObject({ errorClass: 'not-logged-in' })
+  })
+
   it('does not treat a 401 as logged out when the probe lists other statuses', async () => {
     const probe = { ...manifest.session.probe, loggedOutStatuses: [419] }
     expect(await probeOutcome(json({}, 401), probe)).toEqual({

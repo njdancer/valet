@@ -4,6 +4,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -28,9 +29,14 @@ export function cleanEnv(extra = {}, keep = []) {
 /**
  * The installed Electron, cloned (APFS copy-on-write) into `work` without the default app:
  * electron-builder skips its own clean-up when given electronDist, and the bundle should match
- * what a release (which downloads Electron) contains.
+ * what a release (which downloads Electron) contains. The electron package fetches its binary on
+ * first use, not at install, so a fresh checkout has no dist until something asks for it: asking
+ * here fetches it.
  */
 export function electronDist(work) {
+  if (!existsSync(join(APP_DIR, 'node_modules', 'electron', 'dist'))) {
+    createRequire(join(APP_DIR, 'package.json'))('electron')
+  }
   const dist = join(work, 'electron-dist')
   execFileSync('/bin/cp', ['-cR', join(APP_DIR, 'node_modules', 'electron', 'dist'), dist])
   rmSync(join(dist, 'Electron.app', 'Contents', 'Resources', 'default_app.asar'), { force: true })

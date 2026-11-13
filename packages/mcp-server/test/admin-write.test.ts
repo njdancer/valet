@@ -53,6 +53,7 @@ function writer(overrides: Partial<AdminWriter> = {}): AdminWriter & { calls: Ca
     requestSetting: log<WriteOutcome>('requestSetting', { kind: 'asked', request: WAITING, reused: false }),
     requestTool: log<WriteOutcome>('requestTool', { kind: 'asked', request: WAITING, reused: false }),
     turnOffTool: log<WriteOutcome>('turnOffTool', { kind: 'done', what: 'x' }),
+    requestRemoval: log('requestRemoval', { kind: 'removal-asked' as const, siteName: 'Library' }),
     disconnect: log<WriteOutcome>('disconnect', { kind: 'done', what: 'x' }),
     approvals: log('approvals', [WAITING]),
     withdraw: log('withdraw', 'withdrawn' as const),

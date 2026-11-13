@@ -101,6 +101,7 @@ function authoring(overrides: Partial<Authoring> = {}): Authoring & { writes: st
     deleteDraft: async () => ({ draftId: DRAFT, deleted: true }),
     browserOpen: async () => VIEW,
     browserClick: async () => VIEW,
+    browserClose: async () => ({ closed: true }),
     browserType: async () => VIEW,
     browserSnapshot: async () => VIEW,
     browserQuery: async () => ({ count: 0, matches: [] }),
@@ -162,6 +163,28 @@ describe('authoring tools', () => {
     expect(a.writes).toEqual([])
     const read = await runAuthoringTool(tool('valet_get_draft'), r, a, { draftId: DRAFT }, LOCAL)
     expect(read.isError).toBeUndefined()
+  })
+
+  it('gives the authoring guide, with the manifest’s JSON Schema, to anyone who may see Valet', async () => {
+    const r = reader({
+      access: () => ({ seeValet: true, allActivity: false, askForChanges: false, name: 'Claude Desktop' }),
+    })
+    const result = await runAuthoringTool(tool('valet_authoring_guide'), r, authoring(), {}, LOCAL)
+    expect(result.isError).toBeUndefined()
+    const guide = result.structuredContent as { guide: string; manifestSchema: { properties: object } }
+    expect(guide.guide).toMatch(/loggedOutStatuses/)
+    expect(Object.keys(guide.manifestSchema.properties)).toEqual(
+      expect.arrayContaining([
+        'home',
+        'navigation',
+        'egress',
+        'secrets',
+        'session',
+        'auth',
+        'requests',
+        'tools',
+      ]),
+    )
   })
 
   it('tries a read tool live only with Ask for changes, and hands the output back as the site’s', async () => {

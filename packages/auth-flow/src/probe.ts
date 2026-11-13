@@ -2,7 +2,7 @@
 // anything has been handed to the tool partition. The AuthProbe hook only fetches the evidence;
 // deciding what it means happens here, so that every caller reads a probe the same way.
 
-import { type FetchResult, httpsOrigin, urlOriginAllowed, ValetError } from '@valet/core'
+import { type FetchResult, httpsOrigin, redirectedLoggedOut, urlOriginAllowed, ValetError } from '@valet/core'
 import { type FlowContext, guarded } from './context'
 
 /**
@@ -32,6 +32,9 @@ export async function probeLoggedIn(ctx: FlowContext): Promise<boolean> {
   // failure that skips the cooldown.
   const refusal = siteRefusal(result)
   if (refusal !== null) throw new ValetError('probe', refusal)
+  // The probe follows redirects (each hop on the navigation origins), so a signed-out page that
+  // sends the visitor to sign in answers 200 from there: the manifest's redirect status says so.
+  if (redirectedLoggedOut(result, probe.loggedOutStatuses)) return false
   if (result.status !== probe.expectStatus) {
     if (probe.loggedOutStatuses.includes(result.status)) return false
     throw new ValetError('probe', 'unavailable')

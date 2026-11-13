@@ -75,6 +75,22 @@ export class ApprovalStore implements ApprovalLookup {
     })
   }
 
+  /** Drops every approval of an adapter (the site was removed; the caller audits that). */
+  forget(adapterId: string): Promise<void> {
+    if (!ADAPTER_ID.test(adapterId)) return Promise.reject(new ValetError('manifest', 'invalid'))
+    const done = this.queue.then(async () => {
+      const approved = await this.load()
+      if (!approved.delete(adapterId)) return
+      const file = {
+        version: 1,
+        approved: Object.fromEntries([...approved].sort(([a], [b]) => a.localeCompare(b))),
+      }
+      await writeFileAtomic(this.path, `${JSON.stringify(file, null, 2)}\n`)
+    })
+    this.queue = done.catch(() => undefined)
+    return done
+  }
+
   /** `change` returns the adapter's new hashes, or null to leave the file alone. */
   private update(
     adapterId: string,

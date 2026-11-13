@@ -222,6 +222,19 @@ export class ClientRegistry {
     return 'done'
   }
 
+  /**
+   * Turns one site tool back on for one client: the person's click on its Connections page. False
+   * if it wasn't off, or the client is unknown or revoked.
+   */
+  async turnOnTool(id: string, qualified: string): Promise<boolean> {
+    if (this.capabilities(id) === null || !this.toolsOff(id).has(qualified)) return false
+    this.clients = this.clients.map((c) =>
+      c.id === id ? { ...c, toolsOff: (c.toolsOff ?? []).filter((t) => t !== qualified) } : c,
+    )
+    await this.save()
+    return true
+  }
+
   /** Records a call from a client: when, and what it says it is. Returns true when the shown row changed. */
   seen(id: string, reportedName: string, transport: 'http' | 'stdio'): boolean {
     const existing = this.get(id)

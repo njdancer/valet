@@ -91,7 +91,19 @@ function beforeReady(): void {
   recordOwnPorts()
   const debugging = Number(app.commandLine.getSwitchValue('remote-debugging-port'))
   if (debugging > 0) addOwnPort(debugging)
-  if (mode.demo) app.commandLine.appendSwitch('host-resolver-rules', demoResolverRules(mode))
+  if (mode.demo) {
+    // The evals' own sites (eval/README.md) on this machine's port 443, for the windows that
+    // resolve names themselves (the sign-in window); the proxied partitions use VALET_E2E_SITES.
+    const evalHosts =
+      __VALET_DEMO_BUILD__ && mode.e2e
+        ? (process.env['VALET_E2E_SITES'] ?? '')
+            .split(',')
+            .map((pair) => /^([a-z0-9.-]+\.test)=127\.0\.0\.1:443$/.exec(pair.trim())?.[1])
+            .filter((host): host is string => host !== undefined)
+        : []
+    const rules = [demoResolverRules(mode), ...evalHosts.map((host) => `MAP ${host} 127.0.0.1`)]
+    app.commandLine.appendSwitch('host-resolver-rules', rules.join(', '))
+  }
   protocol.registerSchemesAsPrivileged([{ scheme: APP_SCHEME, privileges: APP_SCHEME_PRIVILEGES }])
 }
 
@@ -261,6 +273,22 @@ async function main(): Promise<void> {
     if (__VALET_SHOWCASE_BUILD__) log(`showcase build (${SHOWCASE_BUILD_MARKER})`)
   }
   const demoSite = demo
+  // The scratch browser's and live trials' upstream connections: public addresses only, and the
+  // private ones the person allowed. A demo build may send them through a proxy for the evals.
+  type AuthoringDial = (
+    allowPrivate: (address: string, port: number) => boolean,
+  ) => ReturnType<typeof publicOnlyDial>
+  // The evals' installed adapters (other than the demo shop) dial the same way, minus private ones.
+  let evalDial: ReturnType<typeof publicOnlyDial> | null = null
+  let authoringDial: AuthoringDial = (allowPrivate) => publicOnlyDial(undefined, allowPrivate)
+  const upstreamProxy = process.env['VALET_E2E_UPSTREAM_PROXY']
+  if (__VALET_DEMO_BUILD__ && mode.demo && upstreamProxy !== undefined && upstreamProxy !== '') {
+    const { evalSites, upstreamProxyDial } = await import('./upstream-dial')
+    const sites = evalSites(process.env['VALET_E2E_SITES'])
+    authoringDial = (allowPrivate) => upstreamProxyDial(upstreamProxy, allowPrivate, sites)
+    evalDial = upstreamProxyDial(upstreamProxy, () => false, sites)
+    log('demo: drafts reach sites through an upstream proxy')
+  }
   // The demo's Woolworths is a built-in of its own, made for the fake site; demo mode has its own
   // data folder (launch.ts), so it never meets the real one's versions or approvals.
   const builtins = builtinPackages(
@@ -399,7 +427,11 @@ async function main(): Promise<void> {
     createDriver: (manifest, reporters) =>
       demoSite !== null && manifest.id === 'woolworths'
         ? createElectronSessionDriver(manifest, { ...driverOptions, ...reporters }, { dial: demoSite.dial })
-        : createElectronSessionDriver(manifest, { ...reporters }),
+        : createElectronSessionDriver(
+            manifest,
+            { ...reporters },
+            evalDial === null ? {} : { dial: evalDial },
+          ),
     credentials: demoSite === null ? realCredentials(credentialDeps) : demoSite.credentials,
     approvalKeys,
     relay: devRelay,
@@ -409,7 +441,7 @@ async function main(): Promise<void> {
       openElectronScratchBrowser({
         partition: `scratch:${draftId}:${++scratchOpens}`,
         rules,
-        dial: publicOnlyDial(undefined, allowPrivate),
+        dial: authoringDial(allowPrivate),
       }),
     // A live trial: the same driver a real call uses, in partitions of its own that live in memory,
     // through the dial that refuses private addresses (docs/authoring-tools.md#live-trials).
@@ -426,7 +458,7 @@ async function main(): Promise<void> {
       createElectronSessionDriver(
         manifest,
         { trialLabel: label, ...(session === null ? {} : { trialSession: session }) },
-        { dial: publicOnlyDial(undefined, allowPrivate) },
+        { dial: authoringDial(allowPrivate) },
       ),
     startEndpoint: (caller, clients, onSessionsChanged, admin, authoring) =>
       startEndpoint({
@@ -500,6 +532,13 @@ async function main(): Promise<void> {
         windows.closeAll()
         return true
       },
+      clearSiteData: async (adapterId: string) => {
+        for (const role of ['auth', 'tool'] as const) {
+          const s = session.fromPartition(partitionName(role, adapterId))
+          await s.clearStorageData().catch(() => undefined)
+          await s.clearCache().catch(() => undefined)
+        }
+      },
       clearBrowserData: async () => {
         const sessions = (service?.adapterIds() ?? []).flatMap((id) =>
           (['auth', 'tool'] as const).map((role) => session.fromPartition(partitionName(role, id))),
@@ -541,6 +580,9 @@ async function main(): Promise<void> {
     Object.defineProperty(globalThis, '__valetE2eTray', {
       value: Object.freeze({ toggle: () => windows.toggleTray({ x: 900, y: 0, width: 24, height: 22 }) }),
     })
+
+  if (__VALET_DEMO_BUILD__ && mode.demo && mode.e2e)
+    Object.defineProperty(globalThis, '__valetE2eRequests', { value: Object.freeze(running.e2eRequests()) })
 
   app.on('second-instance', () => windows.openControlPanel(null))
   let stopping = false

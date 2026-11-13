@@ -717,6 +717,23 @@ export interface ClientInfo {
   readonly revokedAt: IsoTime | null
 }
 
+/**
+ * What one app on this Mac may do besides calling site tools (IA section 5, "Use tools · See
+ * Valet · Ask for changes"), and the site tools it turned off for itself with valet_turn_off_tool.
+ */
+export interface ClientAccess {
+  /** Valet's own read-only tools answer it. */
+  readonly seeValet: boolean
+  /** Those tools show other agents' calls too, not only its own. */
+  readonly allActivity: boolean
+  /** Valet's write and authoring tools, each still approved by the person where it widens. */
+  readonly askForChanges: boolean
+  /** `<adapterId>.<tool>`, sorted. */
+  readonly toolsOff: readonly string[]
+}
+
+export type ClientAccessPatch = Partial<Omit<ClientAccess, 'toolsOff'>>
+
 // ---------- Attention ----------
 
 export interface NeedsUserItem {
@@ -887,8 +904,44 @@ export interface MissedItem {
   readonly missedAt: IsoTime
 }
 
+/**
+ * A request an agent made through Valet's own tools that only the person can answer, and that no
+ * other item shows: a setting, a signed-in session, the home network, a tool of its own, a login.
+ * A paired phone gets the same card; whichever answers first wins (docs/approval-broker.md,
+ * "Approving at the Mac"). Installs and updates are review items instead.
+ */
+export interface AgentRequestItem {
+  readonly kind: 'agent-request'
+  /** The broker's request id. */
+  readonly id: string
+  readonly requestKind:
+    | 'setting'
+    | 'authoring-session'
+    | 'private-network'
+    | 'tool-enable'
+    | 'secret-grant'
+    /** An agent asks to remove a site. Not signed: it only narrows, so Approve needs no Touch ID. */
+    | 'uninstall'
+  /** Four characters of the request's digest, as the Touch ID prompt names it. */
+  readonly ref: string
+  /** Built by the Mac from the request's subject. */
+  readonly title: string
+  /** What approving does, one line each, from the subject. Quoted text came from an adapter. */
+  readonly details: readonly string[]
+  readonly adapterId: string | null
+  /** The asking app's name as the person named it, or what a cloud agent calls itself. */
+  readonly agentName: string
+  /** The agent's own words about why. Never trusted; shown as "The agent says". */
+  readonly agentNote: string | null
+  /** For a setting the person picks on the card (a store): the values offered. */
+  readonly choices: readonly { readonly value: string; readonly label: string }[] | null
+  readonly requestedAt: IsoTime
+  readonly expiresAt: IsoTime
+}
+
 export type AttentionItem =
   | NeedsUserItem
+  | AgentRequestItem
   | ConfirmationItem
   | ReviewItem
   | RemoteConsentItem
@@ -1216,6 +1269,13 @@ export interface ValetApi {
      * a version that isn't offered.
      */
     rollback(adapterId: string, hash: string): Promise<void>
+    /** Whether the site can be removed: it isn't built in, and this build keeps a package store. */
+    canRemove(adapterId: string): Promise<boolean>
+    /**
+     * Removes a site that isn't built in: its tools, versions, approvals, logins, settings and
+     * browser data. The click is the decision; it only tightens. Rejects for a built-in site.
+     */
+    remove(adapterId: string): Promise<void>
     /** Whether this build installs from a folder (development builds only). */
     canInstallFromFolder(): Promise<boolean>
     /**
@@ -1287,6 +1347,12 @@ export interface ValetApi {
      * file beside it first. Refuses a file that isn't a JSON object, rather than lose what is in it.
      */
     addToClaudeDesktop(clientId: string): Promise<DesktopConfigWritten>
+    /** What the app may do besides calling site tools, and the tools it turned off for itself. */
+    access(clientId: string): Promise<ClientAccess>
+    /** The person's own switches on the app's page. Not signed: like adding the app, a local choice. */
+    setAccess(clientId: string, patch: ClientAccessPatch): Promise<void>
+    /** Turns back on a site tool the app turned off for itself. */
+    turnToolOn(clientId: string, qualified: string): Promise<void>
   }
   readonly attention: {
     /**
@@ -1297,6 +1363,14 @@ export interface ValetApi {
     list(): Promise<readonly AttentionItem[]>
     /** Removes a missed item. Rejects for any other kind, or an id that isn't there. */
     dismiss(id: string): Promise<void>
+    /**
+     * Approves an agent's request with Touch ID (the Mac's own signature), or, for a removal, removes
+     * the site. False if the person
+     * cancelled the prompt or it ended first. `choice` is the value picked on a card that offers them.
+     */
+    approveRequest(id: string, choice: string | null): Promise<boolean>
+    /** Declines an agent's request. False if it had already ended. */
+    declineRequest(id: string): Promise<boolean>
   }
   /**
    * Declines at once. An approval is accepted only from the confirmation's own panel, and only

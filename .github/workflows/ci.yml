@@ -190,6 +190,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: release dry run
         run: pnpm release "$(node -p "require('./apps/desktop/package.json').version")" --dry-run --skip-check
+      # The development package carries the same helpers (scripts/package.mjs checks they're inside),
+      # so a packaged dev build can open its approvals store instead of locking down.
+      - name: development package carries the helpers
+        run: pnpm --filter @valet/desktop package --target dir --skip-swift
       # The summary and the signed feed metadata only (the key it was signed with is gone); the
       # dry-run DMG and zips are not kept.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

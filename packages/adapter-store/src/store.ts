@@ -229,6 +229,20 @@ export class AdapterStore {
     })
   }
 
+  /**
+   * Removes every stored version of an adapter and its state (the person removed the site).
+   * Returns false if nothing was stored.
+   */
+  remove(id: string): Promise<boolean> {
+    return this.serial(async () => {
+      checkId(id)
+      const folder = join(this.dir, id)
+      const had = (await this.state(id).catch(() => null)) !== null
+      await rm(folder, { recursive: true, force: true })
+      return had
+    })
+  }
+
   private async writeState(id: string, state: AdapterState): Promise<void> {
     await writeFileAtomic(
       join(this.dir, id, 'state.json'),

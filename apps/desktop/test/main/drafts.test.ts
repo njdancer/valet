@@ -25,6 +25,7 @@ import {
   DraftAuthoring,
   type RequestState,
   type SubmitRequest,
+  trialProblem,
 } from '../../src/main/core/drafts/authoring'
 import { partialMismatch } from '../../src/main/core/drafts/cases'
 import { lint, siteDomain } from '../../src/main/core/drafts/checks'
@@ -416,6 +417,21 @@ describe('submit', () => {
     expect(detail.draft.submission?.note).toBe('Use the API instead')
   }, 60_000)
 
+  it('reads a submission Valet forgot the answer to (a restart) as approved once it is installed', async () => {
+    const h = await harness()
+    const { draft } = await h.authoring.createDraft(AGENT, { adapterId: 'shop', from: 'blank' })
+    const asked = await h.authoring.submit(AGENT, draft.draftId, {
+      note: null,
+      references: [],
+      followOns: [],
+    })
+    h.states.delete(asked.requestId)
+    // The broker no longer knows the request, and nothing is installed: still waiting, as far as anyone knows.
+    expect((await h.authoring.getDraft(AGENT, false, draft.draftId)).draft.status).toBe('waiting')
+    h.installed.set('shop', { files: blankDraft('shop', 'Shop'), hash: asked.adapterHash })
+    expect((await h.authoring.getDraft(AGENT, false, draft.draftId)).draft.status).toBe('approved')
+  }, 60_000)
+
   it('keeps the draft waiting on its earlier request when a resubmission is refused', async () => {
     let refuse = false
     const states = new Map<string, RequestState>()
@@ -735,6 +751,7 @@ describe('live trials', () => {
       signedIn?: Map<string, readonly string[]>
       deps?: Partial<AuthoringDeps>
       installed?: PackageFiles
+      repairId?: string
     } = {},
   ) {
     const { fake, driver } = trialDriver(answer)
@@ -754,6 +771,7 @@ describe('live trials', () => {
       adapterId: 'shop',
       from: options.installed === undefined ? 'blank' : 'installed',
       name: 'Shop',
+      ...(options.repairId === undefined ? {} : { repairId: options.repairId }),
     })
     return { ...h, fake, guards: g, draftId: draft.draftId }
   }
@@ -878,6 +896,7 @@ describe('live trials', () => {
       lent.until = Number.POSITIVE_INFINITY
       const report = await h.authoring.liveTrial(AGENT, h.draftId, 'get_item', { id: 'abc-1' }, true)
       expect(report.ok).toBe(true)
+      expect(report.reproduces).toBeUndefined()
       expect(h.fake.sessions.at(-1)).toMatchObject({ adapterId: 'shop', installed: { id: 'shop' } })
       const policy = h.fake.policies.at(-1) as unknown as { egress: string[]; requests: { path: string }[] }
       expect(policy.requests.map((r) => r.path)).toEqual(['/api/items/:id'])
@@ -887,6 +906,81 @@ describe('live trials', () => {
       await h.authoring.submit(AGENT, h.draftId, { note: null, references: [], followOns: [] })
       expect(h.submits[0]?.checks).toContain(
         'Live trial of get_item, signed in: returned output that fits its schema',
+      )
+    }, 60_000)
+
+    it('takes a signed-in trial as a repair’s reproduction when the installed version fails it as the ticket says', async () => {
+      const opened = new Date(Date.now() - 60_000).toISOString()
+      const ticket = {
+        id: 'R-WXYZ',
+        adapterId: 'shop',
+        adapterHash: 'a'.repeat(64),
+        tool: 'get_item',
+        stage: 'tool-run',
+        errorClass: 'site-changed',
+        openedAt: opened,
+        lastFailedAt: opened,
+        lastCallId: 'call-2',
+        failures: 2,
+        state: 'open' as const,
+        fixedAt: null,
+      }
+      const reading = (field: string) => `import { tool, ValetError } from '@valet/core'
+import { z } from 'zod'
+export const tools = {
+  get_item: tool({
+    input: z.object({ id: z.string() }),
+    output: z.object({ id: z.string(), title: z.string(), price: z.number().nullable() }),
+    async run(ctx, input) {
+      const r = await ctx.page.fetch('/api/items/' + input.id, { headers: { accept: 'application/json' } })
+      const body = r.body as Record<string, unknown> | null
+      const title = body?.['${field}']
+      if (typeof title !== 'string') throw new ValetError('tool-run', 'site-changed')
+      return { id: input.id, title, price: null }
+    },
+  }),
+}
+`
+      // The site now sends `name` where the installed version reads `title`.
+      const now = () => ({ status: 200, body: { id: 'abc-1', name: 'Live item' } })
+      const installed = { ...INSTALLED, 'src/tools.ts': reading('title') }
+      const h = await trialHarness(now, {
+        deps: { ...deps, repairs: { get: (id) => (id === ticket.id ? ticket : null), list: () => [ticket] } },
+        installed,
+        signedIn: new Map([['shop', ['example.com']]]),
+        repairId: ticket.id,
+      })
+      const manifest = JSON.parse(INSTALLED['manifest.json'] ?? '{}')
+      await h.authoring.writeFile(
+        AGENT,
+        h.draftId,
+        'manifest.json',
+        JSON.stringify({ ...manifest, version: '0.1.1' }),
+      )
+      await h.authoring.writeFile(AGENT, h.draftId, 'src/tools.ts', reading('name'))
+      await h.authoring.deleteFile(AGENT, h.draftId, 'test/example.json')
+      // An ordinary case, written by the agent: the page behind the sign-in is one Valet can't record.
+      const written = {
+        name: 'reads the name',
+        tool: 'get_item',
+        input: { id: 'abc-1' },
+        fetch: [{ url: '/api/items/abc-1', body: { inline: { id: 'abc-1', name: 'Live item' } } }],
+        expect: { output: { id: 'abc-1', title: 'Live item', price: null } },
+      }
+      await h.authoring.writeFile(AGENT, h.draftId, 'test/item.json', JSON.stringify({ cases: [written] }))
+      const before = await h.authoring.check(AGENT, h.draftId)
+      expect(before.findings.find((f) => f.check === 'reproduction')?.text).toMatch(
+        /signed-in valet_live_trial/,
+      )
+      const report = await h.authoring.liveTrial(AGENT, h.draftId, 'get_item', { id: 'abc-1' }, true)
+      expect(report).toMatchObject({ ok: true, reproduces: 'R-WXYZ' })
+      // The draft, then the installed version on the same session.
+      expect(h.fake.sessions).toHaveLength(2)
+      const after = await h.authoring.check(AGENT, h.draftId)
+      expect(after.findings.filter((f) => f.check === 'reproduction')).toEqual([])
+      await h.authoring.submit(AGENT, h.draftId, { note: null, references: [], followOns: [] })
+      expect(h.submits.at(-1)?.checks).toContain(
+        'Repair R-WXYZ: in a signed-in trial, the installed version fails as it did, and this one works',
       )
     }, 60_000)
 
@@ -976,6 +1070,16 @@ describe('live trials', () => {
       /no live trials/,
     )
   }, 60_000)
+})
+
+describe('trial problems', () => {
+  it('says a signed-in trial that met a signed-out site has a lent session that ended there', () => {
+    const notLoggedIn = {
+      outcome: { kind: 'error', stage: 'tool-run', errorClass: 'not-logged-in' },
+    } as unknown as Parameters<typeof trialProblem>[0]
+    expect(trialProblem(notLoggedIn, true)).toMatch(/lent session is signed out/)
+    expect(trialProblem(notLoggedIn, false)).toBe('Failed with tool-run/not-logged-in.')
+  })
 })
 
 describe('helpers', () => {

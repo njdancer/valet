@@ -292,6 +292,11 @@ export class ApprovalBroker {
     return closed !== undefined && sameAsker(closed.requester, asker) ? closed : null
   }
 
+  /** Requests that ended and are still remembered, newest first. */
+  ended(): readonly Closed[] {
+    return [...this.closed]
+  }
+
   /** Resolves when the request closes; at once if it already has. */
   wait(requestId: string): Promise<Closed | null> {
     const closed = this.closed.find((c) => c.requestId === requestId)
@@ -595,6 +600,14 @@ export class ApprovalBroker {
     return this.withdrawWhere(
       (r) => r.requester.kind === 'agent' && r.requester.clientId === clientId,
       'client-revoked',
+    )
+  }
+
+  /** Withdraws every waiting request about one adapter, when the person removes the site. */
+  withdrawAdapter(adapterId: string): Promise<number> {
+    return this.withdrawWhere(
+      (r) => (r.subject as { readonly adapterId?: unknown }).adapterId === adapterId,
+      'stale',
     )
   }
 

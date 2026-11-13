@@ -16,6 +16,7 @@ import {
   ConfirmDialog,
   DescriptionList,
   Disclosure,
+  Field,
   Inline,
   ObjectLink,
   Page,
@@ -31,7 +32,7 @@ import {
   Value,
 } from '@valet/ui'
 import { useState } from 'react'
-import type { ClientInfo, RemoteClientItem } from '../../../shared/api'
+import type { ClientAccessPatch, ClientInfo, RemoteClientItem } from '../../../shared/api'
 import { useAction, useApi, useLoad, useNow } from '../../lib/api-context'
 import { formatAgo, formatDay, plural } from '../../lib/format'
 import { href, navigate } from '../../lib/router'
@@ -215,6 +216,7 @@ function AppPage({ client }: { readonly client: ClientInfo }) {
             />
           </CardContent>
         </Card>
+        {revoked ? null : <AppAccess client={client} />}
         {revoked ? null : (
           <Card>
             <CardContent>
@@ -256,6 +258,104 @@ function AppPage({ client }: { readonly client: ClientInfo }) {
         </Text>
       </ConfirmDialog>
     </Page>
+  )
+}
+
+/**
+ * What the app may do besides calling site tools (IA section 5), and the site tools it turned off
+ * for itself. The person's own switches: they apply at once, and the app's tool list follows.
+ */
+function AppAccess({ client }: { readonly client: ClientInfo }) {
+  const api = useApi()
+  const action = useAction()
+  const access = useLoad((a) => a.clients.access(client.id), [client.id], ['clients-changed'])
+  const reach = useReach()
+  const set = (patch: ClientAccessPatch) => void action.run(() => api.clients.setAccess(client.id, patch))
+  const turnOn = async (qualified: string) => {
+    if (await action.run(() => api.clients.turnToolOn(client.id, qualified)))
+      toast.success('Turned back on', { description: `${client.name} sees ${qualified} again.` })
+  }
+  if (access.status === 'loading') return null
+  if (access.status === 'error') return <Failed failed what={`load what ${client.name} may do`} />
+  const a = access.data
+  const titleOf = (qualified: string): string => {
+    const [siteId, tool] = qualified.split('.')
+    const site = reach.status === 'ready' ? reach.data.find((s) => s.id === siteId) : undefined
+    const found = site?.tools.find((t) => t.name === tool)
+    return site !== undefined && found !== undefined ? `${site.name}: ${found.title}` : qualified
+  }
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>What it may do</CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-5">
+        <Field
+          inline
+          label="Use tools"
+          description="Call the tools of every approved site. Every app on this Mac has this."
+        >
+          <Switch checked disabled aria-label="Use tools" />
+        </Field>
+        <Field
+          inline
+          label="See Valet"
+          description="Read Valet’s status, sites, Needs you, its own calls and the audit log."
+        >
+          <Switch
+            checked={a.seeValet}
+            onCheckedChange={(on) => set({ seeValet: on })}
+            aria-label="See Valet"
+          />
+        </Field>
+        <Field
+          inline
+          label="All agents’ activity"
+          description="With See Valet, it also sees other apps’ and agents’ calls, not only its own."
+        >
+          <Switch
+            checked={a.allActivity}
+            disabled={!a.seeValet}
+            onCheckedChange={(on) => set({ allActivity: on })}
+            aria-label="All agents’ activity"
+          />
+        </Field>
+        <Field
+          inline
+          label="Ask for changes"
+          description="Build and repair adapters, and ask for settings, logins and sessions. Anything that widens what it can reach still comes to you to approve."
+        >
+          <Switch
+            checked={a.askForChanges}
+            onCheckedChange={(on) => set({ askForChanges: on })}
+            aria-label="Ask for changes"
+          />
+        </Field>
+        <Stack gap={2}>
+          <Text weight="medium">Tools it turned off for itself</Text>
+          {a.toolsOff.length === 0 ? (
+            <Text size="sm" tone="muted">
+              None. An agent can turn a tool off for itself; it can’t turn one back on.
+            </Text>
+          ) : (
+            <ul className="m-0 flex list-none flex-col gap-2 p-0">
+              {a.toolsOff.map((qualified) => (
+                <li key={qualified} className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="flex flex-wrap items-center gap-2">
+                    <span>{titleOf(qualified)}</span>
+                    <Code>{qualified}</Code>
+                  </span>
+                  <Button size="sm" onClick={() => void turnOn(qualified)}>
+                    Turn back on
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Stack>
+        <Failed failed={action.failed} what={`change what ${client.name} may do`} />
+      </CardContent>
+    </Card>
   )
 }
 
