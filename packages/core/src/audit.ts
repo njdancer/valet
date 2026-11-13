@@ -133,6 +133,8 @@ export type AuditEvent =
       /** Which partition refused it: a login's (auth) or a tool run's (tool). */
       readonly partition: 'auth' | 'tool'
       readonly callId: string | null
+      /** Refused in a draft's live trial (callId is then the trial's), not an installed call. */
+      readonly draftId?: string
     }
   | {
       /** Tool code used a sandbox exception (docs/sandbox.md): which capability, and how it ended. */
@@ -323,6 +325,8 @@ export type AuditEvent =
         | 'session-value'
       /** Run with the adapter's session, under an authoring-session approval (PR 3). */
       readonly signedIn?: boolean
+      /** Requests refused during the trial, each also a request-blocked record. Absent for none. */
+      readonly blocked?: number
     }
   | { readonly type: 'device-paired'; readonly deviceId: string; readonly platform: 'ios' | 'macos' }
   | { readonly type: 'device-revoked'; readonly deviceId: string; readonly by: string }

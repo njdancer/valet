@@ -20,6 +20,7 @@ import {
   bundleHash,
   CredentialError,
   DEFAULT_SANDBOX,
+  describeDeclaration,
   type Grant,
   type GrantStore,
   type LocalAccess,
@@ -4430,7 +4431,7 @@ function shown(text: string, max: number): string | undefined {
 function confirmationPreview(item: ConfirmationItem): string[] {
   const lines: string[] = []
   for (const r of [...item.unlocks, ...item.requests]) {
-    const kept = shown(`${r.method} ${r.path}`, 200)
+    const kept = shown(describeDeclaration(r), 200)
     if (kept !== undefined) lines.push(kept)
   }
   if (item.adapterNote !== null) {

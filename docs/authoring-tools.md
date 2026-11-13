@@ -474,6 +474,30 @@ Built in PR 2b: `drafts/trial.ts` runs the call, `DraftAuthoring.liveTrial` deci
   those files puts "Live trial of get_quote, signed out: returned output that fits its schema" (or
   how it failed) on the card, and "Live trial: not run on this version" otherwise.
 
+### APIs on another host (2026-11-13)
+
+A claude.ai agent's Hacker News draft (home `news.ycombinator.com`, API on
+`hacker-news.firebaseio.com`, egress the API host only) passed its cases and failed every trial in
+87 ms with `egress/host-not-allowed` and an empty `blocked` list. The tool page opens `home` before
+tool code runs, and home's host wasn't in egress, so `SurfaceToolPage` refused it before sending
+anything and nobody reported it. What changed:
+
+- `homeUnreachable(manifest)` (core) names that mistake. valet_check_draft makes it an error, each
+  case fails with "A live call would fail with egress/host-not-allowed", and valet_live_trial
+  refuses before opening anything. It is not a schema rule, so stored packages still load.
+- A request declaration may name `host`: one egress host, bare and lower-case. Without it a
+  declaration applies on every egress host, as before. `decideRequest`, goto's GET lookup, the
+  driver's API roots, `refreshes` and the signed-in trial's narrowing all match on it, and every
+  place that shows a declaration uses `describeDeclaration` (`GET api.example.com/v0/item/:id`).
+- `SurfaceToolPage` tells the driver of each URL it refuses, reported as `host-not-allowed` with
+  `initiator: tool`, so a refused home load reaches `onBlocked` (and an installed call's audit).
+- A trial lists the runtime guard's own refusals of tool code's fetch and goto as well as the
+  driver's, with `initiator`, plus `blockedCount`. Each is a `request-blocked` audit record with the
+  trial's `callId` and `draftId`, so the blocked count and the audit log's blocked category show it,
+  and `draft-trial` carries `blocked`.
+- The lint cautions about a URL in tool code on an egress host that no declaration reaches, and the
+  egress message says bare hostnames, not `https://`.
+
 ## Repairs (PR 3)
 
 As authoring-agent.md's repair loop, with the IDE replaced by MCP:

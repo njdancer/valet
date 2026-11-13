@@ -261,8 +261,20 @@ export const trialReportSchema = z.object({
   output: z.object({ fromSite: z.unknown() }).nullable(),
   /** How it ended otherwise, in Valet's words. */
   problem: z.string().nullable(),
-  /** Requests Valet refused during the run, scrubbed: what egress or requests is missing. */
-  blocked: z.array(z.object({ method: z.string(), url: z.string(), reason: z.string() })),
+  /**
+   * Requests Valet refused during the run, scrubbed: what egress or requests is missing. Tool
+   * code's own (fetch, goto, and opening home) as well as the page's; the first 20.
+   */
+  blocked: z.array(
+    z.object({
+      method: z.string(),
+      url: z.string(),
+      reason: z.string(),
+      initiator: z.enum(['tool', 'page']).optional(),
+    }),
+  ),
+  /** How many requests were refused in all, past the 20 listed too. */
+  blockedCount: z.number().int().nonnegative().optional(),
   ms: z.number().int().nonnegative(),
   /**
    * A signed-in trial of a repair's tool after which the installed version failed as the ticket
@@ -829,7 +841,8 @@ export const AUTHORING_TOOLS: readonly AuthoringTool[] = [
       'during a session the person approved (valet_request_session), it runs with the installed adapter’s ' +
       'session, and only the GET reads the installed version declares reach it. On a repair draft, a ' +
       'signed-in trial that works is followed by the installed version on the same input; `reproduces` ' +
-      'then names the ticket it reproduced, for these files only.',
+      'then names the ticket it reproduced, for these files only. Every request Valet refuses is listed in ' +
+      '`blocked`; the trial opens the manifest’s home first, so home’s host must be in egress.',
     input: z.object({
       draftId: draftIdInput,
       tool: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/),

@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   ambiguousPath,
   decideRequest,
+  declarationOnHost,
+  describeDeclaration,
   pathMatches,
   type RequestDeclaration,
   touchesDeniedSegment,
@@ -104,6 +106,44 @@ describe('decideRequest', () => {
   it('lets an irreversible declaration through a denied path', () => {
     const decision = decideRequest('POST', 'https://www.example.com/api/checkout/place', hosts, declarations)
     expect(decision.allowed).toBe(true)
+  })
+})
+
+describe('declarations tied to a host', () => {
+  const hosts = ['news.example.com', 'api.example.net']
+  const declarations: RequestDeclaration[] = [
+    { method: 'GET', host: 'api.example.net', path: '/v0/item/:id', purpose: 'read' },
+    { method: 'GET', path: '/v0/any', purpose: 'read' },
+  ]
+
+  it('applies a declaration with a host on that host only', () => {
+    expect(decideRequest('GET', 'https://api.example.net/v0/item/101.json', hosts, declarations)).toEqual({
+      allowed: true,
+      declaration: declarations[0],
+    })
+    expect(decideRequest('GET', 'https://API.example.net/v0/item/101', hosts, declarations).allowed).toBe(
+      true,
+    )
+    expect(decideRequest('GET', 'https://news.example.com/v0/item/101.json', hosts, declarations)).toEqual({
+      allowed: false,
+      reason: 'undeclared',
+    })
+  })
+
+  it('applies a declaration without a host on every egress host', () => {
+    for (const host of hosts)
+      expect(decideRequest('GET', `https://${host}/v0/any`, hosts, declarations).allowed, host).toBe(true)
+  })
+
+  it('matches a :param against one whole segment, suffix and all, never more', () => {
+    expect(pathMatches('/v0/item/:id', '/v0/item/101.json')).toBe(true)
+    expect(pathMatches('/v0/item/:id', '/v0/item/101/kids')).toBe(false)
+  })
+
+  it('describes a declaration with its host', () => {
+    expect(describeDeclaration(declarations[0] as RequestDeclaration)).toBe('GET api.example.net/v0/item/:id')
+    expect(describeDeclaration(declarations[1] as RequestDeclaration)).toBe('GET /v0/any')
+    expect(declarationOnHost({}, 'x.example.com')).toBe(true)
   })
 })
 

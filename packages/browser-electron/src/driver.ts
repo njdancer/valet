@@ -558,6 +558,13 @@ export class ElectronSessionDriver implements SessionDriver {
       () => {
         this.clickPacedUntil = Date.now() + CLICK_GRACE_MS
       },
+      (method, url) =>
+        this.report(this.run, {
+          method: /^[A-Z]{1,16}$/i.test(method) ? method.toUpperCase() : 'INVALID',
+          target: requestTarget(url, false),
+          reason: 'host-not-allowed',
+          initiator: 'tool',
+        }),
     )
   }
 

@@ -4,6 +4,7 @@ import { defineAdapter, tool } from '../src/adapter'
 import {
   type AuthStep,
   hasLogin,
+  homeUnreachable,
   type ManifestInput,
   manifestSchema,
   messagesSourcesIn,
@@ -82,6 +83,44 @@ describe('manifestSchema', () => {
     expect(manifest.session.storage).toEqual([])
     expect(manifest.auth.frameOrigins).toEqual([])
     expect(manifest.session.probe).toMatchObject({ loggedOutStatuses: [401] })
+  })
+
+  it('says when home’s host is off egress, since every call opens home first', () => {
+    const input = copy()
+    input.egress = ['api.example.net']
+    expect(homeUnreachable(input as never)).toBe(
+      "egress must allow www.example.com, home's host: every call opens home first",
+    )
+    input.egress = ['*.example.com']
+    expect(homeUnreachable(input as never)).toBeNull()
+    expect(homeUnreachable(VALID as never)).toBeNull()
+  })
+
+  it('says egress takes bare hostnames when given an origin', () => {
+    const input = copy()
+    input.egress = ['www.example.com', 'https://api.example.net']
+    expect(issues(input).join('\n')).toMatch(/bare hostname such as api\.example\.com/)
+  })
+
+  it('takes a request host on an egress host, bare and lower-case', () => {
+    const input = copy()
+    input.egress = ['www.example.com', 'api.example.net']
+    input.requests.push({ method: 'GET', host: 'api.example.net', path: '/v0/item/:id', purpose: 'read' })
+    expect(parseManifest(input).requests.at(-1)).toMatchObject({ host: 'api.example.net' })
+    for (const host of [
+      'https://api.example.net',
+      'API.example.net',
+      '*.example.net',
+      'api.example.net/v0',
+    ]) {
+      const bad = copy()
+      bad.egress = ['www.example.com', 'api.example.net']
+      bad.requests.push({ method: 'GET', host, path: '/v0', purpose: 'read' })
+      expect(issues(bad).length, host).toBeGreaterThan(0)
+    }
+    const off = copy()
+    off.requests.push({ method: 'GET', host: 'api.example.net', path: '/v0', purpose: 'read' })
+    expect(issues(off)).toContain('GET api.example.net/v0: host api.example.net is not on an egress host')
   })
 
   it('returns an issue, not a TypeError, for a secret named after an Object.prototype property', () => {
@@ -337,7 +376,7 @@ describe('manifestSchema', () => {
       ])
     }
     const badTarget =
-      'POST /api/basket/set: refreshes must name a declared GET read with cacheSeconds and no ":param" or "*"'
+      'POST /api/basket/set: refreshes must name a declared GET read on the same host, with cacheSeconds and no ":param" or "*"'
     // Not declared; declared without cacheSeconds; a POST; a pattern; an irreversible GET.
     expect(issues(withRequests(write))).toEqual([badTarget])
     expect(issues(withRequests({ method: 'GET', path: '/api/basket', purpose: 'read' }, write))).toEqual([

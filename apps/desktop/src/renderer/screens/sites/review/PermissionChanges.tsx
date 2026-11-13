@@ -2,6 +2,7 @@
 // much they widen access and tagged with what they are, removals struck through, the rest summed up.
 // Each row's tag is a label, never a control. Values (hosts, selectors, paths) are selectable Code.
 
+import { describeDeclaration } from '@valet/core/request-surface'
 import { Badge, Code, cn, RiskBadge, SecretBadge } from '@valet/ui'
 import type { ReactNode } from 'react'
 import type { LimitsInfo, ListDiff, PendingReview } from '../../../../shared/api'
@@ -479,19 +480,19 @@ export function PermissionChanges({ review }: { readonly review: PendingReview }
             <ul className="m-0 flex list-none flex-col p-0">
               {group.requests.map((r) => (
                 <Added
-                  key={`${r.method} ${r.path} ${r.purpose}`}
+                  key={`${describeDeclaration(r)} ${r.purpose}`}
                   tone={r.purpose}
                   tag={<RiskBadge purpose={r.purpose}>{r.purpose}</RiskBadge>}
                 >
-                  <Code>{`${r.method} ${r.path}`}</Code>
+                  <Code>{describeDeclaration(r)}</Code>
                 </Added>
               ))}
             </ul>
           </li>
         ))}
         {diff.requests.removed.map((r) => (
-          <Removed key={`${r.method} ${r.path} ${r.purpose}`} tag={<RiskBadge purpose={r.purpose} />}>
-            <Code>{`${r.method} ${r.path}`}</Code>
+          <Removed key={`${describeDeclaration(r)} ${r.purpose}`} tag={<RiskBadge purpose={r.purpose} />}>
+            <Code>{describeDeclaration(r)}</Code>
           </Removed>
         ))}
         {diff.limits !== null && limitsChanged(diff) ? (

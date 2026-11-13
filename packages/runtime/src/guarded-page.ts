@@ -30,6 +30,7 @@ import {
   type AuditEvent,
   ambiguousPath,
   decideRequest,
+  declarationOnHost,
   type ErrorClass,
   type FetchInit,
   type FetchResult,
@@ -98,7 +99,10 @@ export class GuardedToolPage implements ToolPage {
     }
     // The first GET declaration matching the path, as core's decideRequest picks it.
     const declared = manifest.requests.find(
-      (d) => d.method.toUpperCase() === 'GET' && pathMatches(d.path, target.pathname),
+      (d) =>
+        d.method.toUpperCase() === 'GET' &&
+        declarationOnHost(d, target.hostname) &&
+        pathMatches(d.path, target.pathname),
     )
     if (
       touchesDeniedSegment(target.pathname) &&

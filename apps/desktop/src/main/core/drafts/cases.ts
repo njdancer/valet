@@ -16,6 +16,7 @@ import {
   type EnsureResult,
   type FetchInit,
   type FetchResult,
+  homeUnreachable,
   type LocalAccess,
   NeedsUserError,
   type PackageFiles,
@@ -240,6 +241,9 @@ export async function runCase(
   if (declared === undefined || schemas === undefined) return fail(`No tool ${c.tool} in the manifest.`)
   const input = schemas.input.safeParse(c.input)
   if (!input.success) return fail(`The input doesn't match ${c.tool}'s input schema.`)
+  // A live call opens home before tool code runs: a home it can't reach fails every call.
+  const home = homeUnreachable(draft.manifest)
+  if (home !== null) return fail(`A live call would fail with egress/host-not-allowed: ${home}.`)
 
   const controller = new AbortController()
   const state = new CallState(

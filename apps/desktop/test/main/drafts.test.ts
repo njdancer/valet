@@ -1070,6 +1070,148 @@ export const tools = {
       /no live trials/,
     )
   }, 60_000)
+  describe('an API on another host than home’s (the Hacker News report)', () => {
+    /** Home on www.example.com, the API on api.example.net, its declarations tied to that host. */
+    async function apiDraft(
+      h: Awaited<ReturnType<typeof trialHarness>>,
+      egress = ['www.example.com', 'api.example.net'],
+    ) {
+      const manifest = JSON.parse(
+        (await h.authoring.readFile(AGENT, false, h.draftId, 'manifest.json')).content,
+      )
+      manifest.egress = egress
+      manifest.requests = [
+        { method: 'GET', host: 'api.example.net', path: '/v0/top.json', purpose: 'read' },
+        { method: 'GET', host: 'api.example.net', path: '/v0/item/:id', purpose: 'read' },
+      ]
+      await h.authoring.writeFile(AGENT, h.draftId, 'manifest.json', JSON.stringify(manifest))
+      const tools = (await h.authoring.readFile(AGENT, false, h.draftId, 'src/tools.ts')).content
+      await h.authoring.writeFile(
+        AGENT,
+        h.draftId,
+        'src/tools.ts',
+        tools.replace(
+          'const response = await ctx.page.fetch(`/api/items/${encodeURIComponent(input.id)}`, {',
+          "const API = 'https://api.example.net/v0'\n      await ctx.page.fetch(`${API}/top.json`)\n      const response = await ctx.page.fetch(`${API}/item/${encodeURIComponent(input.id)}.json`, {",
+        ),
+      )
+      await h.authoring.writeFile(
+        AGENT,
+        h.draftId,
+        'test/example.json',
+        JSON.stringify({
+          cases: [
+            {
+              name: 'an item',
+              tool: 'get_item',
+              input: { id: 'abc-1' },
+              fetch: [
+                { url: 'https://api.example.net/v0/top.json', body: { inline: [1] } },
+                { url: 'https://api.example.net/v0/item/abc-1.json', body: 'fixtures/item-abc-1.json' },
+              ],
+              expect: { output: { id: 'abc-1', name: 'Example item' } },
+            },
+          ],
+        }),
+      )
+    }
+
+    it('reaches a declared request on the API host, and :id matches a segment ending .json', async () => {
+      const h = await trialHarness(item)
+      await apiDraft(h)
+      const check = await h.authoring.check(AGENT, h.draftId)
+      expect(check.findings.filter((f) => f.level === 'error')).toEqual([])
+      expect(check.findings.map((f) => f.text).join('\n')).not.toMatch(/no declared request reaches/)
+      expect(check.ok).toBe(true)
+      const report = await h.authoring.liveTrial(AGENT, h.draftId, 'get_item', { id: 'abc-1' })
+      expect(report).toMatchObject({ ok: true, blocked: [], blockedCount: 0 })
+      expect(h.fake.fetched).toEqual([
+        'https://api.example.net/v0/top.json',
+        'https://api.example.net/v0/item/abc-1.json',
+      ])
+    }, 60_000)
+
+    it('refuses a host-tied path on another egress host, and lists the refusal in the trial, the count and the audit log', async () => {
+      const h = await trialHarness(item)
+      await apiDraft(h)
+      const tools = (await h.authoring.readFile(AGENT, false, h.draftId, 'src/tools.ts')).content
+      // The same path on home's host: declared only for api.example.net.
+      await h.authoring.writeFile(
+        AGENT,
+        h.draftId,
+        'src/tools.ts',
+        tools.replace("const API = 'https://api.example.net/v0'", "const API = 'https://www.example.com/v0'"),
+      )
+      const check = await h.authoring.check(AGENT, h.draftId)
+      expect(check.findings.map((f) => f.text)).toContain(
+        'src/tools.ts names https://www.example.com/v0, but no declared request reaches it: page.fetch there would be refused. Declare its path in requests (with "host": "www.example.com" if only that host serves it).',
+      )
+      // The case's own answers can't get it through either: same guard as live.
+      expect(check.cases[0]?.reason).toMatch(/request-surface\/undeclared-request/)
+      const report = await h.authoring.liveTrial(AGENT, h.draftId, 'get_item', { id: 'abc-1' })
+      expect(report).toMatchObject({
+        ok: false,
+        problem: 'Failed with request-surface/undeclared-request.',
+        blocked: [
+          {
+            method: 'GET',
+            url: 'https://www.example.com/v0/top.json',
+            reason: 'undeclared-request',
+            initiator: 'tool',
+          },
+        ],
+        blockedCount: 1,
+      })
+      expect(h.fake.fetched).toEqual([])
+      const blockedEvents = h.audit.filter((e) => e.type === 'request-blocked')
+      expect(blockedEvents).toEqual([
+        {
+          type: 'request-blocked',
+          adapterId: 'shop',
+          method: 'GET',
+          target: 'https://www.example.com/v0/top.json',
+          reason: 'undeclared-request',
+          initiator: 'tool',
+          partition: 'tool',
+          callId: `trial-${h.draftId.toLowerCase()}-1`,
+          draftId: h.draftId,
+        },
+      ])
+      expect(h.audit.at(-1)).toMatchObject({ type: 'draft-trial', outcome: 'error', blocked: 1 })
+    }, 60_000)
+
+    it('fails the check when home’s host is not in egress, and when egress is written as an origin', async () => {
+      const h = await trialHarness(item)
+      await apiDraft(h, ['api.example.net'])
+      const check = await h.authoring.check(AGENT, h.draftId)
+      expect(check.ok).toBe(false)
+      expect(check.findings).toContainEqual({
+        level: 'error',
+        check: 'package',
+        text: "manifest.json: egress must allow www.example.com, home's host: every call opens home first. Add that host to egress, or, for an API-only adapter, make home the API’s own origin and navigation the same.",
+      })
+      // The mocked case fails the way the live call would.
+      expect(check.cases[0]?.reason).toBe(
+        "A live call would fail with egress/host-not-allowed: egress must allow www.example.com, home's host: every call opens home first.",
+      )
+      await expect(h.authoring.liveTrial(AGENT, h.draftId, 'get_item', { id: 'abc-1' })).rejects.toThrow(
+        /Not tried: egress must allow www\.example\.com/,
+      )
+      expect(h.fake.labels).toEqual([])
+      await apiDraft(h, ['www.example.com', 'https://api.example.net'])
+      const origin = await h.authoring.check(AGENT, h.draftId)
+      expect(origin.findings.map((f) => f.text).join('\n')).toMatch(/bare hostname such as api\.example\.com/)
+    }, 60_000)
+
+    it('refuses a declaration whose host is not on an egress host', async () => {
+      const h = await trialHarness(item)
+      await apiDraft(h, ['www.example.com'])
+      const check = await h.authoring.check(AGENT, h.draftId)
+      expect(check.findings.map((f) => f.text).join('\n')).toMatch(
+        /GET api\.example\.net\/v0\/top\.json: host api\.example\.net is not on an egress host/,
+      )
+    }, 60_000)
+  })
 })
 
 describe('trial problems', () => {
