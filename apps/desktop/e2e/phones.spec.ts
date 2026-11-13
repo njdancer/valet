@@ -116,8 +116,13 @@ test('an agent’s request reaches the phone, and its approval comes back', asyn
   await expect
     .poll(async () => (await callToolOnce(client, 'valet_get_approval', {})).text, { timeout: 20_000 })
     .toMatch(/approved/i)
-  const settings = await control.evaluate(() => window.valet?.settings.get())
-  expect(settings?.traceRetentionDays).toBe(7)
+  // The broker reports the approval before it applies the change (valet_get_approval tells the
+  // agent to read it back), so on a slow runner the setting can lag the answer by a moment.
+  await expect
+    .poll(async () => (await control.evaluate(() => window.valet?.settings.get()))?.traceRetentionDays, {
+      timeout: 20_000,
+    })
+    .toBe(7)
 })
 
 test('a request made while the phone is closed is there when it opens, and a decline reaches the agent', async () => {
