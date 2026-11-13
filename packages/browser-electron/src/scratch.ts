@@ -97,6 +97,8 @@ export class ScratchBrowser {
   private readonly closers: (() => void)[] = []
   private requests = 0
   private loadRequests = 0
+  /** The main-frame request last paced, whose redirect hops go through unpaced. */
+  private pacedRequest: number | null = null
   private readonly log: (LogEntry & { readonly id: string })[] = []
   private seq = 0
   private readonly refs = new Map<string, string>()
@@ -367,6 +369,10 @@ export class ScratchBrowser {
     if (request.resourceType !== 'mainFrame') return true
     // A form that posts is a request the agent could make as anyone; only GET pages open.
     if (request.method !== 'GET' || !this.options.rules.mayNavigate(url)) return false
+    // A server redirect is the same load (it keeps the request's id): paced once, at its first hop,
+    // so a page that sends a signed-out visitor to its sign-in page isn't refused as a second load.
+    if (request.id !== undefined && request.id === this.pacedRequest) return true
+    this.pacedRequest = request.id ?? null
     return this.options.rules.pace(url.hostname).then(
       () => !this.closed,
       (error: unknown) => {

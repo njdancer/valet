@@ -255,7 +255,7 @@ contracts. Recorded here as each signs:
 | B      | Tiers, gestures, Mac-only list, nonce and expiry, pairing words, recovery code, signed lock, amendments    | signed (notes below)        |
 | D      | Card payload, Because, states, follow-ons, limits, "Not confirmed yet", "Changed before order"             | signed with changes (below) |
 | E      | Section 5's tool table and wording; scoping of See Valet                                                   | signed with changes (below) |
-| F      | Drafts frozen on submit, checks vs tests, reproduction check on Valet-recorded fixtures, private addresses | waiting                     |
+| F      | Drafts frozen on submit, checks vs tests, reproduction check on Valet-recorded fixtures, private addresses | signed with changes (below) |
 | G      | Consent through the relay, Accept new agents, offline behaviour, lock at the relay, recovery page          | signed                      |
 | H      | The iOS IA, card layout at AX sizes, VoiceOver order, notifications without actions, Face ID to open       | signed (notes below)        |
 
@@ -387,3 +387,26 @@ The app is in `ios/`, its design in `docs/ios-app.md`.
 - **Departures:** six digits instead of words (B), and no
   recovery code, Pause this site, Secrets or Add an agent on the phone until B and G design them.
   The full list is in `docs/ios-app.md`, "Where H departs from A's wireframes".
+
+### F's sign-off (authoring tools, 2026-11-12)
+
+Checked against what PRs #88, #96, #98 and #99 built (`docs/authoring-tools.md`), and against two
+evals in which a model built and then repaired a sign-in site's adapter using only the MCP tools
+(`docs/findings/2026-11-12-authoring-evals.md`).
+
+- **Drafts frozen on submit:** match. The card's request carries the package hash. Valet installs
+  the snapshot it froze, and any later write to the draft withdraws the request.
+- **Checks vs tests:** match. The card's checks list has Valet's own runs only. The agent's tests
+  are one plain line ("7 tests the agent wrote pass (Valet ran them)"), and fixtures say how many
+  were recorded by Valet and how many were written by the agent.
+- **Reproduction check on Valet-recorded fixtures:** changed. A page behind the sign-in can't be
+  recorded by the scratch browser, so a repair there also passes with a signed-in live trial of
+  the ticket's tool. That trial runs during a Signed-in session the person approved, and the
+  installed version then fails on the same input as the ticket says. The card says which route
+  was used: "Repair R-…: on what Valet recorded, …" or "Repair R-…: in a signed-in trial, the
+  installed version fails as it did, and this one works". No signed-in page is saved.
+- **Private addresses:** match. The scratch browser and live trials refuse them, with R21's
+  wording, unless a Private network card is approved (`valet_request_private_network`).
+- **For A:** an install request's title names the registrable domain ("for example.test"), not
+  the site's host. Agents found that confusing, so the Review page should show the host
+  (`library.example.test`) beside it.

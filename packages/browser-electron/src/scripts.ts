@@ -139,7 +139,7 @@ const FETCH = `async (request) => {
   const text = await response.text()
   let body = text
   try { body = JSON.parse(text) } catch {}
-  return { status: response.status, contentType: response.headers.get('content-type'), body }
+  return { status: response.status, contentType: response.headers.get('content-type'), body, redirected: response.redirected === true }
 }`
 
 // Resolves once the page has rendered a frame (two animation frames: the next one starts only after

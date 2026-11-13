@@ -613,13 +613,24 @@ export class DraftAuthoring implements Authoring {
     const ticket = this.deps.repairs?.get(id) ?? null
     if (ticket === null) return `Valet no longer has repair ticket ${id}.`
     if (installed === null) return `${record.adapterId} isn’t installed now, so there’s nothing to repair.`
+    const current = await this.deps.store.require(record.id)
+    // Behind a sign-in: a signed-in trial of this very package that Valet saw reproduce the ticket.
+    const packageHash = bundleHash(files)
+    const live = current.trials.some(
+      (t) =>
+        t.reproduces === id &&
+        t.packageHash === packageHash &&
+        Date.parse(t.at) >= Date.parse(ticket.openedAt),
+    )
+    if (live) return null
     const mine = readCases(files).cases.filter((c) => c.case.reproduces === id)
     if (mine.length === 0)
       return (
         `A repair needs a case with "reproduces": "${id}" that calls ${ticket.tool} on fixtures Valet ` +
-        `recorded after ${id} opened (valet_capture_fixture).`
+        `recorded after ${id} opened (valet_capture_fixture). For a page behind the sign-in, run ` +
+        `${ticket.tool} in a signed-in valet_live_trial of this version instead: Valet runs the installed ` +
+        'version straight after, and its failing as the ticket says is the reproduction.'
       )
-    const current = await this.deps.store.require(record.id)
     let old: LoadedPackage
     try {
       old = await this.deps.prepare(installed.files)
@@ -795,13 +806,23 @@ export class DraftAuthoring implements Authoring {
   private async refreshed(record: DraftRecord): Promise<DraftRecord> {
     if (record.status !== 'waiting' || record.submission === null) return record
     const state = this.deps.requestState(record.submission.requestId)
-    if (state.state === 'pending' || state.state === 'unknown') return record
-    const status = state.state
+    if (state.state === 'pending') return record
+    let status: Exclude<typeof state.state, 'pending' | 'unknown'>
+    if (state.state === 'unknown') {
+      // Ended while nobody read the draft, and Valet restarted since, which forgets how requests
+      // ended. The installed version says it was approved; anything else stays as it was.
+      const installed = await this.deps.installed(record.adapterId).catch(() => null)
+      if (installed?.hash !== record.submission.adapterHash) return record
+      status = 'approved'
+    } else status = state.state
     return this.deps.store
       .update(record.id, (r) => ({
         ...r,
         status,
-        submission: r.submission === null ? null : { ...r.submission, note: state.note },
+        submission:
+          r.submission === null
+            ? null
+            : { ...r.submission, note: state.state === 'unknown' ? null : state.note },
       }))
       .catch(() => record)
   }
@@ -891,6 +912,14 @@ export class DraftAuthoring implements Authoring {
       ),
     )
     return view(await this.researching(() => browser.navigate(url)))
+  }
+
+  async browserClose(viewer: ClientIdentity, draftId: string): Promise<{ readonly closed: boolean }> {
+    await this.own(viewer, draftId)
+    const research = this.deps.research
+    const open = research?.isOpen(draftId) ?? false
+    research?.close(draftId)
+    return { closed: open }
   }
 
   async browserClick(viewer: ClientIdentity, draftId: string, target: BrowserTarget): Promise<BrowserView> {
@@ -1080,7 +1109,11 @@ export class DraftAuthoring implements Authoring {
     } finally {
       this.trialing.delete(draftId)
     }
-    const problem = trialProblem(result)
+    const problem = trialProblem(result, session !== null)
+    const reproduces =
+      session !== null && problem === null
+        ? await this.reproducedLive(record, tool, parsed.data, session, trials, draftId)
+        : null
     const summary: TrialSummary = {
       tool,
       packageHash,
@@ -1088,6 +1121,7 @@ export class DraftAuthoring implements Authoring {
       ok: problem === null,
       problem: problem === null ? null : clip(problem, 200),
       signedIn: session !== null,
+      reproduces,
     }
     await this.deps.store
       .update(draftId, (r) => ({ ...r, trials: [...r.trials, summary].slice(-20) }))
@@ -1115,6 +1149,53 @@ export class DraftAuthoring implements Authoring {
       problem,
       blocked: result.blocked.map((b) => ({ ...b })),
       ms: Math.max(0, Math.round(result.ms)),
+      ...(reproduces === null ? {} : { reproduces }),
+    }
+  }
+
+  /**
+   * A repair of a page behind the sign-in, where Valet can record no fixture: after the draft's
+   * signed-in trial of the ticket's tool worked, the installed version runs on the same input and
+   * session. Its failing as the ticket says is the reproduction (check step 7). The ticket's id,
+   * or null.
+   */
+  private async reproducedLive(
+    record: DraftRecord,
+    tool: string,
+    input: unknown,
+    session: SignedInTrial,
+    trials: TrialDeps,
+    draftId: string,
+  ): Promise<string | null> {
+    const ticket = record.repairId === null ? null : (this.deps.repairs?.get(record.repairId) ?? null)
+    if (ticket === null || ticket.state !== 'open' || ticket.tool !== tool) return null
+    const installed = await this.deps.installed(record.adapterId).catch(() => null)
+    if (installed === null) return null
+    let old: LoadedPackage
+    try {
+      old = await this.deps.prepare(installed.files)
+    } catch {
+      return null
+    }
+    this.trialing.add(draftId)
+    try {
+      const before = await runTrial(
+        { manifest: old.manifest, script: old.script, tools: old.definition.tools },
+        tool,
+        input,
+        `${draftId.toLowerCase()}-${++this.trialCount}`,
+        trials,
+        this.deps.now,
+        session,
+      )
+      const o = before.outcome
+      return o.kind === 'error' && o.stage === ticket.stage && o.errorClass === ticket.errorClass
+        ? ticket.id
+        : null
+    } catch {
+      return null
+    } finally {
+      this.trialing.delete(draftId)
     }
   }
 
@@ -1240,10 +1321,14 @@ export function checkLines(
     `Fixtures: ${provenance.recordedByValet} recorded by Valet, ${provenance.writtenByAgent} written by the agent`,
   )
   out.push(...trialLines(trials, report.packageHash))
-  if (repairId !== null)
+  if (repairId !== null) {
+    const live = trials.some((t) => t.reproduces === repairId && t.packageHash === report.packageHash)
     out.push(
-      `Repair ${repairId}: on what Valet recorded, the installed version fails as it did, and this one works`,
+      live
+        ? `Repair ${repairId}: in a signed-in trial, the installed version fails as it did, and this one works`
+        : `Repair ${repairId}: on what Valet recorded, the installed version fails as it did, and this one works`,
     )
+  }
   return out.slice(0, 20)
 }
 
@@ -1263,8 +1348,15 @@ function trialLines(trials: readonly TrialSummary[], packageHash: string | null)
 }
 
 /** How a trial ended, for the agent and the card; null when it returned good output. */
-function trialProblem(result: TrialResult): string | null {
+/** In a signed-in trial, what a signed-out answer means: the lent session is, at the site. */
+const LENT_SIGNED_OUT =
+  'The site says the lent session is signed out (it may have ended there). A call of the installed ' +
+  'adapter’s tool signs it in again; then try the trial again.'
+
+export function trialProblem(result: TrialResult, signedIn = false): string | null {
   const o = result.outcome
+  if (signedIn && o.kind === 'needs-user' && o.reason === 'login-required') return LENT_SIGNED_OUT
+  if (signedIn && o.kind === 'error' && o.errorClass === 'not-logged-in') return LENT_SIGNED_OUT
   switch (o.kind) {
     case 'output':
       return null

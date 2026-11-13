@@ -106,7 +106,7 @@ export class ScratchSessions {
     const mine = [...this.open.values()].filter((o) => o.client === client && !o.handle.isClosed())
     if (mine.length >= RESEARCH_LIMITS.perClient)
       throw new ResearchRefusal(
-        'You have a scratch browser open for another draft. Close that draft’s first.',
+        'You have a scratch browser open for another draft. Close it with valet_browser_close first.',
       )
     if (this.live() >= RESEARCH_LIMITS.total)
       throw new ResearchRefusal(
@@ -132,6 +132,10 @@ export class ScratchSessions {
       throw new ResearchRefusal('No scratch browser is open for this draft. valet_browser_open opens one.')
     this.touch(draftId)
     return open.handle
+  }
+
+  isOpen(draftId: string): boolean {
+    return this.open.has(draftId)
   }
 
   close(draftId: string): void {

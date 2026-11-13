@@ -292,6 +292,11 @@ export class ApprovalBroker {
     return closed !== undefined && sameAsker(closed.requester, asker) ? closed : null
   }
 
+  /** Requests that ended and are still remembered, newest first. */
+  ended(): readonly Closed[] {
+    return [...this.closed]
+  }
+
   /** Resolves when the request closes; at once if it already has. */
   wait(requestId: string): Promise<Closed | null> {
     const closed = this.closed.find((c) => c.requestId === requestId)
