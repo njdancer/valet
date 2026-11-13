@@ -7,6 +7,21 @@ import { join } from 'node:path'
 export const KEYCHAIN_SERVICE = 'valet'
 export const KEYCHAIN_ACCOUNT = 'onepassword-service-account'
 /**
+ * Keychain item holding the GitHub token agents' feedback is filed with (docs/feedback.md). The
+ * person adds it with `security add-generic-password -s valet -a github-feedback -w`; Valet only
+ * reads it, and no agent or adapter ever sees it.
+ */
+export const FEEDBACK_KEYCHAIN_ACCOUNT = 'github-feedback'
+/** The repository agents' feedback is filed on, `owner/name`, unless VALET_FEEDBACK_REPO says otherwise. */
+export const DEFAULT_FEEDBACK_REPO = 'njdancer/valet-feedback'
+
+/** The repository feedback is filed on: VALET_FEEDBACK_REPO when it is `owner/name`, else the default. */
+export function feedbackRepo(value: string | undefined): string {
+  return value !== undefined && /^[A-Za-z0-9-]{1,39}\/[A-Za-z0-9._-]{1,100}$/.test(value)
+    ? value
+    : DEFAULT_FEEDBACK_REPO
+}
+/**
  * Where Keychain copies of granted 1Password items live (D6), and the Messages helper's launchd
  * label (D8, the plist in build/launch-agents). A development build keeps its own of each, so it
  * never reads or replaces the release build's.
@@ -105,6 +120,8 @@ export interface DataPaths {
   readonly adapters: string
   /** Adapters agents are writing, one folder per draft (docs/authoring-tools.md#storage). */
   readonly drafts: string
+  /** Agents' reports to the Valet team and their replies (docs/feedback.md). */
+  readonly feedback: string
 }
 
 /** Every file the app keeps, under one owner-only directory (D45). */
@@ -137,5 +154,6 @@ export function dataPaths(dir: string): DataPaths {
     devAnchor: join(dir, 'dev-anchor.json'),
     adapters: join(dir, 'adapters'),
     drafts: join(dir, 'drafts'),
+    feedback: join(dir, 'feedback.json'),
   }
 }

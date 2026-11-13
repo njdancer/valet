@@ -34,6 +34,7 @@ import {
   plainName,
   type Requester,
   type SecretField,
+  type SecretValue,
   type SessionDriver,
   type SettingChoice,
   settingToolNames,
@@ -170,6 +171,7 @@ import { draftDomains, type ScratchHandle, ScratchSessions } from './drafts/rese
 import { type DraftRecord, DraftStore } from './drafts/store'
 import type { SignedInTrial } from './drafts/trial'
 import { type EraseKind, type EraseReport, type EraseStep, eraseEverything } from './erase'
+import { FeedbackDeskImpl } from './feedback'
 import { ensurePrivateDir, JsonDocument } from './files'
 import { carriesOver, checkGrantRequest, grantInfo } from './grants'
 import type { AppWindow, MainApi } from './ipc'
@@ -278,6 +280,15 @@ export interface ServiceDeps {
   readonly approvalKeys: MacApprovalKeys
   /** The relay paired phones reach this Mac through (docs/phone-channel.md); none, no phones. */
   readonly relay?: RelaySetup | null
+  /**
+   * Where agents' feedback goes (docs/feedback.md): the repository, and the GitHub token from the
+   * Keychain (null when the person hasn't added one). None: agents get no feedback tools.
+   */
+  readonly feedback?: {
+    readonly repo: string
+    readonly token: () => Promise<SecretValue | null>
+    readonly fetch?: typeof fetch
+  } | null
   /** This Mac's name, as a paired phone shows it. */
   readonly macName?: string
   /**
@@ -451,6 +462,8 @@ export class AppService {
   private phoneStatus: PhoneStatusBody | null = null
   /** The write tools' side (admin-writer.ts): one for the app's life, so it remembers requests. */
   private writer: AdminWriterImpl | null = null
+  /** Agents' feedback (feedback.ts): one for the app's life. */
+  private feedbackDesk: FeedbackDeskImpl | null = null
   /** Agents' asks to remove a site, by id, until the person answers or Valet restarts. */
   private readonly removalAsks = new Map<string, AgentRequestItem & { readonly asker: string }>()
   private readonly versions: VersionStore
@@ -856,6 +869,10 @@ export class AppService {
           }
         },
       })
+      .catch(() => undefined)
+    // Reports an agent sent while GitHub couldn't be reached, or before the token was there.
+    void this.feedback()
+      ?.flush()
       .catch(() => undefined)
   }
 
@@ -3398,7 +3415,32 @@ export class AppService {
       // Which tool, never what matched.
       withheld: () => this.deps.diagnostics?.({ type: 'admin-result-withheld' }),
       writer: this.adminWriter(),
+      ...feedbackPart(this.feedback()),
     })
+  }
+
+  /** Agents' reports to the Valet team (docs/feedback.md); null when this launch has no channel. */
+  private feedback(): FeedbackDeskImpl | null {
+    const channel = this.deps.feedback
+    if (channel === undefined || channel === null) return null
+    this.feedbackDesk ??= new FeedbackDeskImpl({
+      path: this.deps.paths.feedback,
+      repo: channel.repo,
+      token: channel.token,
+      ...(channel.fetch === undefined ? {} : { fetch: channel.fetch }),
+      agentName: (viewer) => {
+        if (viewer.origin === 'remote') {
+          const agent = this.remote.remoteClients().find((c) => c.id === viewer.clientId)
+          return agent === undefined || agent.grant === null ? null : agent.host
+        }
+        if (!this.clients.isActive(viewer.clientId)) return null
+        return this.clients.get(viewer.clientId)?.name ?? null
+      },
+      sensitive: (texts) => this.knownSecretIn(texts),
+      version: this.deps.version,
+      now: () => this.deps.now(),
+    })
+    return this.feedbackDesk
   }
 
   private adminWriter(): AdminWriterImpl {
@@ -4455,4 +4497,8 @@ function submitRefusal(reason: string, until?: string): string {
     default:
       return 'Not submitted: Valet can’t ask for approvals right now.'
   }
+}
+
+function feedbackPart(desk: FeedbackDeskImpl | null): { feedback?: FeedbackDeskImpl } {
+  return desk === null ? {} : { feedback: desk }
 }

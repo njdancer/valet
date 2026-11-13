@@ -17,7 +17,7 @@ import {
   startEgressProxy,
 } from '@valet/browser-electron'
 import { DEFAULT_SANDBOX } from '@valet/core'
-import { KeychainHelper, messagesHelperSocketPath } from '@valet/credentials'
+import { KeychainHelper, KeychainTokenSource, messagesHelperSocketPath } from '@valet/credentials'
 import { startEndpoint } from '@valet/mcp-server'
 import { createLocalAccess } from '@valet/sandbox'
 import { app, clipboard, dialog, protocol, session, shell } from 'electron'
@@ -25,7 +25,14 @@ import { href } from '../../renderer/lib/routes'
 import { builtinPackages } from '../adapters'
 import { APP_SCHEME, APP_SCHEME_PRIVILEGES, createAppSchemeHandler } from '../core/app-scheme'
 import { ANCHOR_SERVICE, macApprovalKeys } from '../core/approvals'
-import { dataPaths, MCP_SERVER_NAME, nativeNames } from '../core/constants'
+import {
+  dataPaths,
+  FEEDBACK_KEYCHAIN_ACCOUNT,
+  feedbackRepo,
+  KEYCHAIN_SERVICE,
+  MCP_SERVER_NAME,
+  nativeNames,
+} from '../core/constants'
 import { checkOpBinary, defaultOpCheckDeps, realCredentials } from '../core/credentials'
 import {
   afterCrash,
@@ -435,6 +442,18 @@ async function main(): Promise<void> {
     credentials: demoSite === null ? realCredentials(credentialDeps) : demoSite.credentials,
     approvalKeys,
     relay: devRelay,
+    // Agents' reports to the Valet team (docs/feedback.md), filed with a token only the Keychain
+    // holds. None in demo mode or e2e runs: nothing a test does may reach GitHub.
+    feedback:
+      demoSite !== null || mode.e2e
+        ? null
+        : {
+            repo: feedbackRepo(process.env['VALET_FEEDBACK_REPO']),
+            token: () =>
+              new KeychainTokenSource({ service: KEYCHAIN_SERVICE, account: FEEDBACK_KEYCHAIN_ACCOUNT })
+                .token()
+                .catch(() => null),
+          },
     macName: macName(process.env),
     // Each open its own in-memory partition, so nothing a page left behind is there the next time.
     scratch: (draftId, rules, allowPrivate) =>
