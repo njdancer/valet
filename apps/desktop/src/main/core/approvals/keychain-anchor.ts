@@ -9,7 +9,7 @@
 import { type AnchorState, anchorStateSchema, CredentialError, type StoreAnchor } from '@valet/core'
 import type { KeychainStore } from '@valet/credentials'
 
-/** The release build's anchors. A dev build keeps its own (`valet-dev.anchor`): it has its own data. */
+/** The release build's anchors. A dev build keeps its own (`valet.dev.anchor`; the Keychain helper takes only `valet.` services): it has its own data. */
 export const ANCHOR_SERVICE = 'valet.anchor'
 
 export class KeychainAnchor implements StoreAnchor {

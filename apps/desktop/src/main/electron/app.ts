@@ -320,7 +320,7 @@ async function main(): Promise<void> {
     // A demo launch keeps its anchor in its own data folder, never the Keychain.
     keychain:
       keychainHelper === null || mode.demo ? null : new KeychainHelper({ helperPath: keychainHelper }),
-    anchorService: release ? ANCHOR_SERVICE : 'valet-dev.anchor',
+    anchorService: release ? ANCHOR_SERVICE : 'valet.dev.anchor',
     devKeysPath: paths.devApprovalKeys,
     devAnchorPath: paths.devAnchor,
     // A dev build signing in software asks in a native dialog of the main process, where the
