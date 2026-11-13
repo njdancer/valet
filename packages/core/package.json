@@ -11,7 +11,8 @@
     "./tool-code": "./src/tool-code.ts",
     "./relay-protocol": "./src/relay-protocol.ts",
     "./signing": "./src/signing.ts",
-    "./devices": "./src/devices.ts"
+    "./devices": "./src/devices.ts",
+    "./request-surface": "./src/request-surface.ts"
   },
   "dependencies": {
     "zod": "^4.6.7"

@@ -161,7 +161,9 @@ export class CachedToolPage implements ToolPage {
       const result = await inner.fetch(pathOrUrl, request.init)
       const refreshed = refreshedBy(manifest, declared)
       if (refreshed !== null && cache.epoch === epoch) {
-        this.store(`GET ${new URL(refreshed.path, manifest.home).href} `, refreshed, result)
+        // On the read's own host, or, for a read on every egress host, the write's.
+        const origin = refreshed.host === undefined ? target.origin : `https://${refreshed.host}`
+        this.store(`GET ${new URL(refreshed.path, origin).href} `, refreshed, result)
       }
       return result
     }
@@ -220,7 +222,9 @@ function refreshedBy(
   declared: ManifestRequest | undefined,
 ): ManifestRequest | null {
   if (declared === undefined || declared.purpose !== 'write' || declared.refreshes === undefined) return null
-  const read = manifest.requests.find((r) => r.method === 'GET' && r.path === declared.refreshes)
+  const read = manifest.requests.find(
+    (r) => r.method === 'GET' && r.path === declared.refreshes && r.host === declared.host,
+  )
   // The schema requires all of this; a hand-built manifest might not have been parsed.
   if (read === undefined || read.purpose !== 'read' || read.cacheSeconds === undefined) return null
   if (read.path.includes('?') || read.path.split('/').some((part) => part.startsWith(':') || part === '*'))

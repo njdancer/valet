@@ -59,7 +59,7 @@ export function isHostPattern(value: string): boolean {
 }
 
 /** A DNS name with at least two labels and a non-numeric last label, so never an IPv4 literal. */
-function isHostname(host: string): boolean {
+export function isHostname(host: string): boolean {
   const shape = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/i
   return shape.test(host) && !/^\d+$/.test(host.slice(host.lastIndexOf('.') + 1))
 }

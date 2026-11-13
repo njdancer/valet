@@ -9,6 +9,7 @@ import {
   type AdapterManifest,
   type AuditEvent,
   bundleHash,
+  homeUnreachable,
   type PackageFiles,
   type PermissionChange,
   parseManifest,
@@ -556,6 +557,9 @@ export class DraftAuthoring implements Authoring {
         text: `The manifest’s id must be ${record.adapterId}, the draft’s.`,
       })
     }
+    const home = homeUnreachable(manifest)
+    if (home !== null)
+      findings.push({ level: 'error', check: 'package', text: `manifest.json: ${home}. ${HOME_FIX}` })
     const installed = await this.deps.installed(record.adapterId)
     if (installed !== null && record.basedOn === null)
       findings.push({
@@ -1066,6 +1070,8 @@ export class DraftAuthoring implements Authoring {
     const parsed = schemas.input.safeParse(input)
     if (!parsed.success)
       throw new AuthoringRefusal(`Not tried: the input doesn’t match ${tool}’s input schema.`)
+    const home = homeUnreachable(manifest)
+    if (home !== null) throw new AuthoringRefusal(`Not tried: ${home}. ${HOME_FIX}`)
     // Never a site the person is signed in to, except this draft's own adapter's, as for the
     // scratch browser.
     const domains = draftDomains(manifest)
@@ -1095,6 +1101,7 @@ export class DraftAuthoring implements Authoring {
       )
     const host = new URL(manifest.home).hostname
     const packageHash = bundleHash(files)
+    const trialLabel = `${draftId.toLowerCase()}-${++this.trialCount}`
     this.trialing.add(draftId)
     let result: TrialResult
     try {
@@ -1102,7 +1109,7 @@ export class DraftAuthoring implements Authoring {
         { manifest, script: loaded.script, tools: loaded.definition.tools },
         tool,
         parsed.data,
-        `${draftId.toLowerCase()}-${++this.trialCount}`,
+        trialLabel,
         trials,
         this.deps.now,
         session,
@@ -1129,6 +1136,20 @@ export class DraftAuthoring implements Authoring {
     await this.deps.store
       .update(draftId, (r) => ({ ...r, trials: [...r.trials, summary].slice(-20) }))
       .catch(() => undefined)
+    // Each refusal is a request-blocked record, as an installed call's is, so the blocked count
+    // and the audit log's blocked category show it.
+    for (const b of result.blocked)
+      await this.deps.audit({
+        type: 'request-blocked',
+        adapterId: record.adapterId,
+        method: b.method,
+        target: b.url,
+        reason: b.reason,
+        initiator: b.initiator,
+        partition: 'tool',
+        callId: `trial-${trialLabel}`,
+        draftId,
+      })
     await this.deps.audit({
       type: 'draft-trial',
       draftId,
@@ -1139,6 +1160,7 @@ export class DraftAuthoring implements Authoring {
       packageHash,
       outcome: result.outcome.kind,
       ...(session === null ? {} : { signedIn: true }),
+      ...(result.blockedCount === 0 ? {} : { blocked: result.blockedCount }),
     })
     // The tool's name, never its agent-written title.
     this.deps.notify(
@@ -1151,6 +1173,7 @@ export class DraftAuthoring implements Authoring {
       output: result.outcome.kind === 'output' ? { fromSite: result.outcome.output } : null,
       problem,
       blocked: result.blocked.map((b) => ({ ...b })),
+      blockedCount: result.blockedCount,
       ms: Math.max(0, Math.round(result.ms)),
       ...(reproduces === null ? {} : { reproduces }),
     }
@@ -1360,6 +1383,10 @@ function trialLines(trials: readonly TrialSummary[], packageHash: string | null)
 const LENT_SIGNED_OUT =
   'The site says the lent session is signed out (it may have ended there). A call of the installed ' +
   'adapter’s tool signs it in again; then try the trial again.'
+
+/** What to do about a home off the egress list, for the check and the trial. */
+const HOME_FIX =
+  'Add that host to egress, or, for an API-only adapter, make home the API’s own origin and navigation the same.'
 
 export function trialProblem(result: TrialResult, signedIn = false): string | null {
   const o = result.outcome

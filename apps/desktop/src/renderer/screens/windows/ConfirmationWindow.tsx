@@ -12,6 +12,7 @@
 // CONFIRM_ARM_MS after the window mounts and again whenever it regains focus or visibility
 // (useArmed). The main process enforces the same delay on its side.
 
+import { describeDeclaration } from '@valet/core/request-surface'
 import {
   Badge,
   Banner,
@@ -394,11 +395,8 @@ function Checked({ item }: { readonly item: ConfirmationItem }) {
             <span data-testid="confirm-requests">
               If you allow it, the tool says it will make{' '}
               {item.requests.map((r) => (
-                <span key={`${r.method} ${r.path}`} className="inline-flex items-center gap-1">
-                  <Code>
-                    {r.method} {r.path}
-                  </Code>{' '}
-                  <RiskBadge purpose={r.purpose} />{' '}
+                <span key={describeDeclaration(r)} className="inline-flex items-center gap-1">
+                  <Code>{describeDeclaration(r)}</Code> <RiskBadge purpose={r.purpose} />{' '}
                 </span>
               ))}
               . Each is declared in the manifest and allowed for this tool. Approving doesn’t unlock them.

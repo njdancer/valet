@@ -2,6 +2,7 @@
 // from the declaration, then the declaration itself under Details, every host, origin and path a
 // selectable value.
 
+import { describeDeclaration } from '@valet/core/request-surface'
 import {
   Card,
   CardContent,
@@ -131,10 +132,8 @@ export function SitePermissions({ data }: { readonly data: SiteData }) {
                   <Stack gap={1.5}>
                     {requestsByPurpose(adapter.requests).flatMap((g) =>
                       g.requests.map((r) => (
-                        <Inline key={`${r.method} ${r.path}`} gap={2}>
-                          <Code>
-                            {r.method} {r.path}
-                          </Code>
+                        <Inline key={describeDeclaration(r)} gap={2}>
+                          <Code>{describeDeclaration(r)}</Code>
                           <RiskBadge purpose={r.purpose} />
                         </Inline>
                       )),

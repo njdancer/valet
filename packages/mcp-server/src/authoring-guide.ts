@@ -16,8 +16,9 @@ the manifest's JSON Schema; valet_check_draft says what any file gets wrong.
 
 - \`home\`, \`navigation\` (origins pages may load), \`egress\` (hosts any request may reach).
 - \`requests\`: every request tool code makes with \`page.fetch\`, and every page \`page.goto\` loads,
-  as \`{ method, path, purpose }\` (\`read\`, \`write\` or \`irreversible\`), with \`:param\` segments.
+  as \`{ method, host?, path, purpose }\` (\`read\`, \`write\` or \`irreversible\`), with \`:param\` segments.
   A redirect's next hop is a request too: declare the page a signed-out visitor is sent to.
+  See "Hosts and requests" below for an API on another host than home's.
 - \`tools\`: \`{ name, title, description, sideEffect }\`, one per implementation in \`src/tools.ts\`.
 - \`limits.requestsPerRun\`: every request a call makes counts, redirect hops included.
 - \`secrets\`: what the person grants, e.g. \`{ "login": { "description": "…", "fields": ["username",
@@ -37,6 +38,28 @@ the manifest's JSON Schema; valet_check_draft says what any file gets wrong.
   - \`{ kind: "cookie", name }\`: signed in while the session has that cookie.
   - \`{ kind: "none" }\` for a site without accounts.
 - \`session.cookieDomains\`: the domains whose cookies the tool's browser gets after sign-in.
+
+## Hosts and requests
+
+- Every call opens \`home\` in the tool's browser before tool code runs, so home's host must be in
+  \`egress\` too. A site whose only part you use is an API (\`https://api.example.com/\`) can make that
+  its \`home\`, with \`navigation\` set to the same origin.
+- \`egress\` entries are bare hostnames (\`api.example.com\`, or \`*.example.com\` for its subdomains),
+  never \`https://…\` or a path.
+- \`page.fetch\` takes a path (resolved against \`home\`) or an absolute https URL on any egress host. A
+  request is allowed when its host is in \`egress\` and a declaration matches its method and path.
+- A declaration without \`host\` applies on every egress host. Give \`host\` (one egress host,
+  lower-case, no scheme) to tie it to one: \`{ "method": "GET", "host": "hacker-news.firebaseio.com",
+  "path": "/v0/item/:id", "purpose": "read" }\` with \`"egress": ["news.ycombinator.com",
+  "hacker-news.firebaseio.com"]\`.
+- Paths match segment by segment. \`:id\` is one whole segment, whatever is in it, so \`/v0/item/:id\`
+  matches \`/v0/item/101.json\` and \`/v0/item/101\` but not \`/v0/item/101/kids\`. There is no
+  \`:id.json\`: a \`:\` segment is all parameter. A final \`*\` matches the rest of the path. The query
+  string isn't matched.
+- Cases run through the same guard as live calls: a case passes only if the real call would be let
+  through, and valet_check_draft cautions about a URL in your code that no declaration reaches.
+- valet_live_trial lists every refused request in \`blocked\` (with \`initiator\` tool or page), and the
+  person sees them in the audit log's blocked category.
 
 ## Tool code
 

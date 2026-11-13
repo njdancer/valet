@@ -7,8 +7,27 @@ export type Purpose = 'read' | 'write' | 'irreversible'
 
 export interface RequestDeclaration {
   readonly method: string
+  /**
+   * The one egress host this request goes to, lower-case. Left out, the declaration applies on
+   * every egress host.
+   */
+  readonly host?: string
   readonly path: string
   readonly purpose: Purpose
+}
+
+/** Whether a declaration applies to requests sent to `hostname`. */
+export function declarationOnHost(declaration: { readonly host?: string }, hostname: string): boolean {
+  return declaration.host === undefined || declaration.host.toLowerCase() === hostname.toLowerCase()
+}
+
+/** A declaration as people and agents read it: `GET /path`, or `GET api.example.com/path`. */
+export function describeDeclaration(declaration: {
+  readonly method: string
+  readonly host?: string
+  readonly path: string
+}): string {
+  return `${declaration.method} ${declaration.host ?? ''}${declaration.path}`
 }
 
 /**
@@ -103,7 +122,10 @@ export function decideRequest(
   }
   if (ambiguousPath(parsed.pathname)) return { allowed: false, reason: 'ambiguous-path' }
   const declaration = declarations.find(
-    (d) => d.method.toUpperCase() === method.toUpperCase() && pathMatches(d.path, parsed.pathname),
+    (d) =>
+      d.method.toUpperCase() === method.toUpperCase() &&
+      declarationOnHost(d, parsed.hostname) &&
+      pathMatches(d.path, parsed.pathname),
   )
   if (declaration === undefined) return { allowed: false, reason: 'undeclared' }
   if (touchesDeniedSegment(parsed.pathname) && declaration.purpose !== 'irreversible') {
