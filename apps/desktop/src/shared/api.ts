@@ -717,6 +717,23 @@ export interface ClientInfo {
   readonly revokedAt: IsoTime | null
 }
 
+/**
+ * What one app on this Mac may do besides calling site tools (IA section 5, "Use tools · See
+ * Valet · Ask for changes"), and the site tools it turned off for itself with valet_turn_off_tool.
+ */
+export interface ClientAccess {
+  /** Valet's own read-only tools answer it. */
+  readonly seeValet: boolean
+  /** Those tools show other agents' calls too, not only its own. */
+  readonly allActivity: boolean
+  /** Valet's write and authoring tools, each still approved by the person where it widens. */
+  readonly askForChanges: boolean
+  /** `<adapterId>.<tool>`, sorted. */
+  readonly toolsOff: readonly string[]
+}
+
+export type ClientAccessPatch = Partial<Omit<ClientAccess, 'toolsOff'>>
+
 // ---------- Attention ----------
 
 export interface NeedsUserItem {
@@ -1272,6 +1289,12 @@ export interface ValetApi {
      * file beside it first. Refuses a file that isn't a JSON object, rather than lose what is in it.
      */
     addToClaudeDesktop(clientId: string): Promise<DesktopConfigWritten>
+    /** What the app may do besides calling site tools, and the tools it turned off for itself. */
+    access(clientId: string): Promise<ClientAccess>
+    /** The person's own switches on the app's page. Not signed: like adding the app, a local choice. */
+    setAccess(clientId: string, patch: ClientAccessPatch): Promise<void>
+    /** Turns back on a site tool the app turned off for itself. */
+    turnToolOn(clientId: string, qualified: string): Promise<void>
   }
   readonly attention: {
     /**

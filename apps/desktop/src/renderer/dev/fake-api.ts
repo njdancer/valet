@@ -18,6 +18,7 @@ import type {
   AuditQuery,
   AuthStepEntry,
   ChainStatus,
+  ClientAccess,
   ClientInfo,
   ClientSnippet,
   ConfirmationItem,
@@ -643,6 +644,15 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     },
   ]
 
+  // Every app starts with the defaults; the first one has turned a tool off for itself.
+  const access = new Map<string, ClientAccess>()
+  const accessOf = (clientId: string): ClientAccess =>
+    access.get(clientId) ?? {
+      seeValet: true,
+      allActivity: false,
+      askForChanges: true,
+      toolsOff: clientId === clients[0]?.id ? ['woolworths.remove_from_cart'] : [],
+    }
   let clients: ClientInfo[] = [
     {
       id: 'c_c7d2a1b2c3d4e5f6',
@@ -1418,6 +1428,24 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
             '~/Library/Application Support/Claude/claude_desktop_config.json.valet-backup-20261107T214800Z',
           replaced: false,
         }
+      },
+      async access(clientId) {
+        enter('clients.access', clientId)
+        if (!clients.some((c) => c.id === clientId && c.revokedAt === null)) throw new Error('not-found')
+        return clone(accessOf(clientId))
+      },
+      async setAccess(clientId, patch) {
+        enter('clients.setAccess', clientId, patch)
+        if (!clients.some((c) => c.id === clientId && c.revokedAt === null)) throw new Error('not-found')
+        access.set(clientId, { ...accessOf(clientId), ...patch })
+        emit({ type: 'clients-changed' })
+      },
+      async turnToolOn(clientId, qualified) {
+        enter('clients.turnToolOn', clientId, qualified)
+        const current = accessOf(clientId)
+        if (!current.toolsOff.includes(qualified)) throw new Error('not-found')
+        access.set(clientId, { ...current, toolsOff: current.toolsOff.filter((t) => t !== qualified) })
+        emit({ type: 'clients-changed' })
       },
       async revoke(clientId) {
         enter('clients.revoke', clientId)

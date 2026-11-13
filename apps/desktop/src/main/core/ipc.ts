@@ -215,6 +215,24 @@ const HANDLERS: Readonly<
   'clients.addToClaudeDesktop': entry(z.tuple([OPAQUE_ID]), (api, [id]) =>
     api.clients.addToClaudeDesktop(id),
   ),
+  'clients.access': entry(z.tuple([OPAQUE_ID]), (api, [id]) => api.clients.access(id)),
+  'clients.setAccess': entry(
+    z.tuple([
+      OPAQUE_ID,
+      z
+        .object({
+          seeValet: z.boolean().optional(),
+          allActivity: z.boolean().optional(),
+          askForChanges: z.boolean().optional(),
+        })
+        .strict(),
+    ]),
+    (api, [id, patch]) => api.clients.setAccess(id, stripUndefined(patch)),
+  ),
+  'clients.turnToolOn': entry(
+    z.tuple([OPAQUE_ID, z.string().regex(/^[a-z][a-z0-9-]{1,63}\.[a-z][a-z0-9_]{0,63}$/)]),
+    (api, [id, qualified]) => api.clients.turnToolOn(id, qualified),
+  ),
   'attention.list': entry(none, (api) => api.attention.list()),
   'attention.dismiss': entry(z.tuple([OPAQUE_ID]), (api, [id]) => api.attention.dismiss(id)),
   answerConfirmation: entry(z.tuple([OPAQUE_ID, z.boolean()]), (api, [id, approved], sender) =>

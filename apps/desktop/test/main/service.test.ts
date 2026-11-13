@@ -3992,6 +3992,34 @@ describe('admin write tools (docs/admin-tools.md, "Write tier")', () => {
     expect(s.ui.notifications.at(-1)).toMatchObject({ title: 'Claude Code made a change' })
   })
 
+  it('lets the person turn a tool back on and change what the app may do, on its Connections page', async () => {
+    const s = await agents()
+    await write(s.admin, 'valet_turn_off_tool', { adapterId: 'shop', tool: 'echo' }, s.C1)
+    expect(await s.api.clients.access(s.C1.clientId)).toEqual({
+      seeValet: true,
+      allActivity: false,
+      askForChanges: true,
+      toolsOff: ['shop.echo'],
+    })
+    await s.api.clients.turnToolOn(s.C1.clientId, 'shop.echo')
+    const caller = s.endpoint.caller as ToolCaller
+    expect(caller.listTools(s.C1).map((t) => t.declaration.name)).toContain('echo')
+    expect((await s.api.clients.access(s.C1.clientId)).toolsOff).toEqual([])
+    await expect(s.api.clients.turnToolOn(s.C1.clientId, 'shop.echo')).rejects.toThrow()
+
+    await s.api.clients.setAccess(s.C1.clientId, { askForChanges: false })
+    expect(await s.api.clients.access(s.C1.clientId)).toMatchObject({ seeValet: true, askForChanges: false })
+    const refused = await write(s.admin, 'valet_turn_off_tool', { adapterId: 'shop', tool: 'echo' }, s.C1)
+    expect(text(refused)).toMatch(/isn't allowed to ask for changes/)
+    await s.api.clients.setAccess(s.C1.clientId, { askForChanges: true })
+    expect(
+      text(await write(s.admin, 'valet_turn_off_tool', { adapterId: 'shop', tool: 'echo' }, s.C1)),
+    ).toMatch(/^Done:/)
+    await s.api.clients.revoke(s.C2.clientId)
+    await expect(s.api.clients.access(s.C2.clientId)).rejects.toThrow()
+    await expect(s.api.clients.setAccess(s.C2.clientId, { seeValet: true })).rejects.toThrow()
+  })
+
   it('makes a stricter setting change at once and asks for a looser one', async () => {
     const s = await agents()
     await s.api.settings.set({ traceRetentionDays: 14 })

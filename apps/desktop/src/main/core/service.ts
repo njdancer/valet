@@ -3366,6 +3366,15 @@ export class AppService {
   }
 
   /** The client as the screens show it, with its calls over the last seven days. */
+  /** Tells connected clients their tool lists changed; a failure only delays it to the next refresh. */
+  private refreshEndpoint(): void {
+    try {
+      this.endpoint?.refresh()
+    } catch {
+      // The caller checks access on every call anyway.
+    }
+  }
+
   private async clientInfos(): Promise<ClientInfo[]> {
     const records = await this.reader.records()
     const since = this.deps.now() - 7 * 24 * 60 * 60_000
@@ -3716,6 +3725,23 @@ export class AppService {
           const bridge = deps.bridge(this.clients.configPath(clientId))
           const result = await addToDesktopConfig(path, this.serverName(), bridge, deps.now())
           return { path, ...result }
+        },
+        access: async (clientId) => {
+          const capabilities = this.clients.capabilities(clientId)
+          if (capabilities === null) throw new ValetError('config', 'not-found')
+          return { ...capabilities, toolsOff: [...this.clients.toolsOff(clientId)].sort() }
+        },
+        setAccess: async (clientId, patch) => {
+          if (!(await this.clients.setCapabilities(clientId, patch)))
+            throw new ValetError('config', 'not-found')
+          this.refreshEndpoint()
+          this.emit('clients-changed')
+        },
+        turnToolOn: async (clientId, qualified) => {
+          if (!(await this.clients.turnOnTool(clientId, qualified)))
+            throw new ValetError('config', 'not-found')
+          this.refreshEndpoint()
+          this.emit('clients-changed')
         },
       },
       attention: {
