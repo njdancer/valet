@@ -48,6 +48,7 @@ import {
   leftoverPaths,
   sweepCommand,
 } from '../core/erase'
+import { ghCliToken } from '../core/feedback'
 import {
   DEV_DATA_NAME,
   demoResolverRules,
@@ -449,10 +450,14 @@ async function main(): Promise<void> {
         ? null
         : {
             repo: feedbackRepo(process.env['VALET_FEEDBACK_REPO']),
-            token: () =>
-              new KeychainTokenSource({ service: KEYCHAIN_SERVICE, account: FEEDBACK_KEYCHAIN_ACCOUNT })
+            // The Keychain item if the person added one, else their own GitHub CLI's sign-in.
+            token: async () =>
+              (await new KeychainTokenSource({
+                service: KEYCHAIN_SERVICE,
+                account: FEEDBACK_KEYCHAIN_ACCOUNT,
+              })
                 .token()
-                .catch(() => null),
+                .catch(() => null)) ?? (await ghCliToken().catch(() => null)),
           },
     macName: macName(process.env),
     // Each open its own in-memory partition, so nothing a page left behind is there the next time.

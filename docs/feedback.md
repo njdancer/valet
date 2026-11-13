@@ -33,9 +33,11 @@ the site, draft or call. A follow-up becomes a comment with the same marker.
 
 - The repository is `njdancer/valet-feedback` unless `VALET_FEEDBACK_REPO=owner/name` is set
   when Valet starts (`DEFAULT_FEEDBACK_REPO` in `constants.ts`).
-- The token is a Keychain item, service `valet`, account `github-feedback`. Valet reads it with
-  `security` for each GitHub call, puts it in the `Authorization` header, and nowhere else. No
-  agent, adapter or result ever sees it.
+- The token is a Keychain item, service `valet`, account `github-feedback`, if the person added
+  one; otherwise the token the person's own GitHub CLI is signed in with (`gh auth token`, from
+  `/opt/homebrew/bin/gh` or `/usr/local/bin/gh`). Valet reads it for each GitHub call, puts it in
+  the `Authorization` header, and nowhere else. No agent, adapter or result ever sees it. The gh
+  token is broader than one made for the feedback repository; a Keychain item, once added, wins.
 - No token, a token GitHub refuses (401, 403, 404), or GitHub unreachable: the report is kept in
   `feedback.json` and the agent is told it is saved. Valet sends what's owed, three at a time, at
   start and on the agent's next feedback call. Once filed, the issue's text is dropped from the
@@ -49,7 +51,7 @@ the site, draft or call. A follow-up becomes a comment with the same marker.
 2. Make a fine-grained personal access token for that one repository with **Issues: read and
    write** and nothing else.
 3. In Terminal: `security add-generic-password -s valet -a github-feedback -w` and paste the token
-   when asked.
+   when asked. (Without this, Valet uses the GitHub CLI's sign-in, if gh is signed in.)
 
 Valet picks it up on the next feedback call; reports saved before then go out on that call.
 
