@@ -174,6 +174,20 @@ export function needsYouView(
         action: { kind: 'route', to: href.call(item.callId) },
         tone: 'warning',
       }
+    case 'agent-request':
+      return {
+        ...base,
+        title: item.title,
+        description: `${item.agentName} asks. Approve with Touch ID here, or on your iPhone.`,
+        adapterId: item.adapterId,
+        adapterName: item.adapterId,
+        callId: null,
+        deadline: time(item.expiresAt),
+        at: time(item.requestedAt) ?? 0,
+        actionLabel: 'Answer…',
+        action: { kind: 'route', to: href.needsYou(item.id) },
+        tone: 'accent',
+      }
     case 'missed':
       return {
         ...base,

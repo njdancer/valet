@@ -324,6 +324,8 @@ describe('every channel', () => {
     'adapters.installFromFolder': [],
     'clients.addToClaudeDesktop': ['c_0123456789abcdef'],
     'clients.access': ['c_0123456789abcdef'],
+    'attention.approveRequest': ['AAAAAAAAAAAAAAAAAAAAAA', null],
+    'attention.declineRequest': ['AAAAAAAAAAAAAAAAAAAAAA'],
     'clients.setAccess': ['c_0123456789abcdef', { askForChanges: false }],
     'clients.turnToolOn': ['c_0123456789abcdef', 'woolworths.remove_from_cart'],
     'drafts.list': [],

@@ -235,6 +235,11 @@ const HANDLERS: Readonly<
   ),
   'attention.list': entry(none, (api) => api.attention.list()),
   'attention.dismiss': entry(z.tuple([OPAQUE_ID]), (api, [id]) => api.attention.dismiss(id)),
+  'attention.approveRequest': entry(
+    z.tuple([OPAQUE_ID, z.string().min(1).max(200).nullable()]),
+    (api, [id, choice]) => api.attention.approveRequest(id, choice),
+  ),
+  'attention.declineRequest': entry(z.tuple([OPAQUE_ID]), (api, [id]) => api.attention.declineRequest(id)),
   answerConfirmation: entry(z.tuple([OPAQUE_ID, z.boolean()]), (api, [id, approved], sender) =>
     // The sender's role is non-null here: untrusted senders never reach a handler.
     api.answerConfirmation(id, approved, { role: sender.role as WindowRole, shows: sender.shows }),

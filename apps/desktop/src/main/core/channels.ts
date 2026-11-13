@@ -56,6 +56,8 @@ export const INVOKE_METHODS = [
   'clients.turnToolOn',
   'attention.list',
   'attention.dismiss',
+  'attention.approveRequest',
+  'attention.declineRequest',
   'answerConfirmation',
   'openConfirmation',
   'openLoginWindow',

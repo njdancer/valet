@@ -904,8 +904,37 @@ export interface MissedItem {
   readonly missedAt: IsoTime
 }
 
+/**
+ * A request an agent made through Valet's own tools that only the person can answer, and that no
+ * other item shows: a setting, a signed-in session, the home network, a tool of its own, a login.
+ * A paired phone gets the same card; whichever answers first wins (docs/approval-broker.md,
+ * "Approving at the Mac"). Installs and updates are review items instead.
+ */
+export interface AgentRequestItem {
+  readonly kind: 'agent-request'
+  /** The broker's request id. */
+  readonly id: string
+  readonly requestKind: 'setting' | 'authoring-session' | 'private-network' | 'tool-enable' | 'secret-grant'
+  /** Four characters of the request's digest, as the Touch ID prompt names it. */
+  readonly ref: string
+  /** Built by the Mac from the request's subject. */
+  readonly title: string
+  /** What approving does, one line each, from the subject. Quoted text came from an adapter. */
+  readonly details: readonly string[]
+  readonly adapterId: string | null
+  /** The asking app's name as the person named it, or what a cloud agent calls itself. */
+  readonly agentName: string
+  /** The agent's own words about why. Never trusted; shown as "The agent says". */
+  readonly agentNote: string | null
+  /** For a setting the person picks on the card (a store): the values offered. */
+  readonly choices: readonly { readonly value: string; readonly label: string }[] | null
+  readonly requestedAt: IsoTime
+  readonly expiresAt: IsoTime
+}
+
 export type AttentionItem =
   | NeedsUserItem
+  | AgentRequestItem
   | ConfirmationItem
   | ReviewItem
   | RemoteConsentItem
@@ -1305,6 +1334,13 @@ export interface ValetApi {
     list(): Promise<readonly AttentionItem[]>
     /** Removes a missed item. Rejects for any other kind, or an id that isn't there. */
     dismiss(id: string): Promise<void>
+    /**
+     * Approves an agent's request with Touch ID (the Mac's own signature). False if the person
+     * cancelled the prompt or it ended first. `choice` is the value picked on a card that offers them.
+     */
+    approveRequest(id: string, choice: string | null): Promise<boolean>
+    /** Declines an agent's request. False if it had already ended. */
+    declineRequest(id: string): Promise<boolean>
   }
   /**
    * Declines at once. An approval is accepted only from the confirmation's own panel, and only

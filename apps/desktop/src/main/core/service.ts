@@ -75,6 +75,7 @@ import { z } from 'zod'
 import { href } from '../../renderer/lib/routes'
 import type {
   AdapterVersions,
+  AgentRequestItem,
   AppEvent,
   AttentionItem,
   ChainStatus,
@@ -99,6 +100,7 @@ import type {
 import { AdapterSettingsStore } from './adapter-settings'
 import { adminReader } from './admin'
 import { AdminWriterImpl, type AgentSettingValues, type WriterSource } from './admin-writer'
+import { agentRequestItem } from './agent-requests'
 import { AppStateStore } from './app-state'
 import {
   AnchoredFile,
@@ -1127,6 +1129,14 @@ export class AppService {
           repairId: this.repairTickets.openForAdapter(adapterId)?.id ?? null,
         },
       ]
+    })
+  }
+
+  /** Agents' requests that only the person can answer and no other item shows (agent-requests.ts). */
+  private agentRequestItems(): AgentRequestItem[] {
+    return (this.approvalBroker?.list() ?? []).flatMap((r) => {
+      const item = agentRequestItem(r)
+      return item === null ? [] : [item]
     })
   }
 
@@ -3758,6 +3768,7 @@ export class AppService {
             ...this.handoffs.list(),
             ...this.broker.list(),
             ...this.consentItems(),
+            ...this.agentRequestItems(),
             ...reviews,
             ...states.flatMap(missingItems),
             ...this.repairItems(),
@@ -3766,6 +3777,20 @@ export class AppService {
         },
         dismiss: async (id) => {
           if (!this.missed.dismiss(id)) throw new ValetError('config', 'not-found')
+        },
+        approveRequest: async (id, choice) => {
+          const broker = this.approvalBroker
+          const pending = broker?.get(id) ?? null
+          if (broker === null || pending === null || agentRequestItem(pending) === null)
+            throw new ValetError('config', 'not-found')
+          const result = await broker.approveOnMac(id, choice === null ? {} : { choice })
+          return result.ok
+        },
+        declineRequest: async (id) => {
+          const broker = this.approvalBroker
+          const pending = broker?.get(id) ?? null
+          if (broker === null || pending === null || agentRequestItem(pending) === null) return false
+          return broker.decline(id, { via: 'mac' })
         },
       },
       answerConfirmation: (confirmationId: string, approved: boolean, from: AppWindow) =>

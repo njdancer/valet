@@ -16,13 +16,20 @@ import {
   PageBody,
   PageHeader,
   Section,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
   SiteAvatar,
   Stack,
   Text,
   TextLink,
+  toast,
 } from '@valet/ui'
 import { CheckCircle2, RotateCw } from 'lucide-react'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import type { AgentRequestItem } from '../../../shared/api'
 import { useAction, useApi, useAppStop, useLoad, useNow } from '../../lib/api-context'
 import { callRef, formatClock, formatTime, plural } from '../../lib/format'
 import { type NeedsYouView, needsYouOrder, needsYouView, runNeedsYouAction } from '../../lib/needs-you'
@@ -100,9 +107,19 @@ export function NeedsYouPage({ item }: { readonly item: string | null }) {
         ) : (
           <ul aria-label="Waiting for you" className="m-0 flex list-none flex-col gap-3 p-0">
             {setupLeft !== null ? <FinishSetupRow left={setupLeft} /> : null}
-            {waiting.map((v) => (
-              <NeedsYouRow key={v.id} view={v} now={now} />
-            ))}
+            {waiting.map((v) => {
+              const request =
+                v.kind === 'agent-request' && attention.status === 'ready'
+                  ? attention.data.find(
+                      (i): i is AgentRequestItem => i.kind === 'agent-request' && i.id === v.id,
+                    )
+                  : undefined
+              return request !== undefined ? (
+                <AgentRequestRow key={v.id} item={request} view={v} now={now} />
+              ) : (
+                <NeedsYouRow key={v.id} view={v} now={now} />
+              )
+            })}
           </ul>
         )}
         {missed.length > 0 ? (
@@ -170,6 +187,112 @@ function NeedsYouRow({ view, now }: { readonly view: NeedsYouView; readonly now:
         </Button>
       }
     />
+  )
+}
+
+/**
+ * An agent's request, answered right here (docs/approval-broker.md, "Approving at the Mac"): the
+ * click only raises the Touch ID prompt, which names the request's ref. The agent's note is its own
+ * claim, kept apart from what Valet says the request does.
+ */
+function AgentRequestRow({
+  item,
+  view,
+  now,
+}: {
+  readonly item: AgentRequestItem
+  readonly view: NeedsYouView
+  readonly now: number
+}) {
+  const api = useApi()
+  const approve = useAction()
+  const decline = useAction()
+  const [choice, setChoice] = useState<string | null>(null)
+  const [cancelled, setCancelled] = useState(false)
+  const needsChoice = item.choices !== null
+  const onApprove = async () => {
+    setCancelled(false)
+    let ok = false
+    const ran = await approve.run(async () => {
+      ok = await api.attention.approveRequest(item.id, choice)
+    })
+    if (!ran) return
+    if (ok) toast.success('Approved', { description: `${item.agentName} is told.` })
+    else setCancelled(true)
+  }
+  const onDecline = async () => {
+    if (await decline.run(() => api.attention.declineRequest(item.id)))
+      toast('Declined', { description: `${item.agentName} is told.` })
+  }
+  return (
+    <li className="m-0" aria-label={view.title}>
+      <Card>
+        <CardHeader className="flex-row flex-wrap items-start justify-between gap-2">
+          <Stack gap={1} className="min-w-0">
+            <CardTitle className="break-words">{view.title}</CardTitle>
+            <Text size="sm" tone="muted">
+              Asked by {item.agentName} · request <span className="font-mono">{item.ref}</span>
+            </Text>
+          </Stack>
+          {view.deadline !== null ? (
+            <DeadlineChip until={view.deadline} now={now} subject={view.title} />
+          ) : null}
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <ul className="m-0 flex list-disc flex-col gap-1 pl-5">
+            {item.details.map((line) => (
+              <li key={line}>
+                <Text size="sm">{line}</Text>
+              </li>
+            ))}
+          </ul>
+          {item.agentNote !== null ? (
+            <Text size="sm" tone="muted" className="break-words">
+              The agent says: “{item.agentNote}”
+            </Text>
+          ) : null}
+          {item.choices !== null ? (
+            <Select value={choice ?? undefined} onValueChange={setChoice}>
+              <SelectTrigger className="w-72 max-w-full" aria-label="Choose the value">
+                <SelectValue placeholder="Choose…" />
+              </SelectTrigger>
+              <SelectContent>
+                {item.choices.map((c) => (
+                  <SelectItem key={c.value} value={c.value}>
+                    {c.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          ) : null}
+          {cancelled ? (
+            <Text role="status" size="sm" tone="muted">
+              Not approved: Touch ID was cancelled, or the request ended. If it’s still here, it’s still
+              waiting.
+            </Text>
+          ) : null}
+          {approve.failed || decline.failed ? (
+            <Text role="alert" size="sm" tone="danger">
+              Couldn’t answer it. It may have ended already.
+            </Text>
+          ) : null}
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button size="sm" variant="ghost" loading={decline.busy} onClick={() => void onDecline()}>
+              Decline
+            </Button>
+            <Button
+              size="sm"
+              variant="primary"
+              loading={approve.busy}
+              disabled={needsChoice && choice === null}
+              onClick={() => void onApprove()}
+            >
+              Approve with Touch ID
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </li>
   )
 }
 

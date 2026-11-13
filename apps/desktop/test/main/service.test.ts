@@ -2142,6 +2142,67 @@ describe('an adapter setting (D69)', () => {
     expect(detail?.settings[0]?.chosen).toMatchObject({ id: '12', label: 'Shop <b>North</b>' })
   })
 
+  it('shows an agent’s setting request in Needs you, answered there with the pick', async () => {
+    const s = await storeShop()
+    const broker = (s.service as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
+    const subject = adapterSettingSubject(
+      s.adapter.definition.manifest,
+      'store',
+      null,
+      SHOP_STORES.map((c) => ({ id: c.value, label: c.label })),
+    )
+    if (subject === null) throw new Error('no subject')
+    const asked = await broker.request(
+      'setting',
+      subject,
+      { kind: 'agent', clientId: 'local:c_1', clientName: 'Claude Code' },
+      { agentNote: 'Pick the one near home' },
+    )
+    if (!asked.ok) throw new Error(asked.reason)
+    const item = (await s.api.attention.list()).find((i) => i.id === asked.requestId)
+    expect(item).toMatchObject({
+      kind: 'agent-request',
+      requestKind: 'setting',
+      agentName: 'Claude Code',
+      agentNote: 'Pick the one near home',
+      adapterId: 'shop',
+    })
+    if (item?.kind !== 'agent-request') throw new Error('no item')
+    expect(item.choices?.map((c) => c.value)).toContain('12')
+    expect(item.ref).toMatch(/^[0-9A-F]{4}$/)
+    expect(await s.api.attention.approveRequest(asked.requestId, '12')).toBe(true)
+    expect((await s.api.attention.list()).some((i) => i.id === asked.requestId)).toBe(false)
+    expect((await s.api.adapters.get('shop'))?.settings[0]?.chosen).toMatchObject({ id: '12' })
+    // Once answered, it's gone: neither answer works again.
+    await expect(s.api.attention.approveRequest(asked.requestId, '12')).rejects.toThrow()
+    expect(await s.api.attention.declineRequest(asked.requestId)).toBe(false)
+  })
+
+  it('declines an agent’s request from Needs you, and leaves the person’s own requests to their own surfaces', async () => {
+    const s = await storeShop()
+    const broker = (s.service as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
+    const subject = adapterSettingSubject(
+      s.adapter.definition.manifest,
+      'store',
+      null,
+      SHOP_STORES.map((c) => ({ id: c.value, label: c.label })),
+    )
+    if (subject === null) throw new Error('no subject')
+    const mine = await broker.request('setting', subject, { kind: 'person' })
+    if (!mine.ok) throw new Error(mine.reason)
+    expect((await s.api.attention.list()).some((i) => i.id === mine.requestId)).toBe(false)
+    await expect(s.api.attention.approveRequest(mine.requestId, '12')).rejects.toThrow()
+    expect(await s.api.attention.declineRequest(mine.requestId)).toBe(false)
+    const asked = await broker.request('setting', subject, {
+      kind: 'agent',
+      clientId: 'local:c_1',
+      clientName: 'Claude Code',
+    })
+    if (!asked.ok) throw new Error(asked.reason)
+    expect(await s.api.attention.declineRequest(asked.requestId)).toBe(true)
+    expect((await s.api.attention.list()).some((i) => i.id === asked.requestId)).toBe(false)
+  })
+
   it('keeps the choice across a restart, in an owner-only file', async () => {
     const s = await storeShop()
     await s.api.adapters.settingChoices('shop', 'store', '2000')

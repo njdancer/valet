@@ -11,6 +11,7 @@ import { missedTitle, needsYouTitle } from '@valet/core/vocabulary'
 import type {
   AdapterDetail,
   AdapterSummary,
+  AgentRequestItem,
   AppEvent,
   AppStatus,
   AttentionItem,
@@ -588,6 +589,8 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     ),
   ]
 
+  // Agents' requests only the person answers; none in the fake world until a test adds one.
+  let agentRequests: AgentRequestItem[] = []
   let attention: AttentionItem[] = [
     {
       kind: 'needs-user',
@@ -1468,13 +1471,27 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
           expiresAt: r.expiresAt,
         }))
         const missing = [...adapters.values()].flatMap((a) => missingOf(detailOf(a)))
-        return clone(sorted([...attention, ...consents, ...missing, ...repairs, ...missed]))
+        return clone(sorted([...attention, ...consents, ...agentRequests, ...missing, ...repairs, ...missed]))
       },
       async dismiss(id) {
         enter('attention.dismiss', id)
         if (!missed.some((m) => m.id === id)) throw new Error('refused')
         missed = missed.filter((m) => m.id !== id)
         emit({ type: 'attention-changed' })
+      },
+      async approveRequest(id, choice) {
+        enter('attention.approveRequest', id, choice)
+        if (!agentRequests.some((r) => r.id === id)) throw new Error('not-found')
+        agentRequests = agentRequests.filter((r) => r.id !== id)
+        emit({ type: 'attention-changed' })
+        return true
+      },
+      async declineRequest(id) {
+        enter('attention.declineRequest', id)
+        const had = agentRequests.some((r) => r.id === id)
+        agentRequests = agentRequests.filter((r) => r.id !== id)
+        if (had) emit({ type: 'attention-changed' })
+        return had
       },
     },
     async openConfirmation(confirmationId) {

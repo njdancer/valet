@@ -251,9 +251,16 @@ since it was last told (R23), each once, scanned for secrets like everything els
 - **New audit event `agent-change`** (`clientId`, `action`: tool-off, setting or disconnect,
   `target`, `value`). Loosening changes are audited by the broker as approval records instead.
 - **Left out for now:** restore (rollback) and login (grant) requests, which need D's handlers and a
-  decision on how the item is picked; a local tool turned back on, which has no store yet (the person
-  can't turn one off locally today); remote tools, which only matter once cloud agents get admin
+  decision on how the item is picked; remote tools, which only matter once cloud agents get admin
   tools (B); uninstall, which doesn't exist; drafts and the scratch browser, which are F's.
+- **The person's side (2026-11-13):** an app's Connections page has switches for See Valet, All
+  agents' activity and Ask for changes (`clients.setAccess`, not signed, like adding the app), and
+  lists the tools it turned off for itself, each with Turn back on (`clients.turnToolOn`). An
+  agent's request that no other item shows (a setting, a signed-in session, the home network, a
+  tool or a login) is an **agent-request** item in Needs you, with Approve with Touch ID and Decline
+  (`attention.approveRequest`, `attention.declineRequest`, `agent-requests.ts`). The phone gets the
+  same request; whichever answers first wins. `valet_needs_you` leaves these items out: an agent
+  reads its own with `valet_get_approval`.
 
 ### Prompt injection
 
