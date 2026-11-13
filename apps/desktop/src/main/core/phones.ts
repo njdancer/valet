@@ -18,6 +18,11 @@ export interface RelaySetup {
   readonly origin: string
   /** Where to dial when that isn't the origin itself (a local relay in development). */
   readonly connectUrl?: string
+  /**
+   * The base of this Mac's own host for cloud agents, when the relay names Macs under another
+   * domain (its RELAY_MAC_HOST): `<macId>.<macHost>`.
+   */
+  readonly macHost?: string
 }
 
 export interface PhonesOptions {
@@ -117,6 +122,7 @@ export class Phones implements PhoneOutbox {
       consent: (id, query, source) =>
         this.options.remote?.relayConsent(id, query, source) ?? { state: 'declined' },
       ...(relay.connectUrl === undefined ? {} : { connectUrl: relay.connectUrl }),
+      ...(relay.macHost === undefined ? {} : { macHost: relay.macHost }),
       onStatus: (status) => {
         // A local relay (VALET_RELAY_CONNECT, dev builds only): say what it does, for the walkthrough.
         if (relay.connectUrl !== undefined) console.log(`[relay] ${status.state}`)
@@ -249,14 +255,27 @@ export function relayFromEnv(env: NodeJS.ProcessEnv): RelaySetup | null {
   const origin = env['VALET_RELAY_ORIGIN']
   if (origin === undefined || !/^https:\/\/[a-z0-9.-]+(:\d+)?$/.test(origin)) return null
   const connect = env['VALET_RELAY_CONNECT']
-  return connect !== undefined && /^https?:\/\/[a-z0-9.-]+(:\d+)?$/.test(connect)
-    ? { origin, connectUrl: connect }
-    : { origin }
+  const macHost = env['VALET_RELAY_MAC_HOST']
+  return {
+    origin,
+    ...(connect !== undefined && /^https?:\/\/[a-z0-9.-]+(:\d+)?$/.test(connect)
+      ? { connectUrl: connect }
+      : {}),
+    ...(macHost !== undefined && HOST_NAME.test(macHost) ? { macHost } : {}),
+  }
 }
 
-/** The relay a host name in Settings names: always https, on the default port. */
-export function relayFromHost(host: string | null): RelaySetup | null {
-  return host === null ? null : { origin: `https://${host}` }
+const HOST_NAME = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$/
+
+/**
+ * The relay a host name in Settings names: always https, on the default port. `macHost`, when
+ * set, is the base of this Mac's own host for cloud agents (the relay's RELAY_MAC_HOST).
+ */
+export function relayFromHost(host: string | null, macHost: string | null = null): RelaySetup | null {
+  if (host === null) return null
+  return macHost === null || !HOST_NAME.test(macHost)
+    ? { origin: `https://${host}` }
+    : { origin: `https://${host}`, macHost }
 }
 
 /** The Mac's name as a paired phone shows it. */

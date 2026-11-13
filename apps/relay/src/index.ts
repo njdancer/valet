@@ -40,6 +40,9 @@ export default {
       key = { secret: env.WAIT_SECRET, key: waitKey(env.WAIT_SECRET) }
     const door: FrontDoor = {
       host: env.RELAY_HOST,
+      ...(env.RELAY_MAC_HOST === undefined || env.RELAY_MAC_HOST === ''
+        ? {}
+        : { macHost: env.RELAY_MAC_HOST }),
       waitKey: await key.key,
       mac: (macId) => stub(env, macId),
       limits: {

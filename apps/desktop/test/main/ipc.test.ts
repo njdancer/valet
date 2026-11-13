@@ -384,6 +384,7 @@ describe('every channel', () => {
     'remote.clients': [],
     'remote.revokeClient': ['rcabcdefghijklmnopqrst'],
     'remote.revokeAllClients': [],
+    'remote.setAskForChanges': ['rcabcdefghijklmnopqrst', true],
     'remote.setup': [],
     'remote.setEnabled': [true],
     'remote.setHosts': [['valet.example.com']],
@@ -401,7 +402,11 @@ describe('every channel', () => {
     const { d, calls } = dispatcher()
     await expect(d.dispatch(invokeChannel(method), valid[method], control)).resolves.toEqual({ method })
     const expected =
-      method === 'answerConfirmation' ? [...valid[method], { role: 'control', shows: null }] : valid[method]
+      method === 'answerConfirmation'
+        ? [...valid[method], { role: 'control', shows: null }]
+        : method === 'remote.approveConsent'
+          ? [...valid[method], []]
+          : valid[method]
     expect(calls).toEqual([{ method, args: expected }])
   })
 })

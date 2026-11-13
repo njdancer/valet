@@ -5,7 +5,10 @@
 // app connects to it there, and it never listens on another interface.
 //
 // The OAuth authorisation server that mints the access tokens (oauth-server.ts) answers on this
-// listener too, ahead of the MCP path. The tunnel is not built yet.
+// listener too, ahead of the MCP path.
+//
+// A cloud agent gets Valet's own tools (admin, and authoring with them) only when `ownTools` says
+// the person gave it them with a signature; each tool still checks its access on every call.
 
 import { type HttpServerOptions, type LiveSessions, startHttpServer } from './http'
 import type { RemoteAuthorization } from './oauth-server'
@@ -15,9 +18,15 @@ import type { ToolCaller } from './tool-caller'
 import type { SkippedTool } from './tool-names'
 
 export interface RemoteListenerOptions
-  // No `admin`: Valet's own tools are for local clients only (docs/admin-tools.md).
-  extends Omit<HttpServerOptions, 'authenticate' | 'host' | 'caller' | 'admin' | 'authoring'>,
+  extends Omit<HttpServerOptions, 'authenticate' | 'host' | 'caller' | 'adminFor'>,
     RemotePolicyOptions {
+  /**
+   * Whether a cloud agent (by its registration id, no `remote:`) gets Valet's own tools in its
+   * next session: true only when the person gave it See Valet or Ask for changes with a signature
+   * (docs/authoring-tools.md, "Who can author"). Without it, no cloud agent gets `admin` or
+   * `authoring`, whatever else is passed.
+   */
+  readonly ownTools?: (clientId: string) => boolean
   /** The caller the local endpoint uses. The listener wraps it in the remote policy. */
   readonly caller: ToolCaller
   readonly policy: RemotePolicy
@@ -38,6 +47,11 @@ export interface RunningRemoteListener {
   /** Revokes one client's access tokens and closes its sessions. */
   endClient(clientId: string): Promise<void>
   /**
+   * Closes one client's sessions and keeps its tokens, so its next session is opened with what it
+   * may have now (its own tools given or taken away).
+   */
+  reopenClient(clientId: string): Promise<void>
+  /**
    * The kill switch: refuses every access token, fails every remote call in flight with aborted,
    * closes every session and stops listening. Client registrations (later) are kept, so clients
    * refresh and carry on when remote access is resumed.
@@ -47,12 +61,19 @@ export interface RunningRemoteListener {
 
 export async function startRemoteListener(options: RemoteListenerOptions): Promise<RunningRemoteListener> {
   // `admin` is left out of the type too; taken out here as well, so nothing untyped can pass it on.
-  const { caller, policy, tokens, hosts, authorization, callsPerHour, now, refused, ...rest } = options
-  const {
-    admin: _admin,
-    authoring: _authoring,
-    ...http
-  } = rest as typeof rest & { readonly admin?: unknown; readonly authoring?: unknown }
+  const { caller, policy, tokens, hosts, authorization, callsPerHour, now, refused, ownTools, ...rest } =
+    options
+  // Valet's own tools only with the predicate that says which agent may have them.
+  const { admin, authoring, ...http } = rest
+  const own =
+    ownTools === undefined || admin === undefined
+      ? {}
+      : {
+          admin,
+          ...(authoring === undefined ? {} : { authoring }),
+          adminFor: (identity: { readonly origin: string; readonly clientId: string }) =>
+            identity.origin === 'remote' && ownTools(identity.clientId),
+        }
   const remote = new RemotePolicyCaller(caller, policy, {
     ...(callsPerHour === undefined ? {} : { callsPerHour }),
     ...(now === undefined ? {} : { now }),
@@ -60,6 +81,7 @@ export async function startRemoteListener(options: RemoteListenerOptions): Promi
   })
   const server = await startHttpServer({
     ...http,
+    ...own,
     caller: remote,
     authenticate: remoteAuthenticator({ tokens, hosts }),
     ...(authorization === undefined ? {} : { before: authorization.handler(hosts) }),
@@ -73,6 +95,9 @@ export async function startRemoteListener(options: RemoteListenerOptions): Promi
     sessions: () => server.sessions(),
     async endClient(clientId) {
       tokens.revokeClient(clientId)
+      await server.endSessions((identity) => identity.origin === 'remote' && identity.clientId === clientId)
+    },
+    async reopenClient(clientId) {
       await server.endSessions((identity) => identity.origin === 'remote' && identity.clientId === clientId)
     },
     async close() {

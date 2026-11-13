@@ -51,8 +51,18 @@ describe('settings', () => {
     expect(screen.getByText('Enter a host name, like relay.example.com')).toBeTruthy()
     await user.clear(field)
     await user.type(field, 'https://Relay.Valet.Example/')
-    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await user.click(within(field.closest('form') as HTMLElement).getByRole('button', { name: 'Save' }))
     expect(called(api, 'settings.set')).toEqual([[{ relayHost: 'relay.valet.example' }]])
+  })
+
+  it('sets the domain the relay names Macs under, for cloud agents, and clears it', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    renderPage(api, <SettingsPage section="devices" />)
+    const field = await screen.findByRole('textbox', { name: 'Cloud agents’ domain' })
+    await user.type(field, 'Valet.Example.com')
+    await user.click(within(field.closest('form') as HTMLElement).getByRole('button', { name: 'Save' }))
+    expect(called(api, 'settings.set')).toEqual([[{ relayMacHost: 'valet.example.com' }]])
   })
 
   it('turns notifications off', async () => {

@@ -47,6 +47,15 @@ function detail(serialized: SerializedRequest): string {
     }
     case 'tool-enable':
       return ` (${request.subject.tool}, ${request.subject.scope === 'remote' ? 'for remote use' : 'on this Mac'})`
+    case 'setting':
+      // A cloud agent's "Ask for changes", given after its consent: fixed words, never the host.
+      return /^remote_ask_[a-z0-9_]+$/.test(request.subject.setting)
+        ? ' so a cloud agent may ask for changes, such as new adapters'
+        : ''
+    case 'remote-client':
+      return request.subject.capabilities?.includes('ask-for-changes') === true
+        ? ' and ask for changes, such as new adapters'
+        : ''
     case 'private-network': {
       const { address, port } = request.subject
       return ` (${address}${port === null ? '' : ` port ${port}`})`

@@ -326,6 +326,8 @@ export class DraftAuthoring implements Authoring {
 
   async requestSession(viewer: ClientIdentity, draftId: string, minutes: number): Promise<AskReport> {
     const record = await this.own(viewer, draftId)
+    // Signed-in trials stay local-only until a remote one has been red-teamed (B, F's design).
+    if (viewer.origin !== 'local') throw new AuthoringRefusal(REMOTE_SIGNED_IN)
     const ask = this.deps.askSession
     const trials = this.deps.trials
     if (ask === undefined || trials === undefined)
@@ -1048,6 +1050,7 @@ export class DraftAuthoring implements Authoring {
         throw new AuthoringRefusal(`Not tried: the person is signed in to ${shared} with another adapter.`)
     }
     let session: SignedInTrial | null = null
+    if (signedIn && viewer.origin !== 'local') throw new AuthoringRefusal(REMOTE_SIGNED_IN)
     if (signedIn) {
       const lent = this.deps.sessionFor?.(draftId) ?? null
       const installed = record.basedOn === null ? null : await this.deps.installed(record.adapterId)
@@ -1212,6 +1215,11 @@ function take(map: Map<string, number[]>, client: string, limit: number, now: nu
   map.set(client, recent)
   return true
 }
+
+/** Why a cloud agent gets no signed-in session or trial. */
+export const REMOTE_SIGNED_IN =
+  'Signed-in sessions and trials are for agents on the person’s Mac only for now. Try the draft signed out, ' +
+  'or test it with cases; the person can try it signed in after approving it.'
 
 function clientKey(viewer: ClientIdentity): string {
   return `${viewer.origin}:${viewer.clientId}`

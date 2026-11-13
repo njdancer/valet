@@ -2413,7 +2413,61 @@ describe('remote access', () => {
     })
   })
 
-  it('adds a tool already on for remote clients to an agent’s own grant, with Touch ID, and nothing more', async () => {
+  it('lets an approved cloud agent ask for changes only once the person signs it, and stops at once', async () => {
+    const s = await approved()
+    await s.service.remote.setHosts([HOST])
+    await s.service.remote.setEnabled(true)
+    await s.service.setRemoteTool('shop', 'echo', true)
+    const port = Number(new URL(s.service.remote.status().url as string).port)
+    const agent = approvedClient(s, ['shop.echo'])
+    const names = async () =>
+      (await (await remoteClient(port, agent.token)).listTools()).tools.map((t) => t.name)
+
+    // Off by default for a cloud agent: its grant is site tools alone.
+    expect(await names()).toEqual(['shop_echo'])
+    expect((await s.api.remote.clients())[0]).toMatchObject({ seeValet: false, askForChanges: false })
+
+    // A cancelled Touch ID prompt changes nothing.
+    s.presence.answer = false
+    await expect(s.api.remote.setAskForChanges(agent.id, true)).rejects.toBeInstanceOf(ValetError)
+    expect((await s.api.remote.clients())[0]).toMatchObject({ askForChanges: false })
+
+    s.presence.answer = true
+    const before = s.presence.prompts.length
+    await s.api.remote.setAskForChanges(agent.id, true)
+    expect(s.presence.prompts.slice(before)).toEqual([
+      expect.stringMatching(/^change a setting so a cloud agent may ask for changes/),
+    ])
+    expect((await s.api.remote.clients())[0]).toMatchObject({ seeValet: true, askForChanges: true })
+    const given = await names()
+    expect(given).toContain('valet_list_adapters')
+    expect(given).toContain('valet_request_tool')
+    expect(given).toContain('shop_echo')
+
+    // Asking for changes as a cloud agent: the request names it, and it lands with the broker.
+    const client = await remoteClient(port, agent.token)
+    await s.service.setRemoteTool('shop', 'add', true)
+    const asked = await client.callTool({
+      name: 'valet_request_tool',
+      arguments: { adapterId: 'shop', tool: 'add', note: 'to test my adapter' },
+    })
+    expect(asked.isError).not.toBe(true)
+    const broker = (s.service as unknown as { approvalBroker: ApprovalBroker }).approvalBroker
+    expect(broker.list().map((p) => [p.request.kind, p.request.requester])).toContainEqual([
+      'tool-enable',
+      { kind: 'agent', clientId: `remote:${agent.id}`, clientName: 'claude.example' },
+    ])
+
+    // Off is at once, with no prompt, and its waiting requests go with it.
+    const prompts = s.presence.prompts.length
+    await s.api.remote.setAskForChanges(agent.id, false)
+    expect(s.presence.prompts.length).toBe(prompts)
+    expect((await s.api.remote.clients())[0]).toMatchObject({ seeValet: false, askForChanges: false })
+    expect(broker.list().filter((p) => p.request.kind === 'tool-enable')).toEqual([])
+    expect(await names()).toEqual(['shop_echo'])
+  })
+
+  it('adds a tool to an agent’s own grant with Touch ID, turning it on for cloud agents only as far as that grant', async () => {
     const s = await approved()
     await s.service.setRemoteTool('shop', 'echo', true)
     await s.service.setRemoteTool('shop', 'add', true)
@@ -2447,13 +2501,22 @@ describe('remote access', () => {
     expect(s.service.remote.allows('shop', declared('add'), mine.id)).toBe(true)
     expect(s.service.remote.allows('shop', declared('add'), theirs.id)).toBe(false)
 
-    // A tool that isn't on for remote clients stays off: the request is stale, never applied.
+    // A tool that isn't on for remote clients (one the agent just built, say): approving the
+    // agent's own request turns it on, and only this agent's grant gets it.
     await s.service.setRemoteTool('shop', 'echo', false)
     s.service.remote.clients.grant(mine.id, ['shop.add'], REMOTE_RESOURCE)
-    const stale = await ask('echo')
-    expect(await broker.approveOnMac(stale)).toMatchObject({ ok: false })
-    expect(s.service.remote.allows('shop', declared('echo'))).toBe(false)
-    expect(s.service.remote.clients.get(mine.id)?.grant?.tools).toEqual(['shop.add'])
+    expect(await broker.approveOnMac(await ask('echo'))).toEqual({ ok: true })
+    expect(s.service.remote.allows('shop', declared('echo'))).toBe(true)
+    expect(s.service.remote.allows('shop', declared('echo'), mine.id)).toBe(true)
+    const third = approvedClient(s, ['shop.add'])
+    expect(s.service.remote.allows('shop', declared('echo'), third.id)).toBe(false)
+    expect(s.service.remote.clients.get(mine.id)?.grant?.tools).toEqual(['shop.add', 'shop.echo'])
+
+    // Already in its grant by the time the person answers: stale, never applied again.
+    const again = await ask('add')
+    s.service.remote.clients.grant(mine.id, ['shop.add'], REMOTE_RESOURCE)
+    await s.service.remote.allowForClient('shop', declared('add'), mine.id)
+    expect(await broker.approveOnMac(again)).toMatchObject({ ok: false })
   })
 
   it('refuses and audits a call to a tool turned off since the client listed it', async () => {
@@ -2591,7 +2654,11 @@ describe('remote access', () => {
     ])
     await expect(s.api.remote.approveConsent(shown, ['shop.nope'])).rejects.toBeInstanceOf(ValetError)
     expect(await s.api.remote.approveConsent('AAAA-AAAA', ['shop.echo'])).toBe('wrong-code')
-    expect(await s.api.remote.approveConsent(shown.toLowerCase(), ['shop.echo'])).toBe('approved')
+    expect(await s.api.remote.approveConsent(shown.toLowerCase(), ['shop.echo'], ['ask-for-changes'])).toBe(
+      'approved',
+    )
+    // Ticked on the consent sheet: signed with the consent, and named in the Touch ID prompt.
+    expect(s.presence.prompts.at(-1)).toMatch(/^let a remote agent connect and ask for changes/)
 
     const back = await web(`${base}${wait}`)
     expect(back.status).toBe(302)
@@ -2610,7 +2677,13 @@ describe('remote access', () => {
     const tokens = (await tokenRes.json()) as { access_token: string; refresh_token: string }
 
     const client = await remoteClient(port, tokens.access_token)
-    expect((await client.listTools()).tools.map((t) => t.name)).toEqual(['shop_echo'])
+    expect((await s.api.remote.clients()).map((c) => [c.id, c.seeValet, c.askForChanges])).toEqual([
+      [clientId, true, true],
+    ])
+    const listed = (await client.listTools()).tools.map((t) => t.name)
+    expect(listed).toContain('shop_echo')
+    expect(listed).toContain('valet_status')
+    expect(listed).toContain('valet_request_tool')
     expect(audited(s.paths)).toContainEqual({
       type: 'remote-consent',
       clientId: `remote:${clientId}`,

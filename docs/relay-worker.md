@@ -65,6 +65,18 @@ Device connections go to any host that isn't a Mac's:
 
 Any other host or path gets a plain 404.
 
+**A separate domain for Macs (`RELAY_MAC_HOST`).** The Worker can name Macs under another domain
+than its own: with `RELAY_MAC_HOST` set, each Mac is `<macId>.<RELAY_MAC_HOST>` and the relay's
+own host (`RELAY_HOST`) serves device sockets only. The Mac's side is Settings › Devices, "Cloud
+agents' domain" (`relayMacHost`, or `VALET_RELAY_MAC_HOST` in a development build). This lets the
+relay stay on a `workers.dev` name, which can't take a name per Mac, while cloud agents use a
+zone the person owns. Paired phones are unaffected: they dial `RELAY_HOST`.
+
+On a zone the person owns, each Mac's host can be its own Workers Custom Domain
+(`<macId>.valet.example.com`), which Cloudflare issues a certificate for by itself. That needs no
+wildcard record and no Advanced Certificate Manager, at one custom domain per Mac. Deploying it
+needs Nick ([What needs Nick](#what-needs-nick)).
+
 **Recommended host:** a short dedicated domain.
 
 - relay.md explains why: as a separate registrable domain, cookies and reputation can't cross onto

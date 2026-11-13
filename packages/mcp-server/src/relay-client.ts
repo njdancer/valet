@@ -66,6 +66,11 @@ export interface RelayClientOptions {
   readonly consent: (id: string, query: string, source: string | null) => RelayConsentView
   readonly onEvent?: (event: RelayEvent) => void
   readonly onStatus?: (status: RelayClientStatus) => void
+  /**
+   * The base of this Mac's public host, when the relay gives Macs names under another domain
+   * (its RELAY_MAC_HOST): `<macId>.<macHost>`. Unset, `<macId>.<relay host>`.
+   */
+  readonly macHost?: string
   /** Where to connect, when it isn't the relay's own origin (tests against a local runtime). */
   readonly connectUrl?: string
   readonly WebSocket?: typeof WebSocket
@@ -103,9 +108,9 @@ export class RelayClient {
 
   constructor(private readonly options: RelayClientOptions) {}
 
-  /** The host remote clients use for this Mac: `<macId>.<relay host>`. */
+  /** The host remote clients use for this Mac: `<macId>.<relay host>`, or `<macId>.<macHost>`. */
   get publicHost(): string {
-    return `${this.options.macId}.${new URL(this.options.relay).host}`
+    return `${this.options.macId}.${this.options.macHost ?? new URL(this.options.relay).host}`
   }
 
   get status(): RelayClientStatus {

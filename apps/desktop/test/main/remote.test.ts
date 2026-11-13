@@ -38,6 +38,7 @@ function make(file?: unknown) {
       refresh: () => [],
       sessions: () => ({ total: 0, bridge: 0, http: 0, sessions: [] }),
       endClient: async () => {},
+      reopenClient: async () => {},
       close: async () => {
         closes++
       },
