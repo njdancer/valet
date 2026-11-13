@@ -702,12 +702,18 @@ async function setup() {
       // A form POST that a trusted click submits: a navigation, not a fetch.
       await page.goto(site.url('site.test', '/pay-form'))
       const click = await settle(page.click('#pay'))
-      await sleep(500)
+      // Until the cancelled navigation has been reported: a goto while it is still in flight would
+      // take its ERR_BLOCKED_BY_CLIENT as its own (seen on a slow runner).
+      const blockedPath = (path: string) => () =>
+        blocked.slice(from).some((b) => b.target === site.url('site.test', path)) ? true : undefined
+      await until(blockedPath('/payment'))
+      await sleep(200)
       // A navigation that adapter code starts by itself. The cancelled POST left Chromium's error
       // page behind, so start from a page on the site again.
       await page.goto(site.url('site.test', '/'))
       await settle(page.evaluate(`(location.href = '/payments/new', null)`))
-      await sleep(500)
+      await until(blockedPath('/payments/new'))
+      await sleep(200)
       // The ceiling: five API calls a run, and the sixth is cut off. Back to a page on the site.
       await page.goto(site.url('site.test', '/'))
       begin()
