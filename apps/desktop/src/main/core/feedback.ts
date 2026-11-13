@@ -9,7 +9,8 @@
 // whole. Each agent sees only its own reports. Plain TypeScript over ports, tested without Electron.
 
 import { randomBytes } from 'node:crypto'
-import type { SecretValue } from '@valet/core'
+import { SecretValue } from '@valet/core'
+import { nodeSpawner, nodeTimers, runProcess, type Spawner, type Timers } from '@valet/credentials'
 import {
   type ClientIdentity,
   type FeedbackDesk,
@@ -268,6 +269,35 @@ class GitHubIssues {
       return { ok: false, why: 'unreachable' }
     }
   }
+}
+
+/** Where the GitHub CLI usually is on a Mac: Homebrew on Apple silicon, then on Intel. */
+export const GH_PATHS: readonly string[] = ['/opt/homebrew/bin/gh', '/usr/local/bin/gh']
+const GH_TOKEN = /^(gho|ghp|ghu|github_pat)_[A-Za-z0-9_]{20,255}$/
+
+/**
+ * The token the person's own GitHub CLI is signed in with (`gh auth token`), for a Mac without the
+ * Keychain item. Never printed or kept: read for one call, handed over as a SecretValue, and the
+ * process's output zeroed. Null when gh isn't there, isn't signed in, or answers anything else.
+ */
+export async function ghCliToken(
+  paths: readonly string[] = GH_PATHS,
+  spawner: Spawner = nodeSpawner,
+  timers: Timers = nodeTimers,
+): Promise<SecretValue | null> {
+  for (const path of paths) {
+    const outcome = await runProcess(spawner, path, ['auth', 'token', '--hostname', 'github.com'], {
+      timeoutMs: 5_000,
+      maxStdoutBytes: 4096,
+      timers,
+    })
+    if (outcome.kind === 'missing') continue
+    if (outcome.kind !== 'exited') return null
+    const token = outcome.code === 0 ? outcome.stdout.toString('utf8').trim() : ''
+    outcome.stdout.fill(0)
+    return GH_TOKEN.test(token) ? SecretValue.fromString(token) : null
+  }
+  return null
 }
 
 export class FeedbackDeskImpl implements FeedbackDesk {

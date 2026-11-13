@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SecretValue } from '@valet/core'
@@ -9,6 +9,7 @@ import {
   FEEDBACK_PER_HOUR,
   type FeedbackDeskDeps,
   FeedbackDeskImpl,
+  ghCliToken,
   scrubFeedback,
 } from '../../src/main/core/feedback'
 
@@ -276,5 +277,28 @@ describe('FeedbackDeskImpl', () => {
     expect((await desk.send(OTHER, REPORT)).kind).toBe('filed')
     clock.now += 3600_000
     expect((await desk.send(ME, REPORT)).kind).toBe('filed')
+  })
+})
+
+describe('ghCliToken', () => {
+  function fakeGh(script: string): string {
+    const dir = mkdtempSync(join(tmpdir(), 'valet-gh-'))
+    dirs.push(dir)
+    const path = join(dir, 'gh')
+    writeFileSync(path, `#!/bin/sh\n${script}\n`)
+    chmodSync(path, 0o755)
+    return path
+  }
+
+  it('reads the token gh is signed in with, skipping a gh that isn’t there', async () => {
+    const gh = fakeGh('[ "$1 $2" = "auth token" ] && echo gho_abcdefghijklmnopqrstuvwxyz0123')
+    const token = await ghCliToken(['/nonexistent/gh', gh])
+    expect(token?.reveal((t) => t)).toBe('gho_abcdefghijklmnopqrstuvwxyz0123')
+  })
+
+  it('gives nothing when gh isn’t signed in, or answers with something that isn’t a token', async () => {
+    expect(await ghCliToken([fakeGh('echo "not logged in" >&2; exit 1')])).toBeNull()
+    expect(await ghCliToken([fakeGh('echo "hello world"')])).toBeNull()
+    expect(await ghCliToken(['/nonexistent/gh'])).toBeNull()
   })
 })
