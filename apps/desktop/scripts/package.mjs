@@ -47,7 +47,9 @@ if (!values['skip-swift']) {
 }
 const unbuilt = NATIVE.filter((name) => !existsSync(join(SWIFT_PRODUCTS, name)))
 if (unbuilt.length > 0) {
-  process.stderr.write(`package: no ${unbuilt.join(', ')} in ${SWIFT_PRODUCTS}; build them without --skip-swift\n`)
+  process.stderr.write(
+    `package: no ${unbuilt.join(', ')} in ${SWIFT_PRODUCTS}; build them without --skip-swift\n`,
+  )
   process.exit(1)
 }
 

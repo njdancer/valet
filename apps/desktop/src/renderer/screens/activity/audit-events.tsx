@@ -26,6 +26,7 @@ export const EVENT_WORDS = {
   'adapter-installed': { label: 'Version installed', tone: 'neutral' },
   'adapter-activated': { label: 'Rolled back', tone: 'warning' },
   'adapter-refused': { label: 'Version refused', tone: 'danger' },
+  'adapter-removed': { label: 'Site removed', tone: 'neutral' },
   'grant-made': { label: 'Login given', tone: 'brass' },
   'grant-revoked': { label: 'Login taken back', tone: 'neutral' },
   'grant-copied': { label: 'Login copied', tone: 'brass' },
@@ -167,6 +168,16 @@ export function details(event: AuditEvent, now: number): ReactNode {
         <>
           {event.adapterId} <HashChip value={event.adapterHash} label="adapter hash" />{' '}
           <Quiet>failed its checks ({event.reason}) and did not run</Quiet>
+        </>
+      )
+    case 'adapter-removed':
+      return (
+        <>
+          {event.adapterId} {event.version} <HashChip value={event.adapterHash} label="adapter hash" />{' '}
+          <Quiet>
+            removed, with its logins and browser data
+            {event.clientId === null ? '' : `, as ${event.clientId} asked`}
+          </Quiet>
         </>
       )
     case 'grant-made':
@@ -406,6 +417,7 @@ export const EVENT_FIELDS = {
   ],
   'adapter-activated': ['type', 'adapterId', 'adapterHash', 'version', 'previousHash'],
   'adapter-refused': ['type', 'adapterId', 'adapterHash', 'reason'],
+  'adapter-removed': ['type', 'adapterId', 'adapterHash', 'version', 'clientId'],
   'grant-made': ['type', 'adapterId', 'adapterHash', 'secret', 'provider', 'origins'],
   'grant-revoked': ['type', 'adapterId', 'secret'],
   'grant-copied': ['type', 'adapterId', 'secret', 'fields'],

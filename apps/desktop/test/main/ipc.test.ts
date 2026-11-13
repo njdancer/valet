@@ -320,6 +320,8 @@ describe('every channel', () => {
     'adapters.versions': ['woolworths'],
     'adapters.rollbackPreview': ['woolworths', HASH64],
     'adapters.rollback': ['woolworths', HASH64],
+    'adapters.canRemove': ['woolworths'],
+    'adapters.remove': ['woolworths'],
     'adapters.canInstallFromFolder': [],
     'adapters.installFromFolder': [],
     'clients.addToClaudeDesktop': ['c_0123456789abcdef'],

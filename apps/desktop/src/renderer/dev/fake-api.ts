@@ -1125,6 +1125,14 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         enter('adapters.rollback', adapterId, hash)
         throw new Error('refused')
       },
+      async canRemove(adapterId) {
+        enter('adapters.canRemove', adapterId)
+        return false
+      },
+      async remove(adapterId) {
+        enter('adapters.remove', adapterId)
+        throw new Error('refused')
+      },
       async canInstallFromFolder() {
         enter('adapters.canInstallFromFolder')
         return false
@@ -1923,6 +1931,7 @@ const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent['type']
     'adapter-installed',
     'adapter-activated',
     'adapter-refused',
+    'adapter-removed',
     'grant-made',
     'grant-revoked',
     'grant-copied',

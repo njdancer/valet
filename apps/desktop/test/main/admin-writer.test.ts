@@ -132,6 +132,7 @@ function setup(overrides: Partial<WriterSource> = {}) {
       return name === undefined ? null : { name }
     },
     broker: () => broker,
+    requestRemoval: async () => 'not-found',
     wiredKinds: () => new Set<ApprovalKind>(['setting']),
     phonePaired: () => false,
     settings: () => values as unknown as AgentSettingValues,

@@ -19,6 +19,8 @@ export const INVOKE_METHODS = [
   'adapters.versions',
   'adapters.rollbackPreview',
   'adapters.rollback',
+  'adapters.canRemove',
+  'adapters.remove',
   'adapters.canInstallFromFolder',
   'adapters.installFromFolder',
   'drafts.list',

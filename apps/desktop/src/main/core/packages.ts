@@ -148,6 +148,18 @@ export class PackageManager {
     return this.options.store.discard(adapterId, hash)
   }
 
+  /** Whether this app ships an adapter with this id: it comes back at every launch. */
+  isBuiltinId(adapterId: string): boolean {
+    return this.shippedHashes.has(adapterId)
+  }
+
+  /** Removes every stored version of a site that isn't built in. */
+  remove(adapterId: string): Promise<boolean> {
+    if (this.isBuiltinId(adapterId))
+      return Promise.reject(new InstallError('A built-in site can’t be removed.'))
+    return this.options.store.remove(adapterId)
+  }
+
   /** The adapter's history, or null. */
   versions(adapterId: string): Promise<StoredState | null> {
     return this.options.store.state(adapterId).catch(() => null)

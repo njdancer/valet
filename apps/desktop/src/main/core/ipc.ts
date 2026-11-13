@@ -171,6 +171,8 @@ const HANDLERS: Readonly<
   'adapters.rollbackPreview': entry(z.tuple([ADAPTER_ID, HASH]), (api, [id, hash]) =>
     api.adapters.rollbackPreview(id, hash),
   ),
+  'adapters.canRemove': entry(z.tuple([ADAPTER_ID]), (api, [id]) => api.adapters.canRemove(id)),
+  'adapters.remove': entry(z.tuple([ADAPTER_ID]), (api, [id]) => api.adapters.remove(id)),
   'adapters.rollback': entry(z.tuple([ADAPTER_ID, HASH]), (api, [id, hash]) =>
     api.adapters.rollback(id, hash),
   ),

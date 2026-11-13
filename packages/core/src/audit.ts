@@ -43,6 +43,17 @@ export type AuditEvent =
       readonly version: string
       readonly previousHash: string | null
     }
+  /**
+   * The person removed a site that isn't built in: its versions, approvals, logins and browser
+   * data are gone. `clientId` names the agent that asked for it, if one did.
+   */
+  | {
+      readonly type: 'adapter-removed'
+      readonly adapterId: string
+      readonly adapterHash: string
+      readonly version: string
+      readonly clientId: string | null
+    }
   /** A stored version failed its checks at load and was not run. */
   | {
       readonly type: 'adapter-refused'

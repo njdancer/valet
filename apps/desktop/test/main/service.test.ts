@@ -62,6 +62,7 @@ import { buildToolLibrary } from '@valet/runtime/tool-script'
 import { NO_LOCAL_ACCESS } from '@valet/sandbox'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { z } from 'zod'
+import type { WriterSource } from '../../src/main/core/admin-writer'
 import {
   type ApprovalBroker,
   adapterSettingSubject,
@@ -3457,6 +3458,55 @@ describe('adapter packages (docs/adapter-packages.md)', () => {
     const third = await withPackages(null, s.dir)
     expect((await third.api.adapters.versions('shop')).versions.find((v) => v.active)?.hash).toBe(v1)
     expect((await third.api.adapters.list())[0]?.approval).not.toBe('approved')
+  })
+
+  it('removes a site that isn’t built in, with everything it had, and never a built-in one', async () => {
+    const library = shopPackage('l1:', { ...SHOP, id: 'library', name: 'Library' })
+    const s = await withPackages(library)
+    const v1 = s.hashOf(shopPackage('v1:'))
+    await s.api.approvals.approve('shop', v1)
+    expect(await s.api.adapters.installFromFolder()).toMatchObject({ ok: true, adapterId: 'library' })
+    await s.api.approvals.approve('library', s.hashOf(library))
+    expect(await s.api.adapters.canRemove('shop')).toBe(false)
+    expect(await s.api.adapters.canRemove('library')).toBe(true)
+    await expect(s.api.adapters.remove('shop')).rejects.toThrow(/built-in/)
+
+    // An agent asks: it waits in Needs you until the person says yes there.
+    const source = (s.service as unknown as { writerSource(): WriterSource }).writerSource()
+    expect(await source.requestRemoval('c_1', 'Claude Code', 'library', 'Done testing')).toEqual({
+      kind: 'removal-asked',
+      siteName: 'Library',
+    })
+    expect(await source.requestRemoval('c_1', 'Claude Code', 'library', null)).toMatchObject({
+      kind: 'removal-already',
+    })
+    expect(await source.requestRemoval('c_1', 'Claude Code', 'shop', null)).toBe('built-in')
+    expect(await source.requestRemoval('c_1', 'Claude Code', 'nope', null)).toBe('not-found')
+    const ask = (await s.api.attention.list()).find(
+      (i) => i.kind === 'agent-request' && i.requestKind === 'uninstall',
+    )
+    expect(ask).toMatchObject({
+      title: 'Remove Library',
+      agentName: 'Claude Code',
+      agentNote: 'Done testing',
+    })
+    expect((await s.api.adapters.list()).map((a) => a.id).sort()).toEqual(['library', 'shop'])
+    expect(await s.api.attention.approveRequest(ask?.id ?? '', null)).toBe(true)
+
+    expect((await s.api.adapters.list()).map((a) => a.id)).toEqual(['shop'])
+    expect(existsSync(join(s.paths.adapters, 'library'))).toBe(false)
+    expect((await s.api.attention.list()).some((i) => i.kind === 'agent-request')).toBe(false)
+    const removed = readAudit(s.paths.audit).filter((e) => e.type === 'adapter-removed')
+    expect(removed).toEqual([
+      expect.objectContaining({ adapterId: 'library', clientId: 'local:c_1', version: SHOP.version }),
+    ])
+    expect(await s.call('echo', { text: 'hi' })).toMatchObject({ status: 'ok' })
+    // Gone after a restart too, and installing it again is a first install.
+    await s.service.stop()
+    const again = await withPackages(library, s.dir)
+    expect((await again.api.adapters.list()).map((a) => a.id)).toEqual(['shop'])
+    expect(await again.api.adapters.installFromFolder()).toMatchObject({ ok: true, adapterId: 'library' })
+    expect((await again.api.adapters.list()).find((a) => a.id === 'library')?.approval).not.toBe('approved')
   })
 
   it('never offers a rollback to a version the person never approved, or rejected', async () => {

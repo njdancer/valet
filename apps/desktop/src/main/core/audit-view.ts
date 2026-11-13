@@ -129,6 +129,7 @@ export const CATEGORY_TYPES: Readonly<Record<AuditCategory, readonly AuditEvent[
     'adapter-installed',
     'adapter-activated',
     'adapter-refused',
+    'adapter-removed',
     'grant-made',
     'grant-revoked',
     'grant-copied',

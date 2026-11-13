@@ -334,6 +334,7 @@ const EVENT_FIELDS: Readonly<Record<AuditEvent['type'], readonly string[]>> = {
   ],
   'adapter-activated': ['adapterId', 'adapterHash', 'version', 'previousHash'],
   'adapter-refused': ['adapterId', 'adapterHash', 'reason'],
+  'adapter-removed': ['adapterId', 'adapterHash', 'version', 'clientId'],
   'grant-made': ['adapterId', 'adapterHash', 'secret', 'provider', 'origins', 'carriedFrom'],
   'grant-revoked': ['adapterId', 'secret'],
   'grant-copied': ['adapterId', 'secret', 'fields'],

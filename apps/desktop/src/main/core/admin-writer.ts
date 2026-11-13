@@ -106,6 +106,20 @@ export interface WriterSource {
   /** Whether this client already turned the tool off. */
   toolOff(clientId: string, qualified: string): boolean
   turnOffTool(clientId: string, qualified: string): Promise<'done' | 'already' | 'not-found'>
+  /**
+   * Files an agent's ask to remove a site (shown in Needs you; service.requestRemoval). The site's
+   * name, or why not: no such site, or a built-in one.
+   */
+  requestRemoval(
+    clientId: string,
+    clientName: string,
+    adapterId: string,
+    note: string | null,
+  ): Promise<
+    | { readonly kind: 'removal-asked' | 'removal-already'; readonly siteName: string }
+    | 'not-found'
+    | 'built-in'
+  >
   /** Revokes the client (its token stops working) and withdraws its requests. */
   disconnect(clientId: string): Promise<boolean>
   /** Audits a Notify-only change. A change that can't be audited isn't made. */
@@ -252,6 +266,30 @@ export class AdminWriterImpl implements AdminWriter {
         return { kind: 'unchanged', current: `"${found.title}" is already off for you` }
       this.notified(viewer, gate.name, what)
       return { kind: 'done', what }
+    })
+  }
+
+  requestRemoval(
+    viewer: ClientIdentity,
+    adapterId: string,
+    note: string | null,
+  ): Promise<
+    { readonly kind: 'removal-asked' | 'removal-already'; readonly siteName: string } | WriteOutcome
+  > {
+    return this.exclusive(async () => {
+      const gate = this.gate(viewer)
+      if (gate.refused !== undefined) return gate.refused
+      const limited = this.takeSlot(viewer)
+      if (limited !== null) return limited
+      let result: Awaited<ReturnType<WriterSource['requestRemoval']>>
+      try {
+        result = await this.source.requestRemoval(viewer.clientId, gate.name, adapterId, note)
+      } catch {
+        return refused('unavailable')
+      }
+      if (result === 'not-found') return refused('not-found')
+      if (result === 'built-in') return refused('not-allowed')
+      return result
     })
   }
 

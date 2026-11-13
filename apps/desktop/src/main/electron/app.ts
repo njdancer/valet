@@ -532,6 +532,13 @@ async function main(): Promise<void> {
         windows.closeAll()
         return true
       },
+      clearSiteData: async (adapterId: string) => {
+        for (const role of ['auth', 'tool'] as const) {
+          const s = session.fromPartition(partitionName(role, adapterId))
+          await s.clearStorageData().catch(() => undefined)
+          await s.clearCache().catch(() => undefined)
+        }
+      },
       clearBrowserData: async () => {
         const sessions = (service?.adapterIds() ?? []).flatMap((id) =>
           (['auth', 'tool'] as const).map((role) => session.fromPartition(partitionName(role, id))),

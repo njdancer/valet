@@ -603,6 +603,14 @@ export class ApprovalBroker {
     )
   }
 
+  /** Withdraws every waiting request about one adapter, when the person removes the site. */
+  withdrawAdapter(adapterId: string): Promise<number> {
+    return this.withdrawWhere(
+      (r) => (r.subject as { readonly adapterId?: unknown }).adapterId === adapterId,
+      'stale',
+    )
+  }
+
   /** A newer draft replaces older install requests for the same adapter from the same asker. */
   withdrawReplaced(adapterId: string, asker: Requester, keep: string): Promise<number> {
     return this.withdrawWhere(

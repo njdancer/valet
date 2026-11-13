@@ -914,7 +914,14 @@ export interface AgentRequestItem {
   readonly kind: 'agent-request'
   /** The broker's request id. */
   readonly id: string
-  readonly requestKind: 'setting' | 'authoring-session' | 'private-network' | 'tool-enable' | 'secret-grant'
+  readonly requestKind:
+    | 'setting'
+    | 'authoring-session'
+    | 'private-network'
+    | 'tool-enable'
+    | 'secret-grant'
+    /** An agent asks to remove a site. Not signed: it only narrows, so Approve needs no Touch ID. */
+    | 'uninstall'
   /** Four characters of the request's digest, as the Touch ID prompt names it. */
   readonly ref: string
   /** Built by the Mac from the request's subject. */
@@ -1247,6 +1254,13 @@ export interface ValetApi {
      * a version that isn't offered.
      */
     rollback(adapterId: string, hash: string): Promise<void>
+    /** Whether the site can be removed: it isn't built in, and this build keeps a package store. */
+    canRemove(adapterId: string): Promise<boolean>
+    /**
+     * Removes a site that isn't built in: its tools, versions, approvals, logins, settings and
+     * browser data. The click is the decision; it only tightens. Rejects for a built-in site.
+     */
+    remove(adapterId: string): Promise<void>
     /** Whether this build installs from a folder (development builds only). */
     canInstallFromFolder(): Promise<boolean>
     /**
@@ -1335,7 +1349,8 @@ export interface ValetApi {
     /** Removes a missed item. Rejects for any other kind, or an id that isn't there. */
     dismiss(id: string): Promise<void>
     /**
-     * Approves an agent's request with Touch ID (the Mac's own signature). False if the person
+     * Approves an agent's request with Touch ID (the Mac's own signature), or, for a removal, removes
+     * the site. False if the person
      * cancelled the prompt or it ended first. `choice` is the value picked on a card that offers them.
      */
     approveRequest(id: string, choice: string | null): Promise<boolean>
