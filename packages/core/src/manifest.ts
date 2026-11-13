@@ -4,13 +4,26 @@
 import { z } from 'zod'
 import { MESSAGES_SECRET } from './credentials'
 import { type ERROR_CLASSES, NEEDS_USER_REASONS, type NeedsUserReason } from './errors'
-import { isBareOrigin, isHostPattern } from './origins'
+import { hostAllowed, isBareOrigin, isHostname, isHostPattern } from './origins'
 import { isScreenedPattern } from './regex-screen'
+import { describeDeclaration } from './request-surface'
 import { sandboxDeclarationSchema } from './sandbox'
 
 const name = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, 'lower snake_case, at most 64 characters')
 const origin = z.string().refine(isBareOrigin, 'must be a bare https origin, e.g. https://www.example.com')
-const hostPattern = z.string().refine(isHostPattern, 'must be a hostname, optionally prefixed with "*."')
+const hostPattern = z
+  .string()
+  .refine(
+    isHostPattern,
+    'must be a bare hostname such as api.example.com, optionally prefixed with "*.": no https:// and no path',
+  )
+/** One exact host: a request declaration's, which must also be on an egress host. */
+const exactHost = z
+  .string()
+  .refine(
+    (value) => isHostname(value) && value === value.toLowerCase(),
+    'must be a bare lower-case hostname such as api.example.com: no https://, no path, no "*."',
+  )
 const selector = z.string().min(1).max(500)
 const timeoutMs = z.number().int().min(100).max(120_000)
 /** An adapter-supplied regular expression: it must compile and pass the backtracking screen. */
@@ -342,6 +355,12 @@ export const manifestSchema = z
         z
           .object({
             method: requestMethod,
+            /**
+             * The egress host this request is sent to, for an API on another host than home's
+             * (`hacker-news.firebaseio.com`, say). Left out, the declaration applies on every
+             * egress host.
+             */
+            host: exactHost.optional(),
             path: sitePath(300),
             purpose: purposeSchema,
             /**
@@ -463,7 +482,10 @@ export const manifestSchema = z
       ctx.addIssue({ code: 'custom', message: 'every tool serves a setting: none is left for clients' })
     }
     for (const request of manifest.requests) {
-      const label = `${request.method} ${request.path}`
+      const label = describeDeclaration(request)
+      if (request.host !== undefined && !hostAllowed(request.host, manifest.egress)) {
+        ctx.addIssue({ code: 'custom', message: `${label}: host ${request.host} is not on an egress host` })
+      }
       // Only a read may be answered from a cache, and only a write's response may fill one. An
       // irreversible request is never cached, never fills the cache and is never replayed.
       if (request.cacheSeconds !== undefined && request.purpose !== 'read') {
@@ -474,7 +496,9 @@ export const manifestSchema = z
         ctx.addIssue({ code: 'custom', message: `${label}: only a write request may set refreshes` })
         continue
       }
-      const target = manifest.requests.find((r) => r.method === 'GET' && r.path === request.refreshes)
+      const target = manifest.requests.find(
+        (r) => r.method === 'GET' && r.path === request.refreshes && r.host === request.host,
+      )
       if (
         target === undefined ||
         target.purpose !== 'read' ||
@@ -483,7 +507,7 @@ export const manifestSchema = z
       ) {
         ctx.addIssue({
           code: 'custom',
-          message: `${label}: refreshes must name a declared GET read with cacheSeconds and no ":param" or "*"`,
+          message: `${label}: refreshes must name a declared GET read on the same host, with cacheSeconds and no ":param" or "*"`,
         })
       }
     }
@@ -515,6 +539,18 @@ export const manifestSchema = z
       }
     }
   })
+
+/**
+ * Why every call of this manifest's tools would fail before tool code runs, or null. The tool page
+ * opens home first, so home's host must be on the egress list. Not a schema rule, so that a stored
+ * package written before it still loads; drafts are checked against it (valet_check_draft).
+ */
+export function homeUnreachable(manifest: Pick<AdapterManifest, 'home' | 'egress'>): string | null {
+  const host = new URL(manifest.home).hostname
+  return hostAllowed(host, manifest.egress)
+    ? null
+    : `egress must allow ${host}, home's host: every call opens home first`
+}
 
 /** A declared path with no ":param" or "*" segment and no query: it names exactly one URL. */
 function isLiteralPath(path: string): boolean {

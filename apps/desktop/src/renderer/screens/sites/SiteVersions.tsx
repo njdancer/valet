@@ -2,6 +2,7 @@
 // waiting for review (with its Review button), the version calls use now, and its hash. Logins are
 // given to one content hash, so each version says whether it has one.
 
+import { describeDeclaration } from '@valet/core/request-surface'
 import {
   Badge,
   Button,
@@ -255,7 +256,7 @@ function RollbackChanges({ preview }: { readonly preview: RollbackPreview }) {
   const { changes } = preview
   const added = [
     ...changes.egress.added.map((host) => `Sends traffic to ${host}`),
-    ...changes.requests.added.map((r) => `${r.method} ${r.path} (${r.purpose})`),
+    ...changes.requests.added.map((r) => `${describeDeclaration(r)} (${r.purpose})`),
     ...changes.tools.added.map((t) => `Tool ${t.name} (${t.sideEffect})`),
     ...changes.secrets.added.map((s) => `Asks for the login “${s.name}”`),
     ...changes.cookieDomains.added.map((d) => `Copies cookies for ${d}`),

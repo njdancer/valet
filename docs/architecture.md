@@ -233,8 +233,10 @@ the auth host. Whether the site works with its ~40 analytics hosts blocked is un
 From the earlier app's connector guard, generalised. A manifest declares:
 
 - **egress**: the hosts the tool partition may contact;
-- **requests**: `{ method, path pattern, purpose: read | write | irreversible }`. Path patterns
-  are literal segments, `:name` for one segment, and a trailing `*`;
+- **requests**: `{ method, host?, path pattern, purpose: read | write | irreversible }`. Path
+  patterns are literal segments, `:name` for one whole segment, and a trailing `*`. `host` ties a
+  declaration to one egress host; without it, it applies on every egress host. Home's host must be
+  on the egress list, since every call opens home first;
 - **limits**: `requestsPerRun` (the per-run ceiling), `minGapMs`, `cooldownSeconds` and
   `maxCooldownSeconds`.
 

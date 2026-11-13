@@ -59,6 +59,27 @@ describe('ToolPage.goto', () => {
     expect(surface.loads).toEqual(['https://www.example.com/'])
   })
 
+  it('tells the driver of each URL it refuses, so a refusal before any request is still reported', async () => {
+    const timers = new ManualTimers()
+    const surface = new FakeSurface(PARTITION, [
+      new FakeFrame('https://www.example.com', 'https://www.example.com/', null, new FakeWindow()),
+    ])
+    const refused: string[] = []
+    const page = new SurfaceToolPage(
+      surface,
+      ['api.example.net'],
+      timing(timers),
+      undefined,
+      undefined,
+      (method, url) => void refused.push(`${method} ${url}`),
+    )
+    // Opening home on a host egress lacks: the Hacker News report's 87 ms failure.
+    const error = await rejection(page.goto('https://www.example.com/'))
+    expect(error).toMatchObject({ stage: 'egress', errorClass: 'host-not-allowed' })
+    expect(refused).toEqual(['GET https://www.example.com/'])
+    expect(surface.loads).toEqual([])
+  })
+
   it('reports a load the network guard cancelled as an egress block', async () => {
     const { surface, page } = await onHome(new FakeWindow())
     surface.onLoad = () => ({ ok: false, code: 'ERR_BLOCKED_BY_CLIENT' })

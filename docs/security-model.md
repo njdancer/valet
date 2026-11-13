@@ -352,7 +352,7 @@ declared side effect as `maxPurpose`, and a ceiling. For every request:
    scripts, styles, images, fonts or media, once M2 has measured what the real pages load
    ([R17](plan.md#risk-register), [D58](plan.md#d58-page-initiated-traffic)).
 4. **Declarations.** Every API call (fetch and XHR, any non-GET, beacons, sockets, unknown
-   types) must match a declared `{ method, path }`, and the declaration's purpose may not exceed
+   types) must match a declared `{ method, path }` (and its `host`, when it names one), and the declaration's purpose may not exceed
    `maxPurpose`. So a `read` tool can't call a `write` endpoint, whether through `page.fetch`,
    `evaluate()` or the site's own button.
 5. **Ceiling.** Navigations and API calls count against the run's ceiling

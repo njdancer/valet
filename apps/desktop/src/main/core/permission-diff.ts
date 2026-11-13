@@ -8,6 +8,7 @@ import {
   type Condition,
   canonicalJson,
   DEFAULT_SANDBOX,
+  describeDeclaration,
   describeException,
   exceptionKey,
   exceptionRisk,
@@ -92,7 +93,7 @@ function tools(manifest: AdapterManifest): ToolDiffEntry[] {
   const internal = settingToolNames(manifest)
   return manifest.tools.map((tool) => {
     // In the entry, so a tool that names one more request to unlock reads as a changed tool.
-    const unlocks = unlockedBy(manifest.requests, tool.unlocks).map((r) => `${r.method} ${r.path}`)
+    const unlocks = unlockedBy(manifest.requests, tool.unlocks).map(describeDeclaration)
     return {
       name: tool.name,
       title: tool.title,
@@ -234,7 +235,14 @@ export function permissionDiff(before: AdapterManifest | null, after: AdapterMan
     egress: pick((m) => m.egress),
     cookieDomains: pick((m) => m.session.cookieDomains),
     storage: pick(storageKeys),
-    requests: pick((m) => m.requests.map(({ method, path, purpose }) => ({ method, path, purpose }))),
+    requests: pick((m) =>
+      m.requests.map(({ method, host, path, purpose }) => ({
+        method,
+        ...(host === undefined ? {} : { host }),
+        path,
+        purpose,
+      })),
+    ),
     tools: pick(tools),
     secrets: pick(secrets),
     secretFills: pick((m) => secretFills(m.auth.steps)),

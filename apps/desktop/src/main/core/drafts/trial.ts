@@ -74,10 +74,25 @@ export type TrialOutcome =
   /** The site's breaker is open, or its hourly cap is spent: nothing was sent. */
   | { readonly kind: 'site-resting'; readonly retryAfterMs: number }
 
+export interface TrialBlocked {
+  readonly method: string
+  readonly url: string
+  readonly reason: string
+  /** Tool code (fetch, goto, opening home) or the site's own page. */
+  readonly initiator: 'tool' | 'page'
+}
+
 export interface TrialResult {
   readonly outcome: TrialOutcome
-  /** What the driver refused, scrubbed of ids: what an agent fixes egress and requests from. */
-  readonly blocked: readonly { readonly method: string; readonly url: string; readonly reason: string }[]
+  /**
+   * Every request refused, scrubbed of ids: what an agent fixes egress and requests from. The
+   * runtime's refusals of tool code's own fetch and goto (reason an error class, such as
+   * `undeclared-request`) and the browser's of anything else (reason a block reason, such as
+   * `host-not-allowed` or `undeclared`), opening home included.
+   */
+  readonly blocked: readonly TrialBlocked[]
+  /** How many were refused, past the TRIAL_LIMITS.blocked listed too. */
+  readonly blockedCount: number
   readonly ms: number
 }
 
@@ -98,8 +113,14 @@ export async function runTrial(
   if (declared === undefined || schemas === undefined || declared.sideEffect !== 'read')
     throw new Error('runTrial is for a declared read tool')
   const site = deps.guards(new URL(manifest.home).hostname)
-  const blocked: TrialResult['blocked'][number][] = []
-  const done = (outcome: TrialOutcome): TrialResult => ({ outcome, blocked, ms: now() - started })
+  const blocked: TrialBlocked[] = []
+  let blockedCount = 0
+  const done = (outcome: TrialOutcome): TrialResult => ({
+    outcome,
+    blocked,
+    blockedCount,
+    ms: now() - started,
+  })
   if (site.breaker.isOpen())
     return done({ kind: 'site-resting', retryAfterMs: site.breaker.status().retryAfterMs })
   // The hourly cap, asked about once before anything is sent, as an installed call's is.
@@ -119,9 +140,10 @@ export async function runTrial(
         await site.budget.acquire(controller.signal)
       },
     })
-    const record = (b: BlockedRequest): void => {
+    const record = (b: Omit<BlockedRequest, 'reason'> & { readonly reason: string }): void => {
+      blockedCount++
       if (blocked.length < TRIAL_LIMITS.blocked)
-        blocked.push({ method: b.method, url: scrubUrl(b.target), reason: b.reason })
+        blocked.push({ method: b.method, url: scrubUrl(b.target), reason: b.reason, initiator: b.initiator })
     }
     driver.beginRun(
       { ...policy, unlocks: [], maxPurpose: 'read', ceiling: manifest.limits.requestsPerRun },
@@ -145,7 +167,11 @@ export async function runTrial(
         inner,
         site,
         state,
-        audit: async () => {},
+        // The guard refuses tool code's own requests before the browser sees them: list those too.
+        audit: async (event) => {
+          if (event.type === 'request-blocked')
+            record({ method: event.method, target: event.target, reason: event.reason, initiator: 'tool' })
+        },
       })
       const ctx: ToolContext = {
         page,
@@ -217,7 +243,9 @@ function trialPolicy(
   const allowedReads = installed.requests.filter((r) => r.purpose === 'read' && r.method === 'GET')
   return {
     egress: manifest.egress.filter((host) => installed.egress.includes(host)),
-    requests: reads.filter((r) => allowedReads.some((a) => a.method === r.method && a.path === r.path)),
+    requests: reads.filter((r) =>
+      allowedReads.some((a) => a.method === r.method && a.path === r.path && a.host === r.host),
+    ),
   }
 }
 

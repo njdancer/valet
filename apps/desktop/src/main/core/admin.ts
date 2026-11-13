@@ -361,7 +361,16 @@ const EVENT_FIELDS: Readonly<Record<AuditEvent['type'], readonly string[]>> = {
   'login-finished': ['adapterId', 'outcome', 'needsUser', 'stage', 'errorClass'],
   'secret-used': ['adapterId', 'adapterHash', 'secret', 'field', 'origin', 'callId'],
   'local-access': ['adapterId', 'callId', 'capability', 'errorClass'],
-  'request-blocked': ['adapterId', 'method', 'target', 'reason', 'initiator', 'partition', 'callId'],
+  'request-blocked': [
+    'adapterId',
+    'method',
+    'target',
+    'reason',
+    'initiator',
+    'partition',
+    'callId',
+    'draftId',
+  ],
   'breaker-opened': ['host', 'cause', 'retryAt', 'callId'],
   'breaker-closed': ['host'],
   'update-downloaded': ['from', 'to'],
@@ -386,7 +395,7 @@ const EVENT_FIELDS: Readonly<Record<AuditEvent['type'], readonly string[]>> = {
   'draft-created': ['draftId', 'adapterId', 'clientId'],
   'draft-submitted': ['draftId', 'adapterId', 'clientId', 'adapterHash', 'packageHash', 'requestId'],
   'draft-deleted': ['draftId', 'adapterId', 'clientId'],
-  'draft-trial': ['draftId', 'adapterId', 'clientId', 'tool', 'host', 'packageHash', 'outcome'],
+  'draft-trial': ['draftId', 'adapterId', 'clientId', 'tool', 'host', 'packageHash', 'outcome', 'blocked'],
 }
 
 function eventEntry(event: AuditEvent): AdminAuditPage['records'][number]['event'] {

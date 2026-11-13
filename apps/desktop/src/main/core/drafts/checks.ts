@@ -4,7 +4,7 @@
 // the lint, and runs the agent's cases. Every line it produces is Valet's own wording.
 
 import type { AdapterManifest, PackageFiles } from '@valet/core'
-import { isDisplayText, sha256Hex } from '@valet/core'
+import { declarationOnHost, describeDeclaration, hostAllowed, isDisplayText, sha256Hex } from '@valet/core'
 import { CASE_FILE, type CaseRun, readCases } from './cases'
 
 /** Words a tool title may not use: they'd tell the person what to think of it. */
@@ -89,7 +89,8 @@ export function checkNames(
 
 const EVALUATE_NETWORK =
   /\b(fetch|XMLHttpRequest|sendBeacon|WebSocket|RTCPeerConnection|EventSource)\b|import\s*\(|\.(src|href|action)\s*=|location\s*=|\.submit\s*\(/
-const ABSOLUTE_URL = /['"`](https?:)?\/\/([a-z0-9.-]+)/gi
+/** An absolute URL at the start of a string literal: its host, then any literal path after it. */
+const ABSOLUTE_URL = /['"`](https?:)?\/\/([a-z0-9.-]+)(\/[^'"`\s$?#]*)?/gi
 
 /** Deterministic, heuristic lint. Findings are cautions for the card, never passes or blocks. */
 export function lint(manifest: AdapterManifest, files: PackageFiles): Finding[] {
@@ -98,19 +99,33 @@ export function lint(manifest: AdapterManifest, files: PackageFiles): Finding[] 
   const domain = siteDomain(home)
   const sources = Object.entries(files).filter(([path]) => path.startsWith('src/'))
   const hostsSeen = new Set<string>()
+  const urlsSeen = new Set<string>()
   for (const [path, text] of sources) {
     for (const match of text.matchAll(ABSOLUTE_URL)) {
       const host = (match[2] ?? '').toLowerCase()
-      if (host === '' || hostsSeen.has(host)) continue
-      hostsSeen.add(host)
-      const declared = manifest.egress.some((e) =>
-        e.startsWith('*.') ? within(host, hostOf(e)) : e === host,
-      )
-      if (!declared)
+      if (host === '') continue
+      const declared = hostAllowed(host, manifest.egress)
+      if (!declared) {
+        if (hostsSeen.has(host)) continue
+        hostsSeen.add(host)
         out.push({
           level: 'caution',
           check: 'lint',
-          text: `${path} names ${host}, which the manifest doesn’t let it reach.`,
+          text: `${path} names ${host}, which the manifest doesn’t let it reach: add it to egress.`,
+        })
+        continue
+      }
+      // On an egress host: a fetch there also needs a declared request whose path can start so.
+      const prefix = match[3] ?? ''
+      const key = `${host}${prefix}`
+      if (urlsSeen.has(key)) continue
+      urlsSeen.add(key)
+      if (host === home && prefix.replace(/\/+$/, '') === '') continue
+      if (!manifest.requests.some((r) => declarationOnHost(r, host) && pathCanStartWith(r.path, prefix)))
+        out.push({
+          level: 'caution',
+          check: 'lint',
+          text: `${path} names https://${clipText(key, 120)}, but no declared request reaches it: page.fetch there would be refused. Declare its path in requests (with "host": "${host}" if only that host serves it).`,
         })
     }
     if (/page\.(fetch|goto)\s*\(\s*`[^`]*\$\{[^}]*\binput\b/.test(text) && /https?:\/\/\$\{/.test(text))
@@ -136,7 +151,7 @@ export function lint(manifest: AdapterManifest, files: PackageFiles): Finding[] 
       out.push({
         level: 'caution',
         check: 'lint',
-        text: `The adapter says ${r.method} ${r.path} only reads. Valet can’t check that.`,
+        text: `The adapter says ${describeDeclaration(r)} only reads. Valet can’t check that.`,
       })
   }
   for (const host of manifest.egress)
@@ -171,6 +186,36 @@ export function lint(manifest: AdapterManifest, files: PackageFiles): Finding[] 
           text: `${tool.name} says it only reads, but the adapter declares requests that change things.`,
         })
   return out
+}
+
+/**
+ * Whether some path `pattern` matches could begin with `prefix`, a literal path that tool code may
+ * go on to extend (`/v0` before `/item/${id}.json`). Its last segment may be cut short.
+ */
+export function pathCanStartWith(pattern: string, prefix: string): boolean {
+  const want =
+    pattern
+      .split('?')[0]
+      ?.split('/')
+      .filter((x) => x.length > 0) ?? []
+  const parts = prefix.split('/')
+  const open = !prefix.endsWith('/')
+  const got = parts.filter((x) => x.length > 0)
+  for (let i = 0; i < got.length; i++) {
+    const w = want[i]
+    const g = got[i] ?? ''
+    if (w === undefined) return false
+    if (w === '*' && i === want.length - 1) return true
+    if (w.startsWith(':')) continue
+    const last = open && i === got.length - 1
+    if (last ? !w.toLowerCase().startsWith(g.toLowerCase()) : w.toLowerCase() !== g.toLowerCase())
+      return false
+  }
+  return true
+}
+
+function clipText(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text
 }
 
 /** Weak signal: a read tool whose file also mentions a non-GET method. */

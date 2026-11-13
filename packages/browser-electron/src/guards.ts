@@ -15,6 +15,7 @@
 import {
   type BlockedRequest,
   decideRequest,
+  declarationOnHost,
   hostAllowed,
   type Purpose,
   type RequestDeclaration,
@@ -230,7 +231,8 @@ export function decideToolRequest(
     const unlocked = usable && surface.declaration.purpose === 'irreversible'
     if (!unlocked) return { allowed: false, reason: 'denied-path' }
   }
-  if (byKind || underApiRoot(parsed.pathname, apiRoots([...declared, ...policy.requests]))) {
+  const onHost = [...declared, ...policy.requests].filter((d) => declarationOnHost(d, parsed.hostname))
+  if (byKind || underApiRoot(parsed.pathname, apiRoots(onHost))) {
     if (!surface.allowed) return { allowed: false, reason: surface.reason }
     return usable ? { allowed: true, counts: 'request' } : { allowed: false, reason: 'purpose-exceeded' }
   }

@@ -31,13 +31,18 @@ export class SurfaceToolPage implements ToolPage {
     private readonly announce: Announce = unannounced,
     /** Told just before each click, so a navigation the click starts isn't paced a second time. */
     private readonly clicking: () => void = () => {},
+    /**
+     * Told of each URL refused here, off the egress list, before anything is sent: the driver
+     * reports it as blocked, so a refusal never goes unseen (opening home on a host egress lacks).
+     */
+    private readonly refused: (method: string, url: string) => void = () => {},
   ) {
     this.core = new PageCore(surface, timing)
   }
 
   goto(url: string): Promise<void> {
     return this.core.step('navigate', async () => {
-      const target = this.resolve(url)
+      const target = this.resolve(url, 'GET')
       const withdraw = this.announce('GET', target)
       const failure = await this.core.load(target).finally(withdraw)
       if (failure === 'ERR_BLOCKED_BY_CLIENT') throw new ValetError('egress', 'host-not-allowed')
@@ -109,7 +114,7 @@ export class SurfaceToolPage implements ToolPage {
     let script: string
     let url: string
     try {
-      url = this.resolve(pathOrUrl)
+      url = this.resolve(pathOrUrl, method)
       script = fetchScript({
         url,
         method,
@@ -141,7 +146,7 @@ export class SurfaceToolPage implements ToolPage {
   }
 
   /** Resolves a path against the current page and refuses anything off the egress list. */
-  private resolve(pathOrUrl: string): string {
+  private resolve(pathOrUrl: string, method: string): string {
     let url: URL
     try {
       // Before the first load there is no page URL, and only an absolute URL makes sense.
@@ -150,6 +155,7 @@ export class SurfaceToolPage implements ToolPage {
       throw new ValetError('tool-input', 'invalid')
     }
     if (url.protocol !== 'https:' || !egressAllowed(url.href, this.egress)) {
+      this.refused(method, url.href)
       throw new ValetError('egress', 'host-not-allowed')
     }
     return url.href

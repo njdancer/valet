@@ -8,6 +8,7 @@ import {
   type ApprovalSubject,
   bundleHash,
   canonicalJson,
+  describeDeclaration,
   isDisplayText,
   type PermissionChange,
   type Risk,
@@ -127,7 +128,7 @@ export function permissionChanges(
   list(
     'requests',
     diff.requests,
-    (r) => [`${r.method} ${r.path}`, `(${r.purpose})`],
+    (r) => [describeDeclaration(r), `(${r.purpose})`],
     (r) => (r.purpose === 'irreversible' ? 'high' : r.purpose === 'write' ? 'medium' : 'low'),
   )
   list(
