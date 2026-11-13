@@ -989,6 +989,12 @@ export interface Settings {
    * Mac through. Null until the person sets it; phones can't pair without one.
    */
   readonly relayHost: string | null
+  /**
+   * The base of this Mac's own address for cloud agents, when the relay gives Macs names under
+   * another domain (valet.example.com makes it `<macId>.valet.example.com`). Null: under the
+   * relay's own host.
+   */
+  readonly relayMacHost: string | null
 }
 
 /** What the renderer may change directly. The 1Password CLI path isn't among them. */
@@ -1106,7 +1112,16 @@ export interface RemoteClientItem {
   readonly registeredAt: IsoTime
   /** Null for a registration nobody approved yet; it expires within the hour. */
   readonly grant: { readonly tools: readonly string[]; readonly grantedAt: IsoTime } | null
+  /**
+   * What it may do beyond Use tools, as far as a signature backs it now: See Valet (Valet's own
+   * read tools), and Ask for changes (build and fix adapters, ask for tools and settings).
+   */
+  readonly seeValet: boolean
+  readonly askForChanges: boolean
 }
+
+/** What a cloud agent may do beyond Use tools, ticked on the consent sheet. */
+export type RemoteCapability = 'see-valet' | 'ask-for-changes'
 
 /** One tool of an approved adapter, as the remote access setup lists it. */
 export interface RemoteSetupTool {
@@ -1408,12 +1423,21 @@ export interface ValetApi {
      * Approves the waiting request the typed code belongs to, granting the ticked tools (refs from
      * consents().tools; anything else rejects). A wrong code approves nothing.
      */
-    approveConsent(code: string, tools: readonly string[]): Promise<RemoteConsentAnswer>
+    approveConsent(
+      code: string,
+      tools: readonly string[],
+      capabilities?: readonly RemoteCapability[],
+    ): Promise<RemoteConsentAnswer>
     declineConsent(requestId: string): Promise<void>
     declineAllConsents(): Promise<void>
     clients(): Promise<readonly RemoteClientItem[]>
     /** Deletes one client's registration, grant and tokens, and closes its sessions. */
     revokeClient(clientId: string): Promise<void>
+    /**
+     * Lets one approved cloud agent ask for changes (with Touch ID), or stops it (at once). Its
+     * open sessions close, so its next one has the authoring tools or loses them.
+     */
+    setAskForChanges(clientId: string, on: boolean): Promise<void>
     /** Deletes every remote client. Each connector has to be added again. Returns how many. */
     revokeAllClients(): Promise<number>
     /** Remote access as set up now. */

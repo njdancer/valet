@@ -708,6 +708,7 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     traceRetentionDays: 14,
     notifications: true,
     relayHost: 'relay.example',
+    relayMacHost: null,
   }
 
   const updates: UpdateStatus = {
@@ -1701,8 +1702,8 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         enter('remote.consents')
         return clone({ requests: remoteRequests, tools: remoteTools })
       },
-      async approveConsent(code, tools) {
-        enter('remote.approveConsent', code, tools)
+      async approveConsent(code, tools, capabilities = []) {
+        enter('remote.approveConsent', code, tools, capabilities)
         const request = remoteRequests[0]
         if (request === undefined || code.toUpperCase().replace(/[\s-]/g, '') !== remoteCode) {
           remoteWrong++
@@ -1721,6 +1722,8 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
             clientName: request.clientName,
             registeredAt: request.requestedAt,
             grant: { tools: [...tools], grantedAt: new Date(now).toISOString() },
+            seeValet: capabilities.length > 0,
+            askForChanges: capabilities.includes('ask-for-changes'),
           },
         ]
         emit({ type: 'remote-changed' })
@@ -1743,6 +1746,15 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       async revokeClient(id) {
         enter('remote.revokeClient', id)
         remoteClients = remoteClients.filter((c) => c.id !== id)
+        emit({ type: 'remote-changed' })
+      },
+      async setAskForChanges(id, on) {
+        enter('remote.setAskForChanges', id, on)
+        const client = remoteClients.find((c) => c.id === id)
+        if (client === undefined || client.grant === null) throw new Error('refused')
+        remoteClients = remoteClients.map((c) =>
+          c.id === id ? { ...c, askForChanges: on, seeValet: on ? true : c.seeValet } : c,
+        )
         emit({ type: 'remote-changed' })
       },
       async revokeAllClients() {

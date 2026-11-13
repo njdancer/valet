@@ -29,8 +29,10 @@ export interface MacRelayStub {
 }
 
 export interface FrontDoor {
-  /** The bare relay host, e.g. relay.example. Each Mac is `<macId>.<host>`. */
+  /** The bare relay host, e.g. relay.example. Each Mac is `<macId>.<host>`, unless `macHost`. */
   readonly host: string
+  /** The base of each Mac's own host, when it isn't `host`: `<macId>.<macHost>`. */
+  readonly macHost?: string
   /** HMAC key for wait tokens, raw bytes. */
   readonly waitKey: ImportedKey
   readonly mac: (macId: string) => MacRelayStub
@@ -61,7 +63,7 @@ export async function frontDoor(request: Request, door: FrontDoor): Promise<Resp
   const host = url.hostname.toLowerCase()
   const source = request.headers.get('cf-connecting-ip') ?? ''
 
-  const suffix = `.${door.host}`
+  const suffix = `.${door.macHost ?? door.host}`
   const macId = host.endsWith(suffix) ? host.slice(0, -suffix.length) : null
   if (macId === null || !KEY_ID.test(macId)) {
     // Device connections. On any host but a Mac's: only the relay's own names are routed here.

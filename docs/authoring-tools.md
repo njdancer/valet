@@ -156,6 +156,30 @@ trial or a case, under the guards.
   "through the relay", critical lines stay Mac only, and signed-in trials stay local only until a
   remote one has been red-teamed. PR 1 builds the local path; the remote listener gets the
   authoring tools with the relay work (J3 starts in the Claude iPhone app, a remote client).
+
+  **Built (remote authoring):**
+  - _Granting._ The consent sheet has "Let it ask for changes", unticked; ticked, the
+    `remote-client` subject carries `capabilities: ['see-valet', 'ask-for-changes']` and the Touch
+    ID prompt says so. For an agent already approved, its Connections page has an "Ask for changes"
+    switch: on is a `setting` request named `remote_ask_<registration id>` (so the phone's setting
+    card parses it as it is), approved with Touch ID; off removes the evidence at once and
+    withdraws the agent's waiting requests. A new consent for the same client supersedes the old
+    one's evidence.
+  - _Honouring._ `service.remoteCapabilities` reads only the trusted ledger, on every call: Ask
+    for changes from either signature, See Valet from the consent or with Ask for changes. An agent
+    with no approved registration has neither. All agents' activity is never given to a cloud agent.
+  - _Tools._ `startRemoteListener` takes `admin`, `authoring` and `ownTools(clientId)`; a cloud
+    agent's session gets Valet's own tools only when `ownTools` says so when it opens. Changing the
+    grant closes the agent's sessions (`reopenClient`, tokens kept), so its next session has the
+    change. The same per-call checks then apply as for a local app.
+  - _Asking for its own tools._ `valet_request_tool` (Ask for changes) asks for one tool of an
+    approved adapter for this cloud agent: a `tool-enable` subject with its `clientId`, answered on
+    the phone or the Mac. Approved, the tool is on for cloud agents and in this agent's grant only.
+    An app on this Mac is told it doesn't need it (`not-needed`).
+  - _Gates kept._ `valet_request_session` and signed-in `valet_live_trial` refuse a cloud agent
+    (`REMOTE_SIGNED_IN`). Install cards carry the `remote` client badge from the requester's
+    `remote:` id. `valet_turn_off_tool` refuses a cloud agent, whose tools are its grant;
+    `valet_disconnect` revokes its registration.
 - **A draft belongs to the client that created it** (`local:<id>`). Only it can write, check,
   browse, trial or submit through MCP. Other agents may read it with All agents' activity. This is
   hygiene between well-behaved agents, not a security boundary: an agent with a shell runs as the

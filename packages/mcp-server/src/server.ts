@@ -45,6 +45,12 @@ export interface ServerOptions {
    * client's session, as the admin tools are.
    */
   readonly authoring?: Authoring
+  /**
+   * A cloud agent's session that gets `admin` and `authoring` too: the person gave this agent
+   * See Valet or Ask for changes with a signature (docs/authoring-tools.md, "Who can author"). The
+   * tools still check the agent's access on every call.
+   */
+  readonly remoteAdmin?: boolean
 }
 
 /**
@@ -206,9 +212,13 @@ export function createMcpServer(
 
   // Before any site tool, and never removed by apply(): planTools withholds every site tool whose
   // name could take one of these.
-  // Only for a session a local client's credential opened: never a cloud agent's, and never one
-  // with no identity at all.
-  if (options.admin !== undefined && options.identity?.origin === 'local') {
+  // Only for a session a local client's credential opened, or a cloud agent's the person gave
+  // Valet's own tools with a signature; never one with no identity at all.
+  const ownTools =
+    options.identity !== undefined &&
+    (options.identity.origin === 'local' ||
+      (options.identity.origin === 'remote' && options.remoteAdmin === true))
+  if (options.admin !== undefined && options.identity !== undefined && ownTools) {
     registerAdminTools(server, options.admin, options.identity, {
       now: options.now ?? Date.now,
       ...(options.timeZone === undefined ? {} : { timeZone: options.timeZone }),

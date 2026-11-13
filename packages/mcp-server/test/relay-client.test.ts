@@ -130,6 +130,11 @@ const request = (id: string, extra: Record<string, unknown> = {}) => ({
 })
 
 describe('connecting', () => {
+  it('names this Mac under the relay’s own host, or under the domain the relay gives Macs', () => {
+    expect(client().relay.publicHost).toBe(`${MAC_ID}.relay.test`)
+    expect(client({ macHost: 'valet.example.com' }).relay.publicHost).toBe(`${MAC_ID}.valet.example.com`)
+  })
+
   it('answers the challenge with the transport key over this relay, this Mac and its nonce', async () => {
     const { relay, statuses, events } = client()
     relay.start()

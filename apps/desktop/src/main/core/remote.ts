@@ -22,6 +22,8 @@
 import type { ToolDeclaration } from '@valet/core'
 import { ValetError } from '@valet/core'
 import {
+  type AdminReader,
+  type Authoring,
   type ConsentPrompt,
   type ConsentRequest,
   ConsentRequests,
@@ -153,6 +155,17 @@ export interface RemoteAccessDeps {
   readonly start?: (options: RemoteListenerOptions) => Promise<RunningRemoteListener>
 }
 
+/**
+ * Valet's own tools for cloud agents: the readers the local endpoint has, and which agent may have
+ * them in its next session (signed capabilities, docs/authoring-tools.md "Who can author").
+ */
+export interface RemoteOwnTools {
+  readonly admin: AdminReader
+  readonly authoring: Authoring | null
+  /** By registration id, no `remote:`. Must not throw. */
+  readonly allowed: (clientId: string) => boolean
+}
+
 export class RemoteAccess {
   /** The access tokens the listener accepts. The authorisation server mints into this. */
   readonly tokens: RemoteAccessTokens
@@ -167,6 +180,7 @@ export class RemoteAccess {
   private current: RemoteDocument = DEFAULT_REMOTE
   private listener: RunningRemoteListener | null = null
   private caller: ToolCaller | null = null
+  private own: RemoteOwnTools | null = null
   /** Changes run one at a time: a pause never interleaves with a start. */
   private queue: Promise<unknown> = Promise.resolve()
   /** This Mac's name at the relay, `<macId>.<relay host>`, while the relay client runs. */
@@ -204,8 +218,9 @@ export class RemoteAccess {
   }
 
   /** Reads remote.json, and starts listening if the person left remote access on. */
-  start(caller: ToolCaller): Promise<void> {
+  start(caller: ToolCaller, own: RemoteOwnTools | null = null): Promise<void> {
     this.caller = caller
+    this.own = own
     return this.serially(async () => {
       this.current = await this.document.read()
       this.clients.restore(await this.clientsDocument.read())
@@ -235,6 +250,16 @@ export class RemoteAccess {
       grant != null &&
       !grant.tools.includes(`${adapter}.${declaration.name}`)
     )
+  }
+
+  /**
+   * Whether this client (no `remote:` prefix) may be asked about the tool for itself: it holds a
+   * grant without it. The tool needn't be on for remote clients yet: approving the request turns
+   * it on, for this client's grant only.
+   */
+  canRequestForClient(adapter: string, declaration: ToolDeclaration, clientId: string): boolean {
+    const grant = this.clients.get(clientId)?.grant
+    return grant != null && !grant.tools.includes(`${adapter}.${declaration.name}`)
   }
 
   /**
@@ -433,6 +458,14 @@ export class RemoteAccess {
     })
   }
 
+  /**
+   * Closes one client's sessions, keeping its tokens, so its next session has Valet's own tools
+   * or loses them (after the person changed what it may do).
+   */
+  reopenClient(clientId: string): Promise<void> {
+    return this.listener?.reopenClient(clientId) ?? Promise.resolve()
+  }
+
   /** Re-lists the tools for remote sessions, after approvals or the policy change. */
   refresh(): void {
     try {
@@ -472,6 +505,13 @@ export class RemoteAccess {
       port: this.current.port ?? 0,
       refused: (call, reason) => this.deps.refused(call, reason),
       onSessionsChanged: () => this.deps.changed(),
+      ...(this.own === null
+        ? {}
+        : {
+            admin: this.own.admin,
+            ...(this.own.authoring === null ? {} : { authoring: this.own.authoring }),
+            ownTools: this.own.allowed,
+          }),
     })
     this.listener.refresh()
     if (this.current.port !== this.listener.port)

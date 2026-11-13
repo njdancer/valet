@@ -858,6 +858,30 @@ describe('live trials', () => {
       )
     }, 60_000)
 
+    it('gives a cloud agent no signed-in session or trial, while its signed-out work goes on', async () => {
+      const h = await trialHarness(item, {
+        deps,
+        installed: INSTALLED,
+        signedIn: new Map([['shop', ['example.com']]]),
+      })
+      const cloud: ClientIdentity = { origin: 'remote', clientId: 'rcagent' }
+      const { draft } = await h.authoring.createDraft(cloud, {
+        adapterId: 'shop',
+        from: 'installed',
+        name: 'Shop',
+      })
+      const before = asked.length
+      await expect(h.authoring.requestSession(cloud, draft.draftId, 30)).rejects.toThrow(
+        /for agents on the person’s Mac only/,
+      )
+      await expect(
+        h.authoring.liveTrial(cloud, draft.draftId, 'get_item', { id: 'abc-1' }, true),
+      ).rejects.toThrow(/for agents on the person’s Mac only/)
+      expect(asked.length).toBe(before)
+      // And one agent's draft isn't another's to write.
+      await expect(h.authoring.writeFile(AGENT, draft.draftId, 'src/index.ts', 'x')).rejects.toThrow()
+    }, 60_000)
+
     it('runs only under a lent session, limited to the installed version’s GET reads and hosts', async () => {
       const h = await trialHarness(item, {
         deps,

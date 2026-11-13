@@ -155,10 +155,24 @@ describe('approve a connection', () => {
     )
     await user.click(screen.getByRole('button', { name: 'Approve' }))
     await screen.findByText(/Approved\. Your browser carries on/)
-    expect(called(api, 'remote.approveConsent')).toEqual([['abcd-efgh', ['woolworths.view_cart']]])
+    expect(called(api, 'remote.approveConsent')).toEqual([['abcd-efgh', ['woolworths.view_cart'], []]])
     expect(screen.getByRole('link', { name: 'Open claude.ai’s page' }).getAttribute('href')).toBe(
       '#/connections/rcdemodemodemodemodemo',
     )
+  })
+
+  it('lets it ask for changes only when the person ticks that too, unticked to begin with', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    renderPage(api, <ApproveConnectionSheet armDelayMs={0} />)
+    const ask = await screen.findByRole('checkbox', { name: 'Let it ask for changes' })
+    expect(ask.getAttribute('aria-checked')).toBe('false')
+    await user.click(ask)
+    await user.type(screen.getByRole('textbox', { name: 'Code from your browser' }), 'abcd-efgh')
+    await user.click(screen.getByRole('button', { name: 'Approve' }))
+    await screen.findByText(/Approved\. Your browser carries on/)
+    expect(called(api, 'remote.approveConsent')).toEqual([['abcd-efgh', [], ['ask-for-changes']]])
+    expect((await api.remote.clients()).at(-1)).toMatchObject({ seeValet: true, askForChanges: true })
   })
 
   it('keeps Approve disarmed for a moment after it opens, so a click on its way can’t land', async () => {

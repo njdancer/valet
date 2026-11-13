@@ -193,16 +193,59 @@ export function settingValue(setting: WideningSetting, to: string): boolean | nu
   return label(shownValue(value), 120, '(blank)') === to ? value : null
 }
 
+/** What a cloud agent may do beyond Use tools, as the consent request signs it. */
+export type RemoteCapability = 'see-valet' | 'ask-for-changes'
+
 /** The `remote-client` subject for a pending consent: the client's claims, shown as claims. */
 export function remoteClientSubject(
   consent: { readonly clientId: string; readonly clientHost: string; readonly source: string | null },
   tools: readonly string[],
+  capabilities: readonly RemoteCapability[] = [],
 ): ApprovalSubject<'remote-client'> {
+  // Ask for changes needs See Valet (every authoring tool reads Valet first), so it brings it.
+  const wanted = new Set(capabilities)
+  if (wanted.has('ask-for-changes')) wanted.add('see-valet')
+  const ordered = (['see-valet', 'ask-for-changes'] as const).filter((c) => wanted.has(c))
   return {
     clientId: `remote:${consent.clientId}`,
     host: consent.clientHost.toLowerCase(),
     sourceAddress:
       consent.source !== null && /^[0-9A-Fa-f:.]{2,45}$/.test(consent.source) ? consent.source : null,
     tools: [...tools],
+    ...(ordered.length === 0 ? {} : { capabilities: ordered }),
+  }
+}
+
+/**
+ * The setting name that carries "Ask for changes" for one cloud agent given after its consent
+ * (agent-run-security.md: "or a later `setting`"). The registration id is in the name, so the
+ * phone's setting card parses it as it is. Null for an id that can't fit the pattern.
+ */
+export function remoteAskSetting(clientId: string): string | null {
+  const name = `remote_ask_${clientId}`
+  return /^[a-z][a-z0-9_]{0,63}$/.test(name) ? name : null
+}
+
+/** The registration id a `remote_ask_<id>` setting name carries, or null for any other name. */
+export function remoteAskClient(setting: string): string | null {
+  const match = /^remote_ask_([a-z0-9_]{1,52})$/.exec(setting)
+  return match === null ? null : (match[1] as string)
+}
+
+/** The `setting` subject that lets one cloud agent ask for changes (signed), or stop (a click). */
+export function remoteAskSubject(
+  clientId: string,
+  host: string,
+  on: boolean,
+): ApprovalSubject<'setting'> | null {
+  const setting = remoteAskSetting(clientId)
+  if (setting === null) return null
+  return {
+    scope: 'valet',
+    adapterId: null,
+    setting,
+    label: label(`Let ${host.toLowerCase()} ask for changes`, 80, 'Let a cloud agent ask for changes'),
+    from: on ? 'Off' : 'On',
+    to: on ? 'On' : 'Off',
   }
 }

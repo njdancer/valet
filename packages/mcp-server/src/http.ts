@@ -40,6 +40,11 @@ export interface HttpServerOptions {
   readonly admin?: AdminReader
   /** The authoring tools, for local clients' sessions with `admin` (docs/authoring-tools.md). */
   readonly authoring?: Authoring
+  /**
+   * Whether a cloud agent's new session gets `admin` and `authoring` (the remote listener's, from
+   * the agent's signed capabilities). Read when each session opens. Without it, none does.
+   */
+  readonly adminFor?: (identity: ClientIdentity) => boolean
   readonly newCallId?: () => string
   readonly newSessionId?: () => string
   /** How often a running call reports progress to a client that asked. See ServerOptions. */
@@ -113,6 +118,14 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
   const sessions = new Map<string, Session>()
   let port = 0
 
+  const ownToolsFor = (identity: ClientIdentity): boolean => {
+    try {
+      return options.adminFor?.(identity) === true
+    } catch {
+      return false
+    }
+  }
+
   const live = (): LiveSessions => {
     const list = [...sessions.values()].map(
       (session): LiveSession => ({
@@ -164,15 +177,17 @@ export async function startHttpServer(options: HttpServerOptions): Promise<Runni
     identity: ClientIdentity,
   ): Promise<void> => {
     const via = transportFrom(req.headers[TRANSPORT_HEADER])
+    const ownTools = identity.origin === 'local' || ownToolsFor(identity)
     const endpoint = createMcpServer(options.caller, info, {
       ...(options.newCallId === undefined ? {} : { newCallId: options.newCallId }),
       ...(options.progressIntervalMs === undefined ? {} : { progressIntervalMs: options.progressIntervalMs }),
-      // Only a local client's session: a remote credential names a cloud agent, whose grant covers
-      // site tools alone.
-      ...(options.admin === undefined || identity.origin !== 'local' ? {} : { admin: options.admin }),
-      ...(options.admin === undefined || options.authoring === undefined || identity.origin !== 'local'
+      // A local client's session, or a cloud agent's the person gave Valet's own tools with a
+      // signature (adminFor). Any other remote credential's grant covers site tools alone.
+      ...(options.admin === undefined || !ownTools ? {} : { admin: options.admin }),
+      ...(options.admin === undefined || options.authoring === undefined || !ownTools
         ? {}
         : { authoring: options.authoring }),
+      ...(identity.origin === 'remote' && ownTools ? { remoteAdmin: true } : {}),
       transport: via,
       identity,
     })

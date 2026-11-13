@@ -3,6 +3,12 @@ import type { RateLimiter } from './front'
 export interface Env {
   /** The bare relay host, e.g. relay.example. */
   readonly RELAY_HOST: string
+  /**
+   * The base of each Mac's own host, `<macId>.<RELAY_MAC_HOST>`, when it isn't RELAY_HOST: a
+   * domain whose names can each have a certificate (workers.dev can't take a name per Mac).
+   * Unset, each Mac is `<macId>.<RELAY_HOST>`.
+   */
+  readonly RELAY_MAC_HOST?: string
   /** https://<RELAY_HOST>, named in every challenge. */
   readonly RELAY_ORIGIN: string
   /** HMAC key for consent wait tokens. A Worker secret. */

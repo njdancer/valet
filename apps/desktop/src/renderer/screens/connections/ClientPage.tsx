@@ -376,6 +376,12 @@ function AgentPage({ agent }: { readonly agent: RemoteClientItem }) {
   const matched = new Set(scoped.flatMap((s) => s.tools.map((t) => `${s.id}.${t.name}`)))
   const unmatched = reach.status === 'ready' ? [...granted].filter((ref) => !matched.has(ref)) : []
   const label = agent.clientName === null ? null : clientLabel(agent.clientName)
+  const setAsk = async (on: boolean) => {
+    if (await action.run(() => api.remote.setAskForChanges(agent.id, on)))
+      toast(on ? `${agent.host} may ask for changes` : `${agent.host} can no longer ask for changes`, {
+        description: 'Its next session has the change. Start a new chat if it’s in one now.',
+      })
+  }
   const revoke = async () => {
     if (await action.run(() => api.remote.revokeClient(agent.id))) {
       toast(`${agent.host} revoked`)
@@ -457,6 +463,35 @@ function AgentPage({ agent }: { readonly agent: RemoteClientItem }) {
             />
           </CardContent>
         </Card>
+        {agent.grant !== null ? (
+          <Card>
+            <CardHeader>
+              <CardTitle>What else it may do</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              <div className="flex items-start gap-3">
+                <Switch
+                  aria-label="Ask for changes"
+                  checked={agent.askForChanges}
+                  disabled={action.busy}
+                  onCheckedChange={(next) => void setAsk(next)}
+                />
+                <Stack gap={0.5}>
+                  <Text weight="medium">Ask for changes</Text>
+                  <Text size="sm" tone="muted">
+                    Write and test adapters, and ask you for tools and settings. Nothing it writes runs or
+                    installs until you approve it. Turning this on needs Touch ID; off is at once.
+                  </Text>
+                </Stack>
+              </div>
+              <Text size="sm" tone="muted" data-testid="agent-see-valet">
+                {agent.seeValet
+                  ? 'It can see Valet: its sites, their health and its own calls.'
+                  : 'It can’t see Valet’s settings or other sites.'}
+              </Text>
+            </CardContent>
+          </Card>
+        ) : null}
         <Card>
           <CardHeader>
             <CardTitle>Tools it may use</CardTitle>
@@ -490,7 +525,8 @@ function AgentPage({ agent }: { readonly agent: RemoteClientItem }) {
               </ul>
             )}
             <Text size="sm" tone="muted">
-              To give it other tools, revoke it and approve it again. A tool turned off in{' '}
+              To give it other tools, revoke it and approve it again, or, with Ask for changes, it can ask for
+              one and you approve it. A tool turned off in{' '}
               <TextLink href={href.remote()}>Remote access</TextLink> is off for every cloud agent.
             </Text>
           </CardContent>

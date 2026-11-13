@@ -64,6 +64,16 @@ export interface AdminSource {
     readonly askForChanges: boolean
     readonly name: string
   } | null
+  /**
+   * What an approved cloud agent may see (signed capabilities only, never `clients.json`); null
+   * for one the app doesn't know or nobody approved.
+   */
+  readonly remoteAccess?: (clientId: string) => {
+    readonly seeValet: boolean
+    readonly allActivity: boolean
+    readonly askForChanges: boolean
+    readonly name: string
+  } | null
   readonly lockedDown: () => boolean
   /** The tools on for cloud agents now, as `<adapterId>.<tool>`. */
   readonly remoteTools: () => ReadonlySet<string>
@@ -78,9 +88,12 @@ export function adminReader(source: AdminSource): AdminReader {
   const { api } = source
   return {
     lockedDown: () => source.lockedDown(),
-    // A local app the person added, by its stored capabilities. Anything else sees nothing.
+    // A local app the person added, by its stored capabilities; a cloud agent, by what the person
+    // signed for it. Anything else sees nothing.
     access: (viewer) =>
-      (viewer.origin === 'local' ? source.access(viewer.clientId) : null) ?? {
+      (viewer.origin === 'local'
+        ? source.access(viewer.clientId)
+        : (source.remoteAccess?.(viewer.clientId) ?? null)) ?? {
         seeValet: false,
         allActivity: false,
         askForChanges: false,

@@ -12,6 +12,7 @@ import type { Closed, RequestResult } from '../../src/main/core/approvals/broker
 
 const ME: ClientIdentity = { origin: 'local', clientId: 'c_me' }
 const OTHER: ClientIdentity = { origin: 'local', clientId: 'c_other' }
+const AGENT: ClientIdentity = { origin: 'remote', clientId: 'rcagent' }
 const T0 = Date.parse('2026-11-12T08:00:00.000Z')
 
 /** A broker that records requests and lets the test close them; it has no way to approve. */
@@ -128,12 +129,34 @@ function setup(overrides: Partial<WriterSource> = {}) {
     now: () => now,
     lockedDown: () => false,
     client: (viewer) => {
-      const name = viewer.origin === 'local' ? clients.get(viewer.clientId) : undefined
+      const name =
+        viewer.origin === 'local'
+          ? clients.get(viewer.clientId)
+          : viewer.clientId === 'rcagent'
+            ? 'claude.ai'
+            : undefined
       return name === undefined ? null : { name }
+    },
+    toolRequest: (viewer, adapterId, tool) => {
+      if (adapterId !== 'yahoo-finance') return { ok: false, reason: 'not-found' }
+      if (tool === 'get_quote') return { ok: false, reason: 'already', title: 'Get a quote' }
+      if (tool !== 'search_symbols') return { ok: false, reason: 'not-found' }
+      return {
+        ok: true,
+        title: 'Search symbols',
+        subject: {
+          adapterId,
+          adapterHash: 'a'.repeat(64),
+          tool,
+          scope: 'remote',
+          clientId: `remote:${viewer.clientId}`,
+          sideEffect: 'read',
+        },
+      }
     },
     broker: () => broker,
     requestRemoval: async () => 'not-found',
-    wiredKinds: () => new Set<ApprovalKind>(['setting']),
+    wiredKinds: () => new Set<ApprovalKind>(['setting', 'tool-enable']),
     phonePaired: () => false,
     settings: () => values as unknown as AgentSettingValues,
     // As approvals/subjects.ts classifies them (R6): turning on Messages or remote access, turning
@@ -187,9 +210,9 @@ function setup(overrides: Partial<WriterSource> = {}) {
       off.set(clientId, set)
       return 'done'
     },
-    disconnect: async (clientId) => {
-      disconnected.push(clientId)
-      clients.delete(clientId)
+    disconnect: async (viewer) => {
+      disconnected.push(viewer.clientId)
+      clients.delete(viewer.clientId)
       return true
     },
     audit: async (event) => {
@@ -338,7 +361,7 @@ describe('AdminWriterImpl', () => {
     expect(values['notifications']).toBe(false)
   })
 
-  it('refuses everything while locked down, from a remote client, or from an unknown one', async () => {
+  it('refuses everything while locked down, from a remote client nobody approved, or from an unknown one', async () => {
     const locked = setup({ lockedDown: () => true })
     expect(await locked.writer.disconnect(ME)).toEqual({ kind: 'refused', reason: 'locked-down' })
     const { writer } = setup()
@@ -346,7 +369,7 @@ describe('AdminWriterImpl', () => {
       await writer.setSetting({ origin: 'remote', clientId: 'c_me' }, 'notifications', true, null),
     ).toEqual({
       kind: 'refused',
-      reason: 'not-allowed',
+      reason: 'not-found',
     })
     expect(
       await writer.turnOffTool({ origin: 'local', clientId: 'c_gone' }, 'woolworths', 'search_products'),
@@ -354,6 +377,54 @@ describe('AdminWriterImpl', () => {
       kind: 'refused',
       reason: 'not-found',
     })
+  })
+
+  it('asks for a tool for an approved cloud agent, as a tool-enable request for that agent', async () => {
+    const { writer, broker } = setup()
+    const asked = await writer.requestTool(AGENT, 'yahoo-finance', 'search_symbols', 'I built it')
+    expect(asked.kind).toBe('asked')
+    expect(broker.requests).toEqual([
+      expect.objectContaining({
+        kind: 'tool-enable',
+        subject: expect.objectContaining({
+          clientId: 'remote:rcagent',
+          scope: 'remote',
+          tool: 'search_symbols',
+        }),
+        requester: { kind: 'agent', clientId: 'remote:rcagent', clientName: 'claude.ai' },
+      }),
+    ])
+    if (asked.kind === 'asked') expect(asked.request.title).toBe('Turn on a tool: Search symbols')
+    expect(await writer.requestTool(AGENT, 'yahoo-finance', 'get_quote', null)).toEqual({
+      kind: 'unchanged',
+      current: 'you can already use "Get a quote"',
+    })
+    expect(await writer.requestTool(AGENT, 'woolworths', 'checkout', null)).toEqual({
+      kind: 'refused',
+      reason: 'not-found',
+    })
+  })
+
+  it('never asks for a tool for an app on this Mac, nor turns a cloud agent’s granted tool off', async () => {
+    const { writer, broker } = setup()
+    expect(await writer.requestTool(ME, 'yahoo-finance', 'search_symbols', null)).toEqual({
+      kind: 'refused',
+      reason: 'not-needed',
+    })
+    expect(await writer.turnOffTool(AGENT, 'woolworths', 'search_products')).toEqual({
+      kind: 'refused',
+      reason: 'not-allowed',
+    })
+    expect(broker.requests).toEqual([])
+  })
+
+  it('disconnects a cloud agent through the same path, by its identity', async () => {
+    const { writer, disconnected, audited } = setup()
+    expect((await writer.disconnect(AGENT)).kind).toBe('done')
+    expect(disconnected).toEqual(['rcagent'])
+    expect(audited).toEqual([
+      { clientId: 'remote:rcagent', action: 'disconnect', target: 'remote:rcagent', value: null },
+    ])
   })
 
   it('disconnects only the asking agent', async () => {

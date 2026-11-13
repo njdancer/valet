@@ -60,6 +60,8 @@ export type WriteRefusal =
   | 'too-many-changes'
   /** The adapter's list of choices couldn't be read, or had fewer than two. */
   | 'no-choices'
+  /** Nothing to ask for: an app on this Mac already has every approved tool it didn't turn off. */
+  | 'not-needed'
 
 /** How one of the agent's own requests stands. */
 export type RequestView = {
@@ -134,6 +136,17 @@ export interface AdminWriter {
     adapterId: string,
     setting: string,
     query: string | null,
+    note: string | null,
+  ): Promise<WriteOutcome>
+  /**
+   * Asks the person to let this cloud agent use one of an approved adapter's tools, such as one it
+   * just built (a `tool-enable` request for this client). Always a request; never for an app on
+   * this Mac, whose tools are on unless the person turned one off.
+   */
+  requestTool(
+    viewer: ClientIdentity,
+    adapterId: string,
+    tool: string,
     note: string | null,
   ): Promise<WriteOutcome>
   /** Turns one tool off for this agent only (Notify only). */
@@ -262,6 +275,8 @@ const REFUSED: Readonly<Record<WriteRefusal, string>> = {
   'too-many-changes': 'Not done: too many changes this hour. Try again later.',
   'no-choices':
     'Not asked: Valet couldn’t get the site’s list of choices for this setting. Try a different search, or ask the person to choose it in the Valet app.',
+  'not-needed':
+    'Not asked: apps on this Mac can use every tool of an approved site unless the person turned one off for them (config: not-needed). Only the person can turn one back on, in the Valet app.',
 }
 
 /** The sentence for a refusal, with when to try again if the app gave one. */
@@ -340,6 +355,17 @@ export const writeInputs = {
       .describe(
         'Narrows the site’s list of choices, e.g. a postcode or suburb. Not a value: the person picks.',
       ),
+    note: noteInput,
+  }),
+  requestTool: z.object({
+    adapterId: z
+      .string()
+      .regex(ADAPTER_ID)
+      .describe('The site’s adapter id, as valet_list_adapters gives it.'),
+    tool: z
+      .string()
+      .regex(TOOL_NAME)
+      .describe('The tool’s name within the adapter, as valet_get_adapter lists it.'),
     note: noteInput,
   }),
   turnOffTool: z.object({
@@ -483,6 +509,22 @@ export const WRITE_TOOLS: readonly WriteTool[] = [
         typeof args.query === 'string' && args.query.trim().length > 0 ? args.query.trim() : null,
         note(args),
       ),
+    }),
+  },
+  {
+    name: 'valet_request_tool',
+    title: 'Ask to use a site tool',
+    description:
+      'For a cloud agent: asks the person to let you call one tool of an approved site, such as ' +
+      'one you built and they approved. The person answers on their phone or Mac; nothing changes ' +
+      'until they approve it. Apps on this Mac don’t need this: their tools are on unless the ' +
+      'person turned one off.',
+    input: writeInputs.requestTool,
+    needs: 'ask',
+    annotations: CHANGE,
+    run: async (writer, args, viewer) => ({
+      kind: 'outcome',
+      outcome: await writer.requestTool(viewer, str(args.adapterId), str(args.tool), note(args)),
     }),
   },
   {
