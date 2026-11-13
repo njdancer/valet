@@ -10,3 +10,7 @@ swift-bridge/.build/
 # The iPhone app's generated Xcode project (ios/project.yml)
 ios/ValetPhone.xcodeproj/
 ios/ValetPhone/Generated/
+
+# Local iPhone builds and relay deploy configs (docs/iphone-setup.md)
+ios/build/
+apps/relay/wrangler.local.jsonc
