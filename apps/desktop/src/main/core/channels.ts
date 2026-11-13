@@ -74,6 +74,7 @@ export const INVOKE_METHODS = [
   'remote.clients',
   'remote.revokeClient',
   'remote.revokeAllClients',
+  'remote.setAskForChanges',
   'remote.setup',
   'remote.setEnabled',
   'remote.setHosts',

@@ -274,6 +274,28 @@ describe('a cloud agent’s page', () => {
     expect(called(api, 'remote.revokeClient')).toEqual([['rcdemodemodemodemodemo']])
     await waitFor(() => expect(window.location.hash).toBe('#/connections'))
   })
+
+  it('turns Ask for changes on and off from its page', async () => {
+    const user = userEvent.setup()
+    const api = createFakeApi({ now: NOW })
+    await api.remote.approveConsent('ABCDEFGH', ['woolworths.get_cart'])
+    renderPage(api, <ClientPage clientId="rcdemodemodemodemodemo" />)
+    const ask = await screen.findByRole('switch', { name: 'Ask for changes' })
+    expect(ask.getAttribute('aria-checked')).toBe('false')
+    expect(screen.getByTestId('agent-see-valet').textContent).toMatch(/can’t see Valet/)
+    await user.click(ask)
+    await waitFor(() =>
+      expect(screen.getByRole('switch', { name: 'Ask for changes' }).getAttribute('aria-checked')).toBe(
+        'true',
+      ),
+    )
+    expect(screen.getByTestId('agent-see-valet').textContent).toMatch(/It can see Valet/)
+    await user.click(screen.getByRole('switch', { name: 'Ask for changes' }))
+    expect(called(api, 'remote.setAskForChanges')).toEqual([
+      ['rcdemodemodemodemodemo', true],
+      ['rcdemodemodemodemodemo', false],
+    ])
+  })
 })
 
 describe('connection helpers', () => {

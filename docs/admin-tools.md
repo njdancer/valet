@@ -54,10 +54,10 @@ button), the Connections list (the clients and their tokens' state), and anythin
 3. _A separate MCP server_ (another endpoint or bridge). Rejected: a second connection to set up in
    every client, for the same person on the same Mac.
 
-**Which clients see them.** Local clients only, for now: a session whose credential is a local
-client's token (D42). A session with no identity gets none either. The remote listener never gets
-the reader (it is left out of its options' type and dropped at runtime), so cloud agents see no
-admin tools until workstream B decides what a cloud agent may read and D can gate it.
+**Which clients see them.** Local clients, and cloud agents the person gave See Valet or Ask for
+changes with a signature (docs/authoring-tools.md, "Who can author"). A session with no identity
+gets none. The remote listener gets the reader only with an `ownTools(clientId)` predicate, read
+when each session opens; without it, no cloud agent sees an admin tool.
 
 **What each app may see** (the agent-run IA, section 5: "Use tools · See Valet · Ask for
 changes"). Each local app the person added has two stored capabilities in its Connections record
@@ -169,8 +169,9 @@ In `packages/mcp-server/src/admin-tools.ts`:
 - `ADMIN_TOOLS`: the definitions. `registerAdminTools(server, reader, viewer)` adds them to a
   session; `viewer` is the session's identity, which `valet_get_call` uses to decide on the input.
 - `ServerOptions.admin` and `HttpServerOptions.admin`: the reader. `createMcpServer` registers the
-  admin tools only when it has one and the session's identity is local. `startRemoteListener` takes
-  no `admin` at all.
+  admin tools only when it has one and the session's identity is local, or remote with
+  `remoteAdmin` (the remote listener's `ownTools` said yes). `startRemoteListener` passes `admin`
+  and `authoring` on only with `ownTools`.
 
 In the app, `apps/desktop/src/main/core/admin.ts` implements `AdminReader` over `AppService`'s
 `api` and its secrets, and `startEndpoint` receives it.
@@ -215,6 +216,7 @@ what it did, or approve its own request. Nothing here adds friction for the pers
 | ------------------------- | --------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `valet_set_setting`       | Ask for changes | Notify only if stricter and deletes nothing; else asks | One of three Valet settings: Messages codes, notifications, call-detail retention. The app classifies the change (`settingWidens`, D's table): Messages codes on, notifications off and shorter retention ask. Remote access isn't offered: turning it off revokes every cloud agent, which is changing other agents' connections. |
 | `valet_request_setting`   | Ask for changes | Approve (Setting)                                      | An adapter's setting, such as the store. The Mac fetches the adapter's own choices (an optional `query` narrows them) and the person picks on the card. Never a value.                                                                                                                                                             |
+| `valet_request_tool`      | Ask for changes | Approve (Turn on a tool)                               | Cloud agents only: one tool of an approved adapter for the asking agent (`tool-enable` with its `clientId`). Approved, the tool is on for cloud agents and in this agent's grant only. An app on this Mac is told it isn't needed.                                                                                                 |
 | `valet_turn_off_tool`     | Ask for changes | Notify only, for itself                                | Stored on the asking app's record (`clients.json` `toolsOff`). The caller leaves it out of that app's listing and refuses a call to it.                                                                                                                                                                                            |
 | `valet_disconnect`        | any             | Notify only, for itself                                | Revokes the asking app's token and withdraws its requests.                                                                                                                                                                                                                                                                         |
 | `valet_get_approval`      | Ask for changes | none                                                   | The app's own requests, one by ref or all it remembers.                                                                                                                                                                                                                                                                            |

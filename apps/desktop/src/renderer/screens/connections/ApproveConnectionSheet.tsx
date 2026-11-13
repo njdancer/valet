@@ -5,7 +5,8 @@
 // the request it belongs to, so a request someone else started (from their own account, against
 // the person's public URL) can't be approved by someone who never saw that browser. Every request
 // is headed by its claimed host, never by its self-chosen name, which is shown as a claim. Three
-// wrong codes cancel them all. No tool is ticked to begin with: the person chooses each one.
+// wrong codes cancel them all. No tool is ticked to begin with: the person chooses each one, and
+// "Ask for changes" (building and fixing adapters) is unticked too, granted only by this approval.
 //
 // Like the confirmation panel, Approve stays disabled for CONFIRM_ARM_MS after the sheet opens and
 // whenever the window comes back, so a click already on its way can't land on it.
@@ -80,6 +81,7 @@ function Consent({
   const toolsId = useId()
   const [code, setCode] = useState('')
   const [ticked, setTicked] = useState<ReadonlySet<string>>(() => new Set())
+  const [askForChanges, setAskForChanges] = useState(false)
   const [answer, setAnswer] = useState<RemoteConsentAnswer | null>(null)
   const [approvedAgent, setApprovedAgent] = useState<RemoteConsentRequest | null>(null)
 
@@ -125,7 +127,7 @@ function Consent({
     const only = state.requests.length === 1 ? (state.requests[0] ?? null) : null
     let result: RemoteConsentAnswer | null = null
     const ok = await action.run(async () => {
-      result = await api.remote.approveConsent(code, [...ticked])
+      result = await api.remote.approveConsent(code, [...ticked], askForChanges ? ['ask-for-changes'] : [])
     })
     if (ok) {
       setAnswer(result)
@@ -274,6 +276,22 @@ function Consent({
             </>
           )}
         </fieldset>
+
+        <div className="flex items-start gap-2.5">
+          <Checkbox
+            id={`${toolsId}-ask`}
+            className="mt-0.5"
+            checked={askForChanges}
+            onCheckedChange={(next) => setAskForChanges(next === true)}
+          />
+          <Stack gap={0.5}>
+            <Label htmlFor={`${toolsId}-ask`}>Let it ask for changes</Label>
+            <Text size="sm" tone="muted">
+              It can see Valet, write and test adapters, and ask for tools and settings. Nothing it writes
+              runs or installs until you approve it on your phone or here. Signed-in trials stay on this Mac.
+            </Text>
+          </Stack>
+        </div>
         <Failed failed={action.failed} what="send your answer" />
       </Stack>
     </SheetContent>

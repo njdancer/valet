@@ -93,6 +93,21 @@ const req = (url: string, init: RequestInit = {}) => {
 }
 
 describe('routing', () => {
+  it('names Macs under RELAY_MAC_HOST when set, and leaves device sockets on the relay host', async () => {
+    const h = await harness()
+    const door: FrontDoor = { ...h.door, macHost: 'valet.example.com' }
+    const upgrade = { headers: { upgrade: 'websocket' } }
+    expect(await (await frontDoor(req(`https://relay.test/v1/phone/${MAC}`, upgrade), door)).text()).toBe(
+      'upgraded',
+    )
+    const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' })
+    const post = { method: 'POST', body, headers: { 'content-type': 'application/json' } }
+    expect(await (await frontDoor(req(`https://${MAC}.valet.example.com/mcp`, post), door)).text()).toBe('ok')
+    // The relay's own host no longer names Macs.
+    expect((await frontDoor(req(`https://${HOST}/mcp`, post), door)).status).toBe(404)
+    expect(h.forwarded).toHaveLength(1)
+  })
+
   it('routes device sockets on the relay host and refuses everything else there', async () => {
     const h = await harness()
     const upgrade = { headers: { upgrade: 'websocket' } }

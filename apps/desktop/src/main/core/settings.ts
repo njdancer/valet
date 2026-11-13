@@ -23,6 +23,7 @@ export const DEFAULT_SETTINGS: Settings = {
   traceRetentionDays: DEFAULT_TRACE_RETENTION_DAYS,
   notifications: true,
   relayHost: null,
+  relayMacHost: null,
 }
 
 /**
@@ -61,6 +62,9 @@ const settingsSchema = z
     // On unless the person turns it off: a notification only opens one of the app's own windows.
     notifications: z.boolean().default(true),
     relayHost: relayHostSchema.nullable().default(null),
+    // The base of this Mac's own host for cloud agents, when the relay names Macs under another
+    // domain than its own (docs/relay-worker.md, "Host names"). Unset: `<macId>.<relayHost>`.
+    relayMacHost: relayHostSchema.nullable().default(null),
   })
   .strict()
 
@@ -86,6 +90,7 @@ export class SettingsStore {
       ...(patch.traceRetentionDays === undefined ? {} : { traceRetentionDays: patch.traceRetentionDays }),
       ...(patch.notifications === undefined ? {} : { notifications: patch.notifications }),
       ...(patch.relayHost === undefined ? {} : { relayHost: patch.relayHost }),
+      ...(patch.relayMacHost === undefined ? {} : { relayMacHost: patch.relayMacHost }),
     }
     return this.document.update((current) => ({ ...current, ...known }))
   }

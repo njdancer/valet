@@ -67,11 +67,26 @@ export type AdapterSettingAsk =
     }
   | { readonly ok: false; readonly reason: 'not-found' | 'no-choices' | 'unavailable' }
 
+/** A cloud agent's request to use one tool, as the app built it, or why it couldn't. */
+export type ToolAsk =
+  | {
+      readonly ok: true
+      readonly subject: ApprovalSubject<'tool-enable'>
+      /** The tool's title the person approved with the adapter. */
+      readonly title: string
+    }
+  | { readonly ok: false; readonly reason: 'not-found' | 'already'; readonly title?: string }
+
 export interface WriterSource {
   now(): number
   lockedDown(): boolean
-  /** An active local client the person added: its id and the person's name for it. Null otherwise. */
+  /**
+   * An active local client the person added, or a cloud agent the person approved: the person's
+   * name for it (an agent's claimed host). Null otherwise.
+   */
   client(viewer: ClientIdentity): { readonly name: string } | null
+  /** The `tool-enable` request that lets this cloud agent call one approved tool. */
+  toolRequest(viewer: ClientIdentity, adapterId: string, tool: string): ToolAsk
   /** Null while the broker isn't running. */
   broker(): AgentBroker | null
   /** Kinds the app has wired to act on an approval (service.wiredKinds()). */
@@ -99,7 +114,7 @@ export interface WriterSource {
   toolOff(clientId: string, qualified: string): boolean
   turnOffTool(clientId: string, qualified: string): Promise<'done' | 'already' | 'not-found'>
   /** Revokes the client (its token stops working) and withdraws its requests. */
-  disconnect(clientId: string): Promise<boolean>
+  disconnect(viewer: ClientIdentity): Promise<boolean>
   /** Audits a Notify-only change. A change that can't be audited isn't made. */
   audit(event: {
     readonly clientId: string
@@ -214,10 +229,38 @@ export class AdminWriterImpl implements AdminWriter {
     })
   }
 
+  requestTool(
+    viewer: ClientIdentity,
+    adapterId: string,
+    tool: string,
+    note: string | null,
+  ): Promise<WriteOutcome> {
+    return this.exclusive(async () => {
+      const gate = this.gate(viewer)
+      if (gate.refused !== undefined) return gate.refused
+      // An app on this Mac has every approved tool unless the person turned it off for it.
+      if (viewer.origin !== 'remote') return refused('not-needed')
+      let built: ToolAsk
+      try {
+        built = this.source.toolRequest(viewer, adapterId, tool)
+      } catch {
+        return refused('unavailable')
+      }
+      if (!built.ok) {
+        if (built.reason === 'already')
+          return { kind: 'unchanged', current: `you can already use "${built.title ?? tool}"` }
+        return refused('not-found')
+      }
+      return this.ask(viewer, gate.name, 'tool-enable', built.subject, note, `Turn on a tool: ${built.title}`)
+    })
+  }
+
   turnOffTool(viewer: ClientIdentity, adapterId: string, tool: string): Promise<WriteOutcome> {
     return this.exclusive(async () => {
       const gate = this.gate(viewer)
       if (gate.refused !== undefined) return gate.refused
+      // A cloud agent's tools are its grant, which only the person changes (Connections).
+      if (viewer.origin !== 'local') return refused('not-allowed')
       const found = this.source.tool(adapterId, tool)
       if (found === null) return refused('not-found')
       const qualified = `${adapterId}.${tool}`
@@ -259,7 +302,7 @@ export class AdminWriterImpl implements AdminWriter {
           target: identityLabel(viewer),
           value: null,
         })
-        if (!(await this.source.disconnect(viewer.clientId))) return refused('not-found')
+        if (!(await this.source.disconnect(viewer))) return refused('not-found')
       } catch {
         return refused('unavailable')
       }
@@ -334,7 +377,6 @@ export class AdminWriterImpl implements AdminWriter {
   /** Locked down, or a client the person no longer has: refused before anything else. */
   private gate(viewer: ClientIdentity): { readonly refused?: WriteOutcome; readonly name: string } {
     if (this.source.lockedDown()) return { refused: refused('locked-down'), name: '' }
-    if (viewer.origin !== 'local') return { refused: refused('not-allowed'), name: '' }
     const client = this.source.client(viewer)
     if (client === null) return { refused: refused('not-found'), name: '' }
     return { name: client.name }
@@ -344,11 +386,11 @@ export class AdminWriterImpl implements AdminWriter {
     return { kind: 'agent', clientId: identityLabel(viewer), clientName: name }
   }
 
-  private async ask(
+  private async ask<K extends 'setting' | 'tool-enable'>(
     viewer: ClientIdentity,
     name: string,
-    kind: 'setting',
-    subject: ApprovalSubject<'setting'>,
+    kind: K,
+    subject: ApprovalSubject<K>,
     note: string | null,
     title: string,
   ): Promise<WriteOutcome> {

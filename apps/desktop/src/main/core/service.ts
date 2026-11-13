@@ -111,6 +111,10 @@ import {
   type KindHandlers,
   type MacApprovalKeys,
   permissionChanges,
+  type RemoteCapability,
+  remoteAskClient,
+  remoteAskSetting,
+  remoteAskSubject,
   remoteClientSubject,
   requestRef,
   settingSubject,
@@ -833,7 +837,19 @@ export class AppService {
     await this.states()
     await this.startListening().catch(() => undefined)
     // The same caller: remote calls go through the same pause, runtime and audit as local ones.
-    await this.remote.start(this.caller).catch(() => undefined)
+    await this.remote
+      .start(this.caller, {
+        admin: this.adminReader(),
+        authoring: this.authoring,
+        allowed: (clientId) => {
+          try {
+            return this.remoteCapabilities(clientId).seeValet
+          } catch {
+            return false
+          }
+        },
+      })
+      .catch(() => undefined)
   }
 
   /**
@@ -1480,6 +1496,9 @@ export class AppService {
       // the person's own paths ask too, through changeValetSetting).
       setting: {
         precheck: (subject) => {
+          // One cloud agent's Ask for changes: still an approved agent, and only ever turned on.
+          const asker = subject.scope === 'valet' ? remoteAskClient(subject.setting) : null
+          if (asker !== null) return subject.to === 'On' && this.remote.clients.get(asker)?.grant != null
           if (subject.scope === 'adapter') {
             const adapter = subject.adapterId === null ? null : this.adapter(subject.adapterId)
             return adapter !== null && Object.hasOwn(adapter.definition.manifest.settings, subject.setting)
@@ -1491,6 +1510,13 @@ export class AppService {
           return to !== null && settingSubject(name, this.valetSetting(name).get(), to).from === subject.from
         },
         apply: async (subject, evidence) => {
+          // The evidence is the grant (remoteCapabilities reads it); its next session has the tools.
+          const asker = subject.scope === 'valet' ? remoteAskClient(subject.setting) : null
+          if (asker !== null) {
+            await this.remote.reopenClient(asker).catch(() => undefined)
+            this.emit('remote-changed')
+            return
+          }
           if (subject.scope === 'adapter') {
             const value = evidence === null ? undefined : decisionChoice(evidence.decision.payload)
             // From the signed card's own list (the decision was checked against it), not the
@@ -1522,24 +1548,26 @@ export class AppService {
           if (subject.scope !== 'remote' || this.adapter(subject.adapterId)?.hash !== subject.adapterHash)
             return false
           if (subject.clientId === null) return true
-          // One client's own: only a tool already on for remote clients, added to its grant.
+          // One cloud agent's own (valet_request_tool): an approved agent without the tool yet.
           const client = remoteClientKey(subject.clientId)
           const declaration = this.remoteDeclared(subject.adapterId, subject.tool)
           return (
             client !== null &&
             declaration !== null &&
-            this.remote.canAllowForClient(subject.adapterId, declaration, client)
+            declaration.sideEffect === subject.sideEffect &&
+            this.remote.canRequestForClient(subject.adapterId, declaration, client)
           )
         },
         apply: async (subject) => {
           if (subject.clientId === null) return this.setRemoteTool(subject.adapterId, subject.tool, true)
           const client = remoteClientKey(subject.clientId)
           const declaration = this.remoteDeclared(subject.adapterId, subject.tool)
-          if (
-            client === null ||
-            declaration === null ||
-            !(await this.remote.allowForClient(subject.adapterId, declaration, client))
-          )
+          if (client === null || declaration === null) throw new ValetError('config', 'not-found')
+          // The person approved this tool for this agent: it is on for cloud agents from now on
+          // (each still needs it in its own grant), then in this agent's grant.
+          if (!this.remote.allows(subject.adapterId, declaration))
+            await this.setRemoteTool(subject.adapterId, subject.tool, true)
+          if (!(await this.remote.allowForClient(subject.adapterId, declaration, client)))
             throw new ValetError('config', 'not-found')
         },
         supersedes: (next, older) =>
@@ -1558,6 +1586,8 @@ export class AppService {
           const answer = await this.remote.approveConsent(code, subject.tools)
           if (answer !== 'approved') throw new ValetError('config', 'not-found')
         },
+        // A client approved again keeps only what this approval ticked.
+        supersedes: (next, older) => next.clientId === older.clientId,
       },
       // A draft's live trials may use the adapter's signed-in session for a while (D81).
       'authoring-session': {
@@ -1986,6 +2016,68 @@ export class AppService {
         .withdraw(asked.requestId, kind === 'remote-client' ? { kind: 'app' } : { kind: 'person' })
         .catch(() => false)
     return false
+  }
+
+  /**
+   * What a cloud agent may do beyond Use tools: only what a signature backs now (F's design,
+   * docs/authoring-tools.md "Who can author"). Ask for changes from its consent card or a later
+   * `setting`; See Valet from its consent card, or with Ask for changes. Nothing for an agent
+   * without an approved registration, or without the broker.
+   */
+  private remoteCapabilities(clientId: string): {
+    readonly seeValet: boolean
+    readonly askForChanges: boolean
+  } {
+    const none = { seeValet: false, askForChanges: false }
+    const broker = this.approvalBroker
+    if (broker === null || this.remote.clients.get(clientId)?.grant == null) return none
+    const id = `remote:${clientId}`
+    const consented = (capability: RemoteCapability): boolean =>
+      broker.honoured(
+        'remote-client',
+        (s) => s.clientId === id && (s.capabilities ?? []).includes(capability),
+      ) !== null
+    const setting = remoteAskSetting(clientId)
+    const askForChanges =
+      consented('ask-for-changes') ||
+      (setting !== null &&
+        broker.honoured('setting', (s) => s.scope === 'valet' && s.setting === setting && s.to === 'On') !==
+          null)
+    return { seeValet: askForChanges || consented('see-valet'), askForChanges }
+  }
+
+  /** Turns a cloud agent's Ask for changes on (Touch ID) or off (at once, tightening). */
+  private async setRemoteAsk(clientId: string, on: boolean): Promise<void> {
+    const client = this.remote.remoteClients().find((c) => c.id === clientId)
+    if (client === undefined || client.grant === null || this.approvalBroker === null)
+      throw new ValetError('config', 'not-found')
+    if (on) {
+      if (this.remoteCapabilities(clientId).askForChanges) return
+      const subject = remoteAskSubject(clientId, client.host, true)
+      if (subject === null) throw new ValetError('config', 'invalid')
+      await this.approveOrRefuse('setting', subject)
+      if (!this.remoteCapabilities(clientId).askForChanges) throw new ValetError('config', 'unavailable')
+      return
+    }
+    await this.dropRemoteCapabilities(clientId)
+    // Its requests about changes go with the capability.
+    await this.approvalBroker.withdrawClient(`remote:${clientId}`).catch(() => 0)
+    await this.remote.reopenClient(clientId).catch(() => undefined)
+    this.emit('remote-changed')
+  }
+
+  /** Removes the evidence behind a cloud agent's See Valet and Ask for changes. Only tightens. */
+  private async dropRemoteCapabilities(clientId: string): Promise<void> {
+    const broker = this.approvalBroker
+    if (broker === null) return
+    const setting = remoteAskSetting(clientId)
+    if (setting !== null) await broker.revoke('setting', (s) => s.setting === setting).catch(() => 0)
+    await broker
+      .revoke(
+        'remote-client',
+        (s) => s.clientId === `remote:${clientId}` && (s.capabilities ?? []).length > 0,
+      )
+      .catch(() => 0)
   }
 
   /** A widening change the person asked for: Touch ID first, then the kind's handler applies it. */
@@ -2444,7 +2536,9 @@ export class AppService {
       },
       requestState: (requestId) => this.draftRequestState(requestId),
       clientName: (viewer) =>
-        viewer.origin === 'local' ? (this.clients.get(viewer.clientId)?.name ?? 'An app') : 'A cloud agent',
+        viewer.origin === 'local'
+          ? (this.clients.get(viewer.clientId)?.name ?? 'An app')
+          : (this.remote.remoteClients().find((c) => c.id === viewer.clientId)?.host ?? 'A cloud agent'),
       audit: async (event) => {
         await this.audit.append(event)
       },
@@ -3172,6 +3266,12 @@ export class AppService {
         const client = this.clients.get(clientId)
         return capabilities === null || client === null ? null : { ...capabilities, name: client.name }
       },
+      remoteAccess: (clientId) => {
+        const client = this.remote.remoteClients().find((c) => c.id === clientId)
+        if (client === undefined || client.grant === null) return null
+        // A cloud agent sees its own activity only: All agents' activity is for apps on this Mac.
+        return { ...this.remoteCapabilities(clientId), allActivity: false, name: client.host }
+      },
       lockedDown: () => this.lockedDown,
       remoteTools: () => new Set(this.remote.status().tools),
       sensitive: (texts) => this.knownSecretIn(texts),
@@ -3195,9 +3295,36 @@ export class AppService {
       now: () => this.deps.now(),
       lockedDown: () => this.lockedDown,
       client: (viewer) => {
-        if (viewer.origin !== 'local' || !this.clients.isActive(viewer.clientId)) return null
+        if (viewer.origin === 'remote') {
+          const agent = this.remote.remoteClients().find((c) => c.id === viewer.clientId)
+          return agent === undefined || agent.grant === null ? null : { name: agent.host }
+        }
+        if (!this.clients.isActive(viewer.clientId)) return null
         const client = this.clients.get(viewer.clientId)
         return client === null ? null : { name: client.name }
+      },
+      toolRequest: (viewer, adapterId, tool) => {
+        const adapter = this.adapter(adapterId)
+        const declaration = this.remoteDeclared(adapterId, tool)
+        const agent = viewer.origin === 'remote' ? viewer.clientId : null
+        // Only a tool of an approved adapter, as the caller lists them (the precheck asks again).
+        const listed = this.caller
+          ?.listTools()
+          .some((t) => t.adapterId === adapterId && t.declaration.name === tool)
+        if (adapter === null || declaration === null || agent === null || listed !== true)
+          return { ok: false, reason: 'not-found' }
+        if (this.remote.allows(adapterId, declaration, agent))
+          return { ok: false, reason: 'already', title: declaration.title }
+        const subject = toolEnableSubject(
+          adapter.definition.manifest,
+          adapter.hash,
+          tool,
+          'remote',
+          `remote:${agent}`,
+        )
+        if (subject === null || !this.remote.canRequestForClient(adapterId, declaration, agent))
+          return { ok: false, reason: 'not-found' }
+        return { ok: true, subject, title: declaration.title }
       },
       broker: () => {
         const broker = this.approvalBroker
@@ -3274,7 +3401,18 @@ export class AppService {
         }
         return done
       },
-      disconnect: async (clientId) => {
+      disconnect: async (viewer) => {
+        if (viewer.origin === 'remote') {
+          const id = viewer.clientId
+          if (this.remote.clients.get(id) === null) return false
+          await this.approvalBroker?.withdrawClient(`remote:${id}`).catch(() => 0)
+          await this.dropRemoteCapabilities(id)
+          // Just after, so this call's own result still reaches the agent.
+          const timer = setTimeout(() => void this.remote.revokeClient(id).catch(() => false), 1000)
+          timer.unref?.()
+          return true
+        }
+        const clientId = viewer.clientId
         if (!this.clients.isActive(clientId)) return false
         await this.clients.revoke(clientId)
         await this.approvalBroker?.withdrawClient(`local:${clientId}`).catch(() => 0)
@@ -3387,7 +3525,8 @@ export class AppService {
    */
   private async relaySetup(): Promise<RelaySetup | null> {
     if (this.deps.relay !== undefined && this.deps.relay !== null) return this.deps.relay
-    return relayFromHost((await this.settings.get()).relayHost)
+    const settings = await this.settings.get()
+    return relayFromHost(settings.relayHost, settings.relayMacHost)
   }
 
   private async afterSettings(settings: Settings): Promise<Settings> {
@@ -3789,7 +3928,8 @@ export class AppService {
             await this.changeValetSetting('trace_retention', traceRetentionDays)
           const settings = await this.settings.set(rest)
           if (patch.launchAtLogin !== undefined) deps.ui.setLaunchAtLogin(settings.launchAtLogin)
-          if (patch.relayHost !== undefined) await this.phones.setRelay(await this.relaySetup())
+          if (patch.relayHost !== undefined || patch.relayMacHost !== undefined)
+            await this.phones.setRelay(await this.relaySetup())
           return this.afterSettings(settings)
         },
         chooseOpPath: async () => {
@@ -3841,14 +3981,14 @@ export class AppService {
             }),
           }
         },
-        approveConsent: async (code, tools) => {
+        approveConsent: async (code, tools, capabilities = []) => {
           const consent = this.remote.consentFor(code)
           const typed = normaliseCode(code)
           // A wrong code goes straight through, so it counts against the three tries.
           if (consent === null || typed === null) return this.remote.approveConsent(code, tools)
           const on = new Set(this.remote.status().tools)
           if (tools.some((t) => !on.has(t))) throw new ValetError('config', 'invalid')
-          await this.approveOrRefuse('remote-client', remoteClientSubject(consent, tools), {
+          await this.approveOrRefuse('remote-client', remoteClientSubject(consent, tools, capabilities), {
             consentCode: displayCode(typed),
             typedCode: displayCode(typed),
           })
@@ -3872,11 +4012,19 @@ export class AppService {
               c.grant === null
                 ? null
                 : { tools: c.grant.tools, grantedAt: new Date(c.grant.grantedAt).toISOString() },
+            ...this.remoteCapabilities(c.id),
           })),
         revokeClient: async (id) => {
           if (!(await this.remote.revokeClient(id))) throw new ValetError('config', 'not-found')
+          await this.dropRemoteCapabilities(id)
         },
-        revokeAllClients: () => this.remote.revokeAllClients(),
+        revokeAllClients: async () => {
+          const ids = this.remote.remoteClients().map((c) => c.id)
+          const count = await this.remote.revokeAllClients()
+          for (const id of ids) await this.dropRemoteCapabilities(id)
+          return count
+        },
+        setAskForChanges: (id, on) => this.setRemoteAsk(id, on),
         setup: () => this.remoteSetup(),
         setEnabled: async (enabled) => {
           await this.changeValetSetting('remote_enabled', enabled)

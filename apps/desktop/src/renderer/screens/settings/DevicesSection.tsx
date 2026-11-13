@@ -79,6 +79,7 @@ export function DevicesSection() {
           </div>
           {s !== null && s.available ? <RelayLine status={s} /> : null}
           <RelaySetting paired={s?.phones.length ?? 0} />
+          <AgentHostSetting />
         </CardContent>
       </Card>
       <PairSheet open={pairing} onOpenChange={setPairing} view={s?.pairing ?? { step: 'idle' }} />
@@ -149,6 +150,56 @@ function RelaySetting({ paired }: { readonly paired: number }) {
         </Inline>
       </Field>
       <Failed failed={action.failed} what="save the relay" />
+    </form>
+  )
+}
+
+/**
+ * Where cloud agents reach this Mac through the relay, when the relay names Macs under a domain
+ * of its own (its RELAY_MAC_HOST, docs/relay-worker.md "Host names"). Empty: under the relay's host.
+ */
+function AgentHostSetting() {
+  const api = useApi()
+  const action = useAction()
+  const settings = useLoad((a) => a.settings.get(), [], ['settings-changed'])
+  const saved = settings.status === 'ready' ? settings.data.relayMacHost : null
+  const [draft, setDraft] = useState<string | null>(null)
+  const text = draft ?? saved ?? ''
+  const host = text.trim() === '' ? null : relayHostFrom(text)
+  const invalid = text.trim() !== '' && host === null
+  const changed = !invalid && host !== saved
+  if (settings.status !== 'ready' || settings.data.relayHost === null) return null
+  return (
+    <form
+      onSubmit={(e) => {
+        e.preventDefault()
+        if (changed)
+          void action.run(async () => {
+            await api.settings.set({ relayMacHost: host })
+            setDraft(null)
+          })
+      }}
+    >
+      <Field
+        label="Cloud agents’ domain (optional)"
+        description="When your relay gives each Mac a name under its own domain, enter that domain. Cloud agents then connect to this Mac’s name under it. Leave it empty to use the relay’s host."
+        error={invalid ? 'Enter a domain, like valet.example.com' : undefined}
+      >
+        <Inline gap={2} wrap={false}>
+          <Input
+            aria-label="Cloud agents’ domain"
+            placeholder="valet.example.com"
+            value={text}
+            className="flex-1"
+            spellCheck={false}
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <Button type="submit" loading={action.busy} disabled={!changed} disabledReason="Nothing to save">
+            Save
+          </Button>
+        </Inline>
+      </Field>
+      <Failed failed={action.failed} what="save the domain" />
     </form>
   )
 }

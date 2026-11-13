@@ -51,6 +51,7 @@ function writer(overrides: Partial<AdminWriter> = {}): AdminWriter & { calls: Ca
     calls,
     setSetting: log<WriteOutcome>('setSetting', { kind: 'done', what: 'Notifications set to on' }),
     requestSetting: log<WriteOutcome>('requestSetting', { kind: 'asked', request: WAITING, reused: false }),
+    requestTool: log<WriteOutcome>('requestTool', { kind: 'asked', request: WAITING, reused: false }),
     turnOffTool: log<WriteOutcome>('turnOffTool', { kind: 'done', what: 'x' }),
     disconnect: log<WriteOutcome>('disconnect', { kind: 'done', what: 'x' }),
     approvals: log('approvals', [WAITING]),
@@ -145,6 +146,32 @@ describe('write tools', () => {
     const result = await runWriteTool(tool('valet_disconnect'), r, {}, LOCAL, WORDING)
     expect(result.isError).toBeUndefined()
     expect(w.calls.map((c) => c.name)).toEqual(['disconnect'])
+  })
+
+  it('pass a cloud agent’s request for a tool on, with Ask for changes, and word it as a wait', async () => {
+    const w = writer()
+    const agent: ClientIdentity = { origin: 'remote', clientId: 'rcagent' }
+    const result = await runWriteTool(
+      tool('valet_request_tool'),
+      reader(w),
+      { adapterId: 'yahoo-finance', tool: 'get_quote', note: 'I built it' },
+      agent,
+      WORDING,
+    )
+    expect(w.calls).toEqual([
+      { name: 'requestTool', args: [agent, 'yahoo-finance', 'get_quote', 'I built it'] },
+    ])
+    expect(text(result)).toContain('Waiting for the person in Valet')
+    const without = await runWriteTool(
+      tool('valet_request_tool'),
+      reader(writer(), {
+        access: () => ({ seeValet: true, allActivity: false, askForChanges: false, name: 'claude.ai' }),
+      }),
+      { adapterId: 'yahoo-finance', tool: 'get_quote' },
+      agent,
+      WORDING,
+    )
+    expect(text(without)).toBe(askNotAllowedResult('claude.ai'))
   })
 
   it('need See Valet for the changes list', async () => {

@@ -120,6 +120,7 @@ const settingsPatch = z
     traceRetentionDays: traceRetentionDaysSchema.optional(),
     notifications: z.boolean().optional(),
     relayHost: relayHostSchema.nullable().optional(),
+    relayMacHost: relayHostSchema.nullable().optional(),
   })
   .strict()
 
@@ -236,14 +237,24 @@ const HANDLERS: Readonly<
   'setup.finish': entry(none, (api) => api.setup.finish()),
   'remote.consents': entry(none, (api) => api.remote.consents()),
   'remote.approveConsent': entry(
-    z.tuple([z.string().min(1).max(32), z.array(REMOTE_TOOL).max(200)]),
-    (api, [code, tools]) => api.remote.approveConsent(code, tools),
+    z.union([
+      z.tuple([z.string().min(1).max(32), z.array(REMOTE_TOOL).max(200)]),
+      z.tuple([
+        z.string().min(1).max(32),
+        z.array(REMOTE_TOOL).max(200),
+        z.array(z.enum(['see-valet', 'ask-for-changes'])).max(2),
+      ]),
+    ]),
+    (api, [code, tools, capabilities]) => api.remote.approveConsent(code, tools, capabilities ?? []),
   ),
   'remote.declineConsent': entry(z.tuple([OPAQUE_ID]), (api, [id]) => api.remote.declineConsent(id)),
   'remote.declineAllConsents': entry(none, (api) => api.remote.declineAllConsents()),
   'remote.clients': entry(none, (api) => api.remote.clients()),
   'remote.revokeClient': entry(z.tuple([REMOTE_CLIENT_ID]), (api, [id]) => api.remote.revokeClient(id)),
   'remote.revokeAllClients': entry(none, (api) => api.remote.revokeAllClients()),
+  'remote.setAskForChanges': entry(z.tuple([REMOTE_CLIENT_ID, z.boolean()]), (api, [id, on]) =>
+    api.remote.setAskForChanges(id, on),
+  ),
   'remote.setup': entry(none, (api) => api.remote.setup()),
   'remote.setEnabled': entry(z.tuple([z.boolean()]), (api, [enabled]) => api.remote.setEnabled(enabled)),
   'remote.setHosts': entry(z.tuple([z.array(z.string().min(1).max(253)).max(8)]), (api, [hosts]) =>
