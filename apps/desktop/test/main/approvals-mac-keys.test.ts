@@ -21,7 +21,7 @@ function dir(): string {
 const base = (d: string) => ({
   approverPath: null,
   keychain: null,
-  anchorService: 'valet-dev.anchor',
+  anchorService: 'valet.dev.anchor',
   devKeysPath: join(d, 'data', 'keys.json'),
   devAnchorPath: join(d, 'anchor.json'),
   devPresent: () => true,
