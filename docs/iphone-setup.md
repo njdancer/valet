@@ -53,12 +53,29 @@ choose **Always Allow**.
 The first time, iOS refuses to open the app ("Untrusted Developer"). On the iPhone: Settings ›
 General › **VPN & Device Management** › your Apple ID under "Developer App" › **Trust**.
 
-## 5. Point the Mac at the relay
+## 5. Run the Mac app with its helpers
+
+The development package (`pnpm --filter desktop package`) doesn't yet carry the Swift helpers
+(`swift-bridge`) that hold the Mac's approval keys and the Keychain anchor. Without them it can't
+read its trusted approvals store, so it locks itself down and can't pair. Until the package
+bundles them, run the app unpackaged from the repository, after building the helpers:
+
+```bash
+cd swift-bridge && swift build
+```
+
+```bash
+cd apps/desktop && pnpm exec electron-vite build && pnpm exec electron .
+```
+
+Approve the Touch ID prompt when it starts: the Mac signs its relay key with it.
+
+## 6. Point the Mac at the relay
 
 In Valet on the Mac: Settings › Devices › **Relay**, type the relay's host name, and **Save**. The
 line under it should say "Connected to the relay".
 
-## 6. Pair with the QR code
+## 7. Pair with the QR code
 
 1. On the Mac: Settings › Devices › **Pair an iPhone**. A QR code appears.
 2. On the iPhone, open Valet. It shows "Pair with your Mac" and asks to use the camera. Scan the
@@ -70,7 +87,7 @@ line under it should say "Connected to the relay".
 Pairing makes keys on the phone that never leave it. Approving a card asks for Face ID, or your
 passcode.
 
-## 7. Every 7 days: install again
+## 8. Every 7 days: install again
 
 With a free account the app stops opening 7 days after it was signed. Your pairing is kept in the
 phone's Keychain, so you don't need to pair again: plug the phone in and run step 3 again. If the
