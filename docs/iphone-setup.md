@@ -55,10 +55,19 @@ General › **VPN & Device Management** › your Apple ID under "Developer App" 
 
 ## 5. Run the Mac app with its helpers
 
-The development package (`pnpm --filter desktop package`) doesn't yet carry the Swift helpers
-(`swift-bridge`) that hold the Mac's approval keys and the Keychain anchor. Without them it can't
-read its trusted approvals store, so it locks itself down and can't pair. Until the package
-bundles them, run the app unpackaged from the repository, after building the helpers:
+The Mac app needs its Swift helpers (`swift-bridge`): they hold the Mac's approval keys and the
+Keychain anchor of its trusted approvals store. Without them it can't open that store, so it locks
+itself down and can't pair.
+
+The development package builds them and puts them inside the app. It refuses to finish without
+them:
+
+```bash
+pnpm --filter @valet/desktop package --target dir
+open "apps/desktop/dist/mac-arm64/Valet Dev.app"
+```
+
+Or run it unpackaged from the repository, after building the debug helpers:
 
 ```bash
 cd swift-bridge && swift build
@@ -67,6 +76,11 @@ cd swift-bridge && swift build
 ```bash
 cd apps/desktop && pnpm exec electron-vite build && pnpm exec electron .
 ```
+
+Both use the same data folder (`~/Library/Application Support/Valet Dev`). The first time the
+package's helper reads the Keychain items the unpackaged run made, macOS asks to allow it: choose
+**Always Allow**. If the package can't use the approval key the unpackaged run made, it shows the
+lockdown or the phone as unpaired. Then pair the iPhone again (Settings › Devices).
 
 Approve the Touch ID prompt when it starts: the Mac signs its relay key with it.
 
