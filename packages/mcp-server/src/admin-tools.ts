@@ -22,6 +22,7 @@ import {
   type WriteWording,
 } from './admin-write'
 import type { ClientIdentity } from './auth'
+import { type FeedbackDesk, registerFeedbackTools } from './feedback'
 
 /** Every admin tool's name starts with this; the endpoint withholds adapter tools that do. */
 export const ADMIN_PREFIX = 'valet_'
@@ -375,6 +376,8 @@ export interface AdminReader {
   withheld?(tool: string): void
   /** The write tier (admin-write.ts). Absent: the read tools only. */
   readonly writer?: AdminWriter
+  /** Reports to the Valet team and their replies (feedback.ts). Absent: no feedback tools. */
+  readonly feedback?: FeedbackDesk
 }
 
 // ---------- Tools ----------
@@ -666,7 +669,13 @@ export function registerAdminTools(
         ),
     ),
   )
-  if (reader.writer === undefined) return reads
+  // Any session that has Valet's own tools may report a problem: being stuck is no reason to be
+  // refused the way out. The desk keeps each agent's reports apart and limits them.
+  const feedback =
+    reader.feedback === undefined || viewer === null
+      ? []
+      : registerFeedbackTools(server, reader.feedback, reader, viewer, wording)
+  if (reader.writer === undefined) return [...reads, ...feedback]
   const writes = WRITE_TOOLS.map((tool) =>
     server.registerTool(
       tool.name,
@@ -686,7 +695,7 @@ export function registerAdminTools(
         ),
     ),
   )
-  return [...reads, ...writes]
+  return [...reads, ...feedback, ...writes]
 }
 
 /** Ends every write tool's description. */

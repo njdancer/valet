@@ -26,6 +26,7 @@ import {
   type AdminStatus,
   type AdminTraceStep,
   type AdminWriter,
+  type FeedbackDesk,
   identityLabel,
   matchCalls,
   mcpToolName,
@@ -82,6 +83,8 @@ export interface AdminSource {
   readonly withheld: (tool: string) => void
   /** The write tier (admin-writer.ts); absent, the read tools only. */
   readonly writer?: AdminWriter
+  /** Agents' feedback (feedback.ts); absent, no feedback tools. */
+  readonly feedback?: FeedbackDesk
 }
 
 export function adminReader(source: AdminSource): AdminReader {
@@ -100,6 +103,7 @@ export function adminReader(source: AdminSource): AdminReader {
         name: 'This app',
       },
     ...(source.writer === undefined ? {} : { writer: source.writer }),
+    ...(source.feedback === undefined ? {} : { feedback: source.feedback }),
     sensitive: (texts) => source.sensitive(texts),
     withheld: (tool) => source.withheld(tool),
 

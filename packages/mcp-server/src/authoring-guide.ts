@@ -91,6 +91,16 @@ writing them by hand where you can.
 Live trials are signed out. Once a version is installed and the person has signed in, ask for a
 signed-in session on a draft from "installed" with valet_request_session, then valet_live_trial with
 \`signedIn: true\` runs the draft with that session, reading only what the installed version reads.
+
+## When something's wrong
+
+You are one of Valet's testers. When a valet_ tool fails in a way this guide doesn't explain, a
+check passes but the live trial fails, a result contradicts a tool's description, or you have to
+work around something, file it with valet_send_feedback (\`kind\` bug, question or idea): what you
+called, with what, the exact result, and your guess. Give the draft id and package hash rather than
+pasting files; the team can ask for more. Then carry on: replies come back through
+valet_get_feedback, usually within hours. Answer the team's questions with valet_send_feedback and
+\`followUpOn\` set to the report's id.
 `
 
 /** The manifest's JSON Schema, as an agent writes it (inputs, with defaults optional). */
