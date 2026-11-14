@@ -131,6 +131,7 @@ export const ERROR_WORDING: Readonly<Record<ErrorClass, string>> = {
   'host-not-allowed': 'Host not allowed',
   'request-ceiling': 'Too many requests',
   'ambiguous-path': 'Ambiguous path',
+  'page-policy': 'Refused by the page’s own policy',
   'unexpected-shape': 'Unexpected response',
   'site-changed': 'Site changed, adapter needs an update',
   'input-unreachable': 'Field unreachable',
@@ -159,6 +160,7 @@ export const BLOCKED_WORDING: Readonly<Record<BlockedRequest['reason'], string>>
   'purpose-exceeded': 'beyond the tool’s side effect',
   'request-ceiling': 'over the request ceiling',
   'bad-url': 'malformed URL',
+  'page-policy': 'refused by the page’s policy',
 }
 
 export function blockedWording(reason: BlockedRequest['reason']): string {
@@ -177,6 +179,8 @@ export const BLOCKED_EXPLANATION: Readonly<Record<BlockedRequest['reason'], stri
   'purpose-exceeded': 'The request is declared, but for a stronger side effect than this tool declares.',
   'request-ceiling': 'The run had already made as many requests as the manifest allows.',
   'bad-url': 'The URL could not be parsed.',
+  'page-policy':
+    'The page the tool was on refused it under its own Content-Security-Policy, so it never left the browser.',
 }
 
 export function blockedExplanation(reason: BlockedRequest['reason']): string {

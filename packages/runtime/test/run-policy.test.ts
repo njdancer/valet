@@ -406,6 +406,7 @@ describe('what the driver refuses', () => {
       ['purpose-exceeded', 'denied-path'],
       ['request-ceiling', 'request-ceiling'],
       ['bad-url', 'invalid'],
+      ['page-policy', 'page-policy'],
       ['something new', 'invalid'],
     ] as const
     for (const [reason, errorClass] of reasons) {

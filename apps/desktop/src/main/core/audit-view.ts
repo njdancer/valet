@@ -389,6 +389,7 @@ const BLOCK_REASON_OF: Readonly<
   'ambiguous-path': 'ambiguous-path',
   'request-ceiling': 'request-ceiling',
   invalid: 'bad-url',
+  'page-policy': 'page-policy',
 }
 
 function blockReason(reason: string): Extract<TraceStep, { type: 'request' }>['blockedReason'] {

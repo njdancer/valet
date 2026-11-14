@@ -21,6 +21,8 @@ export type Announce = (method: string, url: string) => () => void
 
 const unannounced: Announce = () => () => {}
 
+export type RefusalReason = 'host-not-allowed' | 'page-policy'
+
 export class SurfaceToolPage implements ToolPage {
   private readonly core: PageCore
 
@@ -32,10 +34,12 @@ export class SurfaceToolPage implements ToolPage {
     /** Told just before each click, so a navigation the click starts isn't paced a second time. */
     private readonly clicking: () => void = () => {},
     /**
-     * Told of each URL refused here, off the egress list, before anything is sent: the driver
-     * reports it as blocked, so a refusal never goes unseen (opening home on a host egress lacks).
+     * Told of each URL refused here, off the egress list, before anything is sent, and of each
+     * fetch the page's own Content-Security-Policy refused: the driver reports it as blocked, so a
+     * refusal never goes unseen (opening home on a host egress lacks, or a fetch from home to an API
+     * on another host).
      */
-    private readonly refused: (method: string, url: string) => void = () => {},
+    private readonly refused: (method: string, url: string, reason: RefusalReason) => void = () => {},
   ) {
     this.core = new PageCore(surface, timing)
   }
@@ -129,6 +133,10 @@ export class SurfaceToolPage implements ToolPage {
     return this.core.step('tool-run', async () => {
       const withdraw = this.announce(method, url)
       const raw = await this.mainFrame().run(script).finally(withdraw)
+      if (isRecord(raw) && raw['error'] === 'page-policy') {
+        this.refused(method, url, 'page-policy')
+        throw new ValetError('egress', 'page-policy')
+      }
       if (isRecord(raw) && raw['error'] === 'network') throw new ValetError('tool-run', 'unavailable')
       if (!isRecord(raw) || typeof raw['status'] !== 'number') throw new ValetError('tool-run', 'internal')
       const contentType = raw['contentType']
@@ -155,7 +163,7 @@ export class SurfaceToolPage implements ToolPage {
       throw new ValetError('tool-input', 'invalid')
     }
     if (url.protocol !== 'https:' || !egressAllowed(url.href, this.egress)) {
-      this.refused(method, url.href)
+      this.refused(method, url.href, 'host-not-allowed')
       throw new ValetError('egress', 'host-not-allowed')
     }
     return url.href

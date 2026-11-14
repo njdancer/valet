@@ -467,6 +467,68 @@ describe('fetchScript', () => {
     )
     expect(result).toEqual({ error: 'network' })
   })
+
+  it('tells a fetch the page’s own policy refused from a network failure', async () => {
+    let window: FakeWindow | null = null
+    window = new FakeWindow({
+      fetch: () => {
+        // As Chromium does it: the promise rejects first, and the violation event follows.
+        setTimeout(() =>
+          window?.document.dispatchEvent('securitypolicyviolation', {
+            isTrusted: true,
+            effectiveDirective: 'connect-src',
+            blockedURI: 'https://api.example.com/v0/item/1.json',
+          }),
+        )
+        return Promise.reject(new TypeError('Failed to fetch'))
+      },
+    })
+    const result = await window.run(
+      fetchScript({
+        url: 'https://api.example.com/v0/item/1.json',
+        method: 'GET',
+        headers: {},
+        hasJson: false,
+        json: null,
+      }),
+    )
+    expect(result).toEqual({ error: 'page-policy' })
+    expect(window.document.listeners.get('securitypolicyviolation')?.size).toBe(0)
+  })
+
+  it('ignores a policy violation for another origin or directive, or not from the browser', async () => {
+    let window: FakeWindow | null = null
+    window = new FakeWindow({
+      fetch: () => {
+        window?.document.dispatchEvent('securitypolicyviolation', {
+          isTrusted: true,
+          effectiveDirective: 'connect-src',
+          blockedURI: 'https://analytics.example.net/collect',
+        })
+        // One the page's own scripts made up.
+        window?.document.dispatchEvent('securitypolicyviolation', {
+          effectiveDirective: 'connect-src',
+          blockedURI: 'https://api.example.com/x',
+        })
+        window?.document.dispatchEvent('securitypolicyviolation', {
+          isTrusted: true,
+          effectiveDirective: 'img-src',
+          blockedURI: 'https://api.example.com/pixel.gif',
+        })
+        return Promise.reject(new TypeError('Failed to fetch'))
+      },
+    })
+    const result = await window.run(
+      fetchScript({
+        url: 'https://api.example.com/x',
+        method: 'GET',
+        headers: {},
+        hasJson: false,
+        json: null,
+      }),
+    )
+    expect(result).toEqual({ error: 'network' })
+  })
 })
 
 describe('evaluateScript', () => {

@@ -120,6 +120,7 @@ const BLOCKED_REASONS = new Set([
   'purpose-exceeded',
   'request-ceiling',
   'bad-url',
+  'page-policy',
 ])
 
 function isBlockedReason(reason: string): reason is Parameters<typeof blockedWording>[0] {

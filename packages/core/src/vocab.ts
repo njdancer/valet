@@ -20,4 +20,6 @@ export const BLOCK_REASONS = [
   'purpose-exceeded',
   'request-ceiling',
   'bad-url',
+  /** The page tool code ran in refused it: its own Content-Security-Policy, not ours. */
+  'page-policy',
 ] as const

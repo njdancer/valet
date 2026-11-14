@@ -1349,6 +1349,7 @@ const BLOCKED_REASON = {
   'purpose-exceeded': ['request-surface', 'denied-path'],
   'request-ceiling': ['request-surface', 'request-ceiling'],
   'bad-url': ['request-surface', 'invalid'],
+  'page-policy': ['egress', 'page-policy'],
 } as const satisfies Record<BlockedRequest['reason'], readonly [Stage, ErrorClass]>
 
 /** Refusals that end the run whoever made the request; see onBlocked. */
