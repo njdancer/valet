@@ -19,14 +19,14 @@ works, but the browser adds nothing and the workaround needs explaining.
 A platform that offers an API is usually happy for agents to call it directly, so this design is
 only for the cases where Valet adds something an agent calling the API itself doesn't get:
 
-| Case                                                          | What Valet adds                                                                                                                         | In scope                                     |
-| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| An API that acts as the person (a personal token, an API key) | **The agent never holds the key.** Valet adds it to requests on the hosts the person approved, and keeps it out of what tool code sees. | Yes: the main reason to build this           |
-| A service on the person's home network (a NAS, a home server) | **Reach.** Cloud agents can't get to it any other way.                                                                                  | Yes, as the second slice                     |
-| Any of these                                                  | One approval card, audit log, declared-request list and pacing for everything an agent touches.                                         | Comes with the above                         |
-| A public API with no login (Hacker News, Wikipedia's REST API)  | Only the audit log.                                                                                                                     | Allowed once built, but not a reason to build |
-| OAuth APIs                                                    | Key custody too, but they need a browser sign-in and token refresh.                                                                      | Later, separately                            |
-| A site with part API, part browser-only                       | One adapter. But mixing loses the real-browser fingerprint.                                                                             | No: use two adapters                         |
+| Case                                                           | What Valet adds                                                                                                                         | In scope                                      |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| An API that acts as the person (a personal token, an API key)  | **The agent never holds the key.** Valet adds it to requests on the hosts the person approved, and keeps it out of what tool code sees. | Yes: the main reason to build this            |
+| A service on the person's home network (a NAS, a home server)  | **Reach.** Cloud agents can't get to it any other way.                                                                                  | Yes, as the second slice                      |
+| Any of these                                                   | One approval card, audit log, declared-request list and pacing for everything an agent touches.                                         | Comes with the above                          |
+| A public API with no login (Hacker News, Wikipedia's REST API) | Only the audit log.                                                                                                                     | Allowed once built, but not a reason to build |
+| OAuth APIs                                                     | Key custody too, but they need a browser sign-in and token refresh.                                                                     | Later, separately                             |
+| A site with part API, part browser-only                        | One adapter. But mixing loses the real-browser fingerprint.                                                                             | No: use two adapters                          |
 
 ## What already exists
 
@@ -45,14 +45,14 @@ It already does several things this design needs:
 
 What it doesn't do, and an API adapter needs:
 
-| Gap                                                                                                 | Why it matters                                                                                  |
-| --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| It isn't held to the manifest's `requests` declarations, their purpose or the run's ceiling.         | A `read` tool could call a write endpoint. Browser traffic can't.                               |
-| It isn't paced by the adapter's `limits`, budget or circuit breaker.                                  | Pacing is a promise Valet makes for every site.                                                 |
-| A refused request isn't reported in `blocked` or audited as `request-blocked`.                       | Agents and the person can't see why a call failed (the problem #111 fixed for `page.fetch`).    |
-| It can't add a secret.                                                                              | This is the main reason to build the feature.                                                   |
-| The manifest still needs `home` and `navigation`, and every call opens `home` first.                 | That's the workaround.                                                                          |
-| Private addresses are refused. The `private-network` approval is for authoring sessions only, 30 minutes at a time. | Home-network services can't be reached.                                                         |
+| Gap                                                                                                                 | Why it matters                                                                               |
+| ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| It isn't held to the manifest's `requests` declarations, their purpose or the run's ceiling.                        | A `read` tool could call a write endpoint. Browser traffic can't.                            |
+| It isn't paced by the adapter's `limits`, budget or circuit breaker.                                                | Pacing is a promise Valet makes for every site.                                              |
+| A refused request isn't reported in `blocked` or audited as `request-blocked`.                                      | Agents and the person can't see why a call failed (the problem #111 fixed for `page.fetch`). |
+| It can't add a secret.                                                                                              | This is the main reason to build the feature.                                                |
+| The manifest still needs `home` and `navigation`, and every call opens `home` first.                                | That's the workaround.                                                                       |
+| Private addresses are refused. The `private-network` approval is for authoring sessions only, 30 minutes at a time. | Home-network services can't be reached.                                                      |
 
 So the design is mostly closing those gaps, not building a second runtime.
 
@@ -142,7 +142,7 @@ Rules, each enforced in the main process:
 **How this fits the security model.** Its first guarantee is that adapter code never gets a
 secret's value, and rules 1, 4 and 6 keep that. The second is that a secret, or what it lets you
 do, can't reach a host the manifest doesn't declare, and rules 2, 3 and 5 keep that. What tool code
-*can* do with the key is call the declared endpoints with the purposes it declared. A signed-in
+_can_ do with the key is call the declared endpoints with the purposes it declared. A signed-in
 browser session gives a browser adapter exactly the same power today. So a key doesn't add a new
 kind of trust, it adds a new way of carrying one. Even so, this slice needs its own red-team pass
 before it merges ([red-team.md](red-team.md)), focused on attacks an agent could drive.
