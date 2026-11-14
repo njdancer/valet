@@ -44,6 +44,10 @@ the manifest's JSON Schema; valet_check_draft says what any file gets wrong.
 - Every call opens \`home\` in the tool's browser before tool code runs, so home's host must be in
   \`egress\` too. A site whose only part you use is an API (\`https://api.example.com/\`) can make that
   its \`home\`, with \`navigation\` set to the same origin.
+  Point that \`home\` at a small endpoint that answers without redirecting (a JSON resource such as
+  \`https://api.example.com/v0/status.json\`), not the bare origin: many API hosts redirect \`/\` to
+  docs or a console on another host, and the home load then fails with \`egress/host-not-allowed\`
+  and a \`blocked\` entry with initiator \`page\`. Declare that GET like any other request.
 - \`egress\` entries are bare hostnames (\`api.example.com\`, or \`*.example.com\` for its subdomains),
   never \`https://…\` or a path.
 - \`page.fetch\` takes a path (resolved against \`home\`) or an absolute https URL on any egress host. A
