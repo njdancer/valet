@@ -48,10 +48,18 @@ the manifest's JSON Schema; valet_check_draft says what any file gets wrong.
   never \`https://…\` or a path.
 - \`page.fetch\` takes a path (resolved against \`home\`) or an absolute https URL on any egress host. A
   request is allowed when its host is in \`egress\` and a declaration matches its method and path.
+- \`page.fetch\` runs inside the page the tool is on, so that page's own rules apply as they would to
+  its scripts: its Content-Security-Policy (\`connect-src\`) and, for another origin, CORS. Many sites
+  forbid fetches to other hosts, so a fetch from home to an API on another host can fail before it
+  is sent. A Content-Security-Policy refusal fails with \`egress/page-policy\` and is listed in
+  \`blocked\`; a CORS failure looks like \`tool-run/unavailable\`. Either way, open a page on the API's
+  own origin first: make it \`home\` when the API is all you use, or \`page.goto\` there (with the origin
+  in \`navigation\`) before fetching.
 - A declaration without \`host\` applies on every egress host. Give \`host\` (one egress host,
-  lower-case, no scheme) to tie it to one: \`{ "method": "GET", "host": "hacker-news.firebaseio.com",
-  "path": "/v0/item/:id", "purpose": "read" }\` with \`"egress": ["news.ycombinator.com",
-  "hacker-news.firebaseio.com"]\`.
+  lower-case, no scheme) to tie it to one: \`{ "method": "GET", "host": "api.example.com",
+  "path": "/v0/item/:id", "purpose": "read" }\` with \`"egress": ["www.example.com",
+  "api.example.com"]\`, for a tool that reads pages on www and calls the API after a \`page.goto\` to
+  \`https://api.example.com/\`.
 - Paths match segment by segment. \`:id\` is one whole segment, whatever is in it, so \`/v0/item/:id\`
   matches \`/v0/item/101.json\` and \`/v0/item/101\` but not \`/v0/item/101/kids\`. There is no
   \`:id.json\`: a \`:\` segment is all parameter. A final \`*\` matches the rest of the path. The query

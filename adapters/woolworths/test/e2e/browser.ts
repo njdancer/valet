@@ -317,6 +317,7 @@ const REFUSALS: Readonly<Record<BlockedRequest['reason'], ValetError>> = {
   'purpose-exceeded': new ValetError('request-surface', 'denied-path'),
   'request-ceiling': new ValetError('request-surface', 'request-ceiling'),
   'bad-url': new ValetError('request-surface', 'invalid'),
+  'page-policy': new ValetError('egress', 'page-policy'),
 }
 
 /**

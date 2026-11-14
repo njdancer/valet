@@ -97,6 +97,21 @@ export class FakeDocument {
   /** What elementFromPoint returns. By default, the last registered element containing the point. */
   hitTest: ((x: number, y: number) => FakeElement | null) | null = null
   readonly ranges: unknown[] = []
+  readonly listeners = new Map<string, Set<(event: unknown) => void>>()
+
+  addEventListener(type: string, listener: (event: unknown) => void): void {
+    const set = this.listeners.get(type) ?? new Set()
+    set.add(listener)
+    this.listeners.set(type, set)
+  }
+
+  removeEventListener(type: string, listener: (event: unknown) => void): void {
+    this.listeners.get(type)?.delete(listener)
+  }
+
+  dispatchEvent(type: string, event: unknown): void {
+    for (const listener of this.listeners.get(type) ?? []) listener(event)
+  }
 
   add(selector: string, element: FakeElement): FakeElement {
     this.bySelector.set(selector, [...(this.bySelector.get(selector) ?? []), element])
@@ -179,6 +194,8 @@ export class FakeWindow {
         setItem: (key: string, value: string) => storage.set(key, String(value)),
       },
       fetch: options.fetch ?? (() => Promise.reject(new TypeError('Failed to fetch'))),
+      URL,
+      setTimeout,
       // Recorded rather than run: a script that manages to call alert() has broken out.
       alert: (message: unknown) => this.calls.push(`alert:${String(message)}`),
       length: 0,

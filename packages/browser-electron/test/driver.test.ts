@@ -557,6 +557,24 @@ describe('tool partition request surface, in a run', () => {
     expect(blocked.map((b) => b.initiator)).toEqual(['tool', 'page'])
   })
 
+  it('reports a fetch the page’s own policy refused as the tool’s, keeping the path but not the query', async () => {
+    const { page, platform, blocked, begin } = await toolFilter()
+    begin()
+    platform.surfaces[0]!.frameList[0]!.run = async () => ({ error: 'page-policy' })
+    expect(await rejection(page.fetch('/apis/ui/Orders?x=1'))).toMatchObject({
+      stage: 'egress',
+      errorClass: 'page-policy',
+    })
+    expect(blocked).toEqual([
+      {
+        method: 'GET',
+        target: 'https://www.example.com/apis/ui/Orders',
+        reason: 'page-policy',
+        initiator: 'tool',
+      },
+    ])
+  })
+
   it('reports a refused navigation tool code asked for through page.goto as the tool’s', async () => {
     const { page, platform, blocked, begin } = await toolFilter()
     begin()

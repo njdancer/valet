@@ -107,6 +107,12 @@ to measure a decision or an opt-in rather than to test the default.
 - **Adapter code runs in its own world.** `evaluate()` source runs in isolated world 1001; the
   runtime's own scripts (fetch, extract, storage handoff) in 1000, so adapter code can't patch
   the `fetch`, `JSON` or `Storage` they use.
+- **A tool's `fetch` is held to the page's own policy too.** It runs in the tool page, so the
+  site's Content-Security-Policy and CORS apply on top of ours. The fetch script watches for a
+  `securitypolicyviolation` (`connect-src` or `default-src`, the request's origin) and answers
+  `page-policy` for one, which `SurfaceToolPage` throws as `egress/page-policy` and reports as
+  blocked, `initiator: tool`. Chromium fires the event just after the fetch rejects, so a failed
+  fetch waits 50 ms for it. A CORS failure has no event and stays `tool-run/unavailable`.
 - **Secrets are typed only into the element `focus()` targeted, in the frame `inspect()`
   reported, on the grant's origins.** `type(secret)` without `allowedOrigins` is refused
   (`secret-fill/origin-mismatch`). `focus(selector)` must land in the same frame, at the same

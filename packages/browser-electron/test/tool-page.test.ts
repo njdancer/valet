@@ -71,12 +71,12 @@ describe('ToolPage.goto', () => {
       timing(timers),
       undefined,
       undefined,
-      (method, url) => void refused.push(`${method} ${url}`),
+      (method, url, reason) => void refused.push(`${method} ${url} ${reason}`),
     )
     // Opening home on a host egress lacks: the Hacker News report's 87 ms failure.
     const error = await rejection(page.goto('https://www.example.com/'))
     expect(error).toMatchObject({ stage: 'egress', errorClass: 'host-not-allowed' })
-    expect(refused).toEqual(['GET https://www.example.com/'])
+    expect(refused).toEqual(['GET https://www.example.com/ host-not-allowed'])
     expect(surface.loads).toEqual([])
   })
 
@@ -297,6 +297,29 @@ describe('ToolPage.fetch', () => {
   it('reports a network failure as unavailable', async () => {
     const { page } = await onHome(new FakeWindow())
     expect(await rejection(page.fetch('/x'))).toMatchObject({ stage: 'tool-run', errorClass: 'unavailable' })
+  })
+
+  it('reports a fetch the page’s own policy refused as egress page-policy, and tells the driver', async () => {
+    const timers = new ManualTimers()
+    const surface = new FakeSurface(PARTITION, [
+      new FakeFrame('https://www.example.com', 'https://www.example.com/', null, new FakeWindow()),
+    ])
+    const refused: string[] = []
+    const page = new SurfaceToolPage(
+      surface,
+      EGRESS,
+      timing(timers),
+      undefined,
+      undefined,
+      (method, url, reason) => void refused.push(`${method} ${url} ${reason}`),
+    )
+    await page.goto('https://www.example.com/')
+    surface.frameList[0]!.run = async () => ({ error: 'page-policy' })
+    expect(await rejection(page.fetch('/api/x?id=1', { method: 'post' }))).toMatchObject({
+      stage: 'egress',
+      errorClass: 'page-policy',
+    })
+    expect(refused).toEqual(['POST https://www.example.com/api/x?id=1 page-policy'])
   })
 
   it('does not trust a malformed answer from the page', async () => {

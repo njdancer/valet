@@ -134,8 +134,27 @@ const FETCH = `async (request) => {
     }
     init.body = JSON.stringify(request.json)
   }
+  // The page's own Content-Security-Policy applies to this fetch too. Chromium reports a refusal
+  // only as a failed fetch, and fires the violation event just after the promise rejects, so on a
+  // failure wait a moment for it before calling the failure the network's.
+  const target = new URL(request.url).origin
+  let refusedByPage = false
+  const onViolation = (event) => {
+    // The page's own scripts can dispatch a look-alike; only the browser's counts.
+    if (event.isTrusted !== true) return
+    if (event.effectiveDirective !== 'connect-src' && event.effectiveDirective !== 'default-src') return
+    try { if (new URL(event.blockedURI).origin === target) refusedByPage = true } catch {}
+  }
+  document.addEventListener('securitypolicyviolation', onViolation)
   let response
-  try { response = await fetch(request.url, init) } catch { return { error: 'network' } }
+  try {
+    response = await fetch(request.url, init)
+  } catch {
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    return { error: refusedByPage ? 'page-policy' : 'network' }
+  } finally {
+    document.removeEventListener('securitypolicyviolation', onViolation)
+  }
   const text = await response.text()
   let body = text
   try { body = JSON.parse(text) } catch {}

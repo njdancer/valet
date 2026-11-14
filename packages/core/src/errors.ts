@@ -56,6 +56,11 @@ export const ERROR_CLASSES = [
   'request-ceiling',
   'ambiguous-path',
   /**
+   * The page a tool's fetch ran in refused it under its own Content-Security-Policy: the request
+   * never left the browser. The tool should open a page on the API's own origin first.
+   */
+  'page-policy',
+  /**
    * A response was not the kind the caller expects at all: HTML where JSON was asked for, or a body
    * over a size cap. An error page or a redirect, as often as a changed site.
    */

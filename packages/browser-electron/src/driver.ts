@@ -558,11 +558,12 @@ export class ElectronSessionDriver implements SessionDriver {
       () => {
         this.clickPacedUntil = Date.now() + CLICK_GRACE_MS
       },
-      (method, url) =>
+      (method, url, reason) =>
         this.report(this.run, {
           method: /^[A-Z]{1,16}$/i.test(method) ? method.toUpperCase() : 'INVALID',
-          target: requestTarget(url, false),
-          reason: 'host-not-allowed',
+          // An allowed host's path may be kept like any declared request's; an off-list one is not.
+          target: requestTarget(url, reason === 'page-policy'),
+          reason,
           initiator: 'tool',
         }),
     )

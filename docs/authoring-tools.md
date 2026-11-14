@@ -498,6 +498,29 @@ anything and nobody reported it. What changed:
 - The lint cautions about a URL in tool code on an egress host that no declaration reaches, and the
   egress message says bare hostnames, not `https://`.
 
+### Fetches the page refuses (2026-11-14)
+
+The same agent's next draft made `https://news.ycombinator.com/` home and put both hosts in egress,
+then fetched `https://hacker-news.firebaseio.com/v0/...` from home. Cases passed; every trial
+failed with `tool-run/unavailable` and an empty `blocked`. `page.fetch` runs in an isolated world of
+the tool page, and Chromium applies the page's Content-Security-Policy (`connect-src`) and CORS to
+it, so the fetch failed in the renderer before our filter saw a request. Confirmed in Electron with a
+`default-src 'self'` page: the fetch rejects with `Failed to fetch`, and a `securitypolicyviolation`
+event (`effectiveDirective` `connect-src`, `blockedURI` the full URL) fires on the document just
+after the rejection. What changed:
+
+- The fetch script listens for that event while it fetches and, on a failure, waits 50 ms for it.
+  A `connect-src` or `default-src` violation for the request's origin makes the answer
+  `page-policy` instead of `network`.
+- `SurfaceToolPage` then throws `egress/page-policy` (a new error class) and tells the driver,
+  which reports `page-policy` (a new block reason, with the path but not the query) as the tool's.
+  So the trial lists it in `blocked`, and the audit log's blocked category shows it.
+- A CORS failure has no event and still reads `tool-run/unavailable`. The authoring guide now says
+  `page.fetch` runs under the page's own rules, and to open a page on the API's origin first.
+
+Not built: running a cross-origin GET from the main process (the session's `net.fetch`) instead,
+which would sidestep both.
+
 ## Repairs (PR 3)
 
 As authoring-agent.md's repair loop, with the IDE replaced by MCP:
