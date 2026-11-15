@@ -310,6 +310,7 @@ describe('every channel', () => {
     'phones.confirmPairing': ['123456'],
     'phones.cancelPairing': [],
     'phones.remove': ['0123456789abcdef0123456789abcdef'],
+    'phones.renewKeys': [],
     'adapters.list': [],
     'adapters.get': ['woolworths'],
     'adapters.settingChoices': ['woolworths', 'store', '2000'],

@@ -92,6 +92,12 @@ const HEADER_VALUE = /^[\t\x20-\x7e\x80-\xff]*$/
 const OPEN = 1
 const CLOSE_AUTH_FAILED = 4401
 const CLOSE_REPLACED = 4409
+/**
+ * Codes this side closes with. A WebSocket may only be closed with 1000 or 3000-4999: Node's
+ * WebSocket throws on anything else (1003, 1008, 1011) and the socket stays open, unsigned in.
+ */
+const CLOSE_BAD_FRAME = 4400
+const CLOSE_SIGN_FAILED = 4500
 
 interface Forwarded {
   readonly abort: () => void
@@ -177,20 +183,20 @@ export class RelayClient {
   }
 
   private async onMessage(socket: WebSocket, data: unknown): Promise<void> {
-    if (typeof data !== 'string') return socket.close(1003, 'text only')
+    if (typeof data !== 'string') return socket.close(CLOSE_BAD_FRAME, 'text only')
     if (data === 'pong') return
     let parsed: RelayToMac
     try {
       const result = relayToMacSchema.safeParse(JSON.parse(data))
-      if (!result.success) return socket.close(1008, 'bad frame')
+      if (!result.success) return socket.close(CLOSE_BAD_FRAME, 'bad frame')
       parsed = result.data
     } catch {
-      return socket.close(1008, 'bad frame')
+      return socket.close(CLOSE_BAD_FRAME, 'bad frame')
     }
     switch (parsed.type) {
       case 'challenge': {
         // A challenge for another relay would sign us in there with this signature: refuse it.
-        if (parsed.relay !== this.options.relay) return socket.close(1008, 'wrong relay')
+        if (parsed.relay !== this.options.relay) return socket.close(CLOSE_BAD_FRAME, 'wrong relay')
         const payload = relayAuthPayload({
           nonce: parsed.nonce,
           relay: parsed.relay,
@@ -201,7 +207,7 @@ export class RelayClient {
         try {
           signature = await this.options.signer.sign(payload)
         } catch {
-          return socket.close(1011, 'could not sign')
+          return socket.close(CLOSE_SIGN_FAILED, 'could not sign')
         }
         if (this.socket !== socket) return
         socket.send(
