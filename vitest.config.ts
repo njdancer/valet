@@ -33,6 +33,10 @@ export default defineConfig({
         'apps/relay/src/mac-relay.ts',
         'apps/relay/src/push-relay.ts',
         'apps/relay/src/env.ts',
+        // The hub's Durable Object and the glue that reaches it (docs/relay-hub.md): covered by
+        // test/hub.test.ts, which runs them in workerd, as above.
+        'apps/relay/src/hub/hub.ts',
+        'apps/relay/src/hub/link.ts',
         '**/*.html',
       ],
       reporter: ['text-summary', 'html', 'json-summary'],
