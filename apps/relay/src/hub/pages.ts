@@ -42,7 +42,8 @@ const STYLE = `
   .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px;
          background: var(--muted); }
   .dot.on { background: var(--good); }
-  nav { display: flex; gap: 16px; margin-top: 24px; flex-wrap: wrap; }
+  nav { display: flex; gap: 16px; margin-top: 24px; flex-wrap: wrap; align-items: baseline; }
+  nav button.quiet { margin: 0; padding: 0; }
   a { color: var(--accent); }
   code { font-family: ui-monospace, Menlo, monospace; word-break: break-all; }
   [hidden] { display: none !important; }

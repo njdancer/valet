@@ -24,4 +24,18 @@ describe('Phones', () => {
     await phones.setRelay(null)
     expect(phones.status()).toMatchObject({ unavailableReason: 'no-relay', relayOrigin: null })
   })
+
+  it('has no hub until the relay says so, and asks nothing of it while offline', () => {
+    const phones = new Phones({
+      relay: relayFromHost('relay.example.com'),
+      macName: 'Mac',
+      statePath: '/nonexistent/a',
+      bindingPath: '/nonexistent/b',
+      emit: vi.fn(),
+    })
+    expect(phones.status().hub).toBeNull()
+    expect(phones.joinHub()).toBe(false)
+    expect(phones.leaveHub()).toBe(false)
+    expect(phones.hubPage('/link')).toBeNull()
+  })
 })

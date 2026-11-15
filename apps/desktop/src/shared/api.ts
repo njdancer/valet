@@ -1207,6 +1207,18 @@ export type PairingView =
       readonly why: 'expired' | 'declined' | 'too-many-attempts' | 'cancelled' | 'not-sent' | 'unavailable'
     }
 
+export type HubView =
+  | { readonly state: 'off' }
+  | { readonly state: 'unlinked'; readonly url: string; readonly problem?: 'too-many' | 'unavailable' }
+  | { readonly state: 'linking'; readonly url: string; readonly code: string; readonly expiresAt: string }
+  | {
+      readonly state: 'linked'
+      readonly url: string
+      readonly account: string
+      readonly slug: string
+      readonly name: string
+    }
+
 export interface PhonesStatus {
   /**
    * Whether this Mac can pair phones: `no-relay`, none is set up; `no-keys`, this Mac's keys
@@ -1222,6 +1234,11 @@ export interface PhonesStatus {
    * renewed (phones.renewKeys). Null where it doesn't apply (no Secure Enclave helper).
    */
   readonly worksLocked: boolean | null
+  /**
+   * This Mac at the Valet hub (docs/relay-hub.md), as the relay last said; null until it has.
+   * `off`: the relay has no hub. `linking`: the code to type on the hub's page, signed in.
+   */
+  readonly hub: HubView | null
   readonly phones: readonly {
     readonly deviceId: string
     readonly name: string
@@ -1248,6 +1265,15 @@ export interface ValetApi {
      * Every paired phone is removed (it must pair again) and Valet restarts.
      */
     renewKeys(): Promise<void>
+    /**
+     * Asks the hub for a code to add this Mac to the Valet account, and opens the hub's page
+     * where it is typed. Adds nothing by itself: someone signed in to the account must type it.
+     */
+    joinHub(): Promise<void>
+    /** Opens the hub's page in the browser. */
+    openHub(): Promise<void>
+    /** Leaves the account: the hub forgets this Mac at once. */
+    leaveHub(): Promise<void>
   }
   readonly adapters: {
     list(): Promise<readonly AdapterSummary[]>

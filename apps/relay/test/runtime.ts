@@ -33,7 +33,8 @@ export async function startRelay(
   options: {
     limits?: Partial<Record<'CONNECT_LIMIT' | 'FORWARD_LIMIT' | 'SIGN_IN_LIMIT' | 'POLL_LIMIT', number>>
     /** Without a hub, as the relay ran before relay-hub.md. */
-    hub?: false | { readonly offlineAfterSeconds?: number }
+    hub?: false | { readonly offlineAfterSeconds?: number; readonly host?: string; readonly origin?: string }
+    port?: number
   } = {},
 ): Promise<Runtime> {
   mkdirSync(SCRATCH, { recursive: true })
@@ -62,8 +63,9 @@ export async function startRelay(
       ...(options.hub === false
         ? {}
         : {
-            HUB_HOST,
+            HUB_HOST: options.hub?.host ?? HUB_HOST,
             HUB_SETUP_SECRET,
+            ...(options.hub?.origin === undefined ? {} : { HUB_ORIGIN: options.hub.origin }),
             HUB_OFFLINE_AFTER_S: String(options.hub?.offlineAfterSeconds ?? 90),
           }),
     },
@@ -73,7 +75,7 @@ export async function startRelay(
       SIGN_IN_LIMIT: limit('SIGN_IN_LIMIT', '3'),
       POLL_LIMIT: limit('POLL_LIMIT', '4'),
     },
-    port: 0,
+    port: options.port ?? 0,
   })
   const url = (await mf.ready).toString().replace(/\/$/, '')
   return {

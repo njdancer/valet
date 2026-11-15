@@ -19,6 +19,11 @@ export interface Env {
    * hub-status `off` and the host serves nothing.
    */
   readonly HUB_HOST?: string
+  /**
+   * The hub's origin when it isn't https://<HUB_HOST>: only for trying the hub locally, at
+   * http://localhost:<port>, where browsers allow passkeys without a certificate.
+   */
+  readonly HUB_ORIGIN?: string
   /** Typed once on the hub's sign-up page to create the account. A Worker secret. */
   readonly HUB_SETUP_SECRET?: string
   /** Seconds without a frame before a node counts as offline. Default 90. */

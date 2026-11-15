@@ -759,12 +759,14 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
   let pairing: PairingView = { step: 'idle' }
   let phones: PhonesStatus['phones'] = []
   let worksLocked: boolean | null = true
+  let hub: PhonesStatus['hub'] = { state: 'unlinked', url: 'https://valet.example' }
   const phonesStatus = (): PhonesStatus => ({
     available: settings.relayHost !== null,
     unavailableReason: settings.relayHost === null ? 'no-relay' : null,
     relay: settings.relayHost === null ? 'stopped' : 'online',
     relayOrigin: settings.relayHost === null ? null : `https://${settings.relayHost}`,
     worksLocked,
+    hub: settings.relayHost === null ? null : hub,
     phones,
     pairing,
   })
@@ -1696,6 +1698,24 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       async remove(deviceId) {
         enter('phones.remove')
         phones = phones.filter((p) => p.deviceId !== deviceId)
+        emit({ type: 'phones-changed' })
+      },
+      async joinHub() {
+        enter('phones.joinHub')
+        hub = {
+          state: 'linking',
+          url: 'https://valet.example',
+          code: remoteCode.replace(/^(....)/, '$1-'),
+          expiresAt: new Date(Date.now() + 10 * 60_000).toISOString(),
+        }
+        emit({ type: 'phones-changed' })
+      },
+      async openHub() {
+        enter('phones.openHub')
+      },
+      async leaveHub() {
+        enter('phones.leaveHub')
+        hub = { state: 'unlinked', url: 'https://valet.example' }
         emit({ type: 'phones-changed' })
       },
       async renewKeys() {

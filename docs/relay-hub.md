@@ -1,6 +1,6 @@
 # The relay as a hub: one MCP address for all your nodes
 
-Status: **brief, not built.** Agreed with Nick in the project thread on 2026-11-15/16. It
+Status: **step 1 built** (see [Step 1 as built](#step-1-as-built)); steps 2 to 5 not yet. Agreed with Nick in the project thread on 2026-11-15/16. It
 replaces the per-Mac byte pipe in [relay-worker.md](relay-worker.md) as the way remote agents
 reach Valet. The phone channel, pairing crypto and approvals described there stay unless this
 says otherwise.
@@ -19,15 +19,15 @@ tools your connected nodes offer, scoped by node.
 
 ## Decisions (Nick, 2026-11-15/16)
 
-| #   | Question                         | Answer                                                                                                                                                                                                                                                                                                       |
-| --- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| H1  | How you sign in                  | **D79**: Valet accounts with login and 2FA. Scanning a QR code with a signed-in phone is a shortcut for signing in (like Discord's), not an extra step. No separate device-approval step. 2FA by passkey or authenticator app, never SMS (proposed with D79, not separately confirmed).                       |
-| H2  | Who authorises an agent          | **You approve once on your phone; nodes check it.** The phone signs the grant (agent, tools or scope, expiry) with its device approval key. The hub stores and carries it; each node verifies the signature against your account's device list before serving. The hub can't grant an agent access by itself. |
-| H3  | The same site on two nodes       | **Scoped to the node.** Each node's tools are listed separately and name the node; nothing is merged or routed by preference.                                                                                                                                                                                 |
-| H4  | A node that goes offline         | **Its tools disappear, after a grace period.** See [Offline nodes](#offline-nodes).                                                                                                                                                                                                                         |
-| H5  | Whose nodes                      | **Just Nick for now.** One account, his nodes. Design the data model so sharing could come later, but build none of it.                                                                                                                                                                                     |
-| H6  | What goes through the hub        | **Everything**: site tools and Valet's admin and authoring tools, each scoped to its node and still behind that node's own approvals. Phones pair with the **account**, but every device keeps its own keys (below).                                                                                          |
-| H7  | Domain                           | **`valet.dncr.me`** on Nick's Cloudflare zone for now; move to a dedicated domain later. One host, so no per-Mac wildcard certificate is needed.                                                                                                                                                             |
+| #   | Question                   | Answer                                                                                                                                                                                                                                                                                                        |
+| --- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| H1  | How you sign in            | **D79**: Valet accounts with login and 2FA. Scanning a QR code with a signed-in phone is a shortcut for signing in (like Discord's), not an extra step. No separate device-approval step. 2FA by passkey or authenticator app, never SMS (proposed with D79, not separately confirmed).                       |
+| H2  | Who authorises an agent    | **You approve once on your phone; nodes check it.** The phone signs the grant (agent, tools or scope, expiry) with its device approval key. The hub stores and carries it; each node verifies the signature against your account's device list before serving. The hub can't grant an agent access by itself. |
+| H3  | The same site on two nodes | **Scoped to the node.** Each node's tools are listed separately and name the node; nothing is merged or routed by preference.                                                                                                                                                                                 |
+| H4  | A node that goes offline   | **Its tools disappear, after a grace period.** See [Offline nodes](#offline-nodes).                                                                                                                                                                                                                           |
+| H5  | Whose nodes                | **Just Nick for now.** One account, his nodes. Design the data model so sharing could come later, but build none of it.                                                                                                                                                                                       |
+| H6  | What goes through the hub  | **Everything**: site tools and Valet's admin and authoring tools, each scoped to its node and still behind that node's own approvals. Phones pair with the **account**, but every device keeps its own keys (below).                                                                                          |
+| H7  | Domain                     | **`valet.dncr.me`** on Nick's Cloudflare zone for now; move to a dedicated domain later. One host, so no per-Mac wildcard certificate is needed.                                                                                                                                                              |
 
 Context Nick gave with these: the threat model isn't strict; approvals exist to limit what is
 exposed to models ([agent-run-security.md](agent-run-security.md), "Who this guards against
@@ -129,6 +129,66 @@ delta in [agent-run-security.md](agent-run-security.md).
 - Deploying the Worker, DNS on `dncr.me`, and anything published needs Nick in the thread.
 - The Mac's transport and agreement keys work after first unlock (PR #115), so nodes stay
   online while locked; the hub design relies on that.
+
+## Step 1 as built
+
+The hub runs in the relay's own Worker (`apps/relay/src/hub/`), on `HUB_HOST`. Without `HUB_HOST`
+there is no hub: that host serves nothing and a Mac that asks hears `off`.
+
+**Storage: one Durable Object with SQLite** (`Hub`, named `hub`). H5 is one account, so one
+object holds the account, its passkeys, sessions and nodes. Every row carries its account id, so
+moving to an object per account later is a data move, not a redesign. Chosen over D1 because the
+object also has to be the single place that hands out link codes and, from step 2, holds the MCP
+sessions that get `list_changed`; D1 would need a Durable Object for that anyway.
+
+**Signing in (H1).**
+
+- Sign-up is open once: it needs `HUB_SETUP_SECRET` (a Worker secret, typed on `/sign-up`) and
+  closes for good once the account exists. Then a passkey is made (WebAuthn, user verification
+  required, "none" attestation, `@simplewebauthn/server`).
+- Sign-in is a discoverable passkey: the browser offers the site's passkeys, so the page never
+  says which emails exist. A passkey counts as both factors.
+- The backup is **email, password and an authenticator-app code, all three** (RFC 6238, 6 digits,
+  30 s, each code once). Set up on `/security` after signing in. No SMS, no email codes (the hub
+  sends no email).
+- You can't remove your last way in: the last passkey stays until the app backup is on, and the
+  app backup can't be turned off without a passkey.
+- Sessions: a random token in a `__Host-` cookie (HttpOnly, Secure, SameSite=Lax), stored only as
+  its SHA-256, 30 days. Every change is a JSON POST whose `Origin` must be the hub's.
+- Changes that add or remove access (adding a node, a passkey or the app backup; removing
+  anything) need a sign-in from the last 10 minutes. The page signs in with the passkey again and
+  retries.
+
+**Adding a node.** No second socket and no new signature: the Mac asks over the relay socket it
+already has, which its transport key authenticated.
+
+1. Settings › Devices › Connect to your Valet account sends `hub-link-start` with the Mac's name.
+2. The hub answers `hub-status` in state `linking` with a code (`ABCD-EFGH`, 10 minutes, one per
+   Mac) and Valet opens `https://<hub>/link`.
+3. Someone signed in types the code and picks the node's short name (H3; defaults from the Mac's
+   name). The code is never in a link, so a link someone sends you can't add their Mac to your
+   account. Wrong codes are limited to 10 per 10 minutes per account.
+4. The hub sends `hub-status` `linked` (account email, slug, name). After every hello the Mac hears
+   its status again, so it is right after a restart.
+
+Leaving: the Mac sends `hub-unlink`, or the node is removed on the hub's page (the Mac is told at
+once). Step 4 moves "a phone approves the new node" onto the phone; until then the passkey
+sign-in on the hub's page is that approval.
+
+**Presence.** From the Mac's own object, so nothing new is sent. The relay client pings every 30 s
+and the platform answers without waking the object; `getWebSocketAutoResponseTimestamp` gives
+the last ping, and the hello time covers the first 30 s. A node is online if its socket is open and
+it was heard from within `HUB_OFFLINE_AFTER_S` (default 90), which also catches a socket that
+looks open but whose Mac went away. Connect and close are pushed to the hub as well, for step 2's
+grace period and `list_changed` (`HUB_GRACE_S`, default 120, read from step 2).
+
+**Trying it locally.** `VALET_HUB_BROWSER=1 HUB_CHROMIUM=<chromium> pnpm exec vitest run
+test/hub-browser.test.ts` in `apps/relay` drives the pages in Chromium with a virtual passkey, at
+`http://localhost:<port>` (`HUB_ORIGIN`, which only accepts that form).
+
+**Deploying it (needs Nick).** In `wrangler.jsonc`: the `HUB` binding and the `v2` migration are
+there. Set `HUB_HOST = "valet.dncr.me"`, add a Workers Custom Domain for `valet.dncr.me`, run
+`wrangler secret put HUB_SETUP_SECRET`, deploy, then open `https://valet.dncr.me/sign-up`.
 
 ## Open, for the building agent to propose (not for Nick unless it changes his goal)
 

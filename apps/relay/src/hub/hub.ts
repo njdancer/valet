@@ -201,7 +201,8 @@ export class Hub extends DurableObject<Env> {
   }
 
   private get origin(): string {
-    return `https://${this.host}`
+    const local = this.env.HUB_ORIGIN
+    return local !== undefined && /^http:\/\/localhost:\d+$/.test(local) ? local : `https://${this.host}`
   }
 
   private get offlineAfterMs(): number {

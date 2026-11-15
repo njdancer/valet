@@ -428,6 +428,29 @@ What the relay can see, for the record (D77): MCP requests and results, OAuth to
 timing and sizes, which devices belong to which Mac, and APNs tokens. It can't see secrets, the
 phone channel's contents, or approvals.
 
+### The hub (relay-hub.md), step 1
+
+What changes with the hub's first step, which adds accounts and nodes but forwards nothing yet:
+
+- **New at rest:** the account's email, its passkeys' public keys and counters, a PBKDF2 hash of
+  the backup password and the authenticator secret if the backup is on, SHA-256 hashes of
+  session tokens, and for each node its Mac id, name, short name and when it was last seen. Still
+  nothing about calls, tools, results or approvals.
+- **What a stolen session can do:** see the account's nodes and their names. Anything that adds or
+  removes access needs a sign-in in the last 10 minutes, which needs the passkey or all three of
+  email, password and code.
+- **What the hub can't do in step 1:** reach a Mac's tools. Joining an account changes nothing on
+  the Mac besides what it shows in Settings. From step 2 the hub forwards calls; from step 3 a
+  Mac serves a call only with a grant a phone signed (H2), so a breach of the hub alone still
+  can't approve an agent.
+- **Who can add a Mac:** only someone signed in, typing the code that Mac shows. The code is never
+  put in a link. A relay that lied about a Mac's `hub-link-start` could only add a Mac that is
+  already connected to that relay under its own transport key.
+- **Sign-up** needs the setup secret and closes after the first account, so a hub deployed before
+  Nick signs up can't be claimed by someone else.
+- **Accepted for now:** the hub's pages are served by the same Worker as the relay, so a bug in
+  either is a bug in both. No email verification, as there is one account and no email is sent.
+
 ## Lockdown and revocation
 
 - **Lockdown** (J7) from the Mac or a phone: every call is refused, every remote client revoked,

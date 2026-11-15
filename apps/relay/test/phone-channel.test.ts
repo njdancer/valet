@@ -98,7 +98,9 @@ async function startMac(relay: Runtime) {
     binding: { approvalKey: keys.approvalKey, signature: binding as string },
     listener: () => null,
     consent: () => ({ state: 'declined' }),
-    onEvent: (event) => channel?.handle(event),
+    onEvent: (event) => {
+      if (event.type !== 'hub-status') channel?.handle(event)
+    },
     backoff: { minMs: 50, maxMs: 200 },
   })
   channel = await PhoneChannel.open({
