@@ -394,6 +394,53 @@ export function parsePhoneToMac(raw: unknown, macId: string): PhoneToMacMessage 
   return message
 }
 
+/** A node's name as the person sees it at the hub, e.g. "MacBook Pro". */
+export const hubNodeNameSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[^\p{Cc}\p{Cf}]+$/u)
+
+/**
+ * A node's short name in tool names (`<slug>__<adapter>_<tool>`, relay-hub.md "Tool naming"):
+ * lower-case letters and digits, with single hyphens inside, at most 16 characters.
+ */
+export const hubNodeSlugSchema = z.string().regex(/^[a-z0-9](?:-?[a-z0-9]){0,15}$/)
+
+export const hubStatusSchema = z.discriminatedUnion('state', [
+  /** This relay has no hub. */
+  z.object({ state: z.literal('off') }).strict(),
+  z
+    .object({
+      state: z.literal('unlinked'),
+      /** The hub's address, e.g. https://valet.example. */
+      url: z.url({ protocol: /^https?$/ }),
+      /** Why the last hub-link-start didn't open a code. */
+      problem: z.enum(['too-many', 'unavailable']).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      state: z.literal('linking'),
+      url: z.url({ protocol: /^https?$/ }),
+      /** Typed on the hub's page by someone signed in to the account. Never put in a link. */
+      code: consentCodeSchema,
+      expiresAt: z.iso.datetime(),
+    })
+    .strict(),
+  z
+    .object({
+      state: z.literal('linked'),
+      url: z.url({ protocol: /^https?$/ }),
+      /** How the hub names the account, for "Connected to …". */
+      account: z.string().min(1).max(254),
+      slug: hubNodeSlugSchema,
+      name: hubNodeNameSchema,
+    })
+    .strict(),
+])
+export type HubStatus = z.infer<typeof hubStatusSchema>
+
 export const macToRelaySchema = z.discriminatedUnion('type', [
   relayHelloSchema,
   z
@@ -454,6 +501,13 @@ export const macToRelaySchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('recovery-register'), codeHash: z.string().regex(/^[0-9a-f]{64}$/) }).strict(),
   /** Wake a phone. The relay sends a push with fixed text and no content; see pushPayloadSchema. */
   z.object({ type: z.literal('push'), deviceId: keyIdSchema, kind: z.enum(['needs-you', 'alert']) }).strict(),
+  /**
+   * Add this Mac to a Valet account at the hub (relay-hub.md, "Adding a node"). The relay answers
+   * with hub-status in state `linking` and a code the person types on the hub's page, signed in.
+   */
+  z.object({ type: z.literal('hub-link-start'), name: hubNodeNameSchema }).strict(),
+  /** Leave the account. The hub forgets the node at once. */
+  z.object({ type: z.literal('hub-unlink') }).strict(),
 ])
 export type MacToRelay = z.infer<typeof macToRelaySchema>
 
@@ -500,6 +554,8 @@ export const relayToMacSchema = z.discriminatedUnion('type', [
       phonesUnregistered: z.boolean(),
     })
     .strict(),
+  /** Where this Mac stands with the hub: after ready, and whenever that changes. */
+  z.object({ type: z.literal('hub-status'), hub: hubStatusSchema }).strict(),
 ])
 export type RelayToMac = z.infer<typeof relayToMacSchema>
 

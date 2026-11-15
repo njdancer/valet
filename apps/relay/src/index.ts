@@ -3,8 +3,11 @@
 import type { ForwardRequest } from './core'
 import type { Env } from './env'
 import { type FrontDoor, frontDoor, type MacRelayStub, waitKey } from './front'
+import { hubFront } from './hub/front'
+import { hubEnabled, hubStub } from './hub/link'
 import { logFailure } from './log'
 
+export { Hub } from './hub/hub'
 export { MacRelay } from './mac-relay'
 export { PushRelay } from './push-relay'
 
@@ -53,6 +56,16 @@ export default {
       },
     }
     try {
+      const host = new URL(request.url).hostname.toLowerCase()
+      if (
+        hubEnabled(env) &&
+        host === env.HUB_HOST?.toLowerCase() &&
+        request.headers.get('upgrade')?.toLowerCase() !== 'websocket'
+      )
+        return await hubFront(request, {
+          hub: () => hubStub(env),
+          limits: { forward: env.FORWARD_LIMIT, signIn: env.SIGN_IN_LIMIT },
+        })
       return await frontDoor(request, door)
     } catch (error) {
       logFailure('front door', error)

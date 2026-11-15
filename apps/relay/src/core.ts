@@ -7,6 +7,7 @@
 
 import {
   type Envelope,
+  type HubStatus,
   type MacToRelay,
   macToRelaySchema,
   type PhoneToRelay,
@@ -101,6 +102,8 @@ export type SocketState =
       readonly role: Role
       readonly id: string
       readonly key: string
+      /** When the hello finished, for presence before the first ping (relay-hub.md). */
+      readonly since?: number
       /** The Mac's open pairing offers. */
       readonly offers?: readonly OpenOffer[]
     }
@@ -129,6 +132,19 @@ export interface RelayEnvironment {
   /** Ask to be called back (`alarm`) at or after this time. */
   wakeAt(at: number): void
   push(token: string, kind: PushKind): Promise<PushResult>
+  /** The hub (relay-hub.md), when this relay has one. */
+  readonly hub?: HubLink
+}
+
+/**
+ * What a Mac's object asks of the hub. Each answer is the Mac's hub status to send it. The hub is
+ * the authority on which account a node belongs to; the Mac's object keeps nothing about it.
+ */
+export interface HubLink {
+  /** The Mac connected (true) or its socket closed (false). */
+  presence(macId: string, online: boolean): Promise<HubStatus>
+  linkStart(macId: string, name: string): Promise<HubStatus>
+  unlink(macId: string): Promise<HubStatus>
 }
 
 export interface RelayCoreOptions {
@@ -269,21 +285,22 @@ export class RelayCore {
     return this.fromPhone(socket, state.id, parsed.data, data)
   }
 
-  /** A socket closed, whatever the reason. */
-  closed(socket: RelaySocket): void {
+  /** A socket closed, whatever the reason. Resolves once the hub has heard, for a Mac. */
+  closed(socket: RelaySocket): Promise<void> {
     const state = socket.state()
-    if (state?.phase !== 'ready' || state.key === 'replaced') return
+    if (state?.phase !== 'ready' || state.key === 'replaced') return Promise.resolve()
     if (state.role === 'mac') {
       // Only if it was the live Mac socket: a replaced one closing changes nothing.
-      if (this.macSocket(socket) !== null) return
+      if (this.macSocket(socket) !== null) return Promise.resolve()
       this.failAll()
       for (const phone of this.readySockets('phone'))
         this.sendTo(phone, { type: 'mac-online', online: false })
-      return
+      return this.toHub((hub) => hub.presence(this.options.macId, false), false)
     }
-    if (this.readySockets('phone').some((s) => s !== socket && idOf(s) === state.id)) return
+    if (this.readySockets('phone').some((s) => s !== socket && idOf(s) === state.id)) return Promise.resolve()
     const mac = this.macSocket()
     if (mac !== null) this.sendTo(mac, { type: 'device-online', deviceId: state.id, online: false })
+    return Promise.resolve()
   }
 
   private async hello(socket: RelaySocket, state: SocketState & { phase: 'challenged' }, raw: unknown) {
@@ -366,7 +383,7 @@ export class RelayCore {
         other.close(CLOSE.replaced, 'replaced by a newer connection')
       }
     }
-    socket.setState({ phase: 'ready', role: hello.role, id: hello.id, key: state.key })
+    socket.setState({ phase: 'ready', role: hello.role, id: hello.id, key: state.key, since: this.now() })
     const current = await this.state()
     const locked = current?.locked === true
     if (hello.role === 'mac') {
@@ -384,6 +401,9 @@ export class RelayCore {
         this.sendTo(phone, { type: 'mac-online', online: true })
         this.sendTo(socket, { type: 'device-online', deviceId: idOf(phone), online: true })
       }
+      // Without a hub, nothing: the Mac hears `off` only if it asks to join one.
+      if (this.options.env.hub !== undefined)
+        await this.toHub((hub) => hub.presence(this.options.macId, true))
     } else {
       this.sendTo(socket, { type: 'ready', macOnline: this.macSocket() !== null })
       if (locked)
@@ -525,12 +545,48 @@ export class RelayCore {
       }
       case 'relay-unlock':
         return this.setLocked(false, 'mac', false)
+      case 'hub-link-start':
+        return this.toHub((hub) => hub.linkStart(this.options.macId, frame.name))
+      case 'hub-unlink':
+        return this.toHub((hub) => hub.unlink(this.options.macId))
       case 'recovery-register': {
         const stored = await this.state()
         if (stored === null || stored.recoveryCodeHash === frame.codeHash) return
         return this.save({ ...stored, recoveryCodeHash: frame.codeHash })
       }
     }
+  }
+
+  // ---------- The hub ----------
+
+  /**
+   * Asks the hub and passes its answer to the Mac. Without a hub the Mac hears `off`, so it can
+   * say so; when the hub fails, nothing is sent (presence is checked again on the hub's side).
+   */
+  private toHub(ask: (hub: HubLink) => Promise<HubStatus>, tell = true): Promise<void> {
+    const hub = this.options.env.hub
+    if (hub === undefined) {
+      if (tell) this.hubStatus({ state: 'off' })
+      return Promise.resolve()
+    }
+    return ask(hub).then(
+      (status) => {
+        if (tell) this.hubStatus(status)
+      },
+      (error) => logFailure('hub', error),
+    )
+  }
+
+  /** Tells the Mac, if it is connected, where it stands with the hub. */
+  hubStatus(status: HubStatus): void {
+    const mac = this.macSocket()
+    if (mac !== null) this.sendTo(mac, { type: 'hub-status', hub: status })
+  }
+
+  /** The live Mac socket's state, for the hub's presence check. */
+  macPresence(): { readonly since: number } | null {
+    const state = this.macSocket()?.state()
+    return state?.phase === 'ready' ? { since: state.since ?? 0 } : null
   }
 
   /** Locks or unlocks forwarding at the relay, and tells the Mac and every phone. */
