@@ -166,8 +166,8 @@ describe('logging', () => {
 
   it('uses console nowhere but log.ts', () => {
     const dir = fileURLToPath(new URL('../src/', import.meta.url))
-    for (const file of readdirSync(dir)) {
-      if (file === 'log.ts') continue
+    for (const file of readdirSync(dir, { recursive: true, encoding: 'utf8' })) {
+      if (file === 'log.ts' || !file.endsWith('.ts')) continue
       expect(readFileSync(join(dir, file), 'utf8'), file).not.toMatch(/\bconsole\./)
     }
   })

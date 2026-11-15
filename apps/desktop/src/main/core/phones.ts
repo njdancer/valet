@@ -6,7 +6,7 @@ import { readFile, rename, writeFile } from 'node:fs/promises'
 import { hostname } from 'node:os'
 import { type DeviceRecord, SIGNING_DOMAINS, verifyP256 } from '@valet/core'
 import { RelayClient, type RelayClientStatus, type RelayConsentView } from '@valet/mcp-server'
-import type { PairingView, PhonesStatus } from '../../shared/api'
+import type { HubView, PairingView, PhonesStatus } from '../../shared/api'
 import type { ApprovalBroker, MacToPhoneBody, PhoneOutbox } from './approvals/broker'
 import type { DeviceStore } from './approvals/devices'
 import { PhoneChannel, type PhoneChannelOptions } from './approvals/phone-channel'
@@ -63,6 +63,7 @@ export class Phones implements PhoneOutbox {
   private channel: PhoneChannel | null = null
   private client: RelayClient | null = null
   private relayStatus: RelayClientStatus = { state: 'stopped' }
+  private hub: HubView | null = null
   private online = new Set<string>()
   private devices: DeviceStore | null = null
   private unavailable: PhonesStatus['unavailableReason'] = 'approvals-unavailable'
@@ -94,6 +95,7 @@ export class Phones implements PhoneOutbox {
     this.parts = parts
     this.devices = parts.devices
     this.relayStatus = { state: 'stopped' }
+    this.hub = null
     const relay = this.relay
     if (relay === null) {
       this.unavailable = 'no-relay'
@@ -135,6 +137,11 @@ export class Phones implements PhoneOutbox {
           console.log(
             `[relay] ${event.type}${event.type === 'device-online' ? ` ${event.deviceId} ${event.online}` : ''}`,
           )
+        if (event.type === 'hub-status') {
+          this.hub = event.hub
+          this.options.emit()
+          return
+        }
         if (event.type === 'device-online') {
           if (event.online) this.online.add(event.deviceId)
           else this.online.delete(event.deviceId)
@@ -188,6 +195,7 @@ export class Phones implements PhoneOutbox {
       relay: this.relayStatus.state === 'replaced' ? 'refused' : this.relayStatus.state,
       relayOrigin: this.relay?.origin ?? null,
       worksLocked: null,
+      hub: this.hub,
       phones: phones.map((p) => ({
         deviceId: p.deviceId,
         name: p.name,
@@ -196,6 +204,25 @@ export class Phones implements PhoneOutbox {
       })),
       pairing: this.channel?.pairing ?? { step: 'idle' },
     }
+  }
+
+  /** Asks the hub for a code to join the account (relay-hub.md). False when not connected. */
+  joinHub(): boolean {
+    if (this.client === null || this.relayStatus.state !== 'online') return false
+    return this.client.send({ type: 'hub-link-start', name: this.options.macName.slice(0, 64) })
+  }
+
+  leaveHub(): boolean {
+    if (this.client === null || this.relayStatus.state !== 'online') return false
+    return this.client.send({ type: 'hub-unlink' })
+  }
+
+  /** A page on the hub the relay named, https only; null when there is none. */
+  hubPage(path: '/' | '/link'): string | null {
+    const hub = this.hub
+    if (hub === null || hub.state === 'off') return null
+    const url = new URL(path, hub.url)
+    return url.protocol === 'https:' ? url.toString() : null
   }
 
   startPairing(): PairingView {

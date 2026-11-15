@@ -19,10 +19,11 @@ import {
   StatusDot,
   SuccessCheck,
   Text,
+  Value,
 } from '@valet/ui'
 import QRCode from 'qrcode'
 import { useEffect, useMemo, useState } from 'react'
-import type { PairingView, PhonesStatus } from '../../../shared/api'
+import type { HubView, PairingView, PhonesStatus } from '../../../shared/api'
 import { useAction, useApi, useLoad } from '../../lib/api-context'
 import { Failed } from '../connections/shared'
 
@@ -79,6 +80,9 @@ export function DevicesSection() {
           </div>
           {s !== null && s.available ? <RelayLine status={s} /> : null}
           {s !== null && s.worksLocked === false ? <RenewKeys phones={s.phones.length} /> : null}
+          {s !== null && s.relay === 'online' && s.hub !== null && s.hub.state !== 'off' ? (
+            <HubAccount hub={s.hub} />
+          ) : null}
           <RelaySetting paired={s?.phones.length ?? 0} />
           <AgentHostSetting />
         </CardContent>
@@ -233,6 +237,86 @@ function RemovePhone({ deviceId, name }: { readonly deviceId: string; readonly n
     >
       Remove {name}
     </Button>
+  )
+}
+
+const HUB_PROBLEM: Record<NonNullable<Extract<HubView, { state: 'unlinked' }>['problem']>, string> = {
+  'too-many': 'The hub has too many Macs waiting to join. Try again in a few minutes.',
+  unavailable: 'The hub has no account yet. Set one up on its page first, then connect this Mac.',
+}
+
+/**
+ * This Mac at the Valet hub (docs/relay-hub.md): one address for agents that reaches every Mac on
+ * your account. Joining shows a code, typed on the hub's page by someone signed in to the account.
+ */
+function HubAccount({ hub }: { readonly hub: Exclude<HubView, { state: 'off' }> }) {
+  const api = useApi()
+  const action = useAction()
+  const [confirming, setConfirming] = useState(false)
+  const host = new URL(hub.url).host
+  return (
+    <Stack gap={2}>
+      <Text weight="semibold">Valet account</Text>
+      {hub.state === 'linked' ? (
+        <Text tone="muted">
+          This Mac is on {hub.account}’s account at {host}, as {hub.name} ({hub.slug}).
+        </Text>
+      ) : hub.state === 'linking' ? (
+        <Text tone="muted">
+          On the page that opened, signed in to your account, type this code. It works until{' '}
+          {new Date(hub.expiresAt).toLocaleTimeString()}.
+        </Text>
+      ) : (
+        <Text tone="muted">
+          Put this Mac on your Valet account at {host}, so agents can reach all your Macs at one address.
+        </Text>
+      )}
+      {hub.state === 'linking' ? (
+        <div>
+          <Value mono size="lg" copy={hub.code}>
+            {hub.code}
+          </Value>
+        </div>
+      ) : null}
+      {hub.state === 'unlinked' && hub.problem !== undefined ? (
+        <Text tone="muted">{HUB_PROBLEM[hub.problem]}</Text>
+      ) : null}
+      <Inline gap={2}>
+        {hub.state === 'unlinked' ? (
+          <Button loading={action.busy} onClick={() => void action.run(() => api.phones.joinHub())}>
+            Connect to your Valet account
+          </Button>
+        ) : null}
+        {hub.state === 'linking' ? (
+          <>
+            <Button onClick={() => void action.run(() => api.phones.openHub())}>Open the hub</Button>
+            <Button loading={action.busy} onClick={() => void action.run(() => api.phones.joinHub())}>
+              New code
+            </Button>
+          </>
+        ) : null}
+        {hub.state === 'linked' ? (
+          confirming ? (
+            <>
+              <Button
+                variant="primary"
+                loading={action.busy}
+                onClick={() => void action.run(() => api.phones.leaveHub())}
+              >
+                Leave the account
+              </Button>
+              <Button onClick={() => setConfirming(false)}>Cancel</Button>
+            </>
+          ) : (
+            <>
+              <Button onClick={() => void action.run(() => api.phones.openHub())}>Open the hub</Button>
+              <Button onClick={() => setConfirming(true)}>Leave the account</Button>
+            </>
+          )
+        ) : null}
+      </Inline>
+      <Failed failed={action.failed} what="reach the hub" />
+    </Stack>
   )
 }
 

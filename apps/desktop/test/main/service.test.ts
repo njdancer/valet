@@ -3006,6 +3006,15 @@ describe('lock down (IA 2.10)', () => {
     })
   })
 
+  it('can’t join, open or leave the hub without a relay connection, and opens nothing', async () => {
+    const s = await setup({})
+    expect((await s.api.phones.status()).hub).toBeNull()
+    await expect(s.api.phones.joinHub()).rejects.toThrow()
+    await expect(s.api.phones.openHub()).rejects.toThrow()
+    await expect(s.api.phones.leaveHub()).rejects.toThrow()
+    expect(s.ui.opened).toEqual([])
+  })
+
   it('has nothing to renew with a signer that can’t', async () => {
     const s = await setup({})
     expect((await s.api.phones.status()).worksLocked).toBeNull()

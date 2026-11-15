@@ -17,16 +17,22 @@
   "durable_objects": {
     "bindings": [
       { "name": "MAC_RELAY", "class_name": "MacRelay" },
-      { "name": "PUSH", "class_name": "PushRelay" }
+      { "name": "PUSH", "class_name": "PushRelay" },
+      { "name": "HUB", "class_name": "Hub" }
     ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MacRelay", "PushRelay"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["MacRelay", "PushRelay"] },
+    { "tag": "v2", "new_sqlite_classes": ["Hub"] }
+  ],
   "ratelimits": [
     { "name": "CONNECT_LIMIT", "namespace_id": "4101", "simple": { "limit": 20, "period": 60 } },
     { "name": "FORWARD_LIMIT", "namespace_id": "4102", "simple": { "limit": 120, "period": 60 } },
     { "name": "SIGN_IN_LIMIT", "namespace_id": "4103", "simple": { "limit": 20, "period": 60 } },
     { "name": "POLL_LIMIT", "namespace_id": "4104", "simple": { "limit": 40, "period": 60 } }
   ]
-  // Secrets, set with `wrangler secret put`: WAIT_SECRET, APNS_KEY. Vars at deploy: APNS_KEY_ID,
+  // The hub (docs/relay-hub.md): set HUB_HOST (e.g. valet.dncr.me) with a Workers Custom Domain for
+  // it, and the HUB_SETUP_SECRET secret. Optional: HUB_OFFLINE_AFTER_S, HUB_GRACE_S.
+  // Secrets, set with `wrangler secret put`: WAIT_SECRET, APNS_KEY, HUB_SETUP_SECRET. Vars at deploy: APNS_KEY_ID,
   // APNS_TEAM_ID, APNS_TOPIC, APNS_HOST.
 }

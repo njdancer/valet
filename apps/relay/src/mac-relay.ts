@@ -3,7 +3,7 @@
 // answers "ping" without waking (relay.md, "Shape").
 
 import { DurableObject } from 'cloudflare:workers'
-import type { RelayStoredState } from '@valet/core/relay-protocol'
+import type { HubStatus, RelayStoredState } from '@valet/core/relay-protocol'
 import {
   type ConsentAnswer,
   type ForwardRequest,
@@ -13,6 +13,7 @@ import {
   type SocketState,
 } from './core'
 import type { Env } from './env'
+import { hubLink } from './hub/link'
 import type { PushKind, PushResult } from './push'
 
 const STATE_KEY = 'state'
@@ -50,6 +51,7 @@ export class MacRelay extends DurableObject<Env> {
           })
         },
         push: (token, kind) => push(env, token, kind),
+        ...(hubLink(env) === undefined ? {} : { hub: hubLink(env) }),
       },
     })
     return this.core
@@ -77,6 +79,23 @@ export class MacRelay extends DurableObject<Env> {
         const { id, query, source } = (await request.json()) as { id: string; query: string; source: string }
         return Response.json(await core.consent(id, query, source))
       }
+      case '/hub-status': {
+        core.hubStatus((await request.json()) as HubStatus)
+        return new Response(null, { status: 204 })
+      }
+      case '/presence': {
+        // The last frame: a ping the platform answered without waking this object, or the hello.
+        const presence = core.macPresence()
+        if (presence === null) return Response.json({ connected: false })
+        let last = presence.since
+        for (const ws of this.ctx.getWebSockets()) {
+          const state = (ws.deserializeAttachment() as Attached | null) ?? null
+          if (state?.phase !== 'ready' || state.role !== 'mac' || state.key === 'replaced') continue
+          const pinged = this.ctx.getWebSocketAutoResponseTimestamp(ws)
+          if (pinged !== null) last = Math.max(last, pinged.getTime())
+        }
+        return Response.json({ connected: true, lastFrameAt: last })
+      }
       case '/recover': {
         const { code, unregisterPhones } = (await request.json()) as {
           code: string
@@ -94,11 +113,11 @@ export class MacRelay extends DurableObject<Env> {
   }
 
   override async webSocketClose(ws: WebSocket): Promise<void> {
-    this.relayFor(ws).closed(wrap(ws))
+    await this.relayFor(ws).closed(wrap(ws))
   }
 
   override async webSocketError(ws: WebSocket): Promise<void> {
-    this.relayFor(ws).closed(wrap(ws))
+    await this.relayFor(ws).closed(wrap(ws))
   }
 
   override async alarm(): Promise<void> {

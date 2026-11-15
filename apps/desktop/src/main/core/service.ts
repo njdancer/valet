@@ -3791,6 +3791,19 @@ export class AppService {
           await this.refreshPhoneStatus()
         },
         renewKeys: () => this.renewKeys(),
+        joinHub: async () => {
+          if (!this.phones.joinHub()) throw new ValetError('config', 'not-found')
+          const url = this.phones.hubPage('/link')
+          if (url !== null) deps.ui.openExternal(url)
+        },
+        openHub: async () => {
+          const url = this.phones.hubPage('/')
+          if (url === null) throw new ValetError('config', 'not-found')
+          deps.ui.openExternal(url)
+        },
+        leaveHub: async () => {
+          if (!this.phones.leaveHub()) throw new ValetError('config', 'not-found')
+        },
       },
       adapters: {
         list: async () => (await this.states()).map(adapterSummary),
