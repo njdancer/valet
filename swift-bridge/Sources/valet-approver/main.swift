@@ -3,6 +3,8 @@
 //
 //   valet-approver keys            the public keys, as JSON; 44 if there are none yet
 //   valet-approver create          makes the three keys; 73 if any already exist
+//   valet-approver rotate-channel  new transport and agreement keys, keeping the approval key (and
+//                                  so the Mac's id); the public keys, as `keys` prints them
 //   valet-approver sign-decision   stdin {"requestText","payload"}: the approval signature
 //   valet-approver sign-transport  stdin a relay sign-in payload: the transport key's signature
 //   valet-approver agree           stdin a peer's P-256 public key (base64url SPKI): the ECDH secret
@@ -11,7 +13,10 @@
 //
 // Every key is a P-256 key in the Secure Enclave. The approval key needs user presence (Touch ID,
 // or the Mac's password), so each signature is the person's gesture; the transport and agreement
-// keys don't. The Keychain keeps only the Secure Enclave's wrapped blobs, usable on this Mac alone.
+// keys don't, and work after the Mac's first unlock since it started, so Valet stays reachable
+// while the screen is locked. The approval key works only while unlocked: Touch ID needs that
+// anyway. Keys made before that change work only while unlocked; `keys` says which
+// (`worksLocked`) and `rotate-channel` replaces them. The Keychain keeps only the Secure Enclave's wrapped blobs, usable on this Mac alone.
 // No private key ever leaves this process, and nothing but public keys and signatures reaches
 // stdout.
 //
@@ -94,12 +99,19 @@ func blob(_ name: String) -> Data? {
   }
 }
 
+/// The comment on every stored key; the transport and agreement keys made to work while locked
+/// carry `lockedComment`, which `keys` reads without touching a secret.
+let keyComment = "Valet device key"
+let lockedComment = "Valet device key, works while locked"
+
 func accessControl(presence: Bool) -> SecAccessControl {
   let flags: SecAccessControlCreateFlags = presence ? [.privateKeyUsage, .userPresence] : [.privateKeyUsage]
+  // Relay sign-ins and the phone channel run while the person is away and the screen is locked.
+  let accessible = presence ? kSecAttrAccessibleWhenUnlockedThisDeviceOnly : kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
   var error: Unmanaged<CFError>?
   guard
     let access = SecAccessControlCreateWithFlags(
-      nil, kSecAttrAccessibleWhenUnlockedThisDeviceOnly, flags, &error)
+      nil, accessible, flags, &error)
   else { fail(Code.other, "access control") }
   return access
 }
@@ -117,12 +129,36 @@ func publicKey(_ name: String, _ data: Data) throws -> Data {
   return try SecureEnclave.P256.Signing.PrivateKey(dataRepresentation: data).publicKey.derRepresentation
 }
 
+/// Whether the transport and agreement keys work while the screen is locked.
+func worksLocked() -> Bool {
+  ["transport", "agreement"].allSatisfy { (try? store.comment(item($0))) == lockedComment }
+}
+
+/// A new transport and agreement key, which need no presence and work while locked.
+func newChannelKeys() throws -> [String: Data] {
+  if software {
+    return [
+      "transport": P256.Signing.PrivateKey().rawRepresentation,
+      "agreement": P256.KeyAgreement.PrivateKey().rawRepresentation,
+    ]
+  }
+  return [
+    "transport": try SecureEnclave.P256.Signing.PrivateKey(
+      accessControl: accessControl(presence: false)
+    ).dataRepresentation,
+    "agreement": try SecureEnclave.P256.KeyAgreement.PrivateKey(
+      accessControl: accessControl(presence: false)
+    ).dataRepresentation,
+  ]
+}
+
 func printKeys(_ blobs: [String: Data]) {
-  var keys: [String: String] = [:]
+  var keys: [String: Any] = [:]
   for name in names {
     guard let data = blobs[name], let der = try? publicKey(name, data) else { fail(Code.other, "unreadable key") }
     keys["\(name)Key"] = base64url(der)
   }
+  keys["worksLocked"] = worksLocked()
   guard let json = try? JSONSerialization.data(withJSONObject: keys, options: [.sortedKeys]) else {
     fail(Code.other, "encode")
   }
@@ -135,7 +171,7 @@ func storedBlobs() -> [String: Data] {
   return found
 }
 
-let usage = "usage: valet-approver keys|create|sign-decision|sign-transport|agree|sign-approval"
+let usage = "usage: valet-approver keys|create|rotate-channel|sign-decision|sign-transport|agree|sign-approval"
 let args = Array(CommandLine.arguments.dropFirst())
 guard args.count == 1, let command = args.first else {
   fail(Code.usage, usage)
@@ -181,26 +217,33 @@ case "create":
   if !software && !SecureEnclave.isAvailable { fail(Code.unavailable, "no secure enclave") }
   var made: [String: Data] = [:]
   do {
-    if software {
-      made["approval"] = P256.Signing.PrivateKey().rawRepresentation
-      made["transport"] = P256.Signing.PrivateKey().rawRepresentation
-      made["agreement"] = P256.KeyAgreement.PrivateKey().rawRepresentation
-    } else {
-      made["approval"] = try SecureEnclave.P256.Signing.PrivateKey(
-        accessControl: accessControl(presence: true)).dataRepresentation
-      made["transport"] = try SecureEnclave.P256.Signing.PrivateKey(
-        accessControl: accessControl(presence: false)).dataRepresentation
-      made["agreement"] = try SecureEnclave.P256.KeyAgreement.PrivateKey(
-        accessControl: accessControl(presence: false)).dataRepresentation
-    }
+    made = try newChannelKeys()
+    made["approval"] =
+      software
+      ? P256.Signing.PrivateKey().rawRepresentation
+      : try SecureEnclave.P256.Signing.PrivateKey(accessControl: accessControl(presence: true)).dataRepresentation
     for name in names {
       guard let data = made[name] else { fail(Code.other, "create failed") }
-      try store.write(item(name), secret: [UInt8](data), comment: "Valet device key")
+      try store.write(item(name), secret: [UInt8](data), comment: name == "approval" ? keyComment : lockedComment)
     }
   } catch {
     fail(Code.other, "create failed")
   }
   printKeys(made)
+
+case "rotate-channel":
+  // Only a complete set: the approval key, and so the Mac's id, stays as it is.
+  var (blobs, _) = ownKeys()
+  if !software && !SecureEnclave.isAvailable { fail(Code.unavailable, "no secure enclave") }
+  do {
+    for (name, data) in try newChannelKeys() {
+      try store.write(item(name), secret: [UInt8](data), comment: lockedComment)
+      blobs[name] = data
+    }
+  } catch {
+    fail(Code.other, "rotate failed")
+  }
+  printKeys(blobs)
 
 case "sign-decision":
   guard

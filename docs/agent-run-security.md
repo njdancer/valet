@@ -161,6 +161,14 @@ holds on both Mac and iPhone.
 | Transport | Secure Enclave, no user presence               | The relay's connection challenge, so the device reconnects unattended |
 | Agreement | Secure Enclave key agreement (or Keychain)     | The end-to-end channel (HPKE)                                         |
 
+- **While locked.** On the Mac, the transport and agreement keys work after the first unlock since
+  the Mac started (`AfterFirstUnlockThisDeviceOnly`), so the relay connection and the phone
+  channel keep running while the screen is locked and the person is away (Nick, 2026-11-15). The
+  approval key works only while unlocked, which Touch ID needs anyway. Keys made before that
+  change worked only while unlocked: Valet dropped off the relay whenever the Mac locked. A key's
+  access can't be changed, so Settings › Devices offers to renew them (`valet-approver
+  rotate-channel`): new transport and agreement keys, the same approval key and so the same Mac
+  id, every phone removed to pair again, and a restart that signs a new relay binding.
 - A device's id is the first 128 bits of the SHA-256 of its approval key (`keyId`). The Mac's id
   (`macId`) is its own device id.
 - The Mac's own record is self-signed; every phone's record is signed by the Mac's approval key,

@@ -187,6 +187,7 @@ export class Phones implements PhoneOutbox {
       unavailableReason: this.unavailable,
       relay: this.relayStatus.state === 'replaced' ? 'refused' : this.relayStatus.state,
       relayOrigin: this.relay?.origin ?? null,
+      worksLocked: null,
       phones: phones.map((p) => ({
         deviceId: p.deviceId,
         name: p.name,

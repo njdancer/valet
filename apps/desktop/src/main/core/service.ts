@@ -218,6 +218,8 @@ export interface UiPort {
   closeNeedsUser(adapterId: string): void
   setLaunchAtLogin(enabled: boolean): void
   quit(): void
+  /** Quits and starts again, after the Mac's keys changed under everything holding them. */
+  relaunch?(): void
   /** A system notification; a click opens its target window and does nothing else. */
   notify(notification: AppNotification): void
   closeNotification(key: string): void
@@ -1403,6 +1405,33 @@ export class AppService {
       this.approvalBroker = null
       this.deps.diagnostics?.({ type: 'approvals-unavailable' })
     }
+  }
+
+  /** Null where the signer can't say (a software signer, whose keys aren't affected). */
+  private async keysWorkLocked(): Promise<boolean | null> {
+    const signer = this.deps.approvalKeys.signer
+    if (signer.worksLocked === undefined) return null
+    return signer.worksLocked().catch(() => null)
+  }
+
+  /**
+   * Keys made before they could work while locked can't be changed, only replaced. Every phone
+   * was paired with the old agreement key, so each is removed first (told, and refused by the
+   * relay); the relay binding is signed again for the new transport key after the restart.
+   */
+  private async renewKeys(): Promise<void> {
+    const signer = this.deps.approvalKeys.signer
+    const devices = this.deviceStore
+    if (signer.rotateChannel === undefined || devices === null) throw new ValetError('config', 'not-found')
+    for (const phone of devices.activePhones()) {
+      this.phones.unpair(phone.deviceId)
+      await devices.revoke(phone.deviceId, 'mac-ui', new Date(this.deps.now()).toISOString())
+      await this.audit.append({ type: 'device-revoked', deviceId: phone.deviceId, by: 'mac-ui' })
+    }
+    await signer.rotateChannel()
+    await this.audit.append({ type: 'device-keys-renewed' })
+    this.emit('phones-changed')
+    this.deps.ui.relaunch?.()
   }
 
   /** Starts the relay connection and the phone channel, once the broker is open. */
@@ -3747,7 +3776,7 @@ export class AppService {
     const deps = this.deps
     return {
       phones: {
-        status: async () => this.phones.status(),
+        status: async () => ({ ...this.phones.status(), worksLocked: await this.keysWorkLocked() }),
         startPairing: async () => this.phones.startPairing(),
         confirmPairing: (code) => this.phones.confirmPairing(code),
         cancelPairing: async () => this.phones.cancelPairing(),
@@ -3761,6 +3790,7 @@ export class AppService {
           this.emit('phones-changed')
           await this.refreshPhoneStatus()
         },
+        renewKeys: () => this.renewKeys(),
       },
       adapters: {
         list: async () => (await this.states()).map(adapterSummary),

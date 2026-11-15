@@ -9,6 +9,7 @@ export const INVOKE_METHODS = [
   'phones.confirmPairing',
   'phones.cancelPairing',
   'phones.remove',
+  'phones.renewKeys',
   'adapters.list',
   'adapters.get',
   'adapters.settingChoices',

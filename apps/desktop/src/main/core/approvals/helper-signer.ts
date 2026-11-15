@@ -44,6 +44,7 @@ const CHANNEL_TIMEOUT_MS = 20_000
 
 export class HelperSigner implements MacSigner {
   private cached: MacKeys | null = null
+  private locked: boolean | null = null
 
   /**
    * The phone channel's operations, in the helper: relay sign-ins with the transport key, ECDH
@@ -102,6 +103,32 @@ export class HelperSigner implements MacSigner {
     if (this.cached !== null) return this.cached
     let outcome = await this.run(['keys'], KEYS_TIMEOUT_MS)
     if (outcome.code === APPROVER_EXIT.noKeys) outcome = await this.run(['create'], KEYS_TIMEOUT_MS)
+    const parsed = this.parseKeys(outcome)
+    this.locked = parsed.worksLocked
+    this.cached = parsed.keys
+    return this.cached
+  }
+
+  async worksLocked(): Promise<boolean> {
+    if (this.locked === null) await this.keys()
+    return this.locked === true
+  }
+
+  /** New transport and agreement keys that work while locked; the approval key stays. */
+  async rotateChannel(): Promise<MacKeys> {
+    const before = await this.keys()
+    const { keys, worksLocked } = this.parseKeys(await this.run(['rotate-channel'], KEYS_TIMEOUT_MS))
+    // The same identity, or the helper did something else.
+    if (keys.approvalKey !== before.approvalKey) throw new ApproverError('failed')
+    this.locked = worksLocked
+    this.cached = keys
+    return keys
+  }
+
+  private parseKeys(outcome: { readonly code: number | null; readonly stdout: string }): {
+    readonly keys: MacKeys
+    readonly worksLocked: boolean
+  } {
     if (outcome.code === APPROVER_EXIT.unavailable) throw new ApproverError('unavailable')
     if (outcome.code === APPROVER_EXIT.refused) throw new ApproverError('refused')
     if (outcome.code !== APPROVER_EXIT.ok) throw new ApproverError('failed')
@@ -111,16 +138,19 @@ export class HelperSigner implements MacSigner {
     } catch {
       throw new ApproverError('failed')
     }
-    const { approvalKey, transportKey, agreementKey } = (parsed ?? {}) as Record<string, unknown>
+    const { approvalKey, transportKey, agreementKey, worksLocked } = (parsed ?? {}) as Record<string, unknown>
     if (![approvalKey, transportKey, agreementKey].every((k) => typeof k === 'string' && KEY.test(k))) {
       throw new ApproverError('failed')
     }
-    this.cached = {
-      approvalKey: approvalKey as string,
-      transportKey: transportKey as string,
-      agreementKey: agreementKey as string,
+    return {
+      keys: {
+        approvalKey: approvalKey as string,
+        transportKey: transportKey as string,
+        agreementKey: agreementKey as string,
+      },
+      // A helper from before keys could work while locked says nothing: they can't.
+      worksLocked: worksLocked === true,
     }
-    return this.cached
   }
 
   async signDecision(request: SerializedRequest, payload: string): Promise<string | null> {

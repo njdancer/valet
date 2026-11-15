@@ -78,6 +78,49 @@ describe('the helper signer', () => {
     ).rejects.toThrow()
   })
 
+  it('says whether the keys work while locked, and renews them keeping the Mac’s id', async () => {
+    const OTHER = 'C'.repeat(122)
+    const old = helper({
+      keys: { code: 0, stdout: keys },
+      'rotate-channel': {
+        code: 0,
+        stdout: JSON.stringify({
+          approvalKey: KEY,
+          transportKey: OTHER,
+          agreementKey: OTHER,
+          worksLocked: true,
+        }),
+      },
+    })
+    // A helper that doesn't say: keys from before they could.
+    expect(await old.signer.worksLocked()).toBe(false)
+    expect(await old.signer.rotateChannel()).toEqual({
+      approvalKey: KEY,
+      transportKey: OTHER,
+      agreementKey: OTHER,
+    })
+    expect(await old.signer.worksLocked()).toBe(true)
+    expect(await old.signer.keys()).toEqual({ approvalKey: KEY, transportKey: OTHER, agreementKey: OTHER })
+    expect(old.ran.map((r) => r.args[0])).toEqual(['keys', 'rotate-channel'])
+
+    // A different approval key is a different Mac: refused.
+    const swapped = helper({
+      keys: { code: 0, stdout: keys },
+      'rotate-channel': {
+        code: 0,
+        stdout: JSON.stringify({
+          approvalKey: OTHER,
+          transportKey: OTHER,
+          agreementKey: OTHER,
+          worksLocked: true,
+        }),
+      },
+    })
+    await expect(swapped.signer.rotateChannel()).rejects.toEqual(new ApproverError('failed'))
+    expect(await swapped.signer.worksLocked()).toBe(false)
+    expect(await swapped.signer.keys()).toEqual({ approvalKey: KEY, transportKey: KEY, agreementKey: KEY })
+  })
+
   it('hands the helper the request text and payload, and takes back only a signature', async () => {
     const ok = helper({ 'sign-decision': { code: 0, stdout: `${SIGNATURE}\n` } })
     const request = { text: '{"kind":"resume"}', digest: '0'.repeat(64), request: {} } as never
