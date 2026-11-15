@@ -56,6 +56,7 @@ export const EVENT_WORDS = {
   'agent-change': { label: 'Agent change', tone: 'neutral' },
   'device-paired': { label: 'Phone paired', tone: 'brass' },
   'device-revoked': { label: 'Phone removed', tone: 'neutral' },
+  'device-keys-renewed': { label: 'Mac keys renewed', tone: 'neutral' },
   'store-refused': { label: 'Saved approvals refused', tone: 'danger' },
   'draft-created': { label: 'Draft started', tone: 'neutral' },
   'draft-submitted': { label: 'Draft submitted', tone: 'warning' },
@@ -363,6 +364,8 @@ export function details(event: AuditEvent, now: number): ReactNode {
     case 'device-paired':
     case 'device-revoked':
       return <Code>{event.deviceId.slice(0, 8)}</Code>
+    case 'device-keys-renewed':
+      return <Quiet>works while locked</Quiet>
     case 'draft-created':
     case 'draft-submitted':
     case 'draft-deleted':
@@ -457,6 +460,7 @@ export const EVENT_FIELDS = {
   'agent-change': ['type', 'clientId', 'action', 'target', 'value'],
   'device-paired': ['type', 'deviceId', 'platform'],
   'device-revoked': ['type', 'deviceId', 'by'],
+  'device-keys-renewed': ['type'],
   'store-refused': ['type', 'store', 'reason', 'records'],
   'draft-created': ['type', 'draftId', 'adapterId', 'clientId'],
   'draft-submitted': ['type', 'draftId', 'adapterId', 'clientId', 'adapterHash', 'packageHash', 'requestId'],

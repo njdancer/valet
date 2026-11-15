@@ -78,6 +78,7 @@ export function DevicesSection() {
             </Button>
           </div>
           {s !== null && s.available ? <RelayLine status={s} /> : null}
+          {s !== null && s.worksLocked === false ? <RenewKeys phones={s.phones.length} /> : null}
           <RelaySetting paired={s?.phones.length ?? 0} />
           <AgentHostSetting />
         </CardContent>
@@ -232,6 +233,44 @@ function RemovePhone({ deviceId, name }: { readonly deviceId: string; readonly n
     >
       Remove {name}
     </Button>
+  )
+}
+
+/**
+ * Keys made before they could work while locked: Valet drops off the relay, and phones see the Mac
+ * offline, whenever this Mac locks. Renewing replaces them, removes every phone and restarts.
+ */
+function RenewKeys({ phones }: { readonly phones: number }) {
+  const api = useApi()
+  const action = useAction()
+  const [confirming, setConfirming] = useState(false)
+  return (
+    <Stack gap={2}>
+      <Text tone="muted">
+        This Mac’s keys only work while it’s unlocked, so your phone and cloud agents lose it whenever the
+        screen locks. Renew them to stay connected while it’s locked.
+        {phones > 0
+          ? ` ${phones === 1 ? 'Your paired phone is' : 'Your paired phones are'} removed and must pair again.`
+          : ''}{' '}
+        Valet restarts.
+      </Text>
+      <Inline gap={2}>
+        {confirming ? (
+          <>
+            <Button
+              variant="primary"
+              loading={action.busy}
+              onClick={() => void action.run(() => api.phones.renewKeys())}
+            >
+              Renew keys and restart
+            </Button>
+            <Button onClick={() => setConfirming(false)}>Cancel</Button>
+          </>
+        ) : (
+          <Button onClick={() => setConfirming(true)}>Renew this Mac’s keys</Button>
+        )}
+      </Inline>
+    </Stack>
   )
 }
 

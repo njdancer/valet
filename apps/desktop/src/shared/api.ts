@@ -1216,6 +1216,12 @@ export interface PhonesStatus {
   readonly unavailableReason: 'no-relay' | 'no-keys' | 'approvals-unavailable' | null
   readonly relay: 'online' | 'connecting' | 'offline' | 'refused' | 'stopped'
   readonly relayOrigin: string | null
+  /**
+   * Whether this Mac's relay and phone-channel keys work while its screen is locked. False for
+   * keys made before they could: Valet drops off the relay whenever the Mac locks until they're
+   * renewed (phones.renewKeys). Null where it doesn't apply (no Secure Enclave helper).
+   */
+  readonly worksLocked: boolean | null
   readonly phones: readonly {
     readonly deviceId: string
     readonly name: string
@@ -1237,6 +1243,11 @@ export interface ValetApi {
     cancelPairing(): Promise<void>
     /** Removes a phone: it is told, and the relay stops letting it in. */
     remove(deviceId: string): Promise<void>
+    /**
+     * New relay and phone-channel keys that work while the Mac is locked, keeping the Mac's id.
+     * Every paired phone is removed (it must pair again) and Valet restarts.
+     */
+    renewKeys(): Promise<void>
   }
   readonly adapters: {
     list(): Promise<readonly AdapterSummary[]>

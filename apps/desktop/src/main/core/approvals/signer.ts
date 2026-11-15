@@ -38,6 +38,17 @@ export interface MacSigner {
    * can't do them.
    */
   readonly channel?: ChannelKeys
+  /**
+   * Whether the transport and agreement keys work while the screen is locked, so the relay and the
+   * phone channel keep running while the person is away. Absent where that can't be otherwise (a
+   * software signer).
+   */
+  worksLocked?(): Promise<boolean>
+  /**
+   * Replaces the transport and agreement keys with ones that work while locked, keeping the
+   * approval key and so the Mac's id. Phones paired with the old agreement key must pair again.
+   */
+  rotateChannel?(): Promise<MacKeys>
 }
 
 /** What the phone channel needs from the Mac's keys. No private key ever leaves them. */

@@ -330,6 +330,8 @@ export type AuditEvent =
     }
   | { readonly type: 'device-paired'; readonly deviceId: string; readonly platform: 'ios' | 'macos' }
   | { readonly type: 'device-revoked'; readonly deviceId: string; readonly by: string }
+  /** The Mac's relay and phone-channel keys were replaced with ones that work while locked. */
+  | { readonly type: 'device-keys-renewed' }
   | {
       /**
        * A trusted store's file didn't match its Keychain anchor, or a record's evidence failed, and

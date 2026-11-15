@@ -758,11 +758,13 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
   const remoteCode = 'ABCDEFGH'
   let pairing: PairingView = { step: 'idle' }
   let phones: PhonesStatus['phones'] = []
+  let worksLocked: boolean | null = true
   const phonesStatus = (): PhonesStatus => ({
     available: settings.relayHost !== null,
     unavailableReason: settings.relayHost === null ? 'no-relay' : null,
     relay: settings.relayHost === null ? 'stopped' : 'online',
     relayOrigin: settings.relayHost === null ? null : `https://${settings.relayHost}`,
+    worksLocked,
     phones,
     pairing,
   })
@@ -1694,6 +1696,12 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
       async remove(deviceId) {
         enter('phones.remove')
         phones = phones.filter((p) => p.deviceId !== deviceId)
+        emit({ type: 'phones-changed' })
+      },
+      async renewKeys() {
+        enter('phones.renewKeys')
+        phones = []
+        worksLocked = true
         emit({ type: 'phones-changed' })
       },
     },

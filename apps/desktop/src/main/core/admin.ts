@@ -391,6 +391,7 @@ const EVENT_FIELDS: Readonly<Record<AuditEvent['type'], readonly string[]>> = {
   'agent-change': ['clientId', 'action', 'target', 'value'],
   'device-paired': ['deviceId', 'platform'],
   'device-revoked': ['deviceId', 'by'],
+  'device-keys-renewed': [],
   'store-refused': ['store', 'reason', 'records'],
   'draft-created': ['draftId', 'adapterId', 'clientId'],
   'draft-submitted': ['draftId', 'adapterId', 'clientId', 'adapterHash', 'packageHash', 'requestId'],

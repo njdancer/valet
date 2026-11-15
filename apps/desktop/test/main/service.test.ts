@@ -171,6 +171,7 @@ async function setup(
     panels: [] as (HashRoute | null)[],
     loginItem: [] as boolean[],
     quits: 0,
+    relaunches: 0,
     saveTo: null as string | null,
     opChoice: null as string | null,
     notifications: [] as AppNotification[],
@@ -285,6 +286,7 @@ async function setup(
       closeNeedsUser: (id) => ui.banners.push(`close ${id}`),
       setLaunchAtLogin: (on) => ui.loginItem.push(on),
       quit: () => ui.quits++,
+      relaunch: () => ui.relaunches++,
       notify: (notification) => ui.notifications.push(notification),
       closeNotification: (key) => ui.closedNotifications.push(key),
       confirmErase: async (kind) => {
@@ -2968,6 +2970,44 @@ describe('lock down (IA 2.10)', () => {
     keysWork = true
     await again.api.app.setLockedDown(false)
     expect((await again.api.app.status()).lockedDown).toBe(false)
+  })
+
+  it('renews keys that only work while unlocked, then restarts', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sa-service-'))
+    dirs.push(dir)
+    const signer = new SoftwareSigner(() => true, await softwareKeysAt(join(dir, 'approval-keys.json')))
+    let locked = false
+    let rotated = 0
+    const s = await setup({
+      dir,
+      approvalKeys: {
+        signer: {
+          keys: () => signer.keys(),
+          signDecision: (request, payload) => signer.signDecision(request, payload),
+          worksLocked: async () => locked,
+          rotateChannel: async () => {
+            rotated++
+            locked = true
+            return signer.keys()
+          },
+        },
+        anchor: new FileAnchor(join(dir, 'anchor.json')),
+        kind: 'software',
+        forget: async () => {},
+      },
+    })
+    expect((await s.api.phones.status()).worksLocked).toBe(false)
+    await s.api.phones.renewKeys()
+    expect(rotated).toBe(1)
+    expect(s.ui.relaunches).toBe(1)
+    expect((await s.api.phones.status()).worksLocked).toBe(true)
+    expect((await s.api.audit.page({})).records.map((r) => r.event)).toContainEqual({ type: 'device-keys-renewed' })
+  })
+
+  it('has nothing to renew with a signer that can’t', async () => {
+    const s = await setup({})
+    expect((await s.api.phones.status()).worksLocked).toBeNull()
+    await expect(s.api.phones.renewKeys()).rejects.toThrow()
   })
 
   it('reads a damaged state file as locked down', async () => {

@@ -532,6 +532,10 @@ async function main(): Promise<void> {
         if (app.isPackaged && !mode.demo) app.setLoginItemSettings({ openAtLogin: enabled })
       },
       quit: () => app.quit(),
+      relaunch: () => {
+        app.relaunch()
+        app.quit()
+      },
       notify: (notification) => notifications.show(notification),
       closeNotification: (key) => notifications.close(key),
       confirmErase: async (kind) => {

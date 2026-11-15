@@ -332,4 +332,16 @@ describe.skipIf(HELPER === undefined || HELPER === '')('valet-approver with soft
     expect(await broker.approveOnMac(resume.requestId)).toEqual({ ok: true })
     expect(broker.isLockedDown()).toBe(false)
   })
+  // Last: it changes the keys the tests above use.
+  it('renews the channel keys so they work while locked, keeping the Mac’s id', async () => {
+    const helper = signer()
+    const before = await helper.keys()
+    expect(await helper.worksLocked()).toBe(true)
+    const after = await helper.rotateChannel()
+    expect(after.approvalKey).toBe(before.approvalKey)
+    expect(after.transportKey).not.toBe(before.transportKey)
+    expect(after.agreementKey).not.toBe(before.agreementKey)
+    expect(await signer().keys()).toEqual(after)
+    expect(await signer().worksLocked()).toBe(true)
+  })
 })
