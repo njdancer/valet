@@ -1,5 +1,8 @@
 # The relay Worker (workstream G)
 
+> **2026-11-16:** remote agents move to one hub address for all your nodes: [relay-hub.md](relay-hub.md). The per-Mac host below is kept until that ships.
+
+
 Status: built, and tested in CI against a local Workers runtime (Miniflare). Not deployed:
 deploying needs Nick's Cloudflare account and a host name ([What needs Nick](#what-needs-nick)).
 Not yet wired into the app: that waits for the device keys in the Swift helper.
