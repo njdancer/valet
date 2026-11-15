@@ -55,6 +55,9 @@ class FakeSocket extends EventTarget {
     this.sent.push(data)
   }
   close(code?: number, reason?: string) {
+    // As the platform's WebSocket does: any other code throws and leaves the socket open.
+    if (code !== undefined && code !== 1000 && (code < 3000 || code > 4999))
+      throw new DOMException('invalid code', 'InvalidAccessError')
     this.closed = { code, reason }
     this.readyState = 3
   }
@@ -173,7 +176,7 @@ describe('connecting', () => {
     relay.start()
     const socket = FakeSocket.last as FakeSocket
     socket.dispatchEvent(Object.assign(new Event('message'), { data: new ArrayBuffer(1) }))
-    expect(socket.closed?.code).toBe(1003)
+    expect(socket.closed?.code).toBe(4400)
   })
 
   it('closes when the key can’t sign', async () => {
@@ -183,7 +186,7 @@ describe('connecting', () => {
     relay.start()
     const socket = FakeSocket.last as FakeSocket
     socket.deliver({ type: 'challenge', v: 1, nonce: 'n'.repeat(43), relay: RELAY })
-    await vi.waitFor(() => expect(socket.closed?.code).toBe(1011))
+    await vi.waitFor(() => expect(socket.closed?.code).toBe(4500))
   })
 
   it('reconnects with backoff, slowly after a refusal, and not at all once replaced', async () => {
