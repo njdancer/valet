@@ -84,12 +84,21 @@ describe('the helper signer', () => {
       keys: { code: 0, stdout: keys },
       'rotate-channel': {
         code: 0,
-        stdout: JSON.stringify({ approvalKey: KEY, transportKey: OTHER, agreementKey: OTHER, worksLocked: true }),
+        stdout: JSON.stringify({
+          approvalKey: KEY,
+          transportKey: OTHER,
+          agreementKey: OTHER,
+          worksLocked: true,
+        }),
       },
     })
     // A helper that doesn't say: keys from before they could.
     expect(await old.signer.worksLocked()).toBe(false)
-    expect(await old.signer.rotateChannel()).toEqual({ approvalKey: KEY, transportKey: OTHER, agreementKey: OTHER })
+    expect(await old.signer.rotateChannel()).toEqual({
+      approvalKey: KEY,
+      transportKey: OTHER,
+      agreementKey: OTHER,
+    })
     expect(await old.signer.worksLocked()).toBe(true)
     expect(await old.signer.keys()).toEqual({ approvalKey: KEY, transportKey: OTHER, agreementKey: OTHER })
     expect(old.ran.map((r) => r.args[0])).toEqual(['keys', 'rotate-channel'])
@@ -99,7 +108,12 @@ describe('the helper signer', () => {
       keys: { code: 0, stdout: keys },
       'rotate-channel': {
         code: 0,
-        stdout: JSON.stringify({ approvalKey: OTHER, transportKey: OTHER, agreementKey: OTHER, worksLocked: true }),
+        stdout: JSON.stringify({
+          approvalKey: OTHER,
+          transportKey: OTHER,
+          agreementKey: OTHER,
+          worksLocked: true,
+        }),
       },
     })
     await expect(swapped.signer.rotateChannel()).rejects.toEqual(new ApproverError('failed'))

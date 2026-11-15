@@ -3001,7 +3001,9 @@ describe('lock down (IA 2.10)', () => {
     expect(rotated).toBe(1)
     expect(s.ui.relaunches).toBe(1)
     expect((await s.api.phones.status()).worksLocked).toBe(true)
-    expect((await s.api.audit.page({})).records.map((r) => r.event)).toContainEqual({ type: 'device-keys-renewed' })
+    expect((await s.api.audit.page({})).records.map((r) => r.event)).toContainEqual({
+      type: 'device-keys-renewed',
+    })
   })
 
   it('has nothing to renew with a signer that can’t', async () => {
