@@ -556,6 +556,15 @@ export const relayToMacSchema = z.discriminatedUnion('type', [
       headers: headers(RELAY_FORWARDED_HEADERS),
       body: z.string().max(RELAY_LIMITS.maxRequestBodyBytes),
       source: z.string().max(64),
+      /**
+       * From the hub, for an agent signed in there (relay-hub.md, step 2): the grant it holds. The
+       * hub sends no credential; the Mac serves the request only if it checked that grant itself,
+       * and supplies its own.
+       */
+      hub: z
+        .object({ grantId: z.string().regex(/^[0-9a-f]{64}$/) })
+        .strict()
+        .optional(),
     })
     .strict(),
   z.object({ type: z.literal('http-cancel'), id: requestId }).strict(),

@@ -466,4 +466,47 @@ describe('red-team regressions', () => {
       })
     expect(hits).toBe(0)
   })
+
+  it('serves a request from the hub only with the Mac’s own credential for a grant it checked', async () => {
+    const seen: (string | undefined)[] = []
+    const url = await listener((req, res) => {
+      seen.push(req.headers.authorization)
+      res.end('{}')
+    })
+    const good = 'a'.repeat(64)
+    const asked: string[] = []
+    const { relay } = client({
+      listener: () => url,
+      hubAuthorization: (grantId) => {
+        asked.push(grantId)
+        return grantId === good ? 'Bearer mac-own' : null
+      },
+    })
+    relay.start()
+    const socket = FakeSocket.last as FakeSocket
+    await online(socket)
+    // Whatever the frame's own headers say, the Mac's credential replaces them, or nothing is served.
+    socket.deliver(request('h1', { hub: { grantId: good } }))
+    socket.deliver(request('h2', { hub: { grantId: 'b'.repeat(64) } }))
+    await vi.waitFor(() =>
+      expect(socket.frames().filter((f) => f['type'] === 'http-response-end')).toHaveLength(2),
+    )
+    const status = (id: string) =>
+      socket.frames().find((f) => f['id'] === id && f['type'] === 'http-response-start')?.['status']
+    expect(status('h1')).toBe(200)
+    expect(status('h2')).toBe(403)
+    expect(seen).toEqual(['Bearer mac-own'])
+    expect(asked).toEqual([good, 'b'.repeat(64)])
+
+    // Without the option, nothing from the hub is served.
+    const bare = client({ listener: () => url })
+    bare.relay.start()
+    const other = FakeSocket.last as FakeSocket
+    await online(other)
+    other.deliver(request('h3', { hub: { grantId: good } }))
+    await vi.waitFor(() =>
+      expect(other.frames().find((f) => f['type'] === 'http-response-start')).toMatchObject({ status: 403 }),
+    )
+    expect(seen).toHaveLength(1)
+  })
 })

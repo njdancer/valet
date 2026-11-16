@@ -181,6 +181,8 @@ export interface ForwardRequest {
   readonly source: string
   /** True for a GET on /mcp: a long-lived event stream. */
   readonly stream: boolean
+  /** Set only by the hub, never from a public request: the agent's grant there. */
+  readonly hub?: { readonly grantId: string }
 }
 
 interface Pending {
@@ -788,6 +790,7 @@ export class RelayCore {
         headers,
         body: request.body,
         source: request.source.slice(0, 64),
+        ...(request.hub === undefined ? {} : { hub: { grantId: request.hub.grantId } }),
       })
     })
   }

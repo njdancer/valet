@@ -33,7 +33,14 @@ export async function startRelay(
   options: {
     limits?: Partial<Record<'CONNECT_LIMIT' | 'FORWARD_LIMIT' | 'SIGN_IN_LIMIT' | 'POLL_LIMIT', number>>
     /** Without a hub, as the relay ran before relay-hub.md. */
-    hub?: false | { readonly offlineAfterSeconds?: number; readonly host?: string; readonly origin?: string }
+    hub?:
+      | false
+      | {
+          readonly offlineAfterSeconds?: number
+          readonly graceSeconds?: number
+          readonly host?: string
+          readonly origin?: string
+        }
     port?: number
   } = {},
 ): Promise<Runtime> {
@@ -67,6 +74,7 @@ export async function startRelay(
             HUB_SETUP_SECRET,
             ...(options.hub?.origin === undefined ? {} : { HUB_ORIGIN: options.hub.origin }),
             HUB_OFFLINE_AFTER_S: String(options.hub?.offlineAfterSeconds ?? 90),
+            HUB_GRACE_S: String(options.hub?.graceSeconds ?? 120),
           }),
     },
     ratelimits: {

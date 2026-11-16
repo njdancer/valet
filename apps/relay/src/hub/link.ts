@@ -1,7 +1,7 @@
 // How a Mac's object reaches the hub's object (relay-hub.md). Both live in this Worker; the hub
 // answers on internal URLs that the front door never routes to.
 
-import type { HubAnswer, HubLink } from '../core'
+import type { ForwardRequest, HubAnswer, HubLink } from '../core'
 import type { Env } from '../env'
 
 /** The one hub object. Single account for now (H5); rows carry an account id so it can shard later. */
@@ -48,6 +48,13 @@ export function macStub(env: Env, macId: string) {
         body: JSON.stringify(answer),
       })
     },
+    /** A request for an agent signed in at the hub: the Mac serves it only for a grant it checked. */
+    forward: (request: ForwardRequest & { hub: { grantId: string } }, signal: AbortSignal) =>
+      object.fetch(`${MAC_INTERNAL}/forward?mac=${macId}`, {
+        method: 'POST',
+        body: JSON.stringify(request),
+        signal,
+      }),
     presence: async (): Promise<{ connected: boolean; lastFrameAt?: number }> => {
       const response = await object.fetch(`${MAC_INTERNAL}/presence?mac=${macId}`)
       return (await response.json()) as { connected: boolean; lastFrameAt?: number }

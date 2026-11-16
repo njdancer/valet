@@ -6,13 +6,25 @@ import { createHash } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import {
   type HubStatus,
+  hubGrantId,
   nextRosterChange,
   type RosterDevice,
   SIGNING_DOMAINS,
   verifyRoster,
 } from '@valet/core'
-import { RelayClient, type RelayEvent } from '@valet/mcp-server'
+import {
+  ConsentRequests,
+  type ListedTool,
+  RelayClient,
+  type RelayEvent,
+  RemoteAccessTokens,
+  RemoteAuthorization,
+  RemoteClients,
+  startRemoteListener,
+  type ToolCall,
+} from '@valet/mcp-server'
 import { afterEach, describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import { base32, checkTotp, fromBase32, normaliseLinkCode, slugFromName, totpAt } from '../src/hub/secrets'
 import { testKey } from './keys'
 import { type TestPasskey, testPasskey } from './passkey'
@@ -104,7 +116,14 @@ interface Mac {
   next(state: HubStatus['state']): Promise<HubStatus>
 }
 
-function startMac(runtime: Runtime, options: { pingMs?: number } = {}): Mac {
+interface MacOptions {
+  readonly pingMs?: number
+  /** The Mac's remote listener, for agents through the hub (step 2). */
+  readonly listener?: () => string | null
+  readonly hubAuthorization?: (grantId: string) => string | null
+}
+
+function startMac(runtime: Runtime, options: MacOptions = {}): Mac {
   const transport = testKey()
   const approval = testKey()
   const hub: HubStatus[] = []
@@ -122,7 +141,8 @@ function startMac(runtime: Runtime, options: { pingMs?: number } = {}): Mac {
       approvalKey: approval.publicKey,
       signature: approval.signDomain(SIGNING_DOMAINS.relayBinding, transport.publicKey),
     },
-    listener: () => null,
+    listener: options.listener ?? (() => null),
+    ...(options.hubAuthorization === undefined ? {} : { hubAuthorization: options.hubAuthorization }),
     consent: () => ({ state: 'declined' }),
     onEvent: (event: RelayEvent) => {
       if (event.type === 'hub-status') hub.push(event.hub)
@@ -569,11 +589,11 @@ describe('agents signing in at the hub', () => {
   const s256 = (verifier: string) => createHash('sha256').update(verifier).digest('base64url')
 
   /** An account with one Mac on it, which started the device list. */
-  async function account() {
-    const runtime = await relay()
+  async function account(options: { runtime?: Runtime; mac?: MacOptions } = {}) {
+    const runtime = options.runtime ?? (await relay())
     const browser = new Browser(runtime)
     await signUp(browser, testPasskey(HUB_HOST))
-    const mac = startMac(runtime)
+    const mac = startMac(runtime, options.mac)
     await mac.online()
     mac.client.send({ type: 'hub-link-start', name: 'Studio' })
     const linking = await mac.next('linking')
@@ -763,4 +783,151 @@ describe('agents signing in at the hub', () => {
     const done = await a.get('/authorize/done')
     expect(new URL(done.headers.get('location') ?? '').searchParams.get('error')).toBe('access_denied')
   })
+
+  it('serves an agent every node’s tools under one address, only with a grant the Mac checked', async () => {
+    const runtime = await relay({ hub: { graceSeconds: 3 } })
+    // The Mac's real remote listener: it lets an agent through the hub (client `hub-…`) call its
+    // remote-enabled tools, as the app's policy does, and the relay client gives it a token only
+    // for a grant it holds.
+    const tokens = new RemoteAccessTokens()
+    const calls: ToolCall[] = []
+    const viewCart: ListedTool = {
+      adapterId: 'woolworths',
+      adapterName: 'Woolworths',
+      declaration: { name: 'view_cart', title: 'View cart', description: 'The cart.', sideEffect: 'read' },
+      input: z.object({}),
+      output: z.object({ items: z.number() }),
+    }
+    let host = ''
+    const listener = await startRemoteListener({
+      caller: {
+        listTools: () => [viewCart],
+        call: async (call) => {
+          calls.push(call)
+          return { status: 'ok', output: { items: 3 } }
+        },
+      },
+      policy: { allows: (_a, _d, clientId) => clientId === null || clientId.startsWith('hub-') },
+      tokens,
+      authorization: new RemoteAuthorization({
+        tokens,
+        clients: new RemoteClients(),
+        consents: new ConsentRequests(),
+      }),
+      hosts: () => new Set([host]),
+    })
+    cleanup.push(() => listener.close())
+    let honoured: Set<string> = new Set()
+    const { mac, accountId } = await account({
+      runtime,
+      mac: {
+        listener: () => listener.url,
+        hubAuthorization: (grantId) =>
+          honoured.has(grantId)
+            ? `Bearer ${tokens.issue(`hub-${grantId.slice(0, 32)}`, `https://${host}/mcp`)}`
+            : null,
+      },
+    })
+    host = `${mac.id}.relay.test`
+
+    // An agent signs in and the Mac approves it.
+    const a = await agent(runtime)
+    await until(() => mac.consents.some((c) => c.consents.some((x) => x.id === a.consent.id)))
+    const signed = mac.signGrant(grantFor(accountId, mac.id, a.consent, a.clientId))
+    mac.client.send({ type: 'hub-grant', grant: signed })
+    await until(() => mac.grants.some((g) => g.grants.length === 1))
+    honoured = new Set([hubGrantId(signed)])
+    const code = new URL((await a.get('/authorize/done')).headers.get('location') ?? '').searchParams.get(
+      'code',
+    )
+    const issued = (await (
+      await a.token({
+        grant_type: 'authorization_code',
+        code: code ?? '',
+        redirect_uri: REDIRECT,
+        code_verifier: a.verifier,
+      })
+    ).json()) as { access_token: string }
+
+    let next = 1
+    const mcp = (method: string, params?: unknown, bearer = issued.access_token) =>
+      runtime.fetch(`${HUB_ORIGIN}/mcp`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+          ...(bearer === '' ? {} : { authorization: `Bearer ${bearer}` }),
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: next++,
+          method,
+          ...(params === undefined ? {} : { params }),
+        }),
+      })
+    const result = async (method: string, params?: unknown) => {
+      const response = await mcp(method, params)
+      expect(response.status).toBe(200)
+      return ((await response.json()) as { result: Record<string, unknown> }).result
+    }
+
+    // No token, or someone else's: the OAuth challenge.
+    const anonymous = await mcp('tools/list', undefined, '')
+    expect(anonymous.status).toBe(401)
+    expect(anonymous.headers.get('www-authenticate')).toContain(
+      `${HUB_ORIGIN}/.well-known/oauth-protected-resource/mcp`,
+    )
+    expect((await mcp('tools/list', undefined, 'x'.repeat(43))).status).toBe(401)
+
+    expect(await result('initialize', { protocolVersion: '2025-06-18', capabilities: {} })).toMatchObject({
+      protocolVersion: '2025-06-18',
+      capabilities: { tools: {} },
+    })
+    expect(await result('ping')).toEqual({})
+
+    // The node's tools, named for it, and a call that runs on it as the agent through the hub.
+    const listed = (await result('tools/list')) as { tools: { name: string; title: string }[] }
+    expect(listed.tools.map((t) => t.name)).toEqual(['studio__woolworths_view_cart'])
+    expect(listed.tools[0]?.title).toBe('View cart (Studio)')
+    const called = await result('tools/call', { name: 'studio__woolworths_view_cart', arguments: {} })
+    expect(called).toMatchObject({ structuredContent: { items: 3 } })
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.identity).toMatchObject({
+      origin: 'remote',
+      clientId: `hub-${hubGrantId(signed).slice(0, 32)}`,
+    })
+    expect(await result('tools/call', { name: 'elsewhere__x', arguments: {} })).toMatchObject({
+      isError: true,
+    })
+
+    // A grant the Mac stops honouring: the node refuses, whatever the hub holds.
+    honoured = new Set()
+    await listener.endClient(`hub-${hubGrantId(signed).slice(0, 32)}`)
+    const refused = (await result('tools/call', {
+      name: 'studio__woolworths_view_cart',
+      arguments: {},
+    })) as { isError?: boolean }
+    expect(refused.isError).toBe(true)
+    expect(calls).toHaveLength(1)
+    honoured = new Set([hubGrantId(signed)])
+
+    // The Mac goes offline: its tools stay listed for the grace, failing fast, and then go.
+    await mac.client.stop()
+    await delay(300)
+    expect(((await result('tools/list')) as { tools: unknown[] }).tools).toHaveLength(1)
+    const offline = (await result('tools/call', { name: 'studio__woolworths_view_cart', arguments: {} })) as {
+      isError: boolean
+      content: { text: string }[]
+    }
+    expect(offline.isError).toBe(true)
+    expect(offline.content[0]?.text).toContain('Studio is offline')
+    await delay(3_200)
+    expect(((await result('tools/list')) as { tools: unknown[] }).tools).toEqual([])
+
+    // Back online: back in the list.
+    mac.client.start()
+    await mac.online()
+    await until(() => mac.grants.length > 1)
+    expect(((await result('tools/list')) as { tools: unknown[] }).tools).toHaveLength(1)
+  }, 30_000)
 })
