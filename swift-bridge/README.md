@@ -29,6 +29,14 @@ VALET_SWIFT_MESSAGES_HELPER="$PWD/swift-bridge/.build/debug/valet-messages-helpe
   pnpm vitest run --project credentials test/keychain-contract test/otp-contract
 ```
 
+**Running the app from source.** An ad hoc signed helper is a new program to the Keychain after
+every build, so macOS asks again before it can read the Mac's keys (and can't ask while the screen
+is locked). Sign the debug helpers with your own certificate instead: put
+`VALET_DEV_SIGN_IDENTITY = "<SHA-1 from security find-identity -v -p codesigning>"` under `[env]`
+in `mise.local.toml` (git ignores it) and build with `swift-bridge/sign-dev-helpers.sh`. Allow the
+Keychain prompt once, with Always Allow. Debug builds skip the caller check whatever they are
+signed with, because the development Electron is unsigned; release builds keep it.
+
 ## valet-bridge
 
 The stdio-to-HTTP bridge the packaged app ships at `Valet.app/Contents/MacOS/valet-bridge` (D60).

@@ -2,7 +2,10 @@
 // that same team: the Keychain helper checks its parent (the app's main process, which spawned it),
 // the Messages helper checks the peer of each socket connection. An unsigned or ad hoc signed
 // helper is a development build and has no team to check against, so it answers anyone running as
-// this user, which is no worse than the in-process reader it stands in for.
+// this user, which is no worse than the in-process reader it stands in for. A debug build is
+// treated the same way even when signed: a developer signs it with their own certificate only so
+// the Keychain recognises it across rebuilds (scripts/sign-dev-helpers.sh), and the development
+// Electron that calls it is unsigned.
 
 import Foundation
 import Security
@@ -10,6 +13,14 @@ import Security
 public enum Caller {
   /// The Team ID this binary is signed with, or nil when it is unsigned or ad hoc signed.
   public static func ownTeamID() -> String? {
+    #if DEBUG
+      return nil
+    #else
+      return signedTeamID()
+    #endif
+  }
+
+  private static func signedTeamID() -> String? {
     var code: SecCode?
     guard SecCodeCopySelf([], &code) == errSecSuccess, let code else { return nil }
     var staticCode: SecStaticCode?
