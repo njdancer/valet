@@ -8,6 +8,10 @@ const SIGN_IN = new Set([
   '/api/sign-in/verify',
   '/api/sign-in/app',
   '/api/sign-up/options',
+  // Agents signing in (oauth.ts): anyone can reach these, so they share the sign-in limit.
+  '/register',
+  '/authorize',
+  '/token',
 ])
 const MAX_BODY = 64 * 1024
 

@@ -2,6 +2,7 @@
 // Macs joining it as nodes over their relay socket, and node presence. Against a local Workers
 // runtime, with the real relay client as the Mac and a software passkey as the browser's.
 
+import { createHash } from 'node:crypto'
 import { setTimeout as delay } from 'node:timers/promises'
 import {
   type HubStatus,
@@ -92,9 +93,13 @@ interface Mac {
   readonly hub: HubStatus[]
   /** Each hub-roster frame, in order. */
   readonly rosters: Extract<RelayEvent, { type: 'hub-roster' }>[]
+  /** Each hub-consents and hub-grants frame, in order. */
+  readonly consents: Extract<RelayEvent, { type: 'hub-consents' }>[]
+  readonly grants: Extract<RelayEvent, { type: 'hub-grants' }>[]
   /** This Mac as a roster device, and its approval key's signature over a change. */
   readonly device: RosterDevice
   signRoster(payload: string): { payload: string; signature: string }
+  signGrant(payload: string): { payload: string; signature: string }
   online(): Promise<void>
   next(state: HubStatus['state']): Promise<HubStatus>
 }
@@ -104,6 +109,8 @@ function startMac(runtime: Runtime, options: { pingMs?: number } = {}): Mac {
   const approval = testKey()
   const hub: HubStatus[] = []
   const rosters: Extract<RelayEvent, { type: 'hub-roster' }>[] = []
+  const consents: Extract<RelayEvent, { type: 'hub-consents' }>[] = []
+  const grants: Extract<RelayEvent, { type: 'hub-grants' }>[] = []
   const waiters: Array<() => void> = []
   let cursor = 0
   const client = new RelayClient({
@@ -120,6 +127,8 @@ function startMac(runtime: Runtime, options: { pingMs?: number } = {}): Mac {
     onEvent: (event: RelayEvent) => {
       if (event.type === 'hub-status') hub.push(event.hub)
       if (event.type === 'hub-roster') rosters.push(event)
+      if (event.type === 'hub-consents') consents.push(event)
+      if (event.type === 'hub-grants') grants.push(event)
       for (const w of waiters.splice(0)) w()
     },
     onStatus: () => {
@@ -142,6 +151,8 @@ function startMac(runtime: Runtime, options: { pingMs?: number } = {}): Mac {
     client,
     hub,
     rosters,
+    consents,
+    grants,
     device: {
       deviceId: approval.id,
       role: 'mac',
@@ -154,6 +165,10 @@ function startMac(runtime: Runtime, options: { pingMs?: number } = {}): Mac {
     signRoster: (payload) => ({
       payload,
       signature: approval.signDomain(SIGNING_DOMAINS.rosterChange, payload),
+    }),
+    signGrant: (payload) => ({
+      payload,
+      signature: approval.signDomain(SIGNING_DOMAINS.hubGrant, payload),
     }),
     online: () => until(() => client.status.state === 'online'),
     // Statuses in order: each call takes the first one of that state after the last one taken.
@@ -539,5 +554,213 @@ describe('nodes', () => {
     await stranger.online()
     stranger.client.send({ type: 'hub-roster-append', changes: [genesis] })
     await until(() => stranger.rosters.some((r) => r.refused === 'not-linked'))
+  })
+})
+
+describe('agents signing in at the hub', () => {
+  const REDIRECT = 'https://claude.ai/api/mcp/auth_callback'
+  const until = async (check: () => boolean) => {
+    const deadline = Date.now() + 10_000
+    while (!check()) {
+      if (Date.now() > deadline) throw new Error('timed out')
+      await delay(50)
+    }
+  }
+  const s256 = (verifier: string) => createHash('sha256').update(verifier).digest('base64url')
+
+  /** An account with one Mac on it, which started the device list. */
+  async function account() {
+    const runtime = await relay()
+    const browser = new Browser(runtime)
+    await signUp(browser, testPasskey(HUB_HOST))
+    const mac = startMac(runtime)
+    await mac.online()
+    mac.client.send({ type: 'hub-link-start', name: 'Studio' })
+    const linking = await mac.next('linking')
+    if (linking.state !== 'linking') throw new Error('expected linking')
+    await browser.json('/api/nodes/link', { code: linking.code, slug: 'studio' })
+    const linked = await mac.next('linked')
+    if (linked.state !== 'linked') throw new Error('expected linked')
+    const genesis = mac.signRoster(
+      nextRosterChange(
+        null,
+        linked.accountId,
+        mac.id,
+        { op: 'add', device: mac.device },
+        new Date().toISOString(),
+      ),
+    )
+    mac.client.send({ type: 'hub-roster-append', changes: [genesis] })
+    await until(() => mac.rosters.some((r) => r.changes.length === 1))
+    return { runtime, mac, accountId: linked.accountId }
+  }
+
+  /** An agent's browser: registers, opens /authorize, and keeps the consent cookie. */
+  async function agent(runtime: Runtime) {
+    const registered = await runtime.fetch(`${HUB_ORIGIN}/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ redirect_uris: [REDIRECT], client_name: 'Claude' }),
+    })
+    expect(registered.status).toBe(201)
+    const { client_id: clientId } = (await registered.json()) as { client_id: string }
+    const verifier = 'v'.repeat(50)
+    const query = new URLSearchParams({
+      response_type: 'code',
+      client_id: clientId,
+      redirect_uri: REDIRECT,
+      code_challenge: s256(verifier),
+      code_challenge_method: 'S256',
+      state: 'st',
+      resource: `${HUB_ORIGIN}/mcp`,
+    })
+    const page = await runtime.fetch(`${HUB_ORIGIN}/authorize?${query}`)
+    expect(page.status).toBe(200)
+    const cookie = (page.headers.get('set-cookie') ?? '').split(';')[0] as string
+    const data = /data-consent="([^"]*)"/.exec(await page.text())?.[1] ?? ''
+    const consent = JSON.parse(
+      data
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&amp;/g, '&'),
+    ) as {
+      id: string
+      code: string
+    }
+    const get = (path: string) =>
+      runtime.fetch(`${HUB_ORIGIN}${path}?id=${consent.id}`, { headers: { cookie }, redirect: 'manual' })
+    const token = (form: Record<string, string>) =>
+      runtime.fetch(`${HUB_ORIGIN}/token`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ client_id: clientId, ...form }).toString(),
+      })
+    return { clientId, verifier, consent, get, token }
+  }
+
+  const grantFor = (
+    accountId: string,
+    by: string,
+    consent: { id: string },
+    clientId: string,
+    at = Date.now(),
+  ) =>
+    JSON.stringify({
+      v: 1,
+      account: accountId,
+      consentId: consent.id,
+      clientId,
+      clientName: 'Claude',
+      host: 'claude.ai',
+      scope: 'remote-tools',
+      at: new Date(at).toISOString(),
+      expiresAt: new Date(at + 30 * 24 * 60 * 60_000).toISOString(),
+      by,
+    })
+
+  it('publishes its metadata', async () => {
+    const runtime = await relay()
+    const resource = await (
+      await runtime.fetch(`${HUB_ORIGIN}/.well-known/oauth-protected-resource/mcp`)
+    ).json()
+    expect(resource).toMatchObject({ resource: `${HUB_ORIGIN}/mcp`, authorization_servers: [HUB_ORIGIN] })
+    const server = await (await runtime.fetch(`${HUB_ORIGIN}/.well-known/oauth-authorization-server`)).json()
+    expect(server).toMatchObject({ issuer: HUB_ORIGIN, code_challenge_methods_supported: ['S256'] })
+    const bad = await runtime.fetch(`${HUB_ORIGIN}/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ redirect_uris: ['http://evil.example/cb'] }),
+    })
+    expect(bad.status).toBe(400)
+  })
+
+  it('lets an agent in only with a grant a device on the list signed', async () => {
+    const { runtime, mac, accountId } = await account()
+    const a = await agent(runtime)
+
+    // The Mac hears the sign-in, with the code the browser shows.
+    await until(() => mac.consents.some((c) => c.consents.some((x) => x.id === a.consent.id)))
+    const shown = mac.consents.at(-1)?.consents.find((x) => x.id === a.consent.id)
+    expect(shown).toMatchObject({ clientName: 'Claude', host: 'claude.ai', code: a.consent.code })
+    expect(await (await a.get('/authorize/status')).json()).toEqual({ state: 'pending' })
+
+    // A key that isn't on the list: refused, still waiting.
+    const stranger = testKey()
+    mac.client.send({
+      type: 'hub-grant',
+      grant: {
+        payload: grantFor(accountId, stranger.id, a.consent, a.clientId),
+        signature: stranger.signDomain(
+          SIGNING_DOMAINS.hubGrant,
+          grantFor(accountId, stranger.id, a.consent, a.clientId),
+        ),
+      },
+    })
+    // Signed for another purpose: refused too.
+    const payload = grantFor(accountId, mac.id, a.consent, a.clientId)
+    mac.client.send({ type: 'hub-grant', grant: { payload, signature: mac.signRoster(payload).signature } })
+    await delay(300)
+    expect(await (await a.get('/authorize/status')).json()).toEqual({ state: 'pending' })
+    // Without the browser's cookie, nothing.
+    expect(
+      (await runtime.fetch(`${HUB_ORIGIN}/authorize/done?id=${a.consent.id}`, { redirect: 'manual' })).status,
+    ).toBe(400)
+
+    // The Mac signs it: every node hears the grant, and the browser collects its code.
+    mac.client.send({ type: 'hub-grant', grant: mac.signGrant(payload) })
+    await until(() => mac.grants.some((g) => g.grants.length === 1))
+    expect(await (await a.get('/authorize/status')).json()).toEqual({ state: 'approved' })
+    const done = await a.get('/authorize/done')
+    expect(done.status).toBe(302)
+    const back = new URL(done.headers.get('location') ?? '')
+    expect(`${back.origin}${back.pathname}`).toBe(REDIRECT)
+    expect(back.searchParams.get('state')).toBe('st')
+    expect(back.searchParams.get('iss')).toBe(HUB_ORIGIN)
+    const code = back.searchParams.get('code') ?? ''
+    expect((await a.get('/authorize/done')).status).toBe(400)
+
+    // The code, with the right verifier, once.
+    const wrong = await a.token({
+      grant_type: 'authorization_code',
+      code,
+      redirect_uri: REDIRECT,
+      code_verifier: 'w'.repeat(50),
+    })
+    expect(wrong.status).toBe(400)
+    const form = { grant_type: 'authorization_code', code, redirect_uri: REDIRECT, code_verifier: a.verifier }
+    const tokens = (await (await a.token(form)).json()) as { access_token: string; refresh_token: string }
+    expect(tokens.access_token).toMatch(/^[A-Za-z0-9_-]{40,}$/)
+
+    // Refresh tokens rotate; a second use of one ends the lot.
+    const refreshed = await a.token({ grant_type: 'refresh_token', refresh_token: tokens.refresh_token })
+    expect(refreshed.status).toBe(200)
+    const next = (await refreshed.json()) as { refresh_token: string }
+    expect((await a.token({ grant_type: 'refresh_token', refresh_token: tokens.refresh_token })).status).toBe(
+      400,
+    )
+    expect((await a.token({ grant_type: 'refresh_token', refresh_token: next.refresh_token })).status).toBe(
+      400,
+    )
+    // A code used twice is refused.
+    expect((await a.token(form)).status).toBe(400)
+
+    // After a reconnect, the grant comes with the status.
+    const before = mac.grants.length
+    await mac.client.stop()
+    mac.client.start()
+    await mac.online()
+    await until(() => mac.grants.length > before)
+    expect(mac.grants.at(-1)?.grants).toHaveLength(1)
+  })
+
+  it('sends the agent back declined when the person says no', async () => {
+    const { runtime, mac } = await account()
+    const a = await agent(runtime)
+    await until(() => mac.consents.some((c) => c.consents.some((x) => x.id === a.consent.id)))
+    mac.client.send({ type: 'hub-consent-decline', consentId: a.consent.id })
+    await until(() => mac.consents.some((c) => c.consents.length === 0))
+    expect(await (await a.get('/authorize/status')).json()).toEqual({ state: 'declined' })
+    const done = await a.get('/authorize/done')
+    expect(new URL(done.headers.get('location') ?? '').searchParams.get('error')).toBe('access_denied')
   })
 })

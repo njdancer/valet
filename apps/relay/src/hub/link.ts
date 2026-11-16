@@ -33,6 +33,8 @@ export function hubLink(env: Env): HubLink | undefined {
     linkStart: (macId, name) => ask('/node/link-start', { macId, name }),
     unlink: (macId) => ask('/node/unlink', { macId }),
     rosterAppend: (macId, changes) => ask('/node/roster-append', { macId, changes }),
+    grant: (macId, grant) => ask('/node/grant', { macId, grant }),
+    consentDecline: (macId, consentId) => ask('/node/consent-decline', { macId, consentId }),
   }
 }
 

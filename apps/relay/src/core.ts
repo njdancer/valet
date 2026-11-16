@@ -147,12 +147,19 @@ export interface HubLink {
   unlink(macId: string): Promise<HubAnswer>
   /** A change to the account's device list, from this Mac (roster.ts). */
   rosterAppend(macId: string, changes: readonly { payload: string; signature: string }[]): Promise<HubAnswer>
+  /** The person approved an agent's sign-in on this Mac: the grant it signed (hub-grant.ts). */
+  grant(macId: string, grant: { payload: string; signature: string }): Promise<HubAnswer>
+  /** The person declined an agent's sign-in on this Mac. */
+  consentDecline(macId: string, consentId: string): Promise<HubAnswer>
 }
 
 /** What the hub tells a Mac: its status, and the account's device list when that is news. */
 export interface HubAnswer {
   readonly status: HubStatus
   readonly roster?: Omit<Extract<RelayToMac, { type: 'hub-roster' }>, 'type'>
+  /** Agents' sign-ins waiting for the person, and the agents' grants, when those are news. */
+  readonly consents?: Extract<RelayToMac, { type: 'hub-consents' }>['consents']
+  readonly grants?: Extract<RelayToMac, { type: 'hub-grants' }>['grants']
 }
 
 export interface RelayCoreOptions {
@@ -559,6 +566,10 @@ export class RelayCore {
         return this.toHub((hub) => hub.unlink(this.options.macId))
       case 'hub-roster-append':
         return this.toHub((hub) => hub.rosterAppend(this.options.macId, frame.changes))
+      case 'hub-grant':
+        return this.toHub((hub) => hub.grant(this.options.macId, frame.grant))
+      case 'hub-consent-decline':
+        return this.toHub((hub) => hub.consentDecline(this.options.macId, frame.consentId))
       case 'recovery-register': {
         const stored = await this.state()
         if (stored === null || stored.recoveryCodeHash === frame.codeHash) return
@@ -593,6 +604,8 @@ export class RelayCore {
     if (mac === null) return
     this.sendTo(mac, { type: 'hub-status', hub: answer.status })
     if (answer.roster !== undefined) this.sendTo(mac, { type: 'hub-roster', ...answer.roster })
+    if (answer.consents !== undefined) this.sendTo(mac, { type: 'hub-consents', consents: answer.consents })
+    if (answer.grants !== undefined) this.sendTo(mac, { type: 'hub-grants', grants: answer.grants })
   }
 
   /** The live Mac socket's state, for the hub's presence check. */

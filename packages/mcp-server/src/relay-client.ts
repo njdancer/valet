@@ -60,6 +60,8 @@ export type RelayEvent = Extract<
       | 'relay-locked'
       | 'hub-status'
       | 'hub-roster'
+      | 'hub-consents'
+      | 'hub-grants'
   }
 >
 
@@ -258,6 +260,8 @@ export class RelayClient {
       case 'relay-locked':
       case 'hub-status':
       case 'hub-roster':
+      case 'hub-consents':
+      case 'hub-grants':
         return this.emit(parsed)
     }
   }
