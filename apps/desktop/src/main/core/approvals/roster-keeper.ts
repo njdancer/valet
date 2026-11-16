@@ -83,8 +83,15 @@ export class RosterKeeper {
   /** Set after a change was refused as invalid, so a bad change isn't sent again and again. */
   private stuck = false
   private busy: Promise<void> = Promise.resolve()
+  /** The list as last verified with this Mac on it; null otherwise. */
+  private verified: Roster | null = null
 
   constructor(private readonly options: RosterKeeperOptions) {}
+
+  /** The account's list, checked here against the pin, while this Mac is on it. */
+  get roster(): Roster | null {
+    return this.verified
+  }
 
   get view(): RosterView {
     return { state: this.state, devices: this.count }
@@ -95,6 +102,7 @@ export class RosterKeeper {
     if (accountId === this.account) return
     this.account = accountId
     this.chain = null
+    this.verified = null
     this.declined = false
     this.stuck = false
     this.set(accountId === null ? 'off' : 'waiting', 0)
@@ -160,13 +168,20 @@ export class RosterKeeper {
     if (roster.account !== account) return this.refuse('the hub sent another account’s list')
     if (pin === undefined) {
       // Pin only a list this Mac started: its own first change, adding itself.
-      if (firstSigner(chain) !== macId) return this.set('not-added', roster.devices.size)
+      if (firstSigner(chain) !== macId) {
+        this.verified = null
+        return this.set('not-added', roster.devices.size)
+      }
     }
     if (pin === undefined || pin.seq !== roster.seq || pin.head !== roster.head)
       await ledger.commit((draft) => {
         draft.roster = { account, genesis: roster.genesis, seq: roster.seq, head: roster.head }
       })
-    if (!roster.devices.has(macId)) return this.set('not-added', roster.devices.size)
+    if (!roster.devices.has(macId)) {
+      this.verified = null
+      return this.set('not-added', roster.devices.size)
+    }
+    this.verified = roster
 
     // Phones of this Mac's that another device took off the list.
     const removedBy = lastRemovals(chain)
@@ -251,6 +266,7 @@ export class RosterKeeper {
   }
 
   private refuse(why: string): void {
+    this.verified = null
     this.options.log?.(`[roster] ${why}`)
     this.set('refused', 0)
   }

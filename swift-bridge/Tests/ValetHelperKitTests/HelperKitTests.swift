@@ -296,6 +296,33 @@ final class ChannelSigningTests: XCTestCase {
     XCTAssertNil(channelApprovalToSign(domain: deviceRecordDomain, payloads: Array(repeating: record([:]), count: 3), own: own))
   }
 
+  func grant(_ fields: [String: Any] = [:]) -> String {
+    var base: [String: Any] = [
+      "v": 1, "account": "acct_0123456789abcdef", "consentId": "consent_0123456789", "clientId": "hc0123456789abcdef",
+      "clientName": "Claude", "host": "claude.ai", "scope": "remote-tools", "at": "2026-11-16T00:00:00.000Z",
+      "expiresAt": "2026-12-16T00:00:00.000Z", "by": own.macId,
+    ]
+    for (k, v) in fields { base[k] = v }
+    return String(decoding: try! JSONSerialization.data(withJSONObject: base, options: [.sortedKeys]), as: UTF8.self)
+  }
+
+  func testHubGrantIsThisMacsForRemoteToolsOnly() {
+    XCTAssertEqual(
+      channelApprovalToSign(domain: hubGrantDomain, payloads: [grant()], own: own)?.reason,
+      "let an agent at claude.ai use your Valet tools through your Valet account")
+    func refused(_ payloads: [String], _ line: UInt = #line) {
+      XCTAssertNil(channelApprovalToSign(domain: hubGrantDomain, payloads: payloads, own: own), line: line)
+    }
+    refused([grant(["by": String(repeating: "c", count: 32)])])
+    refused([grant(["scope": "everything"])])
+    refused([grant(["expiresAt": "2027-03-16T00:00:00.000Z"])])
+    refused([grant(["expiresAt": "2026-11-15T00:00:00.000Z"])])
+    refused([grant(["host": "Claude.AI"])])
+    refused([grant(["clientId": "remote:abc"])])
+    refused([grant(["extra": 1])])
+    refused([grant(), grant()])
+  }
+
   func testTransportSignsOnlyThisMacsSignIn() {
     let payload = #"{"nonce":"n0","relay":"https://relay.example.com","role":"mac","id":"\#(own.macId)"}"#
     XCTAssertNotNil(relayAuthToSign(payload: payload, macId: own.macId))

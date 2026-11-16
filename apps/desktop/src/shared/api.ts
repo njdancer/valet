@@ -1084,6 +1084,11 @@ export interface RemoteConsentRequest {
   readonly source: string | null
   readonly requestedAt: IsoTime
   readonly expiresAt: IsoTime
+  /**
+   * 'hub': an agent signing in through the Valet account (relay-hub.md, step 3). Approving it
+   * gives it the tools each Mac lets cloud agents use, so the tools ticked here don't apply.
+   */
+  readonly via?: 'hub'
 }
 
 /** A tool the person can grant at consent: one that is on for remote clients now. */

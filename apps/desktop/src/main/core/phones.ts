@@ -9,6 +9,7 @@ import { RelayClient, type RelayClientStatus, type RelayConsentView } from '@val
 import type { HubView, PairingView, PhonesStatus } from '../../shared/api'
 import type { ApprovalBroker, MacToPhoneBody, PhoneOutbox } from './approvals/broker'
 import type { DeviceStore } from './approvals/devices'
+import { HubAgents } from './approvals/hub-agents'
 import type { TrustedLedger } from './approvals/ledger'
 import { PhoneChannel, type PhoneChannelOptions } from './approvals/phone-channel'
 import { PhoneInbox, type SafetySwitches } from './approvals/phone-inbox'
@@ -64,6 +65,8 @@ export interface PhonesParts {
   /** A phone paired here that another device removed from the account's list: revoke it. */
   readonly removedFromAccount: (deviceId: string, by: string) => Promise<void>
   readonly now: () => number
+  /** Agents' sign-ins at the hub changed; `opened` when a new one arrived (show the sheet). */
+  readonly hubConsents: (opened: boolean) => void
 }
 
 export class Phones implements PhoneOutbox {
@@ -77,6 +80,7 @@ export class Phones implements PhoneOutbox {
   private relay: RelaySetup | null
   private parts: PhonesParts | null = null
   private roster: RosterKeeper | null = null
+  private agents: HubAgents | null = null
 
   constructor(private readonly options: PhonesOptions) {
     this.relay = options.relay
@@ -134,6 +138,14 @@ export class Phones implements PhoneOutbox {
       onChange: () => this.options.emit(),
       ...(this.options.log === undefined ? {} : { log: this.options.log }),
     })
+    const agents = new HubAgents({
+      macId: parts.devices.macId,
+      channel: keysOps,
+      roster: () => roster.roster,
+      send: (frame) => this.client?.send(frame) ?? false,
+      now: parts.now,
+      onChange: (opened) => parts.hubConsents(opened),
+    })
     const client = new RelayClient({
       relay: relay.origin,
       macId: parts.devices.macId,
@@ -163,8 +175,14 @@ export class Phones implements PhoneOutbox {
           this.options.emit()
           return
         }
-        // Agents' sign-ins and grants at the hub: the Mac takes part in the next step (relay-hub.md, step 3).
-        if (event.type === 'hub-consents' || event.type === 'hub-grants') return
+        if (event.type === 'hub-consents') {
+          agents.received(event.consents)
+          return
+        }
+        if (event.type === 'hub-grants') {
+          agents.grantsReceived(event.grants)
+          return
+        }
         if (event.type === 'hub-roster') {
           void roster
             .received(event.changes, event.refused)
@@ -199,6 +217,7 @@ export class Phones implements PhoneOutbox {
     })
     this.client = client
     this.roster = roster
+    this.agents = agents
     this.options.remote?.setRelayHost(client.publicHost)
     client.start()
   }
@@ -209,6 +228,8 @@ export class Phones implements PhoneOutbox {
     this.client = null
     this.channel = null
     this.roster = null
+    this.agents?.received([])
+    this.agents = null
     this.online.clear()
   }
 
@@ -258,6 +279,11 @@ export class Phones implements PhoneOutbox {
    */
   rosterChanged(): Promise<void> {
     return this.roster?.changed() ?? Promise.resolve()
+  }
+
+  /** Agents signing in through the hub, while the relay connection runs. */
+  get hubAgents(): HubAgents | null {
+    return this.agents
   }
 
   /** A page on the hub the relay named, https only; null when there is none. */

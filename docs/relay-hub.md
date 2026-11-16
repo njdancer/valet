@@ -259,6 +259,14 @@ Built in this order: the hub's sign-in for agents and the grant format (3a), the
 - **What `remote-tools` gives:** on each Mac, the tools it already lets remote agents use, behind
   its own approvals, pacing and lockdown. Nothing wider. Valet's own admin and authoring tools stay
   per-Mac decisions, as today.
+- **The Mac's part (3b)** (`apps/desktop/src/main/core/approvals/hub-agents.ts`). The hub's
+  waiting sign-ins appear in the same "Approve a connection" sheet as the Mac's own, marked
+  "Through: your Valet account", with the same notification. There are no tools to tick: the
+  sheet says what the agent gets instead. The code typed picks the sign-in; approving signs the
+  grant with Touch ID (the Secure Enclave helper checks it is this Mac's, for `remote-tools`, for
+  at most 90 days, and writes the prompt's reason) and sends it. Grants last 30 days. Declining
+  tells the hub. The Mac holds the hub's grants and honours only those that check against the
+  device list it verified; serving agents with them comes with step 2.
 - **Taking access away needs no signature.** The hub can drop a grant (and its tokens), and a Mac
   can stop honouring one; neither can add one.
 - **Who signs:** any device on the list. Nick chose whether that includes the Mac's Touch ID or only
