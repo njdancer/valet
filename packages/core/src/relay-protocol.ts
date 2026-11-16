@@ -18,6 +18,7 @@ import { canRevokeDevice, keyIdSchema } from './devices'
 import { displayText } from './display-text'
 import { sha256Hex } from './hash'
 import { sealedSchema } from './pairing'
+import { ROSTER_MAX_CHANGES, signedRosterChangeSchema } from './roster'
 import {
   keyId,
   p256PublicKeySchema,
@@ -432,6 +433,8 @@ export const hubStatusSchema = z.discriminatedUnion('state', [
     .object({
       state: z.literal('linked'),
       url: z.url({ protocol: /^https?$/ }),
+      /** The account's id at the hub, which every change to its device list names (roster.ts). */
+      accountId: z.string().regex(/^[A-Za-z0-9_-]{16,64}$/),
       /** How the hub names the account, for "Connected to …". */
       account: z.string().min(1).max(254),
       slug: hubNodeSlugSchema,
@@ -508,6 +511,11 @@ export const macToRelaySchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('hub-link-start'), name: hubNodeNameSchema }).strict(),
   /** Leave the account. The hub forgets the node at once. */
   z.object({ type: z.literal('hub-unlink') }).strict(),
+  /**
+   * Append one change to the account's device list (roster.ts), signed by a device on it. The hub
+   * keeps it only if the whole chain still checks; every node then hears `hub-roster`.
+   */
+  z.object({ type: z.literal('hub-roster-append'), change: signedRosterChangeSchema }).strict(),
 ])
 export type MacToRelay = z.infer<typeof macToRelaySchema>
 
@@ -556,6 +564,18 @@ export const relayToMacSchema = z.discriminatedUnion('type', [
     .strict(),
   /** Where this Mac stands with the hub: after ready, and whenever that changes. */
   z.object({ type: z.literal('hub-status'), hub: hubStatusSchema }).strict(),
+  /**
+   * The account's whole device list, as the hub holds it: after ready, after this Mac joins, and
+   * after any change. The Mac checks it against the genesis it pinned before trusting anyone on it.
+   * `refused`: this Mac's last hub-roster-append wasn't kept, and why.
+   */
+  z
+    .object({
+      type: z.literal('hub-roster'),
+      changes: z.array(signedRosterChangeSchema).max(ROSTER_MAX_CHANGES),
+      refused: z.enum(['not-linked', 'conflict', 'invalid']).optional(),
+    })
+    .strict(),
 ])
 export type RelayToMac = z.infer<typeof relayToMacSchema>
 

@@ -51,7 +51,16 @@ export interface RelayBinding {
 /** Frames for the app: the phone channel, pairing replies, the relay-side lock and the hub. */
 export type RelayEvent = Extract<
   RelayToMac,
-  { type: 'envelope' | 'device-online' | 'ready' | 'pairing-reply' | 'relay-locked' | 'hub-status' }
+  {
+    type:
+      | 'envelope'
+      | 'device-online'
+      | 'ready'
+      | 'pairing-reply'
+      | 'relay-locked'
+      | 'hub-status'
+      | 'hub-roster'
+  }
 >
 
 export interface RelayClientOptions {
@@ -248,6 +257,7 @@ export class RelayClient {
       case 'pairing-reply':
       case 'relay-locked':
       case 'hub-status':
+      case 'hub-roster':
         return this.emit(parsed)
     }
   }

@@ -24,6 +24,8 @@ export const SIGNING_DOMAINS = {
   pairing: 'valet/pairing/v1',
   /** The Mac vouching for the nonce it sent and the reply it accepted (H's CR-11). */
   pairingChallenge: 'valet/pairing/v1 challenge',
+  /** A change to the account's device list at the hub (roster.ts), by a device already on it. */
+  rosterChange: 'valet/roster-change/v1',
 } as const
 export type SigningDomain = (typeof SIGNING_DOMAINS)[keyof typeof SIGNING_DOMAINS]
 

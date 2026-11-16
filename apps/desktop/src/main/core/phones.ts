@@ -142,6 +142,8 @@ export class Phones implements PhoneOutbox {
           this.options.emit()
           return
         }
+        // The account's device list: the Mac starts trusting it in the next step (relay-hub.md, step 4).
+        if (event.type === 'hub-roster') return
         if (event.type === 'device-online') {
           if (event.online) this.online.add(event.deviceId)
           else this.online.delete(event.deviceId)
