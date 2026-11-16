@@ -14,3 +14,4 @@ ios/ValetPhone/Generated/
 # Local iPhone builds and relay deploy configs (docs/iphone-setup.md)
 ios/build/
 apps/relay/wrangler.local.jsonc
+mise.local.toml
