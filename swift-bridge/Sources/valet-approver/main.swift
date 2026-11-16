@@ -76,9 +76,9 @@ if let team = Caller.ownTeamID(), !Caller.parentIsSigned(by: team) {
 let service = "valet.device"
 let names = ["approval", "transport", "agreement"]
 
-let store: KeychainStore
+let store: SecretStore
 do {
-  store = try KeychainStore(keychainPath: keychainPath)
+  store = try makeSecretStore(keychainPath: keychainPath)
 } catch {
   fail(Code.other, "keychain unavailable")
 }

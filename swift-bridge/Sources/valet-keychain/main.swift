@@ -5,6 +5,8 @@
 //   valet-keychain write  <service> <account> <comment>  the secret on stdin (never argv)
 //   valet-keychain delete <service> <account>
 //   valet-keychain purge  <service>                      every item of the service (uninstall, reset)
+//   valet-keychain store                                 which store this build uses: "protected
+//                                                        <access group>" or "classic"
 //
 // Exit codes, which packages/credentials/src/keychain-helper.ts maps: 0 done, 44 no such item (as
 // /usr/bin/security), 51 the Keychain wants the person, 64 usage, 77 caller refused, 1 anything
@@ -72,9 +74,14 @@ if let team = Caller.ownTeamID(), !Caller.parentIsSigned(by: team) {
   fail(Code.refused, "caller refused")
 }
 
-let usage = "usage: valet-keychain read|info|write|delete <service> <account> | purge <service>"
+let usage = "usage: valet-keychain read|info|write|delete <service> <account> | purge <service> | store"
 let args = Array(CommandLine.arguments.dropFirst())
 guard let command = args.first else { fail(Code.usage, usage) }
+if command == "store", args.count == 1 {
+  let group = ownAccessGroup()
+  _ = writeAll(Array((group.map { "protected \($0)" } ?? "classic").utf8))
+  exit(Code.ok)
+}
 let expected = ["write": 4, "purge": 2][command] ?? 3
 guard ["read", "info", "write", "delete", "purge"].contains(command), args.count == expected else {
   fail(Code.usage, usage)
@@ -93,7 +100,7 @@ guard purging || named != nil else { fail(Code.usage, "invalid item") }
 #endif
 
 do {
-  let store = try KeychainStore(keychainPath: keychainPath)
+  let store = try makeSecretStore(keychainPath: keychainPath)
   if purging {
     try store.purge(service: args[1])
     exit(Code.ok)

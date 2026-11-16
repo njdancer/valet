@@ -58,6 +58,7 @@ import {
   userDataDir,
 } from '../core/launch'
 import { addOwnPort, ownPorts, recordOwnPorts } from '../core/own-ports'
+import { devHelperPath } from '../core/native-helpers'
 import { macName, relayFromEnv } from '../core/phones'
 import { AppService } from '../core/service'
 import { SHOWCASE_BUILD_MARKER } from '../core/showcase'
@@ -183,10 +184,12 @@ function bridgeCommand(): ((configPath: string) => BridgeCommand) | null {
  * the repo (`swift build --package-path swift-bridge`), or null when neither exists.
  */
 function nativeHelper(name: string): string | null {
-  const path = app.isPackaged
-    ? join(dirname(process.execPath), name)
-    : resolve(app.getAppPath(), '../../swift-bridge/.build/debug', name)
-  return existsSync(path) ? path : null
+  if (app.isPackaged) {
+    const path = join(dirname(process.execPath), name)
+    return existsSync(path) ? path : null
+  }
+  const bridge = resolve(app.getAppPath(), '../../swift-bridge/.build')
+  return devHelperPath(name, bridge, existsSync)
 }
 
 /**

@@ -29,6 +29,33 @@ VALET_SWIFT_MESSAGES_HELPER="$PWD/swift-bridge/.build/debug/valet-messages-helpe
   pnpm vitest run --project credentials test/keychain-contract test/otp-contract
 ```
 
+## Valet's secure store
+
+The helpers that keep Valet's secrets, valet-approver (the Mac's device keys) and valet-keychain
+(the trusted-store anchor and Valet's copies of logins), keep them in the **data protection
+Keychain**, in an access group only binaries signed by Valet's team can open
+(`ValetHelperKit/Store.swift`). Access follows the signature, so there is no per-item prompt,
+rebuilds included, and items work after the Mac's first unlock, so Valet keeps working while the
+screen is locked. An item still in the classic Keychain moves across the first time it is read
+(that one read may ask once).
+
+The access group is a restricted entitlement: macOS kills a binary that claims it without a
+provisioning profile. So for development the two helpers are built as small app bundles that carry
+one (`apps/project.yml`):
+
+```bash
+# once: sign in under Xcode › Settings › Accounts, and set VALET_TEAM_ID in mise.local.toml
+swift-bridge/build-helper-apps.sh     # Xcode makes the development App IDs and profiles itself
+swift-bridge/check-secure-store.sh    # live check: protected store, no prompts, survives a re-sign
+```
+
+A development build of the app uses the bundles when they're there
+(`apps/desktop/src/main/core/native-helpers.ts`) and the plain binaries otherwise. A helper with no
+access group (the plain binaries, CI's unsigned bundles) uses the classic Keychain, and the
+contract suites always use a throwaway keychain file. Release builds still ship the plain binaries
+and the classic Keychain, whose Developer ID requirement doesn't change between releases, until a
+Developer ID provisioning profile exists.
+
 **Running the app from source.** An ad hoc signed helper is a new program to the Keychain after
 every build, so macOS asks again before it can read the Mac's keys (and can't ask while the screen
 is locked). Sign the debug helpers with your own certificate instead: put
