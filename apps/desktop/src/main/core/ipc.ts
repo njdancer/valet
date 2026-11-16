@@ -341,6 +341,10 @@ const HANDLERS: Readonly<
     if (sender.role !== 'control') throw new IpcRefused()
     return api.phones.leaveHub()
   }),
+  'phones.retryRoster': entry(none, (api, _args, sender) => {
+    if (sender.role !== 'control') throw new IpcRefused()
+    return api.phones.retryRoster()
+  }),
   // Settings lives in the control panel, and nowhere else may ask: a confirmation panel or a
   // hand-off banner shows adapter text. The main process's own dialog still decides.
   'app.erase': entry(z.tuple([z.enum(['reset', 'uninstall'])]), (api, [kind], sender) => {

@@ -314,6 +314,7 @@ describe('every channel', () => {
     'phones.joinHub': [],
     'phones.openHub': [],
     'phones.leaveHub': [],
+    'phones.retryRoster': [],
     'adapters.list': [],
     'adapters.get': ['woolworths'],
     'adapters.settingChoices': ['woolworths', 'store', '2000'],

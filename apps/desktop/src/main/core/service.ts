@@ -1400,7 +1400,7 @@ export class AppService {
           this.tidyDraftsSoon()
         },
       })
-      await this.openPhones(this.approvalBroker, devices)
+      await this.openPhones(this.approvalBroker, devices, ledger)
     } catch {
       this.approvalBroker = null
       this.deps.diagnostics?.({ type: 'approvals-unavailable' })
@@ -1435,7 +1435,11 @@ export class AppService {
   }
 
   /** Starts the relay connection and the phone channel, once the broker is open. */
-  private async openPhones(broker: ApprovalBroker, devices: DeviceStore): Promise<void> {
+  private async openPhones(
+    broker: ApprovalBroker,
+    devices: DeviceStore,
+    ledger: TrustedLedger,
+  ): Promise<void> {
     try {
       await this.phones.setRelay(await this.relaySetup())
       await this.phones.open({
@@ -1453,6 +1457,7 @@ export class AppService {
             if (await devices.revoke(deviceId, by, new Date(this.deps.now()).toISOString())) {
               this.phones.unpair(deviceId)
               await this.audit.append({ type: 'device-revoked', deviceId, by })
+              void this.phones.rosterChanged().catch(() => undefined)
             }
           },
         },
@@ -1469,6 +1474,16 @@ export class AppService {
           await this.refreshPhoneStatus()
         },
         status: () => this.phoneStatus ?? undefined,
+        ledger,
+        removedFromAccount: async (deviceId, by) => {
+          if (await devices.revoke(deviceId, by, new Date(this.deps.now()).toISOString())) {
+            this.phones.unpair(deviceId)
+            await this.audit.append({ type: 'device-revoked', deviceId, by })
+            this.emit('phones-changed')
+            await this.refreshPhoneStatus()
+          }
+        },
+        now: this.deps.now,
       })
       await this.refreshPhoneStatus()
     } catch {
@@ -3789,6 +3804,8 @@ export class AppService {
           await this.audit.append({ type: 'device-revoked', deviceId, by: 'mac-ui' })
           this.emit('phones-changed')
           await this.refreshPhoneStatus()
+          // Off the account's list too; a cancelled prompt leaves "Try again" in Settings.
+          void this.phones.rosterChanged().catch(() => undefined)
         },
         renewKeys: () => this.renewKeys(),
         joinHub: async () => {
@@ -3804,6 +3821,7 @@ export class AppService {
         leaveHub: async () => {
           if (!this.phones.leaveHub()) throw new ValetError('config', 'not-found')
         },
+        retryRoster: () => this.phones.rosterChanged(),
       },
       adapters: {
         list: async () => (await this.states()).map(adapterSummary),

@@ -2,6 +2,7 @@
 // themselves run under the TypeScript contract suites (packages/credentials/test/*-contract.ts),
 // against the same cases as the TypeScript implementations.
 
+import CryptoKit
 import Foundation
 import XCTest
 
@@ -202,6 +203,97 @@ final class ChannelSigningTests: XCTestCase {
     XCTAssertEqual(channelApprovalToSign(domain: pairingChallengeDomain, payloads: [ok], own: own)?.reason, "pair a new iPhone")
     XCTAssertNil(channelApprovalToSign(domain: pairingChallengeDomain, payloads: ["{}"], own: own))
     XCTAssertNil(channelApprovalToSign(domain: "valet/approval-decision/v1", payloads: [ok], own: own))
+  }
+
+  func rosterDevice(_ fields: [String: Any] = [:]) -> [String: Any] {
+    var base: [String: Any] = [
+      "deviceId": String(repeating: "b", count: 32), "role": "phone", "platform": "ios", "name": "iPhone",
+      "approvalKey": "P-A", "transportKey": "P-T", "agreementKey": "P-G",
+    ]
+    for (k, v) in fields { base[k] = v }
+    return base
+  }
+
+  var macDevice: [String: Any] {
+    rosterDevice([
+      "deviceId": own.macId, "role": "mac", "platform": "macos", "approvalKey": "MAC-APPROVAL",
+      "transportKey": "MAC-TRANSPORT", "agreementKey": "MAC-AGREEMENT",
+    ])
+  }
+
+  /// A run of changes as core's nextRosterChange writes them, each naming the one before.
+  func rosterChain(_ changes: [[String: Any]], from seq: Int = 0, prev: String? = nil, by: String? = nil,
+                   tweak: (Int, inout [String: Any]) -> Void = { _, _ in }) -> [String] {
+    var out: [String] = []
+    var prev: Any = prev ?? NSNull()
+    for (i, change) in changes.enumerated() {
+      var object: [String: Any] = [
+        "v": 1, "account": "acct_0123456789abcdef", "seq": seq + i, "prev": prev,
+        "at": "2026-11-16T00:00:00.000Z", "by": by ?? own.macId, "change": change,
+      ]
+      tweak(i, &object)
+      let text = String(decoding: try! JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]), as: UTF8.self)
+      out.append(text)
+      prev = SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+    return out
+  }
+
+  func testRosterStartsWithThisMacThenItsPhones() {
+    let phone2 = rosterDevice(["deviceId": String(repeating: "c", count: 32), "approvalKey": "P2-A"])
+    let start = rosterChain([["op": "add", "device": macDevice], ["op": "add", "device": rosterDevice()],
+                             ["op": "add", "device": phone2]])
+    let signed = channelApprovalToSign(domain: rosterChangeDomain, payloads: start, own: own)
+    XCTAssertEqual(signed?.inputs.count, 3)
+    XCTAssertEqual(signed?.reason, "put this Mac and its iPhones on your Valet account")
+    XCTAssertEqual(signed?.inputs.first, Data("\(rosterChangeDomain)\n\(start[0])".utf8))
+
+    let later = rosterChain([["op": "add", "device": rosterDevice()]], from: 4, prev: String(repeating: "0", count: 64))
+    XCTAssertEqual(channelApprovalToSign(domain: rosterChangeDomain, payloads: later, own: own)?.reason,
+                   "add an iPhone to your Valet account")
+    let remove = rosterChain([["op": "remove", "deviceId": String(repeating: "b", count: 32)]], from: 2,
+                             prev: String(repeating: "0", count: 64))
+    XCTAssertEqual(channelApprovalToSign(domain: rosterChangeDomain, payloads: remove, own: own)?.reason,
+                   "remove a device from your Valet account")
+  }
+
+  func testRosterRefusesWhatThisMacMustNotSign() {
+    let prev = String(repeating: "0", count: 64)
+    func refused(_ payloads: [String], _ line: UInt = #line) {
+      XCTAssertNil(channelApprovalToSign(domain: rosterChangeDomain, payloads: payloads, own: own), line: line)
+    }
+    // Signed in another device's name.
+    refused(rosterChain([["op": "add", "device": rosterDevice()]], from: 1, prev: prev, by: String(repeating: "c", count: 32)))
+    // This Mac adding itself anywhere but first, or with keys that aren't its own.
+    refused(rosterChain([["op": "add", "device": macDevice]], from: 1, prev: prev))
+    var wrongKeys = macDevice
+    wrongKeys["transportKey"] = "SOMEONE-ELSE"
+    refused(rosterChain([["op": "add", "device": wrongKeys]]))
+    // Another Mac, a phone using this Mac's id, this Mac removing itself.
+    refused(rosterChain([["op": "add", "device": rosterDevice(["role": "mac", "platform": "macos"])]], from: 1, prev: prev))
+    refused(rosterChain([["op": "add", "device": rosterDevice(["deviceId": own.macId])]], from: 1, prev: prev))
+    refused(rosterChain([["op": "remove", "deviceId": own.macId]], from: 1, prev: prev))
+    // A batch whose changes don't follow one another, or switch account.
+    var broken = rosterChain([["op": "add", "device": macDevice], ["op": "add", "device": rosterDevice()]])
+    broken[1] = broken[1].replacingOccurrences(of: "\"seq\":1", with: "\"seq\":2")
+    refused(broken)
+    refused(rosterChain([["op": "add", "device": macDevice], ["op": "add", "device": rosterDevice()]]) { i, o in
+      if i == 1 { o["prev"] = prev }
+    })
+    refused(rosterChain([["op": "add", "device": macDevice], ["op": "add", "device": rosterDevice()]]) { i, o in
+      if i == 1 { o["account"] = "acct_another_account_0" }
+    })
+    // A first change with a prev, extra fields, too many at once, or another domain's limit.
+    refused(rosterChain([["op": "add", "device": macDevice]]) { _, o in o["prev"] = prev })
+    refused(rosterChain([["op": "add", "device": rosterDevice()]], from: 1, prev: prev) { _, o in o["extra"] = 1 })
+    refused(rosterChain([["op": "add", "device": rosterDevice(["extra": 1])]], from: 1, prev: prev))
+    let many = (0..<10).map { i in
+      ["op": "add", "device": rosterDevice(["deviceId": String(format: "%032d", i + 1), "approvalKey": "P\(i)"])]
+        as [String: Any]
+    }
+    refused(rosterChain(many, from: 1, prev: prev))
+    XCTAssertNotNil(channelApprovalToSign(domain: rosterChangeDomain, payloads: rosterChain(Array(many.prefix(9)), from: 1, prev: prev), own: own))
+    XCTAssertNil(channelApprovalToSign(domain: deviceRecordDomain, payloads: Array(repeating: record([:]), count: 3), own: own))
   }
 
   func testTransportSignsOnlyThisMacsSignIn() {

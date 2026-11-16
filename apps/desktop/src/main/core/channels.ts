@@ -13,6 +13,7 @@ export const INVOKE_METHODS = [
   'phones.joinHub',
   'phones.openHub',
   'phones.leaveHub',
+  'phones.retryRoster',
   'adapters.list',
   'adapters.get',
   'adapters.settingChoices',

@@ -9,8 +9,10 @@ import { RelayClient, type RelayClientStatus, type RelayConsentView } from '@val
 import type { HubView, PairingView, PhonesStatus } from '../../shared/api'
 import type { ApprovalBroker, MacToPhoneBody, PhoneOutbox } from './approvals/broker'
 import type { DeviceStore } from './approvals/devices'
+import type { TrustedLedger } from './approvals/ledger'
 import { PhoneChannel, type PhoneChannelOptions } from './approvals/phone-channel'
 import { PhoneInbox, type SafetySwitches } from './approvals/phone-inbox'
+import { RosterKeeper } from './approvals/roster-keeper'
 import type { MacSigner } from './approvals/signer'
 
 export interface RelaySetup {
@@ -57,6 +59,11 @@ export interface PhonesParts {
   readonly approvePairing: PhoneChannelOptions['approvePairing']
   readonly paired: (record: DeviceRecord) => Promise<void>
   readonly status: PhoneChannelOptions['status']
+  /** Where the Mac pins the account's device list. */
+  readonly ledger: TrustedLedger
+  /** A phone paired here that another device removed from the account's list: revoke it. */
+  readonly removedFromAccount: (deviceId: string, by: string) => Promise<void>
+  readonly now: () => number
 }
 
 export class Phones implements PhoneOutbox {
@@ -69,6 +76,7 @@ export class Phones implements PhoneOutbox {
   private unavailable: PhonesStatus['unavailableReason'] = 'approvals-unavailable'
   private relay: RelaySetup | null
   private parts: PhonesParts | null = null
+  private roster: RosterKeeper | null = null
 
   constructor(private readonly options: PhonesOptions) {
     this.relay = options.relay
@@ -114,6 +122,18 @@ export class Phones implements PhoneOutbox {
     }
     this.unavailable = null
     const inbox = new PhoneInbox(parts.broker, parts.devices, parts.safety)
+    const roster = new RosterKeeper({
+      ledger: parts.ledger,
+      devices: parts.devices,
+      keys,
+      channel: keysOps,
+      macName: this.options.macName,
+      send: (changes) => this.client?.send({ type: 'hub-roster-append', changes: [...changes] }) ?? false,
+      removed: parts.removedFromAccount,
+      now: parts.now,
+      onChange: () => this.options.emit(),
+      ...(this.options.log === undefined ? {} : { log: this.options.log }),
+    })
     const client = new RelayClient({
       relay: relay.origin,
       macId: parts.devices.macId,
@@ -139,11 +159,16 @@ export class Phones implements PhoneOutbox {
           )
         if (event.type === 'hub-status') {
           this.hub = event.hub
+          void roster.linked(event.hub.state === 'linked' ? event.hub.accountId : null).catch(() => undefined)
           this.options.emit()
           return
         }
-        // The account's device list: the Mac starts trusting it in the next step (relay-hub.md, step 4).
-        if (event.type === 'hub-roster') return
+        if (event.type === 'hub-roster') {
+          void roster
+            .received(event.changes, event.refused)
+            .catch((error) => this.options.log?.(`[roster] ${String(error)}`))
+          return
+        }
         if (event.type === 'device-online') {
           if (event.online) this.online.add(event.deviceId)
           else this.online.delete(event.deviceId)
@@ -160,7 +185,10 @@ export class Phones implements PhoneOutbox {
       link: client,
       receive: (from, text) => inbox.receive(from, text),
       approvePairing: parts.approvePairing,
-      paired: parts.paired,
+      paired: async (record) => {
+        await parts.paired(record)
+        void roster.changed().catch(() => undefined)
+      },
       macName: this.options.macName,
       status: parts.status,
       statePath: this.options.statePath,
@@ -168,6 +196,7 @@ export class Phones implements PhoneOutbox {
       ...(this.options.log === undefined ? {} : { log: this.options.log }),
     })
     this.client = client
+    this.roster = roster
     this.options.remote?.setRelayHost(client.publicHost)
     client.start()
   }
@@ -177,6 +206,7 @@ export class Phones implements PhoneOutbox {
     this.client?.stop()
     this.client = null
     this.channel = null
+    this.roster = null
     this.online.clear()
   }
 
@@ -198,6 +228,7 @@ export class Phones implements PhoneOutbox {
       relayOrigin: this.relay?.origin ?? null,
       worksLocked: null,
       hub: this.hub,
+      roster: this.roster?.view ?? { state: 'off', devices: 0 },
       phones: phones.map((p) => ({
         deviceId: p.deviceId,
         name: p.name,
@@ -217,6 +248,14 @@ export class Phones implements PhoneOutbox {
   leaveHub(): boolean {
     if (this.client === null || this.relayStatus.state !== 'online') return false
     return this.client.send({ type: 'hub-unlink' })
+  }
+
+  /**
+   * A phone was removed here: take it off the account's list too (one Touch ID prompt). Also
+   * Settings' "Try again" after a cancelled prompt.
+   */
+  rosterChanged(): Promise<void> {
+    return this.roster?.changed() ?? Promise.resolve()
   }
 
   /** A page on the hub the relay named, https only; null when there is none. */

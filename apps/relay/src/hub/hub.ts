@@ -141,7 +141,9 @@ const BODIES = {
   internalPresence: z.object({ macId: z.string().regex(KEY_ID), online: z.boolean() }).strict(),
   internalLink: z.object({ macId: z.string().regex(KEY_ID), name: hubNodeNameSchema }).strict(),
   internalMac: z.object({ macId: z.string().regex(KEY_ID) }).strict(),
-  internalRoster: z.object({ macId: z.string().regex(KEY_ID), change: signedRosterChangeSchema }).strict(),
+  internalRoster: z
+    .object({ macId: z.string().regex(KEY_ID), changes: z.array(signedRosterChangeSchema).min(1).max(8) })
+    .strict(),
 } as const
 
 export class Hub extends DurableObject<Env> {
@@ -280,11 +282,11 @@ export class Hub extends DurableObject<Env> {
         return this.answer(macId, false)
       }
       case '/node/roster-append': {
-        const { macId, change } = BODIES.internalRoster.parse(body)
+        const { macId, changes } = BODIES.internalRoster.parse(body)
         const node = this.node(macId)
         if (node === null)
           return { ...this.answer(macId, false), roster: { changes: [], refused: 'not-linked' } }
-        const refused = await this.appendRoster(node.account_id, change)
+        const refused = await this.appendRoster(node.account_id, changes)
         if (refused !== null)
           return { ...this.answer(macId, true), roster: { changes: this.chain(node.account_id), refused } }
         await this.tellNodes(node.account_id, macId)
@@ -874,15 +876,17 @@ export class Hub extends DurableObject<Env> {
   }
 
   /**
-   * Keeps one change if the whole chain still checks with it: signed by a device on the list (or,
-   * first, by the device adding itself), naming this account and the current head. The hub
-   * checks so it never hands out a broken chain; nodes check again, and trust only their own check.
+   * Keeps the changes, all or none, if the whole chain still checks with them: each signed by a
+   * device on the list (or, first, by the device adding itself), naming this account and the head
+   * before it. The hub checks so it never hands out a broken chain; nodes check again, and trust
+   * only their own check.
    */
   private async appendRoster(
     accountId: string,
-    change: { payload: string; signature: string },
+    changes: readonly { payload: string; signature: string }[],
   ): Promise<'conflict' | 'invalid' | null> {
-    const chain = [...this.chain(accountId), change]
+    const kept = this.chain(accountId)
+    const chain = [...kept, ...changes]
     const signatures: { key: string; payload: string; signature: string }[] = []
     const check = verifyRoster(chain, {
       verify: (key, payload, signature) => {
@@ -890,25 +894,25 @@ export class Hub extends DurableObject<Env> {
         return true
       },
     })
-    if (!check.ok)
-      return check.reason === 'broken-chain' && check.at === chain.length - 1 ? 'conflict' : 'invalid'
+    if (!check.ok) return check.reason === 'broken-chain' && check.at === kept.length ? 'conflict' : 'invalid'
     if (check.roster.account !== accountId) return 'invalid'
     for (const s of signatures)
       if (!(await verifyRosterSignature(s.key, s.payload, s.signature))) return 'invalid'
     // Another change may have landed while the signatures were checked.
     if (
       (this.one<{ n: number }>('SELECT COUNT(*) AS n FROM roster WHERE account_id = ?', accountId)?.n ??
-        0) !==
-      chain.length - 1
+        0) !== kept.length
     )
       return 'conflict'
-    this.run(
-      'INSERT INTO roster (account_id, seq, payload, signature) VALUES (?, ?, ?, ?)',
-      accountId,
-      chain.length - 1,
-      change.payload,
-      change.signature,
-    )
+    // One synchronous run of inserts: nothing else runs in the object between them.
+    for (const [i, change] of changes.entries())
+      this.run(
+        'INSERT INTO roster (account_id, seq, payload, signature) VALUES (?, ?, ?, ?)',
+        accountId,
+        kept.length + i,
+        change.payload,
+        change.signature,
+      )
     return null
   }
 

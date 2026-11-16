@@ -767,6 +767,8 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
     relayOrigin: settings.relayHost === null ? null : `https://${settings.relayHost}`,
     worksLocked,
     hub: settings.relayHost === null ? null : hub,
+    roster:
+      hub?.state === 'linked' ? { state: 'on', devices: phones.length + 1 } : { state: 'off', devices: 0 },
     phones,
     pairing,
   })
@@ -1717,6 +1719,9 @@ export function createFakeApi(options: FakeOptions = {}): FakeApi {
         enter('phones.leaveHub')
         hub = { state: 'unlinked', url: 'https://valet.example' }
         emit({ type: 'phones-changed' })
+      },
+      async retryRoster() {
+        enter('phones.retryRoster')
       },
       async renewKeys() {
         enter('phones.renewKeys')

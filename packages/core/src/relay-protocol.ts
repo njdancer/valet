@@ -512,10 +512,19 @@ export const macToRelaySchema = z.discriminatedUnion('type', [
   /** Leave the account. The hub forgets the node at once. */
   z.object({ type: z.literal('hub-unlink') }).strict(),
   /**
-   * Append one change to the account's device list (roster.ts), signed by a device on it. The hub
-   * keeps it only if the whole chain still checks; every node then hears `hub-roster`.
+   * Append changes to the account's device list (roster.ts), in order, each signed by a device on
+   * it: several when a Mac starts the list with the phones it already paired. The hub keeps them
+   * all, or none, only if the whole chain still checks; every node then hears `hub-roster`.
    */
-  z.object({ type: z.literal('hub-roster-append'), change: signedRosterChangeSchema }).strict(),
+  z
+    .object({
+      type: z.literal('hub-roster-append'),
+      changes: z
+        .array(signedRosterChangeSchema)
+        .min(1)
+        .max(RELAY_LIMITS.maxDevicesPerMac + 1),
+    })
+    .strict(),
 ])
 export type MacToRelay = z.infer<typeof macToRelaySchema>
 

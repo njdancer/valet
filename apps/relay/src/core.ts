@@ -146,7 +146,7 @@ export interface HubLink {
   linkStart(macId: string, name: string): Promise<HubAnswer>
   unlink(macId: string): Promise<HubAnswer>
   /** A change to the account's device list, from this Mac (roster.ts). */
-  rosterAppend(macId: string, change: { payload: string; signature: string }): Promise<HubAnswer>
+  rosterAppend(macId: string, changes: readonly { payload: string; signature: string }[]): Promise<HubAnswer>
 }
 
 /** What the hub tells a Mac: its status, and the account's device list when that is news. */
@@ -558,7 +558,7 @@ export class RelayCore {
       case 'hub-unlink':
         return this.toHub((hub) => hub.unlink(this.options.macId))
       case 'hub-roster-append':
-        return this.toHub((hub) => hub.rosterAppend(this.options.macId, frame.change))
+        return this.toHub((hub) => hub.rosterAppend(this.options.macId, frame.changes))
       case 'recovery-register': {
         const stored = await this.state()
         if (stored === null || stored.recoveryCodeHash === frame.codeHash) return

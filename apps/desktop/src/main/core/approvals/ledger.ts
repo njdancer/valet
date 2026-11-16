@@ -83,6 +83,20 @@ export const ledgerSchema = z
       )
       .max(500)
       .optional(),
+    /**
+     * The account's device list this Mac pinned (approvals/roster-keeper.ts): its first change,
+     * which this Mac signed, and the latest it saw, so a hub can't swap the list or roll it back.
+     * Absent while the Mac is on no account, or on one whose list it didn't start.
+     */
+    roster: z
+      .object({
+        account: z.string().regex(/^[A-Za-z0-9_-]{16,64}$/),
+        genesis: HASH,
+        seq: z.number().int().min(0),
+        head: HASH,
+      })
+      .strict()
+      .optional(),
   })
   .strict()
 export type LedgerData = z.infer<typeof ledgerSchema>
