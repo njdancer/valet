@@ -204,16 +204,33 @@ first change is a device adding itself. Limits: 32 devices, 512 changes, never z
   from a linked Mac (`hub-roster-append`) only if the whole chain still checks (WebCrypto in the
   Worker), and sends the whole chain (`hub-roster`) to every node of the account after a change,
   after a hello and after joining. A change built on an old head is refused as a conflict.
-- **Each node trusts only its own check.** When a Mac joins, it pins the hash of the first change.
-  It then trusts exactly the devices the chain lists, and refuses a chain that forks, reorders,
-  drops changes or goes back to a head it has already seen (`verifyRoster` with `pinned` and
-  `known`).
-- **Migration, without re-pairing (next PR).** A Mac that already has paired phones writes the
-  first change (itself) and one add for each phone it paired, signed with Touch ID. Each phone's
-  keys are the ones the Mac verified when they paired.
-- **Then (next PRs):** each Mac registers every phone on the list with its own relay object, so
-  a phone added at one Mac reaches all of them. The iPhone gets the QR sign-in shortcut and can
-  sign adds and removes itself.
+- **Each node trusts only its own check.** It refuses a chain that forks, reorders, drops changes
+  or goes back to a head it has already seen (`verifyRoster` with `pinned` and `known`).
+- **The Mac starts the list, without re-pairing**
+  (`apps/desktop/src/main/core/approvals/roster-keeper.ts`). On an account whose list is empty, the Mac writes the first change (itself,
+  with its three keys) and one add for each phone it already paired, all signed under one Touch ID
+  prompt ("put this Mac and its iPhones on your Valet account"), and sends them as one
+  `hub-roster-append` the hub keeps all together or not at all. Each phone's keys are the ones the
+  Mac verified when it paired. After that the Mac keeps the list in step: a phone paired here is
+  added, a phone removed in Settings is removed (each one more prompt), and a phone of this Mac's
+  that another device took off the list is revoked here too.
+- **What the Mac pins.** Only a list whose first change it signed itself: the trusted ledger
+  keeps that hash with the latest head and count it saw. A hub can't hand the Mac a list some other
+  key started; such a list shows "Another device started your account's device list" and the Mac
+  signs nothing on it. Leaving the account forgets the pin, so a fresh start pins again.
+- **The Secure Enclave helper checks each change before the prompt**
+  (`swift-bridge/Sources/ValetHelperKit/ChannelSigning.swift`): up to 9 at once, all by this Mac,
+  for one account, numbered one after another and each naming the hash of the one before. The
+  Mac adds itself (with its own keys) only as the very first change, and otherwise adds iPhones
+  or removes other devices. It never adds another Mac and never removes itself; the helper writes
+  the prompt's reason itself.
+- **Settings › Devices** shows the list's state under "Valet account": how many devices it has,
+  "Try again" after a cancelled prompt, or why it isn't used.
+- **Not yet trusted from the list:** a phone this Mac didn't pair. That comes with step 4c, where
+  the iPhone signs in to the hub with the QR shortcut, can sign adds and removes itself, and each
+  Mac registers every phone on the list with its own relay object. A Mac joining an account whose
+  list another device started waits for that device to add it (also 4c), and a Mac whose keys are
+  renewed (only keys made before they worked while locked) needs its entry replaced then too.
 
 Why a chain and not a list re-signed each time: removing a device must not need the device
 being removed, and a node that saw a removal must never be shown a list without it again.

@@ -32,7 +32,7 @@ export function hubLink(env: Env): HubLink | undefined {
     presence: (macId, online) => ask('/node/presence', { macId, online }),
     linkStart: (macId, name) => ask('/node/link-start', { macId, name }),
     unlink: (macId) => ask('/node/unlink', { macId }),
-    rosterAppend: (macId, change) => ask('/node/roster-append', { macId, change }),
+    rosterAppend: (macId, changes) => ask('/node/roster-append', { macId, changes }),
   }
 }
 

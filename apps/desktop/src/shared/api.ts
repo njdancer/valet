@@ -1207,6 +1207,11 @@ export type PairingView =
       readonly why: 'expired' | 'declined' | 'too-many-attempts' | 'cancelled' | 'not-sent' | 'unavailable'
     }
 
+export interface RosterStatus {
+  readonly state: 'off' | 'waiting' | 'on' | 'needs-you' | 'not-added' | 'refused'
+  readonly devices: number
+}
+
 export type HubView =
   | { readonly state: 'off' }
   | { readonly state: 'unlinked'; readonly url: string; readonly problem?: 'too-many' | 'unavailable' }
@@ -1240,6 +1245,8 @@ export interface PhonesStatus {
    * `off`: the relay has no hub. `linking`: the code to type on the hub's page, signed in.
    */
   readonly hub: HubView | null
+  /** The account's device list, once this Mac is on an account (relay-hub.md, step 4). */
+  readonly roster: RosterStatus
   readonly phones: readonly {
     readonly deviceId: string
     readonly name: string
@@ -1275,6 +1282,8 @@ export interface ValetApi {
     openHub(): Promise<void>
     /** Leaves the account: the hub forgets this Mac at once. */
     leaveHub(): Promise<void>
+    /** Asks for Touch ID again to bring the account's device list in step, after a cancel. */
+    retryRoster(): Promise<void>
   }
   readonly adapters: {
     list(): Promise<readonly AdapterSummary[]>

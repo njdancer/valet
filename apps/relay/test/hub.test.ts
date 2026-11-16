@@ -478,7 +478,7 @@ describe('nodes', () => {
     const genesis = a.signRoster(
       nextRosterChange(null, a.accountId, a.id, { op: 'add', device: a.device }, at),
     )
-    a.client.send({ type: 'hub-roster-append', change: genesis })
+    a.client.send({ type: 'hub-roster-append', changes: [genesis] })
     await until(() => b.rosters.some((r) => r.changes.length === 1))
     await until(() => a.rosters.some((r) => r.changes.length === 1))
     const first = verifyRoster(b.rosters.at(-1)?.changes ?? [])
@@ -488,19 +488,43 @@ describe('nodes', () => {
     const self = b.signRoster(
       nextRosterChange(first.roster, a.accountId, b.id, { op: 'add', device: b.device }, at),
     )
-    b.client.send({ type: 'hub-roster-append', change: self })
+    b.client.send({ type: 'hub-roster-append', changes: [self] })
     await until(() => b.rosters.some((r) => r.refused === 'invalid'))
 
     // A adds B. A change built on an old head is refused as a conflict.
     const add = a.signRoster(
       nextRosterChange(first.roster, a.accountId, a.id, { op: 'add', device: b.device }, at),
     )
-    a.client.send({ type: 'hub-roster-append', change: add })
+    a.client.send({ type: 'hub-roster-append', changes: [add] })
     await until(() => b.rosters.some((r) => r.changes.length === 2))
-    a.client.send({ type: 'hub-roster-append', change: add })
+    a.client.send({ type: 'hub-roster-append', changes: [add] })
     await until(() => a.rosters.some((r) => r.refused === 'conflict'))
     const second = verifyRoster(b.rosters.at(-1)?.changes ?? [], { pinned: first.roster.genesis })
     expect(second.ok && [...second.roster.devices.keys()]).toEqual([a.id, b.id])
+
+    // Several changes in one frame are kept all together, or not at all.
+    const x = startMac(runtime).device
+    const y = startMac(runtime).device
+    if (!second.ok) throw new Error(second.reason)
+    const addX = a.signRoster(
+      nextRosterChange(second.roster, a.accountId, a.id, { op: 'add', device: x }, at),
+    )
+    const afterX = verifyRoster([...(b.rosters.at(-1)?.changes ?? []), addX])
+    if (!afterX.ok) throw new Error(afterX.reason)
+    const again = a.signRoster(
+      nextRosterChange(afterX.roster, a.accountId, a.id, { op: 'add', device: x }, at),
+    )
+    const addY = a.signRoster(
+      nextRosterChange(afterX.roster, a.accountId, a.id, { op: 'add', device: y }, at),
+    )
+    const refusals = a.rosters.filter((r) => r.refused === 'invalid').length
+    a.client.send({ type: 'hub-roster-append', changes: [addX, again] })
+    await until(() => a.rosters.filter((r) => r.refused === 'invalid').length > refusals)
+    expect(a.rosters.at(-1)?.changes).toHaveLength(2)
+    a.client.send({ type: 'hub-roster-append', changes: [addX, addY] })
+    await until(() => b.rosters.some((r) => r.changes.length === 4))
+    const third = verifyRoster(b.rosters.at(-1)?.changes ?? [], { pinned: first.roster.genesis })
+    expect(third.ok && [...third.roster.devices.keys()]).toEqual([a.id, b.id, x.deviceId, y.deviceId])
 
     // After a reconnect, the list comes with the status.
     const before = b.rosters.length
@@ -508,12 +532,12 @@ describe('nodes', () => {
     b.client.start()
     await b.online()
     await until(() => b.rosters.length > before)
-    expect(b.rosters.at(-1)?.changes).toHaveLength(2)
+    expect(b.rosters.at(-1)?.changes).toHaveLength(4)
 
     // A Mac on no account can't append.
     const stranger = startMac(runtime)
     await stranger.online()
-    stranger.client.send({ type: 'hub-roster-append', change: genesis })
+    stranger.client.send({ type: 'hub-roster-append', changes: [genesis] })
     await until(() => stranger.rosters.some((r) => r.refused === 'not-linked'))
   })
 })
