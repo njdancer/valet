@@ -163,6 +163,8 @@ export class Phones implements PhoneOutbox {
           this.options.emit()
           return
         }
+        // Agents' sign-ins and grants at the hub: the Mac takes part in the next step (relay-hub.md, step 3).
+        if (event.type === 'hub-consents' || event.type === 'hub-grants') return
         if (event.type === 'hub-roster') {
           void roster
             .received(event.changes, event.refused)

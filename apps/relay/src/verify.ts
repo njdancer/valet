@@ -59,3 +59,12 @@ async function verifyDomain(
     return false
   }
 }
+
+/** A device's approval signature over an agent's grant at the hub (hub-grant.ts). */
+export function verifyHubGrantSignature(
+  publicKey: string,
+  payload: string,
+  signature: string,
+): Promise<boolean> {
+  return verifyDomain(publicKey, SIGNING_DOMAINS.hubGrant, payload, signature)
+}

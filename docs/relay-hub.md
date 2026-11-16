@@ -235,6 +235,35 @@ first change is a device adding itself. Limits: 32 devices, 512 changes, never z
 Why a chain and not a list re-signed each time: removing a device must not need the device
 being removed, and a node that saw a removal must never be shown a list without it again.
 
+## Step 3 as being built: agents' grants
+
+Built in this order: the hub's sign-in for agents and the grant format (3a), then the Mac's part
+(3b), then the aggregated MCP (step 2), so no agent is ever served without a signed grant.
+
+- **The hub is an OAuth 2.1 server for MCP clients** (`apps/relay/src/hub/oauth.ts`): metadata for
+  `<hub>/mcp`, Dynamic Client Registration (public clients, https or loopback redirects, at most
+  100), the code flow with PKCE S256 and resource indicators, codes good once for a minute,
+  access tokens for an hour, rotating refresh tokens (a reuse ends everything from that sign-in).
+  Tokens are stored as hashes, each tied to the grant that approved it.
+- **`/authorize` never decides.** It shows the browser a code and tells every node of the account
+  (`hub-consents`). The person approves on a device and types that code there, as for today's
+  remote consents. The agent's browser polls and, holding the cookie `/authorize` set, collects
+  its code once a grant is in. No sign-in to the hub is needed on that page: the device's
+  signature is what counts, and the code ties it to that browser.
+- **A grant** (`packages/core/src/hub-grant.ts`, domain `valet/hub-grant/v1`) names the account,
+  the sign-in, the agent and its redirect host (claims, shown as such), the scope
+  `remote-tools`, and at most 90 days. It is signed by the approval key of a device on the
+  account's list. The hub keeps it only after checking the list and the signature with WebCrypto,
+  and only for a sign-in still waiting from that agent. Every node hears all grants
+  (`hub-grants`) and serves an agent only for one it checked against the list it verified itself.
+- **What `remote-tools` gives:** on each Mac, the tools it already lets remote agents use, behind
+  its own approvals, pacing and lockdown. Nothing wider. Valet's own admin and authoring tools stay
+  per-Mac decisions, as today.
+- **Taking access away needs no signature.** The hub can drop a grant (and its tokens), and a Mac
+  can stop honouring one; neither can add one.
+- **Who signs:** any device on the list. Nick chose whether that includes the Mac's Touch ID or only
+  the phone (see the thread); the format allows both.
+
 ## Open, for the building agent to propose (not for Nick unless it changes his goal)
 
 - Storage: D1 vs a Durable Object per account.

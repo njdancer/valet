@@ -14,16 +14,24 @@ import {
   verifyRegistrationResponse,
 } from '@simplewebauthn/server'
 import { KEY_ID } from '@valet/core/devices'
-import { type HubStatus, hubNodeNameSchema, hubNodeSlugSchema } from '@valet/core/relay-protocol'
-import { signedRosterChangeSchema, verifyRoster } from '@valet/core/roster'
+import { hubConsentIdSchema, signedHubGrantSchema, verifyHubGrant } from '@valet/core/hub-grant'
+import {
+  HUB_MAX_GRANTS,
+  HUB_MAX_OPEN_CONSENTS,
+  type HubStatus,
+  hubNodeNameSchema,
+  hubNodeSlugSchema,
+} from '@valet/core/relay-protocol'
+import { type Roster, signedRosterChangeSchema, verifyRoster } from '@valet/core/roster'
 import { z } from 'zod'
 import type { HubAnswer } from '../core'
 import { fromBase64url, toBase64url } from '../encoding'
 import type { Env } from '../env'
 import { logFailure } from '../log'
-import { verifyRosterSignature } from '../verify'
+import { verifyHubGrantSignature, verifyRosterSignature } from '../verify'
 import { WindowCounter } from '../window'
 import { macStub } from './link'
+import { HubOAuth } from './oauth'
 import { type HubPageName, hubPage } from './pages'
 import {
   checkPassword,
@@ -144,17 +152,29 @@ const BODIES = {
   internalRoster: z
     .object({ macId: z.string().regex(KEY_ID), changes: z.array(signedRosterChangeSchema).min(1).max(8) })
     .strict(),
+  internalGrant: z.object({ macId: z.string().regex(KEY_ID), grant: signedHubGrantSchema }).strict(),
+  internalDecline: z.object({ macId: z.string().regex(KEY_ID), consentId: hubConsentIdSchema }).strict(),
 } as const
 
 export class Hub extends DurableObject<Env> {
   private readonly sql: SqlStorage
   private readonly wrongCodes = new WindowCounter(HUB_CAPS.wrongCodes, 10 * 60_000, Date.now, 64)
   private readonly appSignIns = new WindowCounter(HUB_CAPS.appSignIns, 10 * 60_000, Date.now, 256)
+  private readonly oauth: HubOAuth
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
     this.sql = ctx.storage.sql
+    this.oauth = new HubOAuth(
+      {
+        all: (q, ...b) => this.all(q, ...b),
+        one: (q, ...b) => this.one(q, ...b),
+        run: (q, ...b) => this.run(q, ...b),
+      },
+      () => this.origin,
+    )
     this.migrate()
+    this.oauth.migrate()
   }
 
   private migrate(): void {
@@ -184,6 +204,10 @@ export class Hub extends DurableObject<Env> {
       CREATE TABLE IF NOT EXISTS link_requests (
         code TEXT PRIMARY KEY, mac_id TEXT NOT NULL UNIQUE, name TEXT NOT NULL,
         expires_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS grants (
+        id TEXT PRIMARY KEY, account_id TEXT NOT NULL, client_id TEXT NOT NULL, payload TEXT NOT NULL,
+        signature TEXT NOT NULL, expires_at INTEGER NOT NULL
       );
       CREATE TABLE IF NOT EXISTS roster (
         account_id TEXT NOT NULL, seq INTEGER NOT NULL, payload TEXT NOT NULL, signature TEXT NOT NULL,
@@ -227,6 +251,7 @@ export class Hub extends DurableObject<Env> {
     try {
       if (url.origin === 'https://hub.internal')
         return Response.json(await this.internal(url.pathname, request))
+      if (this.oauth.handles(url.pathname)) return await this.agentSignIn(request, url)
       return await this.public(request, url)
     } catch (error) {
       if (error instanceof z.ZodError)
@@ -292,16 +317,120 @@ export class Hub extends DurableObject<Env> {
         await this.tellNodes(node.account_id, macId)
         return this.answer(macId, true)
       }
+      case '/node/grant': {
+        const { macId, grant } = BODIES.internalGrant.parse(body)
+        const node = this.node(macId)
+        if (node === null) return this.answer(macId, false)
+        if (await this.keepGrant(node.account_id, grant, now)) await this.tellNodes(node.account_id, macId)
+        return this.answer(macId, true)
+      }
+      case '/node/consent-decline': {
+        const { macId, consentId } = BODIES.internalDecline.parse(body)
+        const node = this.node(macId)
+        if (node === null) return this.answer(macId, false)
+        this.oauth.decline(consentId)
+        await this.tellNodes(node.account_id, macId)
+        return this.answer(macId, true)
+      }
       default:
         throw new Refusal(404, 'not_found', 'Nothing here.')
     }
+  }
+
+  // ---------- Agents signing in (oauth.ts) and their grants (hub-grant.ts) ----------
+
+  private async agentSignIn(request: Request, url: URL): Promise<Response> {
+    const source = request.headers.get('cf-connecting-ip') ?? ''
+    const response = await this.oauth.fetch(request, url, source)
+    // A new sign-in waits for the person: every node of the account shows it.
+    if (url.pathname === '/authorize' && response.status === 200) {
+      const account = this.one<{ id: string }>('SELECT id FROM accounts LIMIT 1')
+      if (account !== null) await this.tellNodes(account.id, '')
+    }
+    return response
+  }
+
+  /**
+   * Keeps a grant if a device on the account's list signed it, for a sign-in still waiting, and
+   * lets that sign-in's browser collect its code. False if anything doesn't check.
+   */
+  private async keepGrant(
+    accountId: string,
+    signed: { payload: string; signature: string },
+    now: number,
+  ): Promise<boolean> {
+    const roster = await this.verifiedRoster(accountId)
+    if (roster === null) return false
+    const signatures: { key: string; payload: string; signature: string }[] = []
+    const check = verifyHubGrant(signed, roster, now, (key, payload, signature) => {
+      signatures.push({ key, payload, signature })
+      return true
+    })
+    if (!check.ok) return false
+    for (const s of signatures)
+      if (!(await verifyHubGrantSignature(s.key, s.payload, s.signature))) return false
+    const consent = this.oauth.consent(check.grant.consentId)
+    if (consent === null || consent.clientId !== check.grant.clientId) return false
+    const count =
+      this.one<{ n: number }>('SELECT COUNT(*) AS n FROM grants WHERE account_id = ?', accountId)?.n ?? 0
+    if (count >= HUB_MAX_GRANTS) return false
+    this.run(
+      'INSERT OR REPLACE INTO grants (id, account_id, client_id, payload, signature, expires_at) VALUES (?, ?, ?, ?, ?, ?)',
+      check.id,
+      accountId,
+      check.grant.clientId,
+      signed.payload,
+      signed.signature,
+      Date.parse(check.grant.expiresAt),
+    )
+    return this.oauth.approve(check.grant.consentId, check.id)
+  }
+
+  /** The account's device list, checked here with WebCrypto; null if it doesn't check or is empty. */
+  private async verifiedRoster(accountId: string): Promise<Roster | null> {
+    const chain = this.chain(accountId)
+    if (chain.length === 0) return null
+    const signatures: { key: string; payload: string; signature: string }[] = []
+    const check = verifyRoster(chain, {
+      verify: (key, payload, signature) => {
+        signatures.push({ key, payload, signature })
+        return true
+      },
+    })
+    if (!check.ok || check.roster.account !== accountId) return null
+    for (const s of signatures) if (!(await verifyRosterSignature(s.key, s.payload, s.signature))) return null
+    return check.roster
+  }
+
+  private grantsOf(accountId: string): { payload: string; signature: string }[] {
+    return this.all<{ payload: string; signature: string }>(
+      'SELECT payload, signature FROM grants WHERE account_id = ? AND expires_at > ? ORDER BY expires_at LIMIT ?',
+      accountId,
+      Date.now(),
+      HUB_MAX_GRANTS,
+    )
   }
 
   /** A Mac's status, with the account's device list if it is linked and `roster` is asked for. */
   private answer(macId: string, roster: boolean): HubAnswer {
     const status = this.statusOf(macId)
     const node = status.state === 'linked' ? this.node(macId) : null
-    return roster && node !== null ? { status, roster: { changes: this.chain(node.account_id) } } : { status }
+    if (!roster || node === null) return { status }
+    const consents = this.oauth.openConsents().map((c) => ({
+      id: c.id,
+      clientId: c.clientId,
+      clientName: c.clientName,
+      host: c.host,
+      source: c.source,
+      code: c.code,
+      expiresAt: new Date(c.expiresAt).toISOString(),
+    }))
+    return {
+      status,
+      roster: { changes: this.chain(node.account_id) },
+      consents: consents.slice(0, HUB_MAX_OPEN_CONSENTS),
+      grants: this.grantsOf(node.account_id).map((g) => ({ payload: g.payload, signature: g.signature })),
+    }
   }
 
   private statusOf(macId: string): HubStatus {
