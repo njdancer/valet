@@ -1,8 +1,7 @@
 // How a Mac's object reaches the hub's object (relay-hub.md). Both live in this Worker; the hub
 // answers on internal URLs that the front door never routes to.
 
-import type { HubStatus } from '@valet/core/relay-protocol'
-import type { HubLink } from '../core'
+import type { HubAnswer, HubLink } from '../core'
 import type { Env } from '../env'
 
 /** The one hub object. Single account for now (H5); rows carry an account id so it can shard later. */
@@ -21,18 +20,19 @@ export function hubStub(env: Env): DurableObjectStub {
 
 export function hubLink(env: Env): HubLink | undefined {
   if (!hubEnabled(env)) return undefined
-  const ask = async (path: string, body: unknown): Promise<HubStatus> => {
+  const ask = async (path: string, body: unknown): Promise<HubAnswer> => {
     const response = await hubStub(env).fetch(`${HUB_INTERNAL}${path}`, {
       method: 'POST',
       body: JSON.stringify(body),
     })
     if (!response.ok) throw new Error(`hub ${path}: ${response.status}`)
-    return (await response.json()) as HubStatus
+    return (await response.json()) as HubAnswer
   }
   return {
     presence: (macId, online) => ask('/node/presence', { macId, online }),
     linkStart: (macId, name) => ask('/node/link-start', { macId, name }),
     unlink: (macId) => ask('/node/unlink', { macId }),
+    rosterAppend: (macId, change) => ask('/node/roster-append', { macId, change }),
   }
 }
 
@@ -40,10 +40,10 @@ export function hubLink(env: Env): HubLink | undefined {
 export function macStub(env: Env, macId: string) {
   const object = env.MAC_RELAY.get(env.MAC_RELAY.idFromName(macId))
   return {
-    tell: async (status: HubStatus): Promise<void> => {
+    tell: async (answer: HubAnswer): Promise<void> => {
       await object.fetch(`${MAC_INTERNAL}/hub-status?mac=${macId}`, {
         method: 'POST',
-        body: JSON.stringify(status),
+        body: JSON.stringify(answer),
       })
     },
     presence: async (): Promise<{ connected: boolean; lastFrameAt?: number }> => {

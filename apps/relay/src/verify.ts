@@ -33,6 +33,15 @@ export async function keyIdOf(spki: string): Promise<string | null> {
   return [...digest.slice(0, 16)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
+/** A signature over a change to an account's device list (core's roster.ts), by an approval key. */
+export function verifyRosterSignature(
+  publicKey: string,
+  payload: string,
+  signature: string,
+): Promise<boolean> {
+  return verifyDomain(publicKey, SIGNING_DOMAINS.rosterChange, payload, signature)
+}
+
 async function verifyDomain(
   publicKey: string,
   domain: string,

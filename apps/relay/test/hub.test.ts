@@ -3,7 +3,13 @@
 // runtime, with the real relay client as the Mac and a software passkey as the browser's.
 
 import { setTimeout as delay } from 'node:timers/promises'
-import { type HubStatus, SIGNING_DOMAINS } from '@valet/core'
+import {
+  type HubStatus,
+  nextRosterChange,
+  type RosterDevice,
+  SIGNING_DOMAINS,
+  verifyRoster,
+} from '@valet/core'
 import { RelayClient, type RelayEvent } from '@valet/mcp-server'
 import { afterEach, describe, expect, it } from 'vitest'
 import { base32, checkTotp, fromBase32, normaliseLinkCode, slugFromName, totpAt } from '../src/hub/secrets'
@@ -84,6 +90,11 @@ interface Mac {
   readonly id: string
   readonly client: RelayClient
   readonly hub: HubStatus[]
+  /** Each hub-roster frame, in order. */
+  readonly rosters: Extract<RelayEvent, { type: 'hub-roster' }>[]
+  /** This Mac as a roster device, and its approval key's signature over a change. */
+  readonly device: RosterDevice
+  signRoster(payload: string): { payload: string; signature: string }
   online(): Promise<void>
   next(state: HubStatus['state']): Promise<HubStatus>
 }
@@ -92,6 +103,7 @@ function startMac(runtime: Runtime, options: { pingMs?: number } = {}): Mac {
   const transport = testKey()
   const approval = testKey()
   const hub: HubStatus[] = []
+  const rosters: Extract<RelayEvent, { type: 'hub-roster' }>[] = []
   const waiters: Array<() => void> = []
   let cursor = 0
   const client = new RelayClient({
@@ -107,6 +119,7 @@ function startMac(runtime: Runtime, options: { pingMs?: number } = {}): Mac {
     consent: () => ({ state: 'declined' }),
     onEvent: (event: RelayEvent) => {
       if (event.type === 'hub-status') hub.push(event.hub)
+      if (event.type === 'hub-roster') rosters.push(event)
       for (const w of waiters.splice(0)) w()
     },
     onStatus: () => {
@@ -128,6 +141,20 @@ function startMac(runtime: Runtime, options: { pingMs?: number } = {}): Mac {
     id: approval.id,
     client,
     hub,
+    rosters,
+    device: {
+      deviceId: approval.id,
+      role: 'mac',
+      platform: 'macos',
+      name: 'Mac',
+      approvalKey: approval.publicKey,
+      transportKey: transport.publicKey,
+      agreementKey: testKey().publicKey,
+    },
+    signRoster: (payload) => ({
+      payload,
+      signature: approval.signDomain(SIGNING_DOMAINS.rosterChange, payload),
+    }),
     online: () => until(() => client.status.state === 'online'),
     // Statuses in order: each call takes the first one of that state after the last one taken.
     next: async (state) => {
@@ -332,6 +359,7 @@ describe('nodes', () => {
     expect(await mac.next('linked')).toEqual({
       state: 'linked',
       url: HUB_ORIGIN,
+      accountId: expect.stringMatching(/^[A-Za-z0-9_-]{22}$/),
       account: 'nick@example.com',
       slug: 'mbp',
       name: 'Nick’s MacBook Pro',
@@ -415,5 +443,77 @@ describe('nodes', () => {
     expect(await mac.next('unlinked')).toEqual({ state: 'unlinked', url: HUB_ORIGIN })
     mac.client.send({ type: 'hub-link-start', name: 'Mac' })
     expect(await mac.next('unlinked')).toEqual({ state: 'unlinked', url: HUB_ORIGIN, problem: 'unavailable' })
+  })
+
+  it('keeps the account’s device list: signed by devices on it, the same for every node', async () => {
+    const runtime = await relay()
+    const browser = new Browser(runtime)
+    await signUp(browser, testPasskey(HUB_HOST))
+    const join = async (name: string, slug: string): Promise<Mac & { accountId: string }> => {
+      const mac = startMac(runtime)
+      await mac.online()
+      mac.client.send({ type: 'hub-link-start', name })
+      const linking = await mac.next('linking')
+      if (linking.state !== 'linking') throw new Error('expected linking')
+      await browser.json('/api/nodes/link', { code: linking.code, slug })
+      const linked = await mac.next('linked')
+      if (linked.state !== 'linked') throw new Error('expected linked')
+      return Object.assign(mac, { accountId: linked.accountId })
+    }
+    const until = async (check: () => boolean) => {
+      const deadline = Date.now() + 10_000
+      while (!check()) {
+        if (Date.now() > deadline) throw new Error('timed out')
+        await delay(50)
+      }
+    }
+    const a = await join('Studio', 'studio')
+    const b = await join('Laptop', 'laptop')
+    // Linked, with an empty list so far.
+    await until(() => a.rosters.length > 0)
+    expect(a.rosters.at(-1)?.changes).toEqual([])
+
+    // The first device adds itself.
+    const at = new Date().toISOString()
+    const genesis = a.signRoster(
+      nextRosterChange(null, a.accountId, a.id, { op: 'add', device: a.device }, at),
+    )
+    a.client.send({ type: 'hub-roster-append', change: genesis })
+    await until(() => b.rosters.some((r) => r.changes.length === 1))
+    await until(() => a.rosters.some((r) => r.changes.length === 1))
+    const first = verifyRoster(b.rosters.at(-1)?.changes ?? [])
+    if (!first.ok) throw new Error(first.reason)
+
+    // B isn't on the list, so it can't add itself.
+    const self = b.signRoster(
+      nextRosterChange(first.roster, a.accountId, b.id, { op: 'add', device: b.device }, at),
+    )
+    b.client.send({ type: 'hub-roster-append', change: self })
+    await until(() => b.rosters.some((r) => r.refused === 'invalid'))
+
+    // A adds B. A change built on an old head is refused as a conflict.
+    const add = a.signRoster(
+      nextRosterChange(first.roster, a.accountId, a.id, { op: 'add', device: b.device }, at),
+    )
+    a.client.send({ type: 'hub-roster-append', change: add })
+    await until(() => b.rosters.some((r) => r.changes.length === 2))
+    a.client.send({ type: 'hub-roster-append', change: add })
+    await until(() => a.rosters.some((r) => r.refused === 'conflict'))
+    const second = verifyRoster(b.rosters.at(-1)?.changes ?? [], { pinned: first.roster.genesis })
+    expect(second.ok && [...second.roster.devices.keys()]).toEqual([a.id, b.id])
+
+    // After a reconnect, the list comes with the status.
+    const before = b.rosters.length
+    await b.client.stop()
+    b.client.start()
+    await b.online()
+    await until(() => b.rosters.length > before)
+    expect(b.rosters.at(-1)?.changes).toHaveLength(2)
+
+    // A Mac on no account can't append.
+    const stranger = startMac(runtime)
+    await stranger.online()
+    stranger.client.send({ type: 'hub-roster-append', change: genesis })
+    await until(() => stranger.rosters.some((r) => r.refused === 'not-linked'))
   })
 })

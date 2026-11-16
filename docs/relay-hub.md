@@ -190,6 +190,34 @@ test/hub-browser.test.ts` in `apps/relay` drives the pages in Chromium with a vi
 there. Set `HUB_HOST = "valet.dncr.me"`, add a Workers Custom Domain for `valet.dncr.me`, run
 `wrangler secret put HUB_SETUP_SECRET`, deploy, then open `https://valet.dncr.me/sign-up`.
 
+## Step 4 as being built: the account's device list
+
+Nick chose (2026-11-15) to build step 4 before steps 2 and 3, so the hub never lets an agent in
+without a grant your phone signed.
+
+**The list is a chain of signed changes** (`packages/core/src/roster.ts`). Each change adds or
+removes one device (its id, role, name and three public keys), names the change before it by
+hash, and is signed by the approval key of a device already on the list (Face ID or Touch ID). The
+first change is a device adding itself. Limits: 32 devices, 512 changes, never zero devices.
+
+- **The hub keeps it and can't change it.** It stores the chain per account, accepts an append
+  from a linked Mac (`hub-roster-append`) only if the whole chain still checks (WebCrypto in the
+  Worker), and sends the whole chain (`hub-roster`) to every node of the account after a change,
+  after a hello and after joining. A change built on an old head is refused as a conflict.
+- **Each node trusts only its own check.** When a Mac joins, it pins the hash of the first change.
+  It then trusts exactly the devices the chain lists, and refuses a chain that forks, reorders,
+  drops changes or goes back to a head it has already seen (`verifyRoster` with `pinned` and
+  `known`).
+- **Migration, without re-pairing (next PR).** A Mac that already has paired phones writes the
+  first change (itself) and one add for each phone it paired, signed with Touch ID. Each phone's
+  keys are the ones the Mac verified when they paired.
+- **Then (next PRs):** each Mac registers every phone on the list with its own relay object, so
+  a phone added at one Mac reaches all of them. The iPhone gets the QR sign-in shortcut and can
+  sign adds and removes itself.
+
+Why a chain and not a list re-signed each time: removing a device must not need the device
+being removed, and a node that saw a removal must never be shown a list without it again.
+
 ## Open, for the building agent to propose (not for Nick unless it changes his goal)
 
 - Storage: D1 vs a Durable Object per account.

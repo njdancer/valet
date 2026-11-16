@@ -142,9 +142,17 @@ export interface RelayEnvironment {
  */
 export interface HubLink {
   /** The Mac connected (true) or its socket closed (false). */
-  presence(macId: string, online: boolean): Promise<HubStatus>
-  linkStart(macId: string, name: string): Promise<HubStatus>
-  unlink(macId: string): Promise<HubStatus>
+  presence(macId: string, online: boolean): Promise<HubAnswer>
+  linkStart(macId: string, name: string): Promise<HubAnswer>
+  unlink(macId: string): Promise<HubAnswer>
+  /** A change to the account's device list, from this Mac (roster.ts). */
+  rosterAppend(macId: string, change: { payload: string; signature: string }): Promise<HubAnswer>
+}
+
+/** What the hub tells a Mac: its status, and the account's device list when that is news. */
+export interface HubAnswer {
+  readonly status: HubStatus
+  readonly roster?: Omit<Extract<RelayToMac, { type: 'hub-roster' }>, 'type'>
 }
 
 export interface RelayCoreOptions {
@@ -549,6 +557,8 @@ export class RelayCore {
         return this.toHub((hub) => hub.linkStart(this.options.macId, frame.name))
       case 'hub-unlink':
         return this.toHub((hub) => hub.unlink(this.options.macId))
+      case 'hub-roster-append':
+        return this.toHub((hub) => hub.rosterAppend(this.options.macId, frame.change))
       case 'recovery-register': {
         const stored = await this.state()
         if (stored === null || stored.recoveryCodeHash === frame.codeHash) return
@@ -563,24 +573,26 @@ export class RelayCore {
    * Asks the hub and passes its answer to the Mac. Without a hub the Mac hears `off`, so it can
    * say so; when the hub fails, nothing is sent (presence is checked again on the hub's side).
    */
-  private toHub(ask: (hub: HubLink) => Promise<HubStatus>, tell = true): Promise<void> {
+  private toHub(ask: (hub: HubLink) => Promise<HubAnswer>, tell = true): Promise<void> {
     const hub = this.options.env.hub
     if (hub === undefined) {
-      if (tell) this.hubStatus({ state: 'off' })
+      if (tell) this.hubStatus({ status: { state: 'off' } })
       return Promise.resolve()
     }
     return ask(hub).then(
-      (status) => {
-        if (tell) this.hubStatus(status)
+      (answer) => {
+        if (tell) this.hubStatus(answer)
       },
       (error) => logFailure('hub', error),
     )
   }
 
   /** Tells the Mac, if it is connected, where it stands with the hub. */
-  hubStatus(status: HubStatus): void {
+  hubStatus(answer: HubAnswer): void {
     const mac = this.macSocket()
-    if (mac !== null) this.sendTo(mac, { type: 'hub-status', hub: status })
+    if (mac === null) return
+    this.sendTo(mac, { type: 'hub-status', hub: answer.status })
+    if (answer.roster !== undefined) this.sendTo(mac, { type: 'hub-roster', ...answer.roster })
   }
 
   /** The live Mac socket's state, for the hub's presence check. */

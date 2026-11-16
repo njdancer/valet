@@ -1214,6 +1214,7 @@ export type HubView =
   | {
       readonly state: 'linked'
       readonly url: string
+      readonly accountId: string
       readonly account: string
       readonly slug: string
       readonly name: string
